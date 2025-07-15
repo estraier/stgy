@@ -1,6 +1,9 @@
 {
   "name": "fakebook",
   "private": true,
+  "workspaces": [
+    "backend"
+  ],
   "scripts": {
     "docker:reset": "docker-compose down -v && docker-compose build --no-cache",
     "docker:start": "docker-compose up -d",
@@ -8,6 +11,6 @@
     "docker:restart": "docker-compose down ; docker-compose up -d",
     "local": "npm run docker:stop && docker-compose up -d db redis && sleep 2 && cd backend && ./run-local.sh",
     "psql": "docker-compose exec db psql -U fakebook fakebook",
-    "clean": "rm -rf node_modules package-lock.json dist && cd backend && npm run clean"
+    "clean": "rm -rf node_modules package-lock.json dist && npm run clean --workspaces"
   }
 }
