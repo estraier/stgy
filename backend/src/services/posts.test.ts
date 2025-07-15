@@ -1,0 +1,583 @@
+import { v4 as uuidv4 } from "uuid";
+import * as postsService from "./posts";
+import {
+  Post,
+  PostDetail,
+  CreatePostInput,
+  UpdatePostInput,
+  ListPostsInput,
+  ListPostsByFolloweesDetailInput,
+  ListPostsLikedByUserDetailInput,
+} from "../models/post";
+
+type PostRow = Post;
+
+class MockPgClient {
+  data: PostRow[] = [];
+  tags: { post_id: string; name: string }[] = [];
+  likes: { post_id: string; liked_by: string }[] = [];
+  follows: { follower_id: string; followee_id: string }[] = [];
+
+  query(sql: string, params?: any[]) {
+    if (
+      sql.includes("WHERE p.owned_by IN") &&
+      sql.includes("FROM posts p") &&
+      sql.includes("JOIN users u ON p.owned_by = u.id")
+    ) {
+      const user_id = params![0];
+      const offset = params![1] ?? 0;
+      const limit = params![2] ?? 100;
+      let followeeIds = this.follows
+        .filter((f) => f.follower_id === user_id)
+        .map((f) => f.followee_id);
+      if (sql.includes("UNION SELECT $1")) {
+        followeeIds.push(user_id);
+      }
+      followeeIds = Array.from(new Set(followeeIds));
+      const posts = this.data.filter((p) => followeeIds.includes(p.owned_by));
+      const userList = [
+        { id: "user-1", nickname: "Alice" },
+        { id: "user-2", nickname: "Bob" },
+        { id: "user-3", nickname: "Carol" },
+      ];
+      const rows: PostDetail[] = posts.map((p) => ({
+        id: p.id,
+        title: p.title,
+        body: p.body,
+        owned_by: p.owned_by,
+        reply_to: p.reply_to,
+        created_at: p.created_at,
+        owner_nickname: userList.find((u) => u.id === p.owned_by)?.nickname ?? "",
+        reply_count: this.data.filter((r) => r.reply_to === p.id).length,
+        like_count: this.likes.filter((l) => l.post_id === p.id).length,
+        tags: this.tags
+          .filter((t) => t.post_id === p.id)
+          .map((t) => t.name)
+          .sort(),
+      }));
+      return { rows: rows.slice(offset, offset + limit) };
+    }
+
+    if (sql.includes("FROM post_likes pl") && sql.includes("JOIN posts p ON pl.post_id = p.id")) {
+      const user_id = params![0];
+      const offset = params![1] ?? 0;
+      const limit = params![2] ?? 100;
+      const likedPostIds = this.likes.filter((l) => l.liked_by === user_id).map((l) => l.post_id);
+      const posts = this.data.filter((p) => likedPostIds.includes(p.id));
+      const userList = [
+        { id: "user-1", nickname: "Alice" },
+        { id: "user-2", nickname: "Bob" },
+        { id: "user-3", nickname: "Carol" },
+      ];
+      const rows: PostDetail[] = posts.map((p) => ({
+        id: p.id,
+        title: p.title,
+        body: p.body,
+        owned_by: p.owned_by,
+        reply_to: p.reply_to,
+        created_at: p.created_at,
+        owner_nickname: userList.find((u) => u.id === p.owned_by)?.nickname ?? "",
+        reply_count: this.data.filter((r) => r.reply_to === p.id).length,
+        like_count: this.likes.filter((l) => l.post_id === p.id).length,
+        tags: this.tags
+          .filter((t) => t.post_id === p.id)
+          .map((t) => t.name)
+          .sort(),
+      }));
+      return { rows: rows.slice(offset, offset + limit) };
+    }
+
+    if (sql.startsWith("SELECT COUNT(*) FROM posts")) {
+      return { rows: [{ count: this.data.length.toString() }] };
+    }
+
+    if (sql.includes("FROM posts p") && sql.includes("JOIN users u ON p.owned_by = u.id")) {
+      const userList = [
+        { id: "user-1", nickname: "Alice" },
+        { id: "user-2", nickname: "Bob" },
+      ];
+      const result: PostDetail[] = this.data.map((p) => ({
+        id: p.id,
+        title: p.title,
+        body: p.body,
+        owned_by: p.owned_by,
+        reply_to: p.reply_to,
+        created_at: p.created_at,
+        owner_nickname: userList.find((u) => u.id === p.owned_by)?.nickname ?? "",
+        reply_count: this.data.filter((r) => r.reply_to === p.id).length,
+        like_count: this.likes.filter((l) => l.post_id === p.id).length,
+        tags: this.tags
+          .filter((t) => t.post_id === p.id)
+          .map((t) => t.name)
+          .sort(),
+      }));
+      return { rows: result };
+    }
+
+    if (sql.includes("FROM posts p") && !sql.includes("JOIN users u ON p.owned_by = u.id")) {
+      const offset = params?.[params.length - 2] ?? 0;
+      const limit = params?.[params.length - 1] ?? 100;
+      return { rows: this.data.slice(offset, offset + limit) };
+    }
+
+    if (sql.startsWith("INSERT INTO posts")) {
+      const newPost: PostRow = {
+        id: params![0],
+        title: params![1],
+        body: params![2],
+        owned_by: params![3],
+        reply_to: params![4] ?? null,
+        created_at: new Date().toISOString(),
+      };
+      this.data.push(newPost);
+      return { rows: [newPost] };
+    }
+
+    if (
+      sql.startsWith("SELECT id, title, body, owned_by, reply_to, created_at FROM posts WHERE id =")
+    ) {
+      const id = params![0];
+      const post = this.data.find((p) => p.id === id);
+      return { rows: post ? [post] : [] };
+    }
+
+    if (sql.startsWith("UPDATE posts SET")) {
+      const id = params![params!.length - 1];
+      const post = this.data.find((p) => p.id === id);
+      if (!post) return { rows: [] };
+      const columns = sql
+        .match(/SET (.+) WHERE/)![1]
+        .split(",")
+        .map((s) => s.trim());
+      let idx = 0;
+      for (const col of columns) {
+        const key = col.split(" =")[0] as keyof PostRow;
+        (post as any)[key] = params![idx++];
+      }
+      return { rows: [post] };
+    }
+
+    if (sql.startsWith("DELETE FROM posts")) {
+      const id = params![0];
+      const idx = this.data.findIndex((p) => p.id === id);
+      if (idx >= 0) {
+        this.data.splice(idx, 1);
+        return { rowCount: 1 };
+      }
+      return { rowCount: 0 };
+    }
+
+    if (sql.startsWith("INSERT INTO post_likes")) {
+      const [post_id, liked_by] = params!;
+      if (!this.likes.some((l) => l.post_id === post_id && l.liked_by === liked_by)) {
+        this.likes.push({ post_id, liked_by });
+      }
+      return { rowCount: 1 };
+    }
+
+    if (sql.startsWith("DELETE FROM post_likes")) {
+      const [post_id, liked_by] = params!;
+      const before = this.likes.length;
+      this.likes = this.likes.filter((l) => !(l.post_id === post_id && l.liked_by === liked_by));
+      return { rowCount: before !== this.likes.length ? 1 : 0 };
+    }
+
+    return { rows: [] };
+  }
+}
+
+describe("posts service", () => {
+  let pgClient: MockPgClient;
+  let postSample: PostRow;
+
+  beforeEach(() => {
+    pgClient = new MockPgClient();
+    postSample = {
+      id: uuidv4(),
+      title: "test post",
+      body: "test body",
+      owned_by: "user-1",
+      reply_to: null,
+      created_at: new Date().toISOString(),
+    };
+    pgClient.data.push({ ...postSample });
+    pgClient.tags.push({ post_id: postSample.id, name: "tag1" });
+    pgClient.likes.push({ post_id: postSample.id, liked_by: uuidv4() });
+  });
+
+  test("countPosts", async () => {
+    expect(await postsService.countPosts(pgClient as any)).toBe(1);
+    pgClient.data.push({ ...postSample, id: uuidv4() });
+    expect(await postsService.countPosts(pgClient as any)).toBe(2);
+  });
+
+  test("listPosts: default", async () => {
+    const posts = await postsService.listPosts(pgClient as any);
+    expect(posts.length).toBe(1);
+    expect(posts[0].title).toBe(postSample.title);
+  });
+
+  test("listPosts: offset/limit", async () => {
+    for (let i = 0; i < 3; ++i) {
+      pgClient.data.push({ ...postSample, id: uuidv4(), title: `p${i}` });
+    }
+    const input: ListPostsInput = { offset: 1, limit: 2 };
+    const posts = await postsService.listPosts(pgClient as any, input);
+    expect(posts.length).toBe(2);
+    expect(posts[0].title).toBe("p0");
+  });
+
+  test("listPostsDetail: basic", async () => {
+    const details = await postsService.listPostsDetail(pgClient as any);
+    expect(details.length).toBeGreaterThanOrEqual(1);
+    expect(details[0].owner_nickname).toBe("Alice");
+    expect(details[0].tags).toContain("tag1");
+    expect(details[0].like_count).toBeGreaterThanOrEqual(1);
+  });
+
+  test("createPost", async () => {
+    const input: CreatePostInput = {
+      title: "new post",
+      body: "new body",
+      owned_by: "user-2",
+      reply_to: postSample.id,
+    };
+    const post = await postsService.createPost(input, pgClient as any);
+    expect(post.title).toBe("new post");
+    expect(post.owned_by).toBe("user-2");
+    expect(post.reply_to).toBe(postSample.id);
+    expect(pgClient.data.length).toBeGreaterThanOrEqual(2);
+  });
+
+  test("getPost", async () => {
+    const post = await postsService.getPost(postSample.id, pgClient as any);
+    expect(post).not.toBeNull();
+    expect(post!.title).toBe(postSample.title);
+  });
+
+  test("getPost: not found", async () => {
+    const post = await postsService.getPost("no-such-id", pgClient as any);
+    expect(post).toBeNull();
+  });
+
+  test("updatePost", async () => {
+    const input: UpdatePostInput = {
+      id: postSample.id,
+      title: "updated",
+      body: "body2",
+      reply_to: "other-post-id",
+    };
+    const post = await postsService.updatePost(input, pgClient as any);
+    expect(post).not.toBeNull();
+    expect(post!.title).toBe("updated");
+    expect(post!.body).toBe("body2");
+    expect(post!.reply_to).toBe("other-post-id");
+  });
+
+  test("updatePost: partial", async () => {
+    const input: UpdatePostInput = {
+      id: postSample.id,
+      body: "only body changed",
+    };
+    const post = await postsService.updatePost(input, pgClient as any);
+    expect(post).not.toBeNull();
+    expect(post!.body).toBe("only body changed");
+    expect(post!.title).toBe(postSample.title);
+  });
+
+  test("updatePost: not found", async () => {
+    const input: UpdatePostInput = {
+      id: "no-such-id",
+      title: "xxx",
+    };
+    const post = await postsService.updatePost(input, pgClient as any);
+    expect(post).toBeNull();
+  });
+
+  test("deletePost", async () => {
+    const ok = await postsService.deletePost(postSample.id, pgClient as any);
+    expect(ok).toBe(true);
+    expect(pgClient.data.length).toBe(0);
+    const ng = await postsService.deletePost("no-such-id", pgClient as any);
+    expect(ng).toBe(false);
+  });
+
+  test("addLike: normal", async () => {
+    const userId = "user-2";
+    const result = await postsService.addLike(postSample.id, userId, pgClient as any);
+    expect(result).toBe(true);
+    expect(pgClient.likes.some((l) => l.post_id === postSample.id && l.liked_by === userId)).toBe(
+      true,
+    );
+  });
+
+  test("addLike: duplicate", async () => {
+    const userId = "user-2";
+    await postsService.addLike(postSample.id, userId, pgClient as any);
+    const again = await postsService.addLike(postSample.id, userId, pgClient as any);
+    expect(again).toBe(true);
+    expect(
+      pgClient.likes.filter((l) => l.post_id === postSample.id && l.liked_by === userId).length,
+    ).toBe(1);
+  });
+
+  test("removeLike: normal", async () => {
+    const userId = "user-2";
+    await postsService.addLike(postSample.id, userId, pgClient as any);
+    const result = await postsService.removeLike(postSample.id, userId, pgClient as any);
+    expect(result).toBe(true);
+    expect(pgClient.likes.some((l) => l.post_id === postSample.id && l.liked_by === userId)).toBe(
+      false,
+    );
+  });
+
+  test("removeLike: not found", async () => {
+    const result = await postsService.removeLike(postSample.id, "no-such-user", pgClient as any);
+    expect(result).toBe(false);
+  });
+});
+
+describe("listPostsByFolloweesDetail", () => {
+  let pgClient: MockPgClient;
+  let alice: string, bob: string, carol: string;
+  let postAlice: PostRow, postBob: PostRow, postCarol: PostRow;
+
+  beforeEach(() => {
+    pgClient = new MockPgClient();
+    alice = "user-1";
+    bob = "user-2";
+    carol = "user-3";
+
+    pgClient.follows.push({ follower_id: alice, followee_id: bob });
+
+    postAlice = {
+      id: uuidv4(),
+      title: "post-alice",
+      body: "",
+      owned_by: alice,
+      reply_to: null,
+      created_at: new Date().toISOString(),
+    };
+    postBob = {
+      id: uuidv4(),
+      title: "post-bob",
+      body: "",
+      owned_by: bob,
+      reply_to: null,
+      created_at: new Date().toISOString(),
+    };
+    postCarol = {
+      id: uuidv4(),
+      title: "post-carol",
+      body: "",
+      owned_by: carol,
+      reply_to: null,
+      created_at: new Date().toISOString(),
+    };
+    pgClient.data.push(postAlice, postBob, postCarol);
+  });
+
+  test("should not include self posts when include_self is false", async () => {
+    const input: ListPostsByFolloweesDetailInput = {
+      user_id: alice,
+      include_self: false,
+      offset: 0,
+      limit: 10,
+      order: "desc",
+    };
+    const result = await postsService.listPostsByFolloweesDetail(pgClient as any, input);
+    expect(result.some((p) => p.owned_by === alice)).toBe(false);
+    expect(result.some((p) => p.owned_by === bob)).toBe(true);
+    expect(result.some((p) => p.owned_by === carol)).toBe(false);
+  });
+
+  test("should include self posts when include_self is true", async () => {
+    const input: ListPostsByFolloweesDetailInput = {
+      user_id: alice,
+      include_self: true,
+      offset: 0,
+      limit: 10,
+      order: "desc",
+    };
+    const result = await postsService.listPostsByFolloweesDetail(pgClient as any, input);
+    expect(result.some((p) => p.owned_by === alice)).toBe(true);
+    expect(result.some((p) => p.owned_by === bob)).toBe(true);
+    expect(result.some((p) => p.owned_by === carol)).toBe(false);
+  });
+});
+
+describe("listPostsLikedByUserDetail", () => {
+  let pgClient: MockPgClient;
+  let alice: string, bob: string;
+  let post1: PostRow, post2: PostRow;
+
+  beforeEach(() => {
+    pgClient = new MockPgClient();
+    alice = "user-1";
+    bob = "user-2";
+    post1 = {
+      id: uuidv4(),
+      title: "liked-by-alice",
+      body: "",
+      owned_by: bob,
+      reply_to: null,
+      created_at: new Date().toISOString(),
+    };
+    post2 = {
+      id: uuidv4(),
+      title: "not-liked",
+      body: "",
+      owned_by: bob,
+      reply_to: null,
+      created_at: new Date().toISOString(),
+    };
+    pgClient.data.push(post1, post2);
+
+    pgClient.likes.push({ post_id: post1.id, liked_by: alice });
+  });
+
+  test("should return posts liked by the user", async () => {
+    const input: ListPostsLikedByUserDetailInput = {
+      user_id: alice,
+      offset: 0,
+      limit: 10,
+      order: "desc",
+    };
+    const result = await postsService.listPostsLikedByUserDetail(pgClient as any, input);
+    expect(Array.isArray(result)).toBe(true);
+    expect(result.some((p) => p.id === post1.id)).toBe(true);
+    expect(result.some((p) => p.id === post2.id)).toBe(false);
+  });
+
+  test("should return empty array if user has not liked any posts", async () => {
+    const input: ListPostsLikedByUserDetailInput = {
+      user_id: bob,
+      offset: 0,
+      limit: 10,
+      order: "desc",
+    };
+    const result = await postsService.listPostsLikedByUserDetail(pgClient as any, input);
+    expect(result.length).toBe(0);
+  });
+});
+
+describe("getPostDetail", () => {
+  class MockPgClientDetail {
+    posts: PostRow[] = [];
+    users: { id: string; nickname: string }[] = [];
+    post_likes: { post_id: string; liked_by: string }[] = [];
+    post_tags: { post_id: string; name: string }[] = [];
+
+    query(sql: string, params?: any[]) {
+      if (sql.includes("FROM posts p") && sql.includes("JOIN users u ON p.owned_by = u.id")) {
+        const id = params![0];
+        const p = this.posts.find((x) => x.id === id);
+        if (!p) return { rows: [] };
+        const u = this.users.find((x) => x.id === p.owned_by);
+        const reply_count = this.posts.filter((x) => x.reply_to === p.id).length;
+        const like_count = this.post_likes.filter((x) => x.post_id === p.id).length;
+        const tags = this.post_tags
+          .filter((x) => x.post_id === p.id)
+          .map((x) => x.name)
+          .sort();
+        const row: PostDetail = {
+          id: p.id,
+          title: p.title,
+          body: p.body,
+          owned_by: p.owned_by,
+          reply_to: p.reply_to,
+          created_at: p.created_at,
+          owner_nickname: u?.nickname || "",
+          reply_count,
+          like_count,
+          tags,
+        };
+        return { rows: [row] };
+      }
+      return { rows: [] };
+    }
+  }
+
+  let pgClient: MockPgClientDetail;
+  let post: Post;
+  let owner: { id: string; nickname: string };
+
+  beforeEach(() => {
+    pgClient = new MockPgClientDetail();
+
+    owner = { id: uuidv4(), nickname: "Poster" };
+    pgClient.users.push(owner);
+
+    post = {
+      id: uuidv4(),
+      title: "detail title",
+      body: "detail body",
+      owned_by: owner.id,
+      reply_to: null,
+      created_at: new Date().toISOString(),
+    };
+    pgClient.posts.push(post);
+
+    pgClient.post_likes.push(
+      { post_id: post.id, liked_by: uuidv4() },
+      { post_id: post.id, liked_by: uuidv4() },
+    );
+
+    pgClient.post_tags.push({ post_id: post.id, name: "tag1" }, { post_id: post.id, name: "tag2" });
+
+    pgClient.posts.push(
+      {
+        id: uuidv4(),
+        title: "reply1",
+        body: "reply1 body",
+        owned_by: uuidv4(),
+        reply_to: post.id,
+        created_at: new Date().toISOString(),
+      },
+      {
+        id: uuidv4(),
+        title: "reply2",
+        body: "reply2 body",
+        owned_by: uuidv4(),
+        reply_to: post.id,
+        created_at: new Date().toISOString(),
+      },
+    );
+  });
+
+  test("getPostDetail returns all meta correctly", async () => {
+    const detail = await postsService.getPostDetail(post.id, pgClient as any);
+    expect(detail).not.toBeNull();
+    expect(detail!.id).toBe(post.id);
+    expect(detail!.owner_nickname).toBe(owner.nickname);
+    expect(detail!.reply_count).toBe(2);
+    expect(detail!.like_count).toBe(2);
+    expect(detail!.tags.sort()).toEqual(["tag1", "tag2"]);
+  });
+
+  test("getPostDetail: not found returns null", async () => {
+    const detail = await postsService.getPostDetail("no-such-id", pgClient as any);
+    expect(detail).toBeNull();
+  });
+
+  test("getPostDetail: no likes, no replies, no tags", async () => {
+    const anotherOwner = { id: uuidv4(), nickname: "Nobody" };
+    pgClient.users.push(anotherOwner);
+    const p2: Post = {
+      id: uuidv4(),
+      title: "empty",
+      body: "empty",
+      owned_by: anotherOwner.id,
+      reply_to: null,
+      created_at: new Date().toISOString(),
+    };
+    pgClient.posts.push(p2);
+
+    const detail = await postsService.getPostDetail(p2.id, pgClient as any);
+    expect(detail).not.toBeNull();
+    expect(detail!.owner_nickname).toBe("Nobody");
+    expect(detail!.reply_count).toBe(0);
+    expect(detail!.like_count).toBe(0);
+    expect(detail!.tags).toEqual([]);
+  });
+});
