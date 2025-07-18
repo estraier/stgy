@@ -3,11 +3,11 @@ services:
     image: postgres:16
     restart: always
     environment:
-      POSTGRES_USER: ${DATABASE_USER}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-      POSTGRES_DB: ${DATABASE_NAME}
+      POSTGRES_USER: ${FAKEBOOK_DATABASE_USER}
+      POSTGRES_PASSWORD: ${FAKEBOOK_DATABASE_PASSWORD}
+      POSTGRES_DB: ${FAKEBOOK_DATABASE_NAME}
     ports:
-      - "${DATABASE_PORT}:${DATABASE_PORT}"
+      - "${FAKEBOOK_DATABASE_PORT}:${FAKEBOOK_DATABASE_PORT}"
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
@@ -16,8 +16,8 @@ services:
     image: redis:7
     restart: always
     ports:
-      - "${REDIS_PORT}:${REDIS_PORT}"
-    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}"]
+      - "${FAKEBOOK_REDIS_PORT}:${FAKEBOOK_REDIS_PORT}"
+    command: ["redis-server", "--requirepass", "${FAKEBOOK_REDIS_PASSWORD}"]
     volumes:
       - redis_data:/data
 
@@ -27,18 +27,18 @@ services:
       - db
       - redis
     ports:
-      - "${BACKEND_PORT}:${BACKEND_PORT}"
+      - "${FAKEBOOK_BACKEND_PORT}:${FAKEBOOK_BACKEND_PORT}"
     environment:
-      - DATABASE_HOST=${DATABASE_HOST}
-      - DATABASE_USER=${DATABASE_USER}
-      - DATABASE_PASSWORD=${DATABASE_PASSWORD}
-      - DATABASE_NAME=${DATABASE_NAME}
-      - DATABASE_PORT=${DATABASE_PORT}
-      - CHOKIDAR_USEPOLLING=${CHOKIDAR_USEPOLLING}
-      - REDIS_HOST=${REDIS_HOST}
-      - REDIS_PORT=${REDIS_PORT}
-      - REDIS_PASSWORD=${REDIS_PASSWORD}
-      - BACKEND_PORT=${BACKEND_PORT}
+      - FAKEBOOK_DATABASE_HOST=${FAKEBOOK_DATABASE_HOST}
+      - FAKEBOOK_DATABASE_USER=${FAKEBOOK_DATABASE_USER}
+      - FAKEBOOK_DATABASE_PASSWORD=${FAKEBOOK_DATABASE_PASSWORD}
+      - FAKEBOOK_DATABASE_NAME=${FAKEBOOK_DATABASE_NAME}
+      - FAKEBOOK_DATABASE_PORT=${FAKEBOOK_DATABASE_PORT}
+      - FAKEBOOK_CHOKIDAR_USEPOLLING=${FAKEBOOK_CHOKIDAR_USEPOLLING}
+      - FAKEBOOK_REDIS_HOST=${FAKEBOOK_REDIS_HOST}
+      - FAKEBOOK_REDIS_PORT=${FAKEBOOK_REDIS_PORT}
+      - FAKEBOOK_REDIS_PASSWORD=${FAKEBOOK_REDIS_PASSWORD}
+      - FAKEBOOK_BACKEND_PORT=${FAKEBOOK_BACKEND_PORT}
     volumes:
       - ./backend:/app
     command: npm run dev

@@ -6,27 +6,28 @@ import cors from "cors";
 import createAuthRouter from "./routes/auth";
 import createUsersRouter from "./routes/users";
 import createPostRouter from "./routes/posts";
+import createSignupRouter from "./routes/signup";
 
 const app = express();
 app.use(express.json());
 app.use(cookieParser());
 
 const pgClient = new Client({
-  host: process.env.DATABASE_HOST,
-  user: process.env.DATABASE_USER,
-  password: process.env.DATABASE_PASSWORD,
-  database: process.env.DATABASE_NAME,
-  port: process.env.DATABASE_PORT ? Number(process.env.DATABASE_PORT) : 5432,
+  host: process.env.FAKEBOOK_DATABASE_HOST,
+  user: process.env.FAKEBOOK_DATABASE_USER,
+  password: process.env.FAKEBOOK_DATABASE_PASSWORD,
+  database: process.env.FAKEBOOK_DATABASE_NAME,
+  port: process.env.FAKEBOOK_DATABASE_PORT ? Number(process.env.FAKEBOOK_DATABASE_PORT) : 5432,
 });
 pgClient.connect();
 
 const redis = new Redis({
-  host: process.env.REDIS_HOST,
-  port: process.env.REDIS_PORT ? Number(process.env.REDIS_PORT) : 6379,
-  password: process.env.REDIS_PASSWORD,
+  host: process.env.FAKEBOOK_REDIS_HOST,
+  port: process.env.FAKEBOOK_REDIS_PORT ? Number(process.env.FAKEBOOK_REDIS_PORT) : 6379,
+  password: process.env.FAKEBOOK_REDIS_PASSWORD,
 });
 
-const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:3000";
+const frontendOrigin = process.env.FAKEBOOK_FRONTEND_ORIGIN || "http://localhost:3000";
 app.use(cors({
   origin: frontendOrigin,
   credentials: true
@@ -35,6 +36,7 @@ app.use(cors({
 app.use("/auth", createAuthRouter(pgClient, redis));
 app.use("/users", createUsersRouter(pgClient, redis));
 app.use("/posts", createPostRouter(pgClient, redis));
+app.use("/signup", createSignupRouter(pgClient, redis));
 
 const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
   console.error("[API ERROR]", err);
