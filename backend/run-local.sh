@@ -10,5 +10,6 @@ export CHOKIDAR_USEPOLLING=true
 export REDIS_HOST=localhost
 export REDIS_PORT=6379
 export REDIS_PASSWORD=redis_password
+export FRONTEND_ORIGIN=http://localhost:3000
 
 npm run dev

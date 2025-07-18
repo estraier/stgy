@@ -2,6 +2,7 @@ import express, { ErrorRequestHandler } from "express";
 import cookieParser from "cookie-parser";
 import { Client } from "pg";
 import Redis from "ioredis";
+import cors from "cors";
 import createAuthRouter from "./routes/auth";
 import createUsersRouter from "./routes/users";
 import createPostRouter from "./routes/posts";
@@ -24,6 +25,12 @@ const redis = new Redis({
   port: process.env.REDIS_PORT ? Number(process.env.REDIS_PORT) : 6379,
   password: process.env.REDIS_PASSWORD,
 });
+
+const frontendOrigin = process.env.FRONTEND_ORIGIN || "http://localhost:3000";
+app.use(cors({
+  origin: frontendOrigin,
+  credentials: true
+}));
 
 app.use("/auth", createAuthRouter(pgClient, redis));
 app.use("/users", createUsersRouter(pgClient, redis));

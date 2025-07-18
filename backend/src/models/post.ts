@@ -1,7 +1,6 @@
 export type Post = {
   id: string;
-  title: string;
-  body: string;
+  content: string;
   owned_by: string;
   reply_to: string | null;
   created_at: string;
@@ -9,8 +8,7 @@ export type Post = {
 
 export type PostDetail = {
   id: string;
-  title: string;
-  body: string;
+  content: string;
   owned_by: string;
   reply_to: string | null;
   created_at: string;
@@ -38,16 +36,14 @@ export type CountPostsInput = PostFilter;
 export type ListPostsInput = PostFilter & PostPagination;
 
 export type CreatePostInput = {
-  title: string;
-  body: string;
+  content: string;
   owned_by: string;
   reply_to?: string | null;
 };
 
 export type UpdatePostInput = {
   id: string;
-  title?: string;
-  body?: string;
+  content?: string;
   reply_to?: string | null;
 };
 

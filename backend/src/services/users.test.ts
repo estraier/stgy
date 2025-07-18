@@ -165,8 +165,8 @@ function paramsToUser(params: unknown[]): Omit<UserWithPassword, "id" | "created
     password: params[3] as string,
     is_admin: params[4] as boolean,
     introduction: params[5] as string,
-    personality: params[6] as string | null,
-    model: params[7] as string | null,
+    personality: params[6] as string,
+    model: params[7] as string,
   };
 }
 
@@ -184,8 +184,8 @@ describe("users service", () => {
       password: "hashedpw",
       is_admin: false,
       introduction: "test",
-      personality: null,
-      model: null,
+      personality: "",
+      model: "",
       created_at: new Date().toISOString(),
     };
     user2 = {
@@ -195,8 +195,8 @@ describe("users service", () => {
       password: "pw2",
       is_admin: false,
       introduction: "bar",
-      personality: null,
-      model: null,
+      personality: "",
+      model: "",
       created_at: new Date().toISOString(),
     };
     pgClient.data.push({ ...userSample });
@@ -253,7 +253,7 @@ describe("users service", () => {
       password: "barpw",
       is_admin: true,
       introduction: "bar",
-      personality: "barp",
+      personality: "",
       model: "chatgpt:gpt-4.1-nano",
     };
     const user = await usersService.createUser(input, pgClient as any);

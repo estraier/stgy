@@ -143,8 +143,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
         owned_by = req.body.owned_by;
       }
       const input: CreatePostInput = {
-        title: req.body.title,
-        body: req.body.body,
+        content: req.body.content,
         owned_by,
         reply_to: req.body.reply_to !== undefined ? req.body.reply_to : null,
       };
@@ -167,8 +166,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     try {
       const input: UpdatePostInput = {
         id: req.params.id,
-        title: req.body.title,
-        body: req.body.body,
+        content: req.body.content,
         reply_to: req.body.reply_to !== undefined ? req.body.reply_to : null,
       };
       if (input.reply_to === undefined) input.reply_to = null;

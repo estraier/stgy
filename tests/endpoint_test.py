@@ -13,6 +13,7 @@ BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
 def login():
     url = f"{BASE_URL}/auth"
     res = requests.post(url, json={"email": EMAIL, "password": PASSWORD})
+    print(res)
     res.raise_for_status()
     cookies = res.cookies.get_dict()
     session_id = cookies.get("session_id")
@@ -51,8 +52,8 @@ def test_users():
         "nickname": "user1",
         "is_admin": False,
         "introduction": "hi!",
-        "personality": "genki",
-        "model": "gpt-4.1-nano",
+        "personality": "",   # not null in schema
+        "model": "",         # not null in schema
         "password": "password1"
     }
     res = requests.post(f"{BASE_URL}/users", json=user_input, headers=headers, cookies=cookies)
@@ -104,8 +105,7 @@ def test_posts():
     headers = {"Content-Type": "application/json"}
     cookies = {"session_id": session_id}
     post_input = {
-        "title": "first post",
-        "body": "hello, this is a test post!",
+        "content": "hello, this is a test post!",  # only "content" is used in new schema
         "reply_to": None,
     }
     res = requests.post(f"{BASE_URL}/posts", json=post_input, headers=headers, cookies=cookies)
@@ -130,12 +130,12 @@ def test_posts():
     res = requests.get(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
     assert res.status_code == 200, res.text
     got = res.json()
-    assert got["title"] == post_input["title"]
+    assert got["content"] == post_input["content"]  # field changed!
     res = requests.get(f"{BASE_URL}/posts/{post_id}/detail", headers=headers, cookies=cookies)
     assert res.status_code == 200
     detail = res.json()
     assert detail["id"] == post_id
-    assert detail["title"] == post_input["title"]
+    assert detail["content"] == post_input["content"]
     assert detail["owner_nickname"] == "admin"
     res = requests.get(f"{BASE_URL}/posts/by-followees/detail?include_self=true", headers=headers, cookies=cookies)
     assert res.status_code == 200, res.text

@@ -8,7 +8,7 @@ export default function createAuthRouter(pgClient: Client, redis: Redis) {
 
   router.post("/", async (req: Request, res: Response) => {
     const { email, password } = req.body;
-    if (!email || !password) return res.status(400).json({ error: "emailとpassword必須" });
+    if (!email || !password) return res.status(400).json({ error: "email and password are needed" });
 
     try {
       const { sessionId } = await authService.login(email, password, pgClient, redis);

@@ -1,0 +1,691 @@
+openapi: 3.0.3
+info:
+  title: Fakebook API
+  description: API backend for a simple social network application (Fakebook).
+  version: "1.0.0"
+servers:
+  - url: http://localhost:3000
+
+paths:
+  /auth:
+    post:
+      summary: User login
+      description: Logs in a user and returns a session ID as a cookie.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email:
+                  type: string
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Successfully logged in
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  session_id:
+                    type: string
+        "400":
+          description: Email or password not provided
+        "401":
+          description: Authentication failed
+    get:
+      summary: Get session info
+      description: Returns session information for the currently logged-in user.
+      responses:
+        "200":
+          description: Session info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SessionInfo"
+        "401":
+          description: Not authenticated
+    delete:
+      summary: Logout
+      description: Logs out the current session and clears the session cookie.
+      responses:
+        "200":
+          description: Successfully logged out
+
+  /users:
+    get:
+      summary: List users
+      description: Returns a list of users.
+      parameters:
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100 }
+        - in: query
+          name: order
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - in: query
+          name: q
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthorized
+    post:
+      summary: Create user
+      description: Creates a new user account (admin only).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateUserInput"
+      responses:
+        "201":
+          description: User created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Invalid input
+        "403":
+          description: Forbidden (admin only)
+
+  /users/count:
+    get:
+      summary: Get total user count
+      description: Returns the total number of registered users.
+      responses:
+        "200":
+          description: Total user count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+
+  /users/{id}:
+    get:
+      summary: Get user by ID
+      description: Returns information for the specified user.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: User info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          description: Unauthorized
+        "404":
+          description: User not found
+    put:
+      summary: Update user
+      description: Updates user information (admin or self).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateUserInput"
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          description: Invalid input
+        "403":
+          description: Forbidden
+        "404":
+          description: User not found
+    delete:
+      summary: Delete user
+      description: Deletes the specified user (admin or self).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: User not found
+
+  /users/{id}/password:
+    put:
+      summary: Change user password
+      description: Changes the password for the specified user (admin or self).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [password]
+              properties:
+                password:
+                  type: string
+      responses:
+        "200":
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "400":
+          description: Password required
+        "401":
+          description: Unauthorized
+        "403":
+          description: Forbidden
+        "404":
+          description: User not found
+
+  /users/{id}/follow:
+    post:
+      summary: Follow a user
+      description: Follows the specified user.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Followed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "400":
+          description: Cannot follow yourself or already following
+        "401":
+          description: Unauthorized
+    delete:
+      summary: Unfollow a user
+      description: Removes a following relationship with the specified user.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Unfollowed successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "401":
+          description: Unauthorized
+        "404":
+          description: Not following
+
+  /users/{id}/followees:
+    get:
+      summary: Get followees (users being followed)
+      description: Returns a list of users followed by the specified user.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: List of followees
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+
+  /users/{id}/followers:
+    get:
+      summary: Get followers
+      description: Returns a list of users following the specified user.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: List of followers
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+
+  /posts:
+    get:
+      summary: List posts
+      description: Returns a list of posts.
+      parameters:
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100 }
+        - in: query
+          name: order
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - in: query
+          name: query
+          schema: { type: string }
+        - in: query
+          name: user
+          schema: { type: string }
+        - in: query
+          name: tag
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of posts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Post"
+
+    post:
+      summary: Create post
+      description: Creates a new post.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreatePostInput"
+      responses:
+        "201":
+          description: Post created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "400":
+          description: Invalid input
+
+  /posts/count:
+    get:
+      summary: Get total post count
+      description: Returns the total number of posts.
+      responses:
+        "200":
+          description: Total post count
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  count:
+                    type: integer
+
+  /posts/detail:
+    get:
+      summary: List detailed posts
+      description: Returns a list of detailed post information.
+      parameters:
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100 }
+        - in: query
+          name: order
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - in: query
+          name: query
+          schema: { type: string }
+        - in: query
+          name: user
+          schema: { type: string }
+        - in: query
+          name: tag
+          schema: { type: string }
+      responses:
+        "200":
+          description: List of detailed posts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PostDetail"
+
+  /posts/by-followees/detail:
+    get:
+      summary: List detailed posts by followees
+      description: Returns a list of detailed posts by users you are following.
+      parameters:
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100 }
+        - in: query
+          name: order
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - in: query
+          name: include_self
+          schema: { type: boolean, default: false }
+      responses:
+        "200":
+          description: List of detailed posts by followees
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PostDetail"
+
+  /posts/liked/detail:
+    get:
+      summary: List detailed liked posts
+      description: Returns a list of posts liked by the user.
+      parameters:
+        - in: query
+          name: offset
+          schema: { type: integer, default: 0 }
+        - in: query
+          name: limit
+          schema: { type: integer, default: 100 }
+        - in: query
+          name: order
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        "200":
+          description: List of liked posts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PostDetail"
+
+  /posts/{id}:
+    get:
+      summary: Get post by ID
+      description: Returns a single post by its ID.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "404":
+          description: Post not found
+    put:
+      summary: Update post
+      description: Updates a post by its ID (admin or owner).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdatePostInput"
+      responses:
+        "200":
+          description: Post updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Post"
+        "400":
+          description: Invalid input
+        "404":
+          description: Post not found
+    delete:
+      summary: Delete post
+      description: Deletes a post by its ID (admin or owner).
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Post deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+        "404":
+          description: Post not found
+
+  /posts/{id}/detail:
+    get:
+      summary: Get detailed post by ID
+      description: Returns detailed information for a single post by its ID.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Detailed post
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostDetail"
+        "404":
+          description: Post not found
+
+  /posts/{id}/like:
+    post:
+      summary: Like a post
+      description: Likes the specified post.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Post liked successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "400":
+          description: Could not like
+    delete:
+      summary: Unlike a post
+      description: Removes a like from the specified post.
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Post unliked successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "404":
+          description: Like not found
+
+components:
+  schemas:
+    SessionInfo:
+      type: object
+      properties:
+        userId:
+          type: string
+        email:
+          type: string
+        loggedInAt:
+          type: string
+          format: date-time
+
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        email: { type: string }
+        nickname: { type: string }
+        is_admin: { type: boolean }
+        introduction: { type: string }
+        personality: { type: string }
+        model: { type: string }
+        created_at:
+          type: string
+          format: date-time
+
+    CreateUserInput:
+      type: object
+      required: [email, nickname, password, is_admin, introduction, personality, model]
+      properties:
+        email: { type: string }
+        nickname: { type: string }
+        password: { type: string }
+        is_admin: { type: boolean }
+        introduction: { type: string }
+        personality: { type: string }
+        model: { type: string }
+
+    UpdateUserInput:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        email: { type: string }
+        nickname: { type: string }
+        is_admin: { type: boolean }
+        introduction: { type: string }
+        personality: { type: string }
+        model: { type: string }
+
+    Post:
+      type: object
+      properties:
+        id: { type: string }
+        content: { type: string }
+        owned_by: { type: string }
+        reply_to: { type: string, nullable: true }
+        created_at:
+          type: string
+          format: date-time
+
+    CreatePostInput:
+      type: object
+      required: [content, owned_by]
+      properties:
+        content: { type: string }
+        owned_by: { type: string }
+        reply_to: { type: string, nullable: true }
+
+    UpdatePostInput:
+      type: object
+      required: [id]
+      properties:
+        id: { type: string }
+        content: { type: string }
+        reply_to: { type: string, nullable: true }
+
+    PostDetail:
+      type: object
+      properties:
+        id: { type: string }
+        content: { type: string }
+        owned_by: { type: string }
+        reply_to: { type: string, nullable: true }
+        created_at: { type: string, format: date-time }
+        owner_nickname: { type: string }
+        reply_count: { type: integer }
+        like_count: { type: integer }
+        tags:
+          type: array
+          items: { type: string }

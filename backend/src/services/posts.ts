@@ -31,9 +31,8 @@ export async function countPosts(pgClient: Client, input?: CountPostsInput): Pro
     if (reply_to !== null) params.push(reply_to);
   }
   if (query) {
-    where.push(`(p.title ILIKE $${idx} OR p.body ILIKE $${idx + 1})`);
-    params.push(`%${query}%`, `%${query}%`);
-    idx += 2;
+    where.push(`p.content ILIKE $${idx++}`);
+    params.push(`%${query}%`);
   }
   if (where.length > 0) {
     sql += " WHERE " + where.join(" AND ");
@@ -44,7 +43,7 @@ export async function countPosts(pgClient: Client, input?: CountPostsInput): Pro
 
 export async function getPost(id: string, pgClient: Client): Promise<Post | null> {
   const res = await pgClient.query(
-    `SELECT id, title, body, owned_by, reply_to, created_at FROM posts WHERE id = $1`,
+    `SELECT id, content, owned_by, reply_to, created_at FROM posts WHERE id = $1`,
     [id],
   );
   return res.rows[0] || null;
@@ -55,8 +54,7 @@ export async function getPostDetail(id: string, pgClient: Client): Promise<PostD
     `
     SELECT
       p.id,
-      p.title,
-      p.body,
+      p.content,
       p.owned_by,
       p.reply_to,
       p.created_at,
@@ -85,7 +83,7 @@ export async function listPosts(pgClient: Client, options?: ListPostsInput): Pro
   const tag = options?.tag;
   const reply_to = options?.reply_to;
   let sql = `
-    SELECT p.id, p.title, p.body, p.owned_by, p.reply_to, p.created_at
+    SELECT p.id, p.content, p.owned_by, p.reply_to, p.created_at
     FROM posts p
   `;
   const where: string[] = [];
@@ -105,9 +103,8 @@ export async function listPosts(pgClient: Client, options?: ListPostsInput): Pro
     if (reply_to !== null) params.push(reply_to);
   }
   if (q) {
-    where.push(`(p.title ILIKE $${paramIdx} OR p.body ILIKE $${paramIdx + 1})`);
-    params.push(`%${q}%`, `%${q}%`);
-    paramIdx += 2;
+    where.push(`p.content ILIKE $${paramIdx++}`);
+    params.push(`%${q}%`);
   }
   if (where.length > 0) {
     sql += " WHERE " + where.join(" AND ");
@@ -132,8 +129,7 @@ export async function listPostsDetail(
   let sql = `
     SELECT
       p.id,
-      p.title,
-      p.body,
+      p.content,
       p.owned_by,
       p.reply_to,
       p.created_at,
@@ -163,9 +159,8 @@ export async function listPostsDetail(
     if (reply_to !== null) params.push(reply_to);
   }
   if (q) {
-    where.push(`(p.title ILIKE $${paramIdx} OR p.body ILIKE $${paramIdx + 1})`);
-    params.push(`%${q}%`, `%${q}%`);
-    paramIdx += 2;
+    where.push(`p.content ILIKE $${paramIdx++}`);
+    params.push(`%${q}%`);
   }
   if (where.length > 0) {
     sql += " WHERE " + where.join(" AND ");
@@ -179,10 +174,10 @@ export async function listPostsDetail(
 export async function createPost(input: CreatePostInput, pgClient: Client): Promise<Post> {
   const id = uuidv4();
   const res = await pgClient.query(
-    `INSERT INTO posts (id, title, body, owned_by, reply_to, created_at)
-     VALUES ($1, $2, $3, $4, $5, now())
-     RETURNING id, title, body, owned_by, reply_to, created_at`,
-    [id, input.title, input.body, input.owned_by, input.reply_to ?? null],
+    `INSERT INTO posts (id, content, owned_by, reply_to, created_at)
+     VALUES ($1, $2, $3, $4, now())
+     RETURNING id, content, owned_by, reply_to, created_at`,
+    [id, input.content, input.owned_by, input.reply_to ?? null],
   );
   return res.rows[0];
 }
@@ -191,13 +186,9 @@ export async function updatePost(input: UpdatePostInput, pgClient: Client): Prom
   const columns: string[] = [];
   const values: unknown[] = [];
   let idx = 1;
-  if (input.title !== undefined) {
-    columns.push(`title = $${idx++}`);
-    values.push(input.title);
-  }
-  if (input.body !== undefined) {
-    columns.push(`body = $${idx++}`);
-    values.push(input.body);
+  if (input.content !== undefined) {
+    columns.push(`content = $${idx++}`);
+    values.push(input.content);
   }
   if (input.reply_to !== undefined) {
     columns.push(`reply_to = $${idx++}`);
@@ -205,7 +196,7 @@ export async function updatePost(input: UpdatePostInput, pgClient: Client): Prom
   }
   if (columns.length === 0) return getPost(input.id, pgClient);
   values.push(input.id);
-  const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, title, body, owned_by, reply_to, created_at`;
+  const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, content, owned_by, reply_to, created_at`;
   const res = await pgClient.query(sql, values);
   return res.rows[0] || null;
 }
@@ -250,7 +241,7 @@ export async function listPostsByFolloweesDetail(
   `;
   const sql = `
     SELECT
-      p.id, p.title, p.body, p.owned_by, p.reply_to, p.created_at,
+      p.id, p.content, p.owned_by, p.reply_to, p.created_at,
       u.nickname AS owner_nickname,
       (SELECT COUNT(*) FROM posts WHERE reply_to = p.id) AS reply_count,
       (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) AS like_count,
@@ -278,8 +269,7 @@ export async function listPostsLikedByUserDetail(
   const sql = `
     SELECT
       p.id,
-      p.title,
-      p.body,
+      p.content,
       p.owned_by,
       p.reply_to,
       p.created_at,

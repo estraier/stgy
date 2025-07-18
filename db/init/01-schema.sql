@@ -5,8 +5,8 @@ CREATE TABLE users (
   password VARCHAR(50) NOT NULL,
   is_admin BOOLEAN NOT NULL,
   introduction VARCHAR(2000) NOT NULL,
-  personality VARCHAR(2000),
-  model VARCHAR(50),
+  personality VARCHAR(2000) NOT NULL,
+  model VARCHAR(50) NOT NULL,
   created_at TIMESTAMPTZ NOT NULL
 );
 
@@ -19,8 +19,7 @@ CREATE INDEX idx_user_follows_followee ON user_follows(followee_id);
 
 CREATE TABLE posts (
   id VARCHAR(50) PRIMARY KEY,
-  title VARCHAR(100) NOT NULL,
-  body VARCHAR(2000) NOT NULL,
+  content VARCHAR(5000) NOT NULL,
   owned_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reply_to VARCHAR(50),
   created_at TIMESTAMPTZ NOT NULL

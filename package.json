@@ -11,6 +11,7 @@
     "docker:restart": "docker-compose down ; docker-compose up -d",
     "local": "npm run docker:stop && docker-compose up -d db redis && sleep 2 && cd backend && ./run-local.sh",
     "psql": "docker-compose exec db psql -U fakebook fakebook",
+    "db-log": "docker-compose logs db",
     "clean": "rm -rf node_modules package-lock.json dist && npm run clean --workspaces"
   }
 }

@@ -42,8 +42,7 @@ class MockPgClient {
       ];
       const rows: PostDetail[] = posts.map((p) => ({
         id: p.id,
-        title: p.title,
-        body: p.body,
+        content: p.content,
         owned_by: p.owned_by,
         reply_to: p.reply_to,
         created_at: p.created_at,
@@ -71,8 +70,7 @@ class MockPgClient {
       ];
       const rows: PostDetail[] = posts.map((p) => ({
         id: p.id,
-        title: p.title,
-        body: p.body,
+        content: p.content,
         owned_by: p.owned_by,
         reply_to: p.reply_to,
         created_at: p.created_at,
@@ -98,8 +96,7 @@ class MockPgClient {
       ];
       const result: PostDetail[] = this.data.map((p) => ({
         id: p.id,
-        title: p.title,
-        body: p.body,
+        content: p.content,
         owned_by: p.owned_by,
         reply_to: p.reply_to,
         created_at: p.created_at,
@@ -123,10 +120,9 @@ class MockPgClient {
     if (sql.startsWith("INSERT INTO posts")) {
       const newPost: PostRow = {
         id: params![0],
-        title: params![1],
-        body: params![2],
-        owned_by: params![3],
-        reply_to: params![4] ?? null,
+        content: params![1],
+        owned_by: params![2],
+        reply_to: params![3] ?? null,
         created_at: new Date().toISOString(),
       };
       this.data.push(newPost);
@@ -134,7 +130,7 @@ class MockPgClient {
     }
 
     if (
-      sql.startsWith("SELECT id, title, body, owned_by, reply_to, created_at FROM posts WHERE id =")
+      sql.startsWith("SELECT id, content, owned_by, reply_to, created_at FROM posts WHERE id =")
     ) {
       const id = params![0];
       const post = this.data.find((p) => p.id === id);
@@ -194,8 +190,7 @@ describe("posts service", () => {
     pgClient = new MockPgClient();
     postSample = {
       id: uuidv4(),
-      title: "test post",
-      body: "test body",
+      content: "test post content",
       owned_by: "user-1",
       reply_to: null,
       created_at: new Date().toISOString(),
@@ -214,17 +209,17 @@ describe("posts service", () => {
   test("listPosts: default", async () => {
     const posts = await postsService.listPosts(pgClient as any);
     expect(posts.length).toBe(1);
-    expect(posts[0].title).toBe(postSample.title);
+    expect(posts[0].content).toBe(postSample.content);
   });
 
   test("listPosts: offset/limit", async () => {
     for (let i = 0; i < 3; ++i) {
-      pgClient.data.push({ ...postSample, id: uuidv4(), title: `p${i}` });
+      pgClient.data.push({ ...postSample, id: uuidv4(), content: `p${i}` });
     }
     const input: ListPostsInput = { offset: 1, limit: 2 };
     const posts = await postsService.listPosts(pgClient as any, input);
     expect(posts.length).toBe(2);
-    expect(posts[0].title).toBe("p0");
+    expect(posts[0].content).toBe("p0");
   });
 
   test("listPostsDetail: basic", async () => {
@@ -237,13 +232,12 @@ describe("posts service", () => {
 
   test("createPost", async () => {
     const input: CreatePostInput = {
-      title: "new post",
-      body: "new body",
+      content: "new post content",
       owned_by: "user-2",
       reply_to: postSample.id,
     };
     const post = await postsService.createPost(input, pgClient as any);
-    expect(post.title).toBe("new post");
+    expect(post.content).toBe("new post content");
     expect(post.owned_by).toBe("user-2");
     expect(post.reply_to).toBe(postSample.id);
     expect(pgClient.data.length).toBeGreaterThanOrEqual(2);
@@ -252,7 +246,7 @@ describe("posts service", () => {
   test("getPost", async () => {
     const post = await postsService.getPost(postSample.id, pgClient as any);
     expect(post).not.toBeNull();
-    expect(post!.title).toBe(postSample.title);
+    expect(post!.content).toBe(postSample.content);
   });
 
   test("getPost: not found", async () => {
@@ -263,32 +257,29 @@ describe("posts service", () => {
   test("updatePost", async () => {
     const input: UpdatePostInput = {
       id: postSample.id,
-      title: "updated",
-      body: "body2",
+      content: "updated content",
       reply_to: "other-post-id",
     };
     const post = await postsService.updatePost(input, pgClient as any);
     expect(post).not.toBeNull();
-    expect(post!.title).toBe("updated");
-    expect(post!.body).toBe("body2");
+    expect(post!.content).toBe("updated content");
     expect(post!.reply_to).toBe("other-post-id");
   });
 
   test("updatePost: partial", async () => {
     const input: UpdatePostInput = {
       id: postSample.id,
-      body: "only body changed",
+      content: "only content changed",
     };
     const post = await postsService.updatePost(input, pgClient as any);
     expect(post).not.toBeNull();
-    expect(post!.body).toBe("only body changed");
-    expect(post!.title).toBe(postSample.title);
+    expect(post!.content).toBe("only content changed");
   });
 
   test("updatePost: not found", async () => {
     const input: UpdatePostInput = {
       id: "no-such-id",
-      title: "xxx",
+      content: "xxx",
     };
     const post = await postsService.updatePost(input, pgClient as any);
     expect(post).toBeNull();
@@ -352,24 +343,21 @@ describe("listPostsByFolloweesDetail", () => {
 
     postAlice = {
       id: uuidv4(),
-      title: "post-alice",
-      body: "",
+      content: "post-alice",
       owned_by: alice,
       reply_to: null,
       created_at: new Date().toISOString(),
     };
     postBob = {
       id: uuidv4(),
-      title: "post-bob",
-      body: "",
+      content: "post-bob",
       owned_by: bob,
       reply_to: null,
       created_at: new Date().toISOString(),
     };
     postCarol = {
       id: uuidv4(),
-      title: "post-carol",
-      body: "",
+      content: "post-carol",
       owned_by: carol,
       reply_to: null,
       created_at: new Date().toISOString(),
@@ -417,16 +405,14 @@ describe("listPostsLikedByUserDetail", () => {
     bob = "user-2";
     post1 = {
       id: uuidv4(),
-      title: "liked-by-alice",
-      body: "",
+      content: "liked-by-alice",
       owned_by: bob,
       reply_to: null,
       created_at: new Date().toISOString(),
     };
     post2 = {
       id: uuidv4(),
-      title: "not-liked",
-      body: "",
+      content: "not-liked",
       owned_by: bob,
       reply_to: null,
       created_at: new Date().toISOString(),
@@ -482,8 +468,7 @@ describe("getPostDetail", () => {
           .sort();
         const row: PostDetail = {
           id: p.id,
-          title: p.title,
-          body: p.body,
+          content: p.content,
           owned_by: p.owned_by,
           reply_to: p.reply_to,
           created_at: p.created_at,
@@ -510,8 +495,7 @@ describe("getPostDetail", () => {
 
     post = {
       id: uuidv4(),
-      title: "detail title",
-      body: "detail body",
+      content: "detail content",
       owned_by: owner.id,
       reply_to: null,
       created_at: new Date().toISOString(),
@@ -528,16 +512,14 @@ describe("getPostDetail", () => {
     pgClient.posts.push(
       {
         id: uuidv4(),
-        title: "reply1",
-        body: "reply1 body",
+        content: "reply1",
         owned_by: uuidv4(),
         reply_to: post.id,
         created_at: new Date().toISOString(),
       },
       {
         id: uuidv4(),
-        title: "reply2",
-        body: "reply2 body",
+        content: "reply2",
         owned_by: uuidv4(),
         reply_to: post.id,
         created_at: new Date().toISOString(),
@@ -565,8 +547,7 @@ describe("getPostDetail", () => {
     pgClient.users.push(anotherOwner);
     const p2: Post = {
       id: uuidv4(),
-      title: "empty",
-      body: "empty",
+      content: "empty",
       owned_by: anotherOwner.id,
       reply_to: null,
       created_at: new Date().toISOString(),
