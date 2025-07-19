@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
-import * as usersService from "./users";
+import { UsersService } from "./users";
 import {
   User,
   CreateUserInput,
@@ -172,11 +172,13 @@ function paramsToUser(params: unknown[]): Omit<UserWithPassword, "id" | "created
 
 describe("users service", () => {
   let pgClient: MockPgClient;
+  let usersService: UsersService;
   let userSample: UserWithPassword;
   let user2: UserWithPassword;
 
   beforeEach(() => {
     pgClient = new MockPgClient();
+    usersService = new UsersService(pgClient as any);
     userSample = {
       id: uuidv4(),
       email: "foo@example.com",
@@ -209,24 +211,24 @@ describe("users service", () => {
       const u = { ...userSample, id: uuidv4(), email: `u${i}@a.com` };
       pgClient.data.push(u);
     }
-    const count = await usersService.countUsers(pgClient as any);
+    const count = await usersService.countUsers();
     expect(count).toBe(pgClient.data.length);
   });
 
   test("getUser", async () => {
-    const user = await usersService.getUser(userSample.id, pgClient as any);
+    const user = await usersService.getUser(userSample.id);
     expect(user).not.toBeNull();
     expect(user!.email).toBe(userSample.email);
     expect((user as any).password).toBeUndefined();
   });
 
   test("getUser: not found", async () => {
-    const user = await usersService.getUser("no-such-id", pgClient as any);
+    const user = await usersService.getUser("no-such-id");
     expect(user).toBeNull();
   });
 
   test("listUsers: no options", async () => {
-    const users = await usersService.listUsers(pgClient as any);
+    const users = await usersService.listUsers();
     expect(Array.isArray(users)).toBe(true);
     expect(users.length).toBe(2);
     expect(users[0].email).toBe(userSample.email);
@@ -238,10 +240,10 @@ describe("users service", () => {
       const u = { ...userSample, id: uuidv4(), email: `user${i}@ex.com` };
       pgClient.data.push(u);
     }
-    const users1 = await usersService.listUsers(pgClient as any, { offset: 2, limit: 2 });
+    const users1 = await usersService.listUsers({ offset: 2, limit: 2 });
     expect(users1.length).toBe(2);
     expect(users1[0].email).toBe(pgClient.data[2].email);
-    const users2 = await usersService.listUsers(pgClient as any, { offset: 5, limit: 10 });
+    const users2 = await usersService.listUsers({ offset: 5, limit: 10 });
     expect(users2.length).toBe(2);
     expect(users2[0].email).toBe(pgClient.data[5].email);
   });
@@ -256,7 +258,7 @@ describe("users service", () => {
       personality: "",
       model: "chatgpt:gpt-4.1-nano",
     };
-    const user = await usersService.createUser(input, pgClient as any);
+    const user = await usersService.createUser(input);
     expect(user.email).toBe("bar@example.com");
     expect(user.is_admin).toBe(true);
     expect(pgClient.data.length).toBe(3);
@@ -270,7 +272,7 @@ describe("users service", () => {
       nickname: "newnick",
       is_admin: true,
     };
-    const user = await usersService.updateUser(input, pgClient as any);
+    const user = await usersService.updateUser(input);
     expect(user).not.toBeNull();
     expect(user!.email).toBe("new@example.com");
     expect(user!.nickname).toBe("newnick");
@@ -283,37 +285,37 @@ describe("users service", () => {
       id: userSample.id,
       password: "newpw",
     };
-    const ok = await usersService.updateUserPassword(input, pgClient as any);
+    const ok = await usersService.updateUserPassword(input);
     expect(ok).toBe(true);
     const updated = pgClient.data.find((u) => u.id === userSample.id)!;
     expect(updated.password).not.toBe("hashedpw");
   });
 
   test("deleteUser", async () => {
-    const ok = await usersService.deleteUser(userSample.id, pgClient as any);
+    const ok = await usersService.deleteUser(userSample.id);
     expect(ok).toBe(true);
     expect(pgClient.data.length).toBe(1);
-    const ng = await usersService.deleteUser("no-such-id", pgClient as any);
+    const ng = await usersService.deleteUser("no-such-id");
     expect(ng).toBe(false);
   });
 
   test("listFollowees", async () => {
     pgClient.follows.push({ follower_id: userSample.id, followee_id: user2.id });
-    const users = await usersService.listFollowees(pgClient as any, { follower_id: userSample.id });
+    const users = await usersService.listFollowees({ follower_id: userSample.id });
     expect(users.length).toBe(1);
     expect(users[0].id).toBe(user2.id);
   });
 
   test("listFollowers", async () => {
     pgClient.follows.push({ follower_id: userSample.id, followee_id: user2.id });
-    const users = await usersService.listFollowers(pgClient as any, { followee_id: user2.id });
+    const users = await usersService.listFollowers({ followee_id: user2.id });
     expect(users.length).toBe(1);
     expect(users[0].id).toBe(userSample.id);
   });
 
   test("addFollower: should add a follower relationship", async () => {
     const input: AddFollowerInput = { follower_id: userSample.id, followee_id: user2.id };
-    const ok = await usersService.addFollower(input, pgClient as any);
+    const ok = await usersService.addFollower(input);
     expect(ok).toBe(true);
     expect(
       pgClient.follows.some((f) => f.follower_id === userSample.id && f.followee_id === user2.id),
@@ -322,8 +324,8 @@ describe("users service", () => {
 
   test("addFollower: should not duplicate relationship", async () => {
     const input: AddFollowerInput = { follower_id: userSample.id, followee_id: user2.id };
-    await usersService.addFollower(input, pgClient as any);
-    await usersService.addFollower(input, pgClient as any);
+    await usersService.addFollower(input);
+    await usersService.addFollower(input);
     const found = pgClient.follows.filter(
       (f) => f.follower_id === userSample.id && f.followee_id === user2.id,
     );
@@ -332,9 +334,9 @@ describe("users service", () => {
 
   test("removeFollower: should remove follower relationship", async () => {
     const input: AddFollowerInput = { follower_id: userSample.id, followee_id: user2.id };
-    await usersService.addFollower(input, pgClient as any);
+    await usersService.addFollower(input);
     const rmInput: RemoveFollowerInput = { follower_id: userSample.id, followee_id: user2.id };
-    const ok = await usersService.removeFollower(rmInput, pgClient as any);
+    const ok = await usersService.removeFollower(rmInput);
     expect(ok).toBe(true);
     expect(
       pgClient.follows.some((f) => f.follower_id === userSample.id && f.followee_id === user2.id),
@@ -343,7 +345,7 @@ describe("users service", () => {
 
   test("removeFollower: returns false if relationship does not exist", async () => {
     const input: RemoveFollowerInput = { follower_id: userSample.id, followee_id: user2.id };
-    const ok = await usersService.removeFollower(input, pgClient as any);
+    const ok = await usersService.removeFollower(input);
     expect(ok).toBe(false);
   });
 });

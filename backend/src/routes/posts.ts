@@ -1,16 +1,23 @@
 import { Router, Request, Response } from "express";
 import { Client } from "pg";
 import Redis from "ioredis";
-import * as postsService from "../services/posts";
-import { getCurrentUser } from "./authHelpers";
+import { PostsService } from "../services/posts";
+import { AuthService } from "../services/auth";
+import { UsersService } from "../services/users";
+import { AuthHelpers } from "./authHelpers";
 import { CreatePostInput, UpdatePostInput } from "../models/post";
 import { User } from "../models/user";
 
 export default function createPostsRouter(pgClient: Client, redis: Redis) {
   const router = Router();
 
+  const postsService = new PostsService(pgClient);
+  const usersService = new UsersService(pgClient);
+  const authService = new AuthService(pgClient, redis);
+  const authHelpers = new AuthHelpers(authService, usersService);
+
   async function requireLogin(req: Request, res: Response): Promise<User | null> {
-    const user = await getCurrentUser(req, redis, pgClient);
+    const user = await authHelpers.getCurrentUser(req);
     if (!user) {
       res.status(401).json({ error: "login required" });
       return null;
@@ -23,21 +30,21 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     if (!user) return;
     const query =
       typeof req.query.query === "string" && req.query.query.trim() !== ""
-      ? req.query.query.trim()
-      : undefined;
+        ? req.query.query.trim()
+        : undefined;
     const owned_by =
       typeof req.query.owned_by === "string" && req.query.owned_by.trim() !== ""
-      ? req.query.owned_by.trim()
-      : undefined;
+        ? req.query.owned_by.trim()
+        : undefined;
     const tag =
       typeof req.query.tag === "string" && req.query.tag.trim() !== ""
-      ? req.query.tag.trim()
-      : undefined;
+        ? req.query.tag.trim()
+        : undefined;
     const reply_to =
       typeof req.query.reply_to === "string" && req.query.reply_to.trim() !== ""
-      ? req.query.reply_to.trim()
-      : undefined;
-    const count = await postsService.countPosts(pgClient, {
+        ? req.query.reply_to.trim()
+        : undefined;
+    const count = await postsService.countPosts({
       query,
       owned_by,
       tag,
@@ -64,7 +71,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       typeof req.query.tag === "string" && req.query.tag.trim() !== ""
         ? req.query.tag.trim()
         : undefined;
-    const posts = await postsService.listPosts(pgClient, {
+    const posts = await postsService.listPosts({
       offset,
       limit,
       order,
@@ -93,7 +100,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       typeof req.query.tag === "string" && req.query.tag.trim() !== ""
         ? req.query.tag.trim()
         : undefined;
-    const posts = await postsService.listPostsDetail(pgClient, {
+    const posts = await postsService.listPostsDetail({
       offset,
       limit,
       order,
@@ -114,7 +121,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       typeof req.query.include_self === "string"
         ? req.query.include_self === "true" || req.query.include_self === "1"
         : false;
-    const result = await postsService.listPostsByFolloweesDetail(pgClient, {
+    const result = await postsService.listPostsByFolloweesDetail({
       user_id: user.id,
       offset,
       limit,
@@ -130,7 +137,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
-    const result = await postsService.listPostsLikedByUserDetail(pgClient, {
+    const result = await postsService.listPostsLikedByUserDetail({
       user_id: user.id,
       offset,
       limit,
@@ -142,7 +149,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   router.get("/:id/detail", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    const post = await postsService.getPostDetail(req.params.id, pgClient);
+    const post = await postsService.getPostDetail(req.params.id);
     if (!post) return res.status(404).json({ error: "not found" });
     res.json(post);
   });
@@ -150,7 +157,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   router.get("/:id", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    const post = await postsService.getPost(req.params.id, pgClient);
+    const post = await postsService.getPost(req.params.id);
     if (!post) return res.status(404).json({ error: "not found" });
     res.json(post);
   });
@@ -169,7 +176,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
         reply_to: req.body.reply_to !== undefined ? req.body.reply_to : null,
       };
       if (input.reply_to === undefined) input.reply_to = null;
-      const created = await postsService.createPost(input, pgClient);
+      const created = await postsService.createPost(input);
       res.status(201).json(created);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "invalid input" });
@@ -179,7 +186,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   router.put("/:id", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    const post = await postsService.getPost(req.params.id, pgClient);
+    const post = await postsService.getPost(req.params.id);
     if (!post) return res.status(404).json({ error: "not found" });
     if (!(user.is_admin || post.owned_by === user.id)) {
       return res.status(403).json({ error: "forbidden" });
@@ -191,7 +198,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
         reply_to: req.body.reply_to !== undefined ? req.body.reply_to : null,
       };
       if (input.reply_to === undefined) input.reply_to = null;
-      const updated = await postsService.updatePost(input, pgClient);
+      const updated = await postsService.updatePost(input);
       if (!updated) return res.status(404).json({ error: "not found" });
       res.json(updated);
     } catch (e) {
@@ -202,12 +209,12 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   router.delete("/:id", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    const post = await postsService.getPost(req.params.id, pgClient);
+    const post = await postsService.getPost(req.params.id);
     if (!post) return res.status(404).json({ error: "not found" });
     if (!(user.is_admin || post.owned_by === user.id)) {
       return res.status(403).json({ error: "forbidden" });
     }
-    const ok = await postsService.deletePost(req.params.id, pgClient);
+    const ok = await postsService.deletePost(req.params.id);
     if (!ok) return res.status(404).json({ error: "not found" });
     res.json({ result: "ok" });
   });
@@ -215,7 +222,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   router.post("/:id/like", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    const ok = await postsService.addLike(req.params.id, user.id, pgClient);
+    const ok = await postsService.addLike(req.params.id, user.id);
     if (!ok) return res.status(400).json({ error: "could not like" });
     res.json({ result: "ok" });
   });
@@ -223,7 +230,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   router.delete("/:id/like", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    const ok = await postsService.removeLike(req.params.id, user.id, pgClient);
+    const ok = await postsService.removeLike(req.params.id, user.id);
     if (!ok) return res.status(404).json({ error: "like not found" });
     res.json({ result: "ok" });
   });
@@ -237,8 +244,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
     try {
       const users = await postsService.listLikers(
-        { post_id, offset, limit, order },
-        pgClient
+        { post_id, offset, limit, order }
       );
       res.json(users);
     } catch (e) {

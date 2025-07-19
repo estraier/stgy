@@ -1,5 +1,5 @@
-import * as signupService from "./signup";
-import * as usersService from "./users";
+import { SignupService } from "./signup";
+import { UsersService } from "./users";
 
 jest.mock("./users");
 
@@ -23,16 +23,18 @@ class MockRedis {
 
 describe("signup service", () => {
   let redis: MockRedis;
-  let pgClient: any;
+  let usersService: UsersService;
+  let signupService: SignupService;
 
   beforeEach(() => {
     redis = new MockRedis();
-    pgClient = {};
-    (usersService.createUser as jest.Mock).mockReset();
+    usersService = new UsersService({} as any);
+    signupService = new SignupService(usersService, redis as any);
+    (usersService.createUser as unknown as jest.Mock).mockReset();
   });
 
   test("startSignup: valid input", async () => {
-    const res = await signupService.startSignup("foo@example.com", "pass123", redis as any);
+    const res = await signupService.startSignup("foo@example.com", "pass123");
     expect(res.signupId).toBeDefined();
     const signupKey = `signup:${res.signupId}`;
     const stored = await redis.hgetall(signupKey);
@@ -43,35 +45,35 @@ describe("signup service", () => {
 
   test("startSignup: invalid email", async () => {
     await expect(
-      signupService.startSignup("invalid-email", "pass123", redis as any)
+      signupService.startSignup("invalid-email", "pass123")
     ).rejects.toThrow("Invalid email format");
   });
 
   test("startSignup: short password", async () => {
     await expect(
-      signupService.startSignup("foo@example.com", "", redis as any)
+      signupService.startSignup("foo@example.com", "")
     ).rejects.toThrow("Password must be at least 6 characters");
   });
 
   test("verifySignup: normal", async () => {
-    const { signupId } = await signupService.startSignup("test@ex.com", "pass123", redis as any);
+    const { signupId } = await signupService.startSignup("test@ex.com", "pass123");
     const data = await redis.hgetall(`signup:${signupId}`);
-    (usersService.createUser as jest.Mock).mockResolvedValue({ id: "user-1" });
-    const res = await signupService.verifySignup(signupId, data.verificationCode, redis as any, pgClient);
+    (usersService.createUser as unknown as jest.Mock).mockResolvedValue({ id: "user-1" });
+    const res = await signupService.verifySignup(signupId, data.verificationCode);
     expect(res.userId).toBe("user-1");
     expect(await redis.hgetall(`signup:${signupId}`)).toEqual({});
   });
 
   test("verifySignup: code mismatch", async () => {
-    const { signupId } = await signupService.startSignup("test@ex.com", "pass123", redis as any);
+    const { signupId } = await signupService.startSignup("test@ex.com", "pass123");
     await expect(
-      signupService.verifySignup(signupId, "999999", redis as any, pgClient)
+      signupService.verifySignup(signupId, "999999")
     ).rejects.toThrow("Verification code mismatch");
   });
 
   test("verifySignup: expired or not found", async () => {
     await expect(
-      signupService.verifySignup("no-such-id", "123456", redis as any, pgClient)
+      signupService.verifySignup("no-such-id", "123456")
     ).rejects.toThrow("Signup info not found or expired");
   });
 });

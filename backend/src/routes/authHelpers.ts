@@ -1,17 +1,25 @@
 import { Request } from "express";
-import Redis from "ioredis";
-import { Client } from "pg";
-import * as authService from "../services/auth";
-import * as usersService from "../services/users";
+import { AuthService } from "../services/auth";
+import { UsersService } from "../services/users";
 
-export async function getSessionInfo(req: Request, redis: Redis) {
-  const sessionId = req.cookies?.session_id;
-  if (!sessionId) return null;
-  return await authService.getSessionInfo(sessionId, redis);
-}
+export class AuthHelpers {
+  private authService: AuthService;
+  private usersService: UsersService;
 
-export async function getCurrentUser(req: Request, redis: Redis, pgClient: Client) {
-  const sessionInfo = await getSessionInfo(req, redis);
-  if (!sessionInfo || !sessionInfo.userId) return null;
-  return await usersService.getUser(sessionInfo.userId, pgClient);
+  constructor(authService: AuthService, usersService: UsersService) {
+    this.authService = authService;
+    this.usersService = usersService;
+  }
+
+  async getSessionInfo(req: Request) {
+    const sessionId = req.cookies?.session_id;
+    if (!sessionId) return null;
+    return await this.authService.getSessionInfo(sessionId);
+  }
+
+  async getCurrentUser(req: Request) {
+    const sessionInfo = await this.getSessionInfo(req);
+    if (!sessionInfo || !sessionInfo.userId) return null;
+    return await this.usersService.getUser(sessionInfo.userId);
+  }
 }

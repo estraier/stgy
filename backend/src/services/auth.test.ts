@@ -1,4 +1,4 @@
-import { login, getSessionInfo, logout } from "./auth";
+import { AuthService } from "./auth";
 
 class MockPgClient {
   query = jest.fn();
@@ -16,13 +16,15 @@ class MockRedis {
   });
 }
 
-describe("auth service", () => {
+describe("AuthService class", () => {
   let pgClient: MockPgClient;
   let redis: MockRedis;
+  let authService: AuthService;
 
   beforeEach(() => {
     pgClient = new MockPgClient();
     redis = new MockRedis();
+    authService = new AuthService(pgClient as any, redis as any);
   });
 
   test("login: success", async () => {
@@ -30,7 +32,7 @@ describe("auth service", () => {
       rows: [{ id: "user-123", email: "test@example.com" }],
       rowCount: 1,
     });
-    const result = await login("test@example.com", "password", pgClient as any, redis as any);
+    const result = await authService.login("test@example.com", "password");
     expect(result.userId).toBe("user-123");
     expect(redis.set).toHaveBeenCalled();
     const sessionId = result.sessionId;
@@ -42,7 +44,7 @@ describe("auth service", () => {
 
   test("login: fail", async () => {
     pgClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
-    await expect(login("bad@example.com", "bad", pgClient as any, redis as any)).rejects.toThrow(
+    await expect(authService.login("bad@example.com", "bad")).rejects.toThrow(
       "authentication failed",
     );
   });
@@ -55,21 +57,21 @@ describe("auth service", () => {
       loggedInAt: "2025-07-13T00:00:00Z",
     });
     redis.store[`session:${sessionId}`] = value;
-    const session = await getSessionInfo(sessionId, redis as any);
+    const session = await authService.getSessionInfo(sessionId);
     expect(session?.userId).toBe("u1");
     expect(session?.email).toBe("e@example.com");
     expect(session?.loggedInAt).toBe("2025-07-13T00:00:00Z");
   });
 
   test("getSessionInfo: not exists", async () => {
-    const session = await getSessionInfo("notfound", redis as any);
+    const session = await authService.getSessionInfo("notfound");
     expect(session).toBeNull();
   });
 
   test("logout", async () => {
     const sessionId = "toDel";
     redis.store[`session:${sessionId}`] = '{"userId":"xx"}';
-    await logout(sessionId, redis as any);
+    await authService.logout(sessionId);
     expect(redis.store[`session:${sessionId}`]).toBeUndefined();
   });
 });

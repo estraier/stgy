@@ -1,5 +1,5 @@
 import { v4 as uuidv4 } from "uuid";
-import * as postsService from "./posts";
+import { PostsService } from "./posts";
 import {
   Post,
   PostDetail,
@@ -186,10 +186,12 @@ class MockPgClient {
 
 describe("posts service", () => {
   let pgClient: MockPgClient;
+  let postsService: PostsService;
   let postSample: PostRow;
 
   beforeEach(() => {
     pgClient = new MockPgClient();
+    postsService = new PostsService(pgClient as any);
     postSample = {
       id: uuidv4(),
       content: "test post content",
@@ -203,13 +205,13 @@ describe("posts service", () => {
   });
 
   test("countPosts", async () => {
-    expect(await postsService.countPosts(pgClient as any)).toBe(1);
+    expect(await postsService.countPosts()).toBe(1);
     pgClient.data.push({ ...postSample, id: uuidv4() });
-    expect(await postsService.countPosts(pgClient as any)).toBe(2);
+    expect(await postsService.countPosts()).toBe(2);
   });
 
   test("listPosts: default", async () => {
-    const posts = await postsService.listPosts(pgClient as any);
+    const posts = await postsService.listPosts();
     expect(posts.length).toBe(1);
     expect(posts[0].content).toBe(postSample.content);
   });
@@ -219,13 +221,13 @@ describe("posts service", () => {
       pgClient.data.push({ ...postSample, id: uuidv4(), content: `p${i}` });
     }
     const input: ListPostsInput = { offset: 1, limit: 2 };
-    const posts = await postsService.listPosts(pgClient as any, input);
+    const posts = await postsService.listPosts(input);
     expect(posts.length).toBe(2);
     expect(posts[0].content).toBe("p0");
   });
 
   test("listPostsDetail: basic", async () => {
-    const details = await postsService.listPostsDetail(pgClient as any);
+    const details = await postsService.listPostsDetail();
     expect(details.length).toBeGreaterThanOrEqual(1);
     expect(details[0].owner_nickname).toBe("Alice");
     expect(details[0].tags).toContain("tag1");
@@ -238,7 +240,7 @@ describe("posts service", () => {
       owned_by: "user-2",
       reply_to: postSample.id,
     };
-    const post = await postsService.createPost(input, pgClient as any);
+    const post = await postsService.createPost(input);
     expect(post.content).toBe("new post content");
     expect(post.owned_by).toBe("user-2");
     expect(post.reply_to).toBe(postSample.id);
@@ -246,13 +248,13 @@ describe("posts service", () => {
   });
 
   test("getPost", async () => {
-    const post = await postsService.getPost(postSample.id, pgClient as any);
+    const post = await postsService.getPost(postSample.id);
     expect(post).not.toBeNull();
     expect(post!.content).toBe(postSample.content);
   });
 
   test("getPost: not found", async () => {
-    const post = await postsService.getPost("no-such-id", pgClient as any);
+    const post = await postsService.getPost("no-such-id");
     expect(post).toBeNull();
   });
 
@@ -262,7 +264,7 @@ describe("posts service", () => {
       content: "updated content",
       reply_to: "other-post-id",
     };
-    const post = await postsService.updatePost(input, pgClient as any);
+    const post = await postsService.updatePost(input);
     expect(post).not.toBeNull();
     expect(post!.content).toBe("updated content");
     expect(post!.reply_to).toBe("other-post-id");
@@ -273,7 +275,7 @@ describe("posts service", () => {
       id: postSample.id,
       content: "only content changed",
     };
-    const post = await postsService.updatePost(input, pgClient as any);
+    const post = await postsService.updatePost(input);
     expect(post).not.toBeNull();
     expect(post!.content).toBe("only content changed");
   });
@@ -283,21 +285,21 @@ describe("posts service", () => {
       id: "no-such-id",
       content: "xxx",
     };
-    const post = await postsService.updatePost(input, pgClient as any);
+    const post = await postsService.updatePost(input);
     expect(post).toBeNull();
   });
 
   test("deletePost", async () => {
-    const ok = await postsService.deletePost(postSample.id, pgClient as any);
+    const ok = await postsService.deletePost(postSample.id);
     expect(ok).toBe(true);
     expect(pgClient.data.length).toBe(0);
-    const ng = await postsService.deletePost("no-such-id", pgClient as any);
+    const ng = await postsService.deletePost("no-such-id");
     expect(ng).toBe(false);
   });
 
   test("addLike: normal", async () => {
     const userId = "user-2";
-    const result = await postsService.addLike(postSample.id, userId, pgClient as any);
+    const result = await postsService.addLike(postSample.id, userId);
     expect(result).toBe(true);
     expect(pgClient.likes.some((l) => l.post_id === postSample.id && l.liked_by === userId)).toBe(
       true,
@@ -306,8 +308,8 @@ describe("posts service", () => {
 
   test("addLike: duplicate", async () => {
     const userId = "user-2";
-    await postsService.addLike(postSample.id, userId, pgClient as any);
-    const again = await postsService.addLike(postSample.id, userId, pgClient as any);
+    await postsService.addLike(postSample.id, userId);
+    const again = await postsService.addLike(postSample.id, userId);
     expect(again).toBe(true);
     expect(
       pgClient.likes.filter((l) => l.post_id === postSample.id && l.liked_by === userId).length,
@@ -316,8 +318,8 @@ describe("posts service", () => {
 
   test("removeLike: normal", async () => {
     const userId = "user-2";
-    await postsService.addLike(postSample.id, userId, pgClient as any);
-    const result = await postsService.removeLike(postSample.id, userId, pgClient as any);
+    await postsService.addLike(postSample.id, userId);
+    const result = await postsService.removeLike(postSample.id, userId);
     expect(result).toBe(true);
     expect(pgClient.likes.some((l) => l.post_id === postSample.id && l.liked_by === userId)).toBe(
       false,
@@ -325,18 +327,20 @@ describe("posts service", () => {
   });
 
   test("removeLike: not found", async () => {
-    const result = await postsService.removeLike(postSample.id, "no-such-user", pgClient as any);
+    const result = await postsService.removeLike(postSample.id, "no-such-user");
     expect(result).toBe(false);
   });
 });
 
 describe("listPostsByFolloweesDetail", () => {
   let pgClient: MockPgClient;
+  let postsService: PostsService;
   let alice: string, bob: string, carol: string;
   let postAlice: PostRow, postBob: PostRow, postCarol: PostRow;
 
   beforeEach(() => {
     pgClient = new MockPgClient();
+    postsService = new PostsService(pgClient as any);
     alice = "user-1";
     bob = "user-2";
     carol = "user-3";
@@ -375,7 +379,7 @@ describe("listPostsByFolloweesDetail", () => {
       limit: 10,
       order: "desc",
     };
-    const result = await postsService.listPostsByFolloweesDetail(pgClient as any, input);
+    const result = await postsService.listPostsByFolloweesDetail(input);
     expect(result.some((p) => p.owned_by === alice)).toBe(false);
     expect(result.some((p) => p.owned_by === bob)).toBe(true);
     expect(result.some((p) => p.owned_by === carol)).toBe(false);
@@ -389,7 +393,7 @@ describe("listPostsByFolloweesDetail", () => {
       limit: 10,
       order: "desc",
     };
-    const result = await postsService.listPostsByFolloweesDetail(pgClient as any, input);
+    const result = await postsService.listPostsByFolloweesDetail(input);
     expect(result.some((p) => p.owned_by === alice)).toBe(true);
     expect(result.some((p) => p.owned_by === bob)).toBe(true);
     expect(result.some((p) => p.owned_by === carol)).toBe(false);
@@ -398,11 +402,13 @@ describe("listPostsByFolloweesDetail", () => {
 
 describe("listPostsLikedByUserDetail", () => {
   let pgClient: MockPgClient;
+  let postsService: PostsService;
   let alice: string, bob: string;
   let post1: PostRow, post2: PostRow;
 
   beforeEach(() => {
     pgClient = new MockPgClient();
+    postsService = new PostsService(pgClient as any);
     alice = "user-1";
     bob = "user-2";
     post1 = {
@@ -431,7 +437,7 @@ describe("listPostsLikedByUserDetail", () => {
       limit: 10,
       order: "desc",
     };
-    const result = await postsService.listPostsLikedByUserDetail(pgClient as any, input);
+    const result = await postsService.listPostsLikedByUserDetail(input);
     expect(Array.isArray(result)).toBe(true);
     expect(result.some((p) => p.id === post1.id)).toBe(true);
     expect(result.some((p) => p.id === post2.id)).toBe(false);
@@ -444,7 +450,7 @@ describe("listPostsLikedByUserDetail", () => {
       limit: 10,
       order: "desc",
     };
-    const result = await postsService.listPostsLikedByUserDetail(pgClient as any, input);
+    const result = await postsService.listPostsLikedByUserDetail(input);
     expect(result.length).toBe(0);
   });
 });
@@ -486,11 +492,13 @@ describe("getPostDetail", () => {
   }
 
   let pgClient: MockPgClientDetail;
+  let postsService: PostsService;
   let post: Post;
   let owner: { id: string; nickname: string };
 
   beforeEach(() => {
     pgClient = new MockPgClientDetail();
+    postsService = new PostsService(pgClient as any);
 
     owner = { id: uuidv4(), nickname: "Poster" };
     pgClient.users.push(owner);
@@ -530,7 +538,7 @@ describe("getPostDetail", () => {
   });
 
   test("getPostDetail returns all meta correctly", async () => {
-    const detail = await postsService.getPostDetail(post.id, pgClient as any);
+    const detail = await postsService.getPostDetail(post.id);
     expect(detail).not.toBeNull();
     expect(detail!.id).toBe(post.id);
     expect(detail!.owner_nickname).toBe(owner.nickname);
@@ -540,7 +548,7 @@ describe("getPostDetail", () => {
   });
 
   test("getPostDetail: not found returns null", async () => {
-    const detail = await postsService.getPostDetail("no-such-id", pgClient as any);
+    const detail = await postsService.getPostDetail("no-such-id");
     expect(detail).toBeNull();
   });
 
@@ -556,7 +564,7 @@ describe("getPostDetail", () => {
     };
     pgClient.posts.push(p2);
 
-    const detail = await postsService.getPostDetail(p2.id, pgClient as any);
+    const detail = await postsService.getPostDetail(p2.id);
     expect(detail).not.toBeNull();
     expect(detail!.owner_nickname).toBe("Nobody");
     expect(detail!.reply_count).toBe(0);
@@ -579,7 +587,6 @@ describe("listLikers", () => {
         const post_id = params![0];
         const offset = params![1] ?? 0;
         const limit = params![2] ?? 100;
-        // ソート: created_atで降順
         const likes = this.post_likes
           .filter((l) => l.post_id === post_id)
           .sort((a, b) => b.created_at.localeCompare(a.created_at));
@@ -592,10 +599,12 @@ describe("listLikers", () => {
   }
 
   let pgClient: MockPgClient;
+  let postsService: PostsService;
   let user1: User, user2: User, user3: User, postId: string;
 
   beforeEach(() => {
     pgClient = new MockPgClient();
+    postsService = new PostsService(pgClient as any);
     user1 = {
       id: uuidv4(),
       email: "alice@example.com",
@@ -638,7 +647,6 @@ describe("listLikers", () => {
   test("should return users who liked a post", async () => {
     const users = await postsService.listLikers(
       { post_id: postId, offset: 0, limit: 10, order: "desc" },
-      pgClient as any
     );
     expect(users.length).toBe(2);
     expect(users.some((u) => u.id === user1.id)).toBe(true);
@@ -648,13 +656,11 @@ describe("listLikers", () => {
   test("should respect limit and offset", async () => {
     const users1 = await postsService.listLikers(
       { post_id: postId, offset: 0, limit: 1, order: "desc" },
-      pgClient as any
     );
     expect(users1.length).toBe(1);
 
     const users2 = await postsService.listLikers(
       { post_id: postId, offset: 1, limit: 1, order: "desc" },
-      pgClient as any
     );
     expect(users2.length).toBe(1);
     expect(users1[0].id).not.toBe(users2[0].id);
@@ -663,7 +669,6 @@ describe("listLikers", () => {
   test("should return empty array if no likes", async () => {
     const users = await postsService.listLikers(
       { post_id: uuidv4(), offset: 0, limit: 10, order: "desc" },
-      pgClient as any
     );
     expect(users.length).toBe(0);
   });

@@ -10,41 +10,46 @@ export type SessionInfo = {
 
 export type LoginResult = { sessionId: string; userId: string };
 
-export async function login(
-  email: string,
-  password: string,
-  pgClient: Client,
-  redis: Redis,
-): Promise<LoginResult> {
-  const result = await pgClient.query(
-    "SELECT id, email FROM users WHERE email=$1 AND password=md5($2)",
-    [email, password],
-  );
-  if (result.rows.length === 0) throw new Error("authentication failed");
-  const { id: userId, email: userEmail } = result.rows[0];
-  const sessionId = crypto.randomBytes(32).toString("hex");
-  const sessionInfo: SessionInfo = {
-    userId,
-    email: userEmail,
-    loggedInAt: new Date().toISOString(),
-  };
-  await redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", 3600);
-  return { sessionId, userId };
-}
+export class AuthService {
+  private pgClient: Client;
+  private redis: Redis;
 
-export async function getSessionInfo(sessionId: string, redis: Redis): Promise<SessionInfo | null> {
-  if (!sessionId) return null;
-  const value = await redis.get(`session:${sessionId}`);
-  if (!value) return null;
-  try {
-    return JSON.parse(value) as SessionInfo;
-  } catch {
-    return null;
+  constructor(pgClient: Client, redis: Redis) {
+    this.pgClient = pgClient;
+    this.redis = redis;
   }
-}
 
-export async function logout(sessionId: string, redis: Redis): Promise<void> {
-  if (sessionId) {
-    await redis.del(`session:${sessionId}`);
+  async login(email: string, password: string): Promise<LoginResult> {
+    const result = await this.pgClient.query(
+      "SELECT id, email FROM users WHERE email=$1 AND password=md5($2)",
+      [email, password],
+    );
+    if (result.rows.length === 0) throw new Error("authentication failed");
+    const { id: userId, email: userEmail } = result.rows[0];
+    const sessionId = crypto.randomBytes(32).toString("hex");
+    const sessionInfo: SessionInfo = {
+      userId,
+      email: userEmail,
+      loggedInAt: new Date().toISOString(),
+    };
+    await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", 3600);
+    return { sessionId, userId };
+  }
+
+  async getSessionInfo(sessionId: string): Promise<SessionInfo | null> {
+    if (!sessionId) return null;
+    const value = await this.redis.get(`session:${sessionId}`);
+    if (!value) return null;
+    try {
+      return JSON.parse(value) as SessionInfo;
+    } catch {
+      return null;
+    }
+  }
+
+  async logout(sessionId: string): Promise<void> {
+    if (sessionId) {
+      await this.redis.del(`session:${sessionId}`);
+    }
   }
 }
