@@ -20,7 +20,7 @@ export type PostDetail = {
 
 export type PostFilter = {
   query?: string;
-  user?: string;
+  owned_by?: string;
   tag?: string;
   reply_to?: string;
 };
@@ -54,4 +54,8 @@ export type ListPostsByFolloweesDetailInput = {
 
 export type ListPostsLikedByUserDetailInput = {
   user_id: string;
+} & PostPagination;
+
+export type ListLikersInput = {
+  post_id: string;
 } & PostPagination;

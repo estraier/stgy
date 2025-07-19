@@ -8,7 +8,9 @@ import {
   ListPostsInput,
   ListPostsByFolloweesDetailInput,
   ListPostsLikedByUserDetailInput,
+  ListLikersInput,
 } from "../models/post";
+import { User } from "../models/user";
 
 type PostRow = Post;
 
@@ -560,5 +562,109 @@ describe("getPostDetail", () => {
     expect(detail!.reply_count).toBe(0);
     expect(detail!.like_count).toBe(0);
     expect(detail!.tags).toEqual([]);
+  });
+});
+
+describe("listLikers", () => {
+  class MockPgClient {
+    users: User[] = [];
+    post_likes: { post_id: string; liked_by: string; created_at: string }[] = [];
+
+    query(sql: string, params?: any[]) {
+      if (
+        sql.includes("FROM post_likes pl") &&
+        sql.includes("JOIN users u ON pl.liked_by = u.id") &&
+        sql.includes("WHERE pl.post_id = $1")
+      ) {
+        const post_id = params![0];
+        const offset = params![1] ?? 0;
+        const limit = params![2] ?? 100;
+        // ソート: created_atで降順
+        const likes = this.post_likes
+          .filter((l) => l.post_id === post_id)
+          .sort((a, b) => b.created_at.localeCompare(a.created_at));
+        const likedUserIds = likes.map((l) => l.liked_by).slice(offset, offset + limit);
+        const result = this.users.filter((u) => likedUserIds.includes(u.id));
+        return { rows: result };
+      }
+      return { rows: [] };
+    }
+  }
+
+  let pgClient: MockPgClient;
+  let user1: User, user2: User, user3: User, postId: string;
+
+  beforeEach(() => {
+    pgClient = new MockPgClient();
+    user1 = {
+      id: uuidv4(),
+      email: "alice@example.com",
+      nickname: "Alice",
+      is_admin: false,
+      introduction: "Hi, I'm Alice.",
+      personality: "",
+      model: "",
+      created_at: new Date().toISOString(),
+    };
+    user2 = {
+      id: uuidv4(),
+      email: "bob@example.com",
+      nickname: "Bob",
+      is_admin: false,
+      introduction: "Hi, I'm Bob.",
+      personality: "",
+      model: "",
+      created_at: new Date().toISOString(),
+    };
+    user3 = {
+      id: uuidv4(),
+      email: "carol@example.com",
+      nickname: "Carol",
+      is_admin: false,
+      introduction: "Hi, I'm Carol.",
+      personality: "",
+      model: "",
+      created_at: new Date().toISOString(),
+    };
+    postId = uuidv4();
+
+    pgClient.users.push(user1, user2, user3);
+    pgClient.post_likes.push(
+      { post_id: postId, liked_by: user1.id, created_at: "2024-01-01T12:00:00Z" },
+      { post_id: postId, liked_by: user2.id, created_at: "2024-01-02T12:00:00Z" }
+    );
+  });
+
+  test("should return users who liked a post", async () => {
+    const users = await postsService.listLikers(
+      { post_id: postId, offset: 0, limit: 10, order: "desc" },
+      pgClient as any
+    );
+    expect(users.length).toBe(2);
+    expect(users.some((u) => u.id === user1.id)).toBe(true);
+    expect(users.some((u) => u.id === user2.id)).toBe(true);
+  });
+
+  test("should respect limit and offset", async () => {
+    const users1 = await postsService.listLikers(
+      { post_id: postId, offset: 0, limit: 1, order: "desc" },
+      pgClient as any
+    );
+    expect(users1.length).toBe(1);
+
+    const users2 = await postsService.listLikers(
+      { post_id: postId, offset: 1, limit: 1, order: "desc" },
+      pgClient as any
+    );
+    expect(users2.length).toBe(1);
+    expect(users1[0].id).not.toBe(users2[0].id);
+  });
+
+  test("should return empty array if no likes", async () => {
+    const users = await postsService.listLikers(
+      { post_id: uuidv4(), offset: 0, limit: 10, order: "desc" },
+      pgClient as any
+    );
+    expect(users.length).toBe(0);
   });
 });

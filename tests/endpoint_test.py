@@ -14,7 +14,6 @@ BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
 def login():
   url = f"{BASE_URL}/auth"
   res = requests.post(url, json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
-  print(res)
   res.raise_for_status()
   cookies = res.cookies.get_dict()
   session_id = cookies.get("session_id")
@@ -112,6 +111,7 @@ def test_posts():
   assert res.status_code == 201, res.text
   post = res.json()
   post_id = post["id"]
+  user_id = post["owned_by"]
   print("[posts] created:", post)
   res = requests.post(f"{BASE_URL}/posts/{post_id}/like", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
@@ -121,6 +121,12 @@ def test_posts():
   liked_posts = res.json()
   print("[posts] liked/detail:", liked_posts)
   assert any(p["id"] == post_id for p in liked_posts)
+  res = requests.get(f"{BASE_URL}/posts/{post_id}/likers", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  likers = res.json()
+  print("[posts] likers:", likers)
+  assert isinstance(likers, list)
+  assert any(u["id"] == user_id for u in likers)
   res = requests.delete(f"{BASE_URL}/posts/{post_id}/like", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[posts] unlike: ok")

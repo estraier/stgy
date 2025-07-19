@@ -21,7 +21,28 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   router.get("/count", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    const count = await postsService.countPosts(pgClient);
+    const query =
+      typeof req.query.query === "string" && req.query.query.trim() !== ""
+      ? req.query.query.trim()
+      : undefined;
+    const owned_by =
+      typeof req.query.owned_by === "string" && req.query.owned_by.trim() !== ""
+      ? req.query.owned_by.trim()
+      : undefined;
+    const tag =
+      typeof req.query.tag === "string" && req.query.tag.trim() !== ""
+      ? req.query.tag.trim()
+      : undefined;
+    const reply_to =
+      typeof req.query.reply_to === "string" && req.query.reply_to.trim() !== ""
+      ? req.query.reply_to.trim()
+      : undefined;
+    const count = await postsService.countPosts(pgClient, {
+      query,
+      owned_by,
+      tag,
+      reply_to,
+    });
     res.json({ count });
   });
 
@@ -35,9 +56,9 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       typeof req.query.query === "string" && req.query.query.trim() !== ""
         ? req.query.query.trim()
         : undefined;
-    const userId =
-      typeof req.query.user === "string" && req.query.user.trim() !== ""
-        ? req.query.user.trim()
+    const owned_by =
+      typeof req.query.owned_by === "string" && req.query.owned_by.trim() !== ""
+        ? req.query.owned_by.trim()
         : undefined;
     const tag =
       typeof req.query.tag === "string" && req.query.tag.trim() !== ""
@@ -48,7 +69,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       limit,
       order,
       query,
-      user: userId,
+      owned_by,
       tag,
     });
     res.json(posts);
@@ -64,9 +85,9 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       typeof req.query.query === "string" && req.query.query.trim() !== ""
         ? req.query.query.trim()
         : undefined;
-    const userId =
-      typeof req.query.user === "string" && req.query.user.trim() !== ""
-        ? req.query.user.trim()
+    const owned_by =
+      typeof req.query.owned_by === "string" && req.query.owned_by.trim() !== ""
+        ? req.query.owned_by.trim()
         : undefined;
     const tag =
       typeof req.query.tag === "string" && req.query.tag.trim() !== ""
@@ -77,7 +98,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       limit,
       order,
       query,
-      user: userId,
+      owned_by,
       tag,
     });
     res.json(posts);
@@ -205,6 +226,24 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     const ok = await postsService.removeLike(req.params.id, user.id, pgClient);
     if (!ok) return res.status(404).json({ error: "like not found" });
     res.json({ result: "ok" });
+  });
+
+  router.get("/:id/likers", async (req, res) => {
+    const user = await requireLogin(req, res);
+    if (!user) return;
+    const post_id = req.params.id;
+    const offset = parseInt((req.query.offset as string) ?? "0", 10);
+    const limit = parseInt((req.query.limit as string) ?? "100", 10);
+    const order = (req.query.order as string) === "asc" ? "asc" : "desc";
+    try {
+      const users = await postsService.listLikers(
+        { post_id, offset, limit, order },
+        pgClient
+      );
+      res.json(users);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "invalid request" });
+    }
   });
 
   return router;

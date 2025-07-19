@@ -7,12 +7,14 @@ import {
   ListPostsInput,
   ListPostsByFolloweesDetailInput,
   ListPostsLikedByUserDetailInput,
+  ListLikersInput,
 } from "../models/post";
+import { User } from "../models/user";
 import { Client } from "pg";
 import { v4 as uuidv4 } from "uuid";
 
 export async function countPosts(pgClient: Client, input?: CountPostsInput): Promise<number> {
-  const { query, user, tag, reply_to } = input || {};
+  const { query, owned_by, tag, reply_to } = input || {};
   let sql = `SELECT COUNT(*) FROM posts p`;
   const where: string[] = [];
   const params: unknown[] = [];
@@ -22,9 +24,9 @@ export async function countPosts(pgClient: Client, input?: CountPostsInput): Pro
     where.push(`pt.name = $${idx++}`);
     params.push(tag);
   }
-  if (user) {
+  if (owned_by) {
     where.push(`p.owned_by = $${idx++}`);
-    params.push(user);
+    params.push(owned_by);
   }
   if (reply_to !== undefined) {
     where.push(`p.reply_to ${reply_to === null ? "IS NULL" : `= $${idx++}`}`);
@@ -78,8 +80,8 @@ export async function listPosts(pgClient: Client, options?: ListPostsInput): Pro
   const offset = options?.offset ?? 0;
   const limit = options?.limit ?? 100;
   const order = (options?.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
-  const q = options?.query?.trim();
-  const user = options?.user;
+  const query = options?.query?.trim();
+  const owned_by = options?.owned_by;
   const tag = options?.tag;
   const reply_to = options?.reply_to;
   let sql = `
@@ -94,17 +96,17 @@ export async function listPosts(pgClient: Client, options?: ListPostsInput): Pro
     where.push(`pt.name = $${paramIdx++}`);
     params.push(tag);
   }
-  if (user) {
+  if (owned_by) {
     where.push(`p.owned_by = $${paramIdx++}`);
-    params.push(user);
+    params.push(owned_by);
   }
   if (reply_to !== undefined) {
     where.push(`p.reply_to ${reply_to === null ? "IS NULL" : `= $${paramIdx++}`}`);
     if (reply_to !== null) params.push(reply_to);
   }
-  if (q) {
+  if (query) {
     where.push(`p.content ILIKE $${paramIdx++}`);
-    params.push(`%${q}%`);
+    params.push(`%${query}%`);
   }
   if (where.length > 0) {
     sql += " WHERE " + where.join(" AND ");
@@ -122,8 +124,8 @@ export async function listPostsDetail(
   const offset = options?.offset ?? 0;
   const limit = options?.limit ?? 100;
   const order = (options?.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
-  const q = options?.query?.trim();
-  const user = options?.user;
+  const query = options?.query?.trim();
+  const owned_by = options?.owned_by;
   const tag = options?.tag;
   const reply_to = options?.reply_to;
   let sql = `
@@ -150,17 +152,17 @@ export async function listPostsDetail(
     where.push(`pt.name = $${paramIdx++}`);
     params.push(tag);
   }
-  if (user) {
+  if (owned_by) {
     where.push(`p.owned_by = $${paramIdx++}`);
-    params.push(user);
+    params.push(owned_by);
   }
   if (reply_to !== undefined) {
     where.push(`p.reply_to ${reply_to === null ? "IS NULL" : `= $${paramIdx++}`}`);
     if (reply_to !== null) params.push(reply_to);
   }
-  if (q) {
+  if (query) {
     where.push(`p.content ILIKE $${paramIdx++}`);
-    params.push(`%${q}%`);
+    params.push(`%${query}%`);
   }
   if (where.length > 0) {
     sql += " WHERE " + where.join(" AND ");
@@ -287,5 +289,22 @@ export async function listPostsLikedByUserDetail(
     OFFSET $2 LIMIT $3
   `;
   const res = await pgClient.query(sql, [input.user_id, offset, limit]);
+  return res.rows;
+}
+
+export async function listLikers(
+  input: ListLikersInput,
+  pgClient: Client,
+): Promise<User[]> {
+  const { post_id, offset = 0, limit = 100, order = "desc" } = input;
+  const sql = `
+    SELECT u.*
+    FROM post_likes pl
+    JOIN users u ON pl.liked_by = u.id
+    WHERE pl.post_id = $1
+    ORDER BY pl.created_at ${order.toUpperCase()}
+    OFFSET $2 LIMIT $3
+  `;
+  const res = await pgClient.query(sql, [post_id, offset, limit]);
   return res.rows;
 }

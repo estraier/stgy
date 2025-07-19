@@ -14,14 +14,23 @@ import { Client } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 
-export async function countUsers(pgClient: Client, input?: CountUsersInput): Promise<number> {
+export async function countUsers(
+  pgClient: Client,
+  input?: CountUsersInput
+): Promise<number> {
+  const nickname = input?.nickname?.trim();
   const query = input?.query?.trim();
   let sql = `SELECT COUNT(*) FROM users`;
   const params: unknown[] = [];
-  if (query) {
-    sql += " WHERE nickname ILIKE $1 OR introduction ILIKE $2";
+  let where = "";
+  if (nickname) {
+    where = "WHERE nickname ILIKE $1";
+    params.push(`%${nickname}%`);
+  } else if (query) {
+    where = "WHERE nickname ILIKE $1 OR introduction ILIKE $2";
     params.push(`%${query}%`, `%${query}%`);
   }
+  sql += ` ${where}`;
   const res = await pgClient.query(sql, params);
   return Number(res.rows[0].count);
 }
@@ -39,17 +48,24 @@ export async function listUsers(pgClient: Client, input?: ListUsersInput): Promi
   const limit = input?.limit ?? 100;
   const order = (input?.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
   const query = input?.query?.trim();
+  const nickname = input?.nickname?.trim();
   let sql = `
     SELECT id, email, nickname, is_admin, introduction, personality, model, created_at
     FROM users
   `;
   const params: unknown[] = [];
-  let where = "";
+  const wheres: string[] = [];
   if (query) {
-    where = "WHERE nickname ILIKE $1 OR introduction ILIKE $2";
+    wheres.push("(nickname ILIKE $1 OR introduction ILIKE $2)");
     params.push(`%${query}%`, `%${query}%`);
+  } else if (nickname) {
+    wheres.push(`nickname ILIKE $${params.length + 1}`);
+    params.push(`%${nickname}%`);
   }
-  sql += ` ${where} ORDER BY created_at ${order} OFFSET $${params.length + 1} LIMIT $${params.length + 2}`;
+  if (wheres.length > 0) {
+    sql += " WHERE " + wheres.join(" AND ");
+  }
+  sql += ` ORDER BY created_at ${order} OFFSET $${params.length + 1} LIMIT $${params.length + 2}`;
   params.push(offset, limit);
   const res = await pgClient.query(sql, params);
   return res.rows;

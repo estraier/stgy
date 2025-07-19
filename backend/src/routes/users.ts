@@ -11,7 +11,13 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
   router.get("/count", async (req: Request, res: Response) => {
     const loginUser = await getCurrentUser(req, redis, pgClient);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    const count = await usersService.countUsers(pgClient);
+    const nickname =
+      typeof req.query.nickname === "string" && req.query.nickname.trim() !== ""
+      ? req.query.nickname.trim() : undefined;
+    const query =
+      typeof req.query.query === "string" && req.query.query.trim() !== ""
+      ? req.query.query.trim() : undefined;
+    const count = await usersService.countUsers(pgClient, { nickname, query });
     res.json({ count });
   });
 
@@ -31,8 +37,12 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     const order =
       req.query.order === "asc" || req.query.order === "desc" ? req.query.order : "desc";
     const query =
-      typeof req.query.q === "string" && req.query.q.trim() !== "" ? req.query.q.trim() : undefined;
-    const users = await usersService.listUsers(pgClient, { offset, limit, order, query });
+      typeof req.query.query === "string" && req.query.query.trim() !== ""
+      ? req.query.query.trim() : undefined;
+    const nickname =
+      typeof req.query.nickname === "string" && req.query.nickname.trim() !== ""
+      ? req.query.nickname.trim() : undefined;
+    const users = await usersService.listUsers(pgClient, { offset, limit, order, query, nickname });
     res.json(users);
   });
 
