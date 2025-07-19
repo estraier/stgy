@@ -29,7 +29,7 @@ export default function createSignupRouter(pgClient: Client, redis: Redis) {
     }
     try {
       const { userId } = await signupService.verifySignup(signup_id, verification_code);
-      res.status(201).json({ user_id: userId });  // ← 201に変更
+      res.status(201).json({ user_id: userId });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "verification failed" });
     }

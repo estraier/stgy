@@ -34,9 +34,9 @@ app.use(cors({
 }));
 
 app.use("/auth", createAuthRouter(pgClient, redis));
+app.use("/signup", createSignupRouter(pgClient, redis));
 app.use("/users", createUsersRouter(pgClient, redis));
 app.use("/posts", createPostRouter(pgClient, redis));
-app.use("/signup", createSignupRouter(pgClient, redis));
 
 const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
   console.error("[API ERROR]", err);
