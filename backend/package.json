@@ -10,8 +10,8 @@
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint .",
-    "ts-archive": "find . -name '*.ts' -print0 | tar -cvf archive.tar --null -T -",
-    "clean": "rm -rf node_modules package-lock.json dist ts-archive.tar"
+    "ts-archive": "find . -name '*.ts' -print0 | tar -cvf be-ts-archive.tar --null -T -",
+    "clean": "rm -rf node_modules package-lock.json dist be-ts-archive.tar"
   },
   "keywords": [],
   "author": "",

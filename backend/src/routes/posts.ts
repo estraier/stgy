@@ -243,9 +243,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
     try {
-      const users = await postsService.listLikers(
-        { post_id, offset, limit, order }
-      );
+      const users = await postsService.listLikers({ post_id, offset, limit, order });
       res.json(users);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "invalid request" });

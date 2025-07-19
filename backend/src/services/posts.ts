@@ -221,10 +221,10 @@ export class PostsService {
   }
 
   async removeLike(postId: string, userId: string): Promise<boolean> {
-    const res = await this.pgClient.query(`DELETE FROM post_likes WHERE post_id = $1 AND liked_by = $2`, [
-      postId,
-      userId,
-    ]);
+    const res = await this.pgClient.query(
+      `DELETE FROM post_likes WHERE post_id = $1 AND liked_by = $2`,
+      [postId, userId],
+    );
     return (res.rowCount ?? 0) > 0;
   }
 
@@ -254,9 +254,7 @@ export class PostsService {
     return res.rows;
   }
 
-  async listPostsLikedByUserDetail(
-    input: ListPostsLikedByUserDetailInput,
-  ): Promise<PostDetail[]> {
+  async listPostsLikedByUserDetail(input: ListPostsLikedByUserDetailInput): Promise<PostDetail[]> {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";

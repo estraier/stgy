@@ -28,10 +28,12 @@ const redis = new Redis({
 });
 
 const frontendOrigin = process.env.FAKEBOOK_FRONTEND_ORIGIN || "http://localhost:3000";
-app.use(cors({
-  origin: frontendOrigin,
-  credentials: true
-}));
+app.use(
+  cors({
+    origin: frontendOrigin,
+    credentials: true,
+  }),
+);
 
 app.use("/auth", createAuthRouter(pgClient, redis));
 app.use("/signup", createSignupRouter(pgClient, redis));

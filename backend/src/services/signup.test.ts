@@ -12,7 +12,7 @@ class MockRedis {
   async hgetall(key: string) {
     return this.store.get(key) || {};
   }
-  async expire(key: string, seconds: number) {}
+  async expire(_key: string, _seconds: number) {}
   async lpush(queue: string, val: string) {
     this.queue.push(val);
   }
@@ -44,15 +44,15 @@ describe("signup service", () => {
   });
 
   test("startSignup: invalid email", async () => {
-    await expect(
-      signupService.startSignup("invalid-email", "pass123")
-    ).rejects.toThrow("Invalid email format");
+    await expect(signupService.startSignup("invalid-email", "pass123")).rejects.toThrow(
+      "Invalid email format",
+    );
   });
 
   test("startSignup: short password", async () => {
-    await expect(
-      signupService.startSignup("foo@example.com", "")
-    ).rejects.toThrow("Password must be at least 6 characters");
+    await expect(signupService.startSignup("foo@example.com", "")).rejects.toThrow(
+      "Password must be at least 6 characters",
+    );
   });
 
   test("verifySignup: normal", async () => {
@@ -66,14 +66,14 @@ describe("signup service", () => {
 
   test("verifySignup: code mismatch", async () => {
     const { signupId } = await signupService.startSignup("test@ex.com", "pass123");
-    await expect(
-      signupService.verifySignup(signupId, "999999")
-    ).rejects.toThrow("Verification code mismatch");
+    await expect(signupService.verifySignup(signupId, "999999")).rejects.toThrow(
+      "Verification code mismatch",
+    );
   });
 
   test("verifySignup: expired or not found", async () => {
-    await expect(
-      signupService.verifySignup("no-such-id", "123456")
-    ).rejects.toThrow("Signup info not found or expired");
+    await expect(signupService.verifySignup("no-such-id", "123456")).rejects.toThrow(
+      "Signup info not found or expired",
+    );
   });
 });

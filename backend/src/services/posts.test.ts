@@ -640,36 +640,48 @@ describe("listLikers", () => {
     pgClient.users.push(user1, user2, user3);
     pgClient.post_likes.push(
       { post_id: postId, liked_by: user1.id, created_at: "2024-01-01T12:00:00Z" },
-      { post_id: postId, liked_by: user2.id, created_at: "2024-01-02T12:00:00Z" }
+      { post_id: postId, liked_by: user2.id, created_at: "2024-01-02T12:00:00Z" },
     );
   });
 
   test("should return users who liked a post", async () => {
-    const users = await postsService.listLikers(
-      { post_id: postId, offset: 0, limit: 10, order: "desc" },
-    );
+    const users = await postsService.listLikers({
+      post_id: postId,
+      offset: 0,
+      limit: 10,
+      order: "desc",
+    } as ListLikersInput);
     expect(users.length).toBe(2);
     expect(users.some((u) => u.id === user1.id)).toBe(true);
     expect(users.some((u) => u.id === user2.id)).toBe(true);
   });
 
   test("should respect limit and offset", async () => {
-    const users1 = await postsService.listLikers(
-      { post_id: postId, offset: 0, limit: 1, order: "desc" },
-    );
+    const users1 = await postsService.listLikers({
+      post_id: postId,
+      offset: 0,
+      limit: 1,
+      order: "desc",
+    } as ListLikersInput);
     expect(users1.length).toBe(1);
 
-    const users2 = await postsService.listLikers(
-      { post_id: postId, offset: 1, limit: 1, order: "desc" },
-    );
+    const users2 = await postsService.listLikers({
+      post_id: postId,
+      offset: 1,
+      limit: 1,
+      order: "desc",
+    } as ListLikersInput);
     expect(users2.length).toBe(1);
     expect(users1[0].id).not.toBe(users2[0].id);
   });
 
   test("should return empty array if no likes", async () => {
-    const users = await postsService.listLikers(
-      { post_id: uuidv4(), offset: 0, limit: 10, order: "desc" },
-    );
+    const users = await postsService.listLikers({
+      post_id: uuidv4(),
+      offset: 0,
+      limit: 10,
+      order: "desc",
+    } as ListLikersInput);
     expect(users.length).toBe(0);
   });
 });
