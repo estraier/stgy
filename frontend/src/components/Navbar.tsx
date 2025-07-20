@@ -1,0 +1,88 @@
+"use client";
+import { useEffect, useState } from "react";
+import { getSessionInfo, logout } from "@/api/auth";
+import { useRouter, usePathname } from "next/navigation";
+import { FiSettings } from "react-icons/fi";
+
+export default function Navbar() {
+  const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
+  const [nickname, setNickname] = useState<string>("");
+  const [menuOpen, setMenuOpen] = useState(false);
+  const router = useRouter();
+  const pathname = usePathname();
+
+  useEffect(() => {
+    let canceled = false;
+    getSessionInfo()
+      .then((user) => {
+        if (!canceled) {
+          setLoggedIn(true);
+          setNickname(user.nickname || "");
+        }
+      })
+      .catch(() => {
+        if (!canceled) {
+          setLoggedIn(false);
+          setNickname("");
+        }
+      });
+    return () => {
+      canceled = true;
+    };
+  }, [pathname]); // 重要: ページ遷移ごとにセッションを再確認
+
+  if (loggedIn !== true) return null;
+
+  const isActive = (path: string) => pathname?.startsWith(path);
+
+  return (
+    <nav className="w-full h-12 flex items-center px-4 bg-white border-b shadow z-10">
+      <a href="/posts" className="font-bold text-lg text-blue-600 mr-6 select-none" tabIndex={0}>
+        Fakebook
+      </a>
+      <div className="flex gap-2">
+        <a
+          href="/posts"
+          className={`px-3 py-2 rounded ${isActive("/posts") ? "bg-blue-100 font-semibold" : ""}`}
+        >
+          Posts
+        </a>
+        <a
+          href="/users"
+          className={`px-3 py-2 rounded ${isActive("/users") ? "bg-blue-100 font-semibold" : ""}`}
+        >
+          Users
+        </a>
+      </div>
+      <div className="ml-auto relative flex items-center gap-2">
+        <span className="text-sm text-gray-700">{nickname}</span>
+        <button
+          className="p-2 rounded hover:bg-gray-200"
+          aria-label="Settings"
+          onClick={() => setMenuOpen((v) => !v)}
+        >
+          <FiSettings size={22} />
+        </button>
+        {menuOpen && (
+          <div
+            className="absolute right-0 mt-2 bg-white border rounded shadow py-2 min-w-[120px] z-50"
+            onMouseLeave={() => setMenuOpen(false)}
+          >
+            <button
+              className="block w-full px-4 py-2 text-left hover:bg-gray-100"
+              onClick={async () => {
+                setMenuOpen(false);
+                await logout();
+                setLoggedIn(false); // ここで明示的にログイン状態を切る
+                setNickname("");
+                window.location.href = "/"; // ここもフルリロード
+              }}
+            >
+              Log out
+            </button>
+          </div>
+        )}
+      </div>
+    </nav>
+  );
+}
