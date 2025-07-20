@@ -14,6 +14,6 @@
     "endpoint-test": "./tests/endpoint_test.py",
     "psql": "docker-compose exec db psql -U fakebook fakebook",
     "db-log": "docker-compose logs db",
-    "clean": "rm -rf node_modules package-lock.json dist && npm run clean --workspaces"
+    "clean": "rm -rf node_modules package-lock.json dist && npm run clean --workspaces && find . -name '*~' -type f -delete"
   }
 }

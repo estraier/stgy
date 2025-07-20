@@ -112,17 +112,23 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   });
 
   router.get("/by-followees/detail", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
+    const loginUser = await requireLogin(req, res);
+    if (!loginUser) return;
+    const user_id = typeof req.query.user_id === "string" && req.query.user_id.trim() !== ""
+      ? req.query.user_id.trim()
+      : null;
+    if (!user_id) {
+      return res.status(400).json({ error: "user_id is required" });
+    }
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
     const include_self =
       typeof req.query.include_self === "string"
-        ? req.query.include_self === "true" || req.query.include_self === "1"
-        : false;
+      ? req.query.include_self === "true" || req.query.include_self === "1"
+      : false;
     const result = await postsService.listPostsByFolloweesDetail({
-      user_id: user.id,
+      user_id,
       offset,
       limit,
       order,
@@ -132,13 +138,19 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   });
 
   router.get("/liked/detail", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
+    const loginUser = await requireLogin(req, res);
+    if (!loginUser) return;
+    const user_id = typeof req.query.user_id === "string" && req.query.user_id.trim() !== ""
+      ? req.query.user_id.trim()
+      : null;
+    if (!user_id) {
+      return res.status(400).json({ error: "user_id is required" });
+    }
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
     const result = await postsService.listPostsLikedByUserDetail({
-      user_id: user.id,
+      user_id,
       offset,
       limit,
       order,

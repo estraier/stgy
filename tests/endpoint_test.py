@@ -52,8 +52,8 @@ def test_users():
     "nickname": "user1",
     "is_admin": False,
     "introduction": "hi!",
-    "personality": "",   # not null in schema
-    "model": "",         # not null in schema
+    "personality": "",
+    "model": "",
     "password": "password1"
   }
   res = requests.post(f"{BASE_URL}/users", json=user_input, headers=headers, cookies=cookies)
@@ -104,7 +104,7 @@ def test_posts():
   headers = {"Content-Type": "application/json"}
   cookies = {"session_id": session_id}
   post_input = {
-    "content": "hello, this is a test post!",  # only "content" is used in new schema
+    "content": "hello, this is a test post!",
     "reply_to": None,
   }
   res = requests.post(f"{BASE_URL}/posts", json=post_input, headers=headers, cookies=cookies)
@@ -116,7 +116,7 @@ def test_posts():
   res = requests.post(f"{BASE_URL}/posts/{post_id}/like", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[posts] like: ok")
-  res = requests.get(f"{BASE_URL}/posts/liked/detail", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/posts/liked/detail?user_id={user_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   liked_posts = res.json()
   print("[posts] liked/detail:", liked_posts)
@@ -136,14 +136,14 @@ def test_posts():
   res = requests.get(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   got = res.json()
-  assert got["content"] == post_input["content"]  # field changed!
+  assert got["content"] == post_input["content"]
   res = requests.get(f"{BASE_URL}/posts/{post_id}/detail", headers=headers, cookies=cookies)
   assert res.status_code == 200
   detail = res.json()
   assert detail["id"] == post_id
   assert detail["content"] == post_input["content"]
   assert detail["owner_nickname"] == "admin"
-  res = requests.get(f"{BASE_URL}/posts/by-followees/detail?include_self=true", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/posts/by-followees/detail?user_id={user_id}&include_self=true", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   by_followees = res.json()
   print("[posts] by-followees/detail (self):", by_followees)

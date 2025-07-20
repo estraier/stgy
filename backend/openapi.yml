@@ -1,32 +1,116 @@
 openapi: 3.1.0
 info:
   title: Fakebook API
-  version: "1.0.0"
+  version: 1.0.0
   description: |
-    Fakebook SNS API.
-    All endpoints return application/json.
-    Cookie-based session authentication.
+    Fakebook SNS backend API (Express/TypeScript)
+    - Cookie authentication: session_id
 
 servers:
   - url: http://localhost:3001
 
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: session_id
+
+  schemas:
+    ErrorResponse:
+      type: object
+      properties:
+        error: { type: string }
+        code: { type: string, nullable: true }
+      required: [error]
+
+    User:
+      type: object
+      properties:
+        id: { type: string }
+        email: { type: string }
+        nickname: { type: string }
+        is_admin: { type: boolean }
+        introduction: { type: string }
+        personality: { type: string }
+        model: { type: string }
+        created_at: { type: string, format: date-time }
+      required: [id, email, nickname, is_admin, introduction, personality, model, created_at]
+
+    Post:
+      type: object
+      properties:
+        id: { type: string }
+        content: { type: string }
+        owned_by: { type: string }
+        reply_to:
+          type: string
+          nullable: true
+        created_at: { type: string, format: date-time }
+      required: [id, content, owned_by, reply_to, created_at]
+
+    PostDetail:
+      type: object
+      properties:
+        id: { type: string }
+        content: { type: string }
+        owned_by: { type: string }
+        reply_to:
+          type: string
+          nullable: true
+        created_at: { type: string, format: date-time }
+        owner_nickname: { type: string }
+        reply_count: { type: integer }
+        like_count: { type: integer }
+        tags:
+          type: array
+          items: { type: string }
+      required: [id, content, owned_by, reply_to, created_at, owner_nickname, reply_count, like_count, tags]
+
+  responses:
+    Error400:
+      description: Bad request
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Error401:
+      description: Unauthorized
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Error403:
+      description: Forbidden
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+    Error404:
+      description: Not found
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ErrorResponse"
+
 paths:
+
   /auth:
     post:
-      summary: Login (issue session cookie)
+      summary: Log in
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [email, password]
               properties:
                 email: { type: string }
                 password: { type: string }
+              required: [email, password]
       responses:
         "200":
-          description: Login success (session_id returned)
+          description: Login OK, sets session_id cookie
           content:
             application/json:
               schema:
@@ -34,42 +118,37 @@ paths:
                 properties:
                   session_id: { type: string }
         "400":
-          description: Missing parameters
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error: { type: string }
+          $ref: "#/components/responses/Error400"
         "401":
-          description: Authentication failed
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error: { type: string }
+          $ref: "#/components/responses/Error401"
+
     get:
-      summary: Get current session info
+      summary: Get session info
+      security:
+        - sessionCookie: []
       responses:
         "200":
-          description: Session info (for the logged-in user)
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/SessionInfo" }
-        "401":
-          description: Not logged in
+          description: Session valid, returns user info
           content:
             application/json:
               schema:
                 type: object
                 properties:
-                  error: { type: string }
+                  userId: { type: string }
+                  email: { type: string }
+                  nickname: { type: string }
+                  is_admin: { type: boolean }
+                required: [userId, email, nickname, is_admin]
+        "401":
+          $ref: "#/components/responses/Error401"
+
     delete:
-      summary: Logout (clear session)
+      summary: Log out
+      security:
+        - sessionCookie: []
       responses:
         "200":
-          description: Logout successful
+          description: Logout OK (clears cookie)
           content:
             application/json:
               schema:
@@ -79,20 +158,20 @@ paths:
 
   /signup/start:
     post:
-      summary: Start signup (request verification)
+      summary: Start signup (send verification code)
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [email, password]
               properties:
                 email: { type: string }
                 password: { type: string }
+              required: [email, password]
       responses:
         "201":
-          description: Signup started (returns signup_id)
+          description: Signup started
           content:
             application/json:
               schema:
@@ -100,30 +179,24 @@ paths:
                 properties:
                   signup_id: { type: string }
         "400":
-          description: Signup failed
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error: { type: string }
+          $ref: "#/components/responses/Error400"
 
   /signup/verify:
     post:
-      summary: Verify signup (complete registration)
+      summary: Complete signup (verify code)
       requestBody:
         required: true
         content:
           application/json:
             schema:
               type: object
-              required: [signup_id, verification_code]
               properties:
                 signup_id: { type: string }
                 verification_code: { type: string }
+              required: [signup_id, verification_code]
       responses:
         "201":
-          description: Signup completed (returns user_id)
+          description: Signup success
           content:
             application/json:
               schema:
@@ -131,83 +204,23 @@ paths:
                 properties:
                   user_id: { type: string }
         "400":
-          description: Verification failed
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  error: { type: string }
-
-  /users:
-    get:
-      summary: List users (login required)
-      parameters:
-        - name: offset
-          in: query
-          schema: { type: integer, default: 0 }
-        - name: limit
-          in: query
-          schema: { type: integer, default: 100 }
-        - name: order
-          in: query
-          schema: { type: string, enum: [asc, desc], default: desc }
-        - name: query
-          in: query
-          schema: { type: string }
-        - name: nickname
-          in: query
-          schema: { type: string }
-      responses:
-        "200":
-          description: User list
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/User" }
-        "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-    post:
-      summary: Create user (admin only)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/CreateUserInput" }
-      responses:
-        "201":
-          description: User created
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/User" }
-        "400":
-          description: Invalid input
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+          $ref: "#/components/responses/Error400"
 
   /users/count:
     get:
-      summary: Get user count
+      summary: Get total user count (with optional filters)
+      security:
+        - sessionCookie: []
       parameters:
-        - name: query
+        - name: nickname
           in: query
           schema: { type: string }
-        - name: nickname
+        - name: query
           in: query
           schema: { type: string }
       responses:
         "200":
-          description: Count
+          description: User count
           content:
             application/json:
               schema:
@@ -215,199 +228,13 @@ paths:
                 properties:
                   count: { type: integer }
         "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+          $ref: "#/components/responses/Error401"
 
-  /users/{id}:
+  /users:
     get:
-      summary: Get user by ID
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          description: User found
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/User" }
-        "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "404":
-          description: Not found
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-    put:
-      summary: Update user (self or admin)
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema: { $ref: "#/components/schemas/UpdateUserInput" }
-      responses:
-        "200":
-          description: Updated
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/User" }
-        "400":
-          description: Update failed
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "404":
-          description: Not found
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-    delete:
-      summary: Delete user (self or admin)
-      responses:
-        "200":
-          description: Deleted
-          content:
-            application/json:
-              schema: { type: object, properties: { result: { type: string } } }
-        "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "404":
-          description: Not found
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-
-  /users/{id}/follow:
-    post:
-      summary: Follow user
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { type: object, properties: { result: { type: string } } }
-        "400":
-          description: Cannot follow
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-    delete:
-      summary: Unfollow user
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-      responses:
-        "200":
-          description: OK
-          content:
-            application/json:
-              schema: { type: object, properties: { result: { type: string } } }
-        "404":
-          description: Not followed
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-
-  /users/{id}/followees:
-    get:
-      summary: List users this user is following
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-        - name: offset
-          in: query
-          schema: { type: integer, default: 0 }
-        - name: limit
-          in: query
-          schema: { type: integer, default: 100 }
-      responses:
-        "200":
-          description: List
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/User" }
-        "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-
-  /users/{id}/followers:
-    get:
-      summary: List users following this user
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-        - name: offset
-          in: query
-          schema: { type: integer, default: 0 }
-        - name: limit
-          in: query
-          schema: { type: integer, default: 100 }
-      responses:
-        "200":
-          description: List
-          content:
-            application/json:
-              schema:
-                type: array
-                items: { $ref: "#/components/schemas/User" }
-        "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-
-  /posts:
-    get:
-      summary: List posts (login required)
+      summary: List users
+      security:
+        - sessionCookie: []
       parameters:
         - name: offset
           in: query
@@ -417,51 +244,289 @@ paths:
           schema: { type: integer, default: 100 }
         - name: order
           in: query
-          schema: { type: string, enum: [asc, desc], default: desc }
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
         - name: query
           in: query
           schema: { type: string }
-        - name: owned_by
-          in: query
-          schema: { type: string }
-        - name: tag
+        - name: nickname
           in: query
           schema: { type: string }
       responses:
         "200":
-          description: Post list
+          description: Users list
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: "#/components/schemas/Post" }
+                items:
+                  $ref: "#/components/schemas/User"
         "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+          $ref: "#/components/responses/Error401"
+
     post:
-      summary: Create post
+      summary: (Admin only) Create user
+      security:
+        - sessionCookie: []
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/CreatePostInput" }
+            schema:
+              type: object
+              properties:
+                email: { type: string }
+                nickname: { type: string }
+                password: { type: string }
+                is_admin: { type: boolean }
+                introduction: { type: string }
+                personality: { type: string }
+                model: { type: string }
+              required: [email, nickname, password, is_admin, introduction, personality, model]
       responses:
         "201":
-          description: Created
+          description: User created
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Post" }
+              schema:
+                $ref: "#/components/schemas/User"
+        "403":
+          $ref: "#/components/responses/Error403"
         "400":
-          description: Invalid input
+          $ref: "#/components/responses/Error400"
+
+  /users/{id}:
+    get:
+      summary: Get user details
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: User info
           content:
             application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+    put:
+      summary: Update user
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string }
+                nickname: { type: string }
+                is_admin: { type: boolean }
+                introduction: { type: string }
+                personality: { type: string }
+                model: { type: string }
+              required: [email, nickname, introduction, personality, model]
+      responses:
+        "200":
+          description: User updated
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+        "400":
+          $ref: "#/components/responses/Error400"
+
+    delete:
+      summary: Delete user
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: User deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /users/{id}/password:
+    put:
+      summary: Update user password
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password: { type: string }
+              required: [password]
+      responses:
+        "200":
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+        "400":
+          $ref: "#/components/responses/Error400"
+
+  /users/{id}/follow:
+    post:
+      summary: Follow user
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Followed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "401":
+          $ref: "#/components/responses/Error401"
+        "400":
+          $ref: "#/components/responses/Error400"
+    delete:
+      summary: Unfollow user
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Unfollowed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "401":
+          $ref: "#/components/responses/Error401"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /users/{id}/followees:
+    get:
+      summary: List followees
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: Followees list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Error401"
+
+  /users/{id}/followers:
+    get:
+      summary: List followers
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: Followers list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Error401"
 
   /posts/count:
     get:
       summary: Get post count
+      security:
+        - sessionCookie: []
       parameters:
         - name: query
           in: query
@@ -477,7 +542,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Count
+          description: Post count
           content:
             application/json:
               schema:
@@ -485,14 +550,13 @@ paths:
                 properties:
                   count: { type: integer }
         "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+          $ref: "#/components/responses/Error401"
 
-  /posts/detail:
+  /posts:
     get:
-      summary: List posts with details
+      summary: List posts
+      security:
+        - sessionCookie: []
       parameters:
         - name: offset
           in: query
@@ -502,7 +566,10 @@ paths:
           schema: { type: integer, default: 100 }
         - name: order
           in: query
-          schema: { type: string, enum: [asc, desc], default: desc }
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
         - name: query
           in: query
           schema: { type: string }
@@ -514,21 +581,48 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Posts with details
+          description: Posts list
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: "#/components/schemas/Post" }
+                items:
+                  $ref: "#/components/schemas/Post"
         "401":
-          description: Not logged in
+          $ref: "#/components/responses/Error401"
+
+    post:
+      summary: Create post
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                content: { type: string }
+                owned_by: { type: string }
+                reply_to:
+                  type: string
+                  nullable: true
+              required: [content, owned_by]
+      responses:
+        "201":
+          description: Post created
           content:
             application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+              schema:
+                $ref: "#/components/schemas/Post"
+        "400":
+          $ref: "#/components/responses/Error400"
 
-  /posts/by-followees/detail:
+  /posts/detail:
     get:
-      summary: List posts by followees (with details)
+      summary: List posts (with detail)
+      security:
+        - sessionCookie: []
       parameters:
         - name: offset
           in: query
@@ -538,28 +632,80 @@ paths:
           schema: { type: integer, default: 100 }
         - name: order
           in: query
-          schema: { type: string, enum: [asc, desc], default: desc }
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: query
+          in: query
+          schema: { type: string }
+        - name: owned_by
+          in: query
+          schema: { type: string }
+        - name: tag
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Posts detail list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PostDetail"
+        "401":
+          $ref: "#/components/responses/Error401"
+
+  /posts/by-followees/detail:
+    get:
+      summary: List posts by followees (with detail)
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema: { type: string }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
         - name: include_self
           in: query
           schema: { type: boolean }
       responses:
         "200":
-          description: Posts by followees
+          description: Posts detail list by followees
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: "#/components/schemas/Post" }
+                items:
+                  $ref: "#/components/schemas/PostDetail"
+        "400":
+          $ref: "#/components/responses/Error400"
         "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+          $ref: "#/components/responses/Error401"
 
   /posts/liked/detail:
     get:
-      summary: List posts liked by current user (with details)
+      summary: List posts liked by user (with detail)
+      security:
+        - sessionCookie: []
       parameters:
+        - name: user_id
+          in: query
+          required: true
+          schema: { type: string }
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
@@ -568,24 +714,29 @@ paths:
           schema: { type: integer, default: 100 }
         - name: order
           in: query
-          schema: { type: string, enum: [asc, desc], default: desc }
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
       responses:
         "200":
-          description: Liked posts
+          description: Posts liked by user (detail)
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: "#/components/schemas/Post" }
+                items:
+                  $ref: "#/components/schemas/PostDetail"
+        "400":
+          $ref: "#/components/responses/Error400"
         "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+          $ref: "#/components/responses/Error401"
 
-  /posts/{id}:
+  /posts/{id}/detail:
     get:
-      summary: Get post by ID
+      summary: Get post detail by id
+      security:
+        - sessionCookie: []
       parameters:
         - name: id
           in: path
@@ -593,80 +744,79 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Post found
+          description: Post detail
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Post" }
+              schema:
+                $ref: "#/components/schemas/PostDetail"
         "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+          $ref: "#/components/responses/Error401"
         "404":
-          description: Not found
+          $ref: "#/components/responses/Error404"
+
+  /posts/{id}:
+    get:
+      summary: Get post by id
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Post summary
           content:
             application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+              schema:
+                $ref: "#/components/schemas/Post"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "404":
+          $ref: "#/components/responses/Error404"
+
     put:
-      summary: Update post (owner or admin)
+      summary: Update post
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
       requestBody:
         required: true
         content:
           application/json:
-            schema: { $ref: "#/components/schemas/UpdatePostInput" }
+            schema:
+              type: object
+              properties:
+                content: { type: string }
+                reply_to:
+                  type: string
+                  nullable: true
+              required: [content]
       responses:
         "200":
-          description: Updated
+          description: Post updated
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Post" }
+              schema:
+                $ref: "#/components/schemas/Post"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
         "400":
-          description: Update failed
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "404":
-          description: Not found
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-    delete:
-      summary: Delete post (owner or admin)
-      responses:
-        "200":
-          description: Deleted
-          content:
-            application/json:
-              schema: { type: object, properties: { result: { type: string } } }
-        "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "403":
-          description: Forbidden
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "404":
-          description: Not found
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+          $ref: "#/components/responses/Error400"
 
-  /posts/{id}/detail:
-    get:
-      summary: Get post detail by ID
+    delete:
+      summary: Delete post
+      security:
+        - sessionCookie: []
       parameters:
         - name: id
           in: path
@@ -674,24 +824,25 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Post details
+          description: Post deleted
           content:
             application/json:
-              schema: { $ref: "#/components/schemas/Post" }
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
         "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
         "404":
-          description: Not found
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+          $ref: "#/components/responses/Error404"
 
   /posts/{id}/like:
     post:
       summary: Like a post
+      security:
+        - sessionCookie: []
       parameters:
         - name: id
           in: path
@@ -699,22 +850,21 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: OK
+          description: Post liked
           content:
             application/json:
-              schema: { type: object, properties: { result: { type: string } } }
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "401":
+          $ref: "#/components/responses/Error401"
         "400":
-          description: Like failed
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-        "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+          $ref: "#/components/responses/Error400"
     delete:
-      summary: Unlike a post
+      summary: Remove like from a post
+      security:
+        - sessionCookie: []
       parameters:
         - name: id
           in: path
@@ -722,24 +872,23 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: OK
+          description: Like removed
           content:
             application/json:
-              schema: { type: object, properties: { result: { type: string } } }
-        "404":
-          description: Not liked
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
         "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
+          $ref: "#/components/responses/Error401"
+        "404":
+          $ref: "#/components/responses/Error404"
 
   /posts/{id}/likers:
     get:
-      summary: List users who liked this post
+      summary: List users who liked a post
+      security:
+        - sessionCookie: []
       parameters:
         - name: id
           in: path
@@ -753,81 +902,20 @@ paths:
           schema: { type: integer, default: 100 }
         - name: order
           in: query
-          schema: { type: string, enum: [asc, desc], default: desc }
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
       responses:
         "200":
-          description: List of likers
+          description: Users who liked this post
           content:
             application/json:
               schema:
                 type: array
-                items: { $ref: "#/components/schemas/User" }
+                items:
+                  $ref: "#/components/schemas/User"
         "401":
-          description: Not logged in
-          content:
-            application/json:
-              schema: { type: object, properties: { error: { type: string } } }
-
-components:
-  schemas:
-    SessionInfo:
-      type: object
-      properties:
-        userId: { type: string }
-        email: { type: string }
-        loggedInAt: { type: string, format: date-time }
-    User:
-      type: object
-      properties:
-        id: { type: string }
-        email: { type: string }
-        nickname: { type: string }
-        is_admin: { type: boolean }
-        introduction: { type: string }
-        personality: { type: string }
-        model: { type: string }
-    CreateUserInput:
-      type: object
-      required: [email, nickname, password]
-      properties:
-        email: { type: string }
-        nickname: { type: string }
-        password: { type: string }
-        is_admin: { type: boolean }
-        introduction: { type: string }
-        personality: { type: string }
-        model: { type: string }
-    UpdateUserInput:
-      type: object
-      required: [id]
-      properties:
-        id: { type: string }
-        email: { type: string }
-        nickname: { type: string }
-        is_admin: { type: boolean }
-        introduction: { type: string }
-        personality: { type: string }
-        model: { type: string }
-    Post:
-      type: object
-      properties:
-        id: { type: string }
-        content: { type: string }
-        owned_by: { type: string }
-        reply_to: { type: string, nullable: true }
-        created_at: { type: string, format: date-time }
-        updated_at: { type: string, format: date-time }
-    CreatePostInput:
-      type: object
-      required: [content, owned_by]
-      properties:
-        content: { type: string }
-        owned_by: { type: string }
-        reply_to: { type: string, nullable: true }
-    UpdatePostInput:
-      type: object
-      required: [id, content]
-      properties:
-        id: { type: string }
-        content: { type: string }
-        reply_to: { type: string, nullable: true }
+          $ref: "#/components/responses/Error401"
+        "400":
+          $ref: "#/components/responses/Error400"
