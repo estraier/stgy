@@ -2,6 +2,7 @@
   "name": "fakebook",
   "private": true,
   "workspaces": [
+    "frontend",
     "backend"
   ],
   "scripts": {
