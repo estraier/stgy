@@ -4,15 +4,23 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSessionInfo } from "@/api/auth";
 
+type RequireLoginStatus =
+  | { state: "loading" }
+  | { state: "authenticated"; user: { userId: string; email: string; loggedInAt: string } }
+  | { state: "unauthenticated" };
+
 export function useRequireLogin() {
   const router = useRouter();
-  const [ready, setReady] = useState(false);
+  const [status, setStatus] = useState<RequireLoginStatus>({ state: "loading" });
 
   useEffect(() => {
     getSessionInfo()
-      .then(() => setReady(true))
-      .catch(() => router.replace("/error?page=login-required"));
+      .then(user => setStatus({ state: "authenticated", user }))
+      .catch(() => {
+        setStatus({ state: "unauthenticated" });
+        router.replace("/error?page=login-required");
+      });
   }, [router]);
 
-  return ready;
+  return status;
 }

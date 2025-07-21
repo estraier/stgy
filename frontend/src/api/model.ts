@@ -1,7 +1,7 @@
 export type SessionInfo = {
-  userId: string;
+  user_id: string;
   email: string;
-  loggedInAt: string;
+  logged_in_at: string;
 };
 
 export type User = {
@@ -33,9 +33,4 @@ export type PostDetail = {
   reply_count: number;
   like_count: number;
   tags: string[];
-};
-
-export type ErrorResponse = {
-  error: string;
-  code?: string | null;
 };

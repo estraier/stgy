@@ -7,6 +7,7 @@ import { FiSettings } from "react-icons/fi";
 export default function Navbar() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
   const [nickname, setNickname] = useState<string>("");
+  const [userId, setUserId] = useState<string>("");
   const [menuOpen, setMenuOpen] = useState(false);
   const router = useRouter();
   const pathname = usePathname();
@@ -18,18 +19,20 @@ export default function Navbar() {
         if (!canceled) {
           setLoggedIn(true);
           setNickname(user.nickname || "");
+          setUserId(user.user_id || "");
         }
       })
       .catch(() => {
         if (!canceled) {
           setLoggedIn(false);
           setNickname("");
+          setUserId("");
         }
       });
     return () => {
       canceled = true;
     };
-  }, [pathname]); // 重要: ページ遷移ごとにセッションを再確認
+  }, [pathname]);
 
   if (loggedIn !== true) return null;
 
@@ -55,7 +58,7 @@ export default function Navbar() {
         </a>
       </div>
       <div className="ml-auto relative flex items-center gap-2">
-        <span className="text-sm text-gray-700">{nickname}</span>
+        {nickname && <span className="text-sm text-gray-700">{nickname}</span>}
         <button
           className="p-2 rounded hover:bg-gray-200"
           aria-label="Settings"
@@ -65,17 +68,25 @@ export default function Navbar() {
         </button>
         {menuOpen && (
           <div
-            className="absolute right-0 mt-2 bg-white border rounded shadow py-2 min-w-[120px] z-50"
+            className="absolute right-0 mt-2 bg-white border rounded shadow py-2 min-w-[140px] z-50"
             onMouseLeave={() => setMenuOpen(false)}
           >
+            <a
+              href={`/users/${userId}`}
+              className="block w-full px-4 py-2 text-left hover:bg-gray-100"
+              onClick={() => setMenuOpen(false)}
+            >
+              Profile
+            </a>
             <button
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
               onClick={async () => {
                 setMenuOpen(false);
                 await logout();
-                setLoggedIn(false); // ここで明示的にログイン状態を切る
+                setLoggedIn(false);
                 setNickname("");
-                window.location.href = "/"; // ここもフルリロード
+                setUserId("");
+                window.location.href = "/";
               }}
             >
               Log out

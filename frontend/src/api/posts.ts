@@ -1,5 +1,5 @@
 import type { Post, PostDetail, User } from "./models";
-import { apiFetch } from "./client";
+import { apiFetch, extractError } from "./client";
 
 function buildPostQuery(params: {
   offset?: number;
@@ -38,45 +38,50 @@ export async function listPosts(
 ): Promise<Post[]> {
   const search = buildPostQuery(params);
   const res = await apiFetch(`/posts?${search}`, { method: "GET" });
-  if (!res.ok) throw new Error("Failed to fetch posts");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function getPost(id: string): Promise<Post> {
   const res = await apiFetch(`/posts/${id}`, { method: "GET" });
-  if (!res.ok) throw new Error("Post not found");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function createPost(post: {
   content: string;
-  owned_by: string;
+  tags: string[];
   reply_to?: string | null;
+  owned_by?: string; // admin only
 }): Promise<Post> {
   const res = await apiFetch("/posts", {
     method: "POST",
     body: JSON.stringify(post),
   });
-  if (!res.ok) throw new Error((await res.json()).error || "Failed to create post");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function updatePost(
   id: string,
-  post: { content: string; reply_to?: string | null },
+  post: {
+    content: string;
+    tags?: string[];
+    reply_to?: string | null;
+  }
 ): Promise<Post> {
   const res = await apiFetch(`/posts/${id}`, {
     method: "PUT",
     body: JSON.stringify(post),
   });
-  if (!res.ok) throw new Error((await res.json()).error || "Failed to update post");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function deletePost(id: string): Promise<{ result: string }> {
   const res = await apiFetch(`/posts/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error((await res.json()).error || "Failed to delete post");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function getPostDetail(id: string, focus_user_id?: string): Promise<PostDetail> {
@@ -86,8 +91,8 @@ export async function getPostDetail(id: string, focus_user_id?: string): Promise
     `/posts/${id}/detail${search.toString() ? `?${search.toString()}` : ""}`,
     { method: "GET" },
   );
-  if (!res.ok) throw new Error("Post detail not found");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function listPostsDetail(
@@ -105,8 +110,8 @@ export async function listPostsDetail(
   const search = buildPostQuery(params);
   if (params.focus_user_id) search.append("focus_user_id", params.focus_user_id);
   const res = await apiFetch(`/posts/detail?${search}`, { method: "GET" });
-  if (!res.ok) throw new Error("Failed to fetch posts detail");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function listPostsByFolloweesDetail(
@@ -126,8 +131,8 @@ export async function listPostsByFolloweesDetail(
   if (params.include_self !== undefined) search.append("include_self", String(params.include_self));
 
   const res = await apiFetch(`/posts/by-followees/detail?${search}`, { method: "GET" });
-  if (!res.ok) throw new Error("Failed to fetch posts by followees");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function listPostsLikedByUserDetail(
@@ -140,20 +145,20 @@ export async function listPostsLikedByUserDetail(
   if (params.order) search.append("order", params.order);
 
   const res = await apiFetch(`/posts/liked/detail?${search}`, { method: "GET" });
-  if (!res.ok) throw new Error("Failed to fetch liked posts");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function addLike(post_id: string): Promise<{ result: string }> {
   const res = await apiFetch(`/posts/${post_id}/like`, { method: "POST" });
-  if (!res.ok) throw new Error((await res.json()).error || "Failed to like post");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function removeLike(post_id: string): Promise<{ result: string }> {
   const res = await apiFetch(`/posts/${post_id}/like`, { method: "DELETE" });
-  if (!res.ok) throw new Error((await res.json()).error || "Failed to unlike post");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function listLikers(
@@ -166,8 +171,8 @@ export async function listLikers(
   if (params.order) search.append("order", params.order);
 
   const res = await apiFetch(`/posts/${post_id}/likers?${search}`, { method: "GET" });
-  if (!res.ok) throw new Error("Failed to fetch post likers");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function countPosts(
@@ -175,6 +180,6 @@ export async function countPosts(
 ): Promise<number> {
   const search = buildPostQuery(params);
   const res = await apiFetch(`/posts/count?${search}`, { method: "GET" });
-  if (!res.ok) throw new Error("Failed to fetch post count");
+  if (!res.ok) throw new Error(await extractError(res));
   return (await res.json()).count;
 }

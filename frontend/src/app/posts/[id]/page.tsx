@@ -44,9 +44,7 @@ export default function PostDetailPage({ params }: Props) {
       canceled = true;
     };
   }, [id, ready]);
-
-  if (!ready) return null; // 認証が終わるまで何も描画しない
-
+  if (!ready) return null;
   if (loading) {
     return <div className="text-center mt-10">Loading…</div>;
   }
@@ -56,7 +54,6 @@ export default function PostDetailPage({ params }: Props) {
   if (!post) {
     return <div className="text-center mt-10 text-gray-500">No post found.</div>;
   }
-
   return (
     <main className="max-w-xl mx-auto mt-10 p-6 bg-white shadow rounded">
       <h1 className="text-2xl font-bold mb-4">Post Detail</h1>

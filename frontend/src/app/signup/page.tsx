@@ -98,7 +98,12 @@ export default function SignupPage() {
           <div className="mb-6">Your account has been created. Please log in.</div>
           <button
             className="bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700"
-            onClick={() => router.push("/login")}
+            onClick={() => {
+              if (typeof window !== "undefined") {
+                localStorage.setItem("lastLoginEmail", email);
+              }
+              router.push("/login");
+            }}
           >
             Go to Login
           </button>

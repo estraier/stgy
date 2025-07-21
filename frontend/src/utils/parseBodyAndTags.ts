@@ -1,4 +1,4 @@
-export function parseBodyAndTags(body: string): { bodyLines: string[]; tags: string[] } {
+export function parseBodyAndTags(body: string): { content: string; tags: string[] } {
   const lines = body.split(/\r?\n/);
   const forward_lines: string[] = [];
   const forward_tag_lines: string[] = [];

@@ -1,5 +1,5 @@
 import type { User } from "./models";
-import { apiFetch } from "./client";
+import { apiFetch, extractError } from "./client";
 
 export async function listUsers(
   params: {
@@ -18,14 +18,14 @@ export async function listUsers(
   if (params.nickname) search.append("nickname", params.nickname);
 
   const res = await apiFetch(`/users?${search}`, { method: "GET" });
-  if (!res.ok) throw new Error("Failed to fetch users");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function getUser(id: string): Promise<User> {
   const res = await apiFetch(`/users/${id}`, { method: "GET" });
-  if (!res.ok) throw new Error("User not found");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function createUser(
@@ -35,8 +35,8 @@ export async function createUser(
     method: "POST",
     body: JSON.stringify(user),
   });
-  if (!res.ok) throw new Error((await res.json()).error || "Failed to create user");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function updateUser(
@@ -47,14 +47,14 @@ export async function updateUser(
     method: "PUT",
     body: JSON.stringify(user),
   });
-  if (!res.ok) throw new Error((await res.json()).error || "Failed to update user");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function deleteUser(id: string): Promise<{ result: string }> {
   const res = await apiFetch(`/users/${id}`, { method: "DELETE" });
-  if (!res.ok) throw new Error((await res.json()).error || "Failed to delete user");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function updateUserPassword(
@@ -65,36 +65,36 @@ export async function updateUserPassword(
     method: "PUT",
     body: JSON.stringify({ password }),
   });
-  if (!res.ok) throw new Error((await res.json()).error || "Failed to update password");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function addFollower(id: string): Promise<{ result: string }> {
   const res = await apiFetch(`/users/${id}/follow`, { method: "POST" });
-  if (!res.ok) throw new Error((await res.json()).error || "Failed to follow user");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function removeFollower(id: string): Promise<{ result: string }> {
   const res = await apiFetch(`/users/${id}/follow`, { method: "DELETE" });
-  if (!res.ok) throw new Error((await res.json()).error || "Failed to unfollow user");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function listFollowees(id: string, offset = 0, limit = 100): Promise<User[]> {
   const res = await apiFetch(`/users/${id}/followees?offset=${offset}&limit=${limit}`, {
     method: "GET",
   });
-  if (!res.ok) throw new Error("Failed to fetch followees");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function listFollowers(id: string, offset = 0, limit = 100): Promise<User[]> {
   const res = await apiFetch(`/users/${id}/followers?offset=${offset}&limit=${limit}`, {
     method: "GET",
   });
-  if (!res.ok) throw new Error("Failed to fetch followers");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function countUsers(
@@ -105,6 +105,6 @@ export async function countUsers(
   if (params.query) search.append("query", params.query);
 
   const res = await apiFetch(`/users/count?${search}`, { method: "GET" });
-  if (!res.ok) throw new Error("Failed to fetch user count");
+  if (!res.ok) throw new Error(await extractError(res));
   return (await res.json()).count;
 }

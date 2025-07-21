@@ -18,3 +18,15 @@ export async function apiFetch(path: string, options: ApiFetchOptions = {}) {
     headers,
   });
 }
+
+export async function extractError(res: Response): Promise<string> {
+  try {
+    const data = await res.json();
+    if (data && typeof data.error === "string") {
+      return data.error;
+    }
+    return JSON.stringify(data);
+  } catch (e) {
+    return res.statusText || "Unknown error";
+  }
+}

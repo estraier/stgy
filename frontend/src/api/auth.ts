@@ -1,10 +1,10 @@
 import type { SessionInfo } from "./models";
-import { apiFetch } from "./client";
+import { apiFetch, extractError } from "./client";
 
 export async function getSessionInfo(): Promise<SessionInfo> {
   const res = await apiFetch("/auth", { method: "GET" });
-  if (!res.ok) throw new Error("Not logged in");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function login(
@@ -15,12 +15,12 @@ export async function login(
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
-  if (!res.ok) throw new Error((await res.json()).error || "Login failed.");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function logout(): Promise<{ result: string }> {
   const res = await apiFetch("/auth", { method: "DELETE" });
-  if (!res.ok) throw new Error("Logout failed");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }

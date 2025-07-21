@@ -1,12 +1,12 @@
-import { apiFetch } from "./client";
+import { apiFetch, extractError } from "./client";
 
 export async function startSignup(email: string, password: string): Promise<{ signup_id: string }> {
   const res = await apiFetch("/signup/start", {
     method: "POST",
     body: JSON.stringify({ email, password }),
   });
-  if (!res.ok) throw new Error((await res.json()).error || "Failed to send confirmation code.");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
 
 export async function verifySignup(
@@ -17,6 +17,6 @@ export async function verifySignup(
     method: "POST",
     body: JSON.stringify({ signup_id, verification_code }),
   });
-  if (!res.ok) throw new Error((await res.json()).error || "Verification failed.");
-  return await res.json();
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }
