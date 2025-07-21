@@ -44,14 +44,17 @@ class MockPgClient {
     }
     if (sql.startsWith("DELETE FROM post_tags WHERE post_id = $1")) {
       const post_id = params![0];
-      this.tags = this.tags.filter(t => t.post_id !== post_id);
+      this.tags = this.tags.filter((t) => t.post_id !== post_id);
       return { rowCount: 1 };
     }
     if (sql.startsWith("UPDATE posts SET")) {
       const id = params![params!.length - 1];
       const post = this.data.find((p) => p.id === id);
       if (!post) return { rows: [] };
-      const columns = sql.match(/SET (.+) WHERE/)![1].split(",").map((s) => s.trim());
+      const columns = sql
+        .match(/SET (.+) WHERE/)![1]
+        .split(",")
+        .map((s) => s.trim());
       let idx = 0;
       for (const col of columns) {
         const key = col.split(" =")[0] as keyof Post;
@@ -59,7 +62,9 @@ class MockPgClient {
       }
       return { rows: [post] };
     }
-    if (sql.startsWith("SELECT id, content, owned_by, reply_to, created_at FROM posts WHERE id =")) {
+    if (
+      sql.startsWith("SELECT id, content, owned_by, reply_to, created_at FROM posts WHERE id =")
+    ) {
       const id = params![0];
       const post = this.data.find((p) => p.id === id);
       return { rows: post ? [post] : [] };
@@ -169,7 +174,7 @@ class MockPgClient {
       const idx = this.data.findIndex((p) => p.id === id);
       if (idx >= 0) {
         this.data.splice(idx, 1);
-        this.tags = this.tags.filter(t => t.post_id !== id);
+        this.tags = this.tags.filter((t) => t.post_id !== id);
         return { rowCount: 1 };
       }
       return { rowCount: 0 };
@@ -195,9 +200,7 @@ class MockPgClient {
       const post_id = params![0];
       const offset = params![1] ?? 0;
       const limit = params![2] ?? 100;
-      const likes = this.likes
-        .filter((l) => l.post_id === post_id)
-        .slice(offset, offset + limit);
+      const likes = this.likes.filter((l) => l.post_id === post_id).slice(offset, offset + limit);
       const likedUserIds = likes.map((l) => l.liked_by);
       const result = this.users.filter((u) => likedUserIds.includes(u.id));
       return { rows: result };
@@ -268,7 +271,7 @@ describe("posts service", () => {
     expect(post.owned_by).toBe("user-2");
     expect(post.reply_to).toBe(postSample.id);
     expect(pgClient.data.length).toBeGreaterThanOrEqual(2);
-    expect(pgClient.tags.some(t => t.post_id === post.id && t.name === "hello")).toBe(true);
+    expect(pgClient.tags.some((t) => t.post_id === post.id && t.name === "hello")).toBe(true);
   });
 
   test("getPost", async () => {
@@ -293,7 +296,7 @@ describe("posts service", () => {
     expect(post).not.toBeNull();
     expect(post!.content).toBe("updated content");
     expect(post!.reply_to).toBe("other-post-id");
-    expect(pgClient.tags.some(t => t.post_id === postSample.id && t.name === "foo")).toBe(true);
+    expect(pgClient.tags.some((t) => t.post_id === postSample.id && t.name === "foo")).toBe(true);
   });
 
   test("updatePost: partial", async () => {
@@ -319,7 +322,7 @@ describe("posts service", () => {
     const ok = await postsService.deletePost(postSample.id);
     expect(ok).toBe(true);
     expect(pgClient.data.length).toBe(0);
-    expect(pgClient.tags.some(t => t.post_id === postSample.id)).toBe(false);
+    expect(pgClient.tags.some((t) => t.post_id === postSample.id)).toBe(false);
     const ng = await postsService.deletePost("no-such-id");
     expect(ng).toBe(false);
   });

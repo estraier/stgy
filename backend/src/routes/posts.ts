@@ -125,7 +125,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
         tag,
         reply_to,
       },
-      focus_user_id
+      focus_user_id,
     );
     res.json(posts);
   });
@@ -133,9 +133,10 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   router.get("/by-followees/detail", async (req, res) => {
     const loginUser = await requireLogin(req, res);
     if (!loginUser) return;
-    const user_id = typeof req.query.user_id === "string" && req.query.user_id.trim() !== ""
-      ? req.query.user_id.trim()
-      : null;
+    const user_id =
+      typeof req.query.user_id === "string" && req.query.user_id.trim() !== ""
+        ? req.query.user_id.trim()
+        : null;
     if (!user_id) {
       return res.status(400).json({ error: "user_id is required" });
     }
@@ -144,8 +145,8 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
     const include_self =
       typeof req.query.include_self === "string"
-      ? req.query.include_self === "true" || req.query.include_self === "1"
-      : false;
+        ? req.query.include_self === "true" || req.query.include_self === "1"
+        : false;
     const result = await postsService.listPostsByFolloweesDetail({
       user_id,
       offset,
@@ -159,9 +160,10 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   router.get("/liked/detail", async (req, res) => {
     const loginUser = await requireLogin(req, res);
     if (!loginUser) return;
-    const user_id = typeof req.query.user_id === "string" && req.query.user_id.trim() !== ""
-      ? req.query.user_id.trim()
-      : null;
+    const user_id =
+      typeof req.query.user_id === "string" && req.query.user_id.trim() !== ""
+        ? req.query.user_id.trim()
+        : null;
     if (!user_id) {
       return res.status(400).json({ error: "user_id is required" });
     }

@@ -77,19 +77,19 @@ export class PostsService {
       JOIN users u ON p.owned_by = u.id
       WHERE p.id = $1
       `,
-      [id]
+      [id],
     );
     if (res.rows.length === 0) return null;
     const detail: PostDetail = res.rows[0];
     if (focus_user_id) {
       const likeRes = await this.pgClient.query(
         "SELECT 1 FROM post_likes WHERE post_id = $1 AND liked_by = $2 LIMIT 1",
-        [id, focus_user_id]
+        [id, focus_user_id],
       );
       detail.is_liked_by_focus_user = likeRes.rows.length > 0;
       const replyRes = await this.pgClient.query(
         "SELECT 1 FROM posts WHERE reply_to = $1 AND owned_by = $2 LIMIT 1",
-        [id, focus_user_id]
+        [id, focus_user_id],
       );
       detail.is_replied_by_focus_user = replyRes.rows.length > 0;
     }
@@ -192,12 +192,12 @@ export class PostsService {
     const postIds = details.map((p) => p.id);
     const likeRes = await this.pgClient.query(
       `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
-      [postIds, focus_user_id]
+      [postIds, focus_user_id],
     );
     const likedPostIds = new Set(likeRes.rows.map((r) => r.post_id));
     const replyRes = await this.pgClient.query(
       `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
-      [postIds, focus_user_id]
+      [postIds, focus_user_id],
     );
     const repliedPostIds = new Set(replyRes.rows.map((r) => r.reply_to));
     for (const d of details) {
@@ -210,7 +210,7 @@ export class PostsService {
   async createPost(input: CreatePostInput): Promise<Post> {
     const client = this.pgClient;
     const id = uuidv4();
-    await client.query('BEGIN');
+    await client.query("BEGIN");
     try {
       const res = await client.query(
         `INSERT INTO posts (id, content, owned_by, reply_to, created_at)
@@ -221,20 +221,20 @@ export class PostsService {
       if (input.tags && input.tags.length > 0) {
         await client.query(
           `INSERT INTO post_tags (post_id, name) VALUES ${input.tags.map((_, i) => `($1, $${i + 2})`).join(", ")}`,
-          [id, ...input.tags]
+          [id, ...input.tags],
         );
       }
-      await client.query('COMMIT');
+      await client.query("COMMIT");
       return res.rows[0];
     } catch (e) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw e;
     }
   }
 
   async updatePost(input: UpdatePostInput): Promise<Post | null> {
     const client = this.pgClient;
-    await client.query('BEGIN');
+    await client.query("BEGIN");
     try {
       const columns: string[] = [];
       const values: unknown[] = [];
@@ -253,21 +253,18 @@ export class PostsService {
         await client.query(sql, values);
       }
       if (input.tags !== undefined) {
-        await client.query(
-          `DELETE FROM post_tags WHERE post_id = $1`,
-          [input.id]
-        );
+        await client.query(`DELETE FROM post_tags WHERE post_id = $1`, [input.id]);
         if (input.tags.length > 0) {
           await client.query(
             `INSERT INTO post_tags (post_id, name) VALUES ${input.tags.map((_, i) => `($1, $${i + 2})`).join(", ")}`,
-            [input.id, ...input.tags]
+            [input.id, ...input.tags],
           );
         }
       }
-      await client.query('COMMIT');
+      await client.query("COMMIT");
       return this.getPost(input.id);
     } catch (e) {
-      await client.query('ROLLBACK');
+      await client.query("ROLLBACK");
       throw e;
     }
   }
