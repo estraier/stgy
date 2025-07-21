@@ -100,14 +100,21 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       typeof req.query.tag === "string" && req.query.tag.trim() !== ""
         ? req.query.tag.trim()
         : undefined;
-    const posts = await postsService.listPostsDetail({
-      offset,
-      limit,
-      order,
-      query,
-      owned_by,
-      tag,
-    });
+    const focus_user_id =
+      typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
+        ? req.query.focus_user_id.trim()
+        : undefined;
+    const posts = await postsService.listPostsDetail(
+      {
+        offset,
+        limit,
+        order,
+        query,
+        owned_by,
+        tag,
+      },
+      focus_user_id
+    );
     res.json(posts);
   });
 
@@ -161,7 +168,11 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   router.get("/:id/detail", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    const post = await postsService.getPostDetail(req.params.id);
+    const focus_user_id =
+      typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
+        ? req.query.focus_user_id.trim()
+        : undefined;
+    const post = await postsService.getPostDetail(req.params.id, focus_user_id);
     if (!post) return res.status(404).json({ error: "not found" });
     res.json(post);
   });

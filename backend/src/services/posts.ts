@@ -58,7 +58,7 @@ export class PostsService {
     return res.rows[0] || null;
   }
 
-  async getPostDetail(id: string): Promise<PostDetail | null> {
+  async getPostDetail(id: string, focus_user_id?: string): Promise<PostDetail | null> {
     const res = await this.pgClient.query(
       `
       SELECT
@@ -77,10 +77,23 @@ export class PostsService {
       JOIN users u ON p.owned_by = u.id
       WHERE p.id = $1
       `,
-      [id],
+      [id]
     );
     if (res.rows.length === 0) return null;
-    return res.rows[0];
+    const detail: PostDetail = res.rows[0];
+    if (focus_user_id) {
+      const likeRes = await this.pgClient.query(
+        "SELECT 1 FROM post_likes WHERE post_id = $1 AND liked_by = $2 LIMIT 1",
+        [id, focus_user_id]
+      );
+      detail.is_liked_by_focus_user = likeRes.rows.length > 0;
+      const replyRes = await this.pgClient.query(
+        "SELECT 1 FROM posts WHERE reply_to = $1 AND owned_by = $2 LIMIT 1",
+        [id, focus_user_id]
+      );
+      detail.is_replied_by_focus_user = replyRes.rows.length > 0;
+    }
+    return detail;
   }
 
   async listPosts(options?: ListPostsInput): Promise<Post[]> {
@@ -124,7 +137,7 @@ export class PostsService {
     return res.rows;
   }
 
-  async listPostsDetail(options?: ListPostsInput): Promise<PostDetail[]> {
+  async listPostsDetail(options?: ListPostsInput, focus_user_id?: string): Promise<PostDetail[]> {
     const offset = options?.offset ?? 0;
     const limit = options?.limit ?? 100;
     const order = (options?.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
@@ -174,7 +187,24 @@ export class PostsService {
     sql += ` ORDER BY p.created_at ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
     const res = await this.pgClient.query(sql, params);
-    return res.rows;
+    const details: PostDetail[] = res.rows;
+    if (!focus_user_id || details.length === 0) return details;
+    const postIds = details.map((p) => p.id);
+    const likeRes = await this.pgClient.query(
+      `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
+      [postIds, focus_user_id]
+    );
+    const likedPostIds = new Set(likeRes.rows.map((r) => r.post_id));
+    const replyRes = await this.pgClient.query(
+      `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
+      [postIds, focus_user_id]
+    );
+    const repliedPostIds = new Set(replyRes.rows.map((r) => r.reply_to));
+    for (const d of details) {
+      d.is_liked_by_focus_user = likedPostIds.has(d.id);
+      d.is_replied_by_focus_user = repliedPostIds.has(d.id);
+    }
+    return details;
   }
 
   async createPost(input: CreatePostInput): Promise<Post> {

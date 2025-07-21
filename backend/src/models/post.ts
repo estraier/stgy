@@ -16,6 +16,8 @@ export type PostDetail = {
   reply_count: number;
   like_count: number;
   tags: string[];
+  is_liked_by_focus_user?: boolean;
+  is_replied_by_focus_user?: boolean;
 };
 
 export type PostFilter = {

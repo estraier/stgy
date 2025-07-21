@@ -21,7 +21,6 @@ components:
       type: object
       properties:
         error: { type: string }
-        code: { type: string, nullable: true }
       required: [error]
 
     User:
@@ -50,22 +49,23 @@ components:
       required: [id, content, owned_by, reply_to, created_at]
 
     PostDetail:
-      type: object
-      properties:
-        id: { type: string }
-        content: { type: string }
-        owned_by: { type: string }
-        reply_to:
-          type: string
-          nullable: true
-        created_at: { type: string, format: date-time }
-        owner_nickname: { type: string }
-        reply_count: { type: integer }
-        like_count: { type: integer }
-        tags:
-          type: array
-          items: { type: string }
-      required: [id, content, owned_by, reply_to, created_at, owner_nickname, reply_count, like_count, tags]
+      allOf:
+        - $ref: "#/components/schemas/Post"
+        - type: object
+          properties:
+            owner_nickname: { type: string }
+            reply_count: { type: integer }
+            like_count: { type: integer }
+            tags:
+              type: array
+              items: { type: string }
+            is_liked_by_focus_user:
+              type: boolean
+              nullable: true
+            is_replied_by_focus_user:
+              type: boolean
+              nullable: true
+          required: [owner_nickname, reply_count, like_count, tags]
 
   responses:
     Error400:
@@ -94,7 +94,6 @@ components:
             $ref: "#/components/schemas/ErrorResponse"
 
 paths:
-
   /auth:
     post:
       summary: Log in
@@ -128,7 +127,7 @@ paths:
         - sessionCookie: []
       responses:
         "200":
-          description: Session valid, returns user info
+          description: Session valid, returns session info
           content:
             application/json:
               schema:
@@ -136,9 +135,8 @@ paths:
                 properties:
                   userId: { type: string }
                   email: { type: string }
-                  nickname: { type: string }
-                  is_admin: { type: boolean }
-                required: [userId, email, nickname, is_admin]
+                  loggedInAt: { type: string }
+                required: [userId, email, loggedInAt]
         "401":
           $ref: "#/components/responses/Error401"
 
@@ -539,7 +537,9 @@ paths:
           schema: { type: string }
         - name: reply_to
           in: query
-          schema: { type: string }
+          schema:
+            type: string
+            nullable: true
       responses:
         "200":
           description: Post count
@@ -579,6 +579,11 @@ paths:
         - name: tag
           in: query
           schema: { type: string }
+        - name: reply_to
+          in: query
+          schema:
+            type: string
+            nullable: true
       responses:
         "200":
           description: Posts list
@@ -645,6 +650,16 @@ paths:
         - name: tag
           in: query
           schema: { type: string }
+        - name: reply_to
+          in: query
+          schema:
+            type: string
+            nullable: true
+        - name: focus_user_id
+          in: query
+          schema:
+            type: string
+            nullable: true
       responses:
         "200":
           description: Posts detail list
@@ -681,7 +696,7 @@ paths:
             default: desc
         - name: include_self
           in: query
-          schema: { type: boolean }
+          schema: { type: boolean, default: false }
       responses:
         "200":
           description: Posts detail list by followees
@@ -742,6 +757,11 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: focus_user_id
+          in: query
+          schema:
+            type: string
+            nullable: true
       responses:
         "200":
           description: Post detail
