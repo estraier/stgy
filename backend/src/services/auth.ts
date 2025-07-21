@@ -1,12 +1,7 @@
 import { Client } from "pg";
 import Redis from "ioredis";
 import crypto from "crypto";
-
-export type SessionInfo = {
-  userId: string;
-  email: string;
-  loggedInAt: string;
-};
+import type { SessionInfo } from "../models/session";
 
 export type LoginResult = { sessionId: string; userId: string };
 
@@ -21,19 +16,21 @@ export class AuthService {
 
   async login(email: string, password: string): Promise<LoginResult> {
     const result = await this.pgClient.query(
-      "SELECT id, email FROM users WHERE email=$1 AND password=md5($2)",
+      "SELECT id, email, nickname FROM users WHERE email=$1 AND password=md5($2)",
       [email, password],
     );
     if (result.rows.length === 0) throw new Error("authentication failed");
-    const { id: userId, email: userEmail } = result.rows[0];
+    const { id, email: user_email, nickname: user_nickname } = result.rows[0];
+    const user_id = id;
     const sessionId = crypto.randomBytes(32).toString("hex");
     const sessionInfo: SessionInfo = {
-      userId,
-      email: userEmail,
-      loggedInAt: new Date().toISOString(),
+      user_id,
+      user_email,
+      user_nickname,
+      logged_in_at: new Date().toISOString(),
     };
     await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", 3600);
-    return { sessionId, userId };
+    return { sessionId, userId: user_id };
   }
 
   async getSessionInfo(sessionId: string): Promise<SessionInfo | null> {
@@ -50,6 +47,13 @@ export class AuthService {
   async logout(sessionId: string): Promise<void> {
     if (sessionId) {
       await this.redis.del(`session:${sessionId}`);
+    }
+  }
+
+  async elongateSession(sessionId: string): Promise<void> {
+    const value = await this.redis.get(`session:${sessionId}`);
+    if (value) {
+      await this.redis.set(`session:${sessionId}`, value, "EX", 3600);
     }
   }
 }

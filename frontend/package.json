@@ -6,13 +6,13 @@
     "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "fmt": "prettier --write .",
     "lint": "eslint .",
+    "fmt": "prettier --write .",
     "ts-archive": "find . -name '*.ts' -print0 | tar -cvf fe-ts-archive.tar --null -T -",
     "clean": "rm -rf node_modules package-lock.json dist out .next .turbo fe-ts-archive.tar"
   },
   "dependencies": {
+    "lucide-react": "^0.525.0",
     "next": "15.4.1",
     "react": "19.1.0",
     "react-dom": "19.1.0",

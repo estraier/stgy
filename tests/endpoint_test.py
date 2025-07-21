@@ -27,7 +27,10 @@ def get_session(session_id):
   res.raise_for_status()
   data = res.json()
   print(f"[session] {data}")
-  assert data["email"] == ADMIN_EMAIL
+  assert data["user_email"] == ADMIN_EMAIL
+  assert "user_nickname" in data
+  assert "user_id" in data
+  assert "logged_in_at" in data
   return data
 
 def logout(session_id):

@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { getSessionInfo, logout } from "@/api/auth";
 import { useRouter, usePathname } from "next/navigation";
 import { FiSettings } from "react-icons/fi";
+import type { SessionInfo } from "@/api/model";
 
 export default function Navbar() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
@@ -15,10 +16,10 @@ export default function Navbar() {
   useEffect(() => {
     let canceled = false;
     getSessionInfo()
-      .then((user) => {
+      .then((user: SessionInfo) => {
         if (!canceled) {
           setLoggedIn(true);
-          setNickname(user.nickname || "");
+          setNickname(user.user_nickname || "");
           setUserId(user.user_id || "");
         }
       })

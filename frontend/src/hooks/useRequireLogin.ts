@@ -3,10 +3,11 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSessionInfo } from "@/api/auth";
+import type { SessionInfo } from "@/api/model";
 
 type RequireLoginStatus =
   | { state: "loading" }
-  | { state: "authenticated"; user: { userId: string; email: string; loggedInAt: string } }
+  | { state: "authenticated"; user: SessionInfo }
   | { state: "unauthenticated" };
 
 export function useRequireLogin() {

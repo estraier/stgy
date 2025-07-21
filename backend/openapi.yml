@@ -133,10 +133,11 @@ paths:
               schema:
                 type: object
                 properties:
-                  userId: { type: string }
-                  email: { type: string }
-                  loggedInAt: { type: string }
-                required: [userId, email, loggedInAt]
+                  user_id: { type: string }
+                  user_email: { type: string }
+                  user_nickname: { type: string }
+                  logged_in_at: { type: string }
+                required: [user_id, user_email, user_nickname, logged_in_at]
         "401":
           $ref: "#/components/responses/Error401"
 
