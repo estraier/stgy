@@ -213,7 +213,7 @@ export class PostsService {
       `INSERT INTO posts (id, content, owned_by, reply_to, created_at)
        VALUES ($1, $2, $3, $4, now())
        RETURNING id, content, owned_by, reply_to, created_at`,
-      [id, input.content, input.owned_by, input.reply_to ?? null],
+      [id, input.content, input.owned_by, input.reply_to],
     );
     return res.rows[0];
   }

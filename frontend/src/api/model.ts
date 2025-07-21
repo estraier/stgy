@@ -1,3 +1,9 @@
+export type SessionInfo = {
+  userId: string;
+  email: string;
+  loggedInAt: string;
+};
+
 export type User = {
   id: string;
   email: string;

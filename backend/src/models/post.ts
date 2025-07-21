@@ -40,7 +40,7 @@ export type ListPostsInput = PostFilter & PostPagination;
 export type CreatePostInput = {
   content: string;
   owned_by: string;
-  reply_to?: string | null;
+  reply_to: string | null;
 };
 
 export type UpdatePostInput = {

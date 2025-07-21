@@ -539,7 +539,10 @@ paths:
           in: query
           schema:
             type: string
-            nullable: true
+          description: |
+            If omitted: include all posts.
+            If empty string (""): only posts with no reply_to (not a reply).
+            Otherwise: only posts with reply_to equal to the given value.
       responses:
         "200":
           description: Post count
@@ -583,7 +586,10 @@ paths:
           in: query
           schema:
             type: string
-            nullable: true
+          description: |
+            If omitted: include all posts.
+            If empty string (""): only posts with no reply_to (not a reply).
+            Otherwise: only posts with reply_to equal to the given value.
       responses:
         "200":
           description: Posts list
@@ -654,12 +660,15 @@ paths:
           in: query
           schema:
             type: string
-            nullable: true
+          description: |
+            If omitted: include all posts.
+            If empty string (""): only posts with no reply_to (not a reply).
+            Otherwise: only posts with reply_to equal to the given value.
         - name: focus_user_id
           in: query
           schema:
             type: string
-            nullable: true
+          description: (Optional) Used for personalization (e.g., is_liked_by_focus_user)
       responses:
         "200":
           description: Posts detail list
@@ -761,7 +770,7 @@ paths:
           in: query
           schema:
             type: string
-            nullable: true
+          description: (Optional) Used for personalization (e.g., is_liked_by_focus_user)
       responses:
         "200":
           description: Post detail

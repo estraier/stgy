@@ -1,6 +1,30 @@
 import type { Post, PostDetail, User } from "./models";
 import { apiFetch } from "./client";
 
+function buildPostQuery(params: {
+  offset?: number;
+  limit?: number;
+  order?: "asc" | "desc";
+  query?: string;
+  owned_by?: string;
+  tag?: string;
+  reply_to?: string | null;
+} = {}) {
+  const search = new URLSearchParams();
+  if (params.offset !== undefined) search.append("offset", String(params.offset));
+  if (params.limit !== undefined) search.append("limit", String(params.limit));
+  if (params.order) search.append("order", params.order);
+  if (params.query) search.append("query", params.query);
+  if (params.owned_by) search.append("owned_by", params.owned_by);
+  if (params.tag) search.append("tag", params.tag);
+  if (params.reply_to === null) {
+    search.append("reply_to", "");
+  } else if (params.reply_to !== undefined) {
+    search.append("reply_to", params.reply_to);
+  }
+  return search;
+}
+
 export async function listPosts(
   params: {
     offset?: number;
@@ -9,16 +33,10 @@ export async function listPosts(
     query?: string;
     owned_by?: string;
     tag?: string;
+    reply_to?: string | null;
   } = {},
 ): Promise<Post[]> {
-  const search = new URLSearchParams();
-  if (params.offset !== undefined) search.append("offset", String(params.offset));
-  if (params.limit !== undefined) search.append("limit", String(params.limit));
-  if (params.order) search.append("order", params.order);
-  if (params.query) search.append("query", params.query);
-  if (params.owned_by) search.append("owned_by", params.owned_by);
-  if (params.tag) search.append("tag", params.tag);
-
+  const search = buildPostQuery(params);
   const res = await apiFetch(`/posts?${search}`, { method: "GET" });
   if (!res.ok) throw new Error("Failed to fetch posts");
   return await res.json();
@@ -61,8 +79,13 @@ export async function deletePost(id: string): Promise<{ result: string }> {
   return await res.json();
 }
 
-export async function getPostDetail(id: string): Promise<PostDetail> {
-  const res = await apiFetch(`/posts/${id}/detail`, { method: "GET" });
+export async function getPostDetail(id: string, focus_user_id?: string): Promise<PostDetail> {
+  const search = new URLSearchParams();
+  if (focus_user_id) search.append("focus_user_id", focus_user_id);
+  const res = await apiFetch(
+    `/posts/${id}/detail${search.toString() ? `?${search.toString()}` : ""}`,
+    { method: "GET" },
+  );
   if (!res.ok) throw new Error("Post detail not found");
   return await res.json();
 }
@@ -75,16 +98,12 @@ export async function listPostsDetail(
     query?: string;
     owned_by?: string;
     tag?: string;
+    reply_to?: string | null;
+    focus_user_id?: string;
   } = {},
 ): Promise<PostDetail[]> {
-  const search = new URLSearchParams();
-  if (params.offset !== undefined) search.append("offset", String(params.offset));
-  if (params.limit !== undefined) search.append("limit", String(params.limit));
-  if (params.order) search.append("order", params.order);
-  if (params.query) search.append("query", params.query);
-  if (params.owned_by) search.append("owned_by", params.owned_by);
-  if (params.tag) search.append("tag", params.tag);
-
+  const search = buildPostQuery(params);
+  if (params.focus_user_id) search.append("focus_user_id", params.focus_user_id);
   const res = await apiFetch(`/posts/detail?${search}`, { method: "GET" });
   if (!res.ok) throw new Error("Failed to fetch posts detail");
   return await res.json();
@@ -97,7 +116,7 @@ export async function listPostsByFolloweesDetail(
     limit?: number;
     order?: "asc" | "desc";
     include_self?: boolean;
-  } = { user_id: "" },
+  },
 ): Promise<PostDetail[]> {
   const search = new URLSearchParams();
   if (params.user_id) search.append("user_id", params.user_id);
@@ -112,9 +131,7 @@ export async function listPostsByFolloweesDetail(
 }
 
 export async function listPostsLikedByUserDetail(
-  params: { user_id: string; offset?: number; limit?: number; order?: "asc" | "desc" } = {
-    user_id: "",
-  },
+  params: { user_id: string; offset?: number; limit?: number; order?: "asc" | "desc" },
 ): Promise<PostDetail[]> {
   const search = new URLSearchParams();
   if (params.user_id) search.append("user_id", params.user_id);
@@ -154,14 +171,9 @@ export async function listLikers(
 }
 
 export async function countPosts(
-  params: { query?: string; owned_by?: string; tag?: string; reply_to?: string } = {},
+  params: { query?: string; owned_by?: string; tag?: string; reply_to?: string | null } = {},
 ): Promise<number> {
-  const search = new URLSearchParams();
-  if (params.query) search.append("query", params.query);
-  if (params.owned_by) search.append("owned_by", params.owned_by);
-  if (params.tag) search.append("tag", params.tag);
-  if (params.reply_to) search.append("reply_to", params.reply_to);
-
+  const search = buildPostQuery(params);
   const res = await apiFetch(`/posts/count?${search}`, { method: "GET" });
   if (!res.ok) throw new Error("Failed to fetch post count");
   return (await res.json()).count;

@@ -1,18 +1,16 @@
-import type { User } from "./models";
+import type { SessionInfo } from "./models";
 import { apiFetch } from "./client";
 
-export async function getSessionInfo(): Promise<{
-  userId: string;
-  email: string;
-  nickname: string;
-  is_admin: boolean;
-}> {
+export async function getSessionInfo(): Promise<SessionInfo> {
   const res = await apiFetch("/auth", { method: "GET" });
   if (!res.ok) throw new Error("Not logged in");
   return await res.json();
 }
 
-export async function login(email: string, password: string): Promise<{ session_id: string }> {
+export async function login(
+  email: string,
+  password: string
+): Promise<{ session_id: string }> {
   const res = await apiFetch("/auth", {
     method: "POST",
     body: JSON.stringify({ email, password }),
