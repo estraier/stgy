@@ -25,31 +25,22 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     return user as User;
   }
 
+  function parseReplyToParam(val: any): string | null | undefined {
+    if (val === undefined) return undefined;
+    if (val === null) return null;
+    if (typeof val !== "string") return undefined;
+    if (val.trim() === "") return null;
+    return val;
+  }
+
   router.get("/count", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    const query =
-      typeof req.query.query === "string" && req.query.query.trim() !== ""
-        ? req.query.query.trim()
-        : undefined;
-    const owned_by =
-      typeof req.query.owned_by === "string" && req.query.owned_by.trim() !== ""
-        ? req.query.owned_by.trim()
-        : undefined;
-    const tag =
-      typeof req.query.tag === "string" && req.query.tag.trim() !== ""
-        ? req.query.tag.trim()
-        : undefined;
-    const reply_to =
-      typeof req.query.reply_to === "string" && req.query.reply_to.trim() !== ""
-        ? req.query.reply_to.trim()
-        : undefined;
-    const count = await postsService.countPosts({
-      query,
-      owned_by,
-      tag,
-      reply_to,
-    });
+    const query = typeof req.query.query === "string" && req.query.query.trim() !== "" ? req.query.query.trim() : undefined;
+    const owned_by = typeof req.query.owned_by === "string" && req.query.owned_by.trim() !== "" ? req.query.owned_by.trim() : undefined;
+    const tag = typeof req.query.tag === "string" && req.query.tag.trim() !== "" ? req.query.tag.trim() : undefined;
+    const reply_to = parseReplyToParam(req.query.reply_to);
+    const count = await postsService.countPosts({ query, owned_by, tag, reply_to });
     res.json({ count });
   });
 
@@ -59,26 +50,11 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
-    const query =
-      typeof req.query.query === "string" && req.query.query.trim() !== ""
-        ? req.query.query.trim()
-        : undefined;
-    const owned_by =
-      typeof req.query.owned_by === "string" && req.query.owned_by.trim() !== ""
-        ? req.query.owned_by.trim()
-        : undefined;
-    const tag =
-      typeof req.query.tag === "string" && req.query.tag.trim() !== ""
-        ? req.query.tag.trim()
-        : undefined;
-    const posts = await postsService.listPosts({
-      offset,
-      limit,
-      order,
-      query,
-      owned_by,
-      tag,
-    });
+    const query = typeof req.query.query === "string" && req.query.query.trim() !== "" ? req.query.query.trim() : undefined;
+    const owned_by = typeof req.query.owned_by === "string" && req.query.owned_by.trim() !== "" ? req.query.owned_by.trim() : undefined;
+    const tag = typeof req.query.tag === "string" && req.query.tag.trim() !== "" ? req.query.tag.trim() : undefined;
+    const reply_to = parseReplyToParam(req.query.reply_to);
+    const posts = await postsService.listPosts({ offset, limit, order, query, owned_by, tag, reply_to });
     res.json(posts);
   });
 
@@ -88,90 +64,48 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
-    const query =
-      typeof req.query.query === "string" && req.query.query.trim() !== ""
-        ? req.query.query.trim()
-        : undefined;
-    const owned_by =
-      typeof req.query.owned_by === "string" && req.query.owned_by.trim() !== ""
-        ? req.query.owned_by.trim()
-        : undefined;
-    const tag =
-      typeof req.query.tag === "string" && req.query.tag.trim() !== ""
-        ? req.query.tag.trim()
-        : undefined;
-    const focus_user_id =
-      typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
-        ? req.query.focus_user_id.trim()
-        : undefined;
-    const posts = await postsService.listPostsDetail(
-      {
-        offset,
-        limit,
-        order,
-        query,
-        owned_by,
-        tag,
-      },
-      focus_user_id
-    );
+    const query = typeof req.query.query === "string" && req.query.query.trim() !== "" ? req.query.query.trim() : undefined;
+    const owned_by = typeof req.query.owned_by === "string" && req.query.owned_by.trim() !== "" ? req.query.owned_by.trim() : undefined;
+    const tag = typeof req.query.tag === "string" && req.query.tag.trim() !== "" ? req.query.tag.trim() : undefined;
+    const reply_to = parseReplyToParam(req.query.reply_to);
+    const focus_user_id = typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== "" ? req.query.focus_user_id.trim() : undefined;
+    const posts = await postsService.listPostsDetail({ offset, limit, order, query, owned_by, tag, reply_to }, focus_user_id);
     res.json(posts);
   });
 
   router.get("/by-followees/detail", async (req, res) => {
     const loginUser = await requireLogin(req, res);
     if (!loginUser) return;
-    const user_id = typeof req.query.user_id === "string" && req.query.user_id.trim() !== ""
-      ? req.query.user_id.trim()
-      : null;
+    const user_id = typeof req.query.user_id === "string" && req.query.user_id.trim() !== "" ? req.query.user_id.trim() : null;
     if (!user_id) {
       return res.status(400).json({ error: "user_id is required" });
     }
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
-    const include_self =
-      typeof req.query.include_self === "string"
-      ? req.query.include_self === "true" || req.query.include_self === "1"
-      : false;
-    const result = await postsService.listPostsByFolloweesDetail({
-      user_id,
-      offset,
-      limit,
-      order,
-      include_self,
-    });
+    const include_self = typeof req.query.include_self === "string" ? req.query.include_self === "true" || req.query.include_self === "1" : false;
+    const result = await postsService.listPostsByFolloweesDetail({ user_id, offset, limit, order, include_self });
     res.json(result);
   });
 
   router.get("/liked/detail", async (req, res) => {
     const loginUser = await requireLogin(req, res);
     if (!loginUser) return;
-    const user_id = typeof req.query.user_id === "string" && req.query.user_id.trim() !== ""
-      ? req.query.user_id.trim()
-      : null;
+    const user_id = typeof req.query.user_id === "string" && req.query.user_id.trim() !== "" ? req.query.user_id.trim() : null;
     if (!user_id) {
       return res.status(400).json({ error: "user_id is required" });
     }
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
-    const result = await postsService.listPostsLikedByUserDetail({
-      user_id,
-      offset,
-      limit,
-      order,
-    });
+    const result = await postsService.listPostsLikedByUserDetail({ user_id, offset, limit, order });
     res.json(result);
   });
 
   router.get("/:id/detail", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    const focus_user_id =
-      typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
-        ? req.query.focus_user_id.trim()
-        : undefined;
+    const focus_user_id = typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== "" ? req.query.focus_user_id.trim() : undefined;
     const post = await postsService.getPostDetail(req.params.id, focus_user_id);
     if (!post) return res.status(404).json({ error: "not found" });
     res.json(post);
@@ -193,12 +127,13 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       if (user.is_admin && req.body.owned_by && typeof req.body.owned_by === "string") {
         owned_by = req.body.owned_by;
       }
+      let reply_to = req.body.reply_to;
+      if (reply_to === undefined) reply_to = null;
       const input: CreatePostInput = {
         content: req.body.content,
         owned_by,
-        reply_to: req.body.reply_to !== undefined ? req.body.reply_to : null,
+        reply_to,
       };
-      if (input.reply_to === undefined) input.reply_to = null;
       const created = await postsService.createPost(input);
       res.status(201).json(created);
     } catch (e) {
@@ -215,12 +150,13 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       return res.status(403).json({ error: "forbidden" });
     }
     try {
+      let reply_to = req.body.reply_to;
+      if (reply_to === undefined) reply_to = null;
       const input: UpdatePostInput = {
         id: req.params.id,
         content: req.body.content,
-        reply_to: req.body.reply_to !== undefined ? req.body.reply_to : null,
+        reply_to,
       };
-      if (input.reply_to === undefined) input.reply_to = null;
       const updated = await postsService.updatePost(input);
       if (!updated) return res.status(404).json({ error: "not found" });
       res.json(updated);
