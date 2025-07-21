@@ -205,10 +205,14 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       if (user.is_admin && req.body.owned_by && typeof req.body.owned_by === "string") {
         owned_by = req.body.owned_by;
       }
+      if (!Array.isArray(req.body.tags)) {
+        return res.status(400).json({ error: "tags is required and must be array" });
+      }
       const input: CreatePostInput = {
         content: req.body.content,
         owned_by,
         reply_to: req.body.reply_to ?? null,
+        tags: req.body.tags,
       };
       const created = await postsService.createPost(input);
       res.status(201).json(created);
@@ -226,10 +230,18 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       return res.status(403).json({ error: "forbidden" });
     }
     try {
+      let tags;
+      if ("tags" in req.body) {
+        if (!Array.isArray(req.body.tags)) {
+          return res.status(400).json({ error: "tags must be array if specified" });
+        }
+        tags = req.body.tags;
+      }
       const input: UpdatePostInput = {
         id: req.params.id,
         content: req.body.content,
         reply_to: req.body.reply_to,
+        tags,
       };
       const updated = await postsService.updatePost(input);
       if (!updated) return res.status(404).json({ error: "not found" });

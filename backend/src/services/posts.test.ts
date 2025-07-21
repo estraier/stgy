@@ -12,15 +12,61 @@ import {
 } from "../models/post";
 import { User } from "../models/user";
 
-type PostRow = Post;
-
 class MockPgClient {
-  data: PostRow[] = [];
+  data: Post[] = [];
   tags: { post_id: string; name: string }[] = [];
   likes: { post_id: string; liked_by: string }[] = [];
   follows: { follower_id: string; followee_id: string }[] = [];
+  users: User[] = [];
+  txCount = 0;
 
-  query(sql: string, params?: any[]) {
+  async query(sql: string, params?: any[]) {
+    if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+      this.txCount++;
+      return { rows: [] };
+    }
+    if (sql.startsWith("INSERT INTO posts")) {
+      const newPost: Post = {
+        id: params![0],
+        content: params![1],
+        owned_by: params![2],
+        reply_to: params![3] ?? null,
+        created_at: new Date().toISOString(),
+      };
+      this.data.push(newPost);
+      return { rows: [newPost] };
+    }
+    if (sql.startsWith("INSERT INTO post_tags")) {
+      for (let i = 1; i < params!.length; i++) {
+        this.tags.push({ post_id: params![0], name: params![i] });
+      }
+      return { rowCount: params!.length - 1 };
+    }
+    if (sql.startsWith("DELETE FROM post_tags WHERE post_id = $1")) {
+      const post_id = params![0];
+      this.tags = this.tags.filter(t => t.post_id !== post_id);
+      return { rowCount: 1 };
+    }
+    if (sql.startsWith("UPDATE posts SET")) {
+      const id = params![params!.length - 1];
+      const post = this.data.find((p) => p.id === id);
+      if (!post) return { rows: [] };
+      const columns = sql.match(/SET (.+) WHERE/)![1].split(",").map((s) => s.trim());
+      let idx = 0;
+      for (const col of columns) {
+        const key = col.split(" =")[0] as keyof Post;
+        (post as any)[key] = params![idx++];
+      }
+      return { rows: [post] };
+    }
+    if (sql.startsWith("SELECT id, content, owned_by, reply_to, created_at FROM posts WHERE id =")) {
+      const id = params![0];
+      const post = this.data.find((p) => p.id === id);
+      return { rows: post ? [post] : [] };
+    }
+    if (sql.startsWith("SELECT COUNT(*) FROM posts")) {
+      return { rows: [{ count: this.data.length.toString() }] };
+    }
     if (
       sql.includes("WHERE p.owned_by IN") &&
       sql.includes("FROM posts p") &&
@@ -58,7 +104,6 @@ class MockPgClient {
       }));
       return { rows: rows.slice(offset, offset + limit) };
     }
-
     if (sql.includes("FROM post_likes pl") && sql.includes("JOIN posts p ON pl.post_id = p.id")) {
       const user_id = params![0];
       const offset = params![1] ?? 0;
@@ -86,11 +131,6 @@ class MockPgClient {
       }));
       return { rows: rows.slice(offset, offset + limit) };
     }
-
-    if (sql.startsWith("SELECT COUNT(*) FROM posts")) {
-      return { rows: [{ count: this.data.length.toString() }] };
-    }
-
     if (sql.includes("FROM posts p") && sql.includes("JOIN users u ON p.owned_by = u.id")) {
       const userList = [
         { id: "user-1", nickname: "Alice" },
@@ -112,25 +152,11 @@ class MockPgClient {
       }));
       return { rows: result };
     }
-
     if (sql.includes("FROM posts p") && !sql.includes("JOIN users u ON p.owned_by = u.id")) {
       const offset = params?.[params.length - 2] ?? 0;
       const limit = params?.[params.length - 1] ?? 100;
       return { rows: this.data.slice(offset, offset + limit) };
     }
-
-    if (sql.startsWith("INSERT INTO posts")) {
-      const newPost: PostRow = {
-        id: params![0],
-        content: params![1],
-        owned_by: params![2],
-        reply_to: params![3] ?? null,
-        created_at: new Date().toISOString(),
-      };
-      this.data.push(newPost);
-      return { rows: [newPost] };
-    }
-
     if (
       sql.startsWith("SELECT id, content, owned_by, reply_to, created_at FROM posts WHERE id =")
     ) {
@@ -138,33 +164,16 @@ class MockPgClient {
       const post = this.data.find((p) => p.id === id);
       return { rows: post ? [post] : [] };
     }
-
-    if (sql.startsWith("UPDATE posts SET")) {
-      const id = params![params!.length - 1];
-      const post = this.data.find((p) => p.id === id);
-      if (!post) return { rows: [] };
-      const columns = sql
-        .match(/SET (.+) WHERE/)![1]
-        .split(",")
-        .map((s) => s.trim());
-      let idx = 0;
-      for (const col of columns) {
-        const key = col.split(" =")[0] as keyof PostRow;
-        (post as any)[key] = params![idx++];
-      }
-      return { rows: [post] };
-    }
-
     if (sql.startsWith("DELETE FROM posts")) {
       const id = params![0];
       const idx = this.data.findIndex((p) => p.id === id);
       if (idx >= 0) {
         this.data.splice(idx, 1);
+        this.tags = this.tags.filter(t => t.post_id !== id);
         return { rowCount: 1 };
       }
       return { rowCount: 0 };
     }
-
     if (sql.startsWith("INSERT INTO post_likes")) {
       const [post_id, liked_by] = params!;
       if (!this.likes.some((l) => l.post_id === post_id && l.liked_by === liked_by)) {
@@ -172,14 +181,27 @@ class MockPgClient {
       }
       return { rowCount: 1 };
     }
-
     if (sql.startsWith("DELETE FROM post_likes")) {
       const [post_id, liked_by] = params!;
       const before = this.likes.length;
       this.likes = this.likes.filter((l) => !(l.post_id === post_id && l.liked_by === liked_by));
       return { rowCount: before !== this.likes.length ? 1 : 0 };
     }
-
+    if (
+      sql.includes("FROM post_likes pl") &&
+      sql.includes("JOIN users u ON pl.liked_by = u.id") &&
+      sql.includes("WHERE pl.post_id = $1")
+    ) {
+      const post_id = params![0];
+      const offset = params![1] ?? 0;
+      const limit = params![2] ?? 100;
+      const likes = this.likes
+        .filter((l) => l.post_id === post_id)
+        .slice(offset, offset + limit);
+      const likedUserIds = likes.map((l) => l.liked_by);
+      const result = this.users.filter((u) => likedUserIds.includes(u.id));
+      return { rows: result };
+    }
     return { rows: [] };
   }
 }
@@ -187,7 +209,7 @@ class MockPgClient {
 describe("posts service", () => {
   let pgClient: MockPgClient;
   let postsService: PostsService;
-  let postSample: PostRow;
+  let postSample: Post;
 
   beforeEach(() => {
     pgClient = new MockPgClient();
@@ -239,12 +261,14 @@ describe("posts service", () => {
       content: "new post content",
       owned_by: "user-2",
       reply_to: postSample.id,
+      tags: ["hello", "world"],
     };
     const post = await postsService.createPost(input);
     expect(post.content).toBe("new post content");
     expect(post.owned_by).toBe("user-2");
     expect(post.reply_to).toBe(postSample.id);
     expect(pgClient.data.length).toBeGreaterThanOrEqual(2);
+    expect(pgClient.tags.some(t => t.post_id === post.id && t.name === "hello")).toBe(true);
   });
 
   test("getPost", async () => {
@@ -263,11 +287,13 @@ describe("posts service", () => {
       id: postSample.id,
       content: "updated content",
       reply_to: "other-post-id",
+      tags: ["foo", "bar"],
     };
     const post = await postsService.updatePost(input);
     expect(post).not.toBeNull();
     expect(post!.content).toBe("updated content");
     expect(post!.reply_to).toBe("other-post-id");
+    expect(pgClient.tags.some(t => t.post_id === postSample.id && t.name === "foo")).toBe(true);
   });
 
   test("updatePost: partial", async () => {
@@ -293,6 +319,7 @@ describe("posts service", () => {
     const ok = await postsService.deletePost(postSample.id);
     expect(ok).toBe(true);
     expect(pgClient.data.length).toBe(0);
+    expect(pgClient.tags.some(t => t.post_id === postSample.id)).toBe(false);
     const ng = await postsService.deletePost("no-such-id");
     expect(ng).toBe(false);
   });
@@ -336,7 +363,7 @@ describe("listPostsByFolloweesDetail", () => {
   let pgClient: MockPgClient;
   let postsService: PostsService;
   let alice: string, bob: string, carol: string;
-  let postAlice: PostRow, postBob: PostRow, postCarol: PostRow;
+  let postAlice: Post, postBob: Post, postCarol: Post;
 
   beforeEach(() => {
     pgClient = new MockPgClient();
@@ -404,7 +431,7 @@ describe("listPostsLikedByUserDetail", () => {
   let pgClient: MockPgClient;
   let postsService: PostsService;
   let alice: string, bob: string;
-  let post1: PostRow, post2: PostRow;
+  let post1: Post, post2: Post;
 
   beforeEach(() => {
     pgClient = new MockPgClient();
@@ -457,12 +484,12 @@ describe("listPostsLikedByUserDetail", () => {
 
 describe("getPostDetail", () => {
   class MockPgClientDetail {
-    posts: PostRow[] = [];
+    posts: Post[] = [];
     users: { id: string; nickname: string }[] = [];
     post_likes: { post_id: string; liked_by: string }[] = [];
     post_tags: { post_id: string; name: string }[] = [];
 
-    query(sql: string, params?: any[]) {
+    async query(sql: string, params?: any[]) {
       if (sql.includes("FROM posts p") && sql.includes("JOIN users u ON p.owned_by = u.id")) {
         const id = params![0];
         const p = this.posts.find((x) => x.id === id);
@@ -578,7 +605,7 @@ describe("listLikers", () => {
     users: User[] = [];
     post_likes: { post_id: string; liked_by: string; created_at: string }[] = [];
 
-    query(sql: string, params?: any[]) {
+    async query(sql: string, params?: any[]) {
       if (
         sql.includes("FROM post_likes pl") &&
         sql.includes("JOIN users u ON pl.liked_by = u.id") &&

@@ -106,6 +106,7 @@ def test_posts():
   post_input = {
     "content": "hello, this is a test post!",
     "reply_to": None,
+    "tags": ["hop", "step"],
   }
   res = requests.post(f"{BASE_URL}/posts", json=post_input, headers=headers, cookies=cookies)
   assert res.status_code == 201, res.text
@@ -143,11 +144,32 @@ def test_posts():
   assert detail["id"] == post_id
   assert detail["content"] == post_input["content"]
   assert detail["owner_nickname"] == "admin"
+  assert set(detail["tags"]) == {"hop", "step"}
   res = requests.get(f"{BASE_URL}/posts/by-followees/detail?user_id={user_id}&include_self=true", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   by_followees = res.json()
   print("[posts] by-followees/detail (self):", by_followees)
   assert any(p["id"] == post_id for p in by_followees)
+  res = requests.put(f"{BASE_URL}/posts/{post_id}", json={}, headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  post_updated = res.json()
+  assert post_updated["id"] == post_id
+  assert post_updated["content"] == post_input["content"]
+  update_input = {
+    "content": "edited",
+    "tags": ["jump"],
+  }
+  res = requests.put(f"{BASE_URL}/posts/{post_id}", json=update_input, headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  post_updated = res.json()
+  assert post_updated["id"] == post_id
+  assert post_updated["content"] == update_input["content"]
+  res = requests.get(f"{BASE_URL}/posts/{post_id}/detail", headers=headers, cookies=cookies)
+  assert res.status_code == 200
+  detail = res.json()
+  assert detail["id"] == post_id
+  assert detail["content"] == update_input["content"]
+  assert set(detail["tags"]) == set(update_input["tags"])
   res = requests.delete(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[posts] deleted")

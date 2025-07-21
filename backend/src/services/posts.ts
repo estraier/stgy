@@ -208,33 +208,68 @@ export class PostsService {
   }
 
   async createPost(input: CreatePostInput): Promise<Post> {
+    const client = this.pgClient;
     const id = uuidv4();
-    const res = await this.pgClient.query(
-      `INSERT INTO posts (id, content, owned_by, reply_to, created_at)
-       VALUES ($1, $2, $3, $4, now())
-       RETURNING id, content, owned_by, reply_to, created_at`,
-      [id, input.content, input.owned_by, input.reply_to],
-    );
-    return res.rows[0];
+    await client.query('BEGIN');
+    try {
+      const res = await client.query(
+        `INSERT INTO posts (id, content, owned_by, reply_to, created_at)
+         VALUES ($1, $2, $3, $4, now())
+         RETURNING id, content, owned_by, reply_to, created_at`,
+        [id, input.content, input.owned_by, input.reply_to],
+      );
+      if (input.tags && input.tags.length > 0) {
+        await client.query(
+          `INSERT INTO post_tags (post_id, name) VALUES ${input.tags.map((_, i) => `($1, $${i + 2})`).join(", ")}`,
+          [id, ...input.tags]
+        );
+      }
+      await client.query('COMMIT');
+      return res.rows[0];
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
+    }
   }
 
   async updatePost(input: UpdatePostInput): Promise<Post | null> {
-    const columns: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
-    if (input.content !== undefined) {
-      columns.push(`content = $${idx++}`);
-      values.push(input.content);
+    const client = this.pgClient;
+    await client.query('BEGIN');
+    try {
+      const columns: string[] = [];
+      const values: unknown[] = [];
+      let idx = 1;
+      if (input.content !== undefined) {
+        columns.push(`content = $${idx++}`);
+        values.push(input.content);
+      }
+      if (input.reply_to !== undefined) {
+        columns.push(`reply_to = $${idx++}`);
+        values.push(input.reply_to);
+      }
+      if (columns.length > 0) {
+        values.push(input.id);
+        const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, content, owned_by, reply_to, created_at`;
+        await client.query(sql, values);
+      }
+      if (input.tags !== undefined) {
+        await client.query(
+          `DELETE FROM post_tags WHERE post_id = $1`,
+          [input.id]
+        );
+        if (input.tags.length > 0) {
+          await client.query(
+            `INSERT INTO post_tags (post_id, name) VALUES ${input.tags.map((_, i) => `($1, $${i + 2})`).join(", ")}`,
+            [input.id, ...input.tags]
+          );
+        }
+      }
+      await client.query('COMMIT');
+      return this.getPost(input.id);
+    } catch (e) {
+      await client.query('ROLLBACK');
+      throw e;
     }
-    if (input.reply_to !== undefined) {
-      columns.push(`reply_to = $${idx++}`);
-      values.push(input.reply_to);
-    }
-    if (columns.length === 0) return this.getPost(input.id);
-    values.push(input.id);
-    const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, content, owned_by, reply_to, created_at`;
-    const res = await this.pgClient.query(sql, values);
-    return res.rows[0] || null;
   }
 
   async deletePost(id: string): Promise<boolean> {

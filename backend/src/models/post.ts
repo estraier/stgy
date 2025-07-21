@@ -41,12 +41,14 @@ export type CreatePostInput = {
   content: string;
   owned_by: string;
   reply_to: string | null;
+  tags: string[];
 };
 
 export type UpdatePostInput = {
   id: string;
   content?: string;
   reply_to?: string | null;
+  tags?: string[];
 };
 
 export type ListPostsByFolloweesDetailInput = {
