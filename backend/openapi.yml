@@ -213,9 +213,11 @@ paths:
         - name: nickname
           in: query
           schema: { type: string }
+          required: false
         - name: query
           in: query
           schema: { type: string }
+          required: false
       responses:
         "200":
           description: User count
@@ -237,21 +239,26 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
+          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+          required: false
         - name: order
           in: query
           schema:
             type: string
             enum: [asc, desc]
             default: desc
+          required: false
         - name: query
           in: query
           schema: { type: string }
+          required: false
         - name: nickname
           in: query
           schema: { type: string }
+          required: false
       responses:
         "200":
           description: Users list
@@ -477,9 +484,11 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
+          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+          required: false
       responses:
         "200":
           description: Followees list
@@ -505,9 +514,11 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
+          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+          required: false
       responses:
         "200":
           description: Followers list
@@ -529,16 +540,20 @@ paths:
         - name: query
           in: query
           schema: { type: string }
+          required: false
         - name: owned_by
           in: query
           schema: { type: string }
+          required: false
         - name: tag
           in: query
           schema: { type: string }
+          required: false
         - name: reply_to
           in: query
           schema:
             type: string
+          required: false
           description: |
             If omitted: include all posts.
             If empty string (""): only posts with no reply_to (not a reply).
@@ -564,28 +579,35 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
+          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+          required: false
         - name: order
           in: query
           schema:
             type: string
             enum: [asc, desc]
             default: desc
+          required: false
         - name: query
           in: query
           schema: { type: string }
+          required: false
         - name: owned_by
           in: query
           schema: { type: string }
+          required: false
         - name: tag
           in: query
           schema: { type: string }
+          required: false
         - name: reply_to
           in: query
           schema:
             type: string
+          required: false
           description: |
             If omitted: include all posts.
             If empty string (""): only posts with no reply_to (not a reply).
@@ -614,11 +636,13 @@ paths:
               type: object
               properties:
                 content: { type: string }
-                owned_by: { type: string }
                 reply_to:
                   type: string
                   nullable: true
-              required: [content, owned_by]
+                tags:
+                  type: array
+                  items: { type: string }
+              required: [content, tags]
       responses:
         "201":
           description: Post created
@@ -638,28 +662,35 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
+          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+          required: false
         - name: order
           in: query
           schema:
             type: string
             enum: [asc, desc]
             default: desc
+          required: false
         - name: query
           in: query
           schema: { type: string }
+          required: false
         - name: owned_by
           in: query
           schema: { type: string }
+          required: false
         - name: tag
           in: query
           schema: { type: string }
+          required: false
         - name: reply_to
           in: query
           schema:
             type: string
+          required: false
           description: |
             If omitted: include all posts.
             If empty string (""): only posts with no reply_to (not a reply).
@@ -668,6 +699,7 @@ paths:
           in: query
           schema:
             type: string
+          required: false
           description: (Optional) Used for personalization (e.g., is_liked_by_focus_user)
       responses:
         "200":
@@ -694,18 +726,22 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
+          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+          required: false
         - name: order
           in: query
           schema:
             type: string
             enum: [asc, desc]
             default: desc
+          required: false
         - name: include_self
           in: query
           schema: { type: boolean, default: false }
+          required: false
       responses:
         "200":
           description: Posts detail list by followees
@@ -733,15 +769,18 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
+          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+          required: false
         - name: order
           in: query
           schema:
             type: string
             enum: [asc, desc]
             default: desc
+          required: false
       responses:
         "200":
           description: Posts liked by user (detail)
@@ -770,6 +809,7 @@ paths:
           in: query
           schema:
             type: string
+          required: false
           description: (Optional) Used for personalization (e.g., is_liked_by_focus_user)
       responses:
         "200":
@@ -825,6 +865,9 @@ paths:
                 reply_to:
                   type: string
                   nullable: true
+                tags:
+                  type: array
+                  items: { type: string }
               required: [content]
       responses:
         "200":
@@ -926,15 +969,18 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
+          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+          required: false
         - name: order
           in: query
           schema:
             type: string
             enum: [asc, desc]
             default: desc
+          required: false
       responses:
         "200":
           description: Users who liked this post
