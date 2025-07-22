@@ -291,11 +291,19 @@ export class PostsService {
   }
 
   async listPostsByFolloweesDetail(input: ListPostsByFolloweesDetailInput): Promise<PostDetail[]> {
-    const { user_id, include_self = false, offset = 0, limit = 100, order = "desc" } = input;
+    const {
+      user_id,
+      include_self = false,
+      include_replies = true,
+      offset = 0,
+      limit = 100,
+      order = "desc"
+    } = input;
     let followeeSql = `
       SELECT followee_id FROM user_follows WHERE follower_id = $1
       ${include_self ? "UNION SELECT $1" : ""}
     `;
+    const repliesFilter = include_replies === false ? "AND p.reply_to IS NULL" : "";
     const sql = `
       SELECT
         p.id, p.content, p.owned_by, p.reply_to, p.created_at,
@@ -308,6 +316,7 @@ export class PostsService {
       FROM posts p
       JOIN users u ON p.owned_by = u.id
       WHERE p.owned_by IN (${followeeSql})
+        ${repliesFilter}
       ORDER BY p.created_at ${order}
       OFFSET $2 LIMIT $3
     `;

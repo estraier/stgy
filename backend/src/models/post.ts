@@ -54,6 +54,7 @@ export type UpdatePostInput = {
 export type ListPostsByFolloweesDetailInput = {
   user_id: string;
   include_self?: boolean;
+  include_replies?: boolean;
 } & PostPagination;
 
 export type ListPostsLikedByUserDetailInput = {

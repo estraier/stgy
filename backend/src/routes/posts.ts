@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { Client } from "pg";
 import Redis from "ioredis";
+import { strToBool } from "./utils";
 import { PostsService } from "../services/posts";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
@@ -145,16 +146,15 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
-    const include_self =
-      typeof req.query.include_self === "string"
-        ? req.query.include_self === "true" || req.query.include_self === "1"
-        : false;
+    const include_self = strToBool(req.query.include_self as string, false);
+    const include_replies = strToBool(req.query.include_replies as string, true);
     const result = await postsService.listPostsByFolloweesDetail({
       user_id,
       offset,
       limit,
       order,
       include_self,
+      include_replies,
     });
     res.json(result);
   });

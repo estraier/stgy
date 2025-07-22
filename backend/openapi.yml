@@ -743,6 +743,10 @@ paths:
           in: query
           schema: { type: boolean, default: false }
           required: false
+        - name: include_replies
+          in: query
+          schema: { type: boolean, default: true }
+          required: false
       responses:
         "200":
           description: Posts detail list by followees
