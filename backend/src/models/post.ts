@@ -24,7 +24,7 @@ export type PostFilter = {
   query?: string;
   owned_by?: string;
   tag?: string;
-  reply_to?: string;
+  reply_to?: string | null;
 };
 
 export type PostPagination = {

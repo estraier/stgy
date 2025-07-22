@@ -25,10 +25,12 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     return user as User;
   }
 
-  function getReplyToParam(req: Request): string | undefined {
+  function getReplyToParam(req: Request): string | null | undefined {
     if ("reply_to" in req.query) {
       if (typeof req.query.reply_to === "string") {
-        return req.query.reply_to;
+        const reply_to = req.query.reply_to.trim();
+        if (reply_to.length == 0) return null;
+        return reply_to;
       }
     }
     return undefined;

@@ -6,7 +6,7 @@ import type { PostDetail } from "@/api/model";
 import { useRouter } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { parseBodyAndTags } from "@/utils/parseBodyAndTags";
-import { Heart, HeartOff, MessageCircle } from "lucide-react";
+import { Heart, MessageCircle } from "lucide-react";
 
 export default function PostsPage() {
   const status = useRequireLogin();
@@ -17,11 +17,10 @@ export default function PostsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [page, setPage] = useState(1);
   const [hasNext, setHasNext] = useState(false);
+  const [tab, setTab] = useState<"new" | "all">("new");
 
   const PAGE_SIZE = 20;
   const router = useRouter();
-
-  // focus_user_id 取得
   const user_id = status.state === "authenticated" ? status.user.user_id : undefined;
 
   useEffect(() => {
@@ -29,7 +28,11 @@ export default function PostsPage() {
     let canceled = false;
     setLoading(true);
     setError(null);
-    listPostsDetail({ offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, focus_user_id: user_id })
+
+    const params: any = { offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, focus_user_id: user_id };
+    if (tab === "new") params.reply_to = "";
+
+    listPostsDetail(params)
       .then((data) => {
         if (!canceled) {
           setPosts(data);
@@ -45,7 +48,7 @@ export default function PostsPage() {
     return () => {
       canceled = true;
     };
-  }, [status, page, user_id]);
+  }, [status, page, user_id, tab]);
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -57,8 +60,9 @@ export default function PostsPage() {
       await createPost({ content, tags });
       setBody("");
       setPage(1);
-      // 再取得
-      listPostsDetail({ offset: 0, limit: PAGE_SIZE, focus_user_id: user_id }).then((data) => {
+      const params: any = { offset: 0, limit: PAGE_SIZE, focus_user_id: user_id };
+      if (tab === "new") params.reply_to = "";
+      listPostsDetail(params).then((data) => {
         setPosts(data);
         setHasNext(data.length === PAGE_SIZE);
       });
@@ -76,8 +80,9 @@ export default function PostsPage() {
       } else {
         await addLike(post.id);
       }
-      // 再取得
-      listPostsDetail({ offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, focus_user_id: user_id }).then(setPosts);
+      const params: any = { offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, focus_user_id: user_id };
+      if (tab === "new") params.reply_to = "";
+      listPostsDetail(params).then(setPosts);
     } catch (err) {
       alert("Failed to update like.");
     }
@@ -105,6 +110,32 @@ export default function PostsPage() {
         </button>
         {error && <div className="text-red-600 text-sm">{error}</div>}
       </form>
+
+      {/* タブUI */}
+      <div className="flex gap-1 mb-4">
+        <button
+          className={`px-3 py-1 rounded-t text-sm font-normal
+            ${tab === "new"
+              ? "bg-blue-100 text-black"
+              : "bg-blue-50 text-gray-400 hover:bg-blue-100"
+            }`}
+          style={{ minWidth: 110 }}
+          onClick={() => { setTab("new"); setPage(1); }}
+        >
+          New Posts
+        </button>
+        <button
+          className={`px-3 py-1 rounded-t text-sm font-normal
+            ${tab === "all"
+              ? "bg-blue-100 text-black"
+              : "bg-blue-50 text-gray-400 hover:bg-blue-100"
+            }`}
+          style={{ minWidth: 140 }}
+          onClick={() => { setTab("all"); setPage(1); }}
+        >
+          Including Replies
+        </button>
+      </div>
 
       {/* 投稿一覧 */}
       <div>
@@ -174,7 +205,6 @@ export default function PostsPage() {
                 <button
                   className={`flex items-center gap-1 px-2 py-1 rounded
                     ${post.is_replied_by_focus_user ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100"}`}
-                  // 返信フォームの出現は未実装
                   onClick={() => alert("Reply form not implemented yet")}
                   type="button"
                   aria-label="Reply"
