@@ -19,6 +19,12 @@ export default function PostsPage() {
   const [hasNext, setHasNext] = useState(false);
   const [tab, setTab] = useState<"new" | "all">("new");
 
+  // 返信フォーム制御
+  const [replyTo, setReplyTo] = useState<string | null>(null);
+  const [replyBody, setReplyBody] = useState("");
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [replySubmitting, setReplySubmitting] = useState(false);
+
   const PAGE_SIZE = 20;
   const router = useRouter();
   const user_id = status.state === "authenticated" ? status.user.user_id : undefined;
@@ -50,6 +56,11 @@ export default function PostsPage() {
     };
   }, [status, page, user_id, tab]);
 
+  // 投稿フォーム用
+  function clearError() {
+    if (error) setError(null);
+  }
+
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
@@ -57,6 +68,11 @@ export default function PostsPage() {
     try {
       const { content, tags } = parseBodyAndTags(body);
       if (!content.trim()) throw new Error("Content is required.");
+      if (content.length > 5000) throw new Error("Content is too long (max 5000 chars).");
+      if (tags.length > 5) throw new Error("You can specify up to 5 tags.");
+      for (const tag of tags) {
+        if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
+      }
       await createPost({ content, tags });
       setBody("");
       setPage(1);
@@ -70,6 +86,40 @@ export default function PostsPage() {
       setError(err?.message || "Failed to post.");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  // 返信フォーム用
+  function clearReplyError() {
+    if (replyError) setReplyError(null);
+  }
+
+  async function handleReplySubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setReplySubmitting(true);
+    setReplyError(null);
+    try {
+      const { content, tags } = parseBodyAndTags(replyBody);
+      if (!content.trim()) throw new Error("Content is required.");
+      if (content.length > 5000) throw new Error("Content is too long (max 5000 chars).");
+      if (tags.length > 5) throw new Error("You can specify up to 5 tags.");
+      for (const tag of tags) {
+        if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
+      }
+      await createPost({ content, tags, reply_to: replyTo });
+      setReplyBody("");
+      setReplyTo(null);
+      // reload
+      const params: any = { offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, focus_user_id: user_id };
+      if (tab === "new") params.reply_to = "";
+      listPostsDetail(params).then((data) => {
+        setPosts(data);
+        setHasNext(data.length === PAGE_SIZE);
+      });
+    } catch (err: any) {
+      setReplyError(err?.message || "Failed to reply.");
+    } finally {
+      setReplySubmitting(false);
     }
   }
 
@@ -91,24 +141,34 @@ export default function PostsPage() {
   if (status.state !== "authenticated") return null;
 
   return (
-    <main className="max-w-2xl mx-auto mt-8 p-4 bg-white shadow rounded">
+    <main
+      className="max-w-2xl mx-auto mt-8 p-4 bg-white shadow rounded"
+      onClick={clearError}
+    >
       {/* 投稿フォーム */}
-      <form onSubmit={handleSubmit} className="mb-6 flex flex-col gap-2">
+      <form
+        onSubmit={handleSubmit}
+        className="mb-6 flex flex-col gap-2"
+        onClick={e => e.stopPropagation()}
+      >
         <textarea
           className="border rounded px-2 py-1 min-h-[64px]"
           placeholder="Write your post. Use #tag lines for tags."
           value={body}
           onChange={e => setBody(e.target.value)}
-          maxLength={2000}
+          maxLength={5000}
+          onFocus={clearError}
         />
-        <button
-          type="submit"
-          className="self-end bg-blue-600 text-white px-4 py-1 rounded disabled:opacity-60"
-          disabled={submitting}
-        >
-          {submitting ? "Posting..." : "Post"}
-        </button>
-        {error && <div className="text-red-600 text-sm">{error}</div>}
+        <div className="flex items-center gap-2">
+          <button
+            type="submit"
+            className="self-end bg-blue-600 text-white px-4 py-1 rounded disabled:opacity-60"
+            disabled={submitting}
+          >
+            {submitting ? "Posting..." : "Post"}
+          </button>
+          {error && <span className="text-red-600 text-sm ml-2">{error}</span>}
+        </div>
       </form>
 
       {/* タブUI */}
@@ -140,7 +200,6 @@ export default function PostsPage() {
       {/* 投稿一覧 */}
       <div>
         {loading && <div className="text-gray-500">Loading…</div>}
-        {error && <div className="text-red-600">{error}</div>}
         <ul className="space-y-4">
           {posts.map((post) => (
             <li key={post.id} className="p-4 border rounded shadow-sm">
@@ -205,7 +264,11 @@ export default function PostsPage() {
                 <button
                   className={`flex items-center gap-1 px-2 py-1 rounded
                     ${post.is_replied_by_focus_user ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100"}`}
-                  onClick={() => alert("Reply form not implemented yet")}
+                  onClick={() => {
+                    setReplyTo(post.id);
+                    setReplyBody("");
+                    setReplyError(null);
+                  }}
                   type="button"
                   aria-label="Reply"
                 >
@@ -213,6 +276,40 @@ export default function PostsPage() {
                   {post.reply_count > 0 && <span>{post.reply_count}</span>}
                 </button>
               </div>
+              {/* ここに返信フォーム */}
+              {replyTo === post.id && (
+                <form
+                  className="mt-3 flex flex-col gap-2 border-t pt-3"
+                  onSubmit={handleReplySubmit}
+                  onClick={e => e.stopPropagation()}
+                >
+                  <textarea
+                    className="border rounded px-2 py-1 min-h-[48px]"
+                    placeholder="Write your reply. Use #tag lines for tags."
+                    value={replyBody}
+                    onChange={e => setReplyBody(e.target.value)}
+                    maxLength={5000}
+                    onFocus={clearReplyError}
+                  />
+                  <div className="flex items-center gap-2">
+                    <button
+                      type="submit"
+                      className="bg-blue-500 text-white px-4 py-1 rounded disabled:opacity-60"
+                      disabled={replySubmitting}
+                    >
+                      {replySubmitting ? "Replying..." : "Reply"}
+                    </button>
+                    <button
+                      type="button"
+                      className="text-gray-500 underline ml-2"
+                      onClick={() => { setReplyTo(null); setReplyError(null); }}
+                    >
+                      Cancel
+                    </button>
+                    {replyError && <span className="text-red-600 text-sm ml-2">{replyError}</span>}
+                  </div>
+                </form>
+              )}
             </li>
           ))}
         </ul>
