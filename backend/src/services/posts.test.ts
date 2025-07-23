@@ -12,6 +12,10 @@ import {
 } from "../models/post";
 import { User } from "../models/user";
 
+function normalizeSql(sql: string) {
+  return sql.replace(/\s+/g, " ").trim();
+}
+
 class MockPgClient {
   data: Post[] = [];
   tags: { post_id: string; name: string }[] = [];
@@ -21,6 +25,7 @@ class MockPgClient {
   txCount = 0;
 
   async query(sql: string, params?: any[]) {
+    sql = normalizeSql(sql);
     if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
       this.txCount++;
       return { rows: [] };
@@ -493,6 +498,7 @@ describe("getPostDetail", () => {
     post_tags: { post_id: string; name: string }[] = [];
 
     async query(sql: string, params?: any[]) {
+      sql = normalizeSql(sql);
       if (sql.includes("FROM posts p") && sql.includes("JOIN users u ON p.owned_by = u.id")) {
         const id = params![0];
         const p = this.posts.find((x) => x.id === id);
@@ -609,6 +615,7 @@ describe("listLikers", () => {
     post_likes: { post_id: string; liked_by: string; created_at: string }[] = [];
 
     async query(sql: string, params?: any[]) {
+      sql = normalizeSql(sql);
       if (
         sql.includes("FROM post_likes pl") &&
         sql.includes("JOIN users u ON pl.liked_by = u.id") &&

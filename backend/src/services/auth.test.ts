@@ -29,11 +29,13 @@ describe("AuthService class", () => {
 
   test("login: success", async () => {
     pgClient.query.mockResolvedValueOnce({
-      rows: [{
-        id: "user-123",
-        email: "test@example.com",
-        nickname: "TestNick"
-      }],
+      rows: [
+        {
+          id: "user-123",
+          email: "test@example.com",
+          nickname: "TestNick",
+        },
+      ],
       rowCount: 1,
     });
     const result = await authService.login("test@example.com", "password");

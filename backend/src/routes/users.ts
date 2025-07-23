@@ -28,12 +28,42 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     res.json({ count });
   });
 
+  router.get("/detail", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const offset = parseInt((req.query.offset as string) ?? "0", 10);
+    const limit = parseInt((req.query.limit as string) ?? "100", 10);
+    const order = req.query.order === "asc" ? "asc" : "desc";
+    const query = typeof req.query.query === "string" && req.query.query.trim() !== ""
+      ? req.query.query.trim() : undefined;
+    const nickname = typeof req.query.nickname === "string" && req.query.nickname.trim() !== ""
+      ? req.query.nickname.trim() : undefined;
+    const focus_user_id = typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
+      ? req.query.focus_user_id.trim() : undefined;
+    const details = await usersService.listUsersDetail(
+      { offset, limit, order, query, nickname },
+      focus_user_id,
+    );
+    res.json(details);
+  });
+
   router.get("/:id", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const user = await usersService.getUser(req.params.id);
     if (!user) return res.status(404).json({ error: "not found" });
     res.json(user);
+  });
+
+  router.get("/:id/detail", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const focus_user_id = typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
+      ? req.query.focus_user_id.trim()
+      : undefined;
+    const detail = await usersService.getUserDetail(req.params.id, focus_user_id);
+    if (!detail) return res.status(404).json({ error: "not found" });
+    res.json(detail);
   });
 
   router.get("/", async (req: Request, res: Response) => {

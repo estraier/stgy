@@ -9,6 +9,13 @@ export type User = {
   created_at: string;
 };
 
+export type UserDetail = User & {
+  count_followers: number;
+  count_followees: number;
+  is_followed_by_focus_user?: boolean;
+  is_following_focus_user?: boolean;
+};
+
 export type UserFilter = {
   query?: string;
   nickname?: string;

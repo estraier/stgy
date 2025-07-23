@@ -297,7 +297,7 @@ export class PostsService {
       include_replies = true,
       offset = 0,
       limit = 100,
-      order = "desc"
+      order = "desc",
     } = input;
     let followeeSql = `
       SELECT followee_id FROM user_follows WHERE follower_id = $1

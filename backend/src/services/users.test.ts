@@ -17,11 +17,16 @@ function omitKey<T extends object, K extends keyof T>(obj: T, key: K): Omit<T, K
   return result;
 }
 
+function normalizeSql(sql: string) {
+  return sql.replace(/\s+/g, " ").trim();
+}
+
 class MockPgClient {
   data: UserWithPassword[] = [];
   follows: { follower_id: string; followee_id: string }[] = [];
 
   query(sql: string, params?: unknown[]) {
+    sql = normalizeSql(sql);
     if (sql.startsWith("SELECT COUNT(*) FROM users")) {
       return { rows: [{ count: this.data.length.toString() }] };
     }
@@ -347,5 +352,193 @@ describe("users service", () => {
     const input: RemoveFollowerInput = { follower_id: userSample.id, followee_id: user2.id };
     const ok = await usersService.removeFollower(input);
     expect(ok).toBe(false);
+  });
+});
+
+describe("users service detail", () => {
+  class MockPgClientDetail {
+    data: UserWithPassword[] = [];
+    follows: { follower_id: string; followee_id: string }[] = [];
+    query(sql: string, params?: unknown[]) {
+      sql = normalizeSql(sql);
+      if (
+        sql.startsWith(
+          "SELECT id, email, nickname, is_admin, introduction, personality, model, created_at FROM users WHERE id =",
+        )
+      ) {
+        const id = params![0];
+        const user = this.data.find((u) => u.id === id);
+        return { rows: user ? [omitKey(user, "password")] : [] };
+      }
+      if (sql.startsWith("SELECT COUNT(*)::int AS cnt FROM user_follows WHERE followee_id =")) {
+        const id = params![0];
+        const cnt = this.follows.filter((f) => f.followee_id === id).length;
+        return { rows: [{ cnt }] };
+      }
+      if (sql.startsWith("SELECT COUNT(*)::int AS cnt FROM user_follows WHERE follower_id =")) {
+        const id = params![0];
+        const cnt = this.follows.filter((f) => f.follower_id === id).length;
+        return { rows: [{ cnt }] };
+      }
+      if (sql.startsWith("SELECT EXISTS (SELECT 1 FROM user_follows WHERE follower_id =")) {
+        const follower_id = params![0];
+        const followee_id = params![1];
+        const isFollowed = this.follows.some(
+          (f) => f.follower_id === follower_id && f.followee_id === followee_id,
+        );
+        const isFollowing = this.follows.some(
+          (f) => f.follower_id === followee_id && f.followee_id === follower_id,
+        );
+        return {
+          rows: [{ is_followed_by_focus_user: isFollowed, is_following_focus_user: isFollowing }],
+        };
+      }
+      if (
+        sql.startsWith(
+          "SELECT id, email, nickname, is_admin, introduction, personality, model, created_at FROM users",
+        )
+      ) {
+        const offset = (params?.[0] as number) ?? 0;
+        const limit = (params?.[1] as number) ?? 100;
+        const users = this.data.slice(offset, offset + limit).map((u) => omitKey(u, "password"));
+        return { rows: users };
+      }
+      if (
+        sql.startsWith(
+          "SELECT followee_id AS id, COUNT(*)::int AS cnt FROM user_follows WHERE followee_id = ANY($1) GROUP BY followee_id",
+        )
+      ) {
+        const ids = params![0] as string[];
+        return {
+          rows: ids.map((id) => ({
+            id,
+            cnt: this.follows.filter((f) => f.followee_id === id).length,
+          })),
+        };
+      }
+      if (
+        sql.startsWith(
+          "SELECT follower_id AS id, COUNT(*)::int AS cnt FROM user_follows WHERE follower_id = ANY($1) GROUP BY follower_id",
+        )
+      ) {
+        const ids = params![0] as string[];
+        return {
+          rows: ids.map((id) => ({
+            id,
+            cnt: this.follows.filter((f) => f.follower_id === id).length,
+          })),
+        };
+      }
+      if (sql.startsWith("SELECT followee_id FROM user_follows WHERE follower_id =")) {
+        const follower_id = params![0];
+        const ids = params![1] as string[];
+        return {
+          rows: this.follows
+            .filter((f) => f.follower_id === follower_id && ids.includes(f.followee_id))
+            .map((f) => ({ followee_id: f.followee_id })),
+        };
+      }
+      if (
+        sql.startsWith(
+          "SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2",
+        )
+      ) {
+        const ids = params![0] as string[];
+        const followee_id = params![1];
+        return {
+          rows: this.follows
+            .filter((f) => ids.includes(f.follower_id) && f.followee_id === followee_id)
+            .map((f) => ({ follower_id: f.follower_id })),
+        };
+      }
+      return { rows: [] };
+    }
+  }
+
+  let pgClient: any;
+  let usersService: UsersService;
+  let userSample: UserWithPassword;
+  let user2: UserWithPassword;
+  let user3: UserWithPassword;
+
+  beforeEach(() => {
+    pgClient = new MockPgClientDetail();
+    usersService = new UsersService(pgClient);
+    userSample = {
+      id: uuidv4(),
+      email: "foo@example.com",
+      nickname: "foo",
+      password: "hashedpw",
+      is_admin: false,
+      introduction: "test",
+      personality: "",
+      model: "",
+      created_at: new Date().toISOString(),
+    };
+    user2 = {
+      id: uuidv4(),
+      email: "bar@example.com",
+      nickname: "bar",
+      password: "pw2",
+      is_admin: false,
+      introduction: "bar",
+      personality: "",
+      model: "",
+      created_at: new Date().toISOString(),
+    };
+    user3 = {
+      id: uuidv4(),
+      email: "baz@example.com",
+      nickname: "baz",
+      password: "pw3",
+      is_admin: false,
+      introduction: "baz",
+      personality: "",
+      model: "",
+      created_at: new Date().toISOString(),
+    };
+    pgClient.data.push(userSample, user2, user3);
+    pgClient.follows = [
+      { follower_id: userSample.id, followee_id: user2.id },
+      { follower_id: userSample.id, followee_id: user3.id },
+      { follower_id: user3.id, followee_id: userSample.id },
+    ];
+  });
+
+  test("getUserDetail: returns detail with follower/followee count, no focus user", async () => {
+    const detail = await usersService.getUserDetail(userSample.id);
+    expect(detail).not.toBeNull();
+    expect(detail!.id).toBe(userSample.id);
+    expect(detail!.count_followers).toBe(1);
+    expect(detail!.count_followees).toBe(2);
+  });
+
+  test("getUserDetail: with focus user shows mutual state", async () => {
+    const detail = await usersService.getUserDetail(userSample.id, user2.id);
+    expect(detail).not.toBeNull();
+    expect(detail!.id).toBe(userSample.id);
+    expect(detail!.is_followed_by_focus_user).toBe(false);
+    expect(detail!.is_following_focus_user).toBe(true);
+  });
+
+  test("listUsersDetail: no focus user", async () => {
+    const details = await usersService.listUsersDetail();
+    expect(Array.isArray(details)).toBe(true);
+    const sample = details.find((d: any) => d.id === userSample.id)!;
+    expect(sample.count_followers).toBe(1);
+    expect(sample.count_followees).toBe(2);
+    expect(sample.is_followed_by_focus_user).toBeUndefined();
+    expect(sample.is_following_focus_user).toBeUndefined();
+  });
+
+  test("listUsersDetail: with focus user, mutual state", async () => {
+    const details = await usersService.listUsersDetail(undefined, user2.id);
+    expect(Array.isArray(details)).toBe(true);
+    const sample = details.find((d: any) => d.id === userSample.id)!;
+    expect(sample.is_followed_by_focus_user).toBe(false);
+    expect(sample.is_following_focus_user).toBe(true);
+    const user2d = details.find((d: any) => d.id === user2.id)!;
+    expect(user2d.is_followed_by_focus_user).toBe(false);
+    expect(user2d.is_following_focus_user).toBe(false);
   });
 });

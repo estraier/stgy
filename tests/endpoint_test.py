@@ -51,7 +51,7 @@ def test_users():
   headers = {"Content-Type": "application/json"}
   cookies = {"session_id": session_id}
   user_input = {
-    "email": "user1@example.com",
+    "email": f"user1-{session_id[:8]}@example.com",
     "nickname": "user1",
     "is_admin": False,
     "introduction": "hi!",
@@ -75,6 +75,11 @@ def test_users():
   users = res.json()
   admin_user = next(u for u in users if u["email"] == ADMIN_EMAIL)
   admin_id = admin_user["id"]
+  res = requests.get(f"{BASE_URL}/users/{admin_id}", headers=headers, cookies=cookies)
+  got_admin_user = res.json()
+  assert got_admin_user["id"] == admin_id
+  for key, value in got_admin_user.items():
+    assert admin_user[key] == value
   res = requests.post(f"{BASE_URL}/users/{admin_id}/follow", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   print(f"[users] user1 followed admin: {admin_id}")
@@ -88,6 +93,22 @@ def test_users():
   followers = res.json()
   print("[users] admin followers:", followers)
   assert any(u["id"] == user1_id for u in followers)
+  res = requests.get(f"{BASE_URL}/users/{admin_id}/detail?focus_user_id={user1_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  admin_detail = res.json()
+  assert admin_detail["count_followers"] > 0
+  assert "count_followees" in admin_detail
+  assert admin_detail["is_followed_by_focus_user"] == True
+  assert admin_detail["is_following_focus_user"] == False
+  res = requests.get(f"{BASE_URL}/users/detail?focus_user_id={admin_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  users_detail = res.json()
+  assert len(users_detail) >= 2
+  user1_detail = next(u for u in users_detail if u["email"] == user1["email"])
+  assert user1_detail["count_followers"] == 0
+  assert user1_detail["count_followees"] == 1
+  assert user1_detail["is_followed_by_focus_user"] == False
+  assert user1_detail["is_following_focus_user"] == True
   res = requests.delete(f"{BASE_URL}/users/{admin_id}/follow", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   print(f"[users] user1 unfollowed admin: {admin_id}")

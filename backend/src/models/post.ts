@@ -6,12 +6,7 @@ export type Post = {
   created_at: string;
 };
 
-export type PostDetail = {
-  id: string;
-  content: string;
-  owned_by: string;
-  reply_to: string | null;
-  created_at: string;
+export type PostDetail = Post & {
   owner_nickname: string;
   reply_count: number;
   like_count: number;
