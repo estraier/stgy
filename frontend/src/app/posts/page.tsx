@@ -1,7 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { listPostsDetail, createPost, addLike, removeLike } from "@/api/posts";
+import {
+  listPostsDetail,
+  listPostsByFolloweesDetail,
+  listPostsLikedByUserDetail,
+  createPost,
+  addLike,
+  removeLike,
+} from "@/api/posts";
 import type { PostDetail } from "@/api/model";
 import { useRouter } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
@@ -17,9 +24,9 @@ export default function PostsPage() {
   const [submitting, setSubmitting] = useState(false);
   const [page, setPage] = useState(1);
   const [hasNext, setHasNext] = useState(false);
-  const [tab, setTab] = useState<"new" | "all">("new");
-
-  // 返信フォーム制御
+  const [tab, setTab] = useState<"following" | "liked" | "all">("following");
+  const [includingReplies, setIncludingReplies] = useState(false);
+  const [oldestFirst, setOldestFirst] = useState(false);
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
   const [replyError, setReplyError] = useState<string | null>(null);
@@ -35,10 +42,36 @@ export default function PostsPage() {
     setLoading(true);
     setError(null);
 
-    const params: any = { offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, focus_user_id: user_id };
-    if (tab === "new") params.reply_to = "";
+    const order = oldestFirst ? "asc" : "desc";
+    const baseParams: any = {
+      offset: (page - 1) * PAGE_SIZE,
+      limit: PAGE_SIZE,
+      order,
+      focus_user_id: user_id,
+    };
 
-    listPostsDetail(params)
+    let fetcher: Promise<PostDetail[]>;
+    if (tab === "following") {
+      fetcher = listPostsByFolloweesDetail({
+        user_id: user_id!,
+        ...baseParams,
+        include_self: true,
+        include_replies: includingReplies,
+      });
+    } else if (tab === "liked") {
+      fetcher = listPostsLikedByUserDetail({
+        user_id: user_id!,
+        ...baseParams,
+        include_replies: includingReplies,
+      });
+    } else {
+      fetcher = listPostsDetail({
+        ...baseParams,
+        ...(includingReplies ? {} : { reply_to: "" }),
+      });
+    }
+
+    fetcher
       .then((data) => {
         if (!canceled) {
           setPosts(data);
@@ -54,9 +87,8 @@ export default function PostsPage() {
     return () => {
       canceled = true;
     };
-  }, [status, page, user_id, tab]);
+  }, [status, page, user_id, tab, includingReplies, oldestFirst]);
 
-  // 投稿フォーム用
   function clearError() {
     if (error) setError(null);
   }
@@ -76,12 +108,7 @@ export default function PostsPage() {
       await createPost({ content, tags });
       setBody("");
       setPage(1);
-      const params: any = { offset: 0, limit: PAGE_SIZE, focus_user_id: user_id };
-      if (tab === "new") params.reply_to = "";
-      listPostsDetail(params).then((data) => {
-        setPosts(data);
-        setHasNext(data.length === PAGE_SIZE);
-      });
+      reloadPosts(1);
     } catch (err: any) {
       setError(err?.message || "Failed to post.");
     } finally {
@@ -89,7 +116,6 @@ export default function PostsPage() {
     }
   }
 
-  // 返信フォーム用
   function clearReplyError() {
     if (replyError) setReplyError(null);
   }
@@ -109,13 +135,7 @@ export default function PostsPage() {
       await createPost({ content, tags, reply_to: replyTo });
       setReplyBody("");
       setReplyTo(null);
-      // reload
-      const params: any = { offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, focus_user_id: user_id };
-      if (tab === "new") params.reply_to = "";
-      listPostsDetail(params).then((data) => {
-        setPosts(data);
-        setHasNext(data.length === PAGE_SIZE);
-      });
+      reloadPosts(page);
     } catch (err: any) {
       setReplyError(err?.message || "Failed to reply.");
     } finally {
@@ -130,32 +150,61 @@ export default function PostsPage() {
       } else {
         await addLike(post.id);
       }
-      const params: any = { offset: (page - 1) * PAGE_SIZE, limit: PAGE_SIZE, focus_user_id: user_id };
-      if (tab === "new") params.reply_to = "";
-      listPostsDetail(params).then(setPosts);
+      reloadPosts(page);
     } catch (err) {
       alert("Failed to update like.");
     }
   }
 
+  function reloadPosts(targetPage: number) {
+    if (status.state !== "authenticated") return;
+    const order = oldestFirst ? "asc" : "desc";
+    const baseParams: any = {
+      offset: (targetPage - 1) * PAGE_SIZE,
+      limit: PAGE_SIZE,
+      order,
+      focus_user_id: user_id,
+    };
+    let fetcher: Promise<PostDetail[]>;
+    if (tab === "following") {
+      fetcher = listPostsByFolloweesDetail({
+        user_id: user_id!,
+        ...baseParams,
+        include_self: true,
+        include_replies: includingReplies,
+      });
+    } else if (tab === "liked") {
+      fetcher = listPostsLikedByUserDetail({
+        user_id: user_id!,
+        ...baseParams,
+        include_replies: includingReplies,
+      });
+    } else {
+      fetcher = listPostsDetail({
+        ...baseParams,
+        ...(includingReplies ? {} : { reply_to: "" }),
+      });
+    }
+    fetcher.then((data) => {
+      setPosts(data);
+      setHasNext(data.length === PAGE_SIZE);
+    });
+  }
+
   if (status.state !== "authenticated") return null;
 
   return (
-    <main
-      className="max-w-2xl mx-auto mt-8 p-4 bg-white shadow rounded"
-      onClick={clearError}
-    >
-      {/* 投稿フォーム */}
+    <main className="max-w-2xl mx-auto mt-8 p-4 bg-white shadow rounded" onClick={clearError}>
       <form
         onSubmit={handleSubmit}
         className="mb-6 flex flex-col gap-2"
-        onClick={e => e.stopPropagation()}
+        onClick={(e) => e.stopPropagation()}
       >
         <textarea
           className="border rounded px-2 py-1 min-h-[64px]"
           placeholder="Write your post. Use #tag lines for tags."
           value={body}
-          onChange={e => setBody(e.target.value)}
+          onChange={(e) => setBody(e.target.value)}
           maxLength={5000}
           onFocus={clearError}
         />
@@ -170,34 +219,59 @@ export default function PostsPage() {
           {error && <span className="text-red-600 text-sm ml-2">{error}</span>}
         </div>
       </form>
-
-      {/* タブUI */}
       <div className="flex gap-1 mb-4">
         <button
           className={`px-3 py-1 rounded-t text-sm font-normal
-            ${tab === "new"
-              ? "bg-blue-100 text-black"
-              : "bg-blue-50 text-gray-400 hover:bg-blue-100"
-            }`}
+            ${tab === "following" ? "bg-blue-100 text-black" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
           style={{ minWidth: 110 }}
-          onClick={() => { setTab("new"); setPage(1); }}
+          onClick={() => {
+            setTab("following");
+            setPage(1);
+          }}
         >
-          New Posts
+          Following
         </button>
         <button
           className={`px-3 py-1 rounded-t text-sm font-normal
-            ${tab === "all"
-              ? "bg-blue-100 text-black"
-              : "bg-blue-50 text-gray-400 hover:bg-blue-100"
-            }`}
-          style={{ minWidth: 140 }}
-          onClick={() => { setTab("all"); setPage(1); }}
+            ${tab === "liked" ? "bg-blue-100 text-black" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+          style={{ minWidth: 110 }}
+          onClick={() => {
+            setTab("liked");
+            setPage(1);
+          }}
         >
-          Including Replies
+          Liked
+        </button>
+        <button
+          className={`px-3 py-1 rounded-t text-sm font-normal
+            ${tab === "all" ? "bg-blue-100 text-black" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+          style={{ minWidth: 110 }}
+          onClick={() => {
+            setTab("all");
+            setPage(1);
+          }}
+        >
+          All
         </button>
       </div>
-
-      {/* 投稿一覧 */}
+      <div className="flex gap-2 items-center mb-4">
+        <label className="flex items-center gap-1 text-sm">
+          <input
+            type="checkbox"
+            checked={includingReplies}
+            onChange={(e) => setIncludingReplies(e.target.checked)}
+          />
+          Including replies
+        </label>
+        <label className="flex items-center gap-1 text-sm">
+          <input
+            type="checkbox"
+            checked={oldestFirst}
+            onChange={(e) => setOldestFirst(e.target.checked)}
+          />
+          Oldest first
+        </label>
+      </div>
       <div>
         {loading && <div className="text-gray-500">Loading…</div>}
         <ul className="space-y-4">
@@ -211,20 +285,14 @@ export default function PostsPage() {
                   {post.owner_nickname}
                 </a>
                 <span className="text-gray-400">|</span>
-                <a
-                  className="text-gray-500 hover:underline"
-                  href={`/posts/${post.id}`}
-                >
+                <a className="text-gray-500 hover:underline" href={`/posts/${post.id}`}>
                   {new Date(post.created_at).toLocaleString()}
                 </a>
                 {post.reply_to && (
                   <span className="ml-2 text-xs text-gray-500">
                     In response to{" "}
-                    <a
-                      href={`/posts/${post.reply_to}`}
-                      className="text-blue-500 hover:underline"
-                    >
-                      {post.reply_to_author_name || post.reply_to}
+                    <a href={`/posts/${post.reply_to}`} className="text-blue-500 hover:underline">
+                      {post.reply_to_owner_nickname || post.reply_to}
                     </a>
                   </span>
                 )}
@@ -239,7 +307,7 @@ export default function PostsPage() {
               <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
                 {post.tags && post.tags.length > 0 && (
                   <div>
-                    {post.tags.map(tag => (
+                    {post.tags.map((tag) => (
                       <span
                         key={tag}
                         className="inline-block bg-gray-200 rounded px-2 py-0.5 mr-1 text-gray-700"
@@ -256,9 +324,11 @@ export default function PostsPage() {
                   type="button"
                   aria-label={post.is_liked_by_focus_user ? "Unlike" : "Like"}
                 >
-                  {post.is_liked_by_focus_user
-                    ? <Heart fill="currentColor" size={18} />
-                    : <Heart size={18} />}
+                  {post.is_liked_by_focus_user ? (
+                    <Heart fill="currentColor" size={18} />
+                  ) : (
+                    <Heart size={18} />
+                  )}
                   {post.like_count > 0 && <span>{post.like_count}</span>}
                 </button>
                 <button
@@ -276,18 +346,17 @@ export default function PostsPage() {
                   {post.reply_count > 0 && <span>{post.reply_count}</span>}
                 </button>
               </div>
-              {/* ここに返信フォーム */}
               {replyTo === post.id && (
                 <form
                   className="mt-3 flex flex-col gap-2 border-t pt-3"
                   onSubmit={handleReplySubmit}
-                  onClick={e => e.stopPropagation()}
+                  onClick={(e) => e.stopPropagation()}
                 >
                   <textarea
                     className="border rounded px-2 py-1 min-h-[48px]"
                     placeholder="Write your reply. Use #tag lines for tags."
                     value={replyBody}
-                    onChange={e => setReplyBody(e.target.value)}
+                    onChange={(e) => setReplyBody(e.target.value)}
                     maxLength={5000}
                     onFocus={clearReplyError}
                   />
@@ -302,7 +371,10 @@ export default function PostsPage() {
                     <button
                       type="button"
                       className="text-gray-500 underline ml-2"
-                      onClick={() => { setReplyTo(null); setReplyError(null); }}
+                      onClick={() => {
+                        setReplyTo(null);
+                        setReplyError(null);
+                      }}
                     >
                       Cancel
                     </button>
@@ -313,7 +385,6 @@ export default function PostsPage() {
             </li>
           ))}
         </ul>
-        {/* ページ送り */}
         <div className="mt-6 flex justify-center gap-4">
           <button
             className="px-3 py-1 rounded border"
@@ -340,6 +411,9 @@ export default function PostsPage() {
 }
 
 function truncatePlaintext(text: string, maxLen: number) {
-  let plain = text.replace(/[#>*_`~\-!\[\]()]/g, " ").replace(/\s+/g, " ").trim();
+  let plain = text
+    .replace(/[#>*_`~\-!\[\]()]/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
   return plain.length > maxLen ? plain.slice(0, maxLen) + "…" : plain;
 }

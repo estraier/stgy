@@ -365,7 +365,8 @@ export class PostsService {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
-    const sql = `
+    const include_replies = input.include_replies !== false;
+    let sql = `
       SELECT
         p.id,
         p.content,
@@ -385,10 +386,15 @@ export class PostsService {
       LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
       LEFT JOIN users pu ON parent_post.owned_by = pu.id
       WHERE pl.liked_by = $1
-      ORDER BY p.created_at ${order}
-      OFFSET $2 LIMIT $3
     `;
-    const res = await this.pgClient.query(sql, [input.user_id, offset, limit]);
+    const params: unknown[] = [input.user_id];
+    let paramIdx = 2;
+    if (!include_replies) {
+      sql += ` AND p.reply_to IS NULL`;
+    }
+    sql += ` ORDER BY p.created_at ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
+    params.push(offset, limit);
+    const res = await this.pgClient.query(sql, params);
     const details: PostDetail[] = res.rows;
     if (!focus_user_id || details.length === 0) return details;
     const postIds = details.map((p) => p.id);

@@ -16,7 +16,7 @@ export function useRequireLogin() {
 
   useEffect(() => {
     getSessionInfo()
-      .then(user => setStatus({ state: "authenticated", user }))
+      .then((user) => setStatus({ state: "authenticated", user }))
       .catch(() => {
         setStatus({ state: "unauthenticated" });
         router.replace("/error?page=login-required");

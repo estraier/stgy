@@ -1,15 +1,17 @@
 import type { Post, PostDetail, User } from "./models";
 import { apiFetch, extractError } from "./client";
 
-function buildPostQuery(params: {
-  offset?: number;
-  limit?: number;
-  order?: "asc" | "desc";
-  query?: string;
-  owned_by?: string;
-  tag?: string;
-  reply_to?: string | null;
-} = {}) {
+function buildPostQuery(
+  params: {
+    offset?: number;
+    limit?: number;
+    order?: "asc" | "desc";
+    query?: string;
+    owned_by?: string;
+    tag?: string;
+    reply_to?: string | null;
+  } = {},
+) {
   const search = new URLSearchParams();
   if (params.offset !== undefined) search.append("offset", String(params.offset));
   if (params.limit !== undefined) search.append("limit", String(params.limit));
@@ -68,7 +70,7 @@ export async function updatePost(
     content: string;
     tags?: string[];
     reply_to?: string | null;
-  }
+  },
 ): Promise<Post> {
   const res = await apiFetch(`/posts/${id}`, {
     method: "PUT",
@@ -114,36 +116,45 @@ export async function listPostsDetail(
   return res.json();
 }
 
-export async function listPostsByFolloweesDetail(
-  params: {
-    user_id: string;
-    offset?: number;
-    limit?: number;
-    order?: "asc" | "desc";
-    include_self?: boolean;
-  },
-): Promise<PostDetail[]> {
+export async function listPostsByFolloweesDetail(params: {
+  user_id: string;
+  offset?: number;
+  limit?: number;
+  order?: "asc" | "desc";
+  include_self?: boolean;
+  include_replies?: boolean;
+  focus_user_id?: string;
+}): Promise<PostDetail[]> {
   const search = new URLSearchParams();
   if (params.user_id) search.append("user_id", params.user_id);
   if (params.offset !== undefined) search.append("offset", String(params.offset));
   if (params.limit !== undefined) search.append("limit", String(params.limit));
   if (params.order) search.append("order", params.order);
   if (params.include_self !== undefined) search.append("include_self", String(params.include_self));
-
+  if (params.include_replies !== undefined)
+    search.append("include_replies", String(params.include_replies));
+  if (params.focus_user_id) search.append("focus_user_id", params.focus_user_id);
   const res = await apiFetch(`/posts/by-followees/detail?${search}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
 
-export async function listPostsLikedByUserDetail(
-  params: { user_id: string; offset?: number; limit?: number; order?: "asc" | "desc" },
-): Promise<PostDetail[]> {
+export async function listPostsLikedByUserDetail(params: {
+  user_id: string;
+  offset?: number;
+  limit?: number;
+  order?: "asc" | "desc";
+  include_replies?: boolean;
+  focus_user_id?: string;
+}): Promise<PostDetail[]> {
   const search = new URLSearchParams();
   if (params.user_id) search.append("user_id", params.user_id);
   if (params.offset !== undefined) search.append("offset", String(params.offset));
   if (params.limit !== undefined) search.append("limit", String(params.limit));
   if (params.order) search.append("order", params.order);
-
+  if (params.include_replies !== undefined)
+    search.append("include_replies", String(params.include_replies));
+  if (params.focus_user_id) search.append("focus_user_id", params.focus_user_id);
   const res = await apiFetch(`/posts/liked/detail?${search}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
@@ -169,7 +180,6 @@ export async function listLikers(
   if (params.offset !== undefined) search.append("offset", String(params.offset));
   if (params.limit !== undefined) search.append("limit", String(params.limit));
   if (params.order) search.append("order", params.order);
-
   const res = await apiFetch(`/posts/${post_id}/likers?${search}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();

@@ -55,6 +55,7 @@ export type ListPostsByFolloweesDetailInput = {
 
 export type ListPostsLikedByUserDetailInput = {
   user_id: string;
+  include_replies?: boolean;
 } & PostPagination;
 
 export type ListLikersInput = {

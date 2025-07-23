@@ -179,6 +179,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
+    const include_replies = strToBool(req.query.include_replies as string, true);
     const focus_user_id =
       typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
         ? req.query.focus_user_id.trim()
@@ -189,6 +190,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
         offset,
         limit,
         order,
+        include_replies,
       },
       focus_user_id,
     );

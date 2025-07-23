@@ -891,6 +891,10 @@ paths:
             enum: [asc, desc]
             default: desc
           required: false
+        - name: include_replies
+          in: query
+          schema: { type: boolean, default: true }
+          required: false
         - name: focus_user_id
           in: query
           schema:

@@ -3,7 +3,7 @@ export function parseBodyAndTags(body: string): { content: string; tags: string[
   const forward_lines: string[] = [];
   const forward_tag_lines: string[] = [];
   for (let line of lines) {
-    line = line.replace(/\r$/, '').replace(/\s+$/, '');
+    line = line.replace(/\r$/, "").replace(/\s+$/, "");
     if (line) {
       if (forward_lines.length === 0 && line.startsWith("#")) {
         forward_tag_lines.push(line);
