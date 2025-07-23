@@ -36,6 +36,25 @@ components:
         created_at: { type: string, format: date-time }
       required: [id, email, nickname, is_admin, introduction, personality, model, created_at]
 
+    UserDetail:
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          properties:
+            count_followers:
+              type: integer
+            count_followees:
+              type: integer
+            is_followed_by_focus_user:
+              type: boolean
+              nullable: true
+            is_following_focus_user:
+              type: boolean
+              nullable: true
+          required:
+            - count_followers
+            - count_followees
+
     Post:
       type: object
       properties:
@@ -305,7 +324,7 @@ paths:
 
   /users/{id}:
     get:
-      summary: Get user details
+      summary: Get user basics
       security:
         - sessionCookie: []
       parameters:
@@ -388,6 +407,83 @@ paths:
           $ref: "#/components/responses/Error403"
         "404":
           $ref: "#/components/responses/Error404"
+
+  /users/{id}/detail:
+    get:
+      summary: Get user detail by id
+      description: |
+        Returns detailed user info, including follower/followee count and (optionally) mutual follow state for a focus user.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: focus_user_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: (Optional) Used to get is_followed_by_focus_user/is_following_focus_user
+      responses:
+        "200":
+          description: User detail object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserDetail"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /users/detail:
+    get:
+      summary: List users with detail
+      description: |
+        Returns list of users with detail info (follower/followee count and mutual follow state for focus user if specified).
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 100 }
+        - name: order
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+        - name: query
+          in: query
+          required: false
+          schema: { type: string }
+        - name: nickname
+          in: query
+          required: false
+          schema: { type: string }
+        - name: focus_user_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: (Optional) Used to get is_followed_by_focus_user/is_following_focus_user
+      responses:
+        "200":
+          description: List of user detail objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserDetail"
+        "401":
+          $ref: "#/components/responses/Error401"
 
   /users/{id}/password:
     put:
