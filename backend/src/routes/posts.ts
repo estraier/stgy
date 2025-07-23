@@ -148,14 +148,21 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
     const include_self = strToBool(req.query.include_self as string, false);
     const include_replies = strToBool(req.query.include_replies as string, true);
-    const result = await postsService.listPostsByFolloweesDetail({
-      user_id,
-      offset,
-      limit,
-      order,
-      include_self,
-      include_replies,
-    });
+    const focus_user_id =
+      typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
+        ? req.query.focus_user_id.trim()
+        : undefined;
+    const result = await postsService.listPostsByFolloweesDetail(
+      {
+        user_id,
+        offset,
+        limit,
+        order,
+        include_self,
+        include_replies,
+      },
+      focus_user_id,
+    );
     res.json(result);
   });
 
@@ -172,12 +179,19 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
-    const result = await postsService.listPostsLikedByUserDetail({
-      user_id,
-      offset,
-      limit,
-      order,
-    });
+    const focus_user_id =
+      typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
+        ? req.query.focus_user_id.trim()
+        : undefined;
+    const result = await postsService.listPostsLikedByUserDetail(
+      {
+        user_id,
+        offset,
+        limit,
+        order,
+      },
+      focus_user_id,
+    );
     res.json(result);
   });
 

@@ -8,6 +8,7 @@ export type Post = {
 
 export type PostDetail = Post & {
   owner_nickname: string;
+  reply_to_owner_nickname: string | null;
   reply_count: number;
   like_count: number;
   tags: string[];

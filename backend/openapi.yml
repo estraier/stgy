@@ -73,6 +73,9 @@ components:
         - type: object
           properties:
             owner_nickname: { type: string }
+            reply_to_owner_nickname:
+              type: string
+              nullable: true
             reply_count: { type: integer }
             like_count: { type: integer }
             tags:
@@ -843,6 +846,12 @@ paths:
           in: query
           schema: { type: boolean, default: true }
           required: false
+        - name: focus_user_id
+          in: query
+          schema:
+            type: string
+          required: false
+          description: (Optional) Used for personalization (e.g., is_liked_by_focus_user)
       responses:
         "200":
           description: Posts detail list by followees
@@ -882,6 +891,12 @@ paths:
             enum: [asc, desc]
             default: desc
           required: false
+        - name: focus_user_id
+          in: query
+          schema:
+            type: string
+          required: false
+          description: (Optional) Used for personalization (e.g., is_liked_by_focus_user)
       responses:
         "200":
           description: Posts liked by user (detail)

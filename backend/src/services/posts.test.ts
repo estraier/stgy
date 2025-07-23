@@ -21,7 +21,7 @@ class MockPgClient {
   tags: { post_id: string; name: string }[] = [];
   likes: { post_id: string; liked_by: string }[] = [];
   follows: { follower_id: string; followee_id: string }[] = [];
-  users: User[] = [];
+  users: { id: string; nickname: string }[] = [];
   txCount = 0;
 
   async query(sql: string, params?: any[]) {
@@ -77,6 +77,16 @@ class MockPgClient {
     if (sql.startsWith("SELECT COUNT(*) FROM posts")) {
       return { rows: [{ count: this.data.length.toString() }] };
     }
+    if (sql.startsWith("SELECT 1 FROM post_likes")) {
+      const [post_id, liked_by] = params!;
+      const found = this.likes.some((l) => l.post_id === post_id && l.liked_by === liked_by);
+      return { rows: found ? [{}] : [] };
+    }
+    if (sql.startsWith("SELECT 1 FROM posts WHERE reply_to =")) {
+      const [reply_to, owned_by] = params!;
+      const found = this.data.some((p) => p.reply_to === reply_to && p.owned_by === owned_by);
+      return { rows: found ? [{}] : [] };
+    }
     if (
       sql.includes("WHERE p.owned_by IN") &&
       sql.includes("FROM posts p") &&
@@ -93,25 +103,27 @@ class MockPgClient {
       }
       followeeIds = Array.from(new Set(followeeIds));
       const posts = this.data.filter((p) => followeeIds.includes(p.owned_by));
-      const userList = [
-        { id: "user-1", nickname: "Alice" },
-        { id: "user-2", nickname: "Bob" },
-        { id: "user-3", nickname: "Carol" },
-      ];
-      const rows: PostDetail[] = posts.map((p) => ({
-        id: p.id,
-        content: p.content,
-        owned_by: p.owned_by,
-        reply_to: p.reply_to,
-        created_at: p.created_at,
-        owner_nickname: userList.find((u) => u.id === p.owned_by)?.nickname ?? "",
-        reply_count: this.data.filter((r) => r.reply_to === p.id).length,
-        like_count: this.likes.filter((l) => l.post_id === p.id).length,
-        tags: this.tags
-          .filter((t) => t.post_id === p.id)
-          .map((t) => t.name)
-          .sort(),
-      }));
+      const rows: PostDetail[] = posts.map((p) => {
+        const replyToPost = this.data.find((pp) => pp.id === p.reply_to);
+        const replyToNickname = replyToPost
+          ? (this.users.find((u) => u.id === replyToPost.owned_by)?.nickname ?? null)
+          : null;
+        return {
+          id: p.id,
+          content: p.content,
+          owned_by: p.owned_by,
+          reply_to: p.reply_to,
+          created_at: p.created_at,
+          owner_nickname: this.users.find((u) => u.id === p.owned_by)?.nickname ?? "",
+          reply_to_owner_nickname: replyToNickname,
+          reply_count: this.data.filter((r) => r.reply_to === p.id).length,
+          like_count: this.likes.filter((l) => l.post_id === p.id).length,
+          tags: this.tags
+            .filter((t) => t.post_id === p.id)
+            .map((t) => t.name)
+            .sort(),
+        };
+      });
       return { rows: rows.slice(offset, offset + limit) };
     }
     if (sql.includes("FROM post_likes pl") && sql.includes("JOIN posts p ON pl.post_id = p.id")) {
@@ -120,46 +132,51 @@ class MockPgClient {
       const limit = params![2] ?? 100;
       const likedPostIds = this.likes.filter((l) => l.liked_by === user_id).map((l) => l.post_id);
       const posts = this.data.filter((p) => likedPostIds.includes(p.id));
-      const userList = [
-        { id: "user-1", nickname: "Alice" },
-        { id: "user-2", nickname: "Bob" },
-        { id: "user-3", nickname: "Carol" },
-      ];
-      const rows: PostDetail[] = posts.map((p) => ({
-        id: p.id,
-        content: p.content,
-        owned_by: p.owned_by,
-        reply_to: p.reply_to,
-        created_at: p.created_at,
-        owner_nickname: userList.find((u) => u.id === p.owned_by)?.nickname ?? "",
-        reply_count: this.data.filter((r) => r.reply_to === p.id).length,
-        like_count: this.likes.filter((l) => l.post_id === p.id).length,
-        tags: this.tags
-          .filter((t) => t.post_id === p.id)
-          .map((t) => t.name)
-          .sort(),
-      }));
+      const rows: PostDetail[] = posts.map((p) => {
+        const replyToPost = this.data.find((pp) => pp.id === p.reply_to);
+        const replyToNickname = replyToPost
+          ? (this.users.find((u) => u.id === replyToPost.owned_by)?.nickname ?? null)
+          : null;
+        return {
+          id: p.id,
+          content: p.content,
+          owned_by: p.owned_by,
+          reply_to: p.reply_to,
+          created_at: p.created_at,
+          owner_nickname: this.users.find((u) => u.id === p.owned_by)?.nickname ?? "",
+          reply_to_owner_nickname: replyToNickname,
+          reply_count: this.data.filter((r) => r.reply_to === p.id).length,
+          like_count: this.likes.filter((l) => l.post_id === p.id).length,
+          tags: this.tags
+            .filter((t) => t.post_id === p.id)
+            .map((t) => t.name)
+            .sort(),
+        };
+      });
       return { rows: rows.slice(offset, offset + limit) };
     }
     if (sql.includes("FROM posts p") && sql.includes("JOIN users u ON p.owned_by = u.id")) {
-      const userList = [
-        { id: "user-1", nickname: "Alice" },
-        { id: "user-2", nickname: "Bob" },
-      ];
-      const result: PostDetail[] = this.data.map((p) => ({
-        id: p.id,
-        content: p.content,
-        owned_by: p.owned_by,
-        reply_to: p.reply_to,
-        created_at: p.created_at,
-        owner_nickname: userList.find((u) => u.id === p.owned_by)?.nickname ?? "",
-        reply_count: this.data.filter((r) => r.reply_to === p.id).length,
-        like_count: this.likes.filter((l) => l.post_id === p.id).length,
-        tags: this.tags
-          .filter((t) => t.post_id === p.id)
-          .map((t) => t.name)
-          .sort(),
-      }));
+      const result: PostDetail[] = this.data.map((p) => {
+        const replyToPost = this.data.find((pp) => pp.id === p.reply_to);
+        const replyToNickname = replyToPost
+          ? (this.users.find((u) => u.id === replyToPost.owned_by)?.nickname ?? null)
+          : null;
+        return {
+          id: p.id,
+          content: p.content,
+          owned_by: p.owned_by,
+          reply_to: p.reply_to,
+          created_at: p.created_at,
+          owner_nickname: this.users.find((u) => u.id === p.owned_by)?.nickname ?? "",
+          reply_to_owner_nickname: replyToNickname,
+          reply_count: this.data.filter((r) => r.reply_to === p.id).length,
+          like_count: this.likes.filter((l) => l.post_id === p.id).length,
+          tags: this.tags
+            .filter((t) => t.post_id === p.id)
+            .map((t) => t.name)
+            .sort(),
+        };
+      });
       return { rows: result };
     }
     if (sql.includes("FROM posts p") && !sql.includes("JOIN users u ON p.owned_by = u.id")) {
@@ -222,6 +239,11 @@ describe("posts service", () => {
   beforeEach(() => {
     pgClient = new MockPgClient();
     postsService = new PostsService(pgClient as any);
+
+    pgClient.users.push({ id: "user-1", nickname: "Alice" });
+    pgClient.users.push({ id: "user-2", nickname: "Bob" });
+    pgClient.users.push({ id: "user-3", nickname: "Carol" });
+
     postSample = {
       id: uuidv4(),
       content: "test post content",
@@ -376,6 +398,11 @@ describe("listPostsByFolloweesDetail", () => {
   beforeEach(() => {
     pgClient = new MockPgClient();
     postsService = new PostsService(pgClient as any);
+
+    pgClient.users.push({ id: "user-1", nickname: "Alice" });
+    pgClient.users.push({ id: "user-2", nickname: "Bob" });
+    pgClient.users.push({ id: "user-3", nickname: "Carol" });
+
     alice = "user-1";
     bob = "user-2";
     carol = "user-3";
@@ -444,6 +471,10 @@ describe("listPostsLikedByUserDetail", () => {
   beforeEach(() => {
     pgClient = new MockPgClient();
     postsService = new PostsService(pgClient as any);
+
+    pgClient.users.push({ id: "user-1", nickname: "Alice" });
+    pgClient.users.push({ id: "user-2", nickname: "Bob" });
+
     alice = "user-1";
     bob = "user-2";
     post1 = {
@@ -510,6 +541,10 @@ describe("getPostDetail", () => {
           .filter((x) => x.post_id === p.id)
           .map((x) => x.name)
           .sort();
+        const replyToPost = this.posts.find((pp) => pp.id === p.reply_to);
+        const reply_to_owner_nickname = replyToPost
+          ? (this.users.find((u) => u.id === replyToPost.owned_by)?.nickname ?? null)
+          : null;
         const row: PostDetail = {
           id: p.id,
           content: p.content,
@@ -517,6 +552,7 @@ describe("getPostDetail", () => {
           reply_to: p.reply_to,
           created_at: p.created_at,
           owner_nickname: u?.nickname || "",
+          reply_to_owner_nickname,
           reply_count,
           like_count,
           tags,

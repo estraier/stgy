@@ -68,6 +68,7 @@ export class PostsService {
         p.reply_to,
         p.created_at,
         u.nickname AS owner_nickname,
+        pu.nickname AS reply_to_owner_nickname,
         (SELECT COUNT(*) FROM posts WHERE reply_to = p.id) AS reply_count,
         (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) AS like_count,
         ARRAY(
@@ -75,6 +76,8 @@ export class PostsService {
         ) AS tags
       FROM posts p
       JOIN users u ON p.owned_by = u.id
+      LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
+      LEFT JOIN users pu ON parent_post.owned_by = pu.id
       WHERE p.id = $1
       `,
       [id],
@@ -153,6 +156,7 @@ export class PostsService {
         p.reply_to,
         p.created_at,
         u.nickname AS owner_nickname,
+        pu.nickname AS reply_to_owner_nickname,
         (SELECT COUNT(*) FROM posts WHERE reply_to = p.id) AS reply_count,
         (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) AS like_count,
         ARRAY(
@@ -160,6 +164,8 @@ export class PostsService {
         ) AS tags
       FROM posts p
       JOIN users u ON p.owned_by = u.id
+      LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
+      LEFT JOIN users pu ON parent_post.owned_by = pu.id
     `;
     const where: string[] = [];
     const params: unknown[] = [];
@@ -290,7 +296,10 @@ export class PostsService {
     return (res.rowCount ?? 0) > 0;
   }
 
-  async listPostsByFolloweesDetail(input: ListPostsByFolloweesDetailInput): Promise<PostDetail[]> {
+  async listPostsByFolloweesDetail(
+    input: ListPostsByFolloweesDetailInput,
+    focus_user_id?: string,
+  ): Promise<PostDetail[]> {
     const {
       user_id,
       include_self = false,
@@ -306,8 +315,13 @@ export class PostsService {
     const repliesFilter = include_replies === false ? "AND p.reply_to IS NULL" : "";
     const sql = `
       SELECT
-        p.id, p.content, p.owned_by, p.reply_to, p.created_at,
+        p.id,
+        p.content,
+        p.owned_by,
+        p.reply_to,
+        p.created_at,
         u.nickname AS owner_nickname,
+        pu.nickname AS reply_to_owner_nickname,
         (SELECT COUNT(*) FROM posts WHERE reply_to = p.id) AS reply_count,
         (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) AS like_count,
         ARRAY(
@@ -315,6 +329,8 @@ export class PostsService {
         ) AS tags
       FROM posts p
       JOIN users u ON p.owned_by = u.id
+      LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
+      LEFT JOIN users pu ON parent_post.owned_by = pu.id
       WHERE p.owned_by IN (${followeeSql})
         ${repliesFilter}
       ORDER BY p.created_at ${order}
@@ -322,10 +338,30 @@ export class PostsService {
     `;
     const params = [user_id, offset, limit];
     const res = await this.pgClient.query(sql, params);
-    return res.rows;
+    const details: PostDetail[] = res.rows;
+    if (!focus_user_id || details.length === 0) return details;
+    const postIds = details.map((p) => p.id);
+    const likeRes = await this.pgClient.query(
+      `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
+      [postIds, focus_user_id],
+    );
+    const likedPostIds = new Set(likeRes.rows.map((r) => r.post_id));
+    const replyRes = await this.pgClient.query(
+      `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
+      [postIds, focus_user_id],
+    );
+    const repliedPostIds = new Set(replyRes.rows.map((r) => r.reply_to));
+    for (const d of details) {
+      d.is_liked_by_focus_user = likedPostIds.has(d.id);
+      d.is_replied_by_focus_user = repliedPostIds.has(d.id);
+    }
+    return details;
   }
 
-  async listPostsLikedByUserDetail(input: ListPostsLikedByUserDetailInput): Promise<PostDetail[]> {
+  async listPostsLikedByUserDetail(
+    input: ListPostsLikedByUserDetailInput,
+    focus_user_id?: string,
+  ): Promise<PostDetail[]> {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
@@ -337,6 +373,7 @@ export class PostsService {
         p.reply_to,
         p.created_at,
         u.nickname AS owner_nickname,
+        pu.nickname AS reply_to_owner_nickname,
         (SELECT COUNT(*) FROM posts WHERE reply_to = p.id) AS reply_count,
         (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) AS like_count,
         ARRAY(
@@ -345,12 +382,31 @@ export class PostsService {
       FROM post_likes pl
       JOIN posts p ON pl.post_id = p.id
       JOIN users u ON p.owned_by = u.id
+      LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
+      LEFT JOIN users pu ON parent_post.owned_by = pu.id
       WHERE pl.liked_by = $1
       ORDER BY p.created_at ${order}
       OFFSET $2 LIMIT $3
     `;
     const res = await this.pgClient.query(sql, [input.user_id, offset, limit]);
-    return res.rows;
+    const details: PostDetail[] = res.rows;
+    if (!focus_user_id || details.length === 0) return details;
+    const postIds = details.map((p) => p.id);
+    const likeRes = await this.pgClient.query(
+      `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
+      [postIds, focus_user_id],
+    );
+    const likedPostIds = new Set(likeRes.rows.map((r) => r.post_id));
+    const replyRes = await this.pgClient.query(
+      `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
+      [postIds, focus_user_id],
+    );
+    const repliedPostIds = new Set(replyRes.rows.map((r) => r.reply_to));
+    for (const d of details) {
+      d.is_liked_by_focus_user = likedPostIds.has(d.id);
+      d.is_replied_by_focus_user = repliedPostIds.has(d.id);
+    }
+    return details;
   }
 
   async listLikers(input: ListLikersInput): Promise<User[]> {
