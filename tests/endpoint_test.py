@@ -100,7 +100,7 @@ def test_users():
   assert "count_followees" in admin_detail
   assert admin_detail["is_followed_by_focus_user"] == True
   assert admin_detail["is_following_focus_user"] == False
-  res = requests.get(f"{BASE_URL}/users/detail?focus_user_id={admin_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/users/detail?focus_user_id={admin_id}&order=social", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   users_detail = res.json()
   assert len(users_detail) >= 2

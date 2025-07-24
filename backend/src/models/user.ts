@@ -24,7 +24,7 @@ export type UserFilter = {
 export type UserPagination = {
   offset?: number;
   limit?: number;
-  order?: "asc" | "desc";
+  order?: "asc" | "desc" | "social";
 };
 
 export type CountUsersInput = UserFilter;

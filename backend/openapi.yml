@@ -271,7 +271,7 @@ paths:
           in: query
           schema:
             type: string
-            enum: [asc, desc]
+            enum: [asc, desc, social]
             default: desc
           required: false
         - name: query
@@ -282,6 +282,11 @@ paths:
           in: query
           schema: { type: string }
           required: false
+        - name: focus_user_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: (Optional) Used with order=social to prioritize followees and followers.
       responses:
         "200":
           description: Users list
@@ -461,7 +466,7 @@ paths:
           required: false
           schema:
             type: string
-            enum: [asc, desc]
+            enum: [asc, desc, social]
             default: desc
         - name: query
           in: query

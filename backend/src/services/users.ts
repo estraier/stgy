@@ -80,36 +80,52 @@ export class UsersService {
     return user;
   }
 
-  async listUsers(input?: ListUsersInput): Promise<User[]> {
+  async listUsers(input?: ListUsersInput, focus_user_id?: string): Promise<User[]> {
     const offset = input?.offset ?? 0;
     const limit = input?.limit ?? 100;
-    const order = (input?.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+    const order = input?.order ?? "desc";
     const query = input?.query?.trim();
     const nickname = input?.nickname?.trim();
-    let sql = `
-      SELECT id, email, nickname, is_admin, introduction, personality, model, created_at
-      FROM users
+
+    let baseSelect = `
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.personality, u.model, u.created_at
+      FROM users u
     `;
     const params: unknown[] = [];
     const wheres: string[] = [];
+
     if (query) {
-      wheres.push("(nickname ILIKE $1 OR introduction ILIKE $2)");
+      wheres.push("(u.nickname ILIKE $1 OR u.introduction ILIKE $2)");
       params.push(`%${query}%`, `%${query}%`);
     } else if (nickname) {
-      wheres.push(`nickname ILIKE $${params.length + 1}`);
+      wheres.push(`u.nickname ILIKE $${params.length + 1}`);
       params.push(`%${nickname}%`);
     }
+    let orderClause = "";
+    if (order === "social" && focus_user_id) {
+      baseSelect += `
+        LEFT JOIN user_follows f1 ON f1.follower_id = $${params.length + 1} AND f1.followee_id = u.id
+        LEFT JOIN user_follows f2 ON f2.follower_id = u.id AND f2.followee_id = $${params.length + 1}
+      `;
+      params.push(focus_user_id);
+      orderClause =
+        "ORDER BY (f1.follower_id IS NOT NULL) DESC, (f2.follower_id IS NOT NULL) DESC, u.created_at ASC";
+    } else {
+      const dir = order.toLowerCase() === "asc" ? "ASC" : "DESC";
+      orderClause = `ORDER BY u.created_at ${dir}`;
+    }
+    let sql = baseSelect;
     if (wheres.length > 0) {
       sql += " WHERE " + wheres.join(" AND ");
     }
-    sql += ` ORDER BY created_at ${order} OFFSET $${params.length + 1} LIMIT $${params.length + 2}`;
+    sql += ` ${orderClause} OFFSET $${params.length + 1} LIMIT $${params.length + 2}`;
     params.push(offset, limit);
     const res = await this.pgClient.query(sql, params);
     return res.rows;
   }
 
   async listUsersDetail(input?: ListUsersInput, focus_user_id?: string): Promise<UserDetail[]> {
-    const users = await this.listUsers(input);
+    const users = await this.listUsers(input, focus_user_id);
     if (users.length === 0) return [];
     const ids = users.map((u) => u.id);
     const followersRes = await this.pgClient.query(

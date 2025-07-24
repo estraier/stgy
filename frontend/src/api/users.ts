@@ -5,9 +5,10 @@ export async function listUsers(
   params: {
     offset?: number;
     limit?: number;
-    order?: "asc" | "desc";
+    order?: "asc" | "desc" | "social";
     query?: string;
     nickname?: string;
+    focus_user_id?: string;
   } = {},
 ): Promise<User[]> {
   const search = new URLSearchParams();
@@ -16,6 +17,7 @@ export async function listUsers(
   if (params.order) search.append("order", params.order);
   if (params.query) search.append("query", params.query);
   if (params.nickname) search.append("nickname", params.nickname);
+  if (params.focus_user_id) search.append("focus_user_id", params.focus_user_id);
   const res = await apiFetch(`/users?${search}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
@@ -25,7 +27,7 @@ export async function listUsersDetail(
   params: {
     offset?: number;
     limit?: number;
-    order?: "asc" | "desc";
+    order?: "asc" | "desc" | "social";
     query?: string;
     nickname?: string;
     focus_user_id?: string;
@@ -38,7 +40,6 @@ export async function listUsersDetail(
   if (params.query) search.append("query", params.query);
   if (params.nickname) search.append("nickname", params.nickname);
   if (params.focus_user_id) search.append("focus_user_id", params.focus_user_id);
-
   const res = await apiFetch(`/users/detail?${search}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();

@@ -33,7 +33,10 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
-    const order = req.query.order === "asc" ? "asc" : "desc";
+    const order =
+      req.query.order === "asc" || req.query.order === "desc" || req.query.order === "social"
+        ? req.query.order
+        : "desc";
     const query =
       typeof req.query.query === "string" && req.query.query.trim() !== ""
         ? req.query.query.trim()
@@ -79,7 +82,9 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order =
-      req.query.order === "asc" || req.query.order === "desc" ? req.query.order : "desc";
+      req.query.order === "asc" || req.query.order === "desc" || req.query.order === "social"
+        ? req.query.order
+        : "desc";
     const query =
       typeof req.query.query === "string" && req.query.query.trim() !== ""
         ? req.query.query.trim()
@@ -88,7 +93,14 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       typeof req.query.nickname === "string" && req.query.nickname.trim() !== ""
         ? req.query.nickname.trim()
         : undefined;
-    const users = await usersService.listUsers({ offset, limit, order, query, nickname });
+    const focus_user_id =
+      typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
+        ? req.query.focus_user_id.trim()
+        : undefined;
+    const users = await usersService.listUsers(
+      { offset, limit, order, query, nickname },
+      focus_user_id,
+    );
     res.json(users);
   });
 
