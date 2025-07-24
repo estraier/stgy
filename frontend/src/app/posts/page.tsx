@@ -9,6 +9,7 @@ import {
   addLike,
   removeLike,
 } from "@/api/posts";
+import { listUsers } from "@/api/users";
 import type { PostDetail } from "@/api/model";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
@@ -32,6 +33,7 @@ export default function PostsPage() {
   const [replyBody, setReplyBody] = useState("");
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replySubmitting, setReplySubmitting] = useState(false);
+  const [resolvedOwnedBy, setResolvedOwnedBy] = useState<string | undefined>(undefined);
 
   const PAGE_SIZE = 20;
   const router = useRouter();
@@ -50,6 +52,40 @@ export default function PostsPage() {
   const effectiveTab = isSearchMode ? "all" : tab;
 
   useEffect(() => {
+    let canceled = false;
+    if (
+      isSearchMode &&
+      searchQueryObj.ownedBy &&
+      !/^[0-9a-fA-F\-]{36}$/.test(searchQueryObj.ownedBy)
+    ) {
+      (async () => {
+        try {
+          const users = await listUsers({
+            order: "social",
+            nickname: searchQueryObj.ownedBy,
+            focus_user_id: user_id,
+            limit: 1,
+          });
+          if (!canceled) {
+            if (users.length > 0) {
+              setResolvedOwnedBy(users[0].id);
+            } else {
+              setResolvedOwnedBy("__NO_SUCH_USER__");
+            }
+          }
+        } catch (e) {
+          if (!canceled) setResolvedOwnedBy("__NO_SUCH_USER__");
+        }
+      })();
+    } else {
+      setResolvedOwnedBy(undefined);
+    }
+    return () => {
+      canceled = true;
+    };
+  }, [isSearchMode, searchQueryObj.ownedBy, user_id]);
+
+  useEffect(() => {
     if (status.state !== "authenticated") return;
     let canceled = false;
     setLoading(true);
@@ -66,10 +102,30 @@ export default function PostsPage() {
     };
 
     let fetcher: Promise<PostDetail[]>;
+
+    let effectiveOwnedBy = searchQueryObj.ownedBy;
+    if (
+      isSearchMode &&
+      searchQueryObj.ownedBy &&
+      !/^[0-9a-fA-F\-]{36}$/.test(searchQueryObj.ownedBy)
+    ) {
+      if (resolvedOwnedBy === undefined) {
+        setLoading(true);
+        return () => {};
+      }
+      if (resolvedOwnedBy === "__NO_SUCH_USER__") {
+        setPosts([]);
+        setLoading(false);
+        setHasNext(false);
+        return () => {};
+      }
+      effectiveOwnedBy = resolvedOwnedBy;
+    }
+
     if (isSearchMode) {
       if (searchQueryObj.query) params.query = searchQueryObj.query;
       if (searchQueryObj.tag) params.tag = searchQueryObj.tag;
-      if (searchQueryObj.ownedBy) params.owned_by = searchQueryObj.ownedBy;
+      if (effectiveOwnedBy) params.owned_by = effectiveOwnedBy;
       if (searchQueryObj.noreply) params.reply_to = "";
       if (!searchQueryObj.noreply) params.reply_to = undefined;
       fetcher = listPostsDetail(params);
@@ -120,6 +176,7 @@ export default function PostsPage() {
     qParam,
     pageParam,
     pathname,
+    resolvedOwnedBy,
   ]);
 
   useEffect(() => {
@@ -209,10 +266,28 @@ export default function PostsPage() {
       focus_user_id: user_id,
     };
     let fetcher: Promise<PostDetail[]>;
+    let effectiveOwnedBy = searchQueryObj.ownedBy;
+    if (
+      isSearchMode &&
+      searchQueryObj.ownedBy &&
+      !/^[0-9a-fA-F\-]{36}$/.test(searchQueryObj.ownedBy)
+    ) {
+      if (resolvedOwnedBy === undefined) {
+        setLoading(true);
+        return;
+      }
+      if (resolvedOwnedBy === "__NO_SUCH_USER__") {
+        setPosts([]);
+        setLoading(false);
+        setHasNext(false);
+        return;
+      }
+      effectiveOwnedBy = resolvedOwnedBy;
+    }
     if (isSearchMode) {
       if (searchQueryObj.query) params.query = searchQueryObj.query;
       if (searchQueryObj.tag) params.tag = searchQueryObj.tag;
-      if (searchQueryObj.ownedBy) params.owned_by = searchQueryObj.ownedBy;
+      if (effectiveOwnedBy) params.owned_by = effectiveOwnedBy;
       if (searchQueryObj.noreply) params.reply_to = "";
       if (!searchQueryObj.noreply) params.reply_to = undefined;
       fetcher = listPostsDetail(params);
