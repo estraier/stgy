@@ -86,14 +86,12 @@ export class UsersService {
     const order = input?.order ?? "desc";
     const query = input?.query?.trim();
     const nickname = input?.nickname?.trim();
-
     let baseSelect = `
       SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.personality, u.model, u.created_at
       FROM users u
     `;
     const params: unknown[] = [];
     const wheres: string[] = [];
-
     if (query) {
       wheres.push("(u.nickname ILIKE $1 OR u.introduction ILIKE $2)");
       params.push(`%${query}%`, `%${query}%`);
@@ -109,7 +107,11 @@ export class UsersService {
       `;
       params.push(focus_user_id);
       orderClause =
-        "ORDER BY (f1.follower_id IS NOT NULL) DESC, (f2.follower_id IS NOT NULL) DESC, u.created_at ASC";
+        `ORDER BY (u.id = $${params.length + 1}) DESC, ` +
+        `(f1.follower_id IS NOT NULL) DESC, ` +
+        `(f2.follower_id IS NOT NULL) DESC, ` +
+        `u.created_at ASC`;
+      params.push(focus_user_id); // ORDER BY用
     } else {
       const dir = order.toLowerCase() === "asc" ? "ASC" : "DESC";
       orderClause = `ORDER BY u.created_at ${dir}`;
