@@ -1,8 +1,8 @@
 "use client";
 import { useEffect, useState } from "react";
 import { getSessionInfo, logout } from "@/api/auth";
-import { useRouter, usePathname } from "next/navigation";
-import { FiSettings } from "react-icons/fi";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
+import { FiSettings, FiSearch } from "react-icons/fi";
 import type { SessionInfo } from "@/api/model";
 
 export default function Navbar() {
@@ -10,8 +10,10 @@ export default function Navbar() {
   const [nickname, setNickname] = useState<string>("");
   const [userId, setUserId] = useState<string>("");
   const [menuOpen, setMenuOpen] = useState(false);
+  const [searchValue, setSearchValue] = useState("");
   const router = useRouter();
   const pathname = usePathname();
+  const searchParams = useSearchParams();
 
   useEffect(() => {
     let canceled = false;
@@ -35,9 +37,24 @@ export default function Navbar() {
     };
   }, [pathname]);
 
+  useEffect(() => {
+    const q = searchParams?.get("q") || "";
+    setSearchValue(q);
+  }, [searchParams]);
+
   if (loggedIn !== true) return null;
 
   const isActive = (path: string) => pathname?.startsWith(path);
+
+  function handleSearch(e?: React.FormEvent) {
+    if (e) e.preventDefault();
+    const q = searchValue.trim();
+    if (isActive("/users")) {
+      router.push(q ? `/users?q=${encodeURIComponent(q)}` : "/users");
+    } else {
+      router.push(q ? `/posts?q=${encodeURIComponent(q)}` : "/posts");
+    }
+  }
 
   return (
     <nav className="w-full h-12 flex items-center px-4 bg-white border-b shadow z-10">
@@ -58,8 +75,36 @@ export default function Navbar() {
           Users
         </a>
       </div>
-      <div className="ml-auto relative flex items-center gap-2">
-        {nickname && <span className="text-sm text-gray-700">{nickname}</span>}
+      <div className="ml-auto flex items-center gap-2 relative">
+        <form className="flex items-center relative" onSubmit={handleSearch} autoComplete="off">
+          <input
+            type="text"
+            name="q"
+            className="pl-9 pr-3 py-1 border rounded bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-200 text-sm"
+            placeholder="Search…"
+            value={searchValue}
+            onChange={(e) => setSearchValue(e.target.value)}
+            aria-label="Search"
+            style={{ width: "25ex" }}
+          />
+          <button
+            type="submit"
+            className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-blue-500 p-0"
+            tabIndex={0}
+            aria-label="Search"
+          >
+            <FiSearch size={18} />
+          </button>
+        </form>
+        {nickname && (
+          <span
+            className="text-sm text-gray-700 min-w-[10ex] max-w-[20ex] truncate text-ellipsis text-right block"
+            title={nickname}
+            style={{ display: "inline-block" }}
+          >
+            {nickname}
+          </span>
+        )}
         <button
           className="p-2 rounded hover:bg-gray-200"
           aria-label="Settings"

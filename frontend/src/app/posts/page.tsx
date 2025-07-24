@@ -10,9 +10,10 @@ import {
   removeLike,
 } from "@/api/posts";
 import type { PostDetail } from "@/api/model";
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
-import { parseBodyAndTags } from "@/utils/parseBodyAndTags";
+import { parseBodyAndTags } from "@/utils/parse";
+import { parsePostSearchQuery, serializePostSearchQuery } from "@/utils/parse";
 import { Heart, MessageCircle } from "lucide-react";
 
 export default function PostsPage() {
@@ -34,7 +35,19 @@ export default function PostsPage() {
 
   const PAGE_SIZE = 20;
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const user_id = status.state === "authenticated" ? status.user.user_id : undefined;
+  const qParam = searchParams.get("q") ?? "";
+  const pageParam = Number(searchParams.get("page")) || 1;
+
+  const searchQueryObj = qParam ? parsePostSearchQuery(qParam) : {};
+  const isSearchMode = !!(
+    (searchQueryObj.query && searchQueryObj.query.length > 0) ||
+    (searchQueryObj.tag && searchQueryObj.tag.length > 0) ||
+    (searchQueryObj.ownedBy && searchQueryObj.ownedBy.length > 0)
+  );
+  const effectiveTab = isSearchMode ? "all" : tab;
 
   useEffect(() => {
     if (status.state !== "authenticated") return;
@@ -42,31 +55,40 @@ export default function PostsPage() {
     setLoading(true);
     setError(null);
 
-    const order = oldestFirst ? "asc" : "desc";
-    const baseParams: any = {
-      offset: (page - 1) * PAGE_SIZE,
+    let usePage = page;
+    if (isSearchMode) usePage = pageParam;
+
+    let params: any = {
+      offset: (usePage - 1) * PAGE_SIZE,
       limit: PAGE_SIZE,
-      order,
+      order: oldestFirst ? "asc" : "desc",
       focus_user_id: user_id,
     };
 
     let fetcher: Promise<PostDetail[]>;
-    if (tab === "following") {
+    if (isSearchMode) {
+      if (searchQueryObj.query) params.query = searchQueryObj.query;
+      if (searchQueryObj.tag) params.tag = searchQueryObj.tag;
+      if (searchQueryObj.ownedBy) params.owned_by = searchQueryObj.ownedBy;
+      if (searchQueryObj.noreply) params.reply_to = "";
+      if (!searchQueryObj.noreply) params.reply_to = undefined;
+      fetcher = listPostsDetail(params);
+    } else if (effectiveTab === "following") {
       fetcher = listPostsByFolloweesDetail({
         user_id: user_id!,
-        ...baseParams,
+        ...params,
         include_self: true,
         include_replies: includingReplies,
       });
-    } else if (tab === "liked") {
+    } else if (effectiveTab === "liked") {
       fetcher = listPostsLikedByUserDetail({
         user_id: user_id!,
-        ...baseParams,
+        ...params,
         include_replies: includingReplies,
       });
     } else {
       fetcher = listPostsDetail({
-        ...baseParams,
+        ...params,
         ...(includingReplies ? {} : { reply_to: "" }),
       });
     }
@@ -87,7 +109,27 @@ export default function PostsPage() {
     return () => {
       canceled = true;
     };
-  }, [status, page, user_id, tab, includingReplies, oldestFirst]);
+  }, [
+    status,
+    page,
+    user_id,
+    tab,
+    includingReplies,
+    oldestFirst,
+    isSearchMode,
+    qParam,
+    pageParam,
+    pathname,
+  ]);
+
+  useEffect(() => {
+    if (isSearchMode) {
+      setTab("all");
+      setIncludingReplies(!searchQueryObj.noreply);
+      setOldestFirst(!!searchQueryObj.oldest);
+      setPage(pageParam);
+    }
+  }, [isSearchMode, qParam, pageParam, searchQueryObj.noreply, searchQueryObj.oldest]);
 
   function clearError() {
     if (error) setError(null);
@@ -158,30 +200,38 @@ export default function PostsPage() {
 
   function reloadPosts(targetPage: number) {
     if (status.state !== "authenticated") return;
-    const order = oldestFirst ? "asc" : "desc";
-    const baseParams: any = {
-      offset: (targetPage - 1) * PAGE_SIZE,
+    let usePage = targetPage;
+    if (isSearchMode) usePage = pageParam;
+    let params: any = {
+      offset: (usePage - 1) * PAGE_SIZE,
       limit: PAGE_SIZE,
-      order,
+      order: oldestFirst ? "asc" : "desc",
       focus_user_id: user_id,
     };
     let fetcher: Promise<PostDetail[]>;
-    if (tab === "following") {
+    if (isSearchMode) {
+      if (searchQueryObj.query) params.query = searchQueryObj.query;
+      if (searchQueryObj.tag) params.tag = searchQueryObj.tag;
+      if (searchQueryObj.ownedBy) params.owned_by = searchQueryObj.ownedBy;
+      if (searchQueryObj.noreply) params.reply_to = "";
+      if (!searchQueryObj.noreply) params.reply_to = undefined;
+      fetcher = listPostsDetail(params);
+    } else if (effectiveTab === "following") {
       fetcher = listPostsByFolloweesDetail({
         user_id: user_id!,
-        ...baseParams,
+        ...params,
         include_self: true,
         include_replies: includingReplies,
       });
-    } else if (tab === "liked") {
+    } else if (effectiveTab === "liked") {
       fetcher = listPostsLikedByUserDetail({
         user_id: user_id!,
-        ...baseParams,
+        ...params,
         include_replies: includingReplies,
       });
     } else {
       fetcher = listPostsDetail({
-        ...baseParams,
+        ...params,
         ...(includingReplies ? {} : { reply_to: "" }),
       });
     }
@@ -189,6 +239,32 @@ export default function PostsPage() {
       setPosts(data);
       setHasNext(data.length === PAGE_SIZE);
     });
+  }
+
+  function handleSearchToggle(key: "includingReplies" | "oldestFirst", value: boolean) {
+    if (!isSearchMode) {
+      if (key === "includingReplies") setIncludingReplies(value);
+      if (key === "oldestFirst") setOldestFirst(value);
+      setPage(1);
+      return;
+    }
+    let updated = { ...searchQueryObj };
+    if (key === "includingReplies") {
+      if (value) {
+        delete updated.noreply;
+      } else {
+        updated.noreply = true;
+      }
+    }
+    if (key === "oldestFirst") {
+      if (value) {
+        updated.oldest = true;
+      } else {
+        delete updated.oldest;
+      }
+    }
+    const nextQ = serializePostSearchQuery(updated);
+    router.push(`${pathname}?q=${encodeURIComponent(nextQ)}`);
   }
 
   if (status.state !== "authenticated") return null;
@@ -219,59 +295,68 @@ export default function PostsPage() {
           {error && <span className="text-red-600 text-sm ml-2">{error}</span>}
         </div>
       </form>
-      <div className="flex gap-1 mb-4">
+      <div className="flex gap-1 mb-2">
         <button
           className={`px-3 py-1 rounded-t text-sm font-normal
-            ${tab === "following" ? "bg-blue-100 text-black" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+            ${tab === "following" && !isSearchMode ? "bg-blue-100 text-black" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
           style={{ minWidth: 110 }}
           onClick={() => {
             setTab("following");
             setPage(1);
+            if (isSearchMode) router.push(pathname);
           }}
         >
           Following
         </button>
         <button
           className={`px-3 py-1 rounded-t text-sm font-normal
-            ${tab === "liked" ? "bg-blue-100 text-black" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+            ${tab === "liked" && !isSearchMode ? "bg-blue-100 text-black" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
           style={{ minWidth: 110 }}
           onClick={() => {
             setTab("liked");
             setPage(1);
+            if (isSearchMode) router.push(pathname);
           }}
         >
           Liked
         </button>
         <button
           className={`px-3 py-1 rounded-t text-sm font-normal
-            ${tab === "all" ? "bg-blue-100 text-black" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+            ${tab === "all" || isSearchMode ? "bg-blue-100 text-black" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
           style={{ minWidth: 110 }}
           onClick={() => {
             setTab("all");
             setPage(1);
+            if (isSearchMode) router.push(pathname);
           }}
         >
           All
         </button>
-      </div>
-      <div className="flex gap-2 items-center mb-4">
-        <label className="flex items-center gap-1 text-sm">
+        <label className="flex items-center gap-1 text-sm ml-4">
           <input
             type="checkbox"
-            checked={includingReplies}
-            onChange={(e) => setIncludingReplies(e.target.checked)}
+            checked={isSearchMode ? !searchQueryObj.noreply : includingReplies}
+            onChange={(e) => handleSearchToggle("includingReplies", e.target.checked)}
           />
           Including replies
         </label>
         <label className="flex items-center gap-1 text-sm">
           <input
             type="checkbox"
-            checked={oldestFirst}
-            onChange={(e) => setOldestFirst(e.target.checked)}
+            checked={isSearchMode ? !!searchQueryObj.oldest : oldestFirst}
+            onChange={(e) => handleSearchToggle("oldestFirst", e.target.checked)}
           />
           Oldest first
         </label>
       </div>
+      {isSearchMode && (
+        <div className="mb-2 text-sm text-gray-500">
+          Posts matching{" "}
+          <span className="bg-gray-200 rounded px-2 py-0.5 text-gray-700">
+            {serializePostSearchQuery(searchQueryObj)}
+          </span>
+        </div>
+      )}
       <div>
         {loading && <div className="text-gray-500">Loading…</div>}
         <ul className="space-y-4">
@@ -279,19 +364,21 @@ export default function PostsPage() {
             <li key={post.id} className="p-4 border rounded shadow-sm">
               <div className="flex gap-2 items-center text-sm mb-1">
                 <a
-                  className="font-bold text-blue-700 hover:underline"
+                  className="font-bold text-blue-700 hover:underline min-w-[16ex] max-w-[32ex] truncate inline-block align-bottom"
                   href={`/users/${post.owned_by}`}
                 >
                   {post.owner_nickname}
                 </a>
-                <span className="text-gray-400">|</span>
-                <a className="text-gray-500 hover:underline" href={`/posts/${post.id}`}>
+                <a className="text-gray-400" href={`/posts/${post.id}`}>
                   {new Date(post.created_at).toLocaleString()}
                 </a>
                 {post.reply_to && (
                   <span className="ml-2 text-xs text-gray-500">
                     In response to{" "}
-                    <a href={`/posts/${post.reply_to}`} className="text-blue-500 hover:underline">
+                    <a
+                      href={`/posts/${post.reply_to}`}
+                      className="text-blue-500 hover:underline min-w-[8ex] max-w-[32ex] truncate inline-block align-bottom"
+                    >
                       {post.reply_to_owner_nickname || post.reply_to}
                     </a>
                   </span>
@@ -308,12 +395,13 @@ export default function PostsPage() {
                 {post.tags && post.tags.length > 0 && (
                   <div>
                     {post.tags.map((tag) => (
-                      <span
+                      <a
                         key={tag}
-                        className="inline-block bg-gray-200 rounded px-2 py-0.5 mr-1 text-gray-700"
+                        href={`${pathname}?q=${encodeURIComponent(serializePostSearchQuery({ tag }))}`}
+                        className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-blue-700 hover:bg-blue-200"
                       >
                         #{tag}
-                      </span>
+                      </a>
                     ))}
                   </div>
                 )}
@@ -388,15 +476,31 @@ export default function PostsPage() {
         <div className="mt-6 flex justify-center gap-4">
           <button
             className="px-3 py-1 rounded border"
-            onClick={() => setPage((p) => Math.max(1, p - 1))}
-            disabled={page === 1}
+            onClick={() => {
+              const nextPage = Math.max(1, (isSearchMode ? pageParam : page) - 1);
+              setPage(nextPage);
+              if (isSearchMode) {
+                router.push(
+                  `${pathname}?page=${nextPage}${qParam ? `&q=${encodeURIComponent(qParam)}` : ""}`,
+                );
+              }
+            }}
+            disabled={(isSearchMode ? pageParam : page) === 1}
           >
             Prev
           </button>
-          <span>Page {page}</span>
+          <span>Page {isSearchMode ? pageParam : page}</span>
           <button
             className="px-3 py-1 rounded border"
-            onClick={() => setPage((p) => p + 1)}
+            onClick={() => {
+              const nextPage = (isSearchMode ? pageParam : page) + 1;
+              setPage(nextPage);
+              if (isSearchMode) {
+                router.push(
+                  `${pathname}?page=${nextPage}${qParam ? `&q=${encodeURIComponent(qParam)}` : ""}`,
+                );
+              }
+            }}
             disabled={!hasNext}
           >
             Next
