@@ -16,8 +16,8 @@ import { useRequireLogin } from "@/hooks/useRequireLogin";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 
-const LIKER_PREVIEW_LIMIT = 10;
-const LIKER_FULL_LIMIT = 100;
+const LIKER_LIMIT = 10;
+const LIKER_MAX = 100;
 const REPLY_PAGE_SIZE = 5;
 
 type Props = { params: Promise<{ id: string }> | { id: string } };
@@ -33,32 +33,27 @@ export default function PostDetailPage({ params }: Props) {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  // Likeユーザ
-  const [likers, setLikers] = useState<User[]>([]);
-  const [likerLoading, setLikerLoading] = useState(false);
-  const [likerShowAll, setLikerShowAll] = useState(false);
-  const [likerHasMore, setLikerHasMore] = useState(false);
-
-  // 編集
   const [editing, setEditing] = useState(false);
   const [editBody, setEditBody] = useState("");
   const [editTags, setEditTags] = useState<string[]>([]);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
-  // 返信リスト
+  const [likers, setLikers] = useState<User[]>([]);
+  const [likerAll, setLikerAll] = useState(false);
+  const [likerLoading, setLikerLoading] = useState(false);
+  const [likerHasMore, setLikerHasMore] = useState(false);
+
   const [replies, setReplies] = useState<PostDetail[]>([]);
   const [replyPage, setReplyPage] = useState(1);
   const [replyHasNext, setReplyHasNext] = useState(false);
   const [replyLoading, setReplyLoading] = useState(false);
 
-  // 返信フォーム
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replySubmitting, setReplySubmitting] = useState(false);
 
-  // メイン投稿取得
   useEffect(() => {
     if (!user_id) return;
     setLoading(true);
@@ -73,29 +68,27 @@ export default function PostDetailPage({ params }: Props) {
       .finally(() => setLoading(false));
   }, [postId, user_id]);
 
-  // Likeユーザ取得
   useEffect(() => {
     if (!post) return;
     setLikerLoading(true);
-    const limit = likerShowAll ? LIKER_FULL_LIMIT + 1 : LIKER_PREVIEW_LIMIT + 1;
+    const limit = likerAll ? LIKER_MAX + 1 : LIKER_LIMIT + 1;
     listLikers(post.id, {
       offset: 0,
       limit,
       order: "desc",
     })
       .then((users) => {
-        if (likerShowAll) {
-          setLikers(users.slice(0, LIKER_FULL_LIMIT));
-          setLikerHasMore(users.length > LIKER_FULL_LIMIT);
+        if (likerAll) {
+          setLikers(users.slice(0, LIKER_MAX));
+          setLikerHasMore(users.length > LIKER_MAX);
         } else {
-          setLikers(users.slice(0, LIKER_PREVIEW_LIMIT));
-          setLikerHasMore(users.length > LIKER_PREVIEW_LIMIT);
+          setLikers(users.slice(0, LIKER_LIMIT));
+          setLikerHasMore(users.length > LIKER_LIMIT);
         }
       })
       .finally(() => setLikerLoading(false));
-  }, [post?.id, likerShowAll]);
+  }, [post?.id, likerAll]);
 
-  // 返信リスト取得
   useEffect(() => {
     if (!user_id || !post) return;
     setReplyLoading(true);
@@ -113,14 +106,13 @@ export default function PostDetailPage({ params }: Props) {
       .finally(() => setReplyLoading(false));
   }, [user_id, post?.id, replyPage]);
 
-  // メイン投稿Like
   async function handleLike(post: PostDetail) {
     setPost((prev) =>
       prev
         ? {
             ...prev,
             is_liked_by_focus_user: !prev.is_liked_by_focus_user,
-            like_count: prev.like_count + (prev.is_liked_by_focus_user ? -1 : 1),
+            like_count: Number(prev.like_count) + (prev.is_liked_by_focus_user ? -1 : 1),
           }
         : prev,
     );
@@ -132,11 +124,10 @@ export default function PostDetailPage({ params }: Props) {
       }
     } finally {
       getPostDetail(post.id, user_id).then(setPost);
-      setLikerShowAll(false); // Like直後はサマリー表示に戻す
+      setLikerAll(false);
     }
   }
 
-  // 返信記事Like
   async function handleReplyLike(reply: PostDetail) {
     setReplies((prev) =>
       prev.map((p) =>
@@ -144,7 +135,7 @@ export default function PostDetailPage({ params }: Props) {
           ? {
               ...p,
               is_liked_by_focus_user: !p.is_liked_by_focus_user,
-              like_count: p.like_count + (p.is_liked_by_focus_user ? -1 : 1),
+              like_count: Number(p.like_count) + (p.is_liked_by_focus_user ? -1 : 1),
             }
           : p,
       ),
@@ -156,7 +147,6 @@ export default function PostDetailPage({ params }: Props) {
         await addLike(reply.id);
       }
     } finally {
-      // 最新値で補正
       listPostsDetail({
         reply_to: postId,
         offset: (replyPage - 1) * REPLY_PAGE_SIZE,
@@ -170,7 +160,6 @@ export default function PostDetailPage({ params }: Props) {
     }
   }
 
-  // 編集
   async function handleEditSubmit(e: React.FormEvent) {
     e.preventDefault();
     setEditSubmitting(true);
@@ -192,7 +181,6 @@ export default function PostDetailPage({ params }: Props) {
     }
   }
 
-  // 返信フォーム送信
   async function handleReplySubmit(e: React.FormEvent) {
     e.preventDefault();
     setReplySubmitting(true);
@@ -203,19 +191,33 @@ export default function PostDetailPage({ params }: Props) {
       await createPost({ content: replyBody, tags: [], reply_to: replyingTo });
       setReplyBody("");
       setReplyingTo(null);
-      setReplyPage(1);
-      // メイン・レス再取得
-      getPostDetail(postId, user_id).then(setPost);
-      listPostsDetail({
-        reply_to: postId,
-        offset: 0,
-        limit: REPLY_PAGE_SIZE + 1,
-        order: "desc",
-        focus_user_id: user_id,
-      }).then((list) => {
-        setReplies(list.slice(0, REPLY_PAGE_SIZE));
-        setReplyHasNext(list.length > REPLY_PAGE_SIZE);
-      });
+
+      if (replyingTo === postId) {
+        setReplyPage(1);
+        getPostDetail(postId, user_id).then(setPost);
+        listPostsDetail({
+          reply_to: postId,
+          offset: 0,
+          limit: REPLY_PAGE_SIZE + 1,
+          order: "desc",
+          focus_user_id: user_id,
+        }).then((list) => {
+          setReplies(list.slice(0, REPLY_PAGE_SIZE));
+          setReplyHasNext(list.length > REPLY_PAGE_SIZE);
+        });
+      } else if (replyingTo) {
+        setReplies((prev) =>
+          prev.map((rep) =>
+            rep.id === replyingTo
+              ? {
+                  ...rep,
+                  is_replied_by_focus_user: true,
+                  reply_count: Number(rep.reply_count) + 1,
+                }
+              : rep,
+          ),
+        );
+      }
     } catch (err: any) {
       setReplyError(err?.message ?? "Failed to reply.");
     } finally {
@@ -223,7 +225,6 @@ export default function PostDetailPage({ params }: Props) {
     }
   }
 
-  // 編集権限
   const canEdit = isAdmin || (post && post.owned_by === user_id);
 
   if (!user_id) return null;
@@ -292,11 +293,12 @@ export default function PostDetailPage({ params }: Props) {
           />
         </div>
       )}
-
       {/* Likeユーザ */}
       <div className="my-6">
-        <div className="font-bold mb-2 flex items-center gap-2">Liked by</div>
-        <div className="flex flex-wrap gap-2 items-center">
+        <div className="font-bold mb-2 flex items-center gap-2">
+          Liked by
+        </div>
+        <div className="flex flex-wrap gap-2">
           {likerLoading ? (
             <span>Loading…</span>
           ) : likers.length === 0 ? (
@@ -312,24 +314,22 @@ export default function PostDetailPage({ params }: Props) {
                   {user.nickname}
                 </a>
               ))}
-              {likerHasMore && !likerShowAll && (
+              {!likerAll && likerHasMore && (
                 <button
-                  className="px-2 py-1 bg-gray-200 rounded hover:bg-blue-100"
-                  onClick={() => setLikerShowAll(true)}
-                  aria-label="Show all likers"
+                  className="ml-2 text-blue-600 underline"
+                  onClick={() => setLikerAll(true)}
                 >
                   ...
                 </button>
-              )}
-              {likerHasMore && likerShowAll && (
-                <span className="text-gray-400">and more</span>
               )}
             </>
           )}
         </div>
       </div>
       {/* 返信リスト */}
-      <div className="mt-8 mb-2 font-bold text-lg">Replies</div>
+      <div className="mt-8 mb-2 font-bold text-lg flex items-center gap-2">
+        Replies
+      </div>
       <ul className="space-y-4">
         {replyLoading ? (
           <li>Loading…</li>
@@ -368,13 +368,10 @@ export default function PostDetailPage({ params }: Props) {
           ))
         )}
       </ul>
-      {/* 返信ページネーション（リスト下中央） */}
       <div className="mt-6 flex justify-center gap-4">
         <button
           className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          onClick={() => {
-            setReplyPage((prev) => Math.max(1, prev - 1));
-          }}
+          onClick={() => setReplyPage((p) => Math.max(1, p - 1))}
           disabled={replyPage === 1}
         >
           Prev
@@ -382,9 +379,7 @@ export default function PostDetailPage({ params }: Props) {
         <span className="text-gray-800">Page {replyPage}</span>
         <button
           className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          onClick={() => {
-            setReplyPage((prev) => prev + 1);
-          }}
+          onClick={() => setReplyPage((p) => p + 1)}
           disabled={!replyHasNext}
         >
           Next
