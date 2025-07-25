@@ -156,7 +156,7 @@ export default function PostDetailPage({ params }: Props) {
         reply_to: postId,
         offset: (replyPage - 1) * REPLY_PAGE_SIZE,
         limit: REPLY_PAGE_SIZE + 1,
-        order: "asc",
+        order: "desc",
         focus_user_id: user_id,
       }).then((list) => {
         setReplies(list.slice(0, REPLY_PAGE_SIZE));
@@ -205,7 +205,7 @@ export default function PostDetailPage({ params }: Props) {
         reply_to: postId,
         offset: 0,
         limit: REPLY_PAGE_SIZE + 1,
-        order: "asc",
+        order: "desc",
         focus_user_id: user_id,
       }).then((list) => {
         setReplies(list.slice(0, REPLY_PAGE_SIZE));
@@ -287,6 +287,7 @@ export default function PostDetailPage({ params }: Props) {
           />
         </div>
       )}
+
       {/* Likeユーザ */}
       <div className="my-6">
         <div className="font-bold mb-2 flex items-center gap-2">
@@ -326,24 +327,7 @@ export default function PostDetailPage({ params }: Props) {
         </div>
       </div>
       {/* 返信リスト */}
-      <div className="mt-8 mb-2 font-bold text-lg flex gap-2 items-center">
-        Replies
-        <button
-          className="px-2 py-1"
-          disabled={replyPage === 1}
-          onClick={() => setReplyPage((p) => Math.max(1, p - 1))}
-        >
-          ◀
-        </button>
-        <span>Page {replyPage}</span>
-        <button
-          className="px-2 py-1"
-          disabled={!replyHasNext}
-          onClick={() => setReplyPage((p) => p + 1)}
-        >
-          ▶
-        </button>
-      </div>
+      <div className="mt-8 mb-2 font-bold text-lg">Replies</div>
       <ul className="space-y-4">
         {replyLoading ? (
           <li>Loading…</li>
@@ -382,6 +366,28 @@ export default function PostDetailPage({ params }: Props) {
           ))
         )}
       </ul>
+      {/* 返信ページネーション（リスト下中央） */}
+      <div className="mt-6 flex justify-center gap-4">
+        <button
+          className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          onClick={() => {
+            setReplyPage((prev) => Math.max(1, prev - 1));
+          }}
+          disabled={replyPage === 1}
+        >
+          Prev
+        </button>
+        <span className="text-gray-800">Page {replyPage}</span>
+        <button
+          className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+          onClick={() => {
+            setReplyPage((prev) => prev + 1);
+          }}
+          disabled={!replyHasNext}
+        >
+          Next
+        </button>
+      </div>
     </main>
   );
 }
