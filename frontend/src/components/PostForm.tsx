@@ -13,6 +13,9 @@ type PostFormProps = {
   buttonLabel?: string;
   placeholder?: string;
   className?: string;
+  isEdit?: boolean;           // 編集フォームとして使うか
+  deletable?: boolean;        // 内容が空ならDeleteボタン表示
+  onDelete?: () => void;      // Deleteハンドラ
 };
 
 export default function PostForm({
@@ -26,10 +29,25 @@ export default function PostForm({
   buttonLabel = "Post",
   placeholder = "Write your post. Use #tag lines for tags.",
   className = "",
+  isEdit = false,
+  deletable = false,
+  onDelete,
 }: PostFormProps) {
+  const isEmpty = body.trim() === "";
+
+  // onSubmitかonDeleteを呼び分ける
+  function handleSubmit(e: React.FormEvent) {
+    if (isEdit && deletable && isEmpty && onDelete) {
+      e.preventDefault();
+      onDelete();
+    } else {
+      onSubmit(e);
+    }
+  }
+
   return (
     <form
-      onSubmit={onSubmit}
+      onSubmit={handleSubmit}
       className={className + " flex flex-col gap-2"}
       onClick={(e) => e.stopPropagation()}
     >
@@ -54,10 +72,19 @@ export default function PostForm({
         )}
         <button
           type="submit"
-          className="bg-blue-400 text-white px-4 py-1 rounded cursor-pointer disabled:opacity-60 hover:bg-blue-500 ml-auto"
+          className={
+            isEdit && deletable && isEmpty
+              ? "bg-red-500 text-white hover:bg-red-600 px-4 py-1 rounded cursor-pointer ml-auto"
+              : "bg-blue-400 text-white hover:bg-blue-500 px-4 py-1 rounded cursor-pointer ml-auto"
+          }
           disabled={submitting}
         >
-          {submitting ? (buttonLabel === "Reply" ? "Replying..." : "Posting...") : buttonLabel}
+          {submitting
+            ? (isEdit && deletable && isEmpty ? "Deleting..." : "Saving...")
+            : isEdit && deletable && isEmpty
+            ? "Delete"
+            : buttonLabel
+          }
         </button>
       </div>
     </form>

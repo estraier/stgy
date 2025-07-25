@@ -9,10 +9,12 @@ import {
   removeLike,
   updatePost,
   createPost,
+  deletePost,
   listPostsDetail,
 } from "@/api/posts";
 import type { PostDetail, User } from "@/api/model";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
+import { useRouter } from "next/navigation";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 import { parseBodyAndTags } from "@/utils/parse";
@@ -27,6 +29,7 @@ export default function PostDetailPage({ params }: Props) {
   const { id: postId } = use(params);
 
   const status = useRequireLogin();
+  const router = useRouter();
   const user_id = status.state === "authenticated" ? status.user.user_id : undefined;
   const isAdmin = status.state === "authenticated" && status.user.is_admin;
 
@@ -62,7 +65,11 @@ export default function PostDetailPage({ params }: Props) {
     getPostDetail(postId, user_id)
       .then((data) => {
         setPost(data);
-        setEditBody(data.content);
+        const tagLine =
+          data.tags && data.tags.length > 0
+            ? "#" + data.tags.join(", #") + "\n"
+            : "";
+        setEditBody(tagLine + data.content);
         setEditTags(data.tags || []);
       })
       .catch((err) => setError(err?.message ?? "Failed to fetch post."))
@@ -166,19 +173,30 @@ export default function PostDetailPage({ params }: Props) {
     setEditSubmitting(true);
     setEditError(null);
     try {
-      if (!editBody.trim()) throw new Error("Content is required.");
-      if (editBody.length > 5000) throw new Error("Content is too long (max 5000 chars).");
-      if (editTags.length > 5) throw new Error("You can specify up to 5 tags.");
-      for (const tag of editTags) {
+      const { content, tags } = parseBodyAndTags(editBody);
+      if (!content.trim()) throw new Error("Content is required.");
+      if (content.length > 5000) throw new Error("Content is too long (max 5000 chars).");
+      if (tags.length > 5) throw new Error("You can specify up to 5 tags.");
+      for (const tag of tags) {
         if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
       }
-      await updatePost(postId, { content: editBody, tags: editTags });
+      await updatePost(postId, { content, tags });
       setEditing(false);
       getPostDetail(postId, user_id).then(setPost);
     } catch (err: any) {
       setEditError(err?.message ?? "Failed to update post.");
     } finally {
       setEditSubmitting(false);
+    }
+  }
+
+  async function handleDelete() {
+    if (!post) return;
+    try {
+      await deletePost(postId);
+      router.push("/posts");
+    } catch (err: any) {
+      setEditError(err?.message ?? "Failed to delete post.");
     }
   }
 
@@ -268,23 +286,26 @@ export default function PostDetailPage({ params }: Props) {
           />
         </div>
       )}
-      <div className="flex gap-4 mb-4 text-sm items-center">
-        <span>
-          By{" "}
-          <a href={`/users/${post.owned_by}`} className="text-blue-600 hover:underline">
-            {post.owner_nickname}
-          </a>
-        </span>
-        <span>{new Date(post.created_at).toLocaleString()}</span>
-        {canEdit && !editing && (
+      {/* 投稿の操作エリア */}
+      {canEdit && !editing && (
+        <div className="mb-4 flex justify-end">
           <button
-            className="ml-auto px-2 py-1 border rounded bg-yellow-100 text-yellow-800 hover:bg-yellow-200"
-            onClick={() => setEditing(true)}
+            className="px-4 py-1 rounded border bg-sky-100 text-gray-700 hover:bg-sky-200 transition"
+            onClick={() => {
+              if (post) {
+                const tagLine = post.tags && post.tags.length > 0
+                  ? "#" + post.tags.join(", #") + "\n"
+                  : "";
+                setEditBody(tagLine + post.content);
+                setEditTags(post.tags || []);
+              }
+              setEditing(true);
+            }}
           >
             Edit
           </button>
-        )}
-      </div>
+        </div>
+      )}
       {editing && (
         <div className="mb-4">
           <PostForm
@@ -296,6 +317,9 @@ export default function PostDetailPage({ params }: Props) {
             onCancel={() => setEditing(false)}
             buttonLabel="Save"
             placeholder="Edit your post"
+            deletable={true}
+            isEdit={true}
+            onDelete={handleDelete}
           />
         </div>
       )}
