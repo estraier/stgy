@@ -42,24 +42,21 @@ export default function PostForm({
         onFocus={onErrorClear}
       />
       <div className="flex items-center gap-2">
-        {/* エラーは左寄せ */}
         <span className="flex-1 text-red-600 text-sm">
           {error && error}
         </span>
-        {/* キャンセルボタン（グレー） */}
         {onCancel && (
           <button
             type="button"
-            className="bg-gray-200 text-gray-700 px-4 py-1 rounded border border-gray-300 hover:bg-gray-300 transition"
+            className="bg-gray-200 text-gray-700 px-4 py-1 rounded border border-gray-300 cursor-pointer hover:bg-gray-300 transition"
             onClick={onCancel}
           >
             Cancel
           </button>
         )}
-        {/* Post/Replyボタンは右寄せ */}
         <button
           type="submit"
-          className="bg-blue-500 text-white px-4 py-1 rounded disabled:opacity-60 ml-auto"
+          className="bg-blue-400 text-white px-4 py-1 rounded cursor-pointer disabled:opacity-60 hover:bg-blue-500 ml-auto"
           disabled={submitting}
         >
           {submitting ? (buttonLabel === "Reply" ? "Replying..." : "Posting...") : buttonLabel}

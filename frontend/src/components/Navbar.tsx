@@ -88,7 +88,7 @@ export default function Navbar() {
           />
           <button
             type="submit"
-            className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-blue-500 p-0"
+            className="absolute left-2 top-1/2 -translate-y-1/2 text-gray-400 hover:text-blue-500 p-0 cursor-pointer"
             tabIndex={0}
             aria-label="Search"
           >
@@ -105,7 +105,7 @@ export default function Navbar() {
           </span>
         )}
         <button
-          className="p-2 rounded hover:bg-gray-200"
+          className="p-2 rounded hover:bg-gray-200 cursor-pointer"
           aria-label="Settings"
           onClick={() => setMenuOpen((v) => !v)}
         >

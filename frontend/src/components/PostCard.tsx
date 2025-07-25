@@ -88,7 +88,7 @@ export default function PostCard({
         {showActions && (
           <>
             <button
-              className={`ml-auto flex items-center gap-1 px-2 py-1 rounded
+              className={`ml-auto flex items-center gap-1 px-2 py-1 rounded cursor-pointer
                 ${post.is_liked_by_focus_user ? "bg-pink-100 text-pink-600" : "hover:bg-gray-100"}`}
               onClick={() => onLike?.(post)}
               type="button"
@@ -102,7 +102,7 @@ export default function PostCard({
               {post.like_count > 0 && <span>{post.like_count}</span>}
             </button>
             <button
-              className={`flex items-center gap-1 px-2 py-1 rounded
+              className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer
                 ${post.is_replied_by_focus_user ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100"}`}
               onClick={() => onReply?.(post)}
               type="button"

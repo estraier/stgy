@@ -358,7 +358,7 @@ export default function PostsPage() {
       <div className="h-6" />
       <div className="flex gap-1 mb-2">
         <button
-          className={`px-3 py-1 rounded-t text-sm font-normal
+          className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
             ${tab === "following" && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
           style={{ minWidth: 110 }}
           onClick={() => {
@@ -370,7 +370,7 @@ export default function PostsPage() {
           Following
         </button>
         <button
-          className={`px-3 py-1 rounded-t text-sm font-normal
+          className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
             ${tab === "liked" && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
           style={{ minWidth: 110 }}
           onClick={() => {
@@ -382,7 +382,7 @@ export default function PostsPage() {
           Liked
         </button>
         <button
-          className={`px-3 py-1 rounded-t text-sm font-normal
+          className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
             ${tab === "all" || isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
           style={{ minWidth: 110 }}
           onClick={() => {
@@ -393,19 +393,21 @@ export default function PostsPage() {
         >
           All
         </button>
-        <label className="flex items-center gap-1 text-sm ml-4 text-gray-700">
+        <label className="flex items-center gap-1 text-sm ml-4 text-gray-700 cursor-pointer">
           <input
             type="checkbox"
             checked={isSearchMode ? !searchQueryObj.noreply : includingReplies}
             onChange={(e) => handleSearchToggle("includingReplies", e.target.checked)}
+            className="cursor-pointer"
           />
           Including replies
         </label>
-        <label className="flex items-center gap-1 text-sm text-gray-700">
+        <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer">
           <input
             type="checkbox"
             checked={isSearchMode ? !!searchQueryObj.oldest : oldestFirst}
             onChange={(e) => handleSearchToggle("oldestFirst", e.target.checked)}
+            className="cursor-pointer"
           />
           Oldest first
         </label>
