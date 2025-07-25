@@ -15,6 +15,7 @@ import type { PostDetail, User } from "@/api/model";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
+import { parseBodyAndTags } from "@/utils/parse";
 
 const LIKER_LIMIT = 10;
 const LIKER_MAX = 100;
@@ -186,9 +187,14 @@ export default function PostDetailPage({ params }: Props) {
     setReplySubmitting(true);
     setReplyError(null);
     try {
-      if (!replyBody.trim()) throw new Error("Content is required.");
-      if (replyBody.length > 5000) throw new Error("Content is too long (max 5000 chars).");
-      await createPost({ content: replyBody, tags: [], reply_to: replyingTo });
+      const { content, tags } = parseBodyAndTags(replyBody);
+      if (!content.trim()) throw new Error("Content is required.");
+      if (content.length > 5000) throw new Error("Content is too long (max 5000 chars).");
+      if (tags.length > 5) throw new Error("You can specify up to 5 tags.");
+      for (const tag of tags) {
+        if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
+      }
+      await createPost({ content, tags, reply_to: replyingTo });
       setReplyBody("");
       setReplyingTo(null);
 
