@@ -16,23 +16,28 @@ import { useRequireLogin } from "@/hooks/useRequireLogin";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 
-const LIKER_PAGE_SIZE = 10;
+const LIKER_PREVIEW_LIMIT = 10;
+const LIKER_FULL_LIMIT = 100;
 const REPLY_PAGE_SIZE = 5;
 
 type Props = { params: Promise<{ id: string }> | { id: string } };
 
 export default function PostDetailPage({ params }: Props) {
-  // 正しくparams展開
   const { id: postId } = use(params);
 
   const status = useRequireLogin();
   const user_id = status.state === "authenticated" ? status.user.user_id : undefined;
   const isAdmin = status.state === "authenticated" && status.user.is_admin;
 
-  // メイン投稿状態
   const [post, setPost] = useState<PostDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+
+  // Likeユーザ
+  const [likers, setLikers] = useState<User[]>([]);
+  const [likerLoading, setLikerLoading] = useState(false);
+  const [likerShowAll, setLikerShowAll] = useState(false);
+  const [likerHasMore, setLikerHasMore] = useState(false);
 
   // 編集
   const [editing, setEditing] = useState(false);
@@ -40,12 +45,6 @@ export default function PostDetailPage({ params }: Props) {
   const [editTags, setEditTags] = useState<string[]>([]);
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
-
-  // Likeユーザ
-  const [likers, setLikers] = useState<User[]>([]);
-  const [likerPage, setLikerPage] = useState(1);
-  const [likerHasNext, setLikerHasNext] = useState(false);
-  const [likerLoading, setLikerLoading] = useState(false);
 
   // 返信リスト
   const [replies, setReplies] = useState<PostDetail[]>([]);
@@ -78,17 +77,23 @@ export default function PostDetailPage({ params }: Props) {
   useEffect(() => {
     if (!post) return;
     setLikerLoading(true);
+    const limit = likerShowAll ? LIKER_FULL_LIMIT + 1 : LIKER_PREVIEW_LIMIT + 1;
     listLikers(post.id, {
-      offset: (likerPage - 1) * LIKER_PAGE_SIZE,
-      limit: LIKER_PAGE_SIZE + 1,
+      offset: 0,
+      limit,
       order: "desc",
     })
       .then((users) => {
-        setLikers(users.slice(0, LIKER_PAGE_SIZE));
-        setLikerHasNext(users.length > LIKER_PAGE_SIZE);
+        if (likerShowAll) {
+          setLikers(users.slice(0, LIKER_FULL_LIMIT));
+          setLikerHasMore(users.length > LIKER_FULL_LIMIT);
+        } else {
+          setLikers(users.slice(0, LIKER_PREVIEW_LIMIT));
+          setLikerHasMore(users.length > LIKER_PREVIEW_LIMIT);
+        }
       })
       .finally(() => setLikerLoading(false));
-  }, [post?.id, likerPage]);
+  }, [post?.id, likerShowAll]);
 
   // 返信リスト取得
   useEffect(() => {
@@ -127,7 +132,7 @@ export default function PostDetailPage({ params }: Props) {
       }
     } finally {
       getPostDetail(post.id, user_id).then(setPost);
-      setLikerPage(1);
+      setLikerShowAll(false); // Like直後はサマリー表示に戻す
     }
   }
 
@@ -290,39 +295,36 @@ export default function PostDetailPage({ params }: Props) {
 
       {/* Likeユーザ */}
       <div className="my-6">
-        <div className="font-bold mb-2 flex items-center gap-2">
-          Liked by
-          <button
-            className="px-2 py-1"
-            disabled={likerPage === 1}
-            onClick={() => setLikerPage((p) => Math.max(1, p - 1))}
-          >
-            ◀
-          </button>
-          <span>Page {likerPage}</span>
-          <button
-            className="px-2 py-1"
-            disabled={!likerHasNext}
-            onClick={() => setLikerPage((p) => p + 1)}
-          >
-            ▶
-          </button>
-        </div>
-        <div className="flex flex-wrap gap-2">
+        <div className="font-bold mb-2 flex items-center gap-2">Liked by</div>
+        <div className="flex flex-wrap gap-2 items-center">
           {likerLoading ? (
             <span>Loading…</span>
           ) : likers.length === 0 ? (
             <span className="text-gray-400">No likes yet</span>
           ) : (
-            likers.map((user) => (
-              <a
-                key={user.id}
-                href={`/users/${user.id}`}
-                className="px-2 py-1 bg-gray-100 rounded hover:bg-blue-50"
-              >
-                {user.nickname}
-              </a>
-            ))
+            <>
+              {likers.map((user) => (
+                <a
+                  key={user.id}
+                  href={`/users/${user.id}`}
+                  className="px-2 py-1 bg-gray-100 rounded hover:bg-blue-50"
+                >
+                  {user.nickname}
+                </a>
+              ))}
+              {likerHasMore && !likerShowAll && (
+                <button
+                  className="px-2 py-1 bg-gray-200 rounded hover:bg-blue-100"
+                  onClick={() => setLikerShowAll(true)}
+                  aria-label="Show all likers"
+                >
+                  ...
+                </button>
+              )}
+              {likerHasMore && likerShowAll && (
+                <span className="text-gray-400">and more</span>
+              )}
+            </>
           )}
         </div>
       </div>
