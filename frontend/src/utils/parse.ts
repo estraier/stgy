@@ -96,6 +96,87 @@ export function serializePostSearchQuery(params: {
   return tokens.join(" ");
 }
 
+export function parseUserSearchQuery(q: string): {
+  query?: string;
+  nickname?: string;
+  oldest?: boolean;
+} {
+  if (!q) return {};
+  const ESC_QUOTE = "\uFFF1";
+  const ESC_SPACE = "\uFFF0";
+  let s = q.replace(/\\"/g, ESC_QUOTE);
+  s = s.replace(/"([^"]*)"/g, (m, group1) => {
+    return '"' + group1.replace(/ /g, ESC_SPACE) + '"';
+  });
+  let tokens = s.split(/\s+/).filter(Boolean);
+  let nickname: string | undefined;
+  let oldest = false;
+  let queryParts: string[] = [];
+  for (let token of tokens) {
+    token = token.replace(new RegExp(ESC_SPACE, "g"), " ");
+    if (token.startsWith('"') && token.endsWith('"') && token.length >= 2) {
+      token = token.slice(1, -1);
+    }
+    token = token.replace(/\s+/g, " ").trim();
+    token = token.replace(new RegExp(ESC_QUOTE, "g"), '"');
+    if (!token) continue;
+    if (!nickname && token.startsWith("@") && token.length > 1) {
+      nickname = token.slice(1);
+      continue;
+    }
+    if (token.startsWith("\@") && token.length >= 3) {
+      token = token.slice(2);
+    }
+    if (token.toLowerCase() === "[oldest]") {
+      oldest = true;
+      continue;
+    }
+    queryParts.push(token);
+  }
+  const query = queryParts.length > 0 ? queryParts.join(" ") : undefined;
+  return {
+    ...(query ? { query } : {}),
+    ...(nickname ? { nicknamey } : {}),
+    ...(oldest ? { oldest } : {}),
+  };
+}
+
+export function serializeUserSearchQuery(params: {
+  query?: string;
+  nickname?: string;
+  oldest?: boolean;
+}): string {
+  const tokens: string[] = [];
+  const escapeToken = (token: string): string => {
+    let s = token.replace(/"/g, '\\"');
+    if (s.match(/\s/)) {
+      s = `"${s}"`;
+    }
+    return s;
+  };
+  if (params.query) {
+    const parts = params.query.split(/\s+/).filter(Boolean);
+    for (let p of parts) {
+      if (p.startsWith("#") || p.startsWith("@")) {
+        p = "\\" + p;
+      }
+      tokens.push(escapeToken(p));
+    }
+  }
+  if (params.tag) {
+    let tag = params.tag.replace(/"/g, '\\"');
+    if (tag.match(/\s/)) tag = `"${tag}"`;
+    tokens.push("#" + tag);
+  }
+  if (params.nickname) {
+    let nick = params.nickname.replace(/"/g, '\\"');
+    if (nick.match(/\s/)) nick = `"${nick}"`;
+    tokens.push("@" + nick);
+  }
+  if (params.oldest) tokens.push("[oldest]");
+  return tokens.join(" ");
+}
+
 export function parseBodyAndTags(body: string): { content: string; tags: string[] } {
   const lines = body.split(/\r?\n/);
   const forward_lines: string[] = [];
