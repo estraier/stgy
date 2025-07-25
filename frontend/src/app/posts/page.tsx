@@ -243,16 +243,30 @@ export default function PostsPage() {
     }
   }
 
+  // 楽観的UI対応: Like直後にカウントと状態を即時変更
   async function handleLike(post: PostDetail) {
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === post.id
+          ? {
+              ...p,
+              is_liked_by_focus_user: !p.is_liked_by_focus_user,
+              like_count: p.like_count + (p.is_liked_by_focus_user ? -1 : 1),
+            }
+          : p,
+      ),
+    );
     try {
       if (post.is_liked_by_focus_user) {
         await removeLike(post.id);
       } else {
         await addLike(post.id);
       }
+      // APIで正値を再取得して補正
       reloadPosts(page);
     } catch (err) {
       alert("Failed to update like.");
+      reloadPosts(page);
     }
   }
 

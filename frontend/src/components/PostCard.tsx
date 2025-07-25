@@ -64,11 +64,7 @@ export default function PostCard({
           </span>
         )}
       </div>
-      <div
-        className="cursor-pointer"
-        onClick={handleCardClick}
-        style={{ minHeight: 36 }}
-      >
+      <div className="cursor-pointer" onClick={handleCardClick} style={{ minHeight: 36 }}>
         {truncated ? truncatePlaintext(post.content, 200) : post.content}
       </div>
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
@@ -99,7 +95,7 @@ export default function PostCard({
               ) : (
                 <Heart size={18} />
               )}
-              {post.like_count > 0 && <span>{post.like_count}</span>}
+              <span>{post.like_count}</span>
             </button>
             <button
               className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer
@@ -109,7 +105,7 @@ export default function PostCard({
               aria-label="Reply"
             >
               <MessageCircle size={18} />
-              {post.reply_count > 0 && <span>{post.reply_count}</span>}
+              <span>{post.reply_count}</span>
             </button>
           </>
         )}

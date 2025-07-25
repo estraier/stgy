@@ -42,9 +42,7 @@ export default function PostForm({
         onFocus={onErrorClear}
       />
       <div className="flex items-center gap-2">
-        <span className="flex-1 text-red-600 text-sm">
-          {error && error}
-        </span>
+        <span className="flex-1 text-red-600 text-sm">{error && error}</span>
         {onCancel && (
           <button
             type="button"
