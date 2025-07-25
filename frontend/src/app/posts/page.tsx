@@ -460,7 +460,7 @@ export default function PostsPage() {
                   onErrorClear={clearReplyError}
                   buttonLabel="Reply"
                   placeholder="Write your reply. Use #tag lines for tags."
-                  className="mt-3 flex flex-col gap-2 border-t pt-3"
+                  className="mt-3 flex flex-col gap-2 pt-3"
                   onCancel={() => {
                     setReplyTo(null);
                     setReplyError(null);
