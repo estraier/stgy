@@ -80,12 +80,11 @@ export default function Navbar() {
           <input
             type="text"
             name="q"
-            className="pl-9 pr-3 py-1 border rounded bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-200 text-sm"
+            className="pl-9 pr-3 py-1 border border-gray-400 rounded bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-200 text-sm w-28 sm:w-48"
             placeholder="Search…"
             value={searchValue}
             onChange={(e) => setSearchValue(e.target.value)}
             aria-label="Search"
-            style={{ width: "25ex" }}
           />
           <button
             type="submit"
@@ -114,7 +113,7 @@ export default function Navbar() {
         </button>
         {menuOpen && (
           <div
-            className="absolute right-0 mt-2 bg-white border rounded shadow py-2 min-w-[140px] z-50"
+            className="absolute top-0 right-0 mt-2 bg-white border rounded shadow py-2 min-w-[140px] z-50"
             onMouseLeave={() => setMenuOpen(false)}
           >
             <a

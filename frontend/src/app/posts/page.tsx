@@ -15,7 +15,8 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { parseBodyAndTags } from "@/utils/parse";
 import { parsePostSearchQuery, serializePostSearchQuery } from "@/utils/parse";
-import { Heart, MessageCircle } from "lucide-react";
+import PostCard from "@/components/PostCard";
+import PostForm from "@/components/PostForm";
 
 export default function PostsPage() {
   const status = useRequireLogin();
@@ -35,7 +36,7 @@ export default function PostsPage() {
   const [replySubmitting, setReplySubmitting] = useState(false);
   const [resolvedOwnedBy, setResolvedOwnedBy] = useState<string | undefined>(undefined);
 
-  const PAGE_SIZE = 20;
+  const PAGE_SIZE = 5;
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -345,35 +346,20 @@ export default function PostsPage() {
   if (status.state !== "authenticated") return null;
 
   return (
-    <main className="max-w-2xl mx-auto mt-8 p-4 bg-white shadow rounded" onClick={clearError}>
-      <form
+    <main className="max-w-3xl mx-auto mt-8 p-4" onClick={clearError}>
+      <PostForm
+        body={body}
+        setBody={setBody}
         onSubmit={handleSubmit}
-        className="mb-6 flex flex-col gap-2"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <textarea
-          className="border rounded px-2 py-1 min-h-[64px]"
-          placeholder="Write your post. Use #tag lines for tags."
-          value={body}
-          onChange={(e) => setBody(e.target.value)}
-          maxLength={5000}
-          onFocus={clearError}
-        />
-        <div className="flex items-center gap-2">
-          <button
-            type="submit"
-            className="self-end bg-blue-600 text-white px-4 py-1 rounded disabled:opacity-60"
-            disabled={submitting}
-          >
-            {submitting ? "Posting..." : "Post"}
-          </button>
-          {error && <span className="text-red-600 text-sm ml-2">{error}</span>}
-        </div>
-      </form>
+        submitting={submitting}
+        error={error}
+        onErrorClear={clearError}
+      />
+      <div className="h-6" />
       <div className="flex gap-1 mb-2">
         <button
           className={`px-3 py-1 rounded-t text-sm font-normal
-            ${tab === "following" && !isSearchMode ? "bg-blue-100 text-black" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+            ${tab === "following" && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
           style={{ minWidth: 110 }}
           onClick={() => {
             setTab("following");
@@ -385,7 +371,7 @@ export default function PostsPage() {
         </button>
         <button
           className={`px-3 py-1 rounded-t text-sm font-normal
-            ${tab === "liked" && !isSearchMode ? "bg-blue-100 text-black" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+            ${tab === "liked" && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
           style={{ minWidth: 110 }}
           onClick={() => {
             setTab("liked");
@@ -397,7 +383,7 @@ export default function PostsPage() {
         </button>
         <button
           className={`px-3 py-1 rounded-t text-sm font-normal
-            ${tab === "all" || isSearchMode ? "bg-blue-100 text-black" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+            ${tab === "all" || isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
           style={{ minWidth: 110 }}
           onClick={() => {
             setTab("all");
@@ -407,7 +393,7 @@ export default function PostsPage() {
         >
           All
         </button>
-        <label className="flex items-center gap-1 text-sm ml-4">
+        <label className="flex items-center gap-1 text-sm ml-4 text-gray-700">
           <input
             type="checkbox"
             checked={isSearchMode ? !searchQueryObj.noreply : includingReplies}
@@ -415,7 +401,7 @@ export default function PostsPage() {
           />
           Including replies
         </label>
-        <label className="flex items-center gap-1 text-sm">
+        <label className="flex items-center gap-1 text-sm text-gray-700">
           <input
             type="checkbox"
             checked={isSearchMode ? !!searchQueryObj.oldest : oldestFirst}
@@ -436,121 +422,41 @@ export default function PostsPage() {
         {loading && <div className="text-gray-500">Loading…</div>}
         <ul className="space-y-4">
           {posts.map((post) => (
-            <li key={post.id} className="p-4 border rounded shadow-sm">
-              <div className="flex gap-2 items-center text-sm mb-1">
-                <a
-                  className="font-bold text-blue-700 hover:underline min-w-[16ex] max-w-[32ex] truncate inline-block align-bottom"
-                  href={`/users/${post.owned_by}`}
-                >
-                  {post.owner_nickname}
-                </a>
-                <a className="text-gray-400" href={`/posts/${post.id}`}>
-                  {new Date(post.created_at).toLocaleString()}
-                </a>
-                {post.reply_to && (
-                  <span className="ml-2 text-xs text-gray-500">
-                    In response to{" "}
-                    <a
-                      href={`/posts/${post.reply_to}`}
-                      className="text-blue-500 hover:underline min-w-[8ex] max-w-[32ex] truncate inline-block align-bottom"
-                    >
-                      {post.reply_to_owner_nickname || post.reply_to}
-                    </a>
-                  </span>
-                )}
-              </div>
-              <div
-                className="cursor-pointer"
-                onClick={() => router.push(`/posts/${post.id}`)}
-                style={{ minHeight: 36 }}
-              >
-                {truncatePlaintext(post.content, 200)}
-              </div>
-              <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
-                {post.tags && post.tags.length > 0 && (
-                  <div>
-                    {post.tags.map((tag) => (
-                      <a
-                        key={tag}
-                        href={`${pathname}?q=${encodeURIComponent(serializePostSearchQuery({ tag }))}`}
-                        className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-blue-700 hover:bg-blue-200"
-                      >
-                        #{tag}
-                      </a>
-                    ))}
-                  </div>
-                )}
-                <button
-                  className={`ml-auto flex items-center gap-1 px-2 py-1 rounded
-                    ${post.is_liked_by_focus_user ? "bg-pink-100 text-pink-600" : "hover:bg-gray-100"}`}
-                  onClick={() => handleLike(post)}
-                  type="button"
-                  aria-label={post.is_liked_by_focus_user ? "Unlike" : "Like"}
-                >
-                  {post.is_liked_by_focus_user ? (
-                    <Heart fill="currentColor" size={18} />
-                  ) : (
-                    <Heart size={18} />
-                  )}
-                  {post.like_count > 0 && <span>{post.like_count}</span>}
-                </button>
-                <button
-                  className={`flex items-center gap-1 px-2 py-1 rounded
-                    ${post.is_replied_by_focus_user ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100"}`}
-                  onClick={() => {
-                    setReplyTo(post.id);
-                    setReplyBody("");
+            <li key={post.id}>
+              <PostCard
+                post={post}
+                pathname={pathname}
+                onClickContent={() => router.push(`/posts/${post.id}`)}
+                onLike={() => handleLike(post)}
+                onReply={() => {
+                  setReplyTo(post.id);
+                  setReplyBody("");
+                  setReplyError(null);
+                }}
+              />
+              {replyTo === post.id && (
+                <PostForm
+                  body={replyBody}
+                  setBody={setReplyBody}
+                  onSubmit={handleReplySubmit}
+                  submitting={replySubmitting}
+                  error={replyError}
+                  onErrorClear={clearReplyError}
+                  buttonLabel="Reply"
+                  placeholder="Write your reply. Use #tag lines for tags."
+                  className="mt-3 flex flex-col gap-2 border-t pt-3"
+                  onCancel={() => {
+                    setReplyTo(null);
                     setReplyError(null);
                   }}
-                  type="button"
-                  aria-label="Reply"
-                >
-                  <MessageCircle size={18} />
-                  {post.reply_count > 0 && <span>{post.reply_count}</span>}
-                </button>
-              </div>
-              {replyTo === post.id && (
-                <form
-                  className="mt-3 flex flex-col gap-2 border-t pt-3"
-                  onSubmit={handleReplySubmit}
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  <textarea
-                    className="border rounded px-2 py-1 min-h-[48px]"
-                    placeholder="Write your reply. Use #tag lines for tags."
-                    value={replyBody}
-                    onChange={(e) => setReplyBody(e.target.value)}
-                    maxLength={5000}
-                    onFocus={clearReplyError}
-                  />
-                  <div className="flex items-center gap-2">
-                    <button
-                      type="submit"
-                      className="bg-blue-500 text-white px-4 py-1 rounded disabled:opacity-60"
-                      disabled={replySubmitting}
-                    >
-                      {replySubmitting ? "Replying..." : "Reply"}
-                    </button>
-                    <button
-                      type="button"
-                      className="text-gray-500 underline ml-2"
-                      onClick={() => {
-                        setReplyTo(null);
-                        setReplyError(null);
-                      }}
-                    >
-                      Cancel
-                    </button>
-                    {replyError && <span className="text-red-600 text-sm ml-2">{replyError}</span>}
-                  </div>
-                </form>
+                />
               )}
             </li>
           ))}
         </ul>
         <div className="mt-6 flex justify-center gap-4">
           <button
-            className="px-3 py-1 rounded border"
+            className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={() => {
               const nextPage = Math.max(1, (isSearchMode ? pageParam : page) - 1);
               setPage(nextPage);
@@ -564,9 +470,9 @@ export default function PostsPage() {
           >
             Prev
           </button>
-          <span>Page {isSearchMode ? pageParam : page}</span>
+          <span className="text-gray-800">Page {isSearchMode ? pageParam : page}</span>
           <button
-            className="px-3 py-1 rounded border"
+            className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={() => {
               const nextPage = (isSearchMode ? pageParam : page) + 1;
               setPage(nextPage);
@@ -587,12 +493,4 @@ export default function PostsPage() {
       </div>
     </main>
   );
-}
-
-function truncatePlaintext(text: string, maxLen: number) {
-  let plain = text
-    .replace(/[#>*_`~\-!\[\]()]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-  return plain.length > maxLen ? plain.slice(0, maxLen) + "…" : plain;
 }
