@@ -97,7 +97,7 @@ export default function PostsPage() {
 
     let params: any = {
       offset: (usePage - 1) * PAGE_SIZE,
-      limit: PAGE_SIZE,
+      limit: PAGE_SIZE + 1, // limit+1方式
       order: oldestFirst ? "asc" : "desc",
       focus_user_id: user_id,
     };
@@ -153,8 +153,8 @@ export default function PostsPage() {
     fetcher
       .then((data) => {
         if (!canceled) {
-          setPosts(data);
-          setHasNext(data.length === PAGE_SIZE);
+          setHasNext(data.length > PAGE_SIZE);
+          setPosts(data.slice(0, PAGE_SIZE));
         }
       })
       .catch((err: any) => {
@@ -276,7 +276,7 @@ export default function PostsPage() {
     if (isSearchMode) usePage = pageParam;
     let params: any = {
       offset: (usePage - 1) * PAGE_SIZE,
-      limit: PAGE_SIZE,
+      limit: PAGE_SIZE + 1,
       order: oldestFirst ? "asc" : "desc",
       focus_user_id: user_id,
     };
@@ -326,8 +326,8 @@ export default function PostsPage() {
       });
     }
     fetcher.then((data) => {
-      setPosts(data);
-      setHasNext(data.length === PAGE_SIZE);
+      setHasNext(data.length > PAGE_SIZE);
+      setPosts(data.slice(0, PAGE_SIZE));
     });
   }
 
