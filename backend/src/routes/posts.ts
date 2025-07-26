@@ -249,6 +249,9 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     if (!(user.is_admin || post.owned_by === user.id)) {
       return res.status(403).json({ error: "forbidden" });
     }
+    if (!(user.is_admin || req.body.owned_by !== undefined)) {
+      return res.status(403).json({ error: "forbidden" });
+    }
     try {
       let tags;
       if ("tags" in req.body) {
@@ -260,6 +263,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       const input: UpdatePostInput = {
         id: req.params.id,
         content: req.body.content,
+        owned_by: req.body.owned_by,
         reply_to: req.body.reply_to,
         tags,
       };

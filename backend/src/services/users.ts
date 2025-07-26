@@ -175,6 +175,24 @@ export class UsersService {
   }
 
   async createUser(input: CreateUserInput): Promise<User> {
+    if (typeof input.email !== "string" || input.email.trim() === "") {
+      throw new Error("email is required");
+    }
+    if (typeof input.nickname !== "string" || input.nickname.trim() === "") {
+      throw new Error("nickname is required");
+    }
+    if (typeof input.password !== "string" || input.password.trim() === "") {
+      throw new Error("password is required");
+    }
+    if (typeof input.introduction !== "string") {
+      throw new Error("introduction is required");
+    }
+    if (typeof input.personality !== "string") {
+      throw new Error("personality is required");
+    }
+    if (typeof input.model !== "string") {
+      throw new Error("model is required");
+    }
     const id = uuidv4();
     const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
     const res = await this.pgClient.query(
@@ -200,10 +218,16 @@ export class UsersService {
     const values: unknown[] = [];
     let idx = 1;
     if (input.email !== undefined) {
+      if (!input.email || input.email.trim() === "") {
+        throw new Error("email is required");
+      }
       columns.push(`email = $${idx++}`);
       values.push(input.email);
     }
     if (input.nickname !== undefined) {
+      if (!input.nickname || input.nickname.trim() === "") {
+        throw new Error("nickname is required");
+      }
       columns.push(`nickname = $${idx++}`);
       values.push(input.nickname);
     }
@@ -212,14 +236,23 @@ export class UsersService {
       values.push(input.is_admin);
     }
     if (input.introduction !== undefined) {
+      if (typeof input.introduction !== "string") {
+        throw new Error("introduction is required");
+      }
       columns.push(`introduction = $${idx++}`);
       values.push(input.introduction);
     }
     if (input.personality !== undefined) {
+      if (typeof input.personality !== "string") {
+        throw new Error("personality is required");
+      }
       columns.push(`personality = $${idx++}`);
       values.push(input.personality);
     }
     if (input.model !== undefined) {
+      if (typeof input.model !== "string") {
+        throw new Error("model is required");
+      }
       columns.push(`model = $${idx++}`);
       values.push(input.model);
     }
@@ -231,6 +264,9 @@ export class UsersService {
   }
 
   async updateUserPassword(input: UpdatePasswordInput): Promise<boolean> {
+    if (input.password.trim() === "") {
+      throw new Error("password is mustn't be empty");
+    }
     const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
     const res = await this.pgClient.query(`UPDATE users SET password = $1 WHERE id = $2`, [
       passwordHash,

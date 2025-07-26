@@ -10,6 +10,7 @@ class MockRedis {
     return Promise.resolve("OK");
   });
   get = jest.fn((key: string) => Promise.resolve(this.store[key]));
+  getex = jest.fn((key: string, ..._args: any[]) => Promise.resolve(this.store[key])); // ★これを追加
   del = jest.fn((key: string) => {
     delete this.store[key];
     return Promise.resolve(1);

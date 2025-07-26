@@ -54,7 +54,7 @@ export async function createPost(post: {
   content: string;
   tags: string[];
   reply_to?: string | null;
-  owned_by?: string; // admin only
+  owned_by?: string;
 }): Promise<Post> {
   const res = await apiFetch("/posts", {
     method: "POST",
@@ -69,6 +69,7 @@ export async function updatePost(
   post: {
     content: string;
     tags?: string[];
+    owned_by?: string;
     reply_to?: string | null;
   },
 ): Promise<Post> {

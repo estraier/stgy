@@ -987,13 +987,14 @@ paths:
               type: object
               properties:
                 content: { type: string }
+                owned_by: { type: string }
                 reply_to:
                   type: string
                   nullable: true
                 tags:
                   type: array
                   items: { type: string }
-              required: [content]
+              required: []
       responses:
         "200":
           description: Post updated

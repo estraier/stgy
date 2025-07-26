@@ -214,6 +214,12 @@ export class PostsService {
   }
 
   async createPost(input: CreatePostInput): Promise<Post> {
+    if (typeof input.content !== "string" || input.content.trim() === "") {
+      throw new Error("content is required");
+    }
+    if (typeof input.owned_by !== "string" || input.owned_by.trim() === "") {
+      throw new Error("owned_by is required");
+    }
     const client = this.pgClient;
     const id = uuidv4();
     await client.query("BEGIN");
@@ -246,8 +252,18 @@ export class PostsService {
       const values: unknown[] = [];
       let idx = 1;
       if (input.content !== undefined) {
+        if (typeof input.content !== "string" || input.content.trim() === "") {
+          throw new Error("content is required");
+        }
         columns.push(`content = $${idx++}`);
         values.push(input.content);
+      }
+      if (input.owned_by !== undefined) {
+        if (typeof input.owned_by !== "string" || input.owned_by.trim() === "") {
+          throw new Error("owned_by is required");
+        }
+        columns.push(`owned_by = $${idx++}`);
+        values.push(input.owned_by);
       }
       if (input.reply_to !== undefined) {
         columns.push(`reply_to = $${idx++}`);

@@ -37,7 +37,6 @@ export class AuthService {
     if (!sessionId) return null;
     const value = await this.redis.getex(`session:${sessionId}`, "EX", 3600);
     if (!value) return null;
-    console.log(value);
     try {
       return JSON.parse(value) as SessionInfo;
     } catch {

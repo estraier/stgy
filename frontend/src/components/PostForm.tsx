@@ -13,9 +13,9 @@ type PostFormProps = {
   buttonLabel?: string;
   placeholder?: string;
   className?: string;
-  isEdit?: boolean;           // 編集フォームとして使うか
-  deletable?: boolean;        // 内容が空ならDeleteボタン表示
-  onDelete?: () => void;      // Deleteハンドラ
+  isEdit?: boolean; // 編集フォームとして使うか
+  deletable?: boolean; // 内容が空ならDeleteボタン表示
+  onDelete?: () => void; // Deleteハンドラ
 };
 
 export default function PostForm({
@@ -80,11 +80,12 @@ export default function PostForm({
           disabled={submitting}
         >
           {submitting
-            ? (isEdit && deletable && isEmpty ? "Deleting..." : "Saving...")
+            ? isEdit && deletable && isEmpty
+              ? "Deleting..."
+              : "Saving..."
             : isEdit && deletable && isEmpty
-            ? "Delete"
-            : buttonLabel
-          }
+              ? "Delete"
+              : buttonLabel}
         </button>
       </div>
     </form>

@@ -65,10 +65,7 @@ export default function PostDetailPage({ params }: Props) {
     getPostDetail(postId, user_id)
       .then((data) => {
         setPost(data);
-        const tagLine =
-          data.tags && data.tags.length > 0
-            ? "#" + data.tags.join(", #") + "\n"
-            : "";
+        const tagLine = data.tags && data.tags.length > 0 ? "#" + data.tags.join(", #") + "\n" : "";
         setEditBody(tagLine + data.content);
         setEditTags(data.tags || []);
       })
@@ -293,9 +290,8 @@ export default function PostDetailPage({ params }: Props) {
             className="px-4 py-1 rounded border bg-sky-100 text-gray-700 hover:bg-sky-200 transition"
             onClick={() => {
               if (post) {
-                const tagLine = post.tags && post.tags.length > 0
-                  ? "#" + post.tags.join(", #") + "\n"
-                  : "";
+                const tagLine =
+                  post.tags && post.tags.length > 0 ? "#" + post.tags.join(", #") + "\n" : "";
                 setEditBody(tagLine + post.content);
                 setEditTags(post.tags || []);
               }
@@ -325,9 +321,7 @@ export default function PostDetailPage({ params }: Props) {
       )}
       {/* Likeユーザ */}
       <div className="my-6">
-        <div className="font-bold mb-2 flex items-center gap-2">
-          Liked by
-        </div>
+        <div className="font-bold mb-2 flex items-center gap-2">Liked by</div>
         <div className="flex flex-wrap gap-2">
           {likerLoading ? (
             <span>Loading…</span>
@@ -348,6 +342,7 @@ export default function PostDetailPage({ params }: Props) {
                 <button
                   className="ml-2 text-blue-600 underline"
                   onClick={() => setLikerAll(true)}
+                  className="px-2 py-1 bg-gray-100 rounded hover:bg-blue-50"
                 >
                   ...
                 </button>
@@ -357,9 +352,7 @@ export default function PostDetailPage({ params }: Props) {
         </div>
       </div>
       {/* 返信リスト */}
-      <div className="mt-8 mb-2 font-bold text-lg flex items-center gap-2">
-        Replies
-      </div>
+      <div className="mt-8 mb-2 font-bold text-lg flex items-center gap-2">Replies</div>
       <ul className="space-y-4">
         {replyLoading ? (
           <li>Loading…</li>

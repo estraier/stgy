@@ -42,6 +42,7 @@ export type CreatePostInput = {
 
 export type UpdatePostInput = {
   id: string;
+  owned_by?: string;
   content?: string;
   reply_to?: string | null;
   tags?: string[];

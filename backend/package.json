@@ -21,7 +21,7 @@
     "cookie-parser": "^1",
     "cors": "^2",
     "express": "^5",
-    "ioredis": "^5",
+    "ioredis": "^5.6.1",
     "pg": "^8",
     "uuid": "^11"
   },
