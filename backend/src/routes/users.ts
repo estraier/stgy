@@ -213,12 +213,13 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     const follower_id = req.params.id;
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
+    const order = (req.query.order as string) === "asc" ? "asc" : "desc";
     const focus_user_id =
       typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
         ? req.query.focus_user_id.trim()
         : undefined;
     const result = await usersService.listFolloweesDetail(
-      { follower_id, offset, limit },
+      { follower_id, offset, limit, order },
       focus_user_id,
     );
     res.json(result);
@@ -230,12 +231,13 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     const followee_id = req.params.id;
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
+    const order = (req.query.order as string) === "asc" ? "asc" : "desc";
     const focus_user_id =
       typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
         ? req.query.focus_user_id.trim()
         : undefined;
     const result = await usersService.listFollowersDetail(
-      { followee_id, offset, limit },
+      { followee_id, offset, limit, order },
       focus_user_id,
     );
     res.json(result);

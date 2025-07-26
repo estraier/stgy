@@ -114,11 +114,17 @@ export async function removeFollower(id: string): Promise<{ result: string }> {
 
 export async function listFollowees(
   id: string,
-  params: { offset?: number; limit?: number; focus_user_id?: string } = {},
+  params: {
+    offset?: number;
+    limit?: number;
+    order?: "asc" | "desc";
+    focus_user_id?: string;
+  } = {},
 ): Promise<UserDetail[]> {
   const search = new URLSearchParams();
   if (params.offset !== undefined) search.append("offset", String(params.offset));
   if (params.limit !== undefined) search.append("limit", String(params.limit));
+  if (params.order) search.append("order", params.order);
   if (params.focus_user_id) search.append("focus_user_id", params.focus_user_id);
   const res = await apiFetch(`/users/${id}/followees/detail?${search}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
@@ -127,11 +133,17 @@ export async function listFollowees(
 
 export async function listFollowers(
   id: string,
-  params: { offset?: number; limit?: number; focus_user_id?: string } = {},
+  params: {
+    offset?: number;
+    limit?: number;
+    order?: "asc" | "desc";
+    focus_user_id?: string;
+  } = {},
 ): Promise<UserDetail[]> {
   const search = new URLSearchParams();
   if (params.offset !== undefined) search.append("offset", String(params.offset));
   if (params.limit !== undefined) search.append("limit", String(params.limit));
+  if (params.order) search.append("order", params.order);
   if (params.focus_user_id) search.append("focus_user_id", params.focus_user_id);
   const res = await apiFetch(`/users/${id}/followers/detail?${search}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));

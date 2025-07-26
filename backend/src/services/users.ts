@@ -292,7 +292,7 @@ export class UsersService {
       FROM user_follows f
       JOIN users u ON f.followee_id = u.id
       WHERE f.follower_id = $1
-      ORDER BY u.created_at ${order}
+      ORDER BY u.created_at ${order}, u.id ${order}
       OFFSET $2 LIMIT $3
     `;
     const res = await this.pgClient.query(sql, [input.follower_id, offset, limit]);
@@ -355,7 +355,7 @@ export class UsersService {
       FROM user_follows f
       JOIN users u ON f.follower_id = u.id
       WHERE f.followee_id = $1
-      ORDER BY u.created_at ${order}
+      ORDER BY u.created_at ${order}, u.id ${order}
       OFFSET $2 LIMIT $3
     `;
     const res = await this.pgClient.query(sql, [input.followee_id, offset, limit]);

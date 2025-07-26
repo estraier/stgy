@@ -249,7 +249,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     if (!(user.is_admin || post.owned_by === user.id)) {
       return res.status(403).json({ error: "forbidden" });
     }
-    if (!(user.is_admin || req.body.owned_by !== undefined)) {
+    if (!user.is_admin && req.body.owned_by !== undefined) {
       return res.status(403).json({ error: "forbidden" });
     }
     try {

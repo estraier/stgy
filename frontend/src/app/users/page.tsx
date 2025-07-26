@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { listUsersDetail, listFollowers, listFollowees } from "@/api/users";
-import type { UserDetail, User } from "@/api/model";
+import type { UserDetail, User } from "@/api/models";
 import { parseUserSearchQuery, serializeUserSearchQuery } from "@/utils/parse";
 
 export default function UsersPage() {
@@ -50,9 +50,19 @@ export default function UsersPage() {
       if (searchQueryObj.nickname) params.nickname = searchQueryObj.nickname;
       fetcher = listUsersDetail(params);
     } else if (effectiveTab === "followees") {
-      fetcher = listFollowees(user_id!, params.offset, params.limit);
+      fetcher = listFollowees(user_id!, {
+        offset: params.offset,
+        limit: params.limit,
+        order: params.order,
+        focus_user_id: user_id,
+      });
     } else if (effectiveTab === "followers") {
-      fetcher = listFollowers(user_id!, params.offset, params.limit);
+      fetcher = listFollowers(user_id!, {
+        offset: params.offset,
+        limit: params.limit,
+        order: params.order,
+        focus_user_id: user_id,
+      });
     } else {
       fetcher = listUsersDetail(params);
     }
