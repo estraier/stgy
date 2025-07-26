@@ -576,9 +576,9 @@ paths:
         "404":
           $ref: "#/components/responses/Error404"
 
-  /users/{id}/followees:
+  /users/{id}/followees/detail:
     get:
-      summary: List followees
+      summary: List followees (with detail)
       security:
         - sessionCookie: []
       parameters:
@@ -611,9 +611,9 @@ paths:
         "401":
           $ref: "#/components/responses/Error401"
 
-  /users/{id}/followers:
+  /users/{id}/followers/detail:
     get:
-      summary: List followers
+      summary: List followers (with detail)
       security:
         - sessionCookie: []
       parameters:

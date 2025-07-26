@@ -207,7 +207,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     res.json({ result: "ok" });
   });
 
-  router.get("/:id/followees", async (req: Request, res: Response) => {
+  router.get("/:id/followees/detail", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const follower_id = req.params.id;
@@ -217,11 +217,14 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
         ? req.query.focus_user_id.trim()
         : undefined;
-    const result = await usersService.listFollowees({ follower_id, offset, limit }, focus_user_id);
+    const result = await usersService.listFolloweesDetail(
+      { follower_id, offset, limit },
+      focus_user_id,
+    );
     res.json(result);
   });
 
-  router.get("/:id/followers", async (req: Request, res: Response) => {
+  router.get("/:id/followers/detail", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const followee_id = req.params.id;
@@ -231,7 +234,10 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
         ? req.query.focus_user_id.trim()
         : undefined;
-    const result = await usersService.listFollowers({ followee_id, offset, limit }, focus_user_id);
+    const result = await usersService.listFollowersDetail(
+      { followee_id, offset, limit },
+      focus_user_id,
+    );
     res.json(result);
   });
 

@@ -83,12 +83,12 @@ def test_users():
   res = requests.post(f"{BASE_URL}/users/{admin_id}/follow", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   print(f"[users] user1 followed admin: {admin_id}")
-  res = requests.get(f"{BASE_URL}/users/{user1_id}/followees?limit=1000", headers=headers, cookies=user1_cookies)
+  res = requests.get(f"{BASE_URL}/users/{user1_id}/followees/detail?limit=1000", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   followees = res.json()
   print("[users] user1 followees:", followees)
   assert any(u["id"] == admin_id for u in followees)
-  res = requests.get(f"{BASE_URL}/users/{admin_id}/followers?limit=1000", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/users/{admin_id}/followers/detail?limit=1000", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   followers = res.json()
   print("[users] admin followers:", followers)
@@ -112,9 +112,9 @@ def test_users():
   res = requests.delete(f"{BASE_URL}/users/{admin_id}/follow", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   print(f"[users] user1 unfollowed admin: {admin_id}")
-  res = requests.get(f"{BASE_URL}/users/{user1_id}/followees?limit=1000", headers=headers, cookies=user1_cookies)
+  res = requests.get(f"{BASE_URL}/users/{user1_id}/followees/detail?limit=1000", headers=headers, cookies=user1_cookies)
   assert all(u["id"] != admin_id for u in res.json())
-  res = requests.get(f"{BASE_URL}/users/{admin_id}/followers?limit=1000", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/users/{admin_id}/followers/detail?limit=1000", headers=headers, cookies=cookies)
   assert all(u["id"] != user1_id for u in res.json())
   res = requests.delete(f"{BASE_URL}/users/{user1_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text

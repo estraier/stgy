@@ -191,7 +191,8 @@ export default function UsersPage() {
                 <span className="font-semibold">Introduction:</span> {user.introduction}
               </div>
               <div className="text-xs text-gray-600 mt-1">
-                <span className="font-semibold">Personality:</span> {user.personality} / <span className="font-semibold">Model:</span> {user.model}
+                <span className="font-semibold">Personality:</span> {user.personality} /{" "}
+                <span className="font-semibold">Model:</span> {user.model}
               </div>
               {"is_followed_by_focus_user" in user && user.is_followed_by_focus_user && (
                 <div className="mt-1 text-xs text-blue-700">Follows you</div>
