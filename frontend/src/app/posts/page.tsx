@@ -364,7 +364,7 @@ export default function PostsPage() {
         <div className="mt-6 flex justify-center gap-4">
           <button
             className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            onClick={() => setQuery({ page: Math.max(page - 1, 1) })}
+            onClick={() => setQuery({ page: Math.max(page - 1, 1), q: qParam })}
             disabled={page === 1}
           >
             Prev
@@ -372,7 +372,7 @@ export default function PostsPage() {
           <span className="text-gray-800">Page {page}</span>
           <button
             className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            onClick={() => setQuery({ page: hasNext ? page + 1 : page })}
+            onClick={() => setQuery({ page: hasNext ? page + 1 : page, q: qParam })}
             disabled={!hasNext}
           >
             Next
