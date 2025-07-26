@@ -35,8 +35,9 @@ export class AuthService {
 
   async getSessionInfo(sessionId: string): Promise<SessionInfo | null> {
     if (!sessionId) return null;
-    const value = await this.redis.get(`session:${sessionId}`);
+    const value = await this.redis.getex(`session:${sessionId}`, "EX", 3600);
     if (!value) return null;
+    console.log(value);
     try {
       return JSON.parse(value) as SessionInfo;
     } catch {
@@ -47,13 +48,6 @@ export class AuthService {
   async logout(sessionId: string): Promise<void> {
     if (sessionId) {
       await this.redis.del(`session:${sessionId}`);
-    }
-  }
-
-  async elongateSession(sessionId: string): Promise<void> {
-    const value = await this.redis.get(`session:${sessionId}`);
-    if (value) {
-      await this.redis.set(`session:${sessionId}`, value, "EX", 3600);
     }
   }
 }

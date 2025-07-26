@@ -40,6 +40,7 @@ CREATE TABLE post_likes (
   PRIMARY KEY (post_id, liked_by)
 );
 CREATE INDEX idx_post_likes_liked_by ON post_likes(liked_by);
+CREATE INDEX idx_post_likes_post_id_created_at ON post_likes (post_id, created_at);
 
 CREATE TABLE past_actions (
   user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,

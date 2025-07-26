@@ -14,7 +14,6 @@ export class AuthHelpers {
   async getSessionInfo(req: Request) {
     const sessionId = req.cookies?.session_id;
     if (!sessionId) return null;
-    await this.authService.elongateSession(sessionId);
     return await this.authService.getSessionInfo(sessionId);
   }
 

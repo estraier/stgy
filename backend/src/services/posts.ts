@@ -417,12 +417,13 @@ export class PostsService {
 
   async listLikers(input: ListLikersInput): Promise<User[]> {
     const { post_id, offset = 0, limit = 100, order = "desc" } = input;
+    const orderDir = order && order.toLowerCase() === "asc" ? "ASC" : "DESC";
     const sql = `
       SELECT u.*
       FROM post_likes pl
       JOIN users u ON pl.liked_by = u.id
       WHERE pl.post_id = $1
-      ORDER BY pl.created_at ${order.toUpperCase()}
+      ORDER BY pl.created_at ${orderDir}
       OFFSET $2 LIMIT $3
     `;
     const res = await this.pgClient.query(sql, [post_id, offset, limit]);
