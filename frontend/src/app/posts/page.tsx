@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import {
   listPostsDetail,
   listPostsByFolloweesDetail,
@@ -18,33 +18,43 @@ import { parsePostSearchQuery, serializePostSearchQuery } from "@/utils/parse";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 
+const PAGE_SIZE = 5;
+const TAB_VALUES = ["following", "liked", "all"] as const;
+
 export default function PostsPage() {
   const status = useRequireLogin();
+  const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
+  // 状態
   const [posts, setPosts] = useState<PostDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [body, setBody] = useState("");
   const [submitting, setSubmitting] = useState(false);
-  const [page, setPage] = useState(1);
   const [hasNext, setHasNext] = useState(false);
-  const [tab, setTab] = useState<"following" | "liked" | "all">("following");
-  const [includingReplies, setIncludingReplies] = useState(false);
-  const [oldestFirst, setOldestFirst] = useState(false);
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replySubmitting, setReplySubmitting] = useState(false);
   const [resolvedOwnedBy, setResolvedOwnedBy] = useState<string | undefined>(undefined);
 
-  const PAGE_SIZE = 5;
-  const router = useRouter();
-  const pathname = usePathname();
-  const searchParams = useSearchParams();
-  const user_id = status.state === "authenticated" ? status.user.user_id : undefined;
-  const qParam = searchParams.get("q") ?? "";
-  const pageParam = Number(searchParams.get("page")) || 1;
-
+  // クエリの読み取りは毎レンダリング時に関数で取得
+  function getQueryParams() {
+    const sp = searchParams;
+    return {
+      tab: (sp.get("tab") as "following" | "liked" | "all") || "following",
+      includingReplies: sp.get("includingReplies") === "1",
+      oldestFirst: sp.get("oldestFirst") === "1",
+      page: Math.max(Number(sp.get("page")) || 1, 1),
+      qParam: sp.get("q") ?? "",
+    };
+  }
+  const { tab, includingReplies, oldestFirst, page, qParam } = getQueryParams();
   const searchQueryObj = qParam ? parsePostSearchQuery(qParam) : {};
+  const user_id = status.state === "authenticated" ? status.user.user_id : undefined;
+
   const isSearchMode = !!(
     (searchQueryObj.query && searchQueryObj.query.length > 0) ||
     (searchQueryObj.tag && searchQueryObj.tag.length > 0) ||
@@ -52,6 +62,7 @@ export default function PostsPage() {
   );
   const effectiveTab = isSearchMode ? "all" : tab;
 
+  // ニックネーム→ID解決
   useEffect(() => {
     let canceled = false;
     if (
@@ -68,57 +79,47 @@ export default function PostsPage() {
             limit: 1,
           });
           if (!canceled) {
-            if (users.length > 0) {
-              setResolvedOwnedBy(users[0].id);
-            } else {
-              setResolvedOwnedBy("__NO_SUCH_USER__");
-            }
+            setResolvedOwnedBy(users.length > 0 ? users[0].id : "__NO_SUCH_USER__");
           }
-        } catch (e) {
+        } catch {
           if (!canceled) setResolvedOwnedBy("__NO_SUCH_USER__");
         }
       })();
     } else {
       setResolvedOwnedBy(undefined);
     }
-    return () => {
-      canceled = true;
-    };
-  }, [isSearchMode, searchQueryObj.ownedBy, user_id]);
+    return () => { canceled = true; };
+  }, [searchQueryObj.ownedBy, isSearchMode, user_id]);
 
-  useEffect(() => {
+  // fetchPostsを外部からも叩けるようrefに
+  const fetchPostsRef = useRef<() => Promise<void>>();
+  // 投稿一覧fetch
+  async function fetchPosts() {
     if (status.state !== "authenticated") return;
-    let canceled = false;
     setLoading(true);
     setError(null);
 
     let usePage = page;
-    if (isSearchMode) usePage = pageParam;
-
     let params: any = {
       offset: (usePage - 1) * PAGE_SIZE,
-      limit: PAGE_SIZE + 1, // limit+1方式
+      limit: PAGE_SIZE + 1,
       order: oldestFirst ? "asc" : "desc",
       focus_user_id: user_id,
     };
-
     let fetcher: Promise<PostDetail[]>;
-
     let effectiveOwnedBy = searchQueryObj.ownedBy;
+
     if (
       isSearchMode &&
       searchQueryObj.ownedBy &&
       !/^[0-9a-fA-F\-]{36}$/.test(searchQueryObj.ownedBy)
     ) {
-      if (resolvedOwnedBy === undefined) {
-        setLoading(true);
-        return () => {};
-      }
+      if (resolvedOwnedBy === undefined) { setLoading(true); return; }
       if (resolvedOwnedBy === "__NO_SUCH_USER__") {
         setPosts([]);
         setLoading(false);
         setHasNext(false);
-        return () => {};
+        return;
       }
       effectiveOwnedBy = resolvedOwnedBy;
     }
@@ -150,48 +151,48 @@ export default function PostsPage() {
       });
     }
 
-    fetcher
-      .then((data) => {
-        if (!canceled) {
-          setHasNext(data.length > PAGE_SIZE);
-          setPosts(data.slice(0, PAGE_SIZE));
-        }
-      })
-      .catch((err: any) => {
-        if (!canceled) setError(err?.message || "Failed to fetch posts.");
-      })
-      .finally(() => {
-        if (!canceled) setLoading(false);
-      });
-    return () => {
-      canceled = true;
-    };
-  }, [
-    status,
+    const data = await fetcher.catch((err: any) => {
+      setError(err?.message || "Failed to fetch posts.");
+      return [];
+    });
+    setHasNext(data.length > PAGE_SIZE);
+    setPosts(
+      data.slice(0, PAGE_SIZE).map((post) => ({
+        ...post,
+        like_count: Number(post.like_count ?? 0),
+        reply_count: Number(post.reply_count ?? 0),
+      }))
+    );
+    setLoading(false);
+  }
+  fetchPostsRef.current = fetchPosts;
+
+  // クエリ・依存情報でfetch
+  useEffect(() => { fetchPosts(); /* eslint-disable-next-line */ }, [
+    status.state,
     page,
-    user_id,
     tab,
     includingReplies,
     oldestFirst,
-    isSearchMode,
     qParam,
-    pageParam,
-    pathname,
     resolvedOwnedBy,
+    user_id,
   ]);
 
-  useEffect(() => {
-    if (isSearchMode) {
-      setTab("all");
-      setIncludingReplies(!searchQueryObj.noreply);
-      setOldestFirst(!!searchQueryObj.oldest);
-      setPage(pageParam);
+  // クエリセット関数
+  function setQuery(updates: Record<string, string | number | undefined>) {
+    const sp = new URLSearchParams(searchParams);
+    for (const key of ["tab", "includingReplies", "oldestFirst", "page", "q"]) {
+      if (updates[key] !== undefined && updates[key] !== null && updates[key] !== "") {
+        sp.set(key, String(updates[key]));
+      } else {
+        sp.delete(key);
+      }
     }
-  }, [isSearchMode, qParam, pageParam, searchQueryObj.noreply, searchQueryObj.oldest]);
-
-  function clearError() {
-    if (error) setError(null);
+    router.push(`${pathname}?${sp.toString()}`);
   }
+
+  function clearError() { if (error) setError(null); }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -207,8 +208,8 @@ export default function PostsPage() {
       }
       await createPost({ content, tags });
       setBody("");
-      setPage(1);
-      reloadPosts(1);
+      setQuery({ ...Object.fromEntries(searchParams), page: 1 });
+      setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100); // 直後にrefetch
     } catch (err: any) {
       setError(err?.message || "Failed to post.");
     } finally {
@@ -216,9 +217,7 @@ export default function PostsPage() {
     }
   }
 
-  function clearReplyError() {
-    if (replyError) setReplyError(null);
-  }
+  function clearReplyError() { if (replyError) setReplyError(null); }
 
   async function handleReplySubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -235,7 +234,8 @@ export default function PostsPage() {
       await createPost({ content, tags, reply_to: replyTo });
       setReplyBody("");
       setReplyTo(null);
-      reloadPosts(page);
+      setQuery({ ...Object.fromEntries(searchParams) });
+      setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100); // 直後にrefetch
     } catch (err: any) {
       setReplyError(err?.message || "Failed to reply.");
     } finally {
@@ -243,7 +243,6 @@ export default function PostsPage() {
     }
   }
 
-  // 楽観的UI対応: Like直後にカウントと状態を即時変更
   async function handleLike(post: PostDetail) {
     setPosts((prev) =>
       prev.map((p) =>
@@ -251,7 +250,8 @@ export default function PostsPage() {
           ? {
               ...p,
               is_liked_by_focus_user: !p.is_liked_by_focus_user,
-              like_count: p.like_count + (p.is_liked_by_focus_user ? -1 : 1),
+              like_count:
+                Number(p.like_count ?? 0) + (p.is_liked_by_focus_user ? -1 : 1),
             }
           : p,
       ),
@@ -262,99 +262,11 @@ export default function PostsPage() {
       } else {
         await addLike(post.id);
       }
-      // APIで正値を再取得して補正
-      reloadPosts(page);
+      setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100); // API後にrefetch
     } catch (err) {
       alert("Failed to update like.");
-      reloadPosts(page);
+      setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100);
     }
-  }
-
-  function reloadPosts(targetPage: number) {
-    if (status.state !== "authenticated") return;
-    let usePage = targetPage;
-    if (isSearchMode) usePage = pageParam;
-    let params: any = {
-      offset: (usePage - 1) * PAGE_SIZE,
-      limit: PAGE_SIZE + 1,
-      order: oldestFirst ? "asc" : "desc",
-      focus_user_id: user_id,
-    };
-    let fetcher: Promise<PostDetail[]>;
-    let effectiveOwnedBy = searchQueryObj.ownedBy;
-    if (
-      isSearchMode &&
-      searchQueryObj.ownedBy &&
-      !/^[0-9a-fA-F\-]{36}$/.test(searchQueryObj.ownedBy)
-    ) {
-      if (resolvedOwnedBy === undefined) {
-        setLoading(true);
-        return;
-      }
-      if (resolvedOwnedBy === "__NO_SUCH_USER__") {
-        setPosts([]);
-        setLoading(false);
-        setHasNext(false);
-        return;
-      }
-      effectiveOwnedBy = resolvedOwnedBy;
-    }
-    if (isSearchMode) {
-      if (searchQueryObj.query) params.query = searchQueryObj.query;
-      if (searchQueryObj.tag) params.tag = searchQueryObj.tag;
-      if (effectiveOwnedBy) params.owned_by = effectiveOwnedBy;
-      if (searchQueryObj.noreply) params.reply_to = "";
-      if (!searchQueryObj.noreply) params.reply_to = undefined;
-      fetcher = listPostsDetail(params);
-    } else if (effectiveTab === "following") {
-      fetcher = listPostsByFolloweesDetail({
-        user_id: user_id!,
-        ...params,
-        include_self: true,
-        include_replies: includingReplies,
-      });
-    } else if (effectiveTab === "liked") {
-      fetcher = listPostsLikedByUserDetail({
-        user_id: user_id!,
-        ...params,
-        include_replies: includingReplies,
-      });
-    } else {
-      fetcher = listPostsDetail({
-        ...params,
-        ...(includingReplies ? {} : { reply_to: "" }),
-      });
-    }
-    fetcher.then((data) => {
-      setHasNext(data.length > PAGE_SIZE);
-      setPosts(data.slice(0, PAGE_SIZE));
-    });
-  }
-
-  function handleSearchToggle(key: "includingReplies" | "oldestFirst", value: boolean) {
-    if (!isSearchMode) {
-      if (key === "includingReplies") setIncludingReplies(value);
-      if (key === "oldestFirst") setOldestFirst(value);
-      setPage(1);
-      return;
-    }
-    let updated = { ...searchQueryObj };
-    if (key === "includingReplies") {
-      if (value) {
-        delete updated.noreply;
-      } else {
-        updated.noreply = true;
-      }
-    }
-    if (key === "oldestFirst") {
-      if (value) {
-        updated.oldest = true;
-      } else {
-        delete updated.oldest;
-      }
-    }
-    const nextQ = serializePostSearchQuery(updated);
-    router.push(`${pathname}?q=${encodeURIComponent(nextQ)}`);
   }
 
   if (status.state !== "authenticated") return null;
@@ -371,47 +283,24 @@ export default function PostsPage() {
       />
       <div className="h-6" />
       <div className="flex gap-1 mb-2">
-        <button
-          className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
-            ${tab === "following" && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
-          style={{ minWidth: 110 }}
-          onClick={() => {
-            setTab("following");
-            setPage(1);
-            if (isSearchMode) router.push(pathname);
-          }}
-        >
-          Following
-        </button>
-        <button
-          className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
-            ${tab === "liked" && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
-          style={{ minWidth: 110 }}
-          onClick={() => {
-            setTab("liked");
-            setPage(1);
-            if (isSearchMode) router.push(pathname);
-          }}
-        >
-          Liked
-        </button>
-        <button
-          className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
-            ${tab === "all" || isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
-          style={{ minWidth: 110 }}
-          onClick={() => {
-            setTab("all");
-            setPage(1);
-            if (isSearchMode) router.push(pathname);
-          }}
-        >
-          All
-        </button>
+        {TAB_VALUES.map((t) => (
+          <button
+            key={t}
+            className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
+              ${tab === t && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+            style={{ minWidth: 110 }}
+            onClick={() => setQuery({ tab: t, page: 1 })}
+          >
+            {t.charAt(0).toUpperCase() + t.slice(1)}
+          </button>
+        ))}
         <label className="flex items-center gap-1 text-sm ml-4 text-gray-700 cursor-pointer">
           <input
             type="checkbox"
-            checked={isSearchMode ? !searchQueryObj.noreply : includingReplies}
-            onChange={(e) => handleSearchToggle("includingReplies", e.target.checked)}
+            checked={includingReplies}
+            onChange={(e) =>
+              setQuery({ includingReplies: e.target.checked ? "1" : undefined, page: 1 })
+            }
             className="cursor-pointer"
           />
           Including replies
@@ -419,8 +308,10 @@ export default function PostsPage() {
         <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer">
           <input
             type="checkbox"
-            checked={isSearchMode ? !!searchQueryObj.oldest : oldestFirst}
-            onChange={(e) => handleSearchToggle("oldestFirst", e.target.checked)}
+            checked={oldestFirst}
+            onChange={(e) =>
+              setQuery({ oldestFirst: e.target.checked ? "1" : undefined, page: 1 })
+            }
             className="cursor-pointer"
           />
           Oldest first
@@ -473,31 +364,15 @@ export default function PostsPage() {
         <div className="mt-6 flex justify-center gap-4">
           <button
             className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            onClick={() => {
-              const nextPage = Math.max(1, (isSearchMode ? pageParam : page) - 1);
-              setPage(nextPage);
-              if (isSearchMode) {
-                router.push(
-                  `${pathname}?page=${nextPage}${qParam ? `&q=${encodeURIComponent(qParam)}` : ""}`,
-                );
-              }
-            }}
-            disabled={(isSearchMode ? pageParam : page) === 1}
+            onClick={() => setQuery({ page: Math.max(page - 1, 1) })}
+            disabled={page === 1}
           >
             Prev
           </button>
-          <span className="text-gray-800">Page {isSearchMode ? pageParam : page}</span>
+          <span className="text-gray-800">Page {page}</span>
           <button
             className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            onClick={() => {
-              const nextPage = (isSearchMode ? pageParam : page) + 1;
-              setPage(nextPage);
-              if (isSearchMode) {
-                router.push(
-                  `${pathname}?page=${nextPage}${qParam ? `&q=${encodeURIComponent(qParam)}` : ""}`,
-                );
-              }
-            }}
+            onClick={() => setQuery({ page: hasNext ? page + 1 : page })}
             disabled={!hasNext}
           >
             Next
