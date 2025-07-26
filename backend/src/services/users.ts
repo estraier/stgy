@@ -280,7 +280,10 @@ export class UsersService {
     return (res.rowCount ?? 0) > 0;
   }
 
-  async listFollowees(input: ListFolloweesInput): Promise<User[]> {
+  async listFolloweesDetail(
+    input: ListFolloweesInput,
+    focus_user_id?: string,
+  ): Promise<UserDetail[]> {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
@@ -293,10 +296,57 @@ export class UsersService {
       OFFSET $2 LIMIT $3
     `;
     const res = await this.pgClient.query(sql, [input.follower_id, offset, limit]);
-    return res.rows;
+    const users = res.rows;
+    if (users.length === 0) return [];
+    const ids = users.map((u) => u.id);
+    const followersRes = await this.pgClient.query(
+      `SELECT followee_id AS id, COUNT(*)::int AS cnt
+         FROM user_follows WHERE followee_id = ANY($1)
+         GROUP BY followee_id`,
+      [ids],
+    );
+    const followeesRes = await this.pgClient.query(
+      `SELECT follower_id AS id, COUNT(*)::int AS cnt
+         FROM user_follows WHERE follower_id = ANY($1)
+         GROUP BY follower_id`,
+      [ids],
+    );
+    const followersMap = Object.fromEntries(followersRes.rows.map((r) => [r.id, r.cnt]));
+    const followeesMap = Object.fromEntries(followeesRes.rows.map((r) => [r.id, r.cnt]));
+    let followsMap: Record<
+      string,
+      { is_followed_by_focus_user: boolean; is_following_focus_user: boolean }
+    > = {};
+    if (focus_user_id) {
+      const fwRes = await this.pgClient.query(
+        `SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)`,
+        [focus_user_id, ids],
+      );
+      const followedSet = new Set(fwRes.rows.map((r) => r.followee_id));
+      const fgRes = await this.pgClient.query(
+        `SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2`,
+        [ids, focus_user_id],
+      );
+      const followingSet = new Set(fgRes.rows.map((r) => r.follower_id));
+      for (const id of ids) {
+        followsMap[id] = {
+          is_followed_by_focus_user: followedSet.has(id),
+          is_following_focus_user: followingSet.has(id),
+        };
+      }
+    }
+    return users.map((u) => ({
+      ...u,
+      count_followers: followersMap[u.id] ?? 0,
+      count_followees: followeesMap[u.id] ?? 0,
+      ...(followsMap[u.id] || {}),
+    }));
   }
 
-  async listFollowers(input: ListFollowersInput): Promise<User[]> {
+  async listFollowersDetail(
+    input: ListFollowersInput,
+    focus_user_id?: string,
+  ): Promise<UserDetail[]> {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
@@ -309,7 +359,51 @@ export class UsersService {
       OFFSET $2 LIMIT $3
     `;
     const res = await this.pgClient.query(sql, [input.followee_id, offset, limit]);
-    return res.rows;
+    const users = res.rows;
+    if (users.length === 0) return [];
+    const ids = users.map((u) => u.id);
+    const followersRes = await this.pgClient.query(
+      `SELECT followee_id AS id, COUNT(*)::int AS cnt
+         FROM user_follows WHERE followee_id = ANY($1)
+         GROUP BY followee_id`,
+      [ids],
+    );
+    const followeesRes = await this.pgClient.query(
+      `SELECT follower_id AS id, COUNT(*)::int AS cnt
+         FROM user_follows WHERE follower_id = ANY($1)
+         GROUP BY follower_id`,
+      [ids],
+    );
+    const followersMap = Object.fromEntries(followersRes.rows.map((r) => [r.id, r.cnt]));
+    const followeesMap = Object.fromEntries(followeesRes.rows.map((r) => [r.id, r.cnt]));
+    let followsMap: Record<
+      string,
+      { is_followed_by_focus_user: boolean; is_following_focus_user: boolean }
+    > = {};
+    if (focus_user_id) {
+      const fwRes = await this.pgClient.query(
+        `SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)`,
+        [focus_user_id, ids],
+      );
+      const followedSet = new Set(fwRes.rows.map((r) => r.followee_id));
+      const fgRes = await this.pgClient.query(
+        `SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2`,
+        [ids, focus_user_id],
+      );
+      const followingSet = new Set(fgRes.rows.map((r) => r.follower_id));
+      for (const id of ids) {
+        followsMap[id] = {
+          is_followed_by_focus_user: followedSet.has(id),
+          is_following_focus_user: followingSet.has(id),
+        };
+      }
+    }
+    return users.map((u) => ({
+      ...u,
+      count_followers: followersMap[u.id] ?? 0,
+      count_followees: followeesMap[u.id] ?? 0,
+      ...(followsMap[u.id] || {}),
+    }));
   }
 
   async addFollower(input: AddFollowerInput): Promise<boolean> {

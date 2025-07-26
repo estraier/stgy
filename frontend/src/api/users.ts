@@ -1,4 +1,4 @@
-import type { User } from "./models";
+import type { User, UserDetail } from "./models";
 import { apiFetch, extractError } from "./client";
 
 export async function listUsers(
@@ -112,18 +112,28 @@ export async function removeFollower(id: string): Promise<{ result: string }> {
   return res.json();
 }
 
-export async function listFollowees(id: string, offset = 0, limit = 100): Promise<User[]> {
-  const res = await apiFetch(`/users/${id}/followees?offset=${offset}&limit=${limit}`, {
-    method: "GET",
-  });
+export async function listFollowees(
+  id: string,
+  params: { offset?: number; limit?: number; focus_user_id?: string } = {}
+): Promise<UserDetail[]> {
+  const search = new URLSearchParams();
+  if (params.offset !== undefined) search.append("offset", String(params.offset));
+  if (params.limit !== undefined) search.append("limit", String(params.limit));
+  if (params.focus_user_id) search.append("focus_user_id", params.focus_user_id);
+  const res = await apiFetch(`/users/${id}/followees?${search}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
 
-export async function listFollowers(id: string, offset = 0, limit = 100): Promise<User[]> {
-  const res = await apiFetch(`/users/${id}/followers?offset=${offset}&limit=${limit}`, {
-    method: "GET",
-  });
+export async function listFollowers(
+  id: string,
+  params: { offset?: number; limit?: number; focus_user_id?: string } = {}
+): Promise<UserDetail[]> {
+  const search = new URLSearchParams();
+  if (params.offset !== undefined) search.append("offset", String(params.offset));
+  if (params.limit !== undefined) search.append("limit", String(params.limit));
+  if (params.focus_user_id) search.append("focus_user_id", params.focus_user_id);
+  const res = await apiFetch(`/users/${id}/followers?${search}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
@@ -134,7 +144,6 @@ export async function countUsers(
   const search = new URLSearchParams();
   if (params.nickname) search.append("nickname", params.nickname);
   if (params.query) search.append("query", params.query);
-
   const res = await apiFetch(`/users/count?${search}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return (await res.json()).count;

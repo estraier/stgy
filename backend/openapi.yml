@@ -594,6 +594,11 @@ paths:
           in: query
           schema: { type: integer, default: 100 }
           required: false
+        - name: focus_user_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: (Optional) Used to get is_followed_by_focus_user/is_following_focus_user
       responses:
         "200":
           description: Followees list
@@ -602,7 +607,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/User"
+                  $ref: "#/components/schemas/UserDetail"
         "401":
           $ref: "#/components/responses/Error401"
 
@@ -624,6 +629,11 @@ paths:
           in: query
           schema: { type: integer, default: 100 }
           required: false
+        - name: focus_user_id
+          in: query
+          required: false
+          schema: { type: string }
+          description: (Optional) Used to get is_followed_by_focus_user/is_following_focus_user
       responses:
         "200":
           description: Followers list
@@ -632,7 +642,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/User"
+                  $ref: "#/components/schemas/UserDetail"
         "401":
           $ref: "#/components/responses/Error401"
 
