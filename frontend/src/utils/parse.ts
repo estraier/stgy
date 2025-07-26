@@ -136,7 +136,7 @@ export function parseUserSearchQuery(q: string): {
   const query = queryParts.length > 0 ? queryParts.join(" ") : undefined;
   return {
     ...(query ? { query } : {}),
-    ...(nickname ? { nicknamey } : {}),
+    ...(nickname ? { nickname } : {}),
     ...(oldest ? { oldest } : {}),
   };
 }

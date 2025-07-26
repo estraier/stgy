@@ -134,7 +134,7 @@ export class PostsService {
     if (where.length > 0) {
       sql += " WHERE " + where.join(" AND ");
     }
-    sql += ` ORDER BY p.created_at ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
+    sql += ` ORDER BY p.created_at ${order}, p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
     const res = await this.pgClient.query(sql, params);
     return res.rows;
@@ -190,7 +190,7 @@ export class PostsService {
     if (where.length > 0) {
       sql += " WHERE " + where.join(" AND ");
     }
-    sql += ` ORDER BY p.created_at ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
+    sql += ` ORDER BY p.created_at ${order}, p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
     const res = await this.pgClient.query(sql, params);
     const details: PostDetail[] = res.rows;

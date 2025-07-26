@@ -110,11 +110,11 @@ export class UsersService {
         `ORDER BY (u.id = $${params.length + 1}) DESC, ` +
         `(f1.follower_id IS NOT NULL) DESC, ` +
         `(f2.follower_id IS NOT NULL) DESC, ` +
-        `u.created_at ASC`;
+        `u.created_at ASC, u.id ASC`;
       params.push(focus_user_id); // ORDER BY用
     } else {
       const dir = order.toLowerCase() === "asc" ? "ASC" : "DESC";
-      orderClause = `ORDER BY u.created_at ${dir}`;
+      orderClause = `ORDER BY u.created_at ${dir}, u.id ${dir}`;
     }
     let sql = baseSelect;
     if (wheres.length > 0) {
