@@ -2,8 +2,6 @@ export function parsePostSearchQuery(q: string): {
   query?: string;
   tag?: string;
   ownedBy?: string;
-  noreply?: boolean;
-  oldest?: boolean;
 } {
   if (!q) return {};
   const ESC_QUOTE = "\uFFF1";
@@ -15,8 +13,6 @@ export function parsePostSearchQuery(q: string): {
   let tokens = s.split(/\s+/).filter(Boolean);
   let tag: string | undefined;
   let ownedBy: string | undefined;
-  let noreply = false;
-  let oldest = false;
   let queryParts: string[] = [];
   for (let token of tokens) {
     token = token.replace(new RegExp(ESC_SPACE, "g"), " ");
@@ -37,14 +33,6 @@ export function parsePostSearchQuery(q: string): {
     if ((token.startsWith("\#") || token.startsWith("\@")) && token.length >= 3) {
       token = token.slice(2);
     }
-    if (token.toLowerCase() === "[noreply]") {
-      noreply = true;
-      continue;
-    }
-    if (token.toLowerCase() === "[oldest]") {
-      oldest = true;
-      continue;
-    }
     queryParts.push(token);
   }
   const query = queryParts.length > 0 ? queryParts.join(" ") : undefined;
@@ -52,8 +40,6 @@ export function parsePostSearchQuery(q: string): {
     ...(query ? { query } : {}),
     ...(tag ? { tag } : {}),
     ...(ownedBy ? { ownedBy } : {}),
-    ...(noreply ? { noreply } : {}),
-    ...(oldest ? { oldest } : {}),
   };
 }
 
@@ -61,8 +47,6 @@ export function serializePostSearchQuery(params: {
   query?: string;
   tag?: string;
   ownedBy?: string;
-  noreply?: boolean;
-  oldest?: boolean;
 }): string {
   const tokens: string[] = [];
   const escapeToken = (token: string): string => {
@@ -91,15 +75,12 @@ export function serializePostSearchQuery(params: {
     if (owned.match(/\s/)) owned = `"${owned}"`;
     tokens.push("@" + owned);
   }
-  if (params.noreply) tokens.push("[noreply]");
-  if (params.oldest) tokens.push("[oldest]");
   return tokens.join(" ");
 }
 
 export function parseUserSearchQuery(q: string): {
   query?: string;
   nickname?: string;
-  oldest?: boolean;
 } {
   if (!q) return {};
   const ESC_QUOTE = "\uFFF1";
@@ -110,7 +91,6 @@ export function parseUserSearchQuery(q: string): {
   });
   let tokens = s.split(/\s+/).filter(Boolean);
   let nickname: string | undefined;
-  let oldest = false;
   let queryParts: string[] = [];
   for (let token of tokens) {
     token = token.replace(new RegExp(ESC_SPACE, "g"), " ");
@@ -127,24 +107,18 @@ export function parseUserSearchQuery(q: string): {
     if (token.startsWith("\@") && token.length >= 3) {
       token = token.slice(2);
     }
-    if (token.toLowerCase() === "[oldest]") {
-      oldest = true;
-      continue;
-    }
     queryParts.push(token);
   }
   const query = queryParts.length > 0 ? queryParts.join(" ") : undefined;
   return {
     ...(query ? { query } : {}),
     ...(nickname ? { nickname } : {}),
-    ...(oldest ? { oldest } : {}),
   };
 }
 
 export function serializeUserSearchQuery(params: {
   query?: string;
   nickname?: string;
-  oldest?: boolean;
 }): string {
   const tokens: string[] = [];
   const escapeToken = (token: string): string => {
@@ -173,7 +147,6 @@ export function serializeUserSearchQuery(params: {
     if (nick.match(/\s/)) nick = `"${nick}"`;
     tokens.push("@" + nick);
   }
-  if (params.oldest) tokens.push("[oldest]");
   return tokens.join(" ");
 }
 
