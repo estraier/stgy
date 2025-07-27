@@ -174,7 +174,11 @@ export default function UsersPage() {
         <ul className="space-y-4">
           {users.map((user: any) => (
             <li key={user.id}>
-              <UserCard user={user} onClick={() => location.assign(`/users/${user.id}`)} />
+              <UserCard
+                user={user}
+                focusUserId={user_id}
+                onClick={() => location.assign(`/users/${user.id}`)}
+              />
             </li>
           ))}
         </ul>

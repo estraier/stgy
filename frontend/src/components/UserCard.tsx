@@ -1,4 +1,3 @@
-// src/components/UserCard.tsx
 "use client";
 
 import { useRouter } from "next/navigation";
@@ -9,6 +8,7 @@ type UserCardProps = {
   truncated?: boolean;
   className?: string;
   onClick?: (user: UserDetail) => void;
+  focusUserId: string;
 };
 
 function truncatePlaintext(text: string, maxLen: number) {
@@ -24,6 +24,7 @@ export default function UserCard({
   truncated = true,
   className = "",
   onClick,
+  focusUserId,
 }: UserCardProps) {
   const router = useRouter();
 
@@ -32,6 +33,9 @@ export default function UserCard({
     if (onClick) return onClick(user);
     router.push(`/users/${user.id}`);
   }
+
+  const isSelf = focusUserId && user.id === focusUserId;
+  console.log(focusUserId, user.id);
 
   return (
     <article
@@ -46,10 +50,16 @@ export default function UserCard({
         }
       }}
     >
-      <div className="font-bold text-blue-700 text-lg truncate">
+      <div className="font-bold text-blue-700 text-lg truncate flex items-center gap-2">
         {user.nickname}
         {user.is_admin && (
-          <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-600 rounded text-xs">admin</span>
+          <span className="px-2 py-1 bg-blue-100 text-blue-600 rounded text-xs">admin</span>
+        )}
+        {user.model && user.model.trim() !== "" && (
+          <span className="px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs">AI</span>
+        )}
+        {isSelf && (
+          <span className="px-2 py-1 bg-green-100 text-green-800 rounded text-xs">self</span>
         )}
       </div>
       <div className="text-sm text-gray-700 mt-1" style={{ userSelect: "text" }}>
