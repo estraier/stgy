@@ -26,10 +26,8 @@ export default function PostCard({
   className = "",
 }: PostCardProps) {
   const router = useRouter();
-  const pathname = usePathname();
 
   function handleCardClick(e: React.MouseEvent | React.KeyboardEvent) {
-    // テキストが選択されていたら遷移しない
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
     router.push(`/posts/${post.id}`);
   }
@@ -44,7 +42,7 @@ export default function PostCard({
 
   return (
     <article
-      className={`p-4 border rounded bg-white shadow-sm cursor-pointer ${className}`}
+      className={`pt-4 pb-2 pl-4 pr-3 border rounded bg-white shadow-sm cursor-pointer ${className}`}
       onClick={handleCardClick}
       tabIndex={0}
       role="button"
@@ -55,37 +53,35 @@ export default function PostCard({
         }
       }}
     >
-      <div className="flex gap-2 items-center text-sm mb-1">
+      <div className="flex items-center text-sm mb-1">
         <a
-          className="font-bold text-blue-700 hover:underline min-w-[16ex] max-w-[32ex] truncate inline-block align-bottom"
+          className="font-bold text-blue-700 hover:underline min-w-[20ex] max-w-[48ex] truncate inline-block align-bottom"
           href={`/users/${post.owned_by}`}
           onClick={e => e.stopPropagation()}
         >
           {post.owner_nickname}
-        </a>
-        <a
-          className="text-gray-400"
-          href={`/posts/${post.id}`}
-          onClick={e => e.stopPropagation()}
-        >
-          {new Date(post.created_at).toLocaleString()}
         </a>
         {post.reply_to && (
           <span className="ml-2 text-xs text-gray-500">
             In response to{" "}
             <a
               href={`/posts/${post.reply_to}`}
-              className="text-blue-500 hover:underline min-w-[8ex] max-w-[32ex] truncate inline-block align-bottom"
+              className="text-blue-500 hover:underline max-w-[32ex] truncate inline-block align-bottom"
               onClick={e => e.stopPropagation()}
             >
               {post.reply_to_owner_nickname || post.reply_to}
             </a>
           </span>
         )}
+        <a
+          className="pr-1 ml-auto text-gray-400 whitespace-nowrap"
+          href={`/posts/${post.id}`}
+          onClick={e => e.stopPropagation()}
+        >
+          {new Date(post.created_at).toLocaleString()}
+        </a>
       </div>
-      <div
-        style={{ minHeight: 36, userSelect: "text" }}
-      >
+      <div style={{ minHeight: 36, userSelect: "text" }}>
         {truncated ? truncatePlaintext(post.content, 200) : post.content}
       </div>
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
