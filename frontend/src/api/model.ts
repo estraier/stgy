@@ -5,6 +5,13 @@ export type SessionInfo = {
   logged_in_at: string;
 };
 
+export type AIModel = {
+  name: string;
+  description: string;
+  input_cost: number;
+  output_cost: number;
+};
+
 export type User = {
   id: string;
   email: string;
