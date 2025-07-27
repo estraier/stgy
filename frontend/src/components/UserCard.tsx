@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { UserDetail } from "@/api/models";
 
 type UserCardProps = {
@@ -20,8 +20,12 @@ export default function UserCard({
 }: UserCardProps) {
   const [hovering, setHovering] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  // ローカルstateでフォロー状態を管理
   const [user, setUser] = useState(initialUser);
+
+  // ★★★ 追加：propsが変わったらstateも同期 ★★★
+  useEffect(() => {
+    setUser(initialUser);
+  }, [initialUser]);
 
   const isAdmin = user.is_admin;
   const isAI = !!user.model && user.model.trim() !== "";
