@@ -116,8 +116,8 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
         password: req.body.password,
         is_admin: req.body.is_admin ?? false,
         introduction: req.body.introduction,
-        personality: req.body.personality ?? null,
-        model: req.body.model ?? null,
+        ai_personality: req.body.ai_personality ?? null,
+        ai_model: req.body.ai_model ?? null,
       };
       const created = await usersService.createUser(input);
       res.status(201).json(created);
@@ -142,8 +142,8 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
         nickname: req.body.nickname,
         is_admin: req.body.is_admin,
         introduction: req.body.introduction,
-        personality: req.body.personality,
-        model: req.body.model,
+        ai_personality: req.body.ai_personality,
+        ai_model: req.body.ai_model,
       };
       const updated = await usersService.updateUser(input);
       if (!updated) return res.status(404).json({ error: "not found" });

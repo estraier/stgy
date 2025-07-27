@@ -19,8 +19,8 @@ class MockPgClient {
         nickname: "Alice",
         is_admin: false,
         introduction: "introA",
-        personality: "A",
-        model: "gpt-4.1",
+        ai_personality: "A",
+        ai_model: "gpt-4.1",
         created_at: "2020-01-01T00:00:00Z",
       },
       {
@@ -29,8 +29,8 @@ class MockPgClient {
         nickname: "Bob",
         is_admin: false,
         introduction: "introB",
-        personality: "B",
-        model: "gpt-4.1",
+        ai_personality: "B",
+        ai_model: "gpt-4.1",
         created_at: "2020-01-02T00:00:00Z",
       },
       {
@@ -39,8 +39,8 @@ class MockPgClient {
         nickname: "Carol",
         is_admin: false,
         introduction: "introC",
-        personality: "C",
-        model: "gpt-4.1",
+        ai_personality: "C",
+        ai_model: "gpt-4.1",
         created_at: "2020-01-03T00:00:00Z",
       },
     ];
@@ -88,7 +88,7 @@ class MockPgClient {
     }
     if (
       sql.startsWith(
-        "SELECT id, email, nickname, is_admin, introduction, personality, model, created_at FROM users WHERE id = $1",
+        "SELECT id, email, nickname, is_admin, introduction, ai_personality, ai_model, created_at FROM users WHERE id = $1",
       )
     ) {
       const user = this.users.find((u) => u.id === params[0]);
@@ -123,7 +123,7 @@ class MockPgClient {
     }
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.personality, u.model, u.created_at FROM users u",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.ai_personality, u.ai_model, u.created_at FROM users u",
       )
     ) {
       let list = [...this.users];
@@ -193,15 +193,16 @@ class MockPgClient {
       };
     }
     if (sql.startsWith("INSERT INTO users")) {
-      const [id, email, nickname, password, is_admin, introduction, personality, model] = params;
+      const [id, email, nickname, password, is_admin, introduction, ai_personality, ai_model] =
+        params;
       const user: User = {
         id,
         email,
         nickname,
         is_admin,
         introduction,
-        personality,
-        model,
+        ai_personality,
+        ai_model,
         created_at: new Date().toISOString(),
       };
       this.users.push(user);
@@ -239,7 +240,7 @@ class MockPgClient {
     }
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.personality, u.model, u.created_at FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.ai_personality, u.ai_model, u.created_at FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
       )
     ) {
       const follower_id = params[0];
@@ -254,7 +255,7 @@ class MockPgClient {
     }
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.personality, u.model, u.created_at FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.ai_personality, u.ai_model, u.created_at FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
       )
     ) {
       const followee_id = params[0];
@@ -351,8 +352,8 @@ describe("UsersService", () => {
       password: "danpass",
       is_admin: false,
       introduction: "introD",
-      personality: "D",
-      model: "gpt-4.1",
+      ai_personality: "D",
+      ai_model: "gpt-4.1",
     });
     expect(user.email).toBe("dan@example.com");
     expect(pg.users.find((u) => u.email === "dan@example.com")).toBeDefined();
@@ -366,8 +367,8 @@ describe("UsersService", () => {
       nickname: "Alice2",
       is_admin: true,
       introduction: "introX",
-      personality: "X",
-      model: "gpt-4.1-mini",
+      ai_personality: "X",
+      ai_model: "gpt-4.1-mini",
     });
     expect(user?.email).toBe("alice2@example.com");
     expect(user?.is_admin).toBe(true);

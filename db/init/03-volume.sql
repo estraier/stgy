@@ -1,5 +1,5 @@
 INSERT INTO users (
-  id, email, nickname, password, is_admin, introduction, personality, model, created_at
+  id, email, nickname, password, is_admin, introduction, personality, ai_model, created_at
 ) VALUES (
   '00000000-0000-0000-0001-000000000101',
   'taro@example.com', 'taro', md5('taro'), FALSE,
@@ -20,7 +20,7 @@ BEGIN
   FOR i IN 1..150 LOOP
     uid := '00000000-0000-0000-0001-' || lpad(i::text, 8, '0');
     INSERT INTO users (
-      id, email, nickname, password, is_admin, introduction, personality, model, created_at
+      id, email, nickname, password, is_admin, introduction, personality, ai_model, created_at
     ) VALUES (
       uid,
       'user' || i || '@example.com',

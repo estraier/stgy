@@ -1,4 +1,4 @@
-INSERT INTO models
+INSERT INTO ai_models
 (name, description, input_cost, output_cost)
 VALUES
 ('gpt-4.1', 'OpenAI GPT-4.1', 0.00200, 0.00800),
@@ -14,8 +14,8 @@ INSERT INTO users (
   password,
   is_admin,
   introduction,
-  personality,
-  model,
+  ai_personality,
+  ai_model,
   created_at
 )
 VALUES

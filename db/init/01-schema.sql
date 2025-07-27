@@ -1,4 +1,4 @@
-CREATE TABLE models (
+CREATE TABLE ai_models (
   name VARCHAR(50) PRIMARY KEY,
   description VARCHAR(500) NOT NULL,
   input_cost NUMERIC NOT NULL,
@@ -12,8 +12,8 @@ CREATE TABLE users (
   password VARCHAR(50) NOT NULL,
   is_admin BOOLEAN NOT NULL,
   introduction VARCHAR(2000) NOT NULL,
-  personality VARCHAR(2000),
-  model VARCHAR(50) REFERENCES models(name) ON DELETE SET NULL,
+  ai_personality VARCHAR(2000),
+  ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL
 );
 

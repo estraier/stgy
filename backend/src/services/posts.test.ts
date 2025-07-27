@@ -684,8 +684,8 @@ describe("listLikers", () => {
       nickname: "Alice",
       is_admin: false,
       introduction: "Hi, I'm Alice.",
-      personality: "",
-      model: "",
+      ai_personality: "",
+      ai_model: "",
       created_at: new Date().toISOString(),
     };
     user2 = {
@@ -694,8 +694,8 @@ describe("listLikers", () => {
       nickname: "Bob",
       is_admin: false,
       introduction: "Hi, I'm Bob.",
-      personality: "",
-      model: "",
+      ai_personality: "",
+      ai_model: "",
       created_at: new Date().toISOString(),
     };
     user3 = {
@@ -704,8 +704,8 @@ describe("listLikers", () => {
       nickname: "Carol",
       is_admin: false,
       introduction: "Hi, I'm Carol.",
-      personality: "",
-      model: "",
+      ai_personality: "",
+      ai_model: "",
       created_at: new Date().toISOString(),
     };
     postId = uuidv4();
