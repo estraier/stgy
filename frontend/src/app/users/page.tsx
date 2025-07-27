@@ -7,40 +7,66 @@ import { listUsersDetail, listFollowers, listFollowees } from "@/api/users";
 import type { UserDetail, User } from "@/api/models";
 import { parseUserSearchQuery, serializeUserSearchQuery } from "@/utils/parse";
 
+const PAGE_SIZE = 5;
+const TAB_VALUES = ["followees", "followers", "all"] as const;
+
 export default function UsersPage() {
   const status = useRequireLogin();
-  const [users, setUsers] = useState<(UserDetail | User)[]>([]);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-  const [tab, setTab] = useState<"followees" | "followers" | "all">("followees");
-  const [page, setPage] = useState(1);
-  const [hasNext, setHasNext] = useState(false);
-  const [oldestFirst, setOldestFirst] = useState(false);
-
-  const PAGE_SIZE = 20;
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const user_id = status.state === "authenticated" ? status.user.user_id : undefined;
-  const qParam = searchParams.get("q") ?? "";
-  const pageParam = Number(searchParams.get("page")) || 1;
+
+  // クエリパラメータから状態復元
+  function getQuery() {
+    return {
+      tab: (searchParams.get("tab") as typeof TAB_VALUES[number]) || "followees",
+      page: Math.max(Number(searchParams.get("page")) || 1, 1),
+      qParam: searchParams.get("q") ?? "",
+      oldestFirst: searchParams.get("oldestFirst") === "1",
+    };
+  }
+  const { tab, page, qParam, oldestFirst } = getQuery();
   const searchQueryObj = qParam ? parseUserSearchQuery(qParam) : {};
-  const isSearchMode = !!(
+  const user_id = status.state === "authenticated" ? status.user.user_id : undefined;
+  const isSearchMode =
     (searchQueryObj.query && searchQueryObj.query.length > 0) ||
-    (searchQueryObj.nickname && searchQueryObj.nickname.length > 0)
-  );
+    (searchQueryObj.nickname && searchQueryObj.nickname.length > 0);
+
   const effectiveTab = isSearchMode ? "all" : tab;
 
+  // 状態
+  const [users, setUsers] = useState<(UserDetail | User)[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [hasNext, setHasNext] = useState(false);
+
+  // クエリの変更
+  function setQuery(updates: Partial<{ tab: string; page: number; q: string; oldestFirst: string | undefined }>) {
+    const sp = new URLSearchParams(searchParams);
+    for (const key of ["tab", "page", "q", "oldestFirst"]) {
+      if (
+        updates[key as keyof typeof updates] !== undefined &&
+        updates[key as keyof typeof updates] !== null &&
+        updates[key as keyof typeof updates] !== ""
+      ) {
+        sp.set(key, String(updates[key as keyof typeof updates]));
+      } else {
+        sp.delete(key);
+      }
+    }
+    router.push(`${pathname}?${sp.toString()}`);
+  }
+
+  // データフェッチ
   useEffect(() => {
     if (status.state !== "authenticated") return;
     setLoading(true);
     setError(null);
 
-    let usePage = isSearchMode ? pageParam : page;
     let params: any = {
-      offset: (usePage - 1) * PAGE_SIZE,
+      offset: (page - 1) * PAGE_SIZE,
       limit: PAGE_SIZE + 1,
-      order: (isSearchMode ? !!searchQueryObj.oldest : oldestFirst) ? "asc" : "desc",
+      order: oldestFirst ? "asc" : "desc",
       focus_user_id: user_id,
     };
 
@@ -74,90 +100,60 @@ export default function UsersPage() {
       })
       .catch((err: any) => setError(err.message || "Failed to fetch users."))
       .finally(() => setLoading(false));
+    // eslint-disable-next-line
   }, [
-    status,
-    tab,
+    status.state,
+    effectiveTab,
     page,
-    isSearchMode,
-    qParam,
-    pageParam,
     oldestFirst,
-    searchQueryObj.oldest,
-    searchQueryObj.nickname,
+    qParam,
     searchQueryObj.query,
-    pathname,
-    user_id,
+    searchQueryObj.nickname,
   ]);
 
-  useEffect(() => {
-    if (isSearchMode) {
-      setTab("all");
-      setOldestFirst(!!searchQueryObj.oldest);
-      setPage(pageParam);
-    }
-  }, [isSearchMode, qParam, pageParam, searchQueryObj.oldest]);
+  if (status.state !== "authenticated") return null;
 
+  // Oldest first切り替え
   function handleOldestFirstToggle(checked: boolean) {
-    if (!isSearchMode) {
-      setOldestFirst(checked);
-      setPage(1);
-      return;
-    }
-    let updated = { ...searchQueryObj };
-    if (checked) {
-      updated.oldest = true;
-    } else {
-      delete updated.oldest;
-    }
-    const nextQ = serializeUserSearchQuery(updated);
-    router.push(`${pathname}?q=${encodeURIComponent(nextQ)}`);
+    setQuery({
+      oldestFirst: checked ? "1" : undefined,
+      page: 1,
+      ...(isSearchMode ? { q: qParam } : {}),
+      ...(isSearchMode ? { tab: "all" } : { tab }),
+    });
   }
 
-  if (status.state !== "authenticated") return null;
+  // ページ遷移
+  function handlePageChange(nextPage: number) {
+    setQuery({
+      page: nextPage,
+      ...(isSearchMode ? { q: qParam, oldestFirst: oldestFirst ? "1" : undefined, tab: "all" } : { tab, oldestFirst: oldestFirst ? "1" : undefined }),
+    });
+  }
+
+  // タブ切替
+  function handleTabChange(nextTab: typeof TAB_VALUES[number]) {
+    setQuery({ tab: nextTab, page: 1, q: undefined, oldestFirst: undefined });
+  }
 
   return (
     <main className="max-w-3xl mx-auto mt-8 p-4">
       <div className="flex gap-1 mb-2">
-        <button
-          className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
-            ${tab === "followees" && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
-          style={{ minWidth: 110 }}
-          onClick={() => {
-            setTab("followees");
-            setPage(1);
-            if (isSearchMode) router.push(pathname);
-          }}
-        >
-          Followees
-        </button>
-        <button
-          className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
-            ${tab === "followers" && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
-          style={{ minWidth: 110 }}
-          onClick={() => {
-            setTab("followers");
-            setPage(1);
-            if (isSearchMode) router.push(pathname);
-          }}
-        >
-          Followers
-        </button>
-        <button
-          className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
-            ${tab === "all" || isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
-          style={{ minWidth: 110 }}
-          onClick={() => {
-            setTab("all");
-            setPage(1);
-            if (isSearchMode) router.push(pathname);
-          }}
-        >
-          All
-        </button>
+        {TAB_VALUES.map((t) => (
+          <button
+            key={t}
+            className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
+              ${tab === t && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
+            style={{ minWidth: 110 }}
+            onClick={() => handleTabChange(t)}
+          >
+            {t.charAt(0).toUpperCase() + t.slice(1)}
+          </button>
+        ))}
         <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer ml-4">
           <input
             type="checkbox"
-            checked={isSearchMode ? !!searchQueryObj.oldest : oldestFirst}
+            checked={oldestFirst}
             onChange={(e) => handleOldestFirstToggle(e.target.checked)}
             className="cursor-pointer"
           />
@@ -179,7 +175,7 @@ export default function UsersPage() {
             <li
               key={user.id}
               className="p-4 border rounded shadow-sm hover:bg-gray-50 cursor-pointer"
-              onClick={() => router.push(`/users/${user.id}`)}
+              onClick={() => location.assign(`/users/${user.id}`)}
             >
               <div className="font-semibold">
                 {user.nickname} ({user.email})
@@ -216,31 +212,15 @@ export default function UsersPage() {
         <div className="mt-6 flex justify-center gap-4">
           <button
             className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            onClick={() => {
-              const nextPage = Math.max(1, (isSearchMode ? pageParam : page) - 1);
-              setPage(nextPage);
-              if (isSearchMode) {
-                router.push(
-                  `${pathname}?page=${nextPage}${qParam ? `&q=${encodeURIComponent(qParam)}` : ""}`,
-                );
-              }
-            }}
-            disabled={(isSearchMode ? pageParam : page) === 1}
+            onClick={() => handlePageChange(Math.max(1, page - 1))}
+            disabled={page === 1}
           >
             Prev
           </button>
-          <span className="text-gray-800">Page {isSearchMode ? pageParam : page}</span>
+          <span className="text-gray-800">Page {page}</span>
           <button
             className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            onClick={() => {
-              const nextPage = (isSearchMode ? pageParam : page) + 1;
-              setPage(nextPage);
-              if (isSearchMode) {
-                router.push(
-                  `${pathname}?page=${nextPage}${qParam ? `&q=${encodeURIComponent(qParam)}` : ""}`,
-                );
-              }
-            }}
+            onClick={() => handlePageChange(hasNext ? page + 1 : page)}
             disabled={!hasNext}
           >
             Next
