@@ -293,7 +293,7 @@ export default function PostsPage() {
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
-        <label className="flex items-center gap-1 text-sm ml-4 text-gray-700 cursor-pointer">
+        <label className="flex pl-2 items-center gap-1 text-sm ml-4 text-gray-700 cursor-pointer">
           <input
             type="checkbox"
             checked={includingReplies}
@@ -304,7 +304,7 @@ export default function PostsPage() {
           />
           Including replies
         </label>
-        <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer">
+        <label className="flex pl-2 items-center gap-1 text-sm text-gray-700 cursor-pointer">
           <input
             type="checkbox"
             checked={oldestFirst}
