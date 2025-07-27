@@ -31,8 +31,8 @@ components:
         nickname: { type: string }
         is_admin: { type: boolean }
         introduction: { type: string }
-        personality: { type: string }
-        model: { type: string }
+        personality: { type: string, nullable: true }
+        model: { type: string, nullable: true }
         created_at: { type: string, format: date-time }
       required: [id, email, nickname, is_admin, introduction, personality, model, created_at]
 
@@ -315,8 +315,8 @@ paths:
                 password: { type: string }
                 is_admin: { type: boolean }
                 introduction: { type: string }
-                personality: { type: string }
-                model: { type: string }
+                personality: { type: string, nullable: true }
+                model: { type: string, nullable: true }
               required: [email, nickname, password, is_admin, introduction, personality, model]
       responses:
         "201":
@@ -372,9 +372,9 @@ paths:
                 nickname: { type: string }
                 is_admin: { type: boolean }
                 introduction: { type: string }
-                personality: { type: string }
-                model: { type: string }
-              required: [email, nickname, introduction, personality, model]
+                personality: { type: string, nullable: true }
+                model: { type: string, nullable: true }
+              required: []
       responses:
         "200":
           description: User updated

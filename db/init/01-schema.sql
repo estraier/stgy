@@ -1,3 +1,10 @@
+CREATE TABLE models (
+  name VARCHAR(50) PRIMARY KEY,
+  description VARCHAR(500) NOT NULL,
+  input_cost NUMERIC NOT NULL,
+  output_cost NUMERIC NOT NULL
+);
+
 CREATE TABLE users (
   id VARCHAR(50) PRIMARY KEY,
   email VARCHAR(50) NOT NULL UNIQUE,
@@ -5,8 +12,8 @@ CREATE TABLE users (
   password VARCHAR(50) NOT NULL,
   is_admin BOOLEAN NOT NULL,
   introduction VARCHAR(2000) NOT NULL,
-  personality VARCHAR(2000) NOT NULL,
-  model VARCHAR(50) NOT NULL,
+  personality VARCHAR(2000),
+  model VARCHAR(50) REFERENCES models(name) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL
 );
 

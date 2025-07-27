@@ -20,7 +20,7 @@ class MockPgClient {
         is_admin: false,
         introduction: "introA",
         personality: "A",
-        model: "test",
+        model: "gpt-4.1",
         created_at: "2020-01-01T00:00:00Z",
       },
       {
@@ -30,7 +30,7 @@ class MockPgClient {
         is_admin: false,
         introduction: "introB",
         personality: "B",
-        model: "test",
+        model: "gpt-4.1",
         created_at: "2020-01-02T00:00:00Z",
       },
       {
@@ -40,7 +40,7 @@ class MockPgClient {
         is_admin: false,
         introduction: "introC",
         personality: "C",
-        model: "test",
+        model: "gpt-4.1",
         created_at: "2020-01-03T00:00:00Z",
       },
     ];
@@ -352,7 +352,7 @@ describe("UsersService", () => {
       is_admin: false,
       introduction: "introD",
       personality: "D",
-      model: "test",
+      model: "gpt-4.1",
     });
     expect(user.email).toBe("dan@example.com");
     expect(pg.users.find((u) => u.email === "dan@example.com")).toBeDefined();
@@ -367,7 +367,7 @@ describe("UsersService", () => {
       is_admin: true,
       introduction: "introX",
       personality: "X",
-      model: "test2",
+      model: "gpt-4.1-mini",
     });
     expect(user?.email).toBe("alice2@example.com");
     expect(user?.is_admin).toBe(true);

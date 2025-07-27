@@ -55,8 +55,8 @@ def test_users():
     "nickname": "user1",
     "is_admin": False,
     "introduction": "hi!",
-    "personality": "",
-    "model": "",
+    "personality": "super diligent",
+    "model": "gpt-4.1",
     "password": "password1"
   }
   res = requests.post(f"{BASE_URL}/users", json=user_input, headers=headers, cookies=cookies)

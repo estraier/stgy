@@ -187,12 +187,6 @@ export class UsersService {
     if (typeof input.introduction !== "string") {
       throw new Error("introduction is required");
     }
-    if (typeof input.personality !== "string") {
-      throw new Error("personality is required");
-    }
-    if (typeof input.model !== "string") {
-      throw new Error("model is required");
-    }
     const id = uuidv4();
     const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
     const res = await this.pgClient.query(
@@ -243,16 +237,10 @@ export class UsersService {
       values.push(input.introduction);
     }
     if (input.personality !== undefined) {
-      if (typeof input.personality !== "string") {
-        throw new Error("personality is required");
-      }
       columns.push(`personality = $${idx++}`);
       values.push(input.personality);
     }
     if (input.model !== undefined) {
-      if (typeof input.model !== "string") {
-        throw new Error("model is required");
-      }
       columns.push(`model = $${idx++}`);
       values.push(input.model);
     }
