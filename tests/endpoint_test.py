@@ -45,6 +45,32 @@ def test_auth():
   logout(session_id)
   print("[test_auth] OK")
 
+def test_ai_models():
+  print("[ai_models] admin login")
+  session_id = login()
+  cookies = {"session_id": session_id}
+  headers = {"Content-Type": "application/json"}
+  res = requests.get(f"{BASE_URL}/ai-models", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  models = res.json()
+  print(f"[ai_models] list: {models}")
+  assert isinstance(models, list)
+  assert len(models) > 0, "No AI models found"
+  m = models[0]
+  for k in ("name", "description", "input_cost", "output_cost"):
+    assert k in m, f"{k} missing in ai_model"
+  name = models[0]["name"]
+  res = requests.get(f"{BASE_URL}/ai-models/{name}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  model = res.json()
+  print(f"[ai_models] detail: {model}")
+  assert model["name"] == name
+  res = requests.get(f"{BASE_URL}/ai-models/__no_such_model__", headers=headers, cookies=cookies)
+  assert res.status_code == 404, res.text
+  print("[ai_models] 404 not found ok")
+  logout(session_id)
+  print("[test_ai_models] OK")
+
 def test_users():
   print("[users] admin login")
   session_id = login()

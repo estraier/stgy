@@ -4,6 +4,7 @@ import { Client } from "pg";
 import Redis from "ioredis";
 import cors from "cors";
 import createAuthRouter from "./routes/auth";
+import createAIModelsRouter from "./routes/ai_models";
 import createUsersRouter from "./routes/users";
 import createPostRouter from "./routes/posts";
 import createSignupRouter from "./routes/signup";
@@ -37,6 +38,7 @@ app.use(
 
 app.use("/auth", createAuthRouter(pgClient, redis));
 app.use("/signup", createSignupRouter(pgClient, redis));
+app.use("/ai-models", createAIModelsRouter(pgClient, redis));
 app.use("/users", createUsersRouter(pgClient, redis));
 app.use("/posts", createPostRouter(pgClient, redis));
 

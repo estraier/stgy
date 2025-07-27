@@ -1,8 +1,8 @@
 CREATE TABLE ai_models (
   name VARCHAR(50) PRIMARY KEY,
   description VARCHAR(500) NOT NULL,
-  input_cost NUMERIC NOT NULL,
-  output_cost NUMERIC NOT NULL
+  input_cost REAL NOT NULL,
+  output_cost REAL NOT NULL
 );
 
 CREATE TABLE users (
