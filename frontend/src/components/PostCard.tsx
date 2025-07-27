@@ -28,7 +28,9 @@ export default function PostCard({
   const router = useRouter();
   const pathname = usePathname();
 
-  function handleCardClick() {
+  function handleCardClick(e: React.MouseEvent | React.KeyboardEvent) {
+    // テキストが選択されていたら遷移しない
+    if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
     router.push(`/posts/${post.id}`);
   }
 
@@ -41,15 +43,31 @@ export default function PostCard({
   }
 
   return (
-    <article className={`p-4 border rounded bg-white shadow-sm ${className}`}>
+    <article
+      className={`p-4 border rounded bg-white shadow-sm cursor-pointer ${className}`}
+      onClick={handleCardClick}
+      tabIndex={0}
+      role="button"
+      aria-label="Show post detail"
+      onKeyDown={e => {
+        if (e.key === "Enter" || e.key === " ") {
+          handleCardClick(e);
+        }
+      }}
+    >
       <div className="flex gap-2 items-center text-sm mb-1">
         <a
           className="font-bold text-blue-700 hover:underline min-w-[16ex] max-w-[32ex] truncate inline-block align-bottom"
           href={`/users/${post.owned_by}`}
+          onClick={e => e.stopPropagation()}
         >
           {post.owner_nickname}
         </a>
-        <a className="text-gray-400" href={`/posts/${post.id}`}>
+        <a
+          className="text-gray-400"
+          href={`/posts/${post.id}`}
+          onClick={e => e.stopPropagation()}
+        >
           {new Date(post.created_at).toLocaleString()}
         </a>
         {post.reply_to && (
@@ -58,13 +76,16 @@ export default function PostCard({
             <a
               href={`/posts/${post.reply_to}`}
               className="text-blue-500 hover:underline min-w-[8ex] max-w-[32ex] truncate inline-block align-bottom"
+              onClick={e => e.stopPropagation()}
             >
               {post.reply_to_owner_nickname || post.reply_to}
             </a>
           </span>
         )}
       </div>
-      <div className="cursor-pointer" onClick={handleCardClick} style={{ minHeight: 36 }}>
+      <div
+        style={{ minHeight: 36, userSelect: "text" }}
+      >
         {truncated ? truncatePlaintext(post.content, 200) : post.content}
       </div>
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
@@ -75,6 +96,7 @@ export default function PostCard({
                 key={tag}
                 href={`/posts?q=${encodeURIComponent("#" + tag)}`}
                 className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-blue-700 hover:bg-blue-200"
+                onClick={e => e.stopPropagation()}
               >
                 #{tag}
               </a>
@@ -86,7 +108,7 @@ export default function PostCard({
             <button
               className={`ml-auto flex items-center gap-1 px-2 py-1 rounded cursor-pointer
                 ${post.is_liked_by_focus_user ? "bg-pink-100 text-pink-600" : "hover:bg-gray-100"}`}
-              onClick={() => onLike?.(post)}
+              onClick={e => { e.stopPropagation(); onLike?.(post); }}
               type="button"
               aria-label={post.is_liked_by_focus_user ? "Unlike" : "Like"}
             >
@@ -100,7 +122,7 @@ export default function PostCard({
             <button
               className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer
                 ${post.is_replied_by_focus_user ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100"}`}
-              onClick={() => onReply?.(post)}
+              onClick={e => { e.stopPropagation(); onReply?.(post); }}
               type="button"
               aria-label="Reply"
             >
