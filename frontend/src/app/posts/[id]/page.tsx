@@ -14,7 +14,7 @@ import {
 } from "@/api/posts";
 import type { PostDetail, User } from "@/api/model";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 import { parseBodyAndTags } from "@/utils/parse";
@@ -30,6 +30,7 @@ export default function PostDetailPage({ params }: Props) {
 
   const status = useRequireLogin();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const user_id = status.state === "authenticated" ? status.user.user_id : undefined;
   const isAdmin = status.state === "authenticated" && status.user.is_admin;
 
@@ -48,11 +49,36 @@ export default function PostDetailPage({ params }: Props) {
   const [likerLoading, setLikerLoading] = useState(false);
   const [likerHasMore, setLikerHasMore] = useState(false);
 
-  const [replies, setReplies] = useState<PostDetail[]>([]);
-  const [replyPage, setReplyPage] = useState(1);
+  // ★ replyPageをURLクエリで管理
+  function getReplyPageFromQuery() {
+    const raw = searchParams.get("replyPage");
+    const n = Number(raw);
+    return !raw || isNaN(n) || n < 1 ? 1 : n;
+  }
+  const [replyPage, setReplyPage] = useState(getReplyPageFromQuery());
+
+  // クエリのreplyPage変更時にstate同期
+  useEffect(() => {
+    const queryPage = getReplyPageFromQuery();
+    if (queryPage !== replyPage) setReplyPage(queryPage);
+    // eslint-disable-next-line
+  }, [searchParams.get("replyPage")]);
+
+  // state変更時はクエリも同期（無限ループ防止）
+  useEffect(() => {
+    const current = getReplyPageFromQuery();
+    if (current !== replyPage) {
+      const sp = new URLSearchParams(searchParams);
+      sp.set("replyPage", String(replyPage));
+      router.replace(`?${sp.toString()}`, { scroll: false });
+    }
+    // eslint-disable-next-line
+  }, [replyPage]);
+
   const [replyHasNext, setReplyHasNext] = useState(false);
   const [replyLoading, setReplyLoading] = useState(false);
 
+  const [replies, setReplies] = useState<PostDetail[]>([]);
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
   const [replyError, setReplyError] = useState<string | null>(null);
@@ -253,6 +279,11 @@ export default function PostDetailPage({ params }: Props) {
   if (error) return <div className="text-center mt-10 text-red-600">{error}</div>;
   if (!post) return <div className="text-center mt-10 text-gray-500">No post found.</div>;
 
+  // ページ遷移関数
+  function handleReplyPageChange(nextPage: number) {
+    setReplyPage(nextPage);
+  }
+
   return (
     <main className="max-w-3xl mx-auto mt-8 p-4">
       {/* メイン記事 */}
@@ -340,9 +371,8 @@ export default function PostDetailPage({ params }: Props) {
               ))}
               {!likerAll && likerHasMore && (
                 <button
-                  className="ml-2 text-blue-600 underline"
+                  className="ml-2 text-blue-600 underline px-2 py-1 bg-gray-100 rounded hover:bg-blue-50"
                   onClick={() => setLikerAll(true)}
-                  className="px-2 py-1 bg-gray-100 rounded hover:bg-blue-50"
                 >
                   ...
                 </button>
@@ -394,7 +424,7 @@ export default function PostDetailPage({ params }: Props) {
       <div className="mt-6 flex justify-center gap-4">
         <button
           className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          onClick={() => setReplyPage((p) => Math.max(1, p - 1))}
+          onClick={() => handleReplyPageChange(Math.max(1, replyPage - 1))}
           disabled={replyPage === 1}
         >
           Prev
@@ -402,7 +432,7 @@ export default function PostDetailPage({ params }: Props) {
         <span className="text-gray-800">Page {replyPage}</span>
         <button
           className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          onClick={() => setReplyPage((p) => p + 1)}
+          onClick={() => handleReplyPageChange(replyHasNext ? replyPage + 1 : replyPage)}
           disabled={!replyHasNext}
         >
           Next
