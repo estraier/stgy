@@ -90,7 +90,7 @@ export default function UserCard({
 
   return (
     <article
-      className={`p-4 border rounded shadow-sm hover:bg-gray-50 cursor-pointer ${className}`}
+      className={`p-4 border rounded shadow-sm bg-white cursor-pointer ${className}`}
       onClick={handleCardClick}
       tabIndex={0}
       role="button"
@@ -119,23 +119,29 @@ export default function UserCard({
           ? truncatePlainText(user.introduction ?? "", 200)
           : user.introduction ?? ""}
       </div>
-      <div className="text-xs text-gray-500 mt-1">
-        {("count_followers" in user) && (
-          <span>
-            {user.count_followers} followers / {user.count_followees} followees
-          </span>
-        )}
-      </div>
+      {!truncated && user.personality && user.personality.trim() !== "" && (
+        <div className="text-xs text-gray-600 mt-2">
+          <div className="font-semibold">AI Personality:</div>
+          <div className="pl-2">{user.personality}</div>
+        </div>
+      )}
+      {!truncated && user.model && user.model.trim() !== "" && (
+        <div className="text-xs text-gray-600 mt-2">
+          <div className="font-semibold">AI Model:</div>
+          <div className="pl-2">{user.model}</div>
+        </div>
+      )}
       {!truncated && (
-        <>
-          <div className="text-xs text-gray-600 mt-1">
-            <span className="font-semibold">Personality:</span> {user.personality} /{" "}
-            <span className="font-semibold">Model:</span> {user.model}
-          </div>
-          <div className="text-xs text-gray-500 mt-1">
-            Created: {new Date(user.created_at).toLocaleString()}
-          </div>
-        </>
+        <div className="text-xs text-gray-500 mt-2">
+          <div className="font-semibold">Created:</div>
+          <div className="pl-2">{new Date(user.created_at).toLocaleString()}</div>
+        </div>
+      )}
+      {("count_followers" in user) && (
+        <div className="text-xs text-gray-500 mt-2">
+          <span className="gap-1">followers: {user.count_followers}</span>
+          <span className="ml-2">followees: {user.count_followees}</span>
+        </div>
       )}
     </article>
   );
