@@ -349,7 +349,7 @@ export class PostsService {
       LEFT JOIN users pu ON parent_post.owned_by = pu.id
       WHERE p.owned_by IN (${followeeSql})
         ${repliesFilter}
-      ORDER BY p.created_at ${order}
+      ORDER BY p.created_at ${order}, p.id ${order}
       OFFSET $2 LIMIT $3
     `;
     const params = [user_id, offset, limit];
@@ -408,7 +408,7 @@ export class PostsService {
     if (!include_replies) {
       sql += ` AND p.reply_to IS NULL`;
     }
-    sql += ` ORDER BY p.created_at ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
+    sql += ` ORDER BY p.created_at ${order}, p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
     const res = await this.pgClient.query(sql, params);
     const details: PostDetail[] = res.rows;
@@ -439,7 +439,7 @@ export class PostsService {
       FROM post_likes pl
       JOIN users u ON pl.liked_by = u.id
       WHERE pl.post_id = $1
-      ORDER BY pl.created_at ${orderDir}
+      ORDER BY pl.created_at ${orderDir}, u.id ${orderDir}
       OFFSET $2 LIMIT $3
     `;
     const res = await this.pgClient.query(sql, [post_id, offset, limit]);

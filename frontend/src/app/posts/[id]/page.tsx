@@ -49,31 +49,33 @@ export default function PostDetailPage({ params }: Props) {
   const [likerLoading, setLikerLoading] = useState(false);
   const [likerHasMore, setLikerHasMore] = useState(false);
 
-  // ★ replyPageをURLクエリで管理
-  function getReplyPageFromQuery() {
-    const raw = searchParams.get("replyPage");
-    const n = Number(raw);
-    return !raw || isNaN(n) || n < 1 ? 1 : n;
+  // --- Repliesページ&ソート順: クエリから取得してstate管理 ---
+  function getReplyOptsFromQuery() {
+    const pageRaw = searchParams.get("replyPage");
+    const page = !pageRaw || isNaN(Number(pageRaw)) || Number(pageRaw) < 1 ? 1 : Number(pageRaw);
+    const oldestFirst = searchParams.get("replyOldestFirst") === "1";
+    return { page, oldestFirst };
   }
-  const [replyPage, setReplyPage] = useState(getReplyPageFromQuery());
+  const [{ page: replyPage, oldestFirst: replyOldestFirst }, setReplyOpts] = useState(getReplyOptsFromQuery());
 
-  // クエリのreplyPage変更時にstate同期
+  // クエリの変更にstateを同期
   useEffect(() => {
-    const queryPage = getReplyPageFromQuery();
-    if (queryPage !== replyPage) setReplyPage(queryPage);
+    setReplyOpts(getReplyOptsFromQuery());
     // eslint-disable-next-line
-  }, [searchParams.get("replyPage")]);
+  }, [searchParams.get("replyPage"), searchParams.get("replyOldestFirst")]);
 
-  // state変更時はクエリも同期（無限ループ防止）
+  // stateの変更はクエリに同期
   useEffect(() => {
-    const current = getReplyPageFromQuery();
-    if (current !== replyPage) {
+    const opts = getReplyOptsFromQuery();
+    if (opts.page !== replyPage || opts.oldestFirst !== replyOldestFirst) {
       const sp = new URLSearchParams(searchParams);
       sp.set("replyPage", String(replyPage));
+      if (replyOldestFirst) sp.set("replyOldestFirst", "1");
+      else sp.delete("replyOldestFirst");
       router.replace(`?${sp.toString()}`, { scroll: false });
     }
     // eslint-disable-next-line
-  }, [replyPage]);
+  }, [replyPage, replyOldestFirst]);
 
   const [replyHasNext, setReplyHasNext] = useState(false);
   const [replyLoading, setReplyLoading] = useState(false);
@@ -120,6 +122,7 @@ export default function PostDetailPage({ params }: Props) {
       .finally(() => setLikerLoading(false));
   }, [post?.id, likerAll]);
 
+  // --- Repliesデータ取得: order切り替え ---
   useEffect(() => {
     if (!userId || !post) return;
     setReplyLoading(true);
@@ -127,7 +130,7 @@ export default function PostDetailPage({ params }: Props) {
       reply_to: post.id,
       offset: (replyPage - 1) * REPLY_PAGE_SIZE,
       limit: REPLY_PAGE_SIZE + 1,
-      order: "desc",
+      order: replyOldestFirst ? "asc" : "desc",
       focus_user_id: userId,
     })
       .then((list) => {
@@ -135,7 +138,7 @@ export default function PostDetailPage({ params }: Props) {
         setReplyHasNext(list.length > REPLY_PAGE_SIZE);
       })
       .finally(() => setReplyLoading(false));
-  }, [userId, post?.id, replyPage]);
+  }, [userId, post?.id, replyPage, replyOldestFirst]);
 
   async function handleLike(post: PostDetail) {
     setPost((prev) =>
@@ -182,7 +185,7 @@ export default function PostDetailPage({ params }: Props) {
         reply_to: postId,
         offset: (replyPage - 1) * REPLY_PAGE_SIZE,
         limit: REPLY_PAGE_SIZE + 1,
-        order: "desc",
+        order: replyOldestFirst ? "asc" : "desc",
         focus_user_id: userId,
       }).then((list) => {
         setReplies(list.slice(0, REPLY_PAGE_SIZE));
@@ -246,7 +249,7 @@ export default function PostDetailPage({ params }: Props) {
           reply_to: postId,
           offset: 0,
           limit: REPLY_PAGE_SIZE + 1,
-          order: "desc",
+          order: replyOldestFirst ? "asc" : "desc",
           focus_user_id: userId,
         }).then((list) => {
           setReplies(list.slice(0, REPLY_PAGE_SIZE));
@@ -279,9 +282,20 @@ export default function PostDetailPage({ params }: Props) {
   if (error) return <div className="text-center mt-10 text-red-600">{error}</div>;
   if (!post) return <div className="text-center mt-10 text-gray-500">No post found.</div>;
 
-  // ページ遷移関数
+  // --- ページ遷移・Oldest first切り替え ---
   function handleReplyPageChange(nextPage: number) {
-    setReplyPage(nextPage);
+    const sp = new URLSearchParams(searchParams);
+    sp.set("replyPage", String(nextPage));
+    if (replyOldestFirst) sp.set("replyOldestFirst", "1");
+    else sp.delete("replyOldestFirst");
+    router.replace(`?${sp.toString()}`, { scroll: false });
+  }
+  function handleReplyOldestFirstChange(checked: boolean) {
+    const sp = new URLSearchParams(searchParams);
+    if (checked) sp.set("replyOldestFirst", "1");
+    else sp.delete("replyOldestFirst");
+    sp.set("replyPage", "1");
+    router.replace(`?${sp.toString()}`, { scroll: false });
   }
 
   return (
@@ -371,7 +385,7 @@ export default function PostDetailPage({ params }: Props) {
               ))}
               {!likerAll && likerHasMore && (
                 <button
-                  className="ml-2 text-blue-600 underline px-2 py-1 bg-gray-100 rounded hover:bg-blue-50"
+                  className="px-2 py-1 bg-gray-100 rounded border border-gray-300 hover:bg-blue-100"
                   onClick={() => setLikerAll(true)}
                 >
                   ...
@@ -382,7 +396,18 @@ export default function PostDetailPage({ params }: Props) {
         </div>
       </div>
       {/* 返信リスト */}
-      <div className="mt-8 mb-2 font-bold text-lg flex items-center gap-2">Replies</div>
+      <div className="mt-8 mb-2 flex items-center gap-2">
+        <span className="font-bold text-lg">Replies</span>
+        <label className="flex items-center gap-1 text-sm cursor-pointer ml-4">
+          <input
+            type="checkbox"
+            checked={replyOldestFirst}
+            onChange={e => handleReplyOldestFirstChange(e.target.checked)}
+            className="cursor-pointer"
+          />
+          Oldest first
+        </label>
+      </div>
       <ul className="space-y-4">
         {replyLoading ? (
           <li>Loading…</li>
