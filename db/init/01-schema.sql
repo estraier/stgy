@@ -16,6 +16,8 @@ CREATE TABLE users (
   ai_personality VARCHAR(2000),
   created_at TIMESTAMPTZ NOT NULL
 );
+CREATE INDEX idx_users_email ON users(email);
+CREATE INDEX idx_users_nickname ON users(nickname);
 
 CREATE TABLE user_follows (
   follower_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -31,6 +33,7 @@ CREATE TABLE posts (
   reply_to VARCHAR(50),
   created_at TIMESTAMPTZ NOT NULL
 );
+CREATE INDEX idx_posts_owned_by ON posts(owned_by);
 CREATE INDEX idx_posts_reply_to ON posts(reply_to);
 
 CREATE TABLE post_tags (
