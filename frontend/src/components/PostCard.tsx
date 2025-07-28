@@ -3,6 +3,7 @@
 import { useRouter, usePathname } from "next/navigation";
 import type { PostDetail } from "@/api/model";
 import { Heart, MessageCircle } from "lucide-react";
+import { formatDateTime } from "@/utils/format";
 
 type PostCardProps = {
   post: PostDetail;
@@ -78,7 +79,7 @@ export default function PostCard({
           href={`/posts/${post.id}`}
           onClick={e => e.stopPropagation()}
         >
-          {new Date(post.created_at).toLocaleString()}
+          {formatDateTime(new Date(post.created_at))}
         </a>
       </div>
       <div style={{ minHeight: 36, userSelect: "text" }}>

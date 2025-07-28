@@ -32,7 +32,7 @@ export default function PostDetailPage({ params }: Props) {
   const router = useRouter();
   const searchParams = useSearchParams();
   const userId = status.state === "authenticated" ? status.session.user_id : undefined;
-  const isAdmin = status.state === "authenticated" && status.session.is_admin;
+  const isAdmin = status.state === "authenticated" && status.session.user_is_admin;
 
   const [post, setPost] = useState<PostDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -364,7 +364,7 @@ export default function PostDetailPage({ params }: Props) {
                 <a
                   key={user.id}
                   href={`/users/${user.id}`}
-                  className="px-2 py-1 bg-gray-100 rounded hover:bg-blue-50"
+                  className="px-2 py-1 bg-gray-100 rounded border border-gray-300 hover:bg-blue-100"
                 >
                   {user.nickname}
                 </a>

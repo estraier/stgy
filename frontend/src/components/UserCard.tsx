@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { UserDetail } from "@/api/models";
+import { formatDateTime } from "@/utils/format";
 
 type UserCardProps = {
   user: UserDetail;
@@ -138,7 +139,7 @@ export default function UserCard({
       {!truncated && (
         <div className="text-xs text-gray-500 mt-2">
           <div className="font-semibold">Created:</div>
-          <div className="pl-2">{new Date(user.created_at).toLocaleString()}</div>
+          <div className="pl-2">{formatDateTime(new Date(user.created_at))}</div>
         </div>
       )}
       {("count_followers" in user) && (
