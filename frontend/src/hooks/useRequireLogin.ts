@@ -7,7 +7,7 @@ import type { SessionInfo } from "@/api/model";
 
 type RequireLoginStatus =
   | { state: "loading" }
-  | { state: "authenticated"; user: SessionInfo }
+  | { state: "authenticated"; session: SessionInfo }
   | { state: "unauthenticated" };
 
 export function useRequireLogin() {
@@ -16,7 +16,7 @@ export function useRequireLogin() {
 
   useEffect(() => {
     getSessionInfo()
-      .then((user) => setStatus({ state: "authenticated", user }))
+      .then((session) => setStatus({ state: "authenticated", session }))
       .catch(() => {
         setStatus({ state: "unauthenticated" });
         router.replace("/error?page=login-required");

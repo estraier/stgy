@@ -51,7 +51,7 @@ export default function PostsPage() {
   }
   const { tab, includingReplies, oldestFirst, page, qParam } = getQueryParams();
   const searchQueryObj = qParam ? parsePostSearchQuery(qParam) : {};
-  const user_id = status.state === "authenticated" ? status.user.user_id : undefined;
+  const userId = status.state === "authenticated" ? status.session.user_id : undefined;
 
   const isSearchMode = !!(
     (searchQueryObj.query && searchQueryObj.query.length > 0) ||
@@ -72,7 +72,7 @@ export default function PostsPage() {
           const users = await listUsers({
             order: "social",
             nickname: searchQueryObj.ownedBy,
-            focus_user_id: user_id,
+            focus_user_id: userId,
             limit: 1,
           });
           if (!canceled) {
@@ -86,7 +86,7 @@ export default function PostsPage() {
       setResolvedOwnedBy(undefined);
     }
     return () => { canceled = true; };
-  }, [searchQueryObj.ownedBy, isSearchMode, user_id]);
+  }, [searchQueryObj.ownedBy, isSearchMode, userId]);
 
   const fetchPostsRef = useRef<() => Promise<void>>();
   async function fetchPosts() {
@@ -99,7 +99,7 @@ export default function PostsPage() {
       offset: (usePage - 1) * PAGE_SIZE,
       limit: PAGE_SIZE + 1,
       order: oldestFirst ? "asc" : "desc",
-      focus_user_id: user_id,
+      focus_user_id: userId,
     };
     let fetcher: Promise<PostDetail[]>;
     let effectiveOwnedBy = searchQueryObj.ownedBy;
@@ -127,14 +127,14 @@ export default function PostsPage() {
       fetcher = listPostsDetail(params);
     } else if (effectiveTab === "following") {
       fetcher = listPostsByFolloweesDetail({
-        user_id: user_id!,
+        user_id: userId!,
         ...params,
         include_self: true,
         include_replies: includingReplies,
       });
     } else if (effectiveTab === "liked") {
       fetcher = listPostsLikedByUserDetail({
-        user_id: user_id!,
+        user_id: userId!,
         ...params,
         include_replies: includingReplies,
       });
@@ -169,7 +169,7 @@ export default function PostsPage() {
     oldestFirst,
     qParam,
     resolvedOwnedBy,
-    user_id,
+    userId,
   ]);
 
   function setQuery(updates: Record<string, string | number | undefined>) {

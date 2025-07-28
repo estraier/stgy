@@ -19,10 +19,10 @@ export default function UserDetailPage({ params }: Props) {
   const [editing, setEditing] = useState(false);
 
   // focusUserIdはログインユーザ
-  const focusUserId = ready && ready.state === "authenticated" ? ready.user.user_id : "";
+  const focusUserId = ready && ready.state === "authenticated" ? ready.session.user_id : "";
 
-  const isAdmin = ready && ready.state === "authenticated" && ready.user.is_admin;
-  const isSelf = user && ready && ready.state === "authenticated" && user.id === ready.user.user_id;
+  const isAdmin = ready && ready.state === "authenticated" && ready.session.is_admin;
+  const isSelf = user && ready && ready.state === "authenticated" && user.id === ready.session.user_id;
 
   useEffect(() => {
     if (!ready) return;

@@ -31,8 +31,8 @@ export default function PostDetailPage({ params }: Props) {
   const status = useRequireLogin();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const user_id = status.state === "authenticated" ? status.user.user_id : undefined;
-  const isAdmin = status.state === "authenticated" && status.user.is_admin;
+  const userId = status.state === "authenticated" ? status.session.user_id : undefined;
+  const isAdmin = status.state === "authenticated" && status.session.is_admin;
 
   const [post, setPost] = useState<PostDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -85,10 +85,10 @@ export default function PostDetailPage({ params }: Props) {
   const [replySubmitting, setReplySubmitting] = useState(false);
 
   useEffect(() => {
-    if (!user_id) return;
+    if (!userId) return;
     setLoading(true);
     setError(null);
-    getPostDetail(postId, user_id)
+    getPostDetail(postId, userId)
       .then((data) => {
         setPost(data);
         const tagLine = data.tags && data.tags.length > 0 ? "#" + data.tags.join(", #") + "\n" : "";
@@ -97,7 +97,7 @@ export default function PostDetailPage({ params }: Props) {
       })
       .catch((err) => setError(err?.message ?? "Failed to fetch post."))
       .finally(() => setLoading(false));
-  }, [postId, user_id]);
+  }, [postId, userId]);
 
   useEffect(() => {
     if (!post) return;
@@ -121,21 +121,21 @@ export default function PostDetailPage({ params }: Props) {
   }, [post?.id, likerAll]);
 
   useEffect(() => {
-    if (!user_id || !post) return;
+    if (!userId || !post) return;
     setReplyLoading(true);
     listPostsDetail({
       reply_to: post.id,
       offset: (replyPage - 1) * REPLY_PAGE_SIZE,
       limit: REPLY_PAGE_SIZE + 1,
       order: "desc",
-      focus_user_id: user_id,
+      focus_user_id: userId,
     })
       .then((list) => {
         setReplies(list.slice(0, REPLY_PAGE_SIZE));
         setReplyHasNext(list.length > REPLY_PAGE_SIZE);
       })
       .finally(() => setReplyLoading(false));
-  }, [user_id, post?.id, replyPage]);
+  }, [userId, post?.id, replyPage]);
 
   async function handleLike(post: PostDetail) {
     setPost((prev) =>
@@ -154,7 +154,7 @@ export default function PostDetailPage({ params }: Props) {
         await addLike(post.id);
       }
     } finally {
-      getPostDetail(post.id, user_id).then(setPost);
+      getPostDetail(post.id, userId).then(setPost);
       setLikerAll(false);
     }
   }
@@ -183,7 +183,7 @@ export default function PostDetailPage({ params }: Props) {
         offset: (replyPage - 1) * REPLY_PAGE_SIZE,
         limit: REPLY_PAGE_SIZE + 1,
         order: "desc",
-        focus_user_id: user_id,
+        focus_user_id: userId,
       }).then((list) => {
         setReplies(list.slice(0, REPLY_PAGE_SIZE));
         setReplyHasNext(list.length > REPLY_PAGE_SIZE);
@@ -205,7 +205,7 @@ export default function PostDetailPage({ params }: Props) {
       }
       await updatePost(postId, { content, tags });
       setEditing(false);
-      getPostDetail(postId, user_id).then(setPost);
+      getPostDetail(postId, userId).then(setPost);
     } catch (err: any) {
       setEditError(err?.message ?? "Failed to update post.");
     } finally {
@@ -241,13 +241,13 @@ export default function PostDetailPage({ params }: Props) {
 
       if (replyingTo === postId) {
         setReplyPage(1);
-        getPostDetail(postId, user_id).then(setPost);
+        getPostDetail(postId, userId).then(setPost);
         listPostsDetail({
           reply_to: postId,
           offset: 0,
           limit: REPLY_PAGE_SIZE + 1,
           order: "desc",
-          focus_user_id: user_id,
+          focus_user_id: userId,
         }).then((list) => {
           setReplies(list.slice(0, REPLY_PAGE_SIZE));
           setReplyHasNext(list.length > REPLY_PAGE_SIZE);
@@ -272,9 +272,9 @@ export default function PostDetailPage({ params }: Props) {
     }
   }
 
-  const canEdit = isAdmin || (post && post.owned_by === user_id);
+  const canEdit = isAdmin || (post && post.owned_by === userId);
 
-  if (!user_id) return null;
+  if (!userId) return null;
   if (loading) return <div className="text-center mt-10">Loading…</div>;
   if (error) return <div className="text-center mt-10 text-red-600">{error}</div>;
   if (!post) return <div className="text-center mt-10 text-gray-500">No post found.</div>;

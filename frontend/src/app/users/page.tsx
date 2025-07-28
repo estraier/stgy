@@ -28,7 +28,7 @@ export default function UsersPage() {
   }
   const { tab, page, qParam, oldestFirst } = getQuery();
   const searchQueryObj = qParam ? parseUserSearchQuery(qParam) : {};
-  const user_id = status.state === "authenticated" ? status.user.user_id : undefined;
+  const userId = status.state === "authenticated" ? status.session.user_id : undefined;
   const isSearchMode =
     (searchQueryObj.query && searchQueryObj.query.length > 0) ||
     (searchQueryObj.nickname && searchQueryObj.nickname.length > 0);
@@ -68,7 +68,7 @@ export default function UsersPage() {
       offset: (page - 1) * PAGE_SIZE,
       limit: PAGE_SIZE + 1,
       order: oldestFirst ? "asc" : "desc",
-      focus_user_id: user_id,
+      focus_user_id: userId,
     };
 
     let fetcher: Promise<UserDetail[] | User[]>;
@@ -77,18 +77,18 @@ export default function UsersPage() {
       if (searchQueryObj.nickname) params.nickname = searchQueryObj.nickname;
       fetcher = listUsersDetail(params);
     } else if (effectiveTab === "followees") {
-      fetcher = listFollowees(user_id!, {
+      fetcher = listFollowees(userId!, {
         offset: params.offset,
         limit: params.limit,
         order: params.order,
-        focus_user_id: user_id,
+        focus_user_id: userId,
       });
     } else if (effectiveTab === "followers") {
-      fetcher = listFollowers(user_id!, {
+      fetcher = listFollowers(userId!, {
         offset: params.offset,
         limit: params.limit,
         order: params.order,
-        focus_user_id: user_id,
+        focus_user_id: userId,
       });
     } else {
       fetcher = listUsersDetail(params);
@@ -176,7 +176,7 @@ export default function UsersPage() {
             <li key={user.id}>
               <UserCard
                 user={user}
-                focusUserId={user_id}
+                focusUserId={userId}
                 onClick={() => location.assign(`/users/${user.id}`)}
               />
             </li>
