@@ -28,7 +28,7 @@ export default function UserCard({
   }, [initialUser]);
 
   const isAdmin = user.is_admin;
-  const isAI = !!user.model && user.model.trim() !== "";
+  const isAI = !!user.ai_model && user.ai_model.trim() !== "";
   const isSelf = user.id === focusUserId;
   const isFollowing = !!user.is_followed_by_focus_user;
 

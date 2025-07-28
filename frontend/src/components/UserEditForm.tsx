@@ -23,8 +23,8 @@ export default function UserEditForm({
   const [email, setEmail] = useState(user.email ?? "");
   const [nickname, setNickname] = useState(user.nickname ?? "");
   const [introduction, setIntroduction] = useState(user.introduction ?? "");
-  const [ai_personality, setAIPersonality] = useState(user.personality ?? "");
-  const [ai_model, setAIModel] = useState(user.model ?? "");
+  const [ai_personality, setAIPersonality] = useState(user.ai_personality ?? "");
+  const [ai_model, setAIModel] = useState(user.ai_model ?? "");
   const [is_admin, setIsAdmin] = useState(user.is_admin ?? false);
 
   const [aiModels, setAIModels] = useState<{ name: string; description: string }[]>([]);
@@ -53,7 +53,7 @@ export default function UserEditForm({
     e.preventDefault();
     setError(null);
 
-    if (isAdmin && !isValidEmail(email)) {
+    if (isAdmin && !isSelf && !isValidEmail(email)) {
       setError("Invalid email address.");
       return;
     }
@@ -76,8 +76,10 @@ export default function UserEditForm({
         nickname,
         introduction,
       };
-      if (isAdmin) {
+      if (isAdmin && !isSelf) {
         input.email = email;
+      }
+      if (isAdmin) {
         input.is_admin = is_admin;
         input.ai_model = ai_model || null;
       }
@@ -87,7 +89,6 @@ export default function UserEditForm({
 
       await updateUser(user.id, input);
 
-      // focusUserIdは自分自身のIDでOK
       const updatedUser = await getUserDetail(user.id, user.id);
       if (onUpdated) {
         await onUpdated(updatedUser);
@@ -105,32 +106,53 @@ export default function UserEditForm({
       onSubmit={handleSubmit}
       onClick={e => e.stopPropagation()}
     >
+      {/* Email */}
       <div className="flex flex-col gap-1">
-        <label className="font-bold text-sm">Email</label>
+        <div className="flex items-center justify-between">
+          <label className="font-bold text-sm">Email</label>
+          {isAdmin && isSelf && (
+            <span className="text-xs text-gray-400 ml-2">
+              (You can't change your own email)
+            </span>
+          )}
+          {!isAdmin && (
+            <span className="text-xs text-gray-400 ml-2">
+              (Only admin can change)
+            </span>
+          )}
+        </div>
         <input
-          className="border border-gray-400 rounded px-2 py-1 bg-gray-50"
+          className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700
+                     focus:outline-none focus:ring-2 focus:ring-blue-200
+                     disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
           type="email"
           value={email}
           onChange={e => setEmail(e.target.value)}
-          disabled={!isAdmin}
-          required={isAdmin}
+          disabled={!isAdmin || isSelf}
+          required={isAdmin && !isSelf}
           onFocus={handleClearError}
         />
       </div>
+      {/* Nickname */}
       <div className="flex flex-col gap-1">
         <label className="font-bold text-sm">Nickname</label>
         <input
-          className="border border-gray-400 rounded px-2 py-1 bg-gray-50"
+          className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700
+                     focus:outline-none focus:ring-2 focus:ring-blue-200
+                     disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
           value={nickname}
           onChange={e => setNickname(e.target.value)}
           required
           onFocus={handleClearError}
         />
       </div>
+      {/* Introduction */}
       <div className="flex flex-col gap-1">
         <label className="font-bold text-sm">Introduction</label>
         <textarea
-          className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50"
+          className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50 text-gray-700
+                     focus:outline-none focus:ring-2 focus:ring-blue-200
+                     disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
           value={introduction}
           onChange={e => setIntroduction(e.target.value)}
           maxLength={2000}
@@ -138,6 +160,7 @@ export default function UserEditForm({
           onFocus={handleClearError}
         />
       </div>
+      {/* AI Model */}
       <div className="flex flex-col gap-1">
         <div className="flex flex-row items-center justify-between">
           <label className="font-bold text-sm">AI Model</label>
@@ -151,7 +174,9 @@ export default function UserEditForm({
           <div className="text-gray-400 text-xs">Loading models…</div>
         ) : (
           <select
-            className="border border-gray-400 rounded px-2 py-1 bg-gray-50"
+            className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700
+                       focus:outline-none focus:ring-2 focus:ring-blue-200
+                       disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
             value={ai_model}
             onChange={e => setAIModel(e.target.value)}
             disabled={!isAdmin}
@@ -166,21 +191,26 @@ export default function UserEditForm({
           </select>
         )}
       </div>
+      {/* AI Personality */}
       {ai_model && (
         <div className="flex flex-col gap-1">
           <label className="font-bold text-sm">
             AI Personality
           </label>
-          <input
-            className="border border-gray-400 rounded px-2 py-1 bg-gray-50"
+          <textarea
+            className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50 text-gray-700
+                       focus:outline-none focus:ring-2 focus:ring-blue-200
+                       disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
             value={ai_personality}
             onChange={e => setAIPersonality(e.target.value)}
             required
             onFocus={handleClearError}
             placeholder="Describe AI personality"
+            maxLength={2000}
           />
         </div>
       )}
+      {/* Admin */}
       {isAdmin && (
         <div className="flex flex-row items-center gap-2">
           <input
@@ -188,7 +218,8 @@ export default function UserEditForm({
             id="is_admin"
             checked={is_admin}
             onChange={e => setIsAdmin(e.target.checked)}
-            className="mr-2"
+            className="mr-2
+              disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
             disabled={isSelf}
           />
           <label htmlFor="is_admin" className="font-semibold text-sm">Admin</label>
@@ -199,6 +230,7 @@ export default function UserEditForm({
           )}
         </div>
       )}
+      {/* Buttons and error */}
       <div className="flex items-center gap-2 mt-2">
         <span className="flex-1 text-red-600 text-sm">{error && error}</span>
         <button
