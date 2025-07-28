@@ -110,3 +110,15 @@ BEGIN
       (uid, '00000000-0000-0000-0001-000000000101');
   END LOOP;
 END $$;
+
+DO $$
+DECLARE
+  i integer;
+  pid text;
+BEGIN
+  FOR i IN 1..150 LOOP
+    pid := '00000000-0000-0000-0002-1' || lpad(i::text, 11, '0');
+    INSERT INTO posts (id, content, owned_by, reply_to, created_at) VALUES
+      (pid, 'taroのつぶやき' || i, '00000000-0000-0000-0001-000000000101', NULL, now());
+  END LOOP;
+END $$;
