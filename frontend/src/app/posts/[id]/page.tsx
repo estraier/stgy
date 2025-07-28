@@ -243,7 +243,9 @@ export default function PostDetailPage({ params }: Props) {
       setReplyingTo(null);
 
       if (replyingTo === postId) {
-        setReplyPage(1);
+        // 修正: setReplyOptsでページ番号リセット
+        setReplyOpts((old) => ({ ...old, page: 1 }));
+        // 返信一覧を最新化
         getPostDetail(postId, userId).then(setPost);
         listPostsDetail({
           reply_to: postId,
