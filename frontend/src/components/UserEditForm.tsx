@@ -14,6 +14,7 @@ type UserEditFormProps = {
 export default function UserEditForm({
   user,
   isAdmin,
+  isSelf,
   onUpdated,
   onCancel,
 }: UserEditFormProps) {
@@ -156,6 +157,7 @@ export default function UserEditForm({
             checked={is_admin}
             onChange={e => setIsAdmin(e.target.checked)}
             className="mr-2"
+            disabled={isSelf}
           />
           <label htmlFor="is_admin" className="font-semibold text-sm">Admin</label>
         </div>

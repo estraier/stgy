@@ -18,18 +18,20 @@ export default function UserDetailPage({ params }: Props) {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
 
-  // focusUserIdはログインユーザ
-  const focusUserId = ready && ready.state === "authenticated" ? ready.session.user_id : "";
 
-  const isAdmin = ready && ready.state === "authenticated" && ready.session.is_admin;
-  const isSelf = user && ready && ready.state === "authenticated" && user.id === ready.session.user_id;
+  const userId = ready && ready.state === "authenticated" ? ready.session.user_id : "";
+  const isAdmin = ready && ready.state === "authenticated" && ready.session.user_is_admin;
+  const isSelf = user && ready && ready.state === "authenticated" && user.id === userId;
 
   useEffect(() => {
     if (!ready) return;
+    console.log(userId);
+    console.log(isAdmin);
+    console.log(ready.session);
     let canceled = false;
     setLoading(true);
     setError(null);
-    getUserDetail(id, focusUserId)
+    getUserDetail(id, userId)
       .then((data) => {
         if (!canceled) setUser(data);
       })
@@ -48,7 +50,7 @@ export default function UserDetailPage({ params }: Props) {
     return () => {
       canceled = true;
     };
-  }, [id, ready, focusUserId]);
+  }, [id, ready, userId]);
 
   if (!ready) return null;
   if (loading) {
@@ -68,7 +70,7 @@ export default function UserDetailPage({ params }: Props) {
       <UserCard
         user={user}
         truncated={false}
-        focusUserId={focusUserId}
+        focusUserId={userId}
         className="shadow-none border-none p-0"
       />
       {canEdit && !editing && (
@@ -86,6 +88,7 @@ export default function UserDetailPage({ params }: Props) {
           <UserEditForm
             user={user}
             isAdmin={isAdmin}
+            isSelf={isSelf}
             onUpdated={(updatedUser) => {
               setUser(updatedUser);  // ★ ここで即時反映！
               setEditing(false);
