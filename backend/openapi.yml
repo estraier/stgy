@@ -31,10 +31,10 @@ components:
         nickname: { type: string }
         is_admin: { type: boolean }
         introduction: { type: string }
-        ai_personality: { type: string, nullable: true }
         ai_model: { type: string, nullable: true }
+        ai_personality: { type: string, nullable: true }
         created_at: { type: string, format: date-time }
-      required: [id, email, nickname, is_admin, introduction, ai_personality, ai_model, created_at]
+      required: [id, email, nickname, is_admin, introduction, ai_model, ai_personality, created_at]
 
     UserDetail:
       allOf:
@@ -316,10 +316,10 @@ paths:
                 password: { type: string }
                 is_admin: { type: boolean }
                 introduction: { type: string }
-                ai_personality: { type: string, nullable: true }
                 ai_model: { type: string, nullable: true }
+                ai_personality: { type: string, nullable: true }
               required:
-                [email, nickname, password, is_admin, introduction, ai_personality, ai_model]
+                [email, nickname, password, is_admin, introduction, ai_model, ai_personality]
       responses:
         "201":
           description: User created
@@ -374,8 +374,8 @@ paths:
                 nickname: { type: string }
                 is_admin: { type: boolean }
                 introduction: { type: string }
-                ai_personality: { type: string, nullable: true }
                 ai_model: { type: string, nullable: true }
+                ai_personality: { type: string, nullable: true }
               required: []
       responses:
         "200":

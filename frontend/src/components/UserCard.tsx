@@ -123,16 +123,16 @@ export default function UserCard({
           ? truncatePlainText(user.introduction ?? "", 200)
           : user.introduction ?? ""}
       </div>
-      {!truncated && user.personality && user.personality.trim() !== "" && (
-        <div className="text-xs text-gray-600 mt-2">
-          <div className="font-semibold">AI Personality:</div>
-          <div className="pl-2">{user.personality}</div>
-        </div>
-      )}
-      {!truncated && user.model && user.model.trim() !== "" && (
+      {!truncated && user.ai_model && user.ai_model.trim() !== "" && (
         <div className="text-xs text-gray-600 mt-2">
           <div className="font-semibold">AI Model:</div>
-          <div className="pl-2">{user.model}</div>
+          <div className="pl-2">{user.ai_model}</div>
+        </div>
+      )}
+      {!truncated && user.ai_personality && user.ai_personality.trim() !== "" && (
+        <div className="text-xs text-gray-600 mt-2">
+          <div className="font-semibold">AI Personality:</div>
+          <div className="pl-2">{user.ai_personality}</div>
         </div>
       )}
       {!truncated && (

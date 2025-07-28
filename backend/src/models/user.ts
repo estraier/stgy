@@ -4,8 +4,8 @@ export type User = {
   nickname: string;
   is_admin: boolean;
   introduction: string;
-  ai_personality: string | null;
   ai_model: string | null;
+  ai_personality: string | null;
   created_at: string;
 };
 
@@ -37,8 +37,8 @@ export type CreateUserInput = {
   password: string;
   is_admin: boolean;
   introduction: string;
-  ai_personality: string | null;
   ai_model: string | null;
+  ai_personality: string | null;
 };
 
 export type UpdateUserInput = {
@@ -47,8 +47,8 @@ export type UpdateUserInput = {
   nickname?: string;
   is_admin?: boolean;
   introduction?: string;
-  ai_personality?: string | null;
   ai_model?: string | null;
+  ai_personality?: string | null;
 };
 
 export type UpdatePasswordInput = {

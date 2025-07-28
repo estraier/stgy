@@ -18,8 +18,8 @@ export type User = {
   nickname: string;
   is_admin: boolean;
   introduction: string;
-  personality: string;
-  model: string;
+  ai_model: string;
+  ai_personality: string;
   created_at: string;
 };
 

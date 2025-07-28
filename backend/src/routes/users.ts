@@ -116,8 +116,8 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
         password: req.body.password,
         is_admin: req.body.is_admin ?? false,
         introduction: req.body.introduction,
-        ai_personality: req.body.ai_personality ?? null,
         ai_model: req.body.ai_model ?? null,
+        ai_personality: req.body.ai_personality ?? null,
       };
       const created = await usersService.createUser(input);
       res.status(201).json(created);
@@ -135,6 +135,12 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     if (!loginUser.is_admin && req.body.is_admin !== undefined) {
       return res.status(403).json({ error: "forbidden to change is_admin" });
     }
+    if (!loginUser.is_admin && req.body.ai_model !== undefined) {
+      return res.status(403).json({ error: "forbidden to change ai_model" });
+    }
+    if (!loginUser.is_admin && req.body.ai_personality !== undefined) {
+      return res.status(403).json({ error: "forbidden to change ai_personality" });
+    }
     try {
       const input: UpdateUserInput = {
         id: req.params.id,
@@ -142,8 +148,8 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
         nickname: req.body.nickname,
         is_admin: req.body.is_admin,
         introduction: req.body.introduction,
-        ai_personality: req.body.ai_personality,
         ai_model: req.body.ai_model,
+        ai_personality: req.body.ai_personality,
       };
       const updated = await usersService.updateUser(input);
       if (!updated) return res.status(404).json({ error: "not found" });
