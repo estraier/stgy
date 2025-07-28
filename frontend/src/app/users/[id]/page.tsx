@@ -1,14 +1,16 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { use, useEffect, useState, useRef } from "react";
 import { getUserDetail, listFollowers, listFollowees } from "@/api/users";
-import { listPostsDetail } from "@/api/posts";
+import { listPostsDetail, addLike, removeLike, createPost } from "@/api/posts";
 import type { UserDetail, PostDetail, User } from "@/api/models";
 import { notFound, useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import UserCard from "@/components/UserCard";
 import UserEditForm from "@/components/UserEditForm";
 import PostCard from "@/components/PostCard";
+import PostForm from "@/components/PostForm";
+import { parseBodyAndTags } from "@/utils/parse";
 
 const PAGE_SIZE = 5;
 const TAB_VALUES = ["posts", "replies", "followers", "followees"] as const;
@@ -50,6 +52,12 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
 
   const isSelf = user && userId && user.id === userId;
   const canEdit = isSelf || isAdmin;
+
+  // Reply関連
+  const [replyTo, setReplyTo] = useState<string | null>(null);
+  const [replyBody, setReplyBody] = useState("");
+  const [replyError, setReplyError] = useState<string | null>(null);
+  const [replySubmitting, setReplySubmitting] = useState(false);
 
   // クエリ書き換え
   function setQuery(updates: Partial<{ tab: string; page: number; oldestFirst: string | undefined }>) {
@@ -108,6 +116,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
         offset: (page - 1) * PAGE_SIZE,
         limit: PAGE_SIZE + 1,
         order: oldestFirst ? "asc" : "desc",
+        focus_user_id: userId,
       };
       if (tab === "posts") params.reply_to = null;
       if (tab === "replies") params.reply_to = "*";
@@ -123,6 +132,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
         offset: (page - 1) * PAGE_SIZE,
         limit: PAGE_SIZE + 1,
         order: oldestFirst ? "asc" : "desc",
+        focus_user_id: userId,
       })
         .then((data) => {
           setFollowers(data.slice(0, PAGE_SIZE));
@@ -135,6 +145,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
         offset: (page - 1) * PAGE_SIZE,
         limit: PAGE_SIZE + 1,
         order: oldestFirst ? "asc" : "desc",
+        focus_user_id: userId,
       })
         .then((data) => {
           setFollowees(data.slice(0, PAGE_SIZE));
@@ -143,7 +154,88 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
         .catch((err: any) => setListError(err.message || "Failed to fetch followees."))
         .finally(() => setListLoading(false));
     }
-  }, [tab, user?.id, page, oldestFirst]);
+  }, [tab, user?.id, page, oldestFirst, userId]);
+
+  // Like機能
+  async function handleLike(post: PostDetail) {
+    setPosts((prev) =>
+      prev.map((p) =>
+        p.id === post.id
+          ? {
+              ...p,
+              is_liked_by_focus_user: !p.is_liked_by_focus_user,
+              like_count:
+                Number(p.like_count ?? 0) + (p.is_liked_by_focus_user ? -1 : 1),
+            }
+          : p,
+      ),
+    );
+    try {
+      if (post.is_liked_by_focus_user) {
+        await removeLike(post.id);
+      } else {
+        await addLike(post.id);
+      }
+      // 再取得
+      setTimeout(() => {
+        // タイミングずれによる数のズレ解消
+        listPostsDetail({
+          owned_by: user?.id,
+          offset: (page - 1) * PAGE_SIZE,
+          limit: PAGE_SIZE + 1,
+          order: oldestFirst ? "asc" : "desc",
+          focus_user_id: userId,
+          reply_to: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
+        }).then((data) => setPosts(data.slice(0, PAGE_SIZE)));
+      }, 100);
+    } catch {
+      // エラー時はロールバック
+      setTimeout(() => {
+        listPostsDetail({
+          owned_by: user?.id,
+          offset: (page - 1) * PAGE_SIZE,
+          limit: PAGE_SIZE + 1,
+          order: oldestFirst ? "asc" : "desc",
+          focus_user_id: userId,
+          reply_to: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
+        }).then((data) => setPosts(data.slice(0, PAGE_SIZE)));
+      }, 100);
+    }
+  }
+
+  // Reply送信
+  async function handleReplySubmit(e: React.FormEvent) {
+    e.preventDefault();
+    setReplySubmitting(true);
+    setReplyError(null);
+    try {
+      const { content, tags } = parseBodyAndTags(replyBody);
+      if (!content.trim()) throw new Error("Content is required.");
+      if (content.length > 5000) throw new Error("Content is too long (max 5000 chars).");
+      if (tags.length > 5) throw new Error("You can specify up to 5 tags.");
+      for (const tag of tags) {
+        if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
+      }
+      await createPost({ content, tags, reply_to: replyTo });
+      setReplyBody("");
+      setReplyTo(null);
+      setTimeout(() => {
+        listPostsDetail({
+          owned_by: user?.id,
+          offset: (page - 1) * PAGE_SIZE,
+          limit: PAGE_SIZE + 1,
+          order: oldestFirst ? "asc" : "desc",
+          focus_user_id: userId,
+          reply_to: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
+        }).then((data) => setPosts(data.slice(0, PAGE_SIZE)));
+      }, 100);
+    } catch (err: any) {
+      setReplyError(err?.message || "Failed to reply.");
+    } finally {
+      setReplySubmitting(false);
+    }
+  }
+  function clearReplyError() { if (replyError) setReplyError(null); }
 
   if (!ready) return null;
   if (loading) return <div className="text-center mt-10">Loading…</div>;
@@ -169,11 +261,17 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   // タブ切り替え
   function handleTabChange(nextTab: typeof TAB_VALUES[number]) {
     setQuery({ tab: nextTab, page: 1, oldestFirst: oldestFirst ? "1" : undefined });
+    setReplyTo(null);
+    setReplyBody("");
+    setReplyError(null);
   }
 
   // Oldest first
   function handleOldestFirstToggle(checked: boolean) {
     setQuery({ oldestFirst: checked ? "1" : undefined, tab, page: 1 });
+    setReplyTo(null);
+    setReplyBody("");
+    setReplyError(null);
   }
 
   return (
@@ -250,7 +348,32 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
                 )}
                 {posts.map((post) => (
                   <li key={post.id}>
-                    <PostCard post={post} />
+                    <PostCard
+                      post={post}
+                      onLike={handleLike}
+                      onReply={() => {
+                        setReplyTo(post.id);
+                        setReplyBody("");
+                        setReplyError(null);
+                      }}
+                    />
+                    {replyTo === post.id && (
+                      <PostForm
+                        body={replyBody}
+                        setBody={setReplyBody}
+                        onSubmit={handleReplySubmit}
+                        submitting={replySubmitting}
+                        error={replyError}
+                        onErrorClear={clearReplyError}
+                        buttonLabel="Reply"
+                        placeholder="Write your reply. Use #tag lines for tags."
+                        className="mt-3 flex flex-col gap-2 pt-3"
+                        onCancel={() => {
+                          setReplyTo(null);
+                          setReplyError(null);
+                        }}
+                      />
+                    )}
                   </li>
                 ))}
               </ul>
