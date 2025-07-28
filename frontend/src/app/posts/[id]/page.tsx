@@ -310,6 +310,7 @@ export default function PostDetailPage({ params }: Props) {
         onLike={() => handleLike(post)}
         onReply={() => setReplyingTo(post.id)}
         isReplying={replyingTo === post.id}
+        clickable={false}
         className="mb-8"
       />
       {replyingTo === post.id && (

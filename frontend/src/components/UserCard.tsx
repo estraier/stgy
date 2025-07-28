@@ -10,6 +10,7 @@ type UserCardProps = {
   className?: string;
   onClick?: (user: UserDetail) => void;
   focusUserId: string;
+  clickable?: boolean; // 追加
 };
 
 export default function UserCard({
@@ -18,12 +19,12 @@ export default function UserCard({
   className = "",
   onClick,
   focusUserId,
+  clickable = true, // デフォルトtrue
 }: UserCardProps) {
   const [hovering, setHovering] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [user, setUser] = useState(initialUser);
 
-  // ★★★ 追加：propsが変わったらstateも同期 ★★★
   useEffect(() => {
     setUser(initialUser);
   }, [initialUser]);
@@ -81,6 +82,7 @@ export default function UserCard({
   }
 
   function handleCardClick(e: React.MouseEvent | React.KeyboardEvent) {
+    if (!clickable) return;
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
     onClick?.(user);
   }
@@ -95,16 +97,20 @@ export default function UserCard({
 
   return (
     <article
-      className={`p-4 border rounded shadow-sm bg-white cursor-pointer ${className}`}
-      onClick={handleCardClick}
-      tabIndex={0}
-      role="button"
-      aria-label="Show user detail"
-      onKeyDown={e => {
-        if (e.key === "Enter" || e.key === " ") {
-          handleCardClick(e);
-        }
-      }}
+      className={`p-4 border rounded shadow-sm bg-white ${clickable ? "cursor-pointer" : ""} ${className}`}
+      onClick={clickable ? handleCardClick : undefined}
+      tabIndex={clickable ? 0 : -1}
+      role={clickable ? "button" : undefined}
+      aria-label={clickable ? "Show user detail" : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                handleCardClick(e);
+              }
+            }
+          : undefined
+      }
     >
       <div className="flex items-center text-base font-semibold">
         <span className="truncate max-w-[24ex] text-blue-700">{user.nickname}</span>

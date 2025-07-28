@@ -281,6 +281,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
         user={user}
         truncated={false}
         focusUserId={userId}
+        clickable={false}
       />
 
       {/* Edit */}

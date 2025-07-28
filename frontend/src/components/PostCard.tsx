@@ -14,6 +14,7 @@ type PostCardProps = {
   isReplying?: boolean;
   children?: React.ReactNode;
   className?: string;
+  clickable?: boolean; // ←追加: ナビゲーションを有効化するか
 };
 
 export default function PostCard({
@@ -25,10 +26,12 @@ export default function PostCard({
   isReplying,
   children,
   className = "",
+  clickable = true, // ←追加: デフォルトtrue
 }: PostCardProps) {
   const router = useRouter();
 
   function handleCardClick(e: React.MouseEvent | React.KeyboardEvent) {
+    if (!clickable) return;
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
     router.push(`/posts/${post.id}`);
   }
@@ -43,16 +46,20 @@ export default function PostCard({
 
   return (
     <article
-      className={`pt-4 pb-2 pl-4 pr-3 border rounded bg-white shadow-sm cursor-pointer ${className}`}
-      onClick={handleCardClick}
-      tabIndex={0}
-      role="button"
-      aria-label="Show post detail"
-      onKeyDown={e => {
-        if (e.key === "Enter" || e.key === " ") {
-          handleCardClick(e);
-        }
-      }}
+      className={`pt-4 pb-2 pl-4 pr-3 border rounded bg-white shadow-sm ${clickable ? "cursor-pointer" : ""} ${className}`}
+      onClick={clickable ? handleCardClick : undefined}
+      tabIndex={clickable ? 0 : -1}
+      role={clickable ? "button" : undefined}
+      aria-label={clickable ? "Show post detail" : undefined}
+      onKeyDown={
+        clickable
+          ? (e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                handleCardClick(e);
+              }
+            }
+          : undefined
+      }
     >
       <div className="flex items-center text-sm mb-1">
         <a
