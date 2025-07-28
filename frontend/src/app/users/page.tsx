@@ -134,7 +134,12 @@ export default function UsersPage() {
 
   // タブ切替
   function handleTabChange(nextTab: typeof TAB_VALUES[number]) {
-    setQuery({ tab: nextTab, page: 1, q: undefined, oldestFirst: undefined });
+    setQuery({
+      tab: nextTab,
+      page: 1,
+      q: undefined,
+      oldestFirst: oldestFirst ? "1" : undefined,
+    });
   }
 
   return (
