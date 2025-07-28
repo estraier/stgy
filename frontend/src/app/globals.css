@@ -17,3 +17,60 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+
+.markdown-body h1 {
+  font-size: 2em;
+  margin: 1em 0 0.5em 0;
+  font-weight: bold;
+}
+
+.markdown-body h2 {
+  font-size: 1.5em;
+  margin: 1em 0 0.5em 0;
+  font-weight: bold;
+}
+
+.markdown-body h3 {
+  font-size: 1.2em;
+  margin: 1em 0 0.5em 0;
+  font-weight: bold;
+}
+
+.markdown-body p {
+  margin: 0 0 1em 0;
+  line-height: 1.6;
+}
+
+.markdown-body ul {
+  margin: 0 0 1em 1.5em;
+  padding-left: 1.5em;
+}
+
+.markdown-body li {
+  margin: 0.3em 0;
+  line-height: 1.5;
+}
+
+.markdown-body pre {
+  background: #f7f7fa;
+  border-radius: 8px;
+  padding: 0.7em 1em;
+  font-family: "JetBrains Mono", "Menlo", "Monaco", "Consolas", monospace;
+  font-size: 0.97em;
+  overflow-x: auto;
+  margin-bottom: 1em;
+}
+
+.markdown-body a {
+  color: #1d4ed8;
+  text-decoration: underline;
+  word-break: break-all;
+}
+
+.markdown-body .omitted {
+  color: #999;
+  text-align: center;
+  margin: 1em 0;
+  font-size: 1.1em;
+}
