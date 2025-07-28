@@ -25,9 +25,6 @@ export default function UserDetailPage({ params }: Props) {
 
   useEffect(() => {
     if (!ready) return;
-    console.log(userId);
-    console.log(isAdmin);
-    console.log(ready.session);
     let canceled = false;
     setLoading(true);
     setError(null);

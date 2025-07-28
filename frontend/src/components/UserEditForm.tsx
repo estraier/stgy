@@ -1,12 +1,14 @@
 "use client";
 
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import type { UserDetail } from "@/api/models";
 import { updateUser, getUserDetail } from "@/api/users";
+import { listAIModels } from "@/api/ai_models";
 
 type UserEditFormProps = {
   user: UserDetail;
   isAdmin: boolean;
+  isSelf: boolean;
   onUpdated?: (user: UserDetail) => void | Promise<void>;
   onCancel: () => void;
 };
@@ -25,8 +27,19 @@ export default function UserEditForm({
   const [ai_model, setAIModel] = useState(user.model ?? "");
   const [is_admin, setIsAdmin] = useState(user.is_admin ?? false);
 
+  const [aiModels, setAIModels] = useState<{ name: string; description: string }[]>([]);
+  const [aiModelsLoading, setAIModelsLoading] = useState(true);
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    setAIModelsLoading(true);
+    listAIModels()
+      .then(setAIModels)
+      .catch(() => setAIModels([]))
+      .finally(() => setAIModelsLoading(false));
+  }, []);
 
   function isValidEmail(email: string): boolean {
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
@@ -74,8 +87,8 @@ export default function UserEditForm({
 
       await updateUser(user.id, input);
 
-      // 必ず最新値をAPIで再取得する（updateUserの返り値でもOKならそれでも良い）
-      const updatedUser = await getUserDetail(user.id, user.id); // ←2つめはfocusUserId(自分のID)でよい
+      // focusUserIdは自分自身のIDでOK
+      const updatedUser = await getUserDetail(user.id, user.id);
       if (onUpdated) {
         await onUpdated(updatedUser);
       }
@@ -126,19 +139,38 @@ export default function UserEditForm({
         />
       </div>
       <div className="flex flex-col gap-1">
-        <label className="font-bold text-sm">AI Model</label>
-        <input
-          className="border border-gray-400 rounded px-2 py-1 bg-gray-50"
-          value={ai_model}
-          onChange={e => setAIModel(e.target.value)}
-          disabled={!isAdmin}
-          onFocus={handleClearError}
-          placeholder="AI model name (optional)"
-        />
+        <div className="flex flex-row items-center justify-between">
+          <label className="font-bold text-sm">AI Model</label>
+          {!isAdmin && (
+            <span className="text-xs text-gray-400 ml-2">
+              (Only admin can change)
+            </span>
+          )}
+        </div>
+        {aiModelsLoading ? (
+          <div className="text-gray-400 text-xs">Loading models…</div>
+        ) : (
+          <select
+            className="border border-gray-400 rounded px-2 py-1 bg-gray-50"
+            value={ai_model}
+            onChange={e => setAIModel(e.target.value)}
+            disabled={!isAdmin}
+            onFocus={handleClearError}
+          >
+            <option value="">(None)</option>
+            {aiModels.map(m => (
+              <option key={m.name} value={m.name}>
+                {m.name}{m.description ? ` - ${m.description}` : ""}
+              </option>
+            ))}
+          </select>
+        )}
       </div>
       {ai_model && (
         <div className="flex flex-col gap-1">
-          <label className="font-bold text-sm">AI Personality</label>
+          <label className="font-bold text-sm">
+            AI Personality
+          </label>
           <input
             className="border border-gray-400 rounded px-2 py-1 bg-gray-50"
             value={ai_personality}
@@ -160,6 +192,11 @@ export default function UserEditForm({
             disabled={isSelf}
           />
           <label htmlFor="is_admin" className="font-semibold text-sm">Admin</label>
+          {isSelf && (
+            <span className="text-xs text-gray-400 ml-1">
+              (You can't change your own admin status)
+            </span>
+          )}
         </div>
       )}
       <div className="flex items-center gap-2 mt-2">
