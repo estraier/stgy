@@ -123,6 +123,13 @@ export default function Navbar() {
             >
               Profile
             </a>
+            <a
+              href="/settings"
+              className="block w-full px-4 py-2 text-left hover:bg-gray-100"
+              onClick={() => setMenuOpen(false)}
+            >
+              Settings
+            </a>
             <button
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
               onClick={async () => {
