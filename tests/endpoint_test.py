@@ -29,6 +29,7 @@ def get_session(session_id):
   print(f"[session] {data}")
   assert data["user_email"] == ADMIN_EMAIL
   assert "user_nickname" in data
+  assert "user_is_admin" in data
   assert "user_id" in data
   assert "logged_in_at" in data
   return data

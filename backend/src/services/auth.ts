@@ -16,17 +16,23 @@ export class AuthService {
 
   async login(email: string, password: string): Promise<LoginResult> {
     const result = await this.pgClient.query(
-      "SELECT id, email, nickname FROM users WHERE email=$1 AND password=md5($2)",
+      "SELECT id, email, nickname, is_admin FROM users WHERE email=$1 AND password=md5($2)",
       [email, password],
     );
     if (result.rows.length === 0) throw new Error("authentication failed");
-    const { id, email: user_email, nickname: user_nickname } = result.rows[0];
+    const {
+      id,
+      email: user_email,
+      nickname: user_nickname,
+      is_admin: user_is_admin,
+    } = result.rows[0];
     const user_id = id;
     const sessionId = crypto.randomBytes(32).toString("hex");
     const sessionInfo: SessionInfo = {
       user_id,
       user_email,
       user_nickname,
+      user_is_admin,
       logged_in_at: new Date().toISOString(),
     };
     await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", 3600);

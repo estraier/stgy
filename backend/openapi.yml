@@ -158,8 +158,9 @@ paths:
                   user_id: { type: string }
                   user_email: { type: string }
                   user_nickname: { type: string }
+                  user_is_admin: { type: boolean }
                   logged_in_at: { type: string }
-                required: [user_id, user_email, user_nickname, logged_in_at]
+                required: [user_id, user_email, user_nickname, user_is_admin, logged_in_at]
         "401":
           $ref: "#/components/responses/Error401"
 

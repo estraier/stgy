@@ -35,6 +35,7 @@ describe("AuthService class", () => {
           id: "user-123",
           email: "test@example.com",
           nickname: "TestNick",
+          is_admin: true,
         },
       ],
       rowCount: 1,
@@ -47,6 +48,7 @@ describe("AuthService class", () => {
     expect(session.user_id).toBe("user-123");
     expect(session.user_email).toBe("test@example.com");
     expect(session.user_nickname).toBe("TestNick");
+    expect(session.user_is_admin).toBe(true);
     expect(session.logged_in_at).toBeDefined();
   });
 
@@ -63,6 +65,7 @@ describe("AuthService class", () => {
       user_id: "u1",
       user_email: "e@example.com",
       user_nickname: "TestNick",
+      user_is_admin: true,
       logged_in_at: "2025-07-13T00:00:00Z",
     });
     redis.store[`session:${sessionId}`] = value;
@@ -70,6 +73,7 @@ describe("AuthService class", () => {
     expect(session?.user_id).toBe("u1");
     expect(session?.user_email).toBe("e@example.com");
     expect(session?.user_nickname).toBe("TestNick");
+    expect(session?.user_is_admin).toBe(true);
     expect(session?.logged_in_at).toBe("2025-07-13T00:00:00Z");
   });
 
