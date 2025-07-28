@@ -20,7 +20,7 @@ export default function UsersPage() {
   // クエリパラメータから状態復元
   function getQuery() {
     return {
-      tab: (searchParams.get("tab") as typeof TAB_VALUES[number]) || "followees",
+      tab: (searchParams.get("tab") as (typeof TAB_VALUES)[number]) || "followees",
       page: Math.max(Number(searchParams.get("page")) || 1, 1),
       qParam: searchParams.get("q") ?? "",
       oldestFirst: searchParams.get("oldestFirst") === "1",
@@ -42,7 +42,9 @@ export default function UsersPage() {
   const [hasNext, setHasNext] = useState(false);
 
   // クエリの変更
-  function setQuery(updates: Partial<{ tab: string; page: number; q: string; oldestFirst: string | undefined }>) {
+  function setQuery(
+    updates: Partial<{ tab: string; page: number; q: string; oldestFirst: string | undefined }>,
+  ) {
     const sp = new URLSearchParams(searchParams);
     for (const key of ["tab", "page", "q", "oldestFirst"]) {
       if (
@@ -128,12 +130,14 @@ export default function UsersPage() {
   function handlePageChange(nextPage: number) {
     setQuery({
       page: nextPage,
-      ...(isSearchMode ? { q: qParam, oldestFirst: oldestFirst ? "1" : undefined, tab: "all" } : { tab, oldestFirst: oldestFirst ? "1" : undefined }),
+      ...(isSearchMode
+        ? { q: qParam, oldestFirst: oldestFirst ? "1" : undefined, tab: "all" }
+        : { tab, oldestFirst: oldestFirst ? "1" : undefined }),
     });
   }
 
   // タブ切替
-  function handleTabChange(nextTab: typeof TAB_VALUES[number]) {
+  function handleTabChange(nextTab: (typeof TAB_VALUES)[number]) {
     setQuery({
       tab: nextTab,
       page: 1,

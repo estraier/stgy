@@ -35,7 +35,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   // タブ・オプション・ページ
   function getQuery() {
     return {
-      tab: (searchParams.get("tab") as typeof TAB_VALUES[number]) || "posts",
+      tab: (searchParams.get("tab") as (typeof TAB_VALUES)[number]) || "posts",
       oldestFirst: searchParams.get("oldestFirst") === "1",
       page: Math.max(Number(searchParams.get("page")) || 1, 1),
     };
@@ -60,7 +60,9 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   const [replySubmitting, setReplySubmitting] = useState(false);
 
   // クエリ書き換え
-  function setQuery(updates: Partial<{ tab: string; page: number; oldestFirst: string | undefined }>) {
+  function setQuery(
+    updates: Partial<{ tab: string; page: number; oldestFirst: string | undefined }>,
+  ) {
     const sp = new URLSearchParams(searchParams);
     for (const key of ["tab", "page", "oldestFirst"]) {
       if (
@@ -118,7 +120,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
         order: oldestFirst ? "asc" : "desc",
         focus_user_id: userId,
       };
-      if (tab === "posts") params.reply_to = null;
+      if (tab === "posts") params.reply_to = "";
       if (tab === "replies") params.reply_to = "*";
       listPostsDetail(params)
         .then((data) => {
@@ -164,8 +166,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
           ? {
               ...p,
               is_liked_by_focus_user: !p.is_liked_by_focus_user,
-              like_count:
-                Number(p.like_count ?? 0) + (p.is_liked_by_focus_user ? -1 : 1),
+              like_count: Number(p.like_count ?? 0) + (p.is_liked_by_focus_user ? -1 : 1),
             }
           : p,
       ),
@@ -235,7 +236,9 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
       setReplySubmitting(false);
     }
   }
-  function clearReplyError() { if (replyError) setReplyError(null); }
+  function clearReplyError() {
+    if (replyError) setReplyError(null);
+  }
 
   if (!ready) return null;
   if (loading) return <div className="text-center mt-10">Loading…</div>;
@@ -245,11 +248,16 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   // UI: モードラベル
   function tabLabel(tab: string) {
     switch (tab) {
-      case "posts": return "Posts";
-      case "replies": return "Replies";
-      case "followers": return "Followers";
-      case "followees": return "Followees";
-      default: return tab;
+      case "posts":
+        return "Posts";
+      case "replies":
+        return "Replies";
+      case "followers":
+        return "Followers";
+      case "followees":
+        return "Followees";
+      default:
+        return tab;
     }
   }
 
@@ -259,7 +267,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   }
 
   // タブ切り替え
-  function handleTabChange(nextTab: typeof TAB_VALUES[number]) {
+  function handleTabChange(nextTab: (typeof TAB_VALUES)[number]) {
     setQuery({ tab: nextTab, page: 1, oldestFirst: oldestFirst ? "1" : undefined });
     setReplyTo(null);
     setReplyBody("");
@@ -277,12 +285,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
   return (
     <main className="max-w-3xl mx-auto mt-8 p-4">
       {/* ユーザプロフィール */}
-      <UserCard
-        user={user}
-        truncated={false}
-        focusUserId={userId}
-        clickable={false}
-      />
+      <UserCard user={user} truncated={false} focusUserId={userId} clickable={false} />
 
       {/* Edit */}
       {canEdit && !editing && (

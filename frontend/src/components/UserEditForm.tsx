@@ -104,22 +104,16 @@ export default function UserEditForm({
     <form
       className="flex flex-col gap-2 border border-gray-300 rounded p-4 bg-white"
       onSubmit={handleSubmit}
-      onClick={e => e.stopPropagation()}
+      onClick={(e) => e.stopPropagation()}
     >
       {/* Email */}
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
           <label className="font-bold text-sm">Email</label>
           {isAdmin && isSelf && (
-            <span className="text-xs text-gray-400 ml-2">
-              (You can't change your own email)
-            </span>
+            <span className="text-xs text-gray-400 ml-2">(You can't change your own email)</span>
           )}
-          {!isAdmin && (
-            <span className="text-xs text-gray-400 ml-2">
-              (Only admin can change)
-            </span>
-          )}
+          {!isAdmin && <span className="text-xs text-gray-400 ml-2">(Only admin can change)</span>}
         </div>
         <input
           className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700
@@ -127,7 +121,7 @@ export default function UserEditForm({
                      disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
           type="email"
           value={email}
-          onChange={e => setEmail(e.target.value)}
+          onChange={(e) => setEmail(e.target.value)}
           disabled={!isAdmin || isSelf}
           required={isAdmin && !isSelf}
           onFocus={handleClearError}
@@ -141,7 +135,7 @@ export default function UserEditForm({
                      focus:outline-none focus:ring-2 focus:ring-blue-200
                      disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
           value={nickname}
-          onChange={e => setNickname(e.target.value)}
+          onChange={(e) => setNickname(e.target.value)}
           required
           onFocus={handleClearError}
         />
@@ -154,7 +148,7 @@ export default function UserEditForm({
                      focus:outline-none focus:ring-2 focus:ring-blue-200
                      disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
           value={introduction}
-          onChange={e => setIntroduction(e.target.value)}
+          onChange={(e) => setIntroduction(e.target.value)}
           maxLength={2000}
           required
           onFocus={handleClearError}
@@ -164,11 +158,7 @@ export default function UserEditForm({
       <div className="flex flex-col gap-1">
         <div className="flex flex-row items-center justify-between">
           <label className="font-bold text-sm">AI Model</label>
-          {!isAdmin && (
-            <span className="text-xs text-gray-400 ml-2">
-              (Only admin can change)
-            </span>
-          )}
+          {!isAdmin && <span className="text-xs text-gray-400 ml-2">(Only admin can change)</span>}
         </div>
         {aiModelsLoading ? (
           <div className="text-gray-400 text-xs">Loading models…</div>
@@ -178,14 +168,15 @@ export default function UserEditForm({
                        focus:outline-none focus:ring-2 focus:ring-blue-200
                        disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
             value={ai_model}
-            onChange={e => setAIModel(e.target.value)}
+            onChange={(e) => setAIModel(e.target.value)}
             disabled={!isAdmin}
             onFocus={handleClearError}
           >
             <option value="">(None)</option>
-            {aiModels.map(m => (
+            {aiModels.map((m) => (
               <option key={m.name} value={m.name}>
-                {m.name}{m.description ? ` - ${m.description}` : ""}
+                {m.name}
+                {m.description ? ` - ${m.description}` : ""}
               </option>
             ))}
           </select>
@@ -194,15 +185,13 @@ export default function UserEditForm({
       {/* AI Personality */}
       {ai_model && (
         <div className="flex flex-col gap-1">
-          <label className="font-bold text-sm">
-            AI Personality
-          </label>
+          <label className="font-bold text-sm">AI Personality</label>
           <textarea
             className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50 text-gray-700
                        focus:outline-none focus:ring-2 focus:ring-blue-200
                        disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
             value={ai_personality}
-            onChange={e => setAIPersonality(e.target.value)}
+            onChange={(e) => setAIPersonality(e.target.value)}
             required
             onFocus={handleClearError}
             placeholder="Describe AI personality"
@@ -217,12 +206,14 @@ export default function UserEditForm({
             type="checkbox"
             id="is_admin"
             checked={is_admin}
-            onChange={e => setIsAdmin(e.target.checked)}
+            onChange={(e) => setIsAdmin(e.target.checked)}
             className="mr-2
               disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
             disabled={isSelf}
           />
-          <label htmlFor="is_admin" className="font-semibold text-sm">Admin</label>
+          <label htmlFor="is_admin" className="font-semibold text-sm">
+            Admin
+          </label>
           {isSelf && (
             <span className="text-xs text-gray-400 ml-1">
               (You can't change your own admin status)

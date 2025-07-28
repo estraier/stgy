@@ -65,7 +65,7 @@ export default function PostCard({
         <a
           className="font-bold text-blue-700 hover:underline min-w-[20ex] max-w-[48ex] truncate inline-block align-bottom"
           href={`/users/${post.owned_by}`}
-          onClick={e => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
         >
           {post.owner_nickname}
         </a>
@@ -75,7 +75,7 @@ export default function PostCard({
             <a
               href={`/posts/${post.reply_to}`}
               className="text-blue-500 hover:underline max-w-[32ex] truncate inline-block align-bottom"
-              onClick={e => e.stopPropagation()}
+              onClick={(e) => e.stopPropagation()}
             >
               {post.reply_to_owner_nickname || post.reply_to}
             </a>
@@ -84,7 +84,7 @@ export default function PostCard({
         <a
           className="pr-1 ml-auto text-gray-400 whitespace-nowrap"
           href={`/posts/${post.id}`}
-          onClick={e => e.stopPropagation()}
+          onClick={(e) => e.stopPropagation()}
         >
           {formatDateTime(new Date(post.created_at))}
         </a>
@@ -100,7 +100,7 @@ export default function PostCard({
                 key={tag}
                 href={`/posts?q=${encodeURIComponent("#" + tag)}`}
                 className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-blue-700 hover:bg-blue-200"
-                onClick={e => e.stopPropagation()}
+                onClick={(e) => e.stopPropagation()}
               >
                 #{tag}
               </a>
@@ -112,7 +112,10 @@ export default function PostCard({
             <button
               className={`ml-auto flex items-center gap-1 px-2 py-1 rounded cursor-pointer
                 ${post.is_liked_by_focus_user ? "bg-pink-100 text-pink-600" : "hover:bg-gray-100"}`}
-              onClick={e => { e.stopPropagation(); onLike?.(post); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onLike?.(post);
+              }}
               type="button"
               aria-label={post.is_liked_by_focus_user ? "Unlike" : "Like"}
             >
@@ -126,7 +129,10 @@ export default function PostCard({
             <button
               className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer
                 ${post.is_replied_by_focus_user ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100"}`}
-              onClick={e => { e.stopPropagation(); onReply?.(post); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onReply?.(post);
+              }}
               type="button"
               aria-label="Reply"
             >

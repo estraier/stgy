@@ -56,7 +56,8 @@ export default function PostDetailPage({ params }: Props) {
     const oldestFirst = searchParams.get("replyOldestFirst") === "1";
     return { page, oldestFirst };
   }
-  const [{ page: replyPage, oldestFirst: replyOldestFirst }, setReplyOpts] = useState(getReplyOptsFromQuery());
+  const [{ page: replyPage, oldestFirst: replyOldestFirst }, setReplyOpts] =
+    useState(getReplyOptsFromQuery());
 
   // クエリの変更にstateを同期
   useEffect(() => {
@@ -405,7 +406,7 @@ export default function PostDetailPage({ params }: Props) {
           <input
             type="checkbox"
             checked={replyOldestFirst}
-            onChange={e => handleReplyOldestFirstChange(e.target.checked)}
+            onChange={(e) => handleReplyOldestFirstChange(e.target.checked)}
             className="cursor-pointer"
           />
           Oldest first

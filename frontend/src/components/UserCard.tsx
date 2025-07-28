@@ -126,9 +126,7 @@ export default function UserCard({
         <span className="ml-auto">{followButton}</span>
       </div>
       <div className="text-sm mt-1 text-gray-700">
-        {truncated
-          ? truncatePlainText(user.introduction ?? "", 200)
-          : user.introduction ?? ""}
+        {truncated ? truncatePlainText(user.introduction ?? "", 200) : (user.introduction ?? "")}
       </div>
       {!truncated && user.ai_model && user.ai_model.trim() !== "" && (
         <div className="text-xs text-gray-600 mt-2">
@@ -148,7 +146,7 @@ export default function UserCard({
           <div className="pl-2">{formatDateTime(new Date(user.created_at))}</div>
         </div>
       )}
-      {("count_followers" in user) && (
+      {"count_followers" in user && (
         <div className="text-xs text-gray-500 mt-2">
           <span className="gap-1">followers: {user.count_followers}</span>
           <span className="ml-2">followees: {user.count_followees}</span>

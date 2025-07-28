@@ -36,8 +36,14 @@ export class PostsService {
       params.push(owned_by);
     }
     if (reply_to !== undefined) {
-      where.push(`p.reply_to ${reply_to === null ? "IS NULL" : `= $${idx++}`}`);
-      if (reply_to !== null) params.push(reply_to);
+      if (reply_to === null) {
+        where.push(`p.reply_to IS NULL`);
+      } else if (reply_to === "*") {
+        where.push(`p.reply_to IS NOT NULL`);
+      } else {
+        where.push(`p.reply_to = $${idx++}`);
+        params.push(reply_to);
+      }
     }
     if (query) {
       where.push(`p.content ILIKE $${idx++}`);
@@ -124,8 +130,14 @@ export class PostsService {
       params.push(owned_by);
     }
     if (reply_to !== undefined) {
-      where.push(`p.reply_to ${reply_to === null ? "IS NULL" : `= $${paramIdx++}`}`);
-      if (reply_to !== null) params.push(reply_to);
+      if (reply_to === null) {
+        where.push(`p.reply_to IS NULL`);
+      } else if (reply_to === "*") {
+        where.push(`p.reply_to IS NOT NULL`);
+      } else {
+        where.push(`p.reply_to = $${paramIdx++}`);
+        params.push(reply_to);
+      }
     }
     if (query) {
       where.push(`p.content ILIKE $${paramIdx++}`);
@@ -180,8 +192,14 @@ export class PostsService {
       params.push(owned_by);
     }
     if (reply_to !== undefined) {
-      where.push(`p.reply_to ${reply_to === null ? "IS NULL" : `= $${paramIdx++}`}`);
-      if (reply_to !== null) params.push(reply_to);
+      if (reply_to === null) {
+        where.push(`p.reply_to IS NULL`);
+      } else if (reply_to === "*") {
+        where.push(`p.reply_to IS NOT NULL`);
+      } else {
+        where.push(`p.reply_to = $${paramIdx++}`);
+        params.push(reply_to);
+      }
     }
     if (query) {
       where.push(`p.content ILIKE $${paramIdx++}`);

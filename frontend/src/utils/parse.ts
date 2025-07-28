@@ -116,10 +116,7 @@ export function parseUserSearchQuery(q: string): {
   };
 }
 
-export function serializeUserSearchQuery(params: {
-  query?: string;
-  nickname?: string;
-}): string {
+export function serializeUserSearchQuery(params: { query?: string; nickname?: string }): string {
   const tokens: string[] = [];
   const escapeToken = (token: string): string => {
     let s = token.replace(/"/g, '\\"');

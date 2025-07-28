@@ -85,7 +85,9 @@ export default function PostsPage() {
     } else {
       setResolvedOwnedBy(undefined);
     }
-    return () => { canceled = true; };
+    return () => {
+      canceled = true;
+    };
   }, [searchQueryObj.ownedBy, isSearchMode, userId]);
 
   const fetchPostsRef = useRef<() => Promise<void>>();
@@ -109,7 +111,10 @@ export default function PostsPage() {
       searchQueryObj.ownedBy &&
       !/^[0-9a-fA-F\-]{36}$/.test(searchQueryObj.ownedBy)
     ) {
-      if (resolvedOwnedBy === undefined) { setLoading(true); return; }
+      if (resolvedOwnedBy === undefined) {
+        setLoading(true);
+        return;
+      }
       if (resolvedOwnedBy === "__NO_SUCH_USER__") {
         setPosts([]);
         setLoading(false);
@@ -155,22 +160,15 @@ export default function PostsPage() {
         ...post,
         like_count: Number(post.like_count ?? 0),
         reply_count: Number(post.reply_count ?? 0),
-      }))
+      })),
     );
     setLoading(false);
   }
   fetchPostsRef.current = fetchPosts;
 
-  useEffect(() => { fetchPosts(); /* eslint-disable-next-line */ }, [
-    status.state,
-    page,
-    tab,
-    includingReplies,
-    oldestFirst,
-    qParam,
-    resolvedOwnedBy,
-    userId,
-  ]);
+  useEffect(() => {
+    fetchPosts(); /* eslint-disable-next-line */
+  }, [status.state, page, tab, includingReplies, oldestFirst, qParam, resolvedOwnedBy, userId]);
 
   function setQuery(updates: Record<string, string | number | undefined>) {
     const sp = new URLSearchParams(searchParams);
@@ -186,7 +184,9 @@ export default function PostsPage() {
     router.push(`${pathname}?${sp.toString()}`);
   }
 
-  function clearError() { if (error) setError(null); }
+  function clearError() {
+    if (error) setError(null);
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -217,7 +217,9 @@ export default function PostsPage() {
     }
   }
 
-  function clearReplyError() { if (replyError) setReplyError(null); }
+  function clearReplyError() {
+    if (replyError) setReplyError(null);
+  }
 
   async function handleReplySubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -249,8 +251,7 @@ export default function PostsPage() {
           ? {
               ...p,
               is_liked_by_focus_user: !p.is_liked_by_focus_user,
-              like_count:
-                Number(p.like_count ?? 0) + (p.is_liked_by_focus_user ? -1 : 1),
+              like_count: Number(p.like_count ?? 0) + (p.is_liked_by_focus_user ? -1 : 1),
             }
           : p,
       ),
@@ -308,9 +309,7 @@ export default function PostsPage() {
           <input
             type="checkbox"
             checked={oldestFirst}
-            onChange={(e) =>
-              setQuery({ oldestFirst: e.target.checked ? "1" : undefined, page: 1 })
-            }
+            onChange={(e) => setQuery({ oldestFirst: e.target.checked ? "1" : undefined, page: 1 })}
             className="cursor-pointer"
           />
           Oldest first

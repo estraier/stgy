@@ -674,6 +674,7 @@ paths:
           description: |
             If omitted: include all posts.
             If empty string (""): only posts with no reply_to (not a reply).
+            If "*": only posts with any reply_to (replies).
             Otherwise: only posts with reply_to equal to the given value.
       responses:
         "200":
@@ -728,6 +729,7 @@ paths:
           description: |
             If omitted: include all posts.
             If empty string (""): only posts with no reply_to (not a reply).
+            If "*": only posts with any reply_to (replies).
             Otherwise: only posts with reply_to equal to the given value.
       responses:
         "200":
@@ -811,6 +813,7 @@ paths:
           description: |
             If omitted: include all posts.
             If empty string (""): only posts with no reply_to (not a reply).
+            If "*": only posts with any reply_to (replies).
             Otherwise: only posts with reply_to equal to the given value.
         - name: focus_user_id
           in: query
