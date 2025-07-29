@@ -44,6 +44,14 @@ body {
   margin: 1ex 0;
 }
 
+.markdown-body blockquote {
+  margin: 1ex 0 1ex 0.8ex;
+  padding-left: 0.8ex;
+  line-height: 1.4;
+  font-size: 95%;
+  border-left: 3px solid #ddd;
+}
+
 .markdown-body ul {
   margin: 1ex 0;
   line-height: 1.4;
