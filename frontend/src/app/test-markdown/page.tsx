@@ -8,6 +8,8 @@ export default function TestMarkdownPage() {
 
 ## サブヘッダ
 
+### サブサブヘッダ
+
 地の文。地の文。
 地の文の中の改行は<br>扱いで、マージンなしで改行。
 
@@ -59,6 +61,7 @@ http://example.com/
         <div
           className="markdown-body"
           dangerouslySetInnerHTML={{ __html: renderBody(text, maxLen) }}
+          style={{background: "#fff", border: "1px solid #888", padding: "1ex"}}
         />
       </div>
     </main>
