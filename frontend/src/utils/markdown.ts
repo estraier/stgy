@@ -13,19 +13,17 @@ function escapeHTML(text: string): string {
 // パース用ノード型
 type Node =
   | { type: "text"; text: string }
-  | { type: "element"; tag: string; attrs?: string; children: Node[] }
-  | { type: "image"; src: string; alt: string };
-
-// 画像1枚を何文字分と見なすか
-const IMAGE_BLOCK_WEIGHT = 10;
+  | { type: "element"; tag: string; attrs?: string; children: Node[] };
 
 // Markdown-likeなテキストを簡易パースしてノード配列を返す
 export function parseMarkdownBlocks(mdText: string): Node[] {
   const lines = mdText.replace(/\r\n/g, "\n").split("\n");
   const nodes: Node[] = [];
-  let inCode = false, codeLines: string[] = [];
+  let inCode = false, codeLines: string[] = [], codeLang: string | undefined;
   let currList: { level: number, items: Node[] }[] = [];
   let currPara: string[] = [];
+  let currTable: string[][] = [];
+  let inTable = false;
 
   function flushPara() {
     if (currPara.length) {
@@ -47,21 +45,43 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       });
     }
   }
+  function flushTable() {
+    if (currTable.length) {
+      nodes.push({
+        type: "element",
+        tag: "table",
+        children: currTable.map(row => ({
+          type: "element",
+          tag: "tr",
+          children: row.map(cell => ({
+            type: "element",
+            tag: "td",
+            children: parseInline(cell.trim()),
+          })),
+        })),
+      });
+      currTable = [];
+    }
+  }
   for (let i = 0; i < lines.length; ++i) {
-    const line = lines[i];
+    let line = lines[i];
     // コードブロック
-    if (/^```/.test(line)) {
+    const codeFence = line.match(/^```(\w*)/);
+    if (codeFence) {
       if (!inCode) {
-        flushPara(); flushList();
+        flushPara(); flushList(); flushTable();
         inCode = true;
         codeLines = [];
+        codeLang = codeFence[1] || undefined;
       } else {
         nodes.push({
           type: "element",
           tag: "pre",
+          attrs: codeLang ? ` data-pre-mode="${escapeHTML(codeLang)}"` : undefined,
           children: [{ type: "text", text: codeLines.join("\n") }],
         });
         inCode = false;
+        codeLang = undefined;
         codeLines = [];
       }
       continue;
@@ -70,39 +90,57 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       codeLines.push(line);
       continue;
     }
-    // 画像ブロック: ![alt](url)
+    // 画像 ![caption](url)
     const img = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
     if (img) {
-      flushPara(); flushList();
+      flushPara(); flushList(); flushTable();
       nodes.push({
-        type: "image",
-        src: img[2],
-        alt: img[1],
+        type: "element",
+        tag: "div",
+        attrs: ' class="image-block"',
+        children: [
+          {
+            type: "element",
+            tag: "img",
+            attrs: ` src="${escapeHTML(img[2])}" alt="${escapeHTML(img[1])}"`,
+            children: [],
+          },
+        ],
       });
       continue;
+    }
+    // テーブル |a|b|c|
+    const tableRow = line.match(/^\|(.+)\|$/);
+    if (tableRow) {
+      flushPara(); flushList();
+      currTable.push(tableRow[1].split("|"));
+      continue;
+    } else if (currTable.length) {
+      flushTable();
     }
     // 空行で段落切り替え
     if (/^\s*$/.test(line)) {
       flushPara();
       flushList();
+      flushTable();
       continue;
     }
     // ヘッダ
     const h = line.match(/^(#{1,3}) (.+)$/);
     if (h) {
-      flushPara(); flushList();
+      flushPara(); flushList(); flushTable();
       const level = h[1].length;
       nodes.push({
         type: "element",
         tag: `h${level}`,
-        children: [{ type: "text", text: h[2] }],
+        children: parseInline(h[2]),
       });
       continue;
     }
     // リスト
     const li = line.match(/^(\s*)- (.+)$/);
     if (li) {
-      flushPara();
+      flushPara(); flushTable();
       const level = Math.floor((li[1].length) / 2);
       while (currList.length - 1 > level) {
         const done = currList.pop();
@@ -123,57 +161,98 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
   }
   flushPara();
   flushList();
+  flushTable();
   // 末尾でコードブロック開いたまま終わってたら
   if (inCode && codeLines.length > 0) {
     nodes.push({
       type: "element",
       tag: "pre",
+      attrs: codeLang ? ` data-pre-mode="${escapeHTML(codeLang)}"` : undefined,
       children: [{ type: "text", text: codeLines.join("\n") }],
     });
   }
   return nodes;
 }
 
-// インライン要素パース（リンク・改行のみサポート例。必要に応じて追加拡張）
+// インライン要素パース（リンク・改行・装飾）
 function parseInline(text: string): Node[] {
-  const nodes: Node[] = [];
-  let i = 0;
-  // リンク [anchor](url) or 自動リンク http(s)://
-  const linkRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
-  const urlRe = /https?:\/\/[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/g;
+  // 太字/斜体/下線: **bold** / *italic* / __underline__
+  // 1回だけ最初にマッチしたものだけを再帰的に処理
+  const bold = /\*\*([^\*]+)\*\*/;
+  const italic = /\*([^\*]+)\*/;
+  const underline = /__([^_]+)__/;
+  let m;
+  if ((m = bold.exec(text))) {
+    return [
+      ...parseInline(text.slice(0, m.index)),
+      {
+        type: "element",
+        tag: "strong",
+        children: parseInline(m[1]),
+      },
+      ...parseInline(text.slice(m.index + m[0].length)),
+    ];
+  }
+  if ((m = underline.exec(text))) {
+    return [
+      ...parseInline(text.slice(0, m.index)),
+      {
+        type: "element",
+        tag: "u",
+        children: parseInline(m[1]),
+      },
+      ...parseInline(text.slice(m.index + m[0].length)),
+    ];
+  }
+  if ((m = italic.exec(text))) {
+    return [
+      ...parseInline(text.slice(0, m.index)),
+      {
+        type: "element",
+        tag: "em",
+        children: parseInline(m[1]),
+      },
+      ...parseInline(text.slice(m.index + m[0].length)),
+    ];
+  }
 
-  let last = 0, m: RegExpExecArray | null;
-  // まず[anchor](url)リンク
-  while ((m = linkRe.exec(text))) {
-    if (m.index > last) {
-      nodes.push(...parseInlineText(text.slice(last, m.index)));
+  // [anchor](url)リンク
+  const linkRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+  let nodes: Node[] = [];
+  let last = 0, match: RegExpExecArray | null;
+  while ((match = linkRe.exec(text))) {
+    if (match.index > last) {
+      nodes.push(...parseInlineText(text.slice(last, match.index)));
     }
     nodes.push({
       type: "element",
       tag: "a",
-      attrs: ` href="${escapeHTML(m[2])}" target="_blank" rel="noopener"`,
-      children: [{ type: "text", text: m[1] }],
+      attrs: ` href="${escapeHTML(match[2])}" target="_blank" rel="noopener"`,
+      children: [{ type: "text", text: match[1] }],
     });
-    last = m.index + m[0].length;
+    last = match.index + match[0].length;
   }
-  let t = text.slice(last);
-  // 続けて自動リンク
-  let last2 = 0;
-  while ((m = urlRe.exec(t))) {
-    if (m.index > last2) {
-      nodes.push({ type: "text", text: t.slice(last2, m.index) });
+  text = text.slice(last);
+
+  // 自動リンク
+  const urlRe = /https?:\/\/[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/g;
+  last = 0;
+  while ((match = urlRe.exec(text))) {
+    if (match.index > last) {
+      nodes.push({ type: "text", text: text.slice(last, match.index) });
     }
     nodes.push({
       type: "element",
       tag: "a",
-      attrs: ` href="${escapeHTML(m[0])}" target="_blank" rel="noopener"`,
-      children: [{ type: "text", text: m[0] }],
+      attrs: ` href="${escapeHTML(match[0])}" target="_blank" rel="noopener"`,
+      children: [{ type: "text", text: match[0] }],
     });
-    last2 = m.index + m[0].length;
+    last = match.index + match[0].length;
   }
-  if (last2 < t.length) {
-    nodes.push({ type: "text", text: t.slice(last2) });
+  if (last < text.length) {
+    nodes.push({ type: "text", text: text.slice(last) });
   }
+
   // 改行
   return nodes.flatMap(n =>
     typeof n === "object" && n.type === "text"
@@ -185,7 +264,6 @@ function parseInline(text: string): Node[] {
   );
 }
 function parseInlineText(text: string): Node[] {
-  // 補助: テキストノードのみ分割
   return text === "" ? [] : [{ type: "text", text }];
 }
 
@@ -194,6 +272,7 @@ function parseInlineText(text: string): Node[] {
 export function renderBody(mdText: string, maxLen?: number): string {
   const nodes = parseMarkdownBlocks(mdText);
 
+  // textContent長をカウントしながら再帰的にノードをHTML化
   const state = { remain: typeof maxLen === "number" ? maxLen : Number.POSITIVE_INFINITY, cut: false };
 
   function htmlFromNodes(nodes: Node[]): string {
@@ -218,17 +297,22 @@ export function renderBody(mdText: string, maxLen?: number): string {
           html += `<br>`;
           continue;
         }
+        // 画像ブロックは10文字分消費
+        if (node.tag === "div" && node.attrs && node.attrs.includes('image-block')) {
+          if (state.remain < 10) { state.cut = true; break; }
+          html += `<div class="image-block">`;
+          for (const child of node.children || []) {
+            if (child.type === "element" && child.tag === "img" && child.attrs) {
+              html += `<img${child.attrs}/>`;
+            }
+          }
+          html += `</div>`;
+          state.remain -= 10;
+          continue;
+        }
         html += `<${node.tag}${node.attrs || ""}>`;
         html += htmlFromNodes(node.children || []);
         html += `</${node.tag}>`;
-      } else if (node.type === "image") {
-        // 画像ブロックは10文字分として扱う
-        if (state.remain < IMAGE_BLOCK_WEIGHT) {
-          state.cut = true;
-          break;
-        }
-        html += `<div class="image-block"><img src="${escapeHTML(node.src)}" alt="${escapeHTML(node.alt)}"/></div>`;
-        state.remain -= IMAGE_BLOCK_WEIGHT;
       }
     }
     return html;
