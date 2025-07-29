@@ -22,7 +22,7 @@ export default function TestMarkdownPage() {
 [Google](https://google.com/)
 http://example.com/
 
-\`\`\`
+\`\`\`sql
 コードブロック
 # これはヘッダじゃない
 - これはリストじゃない
