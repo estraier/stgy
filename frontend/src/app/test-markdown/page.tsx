@@ -22,6 +22,8 @@ export default function TestMarkdownPage() {
 [Google](https://google.com/)
 http://example.com/
 
+![これはロゴです](https://dbmx.net/parallelbook/ej-logo.svg)
+
 \`\`\`sql
 コードブロック
 # これはヘッダじゃない

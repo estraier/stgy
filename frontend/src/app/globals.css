@@ -69,6 +69,12 @@ body {
   border: 1px solid #eee;
 }
 
+.markdown-body .image-block {
+  margin: 1ex 0.5ex;
+  max-width: 50ex;
+  max-height: 50ex;
+}
+
 .markdown-body a {
   color: #03c;
   text-decoration: none;
