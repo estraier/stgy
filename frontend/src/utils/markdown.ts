@@ -1,6 +1,5 @@
 // frontend/src/utils/markdown.ts
 
-// HTMLエスケープ
 function escapeHTML(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -10,12 +9,10 @@ function escapeHTML(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-// パース用ノード型
 type Node =
   | { type: "text"; text: string }
   | { type: "element"; tag: string; attrs?: string; children: Node[] };
 
-// Markdown-likeなテキストを簡易パースしてノード配列を返す
 export function parseMarkdownBlocks(mdText: string): Node[] {
   const lines = mdText.replace(/\r\n/g, "\n").split("\n");
   const nodes: Node[] = [];
@@ -23,7 +20,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
   let currList: { level: number, items: Node[] }[] = [];
   let currPara: string[] = [];
   let currTable: string[][] = [];
-  let inTable = false;
 
   function flushPara() {
     if (currPara.length) {
@@ -36,13 +32,19 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     }
   }
   function flushList() {
-    while (currList.length > 0) {
-      const list = currList.pop()!;
+    while (currList.length > 1) {
+      const done = currList.pop();
+      currList[currList.length - 1].items.push({
+        type: "element", tag: "ul", children: done!.items,
+      });
+    }
+    if (currList.length === 1) {
       nodes.push({
         type: "element",
         tag: "ul",
-        children: list.items,
+        children: currList[0].items,
       });
+      currList = [];
     }
   }
   function flushTable() {
@@ -142,13 +144,17 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     if (li) {
       flushPara(); flushTable();
       const level = Math.floor((li[1].length) / 2);
-      while (currList.length - 1 > level) {
+      // 階層過剰ならpopして親にまとめる
+      while (currList.length > level + 1) {
         const done = currList.pop();
         currList[currList.length - 1].items.push({
           type: "element", tag: "ul", children: done!.items,
         });
       }
-      if (!currList[level]) currList[level] = { level, items: [] };
+      // 階層不足ならpushして深さを合わせる
+      while (currList.length < level + 1) {
+        currList.push({ level: currList.length, items: [] });
+      }
       currList[level].items.push({
         type: "element",
         tag: "li",
@@ -156,13 +162,13 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       });
       continue;
     }
-    // 通常文
+    // **ここが修正ポイント: リスト行でなければリストをflushして通常文処理**
+    flushList();
     currPara.push(line);
   }
   flushPara();
   flushList();
   flushTable();
-  // 末尾でコードブロック開いたまま終わってたら
   if (inCode && codeLines.length > 0) {
     nodes.push({
       type: "element",
@@ -174,10 +180,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
   return nodes;
 }
 
-// インライン要素パース（リンク・改行・装飾）
 function parseInline(text: string): Node[] {
-  // 太字/斜体/下線: **bold** / *italic* / __underline__
-  // 1回だけ最初にマッチしたものだけを再帰的に処理
   const bold = /\*\*([^\*]+)\*\*/;
   const italic = /\*([^\*]+)\*/;
   const underline = /__([^_]+)__/;
@@ -216,7 +219,6 @@ function parseInline(text: string): Node[] {
     ];
   }
 
-  // [anchor](url)リンク
   const linkRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
   let nodes: Node[] = [];
   let last = 0, match: RegExpExecArray | null;
@@ -234,7 +236,6 @@ function parseInline(text: string): Node[] {
   }
   text = text.slice(last);
 
-  // 自動リンク
   const urlRe = /https?:\/\/[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/g;
   last = 0;
   while ((match = urlRe.exec(text))) {
@@ -253,7 +254,6 @@ function parseInline(text: string): Node[] {
     nodes.push({ type: "text", text: text.slice(last) });
   }
 
-  // 改行
   return nodes.flatMap(n =>
     typeof n === "object" && n.type === "text"
       ? n.text.split(/\n/).flatMap((frag, i, arr) =>
@@ -267,12 +267,9 @@ function parseInlineText(text: string): Node[] {
   return text === "" ? [] : [{ type: "text", text }];
 }
 
-// -----------------------------
-// maxLenに従いtextContentを途中カットしつつHTMLに変換する
 export function renderBody(mdText: string, maxLen?: number): string {
   const nodes = parseMarkdownBlocks(mdText);
 
-  // textContent長をカウントしながら再帰的にノードをHTML化
   const state = { remain: typeof maxLen === "number" ? maxLen : Number.POSITIVE_INFINITY, cut: false };
 
   function htmlFromNodes(nodes: Node[]): string {
@@ -292,12 +289,10 @@ export function renderBody(mdText: string, maxLen?: number): string {
           state.remain -= s.length;
         }
       } else if (node.type === "element") {
-        // brだけ特別扱い: textContentは増やさない
         if (node.tag === "br") {
           html += `<br>`;
           continue;
         }
-        // 画像ブロックは10文字分消費
         if (node.tag === "div" && node.attrs && node.attrs.includes('image-block')) {
           if (state.remain < 10) { state.cut = true; break; }
           html += `<div class="image-block">`;
