@@ -1,6 +1,3 @@
-// frontend/src/utils/markdown.ts
-
-// HTMLエスケープ
 function escapeHTML(text: string): string {
   return text
     .replace(/&/g, "&amp;")
@@ -10,19 +7,18 @@ function escapeHTML(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-// パース用ノード型
 type Node =
   | { type: "text"; text: string }
   | { type: "element"; tag: string; attrs?: string; children: Node[] };
 
-// Markdown-likeなテキストを簡易パースしてノード配列を返す
+// 拡張: ```sql のような言語指定もdata-pre-modeで反映
 export function parseMarkdownBlocks(mdText: string): Node[] {
-  // パースの簡易実装（本格実装の場合は必要に応じて調整してください）
-  // 各行をブロックとして処理する
   const lines = mdText.replace(/\r\n/g, "\n").split("\n");
   const nodes: Node[] = [];
-  let inCode = false, codeLines: string[] = [];
-  let currList: { level: number, items: Node[] }[] = [];
+  let inCode = false,
+    codeLines: string[] = [],
+    codeLang: string = "";
+  let currList: { level: number; items: Node[] }[] = [];
   let currPara: string[] = [];
 
   function flushPara() {
@@ -47,19 +43,25 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
   }
   for (let i = 0; i < lines.length; ++i) {
     const line = lines[i];
-    // コードブロック
-    if (/^```/.test(line)) {
+    // コードブロック開始/終了
+    const codeFence = line.match(/^```([a-zA-Z0-9_\-]*)\s*$/);
+    if (codeFence) {
       if (!inCode) {
-        flushPara(); flushList();
+        flushPara();
+        flushList();
         inCode = true;
+        codeLang = codeFence[1] || "";
         codeLines = [];
       } else {
+        // 閉じる
         nodes.push({
           type: "element",
           tag: "pre",
+          attrs: codeLang ? ` data-pre-mode="${escapeHTML(codeLang)}"` : undefined,
           children: [{ type: "text", text: codeLines.join("\n") }],
         });
         inCode = false;
+        codeLang = "";
         codeLines = [];
       }
       continue;
@@ -68,16 +70,15 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       codeLines.push(line);
       continue;
     }
-    // 空行で段落切り替え
     if (/^\s*$/.test(line)) {
       flushPara();
       flushList();
       continue;
     }
-    // ヘッダ
     const h = line.match(/^(#{1,3}) (.+)$/);
     if (h) {
-      flushPara(); flushList();
+      flushPara();
+      flushList();
       const level = h[1].length;
       nodes.push({
         type: "element",
@@ -86,15 +87,16 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       });
       continue;
     }
-    // リスト
     const li = line.match(/^(\s*)- (.+)$/);
     if (li) {
       flushPara();
-      const level = Math.floor((li[1].length) / 2);
+      const level = Math.floor(li[1].length / 2);
       while (currList.length - 1 > level) {
         const done = currList.pop();
         currList[currList.length - 1].items.push({
-          type: "element", tag: "ul", children: done!.items,
+          type: "element",
+          tag: "ul",
+          children: done!.items,
         });
       }
       if (!currList[level]) currList[level] = { level, items: [] };
@@ -105,32 +107,29 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       });
       continue;
     }
-    // 通常文
     currPara.push(line);
   }
   flushPara();
   flushList();
-  // 末尾でコードブロック開いたまま終わってたら
+  // コードブロック未閉じ対応
   if (inCode && codeLines.length > 0) {
     nodes.push({
       type: "element",
       tag: "pre",
+      attrs: codeLang ? ` data-pre-mode="${escapeHTML(codeLang)}"` : undefined,
       children: [{ type: "text", text: codeLines.join("\n") }],
     });
   }
   return nodes;
 }
 
-// インライン要素パース（リンク・改行のみサポート例。必要に応じて追加拡張）
 function parseInline(text: string): Node[] {
   const nodes: Node[] = [];
-  let i = 0;
-  // リンク [anchor](url) or 自動リンク http(s)://
   const linkRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
   const urlRe = /https?:\/\/[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/g;
 
-  let last = 0, m: RegExpExecArray | null;
-  // まず[anchor](url)リンク
+  let last = 0,
+    m: RegExpExecArray | null;
   while ((m = linkRe.exec(text))) {
     if (m.index > last) {
       nodes.push(...parseInlineText(text.slice(last, m.index)));
@@ -144,7 +143,6 @@ function parseInline(text: string): Node[] {
     last = m.index + m[0].length;
   }
   let t = text.slice(last);
-  // 続けて自動リンク
   let last2 = 0;
   while ((m = urlRe.exec(t))) {
     if (m.index > last2) {
@@ -161,35 +159,42 @@ function parseInline(text: string): Node[] {
   if (last2 < t.length) {
     nodes.push({ type: "text", text: t.slice(last2) });
   }
-  // 改行
-  return nodes.flatMap(n =>
+  // 改行分割
+  return nodes.flatMap((n) =>
     typeof n === "object" && n.type === "text"
-      ? n.text.split(/\n/).flatMap((frag, i, arr) =>
-          i === 0 ? [{ type: "text", text: frag }] :
-            [{ type: "element", tag: "br", children: [] }, { type: "text", text: frag }]
+      ? n.text.split(/\n/).flatMap((frag, i) =>
+          i === 0
+            ? [{ type: "text", text: frag }]
+            : [
+                { type: "element", tag: "br", children: [] },
+                { type: "text", text: frag },
+              ]
         )
       : [n]
   );
 }
 function parseInlineText(text: string): Node[] {
-  // 補助: テキストノードのみ分割
   return text === "" ? [] : [{ type: "text", text }];
 }
 
-// -----------------------------
-// maxLenに従いtextContentを途中カットしつつHTMLに変換する
+// textContent長をカウントしながら再帰的にノードをHTML化
 export function renderBody(mdText: string, maxLen?: number): string {
   const nodes = parseMarkdownBlocks(mdText);
 
-  // textContent長をカウントしながら再帰的にノードをHTML化
-  const state = { remain: typeof maxLen === "number" ? maxLen : Number.POSITIVE_INFINITY, cut: false };
+  const state = {
+    remain: typeof maxLen === "number" ? maxLen : Number.POSITIVE_INFINITY,
+    cut: false,
+  };
 
   function htmlFromNodes(nodes: Node[]): string {
     let html = "";
     for (const node of nodes) {
       if (state.cut) break;
       if (node.type === "text") {
-        if (state.remain <= 0) { state.cut = true; break; }
+        if (state.remain <= 0) {
+          state.cut = true;
+          break;
+        }
         const s = node.text;
         if (s.length > state.remain) {
           html += escapeHTML(s.slice(0, state.remain));
@@ -201,7 +206,7 @@ export function renderBody(mdText: string, maxLen?: number): string {
           state.remain -= s.length;
         }
       } else if (node.type === "element") {
-        // brだけ特別扱い: textContentは増やさない
+        // brだけ特別扱い
         if (node.tag === "br") {
           html += `<br>`;
           continue;
