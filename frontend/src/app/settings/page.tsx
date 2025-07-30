@@ -12,7 +12,7 @@ export default function SettingsPage() {
   const [userId, setUserId] = useState<string | null>(null);
   useState(() => {
     getSessionInfo()
-      .then(session => setUserId(session.user_id))
+      .then((session) => setUserId(session.user_id))
       .catch(() => setUserId(null));
   });
 
@@ -97,7 +97,7 @@ export default function SettingsPage() {
             type="password"
             placeholder="New password"
             value={pwNew}
-            onChange={e => setPwNew(e.target.value)}
+            onChange={(e) => setPwNew(e.target.value)}
             className="border px-2 py-1 rounded"
             autoComplete="new-password"
           />
@@ -105,7 +105,7 @@ export default function SettingsPage() {
             type="password"
             placeholder="Confirm new password"
             value={pwNew2}
-            onChange={e => setPwNew2(e.target.value)}
+            onChange={(e) => setPwNew2(e.target.value)}
             className="border px-2 py-1 rounded"
             autoComplete="new-password"
           />
@@ -150,19 +150,18 @@ export default function SettingsPage() {
               This action <b>cannot</b> be undone.
             </div>
             <label className="block mb-1">
-              To confirm, type <span className="font-mono bg-gray-100 px-1">withdrawal</span> below and press &quot;Confirm withdrawal&quot;.
+              To confirm, type <span className="font-mono bg-gray-100 px-1">withdrawal</span> below
+              and press &quot;Confirm withdrawal&quot;.
             </label>
             <input
               type="text"
               value={withdrawalInput}
-              onChange={e => setWithdrawalInput(e.target.value)}
+              onChange={(e) => setWithdrawalInput(e.target.value)}
               className="border px-2 py-1 rounded"
               autoFocus
               disabled={withdrawalSubmitting || withdrawalSuccess}
             />
-            {withdrawalError && (
-              <div className="text-red-600">{withdrawalError}</div>
-            )}
+            {withdrawalError && <div className="text-red-600">{withdrawalError}</div>}
             {withdrawalSuccess && (
               <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-2 rounded">
                 Account withdrawn! Logging out…

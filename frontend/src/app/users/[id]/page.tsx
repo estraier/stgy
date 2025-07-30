@@ -90,7 +90,12 @@ export default function UserDetailPage({ params }: { params?: Promise<{ id: stri
       })
       .catch((err: unknown) => {
         if (!canceled) {
-          if (typeof err === "object" && err && "status" in err && (err as { status: unknown }).status === 404) {
+          if (
+            typeof err === "object" &&
+            err &&
+            "status" in err &&
+            (err as { status: unknown }).status === 404
+          ) {
             notFound();
             return;
           }

@@ -57,7 +57,7 @@ We live in Tokyo.
         <label className="block text-sm mb-1">Markdown Input</label>
         <textarea
           value={text}
-          onChange={e => setText(e.target.value)}
+          onChange={(e) => setText(e.target.value)}
           rows={12}
           className="w-full border px-3 py-2 rounded font-mono text-sm"
         />
@@ -70,7 +70,7 @@ We live in Tokyo.
           placeholder="unlimited"
           className="border px-2 py-1 rounded w-32"
           value={maxLen ?? ""}
-          onChange={e => {
+          onChange={(e) => {
             const val = Number(e.target.value);
             setMaxLen(e.target.value ? Math.max(1, val) : undefined);
           }}
@@ -81,7 +81,7 @@ We live in Tokyo.
         <div
           className="markdown-body"
           dangerouslySetInnerHTML={{ __html: renderBody(text, maxLen) }}
-          style={{background: "#fff", border: "1px solid #888", padding: "1ex"}}
+          style={{ background: "#fff", border: "1px solid #888", padding: "1ex" }}
         />
       </div>
     </main>

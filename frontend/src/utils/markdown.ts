@@ -15,13 +15,14 @@ type Node =
   | { type: "text"; text: string }
   | { type: "element"; tag: string; attrs?: string; children: Node[] };
 
-
 // Markdown-likeなテキストを簡易パースしてノード配列を返す
 export function parseMarkdownBlocks(mdText: string): Node[] {
   const lines = mdText.replace(/\r\n/g, "\n").split("\n");
   const nodes: Node[] = [];
-  let inCode = false, codeLines: string[] = [], codeLang: string | undefined;
-  let currList: { level: number, items: Node[] }[] = [];
+  let inCode = false,
+    codeLines: string[] = [],
+    codeLang: string | undefined;
+  let currList: { level: number; items: Node[] }[] = [];
   let currPara: string[] = [];
   let currTable: string[][] = [];
   let currQuote: string[] = [];
@@ -51,10 +52,10 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       nodes.push({
         type: "element",
         tag: "table",
-        children: currTable.map(row => ({
+        children: currTable.map((row) => ({
           type: "element",
           tag: "tr",
-          children: row.map(cell => ({
+          children: row.map((cell) => ({
             type: "element",
             tag: "td",
             children: parseInline(cell.trim()),
@@ -79,7 +80,10 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     // コードブロック
     const codeFence = line.match(/^```(\w*)/);
     if (codeFence) {
-      flushPara(); flushList(); flushTable(); flushQuote();
+      flushPara();
+      flushList();
+      flushTable();
+      flushQuote();
       if (!inCode) {
         inCode = true;
         codeLines = [];
@@ -104,7 +108,10 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     // 画像 ![caption](url)
     const img = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
     if (img) {
-      flushPara(); flushList(); flushTable(); flushQuote();
+      flushPara();
+      flushList();
+      flushTable();
+      flushQuote();
       nodes.push({
         type: "element",
         tag: "div",
@@ -123,7 +130,9 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     // テーブル |a|b|c|
     const tableRow = line.match(/^\|(.+)\|$/);
     if (tableRow) {
-      flushPara(); flushList(); flushQuote();
+      flushPara();
+      flushList();
+      flushQuote();
       currTable.push(tableRow[1].split("|"));
       continue;
     } else if (currTable.length) {
@@ -132,7 +141,9 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     // blockquote: 行頭 > (スペース必須)
     const quote = line.match(/^> (.*)$/);
     if (quote) {
-      flushPara(); flushList(); flushTable();
+      flushPara();
+      flushList();
+      flushTable();
       currQuote.push(quote[1]);
       continue;
     } else if (currQuote.length) {
@@ -149,7 +160,10 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     // ヘッダ
     const h = line.match(/^(#{1,3}) (.+)$/);
     if (h) {
-      flushPara(); flushList(); flushTable(); flushQuote();
+      flushPara();
+      flushList();
+      flushTable();
+      flushQuote();
       const level = h[1].length;
       nodes.push({
         type: "element",
@@ -161,12 +175,16 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     // リスト
     const li = line.match(/^(\s*)- (.+)$/);
     if (li) {
-      flushPara(); flushTable(); flushQuote();
-      const level = Math.floor((li[1].length) / 2);
+      flushPara();
+      flushTable();
+      flushQuote();
+      const level = Math.floor(li[1].length / 2);
       while (currList.length - 1 > level) {
         const done = currList.pop();
         currList[currList.length - 1].items.push({
-          type: "element", tag: "ul", children: done!.items,
+          type: "element",
+          tag: "ul",
+          children: done!.items,
         });
       }
       if (!currList[level]) currList[level] = { level, items: [] };
@@ -241,7 +259,8 @@ function parseInline(text: string): Node[] {
   // [anchor](url)リンク
   const linkRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
   let nodes: Node[] = [];
-  let last = 0, match: RegExpExecArray | null;
+  let last = 0,
+    match: RegExpExecArray | null;
   while ((match = linkRe.exec(text))) {
     if (match.index > last) {
       nodes.push(...parseInlineText(text.slice(last, match.index)));
@@ -276,13 +295,17 @@ function parseInline(text: string): Node[] {
   }
 
   // 改行
-  return nodes.flatMap(n =>
+  return nodes.flatMap((n) =>
     typeof n === "object" && n.type === "text"
       ? n.text.split(/\n/).flatMap((frag, i, arr) =>
-          i === 0 ? [{ type: "text", text: frag }] :
-            [{ type: "element", tag: "br", children: [] as Node[]}, { type: "text", text: frag }]
+          i === 0
+            ? [{ type: "text", text: frag }]
+            : [
+                { type: "element", tag: "br", children: [] as Node[] },
+                { type: "text", text: frag },
+              ],
         )
-      : [n]
+      : [n],
   );
 }
 function parseInlineText(text: string): Node[] {
@@ -295,14 +318,20 @@ export function renderBody(mdText: string, maxLen?: number, imgLen: number = 50)
   const nodes = parseMarkdownBlocks(mdText);
 
   // textContent長をカウントしながら再帰的にノードをHTML化
-  const state = { remain: typeof maxLen === "number" ? maxLen : Number.POSITIVE_INFINITY, cut: false };
+  const state = {
+    remain: typeof maxLen === "number" ? maxLen : Number.POSITIVE_INFINITY,
+    cut: false,
+  };
 
   function htmlFromNodes(nodes: Node[]): string {
     let html = "";
     for (const node of nodes) {
       if (state.cut) break;
       if (node.type === "text") {
-        if (state.remain <= 0) { state.cut = true; break; }
+        if (state.remain <= 0) {
+          state.cut = true;
+          break;
+        }
         const s = node.text;
         if (s.length > state.remain) {
           html += escapeHTML(s.slice(0, state.remain));
@@ -319,8 +348,11 @@ export function renderBody(mdText: string, maxLen?: number, imgLen: number = 50)
           html += `<br>`;
           continue;
         }
-        if (node.tag === "div" && node.attrs && node.attrs.includes('image-block')) {
-          if (state.remain < imgLen) { state.cut = true; break; }
+        if (node.tag === "div" && node.attrs && node.attrs.includes("image-block")) {
+          if (state.remain < imgLen) {
+            state.cut = true;
+            break;
+          }
           html += `<div class="image-block">`;
           for (const child of node.children || []) {
             if (child.type === "element" && child.tag === "img" && child.attrs) {

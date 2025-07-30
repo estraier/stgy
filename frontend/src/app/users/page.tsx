@@ -29,23 +29,20 @@ export default function UsersPage() {
   const { tab, page, qParam, oldestFirst } = getQuery();
 
   // useMemoでオブジェクトの参照を安定化
-  const searchQueryObj = useMemo(
-    () => (qParam ? parseUserSearchQuery(qParam) : {}),
-    [qParam]
-  );
+  const searchQueryObj = useMemo(() => (qParam ? parseUserSearchQuery(qParam) : {}), [qParam]);
 
   const userId = status.state === "authenticated" ? status.session.user_id : undefined;
   const isSearchMode = useMemo(
     () =>
       (searchQueryObj.query && searchQueryObj.query.length > 0) ||
       (searchQueryObj.nickname && searchQueryObj.nickname.length > 0),
-    [searchQueryObj]
+    [searchQueryObj],
   );
 
   const effectiveTab = isSearchMode ? "all" : tab;
 
   // 状態
-  const [users, setUsers] = useState<(UserDetail | User)[]>([]);
+  const [users, setUsers] = useState<UserDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasNext, setHasNext] = useState(false);
@@ -90,10 +87,9 @@ export default function UsersPage() {
       focus_user_id: userId,
     };
 
-    let fetcher: Promise<UserDetail[] | User[]>;
+    let fetcher: Promise<UserDetail[]>;
     if (isSearchMode) {
-      if ("query" in searchQueryObj && searchQueryObj.query)
-        params.query = searchQueryObj.query;
+      if ("query" in searchQueryObj && searchQueryObj.query) params.query = searchQueryObj.query;
       if ("nickname" in searchQueryObj && searchQueryObj.nickname)
         params.nickname = searchQueryObj.nickname;
       fetcher = listUsersDetail(params);
@@ -125,16 +121,7 @@ export default function UsersPage() {
         else setError("Failed to fetch users.");
       })
       .finally(() => setLoading(false));
-  }, [
-    status.state,
-    effectiveTab,
-    page,
-    oldestFirst,
-    qParam,
-    userId,
-    isSearchMode,
-    searchQueryObj,
-  ]);
+  }, [status.state, effectiveTab, page, oldestFirst, qParam, userId, isSearchMode, searchQueryObj]);
 
   if (status.state !== "authenticated") return null;
 
