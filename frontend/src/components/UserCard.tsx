@@ -9,7 +9,7 @@ type UserCardProps = {
   truncated?: boolean;
   className?: string;
   onClick?: (user: UserDetail) => void;
-  focusUserId: string;
+  focusUserId?: string;
   clickable?: boolean; // 追加
 };
 
@@ -30,8 +30,8 @@ export default function UserCard({
   }, [initialUser]);
 
   const isAdmin = user.is_admin;
-  const isAI = !!user.ai_model && user.ai_model.trim() !== "";
-  const isSelf = user.id === focusUserId;
+  const isAI = !!(user.ai_model && user.ai_model.trim() !== "");
+  const isSelf = !!(focusUserId && user.id === focusUserId);
   const isFollowing = !!user.is_followed_by_focus_user;
 
   let followButton: React.ReactNode = null;

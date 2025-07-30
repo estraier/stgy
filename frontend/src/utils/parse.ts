@@ -134,11 +134,6 @@ export function serializeUserSearchQuery(params: { query?: string; nickname?: st
       tokens.push(escapeToken(p));
     }
   }
-  if (params.tag) {
-    let tag = params.tag.replace(/"/g, '\\"');
-    if (tag.match(/\s/)) tag = `"${tag}"`;
-    tokens.push("#" + tag);
-  }
   if (params.nickname) {
     let nick = params.nickname.replace(/"/g, '\\"');
     if (nick.match(/\s/)) nick = `"${nick}"`;

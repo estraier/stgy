@@ -1,6 +1,7 @@
 export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE_URL || "http://localhost:3001";
 
-type ApiFetchOptions = RequestInit & {
+type ApiFetchOptions = Omit<RequestInit, "headers"> & {
+  headers?: Record<string, string>;
   ssrCookie?: string;
 };
 
@@ -27,6 +28,6 @@ export async function extractError(res: Response): Promise<string> {
     }
     return JSON.stringify(data);
   } catch (e) {
-    return res.statusText || "Unknown error";
+    return res.statusText || String(e);
   }
 }

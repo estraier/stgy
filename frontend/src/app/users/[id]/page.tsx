@@ -15,9 +15,9 @@ import { parseBodyAndTags } from "@/utils/parse";
 const PAGE_SIZE = 5;
 const TAB_VALUES = ["posts", "replies", "followers", "followees"] as const;
 
-export default function UserDetailPage({ params }) {
+export default function UserDetailPage({ params }: { params?: Promise<{ id: string }> }) {
+  const { id } = use(params ?? Promise.resolve({ id: "" }));
   const status = useRequireLogin();
-  const { id } = use(params);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
@@ -44,13 +44,13 @@ export default function UserDetailPage({ params }) {
 
   // 投稿・ユーザリスト系
   const [posts, setPosts] = useState<PostDetail[]>([]);
-  const [followers, setFollowers] = useState<User[]>([]);
-  const [followees, setFollowees] = useState<User[]>([]);
+  const [followers, setFollowers] = useState<UserDetail[]>([]);
+  const [followees, setFollowees] = useState<UserDetail[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [hasNext, setHasNext] = useState(false);
 
-  const isSelf = user && userId && user.id === userId;
+  const isSelf = !!(user && userId && user.id === userId);
   const canEdit = isSelf || isAdmin;
 
   // Reply関連

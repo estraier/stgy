@@ -12,7 +12,7 @@ import {
   deletePost,
   listPostsDetail,
 } from "@/api/posts";
-import type { PostDetail, User } from "@/api/model";
+import type { PostDetail, User } from "@/api/models";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { useRouter, useSearchParams } from "next/navigation";
 import PostCard from "@/components/PostCard";
@@ -23,8 +23,8 @@ const LIKER_LIMIT = 10;
 const LIKER_MAX = 100;
 const REPLY_PAGE_SIZE = 5;
 
-export default function PostDetailPage({ params }) {
-  const { id: postId } = use(params);
+export default function PostDetailPage({ params }: { params?: Promise<{ id: string }> }) {
+  const { id: postId } = use(params ?? Promise.resolve({ id: "" }));
 
   const status = useRequireLogin();
   const router = useRouter();

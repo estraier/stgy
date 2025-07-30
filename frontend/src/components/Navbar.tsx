@@ -3,7 +3,7 @@ import { useEffect, useState } from "react";
 import { getSessionInfo, logout } from "@/api/auth";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { FiSettings, FiSearch } from "react-icons/fi";
-import type { SessionInfo } from "@/api/model";
+import type { SessionInfo } from "@/api/models";
 
 export default function Navbar() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);

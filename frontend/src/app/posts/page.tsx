@@ -10,7 +10,7 @@ import {
   removeLike,
 } from "@/api/posts";
 import { listUsers } from "@/api/users";
-import type { PostDetail } from "@/api/model";
+import type { PostDetail } from "@/api/models";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { parseBodyAndTags } from "@/utils/parse";
@@ -90,7 +90,7 @@ export default function PostsPage() {
     };
   }, [searchQueryObj.ownedBy, isSearchMode, userId]);
 
-  const fetchPostsRef = useRef<() => Promise<void>>();
+  const fetchPostsRef = useRef<() => Promise<void> | null>(null);
   async function fetchPosts() {
     if (status.state !== "authenticated") return;
     setLoading(true);
@@ -330,8 +330,6 @@ export default function PostsPage() {
             <li key={post.id}>
               <PostCard
                 post={post}
-                pathname={pathname}
-                onClickContent={() => router.push(`/posts/${post.id}`)}
                 onLike={() => handleLike(post)}
                 onReply={() => {
                   setReplyTo(post.id);

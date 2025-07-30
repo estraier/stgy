@@ -17,7 +17,6 @@ export default function SettingsPage() {
   });
 
   // Password change state
-  const [pwOld, setPwOld] = useState("");
   const [pwNew, setPwNew] = useState("");
   const [pwNew2, setPwNew2] = useState("");
   const [pwError, setPwError] = useState<string | null>(null);
@@ -34,7 +33,7 @@ export default function SettingsPage() {
     e.preventDefault();
     setPwError(null);
     setPwSuccess(false);
-    if (!pwOld || !pwNew || !pwNew2) {
+    if (!pwNew || !pwNew2) {
       setPwError("Please fill in all password fields.");
       return;
     }
@@ -47,7 +46,7 @@ export default function SettingsPage() {
       return;
     }
     try {
-      await updateUserPassword(userId, pwNew, pwOld);
+      await updateUserPassword(userId, pwNew);
       setPwSuccess(true);
       setTimeout(async () => {
         await logout();
@@ -94,14 +93,6 @@ export default function SettingsPage() {
       <section className="mb-10">
         <h2 className="text-lg font-semibold mb-2">Change password</h2>
         <form onSubmit={handleChangePassword} className="flex flex-col gap-3">
-          <input
-            type="password"
-            placeholder="Current password"
-            value={pwOld}
-            onChange={e => setPwOld(e.target.value)}
-            className="border px-2 py-1 rounded"
-            autoComplete="current-password"
-          />
           <input
             type="password"
             placeholder="New password"

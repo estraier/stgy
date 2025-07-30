@@ -15,6 +15,7 @@ type Node =
   | { type: "text"; text: string }
   | { type: "element"; tag: string; attrs?: string; children: Node[] };
 
+
 // Markdown-likeなテキストを簡易パースしてノード配列を返す
 export function parseMarkdownBlocks(mdText: string): Node[] {
   const lines = mdText.replace(/\r\n/g, "\n").split("\n");
@@ -279,7 +280,7 @@ function parseInline(text: string): Node[] {
     typeof n === "object" && n.type === "text"
       ? n.text.split(/\n/).flatMap((frag, i, arr) =>
           i === 0 ? [{ type: "text", text: frag }] :
-            [{ type: "element", tag: "br", children: [] }, { type: "text", text: frag }]
+            [{ type: "element", tag: "br", children: [] as Node[]}, { type: "text", text: frag }]
         )
       : [n]
   );
@@ -290,10 +291,7 @@ function parseInlineText(text: string): Node[] {
 
 // -----------------------------
 // maxLenに従いtextContentを途中カットしつつHTMLに変換する
-export function renderBody(mdText: string, maxLen?: number, imgLen?: number): string {
-  if (!imgLen) {
-    imgLen = 50;
-  }
+export function renderBody(mdText: string, maxLen?: number, imgLen: number = 50): string {
   const nodes = parseMarkdownBlocks(mdText);
 
   // textContent長をカウントしながら再帰的にノードをHTML化

@@ -24,8 +24,8 @@ export default function LoginPage() {
       await login(email, password);
       localStorage.setItem("lastLoginEmail", email);
       router.push("/posts");
-    } catch (err: any) {
-      setError(err?.message || "Invalid email or password.");
+    } catch (e) {
+      setError(e ? String(e) : "Invalid email or password.");
     }
   };
 
@@ -57,7 +57,7 @@ export default function LoginPage() {
           Log in
         </button>
         <div className="mt-4 text-center">
-          Don't have an account?{" "}
+          Don&apos;t have an account?{" "}
           <a href="/signup" className="text-blue-600 hover:underline">
             Sign up
           </a>

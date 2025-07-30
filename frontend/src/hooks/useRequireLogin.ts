@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { getSessionInfo } from "@/api/auth";
-import type { SessionInfo } from "@/api/model";
+import type { SessionInfo } from "@/api/models";
 
 type RequireLoginStatus =
   | { state: "loading" }
