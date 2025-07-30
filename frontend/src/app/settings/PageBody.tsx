@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { updateUserPassword, deleteUser } from "@/api/users";
 import { logout, getSessionInfo } from "@/api/auth";
@@ -10,11 +10,19 @@ export default function PageBody() {
 
   // Fetch login user
   const [userId, setUserId] = useState<string | null>(null);
-  useState(() => {
+  useEffect(() => {
+    let canceled = false;
     getSessionInfo()
-      .then((session) => setUserId(session.user_id))
-      .catch(() => setUserId(null));
-  });
+      .then((session) => {
+        if (!canceled) setUserId(session.user_id);
+      })
+      .catch(() => {
+        if (!canceled) setUserId(null);
+      });
+    return () => {
+      canceled = true;
+    };
+  }, []);
 
   // Password change state
   const [pwNew, setPwNew] = useState("");
