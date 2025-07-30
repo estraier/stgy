@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { updateUserPassword, deleteUser } from "@/api/users";
 import { logout, getSessionInfo } from "@/api/auth";
+import Navbar from "@/components/Navbar";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -86,6 +87,8 @@ export default function SettingsPage() {
   }
 
   return (
+    <>
+    <Navbar />
     <main className="max-w-lg mx-auto mt-12 p-4 bg-white shadow">
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
 
@@ -178,5 +181,6 @@ export default function SettingsPage() {
         )}
       </section>
     </main>
+    </>
   );
 }

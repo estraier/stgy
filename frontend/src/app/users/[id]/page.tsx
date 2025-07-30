@@ -6,6 +6,7 @@ import { listPostsDetail, addLike, removeLike, createPost } from "@/api/posts";
 import type { UserDetail, PostDetail } from "@/api/models";
 import { notFound, useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
+import Navbar from "@/components/Navbar";
 import UserCard from "@/components/UserCard";
 import UserEditForm from "@/components/UserEditForm";
 import PostCard from "@/components/PostCard";
@@ -306,6 +307,8 @@ export default function UserDetailPage({ params }: { params?: Promise<{ id: stri
   }
 
   return (
+    <>
+    <Navbar />
     <main className="max-w-3xl mx-auto mt-8 p-4">
       {/* ユーザプロフィール */}
       <UserCard user={user} truncated={false} focusUserId={userId} clickable={false} />
@@ -462,5 +465,6 @@ export default function UserDetailPage({ params }: { params?: Promise<{ id: stri
         )}
       </div>
     </main>
+    </>
   );
 }

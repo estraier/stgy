@@ -6,6 +6,7 @@ import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { listUsersDetail, listFollowers, listFollowees } from "@/api/users";
 import type { UserDetail } from "@/api/models";
 import { parseUserSearchQuery, serializeUserSearchQuery } from "@/utils/parse";
+import Navbar from "@/components/Navbar";
 import UserCard from "@/components/UserCard";
 
 const PAGE_SIZE = 5;
@@ -156,6 +157,8 @@ export default function UsersPage() {
   }
 
   return (
+    <>
+    <Navbar />
     <main className="max-w-3xl mx-auto mt-8 p-4">
       <div className="flex gap-1 mb-2">
         {TAB_VALUES.map((t) => (
@@ -222,5 +225,6 @@ export default function UsersPage() {
         )}
       </div>
     </main>
+    </>
   );
 }

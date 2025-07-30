@@ -15,6 +15,7 @@ import {
 import type { PostDetail, User } from "@/api/models";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { useRouter, useSearchParams } from "next/navigation";
+import Navbar from "@/components/Navbar";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 import { parseBodyAndTags } from "@/utils/parse";
@@ -301,6 +302,8 @@ export default function PostDetailPage({ params }: { params?: Promise<{ id: stri
   }
 
   return (
+    <>
+    <Navbar />
     <main className="max-w-3xl mx-auto mt-8 p-4">
       {/* メイン記事 */}
       <PostCard
@@ -467,5 +470,6 @@ export default function PostDetailPage({ params }: { params?: Promise<{ id: stri
         </button>
       </div>
     </main>
+    </>
   );
 }

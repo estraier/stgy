@@ -15,6 +15,7 @@ import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { parseBodyAndTags } from "@/utils/parse";
 import { parsePostSearchQuery, serializePostSearchQuery } from "@/utils/parse";
+import Navbar from "@/components/Navbar";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 
@@ -293,6 +294,8 @@ export default function PostsPage() {
   if (status.state !== "authenticated") return null;
 
   return (
+    <>
+    <Navbar />
     <main className="max-w-3xl mx-auto mt-8 p-4" onClick={clearError}>
       <PostForm
         body={body}
@@ -400,5 +403,6 @@ export default function PostsPage() {
         )}
       </div>
     </main>
+    </>
   );
 }
