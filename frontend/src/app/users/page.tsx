@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useMemo } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { listUsersDetail, listFollowers, listFollowees } from "@/api/users";
@@ -27,11 +27,20 @@ export default function UsersPage() {
     };
   }
   const { tab, page, qParam, oldestFirst } = getQuery();
-  const searchQueryObj = qParam ? parseUserSearchQuery(qParam) : {};
+
+  // useMemoでオブジェクトの参照を安定化
+  const searchQueryObj = useMemo(
+    () => (qParam ? parseUserSearchQuery(qParam) : {}),
+    [qParam]
+  );
+
   const userId = status.state === "authenticated" ? status.session.user_id : undefined;
-  const isSearchMode =
-    (searchQueryObj.query && searchQueryObj.query.length > 0) ||
-    (searchQueryObj.nickname && searchQueryObj.nickname.length > 0);
+  const isSearchMode = useMemo(
+    () =>
+      (searchQueryObj.query && searchQueryObj.query.length > 0) ||
+      (searchQueryObj.nickname && searchQueryObj.nickname.length > 0),
+    [searchQueryObj]
+  );
 
   const effectiveTab = isSearchMode ? "all" : tab;
 
@@ -66,7 +75,15 @@ export default function UsersPage() {
     setLoading(true);
     setError(null);
 
-    let params: any = {
+    // 型安全なparams
+    const params: {
+      offset: number;
+      limit: number;
+      order: "asc" | "desc";
+      focus_user_id?: string;
+      query?: string;
+      nickname?: string;
+    } = {
       offset: (page - 1) * PAGE_SIZE,
       limit: PAGE_SIZE + 1,
       order: oldestFirst ? "asc" : "desc",
@@ -75,8 +92,10 @@ export default function UsersPage() {
 
     let fetcher: Promise<UserDetail[] | User[]>;
     if (isSearchMode) {
-      if (searchQueryObj.query) params.query = searchQueryObj.query;
-      if (searchQueryObj.nickname) params.nickname = searchQueryObj.nickname;
+      if ("query" in searchQueryObj && searchQueryObj.query)
+        params.query = searchQueryObj.query;
+      if ("nickname" in searchQueryObj && searchQueryObj.nickname)
+        params.nickname = searchQueryObj.nickname;
       fetcher = listUsersDetail(params);
     } else if (effectiveTab === "followees") {
       fetcher = listFollowees(userId!, {
@@ -101,17 +120,20 @@ export default function UsersPage() {
         setHasNext(data.length > PAGE_SIZE);
         setUsers(data.slice(0, PAGE_SIZE));
       })
-      .catch((err: any) => setError(err.message || "Failed to fetch users."))
+      .catch((err) => {
+        if (err instanceof Error) setError(err.message);
+        else setError("Failed to fetch users.");
+      })
       .finally(() => setLoading(false));
-    // eslint-disable-next-line
   }, [
     status.state,
     effectiveTab,
     page,
     oldestFirst,
     qParam,
-    searchQueryObj.query,
-    searchQueryObj.nickname,
+    userId,
+    isSearchMode,
+    searchQueryObj,
   ]);
 
   if (status.state !== "authenticated") return null;
@@ -181,7 +203,7 @@ export default function UsersPage() {
       <div>
         {loading && <div className="text-gray-500">Loading…</div>}
         <ul className="space-y-4">
-          {users.map((user: any) => (
+          {users.map((user) => (
             <li key={user.id}>
               <UserCard
                 user={user}

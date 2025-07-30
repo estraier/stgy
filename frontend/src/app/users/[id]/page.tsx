@@ -1,9 +1,9 @@
 "use client";
 
-import { use, useEffect, useState, useRef } from "react";
+import { use, useEffect, useState } from "react";
 import { getUserDetail, listFollowers, listFollowees } from "@/api/users";
 import { listPostsDetail, addLike, removeLike, createPost } from "@/api/posts";
-import type { UserDetail, PostDetail, User } from "@/api/models";
+import type { UserDetail, PostDetail } from "@/api/models";
 import { notFound, useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import UserCard from "@/components/UserCard";
@@ -88,13 +88,14 @@ export default function UserDetailPage({ params }: { params?: Promise<{ id: stri
       .then((data) => {
         if (!canceled) setUser(data);
       })
-      .catch((err: any) => {
+      .catch((err: unknown) => {
         if (!canceled) {
-          if (err.status === 404) {
+          if (typeof err === "object" && err && "status" in err && (err as { status: unknown }).status === 404) {
             notFound();
             return;
           }
-          setError(err.message || "Failed to fetch user detail.");
+          if (err instanceof Error) setError(err.message || "Failed to fetch user detail.");
+          else setError(String(err) || "Failed to fetch user detail.");
         }
       })
       .finally(() => {
@@ -113,7 +114,14 @@ export default function UserDetailPage({ params }: { params?: Promise<{ id: stri
 
     if (tab === "posts" || tab === "replies") {
       // 投稿・リプライ
-      const params: any = {
+      const params: {
+        owned_by: string;
+        offset: number;
+        limit: number;
+        order: "asc" | "desc";
+        focus_user_id: string;
+        reply_to?: string;
+      } = {
         owned_by: user.id,
         offset: (page - 1) * PAGE_SIZE,
         limit: PAGE_SIZE + 1,
@@ -127,7 +135,10 @@ export default function UserDetailPage({ params }: { params?: Promise<{ id: stri
           setPosts(data.slice(0, PAGE_SIZE));
           setHasNext(data.length > PAGE_SIZE);
         })
-        .catch((err: any) => setListError(err.message || "Failed to fetch posts."))
+        .catch((err: unknown) => {
+          if (err instanceof Error) setListError(err.message || "Failed to fetch posts.");
+          else setListError(String(err) || "Failed to fetch posts.");
+        })
         .finally(() => setListLoading(false));
     } else if (tab === "followers") {
       listFollowers(user.id, {
@@ -140,7 +151,10 @@ export default function UserDetailPage({ params }: { params?: Promise<{ id: stri
           setFollowers(data.slice(0, PAGE_SIZE));
           setHasNext(data.length > PAGE_SIZE);
         })
-        .catch((err: any) => setListError(err.message || "Failed to fetch followers."))
+        .catch((err: unknown) => {
+          if (err instanceof Error) setListError(err.message || "Failed to fetch followers.");
+          else setListError(String(err) || "Failed to fetch followers.");
+        })
         .finally(() => setListLoading(false));
     } else if (tab === "followees") {
       listFollowees(user.id, {
@@ -153,10 +167,13 @@ export default function UserDetailPage({ params }: { params?: Promise<{ id: stri
           setFollowees(data.slice(0, PAGE_SIZE));
           setHasNext(data.length > PAGE_SIZE);
         })
-        .catch((err: any) => setListError(err.message || "Failed to fetch followees."))
+        .catch((err: unknown) => {
+          if (err instanceof Error) setListError(err.message || "Failed to fetch followees.");
+          else setListError(String(err) || "Failed to fetch followees.");
+        })
         .finally(() => setListLoading(false));
     }
-  }, [tab, user?.id, page, oldestFirst, userId]);
+  }, [tab, user?.id, page, oldestFirst, userId, user]);
 
   // Like機能
   async function handleLike(post: PostDetail) {
@@ -230,8 +247,9 @@ export default function UserDetailPage({ params }: { params?: Promise<{ id: stri
           reply_to: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
         }).then((data) => setPosts(data.slice(0, PAGE_SIZE)));
       }, 100);
-    } catch (err: any) {
-      setReplyError(err?.message || "Failed to reply.");
+    } catch (err: unknown) {
+      if (err instanceof Error) setReplyError(err.message || "Failed to reply.");
+      else setReplyError(String(err) || "Failed to reply.");
     } finally {
       setReplySubmitting(false);
     }

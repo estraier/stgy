@@ -96,8 +96,17 @@ export default function PostsPage() {
     setLoading(true);
     setError(null);
 
-    let usePage = page;
-    let params: any = {
+    const usePage = page;
+    const params: {
+      offset: number;
+      limit: number;
+      order: "asc" | "desc";
+      focus_user_id?: string;
+      query?: string;
+      tag?: string;
+      owned_by?: string;
+      reply_to?: string;
+    } = {
       offset: (usePage - 1) * PAGE_SIZE,
       limit: PAGE_SIZE + 1,
       order: oldestFirst ? "asc" : "desc",
@@ -150,8 +159,12 @@ export default function PostsPage() {
       });
     }
 
-    const data = await fetcher.catch((err: any) => {
-      setError(err?.message || "Failed to fetch posts.");
+    const data = await fetcher.catch((err: unknown) => {
+      if (err instanceof Error) {
+        setError(err.message || "Failed to fetch posts.");
+      } else {
+        setError(String(err) || "Failed to fetch posts.");
+      }
       return [];
     });
     setHasNext(data.length > PAGE_SIZE);
@@ -210,8 +223,12 @@ export default function PostsPage() {
         q: undefined,
       });
       setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100);
-    } catch (err: any) {
-      setError(err?.message || "Failed to post.");
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setError(err.message || "Failed to post.");
+      } else {
+        setError(String(err) || "Failed to post.");
+      }
     } finally {
       setSubmitting(false);
     }
@@ -237,8 +254,12 @@ export default function PostsPage() {
       setReplyBody("");
       setReplyTo(null);
       setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100);
-    } catch (err: any) {
-      setReplyError(err?.message || "Failed to reply.");
+    } catch (err: unknown) {
+      if (err instanceof Error) {
+        setReplyError(err.message || "Failed to reply.");
+      } else {
+        setReplyError(String(err) || "Failed to reply.");
+      }
     } finally {
       setReplySubmitting(false);
     }
@@ -263,7 +284,7 @@ export default function PostsPage() {
         await addLike(post.id);
       }
       setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100);
-    } catch (err) {
+    } catch {
       alert("Failed to update like.");
       setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100);
     }

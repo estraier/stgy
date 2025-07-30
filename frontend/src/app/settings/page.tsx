@@ -52,8 +52,8 @@ export default function SettingsPage() {
         await logout();
         router.push("/login");
       }, 2000);
-    } catch (err: any) {
-      setPwError(err?.message || "Failed to change password.");
+    } catch (e) {
+      setPwError(e ? String(e) : "Failed to change password.");
     }
   }
 
@@ -78,8 +78,8 @@ export default function SettingsPage() {
         await logout();
         router.push("/login");
       }, 2000);
-    } catch (err: any) {
-      setWithdrawalError(err?.message || "Failed to withdraw account.");
+    } catch (e) {
+      setWithdrawalError(e ? String(e) : "Failed to withdraw account.");
     } finally {
       setWithdrawalSubmitting(false);
     }
@@ -150,7 +150,7 @@ export default function SettingsPage() {
               This action <b>cannot</b> be undone.
             </div>
             <label className="block mb-1">
-              To confirm, type <span className="font-mono bg-gray-100 px-1">withdrawal</span> below and press "Confirm withdrawal".
+              To confirm, type <span className="font-mono bg-gray-100 px-1">withdrawal</span> below and press &quot;Confirm withdrawal&quot;.
             </label>
             <input
               type="text"

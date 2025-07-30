@@ -19,8 +19,8 @@ export default function SignupPage() {
       const res = await startSignup(email, password);
       setSignupId(res.signup_id);
       setStep("verify");
-    } catch (e: any) {
-      setError(e.message || "Signup start failed.");
+    } catch (e) {
+      setError(e ? String(e) : "Signup start failed.");
     }
   };
 
@@ -29,8 +29,8 @@ export default function SignupPage() {
     try {
       await verifySignup(signupId, verificationCode);
       setStep("success");
-    } catch (e: any) {
-      setError(e.message || "Verification failed.");
+    } catch (e) {
+      setError(e ? String(e) : "Verification failed.");
     }
   };
 

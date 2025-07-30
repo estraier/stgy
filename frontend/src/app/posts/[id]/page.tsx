@@ -38,7 +38,7 @@ export default function PostDetailPage({ params }: { params?: Promise<{ id: stri
 
   const [editing, setEditing] = useState(false);
   const [editBody, setEditBody] = useState("");
-  const [editTags, setEditTags] = useState<string[]>([]);
+  // const [editTags, setEditTags] = useState<string[]>([]); // ←未使用のため削除
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -94,7 +94,7 @@ export default function PostDetailPage({ params }: { params?: Promise<{ id: stri
         setPost(data);
         const tagLine = data.tags && data.tags.length > 0 ? "#" + data.tags.join(", #") + "\n" : "";
         setEditBody(tagLine + data.content);
-        setEditTags(data.tags || []);
+        // setEditTags(data.tags || []); // ←未使用なので削除
       })
       .catch((err) => setError(err?.message ?? "Failed to fetch post."))
       .finally(() => setLoading(false));
@@ -119,7 +119,7 @@ export default function PostDetailPage({ params }: { params?: Promise<{ id: stri
         }
       })
       .finally(() => setLikerLoading(false));
-  }, [post?.id, likerAll]);
+  }, [post, likerAll]);
 
   // --- Repliesデータ取得: order切り替え ---
   useEffect(() => {
@@ -137,7 +137,7 @@ export default function PostDetailPage({ params }: { params?: Promise<{ id: stri
         setReplyHasNext(list.length > REPLY_PAGE_SIZE);
       })
       .finally(() => setReplyLoading(false));
-  }, [userId, post?.id, replyPage, replyOldestFirst]);
+  }, [userId, post, replyPage, replyOldestFirst]);
 
   async function handleLike(post: PostDetail) {
     setPost((prev) =>
@@ -208,8 +208,9 @@ export default function PostDetailPage({ params }: { params?: Promise<{ id: stri
       await updatePost(postId, { content, tags });
       setEditing(false);
       getPostDetail(postId, userId).then(setPost);
-    } catch (err: any) {
-      setEditError(err?.message ?? "Failed to update post.");
+    } catch (err: unknown) {
+      if (err instanceof Error) setEditError(err.message ?? "Failed to update post.");
+      else setEditError(String(err) ?? "Failed to update post.");
     } finally {
       setEditSubmitting(false);
     }
@@ -220,8 +221,9 @@ export default function PostDetailPage({ params }: { params?: Promise<{ id: stri
     try {
       await deletePost(postId);
       router.push("/posts");
-    } catch (err: any) {
-      setEditError(err?.message ?? "Failed to delete post.");
+    } catch (err: unknown) {
+      if (err instanceof Error) setEditError(err.message ?? "Failed to delete post.");
+      else setEditError(String(err) ?? "Failed to delete post.");
     }
   }
 
@@ -242,9 +244,7 @@ export default function PostDetailPage({ params }: { params?: Promise<{ id: stri
       setReplyingTo(null);
 
       if (replyingTo === postId) {
-        // 修正: setReplyOptsでページ番号リセット
         setReplyOpts((old) => ({ ...old, page: 1 }));
-        // 返信一覧を最新化
         getPostDetail(postId, userId).then(setPost);
         listPostsDetail({
           reply_to: postId,
@@ -269,8 +269,9 @@ export default function PostDetailPage({ params }: { params?: Promise<{ id: stri
           ),
         );
       }
-    } catch (err: any) {
-      setReplyError(err?.message ?? "Failed to reply.");
+    } catch (err: unknown) {
+      if (err instanceof Error) setReplyError(err.message ?? "Failed to reply.");
+      else setReplyError(String(err) ?? "Failed to reply.");
     } finally {
       setReplySubmitting(false);
     }
@@ -340,7 +341,7 @@ export default function PostDetailPage({ params }: { params?: Promise<{ id: stri
                 const tagLine =
                   post.tags && post.tags.length > 0 ? "#" + post.tags.join(", #") + "\n" : "";
                 setEditBody(tagLine + post.content);
-                setEditTags(post.tags || []);
+                // setEditTags(post.tags || []); // ←未使用のため削除
               }
               setEditing(true);
             }}
