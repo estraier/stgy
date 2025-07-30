@@ -2,14 +2,14 @@
 
 import React, { useEffect, useState } from "react";
 import type { UserDetail } from "@/api/models";
-import { updateUser, getUserDetail } from "@/api/users";
+import { updateUser, getUserDetail, deleteUser } from "@/api/users";
 import { listAIModels } from "@/api/ai_models";
 
 type UserEditFormProps = {
   user: UserDetail;
   isAdmin: boolean;
   isSelf: boolean;
-  onUpdated?: (user: UserDetail) => void | Promise<void>;
+  onUpdated?: (user?: UserDetail) => void | Promise<void>;
   onCancel: () => void;
 };
 
@@ -32,6 +32,7 @@ export default function UserEditForm({
 
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [deleteSuccess, setDeleteSuccess] = useState(false);
 
   useEffect(() => {
     setAIModelsLoading(true);
@@ -49,6 +50,24 @@ export default function UserEditForm({
     setError(null);
   }
 
+  // --- 削除ロジック ---
+  async function handleDeleteUser(e: React.FormEvent) {
+    e.preventDefault();
+    setSubmitting(true);
+    setError(null);
+    try {
+      await deleteUser(user.id);
+      setDeleteSuccess(true);
+      // onUpdatedがあればundefinedで呼ぶ（画面側で削除後ハンドル可能）
+      if (onUpdated) await onUpdated(undefined);
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to delete user.");
+    } finally {
+      setSubmitting(false);
+    }
+  }
+
+  // --- 更新ロジック ---
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -100,10 +119,14 @@ export default function UserEditForm({
     }
   }
 
+  // --- 削除ボタン表示条件 ---
+  const canDelete =
+    isAdmin && !isSelf && email.trim() === "";
+
   return (
     <form
       className="flex flex-col gap-2 border border-gray-300 rounded p-4 bg-white"
-      onSubmit={handleSubmit}
+      onSubmit={canDelete ? handleDeleteUser : handleSubmit}
       onClick={(e) => e.stopPropagation()}
     >
       {/* Email */}
@@ -125,7 +148,7 @@ export default function UserEditForm({
           value={email}
           onChange={(e) => setEmail(e.target.value)}
           disabled={!isAdmin || isSelf}
-          required={isAdmin && !isSelf}
+          required={isAdmin && !isSelf && !canDelete}
           onFocus={handleClearError}
         />
       </div>
@@ -234,14 +257,30 @@ export default function UserEditForm({
         >
           Cancel
         </button>
-        <button
-          type="submit"
-          className="bg-blue-400 text-white hover:bg-blue-500 px-4 py-1 rounded cursor-pointer ml-auto"
-          disabled={submitting}
-        >
-          {submitting ? "Saving..." : "Save"}
-        </button>
+        {canDelete ? (
+          <button
+            type="submit"
+            className="bg-red-500 text-white hover:bg-red-600 px-4 py-1 rounded cursor-pointer ml-auto"
+            disabled={submitting || deleteSuccess}
+          >
+            {deleteSuccess ? "Deleted" : "Delete"}
+          </button>
+        ) : (
+          <button
+            type="submit"
+            className="bg-blue-400 text-white hover:bg-blue-500 px-4 py-1 rounded cursor-pointer ml-auto"
+            disabled={submitting}
+          >
+            {submitting ? "Saving..." : "Save"}
+          </button>
+        )}
       </div>
+      {canDelete && (
+        <div className="text-xs text-red-700 mt-2">
+          This will <b>permanently delete</b> this user and all their data.<br />
+          Are you sure?
+        </div>
+      )}
     </form>
   );
 }
