@@ -1,6 +1,6 @@
 "use client";
 
-import { use, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { getUserDetail, listFollowers, listFollowees } from "@/api/users";
 import { listPostsDetail, addLike, removeLike, createPost } from "@/api/posts";
 import type { UserDetail, PostDetail } from "@/api/models";
