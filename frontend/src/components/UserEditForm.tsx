@@ -111,7 +111,9 @@ export default function UserEditForm({
         <div className="flex items-center justify-between">
           <label className="font-bold text-sm">Email</label>
           {isAdmin && isSelf && (
-            <span className="text-xs text-gray-400 ml-2">(You can&#39;t change your own email)</span>
+            <span className="text-xs text-gray-400 ml-2">
+              (You can&#39;t change your own email)
+            </span>
           )}
           {!isAdmin && <span className="text-xs text-gray-400 ml-2">(Only admin can change)</span>}
         </div>

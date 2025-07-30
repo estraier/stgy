@@ -4,7 +4,7 @@ import Link from "next/link";
 import { useSearchParams } from "next/navigation";
 import { AlertTriangle } from "lucide-react";
 
-export default function ErrorPageBody() {
+export default function PageBody() {
   const params = useSearchParams();
   const code = params.get("code") || "Error";
   const message = params.get("message") || "Something went wrong.";

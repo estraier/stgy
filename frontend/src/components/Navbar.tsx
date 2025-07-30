@@ -59,7 +59,7 @@ export default function Navbar() {
   }
 
   return (
-    <nav className="w-full h-12 flex items-center px-4 bg-white border-b shadow z-10">
+    <nav className="w-full h-12 flex items-center px-4 bg-white border-b border-gray-500 shadow z-10">
       <Link href="/posts" className="font-bold text-lg text-blue-600 mr-6 select-none" tabIndex={0}>
         Fakebook
       </Link>
