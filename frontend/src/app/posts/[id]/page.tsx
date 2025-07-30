@@ -23,9 +23,7 @@ const LIKER_LIMIT = 10;
 const LIKER_MAX = 100;
 const REPLY_PAGE_SIZE = 5;
 
-type Props = { params: Promise<{ id: string }> | { id: string } };
-
-export default function PostDetailPage({ params }: Props) {
+export default function PostDetailPage({ params }) {
   const { id: postId } = use(params);
 
   const status = useRequireLogin();

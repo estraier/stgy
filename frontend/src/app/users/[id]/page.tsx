@@ -15,16 +15,16 @@ import { parseBodyAndTags } from "@/utils/parse";
 const PAGE_SIZE = 5;
 const TAB_VALUES = ["posts", "replies", "followers", "followees"] as const;
 
-export default function UserDetailPage({ params }: { params: Promise<{ id: string }> }) {
-  const ready = useRequireLogin();
+export default function UserDetailPage({ params }) {
+  const status = useRequireLogin();
   const { id } = use(params);
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
   // ログイン中ユーザ情報
-  const userId = ready && ready.state === "authenticated" ? ready.session.user_id : "";
-  const isAdmin = ready && ready.state === "authenticated" && ready.session.user_is_admin;
+  const userId = status && status.state === "authenticated" ? status.session.user_id : "";
+  const isAdmin = status && status.state === "authenticated" && status.session.user_is_admin;
 
   // 対象ユーザデータ
   const [user, setUser] = useState<UserDetail | null>(null);
@@ -80,7 +80,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
 
   // ユーザデータ取得
   useEffect(() => {
-    if (!ready) return;
+    if (!status) return;
     let canceled = false;
     setLoading(true);
     setError(null);
@@ -103,7 +103,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
     return () => {
       canceled = true;
     };
-  }, [id, ready, userId]);
+  }, [id, status, userId]);
 
   // タブ内容のリスト取得
   useEffect(() => {
@@ -240,7 +240,7 @@ export default function UserDetailPage({ params }: { params: Promise<{ id: strin
     if (replyError) setReplyError(null);
   }
 
-  if (!ready) return null;
+  if (!status) return null;
   if (loading) return <div className="text-center mt-10">Loading…</div>;
   if (error) return <div className="text-center mt-10 text-red-600">{error}</div>;
   if (!user) return <div className="text-center mt-10 text-gray-500">No user found.</div>;
