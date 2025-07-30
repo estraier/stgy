@@ -10,10 +10,10 @@ export function parsePostSearchQuery(q: string): {
   s = s.replace(/"([^"]*)"/g, (m, group1) => {
     return '"' + group1.replace(/ /g, ESC_SPACE) + '"';
   });
-  let tokens = s.split(/\s+/).filter(Boolean);
+  const tokens = s.split(/\s+/).filter(Boolean);
   let tag: string | undefined;
   let ownedBy: string | undefined;
-  let queryParts: string[] = [];
+  const queryParts: string[] = [];
   for (let token of tokens) {
     token = token.replace(new RegExp(ESC_SPACE, "g"), " ");
     if (token.startsWith('"') && token.endsWith('"') && token.length >= 2) {
@@ -89,9 +89,9 @@ export function parseUserSearchQuery(q: string): {
   s = s.replace(/"([^"]*)"/g, (m, group1) => {
     return '"' + group1.replace(/ /g, ESC_SPACE) + '"';
   });
-  let tokens = s.split(/\s+/).filter(Boolean);
+  const tokens = s.split(/\s+/).filter(Boolean);
   let nickname: string | undefined;
-  let queryParts: string[] = [];
+  const queryParts: string[] = [];
   for (let token of tokens) {
     token = token.replace(new RegExp(ESC_SPACE, "g"), " ");
     if (token.startsWith('"') && token.endsWith('"') && token.length >= 2) {

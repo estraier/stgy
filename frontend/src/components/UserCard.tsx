@@ -81,14 +81,14 @@ export default function UserCard({
     }
   }
 
-  function handleCardClick(e: React.MouseEvent | React.KeyboardEvent) {
+  function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
     onClick?.(user);
   }
 
   function truncatePlainText(text: string, maxLen: number) {
-    let plain = (text ?? "")
+    const plain = (text ?? "")
       .replace(/[#>*_`~\-!\[\]()]/g, " ")
       .replace(/\s+/g, " ")
       .trim();

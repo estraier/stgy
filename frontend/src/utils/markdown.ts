@@ -1,5 +1,3 @@
-// frontend/src/utils/markdown.ts
-
 // HTMLエスケープ
 function escapeHTML(text: string): string {
   return text
@@ -22,7 +20,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
   let inCode = false,
     codeLines: string[] = [],
     codeLang: string | undefined;
-  let currList: { level: number; items: Node[] }[] = [];
+  const currList: { level: number; items: Node[] }[] = [];
   let currPara: string[] = [];
   let currTable: string[][] = [];
   let currQuote: string[] = [];
@@ -76,7 +74,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     }
   }
   for (let i = 0; i < lines.length; ++i) {
-    let line = lines[i];
+    const line = lines[i];
     // コードブロック
     const codeFence = line.match(/^```(\w*)/);
     if (codeFence) {
@@ -258,7 +256,7 @@ function parseInline(text: string): Node[] {
 
   // [anchor](url)リンク
   const linkRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
-  let nodes: Node[] = [];
+  const nodes: Node[] = [];
   let last = 0,
     match: RegExpExecArray | null;
   while ((match = linkRe.exec(text))) {
@@ -297,7 +295,7 @@ function parseInline(text: string): Node[] {
   // 改行
   return nodes.flatMap((n) =>
     typeof n === "object" && n.type === "text"
-      ? n.text.split(/\n/).flatMap((frag, i, arr) =>
+      ? n.text.split(/\n/).flatMap((frag, i, _arr) =>
           i === 0
             ? [{ type: "text", text: frag }]
             : [

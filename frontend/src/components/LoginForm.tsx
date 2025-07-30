@@ -26,8 +26,8 @@ export default function LoginForm() {
       await login(email, password);
       localStorage.setItem(LAST_EMAIL_KEY, email); // ログイン成功時に保存
       router.replace("/posts");
-    } catch (err: any) {
-      setError(err?.message || "Failed to log in");
+    } catch (e) {
+      setError(e ? String(e) : "Failed to log in");
     } finally {
       setIsLoading(false);
     }

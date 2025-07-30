@@ -1,5 +1,6 @@
 "use client";
 import { useEffect, useState } from "react";
+import Link from "next/link";
 import { getSessionInfo, logout } from "@/api/auth";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { FiSettings, FiSearch } from "react-icons/fi";
@@ -58,22 +59,22 @@ export default function Navbar() {
 
   return (
     <nav className="w-full h-12 flex items-center px-4 bg-white border-b shadow z-10">
-      <a href="/posts" className="font-bold text-lg text-blue-600 mr-6 select-none" tabIndex={0}>
+      <Link href="/posts" className="font-bold text-lg text-blue-600 mr-6 select-none" tabIndex={0}>
         Fakebook
-      </a>
+      </Link>
       <div className="flex gap-2">
-        <a
+        <Link
           href="/posts"
           className={`px-3 py-2 rounded ${isActive("/posts") ? "bg-blue-100 font-semibold" : ""}`}
         >
           Posts
-        </a>
-        <a
+        </Link>
+        <Link
           href="/users"
           className={`px-3 py-2 rounded ${isActive("/users") ? "bg-blue-100 font-semibold" : ""}`}
         >
           Users
-        </a>
+        </Link>
       </div>
       <div className="ml-auto flex items-center gap-2 relative">
         <form className="flex items-center relative" onSubmit={handleSearch} autoComplete="off">
@@ -116,20 +117,20 @@ export default function Navbar() {
             className="absolute top-0 right-0 mt-2 bg-white border rounded shadow py-2 min-w-[140px] z-50"
             onMouseLeave={() => setMenuOpen(false)}
           >
-            <a
+            <Link
               href={`/users/${userId}`}
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
               onClick={() => setMenuOpen(false)}
             >
               Profile
-            </a>
-            <a
+            </Link>
+            <Link
               href="/settings"
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
               onClick={() => setMenuOpen(false)}
             >
               Settings
-            </a>
+            </Link>
             <button
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
               onClick={async () => {

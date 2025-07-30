@@ -72,7 +72,7 @@ export default function UserEditForm({
 
     setSubmitting(true);
     try {
-      const input: any = {
+      const input: Record<string, unknown> = {
         nickname,
         introduction,
       };
@@ -93,8 +93,8 @@ export default function UserEditForm({
       if (onUpdated) {
         await onUpdated(updatedUser);
       }
-    } catch (err: any) {
-      setError(err?.message ?? "Failed to update user.");
+    } catch (err: unknown) {
+      setError(err instanceof Error ? err.message : "Failed to update user.");
     } finally {
       setSubmitting(false);
     }
@@ -111,7 +111,7 @@ export default function UserEditForm({
         <div className="flex items-center justify-between">
           <label className="font-bold text-sm">Email</label>
           {isAdmin && isSelf && (
-            <span className="text-xs text-gray-400 ml-2">(You can't change your own email)</span>
+            <span className="text-xs text-gray-400 ml-2">(You can&#39;t change your own email)</span>
           )}
           {!isAdmin && <span className="text-xs text-gray-400 ml-2">(Only admin can change)</span>}
         </div>
@@ -216,7 +216,7 @@ export default function UserEditForm({
           </label>
           {isSelf && (
             <span className="text-xs text-gray-400 ml-1">
-              (You can't change your own admin status)
+              (You can&#39;t change your own admin status)
             </span>
           )}
         </div>

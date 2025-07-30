@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter, usePathname } from "next/navigation";
+import { useRouter } from "next/navigation";
 import type { PostDetail } from "@/api/models";
 import { Heart, MessageCircle } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
@@ -14,7 +14,7 @@ type PostCardProps = {
   isReplying?: boolean;
   children?: React.ReactNode;
   className?: string;
-  clickable?: boolean; // ←追加: ナビゲーションを有効化するか
+  clickable?: boolean;
 };
 
 export default function PostCard({
@@ -26,18 +26,18 @@ export default function PostCard({
   isReplying,
   children,
   className = "",
-  clickable = true, // ←追加: デフォルトtrue
+  clickable = true,
 }: PostCardProps) {
   const router = useRouter();
 
-  function handleCardClick(e: React.MouseEvent | React.KeyboardEvent) {
+  function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
     router.push(`/posts/${post.id}`);
   }
 
   function truncatePlaintext(text: string, maxLen: number) {
-    let plain = text
+    const plain = text
       .replace(/[#>*_`~\-!\[\]()]/g, " ")
       .replace(/\s+/g, " ")
       .trim();
