@@ -3,6 +3,7 @@
 import requests
 import os
 import sys
+import time
 
 APP_HOST = os.environ.get("FAKEBOOK_APP_HOST", "localhost")
 APP_PORT = int(os.environ.get("FAKEBOOK_APP_PORT", 3001))
@@ -78,7 +79,7 @@ def test_users():
   headers = {"Content-Type": "application/json"}
   cookies = {"session_id": session_id}
   user_input = {
-    "email": f"user1-{session_id[:8]}@example.com",
+    "email": f"user1-{session_id[:8]}@fakebook.com",
     "nickname": "user1",
     "is_admin": False,
     "introduction": "hi!",
@@ -232,7 +233,13 @@ def test_posts():
 
 def test_signup():
   print("[signup] start")
-  email = "signup_test@example.com"
+  admin_session_id = login()
+  res = requests.get(f"{BASE_URL}/auth", cookies={"session_id": admin_session_id})
+  res.raise_for_status()
+  session = res.json()
+  print(f"[session] {session}")
+  admin_id = session["user_id"]
+  email = f"signup_test+{int(time.time())}@fakebook.xyz"
   password = "signup_pw1"
   res = requests.post(
     f"{BASE_URL}/signup/start",
@@ -259,9 +266,31 @@ def test_signup():
   session_id = res.cookies.get("session_id")
   assert session_id
   print("[signup] login ok, session_id:", session_id)
-  admin_session = login()
-  cookies = {"session_id": admin_session}
-  res = requests.delete(f"{BASE_URL}/users/{user_id}", cookies=cookies)
+  res = requests.get(f"{BASE_URL}/users?limit=1000", cookies={"session_id": session_id})
+  assert res.status_code == 200
+  users = res.json()
+  assert any(u["id"] == admin_id and "@example." in u["email"] for u in users)
+  assert any(u["email"] == email for u in users)
+  print("[signup] list check ok")
+  res = requests.get(f"{BASE_URL}/users/detail?limit=1000", cookies={"session_id": session_id})
+  assert res.status_code == 200
+  users = res.json()
+  assert any(u["id"] == admin_id and "@example." in u["email"] for u in users)
+  assert any(u["email"] == email for u in users)
+  print("[signup] list detail check ok")
+  res = requests.get(f"{BASE_URL}/users/{admin_id}", cookies={"session_id": session_id})
+  assert res.status_code == 200
+  user = res.json()
+  print(f"[signup] get admin {user}")
+  assert user["id"] == admin_id
+  assert "@example." in user["email"]
+  res = requests.get(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
+  assert res.status_code == 200
+  user = res.json()
+  print(f"[signup] get new user {user}")
+  assert user["id"] == user_id
+  assert user["email"] == email
+  res = requests.delete(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
   assert res.status_code == 200, res.text
   print("[signup] user deleted")
   print("[test_signup] OK")

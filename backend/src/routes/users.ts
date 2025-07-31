@@ -4,7 +4,29 @@ import Redis from "ioredis";
 import { UsersService } from "../services/users";
 import { AuthService } from "../services/auth";
 import { AuthHelpers } from "./authHelpers";
-import { CreateUserInput, UpdateUserInput, UpdatePasswordInput } from "../models/user";
+import { User, UserDetail, CreateUserInput, UpdateUserInput, UpdatePasswordInput } from "../models/user";
+import { maskEmailByHash } from "../utils/format";
+
+function maskUserSensitiveInfo<T extends User | UserDetail>(
+  user: T,
+  isAdmin: boolean,
+  loginUserId: string,
+): T {
+  if (!user) return user;
+  if (isAdmin || user.id === loginUserId) return user;
+  return {
+    ...user,
+    email: maskEmailByHash(user.email),
+  } as T;
+}
+
+function maskUserListSensitiveInfo<T extends User | UserDetail>(
+  users: T[],
+  isAdmin: boolean,
+  loginUserId: string,
+): T[] {
+  return users.map((u) => maskUserSensitiveInfo(u, isAdmin, loginUserId));
+}
 
 export default function createUsersRouter(pgClient: Client, redis: Redis) {
   const router = Router();
@@ -49,18 +71,20 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
         ? req.query.focus_user_id.trim()
         : undefined;
-    const details = await usersService.listUsersDetail(
+    let users = await usersService.listUsersDetail(
       { offset, limit, order, query, nickname },
       focus_user_id,
     );
-    res.json(details);
+    users = maskUserListSensitiveInfo(users, loginUser.is_admin, loginUser.id);
+    res.json(users);
   });
 
   router.get("/:id", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    const user = await usersService.getUser(req.params.id);
+    let user = await usersService.getUser(req.params.id);
     if (!user) return res.status(404).json({ error: "not found" });
+    user = maskUserSensitiveInfo(user, loginUser.is_admin, loginUser.id);
     res.json(user);
   });
 
@@ -71,9 +95,10 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
         ? req.query.focus_user_id.trim()
         : undefined;
-    const detail = await usersService.getUserDetail(req.params.id, focus_user_id);
-    if (!detail) return res.status(404).json({ error: "not found" });
-    res.json(detail);
+    let user = await usersService.getUserDetail(req.params.id, focus_user_id);
+    if (!user) return res.status(404).json({ error: "not found" });
+    user = maskUserSensitiveInfo(user, loginUser.is_admin, loginUser.id);
+    res.json(user);
   });
 
   router.get("/", async (req: Request, res: Response) => {
@@ -97,10 +122,11 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
         ? req.query.focus_user_id.trim()
         : undefined;
-    const users = await usersService.listUsers(
+    let users = await usersService.listUsers(
       { offset, limit, order, query, nickname },
       focus_user_id,
     );
+    users = maskUserListSensitiveInfo(users, loginUser.is_admin, loginUser.id);
     res.json(users);
   });
 
@@ -224,11 +250,12 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
         ? req.query.focus_user_id.trim()
         : undefined;
-    const result = await usersService.listFolloweesDetail(
+    let users = await usersService.listFolloweesDetail(
       { follower_id, offset, limit, order },
       focus_user_id,
     );
-    res.json(result);
+    users = maskUserListSensitiveInfo(users, loginUser.is_admin, loginUser.id);
+    res.json(users);
   });
 
   router.get("/:id/followers/detail", async (req: Request, res: Response) => {
@@ -242,11 +269,12 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
         ? req.query.focus_user_id.trim()
         : undefined;
-    const result = await usersService.listFollowersDetail(
+    let users = await usersService.listFollowersDetail(
       { followee_id, offset, limit, order },
       focus_user_id,
     );
-    res.json(result);
+    users = maskUserListSensitiveInfo(users, loginUser.is_admin, loginUser.id);
+    res.json(users);
   });
 
   return router;
