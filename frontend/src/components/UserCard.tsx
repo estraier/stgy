@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { UserDetail } from "@/api/models";
+import Identicon from "@/components/Identicon";
 import { formatDateTime } from "@/utils/format";
 
 type UserCardProps = {
@@ -85,7 +86,7 @@ export default function UserCard({
     }
   }
 
-  function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
+  function handleCardClick(e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
     onClick?.(user);
@@ -117,26 +118,31 @@ export default function UserCard({
       }
     >
       <div className="flex items-center text-base font-semibold">
-        <span className="truncate max-w-[24ex] text-blue-700">{user.nickname}</span>
+        <Identicon
+          value={user.id + ":" + user.nickname}
+          size={24}
+          className="-mt-2 -ml-1 rounded-full border bg-gray-100 mr-2 flex-shrink-0 opacity-80"
+        />
+        <span className="-mt-1 truncate max-w-[24ex] text-blue-700">{user.nickname}</span>
         {isAdmin && (
-          <span className="ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs">admin</span>
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs">admin</span>
         )}
         {isAI && (
-          <span className="ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs">AI</span>
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs">AI</span>
         )}
         {isSelf && (
-          <span className="ml-2 px-2 py-1 bg-green-100 text-green-800 rounded text-xs">self</span>
+          <span className="-mt-1 ml-2 px-2 py-1 bg-green-100 text-green-800 rounded text-xs">self</span>
         )}
         {isFriend && (
-          <span className="ml-2 px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs">
             friend
           </span>
         )}
         {isFollower && (
-          <span className="ml-2 px-2 py-1 bg-pink-100 text-pink-800 rounded text-xs">follower</span>
+          <span className="-mt-1 ml-2 px-2 py-1 bg-pink-100 text-pink-800 rounded text-xs">follower</span>
         )}
         {isFollowee && (
-          <span className="ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">followee</span>
+          <span className="-mt-1 ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">followee</span>
         )}
         <span className="ml-auto">{followButton}</span>
       </div>

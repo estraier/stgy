@@ -2,6 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import type { PostDetail } from "@/api/models";
+import Identicon from "@/components/Identicon";
 import { Heart, MessageCircle } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
 
@@ -62,6 +63,16 @@ export default function PostCard({
       }
     >
       <div className="flex items-center text-sm mb-1">
+        <a
+          href={`/users/${post.owned_by}`}
+          onClick={(e) => e.stopPropagation()}
+        >
+        <Identicon
+          value={post.owned_by + ":" + post.owner_nickname}
+          size={24}
+          className="-mt-2 -ml-1 rounded-full border bg-gray-100 mr-2 flex-shrink-0 opacity-80"
+        />
+        </a>
         <a
           className="font-bold text-blue-700 hover:underline min-w-[20ex] max-w-[48ex] truncate inline-block align-bottom"
           href={`/users/${post.owned_by}`}
