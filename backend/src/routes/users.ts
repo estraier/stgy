@@ -4,7 +4,13 @@ import Redis from "ioredis";
 import { UsersService } from "../services/users";
 import { AuthService } from "../services/auth";
 import { AuthHelpers } from "./authHelpers";
-import { User, UserDetail, CreateUserInput, UpdateUserInput, UpdatePasswordInput } from "../models/user";
+import {
+  User,
+  UserDetail,
+  CreateUserInput,
+  UpdateUserInput,
+  UpdatePasswordInput,
+} from "../models/user";
 import { maskEmailByHash } from "../utils/format";
 
 function maskUserSensitiveInfo<T extends User | UserDetail>(
