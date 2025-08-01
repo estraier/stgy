@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useState } from "react";
 import {
   getPostDetail,
   listLikers,
@@ -39,7 +39,6 @@ export default function PageBody() {
 
   const [editing, setEditing] = useState(false);
   const [editBody, setEditBody] = useState("");
-  // const [editTags, setEditTags] = useState<string[]>([]); // ←未使用のため削除
   const [editSubmitting, setEditSubmitting] = useState(false);
   const [editError, setEditError] = useState<string | null>(null);
 
@@ -48,23 +47,25 @@ export default function PageBody() {
   const [likerLoading, setLikerLoading] = useState(false);
   const [likerHasMore, setLikerHasMore] = useState(false);
 
-  // --- Repliesページ&ソート順: クエリから取得してstate管理 ---
-  function getReplyOptsFromQuery() {
+  // メモ化した関数で依存関係を安定化
+  const getReplyOptsFromQuery = useCallback(() => {
     const pageRaw = searchParams.get("replyPage");
     const page = !pageRaw || isNaN(Number(pageRaw)) || Number(pageRaw) < 1 ? 1 : Number(pageRaw);
     const oldestFirst = searchParams.get("replyOldestFirst") === "1";
     return { page, oldestFirst };
-  }
-  const [{ page: replyPage, oldestFirst: replyOldestFirst }, setReplyOpts] =
-    useState(getReplyOptsFromQuery());
+  }, [searchParams]);
 
-  // クエリの変更にstateを同期
+  // 依存に使うsearchParamsの値を変数に代入
+  const replyPageParam = searchParams.get("replyPage");
+  const replyOldestFirstParam = searchParams.get("replyOldestFirst");
+
+  const [{ page: replyPage, oldestFirst: replyOldestFirst }, setReplyOpts] =
+    useState(getReplyOptsFromQuery);
+
   useEffect(() => {
     setReplyOpts(getReplyOptsFromQuery());
-    // eslint-disable-next-line
-  }, [searchParams.get("replyPage"), searchParams.get("replyOldestFirst")]);
+  }, [getReplyOptsFromQuery, replyPageParam, replyOldestFirstParam]);
 
-  // stateの変更はクエリに同期
   useEffect(() => {
     const opts = getReplyOptsFromQuery();
     if (opts.page !== replyPage || opts.oldestFirst !== replyOldestFirst) {
@@ -74,8 +75,7 @@ export default function PageBody() {
       else sp.delete("replyOldestFirst");
       router.replace(`?${sp.toString()}`, { scroll: false });
     }
-    // eslint-disable-next-line
-  }, [replyPage, replyOldestFirst]);
+  }, [getReplyOptsFromQuery, replyPage, replyOldestFirst, router, searchParams]);
 
   const [replyHasNext, setReplyHasNext] = useState(false);
   const [replyLoading, setReplyLoading] = useState(false);
@@ -95,7 +95,6 @@ export default function PageBody() {
         setPost(data);
         const tagLine = data.tags && data.tags.length > 0 ? "#" + data.tags.join(", #") + "\n" : "";
         setEditBody(tagLine + data.content);
-        // setEditTags(data.tags || []); // ←未使用なので削除
       })
       .catch((err) => setError(err?.message ?? "Failed to fetch post."))
       .finally(() => setLoading(false));
@@ -122,7 +121,6 @@ export default function PageBody() {
       .finally(() => setLikerLoading(false));
   }, [post, likerAll]);
 
-  // --- Repliesデータ取得: order切り替え ---
   useEffect(() => {
     if (!userId || !post) return;
     setReplyLoading(true);
@@ -285,7 +283,6 @@ export default function PageBody() {
   if (error) return <div className="text-center mt-10 text-red-600">{error}</div>;
   if (!post) return <div className="text-center mt-10 text-gray-500">No post found.</div>;
 
-  // --- ページ遷移・Oldest first切り替え ---
   function handleReplyPageChange(nextPage: number) {
     const sp = new URLSearchParams(searchParams);
     sp.set("replyPage", String(nextPage));
@@ -342,7 +339,6 @@ export default function PageBody() {
                 const tagLine =
                   post.tags && post.tags.length > 0 ? "#" + post.tags.join(", #") + "\n" : "";
                 setEditBody(tagLine + post.content);
-                // setEditTags(post.tags || []); // ←未使用のため削除
               }
               setEditing(true);
             }}

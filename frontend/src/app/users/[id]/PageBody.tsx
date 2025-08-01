@@ -25,17 +25,14 @@ export default function PageBody() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // ログイン中ユーザ情報
   const userId = status && status.state === "authenticated" ? status.session.user_id : "";
   const isAdmin = status && status.state === "authenticated" && status.session.user_is_admin;
 
-  // 対象ユーザデータ
   const [user, setUser] = useState<UserDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
 
-  // タブ・オプション・ページ
   function getQuery() {
     return {
       tab: (searchParams.get("tab") as (typeof TAB_VALUES)[number]) || "posts",
@@ -45,7 +42,6 @@ export default function PageBody() {
   }
   const { tab, oldestFirst, page } = getQuery();
 
-  // 投稿・ユーザリスト系
   const [posts, setPosts] = useState<PostDetail[]>([]);
   const [followers, setFollowers] = useState<UserDetail[]>([]);
   const [followees, setFollowees] = useState<UserDetail[]>([]);
@@ -56,13 +52,11 @@ export default function PageBody() {
   const isSelf = !!(user && userId && user.id === userId);
   const canEdit = isSelf || isAdmin;
 
-  // Reply関連
   const [replyTo, setReplyTo] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replySubmitting, setReplySubmitting] = useState(false);
 
-  // クエリ書き換え
   function setQuery(
     updates: Partial<{ tab: string; page: number; oldestFirst: string | undefined }>,
   ) {
@@ -81,7 +75,6 @@ export default function PageBody() {
     router.push(`${pathname}?${sp.toString()}`);
   }
 
-  // ユーザデータ取得
   useEffect(() => {
     if (!status) return;
     let canceled = false;
@@ -114,14 +107,12 @@ export default function PageBody() {
     };
   }, [id, status, userId]);
 
-  // タブ内容のリスト取得
   useEffect(() => {
     if (!user || !user.id) return;
     setListLoading(true);
     setListError(null);
 
     if (tab === "posts" || tab === "replies") {
-      // 投稿・リプライ
       const params: {
         owned_by: string;
         offset: number;
@@ -183,7 +174,6 @@ export default function PageBody() {
     }
   }, [tab, user?.id, page, oldestFirst, userId, user]);
 
-  // Like機能
   async function handleLike(post: PostDetail) {
     setPosts((prev) =>
       prev.map((p) =>
@@ -202,9 +192,7 @@ export default function PageBody() {
       } else {
         await addLike(post.id);
       }
-      // 再取得
       setTimeout(() => {
-        // タイミングずれによる数のズレ解消
         listPostsDetail({
           owned_by: user?.id,
           offset: (page - 1) * PAGE_SIZE,
@@ -215,7 +203,6 @@ export default function PageBody() {
         }).then((data) => setPosts(data.slice(0, PAGE_SIZE)));
       }, 100);
     } catch {
-      // エラー時はロールバック
       setTimeout(() => {
         listPostsDetail({
           owned_by: user?.id,
@@ -229,7 +216,6 @@ export default function PageBody() {
     }
   }
 
-  // Reply送信
   async function handleReplySubmit(e: React.FormEvent) {
     e.preventDefault();
     setReplySubmitting(true);
@@ -271,7 +257,6 @@ export default function PageBody() {
   if (error) return <div className="text-center mt-10 text-red-600">{error}</div>;
   if (!user) return <div className="text-center mt-10 text-gray-500">No user found.</div>;
 
-  // UI: モードラベル
   function tabLabel(tab: string) {
     switch (tab) {
       case "posts":
@@ -287,12 +272,10 @@ export default function PageBody() {
     }
   }
 
-  // ページ遷移
   function handlePageChange(nextPage: number) {
     setQuery({ page: nextPage, tab, oldestFirst: oldestFirst ? "1" : undefined });
   }
 
-  // タブ切り替え
   function handleTabChange(nextTab: (typeof TAB_VALUES)[number]) {
     setQuery({ tab: nextTab, page: 1, oldestFirst: oldestFirst ? "1" : undefined });
     setReplyTo(null);
@@ -300,7 +283,6 @@ export default function PageBody() {
     setReplyError(null);
   }
 
-  // Oldest first
   function handleOldestFirstToggle(checked: boolean) {
     setQuery({ oldestFirst: checked ? "1" : undefined, tab, page: 1 });
     setReplyTo(null);
@@ -310,10 +292,8 @@ export default function PageBody() {
 
   return (
     <main className="max-w-3xl mx-auto mt-8 p-4">
-      {/* ユーザプロフィール */}
       <UserCard user={user} truncated={false} focusUserId={userId} clickable={false} />
 
-      {/* Edit */}
       {canEdit && !editing && (
         <div className="mt-4 flex justify-end">
           <button
@@ -339,7 +319,6 @@ export default function PageBody() {
         </div>
       )}
 
-      {/* モード切替/オプション */}
       <div className="flex gap-1 mt-6 mb-2">
         {TAB_VALUES.map((t) => (
           <button
@@ -363,7 +342,6 @@ export default function PageBody() {
         </label>
       </div>
 
-      {/* 一覧エリア */}
       <div>
         {listLoading && <div className="text-gray-500">Loading…</div>}
         {listError && <div className="text-red-600">{listError}</div>}
@@ -443,7 +421,6 @@ export default function PageBody() {
           </>
         )}
 
-        {/* ページネーション */}
         {!listLoading && !listError && (
           <div className="mt-6 flex justify-center gap-4">
             <button

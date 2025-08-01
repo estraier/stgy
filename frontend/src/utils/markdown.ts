@@ -1,19 +1,7 @@
-// HTMLエスケープ
-function escapeHTML(text: string): string {
-  return text
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
-}
-
-// パース用ノード型
 type Node =
   | { type: "text"; text: string }
   | { type: "element"; tag: string; attrs?: string; children: Node[] };
 
-// Markdown-likeなテキストを簡易パースしてノード配列を返す
 export function parseMarkdownBlocks(mdText: string): Node[] {
   const lines = mdText.replace(/\r\n/g, "\n").split("\n");
   const nodes: Node[] = [];
@@ -73,9 +61,9 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       currQuote = [];
     }
   }
+
   for (let i = 0; i < lines.length; ++i) {
     const line = lines[i];
-    // コードブロック
     const codeFence = line.match(/^```(\w*)/);
     if (codeFence) {
       flushPara();
@@ -103,7 +91,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       codeLines.push(line);
       continue;
     }
-    // 画像 ![caption](url)
     const img = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
     if (img) {
       flushPara();
@@ -125,7 +112,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       });
       continue;
     }
-    // テーブル |a|b|c|
     const tableRow = line.match(/^\|(.+)\|$/);
     if (tableRow) {
       flushPara();
@@ -136,7 +122,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     } else if (currTable.length) {
       flushTable();
     }
-    // blockquote: 行頭 > (スペース必須)
     const quote = line.match(/^> (.*)$/);
     if (quote) {
       flushPara();
@@ -147,7 +132,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     } else if (currQuote.length) {
       flushQuote();
     }
-    // 空行で段落切り替え
     if (/^\s*$/.test(line)) {
       flushPara();
       flushList();
@@ -155,7 +139,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       flushQuote();
       continue;
     }
-    // ヘッダ
     const h = line.match(/^(#{1,3}) (.+)$/);
     if (h) {
       flushPara();
@@ -170,7 +153,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       });
       continue;
     }
-    // リスト
     const li = line.match(/^(\s*)- (.+)$/);
     if (li) {
       flushPara();
@@ -193,14 +175,12 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       });
       continue;
     }
-    // 通常文
     currPara.push(line);
   }
   flushPara();
   flushList();
   flushTable();
   flushQuote();
-  // 末尾でコードブロック開いたまま終わってたら
   if (inCode && codeLines.length > 0) {
     nodes.push({
       type: "element",
@@ -212,10 +192,23 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
   return nodes;
 }
 
-// インライン要素パース（リンク・改行・装飾）
+function sumTextLenAndNewlines(nodes: Node[]): { length: number; newlines: number } {
+  let length = 0;
+  let newlines = 0;
+  for (const node of nodes) {
+    if (node.type === "text") {
+      length += node.text.length;
+      newlines += node.text.match(/\n/g)?.length ?? 0;
+    } else if (node.type === "element") {
+      const childResult = sumTextLenAndNewlines(node.children || []);
+      length += childResult.length;
+      newlines += childResult.newlines;
+    }
+  }
+  return { length, newlines };
+}
+
 function parseInline(text: string): Node[] {
-  // 太字/斜体/下線: **bold** / *italic* / __underline__
-  // 1回だけ最初にマッチしたものだけを再帰的に処理
   const bold = /\*\*([^\*]+)\*\*/;
   const italic = /\*([^\*]+)\*/;
   const underline = /__([^_]+)__/;
@@ -253,8 +246,6 @@ function parseInline(text: string): Node[] {
       ...parseInline(text.slice(m.index + m[0].length)),
     ];
   }
-
-  // [anchor](url)リンク
   const linkRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
   const nodes: Node[] = [];
   let last = 0,
@@ -272,8 +263,6 @@ function parseInline(text: string): Node[] {
     last = match.index + match[0].length;
   }
   text = text.slice(last);
-
-  // 自動リンク
   const urlRe = /https?:\/\/[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/g;
   last = 0;
   while ((match = urlRe.exec(text))) {
@@ -291,8 +280,6 @@ function parseInline(text: string): Node[] {
   if (last < text.length) {
     nodes.push({ type: "text", text: text.slice(last) });
   }
-
-  // 改行
   return nodes.flatMap((n) =>
     typeof n === "object" && n.type === "text"
       ? n.text.split(/\n/).flatMap((frag, i, _arr) =>
@@ -306,21 +293,34 @@ function parseInline(text: string): Node[] {
       : [n],
   );
 }
+
 function parseInlineText(text: string): Node[] {
   return text === "" ? [] : [{ type: "text", text }];
 }
 
-// -----------------------------
-// maxLenに従いtextContentを途中カットしつつHTMLに変換する
-export function renderBody(mdText: string, maxLen?: number, imgLen: number = 50): string {
-  const nodes = parseMarkdownBlocks(mdText);
+function escapeHTML(text: string): string {
+  return text
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
 
-  // textContent長をカウントしながら再帰的にノードをHTML化
+export function renderBody(
+  mdText: string,
+  maxLen?: number,
+  maxHeight?: number,
+  imgLen: number = 50,
+  imgHeight: number = 6,
+): string {
+  const nodes = parseMarkdownBlocks(mdText);
   const state = {
     remain: typeof maxLen === "number" ? maxLen : Number.POSITIVE_INFINITY,
     cut: false,
+    height: 0,
+    maxHeight: typeof maxHeight === "number" ? maxHeight : Number.POSITIVE_INFINITY,
   };
-
   function htmlFromNodes(nodes: Node[]): string {
     let html = "";
     for (const node of nodes) {
@@ -341,13 +341,42 @@ export function renderBody(mdText: string, maxLen?: number, imgLen: number = 50)
           state.remain -= s.length;
         }
       } else if (node.type === "element") {
-        // brだけ特別扱い: textContentは増やさない
+        const blockTags = [
+          "p",
+          "pre",
+          "blockquote",
+          "h1",
+          "h2",
+          "h3",
+          "h4",
+          "h5",
+          "h6",
+          "tr",
+          "li",
+        ];
+        if (blockTags.includes(node.tag)) {
+          const { length: contentLength, newlines } = sumTextLenAndNewlines(node.children || []);
+          let heightInc = 1 + Math.floor(contentLength / 100);
+          if (node.tag === "pre" && newlines > 1) {
+            heightInc = Math.max(heightInc, newlines);
+          }
+          state.height += heightInc;
+          if (state.height > state.maxHeight) {
+            state.cut = true;
+            break;
+          }
+        }
         if (node.tag === "br") {
+          state.height += 1;
+          if (state.height > state.maxHeight) {
+            state.cut = true;
+            break;
+          }
           html += `<br>`;
           continue;
         }
         if (node.tag === "div" && node.attrs && node.attrs.includes("image-block")) {
-          if (state.remain < imgLen) {
+          if (state.remain < imgLen || state.height + imgHeight > state.maxHeight) {
             state.cut = true;
             break;
           }
@@ -359,6 +388,7 @@ export function renderBody(mdText: string, maxLen?: number, imgLen: number = 50)
           }
           html += `</div>`;
           state.remain -= imgLen;
+          state.height += imgHeight;
           continue;
         }
         html += `<${node.tag}${node.attrs || ""}>`;

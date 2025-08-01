@@ -18,7 +18,7 @@ import { parsePostSearchQuery, serializePostSearchQuery } from "@/utils/parse";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 20;
 const TAB_VALUES = ["following", "liked", "all"] as const;
 
 export default function PageBody() {
@@ -177,12 +177,7 @@ export default function PageBody() {
     );
     setLoading(false);
     const tabParamMissing = !searchParams.has("tab");
-    if (
-      tabParamMissing &&
-      tab === "following" &&
-      data.length === 0 &&
-      !isSearchMode
-    ) {
+    if (tabParamMissing && tab === "following" && data.length === 0 && !isSearchMode) {
       setQuery({ tab: "all", page: 1 });
     }
   }

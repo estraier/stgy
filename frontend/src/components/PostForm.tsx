@@ -13,9 +13,9 @@ type PostFormProps = {
   buttonLabel?: string;
   placeholder?: string;
   className?: string;
-  isEdit?: boolean; // 編集フォームとして使うか
-  deletable?: boolean; // 内容が空ならDeleteボタン表示
-  onDelete?: () => void; // Deleteハンドラ
+  isEdit?: boolean;
+  deletable?: boolean;
+  onDelete?: () => void;
 };
 
 export default function PostForm({

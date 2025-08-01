@@ -12,7 +12,6 @@ export default function LoginForm() {
   const [isLoading, setIsLoading] = useState(false);
   const router = useRouter();
 
-  // フォーム初期化時にlocalStorageから直近のemailをセット
   useEffect(() => {
     const last = typeof window !== "undefined" ? localStorage.getItem(LAST_EMAIL_KEY) : "";
     if (last) setEmail(last);
@@ -24,7 +23,7 @@ export default function LoginForm() {
     setIsLoading(true);
     try {
       await login(email, password);
-      localStorage.setItem(LAST_EMAIL_KEY, email); // ログイン成功時に保存
+      localStorage.setItem(LAST_EMAIL_KEY, email);
       router.replace("/posts");
     } catch (e) {
       setError(e ? String(e) : "Failed to log in");

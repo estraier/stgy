@@ -27,11 +27,19 @@ body {
   font-size: 130%;
   font-weight: bold;
 }
+.markdown-body.user-introduction h1 {
+  font-size: 0.85ex 0;
+  font-size: 120%;
+}
 
 .markdown-body h2 {
   margin: 0.9ex 0;
   font-size: 115%;
   font-weight: bold;
+}
+.markdown-body.user-introduction h2 {
+  font-size: 0.92ex 0;
+  font-size: 110%;
 }
 
 .markdown-body h3 {

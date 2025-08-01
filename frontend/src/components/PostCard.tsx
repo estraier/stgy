@@ -31,13 +31,11 @@ export default function PostCard({
   clickable = true,
 }: PostCardProps) {
   const router = useRouter();
-
   function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
     router.push(`/posts/${post.id}`);
   }
-
   return (
     <article
       className={`pt-4 pb-2 pl-4 pr-3 border rounded bg-white shadow-sm ${clickable ? "cursor-pointer" : ""} ${className}`}
@@ -56,10 +54,7 @@ export default function PostCard({
       }
     >
       <div className="flex items-center text-sm mb-1">
-        <a
-          href={`/users/${post.owned_by}`}
-          onClick={(e) => e.stopPropagation()}
-        >
+        <a href={`/users/${post.owned_by}`} onClick={(e) => e.stopPropagation()}>
           <Identicon
             value={post.owned_by + ":" + post.owner_nickname}
             size={24}
@@ -110,7 +105,7 @@ export default function PostCard({
         className="markdown-body post-content"
         style={{ minHeight: 36, userSelect: "text" }}
         dangerouslySetInnerHTML={{
-          __html: truncated ? renderBody(post.content, 200) : renderBody(post.content),
+          __html: truncated ? renderBody(post.content, 200, 10) : renderBody(post.content),
         }}
       />
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">

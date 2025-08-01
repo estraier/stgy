@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { UserDetail } from "@/api/models";
 import Identicon from "@/components/Identicon";
 import { formatDateTime } from "@/utils/format";
-import { renderBody } from "@/utils/markdown"; // 追加
+import { renderBody } from "@/utils/markdown";
 
 type UserCardProps = {
   user: UserDetail;
@@ -12,7 +12,7 @@ type UserCardProps = {
   className?: string;
   onClick?: (user: UserDetail) => void;
   focusUserId?: string;
-  clickable?: boolean; // 追加
+  clickable?: boolean;
 };
 
 export default function UserCard({
@@ -21,7 +21,7 @@ export default function UserCard({
   className = "",
   onClick,
   focusUserId,
-  clickable = true, // デフォルトtrue
+  clickable = true,
 }: UserCardProps) {
   const [hovering, setHovering] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -87,7 +87,7 @@ export default function UserCard({
     }
   }
 
-  function handleCardClick(e: React.MouseEvent | React.KeyboardEvent) {
+  function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
     onClick?.(user);
@@ -118,13 +118,17 @@ export default function UserCard({
         />
         <span className="-mt-1 truncate max-w-[24ex] text-blue-700">{user.nickname}</span>
         {isAdmin && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs">admin</span>
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs">
+            admin
+          </span>
         )}
         {isAI && (
           <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs">AI</span>
         )}
         {isSelf && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-green-100 text-green-800 rounded text-xs">self</span>
+          <span className="-mt-1 ml-2 px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
+            self
+          </span>
         )}
         {isFriend && (
           <span className="-mt-1 ml-2 px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs">
@@ -132,17 +136,23 @@ export default function UserCard({
           </span>
         )}
         {isFollower && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-pink-100 text-pink-800 rounded text-xs">follower</span>
+          <span className="-mt-1 ml-2 px-2 py-1 bg-pink-100 text-pink-800 rounded text-xs">
+            follower
+          </span>
         )}
         {isFollowee && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">followee</span>
+          <span className="-mt-1 ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
+            followee
+          </span>
         )}
         <span className="ml-auto">{followButton}</span>
       </div>
       <div
         className="markdown-body user-introduction"
         dangerouslySetInnerHTML={{
-          __html: renderBody(user.introduction ?? "", truncated ? 200 : undefined),
+          __html: truncated
+            ? renderBody(user.introduction ?? "", 200, 10)
+            : renderBody(user.introduction ?? ""),
         }}
       />
       {!truncated && user.ai_model && user.ai_model.trim() !== "" && (

@@ -17,7 +17,6 @@ export default function PageBody() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  // クエリパラメータから状態復元
   function getQuery() {
     return {
       tab: (searchParams.get("tab") as (typeof TAB_VALUES)[number]) || "followees",
@@ -28,7 +27,6 @@ export default function PageBody() {
   }
   const { tab, page, qParam, oldestFirst } = getQuery();
 
-  // useMemoでオブジェクトの参照を安定化
   const searchQueryObj = useMemo(() => (qParam ? parseUserSearchQuery(qParam) : {}), [qParam]);
 
   const userId = status.state === "authenticated" ? status.session.user_id : undefined;
@@ -41,13 +39,11 @@ export default function PageBody() {
 
   const effectiveTab = isSearchMode ? "all" : tab;
 
-  // 状態
   const [users, setUsers] = useState<UserDetail[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasNext, setHasNext] = useState(false);
 
-  // クエリの変更
   function setQuery(
     updates: Partial<{ tab: string; page: number; q: string; oldestFirst: string | undefined }>,
   ) {
@@ -66,13 +62,11 @@ export default function PageBody() {
     router.push(`${pathname}?${sp.toString()}`);
   }
 
-  // データフェッチ
   useEffect(() => {
     if (status.state !== "authenticated") return;
     setLoading(true);
     setError(null);
 
-    // 型安全なparams
     const params: {
       offset: number;
       limit: number;
@@ -125,7 +119,6 @@ export default function PageBody() {
 
   if (status.state !== "authenticated") return null;
 
-  // Oldest first切り替え
   function handleOldestFirstToggle(checked: boolean) {
     setQuery({
       oldestFirst: checked ? "1" : undefined,
@@ -135,7 +128,6 @@ export default function PageBody() {
     });
   }
 
-  // ページ遷移
   function handlePageChange(nextPage: number) {
     setQuery({
       page: nextPage,
@@ -145,7 +137,6 @@ export default function PageBody() {
     });
   }
 
-  // タブ切替
   function handleTabChange(nextTab: (typeof TAB_VALUES)[number]) {
     setQuery({
       tab: nextTab,

@@ -67,7 +67,6 @@ export default function UserEditForm({
     }
   }
 
-  // --- 更新ロジック ---
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
@@ -88,7 +87,6 @@ export default function UserEditForm({
       setError("Introduction is required.");
       return;
     }
-
     setSubmitting(true);
     try {
       const input: Record<string, unknown> = {
@@ -119,9 +117,7 @@ export default function UserEditForm({
     }
   }
 
-  // --- 削除ボタン表示条件 ---
-  const canDelete =
-    isAdmin && !isSelf && email.trim() === "";
+  const canDelete = isAdmin && !isSelf && email.trim() === "";
 
   return (
     <form
@@ -277,7 +273,8 @@ export default function UserEditForm({
       </div>
       {canDelete && (
         <div className="text-xs text-red-700 mt-2">
-          This will <b>permanently delete</b> this user and all their data.<br />
+          This will <b>permanently delete</b> this user and all their data.
+          <br />
           Are you sure?
         </div>
       )}
