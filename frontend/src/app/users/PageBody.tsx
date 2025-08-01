@@ -8,7 +8,7 @@ import type { UserDetail } from "@/api/models";
 import { parseUserSearchQuery, serializeUserSearchQuery } from "@/utils/parse";
 import UserCard from "@/components/UserCard";
 
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 20;
 const TAB_VALUES = ["followees", "followers", "all"] as const;
 
 export default function PageBody() {

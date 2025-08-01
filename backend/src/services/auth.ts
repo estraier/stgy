@@ -5,6 +5,8 @@ import type { SessionInfo } from "../models/session";
 
 export type LoginResult = { sessionId: string; userId: string };
 
+const SESSION_TTL = 60 * 60 * 24;
+
 export class AuthService {
   private pgClient: Client;
   private redis: Redis;
@@ -35,13 +37,13 @@ export class AuthService {
       user_is_admin,
       logged_in_at: new Date().toISOString(),
     };
-    await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", 3600);
+    await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", SESSION_TTL);
     return { sessionId, userId: user_id };
   }
 
   async getSessionInfo(sessionId: string): Promise<SessionInfo | null> {
     if (!sessionId) return null;
-    const value = await this.redis.getex(`session:${sessionId}`, "EX", 3600);
+    const value = await this.redis.getex(`session:${sessionId}`, "EX", SESSION_TTL);
     if (!value) return null;
     try {
       return JSON.parse(value) as SessionInfo;

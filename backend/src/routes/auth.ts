@@ -12,7 +12,6 @@ export default function createAuthRouter(pgClient: Client, redis: Redis) {
     if (!email || !password) {
       return res.status(400).json({ error: "email and password are needed" });
     }
-
     try {
       const { sessionId } = await authService.login(email, password);
       res.cookie("session_id", sessionId, {
@@ -30,10 +29,8 @@ export default function createAuthRouter(pgClient: Client, redis: Redis) {
   router.get("/", async (req: Request, res: Response) => {
     const sessionId = req.cookies.session_id;
     if (!sessionId) return res.status(401).json({ error: "no session ID" });
-
     const sessionInfo = await authService.getSessionInfo(sessionId);
     if (!sessionInfo) return res.status(401).json({ error: "no matching session" });
-
     res.json(sessionInfo);
   });
 
