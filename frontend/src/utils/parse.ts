@@ -149,7 +149,7 @@ export function parseBodyAndTags(body: string): { content: string; tags: string[
   for (let line of lines) {
     line = line.replace(/\r$/, "").replace(/\s+$/, "");
     if (line) {
-      if (forward_lines.length === 0 && line.startsWith("#")) {
+      if (forward_lines.length === 0 && /^#[^#\s]/.test(line)) {
         forward_tag_lines.push(line);
       } else {
         forward_lines.push(line);
@@ -163,7 +163,7 @@ export function parseBodyAndTags(body: string): { content: string; tags: string[
   for (let i = forward_lines.length - 1; i >= 0; --i) {
     const line = forward_lines[i];
     if (line) {
-      if (reverse_lines.length === 0 && line.startsWith("#")) {
+      if (reverse_lines.length === 0 && /^#[^#\s]/.test(line)) {
         reverse_tag_lines.push(line);
       } else {
         reverse_lines.push(line);

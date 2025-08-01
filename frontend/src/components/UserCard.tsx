@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import type { UserDetail } from "@/api/models";
 import Identicon from "@/components/Identicon";
 import { formatDateTime } from "@/utils/format";
+import { renderBody } from "@/utils/markdown"; // 追加
 
 type UserCardProps = {
   user: UserDetail;
@@ -92,14 +93,6 @@ export default function UserCard({
     onClick?.(user);
   }
 
-  function truncatePlainText(text: string, maxLen: number) {
-    const plain = (text ?? "")
-      .replace(/[#>*_`~\-!\[\]()]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    return plain.length > maxLen ? plain.slice(0, maxLen) + "…" : plain;
-  }
-
   return (
     <article
       className={`p-4 border rounded shadow-sm bg-white ${clickable ? "cursor-pointer" : ""} ${className}`}
@@ -146,9 +139,12 @@ export default function UserCard({
         )}
         <span className="ml-auto">{followButton}</span>
       </div>
-      <div className="text-sm mt-1 text-gray-700">
-        {truncated ? truncatePlainText(user.introduction ?? "", 200) : (user.introduction ?? "")}
-      </div>
+      <div
+        className="markdown-body user-introduction"
+        dangerouslySetInnerHTML={{
+          __html: renderBody(user.introduction ?? "", truncated ? 200 : undefined),
+        }}
+      />
       {!truncated && user.ai_model && user.ai_model.trim() !== "" && (
         <div className="text-xs text-gray-600 mt-2">
           <div className="font-semibold">AI Model:</div>

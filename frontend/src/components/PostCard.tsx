@@ -5,6 +5,7 @@ import type { PostDetail } from "@/api/models";
 import Identicon from "@/components/Identicon";
 import { Heart, MessageCircle } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
+import { renderBody } from "@/utils/markdown";
 
 type PostCardProps = {
   post: PostDetail;
@@ -37,14 +38,6 @@ export default function PostCard({
     router.push(`/posts/${post.id}`);
   }
 
-  function truncatePlaintext(text: string, maxLen: number) {
-    const plain = text
-      .replace(/[#>*_`~\-!\[\]()]/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-    return plain.length > maxLen ? plain.slice(0, maxLen) + "…" : plain;
-  }
-
   return (
     <article
       className={`pt-4 pb-2 pl-4 pr-3 border rounded bg-white shadow-sm ${clickable ? "cursor-pointer" : ""} ${className}`}
@@ -67,11 +60,24 @@ export default function PostCard({
           href={`/users/${post.owned_by}`}
           onClick={(e) => e.stopPropagation()}
         >
-        <Identicon
-          value={post.owned_by + ":" + post.owner_nickname}
-          size={24}
-          className="-mt-2 -ml-1 rounded-full border bg-gray-100 mr-2 flex-shrink-0 opacity-80"
-        />
+          <Identicon
+            value={post.owned_by + ":" + post.owner_nickname}
+            size={24}
+            className="-mt-2 -ml-1 rounded-full border bg-gray-100 mr-2 flex-shrink-0 opacity-80 cursor-pointer"
+            tabIndex={0}
+            role="button"
+            ariaLabel="Show post owner detail"
+            onClick={(e) => {
+              e.stopPropagation();
+              router.push(`/users/${post.owned_by}`);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" || e.key === " ") {
+                e.stopPropagation();
+                router.push(`/users/${post.owned_by}`);
+              }
+            }}
+          />
         </a>
         <a
           className="font-bold text-blue-700 hover:underline min-w-[20ex] max-w-[48ex] truncate inline-block align-bottom"
@@ -100,9 +106,13 @@ export default function PostCard({
           {formatDateTime(new Date(post.created_at))}
         </a>
       </div>
-      <div style={{ minHeight: 36, userSelect: "text" }}>
-        {truncated ? truncatePlaintext(post.content, 200) : post.content}
-      </div>
+      <div
+        className="markdown-body post-content"
+        style={{ minHeight: 36, userSelect: "text" }}
+        dangerouslySetInnerHTML={{
+          __html: truncated ? renderBody(post.content, 200) : renderBody(post.content),
+        }}
+      />
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
         {post.tags && post.tags.length > 0 && (
           <div>
