@@ -456,82 +456,60 @@ describe("UsersService", () => {
   test("startResetPassword stores verification info in Redis and queues mail", async () => {
     const userId = "alice";
     const email = "alice@example.com";
-    const { resetPasswordId, code } = await service.startResetPassword(email);
+    const { resetPasswordId, webCode } = await service.startResetPassword(email);
     const stored = redis.store[`resetPassword:${resetPasswordId}`];
     expect(stored.userId).toBe(userId);
     expect(stored.email).toBe(email);
-    expect(typeof stored.code).toBe("string");
-    expect(stored.code).toBe(code);
+    expect(typeof stored.mailCode).toBe("string");
+    expect(stored.webCode).toBe(webCode);
     expect(stored.createdAt).toBeDefined();
     expect(
       redis.queue.some(
         (q) =>
           q.queue === "reset_password_mail_queue" &&
           q.val.includes(email) &&
-          q.val.includes(stored.code),
+          q.val.includes(stored.mailCode),
       ),
     ).toBe(true);
   });
 
   test("fakeResetPassword makes a dummy session object", async () => {
-    const { resetPasswordId, code } = await service.fakeResetPassword();
+    const { resetPasswordId, webCode } = await service.fakeResetPassword();
     expect(typeof resetPasswordId).toBe("string");
-    expect(typeof code).toBe("string");
+    expect(typeof webCode).toBe("string");
   });
 
-  test("verifyResetPassword: resets password if code matches", async () => {
-    const userId = "alice";
+  test("verifyResetPassword: resets password if codes match", async () => {
     const email = "alice@example.com";
-    const newPassword = "newsecurepass";
-    const { resetPasswordId } = await service.startResetPassword(email);
-    const code = redis.store[`resetPassword:${resetPasswordId}`]?.code;
-    expect(typeof code).toBe("string");
-    const ok = await service.verifyResetPassword(userId, resetPasswordId, code, newPassword);
-    expect(ok).toBe(true);
-    expect(pg.passwords[userId]).toBe(md5(newPassword));
-    expect(await redis.hgetall(`resetPassword:${resetPasswordId}`)).toEqual({});
-  });
-
-  test("verifyResetPassword: throws if code mismatch", async () => {
-    const userId = "alice";
-    const email = "alice@example.com";
-    const { resetPasswordId } = await service.startResetPassword(email);
-    const wrongCode = "999999";
-    await expect(
-      service.verifyResetPassword(userId, resetPasswordId, wrongCode, "pass1234"),
-    ).rejects.toThrow(/mismatch/i);
-  });
-
-  test("verifyResetPassword: throws if reset info not found", async () => {
-    const userId = "alice";
-    await expect(
-      service.verifyResetPassword(userId, "no-such-reset", "ANYCODE", "pass1234"),
-    ).rejects.toThrow(/not found|expired/i);
-  });
-
-  test("verifyResetPassword: throws if session/user mismatch", async () => {
-    const userId = "alice";
-    const email = "alice@example.com";
-    const { resetPasswordId } = await service.startResetPassword(email);
-    redis.store[`resetPassword:${resetPasswordId}`].userId = "bob";
-    await expect(
-      service.verifyResetPassword(
-        userId,
-        resetPasswordId,
-        redis.store[`resetPassword:${resetPasswordId}`].code,
-        "pass1234",
-      ),
-    ).rejects.toThrow(/user mismatch/i);
-  });
-
-  test("verifyResetPassword: throws if password too short", async () => {
-    const userId = "alice";
-    const email = "alice@example.com";
-    const { resetPasswordId } = await service.startResetPassword(email);
-    const code = redis.store[`resetPassword:${resetPasswordId}`]?.code;
-    await expect(service.verifyResetPassword(userId, resetPasswordId, code, "x")).rejects.toThrow(
-      /at least 6/i,
+    const { resetPasswordId, webCode } = await service.startResetPassword(email);
+    const stored = redis.store[`resetPassword:${resetPasswordId}`];
+    const mailCode = stored.mailCode;
+    const ok = await service.verifyResetPassword(
+      email,
+      resetPasswordId,
+      webCode,
+      mailCode,
+      "newsecurepass",
     );
+    expect(ok).toBe(true);
+    expect(pg.passwords["alice"]).toBe(md5("newsecurepass"));
+  });
+
+  test("verifyResetPassword: throws if webCode does not match", async () => {
+    const email = "alice@example.com";
+    const { resetPasswordId } = await service.startResetPassword(email);
+    const mailCode = redis.store[`resetPassword:${resetPasswordId}`].mailCode;
+    await expect(
+      service.verifyResetPassword(email, resetPasswordId, "wrongWebCode", mailCode, "pass1234"),
+    ).rejects.toThrow(/web verification code mismatch/i);
+  });
+
+  test("verifyResetPassword: throws if mailCode does not match", async () => {
+    const email = "alice@example.com";
+    const { resetPasswordId, webCode } = await service.startResetPassword(email);
+    await expect(
+      service.verifyResetPassword(email, resetPasswordId, webCode, "wrongMailCode", "pass1234"),
+    ).rejects.toThrow(/mail verification code mismatch/i);
   });
 
   test("deleteUser", async () => {

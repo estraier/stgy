@@ -310,50 +310,55 @@ export class UsersService {
     return (res.rowCount ?? 0) > 0;
   }
 
-  async startResetPassword(email: string): Promise<{ resetPasswordId: string; code: string }> {
+  async startResetPassword(email: string): Promise<{ resetPasswordId: string; webCode: string }> {
     const res = await this.pgClient.query(`SELECT id FROM users WHERE email = $1`, [email]);
     if (!res.rows[0] || !res.rows[0].id) throw new Error("User not found");
     const userId: string = res.rows[0].id;
     const resetPasswordId = uuidv4();
-    const code = generateVerificationCode();
+    const webCode = generateVerificationCode();
+    const mailCode = generateVerificationCode();
     const key = `resetPassword:${resetPasswordId}`;
     await this.redis.hmset(key, {
       userId,
       email,
-      code,
+      webCode,
+      mailCode,
       createdAt: new Date().toISOString(),
     });
     await this.redis.expire(key, 900);
     await this.redis.lpush(
       RESET_PASSWORD_MAIL_QUEUE,
-      JSON.stringify({ email, code, resetPasswordId }),
+      JSON.stringify({ email, mailCode, resetPasswordId }),
     );
-    return { resetPasswordId, code };
+    return { resetPasswordId, webCode };
   }
 
-  async fakeResetPassword(): Promise<{ resetPasswordId: string; code: string }> {
+  async fakeResetPassword(): Promise<{ resetPasswordId: string; webCode: string }> {
     const resetPasswordId = uuidv4();
-    const code = generateVerificationCode();
-    return { resetPasswordId, code };
+    const webCode = generateVerificationCode();
+    return { resetPasswordId, webCode };
   }
 
   async verifyResetPassword(
-    userId: string,
+    email: string,
     resetPasswordId: string,
-    code: string,
+    webCode: string,
+    mailCode: string,
     newPassword: string,
   ): Promise<boolean> {
     const key = `resetPassword:${resetPasswordId}`;
     const data = await this.redis.hgetall(key);
-    if (!data || !data.userId || !data.code) throw new Error("Reset session not found or expired");
-    if (data.userId !== userId) throw new Error("Session/user mismatch");
-    if (data.code !== code) throw new Error("Verification code mismatch");
+    if (!data || !data.userId || !data.email || !data.webCode || !mailCode)
+      throw new Error("Reset session not found or expired");
+    if (data.email !== email) throw new Error("Session/user mismatch");
+    if (data.webCode !== webCode) throw new Error("Web verification code mismatch");
+    if (data.mailCode !== mailCode) throw new Error("Mail verification code mismatch");
     if (!newPassword || newPassword.trim().length < 6)
       throw new Error("Password must be at least 6 characters");
     const passwordHash = crypto.createHash("md5").update(newPassword).digest("hex");
     const res = await this.pgClient.query(`UPDATE users SET password = $1 WHERE id = $2`, [
       passwordHash,
-      userId,
+      data.userId,
     ]);
     await this.redis.del(key);
     return (res.rowCount ?? 0) > 0;

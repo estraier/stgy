@@ -228,14 +228,21 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     }
   });
 
-  router.post("/:id/password/reset/verify", async (req: Request, res: Response) => {
-    const userId = req.params.id;
-    const { resetPasswordId, code, newPassword } = req.body;
-    if (!resetPasswordId || !code || !newPassword) {
-      return res.status(400).json({ error: "resetPasswordId, code, newPassword are required" });
+  router.post("/password/reset/verify", async (req: Request, res: Response) => {
+    const { email, resetPasswordId, webCode, mailCode, newPassword } = req.body;
+    if (!email || !resetPasswordId || !webCode || !mailCode || !newPassword) {
+      return res
+        .status(400)
+        .json({ error: "email, resetPasswordId, webCode, mailCode, newPassword are required" });
     }
     try {
-      const ok = await usersService.verifyResetPassword(userId, resetPasswordId, code, newPassword);
+      const ok = await usersService.verifyResetPassword(
+        email,
+        resetPasswordId,
+        webCode,
+        mailCode,
+        newPassword,
+      );
       if (!ok) return res.status(400).json({ error: "invalid or expired code/session" });
       res.json({ result: "ok" });
     } catch (e: unknown) {

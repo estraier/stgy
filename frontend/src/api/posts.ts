@@ -95,13 +95,7 @@ export async function getPostDetail(id: string, focusUserId?: string): Promise<P
     { method: "GET" },
   );
   if (!res.ok) throw new Error(await extractError(res));
-  //return res.json();
-
-  const j = await res.json();
-
-  console.log("HOGE", j);
-
-  return j;
+  return res.json();
 }
 
 export async function listPostsDetail(

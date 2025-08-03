@@ -125,6 +125,32 @@ export async function updateUserPassword(
   return res.json();
 }
 
+export async function startResetPassword(
+  email: string,
+): Promise<{ resetPasswordId: string; code: string }> {
+  const res = await apiFetch("/users/password/reset/start", {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function verifyResetPassword(params: {
+  email: string;
+  resetPasswordId: string;
+  webCode: string;
+  mailCode: string;
+  newPassword: string;
+}): Promise<{ result: string }> {
+  const res = await apiFetch("/users/password/reset/verify", {
+    method: "POST",
+    body: JSON.stringify(params),
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
 export async function addFollower(id: string): Promise<{ result: string }> {
   const res = await apiFetch(`/users/${id}/follow`, { method: "POST" });
   if (!res.ok) throw new Error(await extractError(res));

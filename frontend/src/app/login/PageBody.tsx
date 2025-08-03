@@ -56,10 +56,16 @@ export default function PageBody() {
         >
           Log in
         </button>
-        <div className="mt-4 text-center">
+        <div className="mt-4 text-center opacity-80">
           Don&apos;t have an account?{" "}
           <a href="/signup" className="text-blue-600 hover:underline">
             Sign up
+          </a>
+        </div>
+        <div className="mt-1 text-center opacity-80">
+          Forgot the password?{" "}
+          <a href="/reset-password" className="text-blue-600 hover:underline">
+            Reset it
           </a>
         </div>
       </form>

@@ -634,14 +634,9 @@ paths:
                     description: Verification code for password reset
                 required: [resetPasswordId, code]
 
-  /users/{id}/password/reset/verify:
+  /users/password/reset/verify:
     post:
       summary: Complete password reset with session & code
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
       requestBody:
         required: true
         content:
@@ -649,10 +644,12 @@ paths:
             schema:
               type: object
               properties:
+                email: { type: string }
                 resetPasswordId: { type: string }
-                code: { type: string }
+                webCode: { type: string }
+                mailCode: { type: string }
                 newPassword: { type: string }
-              required: [resetPasswordId, code, newPassword]
+              required: [email, resetPasswordId, webCode, mailCode, newPassword]
       responses:
         "200":
           description: Password updated

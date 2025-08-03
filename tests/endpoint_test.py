@@ -315,11 +315,14 @@ def test_signup():
                       json={"email": new_email})
   assert res.status_code == 201, res.text
   data = res.json()
+  print(data)
+  assert data["webCode"] == TEST_SIGNUP_CODE
   reset_password_id = data["resetPasswordId"]
   print(f"[signup] reset password started: {reset_password_id}")
-  res = requests.post(f"{BASE_URL}/users/{user_id}/password/reset/verify",
-                      json={"resetPasswordId": reset_password_id,
-                            "code": TEST_SIGNUP_CODE, "newPassword": "signup_pw2"})
+  res = requests.post(f"{BASE_URL}/users/password/reset/verify",
+                      json={"email": new_email, "resetPasswordId": reset_password_id,
+                            "webCode": TEST_SIGNUP_CODE, "mailCode": TEST_SIGNUP_CODE,
+                            "newPassword": "signup_pw2"})
   assert res.status_code == 200, res.text
   res = requests.get(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
   assert res.status_code == 200

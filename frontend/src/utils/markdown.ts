@@ -421,6 +421,5 @@ export function renderBody(
     }
     return html;
   }
-  let html = htmlFromNodes(nodes);
-  return html;
+  return htmlFromNodes(nodes);
 }
