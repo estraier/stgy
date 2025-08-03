@@ -290,6 +290,27 @@ def test_signup():
   print(f"[signup] get new user {user}")
   assert user["id"] == user_id
   assert user["email"] == email
+  new_email = email.replace("@", "-new@")
+  res = requests.post(f"{BASE_URL}/users/{user_id}/email/start",
+                      cookies={"session_id": session_id}, json={"email": new_email})
+  assert res.status_code == 201, res.text
+  data = res.json()
+  update_email_id = data["updateEmailId"]
+  print(f"[signup] update email started: {update_email_id}")
+  res = requests.post(f"{BASE_URL}/users/{user_id}/email/verify",
+                      cookies={"session_id": session_id},
+                      json={
+                        "updateEmailId": update_email_id,
+                        "verificationCode": TEST_SIGNUP_CODE,
+                      })
+  assert res.status_code == 200, res.text
+  print("[signup] login with new email OK")
+  res = requests.get(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
+  assert res.status_code == 200
+  user = res.json()
+  print(f"[signup] get new user {user}")
+  assert user["id"] == user_id
+  assert user["email"] == new_email
   res = requests.delete(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
   assert res.status_code == 200, res.text
   print("[signup] user deleted")

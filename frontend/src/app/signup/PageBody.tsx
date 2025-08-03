@@ -9,12 +9,21 @@ export default function PageBody() {
   const [step, setStep] = useState<"start" | "verify" | "success">("start");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [password2, setPassword2] = useState(""); // 追加
   const [signupId, setSignupId] = useState("");
   const [verificationCode, setVerificationCode] = useState("");
   const [error, setError] = useState<string | null>(null);
 
   const handleStart = async () => {
     setError(null);
+    if (!email || !password || !password2) {
+      setError("Please fill in all fields.");
+      return;
+    }
+    if (password !== password2) {
+      setError("Passwords do not match.");
+      return;
+    }
     try {
       const res = await startSignup(email, password);
       setSignupId(res.signupId);
@@ -48,6 +57,7 @@ export default function PageBody() {
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               required
+              autoComplete="username"
             />
           </div>
           <div className="mb-4">
@@ -58,6 +68,18 @@ export default function PageBody() {
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               required
+              autoComplete="new-password"
+            />
+          </div>
+          <div className="mb-4">
+            <label className="block mb-1 text-sm font-medium text-gray-700">Confirm Password</label>
+            <input
+              type="password"
+              className="w-full px-3 py-2 border rounded"
+              value={password2}
+              onChange={(e) => setPassword2(e.target.value)}
+              required
+              autoComplete="new-password"
             />
           </div>
           <button

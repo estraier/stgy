@@ -12,8 +12,8 @@ import { User } from "../models/user";
 export default function createPostsRouter(pgClient: Client, redis: Redis) {
   const router = Router();
 
-  const postsService = new PostsService(pgClient);
-  const usersService = new UsersService(pgClient);
+  const postsService = new PostsService(pgClient, redis);
+  const usersService = new UsersService(pgClient, redis);
   const authService = new AuthService(pgClient, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
 

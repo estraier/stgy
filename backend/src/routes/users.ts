@@ -4,6 +4,7 @@ import Redis from "ioredis";
 import { UsersService } from "../services/users";
 import { AuthService } from "../services/auth";
 import { AuthHelpers } from "./authHelpers";
+import { SendMailService } from "../services/sendMail";
 import {
   User,
   UserDetail,
@@ -13,33 +14,13 @@ import {
 } from "../models/user";
 import { maskEmailByHash } from "../utils/format";
 
-function maskUserSensitiveInfo<T extends User | UserDetail>(
-  user: T,
-  isAdmin: boolean,
-  loginUserId: string,
-): T {
-  if (!user) return user;
-  if (isAdmin || user.id === loginUserId) return user;
-  return {
-    ...user,
-    email: maskEmailByHash(user.email),
-  } as T;
-}
-
-function maskUserListSensitiveInfo<T extends User | UserDetail>(
-  users: T[],
-  isAdmin: boolean,
-  loginUserId: string,
-): T[] {
-  return users.map((u) => maskUserSensitiveInfo(u, isAdmin, loginUserId));
-}
-
 export default function createUsersRouter(pgClient: Client, redis: Redis) {
   const router = Router();
 
-  const usersService = new UsersService(pgClient);
+  const usersService = new UsersService(pgClient, redis);
   const authService = new AuthService(pgClient, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
+  const sendMailService = new SendMailService(redis);
 
   router.get("/count", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
@@ -211,6 +192,47 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     }
   });
 
+  router.post("/:id/email/start", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "email required" });
+    }
+    const check = await sendMailService.canSendMail(email);
+    if (!check.ok) {
+      return res.status(400).json({ error: check.reason || "too many requests" });
+    }
+    try {
+      const { updateEmailId } = await usersService.startUpdateEmail(req.params.id, email);
+      res.status(201).json({ updateEmailId });
+    } catch (e: unknown) {
+      res.status(400).json({ error: (e as Error).message || "update email failed" });
+    }
+  });
+
+  router.post("/:id/email/verify", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    const { updateEmailId, verificationCode } = req.body;
+    if (!updateEmailId || !verificationCode) {
+      return res.status(400).json({ error: "updateEmailId and verificationCode are needed" });
+    }
+    try {
+      const ok = await usersService.verifyUpdateEmail(updateEmailId, verificationCode);
+      if (!ok) return res.status(404).json({ error: "not found" });
+      res.json({ result: "ok" });
+    } catch (e: unknown) {
+      res.status(400).json({ error: (e as Error).message || "verification failed" });
+    }
+  });
+
   router.delete("/:id", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
@@ -284,4 +306,25 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
   });
 
   return router;
+}
+
+function maskUserSensitiveInfo<T extends User | UserDetail>(
+  user: T,
+  isAdmin: boolean,
+  loginUserId: string,
+): T {
+  if (!user) return user;
+  if (isAdmin || user.id === loginUserId) return user;
+  return {
+    ...user,
+    email: maskEmailByHash(user.email),
+  } as T;
+}
+
+function maskUserListSensitiveInfo<T extends User | UserDetail>(
+  users: T[],
+  isAdmin: boolean,
+  loginUserId: string,
+): T[] {
+  return users.map((u) => maskUserSensitiveInfo(u, isAdmin, loginUserId));
 }

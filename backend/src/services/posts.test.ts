@@ -231,16 +231,18 @@ class MockPgClient {
   }
 }
 
-// ========== TESTS ==========
+class MockRedis {}
 
 describe("posts service", () => {
   let pgClient: MockPgClient;
+  let redis: MockRedis;
   let postsService: PostsService;
   let postSample: Post;
 
   beforeEach(() => {
     pgClient = new MockPgClient();
-    postsService = new PostsService(pgClient as any);
+    redis = new MockRedis();
+    postsService = new PostsService(pgClient as any, redis as any);
 
     pgClient.users.push({ id: "user-1", nickname: "Alice" });
     pgClient.users.push({ id: "user-2", nickname: "Bob" });
@@ -393,13 +395,15 @@ describe("posts service", () => {
 
 describe("listPostsByFolloweesDetail", () => {
   let pgClient: MockPgClient;
+  let redis: MockRedis;
   let postsService: PostsService;
   let alice: string, bob: string, carol: string;
   let postAlice: Post, postBob: Post, postCarol: Post;
 
   beforeEach(() => {
     pgClient = new MockPgClient();
-    postsService = new PostsService(pgClient as any);
+    redis = new MockRedis();
+    postsService = new PostsService(pgClient as any, redis as any);
 
     pgClient.users.push({ id: "user-1", nickname: "Alice" });
     pgClient.users.push({ id: "user-2", nickname: "Bob" });
@@ -466,13 +470,15 @@ describe("listPostsByFolloweesDetail", () => {
 
 describe("listPostsLikedByUserDetail", () => {
   let pgClient: MockPgClient;
+  let redis: MockRedis;
   let postsService: PostsService;
   let alice: string, bob: string;
   let post1: Post, post2: Post;
 
   beforeEach(() => {
     pgClient = new MockPgClient();
-    postsService = new PostsService(pgClient as any);
+    redis = new MockRedis();
+    postsService = new PostsService(pgClient as any, redis as any);
 
     pgClient.users.push({ id: "user-1", nickname: "Alice" });
     pgClient.users.push({ id: "user-2", nickname: "Bob" });
@@ -566,13 +572,15 @@ describe("getPostDetail", () => {
   }
 
   let pgClient: MockPgClientDetail;
+  let redis: MockRedis;
   let postsService: PostsService;
   let post: Post;
   let owner: { id: string; nickname: string };
 
   beforeEach(() => {
     pgClient = new MockPgClientDetail();
-    postsService = new PostsService(pgClient as any);
+    redis = new MockRedis();
+    postsService = new PostsService(pgClient as any, redis as any);
 
     owner = { id: uuidv4(), nickname: "Poster" };
     pgClient.users.push(owner);
@@ -674,12 +682,14 @@ describe("listLikers", () => {
   }
 
   let pgClient: MockPgClient;
+  let redis: MockRedis;
   let postsService: PostsService;
   let user1: User, user2: User, user3: User, postId: string;
 
   beforeEach(() => {
     pgClient = new MockPgClient();
-    postsService = new PostsService(pgClient as any);
+    redis = new MockRedis();
+    postsService = new PostsService(pgClient as any, redis as any);
     user1 = {
       id: uuidv4(),
       email: "alice@example.com",

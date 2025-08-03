@@ -12,13 +12,16 @@ import {
 import { User } from "../models/user";
 import { snakeToCamel } from "../utils/format";
 import { Client } from "pg";
+import Redis from "ioredis";
 import { v4 as uuidv4 } from "uuid";
 
 export class PostsService {
-  pgClient: Client;
+  private pgClient: Client;
+  private redis: Redis;
 
-  constructor(pgClient: Client) {
+  constructor(pgClient: Client, redis: Redis) {
     this.pgClient = pgClient;
+    this.redis = redis;
   }
 
   async countPosts(input?: CountPostsInput): Promise<number> {

@@ -11,16 +11,21 @@ import {
   AddFollowerInput,
   RemoveFollowerInput,
 } from "../models/user";
-import { snakeToCamel } from "../utils/format";
+import { generateVerificationCode, validateEmail, snakeToCamel } from "../utils/format";
 import { Client } from "pg";
+import Redis from "ioredis";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 
+const UPDATE_EMAIL_MAIL_QUEUE = "update_email_queue";
+
 export class UsersService {
   private pgClient: Client;
+  private redis: Redis;
 
-  constructor(pgClient: Client) {
+  constructor(pgClient: Client, redis: Redis) {
     this.pgClient = pgClient;
+    this.redis = redis;
   }
 
   async countUsers(input?: CountUsersInput): Promise<number> {
@@ -266,6 +271,40 @@ export class UsersService {
       passwordHash,
       input.id,
     ]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  async startUpdateEmail(userId: string, newEmail: string): Promise<{ updateEmailId: string }> {
+    if (!validateEmail(newEmail)) throw new Error("Invalid email format.");
+    const updateEmailId = uuidv4();
+    const verificationCode = generateVerificationCode();
+    const key = `updateEmail:${updateEmailId}`;
+    await this.redis.hmset(key, {
+      userId,
+      newEmail,
+      verificationCode,
+      createdAt: new Date().toISOString(),
+    });
+    await this.redis.expire(key, 900);
+    await this.redis.lpush(UPDATE_EMAIL_MAIL_QUEUE, JSON.stringify({ newEmail, verificationCode }));
+    return { updateEmailId };
+  }
+
+  async verifyUpdateEmail(updateEmailId: string, code: string): Promise<boolean> {
+    const key = `updateEmail:${updateEmailId}`;
+    const data = await this.redis.hgetall(key);
+    if (!data || !data.userId || !data.newEmail || !data.verificationCode)
+      throw new Error("Update email info not found or expired.");
+    if (data.verificationCode !== code) throw new Error("Verification code mismatch.");
+    const exists = await this.pgClient.query(`SELECT 1 FROM users WHERE email = $1`, [
+      data.newEmail,
+    ]);
+    if (exists.rows.length > 0) throw new Error("Email already in use.");
+    const res = await this.pgClient.query(`UPDATE users SET email = $1 WHERE id = $2`, [
+      data.newEmail,
+      data.userId,
+    ]);
+    await this.redis.del(key);
     return (res.rowCount ?? 0) > 0;
   }
 

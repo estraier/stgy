@@ -10,7 +10,7 @@ export default function createAIModelsRouter(pgClient: Client, redis: Redis) {
   const router = Router();
 
   const aiModelsService = new AIModelsService(pgClient);
-  const usersService = new UsersService(pgClient);
+  const usersService = new UsersService(pgClient, redis);
   const authService = new AuthService(pgClient, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
 

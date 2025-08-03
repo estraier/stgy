@@ -1,5 +1,18 @@
 import crypto from "crypto";
 
+export function generateVerificationCode(): string {
+  if (process.env.FAKEBOOK_TEST_SIGNUP_CODE && process.env.FAKEBOOK_TEST_SIGNUP_CODE.length > 0) {
+    return process.env.FAKEBOOK_TEST_SIGNUP_CODE;
+  }
+  return Math.floor(Math.random() * 1000000)
+    .toString()
+    .padStart(6, "0");
+}
+
+export function validateEmail(email: string): boolean {
+  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+}
+
 export function maskEmailByHash(email: string): string {
   const hash = crypto.createHash("sha256").update(email).digest();
   const hashInt = BigInt("0x" + hash.toString("hex"));

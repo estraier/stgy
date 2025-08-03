@@ -7,7 +7,7 @@ import { SendMailService } from "../services/sendMail";
 
 export default function createSignupRouter(pgClient: Client, redis: Redis) {
   const router = Router();
-  const usersService = new UsersService(pgClient);
+  const usersService = new UsersService(pgClient, redis);
   const signupService = new SignupService(usersService, redis);
   const sendMailService = new SendMailService(redis);
 

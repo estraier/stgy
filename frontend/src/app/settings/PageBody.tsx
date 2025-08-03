@@ -2,13 +2,17 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { updateUserPassword, deleteUser } from "@/api/users";
+import {
+  updateUserPassword,
+  deleteUser,
+  startUpdateEmail,
+  verifyUpdateEmail,
+} from "@/api/users";
 import { logout, getSessionInfo } from "@/api/auth";
 
 export default function PageBody() {
   const router = useRouter();
 
-  // Fetch login user
   const [userId, setUserId] = useState<string | null>(null);
   useEffect(() => {
     let canceled = false;
@@ -24,18 +28,64 @@ export default function PageBody() {
     };
   }, []);
 
-  // Password change state
+  const [newEmail, setNewEmail] = useState("");
+  const [emailError, setEmailError] = useState<string | null>(null);
+  const [emailStep, setEmailStep] = useState<"input" | "verify" | "success">("input");
+  const [updateEmailId, setUpdateEmailId] = useState<string | null>(null);
+  const [emailCode, setEmailCode] = useState("");
+  const [emailSuccessMsg, setEmailSuccessMsg] = useState<string | null>(null);
+
+  async function handleStartUpdateEmail(e: React.FormEvent) {
+    e.preventDefault();
+    setEmailError(null);
+    setEmailStep("input");
+    setEmailSuccessMsg(null);
+    if (!newEmail) {
+      setEmailError("Please enter a new email address.");
+      return;
+    }
+    if (!userId) {
+      setEmailError("User information could not be retrieved. Please re-login.");
+      return;
+    }
+    try {
+      const { updateEmailId } = await startUpdateEmail(userId, newEmail);
+      setUpdateEmailId(updateEmailId);
+      setEmailStep("verify");
+    } catch (e) {
+      setEmailError(e ? String(e) : "Failed to start email update.");
+    }
+  }
+
+  async function handleVerifyUpdateEmail(e: React.FormEvent) {
+    e.preventDefault();
+    setEmailError(null);
+    if (!emailCode || !updateEmailId) {
+      setEmailError("Please enter the verification code.");
+      return;
+    }
+    if (!userId) {
+      setEmailError("User information could not be retrieved. Please re-login.");
+      return;
+    }
+    try {
+      await verifyUpdateEmail(userId, updateEmailId, emailCode);
+      localStorage.setItem("lastLoginEmail", newEmail);
+      setEmailSuccessMsg("Email updated! Logging out…");
+      setEmailStep("success");
+      setTimeout(async () => {
+        await logout();
+        router.push("/login");
+      }, 2000);
+    } catch (e) {
+      setEmailError(e ? String(e) : "Verification failed.");
+    }
+  }
+
   const [pwNew, setPwNew] = useState("");
   const [pwNew2, setPwNew2] = useState("");
   const [pwError, setPwError] = useState<string | null>(null);
   const [pwSuccess, setPwSuccess] = useState(false);
-
-  // Withdrawal state
-  const [withdrawalMode, setWithdrawalMode] = useState(false);
-  const [withdrawalInput, setWithdrawalInput] = useState("");
-  const [withdrawalError, setWithdrawalError] = useState<string | null>(null);
-  const [withdrawalSubmitting, setWithdrawalSubmitting] = useState(false);
-  const [withdrawalSuccess, setWithdrawalSuccess] = useState(false);
 
   async function handleChangePassword(e: React.FormEvent) {
     e.preventDefault();
@@ -64,6 +114,12 @@ export default function PageBody() {
       setPwError(e ? String(e) : "Failed to change password.");
     }
   }
+
+  const [withdrawalMode, setWithdrawalMode] = useState(false);
+  const [withdrawalInput, setWithdrawalInput] = useState("");
+  const [withdrawalError, setWithdrawalError] = useState<string | null>(null);
+  const [withdrawalSubmitting, setWithdrawalSubmitting] = useState(false);
+  const [withdrawalSuccess, setWithdrawalSuccess] = useState(false);
 
   async function handleWithdraw(e: React.FormEvent) {
     e.preventDefault();
@@ -97,7 +153,56 @@ export default function PageBody() {
     <main className="max-w-lg mx-auto mt-12 p-4 bg-white shadow">
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
 
-      {/* Change password */}
+      {/* Email Change */}
+      <section className="mb-10">
+        <h2 className="text-lg font-semibold mb-2">Change email address</h2>
+        {emailStep === "input" && (
+          <form onSubmit={handleStartUpdateEmail} className="flex flex-col gap-3">
+            <input
+              type="email"
+              placeholder="New email address"
+              value={newEmail}
+              onChange={(e) => setNewEmail(e.target.value)}
+              className="border px-2 py-1 rounded"
+              autoComplete="email"
+            />
+            {emailError && <div className="text-red-600">{emailError}</div>}
+            <button
+              type="submit"
+              className="bg-blue-600 text-white px-4 py-1 rounded"
+            >
+              Send verification code
+            </button>
+          </form>
+        )}
+        {emailStep === "verify" && (
+          <form onSubmit={handleVerifyUpdateEmail} className="flex flex-col gap-3">
+            <input
+              type="text"
+              placeholder="Verification code"
+              value={emailCode}
+              onChange={(e) => setEmailCode(e.target.value)}
+              className="border px-2 py-1 rounded"
+              autoComplete="one-time-code"
+              autoFocus
+            />
+            {emailError && <div className="text-red-600">{emailError}</div>}
+            <button
+              type="submit"
+              className="bg-blue-600 text-white px-4 py-1 rounded"
+            >
+              Verify and update email
+            </button>
+          </form>
+        )}
+        {emailStep === "success" && emailSuccessMsg && (
+          <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-2 rounded">
+            {emailSuccessMsg}
+          </div>
+        )}
+      </section>
+
+      {/* Password Change */}
       <section className="mb-10">
         <h2 className="text-lg font-semibold mb-2">Change password</h2>
         <form onSubmit={handleChangePassword} className="flex flex-col gap-3">

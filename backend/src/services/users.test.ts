@@ -192,6 +192,11 @@ class MockPgClient {
           .map((f) => ({ follower_id: f.followerId })),
       };
     }
+    if (sql.startsWith("SELECT 1 FROM users WHERE email = $1")) {
+      const email = params[0];
+      const exists = this.users.some((u) => u.email === email);
+      return { rows: exists ? [1] : [] };
+    }
     if (sql.startsWith("INSERT INTO users")) {
       const [id, email, nickname, password, isAdmin, introduction, aiModel, aiPersonality] = params;
       const user: User = {
@@ -225,7 +230,7 @@ class MockPgClient {
       for (let i = 0; i < columns.length; ++i) {
         (user as any)[columns[i]] = params[i];
       }
-      return { rows: [user] };
+      return { rows: [user], rowCount: 1 };
     }
 
     if (sql.startsWith("DELETE FROM users WHERE id = $1")) {
@@ -286,13 +291,33 @@ class MockPgClient {
   }
 }
 
+class MockRedis {
+  store: Record<string, any> = {};
+  queue: { queue: string; val: string }[] = [];
+  async hmset(key: string, obj: any) {
+    this.store[key] = { ...obj };
+  }
+  async hgetall(key: string) {
+    return this.store[key] ? { ...this.store[key] } : {};
+  }
+  async expire(_key: string, _ttl: number) {}
+  async lpush(queue: string, val: string) {
+    this.queue.push({ queue, val });
+  }
+  async del(key: string) {
+    delete this.store[key];
+  }
+}
+
 describe("UsersService", () => {
   let pg: MockPgClient;
+  let redis: MockRedis;
   let service: UsersService;
 
   beforeEach(() => {
     pg = new MockPgClient();
-    service = new UsersService(pg as unknown as any);
+    redis = new MockRedis();
+    service = new UsersService(pg as any, redis as any);
   });
 
   test("countUsers (all/nickname/query)", async () => {
@@ -378,6 +403,45 @@ describe("UsersService", () => {
     expect(ok).toBe(true);
     expect(pg.passwords[id]).toBe(md5("newpass"));
     expect(await service.updateUserPassword({ id: "no-such-id", password: "x" })).toBe(false);
+  });
+
+  test("startUpdateEmail stores verification info in Redis and queues mail", async () => {
+    const userId = "alice";
+    const newEmail = "alice_new@example.com";
+    const result = await service.startUpdateEmail(userId, newEmail);
+    expect(result).toHaveProperty("updateEmailId");
+    const stored = redis.store[Object.keys(redis.store)[0]];
+    expect(stored.userId).toBe(userId);
+    expect(stored.newEmail).toBe(newEmail);
+    expect(typeof stored.verificationCode).toBe("string");
+    expect(
+      redis.queue.some((q) => q.queue === "update_email_queue" && q.val.includes(newEmail)),
+    ).toBe(true);
+  });
+
+  test("verifyUpdateEmail: updates email if code matches & email unused", async () => {
+    await redis.hmset("updateEmail:xyz", {
+      userId: "alice",
+      newEmail: "alice2@example.com",
+      verificationCode: "123456",
+      createdAt: new Date().toISOString(),
+    });
+    const ok = await new UsersService(pg as any, redis as any).verifyUpdateEmail("xyz", "123456");
+    expect(ok).toBe(true);
+    expect(pg.users.find((u) => u.id === "alice")?.email).toBe("alice2@example.com");
+    expect(await redis.hgetall("updateEmail:xyz")).toEqual({});
+  });
+
+  test("verifyUpdateEmail: throws if code mismatch", async () => {
+    await redis.hmset("updateEmail:abc", {
+      userId: "alice",
+      newEmail: "alice3@example.com",
+      verificationCode: "654321",
+      createdAt: new Date().toISOString(),
+    });
+    await expect(
+      new UsersService(pg as any, redis as any).verifyUpdateEmail("abc", "wrongcode"),
+    ).rejects.toThrow(/mismatch/i);
   });
 
   test("deleteUser", async () => {

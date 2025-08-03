@@ -531,6 +531,81 @@ paths:
         "400":
           $ref: "#/components/responses/Error400"
 
+  /users/{id}/email/start:
+    post:
+      summary: Start email update (send verification code)
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string }
+              required: [email]
+      responses:
+        "201":
+          description: Email update process started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  updateEmailId: { type: string }
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /users/{id}/email/verify:
+    post:
+      summary: Verify email update (verify code)
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                updateEmailId: { type: string }
+                verificationCode: { type: string }
+              required: [updateEmailId, verificationCode]
+      responses:
+        "200":
+          description: Email update verified and completed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+                example:
+                  result: ok
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
   /users/{id}/follow:
     post:
       summary: Follow user

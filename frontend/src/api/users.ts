@@ -100,6 +100,31 @@ export async function updateUserPassword(
   return res.json();
 }
 
+export async function startUpdateEmail(
+  id: string,
+  email: string,
+): Promise<{ updateEmailId: string }> {
+  const res = await apiFetch(`/users/${id}/email/start`, {
+    method: "POST",
+    body: JSON.stringify({ email }),
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function verifyUpdateEmail(
+  id: string,
+  updateEmailId: string,
+  verificationCode: string,
+): Promise<{ result: string }> {
+  const res = await apiFetch(`/users/${id}/email/verify`, {
+    method: "POST",
+    body: JSON.stringify({ updateEmailId, verificationCode }),
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
 export async function addFollower(id: string): Promise<{ result: string }> {
   const res = await apiFetch(`/users/${id}/follow`, { method: "POST" });
   if (!res.ok) throw new Error(await extractError(res));

@@ -1,21 +1,9 @@
 import Redis from "ioredis";
 import { v4 as uuidv4 } from "uuid";
 import { UsersService } from "./users";
+import { generateVerificationCode, validateEmail } from "../utils/format";
 
 const SIGNUP_MAIL_QUEUE = "signup_mail_queue";
-
-function generateVerificationCode(): string {
-  if (process.env.FAKEBOOK_TEST_SIGNUP_CODE && process.env.FAKEBOOK_TEST_SIGNUP_CODE.length > 0) {
-    return process.env.FAKEBOOK_TEST_SIGNUP_CODE;
-  }
-  return Math.floor(Math.random() * 1000000)
-    .toString()
-    .padStart(6, "0");
-}
-
-function validateEmail(email: string): boolean {
-  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
-}
 
 export class SignupService {
   usersService: UsersService;

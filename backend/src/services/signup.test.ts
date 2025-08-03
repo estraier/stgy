@@ -28,7 +28,7 @@ describe("signup service", () => {
 
   beforeEach(() => {
     redis = new MockRedis();
-    usersService = new UsersService({} as any);
+    usersService = new UsersService({} as any, redis as any);
     signupService = new SignupService(usersService, redis as any);
     (usersService.createUser as unknown as jest.Mock).mockReset();
   });
