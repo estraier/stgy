@@ -10,7 +10,7 @@
     "docker:start": "docker-compose up -d",
     "docker:stop": "docker-compose down",
     "docker:restart": "docker-compose down ; docker-compose up -d",
-    "local": "npm run docker:stop && docker-compose up -d db redis && sleep 2 && cd backend && ./run-local.sh",
+    "local": "npm run docker:stop && docker-compose up -d db redis smtp && sleep 2 && cd backend && ./run-local.sh",
     "reset-data": "cd backend && ./reset-data.sh",
     "endpoint-test": "./tests/endpoint_test.py",
     "psql": "docker-compose exec db psql -U fakebook fakebook",

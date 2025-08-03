@@ -21,11 +21,23 @@ services:
     volumes:
       - redis_data:/data
 
+  smtp:
+    image: boky/postfix
+    restart: always
+    environment:
+      RELAYHOST: ${FAKEBOOK_SMTP_RELAYHOST}
+      RELAYHOST_USERNAME: ${FAKEBOOK_SMTP_RELAYHOST_USERNAME}
+      RELAYHOST_PASSWORD: ${FAKEBOOK_SMTP_RELAYHOST_PASSWORD}
+      ALLOWED_SENDER_DOMAINS: ${FAKEBOOK_SMTP_SENDER_DOMAINS}
+    ports:
+      - "${FAKEBOOK_SMTP_PORT}:${FAKEBOOK_SMTP_PORT}"
+
   backend:
     build: ./backend
     depends_on:
       - db
       - redis
+      - smtp
     ports:
       - "${FAKEBOOK_BACKEND_PORT}:${FAKEBOOK_BACKEND_PORT}"
     environment:
@@ -39,6 +51,12 @@ services:
       - FAKEBOOK_REDIS_PORT=${FAKEBOOK_REDIS_PORT}
       - FAKEBOOK_REDIS_PASSWORD=${FAKEBOOK_REDIS_PASSWORD}
       - FAKEBOOK_BACKEND_PORT=${FAKEBOOK_BACKEND_PORT}
+      - FAKEBOOK_SMTP_HOST=smtp
+      - FAKEBOOK_SMTP_PORT=${FAKEBOOK_SMTP_PORT}
+      - FAKEBOOK_SMTP_SENDER_DOMAINS=${FAKEBOOK_SMTP_SENDER_DOMAINS}
+      - FAKEBOOK_SMTP_RELAYHOST=[mail.dbmx.net]:587
+      - FAKEBOOK_SMTP_RELAYHOST_USERNAME=admin@mail.dbmx.net
+      - FAKEBOOK_SMTP_RELAYHOST_PASSWORD=ok8dbmx1978
     volumes:
       - ./backend:/app
     command: npm run dev
