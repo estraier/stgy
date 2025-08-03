@@ -22,6 +22,7 @@
     "cors": "^2",
     "express": "^5",
     "ioredis": "^5.6.1",
+    "nodemailer": "^7.0.5",
     "pg": "^8",
     "uuid": "^11"
   },
@@ -32,6 +33,7 @@
     "@types/ioredis": "^4",
     "@types/jest": "^29",
     "@types/node": "^24",
+    "@types/nodemailer": "^6.4.17",
     "@types/pg": "^8",
     "@types/uuid": "^10",
     "@typescript-eslint/eslint-plugin": "^8",

@@ -1,4 +1,5 @@
 import Redis from "ioredis";
+import nodemailer, { Transporter } from "nodemailer";
 
 export class SendMailService {
   static readonly ADDRESS_LIMIT = 1;
@@ -10,6 +11,24 @@ export class SendMailService {
 
   constructor(redis: Redis) {
     this.redis = redis;
+  }
+
+  static createTransport(config?: nodemailer.TransportOptions): Transporter {
+    return nodemailer.createTransport(
+      config ?? {
+        host: process.env.FAKEBOOK_SMTP_HOST,
+        port: Number(process.env.FAKEBOOK_SMTP_PORT),
+        secure: false,
+        auth: {
+          user: process.env.FAKEBOOK_SMTP_RELAYHOST_USERNAME,
+          pass: process.env.FAKEBOOK_SMTP_RELAYHOST_PASSWORD,
+        },
+      },
+    );
+  }
+
+  static deleteTransport(transporter: Transporter): void {
+    transporter.close();
   }
 
   async canSendMail(address: string): Promise<{ ok: boolean; reason?: string }> {
@@ -70,7 +89,17 @@ export class SendMailService {
     await this.redis.ltrim("mail:send_history", 0, SendMailService.HISTORY_LIMIT - 1);
   }
 
-  async send(address: string, subject: string, body: string): Promise<void> {
-    console.log(`[SendMail] Sending mail to: ${address}, subject: ${subject}, body: ${body}`);
+  async send(
+    transporter: Transporter,
+    address: string,
+    subject: string,
+    body: string,
+  ): Promise<void> {
+    await transporter.sendMail({
+      from: process.env.FAKEBOOK_SMTP_SENDER_ADDRESS,
+      to: address,
+      subject,
+      text: body,
+    });
   }
 }
