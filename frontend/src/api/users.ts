@@ -88,18 +88,6 @@ export async function deleteUser(id: string): Promise<{ result: string }> {
   return res.json();
 }
 
-export async function updateUserPassword(
-  id: string,
-  password: string,
-): Promise<{ result: string }> {
-  const res = await apiFetch(`/users/${id}/password`, {
-    method: "PUT",
-    body: JSON.stringify({ password }),
-  });
-  if (!res.ok) throw new Error(await extractError(res));
-  return res.json();
-}
-
 export async function startUpdateEmail(
   id: string,
   email: string,
@@ -120,6 +108,18 @@ export async function verifyUpdateEmail(
   const res = await apiFetch(`/users/${id}/email/verify`, {
     method: "POST",
     body: JSON.stringify({ updateEmailId, verificationCode }),
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function updateUserPassword(
+  id: string,
+  password: string,
+): Promise<{ result: string }> {
+  const res = await apiFetch(`/users/${id}/password`, {
+    method: "PUT",
+    body: JSON.stringify({ password }),
   });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();

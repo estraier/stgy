@@ -1,4 +1,5 @@
 import Redis from "ioredis";
+import { Client } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { UsersService } from "./users";
 import { generateVerificationCode, validateEmail } from "../utils/format";
@@ -6,10 +7,12 @@ import { generateVerificationCode, validateEmail } from "../utils/format";
 const SIGNUP_MAIL_QUEUE = "signup_mail_queue";
 
 export class SignupService {
+  pgClient: Client;
   usersService: UsersService;
   redis: Redis;
 
-  constructor(usersService: UsersService, redis: Redis) {
+  constructor(pgClient: Client, usersService: UsersService, redis: Redis) {
+    this.pgClient = pgClient;
     this.usersService = usersService;
     this.redis = redis;
   }
@@ -38,6 +41,8 @@ export class SignupService {
     if (!data || !data.email || !data.password || !data.verificationCode)
       throw new Error("Signup info not found or expired.");
     if (data.verificationCode !== code) throw new Error("Verification code mismatch.");
+    const exists = await this.pgClient.query(`SELECT 1 FROM users WHERE email = $1`, [data.email]);
+    if (exists.rows.length > 0) throw new Error("Email already in use.");
     const input = {
       email: data.email,
       password: data.password,

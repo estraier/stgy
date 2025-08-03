@@ -262,18 +262,6 @@ export class UsersService {
     return res.rows[0] ? snakeToCamel<User>(res.rows[0]) : null;
   }
 
-  async updateUserPassword(input: UpdatePasswordInput): Promise<boolean> {
-    if (input.password.trim() === "") {
-      throw new Error("password is mustn't be empty");
-    }
-    const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
-    const res = await this.pgClient.query(`UPDATE users SET password = $1 WHERE id = $2`, [
-      passwordHash,
-      input.id,
-    ]);
-    return (res.rowCount ?? 0) > 0;
-  }
-
   async startUpdateEmail(userId: string, newEmail: string): Promise<{ updateEmailId: string }> {
     if (!validateEmail(newEmail)) throw new Error("Invalid email format.");
     const updateEmailId = uuidv4();
@@ -305,6 +293,18 @@ export class UsersService {
       data.userId,
     ]);
     await this.redis.del(key);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  async updateUserPassword(input: UpdatePasswordInput): Promise<boolean> {
+    if (input.password.trim() === "") {
+      throw new Error("password is mustn't be empty");
+    }
+    const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
+    const res = await this.pgClient.query(`UPDATE users SET password = $1 WHERE id = $2`, [
+      passwordHash,
+      input.id,
+    ]);
     return (res.rowCount ?? 0) > 0;
   }
 

@@ -397,14 +397,6 @@ describe("UsersService", () => {
     expect(user?.introduction).toBe("introX");
   });
 
-  test("updateUserPassword", async () => {
-    const id = pg.users[0].id;
-    const ok = await service.updateUserPassword({ id, password: "newpass" });
-    expect(ok).toBe(true);
-    expect(pg.passwords[id]).toBe(md5("newpass"));
-    expect(await service.updateUserPassword({ id: "no-such-id", password: "x" })).toBe(false);
-  });
-
   test("startUpdateEmail stores verification info in Redis and queues mail", async () => {
     const userId = "alice";
     const newEmail = "alice_new@example.com";
@@ -442,6 +434,14 @@ describe("UsersService", () => {
     await expect(
       new UsersService(pg as any, redis as any).verifyUpdateEmail("abc", "wrongcode"),
     ).rejects.toThrow(/mismatch/i);
+  });
+
+  test("updateUserPassword", async () => {
+    const id = pg.users[0].id;
+    const ok = await service.updateUserPassword({ id, password: "newpass" });
+    expect(ok).toBe(true);
+    expect(pg.passwords[id]).toBe(md5("newpass"));
+    expect(await service.updateUserPassword({ id: "no-such-id", password: "x" })).toBe(false);
   });
 
   test("deleteUser", async () => {

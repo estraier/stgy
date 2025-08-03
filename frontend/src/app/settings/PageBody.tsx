@@ -2,12 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
-import {
-  updateUserPassword,
-  deleteUser,
-  startUpdateEmail,
-  verifyUpdateEmail,
-} from "@/api/users";
+import { updateUserPassword, deleteUser, startUpdateEmail, verifyUpdateEmail } from "@/api/users";
 import { logout, getSessionInfo } from "@/api/auth";
 
 export default function PageBody() {
@@ -167,10 +162,7 @@ export default function PageBody() {
               autoComplete="email"
             />
             {emailError && <div className="text-red-600">{emailError}</div>}
-            <button
-              type="submit"
-              className="bg-blue-600 text-white px-4 py-1 rounded"
-            >
+            <button type="submit" className="bg-blue-600 text-white px-4 py-1 rounded">
               Send verification code
             </button>
           </form>
@@ -187,10 +179,7 @@ export default function PageBody() {
               autoFocus
             />
             {emailError && <div className="text-red-600">{emailError}</div>}
-            <button
-              type="submit"
-              className="bg-blue-600 text-white px-4 py-1 rounded"
-            >
+            <button type="submit" className="bg-blue-600 text-white px-4 py-1 rounded">
               Verify and update email
             </button>
           </form>

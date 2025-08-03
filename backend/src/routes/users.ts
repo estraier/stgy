@@ -172,26 +172,6 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     }
   });
 
-  router.put("/:id/password", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
-      return res.status(403).json({ error: "forbidden" });
-    }
-    const { password } = req.body;
-    if (!password) {
-      return res.status(400).json({ error: "password required" });
-    }
-    try {
-      const input: UpdatePasswordInput = { id: req.params.id, password };
-      const ok = await usersService.updateUserPassword(input);
-      if (!ok) return res.status(404).json({ error: "not found" });
-      res.json({ result: "ok" });
-    } catch (e: unknown) {
-      res.status(400).json({ error: (e as Error).message || "update password error" });
-    }
-  });
-
   router.post("/:id/email/start", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
@@ -230,6 +210,26 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       res.json({ result: "ok" });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "verification failed" });
+    }
+  });
+
+  router.put("/:id/password", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    const { password } = req.body;
+    if (!password) {
+      return res.status(400).json({ error: "password required" });
+    }
+    try {
+      const input: UpdatePasswordInput = { id: req.params.id, password };
+      const ok = await usersService.updateUserPassword(input);
+      if (!ok) return res.status(404).json({ error: "not found" });
+      res.json({ result: "ok" });
+    } catch (e: unknown) {
+      res.status(400).json({ error: (e as Error).message || "update password error" });
     }
   });
 

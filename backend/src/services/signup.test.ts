@@ -3,6 +3,17 @@ import { UsersService } from "./users";
 
 jest.mock("./users");
 
+class MockPgClient {
+  public emails: Set<string> = new Set();
+  async query(sql: string, params: any[]) {
+    // シンプルな重複判定
+    if (sql.includes("SELECT 1 FROM users WHERE email = $1") && this.emails.has(params[0])) {
+      return { rows: [{}] };
+    }
+    return { rows: [] };
+  }
+}
+
 class MockRedis {
   private store = new Map<string, any>();
   private queue: string[] = [];
@@ -22,14 +33,16 @@ class MockRedis {
 }
 
 describe("signup service", () => {
+  let pgClient: MockPgClient;
   let redis: MockRedis;
   let usersService: UsersService;
   let signupService: SignupService;
 
   beforeEach(() => {
+    pgClient = new MockPgClient();
     redis = new MockRedis();
-    usersService = new UsersService({} as any, redis as any);
-    signupService = new SignupService(usersService, redis as any);
+    usersService = new UsersService(pgClient as any, redis as any);
+    signupService = new SignupService(pgClient as any, usersService, redis as any);
     (usersService.createUser as unknown as jest.Mock).mockReset();
   });
 
@@ -74,6 +87,15 @@ describe("signup service", () => {
   test("verifySignup: expired or not found", async () => {
     await expect(signupService.verifySignup("no-such-id", "123456")).rejects.toThrow(
       "Signup info not found or expired",
+    );
+  });
+
+  test("verifySignup: already registered email", async () => {
+    pgClient.emails.add("exists@ex.com");
+    const { signupId } = await signupService.startSignup("exists@ex.com", "pass123");
+    const data = await redis.hgetall(`signup:${signupId}`);
+    await expect(signupService.verifySignup(signupId, data.verificationCode)).rejects.toThrow(
+      "Email already in use.",
     );
   });
 });

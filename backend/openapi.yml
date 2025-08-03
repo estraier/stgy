@@ -494,43 +494,6 @@ paths:
         "401":
           $ref: "#/components/responses/Error401"
 
-  /users/{id}/password:
-    put:
-      summary: Update user password
-      security:
-        - sessionCookie: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                password: { type: string }
-              required: [password]
-      responses:
-        "200":
-          description: Password updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  result: { type: string }
-        "401":
-          $ref: "#/components/responses/Error401"
-        "403":
-          $ref: "#/components/responses/Error403"
-        "404":
-          $ref: "#/components/responses/Error404"
-        "400":
-          $ref: "#/components/responses/Error400"
-
   /users/{id}/email/start:
     post:
       summary: Start email update (send verification code)
@@ -605,6 +568,43 @@ paths:
           $ref: "#/components/responses/Error403"
         "404":
           $ref: "#/components/responses/Error404"
+
+  /users/{id}/password:
+    put:
+      summary: Update user password
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password: { type: string }
+              required: [password]
+      responses:
+        "200":
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+        "400":
+          $ref: "#/components/responses/Error400"
 
   /users/{id}/follow:
     post:
