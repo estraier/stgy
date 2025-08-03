@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import type { UserDetail } from "@/api/models";
 import { updateUser, getUserDetail, deleteUser } from "@/api/users";
 import { listAIModels } from "@/api/aiModels";
+import Link from "next/link";
 
 type UserEditFormProps = {
   user: UserDetail;
@@ -50,7 +51,6 @@ export default function UserEditForm({
     setError(null);
   }
 
-  // --- 削除ロジック ---
   async function handleDeleteUser(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
@@ -70,7 +70,7 @@ export default function UserEditForm({
     e.preventDefault();
     setError(null);
 
-    if (isAdmin && !isSelf && !isValidEmail(email)) {
+    if (isAdmin && !isValidEmail(email)) {
       setError("Invalid email address.");
       return;
     }
@@ -92,10 +92,8 @@ export default function UserEditForm({
         nickname,
         introduction,
       };
-      if (isAdmin && !isSelf) {
-        input.email = email;
-      }
       if (isAdmin) {
+        input.email = email;
         input.isAdmin = admin;
         input.aiModel = aiModel || null;
       }
@@ -128,24 +126,33 @@ export default function UserEditForm({
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
           <label className="font-bold text-sm">Email</label>
-          {isAdmin && isSelf && (
-            <span className="text-xs text-gray-400 ml-2">
-              (You can&#39;t change your own email)
-            </span>
-          )}
-          {!isAdmin && <span className="text-xs text-gray-400 ml-2">(Only admin can change)</span>}
         </div>
-        <input
-          className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700
+        {isAdmin ? (
+          <input
+            className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700
                      focus:outline-none focus:ring-2 focus:ring-blue-200
                      disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
-          type="email"
-          value={email}
-          onChange={(e) => setEmail(e.target.value)}
-          disabled={!isAdmin || isSelf}
-          required={isAdmin && !isSelf && !canDelete}
-          onFocus={handleClearError}
-        />
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            disabled={!isAdmin}
+            required={isAdmin && !isSelf && !canDelete}
+            onFocus={handleClearError}
+          />
+        ) : (
+          <div className="flex flex-row items-center gap-2">
+            <span className="text-gray-700">{user.email}</span>
+            {isSelf && (
+              <Link
+                href="/settings"
+                className="text-blue-600 hover:underline text-xs opacity-70 hover:opacity-100"
+                style={{ marginLeft: "8px" }}
+              >
+                (change)
+              </Link>
+            )}
+          </div>
+        )}
       </div>
       {/* Nickname */}
       <div className="flex flex-col gap-1">
