@@ -22,23 +22,18 @@ export class AuthService {
       [email, password],
     );
     if (result.rows.length === 0) throw new Error("authentication failed");
-    const {
-      id,
-      email: user_email,
-      nickname: user_nickname,
-      is_admin: user_is_admin,
-    } = result.rows[0];
-    const user_id = id;
+    const { id, email: userEmail, nickname: userNickname, is_admin: userIsAdmin } = result.rows[0];
+    const userId = id;
     const sessionId = crypto.randomBytes(32).toString("hex");
     const sessionInfo: SessionInfo = {
-      user_id,
-      user_email,
-      user_nickname,
-      user_is_admin,
-      logged_in_at: new Date().toISOString(),
+      userId,
+      userEmail,
+      userNickname,
+      userIsAdmin,
+      loggedInAt: new Date().toISOString(),
     };
     await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", SESSION_TTL);
-    return { sessionId, userId: user_id };
+    return { sessionId, userId };
   }
 
   async getSessionInfo(sessionId: string): Promise<SessionInfo | null> {

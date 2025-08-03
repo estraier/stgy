@@ -10,7 +10,7 @@ class MockRedis {
     return Promise.resolve("OK");
   });
   get = jest.fn((key: string) => Promise.resolve(this.store[key]));
-  getex = jest.fn((key: string, ..._args: any[]) => Promise.resolve(this.store[key])); // ★これを追加
+  getex = jest.fn((key: string, ..._args: any[]) => Promise.resolve(this.store[key]));
   del = jest.fn((key: string) => {
     delete this.store[key];
     return Promise.resolve(1);
@@ -45,11 +45,11 @@ describe("AuthService class", () => {
     expect(redis.set).toHaveBeenCalled();
     const sessionId = result.sessionId;
     const session = JSON.parse(redis.store[`session:${sessionId}`]);
-    expect(session.user_id).toBe("user-123");
-    expect(session.user_email).toBe("test@example.com");
-    expect(session.user_nickname).toBe("TestNick");
-    expect(session.user_is_admin).toBe(true);
-    expect(session.logged_in_at).toBeDefined();
+    expect(session.userId).toBe("user-123");
+    expect(session.userEmail).toBe("test@example.com");
+    expect(session.userNickname).toBe("TestNick");
+    expect(session.userIsAdmin).toBe(true);
+    expect(session.loggedInAt).toBeDefined();
   });
 
   test("login: fail", async () => {
@@ -62,19 +62,19 @@ describe("AuthService class", () => {
   test("getSessionInfo: exists", async () => {
     const sessionId = "abc123";
     const value = JSON.stringify({
-      user_id: "u1",
-      user_email: "e@example.com",
-      user_nickname: "TestNick",
-      user_is_admin: true,
-      logged_in_at: "2025-07-13T00:00:00Z",
+      userId: "u1",
+      userEmail: "e@example.com",
+      userNickname: "TestNick",
+      userIsAdmin: true,
+      loggedInAt: "2025-07-13T00:00:00Z",
     });
     redis.store[`session:${sessionId}`] = value;
     const session = await authService.getSessionInfo(sessionId);
-    expect(session?.user_id).toBe("u1");
-    expect(session?.user_email).toBe("e@example.com");
-    expect(session?.user_nickname).toBe("TestNick");
-    expect(session?.user_is_admin).toBe(true);
-    expect(session?.logged_in_at).toBe("2025-07-13T00:00:00Z");
+    expect(session?.userId).toBe("u1");
+    expect(session?.userEmail).toBe("e@example.com");
+    expect(session?.userNickname).toBe("TestNick");
+    expect(session?.userIsAdmin).toBe(true);
+    expect(session?.loggedInAt).toBe("2025-07-13T00:00:00Z");
   });
 
   test("getSessionInfo: not exists", async () => {
@@ -84,7 +84,7 @@ describe("AuthService class", () => {
 
   test("logout", async () => {
     const sessionId = "toDel";
-    redis.store[`session:${sessionId}`] = '{"user_id":"xx"}';
+    redis.store[`session:${sessionId}`] = '{"userId":"xx"}';
     await authService.logout(sessionId);
     expect(redis.store[`session:${sessionId}`]).toBeUndefined();
   });

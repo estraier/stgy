@@ -22,20 +22,20 @@ export default function createSignupRouter(pgClient: Client, redis: Redis) {
     }
     try {
       const { signupId } = await signupService.startSignup(email, password);
-      res.status(201).json({ signup_id: signupId });
+      res.status(201).json({ signupId });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "signup failed" });
     }
   });
 
   router.post("/verify", async (req: Request, res: Response) => {
-    const { signup_id, verification_code } = req.body;
-    if (!signup_id || !verification_code) {
-      return res.status(400).json({ error: "signup_id and verification_code are needed" });
+    const { signupId, verificationCode } = req.body;
+    if (!signupId || !verificationCode) {
+      return res.status(400).json({ error: "signupId and verificationCode are needed" });
     }
     try {
-      const { userId } = await signupService.verifySignup(signup_id, verification_code);
-      res.status(201).json({ user_id: userId });
+      const { userId } = await signupService.verifySignup(signupId, verificationCode);
+      res.status(201).json({ userId });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "verification failed" });
     }

@@ -38,7 +38,7 @@ describe("SendMail", () => {
           ts: new Date().toISOString(),
           address: `user${i}@example.com`,
           domain: "example.com",
-        })
+        }),
       );
     }
     redisMock.lrange.mockResolvedValue(items);
@@ -55,7 +55,7 @@ describe("SendMail", () => {
           ts: new Date().toISOString(),
           address: `other${i}@other.com`,
           domain: "other.com",
-        })
+        }),
       );
     }
     redisMock.lrange.mockResolvedValue(items);
@@ -77,12 +77,12 @@ describe("SendMail", () => {
     await sendMail.recordSend("user@example.com");
     expect(redisMock.lpush).toHaveBeenCalledWith(
       "mail:send_history",
-      expect.stringContaining('"address":"user@example.com"')
+      expect.stringContaining('"address":"user@example.com"'),
     );
     expect(redisMock.ltrim).toHaveBeenCalledWith(
       "mail:send_history",
       0,
-      SendMail.HISTORY_LIMIT - 1
+      SendMail.HISTORY_LIMIT - 1,
     );
   });
 });

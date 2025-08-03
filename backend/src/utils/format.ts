@@ -16,3 +16,18 @@ export function maskEmailByHash(email: string): string {
   const domain = domains[Number(hashInt % BigInt(domains.length))];
   return `${alpha}${num}@example${domain}`;
 }
+
+export function snakeToCamel<T = Record<string, unknown>>(obj: unknown): T {
+  if (Array.isArray(obj)) {
+    return obj.map((item) => snakeToCamel(item)) as unknown as T;
+  }
+  if (obj && typeof obj === "object") {
+    const n: Record<string, unknown> = {};
+    for (const k of Object.keys(obj as object)) {
+      const key = k.replace(/_([a-z])/g, (g) => g[1].toUpperCase());
+      n[key] = snakeToCamel((obj as Record<string, unknown>)[k]);
+    }
+    return n as T;
+  }
+  return obj as T;
+}

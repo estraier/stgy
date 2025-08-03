@@ -19,7 +19,7 @@ export default function createAuthRouter(pgClient: Client, redis: Redis) {
         secure: false,
         maxAge: 3600 * 1000,
       });
-      res.json({ session_id: sessionId });
+      res.json({ sessionId });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
       res.status(401).json({ error: message });

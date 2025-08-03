@@ -1,9 +1,9 @@
 import Redis from "ioredis";
 
 export class SendMail {
-  static readonly ADDRESS_LIMIT = 1;    // 同一アドレス1分1回
-  static readonly DOMAIN_LIMIT = 10;    // 同一ドメイン1分10回
-  static readonly GLOBAL_LIMIT = 100;   // 全体1分100回
+  static readonly ADDRESS_LIMIT = 1;
+  static readonly DOMAIN_LIMIT = 10;
+  static readonly GLOBAL_LIMIT = 100;
   static readonly HISTORY_LIMIT = Math.ceil(SendMail.GLOBAL_LIMIT * 1.5);
 
   redis: Redis;
@@ -26,7 +26,6 @@ export class SendMail {
             domain: obj.domain,
           };
         } catch {
-          // 古い形式（ISO文字列＋半角スペース＋アドレス）など
           const m = item.match(/^([0-9T:.Z-]+)\s+([^\s@]+@([^\s@]+))$/);
           if (m) {
             return {
@@ -44,7 +43,6 @@ export class SendMail {
     const domainCount = items.filter((item) => item.domain === domain).length;
     const globalCount = items.length;
 
-    // 判定の順番を修正
     if (globalCount >= SendMail.GLOBAL_LIMIT) {
       return { ok: false, reason: "global limit exceeded" };
     }
@@ -69,7 +67,6 @@ export class SendMail {
   }
 
   async send(address: string, subject: string, body: string): Promise<void> {
-    // 本物の実装ならメール送信する。ここではログだけ
-    console.log(`[SendMail] Sending mail to: ${address}, subject: ${subject}`);
+    console.log(`[SendMail] Sending mail to: ${address}, subject: ${subject}, body: ${body}`);
   }
 }

@@ -73,15 +73,15 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       typeof req.query.nickname === "string" && req.query.nickname.trim() !== ""
         ? req.query.nickname.trim()
         : undefined;
-    const focus_user_id =
-      typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
-        ? req.query.focus_user_id.trim()
+    const focusUserId =
+      typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
+        ? req.query.focusUserId.trim()
         : undefined;
     let users = await usersService.listUsersDetail(
       { offset, limit, order, query, nickname },
-      focus_user_id,
+      focusUserId,
     );
-    users = maskUserListSensitiveInfo(users, loginUser.is_admin, loginUser.id);
+    users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
     res.json(users);
   });
 
@@ -90,20 +90,20 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     if (!loginUser) return res.status(401).json({ error: "login required" });
     let user = await usersService.getUser(req.params.id);
     if (!user) return res.status(404).json({ error: "not found" });
-    user = maskUserSensitiveInfo(user, loginUser.is_admin, loginUser.id);
+    user = maskUserSensitiveInfo(user, loginUser.isAdmin, loginUser.id);
     res.json(user);
   });
 
   router.get("/:id/detail", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    const focus_user_id =
-      typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
-        ? req.query.focus_user_id.trim()
+    const focusUserId =
+      typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
+        ? req.query.focusUserId.trim()
         : undefined;
-    let user = await usersService.getUserDetail(req.params.id, focus_user_id);
+    let user = await usersService.getUserDetail(req.params.id, focusUserId);
     if (!user) return res.status(404).json({ error: "not found" });
-    user = maskUserSensitiveInfo(user, loginUser.is_admin, loginUser.id);
+    user = maskUserSensitiveInfo(user, loginUser.isAdmin, loginUser.id);
     res.json(user);
   });
 
@@ -124,21 +124,21 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       typeof req.query.nickname === "string" && req.query.nickname.trim() !== ""
         ? req.query.nickname.trim()
         : undefined;
-    const focus_user_id =
-      typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
-        ? req.query.focus_user_id.trim()
+    const focusUserId =
+      typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
+        ? req.query.focusUserId.trim()
         : undefined;
     let users = await usersService.listUsers(
       { offset, limit, order, query, nickname },
-      focus_user_id,
+      focusUserId,
     );
-    users = maskUserListSensitiveInfo(users, loginUser.is_admin, loginUser.id);
+    users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
     res.json(users);
   });
 
   router.post("/", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser || !loginUser.is_admin) {
+    if (!loginUser || !loginUser.isAdmin) {
       return res.status(403).json({ error: "admin only" });
     }
     try {
@@ -146,10 +146,10 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
         email: req.body.email,
         nickname: req.body.nickname,
         password: req.body.password,
-        is_admin: req.body.is_admin ?? false,
+        isAdmin: req.body.isAdmin ?? false,
         introduction: req.body.introduction,
-        ai_model: req.body.ai_model ?? null,
-        ai_personality: req.body.ai_personality ?? null,
+        aiModel: req.body.aiModel ?? null,
+        aiPersonality: req.body.aiPersonality ?? null,
       };
       const created = await usersService.createUser(input);
       res.status(201).json(created);
@@ -161,27 +161,27 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
   router.put("/:id", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!(loginUser.is_admin || loginUser.id === req.params.id)) {
+    if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
       return res.status(403).json({ error: "forbidden" });
     }
-    if (!loginUser.is_admin && req.body.is_admin !== undefined) {
-      return res.status(403).json({ error: "forbidden to change is_admin" });
+    if (!loginUser.isAdmin && req.body.isAdmin !== undefined) {
+      return res.status(403).json({ error: "forbidden to change isAdmin" });
     }
-    if (!loginUser.is_admin && req.body.ai_model !== undefined) {
-      return res.status(403).json({ error: "forbidden to change ai_model" });
+    if (!loginUser.isAdmin && req.body.aiModel !== undefined) {
+      return res.status(403).json({ error: "forbidden to change aiModel" });
     }
-    if (!loginUser.is_admin && req.body.ai_personality !== undefined) {
-      return res.status(403).json({ error: "forbidden to change ai_personality" });
+    if (!loginUser.isAdmin && req.body.aiPersonality !== undefined) {
+      return res.status(403).json({ error: "forbidden to change aiPersonality" });
     }
     try {
       const input: UpdateUserInput = {
         id: req.params.id,
         email: req.body.email,
         nickname: req.body.nickname,
-        is_admin: req.body.is_admin,
+        isAdmin: req.body.isAdmin,
         introduction: req.body.introduction,
-        ai_model: req.body.ai_model,
-        ai_personality: req.body.ai_personality,
+        aiModel: req.body.aiModel,
+        aiPersonality: req.body.aiPersonality,
       };
       const updated = await usersService.updateUser(input);
       if (!updated) return res.status(404).json({ error: "not found" });
@@ -194,7 +194,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
   router.put("/:id/password", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!(loginUser.is_admin || loginUser.id === req.params.id)) {
+    if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
       return res.status(403).json({ error: "forbidden" });
     }
     const { password } = req.body;
@@ -214,7 +214,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
   router.delete("/:id", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!(loginUser.is_admin || loginUser.id === req.params.id)) {
+    if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
       return res.status(403).json({ error: "forbidden" });
     }
     const ok = await usersService.deleteUser(req.params.id);
@@ -225,12 +225,12 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
   router.post("/:id/follow", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    const followee_id = req.params.id;
-    const follower_id = loginUser.id;
-    if (follower_id === followee_id) {
+    const followeeId = req.params.id;
+    const followerId = loginUser.id;
+    if (followerId === followeeId) {
       return res.status(400).json({ error: "cannot follow yourself" });
     }
-    const ok = await usersService.addFollower({ follower_id, followee_id });
+    const ok = await usersService.addFollower({ followerId, followeeId });
     if (!ok) return res.status(400).json({ error: "already followed" });
     res.json({ result: "ok" });
   });
@@ -238,9 +238,9 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
   router.delete("/:id/follow", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    const followee_id = req.params.id;
-    const follower_id = loginUser.id;
-    const ok = await usersService.removeFollower({ follower_id, followee_id });
+    const followeeId = req.params.id;
+    const followerId = loginUser.id;
+    const ok = await usersService.removeFollower({ followerId, followeeId });
     if (!ok) return res.status(404).json({ error: "not followed" });
     res.json({ result: "ok" });
   });
@@ -248,38 +248,38 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
   router.get("/:id/followees/detail", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    const follower_id = req.params.id;
+    const followerId = req.params.id;
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
-    const focus_user_id =
-      typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
-        ? req.query.focus_user_id.trim()
+    const focusUserId =
+      typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
+        ? req.query.focusUserId.trim()
         : undefined;
     let users = await usersService.listFolloweesDetail(
-      { follower_id, offset, limit, order },
-      focus_user_id,
+      { followerId, offset, limit, order },
+      focusUserId,
     );
-    users = maskUserListSensitiveInfo(users, loginUser.is_admin, loginUser.id);
+    users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
     res.json(users);
   });
 
   router.get("/:id/followers/detail", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    const followee_id = req.params.id;
+    const followeeId = req.params.id;
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
-    const focus_user_id =
-      typeof req.query.focus_user_id === "string" && req.query.focus_user_id.trim() !== ""
-        ? req.query.focus_user_id.trim()
+    const focusUserId =
+      typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
+        ? req.query.focusUserId.trim()
         : undefined;
     let users = await usersService.listFollowersDetail(
-      { followee_id, offset, limit, order },
-      focus_user_id,
+      { followeeId, offset, limit, order },
+      focusUserId,
     );
-    users = maskUserListSensitiveInfo(users, loginUser.is_admin, loginUser.id);
+    users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
     res.json(users);
   });
 

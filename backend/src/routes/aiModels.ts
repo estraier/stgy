@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { Client } from "pg";
 import Redis from "ioredis";
-import { AIModelsService } from "../services/ai_models";
+import { AIModelsService } from "../services/aiModels";
 import { AuthHelpers } from "./authHelpers";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";

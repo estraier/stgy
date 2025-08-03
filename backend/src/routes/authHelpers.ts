@@ -19,7 +19,7 @@ export class AuthHelpers {
 
   async getCurrentUser(req: Request) {
     const sessionInfo = await this.getSessionInfo(req);
-    if (!sessionInfo || !sessionInfo.user_id) return null;
-    return await this.usersService.getUser(sessionInfo.user_id);
+    if (!sessionInfo || !sessionInfo.userId) return null;
+    return await this.usersService.getUser(sessionInfo.userId);
   }
 }

@@ -29,65 +29,65 @@ components:
         id: { type: string }
         email: { type: string }
         nickname: { type: string }
-        is_admin: { type: boolean }
+        isAdmin: { type: boolean }
         introduction: { type: string }
-        ai_model: { type: string, nullable: true }
-        ai_personality: { type: string, nullable: true }
-        created_at: { type: string, format: date-time }
-      required: [id, email, nickname, is_admin, introduction, ai_model, ai_personality, created_at]
+        aiModel: { type: string, nullable: true }
+        aiPersonality: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+      required: [id, email, nickname, isAdmin, introduction, aiModel, aiPersonality, createdAt]
 
     UserDetail:
       allOf:
         - $ref: "#/components/schemas/User"
         - type: object
           properties:
-            count_followers:
+            countFollowers:
               type: integer
-            count_followees:
+            countFollowees:
               type: integer
-            is_followed_by_focus_user:
+            isFollowedByFocusUser:
               type: boolean
               nullable: true
-            is_following_focus_user:
+            isFollowingFocusUser:
               type: boolean
               nullable: true
           required:
-            - count_followers
-            - count_followees
+            - countFollowers
+            - countFollowees
 
     Post:
       type: object
       properties:
         id: { type: string }
         content: { type: string }
-        owned_by: { type: string }
-        reply_to:
+        ownedBy: { type: string }
+        replyTo:
           type: string
           nullable: true
-        created_at: { type: string, format: date-time }
-      required: [id, content, owned_by, reply_to, created_at]
+        createdAt: { type: string, format: date-time }
+      required: [id, content, ownedBy, replyTo, createdAt]
 
     PostDetail:
       allOf:
         - $ref: "#/components/schemas/Post"
         - type: object
           properties:
-            owner_nickname: { type: string }
-            reply_to_owner_nickname:
+            ownerNickname: { type: string }
+            replyToOwnerNickname:
               type: string
               nullable: true
-            reply_count: { type: integer }
-            like_count: { type: integer }
+            replyCount: { type: integer }
+            likeCount: { type: integer }
             tags:
               type: array
               items: { type: string }
-            is_liked_by_focus_user:
+            isLikedByFocusUser:
               type: boolean
               nullable: true
-            is_replied_by_focus_user:
+            isRepliedByFocusUser:
               type: boolean
               nullable: true
-          required: [owner_nickname, reply_count, like_count, tags]
+          required: [ownerNickname, replyCount, likeCount, tags]
 
   responses:
     Error400:
@@ -137,7 +137,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  session_id: { type: string }
+                  sessionId: { type: string }
         "400":
           $ref: "#/components/responses/Error400"
         "401":
@@ -155,12 +155,12 @@ paths:
               schema:
                 type: object
                 properties:
-                  user_id: { type: string }
-                  user_email: { type: string }
-                  user_nickname: { type: string }
-                  user_is_admin: { type: boolean }
-                  logged_in_at: { type: string }
-                required: [user_id, user_email, user_nickname, user_is_admin, logged_in_at]
+                  userId: { type: string }
+                  userEmail: { type: string }
+                  userNickname: { type: string }
+                  userIsAdmin: { type: boolean }
+                  loggedInAt: { type: string }
+                required: [userId, userEmail, userNickname, userIsAdmin, loggedInAt]
         "401":
           $ref: "#/components/responses/Error401"
 
@@ -199,7 +199,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  signup_id: { type: string }
+                  signupId: { type: string }
         "400":
           $ref: "#/components/responses/Error400"
 
@@ -213,9 +213,9 @@ paths:
             schema:
               type: object
               properties:
-                signup_id: { type: string }
-                verification_code: { type: string }
-              required: [signup_id, verification_code]
+                signupId: { type: string }
+                verificationCode: { type: string }
+              required: [signupId, verificationCode]
       responses:
         "201":
           description: Signup success
@@ -224,7 +224,7 @@ paths:
               schema:
                 type: object
                 properties:
-                  user_id: { type: string }
+                  userId: { type: string }
         "400":
           $ref: "#/components/responses/Error400"
 
@@ -283,7 +283,7 @@ paths:
           in: query
           schema: { type: string }
           required: false
-        - name: focus_user_id
+        - name: focusUserId
           in: query
           required: false
           schema: { type: string }
@@ -314,12 +314,11 @@ paths:
                 email: { type: string }
                 nickname: { type: string }
                 password: { type: string }
-                is_admin: { type: boolean }
+                isAdmin: { type: boolean }
                 introduction: { type: string }
-                ai_model: { type: string, nullable: true }
-                ai_personality: { type: string, nullable: true }
-              required:
-                [email, nickname, password, is_admin, introduction, ai_model, ai_personality]
+                aiModel: { type: string, nullable: true }
+                aiPersonality: { type: string, nullable: true }
+              required: [email, nickname, password, isAdmin, introduction, aiModel, aiPersonality]
       responses:
         "201":
           description: User created
@@ -372,10 +371,10 @@ paths:
               properties:
                 email: { type: string }
                 nickname: { type: string }
-                is_admin: { type: boolean }
+                isAdmin: { type: boolean }
                 introduction: { type: string }
-                ai_model: { type: string, nullable: true }
-                ai_personality: { type: string, nullable: true }
+                aiModel: { type: string, nullable: true }
+                aiPersonality: { type: string, nullable: true }
               required: []
       responses:
         "200":
@@ -430,11 +429,11 @@ paths:
           in: path
           required: true
           schema: { type: string }
-        - name: focus_user_id
+        - name: focusUserId
           in: query
           required: false
           schema: { type: string }
-          description: (Optional) Used to get is_followed_by_focus_user/is_following_focus_user
+          description: (Optional) Used to get isFollowedByFocusUser/isFollowingFocusUser
       responses:
         "200":
           description: User detail object
@@ -478,11 +477,11 @@ paths:
           in: query
           required: false
           schema: { type: string }
-        - name: focus_user_id
+        - name: focusUserId
           in: query
           required: false
           schema: { type: string }
-          description: (Optional) Used to get is_followed_by_focus_user/is_following_focus_user
+          description: (Optional) Used to get isFollowedByFocusUser/isFollowingFocusUser
       responses:
         "200":
           description: List of user detail objects
@@ -596,11 +595,11 @@ paths:
           in: query
           schema: { type: integer, default: 100 }
           required: false
-        - name: focus_user_id
+        - name: focusUserId
           in: query
           required: false
           schema: { type: string }
-          description: (Optional) Used to get is_followed_by_focus_user/is_following_focus_user
+          description: (Optional) Used to get isFollowedByFocusUser/isFollowingFocusUser
       responses:
         "200":
           description: Followees list
@@ -631,11 +630,11 @@ paths:
           in: query
           schema: { type: integer, default: 100 }
           required: false
-        - name: focus_user_id
+        - name: focusUserId
           in: query
           required: false
           schema: { type: string }
-          description: (Optional) Used to get is_followed_by_focus_user/is_following_focus_user
+          description: (Optional) Used to get isFollowedByFocusUser/isFollowingFocusUser
       responses:
         "200":
           description: Followers list
@@ -658,7 +657,7 @@ paths:
           in: query
           schema: { type: string }
           required: false
-        - name: owned_by
+        - name: ownedBy
           in: query
           schema: { type: string }
           required: false
@@ -666,16 +665,16 @@ paths:
           in: query
           schema: { type: string }
           required: false
-        - name: reply_to
+        - name: replyTo
           in: query
           schema:
             type: string
           required: false
           description: |
             If omitted: include all posts.
-            If empty string (""): only posts with no reply_to (not a reply).
-            If "*": only posts with any reply_to (replies).
-            Otherwise: only posts with reply_to equal to the given value.
+            If empty string (""): only posts with no replyTo (not a reply).
+            If "*": only posts with any replyTo (replies).
+            Otherwise: only posts with replyTo equal to the given value.
       responses:
         "200":
           description: Post count
@@ -713,7 +712,7 @@ paths:
           in: query
           schema: { type: string }
           required: false
-        - name: owned_by
+        - name: ownedBy
           in: query
           schema: { type: string }
           required: false
@@ -721,16 +720,16 @@ paths:
           in: query
           schema: { type: string }
           required: false
-        - name: reply_to
+        - name: replyTo
           in: query
           schema:
             type: string
           required: false
           description: |
             If omitted: include all posts.
-            If empty string (""): only posts with no reply_to (not a reply).
-            If "*": only posts with any reply_to (replies).
-            Otherwise: only posts with reply_to equal to the given value.
+            If empty string (""): only posts with no replyTo (not a reply).
+            If "*": only posts with any replyTo (replies).
+            Otherwise: only posts with replyTo equal to the given value.
       responses:
         "200":
           description: Posts list
@@ -755,7 +754,7 @@ paths:
               type: object
               properties:
                 content: { type: string }
-                reply_to:
+                replyTo:
                   type: string
                   nullable: true
                 tags:
@@ -797,7 +796,7 @@ paths:
           in: query
           schema: { type: string }
           required: false
-        - name: owned_by
+        - name: ownedBy
           in: query
           schema: { type: string }
           required: false
@@ -805,22 +804,22 @@ paths:
           in: query
           schema: { type: string }
           required: false
-        - name: reply_to
+        - name: replyTo
           in: query
           schema:
             type: string
           required: false
           description: |
             If omitted: include all posts.
-            If empty string (""): only posts with no reply_to (not a reply).
-            If "*": only posts with any reply_to (replies).
-            Otherwise: only posts with reply_to equal to the given value.
-        - name: focus_user_id
+            If empty string (""): only posts with no replyTo (not a reply).
+            If "*": only posts with any replyTo (replies).
+            Otherwise: only posts with replyTo equal to the given value.
+        - name: focusUserId
           in: query
           schema:
             type: string
           required: false
-          description: (Optional) Used for personalization (e.g., is_liked_by_focus_user)
+          description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
       responses:
         "200":
           description: Posts detail list
@@ -839,7 +838,7 @@ paths:
       security:
         - sessionCookie: []
       parameters:
-        - name: user_id
+        - name: userId
           in: query
           required: true
           schema: { type: string }
@@ -858,20 +857,20 @@ paths:
             enum: [asc, desc]
             default: desc
           required: false
-        - name: include_self
+        - name: includeSelf
           in: query
           schema: { type: boolean, default: false }
           required: false
-        - name: include_replies
+        - name: includeReplies
           in: query
           schema: { type: boolean, default: true }
           required: false
-        - name: focus_user_id
+        - name: focusUserId
           in: query
           schema:
             type: string
           required: false
-          description: (Optional) Used for personalization (e.g., is_liked_by_focus_user)
+          description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
       responses:
         "200":
           description: Posts detail list by followees
@@ -892,7 +891,7 @@ paths:
       security:
         - sessionCookie: []
       parameters:
-        - name: user_id
+        - name: userId
           in: query
           required: true
           schema: { type: string }
@@ -911,16 +910,16 @@ paths:
             enum: [asc, desc]
             default: desc
           required: false
-        - name: include_replies
+        - name: includeReplies
           in: query
           schema: { type: boolean, default: true }
           required: false
-        - name: focus_user_id
+        - name: focusUserId
           in: query
           schema:
             type: string
           required: false
-          description: (Optional) Used for personalization (e.g., is_liked_by_focus_user)
+          description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
       responses:
         "200":
           description: Posts liked by user (detail)
@@ -945,12 +944,12 @@ paths:
           in: path
           required: true
           schema: { type: string }
-        - name: focus_user_id
+        - name: focusUserId
           in: query
           schema:
             type: string
           required: false
-          description: (Optional) Used for personalization (e.g., is_liked_by_focus_user)
+          description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
       responses:
         "200":
           description: Post detail
@@ -1002,8 +1001,8 @@ paths:
               type: object
               properties:
                 content: { type: string }
-                owned_by: { type: string }
-                reply_to:
+                ownedBy: { type: string }
+                replyTo:
                   type: string
                   nullable: true
                 tags:

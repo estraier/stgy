@@ -54,10 +54,10 @@ export class SignupService {
       email: data.email,
       password: data.password,
       nickname: data.email.split("@")[0],
-      is_admin: false,
+      isAdmin: false,
       introduction: "brand new user",
-      ai_personality: null,
-      ai_model: null,
+      aiModel: null,
+      aiPersonality: null,
     };
     const user = await this.usersService.createUser(input);
     await this.redis.del(signupKey);

@@ -4,7 +4,7 @@ import { Client } from "pg";
 import Redis from "ioredis";
 import cors from "cors";
 import createAuthRouter from "./routes/auth";
-import createAIModelsRouter from "./routes/ai_models";
+import createAIModelsRouter from "./routes/aiModels";
 import createUsersRouter from "./routes/users";
 import createPostRouter from "./routes/posts";
 import createSignupRouter from "./routes/signup";

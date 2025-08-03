@@ -18,9 +18,9 @@ function normalizeSql(sql: string) {
 
 class MockPgClient {
   data: Post[] = [];
-  tags: { post_id: string; name: string }[] = [];
-  likes: { post_id: string; liked_by: string }[] = [];
-  follows: { follower_id: string; followee_id: string }[] = [];
+  tags: { postId: string; name: string }[] = [];
+  likes: { postId: string; likedBy: string }[] = [];
+  follows: { followerId: string; followeeId: string }[] = [];
   users: { id: string; nickname: string }[] = [];
   txCount = 0;
 
@@ -34,22 +34,22 @@ class MockPgClient {
       const newPost: Post = {
         id: params![0],
         content: params![1],
-        owned_by: params![2],
-        reply_to: params![3] ?? null,
-        created_at: new Date().toISOString(),
+        ownedBy: params![2],
+        replyTo: params![3] ?? null,
+        createdAt: new Date().toISOString(),
       };
       this.data.push(newPost);
       return { rows: [newPost] };
     }
     if (sql.startsWith("INSERT INTO post_tags")) {
       for (let i = 1; i < params!.length; i++) {
-        this.tags.push({ post_id: params![0], name: params![i] });
+        this.tags.push({ postId: params![0], name: params![i] });
       }
       return { rowCount: params!.length - 1 };
     }
     if (sql.startsWith("DELETE FROM post_tags WHERE post_id = $1")) {
-      const post_id = params![0];
-      this.tags = this.tags.filter((t) => t.post_id !== post_id);
+      const postId = params![0];
+      this.tags = this.tags.filter((t) => t.postId !== postId);
       return { rowCount: 1 };
     }
     if (sql.startsWith("UPDATE posts SET")) {
@@ -78,13 +78,13 @@ class MockPgClient {
       return { rows: [{ count: this.data.length.toString() }] };
     }
     if (sql.startsWith("SELECT 1 FROM post_likes")) {
-      const [post_id, liked_by] = params!;
-      const found = this.likes.some((l) => l.post_id === post_id && l.liked_by === liked_by);
+      const [postId, likedBy] = params!;
+      const found = this.likes.some((l) => l.postId === postId && l.likedBy === likedBy);
       return { rows: found ? [{}] : [] };
     }
     if (sql.startsWith("SELECT 1 FROM posts WHERE reply_to =")) {
-      const [reply_to, owned_by] = params!;
-      const found = this.data.some((p) => p.reply_to === reply_to && p.owned_by === owned_by);
+      const [replyTo, ownedBy] = params!;
+      const found = this.data.some((p) => p.replyTo === replyTo && p.ownedBy === ownedBy);
       return { rows: found ? [{}] : [] };
     }
     if (
@@ -92,34 +92,34 @@ class MockPgClient {
       sql.includes("FROM posts p") &&
       sql.includes("JOIN users u ON p.owned_by = u.id")
     ) {
-      const user_id = params![0];
+      const userId = params![0];
       const offset = params![1] ?? 0;
       const limit = params![2] ?? 100;
       let followeeIds = this.follows
-        .filter((f) => f.follower_id === user_id)
-        .map((f) => f.followee_id);
+        .filter((f) => f.followerId === userId)
+        .map((f) => f.followeeId);
       if (sql.includes("UNION SELECT $1")) {
-        followeeIds.push(user_id);
+        followeeIds.push(userId);
       }
       followeeIds = Array.from(new Set(followeeIds));
-      const posts = this.data.filter((p) => followeeIds.includes(p.owned_by));
+      const posts = this.data.filter((p) => followeeIds.includes(p.ownedBy));
       const rows: PostDetail[] = posts.map((p) => {
-        const replyToPost = this.data.find((pp) => pp.id === p.reply_to);
+        const replyToPost = this.data.find((pp) => pp.id === p.replyTo);
         const replyToNickname = replyToPost
-          ? (this.users.find((u) => u.id === replyToPost.owned_by)?.nickname ?? null)
+          ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
         return {
           id: p.id,
           content: p.content,
-          owned_by: p.owned_by,
-          reply_to: p.reply_to,
-          created_at: p.created_at,
-          owner_nickname: this.users.find((u) => u.id === p.owned_by)?.nickname ?? "",
-          reply_to_owner_nickname: replyToNickname,
-          reply_count: this.data.filter((r) => r.reply_to === p.id).length,
-          like_count: this.likes.filter((l) => l.post_id === p.id).length,
+          ownedBy: p.ownedBy,
+          replyTo: p.replyTo,
+          createdAt: p.createdAt,
+          ownerNickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
+          replyToOwnerNickname: replyToNickname,
+          replyCount: this.data.filter((r) => r.replyTo === p.id).length,
+          likeCount: this.likes.filter((l) => l.postId === p.id).length,
           tags: this.tags
-            .filter((t) => t.post_id === p.id)
+            .filter((t) => t.postId === p.id)
             .map((t) => t.name)
             .sort(),
         };
@@ -127,28 +127,28 @@ class MockPgClient {
       return { rows: rows.slice(offset, offset + limit) };
     }
     if (sql.includes("FROM post_likes pl") && sql.includes("JOIN posts p ON pl.post_id = p.id")) {
-      const user_id = params![0];
+      const userId = params![0];
       const offset = params![1] ?? 0;
       const limit = params![2] ?? 100;
-      const likedPostIds = this.likes.filter((l) => l.liked_by === user_id).map((l) => l.post_id);
+      const likedPostIds = this.likes.filter((l) => l.likedBy === userId).map((l) => l.postId);
       const posts = this.data.filter((p) => likedPostIds.includes(p.id));
       const rows: PostDetail[] = posts.map((p) => {
-        const replyToPost = this.data.find((pp) => pp.id === p.reply_to);
+        const replyToPost = this.data.find((pp) => pp.id === p.replyTo);
         const replyToNickname = replyToPost
-          ? (this.users.find((u) => u.id === replyToPost.owned_by)?.nickname ?? null)
+          ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
         return {
           id: p.id,
           content: p.content,
-          owned_by: p.owned_by,
-          reply_to: p.reply_to,
-          created_at: p.created_at,
-          owner_nickname: this.users.find((u) => u.id === p.owned_by)?.nickname ?? "",
-          reply_to_owner_nickname: replyToNickname,
-          reply_count: this.data.filter((r) => r.reply_to === p.id).length,
-          like_count: this.likes.filter((l) => l.post_id === p.id).length,
+          ownedBy: p.ownedBy,
+          replyTo: p.replyTo,
+          createdAt: p.createdAt,
+          ownerNickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
+          replyToOwnerNickname: replyToNickname,
+          replyCount: this.data.filter((r) => r.replyTo === p.id).length,
+          likeCount: this.likes.filter((l) => l.postId === p.id).length,
           tags: this.tags
-            .filter((t) => t.post_id === p.id)
+            .filter((t) => t.postId === p.id)
             .map((t) => t.name)
             .sort(),
         };
@@ -157,22 +157,22 @@ class MockPgClient {
     }
     if (sql.includes("FROM posts p") && sql.includes("JOIN users u ON p.owned_by = u.id")) {
       const result: PostDetail[] = this.data.map((p) => {
-        const replyToPost = this.data.find((pp) => pp.id === p.reply_to);
+        const replyToPost = this.data.find((pp) => pp.id === p.replyTo);
         const replyToNickname = replyToPost
-          ? (this.users.find((u) => u.id === replyToPost.owned_by)?.nickname ?? null)
+          ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
         return {
           id: p.id,
           content: p.content,
-          owned_by: p.owned_by,
-          reply_to: p.reply_to,
-          created_at: p.created_at,
-          owner_nickname: this.users.find((u) => u.id === p.owned_by)?.nickname ?? "",
-          reply_to_owner_nickname: replyToNickname,
-          reply_count: this.data.filter((r) => r.reply_to === p.id).length,
-          like_count: this.likes.filter((l) => l.post_id === p.id).length,
+          ownedBy: p.ownedBy,
+          replyTo: p.replyTo,
+          createdAt: p.createdAt,
+          ownerNickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
+          replyToOwnerNickname: replyToNickname,
+          replyCount: this.data.filter((r) => r.replyTo === p.id).length,
+          likeCount: this.likes.filter((l) => l.postId === p.id).length,
           tags: this.tags
-            .filter((t) => t.post_id === p.id)
+            .filter((t) => t.postId === p.id)
             .map((t) => t.name)
             .sort(),
         };
@@ -196,22 +196,22 @@ class MockPgClient {
       const idx = this.data.findIndex((p) => p.id === id);
       if (idx >= 0) {
         this.data.splice(idx, 1);
-        this.tags = this.tags.filter((t) => t.post_id !== id);
+        this.tags = this.tags.filter((t) => t.postId !== id);
         return { rowCount: 1 };
       }
       return { rowCount: 0 };
     }
     if (sql.startsWith("INSERT INTO post_likes")) {
-      const [post_id, liked_by] = params!;
-      if (!this.likes.some((l) => l.post_id === post_id && l.liked_by === liked_by)) {
-        this.likes.push({ post_id, liked_by });
+      const [postId, likedBy] = params!;
+      if (!this.likes.some((l) => l.postId === postId && l.likedBy === likedBy)) {
+        this.likes.push({ postId, likedBy });
       }
       return { rowCount: 1 };
     }
     if (sql.startsWith("DELETE FROM post_likes")) {
-      const [post_id, liked_by] = params!;
+      const [postId, likedBy] = params!;
       const before = this.likes.length;
-      this.likes = this.likes.filter((l) => !(l.post_id === post_id && l.liked_by === liked_by));
+      this.likes = this.likes.filter((l) => !(l.postId === postId && l.likedBy === likedBy));
       return { rowCount: before !== this.likes.length ? 1 : 0 };
     }
     if (
@@ -219,17 +219,19 @@ class MockPgClient {
       sql.includes("JOIN users u ON pl.liked_by = u.id") &&
       sql.includes("WHERE pl.post_id = $1")
     ) {
-      const post_id = params![0];
+      const postId = params![0];
       const offset = params![1] ?? 0;
       const limit = params![2] ?? 100;
-      const likes = this.likes.filter((l) => l.post_id === post_id).slice(offset, offset + limit);
-      const likedUserIds = likes.map((l) => l.liked_by);
+      const likes = this.likes.filter((l) => l.postId === postId).slice(offset, offset + limit);
+      const likedUserIds = likes.map((l) => l.likedBy);
       const result = this.users.filter((u) => likedUserIds.includes(u.id));
       return { rows: result };
     }
     return { rows: [] };
   }
 }
+
+// ========== TESTS ==========
 
 describe("posts service", () => {
   let pgClient: MockPgClient;
@@ -247,13 +249,13 @@ describe("posts service", () => {
     postSample = {
       id: uuidv4(),
       content: "test post content",
-      owned_by: "user-1",
-      reply_to: null,
-      created_at: new Date().toISOString(),
+      ownedBy: "user-1",
+      replyTo: null,
+      createdAt: new Date().toISOString(),
     };
     pgClient.data.push({ ...postSample });
-    pgClient.tags.push({ post_id: postSample.id, name: "tag1" });
-    pgClient.likes.push({ post_id: postSample.id, liked_by: uuidv4() });
+    pgClient.tags.push({ postId: postSample.id, name: "tag1" });
+    pgClient.likes.push({ postId: postSample.id, likedBy: uuidv4() });
   });
 
   test("countPosts", async () => {
@@ -281,24 +283,24 @@ describe("posts service", () => {
   test("listPostsDetail: basic", async () => {
     const details = await postsService.listPostsDetail();
     expect(details.length).toBeGreaterThanOrEqual(1);
-    expect(details[0].owner_nickname).toBe("Alice");
+    expect(details[0].ownerNickname).toBe("Alice");
     expect(details[0].tags).toContain("tag1");
-    expect(details[0].like_count).toBeGreaterThanOrEqual(1);
+    expect(details[0].likeCount).toBeGreaterThanOrEqual(1);
   });
 
   test("createPost", async () => {
     const input: CreatePostInput = {
       content: "new post content",
-      owned_by: "user-2",
-      reply_to: postSample.id,
+      ownedBy: "user-2",
+      replyTo: postSample.id,
       tags: ["hello", "world"],
     };
     const post = await postsService.createPost(input);
     expect(post.content).toBe("new post content");
-    expect(post.owned_by).toBe("user-2");
-    expect(post.reply_to).toBe(postSample.id);
+    expect(post.ownedBy).toBe("user-2");
+    expect(post.replyTo).toBe(postSample.id);
     expect(pgClient.data.length).toBeGreaterThanOrEqual(2);
-    expect(pgClient.tags.some((t) => t.post_id === post.id && t.name === "hello")).toBe(true);
+    expect(pgClient.tags.some((t) => t.postId === post.id && t.name === "hello")).toBe(true);
   });
 
   test("getPost", async () => {
@@ -316,14 +318,14 @@ describe("posts service", () => {
     const input: UpdatePostInput = {
       id: postSample.id,
       content: "updated content",
-      reply_to: "other-post-id",
+      replyTo: "other-post-id",
       tags: ["foo", "bar"],
     };
     const post = await postsService.updatePost(input);
     expect(post).not.toBeNull();
     expect(post!.content).toBe("updated content");
-    expect(post!.reply_to).toBe("other-post-id");
-    expect(pgClient.tags.some((t) => t.post_id === postSample.id && t.name === "foo")).toBe(true);
+    expect(post!.replyTo).toBe("other-post-id");
+    expect(pgClient.tags.some((t) => t.postId === postSample.id && t.name === "foo")).toBe(true);
   });
 
   test("updatePost: partial", async () => {
@@ -349,7 +351,7 @@ describe("posts service", () => {
     const ok = await postsService.deletePost(postSample.id);
     expect(ok).toBe(true);
     expect(pgClient.data.length).toBe(0);
-    expect(pgClient.tags.some((t) => t.post_id === postSample.id)).toBe(false);
+    expect(pgClient.tags.some((t) => t.postId === postSample.id)).toBe(false);
     const ng = await postsService.deletePost("no-such-id");
     expect(ng).toBe(false);
   });
@@ -358,7 +360,7 @@ describe("posts service", () => {
     const userId = "user-2";
     const result = await postsService.addLike(postSample.id, userId);
     expect(result).toBe(true);
-    expect(pgClient.likes.some((l) => l.post_id === postSample.id && l.liked_by === userId)).toBe(
+    expect(pgClient.likes.some((l) => l.postId === postSample.id && l.likedBy === userId)).toBe(
       true,
     );
   });
@@ -369,7 +371,7 @@ describe("posts service", () => {
     const again = await postsService.addLike(postSample.id, userId);
     expect(again).toBe(true);
     expect(
-      pgClient.likes.filter((l) => l.post_id === postSample.id && l.liked_by === userId).length,
+      pgClient.likes.filter((l) => l.postId === postSample.id && l.likedBy === userId).length,
     ).toBe(1);
   });
 
@@ -378,7 +380,7 @@ describe("posts service", () => {
     await postsService.addLike(postSample.id, userId);
     const result = await postsService.removeLike(postSample.id, userId);
     expect(result).toBe(true);
-    expect(pgClient.likes.some((l) => l.post_id === postSample.id && l.liked_by === userId)).toBe(
+    expect(pgClient.likes.some((l) => l.postId === postSample.id && l.likedBy === userId)).toBe(
       false,
     );
   });
@@ -407,58 +409,58 @@ describe("listPostsByFolloweesDetail", () => {
     bob = "user-2";
     carol = "user-3";
 
-    pgClient.follows.push({ follower_id: alice, followee_id: bob });
+    pgClient.follows.push({ followerId: alice, followeeId: bob });
 
     postAlice = {
       id: uuidv4(),
       content: "post-alice",
-      owned_by: alice,
-      reply_to: null,
-      created_at: new Date().toISOString(),
+      ownedBy: alice,
+      replyTo: null,
+      createdAt: new Date().toISOString(),
     };
     postBob = {
       id: uuidv4(),
       content: "post-bob",
-      owned_by: bob,
-      reply_to: null,
-      created_at: new Date().toISOString(),
+      ownedBy: bob,
+      replyTo: null,
+      createdAt: new Date().toISOString(),
     };
     postCarol = {
       id: uuidv4(),
       content: "post-carol",
-      owned_by: carol,
-      reply_to: null,
-      created_at: new Date().toISOString(),
+      ownedBy: carol,
+      replyTo: null,
+      createdAt: new Date().toISOString(),
     };
     pgClient.data.push(postAlice, postBob, postCarol);
   });
 
-  test("should not include self posts when include_self is false", async () => {
+  test("should not include self posts when includeSelf is false", async () => {
     const input: ListPostsByFolloweesDetailInput = {
-      user_id: alice,
-      include_self: false,
+      userId: alice,
+      includeSelf: false,
       offset: 0,
       limit: 10,
       order: "desc",
     };
     const result = await postsService.listPostsByFolloweesDetail(input);
-    expect(result.some((p) => p.owned_by === alice)).toBe(false);
-    expect(result.some((p) => p.owned_by === bob)).toBe(true);
-    expect(result.some((p) => p.owned_by === carol)).toBe(false);
+    expect(result.some((p) => p.ownedBy === alice)).toBe(false);
+    expect(result.some((p) => p.ownedBy === bob)).toBe(true);
+    expect(result.some((p) => p.ownedBy === carol)).toBe(false);
   });
 
-  test("should include self posts when include_self is true", async () => {
+  test("should include self posts when includeSelf is true", async () => {
     const input: ListPostsByFolloweesDetailInput = {
-      user_id: alice,
-      include_self: true,
+      userId: alice,
+      includeSelf: true,
       offset: 0,
       limit: 10,
       order: "desc",
     };
     const result = await postsService.listPostsByFolloweesDetail(input);
-    expect(result.some((p) => p.owned_by === alice)).toBe(true);
-    expect(result.some((p) => p.owned_by === bob)).toBe(true);
-    expect(result.some((p) => p.owned_by === carol)).toBe(false);
+    expect(result.some((p) => p.ownedBy === alice)).toBe(true);
+    expect(result.some((p) => p.ownedBy === bob)).toBe(true);
+    expect(result.some((p) => p.ownedBy === carol)).toBe(false);
   });
 });
 
@@ -480,25 +482,25 @@ describe("listPostsLikedByUserDetail", () => {
     post1 = {
       id: uuidv4(),
       content: "liked-by-alice",
-      owned_by: bob,
-      reply_to: null,
-      created_at: new Date().toISOString(),
+      ownedBy: bob,
+      replyTo: null,
+      createdAt: new Date().toISOString(),
     };
     post2 = {
       id: uuidv4(),
       content: "not-liked",
-      owned_by: bob,
-      reply_to: null,
-      created_at: new Date().toISOString(),
+      ownedBy: bob,
+      replyTo: null,
+      createdAt: new Date().toISOString(),
     };
     pgClient.data.push(post1, post2);
 
-    pgClient.likes.push({ post_id: post1.id, liked_by: alice });
+    pgClient.likes.push({ postId: post1.id, likedBy: alice });
   });
 
   test("should return posts liked by the user", async () => {
     const input: ListPostsLikedByUserDetailInput = {
-      user_id: alice,
+      userId: alice,
       offset: 0,
       limit: 10,
       order: "desc",
@@ -511,7 +513,7 @@ describe("listPostsLikedByUserDetail", () => {
 
   test("should return empty array if user has not liked any posts", async () => {
     const input: ListPostsLikedByUserDetailInput = {
-      user_id: bob,
+      userId: bob,
       offset: 0,
       limit: 10,
       order: "desc",
@@ -525,8 +527,8 @@ describe("getPostDetail", () => {
   class MockPgClientDetail {
     posts: Post[] = [];
     users: { id: string; nickname: string }[] = [];
-    post_likes: { post_id: string; liked_by: string }[] = [];
-    post_tags: { post_id: string; name: string }[] = [];
+    postLikes: { postId: string; likedBy: string }[] = [];
+    postTags: { postId: string; name: string }[] = [];
 
     async query(sql: string, params?: any[]) {
       sql = normalizeSql(sql);
@@ -534,27 +536,27 @@ describe("getPostDetail", () => {
         const id = params![0];
         const p = this.posts.find((x) => x.id === id);
         if (!p) return { rows: [] };
-        const u = this.users.find((x) => x.id === p.owned_by);
-        const reply_count = this.posts.filter((x) => x.reply_to === p.id).length;
-        const like_count = this.post_likes.filter((x) => x.post_id === p.id).length;
-        const tags = this.post_tags
-          .filter((x) => x.post_id === p.id)
+        const u = this.users.find((x) => x.id === p.ownedBy);
+        const replyCount = this.posts.filter((x) => x.replyTo === p.id).length;
+        const likeCount = this.postLikes.filter((x) => x.postId === p.id).length;
+        const tags = this.postTags
+          .filter((x) => x.postId === p.id)
           .map((x) => x.name)
           .sort();
-        const replyToPost = this.posts.find((pp) => pp.id === p.reply_to);
-        const reply_to_owner_nickname = replyToPost
-          ? (this.users.find((u) => u.id === replyToPost.owned_by)?.nickname ?? null)
+        const replyToPost = this.posts.find((pp) => pp.id === p.replyTo);
+        const replyToOwnerNickname = replyToPost
+          ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
         const row: PostDetail = {
           id: p.id,
           content: p.content,
-          owned_by: p.owned_by,
-          reply_to: p.reply_to,
-          created_at: p.created_at,
-          owner_nickname: u?.nickname || "",
-          reply_to_owner_nickname,
-          reply_count,
-          like_count,
+          ownedBy: p.ownedBy,
+          replyTo: p.replyTo,
+          createdAt: p.createdAt,
+          ownerNickname: u?.nickname || "",
+          replyToOwnerNickname,
+          replyCount,
+          likeCount,
           tags,
         };
         return { rows: [row] };
@@ -578,33 +580,33 @@ describe("getPostDetail", () => {
     post = {
       id: uuidv4(),
       content: "detail content",
-      owned_by: owner.id,
-      reply_to: null,
-      created_at: new Date().toISOString(),
+      ownedBy: owner.id,
+      replyTo: null,
+      createdAt: new Date().toISOString(),
     };
     pgClient.posts.push(post);
 
-    pgClient.post_likes.push(
-      { post_id: post.id, liked_by: uuidv4() },
-      { post_id: post.id, liked_by: uuidv4() },
+    pgClient.postLikes.push(
+      { postId: post.id, likedBy: uuidv4() },
+      { postId: post.id, likedBy: uuidv4() },
     );
 
-    pgClient.post_tags.push({ post_id: post.id, name: "tag1" }, { post_id: post.id, name: "tag2" });
+    pgClient.postTags.push({ postId: post.id, name: "tag1" }, { postId: post.id, name: "tag2" });
 
     pgClient.posts.push(
       {
         id: uuidv4(),
         content: "reply1",
-        owned_by: uuidv4(),
-        reply_to: post.id,
-        created_at: new Date().toISOString(),
+        ownedBy: uuidv4(),
+        replyTo: post.id,
+        createdAt: new Date().toISOString(),
       },
       {
         id: uuidv4(),
         content: "reply2",
-        owned_by: uuidv4(),
-        reply_to: post.id,
-        created_at: new Date().toISOString(),
+        ownedBy: uuidv4(),
+        replyTo: post.id,
+        createdAt: new Date().toISOString(),
       },
     );
   });
@@ -613,9 +615,9 @@ describe("getPostDetail", () => {
     const detail = await postsService.getPostDetail(post.id);
     expect(detail).not.toBeNull();
     expect(detail!.id).toBe(post.id);
-    expect(detail!.owner_nickname).toBe(owner.nickname);
-    expect(detail!.reply_count).toBe(2);
-    expect(detail!.like_count).toBe(2);
+    expect(detail!.ownerNickname).toBe(owner.nickname);
+    expect(detail!.replyCount).toBe(2);
+    expect(detail!.likeCount).toBe(2);
     expect(detail!.tags.sort()).toEqual(["tag1", "tag2"]);
   });
 
@@ -630,17 +632,17 @@ describe("getPostDetail", () => {
     const p2: Post = {
       id: uuidv4(),
       content: "empty",
-      owned_by: anotherOwner.id,
-      reply_to: null,
-      created_at: new Date().toISOString(),
+      ownedBy: anotherOwner.id,
+      replyTo: null,
+      createdAt: new Date().toISOString(),
     };
     pgClient.posts.push(p2);
 
     const detail = await postsService.getPostDetail(p2.id);
     expect(detail).not.toBeNull();
-    expect(detail!.owner_nickname).toBe("Nobody");
-    expect(detail!.reply_count).toBe(0);
-    expect(detail!.like_count).toBe(0);
+    expect(detail!.ownerNickname).toBe("Nobody");
+    expect(detail!.replyCount).toBe(0);
+    expect(detail!.likeCount).toBe(0);
     expect(detail!.tags).toEqual([]);
   });
 });
@@ -648,7 +650,7 @@ describe("getPostDetail", () => {
 describe("listLikers", () => {
   class MockPgClient {
     users: User[] = [];
-    post_likes: { post_id: string; liked_by: string; created_at: string }[] = [];
+    postLikes: { postId: string; likedBy: string; createdAt: string }[] = [];
 
     async query(sql: string, params?: any[]) {
       sql = normalizeSql(sql);
@@ -657,13 +659,13 @@ describe("listLikers", () => {
         sql.includes("JOIN users u ON pl.liked_by = u.id") &&
         sql.includes("WHERE pl.post_id = $1")
       ) {
-        const post_id = params![0];
+        const postId = params![0];
         const offset = params![1] ?? 0;
         const limit = params![2] ?? 100;
-        const likes = this.post_likes
-          .filter((l) => l.post_id === post_id)
-          .sort((a, b) => b.created_at.localeCompare(a.created_at));
-        const likedUserIds = likes.map((l) => l.liked_by).slice(offset, offset + limit);
+        const likes = this.postLikes
+          .filter((l) => l.postId === postId)
+          .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+        const likedUserIds = likes.map((l) => l.likedBy).slice(offset, offset + limit);
         const result = this.users.filter((u) => likedUserIds.includes(u.id));
         return { rows: result };
       }
@@ -682,44 +684,44 @@ describe("listLikers", () => {
       id: uuidv4(),
       email: "alice@example.com",
       nickname: "Alice",
-      is_admin: false,
+      isAdmin: false,
       introduction: "Hi, I'm Alice.",
-      ai_personality: "",
-      ai_model: "",
-      created_at: new Date().toISOString(),
+      aiPersonality: "",
+      aiModel: "",
+      createdAt: new Date().toISOString(),
     };
     user2 = {
       id: uuidv4(),
       email: "bob@example.com",
       nickname: "Bob",
-      is_admin: false,
+      isAdmin: false,
       introduction: "Hi, I'm Bob.",
-      ai_personality: "",
-      ai_model: "",
-      created_at: new Date().toISOString(),
+      aiPersonality: "",
+      aiModel: "",
+      createdAt: new Date().toISOString(),
     };
     user3 = {
       id: uuidv4(),
       email: "carol@example.com",
       nickname: "Carol",
-      is_admin: false,
+      isAdmin: false,
       introduction: "Hi, I'm Carol.",
-      ai_personality: "",
-      ai_model: "",
-      created_at: new Date().toISOString(),
+      aiPersonality: "",
+      aiModel: "",
+      createdAt: new Date().toISOString(),
     };
     postId = uuidv4();
 
     pgClient.users.push(user1, user2, user3);
-    pgClient.post_likes.push(
-      { post_id: postId, liked_by: user1.id, created_at: "2024-01-01T12:00:00Z" },
-      { post_id: postId, liked_by: user2.id, created_at: "2024-01-02T12:00:00Z" },
+    pgClient.postLikes.push(
+      { postId: postId, likedBy: user1.id, createdAt: "2024-01-01T12:00:00Z" },
+      { postId: postId, likedBy: user2.id, createdAt: "2024-01-02T12:00:00Z" },
     );
   });
 
   test("should return users who liked a post", async () => {
     const users = await postsService.listLikers({
-      post_id: postId,
+      postId: postId,
       offset: 0,
       limit: 10,
       order: "desc",
@@ -731,7 +733,7 @@ describe("listLikers", () => {
 
   test("should respect limit and offset", async () => {
     const users1 = await postsService.listLikers({
-      post_id: postId,
+      postId: postId,
       offset: 0,
       limit: 1,
       order: "desc",
@@ -739,7 +741,7 @@ describe("listLikers", () => {
     expect(users1.length).toBe(1);
 
     const users2 = await postsService.listLikers({
-      post_id: postId,
+      postId: postId,
       offset: 1,
       limit: 1,
       order: "desc",
@@ -750,7 +752,7 @@ describe("listLikers", () => {
 
   test("should return empty array if no likes", async () => {
     const users = await postsService.listLikers({
-      post_id: uuidv4(),
+      postId: uuidv4(),
       offset: 0,
       limit: 10,
       order: "desc",

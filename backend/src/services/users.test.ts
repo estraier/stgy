@@ -8,7 +8,7 @@ function md5(s: string) {
 
 class MockPgClient {
   users: User[];
-  follows: { follower_id: string; followee_id: string }[];
+  follows: { followerId: string; followeeId: string }[];
   passwords: Record<string, string>;
 
   constructor() {
@@ -17,38 +17,38 @@ class MockPgClient {
         id: "alice",
         email: "alice@example.com",
         nickname: "Alice",
-        is_admin: false,
+        isAdmin: false,
         introduction: "introA",
-        ai_model: "gpt-4.1",
-        ai_personality: "A",
-        created_at: "2020-01-01T00:00:00Z",
+        aiModel: "gpt-4.1",
+        aiPersonality: "A",
+        createdAt: "2020-01-01T00:00:00Z",
       },
       {
         id: "bob",
         email: "bob@example.com",
         nickname: "Bob",
-        is_admin: false,
+        isAdmin: false,
         introduction: "introB",
-        ai_model: "gpt-4.1",
-        ai_personality: "B",
-        created_at: "2020-01-02T00:00:00Z",
+        aiModel: "gpt-4.1",
+        aiPersonality: "B",
+        createdAt: "2020-01-02T00:00:00Z",
       },
       {
         id: "carol",
         email: "carol@example.com",
         nickname: "Carol",
-        is_admin: false,
+        isAdmin: false,
         introduction: "introC",
-        ai_model: "gpt-4.1",
-        ai_personality: "C",
-        created_at: "2020-01-03T00:00:00Z",
+        aiModel: "gpt-4.1",
+        aiPersonality: "C",
+        createdAt: "2020-01-03T00:00:00Z",
       },
     ];
     this.follows = [
-      { follower_id: "alice", followee_id: "bob" },
-      { follower_id: "alice", followee_id: "carol" },
-      { follower_id: "bob", followee_id: "alice" },
-      { follower_id: "carol", followee_id: "alice" },
+      { followerId: "alice", followeeId: "bob" },
+      { followerId: "alice", followeeId: "carol" },
+      { followerId: "bob", followeeId: "alice" },
+      { followerId: "carol", followeeId: "alice" },
     ];
     this.passwords = {
       alice: md5("alicepass"),
@@ -95,11 +95,11 @@ class MockPgClient {
       return { rows: user ? [user] : [] };
     }
     if (sql.startsWith("SELECT COUNT(*)::int AS cnt FROM user_follows WHERE followee_id = $1")) {
-      const cnt = this.follows.filter((f) => f.followee_id === params[0]).length;
+      const cnt = this.follows.filter((f) => f.followeeId === params[0]).length;
       return { rows: [{ cnt }] };
     }
     if (sql.startsWith("SELECT COUNT(*)::int AS cnt FROM user_follows WHERE follower_id = $1")) {
-      const cnt = this.follows.filter((f) => f.follower_id === params[0]).length;
+      const cnt = this.follows.filter((f) => f.followerId === params[0]).length;
       return { rows: [{ cnt }] };
     }
     if (
@@ -107,15 +107,15 @@ class MockPgClient {
         "SELECT EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $1 AND followee_id = $2) AS is_followed_by_focus_user",
       )
     ) {
-      const [focus_user_id, id] = params;
+      const [focusUserId, id] = params;
       return {
         rows: [
           {
             is_followed_by_focus_user: this.follows.some(
-              (f) => f.follower_id === focus_user_id && f.followee_id === id,
+              (f) => f.followerId === focusUserId && f.followeeId === id,
             ),
             is_following_focus_user: this.follows.some(
-              (f) => f.follower_id === id && f.followee_id === focus_user_id,
+              (f) => f.followerId === id && f.followeeId === focusUserId,
             ),
           },
         ],
@@ -139,7 +139,7 @@ class MockPgClient {
         const pat = params[0].toLowerCase().replace(/%/g, "");
         list = list.filter((u) => u.nickname.toLowerCase().includes(pat));
       }
-      list.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+      list.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
       const offset = params[params.length - 2] || 0;
       const limit = params[params.length - 1] || 100;
       return { rows: list.slice(offset, offset + limit) };
@@ -152,7 +152,7 @@ class MockPgClient {
       const ids = params[0];
       const rows = ids.map((id: string) => ({
         id,
-        cnt: this.follows.filter((f) => f.followee_id === id).length,
+        cnt: this.follows.filter((f) => f.followeeId === id).length,
       }));
       return { rows };
     }
@@ -164,7 +164,7 @@ class MockPgClient {
       const ids = params[0];
       const rows = ids.map((id: string) => ({
         id,
-        cnt: this.follows.filter((f) => f.follower_id === id).length,
+        cnt: this.follows.filter((f) => f.followerId === id).length,
       }));
       return { rows };
     }
@@ -173,11 +173,11 @@ class MockPgClient {
         "SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)",
       )
     ) {
-      const [focus_user_id, ids] = params;
+      const [focusUserId, ids] = params;
       return {
         rows: this.follows
-          .filter((f) => f.follower_id === focus_user_id && ids.includes(f.followee_id))
-          .map((f) => ({ followee_id: f.followee_id })),
+          .filter((f) => f.followerId === focusUserId && ids.includes(f.followeeId))
+          .map((f) => ({ followee_id: f.followeeId })),
       };
     }
     if (
@@ -185,25 +185,24 @@ class MockPgClient {
         "SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2",
       )
     ) {
-      const [ids, focus_user_id] = params;
+      const [ids, focusUserId] = params;
       return {
         rows: this.follows
-          .filter((f) => ids.includes(f.follower_id) && f.followee_id === focus_user_id)
-          .map((f) => ({ follower_id: f.follower_id })),
+          .filter((f) => ids.includes(f.followerId) && f.followeeId === focusUserId)
+          .map((f) => ({ follower_id: f.followerId })),
       };
     }
     if (sql.startsWith("INSERT INTO users")) {
-      const [id, email, nickname, password, is_admin, introduction, ai_model, ai_personality] =
-        params;
+      const [id, email, nickname, password, isAdmin, introduction, aiModel, aiPersonality] = params;
       const user: User = {
         id,
         email,
         nickname,
-        is_admin,
+        isAdmin,
         introduction,
-        ai_model,
-        ai_personality,
-        created_at: new Date().toISOString(),
+        aiModel,
+        aiPersonality,
+        createdAt: new Date().toISOString(),
       };
       this.users.push(user);
       this.passwords[user.id] = password;
@@ -235,7 +234,7 @@ class MockPgClient {
       if (idx === -1) return { rowCount: 0 };
       this.users.splice(idx, 1);
       delete this.passwords[id];
-      this.follows = this.follows.filter((f) => f.follower_id !== id && f.followee_id !== id);
+      this.follows = this.follows.filter((f) => f.followerId !== id && f.followeeId !== id);
       return { rowCount: 1 };
     }
     if (
@@ -243,12 +242,12 @@ class MockPgClient {
         "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.ai_model, u.ai_personality, u.created_at FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
       )
     ) {
-      const follower_id = params[0];
+      const followerId = params[0];
       const list = this.follows
-        .filter((f) => f.follower_id === follower_id)
-        .map((f) => this.users.find((u) => u.id === f.followee_id))
+        .filter((f) => f.followerId === followerId)
+        .map((f) => this.users.find((u) => u.id === f.followeeId))
         .filter((u): u is User => !!u);
-      list.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+      list.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
       const offset = params[1] || 0;
       const limit = params[2] || 100;
       return { rows: list.slice(offset, offset + limit) };
@@ -258,30 +257,28 @@ class MockPgClient {
         "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.ai_model, u.ai_personality, u.created_at FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
       )
     ) {
-      const followee_id = params[0];
+      const followeeId = params[0];
       const list = this.follows
-        .filter((f) => f.followee_id === followee_id)
-        .map((f) => this.users.find((u) => u.id === f.follower_id))
+        .filter((f) => f.followeeId === followeeId)
+        .map((f) => this.users.find((u) => u.id === f.followerId))
         .filter((u): u is User => !!u);
-      list.sort((a, b) => b.created_at.localeCompare(a.created_at) || b.id.localeCompare(a.id));
+      list.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
       const offset = params[1] || 0;
       const limit = params[2] || 100;
       return { rows: list.slice(offset, offset + limit) };
     }
     if (sql.startsWith("INSERT INTO user_follows")) {
-      const [follower_id, followee_id] = params;
-      if (
-        !this.follows.some((f) => f.follower_id === follower_id && f.followee_id === followee_id)
-      ) {
-        this.follows.push({ follower_id, followee_id });
+      const [followerId, followeeId] = params;
+      if (!this.follows.some((f) => f.followerId === followerId && f.followeeId === followeeId)) {
+        this.follows.push({ followerId, followeeId });
       }
       return { rowCount: 1 };
     }
     if (sql.startsWith("DELETE FROM user_follows WHERE follower_id = $1 AND followee_id = $2")) {
-      const [follower_id, followee_id] = params;
+      const [followerId, followeeId] = params;
       const prev = this.follows.length;
       this.follows = this.follows.filter(
-        (f) => !(f.follower_id === follower_id && f.followee_id === followee_id),
+        (f) => !(f.followerId === followerId && f.followeeId === followeeId),
       );
       return { rowCount: prev - this.follows.length };
     }
@@ -311,13 +308,13 @@ describe("UsersService", () => {
     expect(await service.getUser("no-such-id")).toBeNull();
   });
 
-  test("getUserDetail (with focus_user_id)", async () => {
+  test("getUserDetail (with focusUserId)", async () => {
     const detail = await service.getUserDetail("alice", "bob");
     expect(detail?.id).toBe("alice");
-    expect(detail?.count_followers).toBe(2);
-    expect(detail?.count_followees).toBe(2);
-    expect(detail?.is_followed_by_focus_user).toBe(true);
-    expect(detail?.is_following_focus_user).toBe(true);
+    expect(detail?.countFollowers).toBe(2);
+    expect(detail?.countFollowees).toBe(2);
+    expect(detail?.isFollowedByFocusUser).toBe(true);
+    expect(detail?.isFollowingFocusUser).toBe(true);
   });
 
   test("listUsers", async () => {
@@ -327,22 +324,22 @@ describe("UsersService", () => {
     expect(users[2].id).toBe("alice");
   });
 
-  test("listUsersDetail (with focus_user_id)", async () => {
+  test("listUsersDetail (with focusUserId)", async () => {
     const details = await service.listUsersDetail({}, "bob");
     const aliceDetail = details.find((u) => u.id === "alice")!;
-    expect(aliceDetail.count_followees).toBe(2);
-    expect(aliceDetail.is_followed_by_focus_user).toBe(true);
-    expect(aliceDetail.is_following_focus_user).toBe(true);
+    expect(aliceDetail.countFollowees).toBe(2);
+    expect(aliceDetail.isFollowedByFocusUser).toBe(true);
+    expect(aliceDetail.isFollowingFocusUser).toBe(true);
     const bobDetail = details.find((u) => u.id === "bob")!;
-    expect(bobDetail.count_followers).toBe(1);
-    expect(bobDetail.count_followees).toBe(1);
-    expect(bobDetail.is_followed_by_focus_user).toBe(false);
-    expect(bobDetail.is_following_focus_user).toBe(false);
+    expect(bobDetail.countFollowers).toBe(1);
+    expect(bobDetail.countFollowees).toBe(1);
+    expect(bobDetail.isFollowedByFocusUser).toBe(false);
+    expect(bobDetail.isFollowingFocusUser).toBe(false);
     const carolDetail = details.find((u) => u.id === "carol")!;
-    expect(carolDetail.count_followers).toBe(1);
-    expect(carolDetail.count_followees).toBe(1);
-    expect(carolDetail.is_followed_by_focus_user).toBe(false);
-    expect(carolDetail.is_following_focus_user).toBe(false);
+    expect(carolDetail.countFollowers).toBe(1);
+    expect(carolDetail.countFollowees).toBe(1);
+    expect(carolDetail.isFollowedByFocusUser).toBe(false);
+    expect(carolDetail.isFollowingFocusUser).toBe(false);
   });
 
   test("createUser", async () => {
@@ -350,10 +347,10 @@ describe("UsersService", () => {
       email: "dan@example.com",
       nickname: "Dan",
       password: "danpass",
-      is_admin: false,
+      isAdmin: false,
       introduction: "introD",
-      ai_model: "gpt-4.1",
-      ai_personality: "D",
+      aiModel: "gpt-4.1",
+      aiPersonality: "D",
     });
     expect(user.email).toBe("dan@example.com");
     expect(pg.users.find((u) => u.email === "dan@example.com")).toBeDefined();
@@ -365,13 +362,13 @@ describe("UsersService", () => {
       id: "alice",
       email: "alice2@example.com",
       nickname: "Alice2",
-      is_admin: true,
+      isAdmin: true,
       introduction: "introX",
-      ai_model: "gpt-4.1-mini",
-      ai_personality: "X",
+      aiModel: "gpt-4.1-mini",
+      aiPersonality: "X",
     });
     expect(user?.email).toBe("alice2@example.com");
-    expect(user?.is_admin).toBe(true);
+    expect(user?.isAdmin).toBe(true);
     expect(user?.introduction).toBe("introX");
   });
 
@@ -390,28 +387,26 @@ describe("UsersService", () => {
     expect(await service.deleteUser("no-such-id")).toBe(false);
   });
 
-  test("listFolloweesDetail (with focus_user_id)", async () => {
-    const res = await service.listFolloweesDetail({ follower_id: "alice" }, "bob");
+  test("listFolloweesDetail (with focusUserId)", async () => {
+    const res = await service.listFolloweesDetail({ followerId: "alice" }, "bob");
     expect(res.length).toBe(2);
     expect(res.some((u) => u.id === "bob")).toBe(true);
     expect(res.some((u) => u.id === "carol")).toBe(true);
-    expect(res.every((u) => typeof u.count_followers === "number")).toBe(true);
+    expect(res.every((u) => typeof u.countFollowers === "number")).toBe(true);
   });
 
-  test("listFollowersDetail (with focus_user_id)", async () => {
-    const res = await service.listFollowersDetail({ followee_id: "alice" }, "bob");
+  test("listFollowersDetail (with focusUserId)", async () => {
+    const res = await service.listFollowersDetail({ followeeId: "alice" }, "bob");
     expect(res.length).toBe(2);
     expect(res.some((u) => u.id === "bob")).toBe(true);
     expect(res.some((u) => u.id === "carol")).toBe(true);
-    expect(res.every((u) => typeof u.count_followers === "number")).toBe(true);
+    expect(res.every((u) => typeof u.countFollowers === "number")).toBe(true);
   });
 
   test("addFollower/removeFollower", async () => {
-    expect(await service.addFollower({ follower_id: "bob", followee_id: "carol" })).toBe(true);
-    expect(pg.follows.some((f) => f.follower_id === "bob" && f.followee_id === "carol")).toBe(true);
-    expect(await service.removeFollower({ follower_id: "bob", followee_id: "carol" })).toBe(true);
-    expect(pg.follows.some((f) => f.follower_id === "bob" && f.followee_id === "carol")).toBe(
-      false,
-    );
+    expect(await service.addFollower({ followerId: "bob", followeeId: "carol" })).toBe(true);
+    expect(pg.follows.some((f) => f.followerId === "bob" && f.followeeId === "carol")).toBe(true);
+    expect(await service.removeFollower({ followerId: "bob", followeeId: "carol" })).toBe(true);
+    expect(pg.follows.some((f) => f.followerId === "bob" && f.followeeId === "carol")).toBe(false);
   });
 });

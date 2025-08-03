@@ -10,6 +10,7 @@ import {
   ListLikersInput,
 } from "../models/post";
 import { User } from "../models/user";
+import { snakeToCamel } from "../utils/format";
 import { Client } from "pg";
 import { v4 as uuidv4 } from "uuid";
 
@@ -21,7 +22,7 @@ export class PostsService {
   }
 
   async countPosts(input?: CountPostsInput): Promise<number> {
-    const { query, owned_by, tag, reply_to } = input || {};
+    const { query, ownedBy, tag, replyTo } = input || {};
     let sql = `SELECT COUNT(*) FROM posts p`;
     const where: string[] = [];
     const params: unknown[] = [];
@@ -31,18 +32,18 @@ export class PostsService {
       where.push(`pt.name = $${idx++}`);
       params.push(tag);
     }
-    if (owned_by) {
+    if (ownedBy) {
       where.push(`p.owned_by = $${idx++}`);
-      params.push(owned_by);
+      params.push(ownedBy);
     }
-    if (reply_to !== undefined) {
-      if (reply_to === null) {
+    if (replyTo !== undefined) {
+      if (replyTo === null) {
         where.push(`p.reply_to IS NULL`);
-      } else if (reply_to === "*") {
+      } else if (replyTo === "*") {
         where.push(`p.reply_to IS NOT NULL`);
       } else {
         where.push(`p.reply_to = $${idx++}`);
-        params.push(reply_to);
+        params.push(replyTo);
       }
     }
     if (query) {
@@ -61,10 +62,10 @@ export class PostsService {
       `SELECT id, content, owned_by, reply_to, created_at FROM posts WHERE id = $1`,
       [id],
     );
-    return res.rows[0] || null;
+    return res.rows[0] ? snakeToCamel<Post>(res.rows[0]) : null;
   }
 
-  async getPostDetail(id: string, focus_user_id?: string): Promise<PostDetail | null> {
+  async getPostDetail(id: string, focusUserId?: string): Promise<PostDetail | null> {
     const res = await this.pgClient.query(
       `
       SELECT
@@ -89,18 +90,18 @@ export class PostsService {
       [id],
     );
     if (res.rows.length === 0) return null;
-    const detail: PostDetail = res.rows[0];
-    if (focus_user_id) {
+    const detail = snakeToCamel<PostDetail>(res.rows[0]);
+    if (focusUserId) {
       const likeRes = await this.pgClient.query(
         "SELECT 1 FROM post_likes WHERE post_id = $1 AND liked_by = $2 LIMIT 1",
-        [id, focus_user_id],
+        [id, focusUserId],
       );
-      detail.is_liked_by_focus_user = likeRes.rows.length > 0;
+      detail.isLikedByFocusUser = likeRes.rows.length > 0;
       const replyRes = await this.pgClient.query(
         "SELECT 1 FROM posts WHERE reply_to = $1 AND owned_by = $2 LIMIT 1",
-        [id, focus_user_id],
+        [id, focusUserId],
       );
-      detail.is_replied_by_focus_user = replyRes.rows.length > 0;
+      detail.isRepliedByFocusUser = replyRes.rows.length > 0;
     }
     return detail;
   }
@@ -110,9 +111,9 @@ export class PostsService {
     const limit = options?.limit ?? 100;
     const order = (options?.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     const query = options?.query?.trim();
-    const owned_by = options?.owned_by;
+    const ownedBy = options?.ownedBy;
     const tag = options?.tag;
-    const reply_to = options?.reply_to;
+    const replyTo = options?.replyTo;
     let sql = `
       SELECT p.id, p.content, p.owned_by, p.reply_to, p.created_at
       FROM posts p
@@ -125,18 +126,18 @@ export class PostsService {
       where.push(`pt.name = $${paramIdx++}`);
       params.push(tag);
     }
-    if (owned_by) {
+    if (ownedBy) {
       where.push(`p.owned_by = $${paramIdx++}`);
-      params.push(owned_by);
+      params.push(ownedBy);
     }
-    if (reply_to !== undefined) {
-      if (reply_to === null) {
+    if (replyTo !== undefined) {
+      if (replyTo === null) {
         where.push(`p.reply_to IS NULL`);
-      } else if (reply_to === "*") {
+      } else if (replyTo === "*") {
         where.push(`p.reply_to IS NOT NULL`);
       } else {
         where.push(`p.reply_to = $${paramIdx++}`);
-        params.push(reply_to);
+        params.push(replyTo);
       }
     }
     if (query) {
@@ -149,17 +150,17 @@ export class PostsService {
     sql += ` ORDER BY p.created_at ${order}, p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
     const res = await this.pgClient.query(sql, params);
-    return res.rows;
+    return snakeToCamel<Post[]>(res.rows);
   }
 
-  async listPostsDetail(options?: ListPostsInput, focus_user_id?: string): Promise<PostDetail[]> {
+  async listPostsDetail(options?: ListPostsInput, focusUserId?: string): Promise<PostDetail[]> {
     const offset = options?.offset ?? 0;
     const limit = options?.limit ?? 100;
     const order = (options?.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     const query = options?.query?.trim();
-    const owned_by = options?.owned_by;
+    const ownedBy = options?.ownedBy;
     const tag = options?.tag;
-    const reply_to = options?.reply_to;
+    const replyTo = options?.replyTo;
     let sql = `
       SELECT
         p.id,
@@ -187,18 +188,18 @@ export class PostsService {
       where.push(`pt.name = $${paramIdx++}`);
       params.push(tag);
     }
-    if (owned_by) {
+    if (ownedBy) {
       where.push(`p.owned_by = $${paramIdx++}`);
-      params.push(owned_by);
+      params.push(ownedBy);
     }
-    if (reply_to !== undefined) {
-      if (reply_to === null) {
+    if (replyTo !== undefined) {
+      if (replyTo === null) {
         where.push(`p.reply_to IS NULL`);
-      } else if (reply_to === "*") {
+      } else if (replyTo === "*") {
         where.push(`p.reply_to IS NOT NULL`);
       } else {
         where.push(`p.reply_to = $${paramIdx++}`);
-        params.push(reply_to);
+        params.push(replyTo);
       }
     }
     if (query) {
@@ -211,22 +212,22 @@ export class PostsService {
     sql += ` ORDER BY p.created_at ${order}, p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
     const res = await this.pgClient.query(sql, params);
-    const details: PostDetail[] = res.rows;
-    if (!focus_user_id || details.length === 0) return details;
+    const details = snakeToCamel<PostDetail[]>(res.rows);
+    if (!focusUserId || details.length === 0) return details;
     const postIds = details.map((p) => p.id);
     const likeRes = await this.pgClient.query(
       `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
-      [postIds, focus_user_id],
+      [postIds, focusUserId],
     );
     const likedPostIds = new Set(likeRes.rows.map((r) => r.post_id));
     const replyRes = await this.pgClient.query(
       `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
-      [postIds, focus_user_id],
+      [postIds, focusUserId],
     );
     const repliedPostIds = new Set(replyRes.rows.map((r) => r.reply_to));
     for (const d of details) {
-      d.is_liked_by_focus_user = likedPostIds.has(d.id);
-      d.is_replied_by_focus_user = repliedPostIds.has(d.id);
+      d.isLikedByFocusUser = likedPostIds.has(d.id);
+      d.isRepliedByFocusUser = repliedPostIds.has(d.id);
     }
     return details;
   }
@@ -235,8 +236,8 @@ export class PostsService {
     if (typeof input.content !== "string" || input.content.trim() === "") {
       throw new Error("content is required");
     }
-    if (typeof input.owned_by !== "string" || input.owned_by.trim() === "") {
-      throw new Error("owned_by is required");
+    if (typeof input.ownedBy !== "string" || input.ownedBy.trim() === "") {
+      throw new Error("ownedBy is required");
     }
     const client = this.pgClient;
     const id = uuidv4();
@@ -246,7 +247,7 @@ export class PostsService {
         `INSERT INTO posts (id, content, owned_by, reply_to, created_at)
          VALUES ($1, $2, $3, $4, now())
          RETURNING id, content, owned_by, reply_to, created_at`,
-        [id, input.content, input.owned_by, input.reply_to],
+        [id, input.content, input.ownedBy, input.replyTo],
       );
       if (input.tags && input.tags.length > 0) {
         await client.query(
@@ -255,7 +256,7 @@ export class PostsService {
         );
       }
       await client.query("COMMIT");
-      return res.rows[0];
+      return snakeToCamel<Post>(res.rows[0]);
     } catch (e) {
       await client.query("ROLLBACK");
       throw e;
@@ -276,16 +277,16 @@ export class PostsService {
         columns.push(`content = $${idx++}`);
         values.push(input.content);
       }
-      if (input.owned_by !== undefined) {
-        if (typeof input.owned_by !== "string" || input.owned_by.trim() === "") {
-          throw new Error("owned_by is required");
+      if (input.ownedBy !== undefined) {
+        if (typeof input.ownedBy !== "string" || input.ownedBy.trim() === "") {
+          throw new Error("ownedBy is required");
         }
         columns.push(`owned_by = $${idx++}`);
-        values.push(input.owned_by);
+        values.push(input.ownedBy);
       }
-      if (input.reply_to !== undefined) {
+      if (input.replyTo !== undefined) {
         columns.push(`reply_to = $${idx++}`);
-        values.push(input.reply_to);
+        values.push(input.replyTo);
       }
       if (columns.length > 0) {
         values.push(input.id);
@@ -314,10 +315,10 @@ export class PostsService {
     return (res.rowCount ?? 0) > 0;
   }
 
-  async addLike(post_id: string, user_id: string): Promise<boolean> {
+  async addLike(postId: string, userId: string): Promise<boolean> {
     await this.pgClient.query(
       `INSERT INTO post_likes (post_id, liked_by, created_at) VALUES ($1, $2, $3)`,
-      [post_id, user_id, new Date().toISOString()],
+      [postId, userId, new Date().toISOString()],
     );
     return true;
   }
@@ -332,21 +333,21 @@ export class PostsService {
 
   async listPostsByFolloweesDetail(
     input: ListPostsByFolloweesDetailInput,
-    focus_user_id?: string,
+    focusUserId?: string,
   ): Promise<PostDetail[]> {
     const {
-      user_id,
-      include_self = false,
-      include_replies = true,
+      userId,
+      includeSelf = false,
+      includeReplies = true,
       offset = 0,
       limit = 100,
       order = "desc",
     } = input;
     let followeeSql = `
       SELECT followee_id FROM user_follows WHERE follower_id = $1
-      ${include_self ? "UNION SELECT $1" : ""}
+      ${includeSelf ? "UNION SELECT $1" : ""}
     `;
-    const repliesFilter = include_replies === false ? "AND p.reply_to IS NULL" : "";
+    const repliesFilter = includeReplies === false ? "AND p.reply_to IS NULL" : "";
     const sql = `
       SELECT
         p.id,
@@ -370,36 +371,36 @@ export class PostsService {
       ORDER BY p.created_at ${order}, p.id ${order}
       OFFSET $2 LIMIT $3
     `;
-    const params = [user_id, offset, limit];
+    const params = [userId, offset, limit];
     const res = await this.pgClient.query(sql, params);
-    const details: PostDetail[] = res.rows;
-    if (!focus_user_id || details.length === 0) return details;
+    const details = snakeToCamel<PostDetail[]>(res.rows);
+    if (!focusUserId || details.length === 0) return details;
     const postIds = details.map((p) => p.id);
     const likeRes = await this.pgClient.query(
       `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
-      [postIds, focus_user_id],
+      [postIds, focusUserId],
     );
     const likedPostIds = new Set(likeRes.rows.map((r) => r.post_id));
     const replyRes = await this.pgClient.query(
       `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
-      [postIds, focus_user_id],
+      [postIds, focusUserId],
     );
     const repliedPostIds = new Set(replyRes.rows.map((r) => r.reply_to));
     for (const d of details) {
-      d.is_liked_by_focus_user = likedPostIds.has(d.id);
-      d.is_replied_by_focus_user = repliedPostIds.has(d.id);
+      d.isLikedByFocusUser = likedPostIds.has(d.id);
+      d.isRepliedByFocusUser = repliedPostIds.has(d.id);
     }
     return details;
   }
 
   async listPostsLikedByUserDetail(
     input: ListPostsLikedByUserDetailInput,
-    focus_user_id?: string,
+    focusUserId?: string,
   ): Promise<PostDetail[]> {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
-    const include_replies = input.include_replies !== false;
+    const includeReplies = input.includeReplies !== false;
     let sql = `
       SELECT
         p.id,
@@ -421,36 +422,36 @@ export class PostsService {
       LEFT JOIN users pu ON parent_post.owned_by = pu.id
       WHERE pl.liked_by = $1
     `;
-    const params: unknown[] = [input.user_id];
+    const params: unknown[] = [input.userId];
     let paramIdx = 2;
-    if (!include_replies) {
+    if (!includeReplies) {
       sql += ` AND p.reply_to IS NULL`;
     }
     sql += ` ORDER BY p.created_at ${order}, p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
     const res = await this.pgClient.query(sql, params);
-    const details: PostDetail[] = res.rows;
-    if (!focus_user_id || details.length === 0) return details;
+    const details = snakeToCamel<PostDetail[]>(res.rows);
+    if (!focusUserId || details.length === 0) return details;
     const postIds = details.map((p) => p.id);
     const likeRes = await this.pgClient.query(
       `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
-      [postIds, focus_user_id],
+      [postIds, focusUserId],
     );
     const likedPostIds = new Set(likeRes.rows.map((r) => r.post_id));
     const replyRes = await this.pgClient.query(
       `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
-      [postIds, focus_user_id],
+      [postIds, focusUserId],
     );
     const repliedPostIds = new Set(replyRes.rows.map((r) => r.reply_to));
     for (const d of details) {
-      d.is_liked_by_focus_user = likedPostIds.has(d.id);
-      d.is_replied_by_focus_user = repliedPostIds.has(d.id);
+      d.isLikedByFocusUser = likedPostIds.has(d.id);
+      d.isRepliedByFocusUser = repliedPostIds.has(d.id);
     }
     return details;
   }
 
   async listLikers(input: ListLikersInput): Promise<User[]> {
-    const { post_id, offset = 0, limit = 100, order = "desc" } = input;
+    const { postId, offset = 0, limit = 100, order = "desc" } = input;
     const orderDir = order && order.toLowerCase() === "asc" ? "ASC" : "DESC";
     const sql = `
       SELECT u.*
@@ -460,7 +461,7 @@ export class PostsService {
       ORDER BY pl.created_at ${orderDir}, u.id ${orderDir}
       OFFSET $2 LIMIT $3
     `;
-    const res = await this.pgClient.query(sql, [post_id, offset, limit]);
-    return res.rows;
+    const res = await this.pgClient.query(sql, [postId, offset, limit]);
+    return snakeToCamel<User[]>(res.rows);
   }
 }

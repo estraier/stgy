@@ -1,5 +1,4 @@
-import { AIModelsService } from "./ai_models";
-import { AIModel } from "../models/ai_model";
+import { AIModelsService } from "./aiModels";
 
 class MockPgClient {
   rows: any[];
@@ -18,7 +17,8 @@ class MockPgClient {
 }
 
 describe("AIModelsService", () => {
-  const aiModels: AIModel[] = [
+  // snake_caseで定義
+  const aiModels = [
     {
       name: "gpt-4.0",
       description: "OpenAI GPT-4.0 model",
@@ -45,14 +45,14 @@ describe("AIModelsService", () => {
     const models = await service.listAIModels();
     expect(models).toHaveLength(2);
     expect(models[0].name).toBe("gpt-4.0");
-    expect(models[1].input_cost).toBe(0.002);
+    expect(models[1].inputCost).toBe(0.002);
   });
 
   it("should get an AI model by name", async () => {
     const model = await service.getAIModel("gpt-4.0");
     expect(model).not.toBeNull();
     expect(model?.description).toBe("OpenAI GPT-4.0 model");
-    expect(model?.input_cost).toBe(0.03);
+    expect(model?.inputCost).toBe(0.03);
   });
 
   it("should return null if model not found", async () => {

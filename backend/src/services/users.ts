@@ -11,6 +11,7 @@ import {
   AddFollowerInput,
   RemoveFollowerInput,
 } from "../models/user";
+import { snakeToCamel } from "../utils/format";
 import { Client } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
@@ -45,17 +46,18 @@ export class UsersService {
       `SELECT id, email, nickname, is_admin, introduction, ai_model, ai_personality, created_at FROM users WHERE id = $1`,
       [id],
     );
-    return res.rows[0] || null;
+    if (!res.rows[0]) return null;
+    return snakeToCamel<User>(res.rows[0]);
   }
 
-  async getUserDetail(id: string, focus_user_id?: string): Promise<UserDetail | null> {
+  async getUserDetail(id: string, focusUserId?: string): Promise<UserDetail | null> {
     const userRes = await this.pgClient.query(
       `SELECT id, email, nickname, is_admin, introduction, ai_model, ai_personality, created_at
        FROM users WHERE id = $1`,
       [id],
     );
     if (userRes.rows.length === 0) return null;
-    const user: UserDetail = userRes.rows[0];
+    const user: Record<string, unknown> = snakeToCamel(userRes.rows[0]);
     const [followersRes, followeesRes] = await Promise.all([
       this.pgClient.query(`SELECT COUNT(*)::int AS cnt FROM user_follows WHERE followee_id = $1`, [
         id,
@@ -64,23 +66,23 @@ export class UsersService {
         id,
       ]),
     ]);
-    user.count_followers = followersRes.rows[0].cnt;
-    user.count_followees = followeesRes.rows[0].cnt;
-    if (focus_user_id && focus_user_id !== id) {
+    user.countFollowers = followersRes.rows[0].cnt;
+    user.countFollowees = followeesRes.rows[0].cnt;
+    if (focusUserId && focusUserId !== id) {
       const followRes = await this.pgClient.query(
         `SELECT
            EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $1 AND followee_id = $2) AS is_followed_by_focus_user,
            EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $2 AND followee_id = $1) AS is_following_focus_user
          `,
-        [focus_user_id, id],
+        [focusUserId, id],
       );
-      user.is_followed_by_focus_user = followRes.rows[0].is_followed_by_focus_user;
-      user.is_following_focus_user = followRes.rows[0].is_following_focus_user;
+      user.isFollowedByFocusUser = followRes.rows[0].is_followed_by_focus_user;
+      user.isFollowingFocusUser = followRes.rows[0].is_following_focus_user;
     }
-    return user;
+    return user as UserDetail;
   }
 
-  async listUsers(input?: ListUsersInput, focus_user_id?: string): Promise<User[]> {
+  async listUsers(input?: ListUsersInput, focusUserId?: string): Promise<User[]> {
     const offset = input?.offset ?? 0;
     const limit = input?.limit ?? 100;
     const order = input?.order ?? "desc";
@@ -100,18 +102,18 @@ export class UsersService {
       params.push(`%${nickname}%`);
     }
     let orderClause = "";
-    if (order === "social" && focus_user_id) {
+    if (order === "social" && focusUserId) {
       baseSelect += `
         LEFT JOIN user_follows f1 ON f1.follower_id = $${params.length + 1} AND f1.followee_id = u.id
         LEFT JOIN user_follows f2 ON f2.follower_id = u.id AND f2.followee_id = $${params.length + 1}
       `;
-      params.push(focus_user_id);
+      params.push(focusUserId);
       orderClause =
         `ORDER BY (u.id = $${params.length + 1}) DESC, ` +
         `(f1.follower_id IS NOT NULL) DESC, ` +
         `(f2.follower_id IS NOT NULL) DESC, ` +
         `u.created_at ASC, u.id ASC`;
-      params.push(focus_user_id); // ORDER BY用
+      params.push(focusUserId); // ORDER BY用
     } else {
       const dir = order.toLowerCase() === "asc" ? "ASC" : "DESC";
       orderClause = `ORDER BY u.created_at ${dir}, u.id ${dir}`;
@@ -123,11 +125,11 @@ export class UsersService {
     sql += ` ${orderClause} OFFSET $${params.length + 1} LIMIT $${params.length + 2}`;
     params.push(offset, limit);
     const res = await this.pgClient.query(sql, params);
-    return res.rows;
+    return res.rows.map((row: Record<string, unknown>) => snakeToCamel<User>(row));
   }
 
-  async listUsersDetail(input?: ListUsersInput, focus_user_id?: string): Promise<UserDetail[]> {
-    const users = await this.listUsers(input, focus_user_id);
+  async listUsersDetail(input?: ListUsersInput, focusUserId?: string): Promise<UserDetail[]> {
+    const users = await this.listUsers(input, focusUserId);
     if (users.length === 0) return [];
     const ids = users.map((u) => u.id);
     const followersRes = await this.pgClient.query(
@@ -142,34 +144,38 @@ export class UsersService {
          GROUP BY follower_id`,
       [ids],
     );
-    const followersMap = Object.fromEntries(followersRes.rows.map((r) => [r.id, r.cnt]));
-    const followeesMap = Object.fromEntries(followeesRes.rows.map((r) => [r.id, r.cnt]));
+    const followersMap = Object.fromEntries(
+      followersRes.rows.map((r: { id: string; cnt: number }) => [r.id, r.cnt]),
+    );
+    const followeesMap = Object.fromEntries(
+      followeesRes.rows.map((r: { id: string; cnt: number }) => [r.id, r.cnt]),
+    );
     let followsMap: Record<
       string,
-      { is_followed_by_focus_user: boolean; is_following_focus_user: boolean }
+      { isFollowedByFocusUser: boolean; isFollowingFocusUser: boolean }
     > = {};
-    if (focus_user_id) {
+    if (focusUserId) {
       const fwRes = await this.pgClient.query(
         `SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)`,
-        [focus_user_id, ids],
+        [focusUserId, ids],
       );
-      const followedSet = new Set(fwRes.rows.map((r) => r.followee_id));
+      const followedSet = new Set(fwRes.rows.map((r: { followee_id: string }) => r.followee_id));
       const fgRes = await this.pgClient.query(
         `SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2`,
-        [ids, focus_user_id],
+        [ids, focusUserId],
       );
-      const followingSet = new Set(fgRes.rows.map((r) => r.follower_id));
+      const followingSet = new Set(fgRes.rows.map((r: { follower_id: string }) => r.follower_id));
       for (const id of ids) {
         followsMap[id] = {
-          is_followed_by_focus_user: followedSet.has(id),
-          is_following_focus_user: followingSet.has(id),
+          isFollowedByFocusUser: followedSet.has(id),
+          isFollowingFocusUser: followingSet.has(id),
         };
       }
     }
     return users.map((u) => ({
       ...u,
-      count_followers: followersMap[u.id] ?? 0,
-      count_followees: followeesMap[u.id] ?? 0,
+      countFollowers: followersMap[u.id] ?? 0,
+      countFollowees: followeesMap[u.id] ?? 0,
       ...(followsMap[u.id] || {}),
     }));
   }
@@ -198,13 +204,13 @@ export class UsersService {
         input.email,
         input.nickname,
         passwordHash,
-        input.is_admin,
+        input.isAdmin,
         input.introduction,
-        input.ai_model,
-        input.ai_personality,
+        input.aiModel,
+        input.aiPersonality,
       ],
     );
-    return res.rows[0];
+    return snakeToCamel<User>(res.rows[0]);
   }
 
   async updateUser(input: UpdateUserInput): Promise<User | null> {
@@ -225,9 +231,9 @@ export class UsersService {
       columns.push(`nickname = $${idx++}`);
       values.push(input.nickname);
     }
-    if (input.is_admin !== undefined) {
+    if (input.isAdmin !== undefined) {
       columns.push(`is_admin = $${idx++}`);
-      values.push(input.is_admin);
+      values.push(input.isAdmin);
     }
     if (input.introduction !== undefined) {
       if (typeof input.introduction !== "string") {
@@ -236,19 +242,19 @@ export class UsersService {
       columns.push(`introduction = $${idx++}`);
       values.push(input.introduction);
     }
-    if (input.ai_model !== undefined) {
+    if (input.aiModel !== undefined) {
       columns.push(`ai_model = $${idx++}`);
-      values.push(input.ai_model);
+      values.push(input.aiModel);
     }
-    if (input.ai_personality !== undefined) {
+    if (input.aiPersonality !== undefined) {
       columns.push(`ai_personality = $${idx++}`);
-      values.push(input.ai_personality);
+      values.push(input.aiPersonality);
     }
     if (columns.length === 0) return this.getUser(input.id);
     values.push(input.id);
     const sql = `UPDATE users SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, email, nickname, is_admin, introduction, ai_model, ai_personality, created_at`;
     const res = await this.pgClient.query(sql, values);
-    return res.rows[0] || null;
+    return res.rows[0] ? snakeToCamel<User>(res.rows[0]) : null;
   }
 
   async updateUserPassword(input: UpdatePasswordInput): Promise<boolean> {
@@ -270,7 +276,7 @@ export class UsersService {
 
   async listFolloweesDetail(
     input: ListFolloweesInput,
-    focus_user_id?: string,
+    focusUserId?: string,
   ): Promise<UserDetail[]> {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
@@ -283,8 +289,8 @@ export class UsersService {
       ORDER BY u.created_at ${order}, u.id ${order}
       OFFSET $2 LIMIT $3
     `;
-    const res = await this.pgClient.query(sql, [input.follower_id, offset, limit]);
-    const users = res.rows;
+    const res = await this.pgClient.query(sql, [input.followerId, offset, limit]);
+    const users = res.rows.map((row: Record<string, unknown>) => snakeToCamel<User>(row));
     if (users.length === 0) return [];
     const ids = users.map((u) => u.id);
     const followersRes = await this.pgClient.query(
@@ -299,41 +305,45 @@ export class UsersService {
          GROUP BY follower_id`,
       [ids],
     );
-    const followersMap = Object.fromEntries(followersRes.rows.map((r) => [r.id, r.cnt]));
-    const followeesMap = Object.fromEntries(followeesRes.rows.map((r) => [r.id, r.cnt]));
+    const followersMap = Object.fromEntries(
+      followersRes.rows.map((r: { id: string; cnt: number }) => [r.id, r.cnt]),
+    );
+    const followeesMap = Object.fromEntries(
+      followeesRes.rows.map((r: { id: string; cnt: number }) => [r.id, r.cnt]),
+    );
     let followsMap: Record<
       string,
-      { is_followed_by_focus_user: boolean; is_following_focus_user: boolean }
+      { isFollowedByFocusUser: boolean; isFollowingFocusUser: boolean }
     > = {};
-    if (focus_user_id) {
+    if (focusUserId) {
       const fwRes = await this.pgClient.query(
         `SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)`,
-        [focus_user_id, ids],
+        [focusUserId, ids],
       );
-      const followedSet = new Set(fwRes.rows.map((r) => r.followee_id));
+      const followedSet = new Set(fwRes.rows.map((r: { followee_id: string }) => r.followee_id));
       const fgRes = await this.pgClient.query(
         `SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2`,
-        [ids, focus_user_id],
+        [ids, focusUserId],
       );
-      const followingSet = new Set(fgRes.rows.map((r) => r.follower_id));
+      const followingSet = new Set(fgRes.rows.map((r: { follower_id: string }) => r.follower_id));
       for (const id of ids) {
         followsMap[id] = {
-          is_followed_by_focus_user: followedSet.has(id),
-          is_following_focus_user: followingSet.has(id),
+          isFollowedByFocusUser: followedSet.has(id),
+          isFollowingFocusUser: followingSet.has(id),
         };
       }
     }
     return users.map((u) => ({
       ...u,
-      count_followers: followersMap[u.id] ?? 0,
-      count_followees: followeesMap[u.id] ?? 0,
+      countFollowers: followersMap[u.id] ?? 0,
+      countFollowees: followeesMap[u.id] ?? 0,
       ...(followsMap[u.id] || {}),
     }));
   }
 
   async listFollowersDetail(
     input: ListFollowersInput,
-    focus_user_id?: string,
+    focusUserId?: string,
   ): Promise<UserDetail[]> {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
@@ -346,8 +356,8 @@ export class UsersService {
       ORDER BY u.created_at ${order}, u.id ${order}
       OFFSET $2 LIMIT $3
     `;
-    const res = await this.pgClient.query(sql, [input.followee_id, offset, limit]);
-    const users = res.rows;
+    const res = await this.pgClient.query(sql, [input.followeeId, offset, limit]);
+    const users = res.rows.map((row: Record<string, unknown>) => snakeToCamel<User>(row));
     if (users.length === 0) return [];
     const ids = users.map((u) => u.id);
     const followersRes = await this.pgClient.query(
@@ -362,34 +372,38 @@ export class UsersService {
          GROUP BY follower_id`,
       [ids],
     );
-    const followersMap = Object.fromEntries(followersRes.rows.map((r) => [r.id, r.cnt]));
-    const followeesMap = Object.fromEntries(followeesRes.rows.map((r) => [r.id, r.cnt]));
+    const followersMap = Object.fromEntries(
+      followersRes.rows.map((r: { id: string; cnt: number }) => [r.id, r.cnt]),
+    );
+    const followeesMap = Object.fromEntries(
+      followeesRes.rows.map((r: { id: string; cnt: number }) => [r.id, r.cnt]),
+    );
     let followsMap: Record<
       string,
-      { is_followed_by_focus_user: boolean; is_following_focus_user: boolean }
+      { isFollowedByFocusUser: boolean; isFollowingFocusUser: boolean }
     > = {};
-    if (focus_user_id) {
+    if (focusUserId) {
       const fwRes = await this.pgClient.query(
         `SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)`,
-        [focus_user_id, ids],
+        [focusUserId, ids],
       );
-      const followedSet = new Set(fwRes.rows.map((r) => r.followee_id));
+      const followedSet = new Set(fwRes.rows.map((r: { followee_id: string }) => r.followee_id));
       const fgRes = await this.pgClient.query(
         `SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2`,
-        [ids, focus_user_id],
+        [ids, focusUserId],
       );
-      const followingSet = new Set(fgRes.rows.map((r) => r.follower_id));
+      const followingSet = new Set(fgRes.rows.map((r: { follower_id: string }) => r.follower_id));
       for (const id of ids) {
         followsMap[id] = {
-          is_followed_by_focus_user: followedSet.has(id),
-          is_following_focus_user: followingSet.has(id),
+          isFollowedByFocusUser: followedSet.has(id),
+          isFollowingFocusUser: followingSet.has(id),
         };
       }
     }
     return users.map((u) => ({
       ...u,
-      count_followers: followersMap[u.id] ?? 0,
-      count_followees: followeesMap[u.id] ?? 0,
+      countFollowers: followersMap[u.id] ?? 0,
+      countFollowees: followeesMap[u.id] ?? 0,
       ...(followsMap[u.id] || {}),
     }));
   }
@@ -397,7 +411,7 @@ export class UsersService {
   async addFollower(input: AddFollowerInput): Promise<boolean> {
     await this.pgClient.query(
       `INSERT INTO user_follows (follower_id, followee_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
-      [input.follower_id, input.followee_id],
+      [input.followerId, input.followeeId],
     );
     return true;
   }
@@ -405,7 +419,7 @@ export class UsersService {
   async removeFollower(input: RemoveFollowerInput): Promise<boolean> {
     const res = await this.pgClient.query(
       `DELETE FROM user_follows WHERE follower_id = $1 AND followee_id = $2`,
-      [input.follower_id, input.followee_id],
+      [input.followerId, input.followeeId],
     );
     return (res.rowCount ?? 0) > 0;
   }

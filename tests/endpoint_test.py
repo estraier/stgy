@@ -28,11 +28,11 @@ def get_session(session_id):
   res.raise_for_status()
   data = res.json()
   print(f"[session] {data}")
-  assert data["user_email"] == ADMIN_EMAIL
-  assert "user_nickname" in data
-  assert "user_is_admin" in data
-  assert "user_id" in data
-  assert "logged_in_at" in data
+  assert data["userEmail"] == ADMIN_EMAIL
+  assert "userNickname" in data
+  assert "userIsAdmin" in data
+  assert "userId" in data
+  assert "loggedInAt" in data
   return data
 
 def logout(session_id):
@@ -59,7 +59,7 @@ def test_ai_models():
   assert isinstance(models, list)
   assert len(models) > 0, "No AI models found"
   m = models[0]
-  for k in ("name", "description", "input_cost", "output_cost"):
+  for k in ("name", "description", "inputCost", "outputCost"):
     assert k in m, f"{k} missing in ai_model"
   name = models[0]["name"]
   res = requests.get(f"{BASE_URL}/ai-models/{name}", headers=headers, cookies=cookies)
@@ -81,10 +81,10 @@ def test_users():
   user_input = {
     "email": f"user1-{session_id[:8]}@fakebook.com",
     "nickname": "user1",
-    "is_admin": False,
+    "isAdmin": False,
     "introduction": "hi!",
-    "ai_model": "gpt-4.1",
-    "ai_personality": "super diligent",
+    "aiModel": "gpt-4.1",
+    "aiPersonality": "super diligent",
     "password": "password1"
   }
   res = requests.post(f"{BASE_URL}/users", json=user_input, headers=headers, cookies=cookies)
@@ -121,22 +121,22 @@ def test_users():
   followers = res.json()
   print("[users] admin followers:", followers)
   assert any(u["id"] == user1_id for u in followers)
-  res = requests.get(f"{BASE_URL}/users/{admin_id}/detail?limit=1000&focus_user_id={user1_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/users/{admin_id}/detail?limit=1000&focusUserId={user1_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   admin_detail = res.json()
-  assert admin_detail["count_followers"] > 0
-  assert "count_followees" in admin_detail
-  assert admin_detail["is_followed_by_focus_user"] == True
-  assert admin_detail["is_following_focus_user"] == False
-  res = requests.get(f"{BASE_URL}/users/detail?limit=1000&focus_user_id={admin_id}&order=social", headers=headers, cookies=cookies)
+  assert admin_detail["countFollowers"] > 0
+  assert "countFollowees" in admin_detail
+  assert admin_detail["isFollowedByFocusUser"] == True
+  assert admin_detail["isFollowingFocusUser"] == False
+  res = requests.get(f"{BASE_URL}/users/detail?limit=1000&focusUserId={admin_id}&order=social", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   users_detail = res.json()
   assert len(users_detail) >= 2
   user1_detail = next(u for u in users_detail if u["email"] == user1["email"])
-  assert user1_detail["count_followers"] == 0
-  assert user1_detail["count_followees"] == 1
-  assert user1_detail["is_followed_by_focus_user"] == False
-  assert user1_detail["is_following_focus_user"] == True
+  assert user1_detail["countFollowers"] == 0
+  assert user1_detail["countFollowees"] == 1
+  assert user1_detail["isFollowedByFocusUser"] == False
+  assert user1_detail["isFollowingFocusUser"] == True
   res = requests.delete(f"{BASE_URL}/users/{admin_id}/follow", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   print(f"[users] user1 unfollowed admin: {admin_id}")
@@ -157,19 +157,19 @@ def test_posts():
   cookies = {"session_id": session_id}
   post_input = {
     "content": "hello, this is a test post!",
-    "reply_to": None,
+    "replyTo": None,
     "tags": ["hop", "step"],
   }
   res = requests.post(f"{BASE_URL}/posts", json=post_input, headers=headers, cookies=cookies)
   assert res.status_code == 201, res.text
   post = res.json()
   post_id = post["id"]
-  user_id = post["owned_by"]
+  user_id = post["ownedBy"]
   print("[posts] created:", post)
   res = requests.post(f"{BASE_URL}/posts/{post_id}/like", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[posts] like: ok")
-  res = requests.get(f"{BASE_URL}/posts/liked/detail?limit=1000&user_id={user_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/posts/liked/detail?limit=1000&userId={user_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   liked_posts = res.json()
   print("[posts] liked/detail:", liked_posts)
@@ -195,9 +195,9 @@ def test_posts():
   detail = res.json()
   assert detail["id"] == post_id
   assert detail["content"] == post_input["content"]
-  assert detail["owner_nickname"] == "admin"
+  assert detail["ownerNickname"] == "admin"
   assert set(detail["tags"]) == {"hop", "step"}
-  res = requests.get(f"{BASE_URL}/posts/by-followees/detail?limit=1000&user_id={user_id}&include_self=true", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/posts/by-followees/detail?limit=1000&userId={user_id}&includeSelf=true", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   by_followees = res.json()
   print("[posts] by-followees/detail (self):", by_followees)
@@ -238,7 +238,7 @@ def test_signup():
   res.raise_for_status()
   session = res.json()
   print(f"[session] {session}")
-  admin_id = session["user_id"]
+  admin_id = session["userId"]
   email = f"signup_test+{int(time.time())}@fakebook.xyz"
   password = "signup_pw1"
   res = requests.post(
@@ -247,17 +247,17 @@ def test_signup():
   )
   assert res.status_code == 201, res.text
   signup_start = res.json()
-  assert "signup_id" in signup_start
-  signup_id = signup_start["signup_id"]
+  assert "signupId" in signup_start
+  signup_id = signup_start["signupId"]
   print(f"[signup] got signup_id: {signup_id}")
   res = requests.post(
     f"{BASE_URL}/signup/verify",
-    json={"signup_id": signup_id, "verification_code": TEST_SIGNUP_CODE}
+    json={"signupId": signup_id, "verificationCode": TEST_SIGNUP_CODE}
   )
   assert res.status_code == 201, res.text
   res = res.json()
   print("[signup] created:", res)
-  user_id = res["user_id"]
+  user_id = res["userId"]
   res = requests.post(
     f"{BASE_URL}/auth",
     json={"email": email, "password": password}
