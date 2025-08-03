@@ -205,11 +205,41 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       return res.status(400).json({ error: "updateEmailId and verificationCode are needed" });
     }
     try {
-      const ok = await usersService.verifyUpdateEmail(updateEmailId, verificationCode);
+      const ok = await usersService.verifyUpdateEmail(
+        req.params.id,
+        updateEmailId,
+        verificationCode,
+      );
       if (!ok) return res.status(404).json({ error: "not found" });
       res.json({ result: "ok" });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "verification failed" });
+    }
+  });
+
+  router.post("/password/reset/start", async (req: Request, res: Response) => {
+    const { email } = req.body;
+    try {
+      const result = await usersService.startResetPassword(email);
+      res.status(201).json(result);
+    } catch {
+      const result = await usersService.fakeResetPassword();
+      res.status(201).json(result);
+    }
+  });
+
+  router.post("/:id/password/reset/verify", async (req: Request, res: Response) => {
+    const userId = req.params.id;
+    const { resetPasswordId, code, newPassword } = req.body;
+    if (!resetPasswordId || !code || !newPassword) {
+      return res.status(400).json({ error: "resetPasswordId, code, newPassword are required" });
+    }
+    try {
+      const ok = await usersService.verifyResetPassword(userId, resetPasswordId, code, newPassword);
+      if (!ok) return res.status(400).json({ error: "invalid or expired code/session" });
+      res.json({ result: "ok" });
+    } catch (e: unknown) {
+      res.status(400).json({ error: (e as Error).message || "reset verify failed" });
     }
   });
 

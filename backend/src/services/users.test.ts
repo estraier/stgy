@@ -86,6 +86,11 @@ class MockPgClient {
       }
       return { rows: [{ count: this.users.length }] };
     }
+    if (sql.startsWith("SELECT id FROM users WHERE email = $1")) {
+      const user = this.users.find((u) => u.email === params[0]);
+      if (!user) return { rows: [] };
+      return { rows: [{ id: user.id }] };
+    }
     if (
       sql.startsWith(
         "SELECT id, email, nickname, is_admin, introduction, ai_model, ai_personality, created_at FROM users WHERE id = $1",
@@ -418,7 +423,11 @@ describe("UsersService", () => {
       verificationCode: "123456",
       createdAt: new Date().toISOString(),
     });
-    const ok = await new UsersService(pg as any, redis as any).verifyUpdateEmail("xyz", "123456");
+    const ok = await new UsersService(pg as any, redis as any).verifyUpdateEmail(
+      "alice",
+      "xyz",
+      "123456",
+    );
     expect(ok).toBe(true);
     expect(pg.users.find((u) => u.id === "alice")?.email).toBe("alice2@example.com");
     expect(await redis.hgetall("updateEmail:xyz")).toEqual({});
@@ -432,7 +441,7 @@ describe("UsersService", () => {
       createdAt: new Date().toISOString(),
     });
     await expect(
-      new UsersService(pg as any, redis as any).verifyUpdateEmail("abc", "wrongcode"),
+      new UsersService(pg as any, redis as any).verifyUpdateEmail("alice", "abc", "wrongcode"),
     ).rejects.toThrow(/mismatch/i);
   });
 
@@ -442,6 +451,87 @@ describe("UsersService", () => {
     expect(ok).toBe(true);
     expect(pg.passwords[id]).toBe(md5("newpass"));
     expect(await service.updateUserPassword({ id: "no-such-id", password: "x" })).toBe(false);
+  });
+
+  test("startResetPassword stores verification info in Redis and queues mail", async () => {
+    const userId = "alice";
+    const email = "alice@example.com";
+    const { resetPasswordId, code } = await service.startResetPassword(email);
+    const stored = redis.store[`resetPassword:${resetPasswordId}`];
+    expect(stored.userId).toBe(userId);
+    expect(stored.email).toBe(email);
+    expect(typeof stored.code).toBe("string");
+    expect(stored.code).toBe(code);
+    expect(stored.createdAt).toBeDefined();
+    expect(
+      redis.queue.some(
+        (q) =>
+          q.queue === "reset_password_mail_queue" &&
+          q.val.includes(email) &&
+          q.val.includes(stored.code),
+      ),
+    ).toBe(true);
+  });
+
+  test("fakeResetPassword makes a dummy session object", async () => {
+    const { resetPasswordId, code } = await service.fakeResetPassword();
+    expect(typeof resetPasswordId).toBe("string");
+    expect(typeof code).toBe("string");
+  });
+
+  test("verifyResetPassword: resets password if code matches", async () => {
+    const userId = "alice";
+    const email = "alice@example.com";
+    const newPassword = "newsecurepass";
+    const { resetPasswordId } = await service.startResetPassword(email);
+    const code = redis.store[`resetPassword:${resetPasswordId}`]?.code;
+    expect(typeof code).toBe("string");
+    const ok = await service.verifyResetPassword(userId, resetPasswordId, code, newPassword);
+    expect(ok).toBe(true);
+    expect(pg.passwords[userId]).toBe(md5(newPassword));
+    expect(await redis.hgetall(`resetPassword:${resetPasswordId}`)).toEqual({});
+  });
+
+  test("verifyResetPassword: throws if code mismatch", async () => {
+    const userId = "alice";
+    const email = "alice@example.com";
+    const { resetPasswordId } = await service.startResetPassword(email);
+    const wrongCode = "999999";
+    await expect(
+      service.verifyResetPassword(userId, resetPasswordId, wrongCode, "pass1234"),
+    ).rejects.toThrow(/mismatch/i);
+  });
+
+  test("verifyResetPassword: throws if reset info not found", async () => {
+    const userId = "alice";
+    await expect(
+      service.verifyResetPassword(userId, "no-such-reset", "ANYCODE", "pass1234"),
+    ).rejects.toThrow(/not found|expired/i);
+  });
+
+  test("verifyResetPassword: throws if session/user mismatch", async () => {
+    const userId = "alice";
+    const email = "alice@example.com";
+    const { resetPasswordId } = await service.startResetPassword(email);
+    redis.store[`resetPassword:${resetPasswordId}`].userId = "bob";
+    await expect(
+      service.verifyResetPassword(
+        userId,
+        resetPasswordId,
+        redis.store[`resetPassword:${resetPasswordId}`].code,
+        "pass1234",
+      ),
+    ).rejects.toThrow(/user mismatch/i);
+  });
+
+  test("verifyResetPassword: throws if password too short", async () => {
+    const userId = "alice";
+    const email = "alice@example.com";
+    const { resetPasswordId } = await service.startResetPassword(email);
+    const code = redis.store[`resetPassword:${resetPasswordId}`]?.code;
+    await expect(service.verifyResetPassword(userId, resetPasswordId, code, "x")).rejects.toThrow(
+      /at least 6/i,
+    );
   });
 
   test("deleteUser", async () => {

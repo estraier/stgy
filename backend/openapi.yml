@@ -606,6 +606,67 @@ paths:
         "400":
           $ref: "#/components/responses/Error400"
 
+  /users/password/reset/start:
+    post:
+      summary: Start password reset process
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                email: { type: string }
+              required: [email]
+      responses:
+        "201":
+          description: Password reset process started
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  resetPasswordId:
+                    type: string
+                    description: Password reset session ID
+                  code:
+                    type: string
+                    description: Verification code for password reset
+                required: [resetPasswordId, code]
+
+  /users/{id}/password/reset/verify:
+    post:
+      summary: Complete password reset with session & code
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                resetPasswordId: { type: string }
+                code: { type: string }
+                newPassword: { type: string }
+              required: [resetPasswordId, code, newPassword]
+      responses:
+        "200":
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "400":
+          $ref: "#/components/responses/Error400"
+        "404":
+          $ref: "#/components/responses/Error404"
+
   /users/{id}/follow:
     post:
       summary: Follow user

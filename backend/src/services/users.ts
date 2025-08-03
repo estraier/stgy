@@ -18,6 +18,7 @@ import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 
 const UPDATE_EMAIL_MAIL_QUEUE = "update_email_queue";
+const RESET_PASSWORD_MAIL_QUEUE = "reset_password_mail_queue";
 
 export class UsersService {
   private pgClient: Client;
@@ -278,11 +279,12 @@ export class UsersService {
     return { updateEmailId };
   }
 
-  async verifyUpdateEmail(updateEmailId: string, code: string): Promise<boolean> {
+  async verifyUpdateEmail(userId: string, updateEmailId: string, code: string): Promise<boolean> {
     const key = `updateEmail:${updateEmailId}`;
     const data = await this.redis.hgetall(key);
     if (!data || !data.userId || !data.newEmail || !data.verificationCode)
       throw new Error("Update email info not found or expired.");
+    if (data.userId !== userId) throw new Error("Session/user mismatch");
     if (data.verificationCode !== code) throw new Error("Verification code mismatch.");
     const exists = await this.pgClient.query(`SELECT 1 FROM users WHERE email = $1`, [
       data.newEmail,
@@ -305,6 +307,55 @@ export class UsersService {
       passwordHash,
       input.id,
     ]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
+  async startResetPassword(email: string): Promise<{ resetPasswordId: string; code: string }> {
+    const res = await this.pgClient.query(`SELECT id FROM users WHERE email = $1`, [email]);
+    if (!res.rows[0] || !res.rows[0].id) throw new Error("User not found");
+    const userId: string = res.rows[0].id;
+    const resetPasswordId = uuidv4();
+    const code = generateVerificationCode();
+    const key = `resetPassword:${resetPasswordId}`;
+    await this.redis.hmset(key, {
+      userId,
+      email,
+      code,
+      createdAt: new Date().toISOString(),
+    });
+    await this.redis.expire(key, 900);
+    await this.redis.lpush(
+      RESET_PASSWORD_MAIL_QUEUE,
+      JSON.stringify({ email, code, resetPasswordId }),
+    );
+    return { resetPasswordId, code };
+  }
+
+  async fakeResetPassword(): Promise<{ resetPasswordId: string; code: string }> {
+    const resetPasswordId = uuidv4();
+    const code = generateVerificationCode();
+    return { resetPasswordId, code };
+  }
+
+  async verifyResetPassword(
+    userId: string,
+    resetPasswordId: string,
+    code: string,
+    newPassword: string,
+  ): Promise<boolean> {
+    const key = `resetPassword:${resetPasswordId}`;
+    const data = await this.redis.hgetall(key);
+    if (!data || !data.userId || !data.code) throw new Error("Reset session not found or expired");
+    if (data.userId !== userId) throw new Error("Session/user mismatch");
+    if (data.code !== code) throw new Error("Verification code mismatch");
+    if (!newPassword || newPassword.trim().length < 6)
+      throw new Error("Password must be at least 6 characters");
+    const passwordHash = crypto.createHash("md5").update(newPassword).digest("hex");
+    const res = await this.pgClient.query(`UPDATE users SET password = $1 WHERE id = $2`, [
+      passwordHash,
+      userId,
+    ]);
+    await this.redis.del(key);
     return (res.rowCount ?? 0) > 0;
   }
 
