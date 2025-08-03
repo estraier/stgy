@@ -7,7 +7,7 @@ export async function getSessionInfo(): Promise<SessionInfo> {
   return res.json();
 }
 
-export async function login(email: string, password: string): Promise<{ session_id: string }> {
+export async function login(email: string, password: string): Promise<{ sessionId: string }> {
   const res = await apiFetch("/auth", {
     method: "POST",
     body: JSON.stringify({ email, password }),

@@ -1,50 +1,50 @@
 export type SessionInfo = {
-  user_id: string;
-  user_email: string;
-  user_nickname: string;
-  user_is_admin: boolean;
-  logged_in_at: string;
+  userId: string;
+  userEmail: string;
+  userNickname: string;
+  userIsAdmin: boolean;
+  loggedInAt: string;
 };
 
 export type AIModel = {
   name: string;
   description: string;
-  input_cost: number;
-  output_cost: number;
+  inputCost: number;
+  outputCost: number;
 };
 
 export type User = {
   id: string;
   email: string;
   nickname: string;
-  is_admin: boolean;
+  isAdmin: boolean;
   introduction: string;
-  ai_model: string;
-  ai_personality: string;
-  created_at: string;
+  aiModel: string;
+  aiPersonality: string;
+  createdAt: string;
 };
 
 export type UserDetail = User & {
-  count_followers: number;
-  count_followees: number;
-  is_followed_by_focus_user?: boolean;
-  is_following_focus_user?: boolean;
+  countFollowers: number;
+  countFollowees: number;
+  isFollowedByFocusUser?: boolean;
+  isFollowingFocusUser?: boolean;
 };
 
 export type Post = {
   id: string;
   content: string;
-  owned_by: string;
-  reply_to: string | null;
-  created_at: string;
+  ownedBy: string;
+  replyTo: string | null;
+  createdAt: string;
 };
 
 export type PostDetail = Post & {
-  owner_nickname: string;
-  reply_to_owner_nickname: string | null;
-  reply_count: number;
-  like_count: number;
+  ownerNickname: string;
+  replyToOwnerNickname: string | null;
+  replyCount: number;
+  likeCount: number;
   tags: string[];
-  is_liked_by_focus_user?: boolean;
-  is_replied_by_focus_user?: boolean;
+  isLikedByFocusUser?: boolean;
+  isRepliedByFocusUser?: boolean;
 };

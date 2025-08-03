@@ -59,4 +59,20 @@ describe("snakeToCamel", () => {
       ],
     });
   });
+
+  it("handles Date objects (e.g., timestamptz)", () => {
+    const date = new Date("2023-01-01T12:34:56.789Z");
+    const input = { created_at: date };
+    const result = snakeToCamel(input);
+    expect(result.createdAt).toBeInstanceOf(Date);
+    expect((result.createdAt as Date).toISOString()).toBe("2023-01-01T12:34:56.789Z");
+  });
+
+  it("handles Buffer objects (e.g., bytea)", () => {
+    const buf = Buffer.from([0xde, 0xad, 0xbe, 0xef]);
+    const input = { file_content: buf };
+    const result = snakeToCamel(input);
+    expect(result.fileContent).toBeInstanceOf(Buffer);
+    expect((result.fileContent as Buffer).equals(buf)).toBe(true);
+  });
 });

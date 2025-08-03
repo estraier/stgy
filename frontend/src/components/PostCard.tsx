@@ -54,9 +54,9 @@ export default function PostCard({
       }
     >
       <div className="flex items-center text-sm mb-1">
-        <a href={`/users/${post.owned_by}`} onClick={(e) => e.stopPropagation()}>
+        <a href={`/users/${post.ownedBy}`} onClick={(e) => e.stopPropagation()}>
           <Identicon
-            value={post.owned_by + ":" + post.owner_nickname}
+            value={post.ownedBy + ":" + post.ownerNickname}
             size={24}
             className="-mt-2 -ml-1 rounded-full border bg-gray-100 mr-2 flex-shrink-0 opacity-80 cursor-pointer"
             tabIndex={0}
@@ -64,32 +64,32 @@ export default function PostCard({
             ariaLabel="Show post owner detail"
             onClick={(e) => {
               e.stopPropagation();
-              router.push(`/users/${post.owned_by}`);
+              router.push(`/users/${post.ownedBy}`);
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter" || e.key === " ") {
                 e.stopPropagation();
-                router.push(`/users/${post.owned_by}`);
+                router.push(`/users/${post.ownedBy}`);
               }
             }}
           />
         </a>
         <a
           className="font-bold text-blue-700 hover:underline min-w-[20ex] max-w-[48ex] truncate inline-block align-bottom"
-          href={`/users/${post.owned_by}`}
+          href={`/users/${post.ownedBy}`}
           onClick={(e) => e.stopPropagation()}
         >
-          {post.owner_nickname}
+          {post.ownerNickname}
         </a>
-        {post.reply_to && (
+        {post.replyTo && (
           <span className="ml-2 text-xs text-gray-500">
             In response to{" "}
             <a
-              href={`/posts/${post.reply_to}`}
+              href={`/posts/${post.replyTo}`}
               className="text-blue-500 hover:underline max-w-[32ex] truncate inline-block align-bottom"
               onClick={(e) => e.stopPropagation()}
             >
-              {post.reply_to_owner_nickname || post.reply_to}
+              {post.replyToOwnerNickname || post.replyTo}
             </a>
           </span>
         )}
@@ -98,7 +98,7 @@ export default function PostCard({
           href={`/posts/${post.id}`}
           onClick={(e) => e.stopPropagation()}
         >
-          {formatDateTime(new Date(post.created_at))}
+          {formatDateTime(new Date(post.createdAt))}
         </a>
       </div>
       <div
@@ -127,24 +127,24 @@ export default function PostCard({
           <>
             <button
               className={`ml-auto flex items-center gap-1 px-2 py-1 rounded cursor-pointer
-                ${post.is_liked_by_focus_user ? "bg-pink-100 text-pink-600" : "hover:bg-gray-100"}`}
+                ${post.isLikedByFocusUser ? "bg-pink-100 text-pink-600" : "hover:bg-gray-100"}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onLike?.(post);
               }}
               type="button"
-              aria-label={post.is_liked_by_focus_user ? "Unlike" : "Like"}
+              aria-label={post.isLikedByFocusUser ? "Unlike" : "Like"}
             >
-              {post.is_liked_by_focus_user ? (
+              {post.isLikedByFocusUser ? (
                 <Heart fill="currentColor" size={18} />
               ) : (
                 <Heart size={18} />
               )}
-              <span>{post.like_count}</span>
+              <span>{post.likeCount}</span>
             </button>
             <button
               className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer
-                ${post.is_replied_by_focus_user ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100"}`}
+                ${post.isRepliedByFocusUser ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100"}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onReply?.(post);
@@ -153,7 +153,7 @@ export default function PostCard({
               aria-label="Reply"
             >
               <MessageCircle size={18} />
-              <span>{post.reply_count}</span>
+              <span>{post.replyCount}</span>
             </button>
           </>
         )}

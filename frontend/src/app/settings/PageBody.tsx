@@ -14,7 +14,7 @@ export default function PageBody() {
     let canceled = false;
     getSessionInfo()
       .then((session) => {
-        if (!canceled) setUserId(session.user_id);
+        if (!canceled) setUserId(session.userId);
       })
       .catch(() => {
         if (!canceled) setUserId(null);

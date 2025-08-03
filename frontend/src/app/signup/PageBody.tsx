@@ -17,7 +17,7 @@ export default function PageBody() {
     setError(null);
     try {
       const res = await startSignup(email, password);
-      setSignupId(res.signup_id);
+      setSignupId(res.signupId);
       setStep("verify");
     } catch (e) {
       setError(e ? String(e) : "Signup start failed.");

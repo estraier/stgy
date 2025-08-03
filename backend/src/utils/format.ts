@@ -21,6 +21,12 @@ export function snakeToCamel<T = Record<string, unknown>>(obj: unknown): T {
   if (Array.isArray(obj)) {
     return obj.map((item) => snakeToCamel(item)) as unknown as T;
   }
+  if (typeof Buffer !== "undefined" && obj instanceof Buffer) {
+    return obj as T;
+  }
+  if (obj instanceof Date) {
+    return obj as T;
+  }
   if (obj && typeof obj === "object") {
     const n: Record<string, unknown> = {};
     for (const k of Object.keys(obj as object)) {

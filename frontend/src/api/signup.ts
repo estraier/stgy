@@ -1,6 +1,6 @@
 import { apiFetch, extractError } from "./client";
 
-export async function startSignup(email: string, password: string): Promise<{ signup_id: string }> {
+export async function startSignup(email: string, password: string): Promise<{ signupId: string }> {
   const res = await apiFetch("/signup/start", {
     method: "POST",
     body: JSON.stringify({ email, password }),
@@ -10,12 +10,12 @@ export async function startSignup(email: string, password: string): Promise<{ si
 }
 
 export async function verifySignup(
-  signup_id: string,
-  verification_code: string,
-): Promise<{ user_id: string }> {
+  signupId: string,
+  verificationCode: string,
+): Promise<{ userId: string }> {
   const res = await apiFetch("/signup/verify", {
     method: "POST",
-    body: JSON.stringify({ signup_id, verification_code }),
+    body: JSON.stringify({ signupId, verificationCode }),
   });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();

@@ -25,8 +25,8 @@ export default function PageBody() {
   const pathname = usePathname();
   const searchParams = useSearchParams();
 
-  const userId = status && status.state === "authenticated" ? status.session.user_id : "";
-  const isAdmin = status && status.state === "authenticated" && status.session.user_is_admin;
+  const userId = status && status.state === "authenticated" ? status.session.userId : "";
+  const isAdmin = status && status.state === "authenticated" && status.session.userIsAdmin;
 
   const [user, setUser] = useState<UserDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -114,21 +114,21 @@ export default function PageBody() {
 
     if (tab === "posts" || tab === "replies") {
       const params: {
-        owned_by: string;
+        ownedBy: string;
         offset: number;
         limit: number;
         order: "asc" | "desc";
-        focus_user_id: string;
-        reply_to?: string;
+        focusUserId: string;
+        replyTo?: string;
       } = {
-        owned_by: user.id,
+        ownedBy: user.id,
         offset: (page - 1) * PAGE_SIZE,
         limit: PAGE_SIZE + 1,
         order: oldestFirst ? "asc" : "desc",
-        focus_user_id: userId,
+        focusUserId: userId,
       };
-      if (tab === "posts") params.reply_to = "";
-      if (tab === "replies") params.reply_to = "*";
+      if (tab === "posts") params.replyTo = "";
+      if (tab === "replies") params.replyTo = "*";
       listPostsDetail(params)
         .then((data) => {
           setPosts(data.slice(0, PAGE_SIZE));
@@ -144,7 +144,7 @@ export default function PageBody() {
         offset: (page - 1) * PAGE_SIZE,
         limit: PAGE_SIZE + 1,
         order: oldestFirst ? "asc" : "desc",
-        focus_user_id: userId,
+        focusUserId: userId,
       })
         .then((data) => {
           setFollowers(data.slice(0, PAGE_SIZE));
@@ -160,7 +160,7 @@ export default function PageBody() {
         offset: (page - 1) * PAGE_SIZE,
         limit: PAGE_SIZE + 1,
         order: oldestFirst ? "asc" : "desc",
-        focus_user_id: userId,
+        focusUserId: userId,
       })
         .then((data) => {
           setFollowees(data.slice(0, PAGE_SIZE));
@@ -180,37 +180,37 @@ export default function PageBody() {
         p.id === post.id
           ? {
               ...p,
-              is_liked_by_focus_user: !p.is_liked_by_focus_user,
-              like_count: Number(p.like_count ?? 0) + (p.is_liked_by_focus_user ? -1 : 1),
+              isLikedByFocusUser: !p.isLikedByFocusUser,
+              likeCount: Number(p.likeCount ?? 0) + (p.isLikedByFocusUser ? -1 : 1),
             }
           : p,
       ),
     );
     try {
-      if (post.is_liked_by_focus_user) {
+      if (post.isLikedByFocusUser) {
         await removeLike(post.id);
       } else {
         await addLike(post.id);
       }
       setTimeout(() => {
         listPostsDetail({
-          owned_by: user?.id,
+          ownedBy: user?.id,
           offset: (page - 1) * PAGE_SIZE,
           limit: PAGE_SIZE + 1,
           order: oldestFirst ? "asc" : "desc",
-          focus_user_id: userId,
-          reply_to: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
+          focusUserId: userId,
+          replyTo: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
         }).then((data) => setPosts(data.slice(0, PAGE_SIZE)));
       }, 100);
     } catch {
       setTimeout(() => {
         listPostsDetail({
-          owned_by: user?.id,
+          ownedBy: user?.id,
           offset: (page - 1) * PAGE_SIZE,
           limit: PAGE_SIZE + 1,
           order: oldestFirst ? "asc" : "desc",
-          focus_user_id: userId,
-          reply_to: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
+          focusUserId: userId,
+          replyTo: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
         }).then((data) => setPosts(data.slice(0, PAGE_SIZE)));
       }, 100);
     }
@@ -228,17 +228,17 @@ export default function PageBody() {
       for (const tag of tags) {
         if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
       }
-      await createPost({ content, tags, reply_to: replyTo });
+      await createPost({ content, tags, replyTo });
       setReplyBody("");
       setReplyTo(null);
       setTimeout(() => {
         listPostsDetail({
-          owned_by: user?.id,
+          ownedBy: user?.id,
           offset: (page - 1) * PAGE_SIZE,
           limit: PAGE_SIZE + 1,
           order: oldestFirst ? "asc" : "desc",
-          focus_user_id: userId,
-          reply_to: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
+          focusUserId: userId,
+          replyTo: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
         }).then((data) => setPosts(data.slice(0, PAGE_SIZE)));
       }, 100);
     } catch (err: unknown) {

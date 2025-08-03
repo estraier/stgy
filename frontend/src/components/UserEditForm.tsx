@@ -3,7 +3,7 @@
 import React, { useEffect, useState } from "react";
 import type { UserDetail } from "@/api/models";
 import { updateUser, getUserDetail, deleteUser } from "@/api/users";
-import { listAIModels } from "@/api/ai_models";
+import { listAIModels } from "@/api/aiModels";
 
 type UserEditFormProps = {
   user: UserDetail;
@@ -23,9 +23,9 @@ export default function UserEditForm({
   const [email, setEmail] = useState(user.email ?? "");
   const [nickname, setNickname] = useState(user.nickname ?? "");
   const [introduction, setIntroduction] = useState(user.introduction ?? "");
-  const [ai_personality, setAIPersonality] = useState(user.ai_personality ?? "");
-  const [ai_model, setAIModel] = useState(user.ai_model ?? "");
-  const [is_admin, setIsAdmin] = useState(user.is_admin ?? false);
+  const [aiPersonality, setAIPersonality] = useState(user.aiPersonality ?? "");
+  const [aiModel, setAIModel] = useState(user.aiModel ?? "");
+  const [admin, setIsAdmin] = useState(user.isAdmin ?? false);
 
   const [aiModels, setAIModels] = useState<{ name: string; description: string }[]>([]);
   const [aiModelsLoading, setAIModelsLoading] = useState(true);
@@ -58,7 +58,6 @@ export default function UserEditForm({
     try {
       await deleteUser(user.id);
       setDeleteSuccess(true);
-      // onUpdatedがあればundefinedで呼ぶ（画面側で削除後ハンドル可能）
       if (onUpdated) await onUpdated(undefined);
     } catch (err: unknown) {
       setError(err instanceof Error ? err.message : "Failed to delete user.");
@@ -79,7 +78,7 @@ export default function UserEditForm({
       setError("Nickname is required.");
       return;
     }
-    if (ai_model && !ai_personality.trim()) {
+    if (aiModel && !aiPersonality.trim()) {
       setError("AI Personality is required when an AI Model is set.");
       return;
     }
@@ -97,11 +96,11 @@ export default function UserEditForm({
         input.email = email;
       }
       if (isAdmin) {
-        input.is_admin = is_admin;
-        input.ai_model = ai_model || null;
+        input.isAdmin = admin;
+        input.aiModel = aiModel || null;
       }
-      if (ai_model) {
-        input.ai_personality = ai_personality;
+      if (aiModel) {
+        input.aiPersonality = aiPersonality;
       }
 
       await updateUser(user.id, input);
@@ -188,7 +187,7 @@ export default function UserEditForm({
             className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700
                        focus:outline-none focus:ring-2 focus:ring-blue-200
                        disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
-            value={ai_model}
+            value={aiModel}
             onChange={(e) => setAIModel(e.target.value)}
             disabled={!isAdmin}
             onFocus={handleClearError}
@@ -204,14 +203,14 @@ export default function UserEditForm({
         )}
       </div>
       {/* AI Personality */}
-      {ai_model && (
+      {aiModel && (
         <div className="flex flex-col gap-1">
           <label className="font-bold text-sm">AI Personality</label>
           <textarea
             className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50 text-gray-700
                        focus:outline-none focus:ring-2 focus:ring-blue-200
                        disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
-            value={ai_personality}
+            value={aiPersonality}
             onChange={(e) => setAIPersonality(e.target.value)}
             required
             onFocus={handleClearError}
@@ -225,14 +224,14 @@ export default function UserEditForm({
         <div className="flex flex-row items-center gap-2">
           <input
             type="checkbox"
-            id="is_admin"
-            checked={is_admin}
+            id="isAdmin"
+            checked={admin}
             onChange={(e) => setIsAdmin(e.target.checked)}
             className="mr-2
               disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
             disabled={isSelf}
           />
-          <label htmlFor="is_admin" className="font-semibold text-sm">
+          <label htmlFor="isAdmin" className="font-semibold text-sm">
             Admin
           </label>
           {isSelf && (

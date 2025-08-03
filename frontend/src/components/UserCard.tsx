@@ -31,11 +31,11 @@ export default function UserCard({
     setUser(initialUser);
   }, [initialUser]);
 
-  const isAdmin = user.is_admin;
-  const isAI = !!(user.ai_model && user.ai_model.trim() !== "");
+  const isAdmin = user.isAdmin;
+  const isAI = !!(user.aiModel && user.aiModel.trim() !== "");
   const isSelf = !!(focusUserId && user.id === focusUserId);
-  const isFollowing = !!user.is_followed_by_focus_user;
-  const isFollowed = !!user.is_following_focus_user;
+  const isFollowing = !!user.isFollowedByFocusUser;
+  const isFollowed = !!user.isFollowingFocusUser;
   const isFriend = isFollowing && isFollowed;
   const isFollower = isFollowed && !isFollowing;
   const isFollowee = isFollowing && !isFollowed;
@@ -54,7 +54,7 @@ export default function UserCard({
             setSubmitting(true);
             try {
               await (await import("@/api/users")).removeFollower(user.id);
-              setUser({ ...user, is_followed_by_focus_user: false });
+              setUser({ ...user, isFollowedByFocusUser: false });
             } finally {
               setSubmitting(false);
             }
@@ -74,7 +74,7 @@ export default function UserCard({
             setSubmitting(true);
             try {
               await (await import("@/api/users")).addFollower(user.id);
-              setUser({ ...user, is_followed_by_focus_user: true });
+              setUser({ ...user, isFollowedByFocusUser: true });
             } finally {
               setSubmitting(false);
             }
@@ -155,28 +155,28 @@ export default function UserCard({
             : renderBody(user.introduction ?? ""),
         }}
       />
-      {!truncated && user.ai_model && user.ai_model.trim() !== "" && (
+      {!truncated && user.aiModel && user.aiModel.trim() !== "" && (
         <div className="text-xs text-gray-600 mt-2">
           <div className="font-semibold">AI Model:</div>
-          <div className="pl-2">{user.ai_model}</div>
+          <div className="pl-2">{user.aiModel}</div>
         </div>
       )}
-      {!truncated && user.ai_personality && user.ai_personality.trim() !== "" && (
+      {!truncated && user.aiPersonality && user.aiPersonality.trim() !== "" && (
         <div className="text-xs text-gray-600 mt-2">
           <div className="font-semibold">AI Personality:</div>
-          <div className="pl-2">{user.ai_personality}</div>
+          <div className="pl-2">{user.aiPersonality}</div>
         </div>
       )}
       {!truncated && (
         <div className="text-xs text-gray-500 mt-2">
           <div className="font-semibold">Created:</div>
-          <div className="pl-2">{formatDateTime(new Date(user.created_at))}</div>
+          <div className="pl-2">{formatDateTime(new Date(user.createdAt))}</div>
         </div>
       )}
-      {"count_followers" in user && (
+      {"countFollowers" in user && (
         <div className="text-xs text-gray-500 mt-2">
-          <span className="gap-1">followers: {user.count_followers}</span>
-          <span className="ml-2">followees: {user.count_followees}</span>
+          <span className="gap-1">followers: {user.countFollowers}</span>
+          <span className="ml-2">followees: {user.countFollowees}</span>
         </div>
       )}
     </article>

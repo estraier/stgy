@@ -23,8 +23,8 @@ export default function Navbar() {
       .then((user: SessionInfo) => {
         if (!canceled) {
           setLoggedIn(true);
-          setNickname(user.user_nickname || "");
-          setUserId(user.user_id || "");
+          setNickname(user.userNickname || "");
+          setUserId(user.userId || "");
         }
       })
       .catch(() => {

@@ -29,7 +29,7 @@ export default function PageBody() {
 
   const searchQueryObj = useMemo(() => (qParam ? parseUserSearchQuery(qParam) : {}), [qParam]);
 
-  const userId = status.state === "authenticated" ? status.session.user_id : undefined;
+  const userId = status.state === "authenticated" ? status.session.userId : undefined;
   const isSearchMode = useMemo(
     () =>
       (searchQueryObj.query && searchQueryObj.query.length > 0) ||
@@ -71,14 +71,14 @@ export default function PageBody() {
       offset: number;
       limit: number;
       order: "asc" | "desc";
-      focus_user_id?: string;
+      focusUserId?: string;
       query?: string;
       nickname?: string;
     } = {
       offset: (page - 1) * PAGE_SIZE,
       limit: PAGE_SIZE + 1,
       order: oldestFirst ? "asc" : "desc",
-      focus_user_id: userId,
+      focusUserId: userId,
     };
 
     let fetcher: Promise<UserDetail[]>;
@@ -92,14 +92,14 @@ export default function PageBody() {
         offset: params.offset,
         limit: params.limit,
         order: params.order,
-        focus_user_id: userId,
+        focusUserId: userId,
       });
     } else if (effectiveTab === "followers") {
       fetcher = listFollowers(userId!, {
         offset: params.offset,
         limit: params.limit,
         order: params.order,
-        focus_user_id: userId,
+        focusUserId: userId,
       });
     } else {
       fetcher = listUsersDetail(params);

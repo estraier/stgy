@@ -30,8 +30,8 @@ export default function PageBody() {
   const status = useRequireLogin();
   const router = useRouter();
   const searchParams = useSearchParams();
-  const userId = status.state === "authenticated" ? status.session.user_id : undefined;
-  const isAdmin = status.state === "authenticated" && status.session.user_is_admin;
+  const userId = status.state === "authenticated" ? status.session.userId : undefined;
+  const isAdmin = status.state === "authenticated" && status.session.userIsAdmin;
 
   const [post, setPost] = useState<PostDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -47,7 +47,6 @@ export default function PageBody() {
   const [likerLoading, setLikerLoading] = useState(false);
   const [likerHasMore, setLikerHasMore] = useState(false);
 
-  // メモ化した関数で依存関係を安定化
   const getReplyOptsFromQuery = useCallback(() => {
     const pageRaw = searchParams.get("replyPage");
     const page = !pageRaw || isNaN(Number(pageRaw)) || Number(pageRaw) < 1 ? 1 : Number(pageRaw);
@@ -55,7 +54,6 @@ export default function PageBody() {
     return { page, oldestFirst };
   }, [searchParams]);
 
-  // 依存に使うsearchParamsの値を変数に代入
   const replyPageParam = searchParams.get("replyPage");
   const replyOldestFirstParam = searchParams.get("replyOldestFirst");
 
@@ -125,11 +123,11 @@ export default function PageBody() {
     if (!userId || !post) return;
     setReplyLoading(true);
     listPostsDetail({
-      reply_to: post.id,
+      replyTo: post.id,
       offset: (replyPage - 1) * REPLY_PAGE_SIZE,
       limit: REPLY_PAGE_SIZE + 1,
       order: replyOldestFirst ? "asc" : "desc",
-      focus_user_id: userId,
+      focusUserId: userId,
     })
       .then((list) => {
         setReplies(list.slice(0, REPLY_PAGE_SIZE));
@@ -143,13 +141,13 @@ export default function PageBody() {
       prev
         ? {
             ...prev,
-            is_liked_by_focus_user: !prev.is_liked_by_focus_user,
-            like_count: Number(prev.like_count) + (prev.is_liked_by_focus_user ? -1 : 1),
+            isLikedByFocusUser: !prev.isLikedByFocusUser,
+            likeCount: Number(prev.likeCount) + (prev.isLikedByFocusUser ? -1 : 1),
           }
         : prev,
     );
     try {
-      if (post.is_liked_by_focus_user) {
+      if (post.isLikedByFocusUser) {
         await removeLike(post.id);
       } else {
         await addLike(post.id);
@@ -166,25 +164,25 @@ export default function PageBody() {
         p.id === reply.id
           ? {
               ...p,
-              is_liked_by_focus_user: !p.is_liked_by_focus_user,
-              like_count: Number(p.like_count) + (p.is_liked_by_focus_user ? -1 : 1),
+              isLikedByFocusUser: !p.isLikedByFocusUser,
+              likeCount: Number(p.likeCount) + (p.isLikedByFocusUser ? -1 : 1),
             }
           : p,
       ),
     );
     try {
-      if (reply.is_liked_by_focus_user) {
+      if (reply.isLikedByFocusUser) {
         await removeLike(reply.id);
       } else {
         await addLike(reply.id);
       }
     } finally {
       listPostsDetail({
-        reply_to: postId,
+        replyTo: postId,
         offset: (replyPage - 1) * REPLY_PAGE_SIZE,
         limit: REPLY_PAGE_SIZE + 1,
         order: replyOldestFirst ? "asc" : "desc",
-        focus_user_id: userId,
+        focusUserId: userId,
       }).then((list) => {
         setReplies(list.slice(0, REPLY_PAGE_SIZE));
         setReplyHasNext(list.length > REPLY_PAGE_SIZE);
@@ -238,7 +236,7 @@ export default function PageBody() {
       for (const tag of tags) {
         if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
       }
-      await createPost({ content, tags, reply_to: replyingTo });
+      await createPost({ content, tags, replyTo: replyingTo });
       setReplyBody("");
       setReplyingTo(null);
 
@@ -246,11 +244,11 @@ export default function PageBody() {
         setReplyOpts((old) => ({ ...old, page: 1 }));
         getPostDetail(postId, userId).then(setPost);
         listPostsDetail({
-          reply_to: postId,
+          replyTo: postId,
           offset: 0,
           limit: REPLY_PAGE_SIZE + 1,
           order: replyOldestFirst ? "asc" : "desc",
-          focus_user_id: userId,
+          focusUserId: userId,
         }).then((list) => {
           setReplies(list.slice(0, REPLY_PAGE_SIZE));
           setReplyHasNext(list.length > REPLY_PAGE_SIZE);
@@ -261,8 +259,8 @@ export default function PageBody() {
             rep.id === replyingTo
               ? {
                   ...rep,
-                  is_replied_by_focus_user: true,
-                  reply_count: Number(rep.reply_count) + 1,
+                  isRepliedByFocusUser: true,
+                  replyCount: Number(rep.replyCount) + 1,
                 }
               : rep,
           ),
@@ -276,7 +274,7 @@ export default function PageBody() {
     }
   }
 
-  const canEdit = isAdmin || (post && post.owned_by === userId);
+  const canEdit = isAdmin || (post && post.ownedBy === userId);
 
   if (!userId) return null;
   if (loading) return <div className="text-center mt-10">Loading…</div>;

@@ -51,7 +51,7 @@ export default function PageBody() {
   }
   const { tab, includingReplies, oldestFirst, page, qParam } = getQueryParams();
   const searchQueryObj = qParam ? parsePostSearchQuery(qParam) : {};
-  const userId = status.state === "authenticated" ? status.session.user_id : undefined;
+  const userId = status.state === "authenticated" ? status.session.userId : undefined;
 
   const isSearchMode = !!(
     (searchQueryObj.query && searchQueryObj.query.length > 0) ||
@@ -72,7 +72,7 @@ export default function PageBody() {
           const users = await listUsers({
             order: "social",
             nickname: searchQueryObj.ownedBy,
-            focus_user_id: userId,
+            focusUserId: userId,
             limit: 1,
           });
           if (!canceled) {
@@ -101,16 +101,16 @@ export default function PageBody() {
       offset: number;
       limit: number;
       order: "asc" | "desc";
-      focus_user_id?: string;
+      focusUserId?: string;
       query?: string;
       tag?: string;
-      owned_by?: string;
-      reply_to?: string;
+      ownedBy?: string;
+      replyTo?: string;
     } = {
       offset: (usePage - 1) * PAGE_SIZE,
       limit: PAGE_SIZE + 1,
       order: oldestFirst ? "asc" : "desc",
-      focus_user_id: userId,
+      focusUserId: userId,
     };
     let fetcher: Promise<PostDetail[]>;
     let effectiveOwnedBy = searchQueryObj.ownedBy;
@@ -136,26 +136,26 @@ export default function PageBody() {
     if (isSearchMode) {
       if (searchQueryObj.query) params.query = searchQueryObj.query;
       if (searchQueryObj.tag) params.tag = searchQueryObj.tag;
-      if (effectiveOwnedBy) params.owned_by = effectiveOwnedBy;
-      if (!includingReplies) params.reply_to = "";
+      if (effectiveOwnedBy) params.ownedBy = effectiveOwnedBy;
+      if (!includingReplies) params.replyTo = "";
       fetcher = listPostsDetail(params);
     } else if (effectiveTab === "following") {
       fetcher = listPostsByFolloweesDetail({
-        user_id: userId!,
+        userId: userId!,
         ...params,
-        include_self: true,
-        include_replies: includingReplies,
+        includeSelf: true,
+        includeReplies: includingReplies,
       });
     } else if (effectiveTab === "liked") {
       fetcher = listPostsLikedByUserDetail({
-        user_id: userId!,
+        userId: userId!,
         ...params,
-        include_replies: includingReplies,
+        includeReplies: includingReplies,
       });
     } else {
       fetcher = listPostsDetail({
         ...params,
-        ...(includingReplies ? {} : { reply_to: "" }),
+        ...(includingReplies ? {} : { replyTo: "" }),
       });
     }
 
@@ -171,8 +171,8 @@ export default function PageBody() {
     setPosts(
       data.slice(0, PAGE_SIZE).map((post) => ({
         ...post,
-        like_count: Number(post.like_count ?? 0),
-        reply_count: Number(post.reply_count ?? 0),
+        likeCount: Number(post.likeCount ?? 0),
+        replyCount: Number(post.replyCount ?? 0),
       })),
     );
     setLoading(false);
@@ -254,7 +254,7 @@ export default function PageBody() {
       for (const tag of tags) {
         if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
       }
-      await createPost({ content, tags, reply_to: replyTo });
+      await createPost({ content, tags, replyTo });
       setReplyBody("");
       setReplyTo(null);
       setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100);
@@ -275,14 +275,14 @@ export default function PageBody() {
         p.id === post.id
           ? {
               ...p,
-              is_liked_by_focus_user: !p.is_liked_by_focus_user,
-              like_count: Number(p.like_count ?? 0) + (p.is_liked_by_focus_user ? -1 : 1),
+              isLikedByFocusUser: !p.isLikedByFocusUser,
+              likeCount: Number(p.likeCount ?? 0) + (p.isLikedByFocusUser ? -1 : 1),
             }
           : p,
       ),
     );
     try {
-      if (post.is_liked_by_focus_user) {
+      if (post.isLikedByFocusUser) {
         await removeLike(post.id);
       } else {
         await addLike(post.id);
