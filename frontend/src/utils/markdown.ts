@@ -320,19 +320,29 @@ export function renderBody(
     cut: false,
     height: 0,
     maxHeight: typeof maxHeight === "number" ? maxHeight : Number.POSITIVE_INFINITY,
+    omitted: false,
   };
   function htmlFromNodes(nodes: Node[]): string {
+    const omitTag = `<span class="omitted">...</span>`;
     let html = "";
     for (const node of nodes) {
       if (state.cut) break;
       if (node.type === "text") {
         if (state.remain <= 0) {
           state.cut = true;
+          if (!state.omitted) {
+            html += omitTag;
+            state.omitted = true;
+          }
           break;
         }
         const s = node.text;
         if (s.length > state.remain) {
           html += escapeHTML(s.slice(0, state.remain));
+          if (!state.omitted) {
+            html += omitTag;
+            state.omitted = true;
+          }
           state.cut = true;
           state.remain = 0;
           break;
@@ -363,6 +373,10 @@ export function renderBody(
           state.height += heightInc;
           if (state.height > state.maxHeight) {
             state.cut = true;
+            if (!state.omitted) {
+              html += omitTag;
+              state.omitted = true;
+            }
             break;
           }
         }
@@ -370,6 +384,10 @@ export function renderBody(
           state.height += 1;
           if (state.height > state.maxHeight) {
             state.cut = true;
+            if (!state.omitted) {
+              html += omitTag;
+              state.omitted = true;
+            }
             break;
           }
           html += `<br>`;
@@ -378,6 +396,10 @@ export function renderBody(
         if (node.tag === "div" && node.attrs && node.attrs.includes("image-block")) {
           if (state.remain < imgLen || state.height + imgHeight > state.maxHeight) {
             state.cut = true;
+            if (!state.omitted) {
+              html += omitTag;
+              state.omitted = true;
+            }
             break;
           }
           html += `<div class="image-block">`;
@@ -394,11 +416,11 @@ export function renderBody(
         html += `<${node.tag}${node.attrs || ""}>`;
         html += htmlFromNodes(node.children || []);
         html += `</${node.tag}>`;
+        if (state.cut) break;
       }
     }
     return html;
   }
   let html = htmlFromNodes(nodes);
-  if (state.cut) html += `<div class="omitted">...</div>`;
   return html;
 }
