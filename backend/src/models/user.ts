@@ -2,18 +2,18 @@ export type User = {
   id: string;
   email: string;
   nickname: string;
-  is_admin: boolean;
+  isAdmin: boolean;
   introduction: string;
-  ai_model: string | null;
-  ai_personality: string | null;
-  created_at: string;
+  aiModel: string | null;
+  aiPersonality: string | null;
+  createdAt: string;
 };
 
 export type UserDetail = User & {
-  count_followers: number;
-  count_followees: number;
-  is_followed_by_focus_user?: boolean;
-  is_following_focus_user?: boolean;
+  countFollowers: number;
+  countFollowees: number;
+  isFollowedByFocusUser?: boolean;
+  isFollowingFocusUser?: boolean;
 };
 
 export type UserFilter = {
@@ -35,20 +35,20 @@ export type CreateUserInput = {
   email: string;
   nickname: string;
   password: string;
-  is_admin: boolean;
+  isAdmin: boolean;
   introduction: string;
-  ai_model: string | null;
-  ai_personality: string | null;
+  aiModel: string | null;
+  aiPersonality: string | null;
 };
 
 export type UpdateUserInput = {
   id: string;
   email?: string;
   nickname?: string;
-  is_admin?: boolean;
+  isAdmin?: boolean;
   introduction?: string;
-  ai_model?: string | null;
-  ai_personality?: string | null;
+  aiModel?: string | null;
+  aiPersonality?: string | null;
 };
 
 export type UpdatePasswordInput = {
@@ -57,19 +57,19 @@ export type UpdatePasswordInput = {
 };
 
 export type ListFolloweesInput = {
-  follower_id: string;
+  followerId: string;
 } & UserPagination;
 
 export type ListFollowersInput = {
-  followee_id: string;
+  followeeId: string;
 } & UserPagination;
 
 export type AddFollowerInput = {
-  follower_id: string;
-  followee_id: string;
+  followerId: string;
+  followeeId: string;
 };
 
 export type RemoveFollowerInput = {
-  follower_id: string;
-  followee_id: string;
+  followerId: string;
+  followeeId: string;
 };

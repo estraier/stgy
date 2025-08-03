@@ -1,26 +1,26 @@
 export type Post = {
   id: string;
   content: string;
-  owned_by: string;
-  reply_to: string | null;
-  created_at: string;
+  ownedBy: string;
+  replyTo: string | null;
+  createdAt: string;
 };
 
 export type PostDetail = Post & {
-  owner_nickname: string;
-  reply_to_owner_nickname: string | null;
-  reply_count: number;
-  like_count: number;
+  ownerNickname: string;
+  replyToOwnerNickname: string | null;
+  replyCount: number;
+  likeCount: number;
   tags: string[];
-  is_liked_by_focus_user?: boolean;
-  is_replied_by_focus_user?: boolean;
+  isLikedByFocusUser?: boolean;
+  isRepliedByFocusUser?: boolean;
 };
 
 export type PostFilter = {
   query?: string;
-  owned_by?: string;
+  ownedBy?: string;
   tag?: string;
-  reply_to?: string | null;
+  replyTo?: string | null;
 };
 
 export type PostPagination = {
@@ -35,30 +35,30 @@ export type ListPostsInput = PostFilter & PostPagination;
 
 export type CreatePostInput = {
   content: string;
-  owned_by: string;
-  reply_to: string | null;
+  ownedBy: string;
+  replyTo: string | null;
   tags: string[];
 };
 
 export type UpdatePostInput = {
   id: string;
-  owned_by?: string;
+  ownedBy?: string;
   content?: string;
-  reply_to?: string | null;
+  replyTo?: string | null;
   tags?: string[];
 };
 
 export type ListPostsByFolloweesDetailInput = {
-  user_id: string;
-  include_self?: boolean;
-  include_replies?: boolean;
+  userId: string;
+  includeSelf?: boolean;
+  includeReplies?: boolean;
 } & PostPagination;
 
 export type ListPostsLikedByUserDetailInput = {
-  user_id: string;
-  include_replies?: boolean;
+  userId: string;
+  includeReplies?: boolean;
 } & PostPagination;
 
 export type ListLikersInput = {
-  post_id: string;
+  postId: string;
 } & PostPagination;
