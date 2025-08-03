@@ -1,4 +1,4 @@
-import { SendMail } from "./sendMail";
+import { SendMailService } from "./sendMail";
 
 function makeRedisMock() {
   return {
@@ -10,11 +10,11 @@ function makeRedisMock() {
 
 describe("SendMail", () => {
   let redisMock: any;
-  let sendMail: SendMail;
+  let sendMailService: SendMailService;
 
   beforeEach(() => {
     redisMock = makeRedisMock();
-    sendMail = new SendMail(redisMock);
+    sendMailService = new SendMailService(redisMock);
   });
 
   it("canSendMail returns false with reason if address limit exceeded", async () => {
@@ -25,7 +25,7 @@ describe("SendMail", () => {
         domain: "example.com",
       }),
     ]);
-    const result = await sendMail.canSendMail("user@example.com");
+    const result = await sendMailService.canSendMail("user@example.com");
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/address limit exceeded/i);
   });
@@ -42,7 +42,7 @@ describe("SendMail", () => {
       );
     }
     redisMock.lrange.mockResolvedValue(items);
-    const result = await sendMail.canSendMail("another@example.com");
+    const result = await sendMailService.canSendMail("another@example.com");
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/domain limit exceeded/i);
   });
@@ -59,14 +59,14 @@ describe("SendMail", () => {
       );
     }
     redisMock.lrange.mockResolvedValue(items);
-    const result = await sendMail.canSendMail("user@another.com");
+    const result = await sendMailService.canSendMail("user@another.com");
     expect(result.ok).toBe(false);
     expect(result.reason).toMatch(/global limit exceeded/i);
   });
 
   it("canSendMail returns true if under all limits", async () => {
     redisMock.lrange.mockResolvedValue([]);
-    const result = await sendMail.canSendMail("user@example.com");
+    const result = await sendMailService.canSendMail("user@example.com");
     expect(result.ok).toBe(true);
     expect(result.reason).toBeUndefined();
   });
@@ -74,7 +74,7 @@ describe("SendMail", () => {
   it("recordSend pushes new send record and trims history", async () => {
     redisMock.lpush.mockResolvedValue("OK");
     redisMock.ltrim.mockResolvedValue("OK");
-    await sendMail.recordSend("user@example.com");
+    await sendMailService.recordSend("user@example.com");
     expect(redisMock.lpush).toHaveBeenCalledWith(
       "mail:send_history",
       expect.stringContaining('"address":"user@example.com"'),
@@ -82,7 +82,7 @@ describe("SendMail", () => {
     expect(redisMock.ltrim).toHaveBeenCalledWith(
       "mail:send_history",
       0,
-      SendMail.HISTORY_LIMIT - 1,
+      SendMailService.HISTORY_LIMIT - 1,
     );
   });
 });

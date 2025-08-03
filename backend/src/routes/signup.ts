@@ -3,20 +3,20 @@ import { Client } from "pg";
 import Redis from "ioredis";
 import { UsersService } from "../services/users";
 import { SignupService } from "../services/signup";
-import { SendMail } from "../services/sendMail";
+import { SendMailService } from "../services/sendMail";
 
 export default function createSignupRouter(pgClient: Client, redis: Redis) {
   const router = Router();
   const usersService = new UsersService(pgClient);
   const signupService = new SignupService(usersService, redis);
-  const sendMail = new SendMail(redis);
+  const sendMailService = new SendMailService(redis);
 
   router.post("/start", async (req: Request, res: Response) => {
     const { email, password } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: "email and password are needed" });
     }
-    const check = await sendMail.canSendMail(email);
+    const check = await sendMailService.canSendMail(email);
     if (!check.ok) {
       return res.status(400).json({ error: check.reason || "too many requests" });
     }

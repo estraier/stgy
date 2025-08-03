@@ -1,10 +1,10 @@
 import Redis from "ioredis";
 
-export class SendMail {
+export class SendMailService {
   static readonly ADDRESS_LIMIT = 1;
   static readonly DOMAIN_LIMIT = 10;
   static readonly GLOBAL_LIMIT = 100;
-  static readonly HISTORY_LIMIT = Math.ceil(SendMail.GLOBAL_LIMIT * 1.5);
+  static readonly HISTORY_LIMIT = Math.ceil(SendMailService.GLOBAL_LIMIT * 1.5);
 
   redis: Redis;
 
@@ -14,7 +14,11 @@ export class SendMail {
 
   async canSendMail(address: string): Promise<{ ok: boolean; reason?: string }> {
     const domain = address.split("@")[1]?.toLowerCase() ?? "";
-    const history = await this.redis.lrange("mail:send_history", 0, SendMail.HISTORY_LIMIT - 1);
+    const history = await this.redis.lrange(
+      "mail:send_history",
+      0,
+      SendMailService.HISTORY_LIMIT - 1,
+    );
     const now = Date.now();
     const items = history
       .map((item) => {
@@ -43,13 +47,13 @@ export class SendMail {
     const domainCount = items.filter((item) => item.domain === domain).length;
     const globalCount = items.length;
 
-    if (globalCount >= SendMail.GLOBAL_LIMIT) {
+    if (globalCount >= SendMailService.GLOBAL_LIMIT) {
       return { ok: false, reason: "global limit exceeded" };
     }
-    if (domainCount >= SendMail.DOMAIN_LIMIT) {
+    if (domainCount >= SendMailService.DOMAIN_LIMIT) {
       return { ok: false, reason: "domain limit exceeded" };
     }
-    if (addressCount >= SendMail.ADDRESS_LIMIT) {
+    if (addressCount >= SendMailService.ADDRESS_LIMIT) {
       return { ok: false, reason: "address limit exceeded" };
     }
     return { ok: true };
@@ -63,7 +67,7 @@ export class SendMail {
       domain,
     });
     await this.redis.lpush("mail:send_history", entry);
-    await this.redis.ltrim("mail:send_history", 0, SendMail.HISTORY_LIMIT - 1);
+    await this.redis.ltrim("mail:send_history", 0, SendMailService.HISTORY_LIMIT - 1);
   }
 
   async send(address: string, subject: string, body: string): Promise<void> {
