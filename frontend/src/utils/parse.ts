@@ -144,45 +144,30 @@ export function serializeUserSearchQuery(params: { query?: string; nickname?: st
 
 export function parseBodyAndTags(body: string): { content: string; tags: string[] } {
   const lines = body.split(/\r?\n/);
-  const forward_lines: string[] = [];
-  const forward_tag_lines: string[] = [];
-  for (let line of lines) {
-    line = line.replace(/\r$/, "").replace(/\s+$/, "");
+  const reverseLines: string[] = [];
+  const tagLines: string[] = [];
+  for (let i = lines.length - 1; i >= 0; --i) {
+    const line = lines[i];
     if (line) {
-      if (forward_lines.length === 0 && /^#[^#\s]/.test(line)) {
-        forward_tag_lines.push(line);
+      if (reverseLines.length === 0 && /^#[^#\s]/.test(line)) {
+        tagLines.push(line);
       } else {
-        forward_lines.push(line);
+        reverseLines.push(line);
       }
-    } else if (forward_lines.length > 0) {
-      forward_lines.push(line);
+    } else if (reverseLines.length > 0) {
+      reverseLines.push(line);
     }
   }
-  const reverse_lines: string[] = [];
-  const reverse_tag_lines: string[] = [];
-  for (let i = forward_lines.length - 1; i >= 0; --i) {
-    const line = forward_lines[i];
-    if (line) {
-      if (reverse_lines.length === 0 && /^#[^#\s]/.test(line)) {
-        reverse_tag_lines.push(line);
-      } else {
-        reverse_lines.push(line);
-      }
-    } else if (reverse_lines.length > 0) {
-      reverse_lines.push(line);
-    }
-  }
-  const bodyLines = reverse_lines.reverse();
+  const bodyLines = reverseLines.reverse();
   const tags: string[] = [];
-  const unique_tags = new Set<string>();
-  const all_tag_lines = forward_tag_lines.concat(reverse_tag_lines.reverse());
-  for (let tag_line of all_tag_lines) {
+  const uniqueTags = new Set<string>();
+  for (let tag_line of tagLines) {
     tag_line = tag_line.replace(/^#/, "");
     for (let tag of tag_line.split(/, *#/g)) {
       tag = tag.replace(/\s+/g, " ").trim();
-      if (tag && !unique_tags.has(tag)) {
+      if (tag && !uniqueTags.has(tag)) {
         tags.push(tag);
-        unique_tags.add(tag);
+        uniqueTags.add(tag);
       }
     }
   }
