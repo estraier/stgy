@@ -32,6 +32,10 @@ export class SignupService {
     });
     await this.redis.expire(signupKey, 900);
     await this.redis.lpush(SIGNUP_MAIL_QUEUE, JSON.stringify({ email, verificationCode }));
+
+
+    console.log("signup queue", JSON.stringify({ email, verificationCode }))
+
     return { signupId };
   }
 

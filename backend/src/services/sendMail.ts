@@ -19,9 +19,8 @@ export class SendMailService {
         host: process.env.FAKEBOOK_SMTP_HOST,
         port: Number(process.env.FAKEBOOK_SMTP_PORT),
         secure: false,
-        auth: {
-          user: process.env.FAKEBOOK_SMTP_RELAYHOST_USERNAME,
-          pass: process.env.FAKEBOOK_SMTP_RELAYHOST_PASSWORD,
+        tls: {
+          rejectUnauthorized: false,
         },
       },
     );

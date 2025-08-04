@@ -275,6 +275,7 @@ export class UsersService {
       createdAt: new Date().toISOString(),
     });
     await this.redis.expire(key, 900);
+    console.log("email enqueue", userId, newEmail, verificationCode);
     await this.redis.lpush(UPDATE_EMAIL_MAIL_QUEUE, JSON.stringify({ newEmail, verificationCode }));
     return { updateEmailId };
   }
@@ -326,6 +327,7 @@ export class UsersService {
       createdAt: new Date().toISOString(),
     });
     await this.redis.expire(key, 900);
+    console.log("pass enqueue", userId, email, webCode, mailCode);
     await this.redis.lpush(
       RESET_PASSWORD_MAIL_QUEUE,
       JSON.stringify({ email, mailCode, resetPasswordId }),
