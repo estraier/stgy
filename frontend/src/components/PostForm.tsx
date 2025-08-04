@@ -1,6 +1,4 @@
-"use client";
-
-import React from "react";
+import React, { useRef } from "react";
 
 type PostFormProps = {
   body: string;
@@ -33,10 +31,21 @@ export default function PostForm({
   deletable = false,
   onDelete,
 }: PostFormProps) {
-  const isEmpty = body.trim() === "";
+  const textareaRef = useRef<HTMLTextAreaElement>(null);
 
-  // onSubmitかonDeleteを呼び分ける
+  function handleFocus() {
+    const textarea = textareaRef.current;
+    if (!textarea) return;
+    const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight || "20");
+    const minHeight = lineHeight * 8;
+    if (textarea.offsetHeight < minHeight) {
+      textarea.style.height = `${minHeight}px`;
+    }
+    if (onErrorClear) onErrorClear();
+  }
+
   function handleSubmit(e: React.FormEvent) {
+    const isEmpty = body.trim() === "";
     if (isEdit && deletable && isEmpty && onDelete) {
       e.preventDefault();
       onDelete();
@@ -52,12 +61,15 @@ export default function PostForm({
       onClick={(e) => e.stopPropagation()}
     >
       <textarea
+        ref={textareaRef}
         className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50"
         placeholder={placeholder}
         value={body}
         onChange={(e) => setBody(e.target.value)}
         maxLength={5000}
-        onFocus={onErrorClear}
+        onFocus={handleFocus}
+        rows={1}
+        style={{ resize: "vertical" }}
       />
       <div className="flex items-center gap-2">
         <span className="flex-1 text-red-600 text-sm">{error && error}</span>
@@ -73,17 +85,17 @@ export default function PostForm({
         <button
           type="submit"
           className={
-            isEdit && deletable && isEmpty
+            isEdit && deletable && body.trim() === ""
               ? "bg-red-500 text-white hover:bg-red-600 px-4 py-1 rounded cursor-pointer ml-auto"
               : "bg-blue-400 text-white hover:bg-blue-500 px-4 py-1 rounded cursor-pointer ml-auto"
           }
           disabled={submitting}
         >
           {submitting
-            ? isEdit && deletable && isEmpty
+            ? isEdit && deletable && body.trim() === ""
               ? "Deleting..."
               : "Saving..."
-            : isEdit && deletable && isEmpty
+            : isEdit && deletable && body.trim() === ""
               ? "Delete"
               : buttonLabel}
         </button>
