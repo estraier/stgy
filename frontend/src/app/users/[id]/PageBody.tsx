@@ -12,7 +12,7 @@ import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 import { parseBodyAndTags } from "@/utils/parse";
 
-const PAGE_SIZE = 5;
+const PAGE_SIZE = 20;
 const TAB_VALUES = ["posts", "replies", "followers", "followees"] as const;
 
 export default function PageBody() {
