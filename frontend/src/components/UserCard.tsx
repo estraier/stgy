@@ -148,7 +148,7 @@ export default function UserCard({
         <span className="ml-auto">{followButton}</span>
       </div>
       <div
-        className="markdown-body user-introduction"
+        className={`markdown-body user-introduction${truncated ? " excerpt" : ""}`}
         dangerouslySetInnerHTML={{
           __html: truncated
             ? renderBody(user.introduction ?? "", 200, 10)

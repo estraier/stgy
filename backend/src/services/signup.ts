@@ -4,8 +4,6 @@ import { v4 as uuidv4 } from "uuid";
 import { UsersService } from "./users";
 import { generateVerificationCode, validateEmail } from "../utils/format";
 
-const SIGNUP_MAIL_QUEUE = "signup_mail_queue";
-
 export class SignupService {
   pgClient: Client;
   usersService: UsersService;
@@ -31,11 +29,10 @@ export class SignupService {
       createdAt: new Date().toISOString(),
     });
     await this.redis.expire(signupKey, 900);
-    await this.redis.lpush(SIGNUP_MAIL_QUEUE, JSON.stringify({ email, verificationCode }));
-
-
-    console.log("signup queue", JSON.stringify({ email, verificationCode }))
-
+    await this.redis.lpush(
+      "mail-queue",
+      JSON.stringify({ type: "signup", email, verificationCode }),
+    );
     return { signupId };
   }
 

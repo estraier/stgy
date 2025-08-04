@@ -1,4 +1,109 @@
-import { maskEmailByHash, snakeToCamel } from "./format";
+import {
+  generateVerificationCode,
+  validateEmail,
+  normalizeOneLiner,
+  maskEmailByHash,
+  snakeToCamel,
+} from "./format";
+
+describe("generateVerificationCode", () => {
+  it("returns a 6-digit string", () => {
+    for (let i = 0; i < 10; ++i) {
+      const code = generateVerificationCode();
+      expect(code).toMatch(/^\d{6}$/);
+    }
+  });
+
+  it("returns test code if FAKEBOOK_TEST_SIGNUP_CODE is set", () => {
+    process.env.FAKEBOOK_TEST_SIGNUP_CODE = "999999";
+    expect(generateVerificationCode()).toBe("999999");
+    process.env.FAKEBOOK_TEST_SIGNUP_CODE = "";
+  });
+
+  it("pads with zeros when number is short", () => {
+    jest.spyOn(Math, "random").mockReturnValue(0.000001); // 0.000001 * 1000000 = 1
+    process.env.FAKEBOOK_TEST_SIGNUP_CODE = "";
+    expect(generateVerificationCode()).toBe("000001");
+    jest.spyOn(Math, "random").mockRestore();
+  });
+});
+
+describe("validateEmail", () => {
+  it("returns true for valid emails", () => {
+    const valids = [
+      "foo@example.com",
+      "user.name+tag@sub.domain.com",
+      "A_B.C-d@domain.co.jp",
+      "user@localhost",
+      "user@a.b",
+      "user123@xn--zckzah.jp", // punycode
+      "user%test@domain.info",
+      "a@b.c",
+      "a@b.co",
+    ];
+    valids.forEach((email) => {
+      expect(validateEmail(email)).toBe(true);
+    });
+  });
+
+  it("returns false for invalid emails", () => {
+    const invalids = [
+      "",
+      "fooexample.com",
+      "@example.com",
+      "foo@",
+      "foo@.com",
+      "foo@com.",
+      "foo@.com.",
+      "foo@com..com",
+      "foo@#$.com",
+      "foo@com,com",
+      "foo@ example.com",
+      "foo @example.com",
+      "foo@ex ample.com",
+      "foo@.example.com",
+      "foo@@example.com",
+      "foo@example..com",
+      "foo@example.com ",
+      " foo@example.com",
+      "foo@exam\nple.com",
+    ];
+    invalids.forEach((email) => {
+      expect(validateEmail(email)).toBe(false);
+    });
+  });
+});
+
+describe("normalizeOneLiner", () => {
+  it("removes leading/trailing spaces", () => {
+    expect(normalizeOneLiner("  foo bar  ")).toBe("foo bar");
+  });
+
+  it("converts all Unicode spaces to 0x20 and trims", () => {
+    expect(normalizeOneLiner("foo\u00A0bar\u3000baz")).toBe("foo bar baz"); // nbsp, ideographic
+    expect(normalizeOneLiner("\u2002foo\tbar\nbaz\u3000")).toBe("foo bar baz");
+  });
+
+  it("normalizes Unicode to NFC", () => {
+    // 'e' + combining acute accent should normalize to 'é'
+    const input = "Cafe\u0301";
+    const expected = "Café";
+    expect(normalizeOneLiner(input)).toBe(expected);
+  });
+
+  it("collapses consecutive spaces to a single space", () => {
+    expect(normalizeOneLiner("foo    bar   baz")).toBe("foo bar baz");
+    expect(normalizeOneLiner("foo\t\tbar\nbaz")).toBe("foo bar baz");
+  });
+
+  it("returns empty string for only spaces", () => {
+    expect(normalizeOneLiner("   \t\n\u3000  ")).toBe("");
+  });
+
+  it("returns input as is if already normalized", () => {
+    expect(normalizeOneLiner("foo bar")).toBe("foo bar");
+  });
+});
 
 describe("maskEmailByHash", () => {
   it("returns a masked email for typical addresses", () => {

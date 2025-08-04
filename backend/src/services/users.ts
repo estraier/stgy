@@ -17,9 +17,6 @@ import Redis from "ioredis";
 import { v4 as uuidv4 } from "uuid";
 import crypto from "crypto";
 
-const UPDATE_EMAIL_MAIL_QUEUE = "update_email_queue";
-const RESET_PASSWORD_MAIL_QUEUE = "reset_password_mail_queue";
-
 export class UsersService {
   private pgClient: Client;
   private redis: Redis;
@@ -190,6 +187,9 @@ export class UsersService {
     if (typeof input.email !== "string" || input.email.trim() === "") {
       throw new Error("email is required");
     }
+    if (!validateEmail(input.email)) {
+      throw new Error("given email is invalid");
+    }
     if (typeof input.nickname !== "string" || input.nickname.trim() === "") {
       throw new Error("nickname is required");
     }
@@ -226,6 +226,9 @@ export class UsersService {
     if (input.email !== undefined) {
       if (!input.email || input.email.trim() === "") {
         throw new Error("email is required");
+      }
+      if (!validateEmail(input.email)) {
+        throw new Error("given email is invalid");
       }
       columns.push(`email = $${idx++}`);
       values.push(input.email);
@@ -275,8 +278,10 @@ export class UsersService {
       createdAt: new Date().toISOString(),
     });
     await this.redis.expire(key, 900);
-    console.log("email enqueue", userId, newEmail, verificationCode);
-    await this.redis.lpush(UPDATE_EMAIL_MAIL_QUEUE, JSON.stringify({ newEmail, verificationCode }));
+    await this.redis.lpush(
+      "mail-queue",
+      JSON.stringify({ type: "update-email", newEmail, verificationCode }),
+    );
     return { updateEmailId };
   }
 
@@ -327,10 +332,9 @@ export class UsersService {
       createdAt: new Date().toISOString(),
     });
     await this.redis.expire(key, 900);
-    console.log("pass enqueue", userId, email, webCode, mailCode);
     await this.redis.lpush(
-      RESET_PASSWORD_MAIL_QUEUE,
-      JSON.stringify({ email, mailCode, resetPasswordId }),
+      "mail-queue",
+      JSON.stringify({ type: "reset-password", email, mailCode, resetPasswordId }),
     );
     return { resetPasswordId, webCode };
   }

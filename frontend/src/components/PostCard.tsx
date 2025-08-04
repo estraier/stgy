@@ -102,7 +102,7 @@ export default function PostCard({
         </a>
       </div>
       <div
-        className="markdown-body post-content"
+        className={`markdown-body post-content${truncated ? " excerpt" : ""}`}
         style={{ minHeight: 36, userSelect: "text" }}
         dangerouslySetInnerHTML={{
           __html: truncated ? renderBody(post.content, 200, 10) : renderBody(post.content),

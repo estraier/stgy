@@ -10,7 +10,16 @@ export function generateVerificationCode(): string {
 }
 
 export function validateEmail(email: string): boolean {
-  return /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email);
+  return /^[a-zA-Z0-9.!#$%&'*+\/=?^_`{|}~-]+@[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?(?:\.[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?)*$/.test(
+    email,
+  );
+}
+
+export function normalizeOneLiner(input: string): string {
+  let s = input.normalize("NFC");
+  s = s.replace(/\s+/g, " ");
+  s = s.trim();
+  return s;
 }
 
 export function maskEmailByHash(email: string): string {

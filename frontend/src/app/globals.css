@@ -28,7 +28,7 @@ body {
   font-weight: bold;
 }
 .markdown-body.user-introduction h1 {
-  font-size: 0.85ex 0;
+  margin: 0.85ex 0;
   font-size: 120%;
 }
 
@@ -38,7 +38,7 @@ body {
   font-weight: bold;
 }
 .markdown-body.user-introduction h2 {
-  font-size: 0.92ex 0;
+  margin: 0.92ex 0;
   font-size: 110%;
 }
 
@@ -85,7 +85,7 @@ body {
   word-wrap: break-word;
   border-radius: 0.5ex;
   font-family: "JetBrains Mono", "Menlo", "Monaco", "Consolas", monospace;
-  font-size: 95%;
+  font-size: 90%;
   border: 1px solid #eee;
 }
 
@@ -104,6 +104,10 @@ body {
   margin: 1ex 0.5ex;
   max-width: 50ex;
   max-height: 50ex;
+}
+.markdown-body.excerpt .image-block {
+  max-width: 30ex;
+  max-height: 30ex;
 }
 
 .markdown-body a {

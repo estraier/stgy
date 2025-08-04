@@ -12,7 +12,7 @@ import {
   UpdateUserInput,
   UpdatePasswordInput,
 } from "../models/user";
-import { maskEmailByHash } from "../utils/format";
+import { normalizeOneLiner, maskEmailByHash } from "../utils/format";
 
 export default function createUsersRouter(pgClient: Client, redis: Redis) {
   const router = Router();
@@ -125,7 +125,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     try {
       const input: CreateUserInput = {
         email: req.body.email,
-        nickname: req.body.nickname,
+        nickname: normalizeOneLiner(req.body.nickname),
         password: req.body.password,
         isAdmin: req.body.isAdmin ?? false,
         introduction: req.body.introduction,
@@ -158,7 +158,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       const input: UpdateUserInput = {
         id: req.params.id,
         email: req.body.email,
-        nickname: req.body.nickname,
+        nickname: normalizeOneLiner(req.body.nickname),
         isAdmin: req.body.isAdmin,
         introduction: req.body.introduction,
         aiModel: req.body.aiModel,
@@ -182,6 +182,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     if (!email) {
       return res.status(400).json({ error: "email required" });
     }
+
     const check = await sendMailService.canSendMail(email);
     if (!check.ok) {
       return res.status(400).json({ error: check.reason || "too many requests" });

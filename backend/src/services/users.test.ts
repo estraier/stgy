@@ -411,9 +411,9 @@ describe("UsersService", () => {
     expect(stored.userId).toBe(userId);
     expect(stored.newEmail).toBe(newEmail);
     expect(typeof stored.verificationCode).toBe("string");
-    expect(
-      redis.queue.some((q) => q.queue === "update_email_queue" && q.val.includes(newEmail)),
-    ).toBe(true);
+    expect(redis.queue.some((q) => q.queue === "mail-queue" && q.val.includes(newEmail))).toBe(
+      true,
+    );
   });
 
   test("verifyUpdateEmail: updates email if code matches & email unused", async () => {
@@ -465,10 +465,7 @@ describe("UsersService", () => {
     expect(stored.createdAt).toBeDefined();
     expect(
       redis.queue.some(
-        (q) =>
-          q.queue === "reset_password_mail_queue" &&
-          q.val.includes(email) &&
-          q.val.includes(stored.mailCode),
+        (q) => q.queue === "mail-queue" && q.val.includes(email) && q.val.includes(stored.mailCode),
       ),
     ).toBe(true);
   });

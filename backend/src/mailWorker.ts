@@ -1,9 +1,12 @@
 import Redis from "ioredis";
 import { SendMailService } from "./services/sendMail";
 
-const SIGNUP_MAIL_QUEUE = "signup_mail_queue";
-const UPDATE_EMAIL_MAIL_QUEUE = "update_email_queue";
-const RESET_PASSWORD_MAIL_QUEUE = "reset_password_mail_queue";
+type MailTask =
+  | { type: "signup"; email: string; verificationCode: string }
+  | { type: "update-email"; newEmail: string; verificationCode: string }
+  | { type: "reset-password"; email: string; mailCode: string; resetPasswordId: string };
+
+const MAIL_QUEUE = "mail-queue";
 
 const redis = new Redis({
   host: process.env.FAKEBOOK_REDIS_HOST,
@@ -14,28 +17,31 @@ const redis = new Redis({
 const sendMailService = new SendMailService(redis);
 const mailTransporter = SendMailService.createTransport();
 
-async function handleSignup(msg: unknown) {
-  const { email, verificationCode } = msg as { email: string; verificationCode: string };
-
-  console.log("dequeue", email);
-
-  const subject = "Fakebook Signup Verification Code";
-  const text = `Thank you for signing up for Fakebook.\nYour verification code: ${verificationCode}\nPlease enter this code within 5 minutes.`;
-  await sendMailWithRecord(email, subject, text);
-}
-
-async function handleUpdateEmail(msg: unknown) {
-  const { newEmail, verificationCode } = msg as { newEmail: string; verificationCode: string };
-  const subject = "Fakebook Email Change Verification";
-  const text = `Your verification code for email update: ${verificationCode}\nPlease enter this code within 5 minutes.`;
-  await sendMailWithRecord(newEmail, subject, text);
-}
-
-async function handleResetPassword(msg: unknown) {
-  const { email, mailCode, resetPasswordId } = msg as { email: string; mailCode: string; resetPasswordId: string };
-  const subject = "Fakebook Password Reset Verification";
-  const text = `A password reset was requested for your Fakebook account.\nVerification code: ${mailCode}\nPlease enter this code within 5 minutes.`;
-  await sendMailWithRecord(email, subject, text);
+async function handleMailTask(msg: MailTask) {
+  switch (msg.type) {
+    case "signup": {
+      const subject = "Fakebook Signup Verification Code";
+      const text = `Thank you for signing up for Fakebook.\nYour verification code: ${msg.verificationCode}\nPlease enter this code within 5 minutes.`;
+      await sendMailWithRecord(msg.email, subject, text);
+      break;
+    }
+    case "update-email": {
+      const subject = "Fakebook Email Change Verification";
+      const text = `Your verification code for email update: ${msg.verificationCode}\nPlease enter this code within 5 minutes.`;
+      await sendMailWithRecord(msg.newEmail, subject, text);
+      break;
+    }
+    case "reset-password": {
+      const subject = "Fakebook Password Reset Verification";
+      const text = `A password reset was requested for your Fakebook account.\nVerification code: ${msg.mailCode}\nPlease enter this code within 5 minutes.`;
+      await sendMailWithRecord(msg.email, subject, text);
+      break;
+    }
+    default: {
+      const _exhaustiveCheck: never = msg;
+      console.log("[mailworker] unknown mail type:", _exhaustiveCheck);
+    }
+  }
 }
 
 async function sendMailWithRecord(address: string, subject: string, body: string) {
@@ -53,7 +59,7 @@ async function sendMailWithRecord(address: string, subject: string, body: string
   }
 }
 
-async function processQueue(queue: string, handler: (msg: unknown) => Promise<void>) {
+async function processQueue(queue: string) {
   while (true) {
     try {
       const res = await redis.brpop(queue, 10);
@@ -66,7 +72,11 @@ async function processQueue(queue: string, handler: (msg: unknown) => Promise<vo
         console.log(`[mailworker] invalid payload in ${queue}:`, payload);
         continue;
       }
-      await handler(msg);
+      if (typeof msg === "object" && msg !== null && "type" in msg) {
+        await handleMailTask(msg as MailTask);
+      } else {
+        console.log(`[mailworker] invalid task object in ${queue}:`, payload);
+      }
     } catch (e) {
       console.log(`[mailworker] error processing ${queue}:`, e);
       await new Promise((resolve) => setTimeout(resolve, 3000));
@@ -76,11 +86,7 @@ async function processQueue(queue: string, handler: (msg: unknown) => Promise<vo
 
 async function main() {
   console.log("[mailworker] Fakebook mail worker started");
-  await Promise.all([
-    processQueue(SIGNUP_MAIL_QUEUE, handleSignup),
-    processQueue(UPDATE_EMAIL_MAIL_QUEUE, handleUpdateEmail),
-    processQueue(RESET_PASSWORD_MAIL_QUEUE, handleResetPassword),
-  ]);
+  await processQueue(MAIL_QUEUE);
 }
 
 main().catch((e) => {

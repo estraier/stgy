@@ -6,7 +6,6 @@ jest.mock("./users");
 class MockPgClient {
   public emails: Set<string> = new Set();
   async query(sql: string, params: any[]) {
-    // シンプルな重複判定
     if (sql.includes("SELECT 1 FROM users WHERE email = $1") && this.emails.has(params[0])) {
       return { rows: [{}] };
     }

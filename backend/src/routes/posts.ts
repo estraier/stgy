@@ -8,6 +8,7 @@ import { UsersService } from "../services/users";
 import { AuthHelpers } from "./authHelpers";
 import { CreatePostInput, UpdatePostInput } from "../models/post";
 import { User } from "../models/user";
+import { normalizeOneLiner } from "../utils/format";
 
 export default function createPostsRouter(pgClient: Client, redis: Redis) {
   const router = Router();
@@ -228,11 +229,14 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       if (!Array.isArray(req.body.tags)) {
         return res.status(400).json({ error: "tags is required and must be array" });
       }
+      const tags = req.body.tags
+        .filter((tag: unknown) => typeof tag === "string")
+        .map((tag: string) => normalizeOneLiner(tag));
       const input: CreatePostInput = {
         content: req.body.content,
         ownedBy,
         replyTo: req.body.replyTo ?? null,
-        tags: req.body.tags,
+        tags,
       };
       const created = await postsService.createPost(input);
       res.status(201).json(created);
@@ -258,7 +262,9 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
         if (!Array.isArray(req.body.tags)) {
           return res.status(400).json({ error: "tags must be array if specified" });
         }
-        tags = req.body.tags;
+        tags = req.body.tags
+          .filter((tag: unknown) => typeof tag === "string")
+          .map((tag: string) => normalizeOneLiner(tag));
       }
       const input: UpdatePostInput = {
         id: req.params.id,
