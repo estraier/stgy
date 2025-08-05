@@ -114,7 +114,7 @@ export default function UserCard({
         <Identicon
           value={user.id + ":" + user.nickname}
           size={24}
-          className="-mt-2 -ml-1 rounded-full border bg-gray-100 mr-2 flex-shrink-0 opacity-80"
+          className="-mt-2 -ml-1 rounded-lg border bg-gray-100 mr-2 flex-shrink-0 opacity-80"
         />
         <span className="-mt-1 truncate max-w-[24ex] text-blue-700">{user.nickname}</span>
         {isAdmin && (

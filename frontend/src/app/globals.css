@@ -123,3 +123,8 @@ body {
   margin: 1ex 0.5ex;
   color: #666;
 }
+
+span[aria-label="Identicon"] > svg {
+  /* SVG全体をほんの少し左上に移動する（例：0.5px） */
+  transform: translate(-0.5px, -0.5px);
+}

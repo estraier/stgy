@@ -58,7 +58,7 @@ export default function PostCard({
           <Identicon
             value={post.ownedBy + ":" + post.ownerNickname}
             size={24}
-            className="-mt-2 -ml-1 rounded-full border bg-gray-100 mr-2 flex-shrink-0 opacity-80 cursor-pointer"
+            className="-mt-2 -ml-1 rounded-lg border bg-gray-100 mr-2 flex-shrink-0 opacity-80 cursor-pointer"
             tabIndex={0}
             role="button"
             ariaLabel="Show post owner detail"
