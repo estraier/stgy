@@ -2,6 +2,7 @@ type Node =
   | { type: "text"; text: string }
   | { type: "element"; tag: string; attrs?: string; children: Node[] };
 
+// --- Markdownパーサ本体 ---
 export function parseMarkdownBlocks(mdText: string): Node[] {
   const lines = mdText.replace(/\r\n/g, "\n").split("\n");
   const nodes: Node[] = [];
@@ -158,6 +159,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       flushPara();
       flushTable();
       flushQuote();
+      // リスト内なのでflushListは「しない」
       const level = Math.floor(li[1].length / 2);
       while (currList.length - 1 > level) {
         const done = currList.pop();
@@ -175,6 +177,10 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       });
       continue;
     }
+    // --- ここが重要な修正 ---
+    if (currList.length > 0) {
+      flushList(); // <--- リスト外の通常行が来たら必ずflushListする
+    }
     currPara.push(line);
   }
   flushPara();
@@ -191,6 +197,8 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
   }
   return nodes;
 }
+
+// --- 以下は付随関数 ---
 
 function sumTextLenAndNewlines(nodes: Node[]): { length: number; newlines: number } {
   let length = 0;
