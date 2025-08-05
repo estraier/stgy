@@ -91,8 +91,8 @@ export default function PageBody() {
     getPostDetail(postId, userId)
       .then((data) => {
         setPost(data);
-        const tagLine = data.tags && data.tags.length > 0 ? "#" + data.tags.join(", #") + "\n" : "";
-        setEditBody(tagLine + data.content);
+        const tagLine = data.tags && data.tags.length > 0 ? "\n\n#" + data.tags.join(", #") : "";
+        setEditBody(data.content + tagLine);
       })
       .catch((err) => setError(err?.message ?? "Failed to fetch post."))
       .finally(() => setLoading(false));
@@ -335,8 +335,8 @@ export default function PageBody() {
             onClick={() => {
               if (post) {
                 const tagLine =
-                  post.tags && post.tags.length > 0 ? "#" + post.tags.join(", #") + "\n" : "";
-                setEditBody(tagLine + post.content);
+                  post.tags && post.tags.length > 0 ? "\n\n#" + post.tags.join(", #") : "";
+                setEditBody(post.content + tagLine);
               }
               setEditing(true);
             }}

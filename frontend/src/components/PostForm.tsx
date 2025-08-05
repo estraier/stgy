@@ -1,4 +1,7 @@
-import React, { useRef } from "react";
+"use client";
+
+import React, { useRef, useState, useEffect } from "react";
+import { renderBody } from "@/utils/markdown"; // Markdown変換関数（既存のものを利用）
 
 type PostFormProps = {
   body: string;
@@ -32,6 +35,12 @@ export default function PostForm({
   onDelete,
 }: PostFormProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const [showPreview, setShowPreview] = useState(false);
+
+  // 本文クリア時はプレビューも自動で閉じる
+  useEffect(() => {
+    if (body.trim() === "") setShowPreview(false);
+  }, [body]);
 
   function handleFocus() {
     const textarea = textareaRef.current;
@@ -83,6 +92,14 @@ export default function PostForm({
           </button>
         )}
         <button
+          type="button"
+          className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1 rounded border border-gray-300 cursor-pointer transition"
+          onClick={() => setShowPreview((v) => !v)}
+          tabIndex={-1}
+        >
+          {showPreview ? "Hide Preview" : "Preview"}
+        </button>
+        <button
           type="submit"
           className={
             isEdit && deletable && body.trim() === ""
@@ -100,6 +117,16 @@ export default function PostForm({
               : buttonLabel}
         </button>
       </div>
+
+      {showPreview && body.trim() !== "" && (
+        <div className="border rounded bg-white mt-1 p-3 markdown-body">
+          <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
+          <div
+            dangerouslySetInnerHTML={{ __html: renderBody(body) }}
+            style={{ minHeight: 32 }}
+          />
+        </div>
+      )}
     </form>
   );
 }
