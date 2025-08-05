@@ -102,12 +102,18 @@ body {
 
 .markdown-body .image-block {
   margin: 1ex 0.5ex;
-  max-width: 50ex;
-  max-height: 50ex;
-}
-.markdown-body.excerpt .image-block {
   max-width: 30ex;
   max-height: 30ex;
+  cursor: zoom-in;
+}
+.markdown-body.excerpt .image-block {
+  max-width: 20ex;
+  max-height: 20ex;
+}
+.markdown-body .image-block.expanded {
+  max-width: 60ex;
+  max-height: 60ex;
+  cursor: zoom-out;
 }
 
 .markdown-body a {
@@ -125,6 +131,5 @@ body {
 }
 
 span[aria-label="Identicon"] > svg {
-  /* SVG全体をほんの少し左上に移動する（例：0.5px） */
   transform: translate(-0.5px, -0.5px);
 }
