@@ -1,7 +1,8 @@
 "use client";
 
 import React, { useRef, useState, useEffect } from "react";
-import { renderBody } from "@/utils/markdown"; // Markdown変換関数（既存のものを利用）
+import { renderBody } from "@/utils/markdown";
+import { parseBodyAndTags } from "@/utils/parse";
 
 type PostFormProps = {
   body: string;
@@ -63,6 +64,9 @@ export default function PostForm({
     }
   }
 
+  // プレビュー用に本文・タグを分離
+  const { content, tags } = parseBodyAndTags(body);
+
   return (
     <form
       onSubmit={handleSubmit}
@@ -118,13 +122,25 @@ export default function PostForm({
         </button>
       </div>
 
-      {showPreview && body.trim() !== "" && (
+      {showPreview && content.trim() !== "" && (
         <div className="border rounded bg-white mt-1 p-3 markdown-body">
           <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
           <div
-            dangerouslySetInnerHTML={{ __html: renderBody(body) }}
+            dangerouslySetInnerHTML={{ __html: renderBody(content) }}
             style={{ minHeight: 32 }}
           />
+          {tags.length > 0 && (
+            <div className="mt-3 flex flex-wrap gap-2">
+              {tags.map((tag) => (
+                <span
+                  key={tag}
+                  className="inline-block bg-gray-100 rounded px-2 py-0.5 text-blue-700 text-sm"
+                >
+                  #{tag}
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       )}
     </form>
