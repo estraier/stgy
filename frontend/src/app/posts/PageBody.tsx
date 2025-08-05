@@ -187,6 +187,21 @@ export default function PageBody() {
     fetchPosts(); /* eslint-disable-next-line */
   }, [status.state, page, tab, includingReplies, oldestFirst, qParam, resolvedOwnedBy, userId]);
 
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      const block = target.closest(".image-block");
+      if (block) {
+        block.classList.toggle("expanded");
+        e.stopPropagation();
+      }
+    }
+    document.body.addEventListener("click", handler);
+    return () => {
+      document.body.removeEventListener("click", handler);
+    };
+  }, []);
+
   function setQuery(updates: Record<string, string | number | undefined>) {
     const sp = new URLSearchParams(searchParams);
     for (const key of ["tab", "includingReplies", "oldestFirst", "page", "q"]) {

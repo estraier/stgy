@@ -136,6 +136,21 @@ export default function PageBody() {
       .finally(() => setReplyLoading(false));
   }, [userId, post, replyPage, replyOldestFirst]);
 
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      const block = target.closest(".image-block");
+      if (block) {
+        block.classList.toggle("expanded");
+        e.stopPropagation();
+      }
+    }
+    document.body.addEventListener("click", handler);
+    return () => {
+      document.body.removeEventListener("click", handler);
+    };
+  }, []);
+
   async function handleLike(post: PostDetail) {
     setPost((prev) =>
       prev

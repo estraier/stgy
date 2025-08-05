@@ -102,17 +102,17 @@ body {
 
 .markdown-body .image-block {
   margin: 1ex 0.5ex;
-  max-width: 30ex;
-  max-height: 30ex;
+  max-width: 28ex;
+  max-height: 28ex;
   cursor: zoom-in;
 }
 .markdown-body.excerpt .image-block {
-  max-width: 20ex;
-  max-height: 20ex;
+  max-width: 18ex;
+  max-height: 18ex;
 }
 .markdown-body .image-block.expanded {
-  max-width: 60ex;
-  max-height: 60ex;
+  max-width: 80ex;
+  max-height: 80ex;
   cursor: zoom-out;
 }
 

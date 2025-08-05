@@ -174,6 +174,21 @@ export default function PageBody() {
     }
   }, [tab, user?.id, page, oldestFirst, userId, user]);
 
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      const block = target.closest(".image-block");
+      if (block) {
+        block.classList.toggle("expanded");
+        e.stopPropagation();
+      }
+    }
+    document.body.addEventListener("click", handler);
+    return () => {
+      document.body.removeEventListener("click", handler);
+    };
+  }, []);
+
   async function handleLike(post: PostDetail) {
     setPosts((prev) =>
       prev.map((p) =>

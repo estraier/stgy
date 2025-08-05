@@ -117,6 +117,21 @@ export default function PageBody() {
       .finally(() => setLoading(false));
   }, [status.state, effectiveTab, page, oldestFirst, qParam, userId, isSearchMode, searchQueryObj]);
 
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      const target = e.target as HTMLElement;
+      const block = target.closest(".image-block");
+      if (block) {
+        block.classList.toggle("expanded");
+        e.stopPropagation();
+      }
+    }
+    document.body.addEventListener("click", handler);
+    return () => {
+      document.body.removeEventListener("click", handler);
+    };
+  }, []);
+
   if (status.state !== "authenticated") return null;
 
   function handleOldestFirstToggle(checked: boolean) {
