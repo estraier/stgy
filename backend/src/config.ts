@@ -10,7 +10,7 @@ export class Config {
   static readonly REDIS_PASSWORD = envStr("FAKEBOOK_REDIS_PASSWORD", "redis_password");
   static readonly SMTP_HOST = envStr("FAKEBOOK_SMTP_HOST", "localhost");
   static readonly SMTP_PORT = envNum("FAKEBOOK_SMTP_PORT", 587);
-  static readonly MAIL_SENDER_ADDRESS = envStr("FAKEBOOK_SMTP_SENDER_ADDRESS", "noreply@dbmx.net");
+  static readonly MAIL_SENDER_ADDRESS = envStr("FAKEBOOK_MAIL_SENDER_ADDRESS", "noreply@dbmx.net");
   static readonly MAIL_ADDRESS_LIMIT_PER_MIN = envNum("FAKEBOOK_MAIL_ADDRESS_LIMIT_PER_MIN", 1);
   static readonly MAIL_DOMAIN_LIMIT_PER_MIN = envNum("FAKEBOOK_MAIL_DOMAIN_LIMIT_PER_MIN", 10);
   static readonly MAIL_GLOBAL_LIMIT_PER_MIN = envNum("FAKEBOOK_MAIL_GLOBAL_LIMIT_PER_MIN", 100);

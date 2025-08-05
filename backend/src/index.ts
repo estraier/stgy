@@ -54,5 +54,13 @@ const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
 app.use(errorHandler);
 
 app.listen(3001, () => {
+  Object.entries(Config)
+    .forEach(([key, value]) => {
+      if (key.endsWith("_PASSWORD")) {
+        value = "****";
+      }
+      console.log(`[config] ${key}: ${JSON.stringify(value)}`);
+    });
+
   console.log("Server running on http://localhost:3001");
 });
