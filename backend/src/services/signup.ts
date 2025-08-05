@@ -1,3 +1,4 @@
+import { Config } from "../config";
 import Redis from "ioredis";
 import { Client } from "pg";
 import { v4 as uuidv4 } from "uuid";
@@ -29,10 +30,12 @@ export class SignupService {
       createdAt: new Date().toISOString(),
     });
     await this.redis.expire(signupKey, 900);
-    await this.redis.lpush(
-      "mail-queue",
-      JSON.stringify({ type: "signup", email, verificationCode }),
-    );
+    if (Config.TEST_SIGNUP_CODE.length == 0) {
+      await this.redis.lpush(
+        "mail-queue",
+        JSON.stringify({ type: "signup", email, verificationCode }),
+      );
+    }
     return { signupId };
   }
 

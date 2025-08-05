@@ -1,3 +1,4 @@
+import { Config } from "../config";
 import {
   User,
   UserDetail,
@@ -278,10 +279,12 @@ export class UsersService {
       createdAt: new Date().toISOString(),
     });
     await this.redis.expire(key, 900);
-    await this.redis.lpush(
-      "mail-queue",
-      JSON.stringify({ type: "update-email", newEmail, verificationCode }),
-    );
+    if (Config.TEST_SIGNUP_CODE.length == 0) {
+      await this.redis.lpush(
+        "mail-queue",
+        JSON.stringify({ type: "update-email", newEmail, verificationCode }),
+      );
+    }
     return { updateEmailId };
   }
 
@@ -332,10 +335,12 @@ export class UsersService {
       createdAt: new Date().toISOString(),
     });
     await this.redis.expire(key, 900);
-    await this.redis.lpush(
-      "mail-queue",
-      JSON.stringify({ type: "reset-password", email, mailCode, resetPasswordId }),
-    );
+    if (Config.TEST_SIGNUP_CODE.length == 0) {
+      await this.redis.lpush(
+        "mail-queue",
+        JSON.stringify({ type: "reset-password", email, mailCode, resetPasswordId }),
+      );
+    }
     return { resetPasswordId, webCode };
   }
 

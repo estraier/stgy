@@ -1,3 +1,4 @@
+import { Config } from "./config";
 import express, { ErrorRequestHandler } from "express";
 import cookieParser from "cookie-parser";
 import { Client } from "pg";
@@ -14,24 +15,23 @@ app.use(express.json());
 app.use(cookieParser());
 
 const pgClient = new Client({
-  host: process.env.FAKEBOOK_DATABASE_HOST,
-  user: process.env.FAKEBOOK_DATABASE_USER,
-  password: process.env.FAKEBOOK_DATABASE_PASSWORD,
-  database: process.env.FAKEBOOK_DATABASE_NAME,
-  port: process.env.FAKEBOOK_DATABASE_PORT ? Number(process.env.FAKEBOOK_DATABASE_PORT) : 5432,
+  host: Config.DATABASE_HOST,
+  port: Config.DATABASE_PORT,
+  user: Config.DATABASE_USER,
+  password: Config.DATABASE_PASSWORD,
+  database: Config.DATABASE_NAME,
 });
 pgClient.connect();
 
 const redis = new Redis({
-  host: process.env.FAKEBOOK_REDIS_HOST,
-  port: process.env.FAKEBOOK_REDIS_PORT ? Number(process.env.FAKEBOOK_REDIS_PORT) : 6379,
-  password: process.env.FAKEBOOK_REDIS_PASSWORD,
+  host: Config.REDIS_HOST,
+  port: Config.REDIS_PORT,
+  password: Config.REDIS_PASSWORD,
 });
 
-const frontendOrigin = process.env.FAKEBOOK_FRONTEND_ORIGIN || "http://localhost:3000";
 app.use(
   cors({
-    origin: frontendOrigin,
+    origin: Config.FRONTEND_ORIGIN,
     credentials: true,
   }),
 );

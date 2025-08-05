@@ -1,3 +1,4 @@
+import { Config } from "./config";
 import Redis from "ioredis";
 import { SendMailService } from "./services/sendMail";
 
@@ -9,9 +10,9 @@ type MailTask =
 const MAIL_QUEUE = "mail-queue";
 
 const redis = new Redis({
-  host: process.env.FAKEBOOK_REDIS_HOST,
-  port: process.env.FAKEBOOK_REDIS_PORT ? Number(process.env.FAKEBOOK_REDIS_PORT) : 6379,
-  password: process.env.FAKEBOOK_REDIS_PASSWORD,
+  host: Config.REDIS_HOST,
+  port: Config.REDIS_PORT,
+  password: Config.REDIS_PASSWORD,
 });
 
 const sendMailService = new SendMailService(redis);

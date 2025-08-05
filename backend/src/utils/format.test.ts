@@ -14,15 +14,8 @@ describe("generateVerificationCode", () => {
     }
   });
 
-  it("returns test code if FAKEBOOK_TEST_SIGNUP_CODE is set", () => {
-    process.env.FAKEBOOK_TEST_SIGNUP_CODE = "999999";
-    expect(generateVerificationCode()).toBe("999999");
-    process.env.FAKEBOOK_TEST_SIGNUP_CODE = "";
-  });
-
   it("pads with zeros when number is short", () => {
-    jest.spyOn(Math, "random").mockReturnValue(0.000001); // 0.000001 * 1000000 = 1
-    process.env.FAKEBOOK_TEST_SIGNUP_CODE = "";
+    jest.spyOn(Math, "random").mockReturnValue(0.000001);
     expect(generateVerificationCode()).toBe("000001");
     jest.spyOn(Math, "random").mockRestore();
   });

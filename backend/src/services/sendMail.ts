@@ -1,12 +1,8 @@
+import { Config } from "../config";
 import Redis from "ioredis";
 import nodemailer, { Transporter } from "nodemailer";
 
 export class SendMailService {
-  static readonly ADDRESS_LIMIT = 1;
-  static readonly DOMAIN_LIMIT = 10;
-  static readonly GLOBAL_LIMIT = 100;
-  static readonly HISTORY_LIMIT = Math.ceil(SendMailService.GLOBAL_LIMIT * 1.5);
-
   redis: Redis;
 
   constructor(redis: Redis) {
@@ -16,8 +12,8 @@ export class SendMailService {
   static createTransport(config?: nodemailer.TransportOptions): Transporter {
     return nodemailer.createTransport(
       config ?? {
-        host: process.env.FAKEBOOK_SMTP_HOST,
-        port: Number(process.env.FAKEBOOK_SMTP_PORT),
+        host: Config.SMTP_HOST,
+        port: Config.SMTP_PORT,
         secure: false,
         tls: {
           rejectUnauthorized: false,
@@ -35,7 +31,7 @@ export class SendMailService {
     const history = await this.redis.lrange(
       "mail:send_history",
       0,
-      SendMailService.HISTORY_LIMIT - 1,
+      Config.MAIL_GLOBAL_LIMIT_PER_MIN * 1.5,
     );
     const now = Date.now();
     const items = history
@@ -65,13 +61,13 @@ export class SendMailService {
     const domainCount = items.filter((item) => item.domain === domain).length;
     const globalCount = items.length;
 
-    if (globalCount >= SendMailService.GLOBAL_LIMIT) {
+    if (globalCount >= Config.MAIL_GLOBAL_LIMIT_PER_MIN) {
       return { ok: false, reason: "global limit exceeded" };
     }
-    if (domainCount >= SendMailService.DOMAIN_LIMIT) {
+    if (domainCount >= Config.MAIL_DOMAIN_LIMIT_PER_MIN) {
       return { ok: false, reason: "domain limit exceeded" };
     }
-    if (addressCount >= SendMailService.ADDRESS_LIMIT) {
+    if (addressCount >= Config.MAIL_ADDRESS_LIMIT_PER_MIN) {
       return { ok: false, reason: "address limit exceeded" };
     }
     return { ok: true };
@@ -85,7 +81,7 @@ export class SendMailService {
       domain,
     });
     await this.redis.lpush("mail:send_history", entry);
-    await this.redis.ltrim("mail:send_history", 0, SendMailService.HISTORY_LIMIT - 1);
+    await this.redis.ltrim("mail:send_history", 0, Config.MAIL_GLOBAL_LIMIT_PER_MIN * 1.5);
   }
 
   async send(
@@ -95,7 +91,7 @@ export class SendMailService {
     body: string,
   ): Promise<void> {
     await transporter.sendMail({
-      from: process.env.FAKEBOOK_SMTP_SENDER_ADDRESS,
+      from: Config.MAIL_SENDER_ADDRESS,
       to: address,
       subject,
       text: body,

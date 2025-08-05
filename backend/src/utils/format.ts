@@ -1,8 +1,9 @@
+import { Config } from "../config";
 import crypto from "crypto";
 
 export function generateVerificationCode(): string {
-  if (process.env.FAKEBOOK_TEST_SIGNUP_CODE && process.env.FAKEBOOK_TEST_SIGNUP_CODE.length > 0) {
-    return process.env.FAKEBOOK_TEST_SIGNUP_CODE;
+  if (Config.TEST_SIGNUP_CODE.length > 0) {
+    return Config.TEST_SIGNUP_CODE;
   }
   return Math.floor(Math.random() * 1000000)
     .toString()

@@ -1,3 +1,4 @@
+import { Config } from "../config";
 import { SendMailService } from "./sendMail";
 import { Transporter } from "nodemailer";
 
@@ -83,7 +84,7 @@ describe("SendMail", () => {
     expect(redisMock.ltrim).toHaveBeenCalledWith(
       "mail:send_history",
       0,
-      SendMailService.HISTORY_LIMIT - 1,
+      Config.MAIL_GLOBAL_LIMIT_PER_MIN * 1.5,
     );
   });
 });
@@ -101,13 +102,12 @@ describe("SendMailService.send", () => {
     const toAddress = "test@example.com";
     const subject = "Test Subject";
     const body = "Hello, this is a test mail.";
-    process.env.FAKEBOOK_SMTP_SENDER_ADDRESS = "sender@dbmx.net";
 
     await sendMailService.send(mockTransporter, toAddress, subject, body);
 
     expect(mockSendMail).toHaveBeenCalledTimes(1);
     expect(mockSendMail).toHaveBeenCalledWith({
-      from: "sender@dbmx.net",
+      from: "noreply@dbmx.net",
       to: toAddress,
       subject,
       text: body,
@@ -126,7 +126,6 @@ describe("SendMailService.send", () => {
     const toAddress = "test@example.com";
     const subject = "Test Subject";
     const body = "Hello, this is a test mail.";
-    process.env.FAKEBOOK_SMTP_SENDER_ADDRESS = "sender@dbmx.net";
 
     await expect(sendMailService.send(mockTransporter, toAddress, subject, body)).rejects.toThrow(
       "Failed to send",
