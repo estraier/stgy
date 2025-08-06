@@ -1,7 +1,14 @@
 type Node =
   | { type: "text"; text: string }
-  | { type: "element"; tag: string; attrs?: string; children: Node[] };
+  | {
+      type: "element";
+      tag: string;
+      attrs?: string;
+      children: Node[];
+      isThumbnailBlock?: boolean;
+    };
 
+// マークダウン→Nodeツリー
 export function parseMarkdownBlocks(mdText: string): Node[] {
   const lines = mdText.replace(/\r\n/g, "\n").split("\n");
   const nodes: Node[] = [];
@@ -82,7 +89,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
   }
 
   const imageMacroRe = /^!\[([^\]]*)\]\(([^)]+)\)(?:\{([^\}]*)\})?$/;
-  const videoExts = /\.(mpg|mp4|m4a|mov|avi|wmv)(\?.*)?$/i;
+  const videoExts = /\.(mpg|mp4|m4a|mov|avi|wmv|webm)(\?.*)?$/i;
 
   for (let i = 0; i < lines.length; ++i) {
     const line = lines[i];
@@ -113,7 +120,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       codeLines.push(line);
       continue;
     }
-    // --- マクロ付き画像/動画（必ずdiv.image-blockで囲む） ---
+    // --- マクロ付き画像/動画（figure.image-blockで囲む） ---
     const img = line.match(imageMacroRe);
     if (img) {
       flushPara();
@@ -121,7 +128,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       flushTable();
       flushQuote();
 
-      // マクロ属性パース
+      // マクロ属性パース: key=[a-z][a-z0-9]*のみ許可, value正規化
       const macro: Record<string, string | boolean> = {};
       if (img[3]) {
         for (const pair of img[3].split(',')) {
@@ -130,7 +137,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
             if (m[2] === undefined) {
               macro[m[1]] = true;
             } else {
-              macro[m[1]] = m[2].replace(/\s+/g, " ").trim();
+              macro[m[1]] = m[2].replace(/\s+/g, " ");
             }
           }
         }
@@ -140,7 +147,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       const isVideo =
         macro["media"] === "video" ||
         videoExts.test(img[2]);
-
       // data属性展開
       const dataAttrs = Object.entries(macro)
         .map(
@@ -150,19 +156,19 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
               : ` data-${k}="${escapeHTML(String(v))}"`
         )
         .join("");
-
+      // alt or aria-label用
+      const desc = img[1] || "";
       nodes.push({
         type: "element",
-        tag: "div",
-        attrs: ' class="image-block"',
+        tag: "figure",
+        attrs: ` class="image-block"`,
         children: [
           isVideo
             ? {
                 type: "element",
                 tag: "video",
                 attrs:
-                  ` src="${escapeHTML(img[2])}"` +
-                  ` aria-label="${escapeHTML(img[1])}"` +
+                  ` src="${escapeHTML(img[2])}" aria-label="" controls` +
                   dataAttrs,
                 children: [],
               }
@@ -170,10 +176,19 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
                 type: "element",
                 tag: "img",
                 attrs:
-                  ` src="${escapeHTML(img[2])}" alt="${escapeHTML(img[1])}"` +
+                  ` src="${escapeHTML(img[2])}" alt=""` +
                   dataAttrs,
                 children: [],
               },
+          ...(desc
+            ? [
+                {
+                  type: "element",
+                  tag: "figcaption",
+                  children: [{ type: "text", text: desc }],
+                },
+              ]
+            : []),
         ],
       });
       continue;
@@ -291,6 +306,93 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     });
   }
   return nodes;
+}
+
+// サムネイル抽出＆本文画像除去（figure.image-block→figure.thumbnail-blockに変換）
+function filterNodesForThumbnail(nodes: Node[]): Node[] {
+  let thumbnailFig: Node | null = null;
+
+  function findThumbnailFig(nodes: Node[]): Node | null {
+    for (const node of nodes) {
+      if (
+        node.type === "element" &&
+        node.tag === "figure" &&
+        node.attrs &&
+        node.attrs.includes("image-block")
+      ) {
+        // サムネイル候補はdata-thumbnail付き or 最初
+        const imgOrVideo = node.children[0];
+        if (
+          imgOrVideo &&
+          imgOrVideo.type === "element" &&
+          (imgOrVideo.tag === "img" || imgOrVideo.tag === "video") &&
+          imgOrVideo.attrs &&
+          /\bdata-thumbnail\b/.test(imgOrVideo.attrs)
+        ) {
+          return node;
+        }
+      }
+      if (node.type === "element" && node.children) {
+        const res = findThumbnailFig(node.children);
+        if (res) return res;
+      }
+    }
+    return null;
+  }
+  function findFirstFig(nodes: Node[]): Node | null {
+    for (const node of nodes) {
+      if (
+        node.type === "element" &&
+        node.tag === "figure" &&
+        node.attrs &&
+        node.attrs.includes("image-block")
+      ) {
+        return node;
+      }
+      if (node.type === "element" && node.children) {
+        const res = findFirstFig(node.children);
+        if (res) return res;
+      }
+    }
+    return null;
+  }
+
+  thumbnailFig = findThumbnailFig(nodes) || findFirstFig(nodes);
+
+  function removeImageBlocks(nodes: Node[]): Node[] {
+    let result: Node[] = [];
+    for (const node of nodes) {
+      if (
+        node.type === "element" &&
+        node.tag === "figure" &&
+        node.attrs &&
+        node.attrs.includes("image-block")
+      ) {
+        continue;
+      }
+      if (node.type === "element" && node.children) {
+        const next = { ...node, children: removeImageBlocks(node.children) };
+        result.push(next);
+      } else {
+        result.push(node);
+      }
+    }
+    return result;
+  }
+
+  const bodyNodes = removeImageBlocks(nodes);
+
+  if (thumbnailFig) {
+    // thumbnail-blockクラスに差し替え
+    const thumb = {
+      ...thumbnailFig,
+      attrs: thumbnailFig.attrs.replace("image-block", "thumbnail-block"),
+      isThumbnailBlock: true,
+    } as Node;
+    return [thumb, ...bodyNodes];
+  } else {
+    return bodyNodes;
+  }
 }
 
 function sumTextLenAndNewlines(nodes: Node[]): { length: number; newlines: number } {
@@ -442,12 +544,28 @@ function escapeHTML(text: string): string {
 
 export function renderHtml(
   mdText: string,
-  maxLen?: number,
-  maxHeight?: number,
-  imgLen: number = 50,
-  imgHeight: number = 6,
+  options?: {
+    maxLen?: number;
+    maxHeight?: number;
+    imgLen?: number;
+    imgHeight?: number;
+    pickupThumbnail?: boolean;
+  }
 ): string {
-  const nodes = parseMarkdownBlocks(mdText);
+  const {
+    maxLen,
+    maxHeight,
+    imgLen = 50,
+    imgHeight = 6,
+    pickupThumbnail = false,
+  } = options || {};
+
+  let nodes = parseMarkdownBlocks(mdText);
+
+  if (pickupThumbnail) {
+    nodes = filterNodesForThumbnail(nodes);
+  }
+
   const state = {
     remain: typeof maxLen === "number" ? maxLen : Number.POSITIVE_INFINITY,
     cut: false,
@@ -484,6 +602,69 @@ export function renderHtml(
           state.remain -= s.length;
         }
       } else if (node.type === "element") {
+        // サムネイル描画（直接HTML化）
+        if (
+          node.type === "element" &&
+          node.isThumbnailBlock
+        ) {
+          html += `<figure class="thumbnail-block">`;
+          for (const child of node.children || []) {
+            if (child.type === "element" && (child.tag === "img" || child.tag === "video")) {
+              if (child.tag === "img") {
+                const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
+                html += `<img src="${escapeHTML(src)}" alt="">`;
+              } else if (child.tag === "video") {
+                const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
+                html += `<video src="${escapeHTML(src)}" aria-label="" controls></video>`;
+              }
+            }
+            if (child.type === "element" && child.tag === "figcaption") {
+              html += `<figcaption>${htmlFromNodes(child.children || [])}</figcaption>`;
+            }
+          }
+          html += `</figure>`;
+          continue;
+        }
+        // figure.image-block/thumbnail-block
+        if (
+          node.tag === "figure" &&
+          node.attrs &&
+          (node.attrs.includes("image-block") ||
+            node.attrs.includes("thumbnail-block"))
+        ) {
+          html += `<figure${node.attrs || ""}>`;
+          for (const child of node.children || []) {
+            if (child.type === "element" && (child.tag === "img" || child.tag === "video")) {
+              if (child.tag === "img") {
+                const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
+                html += `<img src="${escapeHTML(src)}" alt="">`;
+              } else if (child.tag === "video") {
+                const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
+                html += `<video src="${escapeHTML(src)}" aria-label="" controls></video>`;
+              }
+            }
+            if (child.type === "element" && child.tag === "figcaption") {
+              html += `<figcaption>${htmlFromNodes(child.children || [])}</figcaption>`;
+            }
+          }
+          html += `</figure>`;
+          continue;
+        }
+        // img, videoが単独で来る場合も許容
+        if (
+          (node.tag === "img" || node.tag === "video") &&
+          node.attrs
+        ) {
+          if (node.tag === "img") {
+            const src = node.attrs.match(/src="([^"]*)"/)?.[1] ?? "";
+            html += `<img src="${escapeHTML(src)}" alt="">`;
+          } else if (node.tag === "video") {
+            const src = node.attrs.match(/src="([^"]*)"/)?.[1] ?? "";
+            html += `<video src="${escapeHTML(src)}" aria-label="" controls></video>`;
+          }
+          continue;
+        }
+        // ブロック系高さ制限など
         const blockTags = [
           "p",
           "pre",
@@ -524,39 +705,6 @@ export function renderHtml(
             break;
           }
           html += `<br>`;
-          continue;
-        }
-        // --- div.image-blockのimg, video出力 ---
-        if (node.tag === "div" && node.attrs && node.attrs.includes("image-block")) {
-          if (state.remain < imgLen || state.height + imgHeight > state.maxHeight) {
-            state.cut = true;
-            if (!state.omitted) {
-              html += omitTag;
-              state.omitted = true;
-            }
-            break;
-          }
-          html += `<div class="image-block">`;
-          for (const child of node.children || []) {
-            if (
-              child.type === "element" &&
-              (child.tag === "img" || child.tag === "video") &&
-              child.attrs
-            ) {
-              html += `<${child.tag}${child.attrs}/>`;
-            }
-          }
-          html += `</div>`;
-          state.remain -= imgLen;
-          state.height += imgHeight;
-          continue;
-        }
-        // --- img, videoが単独で来る場合も許容 ---
-        if (
-          (node.tag === "img" || node.tag === "video") &&
-          node.attrs
-        ) {
-          html += `<${node.tag}${node.attrs}/>`;
           continue;
         }
         html += `<${node.tag}${node.attrs || ""}>`;

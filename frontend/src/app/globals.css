@@ -19,7 +19,13 @@ body {
 }
 
 .markdown-body {
+  position: relative;
   line-height: 1.5;
+}
+.markdown-body::after {
+  content: "";
+  display: table;
+  clear: both;
 }
 
 .markdown-body h1 {
@@ -101,6 +107,7 @@ body {
 }
 
 .markdown-body .image-block {
+  position: relative;
   margin: 1ex 0.5ex;
   max-width: 28ex;
   max-height: 28ex;
@@ -114,6 +121,37 @@ body {
   max-width: 80ex;
   max-height: 80ex;
   cursor: zoom-out;
+}
+.markdown-body .thumbnail-block {
+  float: right;
+  max-width: 20ex;
+  max-height: 20ex;
+  margin: 0 0 0.5ex 0.5ex;
+}
+.markdown-body .image-block figcaption {
+  position: absolute;
+  bottom: 0.5ex;
+  right: 0.5ex;
+  padding: 0.1ex 0.5ex;
+  background: #fff;
+  color: #000;
+  border: 1px solid #ddd;
+  border-radius: 0.5ex;
+  opacity: 0.7;
+  font-size: 75%;
+}
+.markdown-body .image-block:hover figcaption {
+  opacity: 0.2;
+}
+
+.markdown-body .thumbnail-block img, .markdown-body .thumbnail-block video {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+}
+.markdown-body .thumbnail-block figcaption {
+  display: none;
 }
 
 .markdown-body a {
