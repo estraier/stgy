@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useState, useEffect } from "react";
-import { renderBody } from "@/utils/markdown";
+import { renderHtml } from "@/utils/markdown";
 import { parseBodyAndTags } from "@/utils/parse";
 
 type PostFormProps = {
@@ -126,7 +126,7 @@ export default function PostForm({
         <div className="border rounded bg-white mt-1 p-3 markdown-body">
           <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
           <div
-            dangerouslySetInnerHTML={{ __html: renderBody(content) }}
+            dangerouslySetInnerHTML={{ __html: renderHtml(content) }}
             style={{ minHeight: 32 }}
           />
           {tags.length > 0 && (

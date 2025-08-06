@@ -315,7 +315,7 @@ function escapeHTML(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-export function renderBody(
+export function renderHtml(
   mdText: string,
   maxLen?: number,
   maxHeight?: number,

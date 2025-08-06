@@ -5,7 +5,7 @@ import type { PostDetail } from "@/api/models";
 import Identicon from "@/components/Identicon";
 import { Heart, MessageCircle } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
-import { renderBody } from "@/utils/markdown";
+import { renderHtml } from "@/utils/markdown";
 
 type PostCardProps = {
   post: PostDetail;
@@ -105,7 +105,7 @@ export default function PostCard({
         className={`markdown-body post-content${truncated ? " excerpt" : ""}`}
         style={{ minHeight: 36, userSelect: "text" }}
         dangerouslySetInnerHTML={{
-          __html: truncated ? renderBody(post.content, 200, 10) : renderBody(post.content),
+          __html: truncated ? renderHtml(post.content, 200, 10) : renderHtml(post.content),
         }}
       />
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">

@@ -4,7 +4,7 @@ import { useEffect, useState } from "react";
 import type { UserDetail } from "@/api/models";
 import Identicon from "@/components/Identicon";
 import { formatDateTime } from "@/utils/format";
-import { renderBody } from "@/utils/markdown";
+import { renderHtml } from "@/utils/markdown";
 
 type UserCardProps = {
   user: UserDetail;
@@ -151,8 +151,8 @@ export default function UserCard({
         className={`markdown-body user-introduction${truncated ? " excerpt" : ""}`}
         dangerouslySetInnerHTML={{
           __html: truncated
-            ? renderBody(user.introduction ?? "", 200, 10)
-            : renderBody(user.introduction ?? ""),
+            ? renderHtml(user.introduction ?? "", 200, 10)
+            : renderHtml(user.introduction ?? ""),
         }}
       />
       {!truncated && user.aiModel && user.aiModel.trim() !== "" && (
