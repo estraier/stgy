@@ -48,6 +48,11 @@ describe("renderHtml basics", () => {
     expect(renderHtml(mdText)).toBe('<div class=\"image-block\"><img src=\"tako.jpg\" alt=\"tako\"/></div>');
   });
 
+  it("video", () => {
+    const mdText = "![tako](tako.mp4){autoplay,seek=12s}";
+    expect(renderHtml(mdText)).toBe('<div class=\"image-block\"><video src=\"tako.mp4\" aria-label=\"tako\" data-autoplay data-seek=\"12s\"/></div>');
+  });
+
   it("quote", () => {
     const mdText = "> hello world";
     expect(renderHtml(mdText)).toBe('<blockquote>hello world</blockquote>');
@@ -94,11 +99,11 @@ b
 abc
 |*a*|b|
 |c|**d**|
-![abc](def/ghi)
+![abc](def/ghi){thumbnail}
 ### H3
 `;
     const expected = `<h1>H1</h1><p>abc<br>def</p><p>xyz</p><pre data-pre-mode="xml">&lt;a&gt;tako&lt;/a&gt;
-ika</pre><h2>H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul><li>e</li></ul></li><li>f</li></ul></li><li>g</li><li>h<ul><li>j<ul><li>k</li></ul></li></ul></li></ul><p>abc</p><table><tr><td><em>a</em></td><td>b</td></tr><tr><td>c</td><td><strong>d</strong></td></tr></table><div class="image-block"><img src="def/ghi" alt="abc"/></div><h3>H3</h3>`;
+ika</pre><h2>H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul><li>e</li></ul></li><li>f</li></ul></li><li>g</li><li>h<ul><li>j<ul><li>k</li></ul></li></ul></li></ul><p>abc</p><table><tr><td><em>a</em></td><td>b</td></tr><tr><td>c</td><td><strong>d</strong></td></tr></table><div class="image-block"><img src="def/ghi" alt="abc" data-thumbnail/></div><h3>H3</h3>`;
     expect(renderHtml(mdText)).toBe(expected);
   });
 });

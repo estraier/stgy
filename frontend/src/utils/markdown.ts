@@ -24,7 +24,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     }
   }
 
-  // すべてのul階層をpopして正しくネスト化する
   function flushList() {
     while (currList.length > 0) {
       const list = currList.pop()!;
@@ -35,7 +34,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
           children: list.items,
         });
       } else {
-        // 親liのchildrenにulをpush
         let lastLi = currList[currList.length - 1].items.at(-1);
         if (
           lastLi &&
@@ -83,6 +81,9 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     }
   }
 
+  const imageMacroRe = /^!\[([^\]]*)\]\(([^)]+)\)(?:\{([^\}]*)\})?$/;
+  const videoExts = /\.(mpg|mp4|m4a|mov|avi|wmv)(\?.*)?$/i;
+
   for (let i = 0; i < lines.length; ++i) {
     const line = lines[i];
     const codeFence = line.match(/^```(\w*)/);
@@ -112,27 +113,72 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       codeLines.push(line);
       continue;
     }
-    const img = line.match(/^!\[([^\]]*)\]\(([^)]+)\)$/);
+    // --- マクロ付き画像/動画（必ずdiv.image-blockで囲む） ---
+    const img = line.match(imageMacroRe);
     if (img) {
       flushPara();
       flushList();
       flushTable();
       flushQuote();
+
+      // マクロ属性パース
+      const macro: Record<string, string | boolean> = {};
+      if (img[3]) {
+        for (const pair of img[3].split(',')) {
+          const m = pair.match(/^\s*([a-z][a-z0-9]*)(?:=([^,]+))?\s*$/);
+          if (m) {
+            if (m[2] === undefined) {
+              macro[m[1]] = true;
+            } else {
+              macro[m[1]] = m[2].replace(/\s+/g, " ").trim();
+            }
+          }
+        }
+      }
+
+      // 動画判定
+      const isVideo =
+        macro["media"] === "video" ||
+        videoExts.test(img[2]);
+
+      // data属性展開
+      const dataAttrs = Object.entries(macro)
+        .map(
+          ([k, v]) =>
+            v === true
+              ? ` data-${k}`
+              : ` data-${k}="${escapeHTML(String(v))}"`
+        )
+        .join("");
+
       nodes.push({
         type: "element",
         tag: "div",
         attrs: ' class="image-block"',
         children: [
-          {
-            type: "element",
-            tag: "img",
-            attrs: ` src="${escapeHTML(img[2])}" alt="${escapeHTML(img[1])}"`,
-            children: [],
-          },
+          isVideo
+            ? {
+                type: "element",
+                tag: "video",
+                attrs:
+                  ` src="${escapeHTML(img[2])}"` +
+                  ` aria-label="${escapeHTML(img[1])}"` +
+                  dataAttrs,
+                children: [],
+              }
+            : {
+                type: "element",
+                tag: "img",
+                attrs:
+                  ` src="${escapeHTML(img[2])}" alt="${escapeHTML(img[1])}"` +
+                  dataAttrs,
+                children: [],
+              },
         ],
       });
       continue;
     }
+    // --- テーブル ---
     const tableRow = line.match(/^\|(.+)\|$/);
     if (tableRow) {
       flushPara();
@@ -143,6 +189,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     } else if (currTable.length) {
       flushTable();
     }
+    // --- 引用 ---
     const quote = line.match(/^> (.*)$/);
     if (quote) {
       flushPara();
@@ -153,6 +200,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     } else if (currQuote.length) {
       flushQuote();
     }
+    // --- 空行 ---
     if (/^\s*$/.test(line)) {
       flushPara();
       flushList();
@@ -160,6 +208,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       flushQuote();
       continue;
     }
+    // --- ヘッダー ---
     const h = line.match(/^(#{1,3}) (.+)$/);
     if (h) {
       flushPara();
@@ -174,7 +223,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       });
       continue;
     }
-    // --- 正しいリスト入れ子＆順序対応 ---
+    // --- リスト入れ子＆順序対応 ---
     const li = line.match(/^(\s*)- (.+)$/);
     if (li) {
       flushPara();
@@ -182,7 +231,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       flushQuote();
       const level = Math.floor(li[1].length / 2);
 
-      // ネスト解除: popしたulを親liのchildrenにpush
       while (
         currList.length > 0 &&
         currList[currList.length - 1].level > level
@@ -211,7 +259,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
         }
       }
 
-      // 階層アップ：新しいulをpush
       if (
         currList.length === 0 ||
         currList[currList.length - 1].level < level
@@ -219,7 +266,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
         currList.push({ level, items: [] });
       }
 
-      // liを「今のul」にpush
       currList[currList.length - 1].items.push({
         type: "element",
         tag: "li",
@@ -480,6 +526,7 @@ export function renderHtml(
           html += `<br>`;
           continue;
         }
+        // --- div.image-blockのimg, video出力 ---
         if (node.tag === "div" && node.attrs && node.attrs.includes("image-block")) {
           if (state.remain < imgLen || state.height + imgHeight > state.maxHeight) {
             state.cut = true;
@@ -491,13 +538,25 @@ export function renderHtml(
           }
           html += `<div class="image-block">`;
           for (const child of node.children || []) {
-            if (child.type === "element" && child.tag === "img" && child.attrs) {
-              html += `<img${child.attrs}/>`;
+            if (
+              child.type === "element" &&
+              (child.tag === "img" || child.tag === "video") &&
+              child.attrs
+            ) {
+              html += `<${child.tag}${child.attrs}/>`;
             }
           }
           html += `</div>`;
           state.remain -= imgLen;
           state.height += imgHeight;
+          continue;
+        }
+        // --- img, videoが単独で来る場合も許容 ---
+        if (
+          (node.tag === "img" || node.tag === "video") &&
+          node.attrs
+        ) {
+          html += `<${node.tag}${node.attrs}/>`;
           continue;
         }
         html += `<${node.tag}${node.attrs || ""}>`;
