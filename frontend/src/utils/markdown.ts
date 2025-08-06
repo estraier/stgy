@@ -2,7 +2,6 @@ type Node =
   | { type: "text"; text: string }
   | { type: "element"; tag: string; attrs?: string; children: Node[] };
 
-// --- Markdownパーサ本体 ---
 export function parseMarkdownBlocks(mdText: string): Node[] {
   const lines = mdText.replace(/\r\n/g, "\n").split("\n");
   const nodes: Node[] = [];
@@ -24,16 +23,36 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       currPara = [];
     }
   }
+
+  // すべてのul階層をpopして正しくネスト化する
   function flushList() {
     while (currList.length > 0) {
       const list = currList.pop()!;
-      nodes.push({
-        type: "element",
-        tag: "ul",
-        children: list.items,
-      });
+      if (currList.length === 0) {
+        nodes.push({
+          type: "element",
+          tag: "ul",
+          children: list.items,
+        });
+      } else {
+        // 親liのchildrenにulをpush
+        let lastLi = currList[currList.length - 1].items.at(-1);
+        if (
+          lastLi &&
+          lastLi.type === "element" &&
+          lastLi.tag === "li"
+        ) {
+          if (!lastLi.children) lastLi.children = [];
+          lastLi.children.push({
+            type: "element",
+            tag: "ul",
+            children: list.items,
+          });
+        }
+      }
     }
   }
+
   function flushTable() {
     if (currTable.length) {
       nodes.push({
@@ -52,6 +71,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       currTable = [];
     }
   }
+
   function flushQuote() {
     if (currQuote.length) {
       nodes.push({
@@ -154,32 +174,61 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       });
       continue;
     }
+    // --- 正しいリスト入れ子＆順序対応 ---
     const li = line.match(/^(\s*)- (.+)$/);
     if (li) {
       flushPara();
       flushTable();
       flushQuote();
-      // リスト内なのでflushListは「しない」
       const level = Math.floor(li[1].length / 2);
-      while (currList.length - 1 > level) {
+
+      // ネスト解除: popしたulを親liのchildrenにpush
+      while (
+        currList.length > 0 &&
+        currList[currList.length - 1].level > level
+      ) {
         const done = currList.pop();
-        currList[currList.length - 1].items.push({
-          type: "element",
-          tag: "ul",
-          children: done!.items,
-        });
+        if (currList.length === 0) {
+          nodes.push({
+            type: "element",
+            tag: "ul",
+            children: done!.items,
+          });
+        } else {
+          let lastLi = currList[currList.length - 1].items.at(-1);
+          if (
+            lastLi &&
+            lastLi.type === "element" &&
+            lastLi.tag === "li"
+          ) {
+            if (!lastLi.children) lastLi.children = [];
+            lastLi.children.push({
+              type: "element",
+              tag: "ul",
+              children: done!.items,
+            });
+          }
+        }
       }
-      if (!currList[level]) currList[level] = { level, items: [] };
-      currList[level].items.push({
+
+      // 階層アップ：新しいulをpush
+      if (
+        currList.length === 0 ||
+        currList[currList.length - 1].level < level
+      ) {
+        currList.push({ level, items: [] });
+      }
+
+      // liを「今のul」にpush
+      currList[currList.length - 1].items.push({
         type: "element",
         tag: "li",
         children: parseInline(li[2]),
       });
       continue;
     }
-    // --- ここが重要な修正 ---
     if (currList.length > 0) {
-      flushList(); // <--- リスト外の通常行が来たら必ずflushListする
+      flushList();
     }
     currPara.push(line);
   }
@@ -198,8 +247,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
   return nodes;
 }
 
-// --- 以下は付随関数 ---
-
 function sumTextLenAndNewlines(nodes: Node[]): { length: number; newlines: number } {
   let length = 0;
   let newlines = 0;
@@ -217,27 +264,26 @@ function sumTextLenAndNewlines(nodes: Node[]): { length: number; newlines: numbe
 }
 
 function parseInline(text: string): Node[] {
+  const esc = /\\([\\~`*_\[\](){}#+\-.!])/;
   const bold = /\*\*([^\*]+)\*\*/;
   const italic = /\*([^\*]+)\*/;
   const underline = /__([^_]+)__/;
+  const strikethrough = /~~([^~]+)~~/;
+  const code = /`([^`]+)`/;
   let m;
+  if ((m = esc.exec(text))) {
+    return [
+      ...parseInline(text.slice(0, m.index)),
+      { type: "text", text: m[1] },
+      ...parseInline(text.slice(m.index + 2)),
+    ];
+  }
   if ((m = bold.exec(text))) {
     return [
       ...parseInline(text.slice(0, m.index)),
       {
         type: "element",
         tag: "strong",
-        children: parseInline(m[1]),
-      },
-      ...parseInline(text.slice(m.index + m[0].length)),
-    ];
-  }
-  if ((m = underline.exec(text))) {
-    return [
-      ...parseInline(text.slice(0, m.index)),
-      {
-        type: "element",
-        tag: "u",
         children: parseInline(m[1]),
       },
       ...parseInline(text.slice(m.index + m[0].length)),
@@ -254,6 +300,39 @@ function parseInline(text: string): Node[] {
       ...parseInline(text.slice(m.index + m[0].length)),
     ];
   }
+  if ((m = underline.exec(text))) {
+    return [
+      ...parseInline(text.slice(0, m.index)),
+      {
+        type: "element",
+        tag: "u",
+        children: parseInline(m[1]),
+      },
+      ...parseInline(text.slice(m.index + m[0].length)),
+    ];
+  }
+  if ((m = strikethrough.exec(text))) {
+    return [
+      ...parseInline(text.slice(0, m.index)),
+      {
+        type: "element",
+        tag: "s",
+        children: parseInline(m[1]),
+      },
+      ...parseInline(text.slice(m.index + m[0].length)),
+    ];
+  }
+  if ((m = code.exec(text))) {
+    return [
+      ...parseInline(text.slice(0, m.index)),
+      {
+        type: "element",
+        tag: "code",
+        children: parseInline(m[1]),
+      },
+      ...parseInline(text.slice(m.index + m[0].length)),
+    ];
+  }
   const linkRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
   const nodes: Node[] = [];
   let last = 0,
@@ -265,7 +344,7 @@ function parseInline(text: string): Node[] {
     nodes.push({
       type: "element",
       tag: "a",
-      attrs: ` href="${escapeHTML(match[2])}" target="_blank" rel="noopener"`,
+      attrs: ` href="${escapeHTML(match[2])}"`,
       children: [{ type: "text", text: match[1] }],
     });
     last = match.index + match[0].length;
@@ -280,7 +359,7 @@ function parseInline(text: string): Node[] {
     nodes.push({
       type: "element",
       tag: "a",
-      attrs: ` href="${escapeHTML(match[0])}" target="_blank" rel="noopener"`,
+      attrs: ` href="${escapeHTML(match[0])}"`,
       children: [{ type: "text", text: match[0] }],
     });
     last = match.index + match[0].length;
