@@ -125,6 +125,11 @@ body {
   text-decoration: underline;
 }
 
+.markdown-body code {
+  font-size: 95%;
+  background: #eee;
+}
+
 .markdown-body .omitted {
   margin: 1ex 0.5ex;
   color: #666;
