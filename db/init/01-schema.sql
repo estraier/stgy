@@ -12,9 +12,11 @@ CREATE TABLE users (
   password VARCHAR(50) NOT NULL,
   is_admin BOOLEAN NOT NULL,
   introduction VARCHAR(2000) NOT NULL,
+  icon VARCHAR(100),
   ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
   ai_personality VARCHAR(2000),
-  created_at TIMESTAMPTZ NOT NULL
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ
 );
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_nickname ON users(nickname);
@@ -23,6 +25,7 @@ CREATE INDEX idx_users_created_at ON users(created_at);
 CREATE TABLE user_follows (
   follower_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   followee_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (follower_id, followee_id)
 );
 CREATE INDEX idx_user_follows_followee ON user_follows(followee_id);
@@ -32,7 +35,8 @@ CREATE TABLE posts (
   content VARCHAR(5000) NOT NULL,
   owned_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reply_to VARCHAR(50),
-  created_at TIMESTAMPTZ NOT NULL
+  created_at TIMESTAMPTZ NOT NULL,
+  updated_at TIMESTAMPTZ
 );
 CREATE INDEX idx_posts_owned_by ON posts(owned_by);
 CREATE INDEX idx_posts_reply_to ON posts(reply_to);
