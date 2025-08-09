@@ -12,8 +12,7 @@
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
-    "ts-archive": "find . -name '*.ts' -print0 | tar -cvf be-ts-archive.tar --null -T -",
-    "clean": "rm -rf node_modules package-lock.json dist be-ts-archive.tar"
+    "clean": "rm -rf node_modules package-lock.json dist"
   },
   "keywords": [],
   "author": "",
