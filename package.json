@@ -12,12 +12,12 @@
     "docker:stop": "docker-compose down",
     "docker:restart": "docker-compose down ; docker-compose up -d",
     "docker:dev": "npm run docker:stop && docker-compose up -d db redis smtp",
-    "reset-data": "cd backend && ./reset-data.sh",
+    "log:backend": "docker-compose logs backend",
+    "log:frontend-": "docker-compose logs frontend",
+    "log:db": "docker-compose logs db",
+    "reset-data": "./db/reset-data.sh",
     "endpoint-test": "./tests/endpoint_test.py",
     "psql": "docker-compose exec db psql -U fakebook fakebook",
-    "backend-log": "docker-compose logs backend",
-    "frontend-log": "docker-compose logs frontend",
-    "db-log": "docker-compose logs db",
     "clean": "rm -rf node_modules package-lock.json dist && npm run clean --workspaces && find . -name '*~' -type f -delete"
   }
 }
