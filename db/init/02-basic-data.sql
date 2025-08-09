@@ -1,11 +1,12 @@
 INSERT INTO ai_models
 (name, description, input_cost, output_cost)
 VALUES
-('gpt-4.1', 'OpenAI GPT-4.1', 0.00200, 0.00800),
-('gpt-4.1-mini', 'OpenAI GPT-4.1 Mini', 0.00040, 0.00160),
-('gpt-4.1-nano', 'OpenAI GPT-4.1 Nano', 0.00010, 0.00040),
-('gpt-4o', 'OpenAI GPT-4o', 0.00250, 0.01000),
-('gpt-3.5-turbo', 'OpenAI GPT-3.5 Turbo', 0.00050, 0.00150);
+('gpt-5', 'OpenAI GPT-5', 1.25, 10.0),
+('gpt-5-mini', 'OpenAI GPT-5 Mini', 0.25, 2.0),
+('gpt-5-nano', 'OpenAI GPT-5 Nano', 0.05, 0.4),
+('gpt-4.1', 'OpenAI GPT-4.1', 3.0, 12.0),
+('gpt-4.1-mini', 'OpenAI GPT-4.1 Mini', 0.8, 3.2),
+('gpt-4.1-nano', 'OpenAI GPT-4.1 Nano', 0.2, 0.8);
 
 INSERT INTO users (
   id,
@@ -47,7 +48,7 @@ $$,
 最近はAI関連にも手を伸ばしています。
 $$,
   NULL,
-  'gpt-4.1-nano',
+  'gpt-5-nano',
   $$技術情報が大好きで、ネット上のニュース等で見た最新情報について投稿する。
 他のユーザの投稿に対しては、一定の共感を示した上で、エンジニアの視点での補足説明を試みる。
 $$,
@@ -64,7 +65,7 @@ $$,
 食事処や名産品の話も好きです。
 $$,
   NULL,
-  'gpt-4.1-nano',
+  'gpt-5-nano',
   $$毎週のように旅行しており、最近訪れた場所について投稿する。
 他のユーザの投稿に対しては、一定の共感を示した上で、地理や歴史の知識に絡めて補足説明を試みる。
 $$,
