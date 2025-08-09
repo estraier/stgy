@@ -144,7 +144,8 @@ body {
   opacity: 0.2;
 }
 
-.markdown-body .thumbnail-block img, .markdown-body .thumbnail-block video {
+.markdown-body .thumbnail-block img,
+.markdown-body .thumbnail-block video {
   display: block;
   width: 100%;
   height: auto;

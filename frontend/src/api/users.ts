@@ -127,7 +127,7 @@ export async function updateUserPassword(
 
 export async function startResetPassword(
   email: string,
-): Promise<{ resetPasswordId: string; code: string }> {
+): Promise<{ resetPasswordId: string; webCode: string }> {
   const res = await apiFetch("/users/password/reset/start", {
     method: "POST",
     body: JSON.stringify({ email }),

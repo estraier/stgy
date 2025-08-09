@@ -326,7 +326,7 @@ export default function PageBody() {
             isAdmin={isAdmin}
             isSelf={isSelf}
             onUpdated={(updatedUser) => {
-              setUser(updatedUser);
+              setUser(updatedUser ?? null);
               setEditing(false);
             }}
             onCancel={() => setEditing(false)}

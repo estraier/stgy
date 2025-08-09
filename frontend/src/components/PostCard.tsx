@@ -54,24 +54,15 @@ export default function PostCard({
       }
     >
       <div className="flex items-center text-sm mb-1">
-        <a href={`/users/${post.ownedBy}`} onClick={(e) => e.stopPropagation()}>
+        <a
+          href={`/users/${post.ownedBy}`}
+          onClick={(e) => e.stopPropagation()}
+          aria-label="Show post owner detail"
+        >
           <Identicon
             value={post.ownedBy + ":" + post.ownerNickname}
             size={24}
             className="-mt-2 -ml-1 rounded-lg border border-gray-500 bg-gray-100 mr-2 flex-shrink-0 opacity-90 cursor-pointer"
-            tabIndex={0}
-            role="button"
-            ariaLabel="Show post owner detail"
-            onClick={(e) => {
-              e.stopPropagation();
-              router.push(`/users/${post.ownedBy}`);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter" || e.key === " ") {
-                e.stopPropagation();
-                router.push(`/users/${post.ownedBy}`);
-              }
-            }}
           />
         </a>
         <a
@@ -105,7 +96,9 @@ export default function PostCard({
         className={`markdown-body post-content${truncated ? " excerpt" : ""}`}
         style={{ minHeight: 36, userSelect: "text" }}
         dangerouslySetInnerHTML={{
-          __html: truncated ? renderHtml(post.content, {maxLen: 200, maxHeight: 10, pickupThumbnail: true}) : renderHtml(post.content),
+          __html: truncated
+            ? renderHtml(post.content, { maxLen: 200, maxHeight: 10, pickupThumbnail: true })
+            : renderHtml(post.content),
         }}
       />
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">

@@ -1,5 +1,7 @@
 export class Config {
-  static readonly FRONTEND_ORIGIN = envStrCsv("FAKEBOOK_FRONTEND_ORIGIN", ["http://localhost:3000"]);
+  static readonly FRONTEND_ORIGIN = envStrCsv("FAKEBOOK_FRONTEND_ORIGIN", [
+    "http://localhost:3000",
+  ]);
   static readonly BACKEND_HOST = envStr("FAKEBOOK_BACKEND_HOST", "localhost");
   static readonly BACKEND_PORT = envNum("FAKEBOOK_BACKEND_PORT", 3001);
   static readonly DATABASE_HOST = envStr("FAKEBOOK_DATABASE_HOST", "localhost");

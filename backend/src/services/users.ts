@@ -304,10 +304,10 @@ export class UsersService {
       data.newEmail,
     ]);
     if (exists.rows.length > 0) throw new Error("Email already in use.");
-    const res = await this.pgClient.query(`UPDATE users SET email = $1, updated_at = now() WHERE id = $2`, [
-      data.newEmail,
-      data.userId,
-    ]);
+    const res = await this.pgClient.query(
+      `UPDATE users SET email = $1, updated_at = now() WHERE id = $2`,
+      [data.newEmail, data.userId],
+    );
     await this.redis.del(key);
     return (res.rowCount ?? 0) > 0;
   }

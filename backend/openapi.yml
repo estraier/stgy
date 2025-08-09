@@ -636,7 +636,7 @@ paths:
                   resetPasswordId:
                     type: string
                     description: Password reset session ID
-                  code:
+                  webCode:
                     type: string
                     description: Verification code for password reset
                 required: [resetPasswordId, code]

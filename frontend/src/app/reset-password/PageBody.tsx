@@ -24,7 +24,7 @@ export default function PageBody() {
     try {
       const res = await startResetPassword(email);
       setResetPasswordId(res.resetPasswordId);
-      setWebCode(res.webCode); // 内部保持のみ
+      setWebCode(res.webCode);
       setStep("verify");
     } catch (e) {
       setError(e ? String(e) : "Failed to start password reset.");

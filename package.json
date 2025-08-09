@@ -7,14 +7,16 @@
   ],
   "scripts": {
     "docker:reset": "docker-compose down -v && docker-compose build --no-cache",
+    "docker:build": "docker-compose build",
     "docker:start": "docker-compose up -d",
     "docker:stop": "docker-compose down",
     "docker:restart": "docker-compose down ; docker-compose up -d",
-    "local": "npm run docker:stop && docker-compose up -d db redis smtp && sleep 2 && cd backend && ./run-local.sh",
+    "docker:dev": "npm run docker:stop && docker-compose up -d db redis smtp",
     "reset-data": "cd backend && ./reset-data.sh",
     "endpoint-test": "./tests/endpoint_test.py",
     "psql": "docker-compose exec db psql -U fakebook fakebook",
     "backend-log": "docker-compose logs backend",
+    "frontend-log": "docker-compose logs frontend",
     "db-log": "docker-compose logs db",
     "clean": "rm -rf node_modules package-lock.json dist && npm run clean --workspaces && find . -name '*~' -type f -delete"
   }

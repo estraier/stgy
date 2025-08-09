@@ -8,7 +8,6 @@ type Node =
       isThumbnailBlock?: boolean;
     };
 
-// マークダウン→Nodeツリー
 export function parseMarkdownBlocks(mdText: string): Node[] {
   const lines = mdText.replace(/\r\n/g, "\n").split("\n");
   const nodes: Node[] = [];
@@ -41,12 +40,8 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
           children: list.items,
         });
       } else {
-        let lastLi = currList[currList.length - 1].items.at(-1);
-        if (
-          lastLi &&
-          lastLi.type === "element" &&
-          lastLi.tag === "li"
-        ) {
+        const lastLi = currList[currList.length - 1].items.at(-1);
+        if (lastLi && lastLi.type === "element" && lastLi.tag === "li") {
           if (!lastLi.children) lastLi.children = [];
           lastLi.children.push({
             type: "element",
@@ -120,7 +115,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       codeLines.push(line);
       continue;
     }
-    // --- マクロ付き画像/動画（figure.image-blockで囲む） ---
     const img = line.match(imageMacroRe);
     if (img) {
       flushPara();
@@ -128,10 +122,9 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       flushTable();
       flushQuote();
 
-      // マクロ属性パース: key=[a-z][a-z0-9]*のみ許可, value正規化
       const macro: Record<string, string | boolean> = {};
       if (img[3]) {
-        for (const pair of img[3].split(',')) {
+        for (const pair of img[3].split(",")) {
           const m = pair.match(/^\s*([a-z][a-z0-9]*)(?:=([^,]+))?\s*$/);
           if (m) {
             if (m[2] === undefined) {
@@ -143,57 +136,42 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
         }
       }
 
-      // 動画判定
-      const isVideo =
-        macro["media"] === "video" ||
-        videoExts.test(img[2]);
-      // data属性展開
+      const isVideo = macro["media"] === "video" || videoExts.test(img[2]);
       const dataAttrs = Object.entries(macro)
-        .map(
-          ([k, v]) =>
-            v === true
-              ? ` data-${k}`
-              : ` data-${k}="${escapeHTML(String(v))}"`
-        )
+        .map(([k, v]) => (v === true ? ` data-${k}` : ` data-${k}="${escapeHTML(String(v))}"`))
         .join("");
-      // alt or aria-label用
       const desc = img[1] || "";
       nodes.push({
         type: "element",
         tag: "figure",
         attrs: ` class="image-block"`,
         children: [
-          isVideo
+          (isVideo
             ? {
                 type: "element",
                 tag: "video",
-                attrs:
-                  ` src="${escapeHTML(img[2])}" aria-label="" controls` +
-                  dataAttrs,
+                attrs: ` src="${escapeHTML(img[2])}" aria-label="" controls` + dataAttrs,
                 children: [],
               }
             : {
                 type: "element",
                 tag: "img",
-                attrs:
-                  ` src="${escapeHTML(img[2])}" alt=""` +
-                  dataAttrs,
+                attrs: ` src="${escapeHTML(img[2])}" alt=""` + dataAttrs,
                 children: [],
-              },
+              }) as Node,
           ...(desc
-            ? [
+            ? ([
                 {
                   type: "element",
                   tag: "figcaption",
-                  children: [{ type: "text", text: desc }],
-                },
-              ]
+                  children: [{ type: "text", text: desc } as Node],
+                } as Node,
+              ] as Node[])
             : []),
         ],
       });
       continue;
     }
-    // --- テーブル ---
     const tableRow = line.match(/^\|(.+)\|$/);
     if (tableRow) {
       flushPara();
@@ -204,7 +182,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     } else if (currTable.length) {
       flushTable();
     }
-    // --- 引用 ---
     const quote = line.match(/^> (.*)$/);
     if (quote) {
       flushPara();
@@ -215,7 +192,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     } else if (currQuote.length) {
       flushQuote();
     }
-    // --- 空行 ---
     if (/^\s*$/.test(line)) {
       flushPara();
       flushList();
@@ -223,7 +199,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       flushQuote();
       continue;
     }
-    // --- ヘッダー ---
     const h = line.match(/^(#{1,3}) (.+)$/);
     if (h) {
       flushPara();
@@ -238,7 +213,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       });
       continue;
     }
-    // --- リスト入れ子＆順序対応 ---
     const li = line.match(/^(\s*)- (.+)$/);
     if (li) {
       flushPara();
@@ -246,10 +220,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       flushQuote();
       const level = Math.floor(li[1].length / 2);
 
-      while (
-        currList.length > 0 &&
-        currList[currList.length - 1].level > level
-      ) {
+      while (currList.length > 0 && currList[currList.length - 1].level > level) {
         const done = currList.pop();
         if (currList.length === 0) {
           nodes.push({
@@ -258,12 +229,8 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
             children: done!.items,
           });
         } else {
-          let lastLi = currList[currList.length - 1].items.at(-1);
-          if (
-            lastLi &&
-            lastLi.type === "element" &&
-            lastLi.tag === "li"
-          ) {
+          const lastLi = currList[currList.length - 1].items.at(-1);
+          if (lastLi && lastLi.type === "element" && lastLi.tag === "li") {
             if (!lastLi.children) lastLi.children = [];
             lastLi.children.push({
               type: "element",
@@ -274,10 +241,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
         }
       }
 
-      if (
-        currList.length === 0 ||
-        currList[currList.length - 1].level < level
-      ) {
+      if (currList.length === 0 || currList[currList.length - 1].level < level) {
         currList.push({ level, items: [] });
       }
 
@@ -308,7 +272,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
   return nodes;
 }
 
-// サムネイル抽出＆本文画像除去（figure.image-block→figure.thumbnail-blockに変換）
 function filterNodesForThumbnail(nodes: Node[]): Node[] {
   let thumbnailFig: Node | null = null;
 
@@ -320,7 +283,6 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
         node.attrs &&
         node.attrs.includes("image-block")
       ) {
-        // サムネイル候補はdata-thumbnail付き or 最初
         const imgOrVideo = node.children[0];
         if (
           imgOrVideo &&
@@ -339,6 +301,7 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
     }
     return null;
   }
+
   function findFirstFig(nodes: Node[]): Node | null {
     for (const node of nodes) {
       if (
@@ -360,7 +323,7 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
   thumbnailFig = findThumbnailFig(nodes) || findFirstFig(nodes);
 
   function removeImageBlocks(nodes: Node[]): Node[] {
-    let result: Node[] = [];
+    const result: Node[] = [];
     for (const node of nodes) {
       if (
         node.type === "element" &&
@@ -371,8 +334,7 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
         continue;
       }
       if (node.type === "element" && node.children) {
-        const next = { ...node, children: removeImageBlocks(node.children) };
-        result.push(next);
+        result.push({ ...node, children: removeImageBlocks(node.children) });
       } else {
         result.push(node);
       }
@@ -382,13 +344,14 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
 
   const bodyNodes = removeImageBlocks(nodes);
 
-  if (thumbnailFig) {
-    // thumbnail-blockクラスに差し替え
-    const thumb = {
-      ...thumbnailFig,
-      attrs: thumbnailFig.attrs.replace("image-block", "thumbnail-block"),
+  if (thumbnailFig && thumbnailFig.type === "element") {
+    const thumb: Node = {
+      type: "element",
+      tag: thumbnailFig.tag,
+      attrs: (thumbnailFig.attrs || "").replace("image-block", "thumbnail-block"),
+      children: thumbnailFig.children,
       isThumbnailBlock: true,
-    } as Node;
+    };
     return [thumb, ...bodyNodes];
   } else {
     return bodyNodes;
@@ -550,15 +513,9 @@ export function renderHtml(
     imgLen?: number;
     imgHeight?: number;
     pickupThumbnail?: boolean;
-  }
+  },
 ): string {
-  const {
-    maxLen,
-    maxHeight,
-    imgLen = 50,
-    imgHeight = 6,
-    pickupThumbnail = false,
-  } = options || {};
+  const { maxLen, maxHeight, imgLen = 50, imgHeight = 6, pickupThumbnail = false } = options || {};
 
   let nodes = parseMarkdownBlocks(mdText);
 
@@ -573,48 +530,73 @@ export function renderHtml(
     maxHeight: typeof maxHeight === "number" ? maxHeight : Number.POSITIVE_INFINITY,
     omitted: false,
   };
+
   function htmlFromNodes(nodes: Node[]): string {
     const omitTag = `<span class="omitted">...</span>`;
+
+    function consumeImageBudget(): boolean {
+      const nextRemain = state.remain - imgLen;
+      const nextHeight = state.height + imgHeight;
+      if (nextRemain < 0 || nextHeight > state.maxHeight) {
+        state.cut = true;
+        return false;
+      }
+      state.remain = nextRemain;
+      state.height = nextHeight;
+      return true;
+    }
+
+    function writeText(s: string): string {
+      if (state.remain <= 0) {
+        state.cut = true;
+        if (!state.omitted) {
+          state.omitted = true;
+          return omitTag;
+        }
+        return "";
+      }
+      if (s.length > state.remain) {
+        const part = escapeHTML(s.slice(0, state.remain));
+        state.remain = 0;
+        state.cut = true;
+        if (!state.omitted) {
+          state.omitted = true;
+          return part + omitTag;
+        }
+        return part;
+      } else {
+        state.remain -= s.length;
+        return escapeHTML(s);
+      }
+    }
+
     let html = "";
     for (const node of nodes) {
       if (state.cut) break;
       if (node.type === "text") {
-        if (state.remain <= 0) {
-          state.cut = true;
-          if (!state.omitted) {
-            html += omitTag;
-            state.omitted = true;
-          }
-          break;
-        }
-        const s = node.text;
-        if (s.length > state.remain) {
-          html += escapeHTML(s.slice(0, state.remain));
-          if (!state.omitted) {
-            html += omitTag;
-            state.omitted = true;
-          }
-          state.cut = true;
-          state.remain = 0;
-          break;
-        } else {
-          html += escapeHTML(s);
-          state.remain -= s.length;
-        }
+        html += writeText(node.text);
       } else if (node.type === "element") {
-        // サムネイル描画（直接HTML化）
-        if (
-          node.type === "element" &&
-          node.isThumbnailBlock
-        ) {
+        if (node.isThumbnailBlock) {
+          const media = (node.children || []).find(
+            (c) => c.type === "element" && (c.tag === "img" || c.tag === "video"),
+          );
+          if (media) {
+            const ok = consumeImageBudget();
+            if (!ok) {
+              if (!state.omitted) {
+                html += omitTag;
+                state.omitted = true;
+              }
+              break;
+            }
+          }
           html += `<figure class="thumbnail-block">`;
           for (const child of node.children || []) {
             if (child.type === "element" && (child.tag === "img" || child.tag === "video")) {
+              const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
               if (child.tag === "img") {
-                const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
                 html += `<img src="${escapeHTML(src)}" alt="">`;
-              } else if (child.tag === "video") {
-                const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
+              } else {
                 html += `<video src="${escapeHTML(src)}" aria-label="" controls></video>`;
               }
             }
@@ -625,21 +607,32 @@ export function renderHtml(
           html += `</figure>`;
           continue;
         }
-        // figure.image-block/thumbnail-block
+
         if (
           node.tag === "figure" &&
           node.attrs &&
-          (node.attrs.includes("image-block") ||
-            node.attrs.includes("thumbnail-block"))
+          (node.attrs.includes("image-block") || node.attrs.includes("thumbnail-block"))
         ) {
+          const media = (node.children || []).find(
+            (c) => c.type === "element" && (c.tag === "img" || c.tag === "video"),
+          );
+          if (media) {
+            const ok = consumeImageBudget();
+            if (!ok) {
+              if (!state.omitted) {
+                html += omitTag;
+                state.omitted = true;
+              }
+              break;
+            }
+          }
           html += `<figure${node.attrs || ""}>`;
           for (const child of node.children || []) {
             if (child.type === "element" && (child.tag === "img" || child.tag === "video")) {
+              const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
               if (child.tag === "img") {
-                const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
                 html += `<img src="${escapeHTML(src)}" alt="">`;
-              } else if (child.tag === "video") {
-                const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
+              } else {
                 html += `<video src="${escapeHTML(src)}" aria-label="" controls></video>`;
               }
             }
@@ -650,21 +643,25 @@ export function renderHtml(
           html += `</figure>`;
           continue;
         }
-        // img, videoが単独で来る場合も許容
-        if (
-          (node.tag === "img" || node.tag === "video") &&
-          node.attrs
-        ) {
+
+        if ((node.tag === "img" || node.tag === "video") && node.attrs) {
+          const ok = consumeImageBudget();
+          if (!ok) {
+            if (!state.omitted) {
+              html += omitTag;
+              state.omitted = true;
+            }
+            break;
+          }
+          const src = node.attrs.match(/src="([^"]*)"/)?.[1] ?? "";
           if (node.tag === "img") {
-            const src = node.attrs.match(/src="([^"]*)"/)?.[1] ?? "";
             html += `<img src="${escapeHTML(src)}" alt="">`;
-          } else if (node.tag === "video") {
-            const src = node.attrs.match(/src="([^"]*)"/)?.[1] ?? "";
+          } else {
             html += `<video src="${escapeHTML(src)}" aria-label="" controls></video>`;
           }
           continue;
         }
-        // ブロック系高さ制限など
+
         const blockTags = [
           "p",
           "pre",
@@ -694,6 +691,7 @@ export function renderHtml(
             break;
           }
         }
+
         if (node.tag === "br") {
           state.height += 1;
           if (state.height > state.maxHeight) {
@@ -707,6 +705,7 @@ export function renderHtml(
           html += `<br>`;
           continue;
         }
+
         html += `<${node.tag}${node.attrs || ""}>`;
         html += htmlFromNodes(node.children || []);
         html += `</${node.tag}>`;

@@ -151,7 +151,11 @@ export default function UserCard({
         className={`markdown-body user-introduction${truncated ? " excerpt" : ""}`}
         dangerouslySetInnerHTML={{
           __html: truncated
-            ? renderHtml(user.introduction ?? "", {maxLen: 200, maxHeight: 10, pickupThumbnail: true})
+            ? renderHtml(user.introduction ?? "", {
+                maxLen: 200,
+                maxHeight: 10,
+                pickupThumbnail: true,
+              })
             : renderHtml(user.introduction ?? ""),
         }}
       />

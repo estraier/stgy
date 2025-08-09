@@ -55,7 +55,7 @@ const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
 };
 app.use(errorHandler);
 
-const server = app.listen(Config.BACKEND_PORT, Config.BACKEND_HOST, () => {
+const server = app.listen(Config.BACKEND_PORT, () => {
   Object.entries(Config).forEach(([key, value]) => {
     if (key.endsWith("_PASSWORD")) {
       value = "****";

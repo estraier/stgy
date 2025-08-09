@@ -80,7 +80,7 @@ We live in Tokyo.
         <label className="block text-sm mb-1">Preview</label>
         <div
           className="markdown-body"
-          dangerouslySetInnerHTML={{ __html: renderHtml(text, {maxLen: maxLen}) }}
+          dangerouslySetInnerHTML={{ __html: renderHtml(text, { maxLen: maxLen }) }}
           style={{ background: "#fff", border: "1px solid #888", padding: "1ex" }}
         />
       </div>
