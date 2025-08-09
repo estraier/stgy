@@ -14,6 +14,7 @@
     "reset-data": "cd backend && ./reset-data.sh",
     "endpoint-test": "./tests/endpoint_test.py",
     "psql": "docker-compose exec db psql -U fakebook fakebook",
+    "backend-log": "docker-compose logs backend",
     "db-log": "docker-compose logs db",
     "clean": "rm -rf node_modules package-lock.json dist && npm run clean --workspaces && find . -name '*~' -type f -delete"
   }

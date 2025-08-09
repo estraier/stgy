@@ -1,5 +1,7 @@
 export class Config {
-  static readonly FRONTEND_ORIGIN = envStrCsv("FAKEBOOK_FRONTEND_ORIGIN", ["*"]);
+  static readonly FRONTEND_ORIGIN = envStrCsv("FAKEBOOK_FRONTEND_ORIGIN", ["http://localhost:3000"]);
+  static readonly BACKEND_HOST = envStr("FAKEBOOK_BACKEND_HOST", "localhost");
+  static readonly BACKEND_PORT = envNum("FAKEBOOK_BACKEND_PORT", 3001);
   static readonly DATABASE_HOST = envStr("FAKEBOOK_DATABASE_HOST", "localhost");
   static readonly DATABASE_PORT = envNum("FAKEBOOK_DATABASE_PORT", 5432);
   static readonly DATABASE_USER = envStr("FAKEBOOK_DATABASE_USER", "fakebook");
@@ -15,6 +17,7 @@ export class Config {
   static readonly MAIL_DOMAIN_LIMIT_PER_MIN = envNum("FAKEBOOK_MAIL_DOMAIN_LIMIT_PER_MIN", 10);
   static readonly MAIL_GLOBAL_LIMIT_PER_MIN = envNum("FAKEBOOK_MAIL_GLOBAL_LIMIT_PER_MIN", 100);
   static readonly SESSION_TTL = envNum("FAKEBOOK_SESSION_TTL", 60 * 60 * 24 * 7);
+  static readonly TRUST_PROXY_HOPS = envNum("FAKEBOOK_TRUST_PROXY_HOPS", 1);
   static readonly TEST_SIGNUP_CODE = envStr("FAKEBOOK_TEST_SIGNUP_CODE", "");
 }
 

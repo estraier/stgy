@@ -14,11 +14,7 @@ export default function createAuthRouter(pgClient: Client, redis: Redis) {
     }
     try {
       const { sessionId } = await authService.login(email, password);
-      res.cookie("session_id", sessionId, {
-        httpOnly: true,
-        secure: false,
-        maxAge: 3600 * 1000,
-      });
+      res.cookie("session_id", sessionId, makeCookieOptions(req));
       res.json({ sessionId });
     } catch (e) {
       const message = e instanceof Error ? e.message : String(e);
@@ -37,9 +33,19 @@ export default function createAuthRouter(pgClient: Client, redis: Redis) {
   router.delete("/", async (req: Request, res: Response) => {
     const sessionId = req.cookies.session_id;
     await authService.logout(sessionId);
-    res.clearCookie("session_id");
+    res.clearCookie("session_id", makeCookieOptions(req));
     res.json({ result: "ok" });
   });
 
   return router;
+}
+
+function makeCookieOptions(req: Request) {
+  return {
+    httpOnly: true,
+    secure: req.secure || req.get("x-forwarded-proto") === "https",
+    sameSite: "lax" as const,
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365 * 10,
+  };
 }

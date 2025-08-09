@@ -2,6 +2,6 @@ export type SessionInfo = {
   userId: string;
   userEmail: string;
   userNickname: string;
-  userIsAdmin: bool;
+  userIsAdmin: boolean;
   loggedInAt: string;
 };

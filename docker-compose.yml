@@ -7,19 +7,30 @@ services:
       POSTGRES_PASSWORD: ${FAKEBOOK_DATABASE_PASSWORD}
       POSTGRES_DB: ${FAKEBOOK_DATABASE_NAME}
     ports:
-      - "${FAKEBOOK_DATABASE_PORT}:${FAKEBOOK_DATABASE_PORT}"
+      - "${FAKEBOOK_DATABASE_PORT}:5432"
     volumes:
       - db_data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${FAKEBOOK_DATABASE_USER} -d ${FAKEBOOK_DATABASE_NAME}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
 
   redis:
     image: redis:7
     restart: always
     ports:
-      - "${FAKEBOOK_REDIS_PORT}:${FAKEBOOK_REDIS_PORT}"
+      - "${FAKEBOOK_REDIS_PORT}:6379"
     command: ["redis-server", "--requirepass", "${FAKEBOOK_REDIS_PASSWORD}"]
     volumes:
       - redis_data:/data
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli -a ${FAKEBOOK_REDIS_PASSWORD} PING || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
 
   smtp:
     image: boky/postfix
@@ -30,13 +41,17 @@ services:
       RELAYHOST_PASSWORD: ${FAKEBOOK_SMTP_RELAYHOST_PASSWORD}
       ALLOWED_SENDER_DOMAINS: ${FAKEBOOK_SMTP_SENDER_DOMAINS}
     ports:
-      - "${FAKEBOOK_SMTP_PORT}:${FAKEBOOK_SMTP_PORT}"
+      - "${FAKEBOOK_SMTP_PORT}:587"
 
   mailworker:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     depends_on:
-      - redis
-      - smtp
+      redis:
+        condition: service_healthy
+      smtp:
+        condition: service_started
     environment:
       - FAKEBOOK_REDIS_HOST=${FAKEBOOK_REDIS_HOST}
       - FAKEBOOK_REDIS_PORT=${FAKEBOOK_REDIS_PORT}
@@ -44,19 +59,24 @@ services:
       - FAKEBOOK_SMTP_HOST=${FAKEBOOK_SMTP_HOST}
       - FAKEBOOK_SMTP_PORT=${FAKEBOOK_SMTP_PORT}
       - FAKEBOOK_MAIL_SENDER_ADDRESS=${FAKEBOOK_MAIL_SENDER_ADDRESS}
-    volumes:
-      - ./backend:/app
-    command: npm run mail-worker
+    command: ["node", "dist/mailWorker.js"]
+    restart: unless-stopped
 
   backend:
-    build: ./backend
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
     depends_on:
-      - db
-      - redis
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
     ports:
       - "${FAKEBOOK_BACKEND_PORT}:${FAKEBOOK_BACKEND_PORT}"
     environment:
       - FAKEBOOK_FRONTEND_ORIGIN=${FAKEBOOK_FRONTEND_ORIGIN}
+      - FAKEBOOK_BACKEND_HOST=${FAKEBOOK_BACKEND_HOST}
+      - FAKEBOOK_BACKEND_PORT=${FAKEBOOK_BACKEND_PORT}
       - FAKEBOOK_DATABASE_HOST=${FAKEBOOK_DATABASE_HOST}
       - FAKEBOOK_DATABASE_USER=${FAKEBOOK_DATABASE_USER}
       - FAKEBOOK_DATABASE_PASSWORD=${FAKEBOOK_DATABASE_PASSWORD}
@@ -67,9 +87,8 @@ services:
       - FAKEBOOK_REDIS_PASSWORD=${FAKEBOOK_REDIS_PASSWORD}
       - FAKEBOOK_MAIL_SENDER_ADDRESS=${FAKEBOOK_MAIL_SENDER_ADDRESS}
       - FAKEBOOK_TEST_SIGNUP_CODE=${FAKEBOOK_TEST_SIGNUP_CODE}
-    volumes:
-      - ./backend:/app
-    command: npm run dev
+    command: ["node", "dist/index.js"]
+    restart: unless-stopped
 
 volumes:
   db_data:

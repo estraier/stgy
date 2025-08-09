@@ -35,6 +35,9 @@ app.use(
     credentials: true,
   }),
 );
+if (Config.TRUST_PROXY_HOPS > 0) {
+  app.set("trust proxy", Config.TRUST_PROXY_HOPS);
+}
 
 app.use("/auth", createAuthRouter(pgClient, redis));
 app.use("/signup", createSignupRouter(pgClient, redis));
@@ -48,18 +51,62 @@ const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
   const status = (err as { statusCode?: number }).statusCode || 500;
   res.status(status).json({
     error: (err as { message?: string }).message || "internal server error",
-    code: (err as { code?: string }).code,
   });
 };
 app.use(errorHandler);
 
-app.listen(3001, () => {
+const server = app.listen(Config.BACKEND_PORT, Config.BACKEND_HOST, () => {
   Object.entries(Config).forEach(([key, value]) => {
     if (key.endsWith("_PASSWORD")) {
       value = "****";
     }
     console.log(`[config] ${key}: ${JSON.stringify(value)}`);
   });
+  console.log(`Server running on http://${Config.BACKEND_HOST}:${Config.BACKEND_PORT}`);
+});
 
-  console.log("Server running on http://localhost:3001");
+let shuttingDown = false;
+function shutdown(signal: NodeJS.Signals | "SIGUSR2") {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n[shutdown] Received ${signal}. Closing server...`);
+  server.close((err?: Error) => {
+    if (err) {
+      console.error("[shutdown] HTTP server close error:", err);
+      process.exit(1);
+    }
+    Promise.resolve()
+      .then(async () => {
+        try {
+          console.log("[shutdown] Closing PostgreSQL...");
+          await pgClient.end();
+        } catch (e) {
+          console.error("[shutdown] pgClient.end error:", e);
+        }
+      })
+      .then(async () => {
+        try {
+          console.log("[shutdown] Closing Redis...");
+          await redis.quit();
+        } catch (e) {
+          console.error("[shutdown] redis.quit error:", e);
+        }
+      })
+      .finally(() => {
+        console.log("[shutdown] Done. Bye.");
+        process.exit(0);
+      });
+  });
+  setTimeout(() => {
+    console.warn("[shutdown] Force exiting after 10s");
+    process.exit(1);
+  }, 10_000).unref();
+}
+
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+process.on("SIGINT", () => shutdown("SIGINT"));
+
+process.once("SIGUSR2", () => {
+  shutdown("SIGUSR2");
+  setTimeout(() => process.kill(process.pid, "SIGUSR2"), 500);
 });
