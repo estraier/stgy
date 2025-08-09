@@ -4,9 +4,11 @@ export type User = {
   nickname: string;
   isAdmin: boolean;
   introduction: string;
+  icon: string | null;
   aiModel: string | null;
   aiPersonality: string | null;
   createdAt: string;
+  updatedAt: string | null;
 };
 
 export type UserDetail = User & {
@@ -37,6 +39,7 @@ export type CreateUserInput = {
   password: string;
   isAdmin: boolean;
   introduction: string;
+  icon: string | null;
   aiModel: string | null;
   aiPersonality: string | null;
 };
@@ -47,6 +50,7 @@ export type UpdateUserInput = {
   nickname?: string;
   isAdmin?: boolean;
   introduction?: string;
+  icon?: string | null;
   aiModel?: string | null;
   aiPersonality?: string | null;
 };

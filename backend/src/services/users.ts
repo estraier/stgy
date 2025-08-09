@@ -47,7 +47,7 @@ export class UsersService {
 
   async getUser(id: string): Promise<User | null> {
     const res = await this.pgClient.query(
-      `SELECT id, email, nickname, is_admin, introduction, ai_model, ai_personality, created_at FROM users WHERE id = $1`,
+      `SELECT id, email, nickname, is_admin, introduction, icon, ai_model, ai_personality, created_at, updated_at FROM users WHERE id = $1`,
       [id],
     );
     if (!res.rows[0]) return null;
@@ -56,7 +56,7 @@ export class UsersService {
 
   async getUserDetail(id: string, focusUserId?: string): Promise<UserDetail | null> {
     const userRes = await this.pgClient.query(
-      `SELECT id, email, nickname, is_admin, introduction, ai_model, ai_personality, created_at
+      `SELECT id, email, nickname, is_admin, introduction, icon, ai_model, ai_personality, created_at, updated_at
        FROM users WHERE id = $1`,
       [id],
     );
@@ -93,7 +93,7 @@ export class UsersService {
     const query = input?.query?.trim();
     const nickname = input?.nickname?.trim();
     let baseSelect = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.ai_model, u.ai_personality, u.created_at
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.icon, u.ai_model, u.ai_personality, u.created_at, u.updated_at
       FROM users u
     `;
     const params: unknown[] = [];
@@ -203,9 +203,9 @@ export class UsersService {
     const id = uuidv4();
     const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
     const res = await this.pgClient.query(
-      `INSERT INTO users (id, email, nickname, password, is_admin, introduction, ai_model, ai_personality, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
-       RETURNING id, email, nickname, is_admin, introduction, ai_model, ai_personality, created_at`,
+      `INSERT INTO users (id, email, nickname, password, is_admin, introduction, icon, ai_model, ai_personality, created_at, updated_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), NULL)
+       RETURNING id, email, nickname, is_admin, introduction, icon, ai_model, ai_personality, created_at, updated_at`,
       [
         id,
         input.email,
@@ -213,6 +213,7 @@ export class UsersService {
         passwordHash,
         input.isAdmin,
         input.introduction,
+        input.icon,
         input.aiModel,
         input.aiPersonality,
       ],
@@ -252,6 +253,10 @@ export class UsersService {
       columns.push(`introduction = $${idx++}`);
       values.push(input.introduction);
     }
+    if (input.icon !== undefined) {
+      columns.push(`icon = $${idx++}`);
+      values.push(input.icon);
+    }
     if (input.aiModel !== undefined) {
       columns.push(`ai_model = $${idx++}`);
       values.push(input.aiModel);
@@ -260,9 +265,9 @@ export class UsersService {
       columns.push(`ai_personality = $${idx++}`);
       values.push(input.aiPersonality);
     }
-    if (columns.length === 0) return this.getUser(input.id);
+    columns.push(`updated_at = now()`);
     values.push(input.id);
-    const sql = `UPDATE users SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, email, nickname, is_admin, introduction, ai_model, ai_personality, created_at`;
+    const sql = `UPDATE users SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, email, nickname, is_admin, introduction, icon, ai_model, ai_personality, created_at, updated_at`;
     const res = await this.pgClient.query(sql, values);
     return res.rows[0] ? snakeToCamel<User>(res.rows[0]) : null;
   }
@@ -388,7 +393,7 @@ export class UsersService {
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     const sql = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.ai_model, u.ai_personality, u.created_at
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.icon, u.ai_model, u.ai_personality, u.created_at, u.updated_at
       FROM user_follows f
       JOIN users u ON f.followee_id = u.id
       WHERE f.follower_id = $1
@@ -455,7 +460,7 @@ export class UsersService {
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     const sql = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.ai_model, u.ai_personality, u.created_at
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.icon, u.ai_model, u.ai_personality, u.created_at, u.updated_at
       FROM user_follows f
       JOIN users u ON f.follower_id = u.id
       WHERE f.followee_id = $1
@@ -516,7 +521,7 @@ export class UsersService {
 
   async addFollower(input: AddFollowerInput): Promise<boolean> {
     await this.pgClient.query(
-      `INSERT INTO user_follows (follower_id, followee_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      `INSERT INTO user_follows (follower_id, followee_id, created_at) VALUES ($1, $2, now()) ON CONFLICT DO NOTHING`,
       [input.followerId, input.followeeId],
     );
     return true;

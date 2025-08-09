@@ -4,6 +4,7 @@ export type Post = {
   ownedBy: string;
   replyTo: string | null;
   createdAt: string;
+  updatedAt: string | null;
 };
 
 export type PostDetail = Post & {

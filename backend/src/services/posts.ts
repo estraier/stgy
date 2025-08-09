@@ -62,7 +62,7 @@ export class PostsService {
 
   async getPost(id: string): Promise<Post | null> {
     const res = await this.pgClient.query(
-      `SELECT id, content, owned_by, reply_to, created_at FROM posts WHERE id = $1`,
+      `SELECT id, content, owned_by, reply_to, created_at, updated_at FROM posts WHERE id = $1`,
       [id],
     );
     return res.rows[0] ? snakeToCamel<Post>(res.rows[0]) : null;
@@ -77,6 +77,7 @@ export class PostsService {
         p.owned_by,
         p.reply_to,
         p.created_at,
+        p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
         (SELECT COUNT(*) FROM posts WHERE reply_to = p.id) AS reply_count,
@@ -118,7 +119,7 @@ export class PostsService {
     const tag = options?.tag;
     const replyTo = options?.replyTo;
     let sql = `
-      SELECT p.id, p.content, p.owned_by, p.reply_to, p.created_at
+      SELECT p.id, p.content, p.owned_by, p.reply_to, p.created_at, p.updated_at
       FROM posts p
     `;
     const where: string[] = [];
@@ -171,6 +172,7 @@ export class PostsService {
         p.owned_by,
         p.reply_to,
         p.created_at,
+        p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
         (SELECT COUNT(*) FROM posts WHERE reply_to = p.id) AS reply_count,
@@ -247,9 +249,9 @@ export class PostsService {
     await client.query("BEGIN");
     try {
       const res = await client.query(
-        `INSERT INTO posts (id, content, owned_by, reply_to, created_at)
-         VALUES ($1, $2, $3, $4, now())
-         RETURNING id, content, owned_by, reply_to, created_at`,
+        `INSERT INTO posts (id, content, owned_by, reply_to, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, now(), NULL)
+         RETURNING id, content, owned_by, reply_to, created_at, updated_at`,
         [id, input.content, input.ownedBy, input.replyTo],
       );
       if (input.tags && input.tags.length > 0) {
@@ -291,11 +293,10 @@ export class PostsService {
         columns.push(`reply_to = $${idx++}`);
         values.push(input.replyTo);
       }
-      if (columns.length > 0) {
-        values.push(input.id);
-        const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, content, owned_by, reply_to, created_at`;
-        await client.query(sql, values);
-      }
+      columns.push(`updated_at = now()`);
+      values.push(input.id);
+      const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, content, owned_by, reply_to, created_at, updated_at`;
+      await client.query(sql, values);
       if (input.tags !== undefined) {
         await client.query(`DELETE FROM post_tags WHERE post_id = $1`, [input.id]);
         if (input.tags.length > 0) {
@@ -358,6 +359,7 @@ export class PostsService {
         p.owned_by,
         p.reply_to,
         p.created_at,
+        p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
         (SELECT COUNT(*) FROM posts WHERE reply_to = p.id) AS reply_count,
@@ -411,6 +413,7 @@ export class PostsService {
         p.owned_by,
         p.reply_to,
         p.created_at,
+        p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
         (SELECT COUNT(*) FROM posts WHERE reply_to = p.id) AS reply_count,

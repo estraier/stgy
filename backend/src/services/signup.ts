@@ -53,6 +53,7 @@ export class SignupService {
       nickname: data.email.split("@")[0],
       isAdmin: false,
       introduction: "brand new user",
+      icon: null,
       aiModel: null,
       aiPersonality: null,
     };

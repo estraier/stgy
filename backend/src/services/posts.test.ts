@@ -37,6 +37,7 @@ class MockPgClient {
         ownedBy: params![2],
         replyTo: params![3] ?? null,
         createdAt: new Date().toISOString(),
+        updatedAt: null,
       };
       this.data.push(newPost);
       return { rows: [newPost] };
@@ -68,7 +69,9 @@ class MockPgClient {
       return { rows: [post] };
     }
     if (
-      sql.startsWith("SELECT id, content, owned_by, reply_to, created_at FROM posts WHERE id =")
+      sql.startsWith(
+        "SELECT id, content, owned_by, reply_to, created_at, updated_at FROM posts WHERE id =",
+      )
     ) {
       const id = params![0];
       const post = this.data.find((p) => p.id === id);
@@ -114,6 +117,7 @@ class MockPgClient {
           ownedBy: p.ownedBy,
           replyTo: p.replyTo,
           createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
           ownerNickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
           replyToOwnerNickname: replyToNickname,
           replyCount: this.data.filter((r) => r.replyTo === p.id).length,
@@ -143,6 +147,7 @@ class MockPgClient {
           ownedBy: p.ownedBy,
           replyTo: p.replyTo,
           createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
           ownerNickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
           replyToOwnerNickname: replyToNickname,
           replyCount: this.data.filter((r) => r.replyTo === p.id).length,
@@ -167,6 +172,7 @@ class MockPgClient {
           ownedBy: p.ownedBy,
           replyTo: p.replyTo,
           createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
           ownerNickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
           replyToOwnerNickname: replyToNickname,
           replyCount: this.data.filter((r) => r.replyTo === p.id).length,
@@ -185,7 +191,9 @@ class MockPgClient {
       return { rows: this.data.slice(offset, offset + limit) };
     }
     if (
-      sql.startsWith("SELECT id, content, owned_by, reply_to, created_at FROM posts WHERE id =")
+      sql.startsWith(
+        "SELECT id, content, owned_by, reply_to, created_at, updated_at, FROM posts WHERE id =",
+      )
     ) {
       const id = params![0];
       const post = this.data.find((p) => p.id === id);
@@ -254,6 +262,7 @@ describe("posts service", () => {
       ownedBy: "user-1",
       replyTo: null,
       createdAt: new Date().toISOString(),
+      updatedAt: null,
     };
     pgClient.data.push({ ...postSample });
     pgClient.tags.push({ postId: postSample.id, name: "tag1" });
@@ -421,6 +430,7 @@ describe("listPostsByFolloweesDetail", () => {
       ownedBy: alice,
       replyTo: null,
       createdAt: new Date().toISOString(),
+      updatedAt: null,
     };
     postBob = {
       id: uuidv4(),
@@ -428,6 +438,7 @@ describe("listPostsByFolloweesDetail", () => {
       ownedBy: bob,
       replyTo: null,
       createdAt: new Date().toISOString(),
+      updatedAt: null,
     };
     postCarol = {
       id: uuidv4(),
@@ -435,6 +446,7 @@ describe("listPostsByFolloweesDetail", () => {
       ownedBy: carol,
       replyTo: null,
       createdAt: new Date().toISOString(),
+      updatedAt: null,
     };
     pgClient.data.push(postAlice, postBob, postCarol);
   });
@@ -491,6 +503,7 @@ describe("listPostsLikedByUserDetail", () => {
       ownedBy: bob,
       replyTo: null,
       createdAt: new Date().toISOString(),
+      updatedAt: null,
     };
     post2 = {
       id: uuidv4(),
@@ -498,6 +511,7 @@ describe("listPostsLikedByUserDetail", () => {
       ownedBy: bob,
       replyTo: null,
       createdAt: new Date().toISOString(),
+      updatedAt: null,
     };
     pgClient.data.push(post1, post2);
 
@@ -559,6 +573,7 @@ describe("getPostDetail", () => {
           ownedBy: p.ownedBy,
           replyTo: p.replyTo,
           createdAt: p.createdAt,
+          updatedAt: p.updatedAt,
           ownerNickname: u?.nickname || "",
           replyToOwnerNickname,
           replyCount,
@@ -591,6 +606,7 @@ describe("getPostDetail", () => {
       ownedBy: owner.id,
       replyTo: null,
       createdAt: new Date().toISOString(),
+      updatedAt: null,
     };
     pgClient.posts.push(post);
 
@@ -608,6 +624,7 @@ describe("getPostDetail", () => {
         ownedBy: uuidv4(),
         replyTo: post.id,
         createdAt: new Date().toISOString(),
+        updatedAt: null,
       },
       {
         id: uuidv4(),
@@ -615,6 +632,7 @@ describe("getPostDetail", () => {
         ownedBy: uuidv4(),
         replyTo: post.id,
         createdAt: new Date().toISOString(),
+        updatedAt: null,
       },
     );
   });
@@ -643,6 +661,7 @@ describe("getPostDetail", () => {
       ownedBy: anotherOwner.id,
       replyTo: null,
       createdAt: new Date().toISOString(),
+      updatedAt: null,
     };
     pgClient.posts.push(p2);
 
@@ -696,9 +715,11 @@ describe("listLikers", () => {
       nickname: "Alice",
       isAdmin: false,
       introduction: "Hi, I'm Alice.",
+      icon: null,
       aiPersonality: "",
       aiModel: "",
       createdAt: new Date().toISOString(),
+      updatedAt: null,
     };
     user2 = {
       id: uuidv4(),
@@ -706,9 +727,11 @@ describe("listLikers", () => {
       nickname: "Bob",
       isAdmin: false,
       introduction: "Hi, I'm Bob.",
+      icon: null,
       aiPersonality: "",
       aiModel: "",
       createdAt: new Date().toISOString(),
+      updatedAt: null,
     };
     user3 = {
       id: uuidv4(),
@@ -716,9 +739,11 @@ describe("listLikers", () => {
       nickname: "Carol",
       isAdmin: false,
       introduction: "Hi, I'm Carol.",
+      icon: null,
       aiPersonality: "",
       aiModel: "",
       createdAt: new Date().toISOString(),
+      updatedAt: null,
     };
     postId = uuidv4();
 

@@ -31,10 +31,13 @@ components:
         nickname: { type: string }
         isAdmin: { type: boolean }
         introduction: { type: string }
+        icon: { type: string, nullable: true }
         aiModel: { type: string, nullable: true }
         aiPersonality: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
-      required: [id, email, nickname, isAdmin, introduction, aiModel, aiPersonality, createdAt]
+        updatedAt: { type: string, format: date-time, nullable: true }
+      required:
+        [id, email, nickname, isAdmin, introduction, icon, aiModel, aiPersonality, createdAt]
 
     UserDetail:
       allOf:
@@ -65,7 +68,8 @@ components:
           type: string
           nullable: true
         createdAt: { type: string, format: date-time }
-      required: [id, content, ownedBy, replyTo, createdAt]
+        updatedAt: { type: string, format: date-time, nullable: true }
+      required: [id, content, ownedBy, replyTo, createdAt, updatedAt]
 
     PostDetail:
       allOf:
@@ -316,9 +320,11 @@ paths:
                 password: { type: string }
                 isAdmin: { type: boolean }
                 introduction: { type: string }
+                icon: { type: string, nullable: true }
                 aiModel: { type: string, nullable: true }
                 aiPersonality: { type: string, nullable: true }
-              required: [email, nickname, password, isAdmin, introduction, aiModel, aiPersonality]
+              required:
+                [email, nickname, password, isAdmin, introduction, icon, aiModel, aiPersonality]
       responses:
         "201":
           description: User created
@@ -373,6 +379,7 @@ paths:
                 nickname: { type: string }
                 isAdmin: { type: boolean }
                 introduction: { type: string }
+                icon: { type: string, nullable: true }
                 aiModel: { type: string, nullable: true }
                 aiPersonality: { type: string, nullable: true }
               required: []

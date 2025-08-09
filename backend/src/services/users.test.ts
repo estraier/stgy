@@ -19,9 +19,11 @@ class MockPgClient {
         nickname: "Alice",
         isAdmin: false,
         introduction: "introA",
+        icon: null,
         aiModel: "gpt-4.1",
         aiPersonality: "A",
         createdAt: "2020-01-01T00:00:00Z",
+        updatedAt: null,
       },
       {
         id: "bob",
@@ -29,9 +31,11 @@ class MockPgClient {
         nickname: "Bob",
         isAdmin: false,
         introduction: "introB",
+        icon: null,
         aiModel: "gpt-4.1",
         aiPersonality: "B",
         createdAt: "2020-01-02T00:00:00Z",
+        updatedAt: null,
       },
       {
         id: "carol",
@@ -39,9 +43,11 @@ class MockPgClient {
         nickname: "Carol",
         isAdmin: false,
         introduction: "introC",
+        icon: null,
         aiModel: "gpt-4.1",
         aiPersonality: "C",
         createdAt: "2020-01-03T00:00:00Z",
+        updatedAt: null,
       },
     ];
     this.follows = [
@@ -93,7 +99,7 @@ class MockPgClient {
     }
     if (
       sql.startsWith(
-        "SELECT id, email, nickname, is_admin, introduction, ai_model, ai_personality, created_at FROM users WHERE id = $1",
+        "SELECT id, email, nickname, is_admin, introduction, icon, ai_model, ai_personality, created_at, updated_at FROM users WHERE id = $1",
       )
     ) {
       const user = this.users.find((u) => u.id === params[0]);
@@ -128,7 +134,7 @@ class MockPgClient {
     }
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.ai_model, u.ai_personality, u.created_at FROM users u",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.icon, u.ai_model, u.ai_personality, u.created_at, u.updated_at FROM users u",
       )
     ) {
       let list = [...this.users];
@@ -203,16 +209,19 @@ class MockPgClient {
       return { rows: exists ? [1] : [] };
     }
     if (sql.startsWith("INSERT INTO users")) {
-      const [id, email, nickname, password, isAdmin, introduction, aiModel, aiPersonality] = params;
+      const [id, email, nickname, password, isAdmin, introduction, icon, aiModel, aiPersonality] =
+        params;
       const user: User = {
         id,
         email,
         nickname,
         isAdmin,
         introduction,
+        icon,
         aiModel,
         aiPersonality,
         createdAt: new Date().toISOString(),
+        updatedAt: null,
       };
       this.users.push(user);
       this.passwords[user.id] = password;
@@ -249,7 +258,7 @@ class MockPgClient {
     }
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.ai_model, u.ai_personality, u.created_at FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.icon, u.ai_model, u.ai_personality, u.created_at, u.updated_at FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
       )
     ) {
       const followerId = params[0];
@@ -264,7 +273,7 @@ class MockPgClient {
     }
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.ai_model, u.ai_personality, u.created_at FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.icon, u.ai_model, u.ai_personality, u.created_at, u.updated_at FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
       )
     ) {
       const followeeId = params[0];
@@ -379,6 +388,7 @@ describe("UsersService", () => {
       password: "danpass",
       isAdmin: false,
       introduction: "introD",
+      icon: null,
       aiModel: "gpt-4.1",
       aiPersonality: "D",
     });
@@ -394,6 +404,7 @@ describe("UsersService", () => {
       nickname: "Alice2",
       isAdmin: true,
       introduction: "introX",
+      icon: null,
       aiModel: "gpt-4.1-mini",
       aiPersonality: "X",
     });
