@@ -29,7 +29,7 @@ export default function PostForm({
   onErrorClear,
   onCancel,
   buttonLabel = "Post",
-  placeholder = "Write your post. Use #tag lines for tags.",
+  placeholder = "Write your post in Markdown format. Use #tag lines at the bottom for tags.",
   className = "",
   isEdit = false,
   deletable = false,

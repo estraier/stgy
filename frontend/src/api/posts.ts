@@ -67,7 +67,7 @@ export async function createPost(post: {
 export async function updatePost(
   id: string,
   post: {
-    content: string;
+    content?: string;
     tags?: string[];
     ownedBy?: string;
     replyTo?: string | null;

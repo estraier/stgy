@@ -60,7 +60,7 @@ export async function getUserDetail(id: string, focusUserId?: string): Promise<U
 }
 
 export async function createUser(
-  user: Omit<User, "id" | "createdAt"> & { password: string },
+  user: Omit<User, "id" | "createdAt" | "updatedAt"> & { password: string },
 ): Promise<User> {
   const res = await apiFetch("/users", {
     method: "POST",
@@ -72,7 +72,7 @@ export async function createUser(
 
 export async function updateUser(
   id: string,
-  user: Partial<Omit<User, "id" | "createdAt">>,
+  user: Partial<Omit<User, "id" | "createdAt" | "updatedAt">>,
 ): Promise<User> {
   const res = await apiFetch(`/users/${id}`, {
     method: "PUT",
