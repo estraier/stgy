@@ -177,6 +177,12 @@ export default function UserCard({
           <div className="pl-2">{formatDateTime(new Date(user.createdAt))}</div>
         </div>
       )}
+      {!truncated && user.updatedAt && (
+        <div className="text-xs text-gray-500 mt-2">
+          <div className="font-semibold">Updated:</div>
+          <div className="pl-2">{formatDateTime(new Date(user.updatedAt))}</div>
+        </div>
+      )}
       {"countFollowers" in user && (
         <div className="text-xs text-gray-500 mt-2">
           <span className="gap-1">followers: {user.countFollowers}</span>

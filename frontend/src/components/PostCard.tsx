@@ -84,13 +84,14 @@ export default function PostCard({
             </a>
           </span>
         )}
-        <a
-          className="pr-1 ml-auto text-gray-400 whitespace-nowrap"
-          href={`/posts/${post.id}`}
-          onClick={(e) => e.stopPropagation()}
-        >
+        <span className="relative pr-1 ml-auto text-gray-400 whitespace-nowrap">
           {formatDateTime(new Date(post.createdAt))}
-        </a>
+          {post.updatedAt && (
+            <div className="absolute right-1 -translate-y-1 ml-1 text-[11px] text-gray-400">
+              ({formatDateTime(new Date(post.updatedAt))})
+            </div>
+          )}
+        </span>
       </div>
       <div
         className={`markdown-body post-content${truncated ? " excerpt" : ""}`}

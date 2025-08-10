@@ -19,9 +19,9 @@ export type User = {
   nickname: string;
   isAdmin: boolean;
   introduction: string;
-  icon: string;
-  aiModel: string;
-  aiPersonality: string;
+  icon: string | null;
+  aiModel: string | null;
+  aiPersonality: string | null;
   createdAt: string;
   updatedAt: string | null;
 };
@@ -29,8 +29,8 @@ export type User = {
 export type UserDetail = User & {
   countFollowers: number;
   countFollowees: number;
-  isFollowedByFocusUser?: boolean;
-  isFollowingFocusUser?: boolean;
+  isFollowedByFocusUser?: boolean | null;
+  isFollowingFocusUser?: boolean | null;
 };
 
 export type Post = {
@@ -48,6 +48,6 @@ export type PostDetail = Post & {
   replyCount: number;
   likeCount: number;
   tags: string[];
-  isLikedByFocusUser?: boolean;
-  isRepliedByFocusUser?: boolean;
+  isLikedByFocusUser?: boolean | null;
+  isRepliedByFocusUser?: boolean | null;
 };

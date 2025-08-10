@@ -39,7 +39,8 @@ export async function listPosts(
   } = {},
 ): Promise<Post[]> {
   const search = buildPostQuery(params);
-  const res = await apiFetch(`/posts?${search}`, { method: "GET" });
+  const q = search.toString();
+  const res = await apiFetch(`/posts${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
@@ -112,7 +113,8 @@ export async function listPostsDetail(
 ): Promise<PostDetail[]> {
   const search = buildPostQuery(params);
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);
-  const res = await apiFetch(`/posts/detail?${search}`, { method: "GET" });
+  const q = search.toString();
+  const res = await apiFetch(`/posts/detail${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
@@ -135,7 +137,8 @@ export async function listPostsByFolloweesDetail(params: {
   if (params.includeReplies !== undefined)
     search.append("includeReplies", String(params.includeReplies));
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);
-  const res = await apiFetch(`/posts/by-followees/detail?${search}`, { method: "GET" });
+  const q = search.toString();
+  const res = await apiFetch(`/posts/by-followees/detail${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
@@ -156,7 +159,8 @@ export async function listPostsLikedByUserDetail(params: {
   if (params.includeReplies !== undefined)
     search.append("includeReplies", String(params.includeReplies));
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);
-  const res = await apiFetch(`/posts/liked/detail?${search}`, { method: "GET" });
+  const q = search.toString();
+  const res = await apiFetch(`/posts/liked/detail${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
@@ -181,7 +185,8 @@ export async function listLikers(
   if (params.offset !== undefined) search.append("offset", String(params.offset));
   if (params.limit !== undefined) search.append("limit", String(params.limit));
   if (params.order) search.append("order", params.order);
-  const res = await apiFetch(`/posts/${postId}/likers?${search}`, { method: "GET" });
+  const q = search.toString();
+  const res = await apiFetch(`/posts/${postId}/likers${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
@@ -190,7 +195,8 @@ export async function countPosts(
   params: { query?: string; ownedBy?: string; tag?: string; replyTo?: string | null } = {},
 ): Promise<number> {
   const search = buildPostQuery(params);
-  const res = await apiFetch(`/posts/count?${search}`, { method: "GET" });
+  const q = search.toString();
+  const res = await apiFetch(`/posts/count${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return (await res.json()).count;
 }

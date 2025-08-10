@@ -18,7 +18,8 @@ export async function listUsers(
   if (params.query) search.append("query", params.query);
   if (params.nickname) search.append("nickname", params.nickname);
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);
-  const res = await apiFetch(`/users?${search}`, { method: "GET" });
+  const q = search.toString();
+  const res = await apiFetch(`/users${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
@@ -40,7 +41,8 @@ export async function listUsersDetail(
   if (params.query) search.append("query", params.query);
   if (params.nickname) search.append("nickname", params.nickname);
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);
-  const res = await apiFetch(`/users/detail?${search}`, { method: "GET" });
+  const q = search.toString();
+  const res = await apiFetch(`/users/detail${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
@@ -54,7 +56,8 @@ export async function getUser(id: string): Promise<User> {
 export async function getUserDetail(id: string, focusUserId?: string): Promise<UserDetail> {
   const search = new URLSearchParams();
   if (focusUserId) search.append("focusUserId", focusUserId);
-  const res = await apiFetch(`/users/${id}/detail?${search}`, { method: "GET" });
+  const q = search.toString();
+  const res = await apiFetch(`/users/${id}/detail${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
@@ -177,7 +180,8 @@ export async function listFollowees(
   if (params.limit !== undefined) search.append("limit", String(params.limit));
   if (params.order) search.append("order", params.order);
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);
-  const res = await apiFetch(`/users/${id}/followees/detail?${search}`, { method: "GET" });
+  const q = search.toString();
+  const res = await apiFetch(`/users/${id}/followees/detail${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
@@ -196,7 +200,8 @@ export async function listFollowers(
   if (params.limit !== undefined) search.append("limit", String(params.limit));
   if (params.order) search.append("order", params.order);
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);
-  const res = await apiFetch(`/users/${id}/followers/detail?${search}`, { method: "GET" });
+  const q = search.toString();
+  const res = await apiFetch(`/users/${id}/followers/detail${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
@@ -207,7 +212,8 @@ export async function countUsers(
   const search = new URLSearchParams();
   if (params.nickname) search.append("nickname", params.nickname);
   if (params.query) search.append("query", params.query);
-  const res = await apiFetch(`/users/count?${search}`, { method: "GET" });
+  const q = search.toString();
+  const res = await apiFetch(`/users/count${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return (await res.json()).count;
 }

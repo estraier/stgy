@@ -126,7 +126,7 @@ body {
   float: right;
   max-width: 20ex;
   max-height: 20ex;
-  margin: 0 0 0.5ex 0.5ex;
+  margin: 0.5ex 0 0.5ex 0.5ex;
 }
 .markdown-body .image-block figcaption {
   position: absolute;
