@@ -93,6 +93,19 @@ components:
               nullable: true
           required: [ownerNickname, replyCount, likeCount, tags]
 
+    AIModel:
+      type: object
+      properties:
+        name: { type: string }
+        description: { type: string }
+        inputCost:
+          type: number
+          format: float
+        outputCost:
+          type: number
+          format: float
+      required: [name, description, inputCost, outputCost]
+
   responses:
     Error400:
       description: Bad request
@@ -274,10 +287,7 @@ paths:
           required: false
         - name: order
           in: query
-          schema:
-            type: string
-            enum: [asc, desc, social]
-            default: desc
+          schema: { type: string, enum: [asc, desc, social], default: desc }
           required: false
         - name: query
           in: query
@@ -472,10 +482,7 @@ paths:
         - name: order
           in: query
           required: false
-          schema:
-            type: string
-            enum: [asc, desc, social]
-            default: desc
+          schema: { type: string, enum: [asc, desc, social], default: desc }
         - name: query
           in: query
           required: false
@@ -639,7 +646,7 @@ paths:
                   webCode:
                     type: string
                     description: Verification code for password reset
-                required: [resetPasswordId, code]
+                required: [resetPasswordId, webCode]
 
   /users/password/reset/verify:
     post:
@@ -735,6 +742,10 @@ paths:
           in: query
           schema: { type: integer, default: 100 }
           required: false
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+          required: false
         - name: focusUserId
           in: query
           required: false
@@ -769,6 +780,10 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+          required: false
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
           required: false
         - name: focusUserId
           in: query
@@ -807,8 +822,7 @@ paths:
           required: false
         - name: replyTo
           in: query
-          schema:
-            type: string
+          schema: { type: string }
           required: false
           description: |
             If omitted: include all posts.
@@ -843,10 +857,7 @@ paths:
           required: false
         - name: order
           in: query
-          schema:
-            type: string
-            enum: [asc, desc]
-            default: desc
+          schema: { type: string, enum: [asc, desc], default: desc }
           required: false
         - name: query
           in: query
@@ -862,8 +873,7 @@ paths:
           required: false
         - name: replyTo
           in: query
-          schema:
-            type: string
+          schema: { type: string }
           required: false
           description: |
             If omitted: include all posts.
@@ -927,10 +937,7 @@ paths:
           required: false
         - name: order
           in: query
-          schema:
-            type: string
-            enum: [asc, desc]
-            default: desc
+          schema: { type: string, enum: [asc, desc], default: desc }
           required: false
         - name: query
           in: query
@@ -946,8 +953,7 @@ paths:
           required: false
         - name: replyTo
           in: query
-          schema:
-            type: string
+          schema: { type: string }
           required: false
           description: |
             If omitted: include all posts.
@@ -956,8 +962,7 @@ paths:
             Otherwise: only posts with replyTo equal to the given value.
         - name: focusUserId
           in: query
-          schema:
-            type: string
+          schema: { type: string }
           required: false
           description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
       responses:
@@ -992,10 +997,7 @@ paths:
           required: false
         - name: order
           in: query
-          schema:
-            type: string
-            enum: [asc, desc]
-            default: desc
+          schema: { type: string, enum: [asc, desc], default: desc }
           required: false
         - name: includeSelf
           in: query
@@ -1007,8 +1009,7 @@ paths:
           required: false
         - name: focusUserId
           in: query
-          schema:
-            type: string
+          schema: { type: string }
           required: false
           description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
       responses:
@@ -1045,10 +1046,7 @@ paths:
           required: false
         - name: order
           in: query
-          schema:
-            type: string
-            enum: [asc, desc]
-            default: desc
+          schema: { type: string, enum: [asc, desc], default: desc }
           required: false
         - name: includeReplies
           in: query
@@ -1056,8 +1054,7 @@ paths:
           required: false
         - name: focusUserId
           in: query
-          schema:
-            type: string
+          schema: { type: string }
           required: false
           description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
       responses:
@@ -1086,8 +1083,7 @@ paths:
           schema: { type: string }
         - name: focusUserId
           in: query
-          schema:
-            type: string
+          schema: { type: string }
           required: false
           description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
       responses:
@@ -1256,10 +1252,7 @@ paths:
           required: false
         - name: order
           in: query
-          schema:
-            type: string
-            enum: [asc, desc]
-            default: desc
+          schema: { type: string, enum: [asc, desc], default: desc }
           required: false
       responses:
         "200":
@@ -1274,3 +1267,42 @@ paths:
           $ref: "#/components/responses/Error401"
         "400":
           $ref: "#/components/responses/Error400"
+
+  /ai-models:
+    get:
+      summary: List AI models
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: List of AI models
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AIModel"
+        "401":
+          $ref: "#/components/responses/Error401"
+
+  /ai-models/{name}:
+    get:
+      summary: Get AI model by name
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: AI model
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AIModel"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "404":
+          $ref: "#/components/responses/Error404"
