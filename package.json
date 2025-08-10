@@ -13,7 +13,7 @@
     "docker:restart": "docker-compose down ; docker-compose up -d",
     "docker:dev": "npm run docker:stop && docker-compose up -d db redis smtp",
     "log:backend": "docker-compose logs backend",
-    "log:frontend-": "docker-compose logs frontend",
+    "log:frontend": "docker-compose logs frontend",
     "log:db": "docker-compose logs db",
     "log:minio": "docker-compose logs minio",
     "reset-data": "./db/reset-data.sh",

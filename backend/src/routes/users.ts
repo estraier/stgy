@@ -184,7 +184,6 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     if (!email) {
       return res.status(400).json({ error: "email required" });
     }
-
     const check = await sendMailService.canSendMail(email);
     if (!check.ok) {
       return res.status(400).json({ error: check.reason || "too many requests" });
