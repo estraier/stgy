@@ -15,6 +15,7 @@
     "log:backend": "docker-compose logs backend",
     "log:frontend-": "docker-compose logs frontend",
     "log:db": "docker-compose logs db",
+    "log:minio": "docker-compose logs minio",
     "reset-data": "./db/reset-data.sh",
     "endpoint-test": "./tests/endpoint_test.py",
     "psql": "docker-compose exec db psql -U fakebook fakebook",
