@@ -16,10 +16,20 @@ export function validateEmail(email: string): boolean {
   );
 }
 
-export function normalizeOneLiner(input: string): string {
+export function normalizeOneLiner(input: string | undefined | null): string | undefined | null {
+  if (!input) return input;
   let s = input.normalize("NFC");
   s = s.replace(/\s+/g, " ");
   s = s.trim();
+  return s;
+}
+
+export function normalizeMultiLines(input: string | undefined | null): string | undefined | null {
+  if (!input) return input;
+  let s = input.normalize("NFC");
+  s = s.replace(/\r\n?/g, "\n");
+  s = s.replace(/ +\n/g, "\n");
+  s = s.replace(/\n+$/, "");
   return s;
 }
 

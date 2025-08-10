@@ -12,7 +12,7 @@ import {
   UpdateUserInput,
   UpdatePasswordInput,
 } from "../models/user";
-import { normalizeOneLiner, maskEmailByHash } from "../utils/format";
+import { normalizeOneLiner, normalizeMultiLines, maskEmailByHash } from "../utils/format";
 
 export default function createUsersRouter(pgClient: Client, redis: Redis) {
   const router = Router();
@@ -124,14 +124,14 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     }
     try {
       const input: CreateUserInput = {
-        email: req.body.email,
-        nickname: normalizeOneLiner(req.body.nickname),
+        email: normalizeOneLiner(req.body.email) ?? "",
+        nickname: normalizeOneLiner(req.body.nickname) ?? "",
         password: req.body.password,
         isAdmin: req.body.isAdmin ?? false,
-        introduction: req.body.introduction,
-        icon: req.body.icon,
-        aiModel: req.body.aiModel ?? null,
-        aiPersonality: req.body.aiPersonality ?? null,
+        introduction: normalizeMultiLines(req.body.introduction) ?? "",
+        icon: normalizeOneLiner(req.body.icon) ?? null,
+        aiModel: normalizeOneLiner(req.body.aiModel) ?? null,
+        aiPersonality: normalizeMultiLines(req.body.aiPersonality) ?? null,
       };
       const created = await usersService.createUser(input);
       res.status(201).json(created);
@@ -158,13 +158,13 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     try {
       const input: UpdateUserInput = {
         id: req.params.id,
-        email: req.body.email,
-        nickname: normalizeOneLiner(req.body.nickname),
+        email: normalizeOneLiner(req.body.email) ?? undefined,
+        nickname: normalizeOneLiner(req.body.nickname) ?? undefined,
         isAdmin: req.body.isAdmin,
-        introduction: req.body.introduction,
-        icon: req.body.icon,
-        aiModel: req.body.aiModel,
-        aiPersonality: req.body.aiPersonality,
+        introduction: normalizeMultiLines(req.body.introduction) ?? undefined,
+        icon: normalizeOneLiner(req.body.icon),
+        aiModel: normalizeOneLiner(req.body.aiModel),
+        aiPersonality: normalizeMultiLines(req.body.aiPersonality),
       };
       const updated = await usersService.updateUser(input);
       if (!updated) return res.status(404).json({ error: "not found" });

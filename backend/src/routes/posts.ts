@@ -8,7 +8,7 @@ import { UsersService } from "../services/users";
 import { AuthHelpers } from "./authHelpers";
 import { CreatePostInput, UpdatePostInput } from "../models/post";
 import { User } from "../models/user";
-import { normalizeOneLiner } from "../utils/format";
+import { normalizeOneLiner, normalizeMultiLines } from "../utils/format";
 
 export default function createPostsRouter(pgClient: Client, redis: Redis) {
   const router = Router();
@@ -233,7 +233,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
         .filter((tag: unknown) => typeof tag === "string")
         .map((tag: string) => normalizeOneLiner(tag));
       const input: CreatePostInput = {
-        content: req.body.content,
+        content: normalizeMultiLines(req.body.content) ?? "",
         ownedBy,
         replyTo: req.body.replyTo ?? null,
         tags,
@@ -268,7 +268,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       }
       const input: UpdatePostInput = {
         id: req.params.id,
-        content: req.body.content,
+        content: normalizeMultiLines(req.body.content) ?? undefined,
         ownedBy: req.body.ownedBy,
         replyTo: req.body.replyTo,
         tags,

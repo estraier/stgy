@@ -2,6 +2,7 @@ import {
   generateVerificationCode,
   validateEmail,
   normalizeOneLiner,
+  normalizeMultiLines,
   maskEmailByHash,
   snakeToCamel,
 } from "./format";
@@ -68,6 +69,11 @@ describe("validateEmail", () => {
 });
 
 describe("normalizeOneLiner", () => {
+  it("undefiend and null", () => {
+    expect(normalizeOneLiner(undefined) === undefined);
+    expect(normalizeOneLiner(null) === null);
+  });
+
   it("removes leading/trailing spaces", () => {
     expect(normalizeOneLiner("  foo bar  ")).toBe("foo bar");
   });
@@ -78,7 +84,6 @@ describe("normalizeOneLiner", () => {
   });
 
   it("normalizes Unicode to NFC", () => {
-    // 'e' + combining acute accent should normalize to 'é'
     const input = "Cafe\u0301";
     const expected = "Café";
     expect(normalizeOneLiner(input)).toBe(expected);
@@ -95,6 +100,17 @@ describe("normalizeOneLiner", () => {
 
   it("returns input as is if already normalized", () => {
     expect(normalizeOneLiner("foo bar")).toBe("foo bar");
+  });
+});
+
+describe("normalizeMultiLines", () => {
+  it("undefiend and null", () => {
+    expect(normalizeMultiLines(undefined) === undefined);
+    expect(normalizeMultiLines(null) === null);
+  });
+
+  it("removes successive and trailing spaces", () => {
+    expect(normalizeMultiLines("  foo \n\n\nbar \nbaz\n")).toBe("  foo\n\n\nbar\nbaz");
   });
 });
 
