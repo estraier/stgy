@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 import type { UserDetail } from "@/api/models";
 import Identicon from "@/components/Identicon";
-import { formatDateTime } from "@/utils/format";
+import { formatDateTime, normalizeLinefeeds } from "@/utils/format";
 import { renderHtml } from "@/utils/markdown";
 
 type UserCardProps = {
@@ -168,7 +168,7 @@ export default function UserCard({
       {!truncated && user.aiPersonality && user.aiPersonality.trim() !== "" && (
         <div className="text-xs text-gray-600 mt-2">
           <div className="font-semibold">AI Personality:</div>
-          <div className="pl-2">{user.aiPersonality}</div>
+          <div className="pl-2 whitespace-pre-line">{normalizeLinefeeds(user.aiPersonality)}</div>
         </div>
       )}
       {!truncated && (

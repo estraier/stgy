@@ -7,3 +7,11 @@ export function formatDateTime(dt: Date) {
   const s = String(dt.getSeconds()).padStart(2, "0");
   return `${y}/${m}/${d} ${h}:${min}:${s}`;
 }
+
+export function normalizeLinefeeds(str: string): string {
+  if (!str) return "";
+  return str
+    .replace(/\r\n?/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .replace(/\n+$/, "");
+}
