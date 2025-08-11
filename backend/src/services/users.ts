@@ -45,7 +45,6 @@ export class UsersService {
     return Number(res.rows[0].count);
   }
 
-  // User（基本情報）のみ：count_* は選ばない
   async getUser(id: string): Promise<User | null> {
     const res = await this.pgClient.query(
       `SELECT id, email, nickname, is_admin, introduction, icon, ai_model, ai_personality, created_at, updated_at
@@ -56,7 +55,6 @@ export class UsersService {
     return snakeToCamel<User>(res.rows[0]);
   }
 
-  // UserDetail（基本情報 + カウンタ）
   async getUserDetail(id: string, focusUserId?: string): Promise<UserDetail | null> {
     const userRes = await this.pgClient.query(
       `SELECT id, email, nickname, is_admin, introduction, icon, ai_model, ai_personality, created_at, updated_at,
@@ -79,7 +77,6 @@ export class UsersService {
     return user as UserDetail;
   }
 
-  // 一覧（User のみ）：count_* は選ばない
   async listUsers(input?: ListUsersInput, focusUserId?: string): Promise<User[]> {
     const offset = input?.offset ?? 0;
     const limit = input?.limit ?? 100;
@@ -129,7 +126,6 @@ export class UsersService {
     return res.rows.map((row: Record<string, unknown>) => snakeToCamel<User>(row));
   }
 
-  // 一覧（UserDetail）：ここだけ count_* も SELECT する
   async listUsersDetail(input?: ListUsersInput, focusUserId?: string): Promise<UserDetail[]> {
     const offset = input?.offset ?? 0;
     const limit = input?.limit ?? 100;
@@ -181,7 +177,6 @@ export class UsersService {
 
     if (users.length === 0) return [];
 
-    // フォーカスユーザーとの相互関係だけ追加（カウンタはすでに列から取得済み）
     if (focusUserId) {
       const ids = users.map((u) => u.id);
       const fwRes = await this.pgClient.query(
@@ -405,7 +400,6 @@ export class UsersService {
     return (res.rowCount ?? 0) > 0;
   }
 
-  // フォロー先（UserDetail）
   async listFolloweesDetail(
     input: ListFolloweesInput,
     focusUserId?: string,
@@ -449,7 +443,6 @@ export class UsersService {
     return users;
   }
 
-  // フォロワー（UserDetail）
   async listFollowersDetail(
     input: ListFollowersInput,
     focusUserId?: string,
@@ -494,6 +487,9 @@ export class UsersService {
   }
 
   async addFollower(input: AddFollowerInput): Promise<boolean> {
+    if (input.followerId === input.followeeId) {
+      throw new Error("cannot follow yourself");
+    }
     await this.pgClient.query(
       `INSERT INTO user_follows (follower_id, followee_id, created_at)
        VALUES ($1, $2, now())

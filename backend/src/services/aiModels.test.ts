@@ -17,7 +17,6 @@ class MockPgClient {
 }
 
 describe("AIModelsService", () => {
-  // snake_caseで定義
   const aiModels = [
     {
       name: "gpt-4.0",

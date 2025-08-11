@@ -30,7 +30,7 @@ describe("validateEmail", () => {
       "A_B.C-d@domain.co.jp",
       "user@localhost",
       "user@a.b",
-      "user123@xn--zckzah.jp", // punycode
+      "user123@xn--zckzah.jp",
       "user%test@domain.info",
       "a@b.c",
       "a@b.co",
@@ -79,7 +79,7 @@ describe("normalizeOneLiner", () => {
   });
 
   it("converts all Unicode spaces to 0x20 and trims", () => {
-    expect(normalizeOneLiner("foo\u00A0bar\u3000baz")).toBe("foo bar baz"); // nbsp, ideographic
+    expect(normalizeOneLiner("foo\u00A0bar\u3000baz")).toBe("foo bar baz");
     expect(normalizeOneLiner("\u2002foo\tbar\nbaz\u3000")).toBe("foo bar baz");
   });
 
