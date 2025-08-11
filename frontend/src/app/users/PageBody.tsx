@@ -107,6 +107,21 @@ export default function PageBody() {
 
     fetcher
       .then((data) => {
+        const tabParamMissing = searchParams.get("tab") === null;
+        if (
+          effectiveTab === "followees" &&
+          !isSearchMode &&
+          tabParamMissing &&
+          page === 1 &&
+          data.length === 0
+        ) {
+          setQuery({
+            tab: "all",
+            page: 1,
+            oldestFirst: oldestFirst ? "1" : undefined,
+          });
+          return;
+        }
         setHasNext(data.length > PAGE_SIZE);
         setUsers(data.slice(0, PAGE_SIZE));
       })
