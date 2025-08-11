@@ -63,8 +63,17 @@ class MockPgClient {
     };
   }
 
+  private cntFollowers(id: string) {
+    return this.follows.filter((f) => f.followeeId === id).length;
+  }
+  private cntFollowees(id: string) {
+    return this.follows.filter((f) => f.followerId === id).length;
+  }
+
   async query(sql: string, params: any[] = []) {
     sql = sql.replace(/\s+/g, " ").trim();
+
+    // countUsers
     if (sql.startsWith("SELECT COUNT(*) FROM users")) {
       if (sql.includes("WHERE nickname ILIKE $1 OR introduction ILIKE $2")) {
         const [pat1, pat2] = params.map((s: string) => s.toLowerCase().replace(/%/g, ""));
@@ -92,11 +101,15 @@ class MockPgClient {
       }
       return { rows: [{ count: this.users.length }] };
     }
+
+    // startResetPassword 用
     if (sql.startsWith("SELECT id FROM users WHERE email = $1")) {
       const user = this.users.find((u) => u.email === params[0]);
       if (!user) return { rows: [] };
       return { rows: [{ id: user.id }] };
     }
+
+    // getUser（count なし）
     if (
       sql.startsWith(
         "SELECT id, email, nickname, is_admin, introduction, icon, ai_model, ai_personality, created_at, updated_at FROM users WHERE id = $1",
@@ -105,14 +118,24 @@ class MockPgClient {
       const user = this.users.find((u) => u.id === params[0]);
       return { rows: user ? [user] : [] };
     }
-    if (sql.startsWith("SELECT COUNT(*)::int AS cnt FROM user_follows WHERE followee_id = $1")) {
-      const cnt = this.follows.filter((f) => f.followeeId === params[0]).length;
-      return { rows: [{ cnt }] };
+
+    // getUserDetail（count あり）
+    if (
+      sql.startsWith(
+        "SELECT id, email, nickname, is_admin, introduction, icon, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees FROM users WHERE id = $1",
+      )
+    ) {
+      const user = this.users.find((u) => u.id === params[0]);
+      if (!user) return { rows: [] };
+      const row = {
+        ...user,
+        count_followers: this.cntFollowers(user.id),
+        count_followees: this.cntFollowees(user.id),
+      };
+      return { rows: [row] };
     }
-    if (sql.startsWith("SELECT COUNT(*)::int AS cnt FROM user_follows WHERE follower_id = $1")) {
-      const cnt = this.follows.filter((f) => f.followerId === params[0]).length;
-      return { rows: [{ cnt }] };
-    }
+
+    // focusUser との関係確認
     if (
       sql.startsWith(
         "SELECT EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $1 AND followee_id = $2) AS is_followed_by_focus_user",
@@ -132,6 +155,8 @@ class MockPgClient {
         ],
       };
     }
+
+    // listUsers（count なし）
     if (
       sql.startsWith(
         "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.icon, u.ai_model, u.ai_personality, u.created_at, u.updated_at FROM users u",
@@ -150,35 +175,45 @@ class MockPgClient {
         const pat = params[0].toLowerCase().replace(/%/g, "");
         list = list.filter((u) => u.nickname.toLowerCase().includes(pat));
       }
+      // 並びは created_at DESC, id DESC
       list.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
       const offset = params[params.length - 2] || 0;
       const limit = params[params.length - 1] || 100;
       return { rows: list.slice(offset, offset + limit) };
     }
+
+    // listUsersDetail（count あり）
     if (
       sql.startsWith(
-        "SELECT followee_id AS id, COUNT(*)::int AS cnt FROM user_follows WHERE followee_id = ANY($1) GROUP BY followee_id",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.icon, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees FROM users u",
       )
     ) {
-      const ids = params[0];
-      const rows = ids.map((id: string) => ({
-        id,
-        cnt: this.follows.filter((f) => f.followeeId === id).length,
+      let list = [...this.users];
+      if (sql.includes("WHERE (u.nickname ILIKE $1 OR u.introduction ILIKE $2)")) {
+        const [pat1, pat2] = params
+          .slice(0, 2)
+          .map((s: string) => s.toLowerCase().replace(/%/g, ""));
+        list = list.filter(
+          (u) =>
+            u.nickname.toLowerCase().includes(pat1) || u.introduction.toLowerCase().includes(pat2),
+        );
+      } else if (sql.includes("WHERE u.nickname ILIKE")) {
+        const pat = params[0].toLowerCase().replace(/%/g, "");
+        list = list.filter((u) => u.nickname.toLowerCase().includes(pat));
+      }
+      // 並びは created_at DESC, id DESC（social の複雑順はここでは未使用）
+      list.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+      const offset = params[params.length - 2] || 0;
+      const limit = params[params.length - 1] || 100;
+      const rows = list.slice(offset, offset + limit).map((u) => ({
+        ...u,
+        count_followers: this.cntFollowers(u.id),
+        count_followees: this.cntFollowees(u.id),
       }));
       return { rows };
     }
-    if (
-      sql.startsWith(
-        "SELECT follower_id AS id, COUNT(*)::int AS cnt FROM user_follows WHERE follower_id = ANY($1) GROUP BY follower_id",
-      )
-    ) {
-      const ids = params[0];
-      const rows = ids.map((id: string) => ({
-        id,
-        cnt: this.follows.filter((f) => f.followerId === id).length,
-      }));
-      return { rows };
-    }
+
+    // フォーカスとの相互関係検索（listUsersDetail 補助）
     if (
       sql.startsWith(
         "SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)",
@@ -203,11 +238,15 @@ class MockPgClient {
           .map((f) => ({ follower_id: f.followerId })),
       };
     }
+
+    // 既存メール重複確認
     if (sql.startsWith("SELECT 1 FROM users WHERE email = $1")) {
       const email = params[0];
       const exists = this.users.some((u) => u.email === email);
       return { rows: exists ? [1] : [] };
     }
+
+    // createUser（RETURNING は count なし）
     if (sql.startsWith("INSERT INTO users")) {
       const [id, email, nickname, password, isAdmin, introduction, icon, aiModel, aiPersonality] =
         params;
@@ -227,6 +266,8 @@ class MockPgClient {
       this.passwords[user.id] = password;
       return { rows: [user] };
     }
+
+    // update password
     if (sql.startsWith("UPDATE users SET password = $1 WHERE id = $2")) {
       const [password, id] = params;
       const exists = this.users.some((u) => u.id === id);
@@ -234,6 +275,8 @@ class MockPgClient {
       this.passwords[id] = password;
       return { rowCount: 1 };
     }
+
+    // updateUser（RETURNING は count なし）
     if (sql.startsWith("UPDATE users SET")) {
       const columns = sql
         .substring(sql.indexOf("SET ") + 4, sql.indexOf(" WHERE"))
@@ -247,6 +290,7 @@ class MockPgClient {
       return { rows: [user], rowCount: 1 };
     }
 
+    // deleteUser（CASCADE 相当）
     if (sql.startsWith("DELETE FROM users WHERE id = $1")) {
       const id = params[0];
       const idx = this.users.findIndex((u) => u.id === id);
@@ -256,9 +300,11 @@ class MockPgClient {
       this.follows = this.follows.filter((f) => f.followerId !== id && f.followeeId !== id);
       return { rowCount: 1 };
     }
+
+    // listFolloweesDetail（count あり）
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.icon, u.ai_model, u.ai_personality, u.created_at, u.updated_at FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.icon, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
       )
     ) {
       const followerId = params[0];
@@ -269,11 +315,18 @@ class MockPgClient {
       list.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
       const offset = params[1] || 0;
       const limit = params[2] || 100;
-      return { rows: list.slice(offset, offset + limit) };
+      const rows = list.slice(offset, offset + limit).map((u) => ({
+        ...u,
+        count_followers: this.cntFollowers(u.id),
+        count_followees: this.cntFollowees(u.id),
+      }));
+      return { rows };
     }
+
+    // listFollowersDetail（count あり）
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.icon, u.ai_model, u.ai_personality, u.created_at, u.updated_at FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.icon, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
       )
     ) {
       const followeeId = params[0];
@@ -284,8 +337,15 @@ class MockPgClient {
       list.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
       const offset = params[1] || 0;
       const limit = params[2] || 100;
-      return { rows: list.slice(offset, offset + limit) };
+      const rows = list.slice(offset, offset + limit).map((u) => ({
+        ...u,
+        count_followers: this.cntFollowers(u.id),
+        count_followees: this.cntFollowees(u.id),
+      }));
+      return { rows };
     }
+
+    // フォロー追加・削除
     if (sql.startsWith("INSERT INTO user_follows")) {
       const [followerId, followeeId] = params;
       if (!this.follows.some((f) => f.followerId === followerId && f.followeeId === followeeId)) {
@@ -301,6 +361,7 @@ class MockPgClient {
       );
       return { rowCount: prev - this.follows.length };
     }
+
     throw new Error("Unknown SQL: " + sql);
   }
 }
@@ -372,8 +433,8 @@ describe("UsersService", () => {
     const bobDetail = details.find((u) => u.id === "bob")!;
     expect(bobDetail.countFollowers).toBe(1);
     expect(bobDetail.countFollowees).toBe(1);
-    expect(bobDetail.isFollowedByFocusUser).toBe(false);
-    expect(bobDetail.isFollowingFocusUser).toBe(false);
+    expect(bobDetail.isFollowedByFocusUser).toBeUndefined();
+    expect(bobDetail.isFollowingFocusUser).toBeUndefined();
     const carolDetail = details.find((u) => u.id === "carol")!;
     expect(carolDetail.countFollowers).toBe(1);
     expect(carolDetail.countFollowees).toBe(1);

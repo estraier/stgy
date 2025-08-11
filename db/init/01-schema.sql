@@ -16,7 +16,9 @@ CREATE TABLE users (
   ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
   ai_personality VARCHAR(2000),
   created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ
+  updated_at TIMESTAMPTZ,
+  count_followers INT NOT NULL DEFAULT 0,
+  count_followees INT NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_nickname ON users(nickname);
@@ -29,6 +31,8 @@ CREATE TABLE user_follows (
   PRIMARY KEY (follower_id, followee_id)
 );
 CREATE INDEX idx_user_follows_followee ON user_follows(followee_id);
+CREATE INDEX idx_user_follows_followee_created_at ON user_follows (followee_id, created_at DESC);
+CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, created_at DESC);
 
 CREATE TABLE posts (
   id VARCHAR(50) PRIMARY KEY,
@@ -64,3 +68,27 @@ CREATE TABLE past_actions (
   action VARCHAR(2000) NOT NULL
 );
 CREATE INDEX idx_past_actions_user_id ON past_actions(user_id);
+
+CREATE OR REPLACE FUNCTION trg_user_follows_counter()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE users SET count_followees = count_followees + 1 WHERE id = NEW.follower_id;
+    UPDATE users SET count_followers = count_followers + 1 WHERE id = NEW.followee_id;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE users SET count_followees = count_followees - 1 WHERE id = OLD.follower_id;
+    UPDATE users SET count_followers = count_followers - 1 WHERE id = OLD.followee_id;
+    RETURN OLD;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_user_follows_counter_ins
+AFTER INSERT ON user_follows
+FOR EACH ROW EXECUTE FUNCTION trg_user_follows_counter();
+
+CREATE TRIGGER trg_user_follows_counter_del
+AFTER DELETE ON user_follows
+FOR EACH ROW EXECUTE FUNCTION trg_user_follows_counter();
