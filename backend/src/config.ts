@@ -10,12 +10,27 @@ export class Config {
   static readonly DATABASE_PASSWORD = envStr("FAKEBOOK_DATABASE_PASSWORD", "db_password");
   static readonly DATABASE_NAME = envStr("FAKEBOOK_DATABASE_NAME", "fakebook");
   static readonly STORAGE_DRIVER = envStr("FAKEBOOK_STORAGE_DRIVER", "s3");
-  static readonly STORAGE_S3_ENDPOINT = envStr("FAKEBOOK_STORAGE_S3_ENDPOINT", "http://localhost:9000");
+  static readonly STORAGE_S3_ENDPOINT = envStr(
+    "FAKEBOOK_STORAGE_S3_ENDPOINT",
+    "http://localhost:9000",
+  );
   static readonly STORAGE_S3_REGION = envStr("FAKEBOOK_STORAGE_S3_REGION", "us-east-1");
-  static readonly STORAGE_S3_ACCESS_KEY_ID = envStr("FAKEBOOK_STORAGE_S3_ACCESS_KEY_ID", "fakebook");
-  static readonly STORAGE_S3_SECRET_ACCESS_KEY = envStr("FAKEBOOK_STORAGE_S3_SECRET_ACCESS_KEY", "minio_password");
-  static readonly STORAGE_S3_FORCE_PATH_STYLE = envStr("FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLE", "true");
-  static readonly STORAGE_PUBLIC_BASE_URL = envStr("FAKEBOOK_STORAGE_PUBLIC_BASE_URL", "http://localhost:9000");
+  static readonly STORAGE_S3_ACCESS_KEY_ID = envStr(
+    "FAKEBOOK_STORAGE_S3_ACCESS_KEY_ID",
+    "fakebook",
+  );
+  static readonly STORAGE_S3_SECRET_ACCESS_KEY = envStr(
+    "FAKEBOOK_STORAGE_S3_SECRET_ACCESS_KEY",
+    "minio_password",
+  );
+  static readonly STORAGE_S3_FORCE_PATH_STYLE = envStr(
+    "FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLE",
+    "true",
+  );
+  static readonly STORAGE_PUBLIC_BASE_URL = envStr(
+    "FAKEBOOK_STORAGE_PUBLIC_BASE_URL",
+    "http://localhost:9000",
+  );
   static readonly REDIS_HOST = envStr("FAKEBOOK_REDIS_HOST", "localhost");
   static readonly REDIS_PORT = envNum("FAKEBOOK_REDIS_PORT", 6379);
   static readonly REDIS_PASSWORD = envStr("FAKEBOOK_REDIS_PASSWORD", "redis_password");
