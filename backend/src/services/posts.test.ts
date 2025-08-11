@@ -213,8 +213,10 @@ class MockPgClient {
       const [postId, likedBy] = params!;
       if (!this.likes.some((l) => l.postId === postId && l.likedBy === likedBy)) {
         this.likes.push({ postId, likedBy });
+        return { rowCount: 1 };
       }
-      return { rowCount: 1 };
+      // duplicate -> ON CONFLICT DO NOTHING -> rowCount: 0
+      return { rowCount: 0 };
     }
     if (sql.startsWith("DELETE FROM post_likes")) {
       const [postId, likedBy] = params!;
@@ -359,28 +361,25 @@ describe("posts service", () => {
   });
 
   test("deletePost", async () => {
-    const ok = await postsService.deletePost(postSample.id);
-    expect(ok).toBe(true);
+    await postsService.deletePost(postSample.id);
     expect(pgClient.data.length).toBe(0);
     expect(pgClient.tags.some((t) => t.postId === postSample.id)).toBe(false);
-    const ng = await postsService.deletePost("no-such-id");
-    expect(ng).toBe(false);
+    await expect(postsService.deletePost("no-such-id")).rejects.toThrow(/post not found/i);
   });
 
   test("addLike: normal", async () => {
     const userId = "user-2";
-    const result = await postsService.addLike(postSample.id, userId);
-    expect(result).toBe(true);
+    await postsService.addLike(postSample.id, userId);
     expect(pgClient.likes.some((l) => l.postId === postSample.id && l.likedBy === userId)).toBe(
       true,
     );
   });
 
-  test("addLike: duplicate", async () => {
+  test("addLike: duplicate should throw", async () => {
     const userId = "user-2";
     await postsService.addLike(postSample.id, userId);
-    const again = await postsService.addLike(postSample.id, userId);
-    expect(again).toBe(true);
+    await expect(postsService.addLike(postSample.id, userId)).rejects.toThrow(/already liked/i);
+    // state should still have only one like for that pair
     expect(
       pgClient.likes.filter((l) => l.postId === postSample.id && l.likedBy === userId).length,
     ).toBe(1);
@@ -389,16 +388,16 @@ describe("posts service", () => {
   test("removeLike: normal", async () => {
     const userId = "user-2";
     await postsService.addLike(postSample.id, userId);
-    const result = await postsService.removeLike(postSample.id, userId);
-    expect(result).toBe(true);
+    await postsService.removeLike(postSample.id, userId);
     expect(pgClient.likes.some((l) => l.postId === postSample.id && l.likedBy === userId)).toBe(
       false,
     );
   });
 
-  test("removeLike: not found", async () => {
-    const result = await postsService.removeLike(postSample.id, "no-such-user");
-    expect(result).toBe(false);
+  test("removeLike: not found should throw", async () => {
+    await expect(postsService.removeLike(postSample.id, "no-such-user")).rejects.toThrow(
+      /not liked/i,
+    );
   });
 });
 

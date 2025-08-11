@@ -289,25 +289,41 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
     if (!(user.isAdmin || post.ownedBy === user.id)) {
       return res.status(403).json({ error: "forbidden" });
     }
-    const ok = await postsService.deletePost(req.params.id);
-    if (!ok) return res.status(404).json({ error: "not found" });
-    res.json({ result: "ok" });
+    try {
+      await postsService.deletePost(req.params.id);
+      res.json({ result: "ok" });
+    } catch (e) {
+      const msg = (e as Error).message || "";
+      if (/post not found/i.test(msg)) return res.status(404).json({ error: "not found" });
+      res.status(400).json({ error: msg || "delete error" });
+    }
   });
 
   router.post("/:id/like", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    const ok = await postsService.addLike(req.params.id, user.id);
-    if (!ok) return res.status(400).json({ error: "could not like" });
-    res.json({ result: "ok" });
+    try {
+      await postsService.addLike(req.params.id, user.id);
+      res.json({ result: "ok" });
+    } catch (e) {
+      const msg = (e as Error).message || "";
+      // duplicate like -> 400
+      if (/already liked/i.test(msg)) return res.status(400).json({ error: "already liked" });
+      res.status(400).json({ error: msg || "could not like" });
+    }
   });
 
   router.delete("/:id/like", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    const ok = await postsService.removeLike(req.params.id, user.id);
-    if (!ok) return res.status(404).json({ error: "like not found" });
-    res.json({ result: "ok" });
+    try {
+      await postsService.removeLike(req.params.id, user.id);
+      res.json({ result: "ok" });
+    } catch (e) {
+      const msg = (e as Error).message || "";
+      if (/not liked/i.test(msg)) return res.status(404).json({ error: "like not found" });
+      res.status(400).json({ error: msg || "could not remove like" });
+    }
   });
 
   router.get("/:id/likers", async (req, res) => {

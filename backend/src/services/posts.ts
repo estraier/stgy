@@ -314,25 +314,27 @@ export class PostsService {
     }
   }
 
-  async deletePost(id: string): Promise<boolean> {
+  async deletePost(id: string): Promise<void> {
     const res = await this.pgClient.query(`DELETE FROM posts WHERE id = $1`, [id]);
-    return (res.rowCount ?? 0) > 0;
+    if ((res.rowCount ?? 0) === 0) throw new Error("Post not found");
   }
 
-  async addLike(postId: string, userId: string): Promise<boolean> {
-    await this.pgClient.query(
-      `INSERT INTO post_likes (post_id, liked_by, created_at) VALUES ($1, $2, $3)`,
+  async addLike(postId: string, userId: string): Promise<void> {
+    const res = await this.pgClient.query(
+      `INSERT INTO post_likes (post_id, liked_by, created_at)
+       VALUES ($1, $2, $3)
+       ON CONFLICT DO NOTHING`,
       [postId, userId, new Date().toISOString()],
     );
-    return true;
+    if ((res.rowCount ?? 0) === 0) throw new Error("already liked");
   }
 
-  async removeLike(postId: string, userId: string): Promise<boolean> {
+  async removeLike(postId: string, userId: string): Promise<void> {
     const res = await this.pgClient.query(
       `DELETE FROM post_likes WHERE post_id = $1 AND liked_by = $2`,
       [postId, userId],
     );
-    return (res.rowCount ?? 0) > 0;
+    if ((res.rowCount ?? 0) === 0) throw new Error("not liked");
   }
 
   async listPostsByFolloweesDetail(
