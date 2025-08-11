@@ -306,7 +306,7 @@ export class UsersService {
     return { updateEmailId };
   }
 
-  async verifyUpdateEmail(userId: string, updateEmailId: string, code: string): Promise<boolean> {
+  async verifyUpdateEmail(userId: string, updateEmailId: string, code: string): Promise<void> {
     const key = `updateEmail:${updateEmailId}`;
     const data = await this.redis.hgetall(key);
     if (!data || !data.userId || !data.newEmail || !data.verificationCode)
@@ -324,10 +324,10 @@ export class UsersService {
       [data.newEmail, data.userId],
     );
     await this.redis.del(key);
-    return (res.rowCount ?? 0) > 0;
+    if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
   }
 
-  async updateUserPassword(input: UpdatePasswordInput): Promise<boolean> {
+  async updateUserPassword(input: UpdatePasswordInput): Promise<void> {
     if (input.password.trim() === "") {
       throw new Error("password is mustn't be empty");
     }
@@ -336,7 +336,7 @@ export class UsersService {
       passwordHash,
       input.id,
     ]);
-    return (res.rowCount ?? 0) > 0;
+    if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
   }
 
   async startResetPassword(email: string): Promise<{ resetPasswordId: string; webCode: string }> {
@@ -376,7 +376,7 @@ export class UsersService {
     webCode: string,
     mailCode: string,
     newPassword: string,
-  ): Promise<boolean> {
+  ): Promise<void> {
     const key = `resetPassword:${resetPasswordId}`;
     const data = await this.redis.hgetall(key);
     if (!data || !data.userId || !data.email || !data.webCode || !mailCode)
@@ -392,12 +392,12 @@ export class UsersService {
       data.userId,
     ]);
     await this.redis.del(key);
-    return (res.rowCount ?? 0) > 0;
+    if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
   }
 
-  async deleteUser(id: string): Promise<boolean> {
+  async deleteUser(id: string): Promise<void> {
     const res = await this.pgClient.query(`DELETE FROM users WHERE id = $1`, [id]);
-    return (res.rowCount ?? 0) > 0;
+    if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
   }
 
   async listFolloweesDetail(
@@ -486,24 +486,24 @@ export class UsersService {
     return users;
   }
 
-  async addFollower(input: AddFollowerInput): Promise<boolean> {
+  async addFollower(input: AddFollowerInput): Promise<void> {
     if (input.followerId === input.followeeId) {
       throw new Error("cannot follow yourself");
     }
-    await this.pgClient.query(
+    const res = await this.pgClient.query(
       `INSERT INTO user_follows (follower_id, followee_id, created_at)
        VALUES ($1, $2, now())
        ON CONFLICT DO NOTHING`,
       [input.followerId, input.followeeId],
     );
-    return true;
+    if ((res.rowCount ?? 0) === 0) throw new Error("already following");
   }
 
-  async removeFollower(input: RemoveFollowerInput): Promise<boolean> {
+  async removeFollower(input: RemoveFollowerInput): Promise<void> {
     const res = await this.pgClient.query(
       `DELETE FROM user_follows WHERE follower_id = $1 AND followee_id = $2`,
       [input.followerId, input.followeeId],
     );
-    return (res.rowCount ?? 0) > 0;
+    if ((res.rowCount ?? 0) === 0) throw new Error("not following");
   }
 }

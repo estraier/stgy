@@ -477,12 +477,7 @@ describe("UsersService", () => {
       verificationCode: "123456",
       createdAt: new Date().toISOString(),
     });
-    const ok = await new UsersService(pg as any, redis as any).verifyUpdateEmail(
-      "alice",
-      "xyz",
-      "123456",
-    );
-    expect(ok).toBe(true);
+    await new UsersService(pg as any, redis as any).verifyUpdateEmail("alice", "xyz", "123456");
     expect(pg.users.find((u) => u.id === "alice")?.email).toBe("alice2@example.com");
     expect(await redis.hgetall("updateEmail:xyz")).toEqual({});
   });
@@ -501,10 +496,11 @@ describe("UsersService", () => {
 
   test("updateUserPassword", async () => {
     const id = pg.users[0].id;
-    const ok = await service.updateUserPassword({ id, password: "newpass" });
-    expect(ok).toBe(true);
+    await service.updateUserPassword({ id, password: "newpass" });
     expect(pg.passwords[id]).toBe(md5("newpass"));
-    expect(await service.updateUserPassword({ id: "no-such-id", password: "x" })).toBe(false);
+    await expect(service.updateUserPassword({ id: "no-such-id", password: "x" })).rejects.toThrow(
+      /User not found/i,
+    );
   });
 
   test("startResetPassword stores verification info in Redis and queues mail", async () => {
@@ -535,14 +531,7 @@ describe("UsersService", () => {
     const { resetPasswordId, webCode } = await service.startResetPassword(email);
     const stored = redis.store[`resetPassword:${resetPasswordId}`];
     const mailCode = stored.mailCode;
-    const ok = await service.verifyResetPassword(
-      email,
-      resetPasswordId,
-      webCode,
-      mailCode,
-      "newsecurepass",
-    );
-    expect(ok).toBe(true);
+    await service.verifyResetPassword(email, resetPasswordId, webCode, mailCode, "newsecurepass");
     expect(pg.passwords["alice"]).toBe(md5("newsecurepass"));
   });
 
@@ -565,9 +554,9 @@ describe("UsersService", () => {
 
   test("deleteUser", async () => {
     const id = pg.users[0].id;
-    expect(await service.deleteUser(id)).toBe(true);
+    await service.deleteUser(id);
     expect(pg.users.find((u) => u.id === id)).toBeUndefined();
-    expect(await service.deleteUser("no-such-id")).toBe(false);
+    await expect(service.deleteUser("no-such-id")).rejects.toThrow(/User not found/i);
   });
 
   test("listFolloweesDetail (with focusUserId)", async () => {
@@ -587,9 +576,9 @@ describe("UsersService", () => {
   });
 
   test("addFollower/removeFollower", async () => {
-    expect(await service.addFollower({ followerId: "bob", followeeId: "carol" })).toBe(true);
+    await service.addFollower({ followerId: "bob", followeeId: "carol" });
     expect(pg.follows.some((f) => f.followerId === "bob" && f.followeeId === "carol")).toBe(true);
-    expect(await service.removeFollower({ followerId: "bob", followeeId: "carol" })).toBe(true);
+    await service.removeFollower({ followerId: "bob", followeeId: "carol" });
     expect(pg.follows.some((f) => f.followerId === "bob" && f.followeeId === "carol")).toBe(false);
   });
 });

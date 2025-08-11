@@ -207,12 +207,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       return res.status(400).json({ error: "updateEmailId and verificationCode are needed" });
     }
     try {
-      const ok = await usersService.verifyUpdateEmail(
-        req.params.id,
-        updateEmailId,
-        verificationCode,
-      );
-      if (!ok) return res.status(404).json({ error: "not found" });
+      await usersService.verifyUpdateEmail(req.params.id, updateEmailId, verificationCode);
       res.json({ result: "ok" });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "verification failed" });
@@ -238,14 +233,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
         .json({ error: "email, resetPasswordId, webCode, mailCode, newPassword are required" });
     }
     try {
-      const ok = await usersService.verifyResetPassword(
-        email,
-        resetPasswordId,
-        webCode,
-        mailCode,
-        newPassword,
-      );
-      if (!ok) return res.status(400).json({ error: "invalid or expired code/session" });
+      await usersService.verifyResetPassword(email, resetPasswordId, webCode, mailCode, newPassword);
       res.json({ result: "ok" });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "reset verify failed" });
@@ -264,11 +252,12 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     }
     try {
       const input: UpdatePasswordInput = { id: req.params.id, password };
-      const ok = await usersService.updateUserPassword(input);
-      if (!ok) return res.status(404).json({ error: "not found" });
+      await usersService.updateUserPassword(input);
       res.json({ result: "ok" });
     } catch (e: unknown) {
-      res.status(400).json({ error: (e as Error).message || "update password error" });
+      const msg = (e as Error).message || "";
+      if (/user not found/i.test(msg)) return res.status(404).json({ error: "not found" });
+      res.status(400).json({ error: msg || "update password error" });
     }
   });
 
@@ -278,9 +267,14 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
       return res.status(403).json({ error: "forbidden" });
     }
-    const ok = await usersService.deleteUser(req.params.id);
-    if (!ok) return res.status(404).json({ error: "not found" });
-    res.json({ result: "ok" });
+    try {
+      await usersService.deleteUser(req.params.id);
+      res.json({ result: "ok" });
+    } catch (e: unknown) {
+      const msg = (e as Error).message || "";
+      if (/user not found/i.test(msg)) return res.status(404).json({ error: "not found" });
+      res.status(400).json({ error: msg || "delete error" });
+    }
   });
 
   router.post("/:id/follow", async (req: Request, res: Response) => {
@@ -291,9 +285,12 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     if (followerId === followeeId) {
       return res.status(400).json({ error: "cannot follow yourself" });
     }
-    const ok = await usersService.addFollower({ followerId, followeeId });
-    if (!ok) return res.status(400).json({ error: "already followed" });
-    res.json({ result: "ok" });
+    try {
+      await usersService.addFollower({ followerId, followeeId });
+      res.json({ result: "ok" });
+    } catch (e: unknown) {
+      res.status(400).json({ error: (e as Error).message || "follow failed" });
+    }
   });
 
   router.delete("/:id/follow", async (req: Request, res: Response) => {
@@ -301,9 +298,14 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const followeeId = req.params.id;
     const followerId = loginUser.id;
-    const ok = await usersService.removeFollower({ followerId, followeeId });
-    if (!ok) return res.status(404).json({ error: "not followed" });
-    res.json({ result: "ok" });
+    try {
+      await usersService.removeFollower({ followerId, followeeId });
+      res.json({ result: "ok" });
+    } catch (e: unknown) {
+      const msg = (e as Error).message || "";
+      if (/not following/i.test(msg)) return res.status(404).json({ error: "not followed" });
+      res.status(400).json({ error: msg || "unfollow failed" });
+    }
   });
 
   router.get("/:id/followees/detail", async (req: Request, res: Response) => {
