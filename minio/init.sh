@@ -26,7 +26,7 @@ fi
 echo "==> configure alias"
 "$MC" alias set local "http://localhost:9000" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
 
-for b in fakebook-icons fakebook-images; do
+for b in fakebook-test fakebook-staging fakebook-icons fakebook-images; do
   if "$MC" ls "local/${b}" >/dev/null 2>&1; then
     echo "==> bucket exists: $b (skip)"
   else

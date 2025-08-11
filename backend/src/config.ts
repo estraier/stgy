@@ -27,6 +27,10 @@ export class Config {
     "FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLE",
     "true",
   );
+  static readonly STORAGE_S3_BUCKET_PREFIX = envStr(
+    "FAKEBOOK_STORAGE_S3_BUCKET_PREFIX",
+    "fakebook",
+  );
   static readonly STORAGE_PUBLIC_BASE_URL = envStr(
     "FAKEBOOK_STORAGE_PUBLIC_BASE_URL",
     "http://localhost:9000",
@@ -43,6 +47,8 @@ export class Config {
   static readonly SESSION_TTL = envNum("FAKEBOOK_SESSION_TTL", 60 * 60 * 24 * 7);
   static readonly TRUST_PROXY_HOPS = envNum("FAKEBOOK_TRUST_PROXY_HOPS", 1);
   static readonly TEST_SIGNUP_CODE = envStr("FAKEBOOK_TEST_SIGNUP_CODE", "");
+  static readonly MEDIA_ICON_BYTE_LIMIT = 1 * 1024 * 1024;
+  static readonly MEDIA_IMAGE_BYTE_LIMIT = 10 * 1024 * 1024;
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = true): string {

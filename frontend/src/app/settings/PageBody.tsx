@@ -222,7 +222,7 @@ export default function PageBody() {
             className="bg-blue-600 text-white px-4 py-1 rounded"
             disabled={pwSuccess}
           >
-            Change password
+            Send verification code
           </button>
         </form>
       </section>

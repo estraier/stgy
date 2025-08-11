@@ -11,7 +11,7 @@
     "docker:start": "docker-compose up -d",
     "docker:stop": "docker-compose down",
     "docker:restart": "docker-compose down ; docker-compose up -d",
-    "docker:dev": "npm run docker:stop && docker-compose up -d db redis smtp",
+    "docker:dev": "npm run docker:stop && docker-compose up -d db minio redis smtp",
     "log:backend": "docker-compose logs backend",
     "log:frontend": "docker-compose logs frontend",
     "log:db": "docker-compose logs db",
