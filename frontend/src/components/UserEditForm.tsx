@@ -171,7 +171,7 @@ export default function UserEditForm({
       <div className="flex flex-col gap-1">
         <label className="font-bold text-sm">Introduction</label>
         <textarea
-          className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50 text-gray-700
+          className="border border-gray-400 rounded px-2 py-1 min-h-[20ex] bg-gray-50 text-gray-700
                      focus:outline-none focus:ring-2 focus:ring-blue-200
                      disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
           value={introduction}

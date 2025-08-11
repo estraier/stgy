@@ -38,7 +38,6 @@ export default function PostForm({
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showPreview, setShowPreview] = useState(false);
 
-  // 本文クリア時はプレビューも自動で閉じる
   useEffect(() => {
     if (body.trim() === "") setShowPreview(false);
   }, [body]);
@@ -64,7 +63,6 @@ export default function PostForm({
     }
   }
 
-  // プレビュー用に本文・タグを分離
   const { content, tags } = parseBodyAndTags(body);
 
   return (

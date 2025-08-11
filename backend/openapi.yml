@@ -904,6 +904,7 @@ paths:
               type: object
               properties:
                 content: { type: string }
+                ownedBy: { type: string }
                 replyTo:
                   type: string
                   nullable: true
