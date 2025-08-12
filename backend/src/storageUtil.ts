@@ -18,7 +18,7 @@ function parseStoragePath(p: string): StorageObjectId {
 async function main() {
   const args = process.argv.slice(2);
   if (args.length < 2) {
-    console.error("Usage: ts-node src/storageUtil.ts <command> <bucket:/key> [localPath]");
+    console.error("Usage: ts-node src/storageUtil.ts <command> <bucket:/key> [localPath|<bucket:/key>]");
     process.exit(1);
   }
   const command = args[0];
@@ -55,6 +55,20 @@ async function main() {
       const ct = mimeLookup(localPath) || "application/octet-stream";
       await svc.saveObject(id, new Uint8Array(buf), ct);
       console.log(`uploaded <- ${localPath} (${buf.byteLength} bytes)`);
+      break;
+    }
+    case "copy": {
+      if (!localPath) throw new Error("destination key required");
+      const dstId = parseStoragePath(localPath);
+      await svc.copyObject(id, dstId);
+      console.log(`copied ${storagePath} -> ${localPath}`);
+      break;
+    }
+    case "move": {
+      if (!localPath) throw new Error("destination key required");
+      const dstId = parseStoragePath(localPath);
+      await svc.moveObject(id, dstId);
+      console.log(`moved ${storagePath} -> ${localPath}`);
       break;
     }
     case "delete": {
