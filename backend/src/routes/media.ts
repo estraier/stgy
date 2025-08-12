@@ -14,7 +14,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
   const authService = new AuthService(pgClient, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
   const storage = makeStorageService(Config.STORAGE_DRIVER);
-  const media = new MediaService(storage, redis, Config.MEDIA_IMAGE_BUCKET);
+  const media = new MediaService(storage, redis);
 
   router.post("/:userId/images/presigned", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
@@ -110,6 +110,100 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     const rest = params[1] || "";
     try {
       await media.deleteImage(pathUserId, rest);
+      res.json({ result: "ok" });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "error" });
+    }
+  });
+
+  router.post("/:userId/profile/:slot/presigned", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const pathUserId = req.params.userId;
+    const slot = req.params.slot;
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId)) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    if (slot !== "avatar") {
+      return res.status(400).json({ error: "invalid slot" });
+    }
+    try {
+      const presigned = await media.presignProfileUpload(
+        pathUserId,
+        slot,
+        typeof req.body.filename === "string" ? req.body.filename : "",
+        Number(req.body.sizeBytes ?? 0),
+        Config.MEDIA_ICON_BYTE_LIMIT,
+      );
+      res.json(presigned);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "error" });
+    }
+  });
+
+  router.post("/:userId/profile/:slot/finalize", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const pathUserId = req.params.userId;
+    const slot = req.params.slot;
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId)) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    if (slot !== "avatar") {
+      return res.status(400).json({ error: "invalid slot" });
+    }
+    try {
+      const meta = await media.finalizeProfile(
+        pathUserId,
+        slot,
+        typeof req.body.key === "string" ? req.body.key : "",
+        { sizeLimitBytes: Config.MEDIA_ICON_BYTE_LIMIT, thumbnailType: "icon" },
+      );
+      res.json({
+        ...meta,
+        publicUrl: storage.publicUrl({ bucket: meta.bucket, key: meta.key }),
+      });
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "error" });
+    }
+  });
+
+  router.get("/:userId/profile/:slot", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const pathUserId = req.params.userId;
+    const slot = req.params.slot;
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId)) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    if (slot !== "avatar") {
+      return res.status(400).json({ error: "invalid slot" });
+    }
+    try {
+      const { meta, bytes } = await media.getProfileBytes(pathUserId, slot);
+      if (meta.contentType) res.setHeader("Content-Type", meta.contentType);
+      res.setHeader("Content-Length", String(meta.size));
+      if (meta.etag) res.setHeader("ETag", meta.etag);
+      if (meta.lastModified) res.setHeader("Last-Modified", meta.lastModified);
+      res.status(200).end(Buffer.from(bytes));
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "error" });
+    }
+  });
+
+  router.delete("/:userId/profile/:slot", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const pathUserId = req.params.userId;
+    const slot = req.params.slot;
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId)) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    if (slot !== "avatar") {
+      return res.status(400).json({ error: "invalid slot" });
+    }
+    try {
+      await media.deleteProfile(pathUserId, slot);
       res.json({ result: "ok" });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "error" });
