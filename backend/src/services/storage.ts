@@ -29,18 +29,27 @@ export type StorageObjectMetadata = {
   contentType?: string;
 };
 
+export type StorageObjectDataRange = {
+  offset: number;
+  length: number;
+};
+
 export interface StorageService {
-  createPresignedPost(params: PresignedPostRequest): Promise<PresignedPostResult>;
+  createPresignedPost(req: PresignedPostRequest): Promise<PresignedPostResult>;
 
-  headObject(params: StorageObjectId): Promise<StorageObjectMetadata>;
+  headObject(objId: StorageObjectId): Promise<StorageObjectMetadata>;
 
-  publicUrl(params: StorageObjectId): string;
+  publicUrl(objId: StorageObjectId): string;
 
-  listObjects(params: StorageObjectId): Promise<StorageObjectMetadata[]>;
+  listObjects(objId: StorageObjectId): Promise<StorageObjectMetadata[]>;
 
-  loadObject(params: StorageObjectId): Promise<Uint8Array>;
+  loadObject(objId: StorageObjectId, range?: StorageObjectDataRange): Promise<Uint8Array>;
 
-  saveObject(params: StorageObjectId, content: Uint8Array, contentType?: string): Promise<void>;
+  saveObject(objId: StorageObjectId, content: Uint8Array, contentType?: string): Promise<void>;
 
-  deleteObject(params: StorageObjectId): Promise<void>;
+  copyObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void>;
+
+  moveObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void>;
+
+  deleteObject(objId: StorageObjectId): Promise<void>;
 }

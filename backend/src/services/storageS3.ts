@@ -3,6 +3,7 @@ import {
   HeadObjectCommand,
   GetObjectCommand,
   PutObjectCommand,
+  CopyObjectCommand,
   DeleteObjectCommand,
   ListObjectsV2Command,
   ListObjectsV2CommandOutput,
@@ -15,6 +16,7 @@ import type {
   PresignedPostResult,
   StorageObjectId,
   StorageObjectMetadata,
+  StorageObjectDataRange,
 } from "./storage";
 import { Config } from "../config";
 
@@ -37,24 +39,20 @@ export class StorageS3Service implements StorageService {
     });
   }
 
-  async createPresignedPost(params: PresignedPostRequest): Promise<PresignedPostResult> {
-    const { bucket, key, expiresInSec = 300, contentTypeWhitelist, maxBytes } = params;
-
+  async createPresignedPost(req: PresignedPostRequest): Promise<PresignedPostResult> {
+    const { bucket, key, expiresInSec = 300, contentTypeWhitelist, maxBytes } = req;
     type PostPolicyCondition =
       | ["eq", "$Content-Type", string]
       | ["content-length-range", number, number];
     const Conditions: PostPolicyCondition[] = [];
     const Fields: Record<string, string> = { key };
-
     if (contentTypeWhitelist) {
       Fields["Content-Type"] = contentTypeWhitelist;
       Conditions.push(["eq", "$Content-Type", contentTypeWhitelist]);
     }
-
     if (maxBytes !== undefined) {
       Conditions.push(["content-length-range", 1, maxBytes]);
     }
-
     const { url, fields } = await awsCreatePresignedPost(this.s3, {
       Bucket: bucket,
       Key: key,
@@ -62,7 +60,6 @@ export class StorageS3Service implements StorageService {
       Conditions,
       Expires: expiresInSec,
     });
-
     return {
       url,
       fields,
@@ -72,16 +69,16 @@ export class StorageS3Service implements StorageService {
     };
   }
 
-  async headObject(params: StorageObjectId): Promise<StorageObjectMetadata> {
+  async headObject(objId: StorageObjectId): Promise<StorageObjectMetadata> {
     const res = await this.s3.send(
       new HeadObjectCommand({
-        Bucket: params.bucket,
-        Key: params.key,
+        Bucket: objId.bucket,
+        Key: objId.key,
       }),
     );
     return {
-      bucket: params.bucket,
-      key: params.key,
+      bucket: objId.bucket,
+      key: objId.key,
       size: res.ContentLength ?? 0,
       etag: stripEtagQuotes(res.ETag),
       lastModified: res.LastModified?.toISOString(),
@@ -90,25 +87,25 @@ export class StorageS3Service implements StorageService {
     };
   }
 
-  publicUrl(params: StorageObjectId): string {
-    return `${Config.STORAGE_PUBLIC_BASE_URL}/${params.bucket}/${params.key}`;
+  publicUrl(objId: StorageObjectId): string {
+    return `${Config.STORAGE_PUBLIC_BASE_URL}/${objId.bucket}/${objId.key}`;
   }
 
-  async listObjects(params: StorageObjectId): Promise<StorageObjectMetadata[]> {
+  async listObjects(objId: StorageObjectId): Promise<StorageObjectMetadata[]> {
     const all: StorageObjectMetadata[] = [];
     let continuationToken: string | undefined = undefined;
     do {
       const res: ListObjectsV2CommandOutput = await this.s3.send(
         new ListObjectsV2Command({
-          Bucket: params.bucket,
-          Prefix: params.key,
+          Bucket: objId.bucket,
+          Prefix: objId.key,
           MaxKeys: 10,
           ContinuationToken: continuationToken,
         }),
       );
       const page =
         res.Contents?.map((obj: _Object) => ({
-          bucket: params.bucket,
+          bucket: objId.bucket,
           key: obj.Key!,
           size: obj.Size ?? 0,
           etag: stripEtagQuotes(obj.ETag),
@@ -122,36 +119,58 @@ export class StorageS3Service implements StorageService {
     return all;
   }
 
-  async loadObject(params: StorageObjectId): Promise<Uint8Array> {
-    const res = await this.s3.send(
-      new GetObjectCommand({
-        Bucket: params.bucket,
-        Key: params.key,
-      }),
-    );
+  async loadObject(objId: StorageObjectId, range?: StorageObjectDataRange): Promise<Uint8Array> {
+    const getParams: any = {
+      Bucket: objId.bucket,
+      Key: objId.key,
+    };
+    if (range) {
+      const { offset, length } = range;
+      if (offset < 0 || length <= 0) {
+        throw new Error("invalid range");
+      }
+      const end = offset + length - 1;
+      getParams.Range = `bytes=${offset}-${end}`;
+    }
+    const res = await this.s3.send(new GetObjectCommand(getParams));
     return new Uint8Array(await res.Body!.transformToByteArray());
   }
 
   async saveObject(
-    params: StorageObjectId,
+    objId: StorageObjectId,
     content: Uint8Array,
     contentType?: string,
   ): Promise<void> {
     await this.s3.send(
       new PutObjectCommand({
-        Bucket: params.bucket,
-        Key: params.key,
+        Bucket: objId.bucket,
+        Key: objId.key,
         Body: content,
         ContentType: contentType ? contentType : "application/octet-stream",
       }),
     );
   }
 
-  async deleteObject(params: StorageObjectId): Promise<void> {
+  async copyObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void> {
+    await this.s3.send(
+      new CopyObjectCommand({
+        Bucket: dstId.bucket,
+        Key: dstId.key,
+        CopySource: `/${encodeURIComponent(srcId.bucket)}/${encodeURIComponent(srcId.key)}`,
+      }),
+    );
+  }
+
+  async moveObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void> {
+    await this.copyObject(srcId, dstId);
+    await this.deleteObject(srcId);
+  }
+
+  async deleteObject(objId: StorageObjectId): Promise<void> {
     await this.s3.send(
       new DeleteObjectCommand({
-        Bucket: params.bucket,
-        Key: params.key,
+        Bucket: objId.bucket,
+        Key: objId.key,
       }),
     );
   }

@@ -22,6 +22,7 @@ jest.mock("@aws-sdk/client-s3", () => {
     PutObjectCommand: makeCmd("PutObjectCommand"),
     DeleteObjectCommand: makeCmd("DeleteObjectCommand"),
     ListObjectsV2Command: makeCmd("ListObjectsV2Command"),
+    CopyObjectCommand: makeCmd("CopyObjectCommand"),
   };
 });
 
@@ -120,7 +121,7 @@ describe("StorageS3Service", () => {
     expect(url).toBe("http://localhost:9000/fakebook-icons/u1.png");
   });
 
-  test("listObjects returns metadata list", async () => {
+  test("listObjects returns metadata list (single page)", async () => {
     const svc = new StorageS3Service();
     const send = getMockS3Send();
     send.mockResolvedValueOnce({
@@ -140,6 +141,7 @@ describe("StorageS3Service", () => {
           StorageClass: "STANDARD",
         },
       ],
+      IsTruncated: false,
     } as any);
     const list = await svc.listObjects({ bucket: "fakebook-images", key: "u1/20250101/" });
     expect(list).toEqual([
@@ -160,6 +162,33 @@ describe("StorageS3Service", () => {
         storageClass: "STANDARD",
       },
     ]);
+    const listInput = (send.mock.calls[0][0] as any).input;
+    expect(listInput.Bucket).toBe("fakebook-images");
+    expect(listInput.Prefix).toBe("u1/20250101/");
+  });
+
+  test("listObjects paginates when IsTruncated is true", async () => {
+    const svc = new StorageS3Service();
+    const send = getMockS3Send();
+    send.mockResolvedValueOnce({
+      Contents: [
+        { Key: "k1", Size: 1, ETag: "e1", LastModified: new Date("2025-01-01T00:00:00Z") },
+      ],
+      IsTruncated: true,
+      NextContinuationToken: "token-1",
+    } as any);
+    send.mockResolvedValueOnce({
+      Contents: [
+        { Key: "k2", Size: 2, ETag: "e2", LastModified: new Date("2025-01-02T00:00:00Z") },
+      ],
+      IsTruncated: false,
+    } as any);
+    const out = await svc.listObjects({ bucket: "b", key: "prefix/" });
+    expect(out.map((o) => o.key)).toEqual(["k1", "k2"]);
+    const firstInput = (send.mock.calls[0][0] as any).input;
+    const secondInput = (send.mock.calls[1][0] as any).input;
+    expect(firstInput.ContinuationToken).toBeUndefined();
+    expect(secondInput.ContinuationToken).toBe("token-1");
   });
 
   test("loadObject returns Uint8Array", async () => {
@@ -171,6 +200,23 @@ describe("StorageS3Service", () => {
     } as any);
     const out = await svc.loadObject({ bucket: "b", key: "k" });
     expect(out).toEqual(bytes);
+    const getInput = (send.mock.calls[0][0] as any).input;
+    expect(getInput.Bucket).toBe("b");
+    expect(getInput.Key).toBe("k");
+    expect(getInput.Range).toBeUndefined();
+  });
+
+  test("loadObject with range sets Range header", async () => {
+    const svc = new StorageS3Service();
+    const send = getMockS3Send();
+    const bytes = new Uint8Array([10, 20]);
+    send.mockResolvedValueOnce({
+      Body: { transformToByteArray: async () => bytes },
+    } as any);
+    const out = await svc.loadObject({ bucket: "b", key: "k" }, { offset: 0, length: 64 });
+    expect(out).toEqual(bytes);
+    const getInput = (send.mock.calls[0][0] as any).input;
+    expect(getInput.Range).toBe("bytes=0-63");
   });
 
   test("saveObject and deleteObject send correct inputs", async () => {
@@ -190,5 +236,39 @@ describe("StorageS3Service", () => {
     await svc.deleteObject({ bucket: "b", key: "k" });
     const delInput = (send.mock.calls[1][0] as any).input;
     expect(delInput).toEqual({ Bucket: "b", Key: "k" });
+  });
+
+  test("copyObject sends CopyObjectCommand with proper CopySource", async () => {
+    const svc = new StorageS3Service();
+    const send = getMockS3Send();
+    send.mockResolvedValueOnce({} as any);
+    await svc.copyObject(
+      { bucket: "src-bucket", key: "u1/tmp/icon.png" },
+      { bucket: "dst-bucket", key: "u1/media/icon.png" },
+    );
+    const copyInput = (send.mock.calls[0][0] as any).input;
+    expect(copyInput).toEqual({
+      Bucket: "dst-bucket",
+      Key: "u1/media/icon.png",
+      CopySource: "/src-bucket/u1%2Ftmp%2Ficon.png",
+    });
+  });
+
+  test("moveObject performs copy then delete", async () => {
+    const svc = new StorageS3Service();
+    const send = getMockS3Send();
+    send.mockResolvedValueOnce({} as any);
+    send.mockResolvedValueOnce({} as any);
+    await svc.moveObject(
+      { bucket: "b", key: "u1/tmp/a.png" },
+      { bucket: "b", key: "u1/media/a.png" },
+    );
+    expect(send).toHaveBeenCalledTimes(2);
+    const copyInput = (send.mock.calls[0][0] as any).input;
+    const delInput = (send.mock.calls[1][0] as any).input;
+    expect(copyInput.Bucket).toBe("b");
+    expect(copyInput.Key).toBe("u1/media/a.png");
+    expect(copyInput.CopySource).toBe("/b/u1%2Ftmp%2Fa.png");
+    expect(delInput).toEqual({ Bucket: "b", Key: "u1/tmp/a.png" });
   });
 });
