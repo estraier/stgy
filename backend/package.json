@@ -9,6 +9,7 @@
     "check": "tsc --noEmit",
     "dev": "nodemon --exec ts-node src/index.ts",
     "mail-worker": "ts-node src/mailWorker.ts",
+    "media-worker": "ts-node src/mediaWorker.ts",
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
@@ -29,6 +30,7 @@
     "mime-types": "^3.0.1",
     "nodemailer": "^7.0.5",
     "pg": "^8",
+    "sharp": "^0.34.3",
     "uuid": "^11"
   },
   "devDependencies": {

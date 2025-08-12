@@ -4,6 +4,7 @@ import requests
 import os
 import sys
 import time
+import base64
 
 APP_HOST = os.environ.get("FAKEBOOK_APP_HOST", "localhost")
 APP_PORT = int(os.environ.get("FAKEBOOK_APP_PORT", 3001))
@@ -344,16 +345,11 @@ def test_media():
   cookies = {"session_id": session_id}
   sess = get_session(session_id)
   user_id = sess["userId"]
-  img_bytes = (
-    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
-    b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06"
-    b"\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00"
-    b"\x0cIDAT\x08\xd7c\xf8\x0f\x00\x01\x01\x01"
-    b"\x00\x18\xdd\x8d\xf7\x00\x00\x00\x00IEND"
-    b"\xaeB`\x82"
-  )
-  filename = "test.png"
+  img_b64 = "UklGRlQAAABXRUJQVlA4IEgAAADwAwCdASpAAEAAPm02mEkkIqKhIggAgA2JaQDVqoAAEDdTUAV4hbkAAP7ni//43m81s4//+wd/+g7/9B3+yiX+GARoQAAAAAA="
+  img_bytes = base64.b64decode(img_b64)
+  filename = "sample.png"
   size_bytes = len(img_bytes)
+  print(size_bytes)
   presigned_url = f"{BASE_URL}/media/{user_id}/images/presigned"
   res = requests.post(
     presigned_url,
@@ -377,9 +373,9 @@ def test_media():
   meta = res.json()
   print("[media] finalized:", meta)
   assert "bucket" in meta and "key" in meta and meta["size"] > 0
-  final_key = meta["key"]  # 形式: "{userId}/{revMM}/{revTs}-{uuid}.ext"
+  final_key = meta["key"]
   assert final_key.startswith(f"{user_id}/")
-  rest_path = final_key[len(user_id) + 1 :]  # userId/ を除いたパス
+  rest_path = final_key[len(user_id) + 1 :]
   get_url = f"{BASE_URL}/media/{user_id}/images/{rest_path}"
   res = requests.get(get_url, cookies=cookies)
   assert res.status_code == 200, res.text

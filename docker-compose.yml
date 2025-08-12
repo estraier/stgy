@@ -79,6 +79,30 @@ services:
     command: ["node", "dist/mailWorker.js"]
     restart: unless-stopped
 
+  mediaworker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+    environment:
+      FAKEBOOK_REDIS_HOST: ${FAKEBOOK_REDIS_HOST}
+      FAKEBOOK_REDIS_PORT: ${FAKEBOOK_REDIS_PORT}
+      FAKEBOOK_REDIS_PASSWORD: ${FAKEBOOK_REDIS_PASSWORD}
+      FAKEBOOK_STORAGE_DRIVER: ${FAKEBOOK_STORAGE_DRIVER}
+      FAKEBOOK_STORAGE_S3_ENDPOINT: ${FAKEBOOK_STORAGE_S3_ENDPOINT}
+      FAKEBOOK_STORAGE_S3_REGION: ${FAKEBOOK_STORAGE_S3_REGION}
+      FAKEBOOK_STORAGE_S3_ACCESS_KEY_ID: ${FAKEBOOK_STORAGE_S3_ACCESS_KEY_ID}
+      FAKEBOOK_STORAGE_S3_SECRET_ACCESS_KEY: ${FAKEBOOK_STORAGE_S3_SECRET_ACCESS_KEY}
+      FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLE: ${FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLE}
+      FAKEBOOK_STORAGE_S3_BUCKET_PREFIX: ${FAKEBOOK_STORAGE_S3_BUCKET_PREFIX}
+      FAKEBOOK_STORAGE_PUBLIC_BASE_URL: ${FAKEBOOK_STORAGE_PUBLIC_BASE_URL}
+    command: ["node", "dist/mediaWorker.js"]
+    restart: unless-stopped
+
   backend:
     build:
       dockerfile: backend/Dockerfile
