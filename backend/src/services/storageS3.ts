@@ -5,6 +5,8 @@ import {
   PutObjectCommand,
   DeleteObjectCommand,
   ListObjectsV2Command,
+  ListObjectsV2CommandOutput,
+  _Object,
 } from "@aws-sdk/client-s3";
 import { createPresignedPost as awsCreatePresignedPost } from "@aws-sdk/s3-presigned-post";
 import type {
@@ -93,22 +95,31 @@ export class StorageS3Service implements StorageService {
   }
 
   async listObjects(params: StorageObjectId): Promise<StorageObjectMetadata[]> {
-    const res = await this.s3.send(
-      new ListObjectsV2Command({
-        Bucket: params.bucket,
-        Prefix: params.key,
-      }),
-    );
-    return (
-      res.Contents?.map((obj) => ({
-        bucket: params.bucket,
-        key: obj.Key!,
-        size: obj.Size ?? 0,
-        etag: stripEtagQuotes(obj.ETag),
-        lastModified: obj.LastModified?.toISOString(),
-        storageClass: obj.StorageClass,
-      })) ?? []
-    );
+    const all: StorageObjectMetadata[] = [];
+    let continuationToken: string | undefined = undefined;
+    do {
+      const res: ListObjectsV2CommandOutput = await this.s3.send(
+        new ListObjectsV2Command({
+          Bucket: params.bucket,
+          Prefix: params.key,
+          MaxKeys: 10,
+          ContinuationToken: continuationToken,
+        }),
+      );
+      const page =
+        res.Contents?.map((obj: _Object) => ({
+          bucket: params.bucket,
+          key: obj.Key!,
+          size: obj.Size ?? 0,
+          etag: stripEtagQuotes(obj.ETag),
+          lastModified: obj.LastModified?.toISOString(),
+          storageClass: obj.StorageClass,
+        })) ?? [];
+
+      all.push(...page);
+      continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
+    } while (continuationToken);
+    return all;
   }
 
   async loadObject(params: StorageObjectId): Promise<Uint8Array> {
