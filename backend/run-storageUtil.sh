@@ -8,7 +8,7 @@ export FAKEBOOK_STORAGE_S3_ENDPOINT=http://localhost:9000
 
 set -eux
 
-if [ $1 = "volume" ]
+if [ $# -eq 1 ] && [ $1 = "volume" ]
 then
     i=0
     while [ $i -lt 333 ] ; do
@@ -20,7 +20,7 @@ then
     exit
 fi
 
-if [ $1 = "test" ]
+if [ $# -eq 1 ] && [ $1 = "test" ]
 then
    ts-node src/storageUtil.ts save fakebook-test:/test-package.json package.json
    ts-node src/storageUtil.ts head fakebook-test:/test-package.json

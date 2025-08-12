@@ -2,6 +2,7 @@ import {
   S3Client,
   HeadObjectCommand,
   GetObjectCommand,
+  GetObjectCommandInput,
   PutObjectCommand,
   CopyObjectCommand,
   DeleteObjectCommand,
@@ -16,6 +17,7 @@ import type {
   PresignedPostResult,
   StorageObjectId,
   StorageObjectMetadata,
+  ListRange,
   StorageObjectDataRange,
 } from "./storage";
 import { Config } from "../config";
@@ -91,15 +93,20 @@ export class StorageS3Service implements StorageService {
     return `${Config.STORAGE_PUBLIC_BASE_URL}/${objId.bucket}/${objId.key}`;
   }
 
-  async listObjects(objId: StorageObjectId): Promise<StorageObjectMetadata[]> {
+  async listObjects(objId: StorageObjectId, range?: ListRange): Promise<StorageObjectMetadata[]> {
     const all: StorageObjectMetadata[] = [];
     let continuationToken: string | undefined = undefined;
+    const need = range
+      ? Math.max(0, range.offset || 0) + Math.max(0, range.limit || 0)
+      : Number.POSITIVE_INFINITY;
     do {
+      const remaining = isFinite(need) ? Math.max(0, need - all.length) : 1000;
+      const maxKeys = Math.min(1000, Math.max(1, remaining));
       const res: ListObjectsV2CommandOutput = await this.s3.send(
         new ListObjectsV2Command({
           Bucket: objId.bucket,
           Prefix: objId.key,
-          MaxKeys: 10,
+          MaxKeys: maxKeys,
           ContinuationToken: continuationToken,
         }),
       );
@@ -112,15 +119,18 @@ export class StorageS3Service implements StorageService {
           lastModified: obj.LastModified?.toISOString(),
           storageClass: obj.StorageClass,
         })) ?? [];
-
       all.push(...page);
+      if (all.length >= need) break;
       continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
     } while (continuationToken);
-    return all;
+    if (!range) return all;
+    const start = Math.min(Math.max(0, range.offset), all.length);
+    const end = Math.min(start + Math.max(0, range.limit), all.length);
+    return all.slice(start, end);
   }
 
   async loadObject(objId: StorageObjectId, range?: StorageObjectDataRange): Promise<Uint8Array> {
-    const getParams: any = {
+    const getParams: GetObjectCommandInput = {
       Bucket: objId.bucket,
       Key: objId.key,
     };

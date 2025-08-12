@@ -29,6 +29,11 @@ export type StorageObjectMetadata = {
   contentType?: string;
 };
 
+export type ListRange = {
+  offset: number;
+  limit: number;
+};
+
 export type StorageObjectDataRange = {
   offset: number;
   length: number;
@@ -41,7 +46,7 @@ export interface StorageService {
 
   publicUrl(objId: StorageObjectId): string;
 
-  listObjects(objId: StorageObjectId): Promise<StorageObjectMetadata[]>;
+  listObjects(objId: StorageObjectId, range?: ListRange): Promise<StorageObjectMetadata[]>;
 
   loadObject(objId: StorageObjectId, range?: StorageObjectDataRange): Promise<Uint8Array>;
 

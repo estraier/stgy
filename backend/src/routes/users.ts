@@ -233,7 +233,13 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
         .json({ error: "email, resetPasswordId, webCode, mailCode, newPassword are required" });
     }
     try {
-      await usersService.verifyResetPassword(email, resetPasswordId, webCode, mailCode, newPassword);
+      await usersService.verifyResetPassword(
+        email,
+        resetPasswordId,
+        webCode,
+        mailCode,
+        newPassword,
+      );
       res.json({ result: "ok" });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "reset verify failed" });

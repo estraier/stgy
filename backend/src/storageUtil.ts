@@ -1,5 +1,5 @@
 import { Config } from "./config";
-import { StorageObjectId } from "./services/storage";
+import { StorageObjectId, ListRange } from "./services/storage";
 import { makeStorageService } from "./services/storageFactory";
 import path from "path";
 import { readFile, writeFile } from "fs/promises";
@@ -18,7 +18,16 @@ function parseStoragePath(p: string): StorageObjectId {
 async function main() {
   const args = process.argv.slice(2);
   if (args.length < 2) {
-    console.error("Usage: ts-node src/storageUtil.ts <command> <bucket:/key> [localPath|<bucket:/key>]");
+    console.error(`Usage:
+  ts-node src/storageUtil.ts head <bucket:/key>
+  ts-node src/storageUtil.ts list <bucket:/key> [offset limit]
+  ts-node src/storageUtil.ts save <bucket:/key> localPath
+  ts-node src/storageUtil.ts load <bucket:/key> localPath
+  ts-node src/storageUtil.ts copy <bucket:/srcKey> <bucket:/dstKey>
+  ts-node src/storageUtil.ts move <bucket:/srcKey> <bucket:/dstKey>
+  ts-node src/storageUtil.ts delete <bucket:/srcKey>
+  ts-node src/storageUtil.ts presigned-post <bucket:/key> localPath
+`);
     process.exit(1);
   }
   const command = args[0];
@@ -34,7 +43,11 @@ async function main() {
       break;
     }
     case "list": {
-      const objs = await svc.listObjects(id);
+      let range = undefined;
+      if (args.length >= 4) {
+        range = { offset: parseInt(args[2]), limit: parseInt(args[3]) } as ListRange;
+      }
+      const objs = await svc.listObjects(id, range);
       const sliced = objs.map((obj) => ({
         ...obj,
         publicUrl: svc.publicUrl({ bucket: obj.bucket, key: obj.key }),
