@@ -48,11 +48,12 @@ export class Config {
   static readonly TRUST_PROXY_HOPS = envNum("FAKEBOOK_TRUST_PROXY_HOPS", 1);
   static readonly TEST_SIGNUP_CODE = envStr("FAKEBOOK_TEST_SIGNUP_CODE", "");
   static readonly MEDIA_ICON_BUCKET = envStr("FAKEBOOK_MEDIA_ICON_BUCKET", "fakebook-icons");
-  static readonly MEDIA_ICON_BYTE_LIMIT = envNum(
-    "FAKEBOOK_MEDIA_ICON_BYTE_LIMIT", 1 * 1024 * 1024);
+  static readonly MEDIA_ICON_BYTE_LIMIT = envNum("FAKEBOOK_MEDIA_ICON_BYTE_LIMIT", 1 * 1024 * 1024);
   static readonly MEDIA_IMAGE_BUCKET = envStr("FAKEBOOK_MEDIA_IMAGE_BUCKET", "fakebook-images");
   static readonly MEDIA_IMAGE_BYTE_LIMIT = envNum(
-    "FAKEBOOK_MEDIA_IMAGE_BYTE_LIMIT", 10 * 1024 * 1024);
+    "FAKEBOOK_MEDIA_IMAGE_BYTE_LIMIT",
+    10 * 1024 * 1024,
+  );
   static readonly MEDIA_IMAGE_BYTE_LIMIT_PER_MONTH = envNum(
     "FAKEBOOK_MEDIA_IMAGE_BYTE_LIMIT_PER_MONTH",
     100 * 1024 * 1024,
