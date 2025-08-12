@@ -338,6 +338,68 @@ def test_signup():
   print("[signup] user deleted")
   print("[test_signup] OK")
 
+def test_media():
+  print("[media] admin login")
+  session_id = login()
+  cookies = {"session_id": session_id}
+  sess = get_session(session_id)
+  user_id = sess["userId"]
+  img_bytes = (
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+    b"\x00\x00\x00\x01\x00\x00\x00\x01\x08\x06"
+    b"\x00\x00\x00\x1f\x15\xc4\x89\x00\x00\x00"
+    b"\x0cIDAT\x08\xd7c\xf8\x0f\x00\x01\x01\x01"
+    b"\x00\x18\xdd\x8d\xf7\x00\x00\x00\x00IEND"
+    b"\xaeB`\x82"
+  )
+  filename = "test.png"
+  size_bytes = len(img_bytes)
+  presigned_url = f"{BASE_URL}/media/{user_id}/images/presigned"
+  res = requests.post(
+    presigned_url,
+    json={"filename": filename, "sizeBytes": size_bytes},
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  pres = res.json()
+  print("[media] presigned:", pres)
+  upload_url = pres["url"]
+  fields = pres["fields"]
+  files = {
+    "file": (filename, img_bytes, "image/png"),
+  }
+  res = requests.post(upload_url, data=fields, files=files)
+  assert res.status_code in (200, 201, 204), f"upload failed: {res.status_code} {res.text}"
+  print("[media] uploaded to storage")
+  finalize_url = f"{BASE_URL}/media/{user_id}/images/finalize"
+  res = requests.post(finalize_url, json={"key": pres["objectKey"]}, cookies=cookies)
+  assert res.status_code == 200, res.text
+  meta = res.json()
+  print("[media] finalized:", meta)
+  assert "bucket" in meta and "key" in meta and meta["size"] > 0
+  final_key = meta["key"]  # 形式: "{userId}/{revMM}/{revTs}-{uuid}.ext"
+  assert final_key.startswith(f"{user_id}/")
+  rest_path = final_key[len(user_id) + 1 :]  # userId/ を除いたパス
+  get_url = f"{BASE_URL}/media/{user_id}/images/{rest_path}"
+  res = requests.get(get_url, cookies=cookies)
+  assert res.status_code == 200, res.text
+  assert res.content == img_bytes, "downloaded bytes mismatch"
+  print("[media] downloaded OK")
+  list_url = f"{BASE_URL}/media/{user_id}/images?offset=0&limit=10"
+  res = requests.get(list_url, cookies=cookies)
+  assert res.status_code == 200, res.text
+  items = res.json()
+  assert any(it["key"] == final_key for it in items), "finalized key not in list"
+  print("[media] list OK (contains finalized object)")
+  del_url = get_url
+  #res = requests.delete(del_url, cookies=cookies)
+  #assert res.status_code == 200, res.text
+  #print("[media] deleted")
+  #res = requests.get(get_url, cookies=cookies)
+  #assert res.status_code in (404, 400), f"expected not found, got {res.status_code}"
+  logout(session_id)
+  print("[test_media] OK")
+
 def main():
   test_funcs = {name: fn for name, fn in globals().items() if name.startswith("test_") and callable(fn)}
   if len(sys.argv) < 2:
