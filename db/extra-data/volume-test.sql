@@ -5,7 +5,7 @@ INSERT INTO users (
   password,
   is_admin,
   introduction,
-  icon,
+  avatar,
   ai_model,
   ai_personality,
   created_at,
@@ -91,7 +91,7 @@ BEGIN
   FOR i IN 1..150 LOOP
     uid := '00000000-0000-0000-0001-1' || lpad(i::text, 11, '0');
     INSERT INTO users (
-      id, email, nickname, password, is_admin, introduction, icon, ai_model, ai_personality, created_at, updated_at
+      id, email, nickname, password, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at
     ) VALUES (
       uid,
       'user' || i || '@example.com',

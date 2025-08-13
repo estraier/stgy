@@ -31,13 +31,13 @@ components:
         nickname: { type: string }
         isAdmin: { type: boolean }
         introduction: { type: string }
-        icon: { type: string, nullable: true }
+        avatar: { type: string, nullable: true }
         aiModel: { type: string, nullable: true }
         aiPersonality: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time, nullable: true }
       required:
-        [id, email, nickname, isAdmin, introduction, icon, aiModel, aiPersonality, createdAt]
+        [id, email, nickname, isAdmin, introduction, avatar, aiModel, aiPersonality, createdAt]
 
     UserDetail:
       allOf:
@@ -330,11 +330,11 @@ paths:
                 password: { type: string }
                 isAdmin: { type: boolean }
                 introduction: { type: string }
-                icon: { type: string, nullable: true }
+                avatar: { type: string, nullable: true }
                 aiModel: { type: string, nullable: true }
                 aiPersonality: { type: string, nullable: true }
               required:
-                [email, nickname, password, isAdmin, introduction, icon, aiModel, aiPersonality]
+                [email, nickname, password, isAdmin, introduction, avatar, aiModel, aiPersonality]
       responses:
         "201":
           description: User created
@@ -389,7 +389,7 @@ paths:
                 nickname: { type: string }
                 isAdmin: { type: boolean }
                 introduction: { type: string }
-                icon: { type: string, nullable: true }
+                avatar: { type: string, nullable: true }
                 aiModel: { type: string, nullable: true }
                 aiPersonality: { type: string, nullable: true }
               required: []

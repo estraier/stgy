@@ -15,7 +15,7 @@ INSERT INTO users (
   password,
   is_admin,
   introduction,
-  icon,
+  avatar,
   ai_model,
   ai_personality,
   created_at,

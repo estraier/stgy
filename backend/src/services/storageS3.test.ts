@@ -58,7 +58,7 @@ describe("StorageS3Service", () => {
   test("createPresignedPost includes content-type and size conditions", async () => {
     const svc = new StorageS3Service();
     const bucket = "fakebook-staging";
-    const key = "u1/tmp/icon.png";
+    const key = "u1/tmp/avatar.png";
     const url = `http://minio:9000/${bucket}`;
     const fields = {
       key,
@@ -97,7 +97,7 @@ describe("StorageS3Service", () => {
   test("createPresignedPost works without maxBytes", async () => {
     const svc = new StorageS3Service();
     const bucket = "fakebook-staging";
-    const key = "u1/tmp/icon.jpg";
+    const key = "u1/tmp/avatar.jpg";
     const mockCreate = getMockCreatePresignedPost();
     mockCreate.mockResolvedValue({
       url: `http://minio:9000/${bucket}`,
@@ -117,8 +117,8 @@ describe("StorageS3Service", () => {
 
   test("publicUrl returns correct public URL", () => {
     const svc = new StorageS3Service();
-    const url = svc.publicUrl({ bucket: "fakebook-icons", key: "u1.png" });
-    expect(url).toBe("http://localhost:9000/fakebook-icons/u1.png");
+    const url = svc.publicUrl({ bucket: "fakebook-profiles", key: "u1.png" });
+    expect(url).toBe("http://localhost:9000/fakebook-profiles/u1.png");
   });
 
   test("listObjects returns metadata list (single page)", async () => {
@@ -243,14 +243,14 @@ describe("StorageS3Service", () => {
     const send = getMockS3Send();
     send.mockResolvedValueOnce({} as any);
     await svc.copyObject(
-      { bucket: "src-bucket", key: "u1/tmp/icon.png" },
-      { bucket: "dst-bucket", key: "u1/media/icon.png" },
+      { bucket: "src-bucket", key: "u1/tmp/avatar.png" },
+      { bucket: "dst-bucket", key: "u1/media/avatar.png" },
     );
     const copyInput = (send.mock.calls[0][0] as any).input;
     expect(copyInput).toEqual({
       Bucket: "dst-bucket",
-      Key: "u1/media/icon.png",
-      CopySource: "/src-bucket/u1%2Ftmp%2Ficon.png",
+      Key: "u1/media/avatar.png",
+      CopySource: "/src-bucket/u1%2Ftmp%2Favatar.png",
     });
   });
 

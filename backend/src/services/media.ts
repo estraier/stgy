@@ -339,7 +339,6 @@ export class MediaService {
   }
 
   async deleteProfile(userId: string, slot: string): Promise<void> {
-    // マスター本体を探して削除
     const prefix = `${userId}/${slot}`;
     const objs = await this.storage.listObjects({
       bucket: Config.MEDIA_PROFILE_BUCKET,
@@ -353,7 +352,6 @@ export class MediaService {
       });
     }
 
-    // 紐づくサムネイル群も削除（例: `${userId}/thumbs/avatar_icon.webp`）
     const thumbsPrefix = `${userId}/thumbs/${slot}_`;
     const thumbs = await this.storage.listObjects({
       bucket: Config.MEDIA_PROFILE_BUCKET,

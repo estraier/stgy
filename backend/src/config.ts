@@ -60,7 +60,10 @@ export class Config {
     "FAKEBOOK_MEDIA_PROFILE_BUCKET",
     "fakebook-profiles",
   );
-  static readonly MEDIA_ICON_BYTE_LIMIT = envNum("FAKEBOOK_MEDIA_ICON_BYTE_LIMIT", 1 * 1024 * 1024);
+  static readonly MEDIA_AVATAR_BYTE_LIMIT = envNum(
+    "FAKEBOOK_MEDIA_AVATAR_BYTE_LIMIT",
+    1 * 1024 * 1024,
+  );
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = true): string {

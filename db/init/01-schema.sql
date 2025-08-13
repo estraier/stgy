@@ -12,7 +12,7 @@ CREATE TABLE users (
   password VARCHAR(50) NOT NULL,
   is_admin BOOLEAN NOT NULL,
   introduction VARCHAR(2000) NOT NULL,
-  icon VARCHAR(100),
+  avatar VARCHAR(100),
   ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
   ai_personality VARCHAR(2000),
   created_at TIMESTAMPTZ NOT NULL,

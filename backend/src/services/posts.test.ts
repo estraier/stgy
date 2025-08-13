@@ -215,7 +215,6 @@ class MockPgClient {
         this.likes.push({ postId, likedBy });
         return { rowCount: 1 };
       }
-      // duplicate -> ON CONFLICT DO NOTHING -> rowCount: 0
       return { rowCount: 0 };
     }
     if (sql.startsWith("DELETE FROM post_likes")) {
@@ -379,7 +378,6 @@ describe("posts service", () => {
     const userId = "user-2";
     await postsService.addLike(postSample.id, userId);
     await expect(postsService.addLike(postSample.id, userId)).rejects.toThrow(/already liked/i);
-    // state should still have only one like for that pair
     expect(
       pgClient.likes.filter((l) => l.postId === postSample.id && l.likedBy === userId).length,
     ).toBe(1);
@@ -714,7 +712,7 @@ describe("listLikers", () => {
       nickname: "Alice",
       isAdmin: false,
       introduction: "Hi, I'm Alice.",
-      icon: null,
+      avatar: null,
       aiPersonality: "",
       aiModel: "",
       createdAt: new Date().toISOString(),
@@ -726,7 +724,7 @@ describe("listLikers", () => {
       nickname: "Bob",
       isAdmin: false,
       introduction: "Hi, I'm Bob.",
-      icon: null,
+      avatar: null,
       aiPersonality: "",
       aiModel: "",
       createdAt: new Date().toISOString(),
@@ -738,7 +736,7 @@ describe("listLikers", () => {
       nickname: "Carol",
       isAdmin: false,
       introduction: "Hi, I'm Carol.",
-      icon: null,
+      avatar: null,
       aiPersonality: "",
       aiModel: "",
       createdAt: new Date().toISOString(),

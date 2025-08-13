@@ -307,7 +307,6 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       res.json({ result: "ok" });
     } catch (e) {
       const msg = (e as Error).message || "";
-      // duplicate like -> 400
       if (/already liked/i.test(msg)) return res.status(400).json({ error: "already liked" });
       res.status(400).json({ error: msg || "could not like" });
     }

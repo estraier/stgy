@@ -129,7 +129,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
         password: req.body.password,
         isAdmin: req.body.isAdmin ?? false,
         introduction: normalizeMultiLines(req.body.introduction) ?? "",
-        icon: normalizeOneLiner(req.body.icon) ?? null,
+        avatar: normalizeOneLiner(req.body.avatar) ?? null,
         aiModel: normalizeOneLiner(req.body.aiModel) ?? null,
         aiPersonality: normalizeMultiLines(req.body.aiPersonality) ?? null,
       };
@@ -162,7 +162,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
         nickname: normalizeOneLiner(req.body.nickname) ?? undefined,
         isAdmin: req.body.isAdmin,
         introduction: normalizeMultiLines(req.body.introduction) ?? undefined,
-        icon: normalizeOneLiner(req.body.icon),
+        avatar: normalizeOneLiner(req.body.avatar),
         aiModel: normalizeOneLiner(req.body.aiModel),
         aiPersonality: normalizeMultiLines(req.body.aiPersonality),
       };
