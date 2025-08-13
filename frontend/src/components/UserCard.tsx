@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import type { UserDetail } from "@/api/models";
-import Identicon from "@/components/Identicon";
+import AvatarImg from "@/components/AvatarImg";
 import { formatDateTime, normalizeLinefeeds } from "@/utils/format";
 import { renderHtml } from "@/utils/markdown";
 
@@ -111,12 +111,21 @@ export default function UserCard({
       }
     >
       <div className="flex items-center text-base font-semibold">
-        <Identicon
-          value={user.id + ":" + user.nickname}
-          size={24}
-          className="-mt-2 -ml-1 rounded-lg border border-gray-500 bg-gray-100 mr-2 flex-shrink-0 opacity-90"
+        <AvatarImg
+          userId={user.id}
+          nickname={user.nickname}
+          hasAvatar={!!user.avatar}
+          size={truncated ? 24 : 64}
+          useThumb={truncated}
+          className={`${truncated ? "-mt-2 -ml-1" : ""} mr-2 flex-shrink-0`}
         />
-        <span className="-mt-1 truncate max-w-[24ex] text-blue-700">{user.nickname}</span>
+        <span
+          className={`-mt-1 truncate max-w-[24ex] text-blue-700 ${
+            truncated ? "text-base" : "text-xl px-2"
+          }`}
+        >
+          {user.nickname}
+        </span>
         {isAdmin && (
           <span className="-mt-1 ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs">
             admin

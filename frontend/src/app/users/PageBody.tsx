@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useMemo } from "react";
+import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { listUsersDetail, listFollowers, listFollowees } from "@/api/users";
@@ -44,23 +44,26 @@ export default function PageBody() {
   const [error, setError] = useState<string | null>(null);
   const [hasNext, setHasNext] = useState(false);
 
-  function setQuery(
-    updates: Partial<{ tab: string; page: number; q: string; oldestFirst: string | undefined }>,
-  ) {
-    const sp = new URLSearchParams(searchParams);
-    for (const key of ["tab", "page", "q", "oldestFirst"]) {
-      if (
-        updates[key as keyof typeof updates] !== undefined &&
-        updates[key as keyof typeof updates] !== null &&
-        updates[key as keyof typeof updates] !== ""
-      ) {
-        sp.set(key, String(updates[key as keyof typeof updates]));
-      } else {
-        sp.delete(key);
+  const setQuery = useCallback(
+    (updates: Partial<{ tab: string; page: number; q: string; oldestFirst: string | undefined }>) => {
+      const sp = new URLSearchParams(searchParams);
+      for (const key of ["tab", "page", "q", "oldestFirst"]) {
+        if (
+          updates[key as keyof typeof updates] !== undefined &&
+          updates[key as keyof typeof updates] !== null &&
+          updates[key as keyof typeof updates] !== ""
+        ) {
+          sp.set(key, String(updates[key as keyof typeof updates]));
+        } else {
+          sp.delete(key);
+        }
       }
-    }
-    router.push(`${pathname}?${sp.toString()}`);
-  }
+      router.push(`${pathname}?${sp.toString()}`);
+    },
+    [router, pathname, searchParams],
+  );
+
+  const tabParamMissing = useMemo(() => searchParams.get("tab") === null, [searchParams]);
 
   useEffect(() => {
     if (status.state !== "authenticated") return;
@@ -107,7 +110,6 @@ export default function PageBody() {
 
     fetcher
       .then((data) => {
-        const tabParamMissing = searchParams.get("tab") === null;
         if (
           effectiveTab === "followees" &&
           !isSearchMode &&
@@ -130,7 +132,18 @@ export default function PageBody() {
         else setError("Failed to fetch users.");
       })
       .finally(() => setLoading(false));
-  }, [status.state, effectiveTab, page, oldestFirst, qParam, userId, isSearchMode, searchQueryObj]);
+  }, [
+    status.state,
+    effectiveTab,
+    page,
+    oldestFirst,
+    qParam,
+    userId,
+    isSearchMode,
+    searchQueryObj,
+    tabParamMissing,
+    setQuery,
+  ]);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
