@@ -152,7 +152,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     if (!loginUser.isAdmin && req.body.aiModel !== undefined) {
       return res.status(403).json({ error: "forbidden to change aiModel" });
     }
-    if (!loginUser.isAdmin && req.body.aiPersonality !== undefined) {
+    if (!loginUser.isAdmin && !loginUser.aiModel && req.body.aiPersonality !== undefined) {
       return res.status(403).json({ error: "forbidden to change aiPersonality" });
     }
     try {

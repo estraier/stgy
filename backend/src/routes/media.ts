@@ -133,7 +133,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
         slot,
         typeof req.body.filename === "string" ? req.body.filename : "",
         Number(req.body.sizeBytes ?? 0),
-        Config.MEDIA_ICON_BYTE_LIMIT,
+        Config.MEDIA_AVATAR_BYTE_LIMIT,
       );
       res.json(presigned);
     } catch (e) {
@@ -157,7 +157,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
         pathUserId,
         slot,
         typeof req.body.key === "string" ? req.body.key : "",
-        { sizeLimitBytes: Config.MEDIA_ICON_BYTE_LIMIT, thumbnailType: "icon" },
+        { sizeLimitBytes: Config.MEDIA_AVATAR_BYTE_LIMIT, thumbnailType: "icon" },
       );
       res.json({
         ...meta,
