@@ -19,7 +19,7 @@ export type User = {
   nickname: string;
   isAdmin: boolean;
   introduction: string;
-  icon: string | null;
+  avatar: string | null;
   aiModel: string | null;
   aiPersonality: string | null;
   createdAt: string;
