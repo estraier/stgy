@@ -199,8 +199,8 @@ describe("MediaService", () => {
     const fullKey = `${userId}/${keyWithout}`;
 
     const thumbs = [
-      makeMeta(`${userId}/thumbs/foo.webp_image.webp`, 11, "image/webp", imageBucket),
-      makeMeta(`${userId}/thumbs/foo.webp_icon.webp`, 12, "image/webp", imageBucket),
+      makeMeta(`${userId}/797491/thumbs/foo_image.webp`, 11, "image/webp", imageBucket),
+      makeMeta(`${userId}/797491/thumbs/foo_icon.webp`, 12, "image/webp", imageBucket),
     ];
     storage.listObjects.mockResolvedValueOnce(thumbs);
 
@@ -209,15 +209,15 @@ describe("MediaService", () => {
     expect(storage.deleteObject).toHaveBeenCalledWith({ bucket: imageBucket, key: fullKey });
     expect(storage.listObjects).toHaveBeenCalledWith({
       bucket: imageBucket,
-      key: `${userId}/thumbs/foo.webp_`,
+      key: `${userId}/797491/thumbs/foo_`,
     });
     expect(storage.deleteObject).toHaveBeenCalledWith({
       bucket: imageBucket,
-      key: `${userId}/thumbs/foo.webp_image.webp`,
+      key: `${userId}/797491/thumbs/foo_image.webp`,
     });
     expect(storage.deleteObject).toHaveBeenCalledWith({
       bucket: imageBucket,
-      key: `${userId}/thumbs/foo.webp_icon.webp`,
+      key: `${userId}/797491/thumbs/foo_icon.webp`,
     });
   });
 
@@ -280,10 +280,8 @@ describe("MediaService", () => {
     expect((redis.lpush as jest.Mock).mock.calls[0][0]).toBe("media-thumb-queue");
     const payload = (redis.lpush as jest.Mock).mock.calls[0][1] as string;
     expect(payload).toContain('"type":"icon"');
-    expect(payload).toContain('"sourceBucket":"fakebook-profiles"');
-    expect(payload).toContain('"sourceKey":"u1/avatar.png"');
-    expect(payload).toContain('"outputBucket":"fakebook-profiles"');
-    expect(payload).toContain('"outputKey":"u1/thumbs/avatar_icon.webp"');
+    expect(payload).toContain('"bucket":"fakebook-profiles"');
+    expect(payload).toMatch(/"originalKey":"u1\/avatar\.png"/);
   });
 
   test("finalizeProfile: rejects invalid key path", async () => {

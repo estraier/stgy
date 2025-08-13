@@ -215,16 +215,17 @@ export class MediaService {
       throw new Error("cannot delete staging via this endpoint");
     const key = `${pathUserId}/${cleaned}`;
     await this.storage.deleteObject({ bucket: Config.MEDIA_IMAGE_BUCKET, key });
-    const baseName = key.split("/").pop();
-    if (baseName) {
-      const thumbsPrefix = `${pathUserId}/thumbs/${baseName}_`;
-      const thumbs = await this.storage.listObjects({
-        bucket: Config.MEDIA_IMAGE_BUCKET,
-        key: thumbsPrefix,
-      });
-      for (const t of thumbs) {
-        await this.storage.deleteObject({ bucket: Config.MEDIA_IMAGE_BUCKET, key: t.key });
-      }
+    const parts = key.split("/");
+    const file = parts.pop() as string; // 例: "82449...abc.png"
+    const dir = parts.join("/"); // 例: "u1/797491"
+    const base = file.replace(/\.[^.]+$/, ""); // 例: "82449...abc"
+    const thumbsPrefix = `${dir}/thumbs/${base}_`; // 例: "u1/797491/thumbs/82449...abc_"
+    const thumbs = await this.storage.listObjects({
+      bucket: Config.MEDIA_IMAGE_BUCKET,
+      key: thumbsPrefix,
+    });
+    for (const t of thumbs) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_IMAGE_BUCKET, key: t.key });
     }
   }
 
@@ -287,26 +288,20 @@ export class MediaService {
       sniff.mime || head.contentType || "application/octet-stream",
     );
     const masterKey = `${pathUserId}/${slot}${finalExt}`;
-
     await this.storage.moveObject(
       { bucket: Config.MEDIA_PROFILE_BUCKET, key: stagingKey },
       { bucket: Config.MEDIA_PROFILE_BUCKET, key: masterKey },
     );
-
     const meta = await this.storage.headObject({
       bucket: Config.MEDIA_PROFILE_BUCKET,
       key: masterKey,
     });
-
     const thumbnailType = opts?.thumbnailType;
     if (thumbnailType) {
-      const outKey = `${pathUserId}/thumbs/${slot}_${thumbnailType}.webp`;
       const job = {
         type: thumbnailType,
-        sourceBucket: Config.MEDIA_PROFILE_BUCKET,
-        sourceKey: masterKey,
-        outputBucket: Config.MEDIA_PROFILE_BUCKET,
-        outputKey: outKey,
+        bucket: Config.MEDIA_PROFILE_BUCKET,
+        originalKey: masterKey,
       };
       await this.redis.lpush("media-thumb-queue", JSON.stringify(job));
     }

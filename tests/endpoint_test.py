@@ -349,7 +349,6 @@ def test_media():
   img_bytes = base64.b64decode(img_b64)
   filename = "sample.png"
   size_bytes = len(img_bytes)
-  print(size_bytes)
   presigned_url = f"{BASE_URL}/media/{user_id}/images/presigned"
   res = requests.post(
     presigned_url,
@@ -372,6 +371,7 @@ def test_media():
   assert res.status_code == 200, res.text
   meta = res.json()
   print("[media] finalized:", meta)
+  time.sleep(0.1)
   assert "bucket" in meta and "key" in meta and meta["size"] > 0
   final_key = meta["key"]
   assert final_key.startswith(f"{user_id}/")
@@ -388,11 +388,48 @@ def test_media():
   assert any(it["key"] == final_key for it in items), "finalized key not in list"
   print("[media] list OK (contains finalized object)")
   del_url = get_url
-  #res = requests.delete(del_url, cookies=cookies)
-  #assert res.status_code == 200, res.text
-  #print("[media] deleted")
-  #res = requests.get(get_url, cookies=cookies)
-  #assert res.status_code in (404, 400), f"expected not found, got {res.status_code}"
+  res = requests.delete(del_url, cookies=cookies)
+  assert res.status_code == 200, res.text
+  print("[media] deleted")
+  res = requests.get(get_url, cookies=cookies)
+  assert res.status_code in (404, 400), f"expected not found, got {res.status_code}"
+  print("[media] inexistence OK")
+  avatar_filename = "avatar.png"
+  avatar_bytes = img_bytes
+  avatar_size = len(avatar_bytes)
+  pres_url = f"{BASE_URL}/media/{user_id}/profiles/avatar/presigned"
+  res = requests.post(
+    pres_url,
+    json={"filename": avatar_filename, "sizeBytes": avatar_size, "thumbnailType": "icon"},
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  pres = res.json()
+  print("[media] avatar presigned:", pres)
+  avatar_upload_url = pres["url"]
+  avatar_fields = pres["fields"]
+  files = {"file": (avatar_filename, avatar_bytes, "image/png")}
+  res = requests.post(avatar_upload_url, data=avatar_fields, files=files)
+  assert res.status_code in (200, 201, 204), f"avatar upload failed: {res.status_code} {res.text}"
+  print("[media] avatar uploaded to storage")
+  finalize_url = f"{BASE_URL}/media/{user_id}/profiles/avatar/finalize"
+  res = requests.post(finalize_url, json={"key": pres["objectKey"]}, cookies=cookies)
+  assert res.status_code == 200, res.text
+  meta = res.json()
+  print("[media] avatar finalized:", meta)
+  time.sleep(0.1)
+  assert "bucket" in meta and "key" in meta and meta["size"] > 0
+  get_url = f"{BASE_URL}/media/{user_id}/profiles/avatar"
+  res = requests.get(get_url, cookies=cookies)
+  assert res.status_code == 200, res.text
+  assert res.content == avatar_bytes
+  del_url = get_url
+  res = requests.delete(del_url, cookies=cookies)
+  assert res.status_code == 200, res.text
+  print("[media] avatar deleted")
+  res = requests.get(get_url, cookies=cookies)
+  assert res.status_code in (404, 400)
+  print("[media] avatar inexistence OK")
   logout(session_id)
   print("[test_media] OK")
 

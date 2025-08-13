@@ -116,7 +116,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     }
   });
 
-  router.post("/:userId/profile/:slot/presigned", async (req: Request, res: Response) => {
+  router.post("/:userId/profiles/:slot/presigned", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const pathUserId = req.params.userId;
@@ -141,7 +141,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     }
   });
 
-  router.post("/:userId/profile/:slot/finalize", async (req: Request, res: Response) => {
+  router.post("/:userId/profiles/:slot/finalize", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const pathUserId = req.params.userId;
@@ -159,6 +159,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
         typeof req.body.key === "string" ? req.body.key : "",
         { sizeLimitBytes: Config.MEDIA_AVATAR_BYTE_LIMIT, thumbnailType: "icon" },
       );
+      await usersService.updateUser({ id: pathUserId, avatar: `${meta.bucket}/${meta.key}` });
       res.json({
         ...meta,
         publicUrl: storage.publicUrl({ bucket: meta.bucket, key: meta.key }),
@@ -168,7 +169,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     }
   });
 
-  router.get("/:userId/profile/:slot", async (req: Request, res: Response) => {
+  router.get("/:userId/profiles/:slot", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const pathUserId = req.params.userId;
@@ -191,7 +192,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     }
   });
 
-  router.delete("/:userId/profile/:slot", async (req: Request, res: Response) => {
+  router.delete("/:userId/profiles/:slot", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const pathUserId = req.params.userId;
@@ -204,6 +205,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     }
     try {
       await media.deleteProfile(pathUserId, slot);
+      await usersService.updateUser({ id: pathUserId, avatar: null });
       res.json({ result: "ok" });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "error" });
