@@ -51,3 +51,25 @@ export type PostDetail = Post & {
   isLikedByFocusUser?: boolean | null;
   isRepliedByFocusUser?: boolean | null;
 };
+
+export type StorageObjectMetadata = {
+  bucket: string;
+  key: string;
+  size: number;
+  etag?: string | null;
+  lastModified?: string | null;
+  storageClass?: string | null;
+  contentType?: string | null;
+};
+
+export type MediaObject = StorageObjectMetadata & {
+  publicUrl: string;
+};
+
+export type PresignedPostResult = {
+  url: string;
+  fields: Record<string, string>;
+  objectKey: string;
+  maxBytes?: number | null;
+  expiresInSec: number;
+};

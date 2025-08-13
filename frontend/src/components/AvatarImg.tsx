@@ -9,20 +9,17 @@ type Props = {
   hasAvatar: boolean;
   size: number;
   useThumb: boolean;
+  avatarPath?: string | null; // e.g. "fakebook-profiles/<userId>/avatar.webp"
   className?: string;
 };
 
-/**
- * 一覧では useThumb=true（サムネ）
- * 詳細では useThumb=false（マスター）
- * サムネが 404 などで読み込めなければ Identicon にフォールバック。
- */
 export default function AvatarImg({
   userId,
   nickname,
   hasAvatar,
   size,
   useThumb,
+  avatarPath,
   className = "",
 }: Props) {
   const base = process.env.NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL || "http://localhost:9000";
@@ -31,14 +28,12 @@ export default function AvatarImg({
   const src = useMemo(() => {
     if (!hasAvatar) return "";
     if (useThumb) {
-      // 公開サムネ: fakebook-profiles/{userId}/thumbs/avatar_icon.webp
       return `${base}/fakebook-profiles/${encodeURIComponent(userId)}/thumbs/avatar_icon.webp`;
     }
-    // マスターは拡張子が不明なのでバックエンド経由
-    return `/media/${encodeURIComponent(userId)}/profiles/avatar`;
-  }, [base, hasAvatar, useThumb, userId]);
+    return avatarPath ? `${base}/${avatarPath}` : "";
+  }, [base, hasAvatar, useThumb, userId, avatarPath]);
 
-  if (!hasAvatar || error) {
+  if (!hasAvatar || error || !src) {
     return (
       <Identicon
         value={`${userId}:${nickname}`}
