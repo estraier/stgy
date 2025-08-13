@@ -106,6 +106,50 @@ components:
           format: float
       required: [name, description, inputCost, outputCost]
 
+    StorageObjectMetadata:
+      type: object
+      properties:
+        bucket: { type: string }
+        key: { type: string }
+        size: { type: integer }
+        etag:
+          type: string
+          nullable: true
+        lastModified:
+          type: string
+          format: date-time
+          nullable: true
+        storageClass:
+          type: string
+          nullable: true
+        contentType:
+          type: string
+          nullable: true
+      required: [bucket, key, size]
+
+    MediaObject:
+      allOf:
+        - $ref: "#/components/schemas/StorageObjectMetadata"
+        - type: object
+          properties:
+            publicUrl: { type: string }
+          required: [publicUrl]
+
+    PresignedPostResult:
+      type: object
+      properties:
+        url: { type: string }
+        fields:
+          type: object
+          additionalProperties:
+            type: string
+        objectKey: { type: string }
+        maxBytes:
+          type: integer
+          nullable: true
+        expiresInSec: { type: integer }
+      required: [url, fields, objectKey, expiresInSec]
+
   responses:
     Error400:
       description: Bad request
@@ -1305,5 +1349,312 @@ paths:
                 $ref: "#/components/schemas/AIModel"
         "401":
           $ref: "#/components/responses/Error401"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /media/{userId}/images/presigned:
+    post:
+      summary: Get presigned POST for image upload
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filename: { type: string }
+                sizeBytes: { type: integer }
+              required: [filename, sizeBytes]
+      responses:
+        "200":
+          description: Presigned POST to upload image bytes to storage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PresignedPostResult"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /media/{userId}/images/finalize:
+    post:
+      summary: Finalize image (move from staging, enqueue thumbnail job)
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                key:
+                  type: string
+                  description: Staging object key returned as objectKey from presign API
+              required: [key]
+      responses:
+        "200":
+          description: Finalized media object (master)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaObject"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /media/{userId}/images:
+    get:
+      summary: List user's images (masters)
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+          required: false
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+          required: false
+      responses:
+        "200":
+          description: List of media objects
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/MediaObject"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /media/{userId}/images/{path}:
+    get:
+      summary: Download a specific image or thumbnail
+      description: |
+        `path` is a URL-encoded path relative to the user prefix. It may contain slashes (e.g. `797491/XXXXXXXX.png` or `thumbs/XXXXXXXX_image.webp`).
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+          allowReserved: true
+      responses:
+        "200":
+          description: Image bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+    delete:
+      summary: Delete a specific image master (and its thumbnails)
+      description: Deletes the master image and any thumbnails under `/thumbs/` derived from it.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+          allowReserved: true
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+                example: { result: ok }
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /media/{userId}/profiles/{slot}/presigned:
+    post:
+      summary: Get presigned POST for profile image upload (avatar)
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: slot
+          in: path
+          required: true
+          schema: { type: string, enum: [avatar] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filename: { type: string }
+                sizeBytes: { type: integer }
+              required: [filename, sizeBytes]
+      responses:
+        "200":
+          description: Presigned POST to upload profile image
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PresignedPostResult"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /media/{userId}/profiles/{slot}/finalize:
+    post:
+      summary: Finalize profile image (avatar). Also updates users.avatar with "<bucket>/<key>"
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: slot
+          in: path
+          required: true
+          schema: { type: string, enum: [avatar] }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                key:
+                  type: string
+                  description: Staging object key returned as objectKey from presign API
+              required: [key]
+      responses:
+        "200":
+          description: Finalized profile master object
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/MediaObject"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /media/{userId}/profiles/{slot}:
+    get:
+      summary: Download profile master image (avatar)
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: slot
+          in: path
+          required: true
+          schema: { type: string, enum: [avatar] }
+      responses:
+        "200":
+          description: Image bytes
+          content:
+            application/octet-stream:
+              schema:
+                type: string
+                format: binary
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+    delete:
+      summary: Delete profile master image (avatar) and its thumbnails, and clear users.avatar
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: slot
+          in: path
+          required: true
+          schema: { type: string, enum: [avatar] }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+                example: { result: ok }
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
         "404":
           $ref: "#/components/responses/Error404"
