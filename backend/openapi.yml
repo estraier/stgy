@@ -154,7 +154,7 @@ components:
       type: object
       properties:
         userId: { type: string }
-        yyyymm: { type: integer, description: Year and month in YYYYMM (UTC) }
+        yyyymm: { type: string }
         bytesMasters: { type: integer }
         bytesThumbs: { type: integer }
         bytesTotal: { type: integer }
@@ -1471,6 +1471,38 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/MediaObject"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /media/{userId}/images/quota:
+    get:
+      summary: Get monthly image storage quota
+      description: Returns the current month's quota if yyyymm is omitted.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: yyyymm
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: '^\d{6}$'
+      responses:
+        "200":
+          description: Monthly quota
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StorageMonthlyQuota"
         "400":
           $ref: "#/components/responses/Error400"
         "401":
