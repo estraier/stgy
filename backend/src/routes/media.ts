@@ -20,9 +20,8 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const pathUserId = req.params.userId;
-    if (!(loginUser.isAdmin || loginUser.id === pathUserId)) {
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    }
     try {
       const presigned = await media.presignImageUpload(
         pathUserId,
@@ -39,9 +38,8 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const pathUserId = req.params.userId;
-    if (!(loginUser.isAdmin || loginUser.id === pathUserId)) {
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    }
     try {
       const meta = await media.finalizeImage(
         pathUserId,
@@ -60,9 +58,8 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const pathUserId = req.params.userId;
-    if (!(loginUser.isAdmin || loginUser.id === pathUserId)) {
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    }
     try {
       const offset = parseInt((req.query.offset as string) ?? "0", 10);
       const limit = parseInt((req.query.limit as string) ?? "100", 10);
@@ -78,14 +75,32 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     }
   });
 
+  router.get("/:userId/images/quota", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const pathUserId = req.params.userId;
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId))
+      return res.status(403).json({ error: "forbidden" });
+    try {
+      const yyyymm =
+        typeof req.query.yyyymm === "string" && req.query.yyyymm.trim() !== ""
+          ? req.query.yyyymm.trim()
+          : undefined;
+      if (yyyymm && !/^\d{6}$/.test(yyyymm)) throw new Error("invalid yyyymm");
+      const quota = await media.calculateMonthlyQuota(pathUserId, yyyymm);
+      res.json(quota);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "error" });
+    }
+  });
+
   router.get(/^\/([^/]+)\/images\/(.*)$/, async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const params = req.params as unknown as string[];
     const pathUserId = params[0] || "";
-    if (!(loginUser.isAdmin || loginUser.id === pathUserId)) {
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    }
     const rest = params[1] || "";
     try {
       const { meta, bytes } = await media.getImageBytes(pathUserId, rest);
@@ -104,9 +119,8 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const params = req.params as unknown as string[];
     const pathUserId = params[0] || "";
-    if (!(loginUser.isAdmin || loginUser.id === pathUserId)) {
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    }
     const rest = params[1] || "";
     try {
       await media.deleteImage(pathUserId, rest);
@@ -121,12 +135,9 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const pathUserId = req.params.userId;
     const slot = req.params.slot;
-    if (!(loginUser.isAdmin || loginUser.id === pathUserId)) {
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    }
-    if (slot !== "avatar") {
-      return res.status(400).json({ error: "invalid slot" });
-    }
+    if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
       const presigned = await media.presignProfileUpload(
         pathUserId,
@@ -146,18 +157,15 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const pathUserId = req.params.userId;
     const slot = req.params.slot;
-    if (!(loginUser.isAdmin || loginUser.id === pathUserId)) {
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    }
-    if (slot !== "avatar") {
-      return res.status(400).json({ error: "invalid slot" });
-    }
+    if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
       const meta = await media.finalizeProfile(
         pathUserId,
         slot,
         typeof req.body.key === "string" ? req.body.key : "",
-        { sizeLimitBytes: Config.MEDIA_AVATAR_BYTE_LIMIT, thumbnailType: "icon" },
+        Config.MEDIA_AVATAR_BYTE_LIMIT,
       );
       await usersService.updateUser({ id: pathUserId, avatar: `${meta.bucket}/${meta.key}` });
       res.json({
@@ -174,12 +182,9 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const pathUserId = req.params.userId;
     const slot = req.params.slot;
-    if (!(loginUser.isAdmin || loginUser.id === pathUserId)) {
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    }
-    if (slot !== "avatar") {
-      return res.status(400).json({ error: "invalid slot" });
-    }
+    if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
       const { meta, bytes } = await media.getProfileBytes(pathUserId, slot);
       if (meta.contentType) res.setHeader("Content-Type", meta.contentType);
@@ -197,12 +202,9 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const pathUserId = req.params.userId;
     const slot = req.params.slot;
-    if (!(loginUser.isAdmin || loginUser.id === pathUserId)) {
+    if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    }
-    if (slot !== "avatar") {
-      return res.status(400).json({ error: "invalid slot" });
-    }
+    if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
       await media.deleteProfile(pathUserId, slot);
       await usersService.updateUser({ id: pathUserId, avatar: null });

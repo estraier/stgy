@@ -150,6 +150,29 @@ components:
         expiresInSec: { type: integer }
       required: [url, fields, objectKey, expiresInSec]
 
+    StorageMonthlyQuota:
+      type: object
+      properties:
+        userId: { type: string }
+        yyyymm: { type: integer, description: Year and month in YYYYMM (UTC) }
+        bytesMasters: { type: integer }
+        bytesThumbs: { type: integer }
+        bytesTotal: { type: integer }
+        limitSingleBytes:
+          type: integer
+          nullable: true
+        limitMonthlyBytes:
+          type: integer
+          nullable: true
+      required:
+        - userId
+        - yyyymm
+        - bytesMasters
+        - bytesThumbs
+        - bytesTotal
+        - limitSingleBytes
+        - limitMonthlyBytes
+
   responses:
     Error400:
       description: Bad request

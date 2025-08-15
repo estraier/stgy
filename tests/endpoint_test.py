@@ -387,6 +387,13 @@ def test_media():
   items = res.json()
   assert any(it["key"] == final_key for it in items), "finalized key not in list"
   print("[media] list OK (contains finalized object)")
+  quota_url = f"{BASE_URL}/media/{user_id}/images/quota"
+  res = requests.get(quota_url, cookies=cookies)
+  quota = res.json()
+  assert "yyyymm" in quota
+  assert quota["bytesMasters"] > 0
+  assert quota["bytesTotal"] > 0
+  print("[media] quota OK")
   del_url = get_url
   res = requests.delete(del_url, cookies=cookies)
   assert res.status_code == 200, res.text

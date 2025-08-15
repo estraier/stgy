@@ -36,3 +36,13 @@ export type StorageObjectDataRange = {
   offset: number;
   length: number;
 };
+
+export type StorageMonthlyQuota = {
+  userId: string;
+  yyyymm: string;
+  bytesMasters: number;
+  bytesThumbs: number;
+  bytesTotal: number;
+  limitSingleBytes: number | null;
+  limitMonthlyBytes: number | null;
+};
