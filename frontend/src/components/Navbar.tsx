@@ -126,6 +126,13 @@ export default function Navbar() {
               Profile
             </Link>
             <Link
+              href="/images"
+              className="block w-full px-4 py-2 text-left hover:bg-gray-100"
+              onClick={() => setMenuOpen(false)}
+            >
+              Images
+            </Link>
+            <Link
               href="/settings"
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
               onClick={() => setMenuOpen(false)}
