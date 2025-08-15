@@ -400,7 +400,7 @@ def test_media():
   pres_url = f"{BASE_URL}/media/{user_id}/profiles/avatar/presigned"
   res = requests.post(
     pres_url,
-    json={"filename": avatar_filename, "sizeBytes": avatar_size, "thumbnailType": "icon"},
+    json={"filename": avatar_filename, "sizeBytes": avatar_size},
     cookies=cookies,
   )
   assert res.status_code == 200, res.text

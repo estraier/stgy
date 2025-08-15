@@ -2,6 +2,7 @@
 
 import React, { useMemo, useState } from "react";
 import Identicon from "@/components/Identicon";
+import { getProfileUrl } from "@/api/media";
 
 type Props = {
   userId: string;
@@ -9,7 +10,7 @@ type Props = {
   hasAvatar: boolean;
   size: number;
   useThumb: boolean;
-  avatarPath?: string | null; // e.g. "fakebook-profiles/<userId>/avatar.webp"
+  avatarPath?: string | null;
   className?: string;
 };
 
@@ -30,7 +31,10 @@ export default function AvatarImg({
     if (useThumb) {
       return `${base}/fakebook-profiles/${encodeURIComponent(userId)}/thumbs/avatar_icon.webp`;
     }
-    return avatarPath ? `${base}/${avatarPath}` : "";
+    if (avatarPath && avatarPath.trim() !== "") {
+      return `${base}/${avatarPath}`;
+    }
+    return getProfileUrl(userId, "avatar");
   }, [base, hasAvatar, useThumb, userId, avatarPath]);
 
   if (!hasAvatar || error || !src) {
@@ -44,7 +48,6 @@ export default function AvatarImg({
   }
 
   return (
-    // eslint-disable-next-line @next/next/no-img-element
     <img
       src={src}
       width={size}
@@ -52,6 +55,7 @@ export default function AvatarImg({
       alt={`${nickname}'s avatar`}
       className={`rounded-lg border border-gray-300 object-cover ${className || ""}`}
       onError={() => setError(true)}
+      loading="lazy"
     />
   );
 }

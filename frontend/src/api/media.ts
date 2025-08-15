@@ -21,10 +21,7 @@ export async function presignImageUpload(
   return res.json();
 }
 
-export async function finalizeImage(
-  userId: string,
-  objectKey: string,
-): Promise<MediaObject> {
+export async function finalizeImage(userId: string, objectKey: string): Promise<MediaObject> {
   const res = await apiFetch(`/media/${encodeURIComponent(userId)}/images/finalize`, {
     method: "POST",
     body: JSON.stringify({ key: objectKey }),
@@ -61,10 +58,7 @@ export async function deleteImage(userId: string, restPath: string): Promise<{ r
   return res.json();
 }
 
-export async function fetchImageBinary(
-  userId: string,
-  restPath: string,
-): Promise<Blob> {
+export async function fetchImageBinary(userId: string, restPath: string): Promise<Blob> {
   const res = await apiFetch(
     `/media/${encodeURIComponent(userId)}/images/${encodePath(restPath)}`,
     { method: "GET" },
@@ -94,10 +88,7 @@ export async function uploadToPresigned(
               : (file as ArrayBuffer),
           ],
           {
-            type:
-              contentType ||
-              presigned.fields["Content-Type"] ||
-              "application/octet-stream",
+            type: contentType || presigned.fields["Content-Type"] || "application/octet-stream",
           },
         );
   form.append("file", blob, filename ?? "upload.bin");
@@ -114,6 +105,9 @@ export async function presignProfileUpload(
   filename: string,
   sizeBytes: number,
 ): Promise<PresignedPostResult> {
+  console.log(
+    `/media/${encodeURIComponent(userId)}/profiles/${encodeURIComponent(slot)}/presigned`,
+  );
   const res = await apiFetch(
     `/media/${encodeURIComponent(userId)}/profiles/${encodeURIComponent(slot)}/presigned`,
     {
@@ -145,10 +139,7 @@ export function getProfileUrl(userId: string, slot: "avatar"): string {
   return `${API_BASE_URL}/media/${encodeURIComponent(userId)}/profiles/${encodeURIComponent(slot)}`;
 }
 
-export async function deleteProfile(
-  userId: string,
-  slot: "avatar",
-): Promise<{ result: string }> {
+export async function deleteProfile(userId: string, slot: "avatar"): Promise<{ result: string }> {
   const res = await apiFetch(
     `/media/${encodeURIComponent(userId)}/profiles/${encodeURIComponent(slot)}`,
     { method: "DELETE" },
@@ -157,10 +148,7 @@ export async function deleteProfile(
   return res.json();
 }
 
-export async function fetchProfileBinary(
-  userId: string,
-  slot: "avatar",
-): Promise<Blob> {
+export async function fetchProfileBinary(userId: string, slot: "avatar"): Promise<Blob> {
   const res = await apiFetch(
     `/media/${encodeURIComponent(userId)}/profiles/${encodeURIComponent(slot)}`,
     { method: "GET" },

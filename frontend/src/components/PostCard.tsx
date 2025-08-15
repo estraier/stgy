@@ -2,7 +2,7 @@
 
 import { useRouter } from "next/navigation";
 import type { PostDetail } from "@/api/models";
-import Identicon from "@/components/Identicon";
+import AvatarImg from "@/components/AvatarImg";
 import { Heart, MessageCircle } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
 import { renderHtml } from "@/utils/markdown";
@@ -59,10 +59,13 @@ export default function PostCard({
           onClick={(e) => e.stopPropagation()}
           aria-label="Show post owner detail"
         >
-          <Identicon
-            value={post.ownedBy + ":" + post.ownerNickname}
+          <AvatarImg
+            userId={post.ownedBy}
+            nickname={post.ownerNickname}
+            hasAvatar={true}
             size={24}
-            className="-mt-2 -ml-1 rounded-lg border border-gray-500 bg-gray-100 mr-2 flex-shrink-0 opacity-90 cursor-pointer"
+            useThumb={true}
+            className="-mt-2 -ml-1 mr-2 flex-shrink-0"
           />
         </a>
         <a

@@ -45,7 +45,9 @@ export default function PageBody() {
   const [hasNext, setHasNext] = useState(false);
 
   const setQuery = useCallback(
-    (updates: Partial<{ tab: string; page: number; q: string; oldestFirst: string | undefined }>) => {
+    (
+      updates: Partial<{ tab: string; page: number; q: string; oldestFirst: string | undefined }>,
+    ) => {
       const sp = new URLSearchParams(searchParams);
       for (const key of ["tab", "page", "q", "oldestFirst"]) {
         if (

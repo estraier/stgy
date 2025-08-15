@@ -4,6 +4,7 @@ import React, { useEffect, useState } from "react";
 import type { UserDetail } from "@/api/models";
 import { updateUser, getUserDetail, deleteUser } from "@/api/users";
 import { listAIModels } from "@/api/aiModels";
+import { presignProfileUpload, finalizeProfile, getProfileUrl } from "@/api/media";
 import Link from "next/link";
 
 type UserEditFormProps = {
@@ -34,6 +35,9 @@ export default function UserEditForm({
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [deleteSuccess, setDeleteSuccess] = useState(false);
+
+  const [avatarUrl, setAvatarUrl] = useState(user.avatar ? getProfileUrl(user.id, "avatar") : "");
+  const [uploadingAvatar, setUploadingAvatar] = useState(false);
 
   useEffect(() => {
     setAIModelsLoading(true);
@@ -114,6 +118,31 @@ export default function UserEditForm({
     }
   }
 
+  async function handleAvatarChange(e: React.ChangeEvent<HTMLInputElement>) {
+    if (!e.target.files?.length) return;
+    const file = e.target.files[0];
+    try {
+      setUploadingAvatar(true);
+      const { url, fields, objectKey } = await presignProfileUpload(
+        user.id,
+        "avatar",
+        file.name,
+        file.size,
+      );
+      const formData = new FormData();
+      Object.entries(fields).forEach(([k, v]) => formData.append(k, v as string));
+      formData.append("file", file);
+      const resp = await fetch(url, { method: "POST", body: formData });
+      if (!resp.ok) throw new Error("Upload failed");
+      await finalizeProfile(user.id, "avatar", objectKey);
+      setAvatarUrl(getProfileUrl(user.id, "avatar"));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to upload avatar.");
+    } finally {
+      setUploadingAvatar(false);
+    }
+  }
+
   const canDelete = isAdmin && !isSelf && email.trim() === "";
 
   return (
@@ -122,7 +151,18 @@ export default function UserEditForm({
       onSubmit={canDelete ? handleDeleteUser : handleSubmit}
       onClick={(e) => e.stopPropagation()}
     >
-      {/* Email */}
+      <div className="flex flex-col gap-1">
+        <label className="font-bold text-sm">Avatar Image</label>
+        {avatarUrl && <img src={avatarUrl} alt="avatar" className="w-24 h-24 rounded-full" />}
+        <input
+          type="file"
+          accept="image/*"
+          onChange={handleAvatarChange}
+          disabled={uploadingAvatar}
+          className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700"
+        />
+        {uploadingAvatar && <span className="text-xs text-gray-500">Uploading…</span>}
+      </div>
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
           <label className="font-bold text-sm">Email</label>
@@ -154,7 +194,6 @@ export default function UserEditForm({
           </div>
         )}
       </div>
-      {/* Nickname */}
       <div className="flex flex-col gap-1">
         <label className="font-bold text-sm">Nickname</label>
         <input
@@ -167,7 +206,6 @@ export default function UserEditForm({
           onFocus={handleClearError}
         />
       </div>
-      {/* Introduction */}
       <div className="flex flex-col gap-1">
         <label className="font-bold text-sm">Introduction</label>
         <textarea
@@ -181,7 +219,6 @@ export default function UserEditForm({
           onFocus={handleClearError}
         />
       </div>
-      {/* AI Model */}
       <div className="flex flex-col gap-1">
         <div className="flex flex-row items-center justify-between">
           <label className="font-bold text-sm">AI Model</label>
@@ -209,7 +246,6 @@ export default function UserEditForm({
           </select>
         )}
       </div>
-      {/* AI Personality */}
       {aiModel && (
         <div className="flex flex-col gap-1">
           <label className="font-bold text-sm">AI Personality</label>
@@ -226,7 +262,6 @@ export default function UserEditForm({
           />
         </div>
       )}
-      {/* Admin */}
       {isAdmin && (
         <div className="flex flex-row items-center gap-2">
           <input
@@ -248,7 +283,6 @@ export default function UserEditForm({
           )}
         </div>
       )}
-      {/* Buttons and error */}
       <div className="flex items-center gap-2 mt-2">
         <span className="flex-1 text-red-600 text-sm">{error && error}</span>
         <button
