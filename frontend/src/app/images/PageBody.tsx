@@ -1,17 +1,31 @@
+// src/app/images/PageBody.tsx
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
-import type { MediaObject } from "@/api/models";
+import type { MediaObject, StorageMonthlyQuota } from "@/api/models";
 import {
   listImages,
   presignImageUpload,
   uploadToPresigned,
   finalizeImage,
   deleteImage,
+  getImagesMonthlyQuota,
 } from "@/api/media";
 
 const PAGE_SIZE = 30;
+
+function formatBytes(n: number): string {
+  if (n < 1024) return `${n} B`;
+  const units = ["KB", "MB", "GB", "TB"];
+  let v = n / 1024;
+  let i = 0;
+  while (v >= 1024 && i < units.length - 1) {
+    v /= 1024;
+    i++;
+  }
+  return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
+}
 
 export default function PageBody() {
   const status = useRequireLogin();
@@ -22,6 +36,8 @@ export default function PageBody() {
   const [hasNext, setHasNext] = useState(false);
   const [uploading, setUploading] = useState(false);
   const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [quota, setQuota] = useState<StorageMonthlyQuota | null>(null);
+  const [quotaLoading, setQuotaLoading] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -36,7 +52,7 @@ export default function PageBody() {
     return i >= 0 ? key.slice(i + needle.length) : key;
   }
 
-  async function load() {
+  async function loadList() {
     if (status.state !== "authenticated") return;
     setLoading(true);
     setError(null);
@@ -53,9 +69,29 @@ export default function PageBody() {
     }
   }
 
+  async function loadQuota() {
+    if (status.state !== "authenticated") return;
+    setQuotaLoading(true);
+    try {
+      const q = await getImagesMonthlyQuota(userId!);
+      setQuota(q);
+    } catch (e) {
+      // クォータ取得は致命的でないので、画面には出さずに黙って握りつぶす
+      setQuota(null);
+    } finally {
+      setQuotaLoading(false);
+    }
+  }
+
   useEffect(() => {
-    load(); // eslint-disable-line react-hooks/exhaustive-deps
+    loadList(); // eslint-disable-line react-hooks/exhaustive-deps
   }, [status.state, userId, offset]);
+
+  useEffect(() => {
+    if (status.state === "authenticated") {
+      loadQuota();
+    }
+  }, [status.state, userId]);
 
   async function handleFiles(files: FileList) {
     if (status.state !== "authenticated") return;
@@ -69,7 +105,8 @@ export default function PageBody() {
         await finalizeImage(userId!, presigned.objectKey);
       }
       setPage(1);
-      await load();
+      await loadList();
+      await loadQuota();
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : "Failed to upload.");
     } finally {
@@ -86,6 +123,7 @@ export default function PageBody() {
     try {
       await deleteImage(userId!, restPath);
       setItems((prev) => prev.filter((x) => !(x.bucket === obj.bucket && x.key === obj.key)));
+      await loadQuota();
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : "Failed to delete.");
     }
@@ -93,10 +131,40 @@ export default function PageBody() {
 
   if (status.state !== "authenticated") return null;
 
+  const monthlyLimit = quota?.limitMonthlyBytes ?? null;
+  const pct =
+    monthlyLimit && monthlyLimit > 0 ? Math.min(100, Math.round((quota!.bytesTotal / monthlyLimit) * 100)) : null;
+
   return (
     <main className="max-w-5xl mx-auto mt-8 p-4">
-      <div className="mb-4 flex items-center gap-2">
-        <h1 className="text-xl font-semibold">Images</h1>
+      <div className="mb-4 flex items-start gap-4 flex-wrap">
+        <div className="min-w-[260px]">
+          <h1 className="text-xl font-semibold">Images</h1>
+          <div className="mt-2 text-sm text-gray-700">
+            {quotaLoading && <span className="text-gray-400">Loading quota…</span>}
+            {!quotaLoading && quota && (
+              <div className="space-y-1">
+                <div>Month: <span className="font-mono">{quota.yyyymm}</span></div>
+                <div>Total: <b>{formatBytes(quota.bytesTotal)}</b>{monthlyLimit ? ` / ${formatBytes(monthlyLimit)}` : ""}</div>
+                <div className="text-xs text-gray-500">
+                  Masters: {formatBytes(quota.bytesMasters)} / Thumbs: {formatBytes(quota.bytesThumbs)}
+                </div>
+                {monthlyLimit && (
+                  <div className="mt-1 w-64 h-2 bg-gray-200 rounded overflow-hidden">
+                    <div
+                      className="h-2 bg-blue-400"
+                      style={{ width: `${pct}%` }}
+                      aria-valuemin={0}
+                      aria-valuemax={100}
+                      aria-valuenow={pct ?? 0}
+                    />
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+
         <div className="ml-auto flex items-center gap-2">
           <input
             ref={fileInputRef}
@@ -128,9 +196,7 @@ export default function PageBody() {
       {error && <div className="mb-3 text-sm text-red-600">{error}</div>}
       {loading && <div className="text-gray-500">Loading…</div>}
 
-      {!loading && items.length === 0 && (
-        <div className="text-gray-500">No images.</div>
-      )}
+      {!loading && items.length === 0 && <div className="text-gray-500">No images.</div>}
 
       <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
         {items.map((obj) => (

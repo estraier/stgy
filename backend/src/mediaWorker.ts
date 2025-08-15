@@ -1,3 +1,4 @@
+// src/mediaWorker.ts
 import { Config } from "./config";
 import Redis from "ioredis";
 import sharp from "sharp";
@@ -20,12 +21,30 @@ const redis = new Redis({
 
 const storage: StorageService = makeStorageService(Config.STORAGE_DRIVER);
 
+function stripExt(file: string): string {
+  return file.replace(/\.[^.]+$/, "");
+}
+
 function deriveOutKey(originalKey: string, kind: "image" | "icon"): string {
   const parts = originalKey.split("/");
-  const file = parts.pop() as string;
-  const dir = parts.join("/");
-  const base = file.replace(/\.[^.]+$/, "");
-  return `${dir}/thumbs/${base}_${kind}.webp`;
+  if (kind === "image") {
+    if (parts.length < 4 || parts[1] !== "masters") {
+      throw new Error(`invalid originalKey for image: ${originalKey}`);
+    }
+    const userId = parts[0];
+    const revMM = parts[2];
+    const file = parts[3];
+    const base = stripExt(file);
+    return `${userId}/thumbs/${revMM}/${base}_${kind}.webp`;
+  } else {
+    if (parts.length < 3 || parts[1] !== "masters") {
+      throw new Error(`invalid originalKey for icon: ${originalKey}`);
+    }
+    const userId = parts[0];
+    const file = parts[2];
+    const base = stripExt(file);
+    return `${userId}/thumbs/${base}_${kind}.webp`;
+  }
 }
 
 function calcTargetSize(
@@ -75,7 +94,7 @@ async function handleTask(task: ThumbQueueTask) {
     await generateKind(task.bucket, task.originalKey, task.type);
     return;
   }
-  const _exhaustive: never = task;
+  const _exhaustive: never = task as never;
   console.log("[mediaworker] unknown task type", _exhaustive);
 }
 

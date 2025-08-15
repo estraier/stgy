@@ -1,5 +1,5 @@
 import { API_BASE_URL, apiFetch, extractError } from "./client";
-import type { MediaObject, PresignedPostResult } from "./models";
+import type { MediaObject, PresignedPostResult, StorageMonthlyQuota } from "./models";
 
 function encodePath(path: string): string {
   return path
@@ -155,4 +155,20 @@ export async function fetchProfileBinary(userId: string, slot: "avatar"): Promis
   );
   if (!res.ok) throw new Error(await extractError(res));
   return res.blob();
+}
+
+export async function getImagesMonthlyQuota(
+  userId: string,
+  yyyymm?: string,
+): Promise<StorageMonthlyQuota> {
+  const sp = new URLSearchParams();
+  if (yyyymm) sp.set("yyyymm", yyyymm);
+  const q = sp.toString();
+
+  const res = await apiFetch(
+    `/media/${encodeURIComponent(userId)}/images/quota${q ? `?${q}` : ""}`,
+    { method: "GET" },
+  );
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }

@@ -73,3 +73,13 @@ export type PresignedPostResult = {
   maxBytes?: number | null;
   expiresInSec: number;
 };
+
+export type StorageMonthlyQuota = {
+  userId: string;
+  yyyymm: string;
+  bytesMasters: number;
+  bytesThumbs: number;
+  bytesTotal: number;
+  limitSingleBytes: number | null;
+  limitMonthlyBytes: number | null;
+};
