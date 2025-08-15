@@ -1,7 +1,8 @@
 import Redis from "ioredis";
 import { lookup as mimeLookup, extension as mimeExtension } from "mime-types";
 import crypto from "crypto";
-import type { StorageService, StorageObjectMetadata, PresignedPostResult } from "./storage";
+import { PresignedPostResult, StorageObjectMetadata } from "../models/storage";
+import type { StorageService } from "./storage";
 import { Config } from "../config";
 
 function toRevMM(d: Date) {

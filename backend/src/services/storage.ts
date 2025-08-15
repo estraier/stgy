@@ -1,43 +1,11 @@
-export type PresignedPostRequest = {
-  bucket: string;
-  key: string;
-  contentTypeWhitelist: string;
-  maxBytes?: number;
-  expiresInSec?: number;
-};
-
-export type PresignedPostResult = {
-  url: string;
-  fields: Record<string, string>;
-  objectKey: string;
-  maxBytes: number;
-  expiresInSec: number;
-};
-
-export type StorageObjectId = {
-  bucket: string;
-  key: string;
-};
-
-export type StorageObjectMetadata = {
-  bucket: string;
-  key: string;
-  size: number;
-  etag?: string;
-  lastModified?: string;
-  storageClass?: string;
-  contentType?: string;
-};
-
-export type ListRange = {
-  offset: number;
-  limit: number;
-};
-
-export type StorageObjectDataRange = {
-  offset: number;
-  length: number;
-};
+import {
+  PresignedPostRequest,
+  PresignedPostResult,
+  StorageObjectId,
+  StorageObjectMetadata,
+  StorageObjectListRange,
+  StorageObjectDataRange,
+} from "../models/storage";
 
 export interface StorageService {
   createPresignedPost(req: PresignedPostRequest): Promise<PresignedPostResult>;
@@ -46,7 +14,10 @@ export interface StorageService {
 
   publicUrl(objId: StorageObjectId): string;
 
-  listObjects(objId: StorageObjectId, range?: ListRange): Promise<StorageObjectMetadata[]>;
+  listObjects(
+    objId: StorageObjectId,
+    range?: StorageObjectListRange,
+  ): Promise<StorageObjectMetadata[]>;
 
   loadObject(objId: StorageObjectId, range?: StorageObjectDataRange): Promise<Uint8Array>;
 

@@ -11,15 +11,15 @@ import {
   _Object,
 } from "@aws-sdk/client-s3";
 import { createPresignedPost as awsCreatePresignedPost } from "@aws-sdk/s3-presigned-post";
-import type {
-  StorageService,
+import {
   PresignedPostRequest,
   PresignedPostResult,
   StorageObjectId,
   StorageObjectMetadata,
-  ListRange,
+  StorageObjectListRange,
   StorageObjectDataRange,
-} from "./storage";
+} from "../models/storage";
+import type { StorageService } from "./storage";
 import { Config } from "../config";
 
 function stripEtagQuotes(etag?: string): string | undefined {
@@ -93,7 +93,10 @@ export class StorageS3Service implements StorageService {
     return `${Config.STORAGE_PUBLIC_BASE_URL}/${objId.bucket}/${objId.key}`;
   }
 
-  async listObjects(objId: StorageObjectId, range?: ListRange): Promise<StorageObjectMetadata[]> {
+  async listObjects(
+    objId: StorageObjectId,
+    range?: StorageObjectListRange,
+  ): Promise<StorageObjectMetadata[]> {
     const all: StorageObjectMetadata[] = [];
     let continuationToken: string | undefined = undefined;
     const need = range

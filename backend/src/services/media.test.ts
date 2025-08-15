@@ -1,7 +1,8 @@
 import { jest } from "@jest/globals";
 import Redis from "ioredis";
 import { MediaService } from "./media";
-import type { StorageService, StorageObjectMetadata, PresignedPostResult } from "./storage";
+import type { StorageObjectMetadata, PresignedPostResult } from "../models/storage";
+import type { StorageService } from "./storage";
 
 jest.mock("../config", () => ({
   Config: {
