@@ -76,12 +76,27 @@ export async function uploadToPresigned(
 ): Promise<void> {
   const form = new FormData();
   Object.entries(presigned.fields).forEach(([k, v]) => form.append(k, v));
+
   const blob =
     file instanceof Blob
       ? file
-      : new Blob([file instanceof Uint8Array ? file : new Uint8Array(file)], {
-          type: contentType || presigned.fields["Content-Type"] || "application/octet-stream",
-        });
+      : new Blob(
+          [
+            file instanceof Uint8Array
+              ? (file.buffer.slice(
+                  file.byteOffset,
+                  file.byteOffset + file.byteLength,
+                ) as ArrayBuffer)
+              : (file as ArrayBuffer),
+          ],
+          {
+            type:
+              contentType ||
+              presigned.fields["Content-Type"] ||
+              "application/octet-stream",
+          },
+        );
+
   form.append("file", blob, filename ?? "upload.bin");
 
   // S3互換の署名つきURLには Cookie は不要なので omit

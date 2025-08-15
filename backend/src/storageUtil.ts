@@ -1,5 +1,5 @@
 import { Config } from "./config";
-import { StorageObjectId, ListRange } from "./services/storage";
+import { StorageObjectId, StorageObjectListRange } from "./models/storage";
 import { makeStorageService } from "./services/storageFactory";
 import path from "path";
 import { readFile, writeFile } from "fs/promises";
@@ -45,7 +45,7 @@ async function main() {
     case "list": {
       let range = undefined;
       if (args.length >= 4) {
-        range = { offset: parseInt(args[2]), limit: parseInt(args[3]) } as ListRange;
+        range = { offset: parseInt(args[2]), limit: parseInt(args[3]) } as StorageObjectListRange;
       }
       const objs = await svc.listObjects(id, range);
       const sliced = objs.map((obj) => ({
