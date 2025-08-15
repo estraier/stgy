@@ -1,10 +1,17 @@
 "use client";
 
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
+import Image from "next/image";
 import type { UserDetail } from "@/api/models";
 import { updateUser, getUserDetail, deleteUser } from "@/api/users";
 import { listAIModels } from "@/api/aiModels";
-import { presignProfileUpload, finalizeProfile, getProfileUrl } from "@/api/media";
+import {
+  presignProfileUpload,
+  finalizeProfile,
+  getProfileUrl,
+  deleteProfile,
+  fetchProfileBinary,
+} from "@/api/media";
 import Link from "next/link";
 
 type UserEditFormProps = {
@@ -38,6 +45,8 @@ export default function UserEditForm({
 
   const [avatarUrl, setAvatarUrl] = useState(user.avatar ? getProfileUrl(user.id, "avatar") : "");
   const [uploadingAvatar, setUploadingAvatar] = useState(false);
+
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     setAIModelsLoading(true);
@@ -104,7 +113,6 @@ export default function UserEditForm({
       if (aiModel) {
         input.aiPersonality = aiPersonality;
       }
-
       await updateUser(user.id, input);
 
       const updatedUser = await getUserDetail(user.id, user.id);
@@ -115,6 +123,23 @@ export default function UserEditForm({
       setError(err instanceof Error ? err.message : "Failed to update user.");
     } finally {
       setSubmitting(false);
+    }
+  }
+
+  // 反映準備ができるまでポーリング（最大5秒）
+  async function waitForAvatarReady(maxMs = 5000) {
+    const start = Date.now();
+    let attempt = 0;
+    while (Date.now() - start < maxMs) {
+      try {
+        const blob = await fetchProfileBinary(user.id, "avatar");
+        if (blob && blob.size > 0) return; // OK
+      } catch {
+        // まだ反映前
+      }
+      attempt += 1;
+      const delay = Math.min(1000, 150 * Math.pow(1.5, attempt));
+      await new Promise((r) => setTimeout(r, delay));
     }
   }
 
@@ -134,10 +159,29 @@ export default function UserEditForm({
       formData.append("file", file);
       const resp = await fetch(url, { method: "POST", body: formData });
       if (!resp.ok) throw new Error("Upload failed");
+
       await finalizeProfile(user.id, "avatar", objectKey);
-      setAvatarUrl(getProfileUrl(user.id, "avatar"));
+
+      // 反映待ち → キャッシュバスター付きURLに更新
+      await waitForAvatarReady(5000);
+      setAvatarUrl(`${getProfileUrl(user.id, "avatar")}?v=${Date.now()}`);
+      setError(null);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to upload avatar.");
+    } finally {
+      setUploadingAvatar(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  }
+
+  async function handleRemoveAvatar() {
+    try {
+      setUploadingAvatar(true);
+      await deleteProfile(user.id, "avatar");
+      setAvatarUrl("");
+      setError(null);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Failed to remove avatar.");
     } finally {
       setUploadingAvatar(false);
     }
@@ -153,16 +197,58 @@ export default function UserEditForm({
     >
       <div className="flex flex-col gap-1">
         <label className="font-bold text-sm">Avatar Image</label>
-        {avatarUrl && <img src={avatarUrl} alt="avatar" className="w-24 h-24 rounded-full" />}
+
+        {avatarUrl && (
+          <Image
+            src={avatarUrl}
+            alt="avatar"
+            width={384}
+            height={384}
+            className="rounded object-cover mb-2 border border-gray-400"
+            unoptimized
+            priority
+          />
+        )}
+
+        <div className="flex items-center gap-2">
+          <button
+            type="button"
+            onClick={() => fileInputRef.current?.click()}
+            disabled={uploadingAvatar}
+            className={`px-3 py-1 rounded border transition ${
+              uploadingAvatar
+                ? "bg-gray-200 text-gray-400 border-gray-300 cursor-not-allowed"
+                : "bg-gray-300 text-gray-900 border-gray-700 hover:bg-gray-400"
+            }`}
+          >
+            {uploadingAvatar ? "Uploading…" : "Choose image file"}
+          </button>
+
+          {avatarUrl && (
+            <button
+              type="button"
+              onClick={handleRemoveAvatar}
+              disabled={uploadingAvatar}
+              className="px-3 py-1 rounded border border-red-200 text-red-600 hover:bg-red-50 transition disabled:text-gray-400 disabled:border-gray-300"
+            >
+              Remove
+            </button>
+          )}
+        </div>
+
+        {/* 実体の file input は隠す（ブラウザ標準の“Choose File”を見せない） */}
         <input
+          ref={fileInputRef}
           type="file"
           accept="image/*"
           onChange={handleAvatarChange}
           disabled={uploadingAvatar}
-          className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700"
+          className="sr-only"
         />
+
         {uploadingAvatar && <span className="text-xs text-gray-500">Uploading…</span>}
       </div>
+
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between">
           <label className="font-bold text-sm">Email</label>
@@ -194,6 +280,7 @@ export default function UserEditForm({
           </div>
         )}
       </div>
+
       <div className="flex flex-col gap-1">
         <label className="font-bold text-sm">Nickname</label>
         <input
@@ -206,6 +293,7 @@ export default function UserEditForm({
           onFocus={handleClearError}
         />
       </div>
+
       <div className="flex flex-col gap-1">
         <label className="font-bold text-sm">Introduction</label>
         <textarea
@@ -219,6 +307,7 @@ export default function UserEditForm({
           onFocus={handleClearError}
         />
       </div>
+
       <div className="flex flex-col gap-1">
         <div className="flex flex-row items-center justify-between">
           <label className="font-bold text-sm">AI Model</label>
@@ -246,6 +335,7 @@ export default function UserEditForm({
           </select>
         )}
       </div>
+
       {aiModel && (
         <div className="flex flex-col gap-1">
           <label className="font-bold text-sm">AI Personality</label>
@@ -262,6 +352,7 @@ export default function UserEditForm({
           />
         </div>
       )}
+
       {isAdmin && (
         <div className="flex flex-row items-center gap-2">
           <input
@@ -283,6 +374,7 @@ export default function UserEditForm({
           )}
         </div>
       )}
+
       <div className="flex items-center gap-2 mt-2">
         <span className="flex-1 text-red-600 text-sm">{error && error}</span>
         <button

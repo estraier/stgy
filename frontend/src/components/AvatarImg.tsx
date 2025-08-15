@@ -2,7 +2,6 @@
 
 import React, { useMemo, useState } from "react";
 import Identicon from "@/components/Identicon";
-import { getProfileUrl } from "@/api/media";
 
 type Props = {
   userId: string;
@@ -10,6 +9,9 @@ type Props = {
   hasAvatar: boolean;
   size: number;
   useThumb: boolean;
+  /** これが変わるたびに ?v=... を付け替えてキャッシュを回避 */
+  version?: string | number | null;
+  /** 例: "fakebook-profiles/<userId>/avatar.webp" */
   avatarPath?: string | null;
   className?: string;
 };
@@ -20,22 +22,27 @@ export default function AvatarImg({
   hasAvatar,
   size,
   useThumb,
+  version,
   avatarPath,
   className = "",
 }: Props) {
-  const base = process.env.NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL || "http://localhost:9000";
+  const base =
+    process.env.NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL || "http://localhost:9000";
   const [error, setError] = useState(false);
+
+  const suffix = version != null && version !== ""
+    ? `?v=${encodeURIComponent(String(version))}`
+    : "";
 
   const src = useMemo(() => {
     if (!hasAvatar) return "";
     if (useThumb) {
-      return `${base}/fakebook-profiles/${encodeURIComponent(userId)}/thumbs/avatar_icon.webp`;
+      return `${base}/fakebook-profiles/${encodeURIComponent(
+        userId
+      )}/thumbs/avatar_icon.webp${suffix}`;
     }
-    if (avatarPath && avatarPath.trim() !== "") {
-      return `${base}/${avatarPath}`;
-    }
-    return getProfileUrl(userId, "avatar");
-  }, [base, hasAvatar, useThumb, userId, avatarPath]);
+    return avatarPath ? `${base}/${avatarPath}${suffix}` : "";
+  }, [base, hasAvatar, useThumb, userId, avatarPath, suffix]);
 
   if (!hasAvatar || error || !src) {
     return (
@@ -47,6 +54,7 @@ export default function AvatarImg({
     );
   }
 
+  // eslint-disable-next-line @next/next/no-img-element
   return (
     <img
       src={src}
@@ -55,7 +63,6 @@ export default function AvatarImg({
       alt={`${nickname}'s avatar`}
       className={`rounded-lg border border-gray-300 object-cover ${className || ""}`}
       onError={() => setError(true)}
-      loading="lazy"
     />
   );
 }

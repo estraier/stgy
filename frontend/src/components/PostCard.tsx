@@ -63,20 +63,20 @@ export default function PostCard({
             userId={post.ownedBy}
             nickname={post.ownerNickname}
             hasAvatar={true}
-            size={24}
+            size={32}
             useThumb={true}
-            className="-mt-2 -ml-1 mr-2 flex-shrink-0"
+            className="-mt-1 -ml-1 mr-2 flex-shrink-0"
           />
         </a>
         <a
-          className="font-bold text-blue-700 hover:underline min-w-[20ex] max-w-[48ex] truncate inline-block align-bottom"
+          className="-mt-1 text-lg text-blue-700 hover:underline min-w-[20ex] max-w-[48ex] truncate inline-block align-bottom"
           href={`/users/${post.ownedBy}`}
           onClick={(e) => e.stopPropagation()}
         >
           {post.ownerNickname}
         </a>
         {post.replyTo && (
-          <span className="ml-2 text-xs text-gray-500">
+          <span className="-mt-1 ml-2 text-xs text-gray-500">
             In response to{" "}
             <a
               href={`/posts/${post.replyTo}`}
@@ -87,7 +87,7 @@ export default function PostCard({
             </a>
           </span>
         )}
-        <span className="relative pr-1 ml-auto text-gray-400 whitespace-nowrap">
+        <span className="relative -mt-1 pr-1 ml-auto text-gray-400 whitespace-nowrap">
           {formatDateTime(new Date(post.createdAt))}
           {post.updatedAt && (
             <div className="absolute right-1 -translate-y-1 ml-1 text-[11px] text-gray-400">

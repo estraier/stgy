@@ -26,6 +26,7 @@ export default function UserCard({
   const [hovering, setHovering] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [user, setUser] = useState(initialUser);
+  const [avatarExpanded, setAvatarExpanded] = useState(false);
 
   useEffect(() => {
     setUser(initialUser);
@@ -111,14 +112,39 @@ export default function UserCard({
       }
     >
       <div className="flex items-center text-base font-semibold">
-        <AvatarImg
-          userId={user.id}
-          nickname={user.nickname}
-          hasAvatar={!!user.avatar}
-          size={truncated ? 24 : 64}
-          useThumb={truncated}
-          className={`${truncated ? "-mt-2 -ml-1" : ""} mr-2 flex-shrink-0`}
-        />
+        {truncated ? (
+          <AvatarImg
+            userId={user.id}
+            nickname={user.nickname}
+            hasAvatar={!!user.avatar}
+            size={32}
+            useThumb={true}
+            version={user.updatedAt}
+            className="-mt-2 -ml-1 mr-2 flex-shrink-0"
+          />
+        ) : (
+          <button
+            type="button"
+            className="-mt-2 -ml-1 mr-2 flex-shrink-0 rounded-lg focus:outline-none"
+            onClick={(e) => {
+              e.stopPropagation();
+              if (user.avatar) setAvatarExpanded((v) => !v);
+            }}
+            aria-pressed={avatarExpanded}
+            title={user.avatar ? "Toggle large avatar" : "No avatar"}
+          >
+            <AvatarImg
+              userId={user.id}
+              nickname={user.nickname}
+              hasAvatar={!!user.avatar}
+              size={64}
+              useThumb={false}
+              version={user.updatedAt}
+              avatarPath={user.avatar || null}
+            />
+          </button>
+        )}
+
         <span
           className={`-mt-1 truncate max-w-[24ex] text-blue-700 ${
             truncated ? "text-base" : "text-xl px-2"
@@ -156,6 +182,32 @@ export default function UserCard({
         )}
         <span className="ml-auto">{followButton}</span>
       </div>
+
+      {!truncated && avatarExpanded && user.avatar && (
+        <div
+          className="mt-3 p-2 border rounded-lg bg-gray-50 inline-block focus:outline-none"
+          onMouseDown={(e) => e.preventDefault()}
+          onClick={(e) => {
+            e.stopPropagation();
+            setAvatarExpanded(false);
+          }}
+          role="button"
+          aria-label="Close large avatar"
+          title="Click to close"
+        >
+          <AvatarImg
+            userId={user.id}
+            nickname={user.nickname}
+            hasAvatar={!!user.avatar}
+            size={480}
+            useThumb={false}
+            version={user.updatedAt}
+            avatarPath={user.avatar || null}
+            className="rounded-lg"
+          />
+        </div>
+      )}
+
       <div
         className={`markdown-body user-introduction${truncated ? " excerpt" : ""}`}
         dangerouslySetInnerHTML={{
