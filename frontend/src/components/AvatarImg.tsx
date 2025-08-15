@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useMemo, useState } from "react";
+import Image from "next/image";
 import Identicon from "@/components/Identicon";
 
 type Props = {
@@ -26,19 +27,17 @@ export default function AvatarImg({
   avatarPath,
   className = "",
 }: Props) {
-  const base =
-    process.env.NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL || "http://localhost:9000";
+  const base = process.env.NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL || "http://localhost:9000";
   const [error, setError] = useState(false);
 
-  const suffix = version != null && version !== ""
-    ? `?v=${encodeURIComponent(String(version))}`
-    : "";
+  const suffix =
+    version != null && version !== "" ? `?v=${encodeURIComponent(String(version))}` : "";
 
   const src = useMemo(() => {
     if (!hasAvatar) return "";
     if (useThumb) {
       return `${base}/fakebook-profiles/${encodeURIComponent(
-        userId
+        userId,
       )}/thumbs/avatar_icon.webp${suffix}`;
     }
     return avatarPath ? `${base}/${avatarPath}${suffix}` : "";
@@ -54,14 +53,14 @@ export default function AvatarImg({
     );
   }
 
-  // eslint-disable-next-line @next/next/no-img-element
   return (
-    <img
+    <Image
       src={src}
       width={size}
       height={size}
       alt={`${nickname}'s avatar`}
       className={`rounded-lg border border-gray-300 object-cover ${className || ""}`}
+      unoptimized
       onError={() => setError(true)}
     />
   );
