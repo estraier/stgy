@@ -1,7 +1,7 @@
-// src/app/images/PageBody.tsx
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import Image from "next/image";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import type { MediaObject, StorageMonthlyQuota } from "@/api/models";
 import {
@@ -12,19 +12,19 @@ import {
   deleteImage,
   getImagesMonthlyQuota,
 } from "@/api/media";
+import { formatDateTime, formatBytes } from "@/utils/format";
 
-const PAGE_SIZE = 30;
+const PAGE_SIZE = 3;
 
-function formatBytes(n: number): string {
-  if (n < 1024) return `${n} B`;
-  const units = ["KB", "MB", "GB", "TB"];
-  let v = n / 1024;
-  let i = 0;
-  while (v >= 1024 && i < units.length - 1) {
-    v /= 1024;
-    i++;
-  }
-  return `${v.toFixed(v >= 10 ? 0 : 1)} ${units[i]}`;
+function parseIsoToDate(iso?: string | null): Date | null {
+  if (!iso) return null;
+  const d = new Date(iso);
+  return Number.isNaN(d.getTime()) ? null : d;
+}
+function restPathFromKey(key: string, uid: string): string {
+  const needle = `${uid}/`;
+  const i = key.indexOf(needle);
+  return i >= 0 ? key.slice(i + needle.length) : key;
 }
 
 export default function PageBody() {
@@ -35,29 +35,35 @@ export default function PageBody() {
   const [page, setPage] = useState(1);
   const [hasNext, setHasNext] = useState(false);
   const [uploading, setUploading] = useState(false);
-  const [previewUrl, setPreviewUrl] = useState<string | null>(null);
+  const [previewObj, setPreviewObj] = useState<MediaObject | null>(null);
   const [quota, setQuota] = useState<StorageMonthlyQuota | null>(null);
   const [quotaLoading, setQuotaLoading] = useState(false);
+  const [copiedKey, setCopiedKey] = useState<string | null>(null);
+
+  const [confirmingDelete, setConfirmingDelete] = useState(false);
+  const [deleting, setDeleting] = useState(false);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
-
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
   const isAdmin = status.state === "authenticated" ? !!status.session.userIsAdmin : false;
-
   const offset = useMemo(() => (page - 1) * PAGE_SIZE, [page]);
 
-  function restPathFromKey(key: string, uid: string): string {
-    const needle = `${uid}/`;
-    const i = key.indexOf(needle);
-    return i >= 0 ? key.slice(i + needle.length) : key;
-  }
+  const copyMarkdownFor = useCallback(async (key: string) => {
+    try {
+      await navigator.clipboard.writeText(`![](${key})`);
+      setCopiedKey(key);
+      setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1200);
+    } catch {
+      alert("Failed to copy to clipboard.");
+    }
+  }, []);
 
-  async function loadList() {
-    if (status.state !== "authenticated") return;
+  const loadList = useCallback(async () => {
+    if (status.state !== "authenticated" || !userId) return;
     setLoading(true);
     setError(null);
     try {
-      const data = await listImages(userId!, { offset, limit: PAGE_SIZE + 1 });
+      const data = await listImages(userId, { offset, limit: PAGE_SIZE + 1 });
       setHasNext(data.length > PAGE_SIZE);
       setItems(data.slice(0, PAGE_SIZE));
     } catch (e: unknown) {
@@ -67,42 +73,38 @@ export default function PageBody() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [status.state, userId, offset]);
 
-  async function loadQuota() {
-    if (status.state !== "authenticated") return;
+  const loadQuota = useCallback(async () => {
+    if (status.state !== "authenticated" || !userId) return;
     setQuotaLoading(true);
     try {
-      const q = await getImagesMonthlyQuota(userId!);
+      const q = await getImagesMonthlyQuota(userId);
       setQuota(q);
-    } catch (e) {
-      // クォータ取得は致命的でないので、画面には出さずに黙って握りつぶす
+    } catch {
       setQuota(null);
     } finally {
       setQuotaLoading(false);
     }
-  }
-
-  useEffect(() => {
-    loadList(); // eslint-disable-line react-hooks/exhaustive-deps
-  }, [status.state, userId, offset]);
-
-  useEffect(() => {
-    if (status.state === "authenticated") {
-      loadQuota();
-    }
   }, [status.state, userId]);
 
+  useEffect(() => {
+    loadList();
+  }, [loadList]);
+  useEffect(() => {
+    loadQuota();
+  }, [loadQuota]);
+
   async function handleFiles(files: FileList) {
-    if (status.state !== "authenticated") return;
+    if (status.state !== "authenticated" || !userId) return;
     if (!files.length) return;
     setUploading(true);
     setError(null);
     try {
       for (const file of Array.from(files)) {
-        const presigned = await presignImageUpload(userId!, file.name, file.size);
+        const presigned = await presignImageUpload(userId, file.name, file.size);
         await uploadToPresigned(presigned, file, file.name, file.type);
-        await finalizeImage(userId!, presigned.objectKey);
+        await finalizeImage(userId, presigned.objectKey);
       }
       setPage(1);
       await loadList();
@@ -115,17 +117,20 @@ export default function PageBody() {
     }
   }
 
-  async function handleDelete(obj: MediaObject) {
-    if (status.state !== "authenticated") return;
-    const restPath = restPathFromKey(obj.key, userId!);
-    const ok = confirm("Delete this image?");
-    if (!ok) return;
+  async function actuallyDelete(obj: MediaObject) {
+    if (status.state !== "authenticated" || !userId) return;
+    setDeleting(true);
     try {
-      await deleteImage(userId!, restPath);
+      const restPath = restPathFromKey(obj.key, userId);
+      await deleteImage(userId, restPath);
       setItems((prev) => prev.filter((x) => !(x.bucket === obj.bucket && x.key === obj.key)));
+      setPreviewObj(null);
+      setConfirmingDelete(false);
       await loadQuota();
     } catch (e: unknown) {
       alert(e instanceof Error ? e.message : "Failed to delete.");
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -133,7 +138,9 @@ export default function PageBody() {
 
   const monthlyLimit = quota?.limitMonthlyBytes ?? null;
   const pct =
-    monthlyLimit && monthlyLimit > 0 ? Math.min(100, Math.round((quota!.bytesTotal / monthlyLimit) * 100)) : null;
+    monthlyLimit && monthlyLimit > 0
+      ? Math.min(100, Math.round((quota!.bytesTotal / monthlyLimit) * 100))
+      : null;
 
   return (
     <main className="max-w-5xl mx-auto mt-8 p-4">
@@ -144,10 +151,16 @@ export default function PageBody() {
             {quotaLoading && <span className="text-gray-400">Loading quota…</span>}
             {!quotaLoading && quota && (
               <div className="space-y-1">
-                <div>Month: <span className="font-mono">{quota.yyyymm}</span></div>
-                <div>Total: <b>{formatBytes(quota.bytesTotal)}</b>{monthlyLimit ? ` / ${formatBytes(monthlyLimit)}` : ""}</div>
+                <div>
+                  Month: <span className="font-mono">{quota.yyyymm}</span>
+                </div>
+                <div>
+                  Total: <b>{formatBytes(quota.bytesTotal)}</b>
+                  {monthlyLimit ? ` / ${formatBytes(monthlyLimit)}` : ""}
+                </div>
                 <div className="text-xs text-gray-500">
-                  Masters: {formatBytes(quota.bytesMasters)} / Thumbs: {formatBytes(quota.bytesThumbs)}
+                  Masters: {formatBytes(quota.bytesMasters)} / Thumbs:{" "}
+                  {formatBytes(quota.bytesThumbs)}
                 </div>
                 {monthlyLimit && (
                   <div className="mt-1 w-64 h-2 bg-gray-200 rounded overflow-hidden">
@@ -172,9 +185,7 @@ export default function PageBody() {
             accept="image/*"
             multiple
             className="hidden"
-            onChange={(e) => {
-              if (e.target.files) handleFiles(e.target.files);
-            }}
+            onChange={(e) => e.target.files && handleFiles(e.target.files)}
             disabled={uploading || !isAdmin}
           />
           <button
@@ -195,35 +206,43 @@ export default function PageBody() {
 
       {error && <div className="mb-3 text-sm text-red-600">{error}</div>}
       {loading && <div className="text-gray-500">Loading…</div>}
-
       {!loading && items.length === 0 && <div className="text-gray-500">No images.</div>}
 
       <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
-        {items.map((obj) => (
-          <li key={`${obj.bucket}/${obj.key}`} className="group relative">
-            <button
-              className="block w-full aspect-square overflow-hidden rounded border border-gray-300 bg-gray-50"
-              onClick={() => setPreviewUrl(obj.publicUrl)}
-              title="Open"
-            >
-              <img
-                src={obj.publicUrl}
-                alt=""
-                className="w-full h-full object-cover"
-                loading="lazy"
-              />
-            </button>
-            <div className="absolute top-1 right-1 opacity-0 group-hover:opacity-100 transition">
+        {items.map((obj) => {
+          const lm = parseIsoToDate(obj.lastModified);
+          return (
+            <li key={`${obj.bucket}/${obj.key}`} className="group relative">
               <button
-                onClick={() => handleDelete(obj)}
-                className="px-2 py-0.5 text-xs rounded border border-red-200 text-red-600 bg-white/90 hover:bg-red-50"
-                title="Delete"
+                className="relative block w-full aspect-square overflow-hidden rounded border border-gray-300 bg-gray-50"
+                onClick={() => {
+                  setPreviewObj(obj);
+                  setConfirmingDelete(false);
+                }}
+                title="Open"
               >
-                Delete
+                <Image
+                  src={obj.publicUrl}
+                  alt=""
+                  fill
+                  unoptimized
+                  className="object-cover"
+                  sizes="(max-width: 640px) 50vw, (max-width: 1024px) 25vw, 16vw"
+                />
               </button>
-            </div>
-          </li>
-        ))}
+              <div className="mt-1 flex items-center justify-between gap-2">
+                <time className="text-[11px] text-gray-500">{lm ? formatDateTime(lm) : "—"}</time>
+                <button
+                  className="text-[11px] px-1 py-0.5 rounded border border-gray-300 bg-white hover:bg-gray-100"
+                  onClick={() => copyMarkdownFor(obj.key)}
+                  title="Copy Markdown"
+                >
+                  {copiedKey === obj.key ? "OK" : "MD"}
+                </button>
+              </div>
+            </li>
+          );
+        })}
       </ul>
 
       <div className="mt-6 flex justify-center gap-4">
@@ -244,29 +263,100 @@ export default function PageBody() {
         </button>
       </div>
 
-      {previewUrl && (
+      {previewObj && (
         <div
           className="fixed inset-0 bg-black/70 z-50 flex items-center justify-center p-4"
-          onClick={() => setPreviewUrl(null)}
+          onClick={() => {
+            setPreviewObj(null);
+            setConfirmingDelete(false);
+          }}
         >
           <div
-            className="bg-white rounded shadow max-w-[90vw] max-h-[90vh] p-2"
+            className="bg-white rounded shadow max-w-[90vw] max-h-[90vh] p-3 w-full sm:w-auto"
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="flex justify-end">
+            <div className="flex justify-between items-start gap-3">
+              <h2 className="text-base font-semibold break-all">Preview</h2>
               <button
                 className="px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100"
-                onClick={() => setPreviewUrl(null)}
+                onClick={() => {
+                  setPreviewObj(null);
+                  setConfirmingDelete(false);
+                }}
               >
                 Close
               </button>
             </div>
-            <div className="mt-2">
-              <img
-                src={previewUrl}
-                alt=""
-                className="max-w-[85vw] max-h-[80vh] object-contain"
-              />
+
+            <div className="mt-2 grid grid-cols-1 sm:grid-cols-[1fr,260px] gap-3">
+              <div className="relative w-[85vw] h-[70vh] sm:w-[70vw]">
+                <Image
+                  src={previewObj.publicUrl}
+                  alt=""
+                  fill
+                  unoptimized
+                  className="object-contain"
+                  sizes="(max-width: 1024px) 85vw, 70vw"
+                />
+              </div>
+              <div className="text-sm text-gray-700 space-y-1">
+                <div>
+                  <span className="text-gray-500">Key:</span>{" "}
+                  <span className="font-mono break-all">{previewObj.key}</span>
+                </div>
+                <div>
+                  <span className="text-gray-500">Size:</span> {formatBytes(previewObj.size)}
+                </div>
+                <div>
+                  <span className="text-gray-500">Type:</span> {previewObj.contentType || "unknown"}
+                </div>
+                <div>
+                  <span className="text-gray-500">Last Modified:</span>{" "}
+                  {(() => {
+                    const d = parseIsoToDate(previewObj.lastModified);
+                    return d ? formatDateTime(d) : "—";
+                  })()}
+                </div>
+              </div>
+            </div>
+
+            <div className="mt-3 flex flex-wrap gap-2 justify-end items-center">
+              {!confirmingDelete ? (
+                <>
+                  <button
+                    className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
+                    onClick={() => copyMarkdownFor(previewObj.key)}
+                    title="Copy Markdown (![](key))"
+                  >
+                    {copiedKey === previewObj.key ? "Copied!" : "Copy Markdown"}
+                  </button>
+                  <button
+                    className="px-3 py-1 rounded border border-red-300 text-red-700 bg-white hover:bg-red-50"
+                    onClick={() => setConfirmingDelete(true)}
+                    title="Delete"
+                  >
+                    Delete
+                  </button>
+                </>
+              ) : (
+                <>
+                  <span className="text-sm text-red-700 mr-1">Really delete this image?</span>
+                  <button
+                    className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
+                    onClick={() => setConfirmingDelete(false)}
+                    disabled={deleting}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    className="px-3 py-1 rounded border border-red-400 text-white bg-red-500 hover:bg-red-600 disabled:opacity-60"
+                    onClick={() => actuallyDelete(previewObj)}
+                    disabled={deleting}
+                  >
+                    {deleting ? "Deleting…" : "Delete permanently"}
+                  </button>
+                </>
+              )}
             </div>
           </div>
         </div>
