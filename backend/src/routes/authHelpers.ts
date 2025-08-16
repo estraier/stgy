@@ -11,6 +11,10 @@ export class AuthHelpers {
     this.usersService = usersService;
   }
 
+  getSessionId(req: Request): string | null {
+    return req.cookies?.session_id ?? null;
+  }
+
   async getSessionInfo(req: Request) {
     const sessionId = req.cookies?.session_id;
     if (!sessionId) return null;

@@ -168,6 +168,12 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       };
       const updated = await usersService.updateUser(input);
       if (!updated) return res.status(404).json({ error: "not found" });
+      if (loginUser.id === req.params.id) {
+        const sessionId = authHelpers.getSessionId(req);
+        if (sessionId) {
+          await authService.refreshSessionInfo(sessionId);
+        }
+      }
       res.json(updated);
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "update error" });

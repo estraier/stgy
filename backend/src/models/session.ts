@@ -3,5 +3,6 @@ export type SessionInfo = {
   userEmail: string;
   userNickname: string;
   userIsAdmin: boolean;
+  userUpdatedAt: string | null;
   loggedInAt: string;
 };

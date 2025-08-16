@@ -168,6 +168,12 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
         Config.MEDIA_AVATAR_BYTE_LIMIT,
       );
       await usersService.updateUser({ id: pathUserId, avatar: `${meta.bucket}/${meta.key}` });
+      if (loginUser.id === pathUserId) {
+        const sessionId = authHelpers.getSessionId(req);
+        if (sessionId) {
+          await authService.refreshSessionInfo(sessionId);
+        }
+      }
       res.json({
         ...meta,
         publicUrl: storage.publicUrl({ bucket: meta.bucket, key: meta.key }),
@@ -208,6 +214,12 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     try {
       await media.deleteProfile(pathUserId, slot);
       await usersService.updateUser({ id: pathUserId, avatar: null });
+      if (loginUser.id === pathUserId) {
+        const sessionId = authHelpers.getSessionId(req);
+        if (sessionId) {
+          await authService.refreshSessionInfo(sessionId);
+        }
+      }
       res.json({ result: "ok" });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "error" });
