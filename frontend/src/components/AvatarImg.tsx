@@ -61,6 +61,7 @@ export default function AvatarImg({
       alt={`${nickname}'s avatar`}
       className={`rounded-lg border border-gray-300 object-cover ${className || ""}`}
       unoptimized
+      priority
       onError={() => setError(true)}
     />
   );
