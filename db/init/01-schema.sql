@@ -38,7 +38,7 @@ CREATE TABLE posts (
   id VARCHAR(50) PRIMARY KEY,
   content VARCHAR(5000) NOT NULL,
   owned_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  reply_to VARCHAR(50),
+  reply_to VARCHAR(50) REFERENCES posts(id) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ
 );
