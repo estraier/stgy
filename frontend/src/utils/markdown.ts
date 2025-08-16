@@ -444,7 +444,8 @@ function parseInline(text: string): Node[] {
       ...parseInline(text.slice(m.index + m[0].length)),
     ];
   }
-  const linkRe = /\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g;
+  const linkRe =
+    /\[([^\]]+)\]\(((?:https?:\/\/[^\s)]+|\/(?:posts|users|data)\/[^\s)]+))\)/g;
   const nodes: Node[] = [];
   let last = 0,
     match: RegExpExecArray | null;
@@ -461,7 +462,8 @@ function parseInline(text: string): Node[] {
     last = match.index + match[0].length;
   }
   text = text.slice(last);
-  const urlRe = /https?:\/\/[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]+/g;
+  const urlRe =
+    /(https?:\/\/[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]+|\/(?:posts|users|data)\/[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]*)/g;
   last = 0;
   while ((match = urlRe.exec(text))) {
     if (match.index > last) {
