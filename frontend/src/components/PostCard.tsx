@@ -17,6 +17,7 @@ type PostCardProps = {
   children?: React.ReactNode;
   className?: string;
   clickable?: boolean;
+  avatarVersion?: string | null;
 };
 
 export default function PostCard({
@@ -29,6 +30,7 @@ export default function PostCard({
   children,
   className = "",
   clickable = true,
+  avatarVersion,
 }: PostCardProps) {
   const router = useRouter();
   function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
@@ -66,6 +68,7 @@ export default function PostCard({
             size={32}
             useThumb={true}
             className="-mt-1 -ml-1 mr-2 flex-shrink-0"
+            version={avatarVersion}
           />
         </a>
         <a
