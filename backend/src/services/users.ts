@@ -57,8 +57,7 @@ export class UsersService {
 
   async getUserDetail(id: string, focusUserId?: string): Promise<UserDetail | null> {
     const userRes = await this.pgClient.query(
-      `SELECT id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at,
-              count_followers, count_followees
+      `SELECT id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees, count_posts
        FROM users WHERE id = $1`,
       [id],
     );
@@ -134,8 +133,7 @@ export class UsersService {
     const nickname = input?.nickname?.trim();
 
     let baseSelect = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality,
-             u.created_at, u.updated_at, u.count_followers, u.count_followees
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
       FROM users u
     `;
     const params: unknown[] = [];
@@ -408,8 +406,7 @@ export class UsersService {
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     const sql = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality,
-             u.created_at, u.updated_at, u.count_followers, u.count_followees
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
       FROM user_follows f
       JOIN users u ON f.followee_id = u.id
       WHERE f.follower_id = $1
@@ -451,8 +448,7 @@ export class UsersService {
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     const sql = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality,
-             u.created_at, u.updated_at, u.count_followers, u.count_followees
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
       FROM user_follows f
       JOIN users u ON f.follower_id = u.id
       WHERE f.followee_id = $1

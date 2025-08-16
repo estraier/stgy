@@ -248,6 +248,7 @@ export default function UserCard({
         <div className="text-xs text-gray-500 mt-2">
           <span className="gap-1">followers: {user.countFollowers}</span>
           <span className="ml-2">followees: {user.countFollowees}</span>
+          <span className="ml-2">posts: {user.countPosts}</span>
         </div>
       )}
     </article>

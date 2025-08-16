@@ -118,7 +118,7 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees FROM users WHERE id = $1",
+        "SELECT id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1",
       )
     ) {
       const user = this.users.find((u) => u.id === params[0]);
@@ -127,6 +127,7 @@ class MockPgClient {
         ...user,
         count_followers: this.cntFollowers(user.id),
         count_followees: this.cntFollowees(user.id),
+        count_posts: 0,
       };
       return { rows: [row] };
     }
@@ -177,7 +178,7 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees FROM users u",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM users u",
       )
     ) {
       let list = [...this.users];
@@ -200,6 +201,7 @@ class MockPgClient {
         ...u,
         count_followers: this.cntFollowers(u.id),
         count_followees: this.cntFollowees(u.id),
+        count_posts: 0,
       }));
       return { rows };
     }
@@ -288,7 +290,7 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
       )
     ) {
       const followerId = params[0];
@@ -303,13 +305,14 @@ class MockPgClient {
         ...u,
         count_followers: this.cntFollowers(u.id),
         count_followees: this.cntFollowees(u.id),
+        count_posts: 0,
       }));
       return { rows };
     }
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
       )
     ) {
       const followeeId = params[0];
@@ -324,6 +327,7 @@ class MockPgClient {
         ...u,
         count_followers: this.cntFollowers(u.id),
         count_followees: this.cntFollowees(u.id),
+        count_posts: 0,
       }));
       return { rows };
     }
@@ -395,6 +399,7 @@ describe("UsersService", () => {
     expect(detail?.id).toBe("alice");
     expect(detail?.countFollowers).toBe(2);
     expect(detail?.countFollowees).toBe(2);
+    expect(detail?.countPosts).toBe(0);
     expect(detail?.isFollowedByFocusUser).toBe(true);
     expect(detail?.isFollowingFocusUser).toBe(true);
   });
@@ -410,16 +415,19 @@ describe("UsersService", () => {
     const details = await service.listUsersDetail({}, "bob");
     const aliceDetail = details.find((u) => u.id === "alice")!;
     expect(aliceDetail.countFollowees).toBe(2);
+    expect(aliceDetail.countPosts).toBe(0);
     expect(aliceDetail.isFollowedByFocusUser).toBe(true);
     expect(aliceDetail.isFollowingFocusUser).toBe(true);
     const bobDetail = details.find((u) => u.id === "bob")!;
     expect(bobDetail.countFollowers).toBe(1);
     expect(bobDetail.countFollowees).toBe(1);
+    expect(bobDetail.countPosts).toBe(0);
     expect(bobDetail.isFollowedByFocusUser).toBeUndefined();
     expect(bobDetail.isFollowingFocusUser).toBeUndefined();
     const carolDetail = details.find((u) => u.id === "carol")!;
     expect(carolDetail.countFollowers).toBe(1);
     expect(carolDetail.countFollowees).toBe(1);
+    expect(carolDetail.countPosts).toBe(0);
     expect(carolDetail.isFollowedByFocusUser).toBe(false);
     expect(carolDetail.isFollowingFocusUser).toBe(false);
   });
@@ -565,6 +573,7 @@ describe("UsersService", () => {
     expect(res.some((u) => u.id === "bob")).toBe(true);
     expect(res.some((u) => u.id === "carol")).toBe(true);
     expect(res.every((u) => typeof u.countFollowers === "number")).toBe(true);
+    expect(res.every((u) => typeof u.countPosts === "number")).toBe(true);
   });
 
   test("listFollowersDetail (with focusUserId)", async () => {
@@ -573,6 +582,7 @@ describe("UsersService", () => {
     expect(res.some((u) => u.id === "bob")).toBe(true);
     expect(res.some((u) => u.id === "carol")).toBe(true);
     expect(res.every((u) => typeof u.countFollowers === "number")).toBe(true);
+    expect(res.every((u) => typeof u.countPosts === "number")).toBe(true);
   });
 
   test("addFollower/removeFollower", async () => {

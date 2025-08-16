@@ -18,7 +18,8 @@ CREATE TABLE users (
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ,
   count_followers INT NOT NULL DEFAULT 0,
-  count_followees INT NOT NULL DEFAULT 0
+  count_followees INT NOT NULL DEFAULT 0,
+  count_posts INT NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_users_email ON users(email);
 CREATE INDEX idx_users_nickname ON users(nickname);
@@ -92,3 +93,35 @@ FOR EACH ROW EXECUTE FUNCTION trg_user_follows_counter();
 CREATE TRIGGER trg_user_follows_counter_del
 AFTER DELETE ON user_follows
 FOR EACH ROW EXECUTE FUNCTION trg_user_follows_counter();
+
+CREATE OR REPLACE FUNCTION trg_posts_counter()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE users SET count_posts = count_posts + 1 WHERE id = NEW.owned_by;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE users SET count_posts = count_posts - 1 WHERE id = OLD.owned_by;
+    RETURN OLD;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF NEW.owned_by <> OLD.owned_by THEN
+      UPDATE users SET count_posts = count_posts - 1 WHERE id = OLD.owned_by;
+      UPDATE users SET count_posts = count_posts + 1 WHERE id = NEW.owned_by;
+    END IF;
+    RETURN NEW;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_posts_counter_ins
+AFTER INSERT ON posts
+FOR EACH ROW EXECUTE FUNCTION trg_posts_counter();
+
+CREATE TRIGGER trg_posts_counter_del
+AFTER DELETE ON posts
+FOR EACH ROW EXECUTE FUNCTION trg_posts_counter();
+
+CREATE TRIGGER trg_posts_counter_upd
+AFTER UPDATE OF owned_by ON posts
+FOR EACH ROW EXECUTE FUNCTION trg_posts_counter();

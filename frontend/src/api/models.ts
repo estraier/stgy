@@ -30,6 +30,7 @@ export type User = {
 export type UserDetail = User & {
   countFollowers: number;
   countFollowees: number;
+  countPosts: number;
   isFollowedByFocusUser?: boolean | null;
   isFollowingFocusUser?: boolean | null;
 };
