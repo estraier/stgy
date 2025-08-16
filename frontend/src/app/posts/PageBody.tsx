@@ -52,6 +52,8 @@ export default function PageBody() {
   const { tab, includingReplies, oldestFirst, page, qParam } = getQueryParams();
   const searchQueryObj = qParam ? parsePostSearchQuery(qParam) : {};
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
+  const userUpdatedAt =
+    status.state === "authenticated" ? status.session.userUpdatedAt : null;
 
   const isSearchMode = !!(
     (searchQueryObj.query && searchQueryObj.query.length > 0) ||
@@ -370,6 +372,7 @@ export default function PageBody() {
             <li key={post.id}>
               <PostCard
                 post={post}
+                avatarVersion={post.ownedBy === userId ? userUpdatedAt ?? undefined : undefined}
                 onLike={() => handleLike(post)}
                 onReply={() => {
                   setReplyTo(post.id);

@@ -32,6 +32,7 @@ export default function PageBody() {
   const searchParams = useSearchParams();
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
   const isAdmin = status.state === "authenticated" && status.session.userIsAdmin;
+  const updatedAt = status.state === "authenticated" ? status.session.userUpdatedAt : null;
 
   const [post, setPost] = useState<PostDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -316,6 +317,7 @@ export default function PageBody() {
       {/* メイン記事 */}
       <PostCard
         post={post}
+        avatarVersion={post.ownedBy === userId ? updatedAt ?? undefined : undefined}
         truncated={false}
         showActions={true}
         onLike={() => handleLike(post)}

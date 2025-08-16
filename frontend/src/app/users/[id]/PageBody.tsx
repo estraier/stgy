@@ -27,6 +27,7 @@ export default function PageBody() {
 
   const userId = status && status.state === "authenticated" ? status.session.userId : "";
   const isAdmin = status && status.state === "authenticated" && status.session.userIsAdmin;
+  const updatedAt = status.state === "authenticated" ? status.session.userUpdatedAt : null;
 
   const [user, setUser] = useState<UserDetail | null>(null);
   const [loading, setLoading] = useState(true);
@@ -373,6 +374,7 @@ export default function PageBody() {
                   <li key={post.id}>
                     <PostCard
                       post={post}
+                      avatarVersion={post.ownedBy === userId ? updatedAt ?? undefined : undefined}
                       onLike={handleLike}
                       onReply={() => {
                         setReplyTo(post.id);

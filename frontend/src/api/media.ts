@@ -105,9 +105,6 @@ export async function presignProfileUpload(
   filename: string,
   sizeBytes: number,
 ): Promise<PresignedPostResult> {
-  console.log(
-    `/media/${encodeURIComponent(userId)}/profiles/${encodeURIComponent(slot)}/presigned`,
-  );
   const res = await apiFetch(
     `/media/${encodeURIComponent(userId)}/profiles/${encodeURIComponent(slot)}/presigned`,
     {
