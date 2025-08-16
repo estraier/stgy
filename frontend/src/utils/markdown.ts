@@ -444,8 +444,7 @@ function parseInline(text: string): Node[] {
       ...parseInline(text.slice(m.index + m[0].length)),
     ];
   }
-  const linkRe =
-    /\[([^\]]+)\]\(((?:https?:\/\/[^\s)]+|\/(?:posts|users|data)\/[^\s)]+))\)/g;
+  const linkRe = /\[([^\]]+)\]\(((?:https?:\/\/[^\s)]+|\/(?:posts|users|data)\/[^\s)]+))\)/g;
   const nodes: Node[] = [];
   let last = 0,
     match: RegExpExecArray | null;

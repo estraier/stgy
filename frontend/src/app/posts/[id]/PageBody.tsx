@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   getPostDetail,
   listLikers,
@@ -34,6 +34,18 @@ export default function PageBody() {
   const isAdmin = status.state === "authenticated" && status.session.userIsAdmin;
   const updatedAt = status.state === "authenticated" ? status.session.userUpdatedAt : null;
 
+  // URL を唯一のソースにする（state は持たない）
+  const replyPage = useMemo(() => {
+    const raw = searchParams.get("replyPage");
+    const n = Number(raw);
+    return !raw || Number.isNaN(n) || n < 1 ? 1 : n;
+  }, [searchParams]);
+
+  const replyOldestFirst = useMemo(
+    () => searchParams.get("replyOldestFirst") === "1",
+    [searchParams],
+  );
+
   const [post, setPost] = useState<PostDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -48,34 +60,6 @@ export default function PageBody() {
   const [likerLoading, setLikerLoading] = useState(false);
   const [likerHasMore, setLikerHasMore] = useState(false);
 
-  const getReplyOptsFromQuery = useCallback(() => {
-    const pageRaw = searchParams.get("replyPage");
-    const page = !pageRaw || isNaN(Number(pageRaw)) || Number(pageRaw) < 1 ? 1 : Number(pageRaw);
-    const oldestFirst = searchParams.get("replyOldestFirst") === "1";
-    return { page, oldestFirst };
-  }, [searchParams]);
-
-  const replyPageParam = searchParams.get("replyPage");
-  const replyOldestFirstParam = searchParams.get("replyOldestFirst");
-
-  const [{ page: replyPage, oldestFirst: replyOldestFirst }, setReplyOpts] =
-    useState(getReplyOptsFromQuery);
-
-  useEffect(() => {
-    setReplyOpts(getReplyOptsFromQuery());
-  }, [getReplyOptsFromQuery, replyPageParam, replyOldestFirstParam]);
-
-  useEffect(() => {
-    const opts = getReplyOptsFromQuery();
-    if (opts.page !== replyPage || opts.oldestFirst !== replyOldestFirst) {
-      const sp = new URLSearchParams(searchParams);
-      sp.set("replyPage", String(replyPage));
-      if (replyOldestFirst) sp.set("replyOldestFirst", "1");
-      else sp.delete("replyOldestFirst");
-      router.replace(`?${sp.toString()}`, { scroll: false });
-    }
-  }, [getReplyOptsFromQuery, replyPage, replyOldestFirst, router, searchParams]);
-
   const [replyHasNext, setReplyHasNext] = useState(false);
   const [replyLoading, setReplyLoading] = useState(false);
 
@@ -85,6 +69,7 @@ export default function PageBody() {
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replySubmitting, setReplySubmitting] = useState(false);
 
+  // メイン投稿
   useEffect(() => {
     if (!userId) return;
     setLoading(true);
@@ -99,15 +84,12 @@ export default function PageBody() {
       .finally(() => setLoading(false));
   }, [postId, userId]);
 
+  // Liker
   useEffect(() => {
     if (!post) return;
     setLikerLoading(true);
     const limit = likerAll ? LIKER_MAX + 1 : LIKER_LIMIT + 1;
-    listLikers(post.id, {
-      offset: 0,
-      limit,
-      order: "desc",
-    })
+    listLikers(post.id, { offset: 0, limit, order: "desc" })
       .then((users) => {
         if (likerAll) {
           setLikers(users.slice(0, LIKER_MAX));
@@ -120,6 +102,7 @@ export default function PageBody() {
       .finally(() => setLikerLoading(false));
   }, [post, likerAll]);
 
+  // 返信一覧（URL の replyPage / replyOldestFirst に追従）
   useEffect(() => {
     if (!userId || !post) return;
     setReplyLoading(true);
@@ -147,12 +130,10 @@ export default function PageBody() {
       }
     }
     document.body.addEventListener("click", handler);
-    return () => {
-      document.body.removeEventListener("click", handler);
-    };
+    return () => document.body.removeEventListener("click", handler);
   }, []);
 
-  async function handleLike(post: PostDetail) {
+  async function handleLike(p: PostDetail) {
     setPost((prev) =>
       prev
         ? {
@@ -163,13 +144,10 @@ export default function PageBody() {
         : prev,
     );
     try {
-      if (post.isLikedByFocusUser) {
-        await removeLike(post.id);
-      } else {
-        await addLike(post.id);
-      }
+      if (p.isLikedByFocusUser) await removeLike(p.id);
+      else await addLike(p.id);
     } finally {
-      getPostDetail(post.id, userId).then(setPost);
+      getPostDetail(p.id, userId).then(setPost);
       setLikerAll(false);
     }
   }
@@ -187,12 +165,10 @@ export default function PageBody() {
       ),
     );
     try {
-      if (reply.isLikedByFocusUser) {
-        await removeLike(reply.id);
-      } else {
-        await addLike(reply.id);
-      }
+      if (reply.isLikedByFocusUser) await removeLike(reply.id);
+      else await addLike(reply.id);
     } finally {
+      // 再取得は effect に任せても良いが、即時反映させたいので直で呼ぶ
       listPostsDetail({
         replyTo: postId,
         offset: (replyPage - 1) * REPLY_PAGE_SIZE,
@@ -257,8 +233,15 @@ export default function PageBody() {
       setReplyingTo(null);
 
       if (replyingTo === postId) {
-        setReplyOpts((old) => ({ ...old, page: 1 }));
+        // 1ページ目へ（URLを書き換え）
+        const sp = new URLSearchParams(searchParams);
+        sp.set("replyPage", "1");
+        if (replyOldestFirst) sp.set("replyOldestFirst", "1");
+        else sp.delete("replyOldestFirst");
+        router.replace(`?${sp.toString()}`, { scroll: false });
+
         getPostDetail(postId, userId).then(setPost);
+        // 即時反映
         listPostsDetail({
           replyTo: postId,
           offset: 0,
@@ -273,11 +256,7 @@ export default function PageBody() {
         setReplies((prev) =>
           prev.map((rep) =>
             rep.id === replyingTo
-              ? {
-                  ...rep,
-                  isRepliedByFocusUser: true,
-                  replyCount: Number(rep.replyCount) + 1,
-                }
+              ? { ...rep, isRepliedByFocusUser: true, replyCount: Number(rep.replyCount) + 1 }
               : rep,
           ),
         );
@@ -304,6 +283,7 @@ export default function PageBody() {
     else sp.delete("replyOldestFirst");
     router.replace(`?${sp.toString()}`, { scroll: false });
   }
+
   function handleReplyOldestFirstChange(checked: boolean) {
     const sp = new URLSearchParams(searchParams);
     if (checked) sp.set("replyOldestFirst", "1");
@@ -317,7 +297,7 @@ export default function PageBody() {
       {/* メイン記事 */}
       <PostCard
         post={post}
-        avatarVersion={post.ownedBy === userId ? updatedAt ?? undefined : undefined}
+        avatarVersion={post.ownedBy === userId ? (updatedAt ?? undefined) : undefined}
         truncated={false}
         showActions={true}
         onLike={() => handleLike(post)}
@@ -326,6 +306,7 @@ export default function PageBody() {
         clickable={false}
         className="mb-8"
       />
+
       {replyingTo === post.id && (
         <div className="mb-6">
           <PostForm
@@ -344,6 +325,7 @@ export default function PageBody() {
           />
         </div>
       )}
+
       {/* 投稿の操作エリア */}
       {canEdit && !editing && (
         <div className="mb-4 flex justify-end">
@@ -379,6 +361,7 @@ export default function PageBody() {
           />
         </div>
       )}
+
       {/* Likeユーザ */}
       <div className="my-6">
         <div className="font-bold mb-2 flex items-center gap-2">Liked by</div>
@@ -410,6 +393,7 @@ export default function PageBody() {
           )}
         </div>
       </div>
+
       {/* 返信リスト */}
       <div className="mt-8 mb-2 flex items-center gap-2">
         <span className="font-bold text-lg">Replies</span>
@@ -461,6 +445,7 @@ export default function PageBody() {
           ))
         )}
       </ul>
+
       <div className="mt-6 flex justify-center gap-4">
         <button
           className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"

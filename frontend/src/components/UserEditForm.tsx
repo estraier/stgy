@@ -248,11 +248,7 @@ export default function UserEditForm({
         {uploadingAvatar && <span className="text-xs text-gray-500">Uploading…</span>}
 
         {avatarError && (
-          <div
-            className="mt-1 text-sm text-red-600"
-            role="alert"
-            aria-live="polite"
-          >
+          <div className="mt-1 text-sm text-red-600" role="alert" aria-live="polite">
             {avatarError}
           </div>
         )}

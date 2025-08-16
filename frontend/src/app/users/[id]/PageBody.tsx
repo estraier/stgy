@@ -374,7 +374,7 @@ export default function PageBody() {
                   <li key={post.id}>
                     <PostCard
                       post={post}
-                      avatarVersion={post.ownedBy === userId ? updatedAt ?? undefined : undefined}
+                      avatarVersion={post.ownedBy === userId ? (updatedAt ?? undefined) : undefined}
                       onLike={handleLike}
                       onReply={() => {
                         setReplyTo(post.id);
