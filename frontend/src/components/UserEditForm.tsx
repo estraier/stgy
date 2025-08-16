@@ -40,7 +40,8 @@ export default function UserEditForm({
   const [aiModelsLoading, setAIModelsLoading] = useState(true);
 
   const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  const [formError, setFormError] = useState<string | null>(null);
+  const [avatarError, setAvatarError] = useState<string | null>(null);
   const [deleteSuccess, setDeleteSuccess] = useState(false);
 
   const [avatarUrl, setAvatarUrl] = useState(user.avatar ? getProfileUrl(user.id, "avatar") : "");
@@ -60,20 +61,20 @@ export default function UserEditForm({
     return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
   }
 
-  function handleClearError() {
-    setError(null);
+  function handleClearFormError() {
+    setFormError(null);
   }
 
   async function handleDeleteUser(e: React.FormEvent) {
     e.preventDefault();
     setSubmitting(true);
-    setError(null);
+    setFormError(null);
     try {
       await deleteUser(user.id);
       setDeleteSuccess(true);
       if (onUpdated) await onUpdated(undefined);
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to delete user.");
+      setFormError(err instanceof Error ? err.message : "Failed to delete user.");
     } finally {
       setSubmitting(false);
     }
@@ -81,22 +82,22 @@ export default function UserEditForm({
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
-    setError(null);
+    setFormError(null);
 
     if (isAdmin && !isValidEmail(email)) {
-      setError("Invalid email address.");
+      setFormError("Invalid email address.");
       return;
     }
     if (!nickname.trim()) {
-      setError("Nickname is required.");
+      setFormError("Nickname is required.");
       return;
     }
     if (aiModel && !aiPersonality.trim()) {
-      setError("AI Personality is required when an AI Model is set.");
+      setFormError("AI Personality is required when an AI Model is set.");
       return;
     }
     if (introduction.trim() === "") {
-      setError("Introduction is required.");
+      setFormError("Introduction is required.");
       return;
     }
     setSubmitting(true);
@@ -120,22 +121,21 @@ export default function UserEditForm({
         await onUpdated(updatedUser);
       }
     } catch (err: unknown) {
-      setError(err instanceof Error ? err.message : "Failed to update user.");
+      setFormError(err instanceof Error ? err.message : "Failed to update user.");
     } finally {
       setSubmitting(false);
     }
   }
 
-  // 反映準備ができるまでポーリング（最大5秒）
   async function waitForAvatarReady(maxMs = 5000) {
     const start = Date.now();
     let attempt = 0;
     while (Date.now() - start < maxMs) {
       try {
         const blob = await fetchProfileBinary(user.id, "avatar");
-        if (blob && blob.size > 0) return; // OK
+        if (blob && blob.size > 0) return;
       } catch {
-        // まだ反映前
+        // not ready yet
       }
       attempt += 1;
       const delay = Math.min(1000, 150 * Math.pow(1.5, attempt));
@@ -147,6 +147,7 @@ export default function UserEditForm({
     if (!e.target.files?.length) return;
     const file = e.target.files[0];
     try {
+      setAvatarError(null);
       setUploadingAvatar(true);
       const { url, fields, objectKey } = await presignProfileUpload(
         user.id,
@@ -162,12 +163,11 @@ export default function UserEditForm({
 
       await finalizeProfile(user.id, "avatar", objectKey);
 
-      // 反映待ち → キャッシュバスター付きURLに更新
       await waitForAvatarReady(5000);
       setAvatarUrl(`${getProfileUrl(user.id, "avatar")}?v=${Date.now()}`);
-      setError(null);
+      setAvatarError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to upload avatar.");
+      setAvatarError(err instanceof Error ? err.message : "Failed to upload avatar.");
     } finally {
       setUploadingAvatar(false);
       if (fileInputRef.current) fileInputRef.current.value = "";
@@ -176,12 +176,12 @@ export default function UserEditForm({
 
   async function handleRemoveAvatar() {
     try {
+      setAvatarError(null);
       setUploadingAvatar(true);
       await deleteProfile(user.id, "avatar");
       setAvatarUrl("");
-      setError(null);
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Failed to remove avatar.");
+      setAvatarError(err instanceof Error ? err.message : "Failed to remove avatar.");
     } finally {
       setUploadingAvatar(false);
     }
@@ -236,7 +236,6 @@ export default function UserEditForm({
           )}
         </div>
 
-        {/* 実体の file input は隠す（ブラウザ標準の“Choose File”を見せない） */}
         <input
           ref={fileInputRef}
           type="file"
@@ -247,6 +246,16 @@ export default function UserEditForm({
         />
 
         {uploadingAvatar && <span className="text-xs text-gray-500">Uploading…</span>}
+
+        {avatarError && (
+          <div
+            className="mt-1 text-sm text-red-600"
+            role="alert"
+            aria-live="polite"
+          >
+            {avatarError}
+          </div>
+        )}
       </div>
 
       <div className="flex flex-col gap-1">
@@ -263,7 +272,7 @@ export default function UserEditForm({
             onChange={(e) => setEmail(e.target.value)}
             disabled={!isAdmin}
             required={isAdmin && !isSelf && !canDelete}
-            onFocus={handleClearError}
+            onFocus={handleClearFormError}
           />
         ) : (
           <div className="flex flex-row items-center gap-2">
@@ -290,7 +299,7 @@ export default function UserEditForm({
           value={nickname}
           onChange={(e) => setNickname(e.target.value)}
           required
-          onFocus={handleClearError}
+          onFocus={handleClearFormError}
         />
       </div>
 
@@ -304,7 +313,7 @@ export default function UserEditForm({
           onChange={(e) => setIntroduction(e.target.value)}
           maxLength={2000}
           required
-          onFocus={handleClearError}
+          onFocus={handleClearFormError}
         />
       </div>
 
@@ -323,7 +332,7 @@ export default function UserEditForm({
             value={aiModel}
             onChange={(e) => setAIModel(e.target.value)}
             disabled={!isAdmin}
-            onFocus={handleClearError}
+            onFocus={handleClearFormError}
           >
             <option value="">(None)</option>
             {aiModels.map((m) => (
@@ -346,7 +355,7 @@ export default function UserEditForm({
             value={aiPersonality}
             onChange={(e) => setAIPersonality(e.target.value)}
             required
-            onFocus={handleClearError}
+            onFocus={handleClearFormError}
             placeholder="Describe AI personality"
             maxLength={2000}
           />
@@ -376,7 +385,9 @@ export default function UserEditForm({
       )}
 
       <div className="flex items-center gap-2 mt-2">
-        <span className="flex-1 text-red-600 text-sm">{error && error}</span>
+        <span className="flex-1 text-red-600 text-sm" role="alert" aria-live="polite">
+          {formError && formError}
+        </span>
         <button
           type="button"
           className="bg-gray-200 text-gray-700 px-4 py-1 rounded border border-gray-300 cursor-pointer hover:bg-gray-300 transition"
