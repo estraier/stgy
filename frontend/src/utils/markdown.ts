@@ -1,3 +1,5 @@
+import { Config } from "@/config";
+
 type Node =
   | { type: "text"; text: string }
   | {
@@ -83,7 +85,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     }
   }
 
-  const imageMacroRe = /^!\[([^\]]*)\]\(([^)]+)\)(?:\{([^\}]*)\})?$/;
+  const imageMacroRe = /^!\[([^\]]*)\]\s*\(([^)]+)\)\s*(?:\{([^\}]*)\})?$/;
   const videoExts = /\.(mpg|mp4|m4a|mov|avi|wmv|webm)(\?.*)?$/i;
 
   for (let i = 0; i < lines.length; ++i) {
@@ -270,6 +272,49 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     });
   }
   return nodes;
+}
+
+function rewriteMediaUrls(nodes: Node[], useThumbnail: boolean): Node[] {
+  function rewriteOne(n: Node): Node {
+    if (n.type !== "element") return n;
+    if (n.tag === "img" || n.tag === "video") {
+      const srcMatch = n.attrs?.match(/\bsrc="([^"]*)"/);
+      const src = srcMatch?.[1] ?? "";
+      if (!/^\/(data|images|videos)\//.test(src)) {
+        return {
+          type: "element",
+          tag: "img",
+          attrs: ` src="${escapeHTML("/data/no-image.svg")}"`,
+          children: [],
+        };
+      }
+      if (/^\/images\//.test(src)) {
+        const baseUrl = Config.STORAGE_S3_PUBLIC_BASE_URL + "/" + Config.MEDIA_BUCKET_IMAGES;
+        const newSrc = src.replace(/^\/images\//, `${baseUrl}/`);
+        if (useThumbnail && /\/masters\//.test(newSrc)) {
+          const qpos = newSrc.search(/[?#]/);
+          const pathPart = qpos >= 0 ? newSrc.slice(0, qpos) : newSrc;
+          const suffix = qpos >= 0 ? newSrc.slice(qpos) : "";
+          let thumbPath = pathPart.replace(/\/masters\//, "/thumbs/");
+          thumbPath = thumbPath.replace(/\/([^\/?#]+)$/, (_m, filename: string) => {
+            const base = filename.replace(/\.[^.]+$/, "");
+            return `/${base}_image.webp`;
+          });
+          const thumbSrc = thumbPath + suffix;
+          const newAttrsThumb = (n.attrs || "").replace(
+            /\bsrc="[^"]*"/,
+            ` src="${escapeHTML(thumbSrc)}"`,
+          );
+          return { ...n, attrs: newAttrsThumb };
+        }
+        const newAttrs = (n.attrs || "").replace(/\bsrc="[^"]*"/, ` src="${escapeHTML(newSrc)}"`);
+        return { ...n, attrs: newAttrs };
+      }
+      return n;
+    }
+    return { ...n, children: (n.children || []).map(rewriteOne) };
+  }
+  return nodes.map(rewriteOne);
 }
 
 function filterNodesForThumbnail(nodes: Node[]): Node[] {
@@ -518,6 +563,22 @@ function escapeHTML(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
+function collectDataAttrs(attrStr?: string): string {
+  if (!attrStr) return "";
+  const re = /\sdata-([a-z0-9-]+)(?:="([^"]*)")?/gi;
+  const seen = new Set<string>();
+  const parts: string[] = [];
+  let m: RegExpExecArray | null;
+  while ((m = re.exec(attrStr))) {
+    const k = m[1].toLowerCase();
+    if (seen.has(k)) continue;
+    const v = m[2];
+    parts.push(v === undefined ? ` data-${k}` : ` data-${k}="${v}"`);
+    seen.add(k);
+  }
+  return parts.join("");
+}
+
 export function renderHtml(
   mdText: string,
   options?: {
@@ -525,13 +586,16 @@ export function renderHtml(
     maxHeight?: number;
     imgLen?: number;
     imgHeight?: number;
+    rewriteImageUrl?: boolean;
     pickupThumbnail?: boolean;
   },
 ): string {
-  const { maxLen, maxHeight, imgLen = 50, imgHeight = 6, pickupThumbnail = false } = options || {};
+  const { maxLen, maxHeight, imgLen = 50, imgHeight = 6, rewriteImageUrl = true, pickupThumbnail = false } = options || {};
 
   let nodes = parseMarkdownBlocks(mdText);
-
+  if (rewriteImageUrl) {
+    nodes = rewriteMediaUrls(nodes, pickupThumbnail);
+  }
   if (pickupThumbnail) {
     nodes = filterNodesForThumbnail(nodes);
   }
@@ -603,7 +667,12 @@ export function renderHtml(
               break;
             }
           }
-          html += `<figure class="thumbnail-block">`;
+          const figExtra = collectDataAttrs(
+            (node.children || []).find(
+              (c) => c.type === "element" && (c.tag === "img" || c.tag === "video"),
+            )?.attrs,
+          );
+          html += `<figure class="thumbnail-block"${figExtra}>`;
           for (const child of node.children || []) {
             if (child.type === "element" && (child.tag === "img" || child.tag === "video")) {
               const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
@@ -639,7 +708,9 @@ export function renderHtml(
               break;
             }
           }
-          html += `<figure${node.attrs || ""}>`;
+          const figExtra = collectDataAttrs(media?.attrs);
+          const figAttrs = (node.attrs || "") + figExtra;
+          html += `<figure${figAttrs}>`;
           for (const child of node.children || []) {
             if (child.type === "element" && (child.tag === "img" || child.tag === "video")) {
               const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
@@ -691,7 +762,7 @@ export function renderHtml(
         if (blockTags.includes(node.tag)) {
           const { length: contentLength, newlines } = sumTextLenAndNewlines(node.children || []);
           let heightInc = 1 + Math.floor(contentLength / 100);
-          if (node.tag === "pre" && newlines > 1) {
+          if (node.tag === "pre" && newlines > 1)            {
             heightInc = Math.max(heightInc, newlines);
           }
           state.height += heightInc;

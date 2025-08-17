@@ -120,6 +120,7 @@ body {
 .markdown-body .image-block.expanded {
   max-width: 80ex;
   max-height: 80ex;
+  clear: both;
   cursor: zoom-out;
 }
 .markdown-body .thumbnail-block {
@@ -142,6 +143,16 @@ body {
 }
 .markdown-body .image-block:hover figcaption {
   opacity: 0.1;
+}
+.markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-float="left"] {
+  float: left;
+  margin: 0.3ex 0.5ex 0.3ex 0;
+  max-width: 35ex;
+}
+.markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-float="right"] {
+  float: right;
+  margin: 0.3ex 0 0.3ex 0.5ex;
+  max-width: 35ex;
 }
 
 .markdown-body .thumbnail-block img,

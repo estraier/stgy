@@ -48,7 +48,7 @@ export default function PageBody() {
   const offset = useMemo(() => (page - 1) * PAGE_SIZE, [page]);
 
   const copyMarkdownFor = useCallback(async (key: string) => {
-    const imageUrl = "/image/" + key;
+    const imageUrl = "/images/" + key;
     try {
       await navigator.clipboard.writeText(`![](${imageUrl})`);
       setCopiedKey(key);

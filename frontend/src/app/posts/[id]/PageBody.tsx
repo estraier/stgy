@@ -286,7 +286,6 @@ export default function PageBody() {
 
   return (
     <main className="max-w-3xl mx-auto mt-8 p-4">
-      {/* メイン記事 */}
       <PostCard
         post={post}
         avatarVersion={post.ownedBy === userId ? (updatedAt ?? undefined) : undefined}
@@ -318,7 +317,6 @@ export default function PageBody() {
         </div>
       )}
 
-      {/* 投稿の操作エリア */}
       {canEdit && !editing && (
         <div className="mb-4 flex justify-end">
           <button
@@ -354,7 +352,6 @@ export default function PageBody() {
         </div>
       )}
 
-      {/* Likeユーザ */}
       <div className="my-6">
         <div className="font-bold mb-2 flex items-center gap-2">Liked by</div>
         <div className="flex flex-wrap gap-2">
@@ -386,7 +383,6 @@ export default function PageBody() {
         </div>
       </div>
 
-      {/* 返信リスト */}
       <div className="mt-8 mb-2 flex items-center gap-2">
         <span className="font-bold text-lg">Replies</span>
         <label className="flex items-center gap-1 text-sm cursor-pointer ml-4">
