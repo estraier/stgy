@@ -48,7 +48,7 @@ Fakebookの登録にはメールアドレスが必要で、それを入力すれ
 
 ログイン後には、画面上端にナビゲーションバーが現れます。左端にある「Posts」「Users」を全体タブメニューと呼びます。全体タブメニューの「Posts」を押すと、投稿一覧画面に移動します。「Users」を押すと、ユーザ一覧画面に移動します。歯車アイコンの左にある文字列は、ログインユーザのニックネームです。
 
-![ナビゲーションバー](/data/help-navibar.png)
+![ナビゲーションバー](/data/help-navibar.png){size=xlarge}
 
 右端にある歯車アイコンを押すと、ナビゲーションメニューが現れます。「Profile」を押すと、自分のアカウントの詳細画面に移動します。「Images」を押すと、画像データの管理画面に移動します。「Settings」を押すと、アカウントの設定画面に移動します。「Help」を押すと、このヘルプ記事に移動します。「Log out」を押すと、ログアウトします。
 
@@ -145,8 +145,7 @@ Fakebookに投稿される各記事はMarkdown形式で表現されます。特�
 #天気予報, #ポエム
 ```
 
-今日の天気予報：
-晴れときどき曇り、ところにより雨
+![基本的記事](/data/help-basic-post.png){size=xlarge}
 
 Markdownは標準規格ではないので、変種が多数あります。ここでの実装もその変種の一つです。地の文の中の単一の改行を改行を無視する派閥と改行として扱う派閥があるのですが、ここでは単一の改行は段落内の改行（HTMLの`<br/>`）として扱われます。段落はHTMLの`<p>`で区切られます。結果として、単一改行と連続改行の行間は異なることになります。
 
@@ -194,12 +193,123 @@ Markdownは標準規格ではないので、変種が多数あります。ここ
 > あと何を話せただろう、
 > 離れてしまうその前に。
 
-記事内に画像を埋め込むには、`#![キャプション](URL) ` 記法を用います。
+「`|`」で囲んだ連続した行は表になります。「`|`」で列を区切ります。
+
+```
+|東京都|都庁所在地は新宿区。日本の首都。|
+|神奈川県|県庁所在地は横浜市。大阪府より人口が多い。|
+|千葉県|県庁所在地は千葉市。ピーナツで有名|
+|埼玉県|県庁所在地はさいたま市。特徴は特にない。|
+```
+
+|東京都|都庁所在地は新宿区。日本の首都。|
+|神奈川県|県庁所在地は横浜市。大阪府より人口が多い。|
+|千葉県|県庁所在地は千葉市。ピーナツで有名|
+|埼玉県|県庁所在地はさいたま市。特徴は特にない。|
+
+文字の装飾もできます。装飾は地の文だけではなく、ヘッダやリストや表の中でも使えます。
+
+```
+*斜体*、**太字**、__下線__、~~打ち消し~~、`コード`
+```
+
+*斜体*、**太字**、__下線__、~~打ち消し~~、`コード`
+
+HTMLの`<pre>`のように改行をそのまま表現したい場合には、その部分を「\`\`\`」 だけの行と「\`\`\`」だけの行で囲みます。
+
+罫線を引きたい時は、「`----`」だけの行を書きます。「`----`」にするとより目立つ罫線になります。「`---`」は見えない罫線で、行間を少し開けるのに使います。
+
+```
+---
+----
+-----
+```
+
+---
+----
+-----
+
+記事内に画像を埋め込むには、`#![キャプション](URL)` 記法を用います。実際には、セキュリティ上の理由で、埋め込める画像のURLには制限があります。画像管理機能でアップロードした `/images/` で始まるパスか、Fakebookに既存の`/data/` で始まるパスのみです。
+
+```
+![Fakebookロゴ](/data/logo-square.svg)
+```
 
 ![Fakebookロゴ](/data/logo-square.svg)
 
+記事本文の読みやすさのために画像は小さめに表示されますが、その画像を押すと拡大表示されます。
 
+最初から画像を大きく表示したい場合には、`{size=large}` や `{size=xlarge}` マクロを指定できます。
 
+```
+![Fakebookロゴ](/data/logo-square.svg){size=large}
+![Fakebookロゴ](/data/logo-square.svg){size=xlarge}
+```
+
+![Fakebookロゴ](/data/logo-square.svg){size=large}
+![Fakebookロゴ](/data/logo-square.svg){size=xlarge}
+
+画像をフローティングさせて文字を回り込みさせたい場合、`{float=left}` や `{size=right}`マクロを指定できます。回り込みを解除したい場合、「`---`」の見えない罫線を引くと良いでしょう。
+
+```
+![Fakebookロゴ](/data/logo-square.svg){float=left}
+渚のハイカラ人魚
+キュートなヒップにズキンドキン
+渚のハイカラ人魚
+まぶしい素足にズキンドキン
+---
+![Fakebookロゴ](/data/logo-square.svg){float=right}
+I will follow you
+あなたに追いてゆきたい
+I will follow you
+ちょっぴり気が弱いけど
+---
+```
+
+![Fakebookロゴ](/data/logo-square.svg){float=left}
+渚のハイカラ人魚
+キュートなヒップにズキンドキン
+渚のハイカラ人魚
+まぶしい素足にズキンドキン
+---
+![Fakebookロゴ](/data/logo-square.svg){float=right}
+I will follow you
+あなたに追いてゆきたい
+I will follow you
+ちょっぴり気が弱いけど
+---
+
+画像を横並びで表示したい場合には、`{grid}` マクロを使います。`{grid}` がついた画像が連続すると、それを1行にまとめます。最大4列までサポートしています。
+
+```
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+---
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+---
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+---
+```
+
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+---
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+---
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+---
+
+投稿詳細画面には記事内の全ての画像が表示されますが、投稿一覧画像にはひとつの代表画像のサムネイルしか表示されません。デフォルトでは、最初の画像がサムネイル画像になります。最初の画像以外をサムネイル画像にしたい場合には、その画像に `{thumbnail}` マクロを付与します。あるいは、サムネイル画像にしたくない画像に `{no-thumbnail}` をつけても良いでしょう。全ての画像に `{no-thumbnail}` をつければ、サムネイル画像は表示されなくなります。
 $$ WHERE id = '00000000-0000-0000-0002-000000000003';
 
 UPDATE posts

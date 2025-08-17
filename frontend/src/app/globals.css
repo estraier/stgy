@@ -146,19 +146,21 @@ body {
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-float="left"] {
   float: left;
-  margin: 0.3ex 0.5ex 0.3ex 0;
-  max-width: 35ex;
+  margin: 0.3ex 1.2ex 0.3ex 0;
+  width: 35ex;
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-float="right"] {
   float: right;
-  margin: 0.3ex 0 0.3ex 0.5ex;
-  max-width: 35ex;
+  margin: 0.3ex 0 0.3ex 1.2ex;
+  width: 35ex;
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="large"] {
-  max-width: 42ex;
+  max-width: 55ex;
+  max-height: 55ex;
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="xlarge"] {
-  max-width: 65ex;
+  max-width: 70ex;
+  max-height: 70ex;
 }
 
 .markdown-body:not(.excerpt) .image-grid {
@@ -212,14 +214,14 @@ body {
 .markdown-body hr {
   clear: both;
   border: 0;
-  margin: 0 1ex;
+  margin: 0 5ex;
 }
 .markdown-body hr[data-hr-level="2"] {
   border-top: 1px solid #aaa;
-  margin: 1.5ex 1ex;
+  margin: 1.5ex 5ex;
 }
 .markdown-body hr[data-hr-level="3"] {
-  border-top: 1px solid #888;
+  border-top: 1px solid #666;
   margin: 2ex 1ex;
 }
 
