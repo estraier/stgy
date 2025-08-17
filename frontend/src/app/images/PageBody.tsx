@@ -14,7 +14,7 @@ import {
 } from "@/api/media";
 import { formatDateTime, formatBytes } from "@/utils/format";
 
-const PAGE_SIZE = 3;
+const PAGE_SIZE = 30;
 
 function parseIsoToDate(iso?: string | null): Date | null {
   if (!iso) return null;
@@ -45,12 +45,12 @@ export default function PageBody() {
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
-  const isAdmin = status.state === "authenticated" ? !!status.session.userIsAdmin : false;
   const offset = useMemo(() => (page - 1) * PAGE_SIZE, [page]);
 
   const copyMarkdownFor = useCallback(async (key: string) => {
+    const imageUrl = "/image/" + key;
     try {
-      await navigator.clipboard.writeText(`![](${key})`);
+      await navigator.clipboard.writeText(`![](${imageUrl})`);
       setCopiedKey(key);
       setTimeout(() => setCopiedKey((k) => (k === key ? null : k)), 1200);
     } catch {
@@ -186,18 +186,18 @@ export default function PageBody() {
             multiple
             className="hidden"
             onChange={(e) => e.target.files && handleFiles(e.target.files)}
-            disabled={uploading || !isAdmin}
+            disabled={uploading}
           />
           <button
             type="button"
             onClick={() => fileInputRef.current?.click()}
-            disabled={uploading || !isAdmin}
+            disabled={uploading}
             className={`px-3 py-1 rounded border transition ${
-              uploading || !isAdmin
+              uploading
                 ? "bg-gray-200 text-gray-400 border-gray-300 cursor-not-allowed"
                 : "bg-gray-300 text-gray-900 border-gray-700 hover:bg-gray-400"
             }`}
-            title={isAdmin ? "" : "Only admin can upload"}
+            title=""
           >
             {uploading ? "Uploading…" : "Upload images"}
           </button>

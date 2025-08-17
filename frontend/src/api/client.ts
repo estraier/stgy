@@ -1,4 +1,4 @@
-export const API_BASE_URL = process.env.NEXT_PUBLIC_API_BASE || "http://localhost:3001";
+import { Config } from "@/config";
 
 type ApiFetchOptions = Omit<RequestInit, "headers"> & {
   headers?: Record<string, string>;
@@ -13,7 +13,7 @@ export async function apiFetch(path: string, options: ApiFetchOptions = {}) {
   if (options.ssrCookie) {
     headers["cookie"] = options.ssrCookie;
   }
-  return fetch(`${API_BASE_URL}${path}`, {
+  return fetch(`${Config.BACKEND_API_BASE_URL}${path}`, {
     credentials: "include",
     ...options,
     headers,

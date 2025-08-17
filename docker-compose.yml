@@ -144,13 +144,15 @@ services:
     build:
       dockerfile: frontend/Dockerfile
       args:
-        NEXT_PUBLIC_API_BASE: ${FAKEBOOK_BACKEND_API_API_BASE}
+        NEXT_PUBLIC_BACKEND_API_BASE_URL: ${FAKEBOOK_BACKEND_API_BASE_URL}
+        NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL: ${FAKEBOOK_STORAGE_PUBLIC_BASE_URL}
     depends_on:
       backend:
         condition: service_started
     environment:
       PORT: ${FAKEBOOK_FRONTEND_PORT}
-      NEXT_PUBLIC_API_BASE: ${FAKEBOOK_BACKEND_API_API_BASE}
+      NEXT_PUBLIC_BACKEND_API_BASE_URL: ${FAKEBOOK_BACKEND_API_BASE_URL}
+      NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL: ${FAKEBOOK_STORAGE_PUBLIC_BASE_URL}
     ports:
       - "${FAKEBOOK_FRONTEND_PORT}:${FAKEBOOK_FRONTEND_PORT}"
     command: ["node", "frontend/server.js"]

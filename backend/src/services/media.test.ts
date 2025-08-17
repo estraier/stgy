@@ -6,10 +6,10 @@ import type { StorageService } from "./storage";
 
 jest.mock("../config", () => ({
   Config: {
-    MEDIA_IMAGE_BUCKET: "fakebook-images",
+    MEDIA_BUCKET_IMAGES: "test-bucket-images",
+    MEDIA_BUCKET_PROFILES: "test-bucket-profiles",
     MEDIA_IMAGE_BYTE_LIMIT: 10 * 1024 * 1024,
     MEDIA_IMAGE_BYTE_LIMIT_PER_MONTH: 100 * 1024 * 1024,
-    MEDIA_PROFILE_BUCKET: "fakebook-profiles",
   },
 }));
 
@@ -18,8 +18,8 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
   let redis: Redis;
   let service: MediaService;
 
-  const imageBucket = "fakebook-images";
-  const profileBucket = "fakebook-profiles";
+  const imageBucket = "test-bucket-images";
+  const profileBucket = "test-bucket-profiles";
   const userId = "u1";
 
   beforeAll(() => {
@@ -69,7 +69,7 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
       .mockResolvedValueOnce([makeMeta(`${userId}/thumbs/797491/exist_image.webp`, 512 * 1024)]);
 
     const presigned: PresignedPostResult = {
-      url: "http://minio:9000/fakebook-images",
+      url: "http://minio:9000/test-bucket-images",
       fields: { key: "staging/u1/uuid.png", "Content-Type": "image/png" },
       objectKey: "staging/u1/uuid.png",
       maxBytes: 10 * 1024 * 1024,
@@ -155,7 +155,7 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
 
     expect((redis.lpush as jest.Mock).mock.calls[0][0]).toBe("media-thumb-queue");
     expect((redis.lpush as jest.Mock).mock.calls[0][1]).toMatch(
-      /"type":"image","bucket":"fakebook-images","originalKey":"u1\/masters\/797491\/\d{13}[0-9a-f]{8}\.png"/,
+      /"type":"image","bucket":"test-bucket-images","originalKey":"u1\/masters\/797491\/\d{13}[0-9a-f]{8}\.png"/,
     );
 
     expect(meta).toEqual(dstMeta);
@@ -278,7 +278,7 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
 
   test("presignProfileUpload: success with sizeLimit", async () => {
     const presigned: PresignedPostResult = {
-      url: "http://minio:9000/fakebook-profiles",
+      url: "http://minio:9000/test-bucket-profiles",
       fields: { key: "profiles-staging/u1/avatar/uuid.png", "Content-Type": "image/png" },
       objectKey: "profiles-staging/u1/avatar/uuid.png",
       maxBytes: 1 * 1024 * 1024,
@@ -332,7 +332,7 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
     expect((redis.lpush as jest.Mock).mock.calls[0][0]).toBe("media-thumb-queue");
     const payload = (redis.lpush as jest.Mock).mock.calls[0][1] as string;
     expect(payload).toContain('"type":"icon"');
-    expect(payload).toContain('"bucket":"fakebook-profiles"');
+    expect(payload).toContain('"bucket":"test-bucket-profiles"');
     expect(payload).toMatch(/"originalKey":"u1\/masters\/avatar\.png"/);
   });
 

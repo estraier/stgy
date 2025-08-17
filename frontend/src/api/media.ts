@@ -1,4 +1,5 @@
-import { API_BASE_URL, apiFetch, extractError } from "./client";
+import { Config } from "@/config";
+import { apiFetch, extractError } from "./client";
 import type { MediaObject, PresignedPostResult, StorageMonthlyQuota } from "./models";
 
 function encodePath(path: string): string {
@@ -46,7 +47,7 @@ export async function listImages(
 }
 
 export function getImageUrl(userId: string, restPath: string): string {
-  return `${API_BASE_URL}/media/${encodeURIComponent(userId)}/images/${encodePath(restPath)}`;
+  return `${Config.BACKEND_API_BASE_URL}/media/${encodeURIComponent(userId)}/images/${encodePath(restPath)}`;
 }
 
 export async function deleteImage(userId: string, restPath: string): Promise<{ result: string }> {
@@ -133,7 +134,7 @@ export async function finalizeProfile(
 }
 
 export function getProfileUrl(userId: string, slot: "avatar"): string {
-  return `${API_BASE_URL}/media/${encodeURIComponent(userId)}/profiles/${encodeURIComponent(slot)}`;
+  return `${Config.BACKEND_API_BASE_URL}/media/${encodeURIComponent(userId)}/profiles/${encodeURIComponent(slot)}`;
 }
 
 export async function deleteProfile(userId: string, slot: "avatar"): Promise<{ result: string }> {
@@ -161,7 +162,6 @@ export async function getImagesMonthlyQuota(
   const sp = new URLSearchParams();
   if (yyyymm) sp.set("yyyymm", yyyymm);
   const q = sp.toString();
-
   const res = await apiFetch(
     `/media/${encodeURIComponent(userId)}/images/quota${q ? `?${q}` : ""}`,
     { method: "GET" },

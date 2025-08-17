@@ -1,6 +1,18 @@
+import { jest } from "@jest/globals";
 import { Config } from "../config";
 import { SendMailService } from "./sendMail";
 import { Transporter } from "nodemailer";
+
+jest.mock("../config", () => ({
+  Config: {
+    SMTP_HOST: "localhost",
+    SMTP_PORT: 587,
+    MAIL_SENDER_ADDRESS: "noreply-test@dbmx.net",
+    MAIL_ADDRESS_LIMIT_PER_MIN: 1,
+    MAIL_DOMAIN_LIMIT_PER_MIN: 10,
+    MAIL_GLOBAL_LIMIT_PER_MIN: 100,
+  },
+}));
 
 function makeRedisMock() {
   return {
@@ -91,23 +103,17 @@ describe("SendMail", () => {
 
 describe("SendMailService.send", () => {
   it("calls transporter.sendMail with correct parameters", async () => {
-    const mockSendMail = jest.fn().mockResolvedValue({ messageId: "12345" });
-    const mockTransporter = {
-      sendMail: mockSendMail,
-    } as unknown as Transporter;
-
+    const mockSendMail = jest.fn(async () => ({ messageId: "12345" }) as any);
+    const mockTransporter = { sendMail: mockSendMail } as unknown as Transporter;
     const redisMock = makeRedisMock();
     const sendMailService = new SendMailService(redisMock);
-
     const toAddress = "test@example.com";
     const subject = "Test Subject";
     const body = "Hello, this is a test mail.";
-
     await sendMailService.send(mockTransporter, toAddress, subject, body);
-
     expect(mockSendMail).toHaveBeenCalledTimes(1);
     expect(mockSendMail).toHaveBeenCalledWith({
-      from: "noreply@dbmx.net",
+      from: "noreply-test@dbmx.net",
       to: toAddress,
       subject,
       text: body,
@@ -115,18 +121,15 @@ describe("SendMailService.send", () => {
   });
 
   it("throws error if sendMail fails", async () => {
-    const mockSendMail = jest.fn().mockRejectedValue(new Error("Failed to send"));
-    const mockTransporter = {
-      sendMail: mockSendMail,
-    } as unknown as Transporter;
-
+    const mockSendMail = jest.fn(async () => {
+      throw new Error("Failed to send");
+    });
+    const mockTransporter = { sendMail: mockSendMail } as unknown as Transporter;
     const redisMock = makeRedisMock();
     const sendMailService = new SendMailService(redisMock);
-
     const toAddress = "test@example.com";
     const subject = "Test Subject";
     const body = "Hello, this is a test mail.";
-
     await expect(sendMailService.send(mockTransporter, toAddress, subject, body)).rejects.toThrow(
       "Failed to send",
     );

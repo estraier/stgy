@@ -1,5 +1,6 @@
 "use client";
 
+import { Config } from "@/config";
 import React, { useMemo, useState } from "react";
 import Image from "next/image";
 import Identicon from "@/components/Identicon";
@@ -10,9 +11,7 @@ type Props = {
   hasAvatar: boolean;
   size: number;
   useThumb: boolean;
-  /** これが変わるたびに ?v=... を付け替えてキャッシュを回避 */
   version?: string | number | null;
-  /** 例: "fakebook-profiles/<userId>/avatar.webp" */
   avatarPath?: string | null;
   className?: string;
 };
@@ -27,7 +26,7 @@ export default function AvatarImg({
   avatarPath,
   className = "",
 }: Props) {
-  const base = process.env.NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL || "http://localhost:9000";
+  const base = Config.STORAGE_PUBLIC_BASE_URL;
   const [error, setError] = useState(false);
 
   const suffix =
@@ -36,7 +35,7 @@ export default function AvatarImg({
   const src = useMemo(() => {
     if (!hasAvatar) return "";
     if (useThumb) {
-      return `${base}/fakebook-profiles/${encodeURIComponent(
+      return `${base}/${Config.MEDIA_BUCKET_PROFILES}/${encodeURIComponent(
         userId,
       )}/thumbs/avatar_icon.webp${suffix}`;
     }

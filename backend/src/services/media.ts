@@ -1,4 +1,3 @@
-// src/services/media.ts
 import Redis from "ioredis";
 import { lookup as mimeLookup, extension as mimeExtension } from "mime-types";
 import crypto from "crypto";
@@ -108,7 +107,7 @@ export class MediaService {
     const ext = extFromFilenameOrMime(filename, ct0);
     const stagingKey = `staging/${pathUserId}/${crypto.randomUUID()}${ext}`;
     return await this.storage.createPresignedPost({
-      bucket: Config.MEDIA_IMAGE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_IMAGES,
       key: stagingKey,
       contentTypeWhitelist: ct0,
       maxBytes: limitSingle ?? undefined,
@@ -119,22 +118,22 @@ export class MediaService {
   async finalizeImage(pathUserId: string, stagingKey: string): Promise<StorageObjectMetadata> {
     if (!isKeyUnder(`staging/${pathUserId}`, stagingKey)) throw new Error("invalid key");
     const head = await this.storage.headObject({
-      bucket: Config.MEDIA_IMAGE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_IMAGES,
       key: stagingKey,
     });
     if (!head || head.size <= 0) throw new Error("not found");
     const limitSingle = Number(Config.MEDIA_IMAGE_BYTE_LIMIT ?? 0) || null;
     if (limitSingle && head.size > limitSingle) {
-      await this.storage.deleteObject({ bucket: Config.MEDIA_IMAGE_BUCKET, key: stagingKey });
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
       throw new Error("file too large");
     }
     const sniffBytes = await this.storage.loadObject(
-      { bucket: Config.MEDIA_IMAGE_BUCKET, key: stagingKey },
+      { bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey },
       { offset: 0, length: 65536 },
     );
     const sniff = sniffFormat(sniffBytes);
     if (!sniff.ok) {
-      await this.storage.deleteObject({ bucket: Config.MEDIA_IMAGE_BUCKET, key: stagingKey });
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
       throw new Error("invalid image data");
     }
     const now = new Date();
@@ -143,7 +142,7 @@ export class MediaService {
     if (limitMonthly) {
       const quota = await this.calculateMonthlyQuota(pathUserId, yyyymmStr);
       if (quota.bytesTotal + head.size > limitMonthly) {
-        await this.storage.deleteObject({ bucket: Config.MEDIA_IMAGE_BUCKET, key: stagingKey });
+        await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
         throw new Error("monthly quota exceeded");
       }
     }
@@ -155,16 +154,16 @@ export class MediaService {
     );
     const finalKey = `${pathUserId}/masters/${revMM}/${toRevTs(now)}${hash8}${finalExt}`;
     await this.storage.moveObject(
-      { bucket: Config.MEDIA_IMAGE_BUCKET, key: stagingKey },
-      { bucket: Config.MEDIA_IMAGE_BUCKET, key: finalKey },
+      { bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey },
+      { bucket: Config.MEDIA_BUCKET_IMAGES, key: finalKey },
     );
     const meta = await this.storage.headObject({
-      bucket: Config.MEDIA_IMAGE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_IMAGES,
       key: finalKey,
     });
     const job = {
       type: "image",
-      bucket: Config.MEDIA_IMAGE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_IMAGES,
       originalKey: finalKey,
     };
     await this.redis.lpush("media-thumb-queue", JSON.stringify(job));
@@ -178,7 +177,7 @@ export class MediaService {
   ): Promise<StorageObjectMetadata[]> {
     const prefix = `${pathUserId}/masters/`;
     return await this.storage.listObjects(
-      { bucket: Config.MEDIA_IMAGE_BUCKET, key: prefix },
+      { bucket: Config.MEDIA_BUCKET_IMAGES, key: prefix },
       { offset, limit },
     );
   }
@@ -197,8 +196,8 @@ export class MediaService {
     if (isKeyUnder(`staging/${pathUserId}`, cleaned)) {
       throw new Error("cannot read staging via this endpoint");
     }
-    const meta = await this.storage.headObject({ bucket: Config.MEDIA_IMAGE_BUCKET, key: full });
-    const bytes = await this.storage.loadObject({ bucket: Config.MEDIA_IMAGE_BUCKET, key: full });
+    const meta = await this.storage.headObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: full });
+    const bytes = await this.storage.loadObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: full });
     return { meta, bytes };
   }
 
@@ -207,18 +206,18 @@ export class MediaService {
     const full = `${pathUserId}/${cleaned}`;
     const mastersPrefix = `${pathUserId}/masters`;
     if (!isKeyUnder(mastersPrefix, full)) throw new Error("invalid key (must be masters/)");
-    await this.storage.deleteObject({ bucket: Config.MEDIA_IMAGE_BUCKET, key: full });
+    await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: full });
     const parts = full.split("/");
     const filename = parts.pop() as string;
     const revMM = parts.pop() as string;
     const base = filename.replace(/\.[^.]+$/, "");
     const thumbsPrefix = `${pathUserId}/thumbs/${revMM}/${base}_`;
     const thumbs = await this.storage.listObjects({
-      bucket: Config.MEDIA_IMAGE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_IMAGES,
       key: thumbsPrefix,
     });
     for (const t of thumbs) {
-      await this.storage.deleteObject({ bucket: Config.MEDIA_IMAGE_BUCKET, key: t.key });
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: t.key });
     }
   }
 
@@ -237,7 +236,7 @@ export class MediaService {
     const ext = extFromFilenameOrMime(filename, ct0);
     const stagingKey = `profiles-staging/${pathUserId}/${slot}/${crypto.randomUUID()}${ext}`;
     return await this.storage.createPresignedPost({
-      bucket: Config.MEDIA_PROFILE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_PROFILES,
       key: stagingKey,
       contentTypeWhitelist: ct0,
       maxBytes: sizeLimitBytes,
@@ -254,21 +253,21 @@ export class MediaService {
     const stagingPrefix = `profiles-staging/${pathUserId}/${slot}`;
     if (!isKeyUnder(stagingPrefix, stagingKey)) throw new Error("invalid key");
     const head = await this.storage.headObject({
-      bucket: Config.MEDIA_PROFILE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_PROFILES,
       key: stagingKey,
     });
     if (!head || head.size <= 0) throw new Error("not found");
     if (sizeLimitBytes !== undefined && head.size > sizeLimitBytes) {
-      await this.storage.deleteObject({ bucket: Config.MEDIA_PROFILE_BUCKET, key: stagingKey });
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });
       throw new Error("file too large");
     }
     const sniffBytes = await this.storage.loadObject(
-      { bucket: Config.MEDIA_PROFILE_BUCKET, key: stagingKey },
+      { bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey },
       { offset: 0, length: 65536 },
     );
     const sniff = sniffFormat(sniffBytes);
     if (!sniff.ok) {
-      await this.storage.deleteObject({ bucket: Config.MEDIA_PROFILE_BUCKET, key: stagingKey });
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });
       throw new Error("invalid image data");
     }
     const finalExt = extFromFilenameOrMime(
@@ -277,16 +276,16 @@ export class MediaService {
     );
     const masterKey = `${pathUserId}/masters/${slot}${finalExt}`;
     await this.storage.moveObject(
-      { bucket: Config.MEDIA_PROFILE_BUCKET, key: stagingKey },
-      { bucket: Config.MEDIA_PROFILE_BUCKET, key: masterKey },
+      { bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey },
+      { bucket: Config.MEDIA_BUCKET_PROFILES, key: masterKey },
     );
     const meta = await this.storage.headObject({
-      bucket: Config.MEDIA_PROFILE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_PROFILES,
       key: masterKey,
     });
     const job = {
       type: "icon",
-      bucket: Config.MEDIA_PROFILE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_PROFILES,
       originalKey: masterKey,
     };
     await this.redis.lpush("media-thumb-queue", JSON.stringify(job));
@@ -299,7 +298,7 @@ export class MediaService {
   ): Promise<{ meta: StorageObjectMetadata; bytes: Uint8Array }> {
     const prefix = `${userId}/masters/${slot}`;
     const objs = await this.storage.listObjects({
-      bucket: Config.MEDIA_PROFILE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_PROFILES,
       key: prefix,
     });
     const master = objs.find((o) =>
@@ -307,11 +306,11 @@ export class MediaService {
     );
     if (!master) throw new Error("not found");
     const meta = await this.storage.headObject({
-      bucket: Config.MEDIA_PROFILE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_PROFILES,
       key: master.key,
     });
     const bytes = await this.storage.loadObject({
-      bucket: Config.MEDIA_PROFILE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_PROFILES,
       key: master.key,
     });
     return { meta, bytes };
@@ -320,7 +319,7 @@ export class MediaService {
   async deleteProfile(userId: string, slot: string): Promise<void> {
     const prefix = `${userId}/masters/${slot}`;
     const objs = await this.storage.listObjects({
-      bucket: Config.MEDIA_PROFILE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_PROFILES,
       key: prefix,
     });
     const master = objs.find((o) =>
@@ -328,18 +327,18 @@ export class MediaService {
     );
     if (master) {
       await this.storage.deleteObject({
-        bucket: Config.MEDIA_PROFILE_BUCKET,
+        bucket: Config.MEDIA_BUCKET_PROFILES,
         key: master.key,
       });
     }
     const thumbsPrefix = `${userId}/thumbs/${slot}_`;
     const thumbs = await this.storage.listObjects({
-      bucket: Config.MEDIA_PROFILE_BUCKET,
+      bucket: Config.MEDIA_BUCKET_PROFILES,
       key: thumbsPrefix,
     });
     for (const t of thumbs) {
       await this.storage.deleteObject({
-        bucket: Config.MEDIA_PROFILE_BUCKET,
+        bucket: Config.MEDIA_BUCKET_PROFILES,
         key: t.key,
       });
     }
@@ -364,8 +363,8 @@ export class MediaService {
     const mastersPrefix = `${pathUserId}/masters/${revMM}/`;
     const thumbsPrefix = `${pathUserId}/thumbs/${revMM}/`;
     const [masters, thumbs] = await Promise.all([
-      this.storage.listObjects({ bucket: Config.MEDIA_IMAGE_BUCKET, key: mastersPrefix }),
-      this.storage.listObjects({ bucket: Config.MEDIA_IMAGE_BUCKET, key: thumbsPrefix }),
+      this.storage.listObjects({ bucket: Config.MEDIA_BUCKET_IMAGES, key: mastersPrefix }),
+      this.storage.listObjects({ bucket: Config.MEDIA_BUCKET_IMAGES, key: thumbsPrefix }),
     ]);
     const bytesMasters = masters.reduce((a, b) => a + (b.size || 0), 0);
     const bytesThumbs = thumbs.reduce((a, b) => a + (b.size || 0), 0);

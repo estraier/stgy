@@ -57,7 +57,7 @@ describe("StorageS3Service", () => {
 
   test("createPresignedPost includes content-type and size conditions", async () => {
     const svc = new StorageS3Service();
-    const bucket = "fakebook-staging";
+    const bucket = "test-bucket";
     const key = "u1/tmp/avatar.png";
     const url = `http://minio:9000/${bucket}`;
     const fields = {
@@ -96,7 +96,7 @@ describe("StorageS3Service", () => {
 
   test("createPresignedPost works without maxBytes", async () => {
     const svc = new StorageS3Service();
-    const bucket = "fakebook-staging";
+    const bucket = "test-bucket";
     const key = "u1/tmp/avatar.jpg";
     const mockCreate = getMockCreatePresignedPost();
     mockCreate.mockResolvedValue({
@@ -117,8 +117,8 @@ describe("StorageS3Service", () => {
 
   test("publicUrl returns correct public URL", () => {
     const svc = new StorageS3Service();
-    const url = svc.publicUrl({ bucket: "fakebook-profiles", key: "u1.png" });
-    expect(url).toBe("http://localhost:9000/fakebook-profiles/u1.png");
+    const url = svc.publicUrl({ bucket: "test-bucket", key: "u1.png" });
+    expect(url).toBe("http://localhost:9000/test-bucket/u1.png");
   });
 
   test("listObjects returns metadata list (single page)", async () => {
@@ -143,10 +143,10 @@ describe("StorageS3Service", () => {
       ],
       IsTruncated: false,
     } as any);
-    const list = await svc.listObjects({ bucket: "fakebook-images", key: "u1/20250101/" });
+    const list = await svc.listObjects({ bucket: "test-bucket", key: "u1/20250101/" });
     expect(list).toEqual([
       {
-        bucket: "fakebook-images",
+        bucket: "test-bucket",
         key: "u1/20250101/abc.png",
         size: 1234,
         etag: "etag1",
@@ -154,7 +154,7 @@ describe("StorageS3Service", () => {
         storageClass: "STANDARD",
       },
       {
-        bucket: "fakebook-images",
+        bucket: "test-bucket",
         key: "u1/20250101/def.jpg",
         size: 5678,
         etag: "etag2",
@@ -163,7 +163,7 @@ describe("StorageS3Service", () => {
       },
     ]);
     const listInput = (send.mock.calls[0][0] as any).input;
-    expect(listInput.Bucket).toBe("fakebook-images");
+    expect(listInput.Bucket).toBe("test-bucket");
     expect(listInput.Prefix).toBe("u1/20250101/");
   });
 

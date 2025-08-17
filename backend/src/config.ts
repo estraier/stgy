@@ -41,13 +41,17 @@ export class Config {
   static readonly SMTP_HOST = envStr("FAKEBOOK_SMTP_HOST", "localhost");
   static readonly SMTP_PORT = envNum("FAKEBOOK_SMTP_PORT", 587);
   static readonly MAIL_SENDER_ADDRESS = envStr("FAKEBOOK_MAIL_SENDER_ADDRESS", "noreply@dbmx.net");
-  static readonly MAIL_ADDRESS_LIMIT_PER_MIN = envNum("FAKEBOOK_MAIL_ADDRESS_LIMIT_PER_MIN", 1);
+  static readonly MAIL_ADDRESS_LIMIT_PER_MIN = envNum("FAKEBOOK_MAIL_ADDRESS_LIMIT_PER_MIN", 2);
   static readonly MAIL_DOMAIN_LIMIT_PER_MIN = envNum("FAKEBOOK_MAIL_DOMAIN_LIMIT_PER_MIN", 10);
   static readonly MAIL_GLOBAL_LIMIT_PER_MIN = envNum("FAKEBOOK_MAIL_GLOBAL_LIMIT_PER_MIN", 100);
   static readonly SESSION_TTL = envNum("FAKEBOOK_SESSION_TTL", 60 * 60 * 24 * 7);
   static readonly TRUST_PROXY_HOPS = envNum("FAKEBOOK_TRUST_PROXY_HOPS", 1);
   static readonly TEST_SIGNUP_CODE = envStr("FAKEBOOK_TEST_SIGNUP_CODE", "");
-  static readonly MEDIA_IMAGE_BUCKET = envStr("FAKEBOOK_MEDIA_IMAGE_BUCKET", "fakebook-images");
+  static readonly MEDIA_BUCKET_IMAGES = envStr("FAKEBOOK_MEDIA_BUCKET_IMAGES", "fakebook-images");
+  static readonly MEDIA_BUCKET_PROFILES = envStr(
+    "FAKEBOOK_MEDIA_BUCKET_PROFILES",
+    "fakebook-profiles",
+  );
   static readonly MEDIA_IMAGE_BYTE_LIMIT = envNum(
     "FAKEBOOK_MEDIA_IMAGE_BYTE_LIMIT",
     10 * 1024 * 1024,
@@ -55,10 +59,6 @@ export class Config {
   static readonly MEDIA_IMAGE_BYTE_LIMIT_PER_MONTH = envNum(
     "FAKEBOOK_MEDIA_IMAGE_BYTE_LIMIT_PER_MONTH",
     100 * 1024 * 1024,
-  );
-  static readonly MEDIA_PROFILE_BUCKET = envStr(
-    "FAKEBOOK_MEDIA_PROFILE_BUCKET",
-    "fakebook-profiles",
   );
   static readonly MEDIA_AVATAR_BYTE_LIMIT = envNum(
     "FAKEBOOK_MEDIA_AVATAR_BYTE_LIMIT",
