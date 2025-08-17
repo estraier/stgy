@@ -154,6 +154,35 @@ body {
   margin: 0.3ex 0 0.3ex 0.5ex;
   max-width: 35ex;
 }
+.markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="large"] {
+  max-width: 42ex;
+}
+.markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="xlarge"] {
+  max-width: 65ex;
+}
+
+.markdown-body:not(.excerpt) .image-grid {
+  display: grid;
+  gap: 0.5rem;
+  margin: 0.5rem 0 1rem;
+  clear: both;
+}
+.markdown-body:not(.excerpt) .image-grid[data-cols="2"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+.markdown-body:not(.excerpt) .image-grid[data-cols="3"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+.markdown-body:not(.excerpt) .image-grid[data-cols="4"] {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.markdown-body:not(.excerpt) .image-grid figure.image-block {
+  float: none;
+  margin: 0;
+}
+.markdown-body:not(.excerpt) .image-grid figure.image-block.expanded {
+  grid-column: 1 / -1;
+}
 
 .markdown-body .thumbnail-block img,
 .markdown-body .thumbnail-block video {
@@ -178,6 +207,20 @@ body {
 .markdown-body code {
   font-size: 95%;
   background: #eee;
+}
+
+.markdown-body hr {
+  clear: both;
+  border: 0;
+  margin: 0 1ex;
+}
+.markdown-body hr[data-hr-level="2"] {
+  border-top: 1px solid #aaa;
+  margin: 1.5ex 1ex;
+}
+.markdown-body hr[data-hr-level="3"] {
+  border-top: 1px solid #888;
+  margin: 2ex 1ex;
 }
 
 .markdown-body .omitted {

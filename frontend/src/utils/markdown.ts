@@ -117,6 +117,24 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       codeLines.push(line);
       continue;
     }
+
+    const hr = line.match(/^-{3,}$/);
+    if (hr) {
+      flushPara();
+      flushList();
+      flushTable();
+      flushQuote();
+      const dashCount = hr[0].length;
+      const level = dashCount === 3 ? 1 : dashCount === 4 ? 2 : 3;
+      nodes.push({
+        type: "element",
+        tag: "hr",
+        attrs: ` data-hr-level="${level}"`,
+        children: [],
+      });
+      continue;
+    }
+
     const img = line.match(imageMacroRe);
     if (img) {
       flushPara();
@@ -317,6 +335,61 @@ function rewriteMediaUrls(nodes: Node[], useThumbnail: boolean): Node[] {
   return nodes.map(rewriteOne);
 }
 
+function groupImageGrid(nodes: Node[]): Node[] {
+  function isFigureImageBlock(n: Node): n is Extract<Node, { type: "element" }> {
+    return n.type === "element" && n.tag === "figure" && !!n.attrs && n.attrs.includes("image-block");
+  }
+  function findMedia(n: Node | undefined): Extract<Node, { type: "element" }> | undefined {
+    if (!n || n.type !== "element") return undefined;
+    return (n.children || []).find(
+      (c) => c.type === "element" && (c.tag === "img" || c.tag === "video"),
+    ) as any;
+  }
+  function hasGridFlag(attrs?: string): boolean {
+    // data-grid が真（値あり/なし問わず）ならグリッド対象
+    return !!attrs && /\bdata-grid(?:=| |\b)/i.test(attrs);
+  }
+
+  function groupInArray(arr: Node[]): Node[] {
+    const out: Node[] = [];
+    for (let i = 0; i < arr.length; ) {
+      const node = arr[i];
+
+      if (isFigureImageBlock(node) && hasGridFlag(findMedia(node)?.attrs)) {
+        // 同じく data-grid を持つ figure を連続収集
+        const group: Node[] = [node];
+        let j = i + 1;
+        while (j < arr.length && isFigureImageBlock(arr[j]) && hasGridFlag(findMedia(arr[j])?.attrs)) {
+          group.push(arr[j]);
+          j++;
+        }
+        if (group.length >= 2) {
+          // 列数は連続枚数。上限を設けたい場合は Math.min(group.length, 上限) に
+          const cols = group.length;
+          out.push({
+            type: "element",
+            tag: "div",
+            attrs: ` class="image-grid" data-cols="${cols}"`,
+            children: group,
+          });
+          i = j;
+          continue;
+        }
+      }
+
+      if (node.type === "element" && node.children) {
+        out.push({ ...node, children: groupInArray(node.children) });
+      } else {
+        out.push(node);
+      }
+      i++;
+    }
+    return out;
+  }
+
+  return groupInArray(nodes);
+}
+
 function filterNodesForThumbnail(nodes: Node[]): Node[] {
   let thumbnailFig: Node | null = null;
 
@@ -377,7 +450,6 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
     }
     return null;
   }
-
   thumbnailFig = findThumbnailFig(nodes) || findFirstFig(nodes);
 
   function removeImageBlocks(nodes: Node[]): Node[] {
@@ -385,14 +457,18 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
     for (const node of nodes) {
       if (
         node.type === "element" &&
-        node.tag === "figure" &&
-        node.attrs &&
-        node.attrs.includes("image-block")
+          node.tag === "figure" &&
+          node.attrs &&
+          node.attrs.includes("image-block")
       ) {
         continue;
       }
       if (node.type === "element" && node.children) {
-        result.push({ ...node, children: removeImageBlocks(node.children) });
+        const children = removeImageBlocks(node.children);
+        if (node.tag === "div" && node.attrs && node.attrs.includes("image-grid") && children.length === 0) {
+          continue;
+        }
+        result.push({ ...node, children });
       } else {
         result.push(node);
       }
@@ -596,6 +672,7 @@ export function renderHtml(
   if (rewriteImageUrl) {
     nodes = rewriteMediaUrls(nodes, pickupThumbnail);
   }
+  nodes = groupImageGrid(nodes);
   if (pickupThumbnail) {
     nodes = filterNodesForThumbnail(nodes);
   }
@@ -758,11 +835,12 @@ export function renderHtml(
           "h6",
           "tr",
           "li",
+          "hr",
         ];
         if (blockTags.includes(node.tag)) {
           const { length: contentLength, newlines } = sumTextLenAndNewlines(node.children || []);
           let heightInc = 1 + Math.floor(contentLength / 100);
-          if (node.tag === "pre" && newlines > 1)            {
+          if (node.tag === "pre" && newlines > 1) {
             heightInc = Math.max(heightInc, newlines);
           }
           state.height += heightInc;
@@ -787,6 +865,11 @@ export function renderHtml(
             break;
           }
           html += `<br>`;
+          continue;
+        }
+
+        if (node.tag === "hr") {
+          html += `<hr${node.attrs || ""}>`;
           continue;
         }
 
