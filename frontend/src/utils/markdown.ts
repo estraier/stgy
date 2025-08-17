@@ -166,7 +166,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
         tag: "figure",
         attrs: ` class="image-block"`,
         children: [
-          (isVideo
+          isVideo
             ? {
                 type: "element",
                 tag: "video",
@@ -178,15 +178,15 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
                 tag: "img",
                 attrs: ` src="${escapeHTML(img[2])}" alt=""` + dataAttrs,
                 children: [],
-              }) as Node,
+              },
           ...(desc
-            ? ([
+            ? [
                 {
                   type: "element",
                   tag: "figcaption",
-                  children: [{ type: "text", text: desc } as Node],
+                  children: [{ type: "text", text: desc }],
                 } as Node,
-              ] as Node[])
+              ]
             : []),
         ],
       });
@@ -335,18 +335,24 @@ function rewriteMediaUrls(nodes: Node[], useThumbnail: boolean): Node[] {
   return nodes.map(rewriteOne);
 }
 
+/** ---------- any排除のための型ガードとグリッド化 ---------- */
+type ElementNode = Extract<Node, { type: "element" }>;
+function isElement(node: Node): node is ElementNode {
+  return node.type === "element";
+}
+function isMediaElement(node: Node): node is ElementNode & { tag: "img" | "video" } {
+  return isElement(node) && (node.tag === "img" || node.tag === "video");
+}
+
 function groupImageGrid(nodes: Node[]): Node[] {
-  function isFigureImageBlock(n: Node): n is Extract<Node, { type: "element" }> {
-    return n.type === "element" && n.tag === "figure" && !!n.attrs && n.attrs.includes("image-block");
+  function isFigureImageBlock(n: Node): n is ElementNode {
+    return isElement(n) && n.tag === "figure" && !!n.attrs && n.attrs.includes("image-block");
   }
-  function findMedia(n: Node | undefined): Extract<Node, { type: "element" }> | undefined {
-    if (!n || n.type !== "element") return undefined;
-    return (n.children || []).find(
-      (c) => c.type === "element" && (c.tag === "img" || c.tag === "video"),
-    ) as any;
+  function findMedia(n: Node | undefined): (ElementNode & { tag: "img" | "video" }) | undefined {
+    if (!n || !isElement(n)) return undefined;
+    return (n.children || []).find(isMediaElement);
   }
   function hasGridFlag(attrs?: string): boolean {
-    // data-grid が真（値あり/なし問わず）ならグリッド対象
     return !!attrs && /\bdata-grid(?:=| |\b)/i.test(attrs);
   }
 
@@ -356,15 +362,17 @@ function groupImageGrid(nodes: Node[]): Node[] {
       const node = arr[i];
 
       if (isFigureImageBlock(node) && hasGridFlag(findMedia(node)?.attrs)) {
-        // 同じく data-grid を持つ figure を連続収集
         const group: Node[] = [node];
         let j = i + 1;
-        while (j < arr.length && isFigureImageBlock(arr[j]) && hasGridFlag(findMedia(arr[j])?.attrs)) {
+        while (
+          j < arr.length &&
+          isFigureImageBlock(arr[j]) &&
+          hasGridFlag(findMedia(arr[j])?.attrs)
+        ) {
           group.push(arr[j]);
           j++;
         }
         if (group.length >= 2) {
-          // 列数は連続枚数。上限を設けたい場合は Math.min(group.length, 上限) に
           const cols = group.length;
           out.push({
             type: "element",
@@ -377,7 +385,7 @@ function groupImageGrid(nodes: Node[]): Node[] {
         }
       }
 
-      if (node.type === "element" && node.children) {
+      if (isElement(node) && node.children) {
         out.push({ ...node, children: groupInArray(node.children) });
       } else {
         out.push(node);
@@ -424,15 +432,15 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
     for (const node of nodes) {
       if (
         node.type === "element" &&
-          node.tag === "figure" &&
-          node.attrs &&
-          node.attrs.includes("image-block")
+        node.tag === "figure" &&
+        node.attrs &&
+        node.attrs.includes("image-block")
       ) {
         const imgOrVideo = node.children[0];
         if (
           imgOrVideo &&
-            imgOrVideo.type === "element" &&
-            (imgOrVideo.tag === "img" || imgOrVideo.tag === "video")
+          imgOrVideo.type === "element" &&
+          (imgOrVideo.tag === "img" || imgOrVideo.tag === "video")
         ) {
           const a = imgOrVideo.attrs || "";
           if (/\bdata-no-thumbnail\b/.test(a)) {
@@ -457,15 +465,20 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
     for (const node of nodes) {
       if (
         node.type === "element" &&
-          node.tag === "figure" &&
-          node.attrs &&
-          node.attrs.includes("image-block")
+        node.tag === "figure" &&
+        node.attrs &&
+        node.attrs.includes("image-block")
       ) {
         continue;
       }
       if (node.type === "element" && node.children) {
         const children = removeImageBlocks(node.children);
-        if (node.tag === "div" && node.attrs && node.attrs.includes("image-grid") && children.length === 0) {
+        if (
+          node.tag === "div" &&
+          node.attrs &&
+          node.attrs.includes("image-grid") &&
+          children.length === 0
+        ) {
           continue;
         }
         result.push({ ...node, children });
@@ -614,7 +627,7 @@ function parseInline(text: string): Node[] {
   }
   return nodes.flatMap((n) =>
     typeof n === "object" && n.type === "text"
-      ? n.text.split(/\n/).flatMap((frag, i, _arr) =>
+      ? n.text.split(/\n/).flatMap((frag, i) =>
           i === 0
             ? [{ type: "text", text: frag }]
             : [
@@ -666,7 +679,14 @@ export function renderHtml(
     pickupThumbnail?: boolean;
   },
 ): string {
-  const { maxLen, maxHeight, imgLen = 50, imgHeight = 6, rewriteImageUrl = true, pickupThumbnail = false } = options || {};
+  const {
+    maxLen,
+    maxHeight,
+    imgLen = 50,
+    imgHeight = 6,
+    rewriteImageUrl = true,
+    pickupThumbnail = false,
+  } = options || {};
 
   let nodes = parseMarkdownBlocks(mdText);
   if (rewriteImageUrl) {

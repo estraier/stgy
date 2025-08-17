@@ -1,13 +1,13 @@
 export class Config {
-  static readonly BACKEND_API_BASE_URL = envStr("NEXT_PUBLIC_BACKEND_API_BASE_URL", "http://localhost:3001");
+  static readonly BACKEND_API_BASE_URL = envStr(
+    "NEXT_PUBLIC_BACKEND_API_BASE_URL",
+    "http://localhost:3001",
+  );
   static readonly STORAGE_S3_PUBLIC_BASE_URL = envStr(
     "NEXT_PUBLIC_S3_PUBLIC_BASE_URL",
     "http://localhost:9000",
   );
-  static readonly STORAGE_S3_BUCKET_PREFIX = envStr(
-    "NEXT_PUBLIC_S3_BUCKET_PREFIX",
-    "fakebook",
-  );
+  static readonly STORAGE_S3_BUCKET_PREFIX = envStr("NEXT_PUBLIC_S3_BUCKET_PREFIX", "fakebook");
   static readonly MEDIA_BUCKET_IMAGES = Config.STORAGE_S3_BUCKET_PREFIX + "-images";
   static readonly MEDIA_BUCKET_PROFILES = Config.STORAGE_S3_BUCKET_PREFIX + "-profiles";
   static readonly MEDIA_IMAGE_BYTE_LIMIT = envNum(
@@ -23,7 +23,7 @@ export class Config {
   static readonly LIKERS_LIST_FIRST_LIMIT = envNum("NEXT_PUBLIC_LIKERS_FIRST_LIMIT", 10);
   static readonly LIKERS_LIST_SECOND_LIMIT = envNum("NEXT_PUBLIC_LIKERS_SECOND_LIMIT", 100);
   static readonly IMAGES_PAGE_SIZE = envNum("NEXT_PUBLIC_IMAGES_PAGE_SIZE", 30);
-};
+}
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = true): string {
   const v = process.env[name];

@@ -19,8 +19,6 @@ import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 import { parseBodyAndTags } from "@/utils/parse";
 
-const REPLY_PAGE_SIZE = 5;
-
 export default function PageBody() {
   const params = useParams();
   const postId =
