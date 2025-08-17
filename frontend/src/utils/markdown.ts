@@ -125,7 +125,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       const macro: Record<string, string | boolean> = {};
       if (img[3]) {
         for (const pair of img[3].split(",")) {
-          const m = pair.match(/^\s*([a-z][a-z0-9]*)(?:=([^,]+))?\s*$/);
+          const m = pair.match(/^\s*([a-z][a-z0-9-]*)(?:=([^,]+))?\s*$/);
           if (m) {
             if (m[2] === undefined) {
               macro[m[1]] = true;
@@ -306,11 +306,24 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
     for (const node of nodes) {
       if (
         node.type === "element" &&
-        node.tag === "figure" &&
-        node.attrs &&
-        node.attrs.includes("image-block")
+          node.tag === "figure" &&
+          node.attrs &&
+          node.attrs.includes("image-block")
       ) {
-        return node;
+        const imgOrVideo = node.children[0];
+        if (
+          imgOrVideo &&
+            imgOrVideo.type === "element" &&
+            (imgOrVideo.tag === "img" || imgOrVideo.tag === "video")
+        ) {
+          const a = imgOrVideo.attrs || "";
+          if (/\bdata-no-thumbnail\b/.test(a)) {
+          } else {
+            return node;
+          }
+        } else {
+          return node;
+        }
       }
       if (node.type === "element" && node.children) {
         const res = findFirstFig(node.children);
@@ -444,7 +457,7 @@ function parseInline(text: string): Node[] {
       ...parseInline(text.slice(m.index + m[0].length)),
     ];
   }
-  const linkRe = /\[([^\]]+)\]\(((?:https?:\/\/[^\s)]+|\/(?:posts|users|data)\/[^\s)]+))\)/g;
+  const linkRe = /\[([^\]]+)\]\(((?:https?:\/\/[^\s)]+|\/[^\s)]+))\)/g;
   const nodes: Node[] = [];
   let last = 0,
     match: RegExpExecArray | null;
@@ -461,8 +474,7 @@ function parseInline(text: string): Node[] {
     last = match.index + match[0].length;
   }
   text = text.slice(last);
-  const urlRe =
-    /(https?:\/\/[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]+|\/(?:posts|users|data)\/[a-zA-Z0-9\-._~:/?#[\]@!$&'()*+,;=%]*)/g;
+  const urlRe = /(https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+)/g;
   last = 0;
   while ((match = urlRe.exec(text))) {
     if (match.index > last) {
