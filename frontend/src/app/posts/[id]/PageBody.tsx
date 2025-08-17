@@ -1,5 +1,6 @@
 "use client";
 
+import { Config } from "@/config";
 import { useEffect, useMemo, useState } from "react";
 import {
   getPostDetail,
@@ -18,8 +19,6 @@ import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 import { parseBodyAndTags } from "@/utils/parse";
 
-const LIKER_LIMIT = 10;
-const LIKER_MAX = 100;
 const REPLY_PAGE_SIZE = 5;
 
 export default function PageBody() {
@@ -34,7 +33,6 @@ export default function PageBody() {
   const isAdmin = status.state === "authenticated" && status.session.userIsAdmin;
   const updatedAt = status.state === "authenticated" ? status.session.userUpdatedAt : null;
 
-  // URL を唯一のソースにする（state は持たない）
   const replyPage = useMemo(() => {
     const raw = searchParams.get("replyPage");
     const n = Number(raw);
@@ -69,7 +67,6 @@ export default function PageBody() {
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replySubmitting, setReplySubmitting] = useState(false);
 
-  // メイン投稿
   useEffect(() => {
     if (!userId) return;
     setLoading(true);
@@ -84,38 +81,36 @@ export default function PageBody() {
       .finally(() => setLoading(false));
   }, [postId, userId]);
 
-  // Liker
   useEffect(() => {
     if (!post) return;
     setLikerLoading(true);
-    const limit = likerAll ? LIKER_MAX + 1 : LIKER_LIMIT + 1;
+    const limit = likerAll ? LIKERS_LIST_SECOND_LIMIT + 1 : Config.LIKERS_LIST_FIRST_LIMIT + 1;
     listLikers(post.id, { offset: 0, limit, order: "desc" })
       .then((users) => {
         if (likerAll) {
-          setLikers(users.slice(0, LIKER_MAX));
-          setLikerHasMore(users.length > LIKER_MAX);
+          setLikers(users.slice(0, LIKERS_LIST_SECOND_LIMIT));
+          setLikerHasMore(users.length > LIKERS_LIST_SECOND_LIMIT);
         } else {
-          setLikers(users.slice(0, LIKER_LIMIT));
-          setLikerHasMore(users.length > LIKER_LIMIT);
+          setLikers(users.slice(0, Config.LIKERS_LIST_FIRST_LIMIT));
+          setLikerHasMore(users.length > Config.LIKERS_LIST_FIRST_LIMIT);
         }
       })
       .finally(() => setLikerLoading(false));
   }, [post, likerAll]);
 
-  // 返信一覧（URL の replyPage / replyOldestFirst に追従）
   useEffect(() => {
     if (!userId || !post) return;
     setReplyLoading(true);
     listPostsDetail({
       replyTo: post.id,
-      offset: (replyPage - 1) * REPLY_PAGE_SIZE,
-      limit: REPLY_PAGE_SIZE + 1,
+      offset: (replyPage - 1) * Config.POSTS_PAGE_SIZE,
+      limit: Config.POSTS_PAGE_SIZE + 1,
       order: replyOldestFirst ? "asc" : "desc",
       focusUserId: userId,
     })
       .then((list) => {
-        setReplies(list.slice(0, REPLY_PAGE_SIZE));
-        setReplyHasNext(list.length > REPLY_PAGE_SIZE);
+        setReplies(list.slice(0, Config.POSTS_PAGE_SIZE));
+        setReplyHasNext(list.length > Config.POSTS_PAGE_SIZE);
       })
       .finally(() => setReplyLoading(false));
   }, [userId, post, replyPage, replyOldestFirst]);
@@ -168,16 +163,15 @@ export default function PageBody() {
       if (reply.isLikedByFocusUser) await removeLike(reply.id);
       else await addLike(reply.id);
     } finally {
-      // 再取得は effect に任せても良いが、即時反映させたいので直で呼ぶ
       listPostsDetail({
         replyTo: postId,
-        offset: (replyPage - 1) * REPLY_PAGE_SIZE,
-        limit: REPLY_PAGE_SIZE + 1,
+        offset: (replyPage - 1) * Config.POSTS_PAGE_SIZE,
+        limit: Config.POSTS_PAGE_SIZE + 1,
         order: replyOldestFirst ? "asc" : "desc",
         focusUserId: userId,
       }).then((list) => {
-        setReplies(list.slice(0, REPLY_PAGE_SIZE));
-        setReplyHasNext(list.length > REPLY_PAGE_SIZE);
+        setReplies(list.slice(0, Config.POSTS_PAGE_SIZE));
+        setReplyHasNext(list.length > Config.POSTS_PAGE_SIZE);
       });
     }
   }
@@ -233,7 +227,6 @@ export default function PageBody() {
       setReplyingTo(null);
 
       if (replyingTo === postId) {
-        // 1ページ目へ（URLを書き換え）
         const sp = new URLSearchParams(searchParams);
         sp.set("replyPage", "1");
         if (replyOldestFirst) sp.set("replyOldestFirst", "1");
@@ -241,16 +234,15 @@ export default function PageBody() {
         router.replace(`?${sp.toString()}`, { scroll: false });
 
         getPostDetail(postId, userId).then(setPost);
-        // 即時反映
         listPostsDetail({
           replyTo: postId,
           offset: 0,
-          limit: REPLY_PAGE_SIZE + 1,
+          limit: Config.POSTS_PAGE_SIZE + 1,
           order: replyOldestFirst ? "asc" : "desc",
           focusUserId: userId,
         }).then((list) => {
-          setReplies(list.slice(0, REPLY_PAGE_SIZE));
-          setReplyHasNext(list.length > REPLY_PAGE_SIZE);
+          setReplies(list.slice(0, Config.POSTS_PAGE_SIZE));
+          setReplyHasNext(list.length > Config.POSTS_PAGE_SIZE);
         });
       } else if (replyingTo) {
         setReplies((prev) =>
@@ -272,7 +264,7 @@ export default function PageBody() {
   const canEdit = isAdmin || (post && post.ownedBy === userId);
 
   if (!userId) return null;
-  if (loading) return <div className="text-center mt-10">Loading…</div>;
+  if (loading) return <div className="text-center mt-10">Loading...</div>;
   if (error) return <div className="text-center mt-10 text-red-600">{error}</div>;
   if (!post) return <div className="text-center mt-10 text-gray-500">No post found.</div>;
 

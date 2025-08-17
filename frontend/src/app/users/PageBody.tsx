@@ -1,5 +1,6 @@
 "use client";
 
+import { Config } from "@/config";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
@@ -8,7 +9,6 @@ import type { UserDetail } from "@/api/models";
 import { parseUserSearchQuery, serializeUserSearchQuery } from "@/utils/parse";
 import UserCard from "@/components/UserCard";
 
-const PAGE_SIZE = 20;
 const TAB_VALUES = ["followees", "followers", "all"] as const;
 
 export default function PageBody() {
@@ -80,8 +80,8 @@ export default function PageBody() {
       query?: string;
       nickname?: string;
     } = {
-      offset: (page - 1) * PAGE_SIZE,
-      limit: PAGE_SIZE + 1,
+      offset: (page - 1) * Config.USERS_PAGE_SIZE,
+      limit: Config.USERS_PAGE_SIZE + 1,
       order: oldestFirst ? "asc" : "desc",
       focusUserId: userId,
     };
@@ -126,8 +126,8 @@ export default function PageBody() {
           });
           return;
         }
-        setHasNext(data.length > PAGE_SIZE);
-        setUsers(data.slice(0, PAGE_SIZE));
+        setHasNext(data.length > Config.USERS_PAGE_SIZE);
+        setUsers(data.slice(0, Config.USERS_PAGE_SIZE));
       })
       .catch((err) => {
         if (err instanceof Error) setError(err.message);

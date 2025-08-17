@@ -1,5 +1,6 @@
 "use client";
 
+import { Config } from "@/config";
 import { useEffect, useState, useRef } from "react";
 import {
   listPostsDetail,
@@ -18,7 +19,6 @@ import { parsePostSearchQuery, serializePostSearchQuery } from "@/utils/parse";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 
-const PAGE_SIZE = 20;
 const TAB_VALUES = ["following", "liked", "all"] as const;
 
 export default function PageBody() {
@@ -108,8 +108,8 @@ export default function PageBody() {
       ownedBy?: string;
       replyTo?: string;
     } = {
-      offset: (usePage - 1) * PAGE_SIZE,
-      limit: PAGE_SIZE + 1,
+      offset: (usePage - 1) * Config.POSTS_PAGE_SIZE,
+      limit: Config.POSTS_PAGE_SIZE + 1,
       order: oldestFirst ? "asc" : "desc",
       focusUserId: userId,
     };
@@ -168,9 +168,9 @@ export default function PageBody() {
       }
       return [];
     });
-    setHasNext(data.length > PAGE_SIZE);
+    setHasNext(data.length > Config.POSTS_PAGE_SIZE);
     setPosts(
-      data.slice(0, PAGE_SIZE).map((post) => ({
+      data.slice(0, Config.POSTS_PAGE_SIZE).map((post) => ({
         ...post,
         likeCount: Number(post.likeCount ?? 0),
         replyCount: Number(post.replyCount ?? 0),

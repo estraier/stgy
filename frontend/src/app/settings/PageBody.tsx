@@ -148,7 +148,6 @@ export default function PageBody() {
     <main className="max-w-lg mx-auto mt-12 p-4 bg-white shadow">
       <h1 className="text-2xl font-bold mb-6">Settings</h1>
 
-      {/* Email Change */}
       <section className="mb-10">
         <h2 className="text-lg font-semibold mb-2">Change email address</h2>
         {emailStep === "input" && (
@@ -191,7 +190,6 @@ export default function PageBody() {
         )}
       </section>
 
-      {/* Password Change */}
       <section className="mb-10">
         <h2 className="text-lg font-semibold mb-2">Change password</h2>
         <form onSubmit={handleChangePassword} className="flex flex-col gap-3">
@@ -222,12 +220,11 @@ export default function PageBody() {
             className="bg-blue-600 text-white px-4 py-1 rounded"
             disabled={pwSuccess}
           >
-            Send verification code
+            Change password
           </button>
         </form>
       </section>
 
-      {/* Withdrawal */}
       <section>
         <h2 className="text-lg font-semibold mb-2">Withdrawal</h2>
         {!withdrawalMode ? (

@@ -152,15 +152,14 @@ export default function PageBody() {
             {!quotaLoading && quota && (
               <div className="space-y-1">
                 <div>
-                  Month: <span className="font-mono">{quota.yyyymm}</span>
+                  Month: <span className="font-mono">{quota.yyyymm.replace(/^(\d{4})(\d{2})$/, "$1-$2")}</span>
                 </div>
                 <div>
                   Total: <b>{formatBytes(quota.bytesTotal)}</b>
                   {monthlyLimit ? ` / ${formatBytes(monthlyLimit)}` : ""}
-                </div>
-                <div className="text-xs text-gray-500">
-                  Masters: {formatBytes(quota.bytesMasters)} / Thumbs:{" "}
-                  {formatBytes(quota.bytesThumbs)}
+                <span className="pl-2 text-xs text-gray-500">
+                  ({formatBytes(quota.bytesMasters)} + {formatBytes(quota.bytesThumbs)})
+                </span>
                 </div>
                 {monthlyLimit && (
                   <div className="mt-1 w-64 h-2 bg-gray-200 rounded overflow-hidden">

@@ -1,5 +1,6 @@
 "use client";
 
+import { Config } from "@/config";
 import { useEffect, useState } from "react";
 import { getUserDetail, listFollowers, listFollowees } from "@/api/users";
 import { listPostsDetail, addLike, removeLike, createPost } from "@/api/posts";
@@ -12,7 +13,6 @@ import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 import { parseBodyAndTags } from "@/utils/parse";
 
-const PAGE_SIZE = 20;
 const TAB_VALUES = ["posts", "replies", "followers", "followees"] as const;
 
 export default function PageBody() {
@@ -123,8 +123,8 @@ export default function PageBody() {
         replyTo?: string;
       } = {
         ownedBy: user.id,
-        offset: (page - 1) * PAGE_SIZE,
-        limit: PAGE_SIZE + 1,
+        offset: (page - 1) * Config.POSTS_PAGE_SIZE,
+        limit: Config.POSTS_PAGE_SIZE + 1,
         order: oldestFirst ? "asc" : "desc",
         focusUserId: userId,
       };
@@ -132,8 +132,8 @@ export default function PageBody() {
       if (tab === "replies") params.replyTo = "*";
       listPostsDetail(params)
         .then((data) => {
-          setPosts(data.slice(0, PAGE_SIZE));
-          setHasNext(data.length > PAGE_SIZE);
+          setPosts(data.slice(0, Config.POSTS_PAGE_SIZE));
+          setHasNext(data.length > Config.POSTS_PAGE_SIZE);
         })
         .catch((err: unknown) => {
           if (err instanceof Error) setListError(err.message || "Failed to fetch posts.");
@@ -142,14 +142,14 @@ export default function PageBody() {
         .finally(() => setListLoading(false));
     } else if (tab === "followers") {
       listFollowers(user.id, {
-        offset: (page - 1) * PAGE_SIZE,
-        limit: PAGE_SIZE + 1,
+        offset: (page - 1) * Config.USERS_PAGE_SIZE,
+        limit: Config.USERS_PAGE_SIZE + 1,
         order: oldestFirst ? "asc" : "desc",
         focusUserId: userId,
       })
         .then((data) => {
-          setFollowers(data.slice(0, PAGE_SIZE));
-          setHasNext(data.length > PAGE_SIZE);
+          setFollowers(data.slice(0, Config.USERS_PAGE_SIZE));
+          setHasNext(data.length > Config.USERS_PAGE_SIZE);
         })
         .catch((err: unknown) => {
           if (err instanceof Error) setListError(err.message || "Failed to fetch followers.");
@@ -158,14 +158,14 @@ export default function PageBody() {
         .finally(() => setListLoading(false));
     } else if (tab === "followees") {
       listFollowees(user.id, {
-        offset: (page - 1) * PAGE_SIZE,
-        limit: PAGE_SIZE + 1,
+        offset: (page - 1) * Config.USERS_PAGE_SIZE,
+        limit: Config.USERS_PAGE_SIZE + 1,
         order: oldestFirst ? "asc" : "desc",
         focusUserId: userId,
       })
         .then((data) => {
-          setFollowees(data.slice(0, PAGE_SIZE));
-          setHasNext(data.length > PAGE_SIZE);
+          setFollowees(data.slice(0, Config.USERS_PAGE_SIZE));
+          setHasNext(data.length > Config.USERS_PAGE_SIZE);
         })
         .catch((err: unknown) => {
           if (err instanceof Error) setListError(err.message || "Failed to fetch followees.");
@@ -211,23 +211,23 @@ export default function PageBody() {
       setTimeout(() => {
         listPostsDetail({
           ownedBy: user?.id,
-          offset: (page - 1) * PAGE_SIZE,
-          limit: PAGE_SIZE + 1,
+          offset: (page - 1) * Config.POSTS_PAGE_SIZE,
+          limit: Config.POSTS_PAGE_SIZE + 1,
           order: oldestFirst ? "asc" : "desc",
           focusUserId: userId,
           replyTo: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
-        }).then((data) => setPosts(data.slice(0, PAGE_SIZE)));
+        }).then((data) => setPosts(data.slice(0, Config.POSTS_PAGE_SIZE)));
       }, 100);
     } catch {
       setTimeout(() => {
         listPostsDetail({
           ownedBy: user?.id,
-          offset: (page - 1) * PAGE_SIZE,
-          limit: PAGE_SIZE + 1,
+          offset: (page - 1) * Config.POSTS_PAGE_SIZE,
+          limit: Config.POSTS_PAGE_SIZE + 1,
           order: oldestFirst ? "asc" : "desc",
           focusUserId: userId,
           replyTo: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
-        }).then((data) => setPosts(data.slice(0, PAGE_SIZE)));
+        }).then((data) => setPosts(data.slice(0, Config.POSTS_PAGE_SIZE)));
       }, 100);
     }
   }
@@ -250,12 +250,12 @@ export default function PageBody() {
       setTimeout(() => {
         listPostsDetail({
           ownedBy: user?.id,
-          offset: (page - 1) * PAGE_SIZE,
-          limit: PAGE_SIZE + 1,
+          offset: (page - 1) * Config.POSTS_PAGE_SIZE,
+          limit: Config.POSTS_PAGE_SIZE + 1,
           order: oldestFirst ? "asc" : "desc",
           focusUserId: userId,
           replyTo: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
-        }).then((data) => setPosts(data.slice(0, PAGE_SIZE)));
+        }).then((data) => setPosts(data.slice(0, Config.POSTS_PAGE_SIZE)));
       }, 100);
     } catch (err: unknown) {
       if (err instanceof Error) setReplyError(err.message || "Failed to reply.");
