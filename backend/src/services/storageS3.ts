@@ -31,7 +31,7 @@ export class StorageS3Service implements StorageService {
 
   constructor() {
     this.s3 = new S3Client({
-      endpoint: Config.STORAGE_S3_ENDPOINT,
+      ...(Config.STORAGE_S3_ENDPOINT ? { endpoint: Config.STORAGE_S3_ENDPOINT } : {}),
       region: Config.STORAGE_S3_REGION,
       credentials: {
         accessKeyId: Config.STORAGE_S3_ACCESS_KEY_ID,
@@ -90,7 +90,7 @@ export class StorageS3Service implements StorageService {
   }
 
   publicUrl(objId: StorageObjectId): string {
-    return `${Config.STORAGE_PUBLIC_BASE_URL}/${objId.bucket}/${objId.key}`;
+    return `${Config.STORAGE_S3_PUBLIC_BASE_URL}/${objId.bucket}/${objId.key}`;
   }
 
   async listObjects(

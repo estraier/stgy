@@ -26,7 +26,7 @@ export default function AvatarImg({
   avatarPath,
   className = "",
 }: Props) {
-  const base = Config.STORAGE_PUBLIC_BASE_URL;
+  const base = Config.STORAGE_S3_PUBLIC_BASE_URL;
   const [error, setError] = useState(false);
 
   const suffix =

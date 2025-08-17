@@ -1,11 +1,15 @@
 export class Config {
   static readonly BACKEND_API_BASE_URL = envStr("NEXT_PUBLIC_BACKEND_API_BASE_URL", "http://localhost:3001");
-  static readonly STORAGE_PUBLIC_BASE_URL = envStr(
-    "NEXT_PUBLIC_STORAGE_PUBLIC_BASE_URL",
+  static readonly STORAGE_S3_PUBLIC_BASE_URL = envStr(
+    "NEXT_PUBLIC_S3_PUBLIC_BASE_URL",
     "http://localhost:9000",
   );
-  static readonly MEDIA_BUCKET_IMAGES = envStr("NEXT_PUBLIC_MEDIA_BUCKET_IMAGES", "fakebook-profiles");
-  static readonly MEDIA_BUCKET_PROFILES = envStr("NEXT_PUBLIC_MEDIA_BUCKET_PROFILES", "fakebook-profiles");
+  static readonly STORAGE_S3_BUCKET_PREFIX = envStr(
+    "NEXT_PUBLIC_S3_BUCKET_PREFIX",
+    "fakebook",
+  );
+  static readonly MEDIA_BUCKET_IMAGES = Config.STORAGE_S3_BUCKET_PREFIX + "-images";
+  static readonly MEDIA_BUCKET_PROFILES = Config.STORAGE_S3_BUCKET_PREFIX + "-profiles";
   static readonly MEDIA_IMAGE_BYTE_LIMIT = envNum(
     "NEXT_PUBLIC_MEDIA_IMAGE_BYTE_LIMIT",
     10 * 1024 * 1024,

@@ -37,7 +37,7 @@ jest.mock("../config", () => ({
     STORAGE_S3_ACCESS_KEY_ID: "key",
     STORAGE_S3_SECRET_ACCESS_KEY: "secret",
     STORAGE_S3_FORCE_PATH_STYLE: "true",
-    STORAGE_PUBLIC_BASE_URL: "http://localhost:9000",
+    STORAGE_S3_PUBLIC_BASE_URL: "http://localhost:9000",
   },
 }));
 
