@@ -194,12 +194,21 @@ body {
   grid-column: 1 / -1;
 }
 
+.markdown-body .image-block img,
+.markdown-body .image-block video {
+  display: block;
+  width: 100%;
+  height: auto;
+  border: 1px solid #ddd;
+  border-radius: 0.7ex;
+}
 .markdown-body .thumbnail-block img,
 .markdown-body .thumbnail-block video {
   display: block;
   width: 100%;
   height: auto;
-  border-radius: 8px;
+  border: 1px solid #ddd;
+  border-radius: 0.5ex;
 }
 .markdown-body .thumbnail-block figcaption {
   display: none;
