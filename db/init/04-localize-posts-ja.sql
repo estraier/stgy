@@ -1,7 +1,7 @@
 UPDATE posts
-SET content = $$# Fakebookにようこそ
+SET content = $$![Fakebookロゴ](/data/logo-square.svg){float=right,size=small}
 
-![Fakebookロゴ](/data/logo-square.svg)
+# Fakebookにようこそ
 
 Fakebookは、SNS（Social Networking System）の基本機能を率直に実装したオープンソースのシステムです。このサイトはそのデモシステムです。あなたはFakebookで以下のことが行えます。
 
@@ -207,6 +207,42 @@ Markdownは標準規格ではないので、変種が多数あります。ここ
 |千葉県|県庁所在地は千葉市。ピーナツで有名|
 |埼玉県|県庁所在地はさいたま市。特徴は特にない。|
 
+ハイパーリンクを表現するには、`[` と `]` でアンカー文字列を挟んでから、直後に `(` と `)` で挟んでURLを書きます。Fakebook内のページにも、外部サイトへも、リンクを貼ることができます。
+
+```
+私は[ChatGPT](https://ja.wikipedia.org/wiki/ChatGPT)を使っています。
+Googleで[ChatGPT](https://www.google.com/?q=ChatGPT)を検索できます。
+使い方については[ヘルプ記事](/posts/00000000-0000-0000-0002-000000000002)を見てください。
+詳細については[管理者ユーザ](/posts/00000000-0000-0000-0001-000000000001)に聞いて下さい。
+画像の管理は[画像管理ページ](/images)で行います。
+```
+
+私は[ChatGPT](https://ja.wikipedia.org/wiki/ChatGPT)を使っています。
+Googleで[ChatGPT](https://www.google.com/?q=ChatGPT)を検索できます。
+使い方については[ヘルプ記事](/posts/00000000-0000-0000-0002-000000000002)を見てください。
+詳細については[管理者ユーザ](/users/00000000-0000-0000-0001-000000000001)に聞いて下さい。
+画像の管理は[画像管理ページ](/images)で行います。
+
+本文の中に現れる `http://` や `https://` で始まる文字列は、自動的にそのURLへのハイパーリンクになります。
+
+```
+- 詳細はこちら: https://kantei.go.jp/
+```
+
+- 詳細はこちら: https://kantei.go.jp/
+
+ハイパーリンクのURL部分には特殊記法も使えます。`wiki-en` や `wiki-ja` とすると、アンカー文字列を表題とするWikipedia英語版や日本語版の記事へのリンクになります。`google` とすると、アンカー文字列を検索語とするGoogle検索結果へのリンクになります。
+
+```
+私は[ChatGPT](wiki-en)を使っています。
+私は[ChatGPT](wiki-ja)を使っています。
+Googleで[ChatGPT](google)を検索すると出てきます。
+```
+
+私は[ChatGPT](wiki-en)を使っています。
+私は[ChatGPT](wiki-ja)を使っています。
+Googleで[ChatGPT](google)を検索すると出てきます。
+
 文字の装飾もできます。装飾は地の文だけではなく、ヘッダやリストや表の中でも使えます。
 
 ```
@@ -229,7 +265,9 @@ HTMLの`<pre>`のように改行をそのまま表現したい場合には、そ
 ----
 -----
 
-記事内に画像を埋め込むには、`#![キャプション](URL)` 記法を用います。実際には、セキュリティ上の理由で、埋め込める画像のURLには制限があります。画像管理機能でアップロードした `/images/` で始まるパスか、Fakebookに既存の`/data/` で始まるパスのみです。
+記事内に画像を埋め込むには、`#![キャプション](URL)` 記法を用います。投稿メニューの画像ツールを使うと、画像のアップロードど埋め込み記法の執筆が一度でできます。
+
+セキュリティ上の理由で、埋め込める画像のURLには制限があります。画像管理機能でアップロードした `/images/` で始まるパスか、Fakebookに既存の`/data/` で始まるパスのみです。
 
 ```
 ![Fakebookロゴ](/data/logo-square.svg)

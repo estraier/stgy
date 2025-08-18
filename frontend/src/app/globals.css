@@ -154,6 +154,14 @@ body {
   margin: 0.3ex 0 0.3ex 1.2ex;
   width: 35ex;
 }
+.markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="xsmall"] {
+  max-width: 20ex;
+  max-height: 20ex;
+}
+.markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="small"] {
+  max-width: 30ex;
+  max-height: 30ex;
+}
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="large"] {
   max-width: 55ex;
   max-height: 55ex;
