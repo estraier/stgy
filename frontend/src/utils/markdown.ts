@@ -591,23 +591,37 @@ function parseInline(text: string): Node[] {
       ...parseInline(text.slice(m.index + m[0].length)),
     ];
   }
+
   const linkRe = /\[([^\]]+)\]\(((?:https?:\/\/[^\s)]+|\/[^\s)]+|[-_a-z0-9]+))\)/g;
   const nodes: Node[] = [];
   let last = 0,
     match: RegExpExecArray | null;
+  const resolveSpecialHref = (raw: string, anchor: string): string | null => {
+    const toWiki = (lang: "en" | "ja", title: string) =>
+      `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
+    if (raw === "wiki-en") return toWiki("en", anchor);
+    if (raw === "wiki-ja") return toWiki("ja", anchor);
+    if (raw === "google") return `https://www.google.com/search?q=${encodeURIComponent(anchor)}`;
+    return null;
+  };
   while ((match = linkRe.exec(text))) {
     if (match.index > last) {
       nodes.push(...parseInlineText(text.slice(last, match.index)));
     }
+    const anchor = match[1];
+    const rawHref = match[2];
+    const resolved = resolveSpecialHref(rawHref, anchor) ?? rawHref;
+
     nodes.push({
       type: "element",
       tag: "a",
-      attrs: ` href="${escapeHTML(match[2])}"`,
-      children: [{ type: "text", text: match[1] }],
+      attrs: ` href="${escapeHTML(resolved)}"`,
+      children: [{ type: "text", text: anchor }],
     });
     last = match.index + match[0].length;
   }
   text = text.slice(last);
+
   const urlRe = /(https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+)/g;
   last = 0;
   while ((match = urlRe.exec(text))) {
