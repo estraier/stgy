@@ -21,8 +21,7 @@ CREATE TABLE users (
   count_followees INT NOT NULL DEFAULT 0,
   count_posts INT NOT NULL DEFAULT 0
 );
-CREATE INDEX idx_users_email ON users(email);
-CREATE INDEX idx_users_nickname ON users(nickname);
+CREATE INDEX idx_users_nickname_created_at ON users(nickname, created_at);
 CREATE INDEX idx_users_created_at ON users(created_at);
 
 CREATE TABLE user_follows (
@@ -31,9 +30,8 @@ CREATE TABLE user_follows (
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (follower_id, followee_id)
 );
-CREATE INDEX idx_user_follows_followee ON user_follows(followee_id);
-CREATE INDEX idx_user_follows_followee_created_at ON user_follows (followee_id, created_at DESC);
-CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, created_at DESC);
+CREATE INDEX idx_user_follows_followee_created_at ON user_follows (followee_id, created_at);
+CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, created_at);
 
 CREATE TABLE posts (
   id VARCHAR(50) PRIMARY KEY,
@@ -43,8 +41,9 @@ CREATE TABLE posts (
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ
 );
-CREATE INDEX idx_posts_owned_by ON posts(owned_by);
-CREATE INDEX idx_posts_reply_to ON posts(reply_to);
+CREATE INDEX idx_posts_owned_by_created_at ON posts(owned_by, created_at);
+CREATE INDEX idx_posts_reply_to_created_at ON posts(reply_to, created_at);
+CREATE INDEX idx_posts_root_created_at ON posts (created_at) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_created_at ON posts(created_at);
 
 CREATE TABLE post_tags (
@@ -52,7 +51,7 @@ CREATE TABLE post_tags (
   name VARCHAR(100) NOT NULL,
   PRIMARY KEY (post_id, name)
 );
-CREATE INDEX idx_post_tags_name ON post_tags(name);
+CREATE INDEX idx_post_tags_name_post_id ON post_tags(name, post_id);
 
 CREATE TABLE post_likes (
   post_id VARCHAR(50) NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
@@ -60,7 +59,7 @@ CREATE TABLE post_likes (
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (post_id, liked_by)
 );
-CREATE INDEX idx_post_likes_liked_by ON post_likes(liked_by);
+CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_at);
 CREATE INDEX idx_post_likes_post_id_created_at ON post_likes (post_id, created_at);
 
 CREATE TABLE past_actions (
@@ -68,7 +67,7 @@ CREATE TABLE past_actions (
   done_at TIMESTAMPTZ NOT NULL,
   action VARCHAR(2000) NOT NULL
 );
-CREATE INDEX idx_past_actions_user_id ON past_actions(user_id);
+CREATE INDEX idx_past_actions_user_id_done_at ON past_actions(user_id, done_at);
 
 CREATE OR REPLACE FUNCTION trg_user_follows_counter()
 RETURNS TRIGGER AS $$
