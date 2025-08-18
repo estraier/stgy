@@ -639,17 +639,19 @@ function parseInline(text: string): Node[] {
   if (last < text.length) {
     nodes.push({ type: "text", text: text.slice(last) });
   }
-  return nodes.flatMap((n) =>
-    typeof n === "object" && n.type === "text"
-      ? n.text.split(/\n/).flatMap((frag, i) =>
+
+  // ★ ここを最小修正
+  return nodes.flatMap<Node>((n) =>
+    n.type === "text"
+      ? n.text.split(/\n/).flatMap<Node>((frag, i) =>
           i === 0
             ? [{ type: "text", text: frag }]
             : [
-                { type: "element", tag: "br", children: [] as Node[] },
+                { type: "element", tag: "br", children: [] },
                 { type: "text", text: frag },
               ],
         )
-      : [n],
+      : ([n] as Node[]),
   );
 }
 
@@ -765,9 +767,7 @@ export function renderHtml(
         html += writeText(node.text);
       } else if (node.type === "element") {
         if (node.isThumbnailBlock) {
-          const media = (node.children || []).find(
-            (c) => c.type === "element" && (c.tag === "img" || c.tag === "video"),
-          );
+          const media = (node.children || []).find(isMediaElement);
           if (media) {
             const ok = consumeImageBudget();
             if (!ok) {
@@ -778,11 +778,7 @@ export function renderHtml(
               break;
             }
           }
-          const figExtra = collectDataAttrs(
-            (node.children || []).find(
-              (c) => c.type === "element" && (c.tag === "img" || c.tag === "video"),
-            )?.attrs,
-          );
+          const figExtra = collectDataAttrs(media?.attrs);
           html += `<figure class="thumbnail-block"${figExtra}>`;
           for (const child of node.children || []) {
             if (child.type === "element" && (child.tag === "img" || child.tag === "video")) {
@@ -806,9 +802,7 @@ export function renderHtml(
           node.attrs &&
           (node.attrs.includes("image-block") || node.attrs.includes("thumbnail-block"))
         ) {
-          const media = (node.children || []).find(
-            (c) => c.type === "element" && (c.tag === "img" || c.tag === "video"),
-          );
+          const media = (node.children || []).find(isMediaElement);
           if (media) {
             const ok = consumeImageBudget();
             if (!ok) {
