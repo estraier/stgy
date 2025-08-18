@@ -82,12 +82,12 @@ export default function PageBody() {
   useEffect(() => {
     if (!post) return;
     setLikerLoading(true);
-    const limit = likerAll ? LIKERS_LIST_SECOND_LIMIT + 1 : Config.LIKERS_LIST_FIRST_LIMIT + 1;
+    const limit = likerAll ? Config.LIKERS_LIST_SECOND_LIMIT + 1 : Config.LIKERS_LIST_FIRST_LIMIT + 1;
     listLikers(post.id, { offset: 0, limit, order: "desc" })
       .then((users) => {
         if (likerAll) {
-          setLikers(users.slice(0, LIKERS_LIST_SECOND_LIMIT));
-          setLikerHasMore(users.length > LIKERS_LIST_SECOND_LIMIT);
+          setLikers(users.slice(0, Config.LIKERS_LIST_SECOND_LIMIT));
+          setLikerHasMore(users.length > Config.LIKERS_LIST_SECOND_LIMIT);
         } else {
           setLikers(users.slice(0, Config.LIKERS_LIST_FIRST_LIMIT));
           setLikerHasMore(users.length > Config.LIKERS_LIST_FIRST_LIMIT);

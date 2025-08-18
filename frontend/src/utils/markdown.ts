@@ -917,3 +917,56 @@ export function renderHtml(
   }
   return htmlFromNodes(nodes);
 }
+
+function textFromNodes(nodes: Node[]): string {
+  const out: string[] = [];
+  const DOUBLE_AFTER = new Set([
+    "p",
+    "pre",
+    "blockquote",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "figure",
+    "table",
+  ]);
+  const SINGLE_AFTER = new Set(["tr", "ul", "hr"]);
+  function walk(n: Node): void {
+    if (n.type === "text") {
+      out.push(n.text);
+      return;
+    }
+    switch (n.tag) {
+      case "br":
+        out.push("\n");
+        return;
+      case "li":
+        out.push("- ");
+        (n.children || []).forEach(walk);
+        out.push("\n");
+        return;
+      default:
+        (n.children || []).forEach(walk);
+        if (DOUBLE_AFTER.has(n.tag)) {
+          out.push("\n\n");
+        } else if (SINGLE_AFTER.has(n.tag)) {
+          out.push("\n");
+        }
+        return;
+    }
+  }
+  nodes.forEach(walk);
+  const text = out.join("");
+  return text
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function renderText(mdText: string): string {
+  const nodes = parseMarkdownBlocks(mdText);
+  return textFromNodes(nodes);
+}

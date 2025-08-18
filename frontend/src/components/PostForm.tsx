@@ -3,6 +3,7 @@
 import React, { useRef, useState, useEffect } from "react";
 import { renderHtml } from "@/utils/markdown";
 import { parseBodyAndTags } from "@/utils/parse";
+import UserMentionButton from "@/components/UserMentionButton";
 import ImageEmbedButton from "@/components/ImageEmbedButton";
 
 type PostFormProps = {
@@ -64,7 +65,6 @@ export default function PostForm({
     }
   }
 
-  // カーソル位置（なければ末尾）に Markdown を挿入
   function insertAtCursor(snippet: string) {
     const ta = textareaRef.current;
     if (!ta) {
@@ -87,12 +87,45 @@ export default function PostForm({
     });
   }
 
+  function insertInlineAtCursor(snippet: string) {
+    const ta = textareaRef.current;
+    if (!ta) {
+      setBody(body + snippet);
+      return;
+    }
+    const start = ta.selectionStart ?? body.length;
+    const end = ta.selectionEnd ?? start;
+    const before = body.slice(0, start);
+    const after = body.slice(end);
+    const next = before + snippet + after;
+    setBody(next);
+    requestAnimationFrame(() => {
+      ta.focus();
+      const pos = start + snippet.length;
+      ta.setSelectionRange(pos, pos);
+    });
+  }
+
   const { content, tags } = parseBodyAndTags(body);
 
   return (
     <div className="relative group">
       <div className="hidden group-focus-within:flex absolute right-0 top-0 -translate-y-full items-center gap-1">
-        <div className="px-1.5 text-gray-600 backdrop-blur-sm">
+        <div className="px-1.5 text-gray-600 backdrop-blur-sm flex items-center gap-1">
+          <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)}>
+            <svg
+              width="16"
+              height="16"
+              viewBox="-64 -64 640 640"
+              aria-hidden
+              className="opacity-80"
+            >
+              <path
+                fill="currentColor"
+                d="M483.115,144.276C393.486-56.942,101.555-43.768,24.468,159.333 c-79.871,210.431,143.055,438.656,350.166,320.186c-3.748-7.078-14.076-35.546-20.956-37.902 c-34.827,19.912-75.284,27.242-115.267,23.874c-80.693-6.801-147.99-64.165-174.165-140.074 C7.655,161.366,165.91-12.405,333.464,57.027c73.56,30.438,126.67,102.749,126.67,183.37c0,29.853-6.121,66.04-29.797,86.925 c-20.039,17.754-56.147,14.187-67.044-11.744c-12.526-30.232,0.822-75.078,5.773-106.568c3.02-19.248,6.057-38.504,9.078-57.752 c0.475-2.974-37.12-7.702-42.64-8.636c-0.601,3.812-1.202,7.623-1.802,11.435c-87.557-63.366-197.574,21.945-197.574,118.224 c-0.079,96.391,129.138,148.07,192.876,72.224c30.209,51.078,103.911,49.267,140.256,6.105 C515.807,295.311,510.872,206.584,483.115,144.276z M298.464,312.131c-55.134,74.423-160.658-24.728-97.869-101.325 c25.052-30.548,73.813-44.142,107.865-20.046C338.526,212.04,316.272,288.036,298.464,312.131z"
+              />
+            </svg>
+          </UserMentionButton>
           <ImageEmbedButton onInsert={(md) => insertAtCursor(md)}>
             <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden className="opacity-80">
               <path
@@ -111,7 +144,7 @@ export default function PostForm({
       >
         <textarea
           ref={textareaRef}
-          className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50"
+          className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50 break-all"
           placeholder={placeholder}
           value={body}
           onChange={(e) => setBody(e.target.value)}

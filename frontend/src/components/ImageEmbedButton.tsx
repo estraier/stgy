@@ -5,13 +5,9 @@ import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { presignImageUpload, uploadToPresigned, finalizeImage } from "@/api/media";
 
 type Props = {
-  /** アップロード完了後、本文へ挿入する Markdown を親へ通知 */
   onInsert: (markdown: string) => void;
-  /** 配置用クラス */
   className?: string;
-  /** ボタンの title */
   title?: string;
-  /** ボタンの中身を差し替えたい場合 */
   children?: React.ReactNode;
 };
 
@@ -31,13 +27,10 @@ export default function ImageEmbedButton({
     if (!userId || files.length === 0) return;
     setUploading(true);
     try {
-      // シンプル化：1枚だけ扱う（必要なら複数対応に拡張可）
       const file = files[0];
       const presigned = await presignImageUpload(userId, file.name, file.size);
       await uploadToPresigned(presigned, file, file.name, file.type);
       const obj = await finalizeImage(userId, presigned.objectKey);
-
-      // プレーンな埋め込み記法のみ（マクロ無し）
       const md = `![](/images/${obj.key})\n`;
       onInsert(md);
     } catch (e: unknown) {
@@ -62,7 +55,7 @@ export default function ImageEmbedButton({
       />
       <button
         type="button"
-        className="px-2 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100 text-gray-700 disabled:opacity-50"
+        className="px-2 py-1 rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50"
         onClick={() => inputRef.current?.click()}
         disabled={disabled}
         title={title}
