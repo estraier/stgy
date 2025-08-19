@@ -1,3 +1,4 @@
+import { Config } from "../config";
 import {
   Post,
   PostDetail,
@@ -10,18 +11,20 @@ import {
   ListLikersInput,
 } from "../models/post";
 import { User } from "../models/user";
+import { IdIssueService } from "./idIssue";
 import { snakeToCamel } from "../utils/format";
 import { Client } from "pg";
 import Redis from "ioredis";
-import { v4 as uuidv4 } from "uuid";
 
 export class PostsService {
   private pgClient: Client;
   private redis: Redis;
+  private idIssueService: IdIssueService;
 
   constructor(pgClient: Client, redis: Redis) {
     this.pgClient = pgClient;
     this.redis = redis;
+    this.idIssueService = new IdIssueService(Config.ID_ISSUE_WORKER_ID);
   }
 
   async countPosts(input?: CountPostsInput): Promise<number> {
@@ -245,7 +248,7 @@ export class PostsService {
       throw new Error("ownedBy is required");
     }
     const client = this.pgClient;
-    const id = uuidv4();
+    const id = await this.idIssueService.issueId();
     await client.query("BEGIN");
     try {
       const res = await client.query(

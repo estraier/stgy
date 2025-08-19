@@ -3,8 +3,7 @@ export class IdIssueService {
   private static readonly TS_BITS = BigInt(44);
   private static readonly WORKER_BITS = BigInt(8);
   private static readonly SEQ_BITS = BigInt(12);
-  private static readonly TS_SHIFT =
-    IdIssueService.WORKER_BITS + IdIssueService.SEQ_BITS;
+  private static readonly TS_SHIFT = IdIssueService.WORKER_BITS + IdIssueService.SEQ_BITS;
   private static readonly WORKER_SHIFT = IdIssueService.SEQ_BITS;
   private static readonly ONE = BigInt(1);
   private static readonly SEQ_MAX =
@@ -13,7 +12,7 @@ export class IdIssueService {
   private lastMs: bigint = BigInt(-1);
   private seq: bigint = BigInt(0);
   private readonly baseWall = Date.now();
-  private readonly basePerf = (globalThis.performance?.now?.() ?? 0);
+  private readonly basePerf = globalThis.performance?.now?.() ?? 0;
 
   constructor(workerId: number) {
     if (!Number.isInteger(workerId) || workerId < 0 || workerId > 0xff) {

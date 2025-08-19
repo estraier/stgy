@@ -12,6 +12,7 @@ import {
   AddFollowerInput,
   RemoveFollowerInput,
 } from "../models/user";
+import { IdIssueService } from "./idIssue";
 import { generateVerificationCode, validateEmail, snakeToCamel } from "../utils/format";
 import { Client } from "pg";
 import Redis from "ioredis";
@@ -21,10 +22,12 @@ import crypto from "crypto";
 export class UsersService {
   private pgClient: Client;
   private redis: Redis;
+  private idIssueService: IdIssueService;
 
   constructor(pgClient: Client, redis: Redis) {
     this.pgClient = pgClient;
     this.redis = redis;
+    this.idIssueService = new IdIssueService(Config.ID_ISSUE_WORKER_ID);
   }
 
   async countUsers(input?: CountUsersInput): Promise<number> {
@@ -214,7 +217,7 @@ export class UsersService {
       throw new Error("introduction is required");
     }
 
-    const id = uuidv4();
+    const id = await this.idIssueService.issueId();
     const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
 
     const res = await this.pgClient.query(
