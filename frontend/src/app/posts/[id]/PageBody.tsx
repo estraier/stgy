@@ -81,6 +81,12 @@ export default function PageBody() {
 
   useEffect(() => {
     if (!post) return;
+    if (!post.allowLikes) {
+      setLikers([]);
+      setLikerHasMore(false);
+      setLikerLoading(false);
+      return;
+    }
     setLikerLoading(true);
     const limit = likerAll
       ? Config.LIKERS_LIST_SECOND_LIMIT + 1
@@ -434,38 +440,44 @@ export default function PageBody() {
           </div>
         </>
       ) : (
-        <div className="mt-8 text-gray-400">Replies are not allowed.</div>
+        <div className="mt-3 ml-3 text-gray-400">Replies are not allowed.</div>
       )}
 
       <div className="my-6">
-        <div className="font-bold mb-2 flex items-center gap-2">Liked by</div>
-        <div className="flex flex-wrap gap-2">
-          {likerLoading ? (
-            <span>Loading…</span>
-          ) : likers.length === 0 ? (
-            <span className="text-gray-400">No likes yet</span>
-          ) : (
-            <>
-              {likers.map((user) => (
-                <a
-                  key={user.id}
-                  href={`/users/${user.id}`}
-                  className="px-2 py-1 bg-gray-100 rounded border border-gray-300 hover:bg-blue-100"
-                >
-                  {user.nickname}
-                </a>
-              ))}
-              {!likerAll && likerHasMore && (
-                <button
-                  className="px-2 py-1 bg-gray-100 rounded border border-gray-300 hover:bg-blue-100"
-                  onClick={() => setLikerAll(true)}
-                >
-                  ...
-                </button>
+        {post.allowLikes ? (
+          <>
+            <div className="font-bold mb-2 flex items-center gap-2">Liked by</div>
+            <div className="flex flex-wrap gap-2">
+              {likerLoading ? (
+                <span>Loading…</span>
+              ) : likers.length === 0 ? (
+                <span className="text-gray-400">No likes yet</span>
+              ) : (
+                <>
+                  {likers.map((user) => (
+                    <a
+                      key={user.id}
+                      href={`/users/${user.id}`}
+                      className="px-2 py-1 bg-gray-100 rounded border border-gray-300 hover:bg-blue-100"
+                    >
+                      {user.nickname}
+                    </a>
+                  ))}
+                  {!likerAll && likerHasMore && (
+                    <button
+                      className="px-2 py-1 bg-gray-100 rounded border border-gray-300 hover:bg-blue-100"
+                      onClick={() => setLikerAll(true)}
+                    >
+                      ...
+                    </button>
+                  )}
+                </>
               )}
-            </>
-          )}
-        </div>
+            </div>
+          </>
+        ) : (
+          <div className="mt-3 ml-3 text-gray-400">Likes are not allowed.</div>
+        )}
       </div>
     </main>
   );

@@ -127,13 +127,16 @@ export default function PostCard({
           <>
             <button
               className={`ml-auto flex items-center gap-1 px-2 py-1 rounded cursor-pointer
-                ${post.isLikedByFocusUser ? "bg-pink-100 text-pink-600" : "hover:bg-gray-100"}`}
+                ${post.isLikedByFocusUser ? "bg-pink-100 text-pink-600" : "hover:bg-gray-100"}
+                disabled:opacity-40 disabled:cursor-not-allowed`}
               onClick={(e) => {
                 e.stopPropagation();
                 onLike?.(post);
               }}
               type="button"
               aria-label={post.isLikedByFocusUser ? "Unlike" : "Like"}
+              disabled={!post.allowLikes}
+              title={!post.allowLikes ? "Likes are disabled by the author" : undefined}
             >
               {post.isLikedByFocusUser ? (
                 <Heart fill="currentColor" size={18} />
