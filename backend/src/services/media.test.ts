@@ -142,7 +142,7 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
     expect(storage.moveObject).toHaveBeenCalledTimes(1);
     const [, dst] = storage.moveObject.mock.calls[0];
     expect(dst.bucket).toBe(imageBucket);
-    expect(dst.key).toMatch(/^u1\/masters\/797491\/\d{13}[0-9a-f]{8}\.png$/);
+    expect(dst.key).toMatch(/^u1\/masters\/797491\/[0-9a-f]{16}\.png$/);
 
     expect(storage.listObjects).toHaveBeenNthCalledWith(1, {
       bucket: imageBucket,
@@ -155,7 +155,7 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
 
     expect((redis.lpush as jest.Mock).mock.calls[0][0]).toBe("media-thumb-queue");
     expect((redis.lpush as jest.Mock).mock.calls[0][1]).toMatch(
-      /"type":"image","bucket":"test-bucket-images","originalKey":"u1\/masters\/797491\/\d{13}[0-9a-f]{8}\.png"/,
+      /"type":"image","bucket":"test-bucket-images","originalKey":"u1\/masters\/797491\/[0-9a-f]{16}\.png"/,
     );
 
     expect(meta).toEqual(dstMeta);

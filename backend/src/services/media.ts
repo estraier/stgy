@@ -13,10 +13,15 @@ function toRevMM(d: Date) {
   return String(rev).padStart(6, "0");
 }
 
-function toRevTs(d: Date) {
-  const ms = d.getTime();
-  const rev = 9999999999999 - ms;
-  return String(rev).padStart(13, "0");
+function revHexWithinMonth(d: Date): string {
+  const y = d.getUTCFullYear();
+  const m = d.getUTCMonth();
+  const monthStart = Date.UTC(y, m, 1, 0, 0, 0, 0);
+  const nextMonthStart = Date.UTC(y, m + 1, 1, 0, 0, 0, 0);
+  const span = nextMonthStart - monthStart;
+  const sinceStart = d.getTime() - monthStart;
+  const rev = Math.max(0, span - 1 - sinceStart);
+  return rev.toString(16).padStart(8, "0");
 }
 
 function allowedImageMime(ct: string | false | null): string | null {
@@ -152,7 +157,8 @@ export class MediaService {
       undefined,
       sniff.mime || head.contentType || "application/octet-stream",
     );
-    const finalKey = `${pathUserId}/masters/${revMM}/${toRevTs(now)}${hash8}${finalExt}`;
+    const r8 = revHexWithinMonth(now);
+    const finalKey = `${pathUserId}/masters/${revMM}/${r8}${hash8}${finalExt}`;
     await this.storage.moveObject(
       { bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey },
       { bucket: Config.MEDIA_BUCKET_IMAGES, key: finalKey },
