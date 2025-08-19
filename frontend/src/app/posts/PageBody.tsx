@@ -179,7 +179,12 @@ export default function PageBody() {
     setLoading(false);
     const tabParamMissing = !searchParams.has("tab");
     if (tabParamMissing && tab === "following" && data.length === 0 && !isSearchMode) {
-      setQuery({ tab: "all", page: 1 });
+      setQuery({
+        tab: "all",
+        page: 1,
+        includingReplies: undefined,
+        oldestFirst: undefined,
+      });
     }
   }
   fetchPostsRef.current = fetchPosts;
@@ -330,7 +335,15 @@ export default function PageBody() {
             className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
               ${tab === t && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
             style={{ minWidth: 110 }}
-            onClick={() => setQuery({ tab: t, page: 1, q: undefined })}
+            onClick={() =>
+              setQuery({
+                tab: t,
+                page: 1,
+                q: undefined,
+                includingReplies: undefined,
+                oldestFirst: undefined,
+              })
+            }
           >
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>

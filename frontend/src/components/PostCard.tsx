@@ -114,7 +114,7 @@ export default function PostCard({
             {post.tags.map((tag) => (
               <a
                 key={tag}
-                href={`/posts?q=${encodeURIComponent("#" + tag)}`}
+                href={`/posts?q=${encodeURIComponent("#" + tag)}&includingReplies=1`}
                 className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-blue-700 hover:bg-blue-200"
                 onClick={(e) => e.stopPropagation()}
               >

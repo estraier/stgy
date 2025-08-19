@@ -34,6 +34,24 @@ export default function PageBody() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
 
+  function setQuery(
+    updates: Partial<{ tab: string; page: number; oldestFirst: string | undefined }>,
+  ) {
+    const sp = new URLSearchParams(searchParams);
+    for (const key of ["tab", "page", "oldestFirst"]) {
+      if (
+        updates[key as keyof typeof updates] !== undefined &&
+        updates[key as keyof typeof updates] !== null &&
+        updates[key as keyof typeof updates] !== ""
+      ) {
+        sp.set(key, String(updates[key as keyof typeof updates]));
+      } else {
+        sp.delete(key);
+      }
+    }
+    router.push(`${pathname}?${sp.toString()}`);
+  }
+
   function getQuery() {
     return {
       tab: (searchParams.get("tab") as (typeof TAB_VALUES)[number]) || "posts",
@@ -57,24 +75,6 @@ export default function PageBody() {
   const [replyBody, setReplyBody] = useState("");
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replySubmitting, setReplySubmitting] = useState(false);
-
-  function setQuery(
-    updates: Partial<{ tab: string; page: number; oldestFirst: string | undefined }>,
-  ) {
-    const sp = new URLSearchParams(searchParams);
-    for (const key of ["tab", "page", "oldestFirst"]) {
-      if (
-        updates[key as keyof typeof updates] !== undefined &&
-        updates[key as keyof typeof updates] !== null &&
-        updates[key as keyof typeof updates] !== ""
-      ) {
-        sp.set(key, String(updates[key as keyof typeof updates]));
-      } else {
-        sp.delete(key);
-      }
-    }
-    router.push(`${pathname}?${sp.toString()}`);
-  }
 
   useEffect(() => {
     if (!status) return;
@@ -293,7 +293,7 @@ export default function PageBody() {
   }
 
   function handleTabChange(nextTab: (typeof TAB_VALUES)[number]) {
-    setQuery({ tab: nextTab, page: 1, oldestFirst: oldestFirst ? "1" : undefined });
+    setQuery({ tab: nextTab, page: 1, oldestFirst: undefined });
     setReplyTo(null);
     setReplyBody("");
     setReplyError(null);

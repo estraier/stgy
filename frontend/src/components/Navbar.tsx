@@ -54,7 +54,7 @@ export default function Navbar() {
     if (isActive("/users")) {
       router.push(q ? `/users?q=${encodeURIComponent(q)}` : "/users");
     } else {
-      router.push(q ? `/posts?q=${encodeURIComponent(q)}` : "/posts");
+      router.push(q ? `/posts?q=${encodeURIComponent(q)}&includingReplies=1` : "/posts");
     }
   }
 

@@ -87,6 +87,8 @@ DECLARE
   uid text;
   pid1 text;
   pid2 text;
+  tag1 text;
+  tag2 text;
 BEGIN
   FOR i IN 1..150 LOOP
     uid := '00000000-0000-0000-0001-1' || lpad(i::text, 11, '0');
@@ -105,22 +107,26 @@ BEGIN
       now(),
       NULL
     );
-    pid1 := '00000000-0000-0000-0002-' || lpad((1000 + i * 2 - 1)::text, 12, '0');
-    pid2 := '00000000-0000-0000-0002-' || lpad((1000 + i * 2)::text, 12, '0');
+    pid1 := '00000000-0000-0000-0002-' || lpad((10000 + i * 2 - 1)::text, 12, '0');
+    pid2 := '00000000-0000-0000-0002-' || lpad((10000 + i * 2)::text, 12, '0');
     INSERT INTO posts (id, content, owned_by, reply_to, created_at, updated_at) VALUES
       (pid1, 'user' || i || 'の投稿1', uid, NULL, now(), NULL),
       (pid2, 'user' || i || 'の投稿2', uid, NULL, now(), NULL);
     INSERT INTO post_likes (post_id, liked_by, created_at) VALUES
       (pid1, '00000000-0000-0000-0001-000000000101', now());
     INSERT INTO posts (id, content, owned_by, reply_to, created_at, updated_at) VALUES
-      ('00000000-0000-0000-0002-' || lpad((2000 + i)::text, 12, '0'), 'taroの返信 to user' || i || 'の投稿2', '00000000-0000-0000-0001-000000000101', pid2, now(), NULL);
+      ('00000000-0000-0000-0002-' || lpad((20000 + i)::text, 12, '0'), 'taroの返信 to user' || i || 'の投稿2', '00000000-0000-0000-0001-000000000101', pid2, now(), NULL);
     INSERT INTO post_likes (post_id, liked_by, created_at) VALUES
       ('00000000-0000-0000-0002-000000000101', uid, now());
     INSERT INTO posts (id, content, owned_by, reply_to, created_at) VALUES
-      ('00000000-0000-0000-0002-' || lpad((3000 + i)::text, 12, '0'), 'user' || i || 'からtaro投稿2への返信', uid, '00000000-0000-0000-0002-000000000102', now());
+      ('00000000-0000-0000-0002-' || lpad((30000 + i)::text, 12, '0'), 'user' || i || 'からtaro投稿2への返信', uid, '00000000-0000-0000-0002-000000000102', now());
     INSERT INTO user_follows (follower_id, followee_id, created_at) VALUES
       ('00000000-0000-0000-0001-000000000101', uid, now()),
       (uid, '00000000-0000-0000-0001-000000000101', now());
+    tag1 := 'tagA' || (i % 7 + 1)::text;
+    tag2 := 'tagB' || (i % 11 + 1)::text;
+    INSERT INTO post_tags (post_id, name) VALUES
+      (pid1, tag1), (pid1, tag2), (pid2, tag1), (pid2, tag2);
   END LOOP;
 END $$;
 
@@ -128,10 +134,16 @@ DO $$
 DECLARE
   i integer;
   pid text;
+  tag1 text;
+  tag2 text;
 BEGIN
   FOR i IN 1..150 LOOP
     pid := '00000000-0000-0000-0002-1' || lpad(i::text, 11, '0');
     INSERT INTO posts (id, content, owned_by, reply_to, created_at, updated_at) VALUES
       (pid, 'taroのつぶやき' || i, '00000000-0000-0000-0001-000000000101', NULL, now(), NULL);
+    tag1 := 'tagA' || (i % 7 + 1)::text;
+    tag2 := 'tagB' || (i % 11 + 1)::text;
+    INSERT INTO post_tags (post_id, name) VALUES
+      (pid, tag1), (pid, tag2);
   END LOOP;
 END $$;
