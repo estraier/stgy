@@ -1,4 +1,3 @@
-// src/services/auth.test.ts
 import { AuthService } from "./auth";
 
 class MockPgClient {
