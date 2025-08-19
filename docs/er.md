@@ -1,3 +1,11 @@
+# ER図
+
+## tweetデータベース
+
+```mermaid
+---
+title: "タイトル"
+---
 erDiagram
   ai_models {
     VARCHAR(50) name PK
@@ -69,3 +77,4 @@ erDiagram
   posts ||--o{ post_likes : receives
   users ||--o{ post_likes : likes
   users ||--o{ past_actions : does
+```
