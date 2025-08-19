@@ -253,6 +253,19 @@ export class PostsService {
     const id = await this.idIssueService.issueId();
     await client.query("BEGIN");
     try {
+      if (input.replyTo != null) {
+        const chk = await client.query<{ allow_replies: boolean }>(
+          `SELECT allow_replies FROM posts WHERE id = $1`,
+          [input.replyTo],
+        );
+        if (chk.rows.length === 0) {
+          throw new Error("parent post not found");
+        }
+        if (!chk.rows[0].allow_replies) {
+          throw new Error("replies are not allowed for the target post");
+        }
+      }
+
       const res = await client.query(
         `INSERT INTO posts (id, content, owned_by, reply_to, allow_replies, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, now(), NULL)
@@ -277,6 +290,19 @@ export class PostsService {
     const client = this.pgClient;
     await client.query("BEGIN");
     try {
+      if (input.replyTo != null && input.replyTo !== undefined) {
+        const chk = await client.query<{ allow_replies: boolean }>(
+          `SELECT allow_replies FROM posts WHERE id = $1`,
+          [input.replyTo],
+        );
+        if (chk.rows.length === 0) {
+          throw new Error("parent post not found");
+        }
+        if (!chk.rows[0].allow_replies) {
+          throw new Error("replies are not allowed for the target post");
+        }
+      }
+
       const columns: string[] = [];
       const values: unknown[] = [];
       let idx = 1;
@@ -306,6 +332,7 @@ export class PostsService {
       values.push(input.id);
       const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, content, owned_by, reply_to, allow_replies, created_at, updated_at`;
       await client.query(sql, values);
+
       if (input.tags !== undefined) {
         await client.query(`DELETE FROM post_tags WHERE post_id = $1`, [input.id]);
         if (input.tags.length > 0) {

@@ -12,7 +12,13 @@ import {
   UpdateUserInput,
   UpdatePasswordInput,
 } from "../models/user";
-import { normalizeText, normalizeOneLiner, normalizeMultiLines, parseBoolean, maskEmailByHash } from "../utils/format";
+import {
+  normalizeText,
+  normalizeOneLiner,
+  normalizeMultiLines,
+  parseBoolean,
+  maskEmailByHash,
+} from "../utils/format";
 
 export default function createUsersRouter(pgClient: Client, redis: Redis) {
   const router = Router();

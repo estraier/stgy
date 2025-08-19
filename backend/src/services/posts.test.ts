@@ -30,6 +30,11 @@ class MockPgClient {
       this.txCount++;
       return { rows: [] };
     }
+    if (sql.startsWith("SELECT allow_replies FROM posts WHERE id = $1")) {
+      const id = params![0];
+      const post = this.data.find((p) => p.id === id);
+      return { rows: post ? [{ allow_replies: post.allowReplies }] : [] };
+    }
     if (sql.startsWith("INSERT INTO posts")) {
       const newPost: Post = {
         id: params![0],
@@ -336,13 +341,13 @@ describe("posts service", () => {
     const input: UpdatePostInput = {
       id: postSample.id,
       content: "updated content",
-      replyTo: "other-post-id",
+      replyTo: postSample.id,
       tags: ["foo", "bar"],
     };
     const post = await postsService.updatePost(input);
     expect(post).not.toBeNull();
     expect(post!.content).toBe("updated content");
-    expect(post!.replyTo).toBe("other-post-id");
+    expect(post!.replyTo).toBe(postSample.id);
     expect(pgClient.tags.some((t) => t.postId === postSample.id && t.name === "foo")).toBe(true);
   });
 
