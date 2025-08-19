@@ -12,7 +12,7 @@ import {
   UpdateUserInput,
   UpdatePasswordInput,
 } from "../models/user";
-import { normalizeOneLiner, normalizeMultiLines, maskEmailByHash } from "../utils/format";
+import { normalizeText, normalizeOneLiner, normalizeMultiLines, parseBoolean, maskEmailByHash } from "../utils/format";
 
 export default function createUsersRouter(pgClient: Client, redis: Redis) {
   const router = Router();
@@ -126,8 +126,8 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       const input: CreateUserInput = {
         email: normalizeOneLiner(req.body.email) ?? "",
         nickname: normalizeOneLiner(req.body.nickname) ?? "",
-        password: req.body.password,
-        isAdmin: req.body.isAdmin ?? false,
+        password: normalizeText(req.body.password) ?? "",
+        isAdmin: parseBoolean(req.body.isAdmin, false),
         introduction: normalizeMultiLines(req.body.introduction) ?? "",
         avatar: normalizeOneLiner(req.body.avatar) ?? null,
         aiModel: normalizeOneLiner(req.body.aiModel) ?? null,
@@ -160,7 +160,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
         id: req.params.id,
         email: normalizeOneLiner(req.body.email) ?? undefined,
         nickname: normalizeOneLiner(req.body.nickname) ?? undefined,
-        isAdmin: req.body.isAdmin,
+        isAdmin: req.body.isAdmin === undefined ? undefined : parseBoolean(req.body.isAdmin, false),
         introduction: normalizeMultiLines(req.body.introduction) ?? undefined,
         avatar: normalizeOneLiner(req.body.avatar),
         aiModel: normalizeOneLiner(req.body.aiModel),

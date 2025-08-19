@@ -1,8 +1,10 @@
 import {
   generateVerificationCode,
   validateEmail,
+  normalizeText,
   normalizeOneLiner,
   normalizeMultiLines,
+  parseBoolean,
   maskEmailByHash,
   snakeToCamel,
 } from "./format";
@@ -68,6 +70,17 @@ describe("validateEmail", () => {
   });
 });
 
+describe("normalizeText", () => {
+  it("undefiend and null", () => {
+    expect(normalizeText(undefined) === undefined);
+    expect(normalizeText(null) === null);
+  });
+
+  it("keep spaces", () => {
+    expect(normalizeText("  foo bar  ")).toBe("  foo bar  ");
+  });
+});
+
 describe("normalizeOneLiner", () => {
   it("undefiend and null", () => {
     expect(normalizeOneLiner(undefined) === undefined);
@@ -111,6 +124,33 @@ describe("normalizeMultiLines", () => {
 
   it("removes successive and trailing spaces", () => {
     expect(normalizeMultiLines("  foo \n\n\nbar \nbaz\n")).toBe("  foo\n\n\nbar\nbaz");
+  });
+});
+
+describe("parseBoolean", () => {
+  it("default values", () => {
+    expect(parseBoolean(undefined) === false);
+    expect(parseBoolean(null) === false);
+    expect(parseBoolean("") === false);
+    expect(parseBoolean("abc") === false);
+    expect(parseBoolean(undefined, true) === true);
+    expect(parseBoolean(null, true) === true);
+    expect(parseBoolean("", true) === true);
+    expect(parseBoolean("abc", true) === true);
+  });
+
+  it("matching true expressions", () => {
+    expect(parseBoolean("true", false) === true);
+    expect(parseBoolean("1", false) === true);
+    expect(parseBoolean("yes", false) === true);
+    expect(parseBoolean("on", false) === true);
+  });
+
+  it("matching false expressions", () => {
+    expect(parseBoolean("false", true) === false);
+    expect(parseBoolean("0", true) === false);
+    expect(parseBoolean("no", true) === false);
+    expect(parseBoolean("off", true) === false);
   });
 });
 

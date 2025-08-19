@@ -70,9 +70,10 @@ components:
         replyTo:
           type: string
           nullable: true
+        allowReplies: { type: boolean }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time, nullable: true }
-      required: [id, content, ownedBy, replyTo, createdAt, updatedAt]
+      required: [id, content, ownedBy, replyTo, allowReplies, createdAt, updatedAt]
 
     PostDetail:
       allOf:
@@ -979,6 +980,7 @@ paths:
                 replyTo:
                   type: string
                   nullable: true
+                allowReplies: { type: boolean }
                 tags:
                   type: array
                   items: { type: string }
@@ -1213,6 +1215,7 @@ paths:
                 replyTo:
                   type: string
                   nullable: true
+                allowReplies: { type: boolean }
                 tags:
                   type: array
                   items: { type: string }

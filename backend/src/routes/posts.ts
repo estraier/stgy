@@ -8,7 +8,7 @@ import { UsersService } from "../services/users";
 import { AuthHelpers } from "./authHelpers";
 import { CreatePostInput, UpdatePostInput } from "../models/post";
 import { User } from "../models/user";
-import { normalizeOneLiner, normalizeMultiLines } from "../utils/format";
+import { normalizeOneLiner, normalizeMultiLines, parseBoolean } from "../utils/format";
 
 export default function createPostsRouter(pgClient: Client, redis: Redis) {
   const router = Router();
@@ -236,6 +236,8 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
         content: normalizeMultiLines(req.body.content) ?? "",
         ownedBy,
         replyTo: req.body.replyTo ?? null,
+        allowReplies:
+          req.body.allowReplies === undefined ? true : parseBoolean(req.body.allowReplies),
         tags,
       };
       const created = await postsService.createPost(input);
@@ -271,6 +273,8 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
         content: normalizeMultiLines(req.body.content) ?? undefined,
         ownedBy: req.body.ownedBy,
         replyTo: req.body.replyTo,
+        allowReplies:
+          req.body.allowReplies === undefined ? undefined : parseBoolean(req.body.allowReplies),
         tags,
       };
       const updated = await postsService.updatePost(input);

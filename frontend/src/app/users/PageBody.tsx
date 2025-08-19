@@ -244,7 +244,7 @@ export default function PageBody() {
           >
             Prev
           </button>
-        <span className="text-gray-800">Page {page}</span>
+          <span className="text-gray-800">Page {page}</span>
           <button
             className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
             onClick={() => handlePageChange(hasNext ? page + 1 : page)}

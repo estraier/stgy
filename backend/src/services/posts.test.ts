@@ -36,6 +36,7 @@ class MockPgClient {
         content: params![1],
         ownedBy: params![2],
         replyTo: params![3] ?? null,
+        allowReplies: true,
         createdAt: new Date().toISOString(),
         updatedAt: null,
       };
@@ -70,7 +71,7 @@ class MockPgClient {
     }
     if (
       sql.startsWith(
-        "SELECT id, content, owned_by, reply_to, created_at, updated_at FROM posts WHERE id =",
+        "SELECT id, content, owned_by, reply_to, allow_replies, created_at, updated_at FROM posts WHERE id =",
       )
     ) {
       const id = params![0];
@@ -116,6 +117,7 @@ class MockPgClient {
           content: p.content,
           ownedBy: p.ownedBy,
           replyTo: p.replyTo,
+          allowReplies: p.allowReplies,
           createdAt: p.createdAt,
           updatedAt: p.updatedAt,
           ownerNickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
@@ -146,6 +148,7 @@ class MockPgClient {
           content: p.content,
           ownedBy: p.ownedBy,
           replyTo: p.replyTo,
+          allowReplies: p.allowReplies,
           createdAt: p.createdAt,
           updatedAt: p.updatedAt,
           ownerNickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
@@ -171,6 +174,7 @@ class MockPgClient {
           content: p.content,
           ownedBy: p.ownedBy,
           replyTo: p.replyTo,
+          allowReplies: p.allowReplies,
           createdAt: p.createdAt,
           updatedAt: p.updatedAt,
           ownerNickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
@@ -192,7 +196,7 @@ class MockPgClient {
     }
     if (
       sql.startsWith(
-        "SELECT id, content, owned_by, reply_to, created_at, updated_at, FROM posts WHERE id =",
+        "SELECT id, content, owned_by, reply_to, allow_replies, created_at, updated_at, FROM posts WHERE id =",
       )
     ) {
       const id = params![0];
@@ -262,6 +266,7 @@ describe("posts service", () => {
       content: "test post content",
       ownedBy: "user-1",
       replyTo: null,
+      allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
     };
@@ -305,6 +310,7 @@ describe("posts service", () => {
       content: "new post content",
       ownedBy: "user-2",
       replyTo: postSample.id,
+      allowReplies: true,
       tags: ["hello", "world"],
     };
     const post = await postsService.createPost(input);
@@ -426,6 +432,7 @@ describe("listPostsByFolloweesDetail", () => {
       content: "post-alice",
       ownedBy: alice,
       replyTo: null,
+      allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
     };
@@ -434,6 +441,7 @@ describe("listPostsByFolloweesDetail", () => {
       content: "post-bob",
       ownedBy: bob,
       replyTo: null,
+      allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
     };
@@ -442,6 +450,7 @@ describe("listPostsByFolloweesDetail", () => {
       content: "post-carol",
       ownedBy: carol,
       replyTo: null,
+      allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
     };
@@ -499,6 +508,7 @@ describe("listPostsLikedByUserDetail", () => {
       content: "liked-by-alice",
       ownedBy: bob,
       replyTo: null,
+      allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
     };
@@ -507,6 +517,7 @@ describe("listPostsLikedByUserDetail", () => {
       content: "not-liked",
       ownedBy: bob,
       replyTo: null,
+      allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
     };
@@ -569,6 +580,7 @@ describe("getPostDetail", () => {
           content: p.content,
           ownedBy: p.ownedBy,
           replyTo: p.replyTo,
+          allowReplies: p.allowReplies,
           createdAt: p.createdAt,
           updatedAt: p.updatedAt,
           ownerNickname: u?.nickname || "",
@@ -602,6 +614,7 @@ describe("getPostDetail", () => {
       content: "detail content",
       ownedBy: owner.id,
       replyTo: null,
+      allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
     };
@@ -620,6 +633,7 @@ describe("getPostDetail", () => {
         content: "reply1",
         ownedBy: uuidv4(),
         replyTo: post.id,
+        allowReplies: true,
         createdAt: new Date().toISOString(),
         updatedAt: null,
       },
@@ -628,6 +642,7 @@ describe("getPostDetail", () => {
         content: "reply2",
         ownedBy: uuidv4(),
         replyTo: post.id,
+        allowReplies: true,
         createdAt: new Date().toISOString(),
         updatedAt: null,
       },
@@ -657,6 +672,7 @@ describe("getPostDetail", () => {
       content: "empty",
       ownedBy: anotherOwner.id,
       replyTo: null,
+      allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
     };

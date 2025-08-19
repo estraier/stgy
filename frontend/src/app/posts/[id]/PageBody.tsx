@@ -82,7 +82,9 @@ export default function PageBody() {
   useEffect(() => {
     if (!post) return;
     setLikerLoading(true);
-    const limit = likerAll ? Config.LIKERS_LIST_SECOND_LIMIT + 1 : Config.LIKERS_LIST_FIRST_LIMIT + 1;
+    const limit = likerAll
+      ? Config.LIKERS_LIST_SECOND_LIMIT + 1
+      : Config.LIKERS_LIST_FIRST_LIMIT + 1;
     listLikers(post.id, { offset: 0, limit, order: "desc" })
       .then((users) => {
         if (likerAll) {
@@ -98,6 +100,12 @@ export default function PageBody() {
 
   useEffect(() => {
     if (!userId || !post) return;
+    if (!post.allowReplies) {
+      setReplies([]);
+      setReplyHasNext(false);
+      setReplyLoading(false);
+      return;
+    }
     setReplyLoading(true);
     listPostsDetail({
       replyTo: post.id,
@@ -210,6 +218,10 @@ export default function PageBody() {
 
   async function handleReplySubmit(e: React.FormEvent) {
     e.preventDefault();
+    if (post && !post.allowReplies && replyingTo === postId) {
+      setReplyError("Replies are not allowed.");
+      return;
+    }
     setReplySubmitting(true);
     setReplyError(null);
     try {
@@ -350,6 +362,81 @@ export default function PageBody() {
         </div>
       )}
 
+      {post.allowReplies ? (
+        <>
+          <div className="mt-8 mb-2 flex items-center gap-2">
+            <span className="font-bold text-lg">Replies</span>
+            <label className="flex items-center gap-1 text-sm cursor-pointer ml-4">
+              <input
+                type="checkbox"
+                checked={replyOldestFirst}
+                onChange={(e) => handleReplyOldestFirstChange(e.target.checked)}
+                className="cursor-pointer"
+              />
+              Oldest first
+            </label>
+          </div>
+          <ul className="space-y-4">
+            {replyLoading ? (
+              <li>Loading…</li>
+            ) : replies.length === 0 ? (
+              <li className="text-gray-400">No replies yet</li>
+            ) : (
+              replies.map((rep) => (
+                <li key={rep.id}>
+                  <PostCard
+                    post={rep}
+                    showActions={true}
+                    onLike={() => handleReplyLike(rep)}
+                    onReply={() => setReplyingTo(rep.id)}
+                    isReplying={replyingTo === rep.id}
+                  />
+                  {replyingTo === rep.id && (
+                    <div className="mt-2">
+                      <PostForm
+                        body={replyBody}
+                        setBody={setReplyBody}
+                        onSubmit={handleReplySubmit}
+                        submitting={replySubmitting}
+                        error={replyError}
+                        onCancel={() => {
+                          setReplyingTo(null);
+                          setReplyBody("");
+                          setReplyError(null);
+                        }}
+                        buttonLabel="Reply"
+                        placeholder="Write your reply. Use #tag lines for tags."
+                        className="mt-2 flex flex-col gap-2 pt-3"
+                      />
+                    </div>
+                  )}
+                </li>
+              ))
+            )}
+          </ul>
+
+          <div className="mt-6 flex justify-center gap-4">
+            <button
+              className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={() => handleReplyPageChange(Math.max(1, replyPage - 1))}
+              disabled={replyPage === 1}
+            >
+              Prev
+            </button>
+            <span className="text-gray-800">Page {replyPage}</span>
+            <button
+              className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
+              onClick={() => handleReplyPageChange(replyHasNext ? replyPage + 1 : replyPage)}
+              disabled={!replyHasNext}
+            >
+              Next
+            </button>
+          </div>
+        </>
+      ) : (
+        <div className="mt-8 text-gray-400">Replies are not allowed.</div>
+      )}
+
       <div className="my-6">
         <div className="font-bold mb-2 flex items-center gap-2">Liked by</div>
         <div className="flex flex-wrap gap-2">
@@ -379,75 +466,6 @@ export default function PageBody() {
             </>
           )}
         </div>
-      </div>
-
-      <div className="mt-8 mb-2 flex items-center gap-2">
-        <span className="font-bold text-lg">Replies</span>
-        <label className="flex items-center gap-1 text-sm cursor-pointer ml-4">
-          <input
-            type="checkbox"
-            checked={replyOldestFirst}
-            onChange={(e) => handleReplyOldestFirstChange(e.target.checked)}
-            className="cursor-pointer"
-          />
-          Oldest first
-        </label>
-      </div>
-      <ul className="space-y-4">
-        {replyLoading ? (
-          <li>Loading…</li>
-        ) : replies.length === 0 ? (
-          <li className="text-gray-400">No replies yet</li>
-        ) : (
-          replies.map((rep) => (
-            <li key={rep.id}>
-              <PostCard
-                post={rep}
-                showActions={true}
-                onLike={() => handleReplyLike(rep)}
-                onReply={() => setReplyingTo(rep.id)}
-                isReplying={replyingTo === rep.id}
-              />
-              {replyingTo === rep.id && (
-                <div className="mt-2">
-                  <PostForm
-                    body={replyBody}
-                    setBody={setReplyBody}
-                    onSubmit={handleReplySubmit}
-                    submitting={replySubmitting}
-                    error={replyError}
-                    onCancel={() => {
-                      setReplyingTo(null);
-                      setReplyBody("");
-                      setReplyError(null);
-                    }}
-                    buttonLabel="Reply"
-                    placeholder="Write your reply. Use #tag lines for tags."
-                    className="mt-2 flex flex-col gap-2 pt-3"
-                  />
-                </div>
-              )}
-            </li>
-          ))
-        )}
-      </ul>
-
-      <div className="mt-6 flex justify-center gap-4">
-        <button
-          className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          onClick={() => handleReplyPageChange(Math.max(1, replyPage - 1))}
-          disabled={replyPage === 1}
-        >
-          Prev
-        </button>
-        <span className="text-gray-800">Page {replyPage}</span>
-        <button
-          className="px-3 py-1 rounded border text-gray-800 bg-blue-100 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-          onClick={() => handleReplyPageChange(replyHasNext ? replyPage + 1 : replyPage)}
-          disabled={!replyHasNext}
-        >
-          Next
-        </button>
       </div>
     </main>
   );

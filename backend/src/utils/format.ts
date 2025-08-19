@@ -16,6 +16,12 @@ export function validateEmail(email: string): boolean {
   );
 }
 
+export function normalizeText(input: string | undefined | null): string | undefined | null {
+  if (!input) return input;
+  let s = input.normalize("NFC");
+  return s;
+}
+
 export function normalizeOneLiner(input: string | undefined | null): string | undefined | null {
   if (!input) return input;
   let s = input.normalize("NFC");
@@ -31,6 +37,14 @@ export function normalizeMultiLines(input: string | undefined | null): string | 
   s = s.replace(/ +\n/g, "\n");
   s = s.replace(/\n+$/, "");
   return s;
+}
+
+export function parseBoolean(input: string | undefined | null, defaultValue = false): boolean {
+  if (!input) return defaultValue;
+  const s = input.trim().toLowerCase();
+  if (["true", "1", "yes", "on"].includes(s)) return true;
+  if (["false", "0", "no", "off"].includes(s)) return false;
+  return defaultValue;
 }
 
 export function maskEmailByHash(email: string): string {

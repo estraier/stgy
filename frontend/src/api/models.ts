@@ -40,6 +40,7 @@ export type Post = {
   content: string;
   ownedBy: string;
   replyTo: string | null;
+  allowReplies: boolean;
   createdAt: string;
   updatedAt: string | null;
 };

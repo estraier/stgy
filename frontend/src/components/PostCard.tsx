@@ -143,14 +143,17 @@ export default function PostCard({
               <span>{post.likeCount}</span>
             </button>
             <button
-              className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer
-                ${post.isRepliedByFocusUser ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100"}`}
               onClick={(e) => {
                 e.stopPropagation();
                 onReply?.(post);
               }}
               type="button"
               aria-label="Reply"
+              disabled={!post.allowReplies}
+              title={!post.allowReplies ? "Replies are disabled by the author" : undefined}
+              className={`flex items-center gap-1 px-2 py-1 rounded
+                ${post.isRepliedByFocusUser ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100"}
+                disabled:opacity-40 disabled:cursor-not-allowed`}
             >
               <MessageCircle size={18} />
               <span>{post.replyCount}</span>

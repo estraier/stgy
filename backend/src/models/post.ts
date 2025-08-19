@@ -3,6 +3,7 @@ export type Post = {
   content: string;
   ownedBy: string;
   replyTo: string | null;
+  allowReplies: boolean;
   createdAt: string;
   updatedAt: string | null;
 };
@@ -38,6 +39,7 @@ export type CreatePostInput = {
   content: string;
   ownedBy: string;
   replyTo: string | null;
+  allowReplies: boolean;
   tags: string[];
 };
 
@@ -46,6 +48,7 @@ export type UpdatePostInput = {
   ownedBy?: string;
   content?: string;
   replyTo?: string | null;
+  allowReplies?: boolean;
   tags?: string[];
 };
 
