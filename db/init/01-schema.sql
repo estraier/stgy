@@ -37,9 +37,12 @@ CREATE TABLE posts (
   content VARCHAR(10000) NOT NULL,
   owned_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reply_to VARCHAR(50) REFERENCES posts(id) ON DELETE SET NULL,
+  allow_likes BOOLEAN NOT NULL,
   allow_replies BOOLEAN NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
-  updated_at TIMESTAMPTZ
+  updated_at TIMESTAMPTZ,
+  count_likes INT NOT NULL DEFAULT 0,
+  count_replies INT NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
 CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);

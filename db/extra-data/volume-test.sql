@@ -44,6 +44,7 @@ INSERT INTO posts (
   content,
   owned_by,
   reply_to,
+  allow_likes,
   allow_replies,
   created_at,
   updated_at
@@ -55,6 +56,7 @@ VALUES
   '0001000000000101',
   NULL,
   TRUE,
+  TRUE,
   '2025-05-11 01:00:00+00',
   NULL
 ),
@@ -63,6 +65,7 @@ VALUES
   'taroの投稿その2',
   '0001000000000101',
   NULL,
+  TRUE,
   TRUE,
   '2025-05-11 02:00:00+00',
   '2025-05-11 03:00:00+00'
@@ -73,6 +76,7 @@ VALUES
   '0001000000000102',
   NULL,
   TRUE,
+  TRUE,
   '2025-05-11 03:00:00+00',
   NULL
 ),
@@ -81,6 +85,7 @@ VALUES
   'jiroの自己返信',
   '0001000000000102',
   '0002000000000103',
+  TRUE,
   TRUE,
   '2025-05-11 04:00:00+00',
   '2025-05-11 05:00:00+00'
@@ -114,17 +119,17 @@ BEGIN
     );
     pid1 := '0002' || lpad((10000 + i * 2 - 1)::text, 12, '0');
     pid2 := '0002' || lpad((10000 + i * 2)::text, 12, '0');
-    INSERT INTO posts (id, content, owned_by, reply_to, allow_replies, created_at, updated_at) VALUES
-      (pid1, 'user' || i || 'の投稿1', uid, NULL, TRUE, now(), NULL),
-      (pid2, 'user' || i || 'の投稿2', uid, NULL, TRUE, now(), NULL);
+    INSERT INTO posts (id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at) VALUES
+      (pid1, 'user' || i || 'の投稿1', uid, NULL, TRUE, TRUE, now(), NULL),
+      (pid2, 'user' || i || 'の投稿2', uid, NULL, TRUE, TRUE, now(), NULL);
     INSERT INTO post_likes (post_id, liked_by, created_at) VALUES
       (pid1, '0001000000000101', now());
-    INSERT INTO posts (id, content, owned_by, reply_to, allow_replies, created_at, updated_at) VALUES
-      ('0002' || lpad((20000 + i)::text, 12, '0'), 'taroの返信 to user' || i || 'の投稿2', '0001000000000101', pid2, TRUE, now(), NULL);
+    INSERT INTO posts (id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at) VALUES
+      ('0002' || lpad((20000 + i)::text, 12, '0'), 'taroの返信 to user' || i || 'の投稿2', '0001000000000101', pid2, TRUE, TRUE, now(), NULL);
     INSERT INTO post_likes (post_id, liked_by, created_at) VALUES
       ('0002000000000101', uid, now());
-    INSERT INTO posts (id, content, owned_by, reply_to, allow_replies, created_at, updated_at) VALUES
-      ('0002' || lpad((30000 + i)::text, 12, '0'), 'user' || i || 'からtaro投稿2への返信', uid, '0002000000000102', TRUE, now(), NULL);
+    INSERT INTO posts (id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at) VALUES
+      ('0002' || lpad((30000 + i)::text, 12, '0'), 'user' || i || 'からtaro投稿2への返信', uid, '0002000000000102', TRUE, TRUE, now(), NULL);
     INSERT INTO user_follows (follower_id, followee_id, created_at) VALUES
       ('0001000000000101', uid, now()),
       (uid, '0001000000000101', now());
@@ -144,8 +149,8 @@ DECLARE
 BEGIN
   FOR i IN 1..150 LOOP
     pid := '00021' || lpad(i::text, 11, '0');
-    INSERT INTO posts (id, content, owned_by, reply_to, allow_replies, created_at, updated_at) VALUES
-      (pid, 'taroのつぶやき' || i, '0001000000000101', NULL, TRUE, now(), NULL);
+    INSERT INTO posts (id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at) VALUES
+      (pid, 'taroのつぶやき' || i, '0001000000000101', NULL, TRUE, TRUE, now(), NULL);
     tag1 := 'tagA' || (i % 7 + 1)::text;
     tag2 := 'tagB' || (i % 11 + 1)::text;
     INSERT INTO post_tags (post_id, name) VALUES

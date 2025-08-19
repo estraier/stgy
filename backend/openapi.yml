@@ -70,10 +70,11 @@ components:
         replyTo:
           type: string
           nullable: true
+        allowLikes: { type: boolean }
         allowReplies: { type: boolean }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time, nullable: true }
-      required: [id, content, ownedBy, replyTo, allowReplies, createdAt, updatedAt]
+      required: [id, content, ownedBy, replyTo, allowLikes, allowReplies, createdAt, updatedAt]
 
     PostDetail:
       allOf:
@@ -980,6 +981,7 @@ paths:
                 replyTo:
                   type: string
                   nullable: true
+                allowLikes: { type: boolean }
                 allowReplies: { type: boolean }
                 tags:
                   type: array
@@ -1215,6 +1217,7 @@ paths:
                 replyTo:
                   type: string
                   nullable: true
+                allowLikes: { type: boolean }
                 allowReplies: { type: boolean }
                 tags:
                   type: array

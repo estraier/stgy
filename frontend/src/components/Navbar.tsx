@@ -140,7 +140,7 @@ export default function Navbar() {
               Settings
             </Link>
             <Link
-              href="/posts/00000000-0000-0000-0002-000000000002"
+              href="/posts/0002000000000002"
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
               onClick={() => setMenuOpen(false)}
             >

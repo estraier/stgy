@@ -236,6 +236,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
         content: normalizeMultiLines(req.body.content) ?? "",
         ownedBy,
         replyTo: req.body.replyTo ?? null,
+        allowLikes: req.body.allowLikes === undefined ? true : parseBoolean(req.body.allowLikes),
         allowReplies:
           req.body.allowReplies === undefined ? true : parseBoolean(req.body.allowReplies),
         tags,
@@ -273,6 +274,8 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
         content: normalizeMultiLines(req.body.content) ?? undefined,
         ownedBy: req.body.ownedBy,
         replyTo: req.body.replyTo,
+        allowLikes:
+          req.body.allowLikes === undefined ? undefined : parseBoolean(req.body.allowLikes),
         allowReplies:
           req.body.allowReplies === undefined ? undefined : parseBoolean(req.body.allowReplies),
         tags,

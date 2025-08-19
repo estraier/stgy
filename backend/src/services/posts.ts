@@ -65,7 +65,7 @@ export class PostsService {
 
   async getPost(id: string): Promise<Post | null> {
     const res = await this.pgClient.query(
-      `SELECT id, content, owned_by, reply_to, allow_replies, created_at, updated_at FROM posts WHERE id = $1`,
+      `SELECT id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at FROM posts WHERE id = $1`,
       [id],
     );
     return res.rows[0] ? snakeToCamel<Post>(res.rows[0]) : null;
@@ -79,6 +79,7 @@ export class PostsService {
         p.content,
         p.owned_by,
         p.reply_to,
+        p.allow_likes,
         p.allow_replies,
         p.created_at,
         p.updated_at,
@@ -123,7 +124,7 @@ export class PostsService {
     const tag = options?.tag;
     const replyTo = options?.replyTo;
     let sql = `
-      SELECT p.id, p.content, p.owned_by, p.reply_to, p.allow_replies, p.created_at, p.updated_at
+      SELECT p.id, p.content, p.owned_by, p.reply_to, p.allow_likes, p.allow_replies, p.created_at, p.updated_at
       FROM posts p
     `;
     const where: string[] = [];
@@ -175,6 +176,7 @@ export class PostsService {
         p.content,
         p.owned_by,
         p.reply_to,
+        p.allow_likes,
         p.allow_replies,
         p.created_at,
         p.updated_at,
@@ -265,12 +267,18 @@ export class PostsService {
           throw new Error("replies are not allowed for the target post");
         }
       }
-
       const res = await client.query(
-        `INSERT INTO posts (id, content, owned_by, reply_to, allow_replies, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, now(), NULL)
-         RETURNING id, content, owned_by, reply_to, allow_replies, created_at, updated_at`,
-        [id, input.content, input.ownedBy, input.replyTo, input.allowReplies],
+        `INSERT INTO posts (id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, now(), NULL)
+         RETURNING id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at`,
+        [
+          id,
+          input.content,
+          input.ownedBy,
+          input.replyTo,
+          input.allowLikes,
+          input.allowReplies,
+        ],
       );
       if (input.tags && input.tags.length > 0) {
         await client.query(
@@ -302,7 +310,6 @@ export class PostsService {
           throw new Error("replies are not allowed for the target post");
         }
       }
-
       const columns: string[] = [];
       const values: unknown[] = [];
       let idx = 1;
@@ -324,13 +331,17 @@ export class PostsService {
         columns.push(`reply_to = $${idx++}`);
         values.push(input.replyTo);
       }
+      if (input.allowLikes !== undefined) {
+        columns.push(`allow_likes = $${idx++}`);
+        values.push(input.allowLikes);
+      }
       if (input.allowReplies !== undefined) {
         columns.push(`allow_replies = $${idx++}`);
         values.push(input.allowReplies);
       }
       columns.push(`updated_at = now()`);
       values.push(input.id);
-      const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, content, owned_by, reply_to, allow_replies, created_at, updated_at`;
+      const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at`;
       await client.query(sql, values);
 
       if (input.tags !== undefined) {
@@ -356,6 +367,9 @@ export class PostsService {
   }
 
   async addLike(postId: string, userId: string): Promise<void> {
+    const chk = await this.pgClient.query(`SELECT allow_likes FROM posts WHERE id = $1`, [postId]);
+    if (chk.rows.length === 0) throw new Error("post not found");
+    if (!chk.rows[0].allow_likes) throw new Error("likes are not allowed for the target post");
     const res = await this.pgClient.query(
       `INSERT INTO post_likes (post_id, liked_by, created_at)
        VALUES ($1, $2, $3)
@@ -396,6 +410,7 @@ export class PostsService {
         p.content,
         p.owned_by,
         p.reply_to,
+        p.allow_likes,
         p.allow_replies,
         p.created_at,
         p.updated_at,
@@ -451,6 +466,7 @@ export class PostsService {
         p.content,
         p.owned_by,
         p.reply_to,
+        p.allow_likes,
         p.allow_replies,
         p.created_at,
         p.updated_at,
