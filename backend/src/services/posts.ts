@@ -154,7 +154,7 @@ export class PostsService {
     if (where.length > 0) {
       sql += " WHERE " + where.join(" AND ");
     }
-    sql += ` ORDER BY p.created_at ${order}, p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
+    sql += ` ORDER BY p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
     const res = await this.pgClient.query(sql, params);
     return snakeToCamel<Post[]>(res.rows);
@@ -217,7 +217,7 @@ export class PostsService {
     if (where.length > 0) {
       sql += " WHERE " + where.join(" AND ");
     }
-    sql += ` ORDER BY p.created_at ${order}, p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
+    sql += ` ORDER BY p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
     const res = await this.pgClient.query(sql, params);
     const details = snakeToCamel<PostDetail[]>(res.rows);
@@ -378,7 +378,7 @@ export class PostsService {
       LEFT JOIN users pu ON parent_post.owned_by = pu.id
       WHERE p.owned_by IN (${followeeSql})
         ${repliesFilter}
-      ORDER BY p.created_at ${order}, p.id ${order}
+      ORDER BY p.id ${order}
       OFFSET $2 LIMIT $3
     `;
     const params = [userId, offset, limit];
@@ -438,7 +438,7 @@ export class PostsService {
     if (!includeReplies) {
       sql += ` AND p.reply_to IS NULL`;
     }
-    sql += ` ORDER BY p.created_at ${order}, p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
+    sql += ` ORDER BY p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
     const res = await this.pgClient.query(sql, params);
     const details = snakeToCamel<PostDetail[]>(res.rows);

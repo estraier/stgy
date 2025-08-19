@@ -21,8 +21,7 @@ CREATE TABLE users (
   count_followees INT NOT NULL DEFAULT 0,
   count_posts INT NOT NULL DEFAULT 0
 );
-CREATE INDEX idx_users_nickname_created_at ON users(nickname, created_at);
-CREATE INDEX idx_users_created_at ON users(created_at);
+CREATE INDEX idx_users_nickname_id ON users(nickname, id);
 
 CREATE TABLE user_follows (
   follower_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -41,10 +40,9 @@ CREATE TABLE posts (
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ
 );
-CREATE INDEX idx_posts_owned_by_created_at ON posts(owned_by, created_at);
-CREATE INDEX idx_posts_reply_to_created_at ON posts(reply_to, created_at);
-CREATE INDEX idx_posts_root_created_at ON posts (created_at) WHERE reply_to IS NULL;
-CREATE INDEX idx_posts_created_at ON posts(created_at);
+CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
+CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
+CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
 
 CREATE TABLE post_tags (
   post_id VARCHAR(50) NOT NULL REFERENCES posts(id) ON DELETE CASCADE,

@@ -112,11 +112,11 @@ export class UsersService {
         `ORDER BY (u.id = $${params.length + 1}) DESC, ` +
         `(f1.follower_id IS NOT NULL) DESC, ` +
         `(f2.follower_id IS NOT NULL) DESC, ` +
-        `u.created_at ASC, u.id ASC`;
+        `u.id ASC`;
       params.push(focusUserId);
     } else {
       const dir = order.toLowerCase() === "asc" ? "ASC" : "DESC";
-      orderClause = `ORDER BY u.created_at ${dir}, u.id ${dir}`;
+      orderClause = `ORDER BY u.id ${dir}`;
     }
 
     let sql = baseSelect;
@@ -161,11 +161,11 @@ export class UsersService {
         `ORDER BY (u.id = $${params.length + 1}) DESC, ` +
         `(f1.follower_id IS NOT NULL) DESC, ` +
         `(f2.follower_id IS NOT NULL) DESC, ` +
-        `u.created_at ASC, u.id ASC`;
+        `u.id ASC`;
       params.push(focusUserId);
     } else {
       const dir = order.toLowerCase() === "asc" ? "ASC" : "DESC";
-      orderClause = `ORDER BY u.created_at ${dir}, u.id ${dir}`;
+      orderClause = `ORDER BY u.id ${dir}`;
     }
 
     let sql = baseSelect;
@@ -413,7 +413,7 @@ export class UsersService {
       FROM user_follows f
       JOIN users u ON f.followee_id = u.id
       WHERE f.follower_id = $1
-      ORDER BY f.created_at ${order}, u.created_at ${order}, u.id ${order}
+      ORDER BY f.created_at ${order}, f.followee_id ${order}
       OFFSET $2 LIMIT $3
     `;
     const res = await this.pgClient.query(sql, [input.followerId, offset, limit]);
@@ -455,7 +455,7 @@ export class UsersService {
       FROM user_follows f
       JOIN users u ON f.follower_id = u.id
       WHERE f.followee_id = $1
-      ORDER BY f.created_at ${order}, u.created_at ${order}, u.id ${order}
+      ORDER BY f.created_at ${order}, f.follower_id ${order}
       OFFSET $2 LIMIT $3
     `;
     const res = await this.pgClient.query(sql, [input.followeeId, offset, limit]);
