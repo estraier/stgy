@@ -85,8 +85,8 @@ components:
             replyToOwnerNickname:
               type: string
               nullable: true
-            replyCount: { type: integer }
-            likeCount: { type: integer }
+            countLikes: { type: integer }
+            countReplies: { type: integer }
             tags:
               type: array
               items: { type: string }
@@ -96,7 +96,7 @@ components:
             isRepliedByFocusUser:
               type: boolean
               nullable: true
-          required: [ownerNickname, replyCount, likeCount, tags]
+          required: [ownerNickname, countLikes, countReplies, tags]
 
     AIModel:
       type: object

@@ -143,7 +143,7 @@ export default function PostCard({
               ) : (
                 <Heart size={18} />
               )}
-              <span>{post.likeCount}</span>
+              <span>{post.countLikes}</span>
             </button>
             <button
               onClick={(e) => {
@@ -159,7 +159,7 @@ export default function PostCard({
                 disabled:opacity-40 disabled:cursor-not-allowed`}
             >
               <MessageCircle size={18} />
-              <span>{post.replyCount}</span>
+              <span>{post.countReplies}</span>
             </button>
           </>
         )}

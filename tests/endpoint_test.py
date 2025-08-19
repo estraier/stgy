@@ -197,6 +197,8 @@ def test_posts():
   assert detail["id"] == post_id
   assert detail["content"] == post_input["content"]
   assert detail["ownerNickname"] == "admin"
+  assert "countLikes" in detail
+  assert "countReplies" in detail
   assert set(detail["tags"]) == {"hop", "step"}
   res = requests.get(f"{BASE_URL}/posts/by-followees/detail?limit=1000&userId={user_id}&includeSelf=true", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text

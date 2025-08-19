@@ -126,3 +126,65 @@ FOR EACH ROW EXECUTE FUNCTION trg_posts_counter();
 CREATE TRIGGER trg_posts_counter_upd
 AFTER UPDATE OF owned_by ON posts
 FOR EACH ROW EXECUTE FUNCTION trg_posts_counter();
+
+CREATE OR REPLACE FUNCTION trg_post_likes_counter()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    UPDATE posts SET count_likes = count_likes + 1 WHERE id = NEW.post_id;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    UPDATE posts SET count_likes = count_likes - 1 WHERE id = OLD.post_id;
+    RETURN OLD;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_post_likes_counter_ins
+AFTER INSERT ON post_likes
+FOR EACH ROW EXECUTE FUNCTION trg_post_likes_counter();
+
+CREATE TRIGGER trg_post_likes_counter_del
+AFTER DELETE ON post_likes
+FOR EACH ROW EXECUTE FUNCTION trg_post_likes_counter();
+
+CREATE OR REPLACE FUNCTION trg_post_replies_counter()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF TG_OP = 'INSERT' THEN
+    IF NEW.reply_to IS NOT NULL THEN
+      UPDATE posts SET count_replies = count_replies + 1 WHERE id = NEW.reply_to;
+    END IF;
+    RETURN NEW;
+  ELSIF TG_OP = 'DELETE' THEN
+    IF OLD.reply_to IS NOT NULL THEN
+      UPDATE posts SET count_replies = count_replies - 1 WHERE id = OLD.reply_to;
+    END IF;
+    RETURN OLD;
+  ELSIF TG_OP = 'UPDATE' THEN
+    IF NEW.reply_to IS DISTINCT FROM OLD.reply_to THEN
+      IF OLD.reply_to IS NOT NULL THEN
+        UPDATE posts SET count_replies = count_replies - 1 WHERE id = OLD.reply_to;
+      END IF;
+      IF NEW.reply_to IS NOT NULL THEN
+        UPDATE posts SET count_replies = count_replies + 1 WHERE id = NEW.reply_to;
+      END IF;
+    END IF;
+    RETURN NEW;
+  END IF;
+  RETURN NULL;
+END;
+$$ LANGUAGE plpgsql;
+
+CREATE TRIGGER trg_post_replies_counter_ins
+AFTER INSERT ON posts
+FOR EACH ROW EXECUTE FUNCTION trg_post_replies_counter();
+
+CREATE TRIGGER trg_post_replies_counter_del
+AFTER DELETE ON posts
+FOR EACH ROW EXECUTE FUNCTION trg_post_replies_counter();
+
+CREATE TRIGGER trg_post_replies_counter_upd
+AFTER UPDATE OF reply_to ON posts
+FOR EACH ROW EXECUTE FUNCTION trg_post_replies_counter();

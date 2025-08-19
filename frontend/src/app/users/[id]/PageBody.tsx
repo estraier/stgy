@@ -197,7 +197,7 @@ export default function PageBody() {
           ? {
               ...p,
               isLikedByFocusUser: !p.isLikedByFocusUser,
-              likeCount: Number(p.likeCount ?? 0) + (p.isLikedByFocusUser ? -1 : 1),
+              countLikes: Number(p.countLikes ?? 0) + (p.isLikedByFocusUser ? -1 : 1),
             }
           : p,
       ),

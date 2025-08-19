@@ -146,7 +146,7 @@ export default function PageBody() {
         ? {
             ...prev,
             isLikedByFocusUser: !prev.isLikedByFocusUser,
-            likeCount: Number(prev.likeCount) + (prev.isLikedByFocusUser ? -1 : 1),
+            countLikes: Number(prev.countLikes) + (prev.isLikedByFocusUser ? -1 : 1),
           }
         : prev,
     );
@@ -166,7 +166,7 @@ export default function PageBody() {
           ? {
               ...p,
               isLikedByFocusUser: !p.isLikedByFocusUser,
-              likeCount: Number(p.likeCount) + (p.isLikedByFocusUser ? -1 : 1),
+              countLikes: Number(p.countLikes) + (p.isLikedByFocusUser ? -1 : 1),
             }
           : p,
       ),
@@ -264,7 +264,7 @@ export default function PageBody() {
         setReplies((prev) =>
           prev.map((rep) =>
             rep.id === replyingTo
-              ? { ...rep, isRepliedByFocusUser: true, replyCount: Number(rep.replyCount) + 1 }
+              ? { ...rep, isRepliedByFocusUser: true, countReplies: Number(rep.countReplies) + 1 }
               : rep,
           ),
         );

@@ -12,8 +12,8 @@ export type Post = {
 export type PostDetail = Post & {
   ownerNickname: string;
   replyToOwnerNickname: string | null;
-  replyCount: number;
-  likeCount: number;
+  countLikes: number;
+  countReplies: number;
   tags: string[];
   isLikedByFocusUser?: boolean;
   isRepliedByFocusUser?: boolean;

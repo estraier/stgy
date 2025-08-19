@@ -172,8 +172,8 @@ export default function PageBody() {
     setPosts(
       data.slice(0, Config.POSTS_PAGE_SIZE).map((post) => ({
         ...post,
-        likeCount: Number(post.likeCount ?? 0),
-        replyCount: Number(post.replyCount ?? 0),
+        countLikes: Number(post.countLikes ?? 0),
+        countReplies: Number(post.countReplies ?? 0),
       })),
     );
     setLoading(false);
@@ -297,7 +297,7 @@ export default function PageBody() {
           ? {
               ...p,
               isLikedByFocusUser: !p.isLikedByFocusUser,
-              likeCount: Number(p.likeCount ?? 0) + (p.isLikedByFocusUser ? -1 : 1),
+              countLikes: Number(p.countLikes ?? 0) + (p.isLikedByFocusUser ? -1 : 1),
             }
           : p,
       ),

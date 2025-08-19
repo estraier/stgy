@@ -85,8 +85,8 @@ export class PostsService {
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
-        (SELECT COUNT(*) FROM posts WHERE reply_to = p.id) AS reply_count,
-        (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) AS like_count,
+        p.count_replies AS count_replies,
+        p.count_likes AS count_likes,
         ARRAY(
           SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name
         ) AS tags
@@ -182,8 +182,8 @@ export class PostsService {
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
-        (SELECT COUNT(*) FROM posts WHERE reply_to = p.id) AS reply_count,
-        (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) AS like_count,
+        p.count_replies AS count_replies,
+        p.count_likes AS count_likes,
         ARRAY(
           SELECT pt2.name FROM post_tags pt2 WHERE pt2.post_id = p.id ORDER BY pt2.name
         ) AS tags
@@ -271,18 +271,13 @@ export class PostsService {
         `INSERT INTO posts (id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, now(), NULL)
          RETURNING id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at`,
-        [
-          id,
-          input.content,
-          input.ownedBy,
-          input.replyTo,
-          input.allowLikes,
-          input.allowReplies,
-        ],
+        [id, input.content, input.ownedBy, input.replyTo, input.allowLikes, input.allowReplies],
       );
       if (input.tags && input.tags.length > 0) {
         await client.query(
-          `INSERT INTO post_tags (post_id, name) VALUES ${input.tags.map((_, i) => `($1, $${i + 2})`).join(", ")}`,
+          `INSERT INTO post_tags (post_id, name) VALUES ${input.tags
+            .map((_, i) => `($1, $${i + 2})`)
+            .join(", ")}`,
           [id, ...input.tags],
         );
       }
@@ -348,7 +343,9 @@ export class PostsService {
         await client.query(`DELETE FROM post_tags WHERE post_id = $1`, [input.id]);
         if (input.tags.length > 0) {
           await client.query(
-            `INSERT INTO post_tags (post_id, name) VALUES ${input.tags.map((_, i) => `($1, $${i + 2})`).join(", ")}`,
+            `INSERT INTO post_tags (post_id, name) VALUES ${input.tags
+              .map((_, i) => `($1, $${i + 2})`)
+              .join(", ")}`,
             [input.id, ...input.tags],
           );
         }
@@ -416,8 +413,8 @@ export class PostsService {
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
-        (SELECT COUNT(*) FROM posts WHERE reply_to = p.id) AS reply_count,
-        (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) AS like_count,
+        p.count_replies AS count_replies,
+        p.count_likes AS count_likes,
         ARRAY(
           SELECT pt2.name FROM post_tags pt2 WHERE pt2.post_id = p.id ORDER BY pt2.name
         ) AS tags
@@ -472,8 +469,8 @@ export class PostsService {
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
-        (SELECT COUNT(*) FROM posts WHERE reply_to = p.id) AS reply_count,
-        (SELECT COUNT(*) FROM post_likes WHERE post_id = p.id) AS like_count,
+        p.count_replies AS count_replies,
+        p.count_likes AS count_likes,
         ARRAY(
           SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name
         ) AS tags

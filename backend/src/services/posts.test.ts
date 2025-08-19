@@ -2,7 +2,6 @@ import { v4 as uuidv4 } from "uuid";
 import { PostsService } from "./posts";
 import {
   Post,
-  PostDetail,
   CreatePostInput,
   UpdatePostInput,
   ListPostsInput,
@@ -23,6 +22,13 @@ class MockPgClient {
   follows: { followerId: string; followeeId: string }[] = [];
   users: { id: string; nickname: string }[] = [];
   txCount = 0;
+
+  private countRepliesFor(postId: string) {
+    return this.data.filter((r) => r.replyTo === postId).length;
+  }
+  private countLikesFor(postId: string) {
+    return this.likes.filter((l) => l.postId === postId).length;
+  }
 
   async query(sql: string, params?: any[]) {
     sql = normalizeSql(sql);
@@ -118,7 +124,7 @@ class MockPgClient {
       }
       followeeIds = Array.from(new Set(followeeIds));
       const posts = this.data.filter((p) => followeeIds.includes(p.ownedBy));
-      const rows: PostDetail[] = posts.map((p) => {
+      const rows = posts.map((p) => {
         const replyToPost = this.data.find((pp) => pp.id === p.replyTo);
         const replyToNickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
@@ -126,16 +132,16 @@ class MockPgClient {
         return {
           id: p.id,
           content: p.content,
-          ownedBy: p.ownedBy,
-          replyTo: p.replyTo,
-          allowLikes: p.allowLikes,
-          allowReplies: p.allowReplies,
-          createdAt: p.createdAt,
-          updatedAt: p.updatedAt,
-          ownerNickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
-          replyToOwnerNickname: replyToNickname,
-          replyCount: this.data.filter((r) => r.replyTo === p.id).length,
-          likeCount: this.likes.filter((l) => l.postId === p.id).length,
+          owned_by: p.ownedBy,
+          reply_to: p.replyTo,
+          allow_likes: p.allowLikes,
+          allow_replies: p.allowReplies,
+          created_at: p.createdAt,
+          updated_at: p.updatedAt,
+          owner_nickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
+          reply_to_owner_nickname: replyToNickname,
+          count_replies: this.countRepliesFor(p.id),
+          count_likes: this.countLikesFor(p.id),
           tags: this.tags
             .filter((t) => t.postId === p.id)
             .map((t) => t.name)
@@ -150,7 +156,7 @@ class MockPgClient {
       const limit = params![2] ?? 100;
       const likedPostIds = this.likes.filter((l) => l.likedBy === userId).map((l) => l.postId);
       const posts = this.data.filter((p) => likedPostIds.includes(p.id));
-      const rows: PostDetail[] = posts.map((p) => {
+      const rows = posts.map((p) => {
         const replyToPost = this.data.find((pp) => pp.id === p.replyTo);
         const replyToNickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
@@ -158,16 +164,16 @@ class MockPgClient {
         return {
           id: p.id,
           content: p.content,
-          ownedBy: p.ownedBy,
-          replyTo: p.replyTo,
-          allowLikes: p.allowLikes,
-          allowReplies: p.allowReplies,
-          createdAt: p.createdAt,
-          updatedAt: p.updatedAt,
-          ownerNickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
-          replyToOwnerNickname: replyToNickname,
-          replyCount: this.data.filter((r) => r.replyTo === p.id).length,
-          likeCount: this.likes.filter((l) => l.postId === p.id).length,
+          owned_by: p.ownedBy,
+          reply_to: p.replyTo,
+          allow_likes: p.allowLikes,
+          allow_replies: p.allowReplies,
+          created_at: p.createdAt,
+          updated_at: p.updatedAt,
+          owner_nickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
+          reply_to_owner_nickname: replyToNickname,
+          count_replies: this.countRepliesFor(p.id),
+          count_likes: this.countLikesFor(p.id),
           tags: this.tags
             .filter((t) => t.postId === p.id)
             .map((t) => t.name)
@@ -177,7 +183,7 @@ class MockPgClient {
       return { rows: rows.slice(offset, offset + limit) };
     }
     if (sql.includes("FROM posts p") && sql.includes("JOIN users u ON p.owned_by = u.id")) {
-      const result: PostDetail[] = this.data.map((p) => {
+      const result = this.data.map((p) => {
         const replyToPost = this.data.find((pp) => pp.id === p.replyTo);
         const replyToNickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
@@ -185,16 +191,16 @@ class MockPgClient {
         return {
           id: p.id,
           content: p.content,
-          ownedBy: p.ownedBy,
-          replyTo: p.replyTo,
-          allowLikes: p.allowLikes,
-          allowReplies: p.allowReplies,
-          createdAt: p.createdAt,
-          updatedAt: p.updatedAt,
-          ownerNickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
-          replyToOwnerNickname: replyToNickname,
-          replyCount: this.data.filter((r) => r.replyTo === p.id).length,
-          likeCount: this.likes.filter((l) => l.postId === p.id).length,
+          owned_by: p.ownedBy,
+          reply_to: p.replyTo,
+          allow_likes: p.allowLikes,
+          allow_replies: p.allowReplies,
+          created_at: p.createdAt,
+          updated_at: p.updatedAt,
+          owner_nickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
+          reply_to_owner_nickname: replyToNickname,
+          count_replies: this.countRepliesFor(p.id),
+          count_likes: this.countLikesFor(p.id),
           tags: this.tags
             .filter((t) => t.postId === p.id)
             .map((t) => t.name)
@@ -317,7 +323,7 @@ describe("posts service", () => {
     expect(details.length).toBeGreaterThanOrEqual(1);
     expect(details[0].ownerNickname).toBe("Alice");
     expect(details[0].tags).toContain("tag1");
-    expect(details[0].likeCount).toBeGreaterThanOrEqual(1);
+    expect(details[0].countLikes).toBeGreaterThanOrEqual(1);
   });
 
   test("createPost", async () => {
@@ -586,29 +592,29 @@ describe("getPostDetail", () => {
         const p = this.posts.find((x) => x.id === id);
         if (!p) return { rows: [] };
         const u = this.users.find((x) => x.id === p.ownedBy);
-        const replyCount = this.posts.filter((x) => x.replyTo === p.id).length;
-        const likeCount = this.postLikes.filter((x) => x.postId === p.id).length;
+        const count_replies = this.posts.filter((x) => x.replyTo === p.id).length;
+        const count_likes = this.postLikes.filter((x) => x.postId === p.id).length;
         const tags = this.postTags
           .filter((x) => x.postId === p.id)
           .map((x) => x.name)
           .sort();
         const replyToPost = this.posts.find((pp) => pp.id === p.replyTo);
-        const replyToOwnerNickname = replyToPost
+        const reply_to_owner_nickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
-        const row: PostDetail = {
+        const row = {
           id: p.id,
           content: p.content,
-          ownedBy: p.ownedBy,
-          replyTo: p.replyTo,
-          allowLikes: p.allowLikes,
-          allowReplies: p.allowReplies,
-          createdAt: p.createdAt,
-          updatedAt: p.updatedAt,
-          ownerNickname: u?.nickname || "",
-          replyToOwnerNickname,
-          replyCount,
-          likeCount,
+          owned_by: p.ownedBy,
+          reply_to: p.replyTo,
+          allow_likes: p.allowLikes,
+          allow_replies: p.allowReplies,
+          created_at: p.createdAt,
+          updated_at: p.updatedAt,
+          owner_nickname: u?.nickname || "",
+          reply_to_owner_nickname,
+          count_replies,
+          count_likes,
           tags,
         };
         return { rows: [row] };
@@ -679,8 +685,8 @@ describe("getPostDetail", () => {
     expect(detail).not.toBeNull();
     expect(detail!.id).toBe(post.id);
     expect(detail!.ownerNickname).toBe(owner.nickname);
-    expect(detail!.replyCount).toBe(2);
-    expect(detail!.likeCount).toBe(2);
+    expect(detail!.countReplies).toBe(2);
+    expect(detail!.countLikes).toBe(2);
     expect(detail!.tags.sort()).toEqual(["tag1", "tag2"]);
   });
 
@@ -707,8 +713,8 @@ describe("getPostDetail", () => {
     const detail = await postsService.getPostDetail(p2.id);
     expect(detail).not.toBeNull();
     expect(detail!.ownerNickname).toBe("Nobody");
-    expect(detail!.replyCount).toBe(0);
-    expect(detail!.likeCount).toBe(0);
+    expect(detail!.countReplies).toBe(0);
+    expect(detail!.countLikes).toBe(0);
     expect(detail!.tags).toEqual([]);
   });
 });
