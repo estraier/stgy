@@ -146,7 +146,7 @@ export default function UserCard({
         )}
 
         <span
-          className={`-mt-1 truncate max-w-[24ex] text-blue-700 ${
+          className={`-mt-1 truncate max-w-[24ex] text-slate-900 ${
             truncated ? "text-base" : "text-xl px-2"
           }`}
         >

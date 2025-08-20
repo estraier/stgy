@@ -72,7 +72,7 @@ export default function PostCard({
           />
         </a>
         <a
-          className="-mt-1 text-lg text-blue-700 hover:underline min-w-[20ex] max-w-[48ex] truncate inline-block align-bottom"
+          className="-mt-1 text-lg text-slate-900 hover:text-blue-700 hover:underline min-w-[20ex] max-w-[48ex] truncate inline-block align-bottom"
           href={`/users/${post.ownedBy}`}
           onClick={(e) => e.stopPropagation()}
         >
