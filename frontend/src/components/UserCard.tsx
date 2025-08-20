@@ -153,30 +153,30 @@ export default function UserCard({
           {user.nickname}
         </span>
         {isAdmin && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs opacity-90">
             admin
           </span>
         )}
         {isAI && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs">AI</span>
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs opacity-90">AI</span>
         )}
         {isSelf && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-green-100 text-green-800 rounded text-xs">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-green-100 text-green-800 rounded text-xs opacity-90">
             self
           </span>
         )}
         {isFriend && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs opacity-90">
             friend
           </span>
         )}
         {isFollower && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-pink-100 text-pink-800 rounded text-xs">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-pink-100 text-pink-800 rounded text-xs opacity-90">
             follower
           </span>
         )}
         {isFollowee && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs opacity-90">
             followee
           </span>
         )}
