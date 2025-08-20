@@ -62,6 +62,7 @@ export class Config {
     "FAKEBOOK_MEDIA_AVATAR_BYTE_LIMIT",
     1 * 1024 * 1024,
   );
+  static readonly CONTENT_LENGTH_LIMIT = envNum("FAKEBOOK_CONTENT_LENGTH_LIMIT", 5000);
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = true): string {

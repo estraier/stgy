@@ -1,3 +1,4 @@
+import { Config } from "../config";
 import { Router, Request, Response } from "express";
 import { Client } from "pg";
 import Redis from "ioredis";
@@ -232,8 +233,12 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
       const tags = req.body.tags
         .filter((tag: unknown) => typeof tag === "string")
         .map((tag: string) => normalizeOneLiner(tag));
+      const content = normalizeMultiLines(req.body.content) ?? "";
+      if (!user.isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
+        return res.status(400).json({ error: "content is too long" });
+      }
       const input: CreatePostInput = {
-        content: normalizeMultiLines(req.body.content) ?? "",
+        content: content,
         ownedBy,
         replyTo: req.body.replyTo ?? null,
         allowLikes: req.body.allowLikes === undefined ? true : parseBoolean(req.body.allowLikes),
@@ -269,9 +274,16 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
           .filter((tag: unknown) => typeof tag === "string")
           .map((tag: string) => normalizeOneLiner(tag));
       }
+      let content;
+      if (req.body.content) {
+        content = normalizeMultiLines(req.body.content) ?? "";
+        if (!user.isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
+          return res.status(400).json({ error: "content is too long" });
+        }
+      }
       const input: UpdatePostInput = {
         id: req.params.id,
-        content: normalizeMultiLines(req.body.content) ?? undefined,
+        content: content,
         ownedBy: req.body.ownedBy,
         replyTo: req.body.replyTo,
         allowLikes:
