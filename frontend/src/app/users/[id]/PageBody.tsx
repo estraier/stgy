@@ -8,7 +8,7 @@ import type { UserDetail, PostDetail } from "@/api/models";
 import { notFound, useParams, useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import UserCard from "@/components/UserCard";
-import UserEditForm from "@/components/UserEditForm";
+import UserForm from "@/components/UserForm";
 import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 import { parseBodyAndTags } from "@/utils/parse";
@@ -322,7 +322,7 @@ export default function PageBody() {
       )}
       {canEdit && editing && (
         <div className="mt-4">
-          <UserEditForm
+          <UserForm
             user={user}
             isAdmin={isAdmin}
             isSelf={isSelf}

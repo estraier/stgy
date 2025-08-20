@@ -14,7 +14,7 @@ import {
 } from "@/api/media";
 import Link from "next/link";
 
-type UserEditFormProps = {
+type UserFormProps = {
   user: UserDetail;
   isAdmin: boolean;
   isSelf: boolean;
@@ -22,13 +22,13 @@ type UserEditFormProps = {
   onCancel: () => void;
 };
 
-export default function UserEditForm({
+export default function UserForm({
   user,
   isAdmin,
   isSelf,
   onUpdated,
   onCancel,
-}: UserEditFormProps) {
+}: UserFormProps) {
   const [email, setEmail] = useState(user.email ?? "");
   const [nickname, setNickname] = useState(user.nickname ?? "");
   const [introduction, setIntroduction] = useState(user.introduction ?? "");
