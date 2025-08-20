@@ -5,6 +5,7 @@ import { renderHtml } from "@/utils/markdown";
 import { parseBodyAndTags } from "@/utils/parse";
 import UserMentionButton from "@/components/UserMentionButton";
 import ImageEmbedButton from "@/components/ImageEmbedButton";
+import { AtSign, Image as ImageIcon } from "lucide-react";
 
 type PostFormProps = {
   body: string;
@@ -20,6 +21,7 @@ type PostFormProps = {
   isEdit?: boolean;
   deletable?: boolean;
   onDelete?: () => void;
+  contentLengthLimit?: number;
 };
 
 export default function PostForm({
@@ -36,6 +38,7 @@ export default function PostForm({
   isEdit = false,
   deletable = false,
   onDelete,
+  contentLengthLimit,
 }: PostFormProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -43,6 +46,11 @@ export default function PostForm({
   useEffect(() => {
     if (body.trim() === "") setShowPreview(false);
   }, [body]);
+
+  const { content, tags } = parseBodyAndTags(body);
+  const contentLength = content.length;
+  const overLimit =
+    contentLengthLimit != null ? contentLength > contentLengthLimit : false;
 
   function handleFocus() {
     const textarea = textareaRef.current;
@@ -56,6 +64,10 @@ export default function PostForm({
   }
 
   function handleSubmit(e: React.FormEvent) {
+    if (overLimit) {
+      e.preventDefault();
+      return;
+    }
     const isEmpty = body.trim() === "";
     if (isEdit && deletable && isEmpty && onDelete) {
       e.preventDefault();
@@ -106,33 +118,15 @@ export default function PostForm({
     });
   }
 
-  const { content, tags } = parseBodyAndTags(body);
-
   return (
     <div className="relative group">
       <div className="hidden group-focus-within:flex absolute right-0 top-0 -translate-y-full items-center gap-1">
         <div className="px-1.5 text-gray-600 backdrop-blur-sm flex items-center gap-1">
           <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)}>
-            <svg
-              width="16"
-              height="16"
-              viewBox="-64 -64 640 640"
-              aria-hidden
-              className="opacity-80"
-            >
-              <path
-                fill="currentColor"
-                d="M483.115,144.276C393.486-56.942,101.555-43.768,24.468,159.333 c-79.871,210.431,143.055,438.656,350.166,320.186c-3.748-7.078-14.076-35.546-20.956-37.902 c-34.827,19.912-75.284,27.242-115.267,23.874c-80.693-6.801-147.99-64.165-174.165-140.074 C7.655,161.366,165.91-12.405,333.464,57.027c73.56,30.438,126.67,102.749,126.67,183.37c0,29.853-6.121,66.04-29.797,86.925 c-20.039,17.754-56.147,14.187-67.044-11.744c-12.526-30.232,0.822-75.078,5.773-106.568c3.02-19.248,6.057-38.504,9.078-57.752 c0.475-2.974-37.12-7.702-42.64-8.636c-0.601,3.812-1.202,7.623-1.802,11.435c-87.557-63.366-197.574,21.945-197.574,118.224 c-0.079,96.391,129.138,148.07,192.876,72.224c30.209,51.078,103.911,49.267,140.256,6.105 C515.807,295.311,510.872,206.584,483.115,144.276z M298.464,312.131c-55.134,74.423-160.658-24.728-97.869-101.325 c25.052-30.548,73.813-44.142,107.865-20.046C338.526,212.04,316.272,288.036,298.464,312.131z"
-              />
-            </svg>
+            <AtSign size={16} aria-hidden className="opacity-80" />
           </UserMentionButton>
           <ImageEmbedButton onInsert={(md) => insertAtCursor(md)}>
-            <svg width="16" height="16" viewBox="0 0 24 24" aria-hidden className="opacity-80">
-              <path
-                fill="currentColor"
-                d="M21 19V5a2 2 0 0 0-2-2H5C3.89 3 3 3.9 3 5v14a2 2 0 0 0 2 2h14c1.11 0 2-.9 2-2M8.5 13.5l2.5 3.01L14.5 12l4.5 6H5l3.5-4.5M8 8a2 2 0 1 1 4 0a2 2 0 0 1-4 0Z"
-              />
-            </svg>
+            <ImageIcon size={16} aria-hidden className="opacity-80" />
           </ImageEmbedButton>
         </div>
       </div>
@@ -148,13 +142,20 @@ export default function PostForm({
           placeholder={placeholder}
           value={body}
           onChange={(e) => setBody(e.target.value)}
-          maxLength={5000}
+          maxLength={65535}
           onFocus={handleFocus}
           rows={1}
           style={{ resize: "vertical" }}
         />
         <div className="flex items-center gap-2">
-          <span className="flex-1 text-red-600 text-sm">{error && error}</span>
+          <div className="flex-1">
+            {error && <div className="text-red-600 text-sm">{error}</div>}
+            {contentLengthLimit != null && overLimit && (
+              <div className="text-yellow-700 text-sm" role="status" aria-live="polite">
+                Content is too long ({contentLength} / {contentLengthLimit} characters)
+              </div>
+            )}
+          </div>
           {onCancel && (
             <button
               type="button"
@@ -177,9 +178,9 @@ export default function PostForm({
             className={
               isEdit && deletable && body.trim() === ""
                 ? "bg-red-500 text-white hover:bg-red-600 px-4 py-1 rounded cursor-pointer ml-auto"
-                : "bg-blue-400 text-white hover:bg-blue-500 px-4 py-1 rounded cursor-pointer ml-auto"
+                : "bg-blue-400 text-white hover:bg-blue-500 px-4 py-1 rounded cursor-pointer ml-auto disabled:opacity-50 disabled:cursor-not-allowed"
             }
-            disabled={submitting}
+            disabled={submitting || overLimit}
           >
             {submitting
               ? isEdit && deletable && body.trim() === ""

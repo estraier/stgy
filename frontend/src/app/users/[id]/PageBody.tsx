@@ -397,6 +397,7 @@ export default function PageBody() {
                           setReplyTo(null);
                           setReplyError(null);
                         }}
+                        contentLengthLimit={isAdmin ? undefined : Config.CONTENT_LENGTH_LIMIT}
                       />
                     )}
                   </li>

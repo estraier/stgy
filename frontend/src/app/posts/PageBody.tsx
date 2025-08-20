@@ -26,6 +26,7 @@ export default function PageBody() {
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
+  const isAdmin = status && status.state === "authenticated" && status.session.userIsAdmin;
 
   const [posts, setPosts] = useState<PostDetail[]>([]);
   const [loading, setLoading] = useState(true);
@@ -326,6 +327,7 @@ export default function PageBody() {
         submitting={submitting}
         error={error}
         onErrorClear={clearError}
+        contentLengthLimit={isAdmin ? undefined : Config.CONTENT_LENGTH_LIMIT}
       />
       <div className="h-6" />
       <div className="flex gap-1 mb-2">
@@ -407,6 +409,7 @@ export default function PageBody() {
                     setReplyTo(null);
                     setReplyError(null);
                   }}
+                  contentLengthLimit={isAdmin ? undefined : Config.CONTENT_LENGTH_LIMIT}
                 />
               )}
             </li>

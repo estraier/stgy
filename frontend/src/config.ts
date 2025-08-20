@@ -23,6 +23,7 @@ export class Config {
   static readonly LIKERS_LIST_FIRST_LIMIT = envNum("NEXT_PUBLIC_LIKERS_FIRST_LIMIT", 10);
   static readonly LIKERS_LIST_SECOND_LIMIT = envNum("NEXT_PUBLIC_LIKERS_SECOND_LIMIT", 100);
   static readonly IMAGES_PAGE_SIZE = envNum("NEXT_PUBLIC_IMAGES_PAGE_SIZE", 30);
+  static readonly CONTENT_LENGTH_LIMIT = envNum("NEXT_PUBLIC_CONTENT_LENGTH_LIMIT", 5000);
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = true): string {
