@@ -50,9 +50,16 @@ describe("IdIssueService (issueId, 44+8+12, UPPERCASE hex)", () => {
     expect(da.worker).toBe(7);
   });
 
+  test("check date", async () => {
+    const svc = new IdIssueService(7);
+    const res = await svc.issue();
+    expect(res.id).toBe("1977420DC0007000");
+    expect(res.ms).toBe(1750000000000);
+  });
+
   test("advancing to next millisecond bumps timestamp and resets seq", async () => {
     const svc = new IdIssueService(42);
-    const id1 = await svc.issueId(); // at t
+    const id1 = await svc.issueId();
     const d1 = decode(id1);
     expect(d1.ts).toBe(BigInt(nowMs));
     expect(d1.seq).toBe(0);
@@ -60,7 +67,7 @@ describe("IdIssueService (issueId, 44+8+12, UPPERCASE hex)", () => {
     const id2 = await svc.issueId();
     const d2 = decode(id2);
     expect(d2.ts).toBe(BigInt(nowMs));
-    expect(d2.seq).toBe(0); // seq resets on new ms
+    expect(d2.seq).toBe(0);
     expect(d2.n).toBeGreaterThan(d1.n);
   });
 

@@ -13,7 +13,12 @@ import {
   RemoveFollowerInput,
 } from "../models/user";
 import { IdIssueService } from "./idIssue";
-import { generateVerificationCode, validateEmail, snakeToCamel } from "../utils/format";
+import {
+  generateVerificationCode,
+  validateEmail,
+  snakeToCamel,
+  escapeForLike,
+} from "../utils/format";
 import { Client } from "pg";
 import Redis from "ioredis";
 import { v4 as uuidv4 } from "uuid";
@@ -36,12 +41,14 @@ export class UsersService {
     let sql = `SELECT COUNT(*) FROM users`;
     const params: unknown[] = [];
     let where = "";
-    if (nickname) {
-      where = "WHERE nickname ILIKE $1";
-      params.push(`%${nickname}%`);
-    } else if (query) {
+    if (query) {
+      const escapedQuery = escapeForLike(query);
       where = "WHERE nickname ILIKE $1 OR introduction ILIKE $2";
-      params.push(`%${query}%`, `%${query}%`);
+      params.push(`%${escapedQuery}%`, `%${escapedQuery}%`);
+    } else if (nickname) {
+      const escapedNickname = escapeForLike(nickname);
+      where = "WHERE nickname ILIKE $1";
+      params.push(`%${escapedNickname}%`);
     }
     sql += ` ${where}`;
     const res = await this.pgClient.query(sql, params);
@@ -94,11 +101,13 @@ export class UsersService {
     const wheres: string[] = [];
 
     if (query) {
+      const escapedQuery = escapeForLike(query);
       wheres.push("(u.nickname ILIKE $1 OR u.introduction ILIKE $2)");
-      params.push(`%${query}%`, `%${query}%`);
+      params.push(`%${escapedQuery}%`, `%${escapedQuery}%`);
     } else if (nickname) {
+      const escapedNickname = escapeForLike(nickname);
       wheres.push(`u.nickname ILIKE $${params.length + 1}`);
-      params.push(`%${nickname}%`);
+      params.push(`%${escapedNickname}%`);
     }
 
     let orderClause = "";
@@ -143,11 +152,13 @@ export class UsersService {
     const wheres: string[] = [];
 
     if (query) {
+      const escapedQuery = escapeForLike(query);
       wheres.push("(u.nickname ILIKE $1 OR u.introduction ILIKE $2)");
-      params.push(`%${query}%`, `%${query}%`);
+      params.push(`%${escapedQuery}%`, `%${escapedQuery}%`);
     } else if (nickname) {
+      const escapedNickname = escapeForLike(nickname);
       wheres.push(`u.nickname ILIKE $${params.length + 1}`);
-      params.push(`%${nickname}%`);
+      params.push(`%${escapedNickname}%`);
     }
 
     let orderClause = "";
@@ -217,12 +228,13 @@ export class UsersService {
       throw new Error("introduction is required");
     }
 
-    const id = await this.idIssueService.issueId();
+    const { id, ms } = await this.idIssueService.issue();
+    const idDate = new Date(ms).toISOString();
     const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
 
     const res = await this.pgClient.query(
       `INSERT INTO users (id, email, nickname, password, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, now(), NULL)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL)
        RETURNING id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at`,
       [
         id,
@@ -234,6 +246,7 @@ export class UsersService {
         input.avatar,
         input.aiModel,
         input.aiPersonality,
+        idDate,
       ],
     );
     return snakeToCamel<User>(res.rows[0]);

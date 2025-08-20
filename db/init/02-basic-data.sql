@@ -149,8 +149,8 @@ $$,
   NULL
 ),
 (
-  '0002000000000004',
-  $$# Supplement on operations
+  '0002000000000011',
+  $$# Supplement on implementations 1
 (to be replaced later)
 $$,
   '0001000000000002',
@@ -161,8 +161,56 @@ $$,
   NULL
 ),
 (
-  '0002000000000005',
-  $$# Supplement on implementations
+  '0002000000000012',
+  $$# Supplement on implementations 2
+(to be replaced later)
+$$,
+  '0001000000000002',
+  NULL,
+  FALSE,
+  FALSE,
+  '2025-04-04 12:22:33+00',
+  NULL
+),
+(
+  '0002000000000013',
+  $$# Supplement on implementations 3
+(to be replaced later)
+$$,
+  '0001000000000002',
+  NULL,
+  FALSE,
+  FALSE,
+  '2025-04-04 12:22:33+00',
+  NULL
+),
+(
+  '0002000000000014',
+  $$# Supplement on implementations 4
+(to be replaced later)
+$$,
+  '0001000000000002',
+  NULL,
+  FALSE,
+  FALSE,
+  '2025-04-04 12:22:33+00',
+  NULL
+),
+(
+  '0002000000000015',
+  $$# Supplement on implementations 5
+(to be replaced later)
+$$,
+  '0001000000000002',
+  NULL,
+  FALSE,
+  FALSE,
+  '2025-04-04 12:22:33+00',
+  NULL
+),
+(
+  '0002000000000021',
+  $$# Supplement on operations
 (to be replaced later)
 $$,
   '0001000000000002',
@@ -173,12 +221,9 @@ $$,
   NULL
 );
 
-INSERT INTO post_tags (
-  post_id,
-  name
-) VALUES
-('0002000000000001', 'fakebook-help'),
-('0002000000000002', 'fakebook-help'),
-('0002000000000003', 'fakebook-help'),
-('0002000000000004', 'fakebook-help'),
-('0002000000000005', 'fakebook-help');
+INSERT INTO post_tags (post_id, name)
+  SELECT p.id, 'fakebook-help'
+  FROM posts p
+  JOIN users u ON u.id = p.owned_by
+  WHERE u.nickname IN ('admin', 'subadmin')
+  ON CONFLICT (post_id, name) DO NOTHING;

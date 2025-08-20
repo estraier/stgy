@@ -12,7 +12,7 @@ import {
 } from "../models/post";
 import { User } from "../models/user";
 import { IdIssueService } from "./idIssue";
-import { snakeToCamel } from "../utils/format";
+import { snakeToCamel, escapeForLike } from "../utils/format";
 import { Client } from "pg";
 import Redis from "ioredis";
 
@@ -53,8 +53,9 @@ export class PostsService {
       }
     }
     if (query) {
+      const escapedQuery = escapeForLike(query);
       where.push(`p.content ILIKE $${idx++}`);
-      params.push(`%${query}%`);
+      params.push(`%${escapedQuery}%`);
     }
     if (where.length > 0) {
       sql += " WHERE " + where.join(" AND ");
@@ -150,8 +151,9 @@ export class PostsService {
       }
     }
     if (query) {
+      const escapedQuery = escapeForLike(query);
       where.push(`p.content ILIKE $${paramIdx++}`);
-      params.push(`%${query}%`);
+      params.push(`%${escapedQuery}%`);
     }
     if (where.length > 0) {
       sql += " WHERE " + where.join(" AND ");
@@ -215,8 +217,9 @@ export class PostsService {
       }
     }
     if (query) {
+      const escapedQuery = escapeForLike(query);
       where.push(`p.content ILIKE $${paramIdx++}`);
-      params.push(`%${query}%`);
+      params.push(`%${escapedQuery}%`);
     }
     if (where.length > 0) {
       sql += " WHERE " + where.join(" AND ");
@@ -252,7 +255,8 @@ export class PostsService {
       throw new Error("ownedBy is required");
     }
     const client = this.pgClient;
-    const id = await this.idIssueService.issueId();
+    const { id, ms } = await this.idIssueService.issue();
+    const idDate = new Date(ms).toISOString();
     await client.query("BEGIN");
     try {
       if (input.replyTo != null) {
@@ -269,9 +273,17 @@ export class PostsService {
       }
       const res = await client.query(
         `INSERT INTO posts (id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, now(), NULL)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
          RETURNING id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at`,
-        [id, input.content, input.ownedBy, input.replyTo, input.allowLikes, input.allowReplies],
+        [
+          id,
+          input.content,
+          input.ownedBy,
+          input.replyTo,
+          input.allowLikes,
+          input.allowReplies,
+          idDate,
+        ],
       );
       if (input.tags && input.tags.length > 0) {
         await client.query(

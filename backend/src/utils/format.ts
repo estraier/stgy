@@ -84,3 +84,7 @@ export function snakeToCamel<T = Record<string, unknown>>(obj: unknown): T {
   }
   return obj as T;
 }
+
+export function escapeForLike(input: string) {
+  return input.replace(/[\\%_]/g, "\\$&");
+}

@@ -7,6 +7,7 @@ import {
   parseBoolean,
   maskEmailByHash,
   snakeToCamel,
+  escapeForLike,
 } from "./format";
 
 describe("generateVerificationCode", () => {
@@ -228,5 +229,13 @@ describe("snakeToCamel", () => {
     const result = snakeToCamel(input);
     expect(result.fileContent).toBeInstanceOf(Buffer);
     expect((result.fileContent as Buffer).equals(buf)).toBe(true);
+  });
+});
+
+describe("escapeForLike", () => {
+  it("escapeMetaChars", () => {
+    expect(escapeForLike("%abc%")).toBe("\\%abc\\%");
+    expect(escapeForLike("_abc_")).toBe("\\_abc\\_");
+    expect(escapeForLike("\\abc\\")).toBe("\\\\abc\\\\");
   });
 });

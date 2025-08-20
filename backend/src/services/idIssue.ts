@@ -21,8 +21,13 @@ export class IdIssueService {
     this.workerId = workerId;
   }
 
+  async issue(): Promise<{ id: string; ms: number }> {
+    const { id, ms } = this.nextHex64WithMs();
+    return { id, ms: Number(ms) };
+  }
+
   async issueId(): Promise<string> {
-    return this.nextHex64();
+    return (await this.issue()).id;
   }
 
   private nowMsBig(): bigint {
@@ -34,8 +39,8 @@ export class IdIssueService {
     return ms;
   }
 
-  private nextHex64(): string {
-    const now = this.nowMsBig();
+  private nextHex64WithMs(): { id: string; ms: bigint } {
+    let now = this.nowMsBig();
     if (now === this.lastMs) {
       if (this.seq === IdIssueService.SEQ_MAX) {
         const err = new Error("SEQ_EXHAUSTED") as Error & { code: string };
@@ -47,10 +52,11 @@ export class IdIssueService {
       this.seq = BigInt(0);
       this.lastMs = now;
     }
-    const id =
+    const idBig =
       (now << IdIssueService.TS_SHIFT) |
       (BigInt(this.workerId) << IdIssueService.WORKER_SHIFT) |
       this.seq;
-    return id.toString(16).padStart(16, "0").toUpperCase();
+    const id = idBig.toString(16).padStart(16, "0").toUpperCase();
+    return { id, ms: now };
   }
 }
