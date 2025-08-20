@@ -99,7 +99,7 @@ def test_users():
   assert user1_session
   user1_cookies = {"session_id": user1_session}
   print("[users] user1 login OK")
-  res = requests.get(f"{BASE_URL}/users?limit=1000", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/users?limit=2000", headers=headers, cookies=cookies)
   assert res.status_code == 200
   users = res.json()
   admin_user = next(u for u in users if u["email"] == ADMIN_EMAIL)
@@ -112,24 +112,24 @@ def test_users():
   res = requests.post(f"{BASE_URL}/users/{admin_id}/follow", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   print(f"[users] user1 followed admin: {admin_id}")
-  res = requests.get(f"{BASE_URL}/users/{user1_id}/followees/detail?limit=1000", headers=headers, cookies=user1_cookies)
+  res = requests.get(f"{BASE_URL}/users/{user1_id}/followees/detail?limit=2000", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   followees = res.json()
   print("[users] user1 followees:", followees)
   assert any(u["id"] == admin_id for u in followees)
-  res = requests.get(f"{BASE_URL}/users/{admin_id}/followers/detail?limit=1000", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/users/{admin_id}/followers/detail?limit=2000", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   followers = res.json()
   print("[users] admin followers:", followers)
   assert any(u["id"] == user1_id for u in followers)
-  res = requests.get(f"{BASE_URL}/users/{admin_id}/detail?limit=1000&focusUserId={user1_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/users/{admin_id}/detail?limit=2000&focusUserId={user1_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   admin_detail = res.json()
   assert admin_detail["countFollowers"] > 0
   assert "countFollowees" in admin_detail
   assert admin_detail["isFollowedByFocusUser"] == True
   assert admin_detail["isFollowingFocusUser"] == False
-  res = requests.get(f"{BASE_URL}/users/detail?limit=1000&focusUserId={admin_id}&order=social", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/users/detail?limit=2000&focusUserId={admin_id}&order=social", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   users_detail = res.json()
   assert len(users_detail) >= 2
@@ -141,9 +141,9 @@ def test_users():
   res = requests.delete(f"{BASE_URL}/users/{admin_id}/follow", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   print(f"[users] user1 unfollowed admin: {admin_id}")
-  res = requests.get(f"{BASE_URL}/users/{user1_id}/followees/detail?limit=1000", headers=headers, cookies=user1_cookies)
+  res = requests.get(f"{BASE_URL}/users/{user1_id}/followees/detail?limit=2000", headers=headers, cookies=user1_cookies)
   assert all(u["id"] != admin_id for u in res.json())
-  res = requests.get(f"{BASE_URL}/users/{admin_id}/followers/detail?limit=1000", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/users/{admin_id}/followers/detail?limit=2000", headers=headers, cookies=cookies)
   assert all(u["id"] != user1_id for u in res.json())
   res = requests.delete(f"{BASE_URL}/users/{user1_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
@@ -170,12 +170,12 @@ def test_posts():
   res = requests.post(f"{BASE_URL}/posts/{post_id}/like", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[posts] like: ok")
-  res = requests.get(f"{BASE_URL}/posts/liked/detail?limit=1000&userId={user_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/posts/liked/detail?limit=2000&userId={user_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   liked_posts = res.json()
   print("[posts] liked/detail:", liked_posts)
   assert any(p["id"] == post_id for p in liked_posts)
-  res = requests.get(f"{BASE_URL}/posts/{post_id}/likers?limit=1000", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/posts/{post_id}/likers?limit=2000", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   likers = res.json()
   print("[posts] likers:", likers)
@@ -200,7 +200,7 @@ def test_posts():
   assert "countLikes" in detail
   assert "countReplies" in detail
   assert set(detail["tags"]) == {"hop", "step"}
-  res = requests.get(f"{BASE_URL}/posts/by-followees/detail?limit=1000&userId={user_id}&includeSelf=true", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/posts/by-followees/detail?limit=2000&userId={user_id}&includeSelf=true", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   by_followees = res.json()
   print("[posts] by-followees/detail (self):", by_followees)
@@ -269,13 +269,13 @@ def test_signup():
   session_id = res.cookies.get("session_id")
   assert session_id
   print("[signup] login ok, session_id:", session_id)
-  res = requests.get(f"{BASE_URL}/users?limit=1000", cookies={"session_id": session_id})
+  res = requests.get(f"{BASE_URL}/users?limit=2000", cookies={"session_id": session_id})
   assert res.status_code == 200
   users = res.json()
   assert any(u["id"] == admin_id and "@example." in u["email"] for u in users)
   assert any(u["email"] == email for u in users)
   print("[signup] list check ok")
-  res = requests.get(f"{BASE_URL}/users/detail?limit=1000", cookies={"session_id": session_id})
+  res = requests.get(f"{BASE_URL}/users/detail?limit=2000", cookies={"session_id": session_id})
   assert res.status_code == 200
   users = res.json()
   assert any(u["id"] == admin_id and "@example." in u["email"] for u in users)

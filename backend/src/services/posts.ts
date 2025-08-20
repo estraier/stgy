@@ -408,12 +408,47 @@ export class PostsService {
       limit = 100,
       order = "desc",
     } = input;
-    let followeeSql = `
-      SELECT followee_id FROM user_follows WHERE follower_id = $1
-      ${includeSelf ? "UNION SELECT $1" : ""}
-    `;
-    const repliesFilter = includeReplies === false ? "AND p.reply_to IS NULL" : "";
+    const orderDir = order.toLowerCase() === "asc" ? "ASC" : "DESC";
+    const activeFolloweeLimit = limit;
+    const perFolloweeLimit = Math.max(limit + offset, limit);
+    const repliesFilter = includeReplies === false ? "AND p2.reply_to IS NULL" : "";
     const sql = `
+      WITH f AS (
+        SELECT followee_id FROM user_follows WHERE follower_id = $1
+        ${includeSelf ? "UNION SELECT $1" : ""}
+      ),
+      active AS (
+        SELECT DISTINCT ON (p2.owned_by)
+               p2.owned_by, p2.id AS last_id
+        FROM posts p2
+        WHERE p2.owned_by IN (SELECT followee_id FROM f)
+          ${repliesFilter}
+        ORDER BY p2.owned_by, p2.id ${orderDir}
+      ),
+      top_followees AS (
+        SELECT owned_by
+        FROM active
+        ORDER BY last_id ${orderDir}
+        LIMIT $2
+      ),
+      cand AS (
+        SELECT pid.id
+        FROM top_followees tf
+        JOIN LATERAL (
+          SELECT p2.id
+          FROM posts p2
+          WHERE p2.owned_by = tf.owned_by
+            ${repliesFilter}
+          ORDER BY p2.id ${orderDir}
+          LIMIT $3
+        ) AS pid ON TRUE
+      ),
+      top AS (
+        SELECT id
+        FROM cand
+        ORDER BY id ${orderDir}
+        OFFSET $4 LIMIT $5
+      )
       SELECT
         p.id,
         p.content,
@@ -430,16 +465,14 @@ export class PostsService {
         ARRAY(
           SELECT pt2.name FROM post_tags pt2 WHERE pt2.post_id = p.id ORDER BY pt2.name
         ) AS tags
-      FROM posts p
+      FROM top t
+      JOIN posts p ON p.id = t.id
       JOIN users u ON p.owned_by = u.id
       LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
       LEFT JOIN users pu ON parent_post.owned_by = pu.id
-      WHERE p.owned_by IN (${followeeSql})
-        ${repliesFilter}
-      ORDER BY p.id ${order}
-      OFFSET $2 LIMIT $3
+      ORDER BY t.id ${orderDir}
     `;
-    const params = [userId, offset, limit];
+    const params = [userId, activeFolloweeLimit, perFolloweeLimit, offset, limit];
     const res = await this.pgClient.query(sql, params);
     const details = snakeToCamel<PostDetail[]>(res.rows);
     if (!focusUserId || details.length === 0) return details;

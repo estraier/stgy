@@ -391,9 +391,11 @@ $$ WHERE id = '0002000000000011';
 UPDATE posts
 SET content = $$# Fakebookのデータベース
 
+本記事では、Fakebookのデータベースの設定とスキーマについて解説する。Fakebookのユーザや記事のデータはPostgreSQLで管理している。
+
 ## ER図
 
-Fakebookのユーザや記事のデータはPostgreSQLで管理する。データベースのスキーマのER図を以下に示す。主なテーブルは二つで、ユーザを管理するusersテーブルと、各ユーザが投稿した記事を管理するpostsテーブルである。その他のテーブルは、正規化の過程でその二つのテーブルから分離されたものである。
+データベースのスキーマのER図を以下に示す。主なテーブルは二つで、ユーザを管理するusersテーブルと、各ユーザが投稿した記事を管理するpostsテーブルである。その他のテーブルは、正規化の過程でその二つのテーブルから分離されたものである。
 
 ![ER図](/data/help-schema-er.png){size=large}
 
@@ -448,7 +450,7 @@ is_adminは、管理者かどうかのフラグである。ガチなサービス
 ```
 CREATE TABLE posts (
   id VARCHAR(50) PRIMARY KEY,
-  content VARCHAR(10000) NOT NULL,
+  content VARCHAR(65535) NOT NULL,
   owned_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reply_to VARCHAR(50) REFERENCES posts(id) ON DELETE SET NULL,
   allow_likes BOOLEAN NOT NULL,
@@ -461,6 +463,7 @@ CREATE TABLE posts (
 CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
 CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
 CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
+CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
 ```
 
 プライマリキーであるidはSnowflake IDだ。usersと同様にリストを返す全てのクエリは `ORDER by id` をすることになり、その順序が時系列になるのは便利だ。
@@ -493,9 +496,6 @@ CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, 
 ```
 
 フォロイー（自分がフォローしているユーザ）の一覧と、フォロワー（自分をフォローしているユーザ）の一覧を見るためには、このテーブルが必要だ。usersテーブルにfollowersやfolloweesという属性を持たせて中に配列を入れるという運用もできなくはないが、第1正規形に違反する構造で運用すると確実に破綻するので、テーブル分割が必要だ。フォロワーとフォロイーのペアが主キーになっているので、一意性はそこで保証される。また、フォロイーとフォロワーの一覧をそれぞれ時系列で取得するクエリを効率化するためのインデックスが、created_atとの複合インデックスとして設けられている。
-
-さて、FakebookのSNSとしての典型的なビューは、「自分がフォローしているユーザの投稿の一覧」を見ることである。これがログイン直後のデフォルトのビューでもある。そのクエリが効率的に処理できるかどうかが性能を決めると言って良い。
-
 
 ## post_tagsテーブル
 
@@ -532,29 +532,263 @@ CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_
 ```
 
 個々の記事にイイネをつけたユーザの一覧を出すクエリを効率化すべく、post_idとcreated_atの複合インデックスが貼られている。これもソートを省く必要性のために存在する。また、自分がイイネした記事の一覧ができると、ブックマーク的に使えて便利だ。そのクエリを効率化するために、liked_byとcreated_atの複合インデックスも貼られている。
-
-
-
-（以降、今後書き足していく）
 $$ WHERE id = '0002000000000012';
+
+UPDATE posts
+SET content = $$# Fakebookの主要クエリ分析
+
+本記事では、fakebookの運用上でデータベースに発行されるクエリについて分析する。SQLの具体例を示し、その計算量を解析し、実際の実行計画を見て確認する。
+
+## listPosts
+
+全ての投稿の中から最新20件を取り出す処理を考える。バックエンドのpostsService.listPostsというメソッドでそれは実装されている。デフォルトでは返信以外の投稿を一覧するため、reply_toがNULLであるという条件をつける。実際のクエリは以下のものだ。
+
+```
+SELECT
+  p.id, p.content, p.owned_by, p.reply_to,
+  p.allow_likes, p.allow_replies, p.created_at, p.updated_at
+FROM posts p
+WHERE reply_to IS NULL
+ORDER BY p.id DESC OFFSET 0 LIMIT 20;
+```
+
+postsテーブルには、reply_toがNULLのレコードだけを対象としたIDの部分インデックスが設けられているため、そのインデックスを引くだけで処理が完了する。全ての投稿数をPと置くと、計算量はO(log(P))で済む。これは、Pが莫大になっても性能に問題が出ないことを意味している。
+
+PostgreSQLでは、クエリごとの実行計画をEXPLAIN文で調べることができる。以下の出力が得られる。インデックスを使って済むと言っている。推定3021件のレコードを持つインデックスを逆向きに操作して、20件がヒットした段階で処理を打ち切ることが示唆されている。つまりめちゃくちゃ効率的に動くということだ。
+
+```
+Limit (cost=0.28..3.56 rows=20 width=96)
+ -> Index Scan Backward using idx_posts_root_id on posts p (cost=0.28..496.23 rows=3021 width=96)
+```
+
+## listPostsDetail
+
+実運用上は、各投稿の著者のユーザIDを名前に解決したり、各投稿につけられたタグ情報を結果に含めるために、別のテーブルをJOINすることになる。それを実装しているのが、listPostDetailメソッドだ。reply_toがNULLであるという条件をつけると、実際のクエリは以下のものになる。
+
+```
+SELECT
+  p.id, p.content, p.owned_by, p.reply_to,
+  p.allow_likes, p.allow_replies, p.created_at, p.updated_at,
+  u.nickname AS owner_nickname, pu.nickname AS reply_to_owner_nickname,
+  p.count_replies AS count_replies, p.count_likes AS count_likes,
+  ARRAY(SELECT pt2.name FROM post_tags pt2
+    WHERE pt2.post_id = p.id ORDER BY pt2.name) AS tags
+FROM posts p
+JOIN users u ON p.owned_by = u.id
+LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
+LEFT JOIN users pu ON parent_post.owned_by = pu.id
+WHERE p.reply_to IS NULL
+ORDER BY p.id DESC OFFSET 0 LIMIT 20;
+```
+
+listPostsの場合と同様にインデックスが使われて、結果を返却するはずだ。その過程で、post_tagsテーブルとusersテーブルを結合している。タグに関しては返却の各行に対応して投稿IDが一致するタグをサブクエリで調べて取得して埋め込んでいる。ユーザ名に関しては、owned_byのIDをユーザ名に解決するためと、reply_toの投稿のowned_byのIDをユーザ名に解決するために、2回に分けてJOINしている。
+
+これの計算量を考えよう。全ユーザ数をUと置き、全投稿数をPと置く。タグの数はおそらく投稿数の1%くらいの数になるだろうが、Pに比例するのでPとして扱う。まず、該当の投稿のリストを得るのに、インデックスが利けば、O(log(P))+O(20)の計算量がかかる。20は定数なので消えて、O(log(P))になる。そして、ヒットした20件の各々に対し、タグとユーザ名を解決する。インデックスが利けば、タグ取得はO(20*log(P))で、ユーザ名取得はO(20*log(U))だ。20は定数なので消えて、O(log(P))とO(log(U))になる。UはPよりも十分に少ないと仮定すると、全体の支配項はO(log(P))ということになる。つまり、計算量はlitPostsの時と同じである。
+
+EXPLAIN文でインデックスが利くか確かめると、以下の出力が得られる。投稿でヒットしたレコードの各々に対して処理を行うNested Loopがあり、そこでJOINの処理を行っている。結合先のテーブルからデータを取り出すにあたっては全てインデックスが使われ、一部はキャッシュも使われていて、シーケンシャルスキャん（Seq Scan）がひとつもない理想的な処理になっていることがわかる。
+
+```
+Limit (cost=1.14..106.13 rows=20 width=150)
+ -> Nested Loop Left Join (cost=1.14..15858.95 rows=3021 width=150)
+    -> Nested Loop Left Join (cost=0.86..2073.97 rows=3021 width=128)
+       -> Nested Loop (cost=0.57..1474.58 rows=3021 width=111)
+          -> Index Scan Backward using idx_posts_root_id on posts p (cost=0.28..496.23 rows=3021 width=104)
+          -> Memoize (cost=0.29..0.91 rows=1 width=24)
+             Cache Key: p.owned_by
+             Cache Mode: logical
+             -> Index Scan using users_pkey on users u (cost=0.28..0.90 rows=1 width=24)
+                Index Cond: ((id)::text = (p.owned_by)::text)
+       -> Memoize (cost=0.29..0.54 rows=1 width=34)
+          Cache Key: p.reply_to
+          Cache Mode: logical
+          -> Index Scan using posts_pkey on posts parent_post (cost=0.28..0.53 rows=1 width=34)
+             Index Cond: ((id)::text = (p.reply_to)::text)
+    -> Memoize (cost=0.29..0.67 rows=1 width=24)
+       Cache Key: parent_post.owned_by
+       Cache Mode: logical
+       -> Index Scan using users_pkey on users pu (cost=0.28..0.66 rows=1 width=24)
+          Index Cond: ((id)::text = (parent_post.owned_by)::text)
+    SubPlan 1
+     -> Index Only Scan using post_tags_pkey on post_tags pt2 (cost=0.28..4.32 rows=2 width=6)
+        Index Cond: (post_id = (p.id)::text)
+```
+
+## listPostsByFolloweesDetail
+
+FakebookのSNSとしての典型的なビューは、「自分がフォローしているユーザの投稿の一覧」を見ることである。これがログイン直後のデフォルトのビューでもある。そのクエリが効率的に処理できるかどうかがSNSの性能を決めると言って良い。そのクエリとは、具体的には以下のものだ。
+
+基本戦略としては、表示件数が20件という定数であることを利用して計算量の削減を図る。全フォロワーの中から直近の投稿が新しい20人を選び、その20人の各々の最新の投稿20件を取り出すことで、最大400件のソートしかしないことが保証できる。実際のクエリは以下のものだ。
+
+```
+WITH
+f AS (
+  SELECT followee_id
+  FROM user_follows
+  WHERE follower_id = '9901000000000001'),
+active AS (
+  SELECT DISTINCT ON (p2.owned_by) p2.owned_by, p2.id AS last_id
+  FROM posts p2
+  WHERE p2.owned_by IN (SELECT followee_id FROM f)
+  ORDER BY p2.owned_by, p2.id DESC),
+top_followees AS (
+  SELECT owned_by
+  FROM active
+  ORDER BY last_id DESC LIMIT 20),
+cand AS (
+  SELECT pid.id
+  FROM top_followees tf
+  JOIN LATERAL (
+    SELECT p2.id
+    FROM posts p2
+    WHERE p2.owned_by = tf.owned_by
+    ORDER BY p2.id DESC LIMIT 20) AS pid ON TRUE),
+top AS (
+  SELECT id
+  FROM cand
+  ORDER BY id DESC OFFSET 0 LIMIT 20)
+SELECT
+  p.id, p.content, p.owned_by, p.reply_to,
+  p.allow_likes, p.allow_replies, p.created_at, p.updated_at,
+  u.nickname AS owner_nickname, pu.nickname AS reply_to_owner_nickname,
+  p.count_replies AS count_replies, p.count_likes AS count_likes,
+  ARRAY(SELECT pt2.name FROM post_tags pt2
+    WHERE pt2.post_id = p.id ORDER BY pt2.name) AS tags
+FROM top t
+JOIN posts p ON p.id = t.id
+JOIN users u ON p.owned_by = u.id
+LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
+LEFT JOIN users pu ON parent_post.owned_by = pu.id
+ORDER BY t.id DESC;
+```
+
+クエリが込み入っているので、部分ごとに解説しよう。
+
+- フォローしているユーザのIDの一覧をfというビューとして作る。
+- fの各々について最新の投稿IDを紐づけたactiveというビューを作る。
+- activeの内容を投稿IDでソートして、最も最近に投稿をしたトップ20人のユーザIDの集合であるtop_followeesというビューを作る。
+- top_followeesの各ユーザIDにJOIN LATERALして、各ユーザの最新投IDを20件ずつ取り出したcandというビューを作る。
+- candの最大400件の投稿IDをソートして、最新20件に絞ったtopというビューを作る。
+- topの各々のIDに対して、listPostsDetailと同様に、各種属性を肉付けする。
+
+これの計算量を考えよう。全ユーザ数をUと置き、全投稿数をPと置き、フォローしているユーザ数をFと置く。フォローしているユーザの一覧を引くのは、インデックスが利けば、O(log(U))だ。フォローしているユーザの各々の最新投稿を調べるのは、インデックスが利けば、O(F*Log(P))だ。F人から最新アクティブユーザ20人を選ぶのはtop-kヒープなので、O(F*log(20)) で、20は定数なので、O(F)だ。最新アクティブユーザ20人の各々の最新投稿20件を取り出すと、400件が取れる。400件から20件を選ぶのもtop-kヒープなので、O(400*log(20))で、400も20も定数なので、O(1)だ。そして20件の各々に肉付けする処理は、全てインデックスが利くなら、O(20*log(P))で、20は定数なので、O(log(P))だ。つまり、UはPよりも少ないと仮定すると、全体の計算量の支配項はO(F*log(P))ということになる。Pは莫大に大きくても大丈夫だし、Fはそこそこ大きくても大丈夫ということになる。
+
+あとは、各処理でちゃんとインデックスが効いているかどうかを確かめれば良い。上述のクエリをEXPLAINにかけてみると、以下の出力が得られる。シーケンシャルスキャン（Seq Scan）がひとつも出ておらず、理想的な実行計画になっていることが確かめられた。
+
+```
+Nested Loop Left Join (cost=9461.18..9727.60 rows=20 width=167)
+ -> Nested Loop Left Join (cost=9460.90..9628.05 rows=20 width=145)
+  -> Nested Loop (cost=9460.62..9619.31 rows=20 width=128)
+    -> Nested Loop (cost=9460.35..9606.12 rows=20 width=121)
+     -> Limit (cost=9460.06..9460.11 rows=20 width=17)
+       -> Sort (cost=9460.06..9460.31 rows=100 width=17)
+        Sort Key: p2_1.id DESC
+        -> Nested Loop (cost=9369.04..9457.40 rows=100 width=17)
+          -> Limit (cost=9368.75..9368.80 rows=20 width=34)
+           -> Sort (cost=9368.75..9371.28 rows=1010 width=34)
+             Sort Key: p2.id DESC
+             -> Unique (cost=7.29..9341.88 rows=1010 width=34)
+              -> Incremental Sort (cost=7.29..8918.21 rows=169466 width=34)
+                Sort Key: p2.owned_by, p2.id DESC
+                Presorted Key: p2.owned_by
+                -> Nested Loop (cost=0.58..517.50 rows=169466 width=34)
+                 -> Index Only Scan using user_follows_pkey on user_follows (cost=0.29..69.78 rows=1000 width=17)
+                   Index Cond: (follower_id = '9901000000000001'::text)
+                 -> Memoize (cost=0.29..0.58 rows=5 width=34)
+                   Cache Key: user_follows.followee_id
+                   Cache Mode: logical
+                   -> Index Only Scan using idx_posts_owned_by_id on posts p2 (cost=0.28..0.57 rows=5 width=34)
+                    Index Cond: (owned_by = (user_follows.followee_id)::text)
+          -> Limit (cost=0.28..4.37 rows=5 width=17)
+           -> Index Only Scan Backward using idx_posts_owned_by_id on posts p2_1 (cost=0.28..4.37 rows=5 width=17)
+             Index Cond: (owned_by = (p2.owned_by)::text)
+     -> Index Scan using posts_pkey on posts p (cost=0.28..7.30 rows=1 width=104)
+       Index Cond: ((id)::text = (p2_1.id)::text)
+    -> Index Scan using users_pkey on users u (cost=0.28..0.66 rows=1 width=24)
+     Index Cond: ((id)::text = (p.owned_by)::text)
+  -> Index Scan using posts_pkey on posts parent_post (cost=0.28..0.44 rows=1 width=34)
+    Index Cond: ((id)::text = (p.reply_to)::text)
+ -> Index Scan using users_pkey on users pu (cost=0.28..0.66 rows=1 width=24)
+  Index Cond: ((id)::text = (parent_post.owned_by)::text)
+ SubPlan 1
+ -> Index Only Scan using post_tags_pkey on post_tags pt2 (cost=0.28..4.32 rows=2 width=6)
+   Index Cond: (post_id = (p.id)::text)
+```
+
+## listPostsLikedByUserDetail
+
+自分がイイネした投稿の一覧を得るには、以下のクエリが使われる。
+
+```
+SELECT
+  p.id, p.content, p.owned_by, p.reply_to,
+  p.allow_likes, p.allow_replies, p.created_at, p.updated_at,
+  u.nickname AS owner_nickname, pu.nickname AS reply_to_owner_nickname,
+  p.count_replies AS count_replies,
+  p.count_likes AS count_likes,
+  ARRAY(SELECT pt.name FROM post_tags pt
+    WHERE pt.post_id = p.id ORDER BY pt.name) AS tags
+FROM post_likes pl
+JOIN posts p ON pl.post_id = p.id
+JOIN users u ON p.owned_by = u.id
+LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
+LEFT JOIN users pu ON parent_post.owned_by = pu.id
+WHERE pl.liked_by = '9901000000000001'
+ORDER BY p.id DESC OFFSET 0 LIMIT 20;
+```
+
+liked_byでの絞り込みにインデックスが利きさえすれば、計算量はlistPostsと同じくO(log(P))で済むはずだ。あとは実行計画見れば、それが確認できる。
+
+```
+Limit (cost=1.40..140.43 rows=20 width=150)
+ -> Nested Loop Left Join (cost=1.40..6952.62 rows=1000 width=150)
+    -> Nested Loop Left Join (cost=1.13..1975.82 rows=1000 width=128)
+       -> Nested Loop (cost=0.85..1538.82 rows=1000 width=111)
+          -> Nested Loop (cost=0.57..879.52 rows=1000 width=104)
+             -> Index Only Scan Backward using post_likes_pkey on post_likes pl (cost=0.28..113.28 rows=1000 width=17)
+                Index Cond: (liked_by = '9901000000000001'::text)
+             -> Memoize (cost=0.29..1.00 rows=1 width=104)
+                Cache Key: pl.post_id
+                Cache Mode: logical
+                -> Index Scan using posts_pkey on posts p (cost=0.28..0.99 rows=1 width=104)
+                   Index Cond: ((id)::text = (pl.post_id)::text)
+          -> Index Scan using users_pkey on users u (cost=0.28..0.66 rows=1 width=24)
+             Index Cond: ((id)::text = (p.owned_by)::text)
+       -> Index Scan using posts_pkey on posts parent_post (cost=0.28..0.44 rows=1 width=34)
+          Index Cond: ((id)::text = (p.reply_to)::text)
+    -> Index Scan using users_pkey on users pu (cost=0.28..0.66 rows=1 width=24)
+       Index Cond: ((id)::text = (parent_post.owned_by)::text)
+    SubPlan 1
+     -> Index Only Scan using post_tags_pkey on post_tags pt (cost=0.28..4.32 rows=2 width=6)
+        Index Cond: (post_id = (p.id)::text)
+```
+
+## その他
+
+usersテーブルを操作するusersSerivceという実装にも各種メソッドがあって、それぞれクエリを発行しているが、
+
+listUsersDetailの
+ILIKE
+
+
+$$ WHERE id = '0002000000000013';
 
 UPDATE posts
 SET content = $$# Fakebookのメディアストレージ
 
 今後書きます。
-$$ WHERE id = '0002000000000013';
+$$ WHERE id = '0002000000000014';
 
 UPDATE posts
 SET content = $$# Fakebookのセキュリティ
 
 今後書きます。
-$$ WHERE id = '0002000000000014';
+$$ WHERE id = '0002000000000015';
 
 UPDATE posts
 SET content = $$# Fakebookの本番デプロイ
 
 今後書きます。
-$$ WHERE id = '0002000000000015';
+$$ WHERE id = '0002000000000016';
 
 UPDATE posts
 SET content = $$# Fakebookの運用

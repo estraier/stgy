@@ -34,7 +34,7 @@ CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, 
 
 CREATE TABLE posts (
   id VARCHAR(50) PRIMARY KEY,
-  content VARCHAR(10000) NOT NULL,
+  content VARCHAR(65535) NOT NULL,
   owned_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reply_to VARCHAR(50) REFERENCES posts(id) ON DELETE SET NULL,
   allow_likes BOOLEAN NOT NULL,
@@ -47,6 +47,7 @@ CREATE TABLE posts (
 CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
 CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
 CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
+CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
 
 CREATE TABLE post_tags (
   post_id VARCHAR(50) NOT NULL REFERENCES posts(id) ON DELETE CASCADE,

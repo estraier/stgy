@@ -209,6 +209,18 @@ $$,
   NULL
 ),
 (
+  '0002000000000016',
+  $$# Supplement on implementations 6
+(to be replaced later)
+$$,
+  '0001000000000002',
+  NULL,
+  FALSE,
+  FALSE,
+  '2025-04-04 12:22:33+00',
+  NULL
+),
+(
   '0002000000000021',
   $$# Supplement on operations
 (to be replaced later)
