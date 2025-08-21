@@ -13,6 +13,7 @@ import {
   UpdatePasswordInput,
 } from "../models/user";
 import {
+  normalizeEmail,
   normalizeText,
   normalizeOneLiner,
   normalizeMultiLines,
@@ -126,7 +127,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     const focusUserId =
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
-      : undefined;
+        : undefined;
     let users = await usersService.listUsers(
       { offset, limit, order, query, nickname, nicknamePrefix },
       focusUserId,
@@ -142,7 +143,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     }
     try {
       const input: CreateUserInput = {
-        email: normalizeOneLiner(req.body.email) ?? "",
+        email: normalizeEmail(normalizeOneLiner(req.body.email) ?? ""),
         nickname: normalizeOneLiner(req.body.nickname) ?? "",
         password: normalizeText(req.body.password) ?? "",
         isAdmin: parseBoolean(req.body.isAdmin, false),
@@ -176,7 +177,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     try {
       const input: UpdateUserInput = {
         id: req.params.id,
-        email: normalizeOneLiner(req.body.email) ?? undefined,
+        email: req.body.email ? normalizeEmail(normalizeOneLiner(req.body.email) ?? "") : undefined,
         nickname: normalizeOneLiner(req.body.nickname) ?? undefined,
         isAdmin: req.body.isAdmin === undefined ? undefined : parseBoolean(req.body.isAdmin, false),
         introduction: normalizeMultiLines(req.body.introduction) ?? undefined,

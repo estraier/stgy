@@ -4,6 +4,7 @@ import Redis from "ioredis";
 import { UsersService } from "../services/users";
 import { SignupService } from "../services/signup";
 import { SendMailService } from "../services/sendMail";
+import { validateEmail, normalizeEmail, normalizeText } from "../utils/format";
 
 export default function createSignupRouter(pgClient: Client, redis: Redis) {
   const router = Router();
@@ -16,12 +17,17 @@ export default function createSignupRouter(pgClient: Client, redis: Redis) {
     if (!email || !password) {
       return res.status(400).json({ error: "email and password are needed" });
     }
-    const check = await sendMailService.canSendMail(email);
+    if (!validateEmail(email)) {
+      throw res.status(400).json({ error: "invalid e-mail address" });
+    }
+    const normEmail = normalizeEmail(email);
+    const normPassword = normalizeText(password) ?? "";
+    const check = await sendMailService.canSendMail(normEmail);
     if (!check.ok) {
       return res.status(400).json({ error: check.reason || "too many requests" });
     }
     try {
-      const { signupId } = await signupService.startSignup(email, password);
+      const { signupId } = await signupService.startSignup(normEmail, normPassword);
       res.status(201).json({ signupId });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "signup failed" });

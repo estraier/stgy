@@ -1,6 +1,7 @@
 import {
   generateVerificationCode,
   validateEmail,
+  normalizeEmail,
   normalizeText,
   normalizeOneLiner,
   normalizeMultiLines,
@@ -68,6 +69,12 @@ describe("validateEmail", () => {
     invalids.forEach((email) => {
       expect(validateEmail(email)).toBe(false);
     });
+  });
+});
+
+describe("normalizeEmail", () => {
+  it("normalize", () => {
+    expect(normalizeEmail("  ADMIN@dbmX.net  ")).toBe("admin@dbmx.net");
   });
 });
 

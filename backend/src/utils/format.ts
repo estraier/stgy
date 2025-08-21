@@ -16,6 +16,11 @@ export function validateEmail(email: string): boolean {
   );
 }
 
+export function normalizeEmail(input: string): string {
+  let s = input.toLowerCase().trim();
+  return s;
+}
+
 export function normalizeText(input: string | undefined | null): string | undefined | null {
   if (!input) return input;
   let s = input.normalize("NFC");
