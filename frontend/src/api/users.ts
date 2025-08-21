@@ -211,7 +211,7 @@ export async function listFollowers(
 }
 
 export async function countUsers(
-  params: { query?: string; nickname?: string } = {},
+  params: { query?: string; nickname?: string; nicknamePrefix?: string } = {},
 ): Promise<number> {
   const search = new URLSearchParams();
   if (params.query) search.append("query", params.query);

@@ -22,13 +22,7 @@ type UserFormProps = {
   onCancel: () => void;
 };
 
-export default function UserForm({
-  user,
-  isAdmin,
-  isSelf,
-  onUpdated,
-  onCancel,
-}: UserFormProps) {
+export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }: UserFormProps) {
   const [email, setEmail] = useState(user.email ?? "");
   const [nickname, setNickname] = useState(user.nickname ?? "");
   const [introduction, setIntroduction] = useState(user.introduction ?? "");

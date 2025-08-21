@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { UserDetail } from "@/api/models";
+import type { User } from "@/api/models";
 import { listUsers } from "@/api/users";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import AvatarImg from "@/components/AvatarImg";
@@ -29,7 +29,7 @@ export default function UserMentionButton({
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [loading, setLoading] = useState(false);
-  const [items, setItems] = useState<UserDetail[]>([]);
+  const [items, setItems] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
 
   const order: "asc" | "desc" | "social" = focusUserId ? "social" : "desc";
@@ -89,7 +89,7 @@ export default function UserMentionButton({
   }, [open]);
 
   const onPick = useCallback(
-    (u: UserDetail) => {
+    (u: User) => {
       const label = escapeLabelForMarkdown(u.nickname || "");
       const url = `/users/${encodeURIComponent(u.id)}`;
       onInsert(`[@${label}](${url})`);

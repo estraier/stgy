@@ -158,7 +158,9 @@ export default function UserCard({
           </span>
         )}
         {isAI && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs opacity-90">AI</span>
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs opacity-90">
+            AI
+          </span>
         )}
         {isSelf && (
           <span className="-mt-1 ml-2 px-2 py-1 bg-green-100 text-green-800 rounded text-xs opacity-90">

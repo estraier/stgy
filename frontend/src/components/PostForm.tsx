@@ -49,8 +49,7 @@ export default function PostForm({
 
   const { content, tags } = parseBodyAndTags(body);
   const contentLength = content.length;
-  const overLimit =
-    contentLengthLimit != null ? contentLength > contentLengthLimit : false;
+  const overLimit = contentLengthLimit != null ? contentLength > contentLengthLimit : false;
 
   function handleFocus() {
     const textarea = textareaRef.current;

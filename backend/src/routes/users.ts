@@ -13,6 +13,7 @@ import {
   UpdatePasswordInput,
 } from "../models/user";
 import {
+  validateEmail,
   normalizeEmail,
   normalizeText,
   normalizeOneLiner,
@@ -209,12 +210,16 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     if (!email) {
       return res.status(400).json({ error: "email required" });
     }
-    const check = await sendMailService.canSendMail(email);
+    if (!validateEmail(email)) {
+      throw res.status(400).json({ error: "invalid e-mail address" });
+    }
+    const normEmail = normalizeEmail(email);
+    const check = await sendMailService.canSendMail(normEmail);
     if (!check.ok) {
       return res.status(400).json({ error: check.reason || "too many requests" });
     }
     try {
-      const { updateEmailId } = await usersService.startUpdateEmail(req.params.id, email);
+      const { updateEmailId } = await usersService.startUpdateEmail(req.params.id, normEmail);
       res.status(201).json({ updateEmailId });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "update email failed" });
@@ -241,8 +246,19 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
 
   router.post("/password/reset/start", async (req: Request, res: Response) => {
     const { email } = req.body;
+    if (!email) {
+      return res.status(400).json({ error: "email required" });
+    }
+    if (!validateEmail(email)) {
+      throw res.status(400).json({ error: "invalid e-mail address" });
+    }
+    const normEmail = normalizeEmail(email);
+    const check = await sendMailService.canSendMail(normEmail);
+    if (!check.ok) {
+      return res.status(400).json({ error: check.reason || "too many requests" });
+    }
     try {
-      const result = await usersService.startResetPassword(email);
+      const result = await usersService.startResetPassword(normEmail);
       res.status(201).json(result);
     } catch {
       const result = await usersService.fakeResetPassword();
