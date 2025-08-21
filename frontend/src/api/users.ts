@@ -8,6 +8,7 @@ export async function listUsers(
     order?: "asc" | "desc" | "social";
     query?: string;
     nickname?: string;
+    nicknamePrefix?: string;
     focusUserId?: string;
   } = {},
 ): Promise<User[]> {
@@ -17,6 +18,7 @@ export async function listUsers(
   if (params.order) search.append("order", params.order);
   if (params.query) search.append("query", params.query);
   if (params.nickname) search.append("nickname", params.nickname);
+  if (params.nicknamePrefix) search.append("nicknamePrefix", params.nicknamePrefix);
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);
   const q = search.toString();
   const res = await apiFetch(`/users${q ? `?${q}` : ""}`, { method: "GET" });
@@ -31,6 +33,7 @@ export async function listUsersDetail(
     order?: "asc" | "desc" | "social";
     query?: string;
     nickname?: string;
+    nicknamePrefix?: string;
     focusUserId?: string;
   } = {},
 ): Promise<UserDetail[]> {
@@ -40,6 +43,7 @@ export async function listUsersDetail(
   if (params.order) search.append("order", params.order);
   if (params.query) search.append("query", params.query);
   if (params.nickname) search.append("nickname", params.nickname);
+  if (params.nicknamePrefix) search.append("nicknamePrefix", params.nicknamePrefix);
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);
   const q = search.toString();
   const res = await apiFetch(`/users/detail${q ? `?${q}` : ""}`, { method: "GET" });
@@ -207,11 +211,12 @@ export async function listFollowers(
 }
 
 export async function countUsers(
-  params: { nickname?: string; query?: string } = {},
+  params: { query?: string; nickname?: string } = {},
 ): Promise<number> {
   const search = new URLSearchParams();
-  if (params.nickname) search.append("nickname", params.nickname);
   if (params.query) search.append("query", params.query);
+  if (params.nickname) search.append("nickname", params.nickname);
+  if (params.nicknamePrefix) search.append("nicknamePrefix", params.nicknamePrefix);
   const q = search.toString();
   const res = await apiFetch(`/users/count${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));

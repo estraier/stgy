@@ -319,7 +319,7 @@ export default function PageBody() {
   if (status.state !== "authenticated") return null;
 
   return (
-    <main className="max-w-3xl mx-auto mt-8 p-4" onClick={clearError}>
+    <main className="max-w-3xl mx-auto mt-4 p-4" onClick={clearError}>
       <PostForm
         body={body}
         setBody={setBody}
@@ -404,7 +404,7 @@ export default function PageBody() {
                   onErrorClear={clearReplyError}
                   buttonLabel="Reply"
                   placeholder="Write your reply. Use #tag lines for tags."
-                  className="mt-3 flex flex-col gap-2 pt-3"
+                  className="mt-8 flex flex-col"
                   onCancel={() => {
                     setReplyTo(null);
                     setReplyError(null);

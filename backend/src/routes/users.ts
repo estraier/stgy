@@ -31,15 +31,19 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
   router.get("/count", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    const nickname =
-      typeof req.query.nickname === "string" && req.query.nickname.trim() !== ""
-        ? req.query.nickname.trim()
-        : undefined;
     const query =
       typeof req.query.query === "string" && req.query.query.trim() !== ""
         ? req.query.query.trim()
         : undefined;
-    const count = await usersService.countUsers({ nickname, query });
+    const nickname =
+      typeof req.query.nickname === "string" && req.query.nickname.trim() !== ""
+        ? req.query.nickname.trim()
+        : undefined;
+    const nicknamePrefix =
+      typeof req.query.nicknamePrefix === "string" && req.query.nicknamePrefix.trim() !== ""
+        ? req.query.nicknamePrefix.trim()
+        : undefined;
+    const count = await usersService.countUsers({ query, nickname, nicknamePrefix });
     res.json({ count });
   });
 
@@ -60,12 +64,16 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       typeof req.query.nickname === "string" && req.query.nickname.trim() !== ""
         ? req.query.nickname.trim()
         : undefined;
+    const nicknamePrefix =
+      typeof req.query.nicknamePrefix === "string" && req.query.nicknamePrefix.trim() !== ""
+        ? req.query.nicknamePrefix.trim()
+        : undefined;
     const focusUserId =
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
     let users = await usersService.listUsersDetail(
-      { offset, limit, order, query, nickname },
+      { offset, limit, order, query, nickname, nicknamePrefix },
       focusUserId,
     );
     users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
@@ -111,12 +119,16 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
       typeof req.query.nickname === "string" && req.query.nickname.trim() !== ""
         ? req.query.nickname.trim()
         : undefined;
+    const nicknamePrefix =
+      typeof req.query.nicknamePrefix === "string" && req.query.nicknamePrefix.trim() !== ""
+        ? req.query.nicknamePrefix.trim()
+        : undefined;
     const focusUserId =
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
-        : undefined;
+      : undefined;
     let users = await usersService.listUsers(
-      { offset, limit, order, query, nickname },
+      { offset, limit, order, query, nickname, nicknamePrefix },
       focusUserId,
     );
     users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);

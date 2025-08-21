@@ -2,7 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { UserDetail } from "@/api/models";
-import { listUsersDetail } from "@/api/users";
+import { listUsers } from "@/api/users";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import AvatarImg from "@/components/AvatarImg";
 import { renderText } from "@/utils/markdown";
@@ -39,11 +39,10 @@ export default function UserMentionButton({
       setLoading(true);
       setError(null);
       try {
-        const res = await listUsersDetail({
+        const res = await listUsers({
           limit: 20,
           order,
-          ...(focusUserId ? { focusUserId } : {}),
-          ...(q ? { nickname: q } : {}),
+          ...(q ? { nicknamePrefix: q } : {}),
         });
         setItems(res);
       } catch (e) {

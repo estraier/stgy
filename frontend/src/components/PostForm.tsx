@@ -120,22 +120,21 @@ export default function PostForm({
 
   return (
     <div className="relative group">
-      <div className="hidden group-focus-within:flex absolute right-0 top-0 -translate-y-full items-center gap-1">
-        <div className="px-1.5 text-gray-600 backdrop-blur-sm flex items-center gap-1">
-          <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)}>
-            <AtSign size={16} aria-hidden className="opacity-80" />
-          </UserMentionButton>
-          <ImageEmbedButton onInsert={(md) => insertAtCursor(md)}>
-            <ImageIcon size={16} aria-hidden className="opacity-80" />
-          </ImageEmbedButton>
-        </div>
-      </div>
-
       <form
         onSubmit={handleSubmit}
         className={className + " flex flex-col gap-2"}
         onClick={(e) => e.stopPropagation()}
       >
+        <div className="hidden group-focus-within:flex absolute right-0 top-0 -translate-y-full items-center gap-1">
+          <div className="px-1.5 text-gray-600 backdrop-blur-sm flex items-center gap-1">
+            <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)}>
+              <AtSign size={16} aria-hidden className="opacity-80" />
+            </UserMentionButton>
+            <ImageEmbedButton onInsert={(md) => insertAtCursor(md)}>
+              <ImageIcon size={16} aria-hidden className="opacity-80" />
+            </ImageEmbedButton>
+          </div>
+        </div>
         <textarea
           ref={textareaRef}
           className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50 break-all"
@@ -193,7 +192,7 @@ export default function PostForm({
         </div>
 
         {showPreview && content.trim() !== "" && (
-          <div className="border rounded bg-white mt-1 p-3 markdown-body">
+          <div className="border rounded bg-white mt-1 p-3 markdown-body max-h-[50ex] overflow-y-auto">
             <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
             <div
               dangerouslySetInnerHTML={{ __html: renderHtml(content) }}

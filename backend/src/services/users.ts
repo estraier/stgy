@@ -36,8 +36,9 @@ export class UsersService {
   }
 
   async countUsers(input?: CountUsersInput): Promise<number> {
-    const nickname = input?.nickname?.trim();
     const query = input?.query?.trim();
+    const nickname = input?.nickname?.trim();
+    const nicknamePrefix = input?.nicknamePrefix?.trim();
     let sql = `SELECT COUNT(*) FROM users`;
     const params: unknown[] = [];
     let where = "";
@@ -46,9 +47,13 @@ export class UsersService {
       where = "WHERE nickname ILIKE $1 OR introduction ILIKE $2";
       params.push(`%${escapedQuery}%`, `%${escapedQuery}%`);
     } else if (nickname) {
-      const escapedNickname = escapeForLike(nickname);
+      const escapedQuery = escapeForLike(nickname);
       where = "WHERE nickname ILIKE $1";
-      params.push(`%${escapedNickname}%`);
+      params.push(`%${escapedQuery}%`);
+    } else if (nicknamePrefix) {
+      const escapedQuery = escapeForLike(nicknamePrefix.toLowerCase());
+      where = "WHERE LOWER(nickname) LIKE $1";
+      params.push(`${escapedQuery}%`);
     }
     sql += ` ${where}`;
     const res = await this.pgClient.query(sql, params);
@@ -92,6 +97,7 @@ export class UsersService {
     const order = input?.order ?? "desc";
     const query = input?.query?.trim();
     const nickname = input?.nickname?.trim();
+    const nicknamePrefix = input?.nicknamePrefix?.trim();
 
     let baseSelect = `
       SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at
@@ -105,11 +111,14 @@ export class UsersService {
       wheres.push("(u.nickname ILIKE $1 OR u.introduction ILIKE $2)");
       params.push(`%${escapedQuery}%`, `%${escapedQuery}%`);
     } else if (nickname) {
-      const escapedNickname = escapeForLike(nickname);
+      const escapedQuery = escapeForLike(nickname);
       wheres.push(`u.nickname ILIKE $${params.length + 1}`);
-      params.push(`%${escapedNickname}%`);
+      params.push(`%${escapedQuery}%`);
+    } else if (nicknamePrefix) {
+      const escapedQuery = escapeForLike(nicknamePrefix.toLowerCase());
+      wheres.push(`LOWER(u.nickname) LIKE $${params.length + 1}`);
+      params.push(`${escapedQuery}%`);
     }
-
     let orderClause = "";
     if (order === "social" && focusUserId) {
       baseSelect += `
@@ -143,6 +152,7 @@ export class UsersService {
     const order = input?.order ?? "desc";
     const query = input?.query?.trim();
     const nickname = input?.nickname?.trim();
+    const nicknamePrefix = input?.nicknamePrefix?.trim();
 
     let baseSelect = `
       SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
@@ -156,9 +166,13 @@ export class UsersService {
       wheres.push("(u.nickname ILIKE $1 OR u.introduction ILIKE $2)");
       params.push(`%${escapedQuery}%`, `%${escapedQuery}%`);
     } else if (nickname) {
-      const escapedNickname = escapeForLike(nickname);
+      const escapedQuery = escapeForLike(nickname);
       wheres.push(`u.nickname ILIKE $${params.length + 1}`);
-      params.push(`%${escapedNickname}%`);
+      params.push(`%${escapedQuery}%`);
+    } else if (nicknamePrefix) {
+      const escapedQuery = escapeForLike(nicknamePrefix.toLowerCase());
+      wheres.push(`LOWER(u.nickname) LIKE $${params.length + 1}`);
+      params.push(`${escapedQuery}%`);
     }
 
     let orderClause = "";

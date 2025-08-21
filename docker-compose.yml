@@ -6,6 +6,7 @@ services:
       POSTGRES_USER: ${FAKEBOOK_DATABASE_USER}
       POSTGRES_PASSWORD: ${FAKEBOOK_DATABASE_PASSWORD}
       POSTGRES_DB: ${FAKEBOOK_DATABASE_NAME}
+      POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C --lc-collate=C --lc-ctype=C"
     ports:
       - "${FAKEBOOK_DATABASE_PORT}:5432"
     volumes:

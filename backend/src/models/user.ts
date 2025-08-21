@@ -22,6 +22,7 @@ export type UserDetail = User & {
 export type UserFilter = {
   query?: string;
   nickname?: string;
+  nicknamePrefix?: string;
 };
 
 export type UserPagination = {

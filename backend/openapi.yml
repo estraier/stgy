@@ -324,11 +324,15 @@ paths:
       security:
         - sessionCookie: []
       parameters:
+        - name: query
+          in: query
+          schema: { type: string }
+          required: false
         - name: nickname
           in: query
           schema: { type: string }
           required: false
-        - name: query
+        - name: nicknamePrefix
           in: query
           schema: { type: string }
           required: false
@@ -367,6 +371,10 @@ paths:
           schema: { type: string }
           required: false
         - name: nickname
+          in: query
+          schema: { type: string }
+          required: false
+        - name: nicknamePrefix
           in: query
           schema: { type: string }
           required: false
@@ -564,6 +572,10 @@ paths:
           in: query
           required: false
           schema: { type: string }
+        - name: nicknamePrefix
+          in: query
+          schema: { type: string }
+          required: false
         - name: focusUserId
           in: query
           required: false

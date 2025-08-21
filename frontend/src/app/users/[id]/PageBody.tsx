@@ -392,7 +392,7 @@ export default function PageBody() {
                         onErrorClear={clearReplyError}
                         buttonLabel="Reply"
                         placeholder="Write your reply. Use #tag lines for tags."
-                        className="mt-3 flex flex-col gap-2 pt-3"
+                        className="mt-8 flex flex-col"
                         onCancel={() => {
                           setReplyTo(null);
                           setReplyError(null);

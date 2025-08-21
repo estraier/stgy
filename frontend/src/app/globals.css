@@ -16,11 +16,13 @@ body {
   background: var(--background);
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
+  word-break: break-all;
 }
 
 .markdown-body {
   position: relative;
   line-height: 1.5;
+  word-break: break-all;
 }
 .markdown-body::after {
   content: "";
@@ -88,7 +90,6 @@ body {
   line-height: 1.4;
   background: #f7f7fa;
   white-space: pre-wrap;
-  word-wrap: break-word;
   border-radius: 0.5ex;
   font-family: "JetBrains Mono", "Menlo", "Monaco", "Consolas", monospace;
   font-size: 90%;
@@ -217,7 +218,6 @@ body {
 .markdown-body a {
   color: #03c;
   text-decoration: none;
-  word-break: break-all;
 }
 .markdown-body a:hover {
   text-decoration: underline;

@@ -21,7 +21,7 @@ CREATE TABLE users (
   count_followees INT NOT NULL DEFAULT 0,
   count_posts INT NOT NULL DEFAULT 0
 );
-CREATE INDEX idx_users_nickname_id ON users(nickname, id);
+CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, nickname, id);
 
 CREATE TABLE user_follows (
   follower_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
