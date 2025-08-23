@@ -6,6 +6,7 @@ import { UsersService } from "../services/users";
 import { MediaService } from "../services/media";
 import { AuthService } from "../services/auth";
 import { AuthHelpers } from "./authHelpers";
+import { EventLogService } from "../services/eventLog";
 import { SendMailService } from "../services/sendMail";
 import {
   User,
@@ -24,10 +25,15 @@ import {
   maskEmailByHash,
 } from "../utils/format";
 
-export default function createUsersRouter(pgClient: Client, redis: Redis, storage: StorageService) {
+export default function createUsersRouter(
+  pgClient: Client,
+  redis: Redis,
+  storageService: StorageService,
+  eventLogService: EventLogService,
+) {
   const router = Router();
-  const usersService = new UsersService(pgClient, redis);
-  const mediaService = new MediaService(storage, redis);
+  const usersService = new UsersService(pgClient, redis, eventLogService);
+  const mediaService = new MediaService(storageService, redis);
   const authService = new AuthService(pgClient, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
   const sendMailService = new SendMailService(redis);

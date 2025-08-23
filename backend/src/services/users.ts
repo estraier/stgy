@@ -14,6 +14,7 @@ import {
   ListFriendsByNicknamePrefixInput,
 } from "../models/user";
 import { IdIssueService } from "./idIssue";
+import { EventLogService } from "./eventLog";
 import {
   generateVerificationCode,
   validateEmail,
@@ -29,11 +30,13 @@ export class UsersService {
   private pgClient: Client;
   private redis: Redis;
   private idIssueService: IdIssueService;
+  private eventLogService?: EventLogService;
 
-  constructor(pgClient: Client, redis: Redis) {
+  constructor(pgClient: Client, redis: Redis, eventLogService?: EventLogService) {
     this.pgClient = pgClient;
     this.redis = redis;
     this.idIssueService = new IdIssueService(Config.ID_ISSUE_WORKER_ID);
+    this.eventLogService = eventLogService;
   }
 
   async countUsers(input?: CountUsersInput): Promise<number> {
@@ -509,7 +512,6 @@ export class UsersService {
         u.isFollowingFocusUser = followingSet.has(u.id);
       }
     }
-
     return users;
   }
 
@@ -524,6 +526,15 @@ export class UsersService {
       [input.followerId, input.followeeId],
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("already following");
+    if (this.eventLogService) {
+      console.log("FOLLOW");
+      try {
+        this.eventLogService.recordFollow({
+          followerId: input.followerId,
+          followeeId: input.followeeId,
+        });
+      } catch {}
+    }
   }
 
   async removeFollower(input: RemoveFollowerInput): Promise<void> {

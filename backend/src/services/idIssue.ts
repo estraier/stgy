@@ -41,6 +41,12 @@ export class IdIssueService {
     return new Date(Number(ms));
   }
 
+  static lowerBoundIdForDate(date: Date): bigint {
+    const shift = IdIssueService.WORKER_BITS + IdIssueService.SEQ_BITS;
+    const ms = BigInt(date.getTime());
+    return ms << shift;
+  }
+
   private nowMsBig(): bigint {
     const wall = Date.now();
     const mono = this.baseWall + ((globalThis.performance?.now?.() ?? 0) - this.basePerf);

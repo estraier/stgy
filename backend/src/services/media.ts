@@ -394,9 +394,7 @@ export class MediaService {
       if (!objs || objs.length === 0) {
         return;
       }
-      await Promise.allSettled(
-        objs.map((o) => this.storage.deleteObject({ bucket, key: o.key })),
-      );
+      await Promise.allSettled(objs.map((o) => this.storage.deleteObject({ bucket, key: o.key })));
     };
     await Promise.all([
       del(Config.MEDIA_BUCKET_IMAGES, `${pathUserId}/masters/`),

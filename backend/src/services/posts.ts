@@ -12,6 +12,7 @@ import {
 } from "../models/post";
 import { User } from "../models/user";
 import { IdIssueService } from "./idIssue";
+import { EventLogService } from "./eventLog";
 import { snakeToCamel, escapeForLike } from "../utils/format";
 import { Client } from "pg";
 import Redis from "ioredis";
@@ -20,11 +21,13 @@ export class PostsService {
   private pgClient: Client;
   private redis: Redis;
   private idIssueService: IdIssueService;
+  private eventLogService?: EventLogService;
 
-  constructor(pgClient: Client, redis: Redis) {
+  constructor(pgClient: Client, redis: Redis, eventLogService?: EventLogService) {
     this.pgClient = pgClient;
     this.redis = redis;
     this.idIssueService = new IdIssueService(Config.ID_ISSUE_WORKER_ID);
+    this.eventLogService = eventLogService;
   }
 
   async countPosts(input?: CountPostsInput): Promise<number> {
@@ -294,6 +297,16 @@ export class PostsService {
         );
       }
       await client.query("COMMIT");
+      if (this.eventLogService && input.replyTo) {
+        try {
+          console.log("REPLY");
+          this.eventLogService.recordReply({
+            userId: input.ownedBy,
+            postId: id,
+            replyToPostId: input.replyTo,
+          });
+        } catch {}
+      }
       return snakeToCamel<Post>(res.rows[0]);
     } catch (e) {
       await client.query("ROLLBACK");
@@ -350,7 +363,6 @@ export class PostsService {
       values.push(input.id);
       const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at`;
       await client.query(sql, values);
-
       if (input.tags !== undefined) {
         await client.query(`DELETE FROM post_tags WHERE post_id = $1`, [input.id]);
         if (input.tags.length > 0) {
@@ -386,6 +398,15 @@ export class PostsService {
       [postId, userId, new Date().toISOString()],
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("already liked");
+    if (this.eventLogService) {
+      try {
+        console.log("Like");
+        this.eventLogService.recordLike({
+          userId: userId,
+          postId: postId,
+        });
+      } catch {}
+    }
   }
 
   async removeLike(postId: string, userId: string): Promise<void> {

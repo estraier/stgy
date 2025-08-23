@@ -434,12 +434,8 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
     const imThumbs = [
       makeMeta(`${userId}/thumbs/797491/a_image.webp`, 1, "image/webp", imageBucket),
     ];
-    const imStaging = [
-      makeMeta(`staging/${userId}/tmp1.png`, 5, "image/png", imageBucket),
-    ];
-    const pfMasters = [
-      makeMeta(`${userId}/masters/avatar.png`, 100, "image/png", profileBucket),
-    ];
+    const imStaging = [makeMeta(`staging/${userId}/tmp1.png`, 5, "image/png", imageBucket)];
+    const pfMasters = [makeMeta(`${userId}/masters/avatar.png`, 100, "image/png", profileBucket)];
     const pfThumbs = [
       makeMeta(`${userId}/thumbs/avatar_icon.webp`, 12, "image/webp", profileBucket),
     ];
@@ -479,12 +475,12 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
       key: `profiles-staging/${userId}/`,
     });
     const expectedDeletes = [
-      ...imMasters.map(o => ({ bucket: imageBucket, key: o.key })),
-      ...imThumbs.map(o => ({ bucket: imageBucket, key: o.key })),
-      ...imStaging.map(o => ({ bucket: imageBucket, key: o.key })),
-      ...pfMasters.map(o => ({ bucket: profileBucket, key: o.key })),
-      ...pfThumbs.map(o => ({ bucket: profileBucket, key: o.key })),
-      ...pfStaging.map(o => ({ bucket: profileBucket, key: o.key })),
+      ...imMasters.map((o) => ({ bucket: imageBucket, key: o.key })),
+      ...imThumbs.map((o) => ({ bucket: imageBucket, key: o.key })),
+      ...imStaging.map((o) => ({ bucket: imageBucket, key: o.key })),
+      ...pfMasters.map((o) => ({ bucket: profileBucket, key: o.key })),
+      ...pfThumbs.map((o) => ({ bucket: profileBucket, key: o.key })),
+      ...pfStaging.map((o) => ({ bucket: profileBucket, key: o.key })),
     ];
     expect(storage.deleteObject).toHaveBeenCalledTimes(expectedDeletes.length);
     for (const call of expectedDeletes) {

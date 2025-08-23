@@ -67,6 +67,9 @@ export class Config {
   static readonly HOURLY_POSTS_LIMIT = envNum("FAKEBOOK_HOURLY_POSTS_LIMIT", 100);
   static readonly HOURLY_LIKES_LIMIT = envNum("FAKEBOOK_HOURLY_LIKES_LIMIT", 100);
   static readonly HOURLY_IMAGE_POSTS_LIMIT = envNum("FAKEBOOK_HOURLY_IMAGE_POSTS_LIMIT", 100);
+  static readonly EVENT_LOG_PARTITIONS = envNum("FAKEBOOK_EVENT_LOG_PARTITIONS", 256);
+  static readonly EVENT_LOG_RETENTION_DAYS = envNum("FAKEBOOK_EVENT_LOG_RETENTION_DAYS", 90);
+  static readonly NOTIFICATION_SHOWN_RECORDS = envNum("FAKEBOOK_NOTIFICATION_SHOWN_RECORDS", 50);
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = true): string {

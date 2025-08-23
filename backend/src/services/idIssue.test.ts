@@ -65,6 +65,11 @@ describe("IdIssueService (issueId, 44+8+12, UPPERCASE hex)", () => {
     const dt = IdIssueService.bigIntToDate(idBig);
     expect(dt.getTime()).toBe(1750000000000);
     expect(idBig.toString(16).toUpperCase().padStart(16, "0")).toBe("1977420DC0007000");
+    const lb = IdIssueService.lowerBoundIdForDate(new Date(1750000000000));
+    expect(lb).toBe(BigInt("0x1977420DC0000000"));
+    expect(idBig >= lb).toBe(true);
+    const nextLb = IdIssueService.lowerBoundIdForDate(new Date(1750000000001));
+    expect(idBig < nextLb).toBe(true);
   });
 
   test("advancing to next millisecond bumps timestamp and resets seq", async () => {
