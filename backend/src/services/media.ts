@@ -387,4 +387,24 @@ export class MediaService {
       limitMonthlyBytes,
     };
   }
+
+  async deleteAllImagesAndProfiles(pathUserId: string): Promise<void> {
+    const del = async (bucket: string, prefix: string) => {
+      const objs = await this.storage.listObjects({ bucket, key: prefix });
+      if (!objs || objs.length === 0) {
+        return;
+      }
+      await Promise.allSettled(
+        objs.map((o) => this.storage.deleteObject({ bucket, key: o.key })),
+      );
+    };
+    await Promise.all([
+      del(Config.MEDIA_BUCKET_IMAGES, `${pathUserId}/masters/`),
+      del(Config.MEDIA_BUCKET_IMAGES, `${pathUserId}/thumbs/`),
+      del(Config.MEDIA_BUCKET_IMAGES, `staging/${pathUserId}/`),
+      del(Config.MEDIA_BUCKET_PROFILES, `${pathUserId}/masters/`),
+      del(Config.MEDIA_BUCKET_PROFILES, `${pathUserId}/thumbs/`),
+      del(Config.MEDIA_BUCKET_PROFILES, `profiles-staging/${pathUserId}/`),
+    ]);
+  }
 }

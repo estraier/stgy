@@ -2,15 +2,16 @@ import { Config } from "../config";
 import { Router, Request, Response } from "express";
 import { Client } from "pg";
 import Redis from "ioredis";
+import type { StorageService } from "../services/storage";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
 import { AuthHelpers } from "./authHelpers";
 import { ThrottleService } from "../services/throttle";
-import { makeStorageService } from "../services/storageFactory";
 import { MediaService } from "../services/media";
 
-export default function createMediaRouter(pgClient: Client, redis: Redis) {
+export default function createMediaRouter(pgClient: Client, redis: Redis, storage: StorageService) {
   const router = Router();
+  const mediaService = new MediaService(storage, redis);
   const usersService = new UsersService(pgClient, redis);
   const authService = new AuthService(pgClient, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
@@ -20,8 +21,6 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     3600,
     Config.HOURLY_IMAGE_POSTS_LIMIT,
   );
-  const storage = makeStorageService(Config.STORAGE_DRIVER);
-  const media = new MediaService(storage, redis);
 
   router.post("/:userId/images/presigned", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
@@ -33,7 +32,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
       return res.status(403).json({ error: "too often image posts" });
     }
     try {
-      const presigned = await media.presignImageUpload(
+      const presigned = await mediaService.presignImageUpload(
         pathUserId,
         typeof req.body.filename === "string" ? req.body.filename : "",
         Number(req.body.sizeBytes ?? 0),
@@ -54,7 +53,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
       return res.status(403).json({ error: "too often image posts" });
     }
     try {
-      const meta = await media.finalizeImage(
+      const meta = await mediaService.finalizeImage(
         pathUserId,
         typeof req.body.key === "string" ? req.body.key : "",
       );
@@ -79,7 +78,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     try {
       const offset = parseInt((req.query.offset as string) ?? "0", 10);
       const limit = parseInt((req.query.limit as string) ?? "100", 10);
-      const list = await media.listImages(pathUserId, offset, limit);
+      const list = await mediaService.listImages(pathUserId, offset, limit);
       res.json(
         list.map((m) => ({
           ...m,
@@ -103,7 +102,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
           ? req.query.yyyymm.trim()
           : undefined;
       if (yyyymm && !/^\d{6}$/.test(yyyymm)) throw new Error("invalid yyyymm");
-      const quota = await media.calculateMonthlyQuota(pathUserId, yyyymm);
+      const quota = await mediaService.calculateMonthlyQuota(pathUserId, yyyymm);
       res.json(quota);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "error" });
@@ -119,7 +118,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
       return res.status(403).json({ error: "forbidden" });
     const rest = params[1] || "";
     try {
-      const { meta, bytes } = await media.getImageBytes(pathUserId, rest);
+      const { meta, bytes } = await mediaService.getImageBytes(pathUserId, rest);
       if (meta.contentType) res.setHeader("Content-Type", meta.contentType);
       res.setHeader("Content-Length", String(meta.size));
       if (meta.etag) res.setHeader("ETag", meta.etag);
@@ -139,7 +138,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
       return res.status(403).json({ error: "forbidden" });
     const rest = params[1] || "";
     try {
-      await media.deleteImage(pathUserId, rest);
+      await mediaService.deleteImage(pathUserId, rest);
       res.json({ result: "ok" });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "error" });
@@ -155,7 +154,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
       return res.status(403).json({ error: "forbidden" });
     if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
-      const presigned = await media.presignProfileUpload(
+      const presigned = await mediaService.presignProfileUpload(
         pathUserId,
         slot,
         typeof req.body.filename === "string" ? req.body.filename : "",
@@ -177,7 +176,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
       return res.status(403).json({ error: "forbidden" });
     if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
-      const meta = await media.finalizeProfile(
+      const meta = await mediaService.finalizeProfile(
         pathUserId,
         slot,
         typeof req.body.key === "string" ? req.body.key : "",
@@ -208,7 +207,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
       return res.status(403).json({ error: "forbidden" });
     if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
-      const { meta, bytes } = await media.getProfileBytes(pathUserId, slot);
+      const { meta, bytes } = await mediaService.getProfileBytes(pathUserId, slot);
       if (meta.contentType) res.setHeader("Content-Type", meta.contentType);
       res.setHeader("Content-Length", String(meta.size));
       if (meta.etag) res.setHeader("ETag", meta.etag);
@@ -228,7 +227,7 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
       return res.status(403).json({ error: "forbidden" });
     if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
-      await media.deleteProfile(pathUserId, slot);
+      await mediaService.deleteProfile(pathUserId, slot);
       await usersService.updateUser({ id: pathUserId, avatar: null });
       if (loginUser.id === pathUserId) {
         const sessionId = authHelpers.getSessionId(req);

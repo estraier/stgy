@@ -425,4 +425,82 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
     expect(q.limitSingleBytes).toBe(10 * 1024 * 1024);
     expect(q.limitMonthlyBytes).toBe(100 * 1024 * 1024);
   });
+
+  test("deleteAllImagesAndProfiles: deletes all under images/profiles (masters/thumbs/staging)", async () => {
+    const imMasters = [
+      makeMeta(`${userId}/masters/797491/a.png`, 10, "image/png", imageBucket),
+      makeMeta(`${userId}/masters/797491/b.jpg`, 20, "image/jpeg", imageBucket),
+    ];
+    const imThumbs = [
+      makeMeta(`${userId}/thumbs/797491/a_image.webp`, 1, "image/webp", imageBucket),
+    ];
+    const imStaging = [
+      makeMeta(`staging/${userId}/tmp1.png`, 5, "image/png", imageBucket),
+    ];
+    const pfMasters = [
+      makeMeta(`${userId}/masters/avatar.png`, 100, "image/png", profileBucket),
+    ];
+    const pfThumbs = [
+      makeMeta(`${userId}/thumbs/avatar_icon.webp`, 12, "image/webp", profileBucket),
+    ];
+    const pfStaging = [
+      makeMeta(`profiles-staging/${userId}/avatar/tmp.png`, 50, "image/png", profileBucket),
+    ];
+    storage.listObjects
+      .mockResolvedValueOnce(imMasters)
+      .mockResolvedValueOnce(imThumbs)
+      .mockResolvedValueOnce(imStaging)
+      .mockResolvedValueOnce(pfMasters)
+      .mockResolvedValueOnce(pfThumbs)
+      .mockResolvedValueOnce(pfStaging);
+    await service.deleteAllImagesAndProfiles(userId);
+    expect(storage.listObjects).toHaveBeenCalledWith({
+      bucket: imageBucket,
+      key: `${userId}/masters/`,
+    });
+    expect(storage.listObjects).toHaveBeenCalledWith({
+      bucket: imageBucket,
+      key: `${userId}/thumbs/`,
+    });
+    expect(storage.listObjects).toHaveBeenCalledWith({
+      bucket: imageBucket,
+      key: `staging/${userId}/`,
+    });
+    expect(storage.listObjects).toHaveBeenCalledWith({
+      bucket: profileBucket,
+      key: `${userId}/masters/`,
+    });
+    expect(storage.listObjects).toHaveBeenCalledWith({
+      bucket: profileBucket,
+      key: `${userId}/thumbs/`,
+    });
+    expect(storage.listObjects).toHaveBeenCalledWith({
+      bucket: profileBucket,
+      key: `profiles-staging/${userId}/`,
+    });
+    const expectedDeletes = [
+      ...imMasters.map(o => ({ bucket: imageBucket, key: o.key })),
+      ...imThumbs.map(o => ({ bucket: imageBucket, key: o.key })),
+      ...imStaging.map(o => ({ bucket: imageBucket, key: o.key })),
+      ...pfMasters.map(o => ({ bucket: profileBucket, key: o.key })),
+      ...pfThumbs.map(o => ({ bucket: profileBucket, key: o.key })),
+      ...pfStaging.map(o => ({ bucket: profileBucket, key: o.key })),
+    ];
+    expect(storage.deleteObject).toHaveBeenCalledTimes(expectedDeletes.length);
+    for (const call of expectedDeletes) {
+      expect(storage.deleteObject).toHaveBeenCalledWith(call);
+    }
+  });
+
+  test("deleteAllImagesAndProfiles: no objects -> no deletions", async () => {
+    storage.listObjects
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([]);
+    await service.deleteAllImagesAndProfiles(userId);
+    expect(storage.deleteObject).not.toHaveBeenCalled();
+  });
 });

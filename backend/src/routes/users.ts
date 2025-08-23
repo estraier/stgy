@@ -1,7 +1,9 @@
 import { Router, Request, Response } from "express";
 import { Client } from "pg";
 import Redis from "ioredis";
+import type { StorageService } from "../services/storage";
 import { UsersService } from "../services/users";
+import { MediaService } from "../services/media";
 import { AuthService } from "../services/auth";
 import { AuthHelpers } from "./authHelpers";
 import { SendMailService } from "../services/sendMail";
@@ -22,10 +24,10 @@ import {
   maskEmailByHash,
 } from "../utils/format";
 
-export default function createUsersRouter(pgClient: Client, redis: Redis) {
+export default function createUsersRouter(pgClient: Client, redis: Redis, storage: StorageService) {
   const router = Router();
-
   const usersService = new UsersService(pgClient, redis);
+  const mediaService = new MediaService(storage, redis);
   const authService = new AuthService(pgClient, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
   const sendMailService = new SendMailService(redis);
@@ -351,6 +353,7 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     }
     try {
       await usersService.deleteUser(req.params.id);
+      await mediaService.deleteAllImagesAndProfiles(req.params.id);
       res.json({ result: "ok" });
     } catch (e: unknown) {
       const msg = (e as Error).message || "";

@@ -4,12 +4,14 @@ import cookieParser from "cookie-parser";
 import { Client } from "pg";
 import Redis from "ioredis";
 import cors from "cors";
+import type { StorageService } from "./services/storage";
 import createAuthRouter from "./routes/auth";
 import createAIModelsRouter from "./routes/aiModels";
 import createUsersRouter from "./routes/users";
 import createPostRouter from "./routes/posts";
 import createSignupRouter from "./routes/signup";
 import createMediaRouter from "./routes/media";
+import { makeStorageService } from "./services/storageFactory";
 
 const app = express();
 app.use(express.json());
@@ -30,6 +32,8 @@ const redis = new Redis({
   password: Config.REDIS_PASSWORD,
 });
 
+const storage = makeStorageService(Config.STORAGE_DRIVER);
+
 app.use(
   cors({
     origin: Config.FRONTEND_ORIGIN,
@@ -43,9 +47,9 @@ if (Config.TRUST_PROXY_HOPS > 0) {
 app.use("/auth", createAuthRouter(pgClient, redis));
 app.use("/signup", createSignupRouter(pgClient, redis));
 app.use("/ai-models", createAIModelsRouter(pgClient, redis));
-app.use("/users", createUsersRouter(pgClient, redis));
+app.use("/users", createUsersRouter(pgClient, redis, storage));
 app.use("/posts", createPostRouter(pgClient, redis));
-app.use("/media", createMediaRouter(pgClient, redis));
+app.use("/media", createMediaRouter(pgClient, redis, storage));
 
 const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
   console.error("[API ERROR]", err);
