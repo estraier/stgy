@@ -141,50 +141,81 @@ export default function PageBody() {
   }, []);
 
   async function handleLike(p: PostDetail) {
+    if (!userId || !post) return;
+    if (!post.allowLikes) return;
+
+    const oldLiked = post.isLikedByFocusUser;
+    const oldCount = Number(post.countLikes ?? 0);
+
     setPost((prev) =>
       prev
         ? {
             ...prev,
-            isLikedByFocusUser: !prev.isLikedByFocusUser,
-            countLikes: Number(prev.countLikes) + (prev.isLikedByFocusUser ? -1 : 1),
+            isLikedByFocusUser: !oldLiked,
+            countLikes: oldCount + (oldLiked ? -1 : 1),
           }
         : prev,
     );
+
     try {
-      if (p.isLikedByFocusUser) await removeLike(p.id);
-      else await addLike(p.id);
+      if (oldLiked) {
+        await removeLike(p.id);
+      } else {
+        await addLike(p.id);
+      }
+    } catch {
+      setPost((prev) =>
+        prev
+          ? {
+              ...prev,
+              allowLikes: false,
+              isLikedByFocusUser: false,
+              countLikes: oldCount,
+            }
+          : prev,
+      );
     } finally {
-      getPostDetail(p.id, userId).then(setPost);
       setLikerAll(false);
     }
   }
 
   async function handleReplyLike(reply: PostDetail) {
+    if (!userId) return;
+
+    const oldLiked = reply.isLikedByFocusUser;
+    const oldCount = Number(reply.countLikes ?? 0);
+
     setReplies((prev) =>
       prev.map((p) =>
         p.id === reply.id
           ? {
               ...p,
-              isLikedByFocusUser: !p.isLikedByFocusUser,
-              countLikes: Number(p.countLikes) + (p.isLikedByFocusUser ? -1 : 1),
+              isLikedByFocusUser: !oldLiked,
+              countLikes: oldCount + (oldLiked ? -1 : 1),
             }
           : p,
       ),
     );
+
     try {
-      if (reply.isLikedByFocusUser) await removeLike(reply.id);
-      else await addLike(reply.id);
-    } finally {
-      listPostsDetail({
-        replyTo: postId,
-        offset: (replyPage - 1) * Config.POSTS_PAGE_SIZE,
-        limit: Config.POSTS_PAGE_SIZE + 1,
-        order: replyOldestFirst ? "asc" : "desc",
-        focusUserId: userId,
-      }).then((list) => {
-        setReplies(list.slice(0, Config.POSTS_PAGE_SIZE));
-        setReplyHasNext(list.length > Config.POSTS_PAGE_SIZE);
-      });
+      if (oldLiked) {
+        await removeLike(reply.id);
+      } else {
+        await addLike(reply.id);
+      }
+    } catch {
+      setReplies((prev) =>
+        prev.map((p) =>
+          p.id === reply.id
+            ? {
+                ...p,
+                allowLikes: false,
+                isLikedByFocusUser: false,
+                countLikes: oldCount,
+              }
+            : p,
+        ),
+      );
     }
   }
 
@@ -204,8 +235,11 @@ export default function PageBody() {
       setEditing(false);
       getPostDetail(postId, userId).then(setPost);
     } catch (err: unknown) {
-      if (err instanceof Error) setEditError(err.message ?? "Failed to update post.");
-      else setEditError(String(err) ?? "Failed to update post.");
+      if (err instanceof Error) {
+        setEditError(err.message ?? "Failed to update post.");
+      } else {
+        setEditError(String(err) ?? "Failed to update post.");
+      }
     } finally {
       setEditSubmitting(false);
     }
@@ -217,8 +251,11 @@ export default function PageBody() {
       await deletePost(postId);
       router.push("/posts");
     } catch (err: unknown) {
-      if (err instanceof Error) setEditError(err.message ?? "Failed to delete post.");
-      else setEditError(String(err) ?? "Failed to delete post.");
+      if (err instanceof Error) {
+        setEditError(err.message ?? "Failed to delete post.");
+      } else {
+        setEditError(String(err) ?? "Failed to delete post.");
+      }
     }
   }
 
@@ -245,8 +282,11 @@ export default function PageBody() {
       if (replyingTo === postId) {
         const sp = new URLSearchParams(searchParams);
         sp.set("replyPage", "1");
-        if (replyOldestFirst) sp.set("replyOldestFirst", "1");
-        else sp.delete("replyOldestFirst");
+        if (replyOldestFirst) {
+          sp.set("replyOldestFirst", "1");
+        } else {
+          sp.delete("replyOldestFirst");
+        }
         router.replace(`?${sp.toString()}`, { scroll: false });
 
         getPostDetail(postId, userId).then(setPost);
@@ -270,8 +310,11 @@ export default function PageBody() {
         );
       }
     } catch (err: unknown) {
-      if (err instanceof Error) setReplyError(err.message ?? "Failed to reply.");
-      else setReplyError(String(err) ?? "Failed to reply.");
+      if (err instanceof Error) {
+        setReplyError(err.message ?? "Failed to reply.");
+      } else {
+        setReplyError(String(err) ?? "Failed to reply.");
+      }
     } finally {
       setReplySubmitting(false);
     }
@@ -287,15 +330,21 @@ export default function PageBody() {
   function handleReplyPageChange(nextPage: number) {
     const sp = new URLSearchParams(searchParams);
     sp.set("replyPage", String(nextPage));
-    if (replyOldestFirst) sp.set("replyOldestFirst", "1");
-    else sp.delete("replyOldestFirst");
+    if (replyOldestFirst) {
+      sp.set("replyOldestFirst", "1");
+    } else {
+      sp.delete("replyOldestFirst");
+    }
     router.replace(`?${sp.toString()}`, { scroll: false });
   }
 
   function handleReplyOldestFirstChange(checked: boolean) {
     const sp = new URLSearchParams(searchParams);
-    if (checked) sp.set("replyOldestFirst", "1");
-    else sp.delete("replyOldestFirst");
+    if (checked) {
+      sp.set("replyOldestFirst", "1");
+    } else {
+      sp.delete("replyOldestFirst");
+    }
     sp.set("replyPage", "1");
     router.replace(`?${sp.toString()}`, { scroll: false });
   }
@@ -370,7 +419,7 @@ export default function PageBody() {
 
       {post.allowReplies ? (
         <>
-          <div className="mt-8 mb-2 flex items-center gap-2">
+          <div className="mt-8 mb-2 flex items中心 gap-2">
             <span className="font-bold text-lg">Replies</span>
             <label className="flex items-center gap-1 text-sm cursor-pointer ml-4">
               <input

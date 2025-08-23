@@ -324,6 +324,7 @@ export default function PageBody() {
   }
 
   async function handleLike(post: PostDetail) {
+    const oldCountLikes = post.countLikes ?? 0;
     setPosts((prev) =>
       prev.map((p) =>
         p.id === post.id
@@ -349,6 +350,8 @@ export default function PageBody() {
             ? {
                 ...p,
                 allowLikes: false,
+                countLikes: oldCountLikes,
+                isLikedByFocusUser: false,
               }
             : p,
         ),
