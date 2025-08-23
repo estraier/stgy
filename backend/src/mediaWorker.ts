@@ -1,4 +1,3 @@
-// src/mediaWorker.ts
 import { Config } from "./config";
 import Redis from "ioredis";
 import sharp from "sharp";
