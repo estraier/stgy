@@ -13,6 +13,7 @@ import {
   getImagesMonthlyQuota,
 } from "@/api/media";
 import { formatDateTime, formatBytes } from "@/utils/format";
+import { Config } from "@/config";
 
 const PAGE_SIZE = 30;
 
@@ -98,6 +99,51 @@ export default function PageBody() {
   async function handleFiles(files: FileList) {
     if (status.state !== "authenticated" || !userId) return;
     if (!files.length) return;
+
+    // ---- client-side limits ----
+    const countLimit = Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE ?? Infinity;
+    const perFileLimit = Config.MEDIA_IMAGE_BYTE_LIMIT ?? Infinity;
+    const perMonthLimit = Config.MEDIA_IMAGE_BYTE_LIMIT_PER_MONTH ?? Infinity;
+
+    if (files.length > countLimit) {
+      setError(`You can upload up to ${countLimit} images at once.`);
+      return;
+    }
+
+    const tooLarge = Array.from(files).filter((f) => f.size > perFileLimit);
+    if (tooLarge.length > 0) {
+      const f = tooLarge[0];
+      setError(
+        `File exceeds per-file limit (${formatBytes(perFileLimit)}): ${f.name} (${formatBytes(
+          f.size,
+        )})`,
+      );
+      return;
+    }
+
+    const totalSelected = Array.from(files).reduce((a, f) => a + f.size, 0);
+    if (totalSelected > perMonthLimit) {
+      setError(
+        `Total selected size (${formatBytes(totalSelected)}) exceeds per-upload cap (${formatBytes(
+          perMonthLimit,
+        )}).`,
+      );
+      return;
+    }
+
+    if (quota && quota.limitMonthlyBytes) {
+      const remaining = Math.max(0, quota.limitMonthlyBytes - quota.bytesTotal);
+      if (totalSelected > remaining) {
+        setError(
+          `Total selected size (${formatBytes(totalSelected)}) exceeds your remaining monthly quota (${formatBytes(
+            remaining,
+          )}).`,
+        );
+        return;
+      }
+    }
+    // ---- /client-side limits ----
+
     setUploading(true);
     setError(null);
     try {
@@ -159,10 +205,10 @@ export default function PageBody() {
                 </div>
                 <div>
                   Total: <b>{formatBytes(quota.bytesTotal)}</b>
-                  {monthlyLimit ? ` / ${formatBytes(monthlyLimit)}` : ""}
-                  <span className="pl-2 text-xs text-gray-500">
+                  <span className="pl-1 text-xs text-gray-500">
                     ({formatBytes(quota.bytesMasters)} + {formatBytes(quota.bytesThumbs)})
                   </span>
+                  {monthlyLimit ? ` / ${formatBytes(monthlyLimit)}` : ""}
                 </div>
                 {monthlyLimit && (
                   <div className="mt-1 w-64 h-2 bg-gray-200 rounded overflow-hidden">

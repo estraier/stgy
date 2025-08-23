@@ -14,6 +14,14 @@ export class Config {
     "NEXT_PUBLIC_MEDIA_IMAGE_BYTE_LIMIT",
     10 * 1024 * 1024,
   );
+  static readonly MEDIA_IMAGE_BYTE_LIMIT_PER_MONTH = envNum(
+    "NEXT_PUBLIC__MEDIA_IMAGE_BYTE_LIMIT_PER_MONTH",
+    100 * 1024 * 1024,
+  );
+  static readonly MEDIA_IMAGE_COUNT_LIMIT_ONCE = envNum(
+    "NEXT_PUBLIC__MEDIA_IMAGE_COUNT_LIMIT_ONCE",
+    10,
+  );
   static readonly MEDIA_AVATAR_BYTE_LIMIT = envNum(
     "NEXT_PUBLIC_MEDIA_AVATAR_BYTE_LIMIT",
     1 * 1024 * 1024,
