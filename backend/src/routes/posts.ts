@@ -6,6 +6,7 @@ import { strToBool } from "./utils";
 import { PostsService } from "../services/posts";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
+import { ThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
 import { CreatePostInput, UpdatePostInput } from "../models/post";
 import { User } from "../models/user";
@@ -17,6 +18,8 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   const postsService = new PostsService(pgClient, redis);
   const usersService = new UsersService(pgClient, redis);
   const authService = new AuthService(pgClient, redis);
+  const postsThrottleService = new ThrottleService(redis, "post", 3600, Config.HOURLY_POSTS_LIMIT);
+  const likesThrottleService = new ThrottleService(redis, "like", 3600, Config.HOURLY_LIKES_LIMIT);
   const authHelpers = new AuthHelpers(authService, usersService);
 
   async function requireLogin(req: Request, res: Response): Promise<User | null> {
@@ -222,6 +225,9 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   router.post("/", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
+    if (!(await postsThrottleService.canDo(user.id))) {
+      return res.status(404).json({ error: "too often posts" });
+    }
     try {
       let ownedBy = user.id;
       if (user.isAdmin && req.body.ownedBy && typeof req.body.ownedBy === "string") {
@@ -247,6 +253,7 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
         tags,
       };
       const created = await postsService.createPost(input);
+      postsThrottleService.recordDone(user.id);
       res.status(201).json(created);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "invalid input" });
@@ -321,8 +328,12 @@ export default function createPostsRouter(pgClient: Client, redis: Redis) {
   router.post("/:id/like", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
+    if (!(await likesThrottleService.canDo(user.id))) {
+      return res.status(404).json({ error: "too often likes" });
+    }
     try {
       await postsService.addLike(req.params.id, user.id);
+      likesThrottleService.recordDone(user.id);
       res.json({ result: "ok" });
     } catch (e) {
       const msg = (e as Error).message || "";

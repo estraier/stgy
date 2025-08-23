@@ -343,8 +343,16 @@ export default function PageBody() {
       }
       setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100);
     } catch {
-      alert("Failed to update like.");
-      setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100);
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === post.id
+            ? {
+                ...p,
+                allowLikes: false,
+              }
+            : p,
+        ),
+      );
     }
   }
 

@@ -219,16 +219,16 @@ export default function PageBody() {
         }).then((data) => setPosts(data.slice(0, Config.POSTS_PAGE_SIZE)));
       }, 100);
     } catch {
-      setTimeout(() => {
-        listPostsDetail({
-          ownedBy: user?.id,
-          offset: (page - 1) * Config.POSTS_PAGE_SIZE,
-          limit: Config.POSTS_PAGE_SIZE + 1,
-          order: oldestFirst ? "asc" : "desc",
-          focusUserId: userId,
-          replyTo: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
-        }).then((data) => setPosts(data.slice(0, Config.POSTS_PAGE_SIZE)));
-      }, 100);
+      setPosts((prev) =>
+        prev.map((p) =>
+          p.id === post.id
+            ? {
+                ...p,
+                allowLikes: false,
+              }
+            : p,
+        ),
+      );
     }
   }
 
