@@ -527,7 +527,6 @@ export class UsersService {
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("already following");
     if (this.eventLogService) {
-      console.log("FOLLOW");
       try {
         this.eventLogService.recordFollow({
           followerId: input.followerId,

@@ -299,7 +299,6 @@ export class PostsService {
       await client.query("COMMIT");
       if (this.eventLogService && input.replyTo) {
         try {
-          console.log("REPLY");
           this.eventLogService.recordReply({
             userId: input.ownedBy,
             postId: id,
@@ -400,7 +399,6 @@ export class PostsService {
     if ((res.rowCount ?? 0) === 0) throw new Error("already liked");
     if (this.eventLogService) {
       try {
-        console.log("Like");
         this.eventLogService.recordLike({
           userId: userId,
           postId: postId,
