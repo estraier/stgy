@@ -82,6 +82,41 @@ export default function createUsersRouter(pgClient: Client, redis: Redis) {
     res.json(users);
   });
 
+  router.get("/friends/by-nickname-prefix", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const focusUserId =
+      typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
+        ? req.query.focusUserId.trim()
+        : loginUser.id;
+    const offset = parseInt((req.query.offset as string) ?? "0", 10);
+    const limit = parseInt((req.query.limit as string) ?? "100", 10);
+    const nicknamePrefix =
+      typeof req.query.nicknamePrefix === "string" ? req.query.nicknamePrefix.trim() : "";
+    const omitSelf = parseBoolean(
+      typeof req.query.omitSelf === "string" ? req.query.omitSelf : undefined,
+      false,
+    );
+    const omitOthers = parseBoolean(
+      typeof req.query.omitOthers === "string" ? req.query.omitOthers : undefined,
+      false,
+    );
+    try {
+      let users = await usersService.listFriendsByNicknamePrefix({
+        focusUserId,
+        nicknamePrefix,
+        offset,
+        limit,
+        omitSelf,
+        omitOthers,
+      });
+      users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
+      res.json(users);
+    } catch (e: unknown) {
+      res.status(400).json({ error: (e as Error).message || "list friends failed" });
+    }
+  });
+
   router.get("/:id", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });

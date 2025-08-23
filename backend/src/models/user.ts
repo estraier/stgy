@@ -79,3 +79,12 @@ export type RemoveFollowerInput = {
   followerId: string;
   followeeId: string;
 };
+
+export type ListFriendsByNicknamePrefixInput = {
+  focusUserId: string;
+  nicknamePrefix: string;
+  offset?: number;
+  limit?: number;
+  omitSelf?: boolean;
+  omitOthers?: boolean;
+};

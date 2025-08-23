@@ -73,6 +73,84 @@ class MockPgClient {
   async query(sql: string, params: any[] = []) {
     sql = sql.replace(/\s+/g, " ").trim();
 
+    if (
+      sql.startsWith("WITH") &&
+      sql.includes("dedup AS") &&
+      sql.includes("page AS") &&
+      sql.includes("JOIN users u ON u.id = p.id")
+    ) {
+      const likePattern: string = params[0];
+      const focusUserId: string = params[1];
+      const offset: number = params[2] ?? 0;
+      const limit: number = params[3] ?? 20;
+      const k: number = params[4] ?? offset + limit;
+      const prefix = likePattern.toLowerCase().replace(/%+$/g, "");
+      const match = (u: User) => u.nickname.toLowerCase().startsWith(prefix);
+      const hasSelf = sql.includes("self AS (");
+      const hasOthers = sql.includes("others AS (");
+      const candidates: Array<{ prio: number; id: string; nkey: string }> = [];
+      if (hasSelf) {
+        const selfUser = this.users.find((u) => u.id === focusUserId && match(u));
+        if (selfUser) {
+          candidates.push({ prio: 0, id: selfUser.id, nkey: selfUser.nickname.toLowerCase() });
+        }
+      }
+      const followeeIds = this.follows
+        .filter((f) => f.followerId === focusUserId)
+        .map((f) => f.followeeId);
+      const followees = this.users
+        .filter((u) => followeeIds.includes(u.id) && match(u))
+        .sort(
+          (a, b) =>
+            a.nickname.toLowerCase().localeCompare(b.nickname.toLowerCase()) ||
+            a.nickname.localeCompare(b.nickname) ||
+            a.id.localeCompare(b.id),
+        )
+        .slice(0, k);
+      for (const u of followees) {
+        candidates.push({ prio: 1, id: u.id, nkey: u.nickname.toLowerCase() });
+      }
+      if (hasOthers) {
+        const others = this.users
+          .filter((u) => match(u))
+          .sort(
+            (a, b) =>
+              a.nickname.toLowerCase().localeCompare(b.nickname.toLowerCase()) ||
+              a.nickname.localeCompare(b.nickname) ||
+              a.id.localeCompare(b.id),
+          )
+          .slice(0, k);
+        for (const u of others) {
+          candidates.push({ prio: 3, id: u.id, nkey: u.nickname.toLowerCase() });
+        }
+      }
+      const bestById = new Map<string, { prio: number; id: string; nkey: string }>();
+      for (const c of candidates) {
+        const prev = bestById.get(c.id);
+        if (!prev || c.prio < prev.prio) bestById.set(c.id, c);
+      }
+      const deduped = Array.from(bestById.values()).sort(
+        (a, b) => a.prio - b.prio || a.nkey.localeCompare(b.nkey) || a.id.localeCompare(b.id),
+      );
+      const page = deduped.slice(offset, offset + limit);
+      const rows = page
+        .map((p) => this.users.find((u) => u.id === p.id))
+        .filter((u): u is User => !!u)
+        .map((u) => ({
+          id: u.id,
+          email: u.email,
+          nickname: u.nickname,
+          isAdmin: u.isAdmin,
+          introduction: u.introduction,
+          avatar: u.avatar,
+          aiModel: u.aiModel,
+          aiPersonality: u.aiPersonality,
+          createdAt: u.createdAt,
+          updatedAt: u.updatedAt,
+        }));
+      return { rows };
+    }
+
     if (sql.startsWith("SELECT COUNT(*) FROM users")) {
       if (sql.includes("WHERE nickname ILIKE $1 OR introduction ILIKE $2")) {
         const [pat1, pat2] = params.map((s: string) => s.toLowerCase().replace(/%/g, ""));
@@ -590,5 +668,18 @@ describe("UsersService", () => {
     expect(pg.follows.some((f) => f.followerId === "bob" && f.followeeId === "carol")).toBe(true);
     await service.removeFollower({ followerId: "bob", followeeId: "carol" });
     expect(pg.follows.some((f) => f.followerId === "bob" && f.followeeId === "carol")).toBe(false);
+  });
+
+  test("listFriendsByNicknamePrefix (typical)", async () => {
+    const res = await service.listFriendsByNicknamePrefix({
+      focusUserId: "alice",
+      nicknamePrefix: "b",
+      offset: 0,
+      limit: 20,
+      omitSelf: false,
+      omitOthers: false,
+    });
+    expect(res.length).toBe(1);
+    expect(res[0].id).toBe("bob");
   });
 });

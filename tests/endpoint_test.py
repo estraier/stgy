@@ -148,6 +148,11 @@ def test_users():
   res = requests.delete(f"{BASE_URL}/users/{user1_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[users] user1 deleted")
+  res = requests.get(f"{BASE_URL}/users/friends/by-nickname-prefix?limit=2000&nicknamePrefix=adm", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  friends = res.json()
+  assert any(u["id"] == admin_id for u in friends)
+  print("[users] nickname search OK")
   logout(session_id)
   print("[test_users] OK")
 

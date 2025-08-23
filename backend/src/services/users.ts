@@ -11,6 +11,7 @@ import {
   ListFollowersInput,
   AddFollowerInput,
   RemoveFollowerInput,
+  ListFriendsByNicknamePrefixInput,
 } from "../models/user";
 import { IdIssueService } from "./idIssue";
 import {
@@ -531,5 +532,77 @@ export class UsersService {
       [input.followerId, input.followeeId],
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("not following");
+  }
+
+  async listFriendsByNicknamePrefix(input: ListFriendsByNicknamePrefixInput): Promise<User[]> {
+    const focusUserId = input.focusUserId;
+    const prefix = (input.nicknamePrefix ?? "").trim().toLowerCase();
+    const likePattern = `${escapeForLike(prefix)}%`;
+    const offset = Math.max(0, input.offset ?? 0);
+    const limit = Math.max(1, input.limit ?? 20);
+    const k = offset + limit;
+    const omitSelf = !!input.omitSelf;
+    const omitOthers = !!input.omitOthers;
+    const ctes: string[] = [];
+    const unions: string[] = [];
+    if (!omitSelf) {
+      ctes.push(`
+        self AS (
+          SELECT 0 AS prio, u.id, lower(u.nickname) AS nkey
+          FROM users u
+          WHERE u.id = $2
+            AND lower(u.nickname) LIKE $1
+        )`);
+      unions.push(`SELECT * FROM self`);
+    }
+    ctes.push(`
+      followees AS (
+        SELECT 1 AS prio, u.id, lower(u.nickname) AS nkey
+        FROM user_follows f
+        JOIN users u ON u.id = f.followee_id
+        WHERE f.follower_id = $2
+          AND lower(u.nickname) LIKE $1
+        ORDER BY lower(u.nickname), u.nickname, u.id
+        LIMIT $5
+      )`);
+    unions.push(`SELECT * FROM followees`);
+    if (!omitOthers) {
+      ctes.push(`
+        others AS (
+          SELECT 3 AS prio, u.id, lower(u.nickname) AS nkey
+          FROM users u
+          WHERE lower(u.nickname) LIKE $1
+          ORDER BY lower(u.nickname), u.nickname, u.id
+          LIMIT $5
+        )`);
+      unions.push(`SELECT * FROM others`);
+    }
+    const sql = `
+      WITH
+      ${ctes.join(",\n")},
+      candidates AS (
+        ${unions.join("\nUNION ALL\n")}
+      ),
+      dedup AS (
+        SELECT DISTINCT ON (id) id, prio, nkey
+        FROM candidates
+        ORDER BY id, prio
+      ),
+      page AS (
+        SELECT id, prio, nkey
+        FROM dedup
+        ORDER BY prio, nkey, id
+        OFFSET $3
+        LIMIT $4
+      )
+      SELECT
+        u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar,
+        u.ai_model, u.ai_personality, u.created_at, u.updated_at
+      FROM page p
+      JOIN users u ON u.id = p.id
+      ORDER BY p.prio, p.nkey, u.id;`;
+    const params = [likePattern, focusUserId, offset, limit, k];
+    const res = await this.pgClient.query(sql, params);
+    return res.rows.map((row: Record<string, unknown>) => snakeToCamel<User>(row));
   }
 }

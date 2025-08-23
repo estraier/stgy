@@ -768,12 +768,52 @@ Limit (cost=1.40..140.43 rows=20 width=150)
         Index Cond: (post_id = (p.id)::text)
 ```
 
-## その他
+## listUsers
 
-usersテーブルを操作するusersSerivceという実装にも各種メソッドがあって、それぞれクエリを発行しているが、
+usersテーブルを操作するusersSerivceという実装にも各種メソッドがあって、それぞれクエリを発行している。どれも軽い処理だが、ユーザの一覧を出すlistUsersだけは、注意を要する。例えば、ユーザのニックネームの前方一致条件で絞り込みを行いつつ、フォロイーもしくはフォロワーを優先して表示するという特殊機能がある。そのクエリは以下のものだ。
 
-listUsersDetailの
+```
+SELECT
+  u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar,
+  u.ai_model, u.ai_personality, u.created_at, u.updated_at
+FROM users u
+LEFT JOIN user_follows f1 ON
+  f1.follower_id = '9901000000000001' AND f1.followee_id = u.id
+LEFT JOIN user_follows f2 ON
+  f2.follower_id = u.id AND f2.followee_id = '9901000000000001'
+WHERE LOWER(u.nickname) LIKE 'user2%'
+ORDER BY
+  (u.id = '9901000000000001') DESC,
+  (f1.follower_id IS NOT NULL) DESC,
+  (f2.follower_id IS NOT NULL) DESC,
+  u.id ASC OFFSET 0 LIMIT 20;
+```
 
+LIKE演算子による前方一致は、インデックスが利くので、絞り込みを効率的に行うことができる。また、フォロー関係を使った順位付けも、ヒープスキャンを使うので、効率的に動くことが期待できる。EXPLAIN文の結果は以下である。
+
+```
+Limit (cost=494.27..494.32 rows=20 width=487)
+ -> Sort (cost=494.27..494.55 rows=112 width=487)
+    Sort Key: (((u.id)::text = '9901000000000001'::text)) DESC, ((f1.follower_id IS NOT NULL)) DESC, ((f2.follower_id IS NOT NULL)) DESC, u.id
+    -> Hash Right Join (cost=360.65..491.29 rows=112 width=487)
+       Hash Cond: ((f2.follower_id)::text = (u.id)::text)
+       -> Bitmap Heap Scan on user_follows f2 (cost=20.04..145.53 rows=1000 width=17)
+          Recheck Cond: ((followee_id)::text = '9901000000000001'::text)
+          -> Bitmap Index Scan on idx_user_follows_followee_created_at (cost=0.00..19.79 rows=1000 width=0)
+             Index Cond: ((followee_id)::text = '9901000000000001'::text)
+       -> Hash (cost=339.21..339.21 rows=112 width=501)
+          -> Hash Right Join (cost=267.08..339.21 rows=112 width=501)
+             Hash Cond: ((f1.followee_id)::text = (u.id)::text)
+             -> Index Only Scan using user_follows_pkey on user_follows f1 (cost=0.29..69.78 rows=1000 width=34)
+                Index Cond: (follower_id = '9901000000000001'::text)
+             -> Hash (cost=265.39..265.39 rows=112 width=484)
+                -> Bitmap Heap Scan on users u (cost=9.40..265.39 rows=112 width=484)
+                   Filter: (lower((nickname)::text) ~~ 'user2%'::text)
+                   -> Bitmap Index Scan on idx_users_nickname_id (cost=0.00..9.38 rows=110 width=0)
+                      Index Cond: ((lower((nickname)::text) ~>=~ 'user2'::text) AND (lower((nickname)::text) ~<~ 'user3'::text))
+```
+
+さて、多くの処理がインデックスを使って行われているので、このクエリは一見速そうだ。実際、絞り込みの文字列が十分に長くてヒット件数が少ない場合には、最下層の文字列インデックスが効率的に働いて、少ない数のレコードを一瞬で返し、ハッシュマップを使って各々のレコードに効率的にスコアリングを施した上で、一瞬で処理を返してくれるだろう。問題は、絞り込みの文字列が短く、ヒット数が多い場合である。その場合、ヒットしたレコードの全てにスコアリングをしてからソートすることになるため、遅くなる。全ユーザ数をUとした場合、絞り込み文字列が1文字なら、Uの何割かがヒットしてしまうので、空間計算量はO(U)となる。それをtop-kヒープでソートする時間計算量は、kが20と小さいので、O(U)である。
 
 なお、LIKE演算子による前方一致検索を効率的に動かすには、ちょっとしたコツがある。DBを作る際に、`POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C --lc-collate=C --lc-ctype=C"` などと指定して、コレーションを無効化することだ。Postgresのデフォルトでは文字列の比較を厳密なバイト比較ではなく、複数の文字を同一視するコレーションをした上で比較する。コレーションがあると、デフォルトのインデックスがLIKE演算子で使えない。その他の場面でも、コレーションのせいで効率が悪化することがありうるので、特にコレーションの要望がない限りは、コレーションは切っておいた方が無難だ。
 
@@ -795,11 +835,100 @@ Limit (cost=0.28..18.67 rows=3 width=24)
     Filter: ((nickname)::text ~~ 'user2%'::text)
 ```
 
+# listFriendsByNicknamePrefix
+
+さて、上述のlistUsersメソッドは、それに与えられた外部仕様を満たすためには最善の実装ではあるが、SNSの実運用に供するには効率が悪すぎる。そこで、仕様を単純化したlistFriendsByNicknamePrefixという専用メソッドを設けた。ユーザリストはIDの昇順か降順で返すという原則を崩して、自分、フォロイー、その他の分類順で、各分類の中ではニックネームの辞書順にするという特殊仕様だ。あまりこういう専用メソッドを作りたくはないのだが、こればっかりはやらないと仕方がない。基本戦略としては、自分、フォロイー、その他大勢、を別々に処理して絞り込んでから、最後にUNION ALL結合する。具体的なクエリは以下のものだ。
+
+```
+WITH
+  self AS (
+    SELECT
+      0 AS prio,
+      u.id, lower(u.nickname) AS nkey
+    FROM users u
+    WHERE u.id = '9901000000000001' AND lower(u.nickname) LIKE 'user2%' ),
+  followees AS (
+    SELECT
+      1 AS prio, u.id, lower(u.nickname) AS nkey
+    FROM user_follows f
+    JOIN users u ON u.id = f.followee_id
+    WHERE f.follower_id = '9901000000000001' AND lower(u.nickname) LIKE 'user2%'
+    ORDER BY lower(u.nickname), u.nickname, u.id LIMIT 20 ),
+  others AS (
+    SELECT
+      3 AS prio, u.id, lower(u.nickname) AS nkey
+    FROM users u
+    WHERE lower(u.nickname) LIKE 'user2%'
+    ORDER BY lower(u.nickname), u.nickname, u.id LIMIT 20 ),
+  candidates AS (
+    SELECT * FROM self
+    UNION ALL
+    SELECT * FROM followees
+    UNION ALL
+    SELECT * FROM others ),
+  dedup AS (
+    SELECT DISTINCT ON (id)
+      id, prio, nkey
+    FROM candidates
+    ORDER BY id, prio ),
+  page AS (
+    SELECT
+      id, prio, nkey
+    FROM dedup
+    ORDER BY prio, nkey, id OFFSET 0 LIMIT 20 )
+SELECT
+  u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar,
+  u.ai_model, u.ai_personality, u.created_at, u.updated_at
+FROM page p
+JOIN users u ON u.id = p.id
+ORDER BY p.prio, p.nkey, u.id;
+```
+
+selfとfolloweesとothersの3つの枝のそれぞれで最大20件のレコードだけを取り出していて、それぞれが20件だけのスキャンで早期終了することを企図している。取り出すレコードも優先度とIDとニックネームだけの最低限に絞っている。そして、dedup処理では、id, prio, nkeyでソートしてから重複IDを除いていて、prioの最小値が採択されている。最後に最終順序でソートした20件だけに他の属性を肉付けして返している。
+
+これの計算量を考えよう。全ユーザ数をUと置き、フォロイー数をFと置く。自分を調べるのは、O(log(U))だ。フォロイーの一覧を引くのは、O(log(U\*F)+F)だ。検索文字列が短い場合、ほとんど絞り込みが働かないので、フォロイー全員のニックネームを調べることになる。よって、その計算量はO(F\*log(U))だ。フォロイーのヒット全てを並び替える計算量はO(F\*log(F))だ。全員を調べる枝では、検索文字列が短い場合でも、確実に早期終了するので、計算量はO(log(U))だ。つまり、FはUより十分に小さいと仮定すると、支配項はO(F\*log(U))ということになる。EXPLAIN文の結果は以下である。全ての枝（Subquery）でIndex Condが働いていて、早期終了するので、効率は最善だ。フォロイーの枝でフォロイー毎にレコードを調べているのもわかる。
+
+```
+Nested Loop (cost=114.05..247.88 rows=20 width=520)
+ -> Limit (cost=113.77..113.82 rows=20 width=53)
+  -> Sort (cost=113.77..113.87 rows=41 width=53)
+    Sort Key: "*SELECT* 1".prio, "*SELECT* 1".nkey, "*SELECT* 1".id
+    -> Unique (cost=112.48..112.68 rows=41 width=53)
+     -> Sort (cost=112.48..112.58 rows=41 width=53)
+       Sort Key: "*SELECT* 1".id, "*SELECT* 1".prio
+       -> Append (cost=0.28..111.38 rows=41 width=53)
+        -> Subquery Scan on "*SELECT* 1" (cost=0.28..8.31 rows=1 width=53)
+          -> Index Scan using users_pkey on users u_1 (cost=0.28..8.30 rows=1 width=53)
+           Index Cond: ((id)::text = '9901000000000001'::text)
+           Filter: (lower((nickname)::text) ~~ 'user2%'::text)
+        -> Subquery Scan on followees (cost=88.08..88.33 rows=20 width=53)
+          -> Limit (cost=88.08..88.13 rows=20 width=60)
+           -> Sort (cost=88.08..88.35 rows=111 width=60)
+             Sort Key: (lower((u_2.nickname)::text)), u_2.nickname, u_2.id
+             -> Hash Join (cost=12.71..85.12 rows=111 width=60)
+              Hash Cond: ((f.followee_id)::text = (u_2.id)::text)
+              -> Index Only Scan using user_follows_pkey on user_follows f (cost=0.29..69.78 rows=1000 width=17)
+                Index Cond: (follower_id = '9901000000000001'::text)
+              -> Hash (cost=11.03..11.03 rows=112 width=24)
+                -> Index Only Scan using idx_users_nickname_id on users u_2 (cost=0.28..11.03 rows=112 width=24)
+                 Index Cond: (((lower((nickname)::text)) ~>=~ 'user2'::text) AND ((lower((nickname)::text)) ~<~ 'user3'::text))
+                 Filter: ((lower((nickname)::text)) ~~ 'user2%'::text)
+        -> Subquery Scan on others (cost=14.29..14.54 rows=20 width=53)
+          -> Limit (cost=14.29..14.34 rows=20 width=60)
+           -> Sort (cost=14.29..14.57 rows=112 width=60)
+             Sort Key: (lower((u_3.nickname)::text)), u_3.nickname, u_3.id
+             -> Index Only Scan using idx_users_nickname_id on users u_3 (cost=0.28..11.30 rows=112 width=60)
+              Index Cond: (((lower((nickname)::text)) ~>=~ 'user2'::text) AND ((lower((nickname)::text)) ~<~ 'user3'::text))
+              Filter: ((lower((nickname)::text)) ~~ 'user2%'::text)
+ -> Index Scan using users_pkey on users u (cost=0.28..6.69 rows=1 width=484)
+  Index Cond: ((id)::text = ("*SELECT* 1".id)::text)
+```
+
 ## 総評
 
-Fakebookの主要クエリは、全てスケールするものになっている。きちんとインデックスを張っているので、全体の最新投稿を一覧で使うlistPostsDetailの計算量はO(log(P))だ。自分がフォローしているユーザの最新投稿を一覧で使うlistPostsByFolloweesDetailの計算量も何とO(log(P))で済んでいる。イイネした投稿の一覧で使うlistPostsLikedByUserDetailの計算量もO(log(P))だ。その他、全ての投稿一覧はO(log(P))以下の計算量に留めている。ユーザ一覧に関しても同様で、O(log(U))の計算量に留めている。
+Fakebookの主要クエリは、全てスケールするものになっている。きちんとインデックスを張っているので、全体の最新投稿を一覧で使うlistPostsDetailの計算量はO(log(P))だ。自分がフォローしているユーザの最新投稿を一覧で使うlistPostsByFolloweesDetailの計算量も何とO(log(P))で済んでいる。イイネした投稿の一覧で使うlistPostsLikedByUserDetailの計算量もO(log(P))だ。その他、全ての投稿一覧はO(log(P))以下の計算量に留めている。ユーザ一覧に関しても同様で、全文検索以外で最も重いlistFriendsByNicknamePrefixの計算量もO(log(U))に留めている。
 
-全文検索以外で最も重いのはlistPostsLikedByUserDetailであり、その計算量はフォロワー数に比例する。したがって、フォロワーの数を定数項にするために、上限値を決める必要がある。現実的には100人以上フォローしても使い勝手が悪くなるだけなので、200人くらいを上限値にすれば問題ないだろう。
+最も重いlistPostsLikedByUserDetailとlistFriendsByNicknamePrefixの計算量はフォロイー数に比例する。したがって、フォロイー数を定数項にするために、上限値を決める必要がある。現実的には100人以上フォローしても使い勝手が悪くなるだけなので、200人くらいを上限値にすれば問題ないだろう。
 
 ## スキーマ改良案
 
@@ -812,6 +941,10 @@ DBサーバの中に限定しても、読み出しのデータが大きいと、
 記事本文やユーザプロファイル本文を対象とする全文検索も、DB本体で頑張るよりは、別システムに移譲した方がよい。別ホストで運用し、そこにバッチ処理で定期的にデータを流し込めば良い。検索エンジンが重くなっても主たる機能の運用に影響がないというのは実運用上で非常に重要だ。
 
 垂直分割をしても処理しきれなくなってきたら、いよいよ水平分割をすることになる。ユーザIDを使ってシャーディングを行うのが率直な方法だろう。フォロー関係は、フォロー元のユーザとフォロー先のユーザのDBに二重化して持たせれば良い。
+
+規模が大きくなると、投稿一覧の「All」のビューがほとんど意味をなさなくなってくる。見知らぬ人の投稿を全て見る奴は居ない。どなると、「Pickup」とか「Topics」とかいう位置づけのビューを代わりに置くことになるだろう。最近の投稿だけを集めた小さいデータベースを作っておいて、質が高いものや個々のユーザの興味に近そうなものをバッチ処理で計算して、それを提示するのだ。
+
+とはいえ、Fakebookの現状の目標は、スケーラビリティを追求することではない。少なくとも初期段階では、見通しがよく開発と保守がしやすいスキーマを選択すべきで、現状のスキーマはそれに叶うものになっている。時期尚早の最適化をして、人気が出る前に開発が頓挫するというのでは意味がないので、シンプルな構成から始めるというのも重要だ。
 $$ WHERE id = '0002000000000013';
 
 UPDATE posts

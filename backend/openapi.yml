@@ -887,6 +887,53 @@ paths:
         "401":
           $ref: "#/components/responses/Error401"
 
+  /users/friends/by-nickname-prefix:
+    get:
+      summary: List friends by nickname prefix
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: nicknamePrefix
+          in: query
+          required: false
+          schema: { type: string }
+        - name: offset
+          in: query
+          required: false
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, default: 100 }
+        - name: focusUserId
+          in: query
+          required: false
+          schema: { type: string }
+          description: (Optional) Base user whose followees are prioritized. Defaults to current user.
+        - name: omitSelf
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: If true, excludes the self group entirely.
+        - name: omitOthers
+          in: query
+          required: false
+          schema: { type: boolean, default: false }
+          description: If true, excludes the others group entirely.
+      responses:
+        "200":
+          description: Users list by nickname prefix and priority
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+
   /posts/count:
     get:
       summary: Get post count
