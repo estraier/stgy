@@ -63,8 +63,10 @@ export class Config {
     1 * 1024 * 1024,
   );
   static readonly CONTENT_LENGTH_LIMIT = envNum("FAKEBOOK_CONTENT_LENGTH_LIMIT", 5000);
-  static readonly HOURLY_POSTS_LIMIT = envNum("FAKEBOOK_HOURLY_POSTS_LIMIT", 3);
-  static readonly HOURLY_LIKES_LIMIT = envNum("FAKEBOOK_HOURLY_LIKES_LIMIT", 3);
+  static readonly HOURLY_SIGNUP_LIMIT = envNum("FAKEBOOK_HOURLY_SIGNUP_LIMIT", 100);
+  static readonly HOURLY_POSTS_LIMIT = envNum("FAKEBOOK_HOURLY_POSTS_LIMIT", 100);
+  static readonly HOURLY_LIKES_LIMIT = envNum("FAKEBOOK_HOURLY_LIKES_LIMIT", 100);
+  static readonly HOURLY_IMAGE_POSTS_LIMIT = envNum("FAKEBOOK_HOURLY_IMAGE_POSTS_LIMIT", 100);
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = true): string {

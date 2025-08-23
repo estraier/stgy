@@ -1,11 +1,12 @@
+import { Config } from "../config";
 import { Router, Request, Response } from "express";
 import { Client } from "pg";
 import Redis from "ioredis";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
 import { AuthHelpers } from "./authHelpers";
+import { ThrottleService } from "../services/throttle";
 import { makeStorageService } from "../services/storageFactory";
-import { Config } from "../config";
 import { MediaService } from "../services/media";
 
 export default function createMediaRouter(pgClient: Client, redis: Redis) {
@@ -13,6 +14,12 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
   const usersService = new UsersService(pgClient, redis);
   const authService = new AuthService(pgClient, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
+  const throttleService = new ThrottleService(
+    redis,
+    "image-posts",
+    3600,
+    Config.HOURLY_IMAGE_POSTS_LIMIT,
+  );
   const storage = makeStorageService(Config.STORAGE_DRIVER);
   const media = new MediaService(storage, redis);
 
@@ -22,6 +29,9 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     const pathUserId = req.params.userId;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
+    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often image posts" });
+    }
     try {
       const presigned = await media.presignImageUpload(
         pathUserId,
@@ -40,11 +50,17 @@ export default function createMediaRouter(pgClient: Client, redis: Redis) {
     const pathUserId = req.params.userId;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
+    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often image posts" });
+    }
     try {
       const meta = await media.finalizeImage(
         pathUserId,
         typeof req.body.key === "string" ? req.body.key : "",
       );
+      if (!loginUser.isAdmin) {
+        throttleService.recordDone(loginUser.id);
+      }
       res.json({
         ...meta,
         publicUrl: storage.publicUrl({ bucket: meta.bucket, key: meta.key }),

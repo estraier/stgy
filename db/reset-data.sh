@@ -4,7 +4,7 @@ set -a
 source .env
 set +a
 
-#docker-compose exec redis redis-cli -a $FAKEBOOK_REDIS_PASSWORD FLUSHALL
+docker-compose exec redis redis-cli -a $FAKEBOOK_REDIS_PASSWORD FLUSHALL
 
 echo "==> Redis reset done."
 
