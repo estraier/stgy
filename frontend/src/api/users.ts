@@ -51,6 +51,31 @@ export async function listUsersDetail(
   return res.json();
 }
 
+export async function listFriendsByNicknamePrefix(
+  params: {
+    focusUserId?: string;
+    offset?: number;
+    limit?: number;
+    nicknamePrefix?: string;
+    omitSelf?: boolean;
+    omitOthers?: boolean;
+  } = {},
+): Promise<User[]> {
+  const search = new URLSearchParams();
+  if (params.focusUserId) search.append("focusUserId", params.focusUserId);
+  if (params.offset !== undefined) search.append("offset", String(params.offset));
+  if (params.limit !== undefined) search.append("limit", String(params.limit));
+  if (params.nicknamePrefix !== undefined) search.append("nicknamePrefix", params.nicknamePrefix);
+  if (params.omitSelf !== undefined) search.append("omitSelf", String(params.omitSelf));
+  if (params.omitOthers !== undefined) search.append("omitOthers", String(params.omitOthers));
+  const q = search.toString();
+  const res = await apiFetch(`/users/friends/by-nickname-prefix${q ? `?${q}` : ""}`, {
+    method: "GET",
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
 export async function getUser(id: string): Promise<User> {
   const res = await apiFetch(`/users/${id}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));

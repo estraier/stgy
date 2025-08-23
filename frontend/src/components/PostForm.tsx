@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useEffect } from "react";
+import React, { useRef, useState, useEffect, useMemo } from "react";
 import { renderHtml } from "@/utils/markdown";
 import { parseBodyAndTags } from "@/utils/parse";
 import UserMentionButton from "@/components/UserMentionButton";
@@ -42,16 +42,18 @@ export default function PostForm({
 }: PostFormProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showPreview, setShowPreview] = useState(false);
+  const [hasFocusedOnce, setHasFocusedOnce] = useState(false);
 
   useEffect(() => {
     if (body.trim() === "") setShowPreview(false);
   }, [body]);
 
-  const { content, tags } = parseBodyAndTags(body);
+  const { content, tags } = useMemo(() => parseBodyAndTags(body), [body]);
   const contentLength = content.length;
   const overLimit = contentLengthLimit != null ? contentLength > contentLengthLimit : false;
 
   function handleFocus() {
+    if (!hasFocusedOnce) setHasFocusedOnce(true);
     const textarea = textareaRef.current;
     if (!textarea) return;
     const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight || "20");
@@ -145,50 +147,62 @@ export default function PostForm({
           rows={1}
           style={{ resize: "vertical" }}
         />
-        <div className="flex items-center gap-2">
-          <div className="flex-1">
-            {error && <div className="text-red-600 text-sm">{error}</div>}
-            {contentLengthLimit != null && overLimit && (
-              <div className="text-yellow-700 text-sm" role="status" aria-live="polite">
-                Content is too long ({contentLength} / {contentLengthLimit} characters)
+        {hasFocusedOnce && (
+          <div className="flex items-center gap-2">
+            <div className="flex-1">
+              {error && <div className="text-red-600 text-sm">{error}</div>}
+              <div className="hidden group-focus-within:block">
+                <div
+                  className={`ml-1 text-xs ${overLimit ? "text-yellow-700" : "text-gray-400"}`}
+                  role="status"
+                  aria-live="polite"
+                >
+                  {contentLengthLimit != null
+                    ? `${contentLength} / ${contentLengthLimit}`
+                    : `${contentLength} chars`}
+                </div>
+                {contentLengthLimit != null && overLimit && (
+                  <div className="text-yellow-700 text-sm">
+                    Content is too long ({contentLength} / {contentLengthLimit} characters)
+                  </div>
+                )}
               </div>
+            </div>
+            {onCancel && (
+              <button
+                type="button"
+                className="bg-gray-200 text-gray-700 px-4 py-1 rounded border border-gray-300 cursor-pointer hover:bg-gray-300 transition"
+                onClick={onCancel}
+              >
+                Cancel
+              </button>
             )}
-          </div>
-          {onCancel && (
             <button
               type="button"
-              className="bg-gray-200 text-gray-700 px-4 py-1 rounded border border-gray-300 cursor-pointer hover:bg-gray-300 transition"
-              onClick={onCancel}
+              className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1 rounded border border-gray-300 cursor-pointer transition"
+              onClick={() => setShowPreview((v) => !v)}
             >
-              Cancel
+              {showPreview ? "Hide Preview" : "Preview"}
             </button>
-          )}
-          <button
-            type="button"
-            className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1 rounded border border-gray-300 cursor-pointer transition"
-            onClick={() => setShowPreview((v) => !v)}
-            tabIndex={-1}
-          >
-            {showPreview ? "Hide Preview" : "Preview"}
-          </button>
-          <button
-            type="submit"
-            className={
-              isEdit && deletable && body.trim() === ""
-                ? "bg-red-500 text-white hover:bg-red-600 px-4 py-1 rounded cursor-pointer ml-auto"
-                : "bg-blue-400 text-white hover:bg-blue-500 px-4 py-1 rounded cursor-pointer ml-auto disabled:opacity-50 disabled:cursor-not-allowed"
-            }
-            disabled={submitting || overLimit}
-          >
-            {submitting
-              ? isEdit && deletable && body.trim() === ""
-                ? "Deleting..."
-                : "Saving..."
-              : isEdit && deletable && body.trim() === ""
-                ? "Delete"
-                : buttonLabel}
-          </button>
-        </div>
+            <button
+              type="submit"
+              className={
+                isEdit && deletable && body.trim() === ""
+                  ? "bg-red-500 text-white hover:bg-red-600 px-4 py-1 rounded cursor-pointer ml-auto"
+                  : "bg-blue-500 text-white hover:bg-blue-600 px-4 py-1 rounded cursor-pointer ml-auto disabled:opacity-50 disabled:cursor-not-allowed"
+              }
+              disabled={submitting || overLimit}
+            >
+              {submitting
+                ? isEdit && deletable && body.trim() === ""
+                  ? "Deleting..."
+                  : "Saving..."
+                : isEdit && deletable && body.trim() === ""
+                  ? "Delete"
+                  : buttonLabel}
+            </button>
+          </div>
+        )}
 
         {showPreview && content.trim() !== "" && (
           <div className="border rounded bg-white mt-1 p-3 markdown-body max-h-[50ex] overflow-y-auto">

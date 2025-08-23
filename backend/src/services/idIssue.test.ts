@@ -96,7 +96,7 @@ describe("IdIssueService (issueId, 44+8+12, UPPERCASE hex)", () => {
   test("lexicographic order equals numeric order for IDs within the same ms", async () => {
     const svc = new IdIssueService(9);
     const ids = [await svc.issueId(), await svc.issueId(), await svc.issueId()];
-    const sorted = [...ids].sort(); // fixed-length upper-hex, big-endian
+    const sorted = [...ids].sort();
     expect(ids).toEqual(sorted);
   });
 

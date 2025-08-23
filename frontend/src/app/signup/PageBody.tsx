@@ -9,7 +9,7 @@ export default function PageBody() {
   const [step, setStep] = useState<"start" | "verify" | "success">("start");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [password2, setPassword2] = useState(""); // 追加
+  const [password2, setPassword2] = useState("");
   const [signupId, setSignupId] = useState("");
   const [verificationCode, setVerificationCode] = useState("");
   const [error, setError] = useState<string | null>(null);

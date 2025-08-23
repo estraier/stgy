@@ -640,7 +640,6 @@ function parseInline(text: string): Node[] {
     nodes.push({ type: "text", text: text.slice(last) });
   }
 
-  // ★ ここを最小修正
   return nodes.flatMap<Node>((n) =>
     n.type === "text"
       ? n.text.split(/\n/).flatMap<Node>((frag, i) =>

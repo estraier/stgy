@@ -1,7 +1,7 @@
 "use client";
 
 import { Config } from "@/config";
-import { useEffect, useState, useRef } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
   listPostsDetail,
   listPostsByFolloweesDetail,
@@ -20,6 +20,12 @@ import PostCard from "@/components/PostCard";
 import PostForm from "@/components/PostForm";
 
 const TAB_VALUES = ["following", "liked", "all"] as const;
+
+type PostSearchQuery = {
+  query?: string;
+  tag?: string;
+  ownedBy?: string;
+};
 
 export default function PageBody() {
   const status = useRequireLogin();
@@ -51,9 +57,15 @@ export default function PageBody() {
     };
   }
   const { tab, includingReplies, oldestFirst, page, qParam } = getQueryParams();
-  const searchQueryObj = qParam ? parsePostSearchQuery(qParam) : {};
+
+  const searchQueryObj: PostSearchQuery = useMemo(
+    () => (qParam ? (parsePostSearchQuery(qParam) as PostSearchQuery) : {}),
+    [qParam],
+  );
+
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
   const userUpdatedAt = status.state === "authenticated" ? status.session.userUpdatedAt : null;
+  const hasTabParam = searchParams.has("tab");
 
   const isSearchMode = !!(
     (searchQueryObj.query && searchQueryObj.query.length > 0) ||
@@ -73,7 +85,7 @@ export default function PageBody() {
         try {
           const users = await listUsers({
             order: "social",
-            nickname: searchQueryObj.ownedBy,
+            nickname: searchQueryObj.ownedBy!,
             focusUserId: userId,
             limit: 1,
           });
@@ -92,8 +104,26 @@ export default function PageBody() {
     };
   }, [searchQueryObj.ownedBy, isSearchMode, userId]);
 
+  const setQuery = useCallback(
+    (updates: Record<string, string | number | undefined>) => {
+      const sp = new URLSearchParams(searchParams);
+      for (const key of ["tab", "includingReplies", "oldestFirst", "page", "q"]) {
+        if (Object.prototype.hasOwnProperty.call(updates, key)) {
+          if (updates[key] !== undefined && updates[key] !== null && updates[key] !== "") {
+            sp.set(key, String(updates[key]));
+          } else {
+            sp.delete(key);
+          }
+        }
+      }
+      router.push(`${pathname}?${sp.toString()}`);
+    },
+    [searchParams, pathname, router],
+  );
+
   const fetchPostsRef = useRef<() => Promise<void> | null>(null);
-  async function fetchPosts() {
+
+  const fetchPosts = useCallback(async () => {
     if (status.state !== "authenticated") return;
     setLoading(true);
     setError(null);
@@ -178,7 +208,7 @@ export default function PageBody() {
       })),
     );
     setLoading(false);
-    const tabParamMissing = !searchParams.has("tab");
+    const tabParamMissing = !hasTabParam;
     if (tabParamMissing && tab === "following" && data.length === 0 && !isSearchMode) {
       setQuery({
         tab: "all",
@@ -187,12 +217,28 @@ export default function PageBody() {
         oldestFirst: undefined,
       });
     }
-  }
-  fetchPostsRef.current = fetchPosts;
+  }, [
+    status.state,
+    page,
+    oldestFirst,
+    userId,
+    searchQueryObj,
+    isSearchMode,
+    resolvedOwnedBy,
+    includingReplies,
+    effectiveTab,
+    hasTabParam,
+    tab,
+    setQuery,
+  ]);
 
   useEffect(() => {
-    fetchPosts(); /* eslint-disable-next-line */
-  }, [status.state, page, tab, includingReplies, oldestFirst, qParam, resolvedOwnedBy, userId]);
+    fetchPostsRef.current = fetchPosts;
+  }, [fetchPosts]);
+
+  useEffect(() => {
+    fetchPosts();
+  }, [fetchPosts]);
 
   useEffect(() => {
     function handler(e: MouseEvent) {
@@ -208,20 +254,6 @@ export default function PageBody() {
       document.body.removeEventListener("click", handler);
     };
   }, []);
-
-  function setQuery(updates: Record<string, string | number | undefined>) {
-    const sp = new URLSearchParams(searchParams);
-    for (const key of ["tab", "includingReplies", "oldestFirst", "page", "q"]) {
-      if (updates.hasOwnProperty(key)) {
-        if (updates[key] !== undefined && updates[key] !== null && updates[key] !== "") {
-          sp.set(key, String(updates[key]));
-        } else {
-          sp.delete(key);
-        }
-      }
-    }
-    router.push(`${pathname}?${sp.toString()}`);
-  }
 
   function clearError() {
     if (error) setError(null);

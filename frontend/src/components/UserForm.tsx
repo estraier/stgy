@@ -128,9 +128,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
       try {
         const blob = await fetchProfileBinary(user.id, "avatar");
         if (blob && blob.size > 0) return;
-      } catch {
-        // not ready yet
-      }
+      } catch {}
       attempt += 1;
       const delay = Math.min(1000, 150 * Math.pow(1.5, attempt));
       await new Promise((r) => setTimeout(r, delay));
@@ -397,7 +395,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
         ) : (
           <button
             type="submit"
-            className="bg-blue-400 text-white hover:bg-blue-500 px-4 py-1 rounded cursor-pointer ml-auto"
+            className="bg-blue-500 text-white hover:bg-blue-600 px-4 py-1 rounded cursor-pointer ml-auto"
             disabled={submitting}
           >
             {submitting ? "Saving..." : "Save"}

@@ -2,8 +2,7 @@
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { User } from "@/api/models";
-import { listUsers } from "@/api/users";
-import { useRequireLogin } from "@/hooks/useRequireLogin";
+import { listFriendsByNicknamePrefix } from "@/api/users";
 import AvatarImg from "@/components/AvatarImg";
 import { renderText } from "@/utils/markdown";
 
@@ -20,9 +19,6 @@ export default function UserMentionButton({
   className = "",
   title = "Mention user",
 }: UserMentionButtonProps) {
-  const status = useRequireLogin();
-  const focusUserId = status.state === "authenticated" ? status.session.userId : undefined;
-
   const containerRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -32,28 +28,22 @@ export default function UserMentionButton({
   const [items, setItems] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
 
-  const order: "asc" | "desc" | "social" = focusUserId ? "social" : "desc";
-
-  const doFetch = useCallback(
-    async (q: string) => {
-      setLoading(true);
-      setError(null);
-      try {
-        const res = await listUsers({
-          limit: 20,
-          order,
-          ...(q ? { nicknamePrefix: q } : {}),
-        });
-        setItems(res);
-      } catch (e) {
-        setItems([]);
-        setError(e instanceof Error ? e.message : "Failed to load users");
-      } finally {
-        setLoading(false);
-      }
-    },
-    [order, focusUserId],
-  );
+  const doFetch = useCallback(async (q: string) => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await listFriendsByNicknamePrefix({
+        limit: 20,
+        ...(q ? { nicknamePrefix: q } : { omitOthers: true }),
+      });
+      setItems(res);
+    } catch (e) {
+      setItems([]);
+      setError(e instanceof Error ? e.message : "Failed to load users");
+    } finally {
+      setLoading(false);
+    }
+  }, []);
 
   useEffect(() => {
     if (!open) return;
