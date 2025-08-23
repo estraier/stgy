@@ -22,12 +22,23 @@ export class IdIssueService {
   }
 
   async issue(): Promise<{ id: string; ms: number }> {
-    const { id, ms } = this.nextHex64WithMs();
-    return { id, ms: Number(ms) };
+    const { id, ms } = this.nextIdWithMs();
+    const hex = id.toString(16).padStart(16, "0").toUpperCase();
+    return { id: hex, ms: Number(ms) };
   }
 
   async issueId(): Promise<string> {
     return (await this.issue()).id;
+  }
+
+  async issueBigint(): Promise<bigint> {
+    const { id } = this.nextIdWithMs();
+    return id;
+  }
+
+  static bigIntToDate(id: bigint): Date {
+    const ms = id >> IdIssueService.TS_SHIFT;
+    return new Date(Number(ms));
   }
 
   private nowMsBig(): bigint {
@@ -35,11 +46,13 @@ export class IdIssueService {
     const mono = this.baseWall + ((globalThis.performance?.now?.() ?? 0) - this.basePerf);
     const n = Math.max(wall, Math.floor(mono));
     let ms = BigInt(n);
-    if (ms < this.lastMs) ms = this.lastMs;
+    if (ms < this.lastMs) {
+      ms = this.lastMs;
+    }
     return ms;
   }
 
-  private nextHex64WithMs(): { id: string; ms: bigint } {
+  private nextIdWithMs(): { id: bigint; ms: bigint } {
     let now = this.nowMsBig();
     if (now === this.lastMs) {
       if (this.seq === IdIssueService.SEQ_MAX) {
@@ -52,11 +65,10 @@ export class IdIssueService {
       this.seq = BigInt(0);
       this.lastMs = now;
     }
-    const idBig =
+    const id =
       (now << IdIssueService.TS_SHIFT) |
       (BigInt(this.workerId) << IdIssueService.WORKER_SHIFT) |
       this.seq;
-    const id = idBig.toString(16).padStart(16, "0").toUpperCase();
     return { id, ms: now };
   }
 }

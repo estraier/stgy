@@ -57,6 +57,16 @@ describe("IdIssueService (issueId, 44+8+12, UPPERCASE hex)", () => {
     expect(res.ms).toBe(1750000000000);
   });
 
+  test("check bigint", async () => {
+    const svc = new IdIssueService(7);
+    const idBig = await svc.issueBigint();
+    expect(typeof idBig).toBe("bigint");
+    expect(idBig).toBe(BigInt("0x1977420DC0007000"));
+    const dt = IdIssueService.bigIntToDate(idBig);
+    expect(dt.getTime()).toBe(1750000000000);
+    expect(idBig.toString(16).toUpperCase().padStart(16, "0")).toBe("1977420DC0007000");
+  });
+
   test("advancing to next millisecond bumps timestamp and resets seq", async () => {
     const svc = new IdIssueService(42);
     const id1 = await svc.issueId();
