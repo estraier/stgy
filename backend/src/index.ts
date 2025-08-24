@@ -9,9 +9,10 @@ import { makeStorageService } from "./services/storageFactory";
 import createAuthRouter from "./routes/auth";
 import createAIModelsRouter from "./routes/aiModels";
 import createUsersRouter from "./routes/users";
-import createPostRouter from "./routes/posts";
+import createPostsRouter from "./routes/posts";
 import createSignupRouter from "./routes/signup";
 import createMediaRouter from "./routes/media";
+import createNotificationsRouter from "./routes/notifications";
 
 const app = express();
 app.use(express.json());
@@ -49,8 +50,9 @@ app.use("/auth", createAuthRouter(pgClient, redis));
 app.use("/signup", createSignupRouter(pgClient, redis));
 app.use("/ai-models", createAIModelsRouter(pgClient, redis));
 app.use("/users", createUsersRouter(pgClient, redis, storageService, eventLogService));
-app.use("/posts", createPostRouter(pgClient, redis, storageService, eventLogService));
+app.use("/posts", createPostsRouter(pgClient, redis, storageService, eventLogService));
 app.use("/media", createMediaRouter(pgClient, redis, storageService));
+app.use("/notification", createNotificationsRouter(pgClient, redis));
 
 const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
   console.error("[API ERROR]", err);

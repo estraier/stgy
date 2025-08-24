@@ -101,7 +101,7 @@ describe("EventLogService (happy paths)", () => {
     const deleted = await svc.purgeOldRecords(5);
     expect(deleted).toBe(7);
     expect(queryMock).toHaveBeenNthCalledWith(1, "BEGIN");
-    expect(queryMock).toHaveBeenNthCalledWith(2, "SET LOCAL statement_timeout = $1", [10_000]);
+    expect(queryMock).toHaveBeenNthCalledWith(2, "SET LOCAL statement_timeout = 10000");
     const [delSql, delParams] = queryMock.mock.calls[3 - 1] as [string, any[]];
     expect(delSql).toMatch(/DELETE FROM event_logs/i);
     expect(delParams[0]).toBe(5);

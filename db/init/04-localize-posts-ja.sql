@@ -395,7 +395,7 @@ SET content = $$# Fakebookのデータベース
 
 ## ER図
 
-データベースのスキーマのER図を以下に示す。主なテーブルは二つで、ユーザを管理するusersテーブルと、各ユーザが投稿した記事を管理するpostsテーブルである。その他のテーブルは、正規化の過程でその二つのテーブルから分離されたものである。
+データベースのスキーマのER図を以下に示す。主なテーブルは二つで、ユーザを管理するusersテーブルと、各ユーザが投稿した記事を管理するpostsテーブルと、通知を管理するnotificationsテーブルである。その他のテーブルは、正規化の過程でその三つのテーブルから分離されたものだ。
 
 ![ER図](/data/help-schema-er.png){size=large}
 
@@ -529,11 +529,78 @@ CREATE TABLE post_likes (
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (post_id, liked_by)
 );
-CREATE INDEX idx_post_likes_post_id_created_at ON post_likes (post_id, created_at);
+CREATE INDEX idx_post_likes_post_id_created_at ON post_likes(post_id, created_at);
 CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_at);
 ```
 
 個々の記事にイイネをつけたユーザの一覧を出すクエリを効率化すべく、post_idとcreated_atの複合インデックスが貼られている。これもソートを省く必要性のために存在する。また、自分がイイネした記事の一覧ができると、ブックマーク的に使えて便利だ。そのクエリを効率化するために、liked_byとcreated_atの複合インデックスも貼られている。
+
+## event_logsテーブルとnotificationsテーブル
+
+自分がフォローされたり、自分の投稿がイイネされたり、自分の投稿に返信をもらったりした場合、その通知を受け取る機能がある。それらの個々のイベントを全て通知されても鬱陶しいので、通知は日付とリソースの単位でまとめられる。「18 people including Alice, Bob, Nancy have given likes to your post "..." (2025-08-22)」みたいな通知カードになる。ユーザが個々の通知カードをクリックすると、未読状態から既読状態になる。
+
+以上の要件を満たすため、まずはフォローとイイネと返信のイベントを、event_logsテーブルに入れる。そのスキーマは以下のものだ。
+
+```
+CREATE TABLE event_logs (
+  partition_id SMALLINT NOT NULL,
+  event_id BIGINT NOT NULL,
+  payload JSONB NOT NULL,
+  PRIMARY KEY (partition_id, event_id),
+  UNIQUE (event_id),
+);
+```
+
+partition_idは、通知先のユーザIDに対する256の剰余で、[0,255] の値を持つ。event_idはイベント発生時刻を元にしたSnowflake IDだ。partition_idとevent_idの複合キーが主キーであり、勝手にインデックスが張られる。よって、特定のpartition_idに属するレコードをevent_idの昇順で取得するクエリが効率化する。payloadにはイベントの内容のJSONが入っている。例を示す。
+
+```
+{"type": "follow", "followeeId": "9901000000000001", "followerId": "0001000000000003"}
+{"type": "like", "postId": "9902500000001000", "userId": "0001000000000003"}
+{"type": "reply", "postId": "198D9E3364600000", "userId": "0001000000000004", "replyToPostId": "9902500000001000"}
+```
+
+イベントログを読み取るワーカーは複数居て、並列処理を行う。各ワーカーは自分が担当するpartition_idの範囲を知っていて、各パーティションを順番に処理する。ワーカーは0.5秒ごとにDBをポーリングして、担当の各パーティションで最大1000個のイベントを読み込む。したがって、各パーティションで最後に読んだIDを記録するために、event_log_cursorsテーブルを用意する。
+
+```
+CREATE TABLE event_log_cursors (
+  consumer VARCHAR(50) NOT NULL,
+  partition_id SMALLINT NOT NULL,
+  last_event_id BIGINT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, partition_id)
+);
+```
+
+consumerはワーカーの種類をを識別するためにあるが、現状では "notification" しかない。それとpartition_idの複合キーが主キーなので、両者を指定すると効率的にレコードが取得できる。値として重要なのはlast_event_idだけだ。これは最後に処理したevent_idが入っていて、それより大きいIDのイベントログから読み始めれば良いとわかる。updated_atは追跡用の飾りだ。
+
+読み出したイベントは、各ユーザの各リソースの各日を単位としてまとめて通知レコードになる。それを格納するのがnotificationsテーブルだ。
+
+```
+CREATE TABLE notifications (
+  user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slot VARCHAR(100) NOT NULL,
+  day DATE NOT NULL,
+  is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  payload JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, slot, day)
+);
+CREATE INDEX idx_notifications_user_read_ts ON notifications (user_id, is_read, updated_at);
+CREATE INDEX idx_notifications_created_at ON notifications(created_at);
+```
+
+ユーザはuser_idで識別する。slotはリソース種別を表し、ユーザ自信が対象であるフォローでは「follow」という決め打ちの値で、投稿が対象であれば「like:{postId}」や「reply:{postId}」の形式の値になる。dayはUTCベースの日付だ。is_readは未読既読の管理フラグで、updated_atとcreated_atは更新時刻と作成時刻だ。user_idとis_readとupdated_atの複合インデックスがあることで、各ユーザの既読通知の一覧と未読通知の一覧を効率的に取得できる。
+
+通知のpayloadはJSONデータであり、その通知レコードに関わるユーザ数や投稿数とともに、最新10件の履歴を入れる。例を示す。
+
+```
+follow => {"records": [{"ts": 1756002248514, "userId": "0001000000000004"}, {"ts": 1756002138545, "userId": "0001000000000003"}], "countUsers": 2}
+like => {"records": [{"ts": 1756002187871, "userId": "0001000000000004"}, {"ts": 1756002077724, "userId": "0001000000000003"}], "countUsers": 2}
+reply => {"records": [{"ts": 1756002203216, "postId": "198D9E3364600000", "userId": "0001000000000004"}, {"ts": 1756002097802, "postId": "198D9E19A8700000", "userId": "0001000000000003"}, {"ts": 1756002094769, "postId": "198D9E18EAE00000", "userId": "0001000000000003"}], "countPosts": 3, "countUsers": 2}
+```
+
+event_logsテーブルとnotificationsテーブルは急速に肥大化するので、古いレコードを定期的に削除する必要がある。通知作成のワーカーがその処理を行う。event_logsに関しては、event_idから日付を逆算して発生から90日以上のものを削除する。notificationsに関しては、created_atが90日以前のものを削除する。ここでupdated_atを基準にしない方が良い。upadted_atはイイネの度に更新されるので、それにインデックスを貼ると更新負荷が高い。
 
 ## その他
 

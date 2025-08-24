@@ -75,7 +75,7 @@ export class EventLogService {
     return this.insert(partitionId, payload);
   }
 
-  async purgeOldRecords(partitionId: number, statementTimeoutMs = 10_000): Promise<number> {
+  async purgeOldRecords(partitionId: number): Promise<number> {
     if (
       !Number.isInteger(partitionId) ||
       partitionId < 0 ||
@@ -86,10 +86,9 @@ export class EventLogService {
     const days = Config.EVENT_LOG_RETENTION_DAYS;
     const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const cutoffId = IdIssueService.lowerBoundIdForDate(cutoffDate).toString();
-
     await this.pgClient.query("BEGIN");
     try {
-      await this.pgClient.query("SET LOCAL statement_timeout = $1", [statementTimeoutMs]);
+      await this.pgClient.query("SET LOCAL statement_timeout = 10000");
       const res = await this.pgClient.query(
         "DELETE FROM event_logs WHERE partition_id = $1 AND event_id < $2",
         [partitionId, cutoffId],

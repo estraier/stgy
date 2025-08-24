@@ -62,13 +62,13 @@ CREATE TABLE post_likes (
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (post_id, liked_by)
 );
-CREATE INDEX idx_post_likes_post_id_created_at ON post_likes (post_id, created_at);
+CREATE INDEX idx_post_likes_post_id_created_at ON post_likes(post_id, created_at);
 CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_at);
 
 CREATE TABLE event_logs (
-  partition_id SMALLINT NOT NULL,  -- 0..255
-  event_id     BIGINT   NOT NULL,  -- Snowflake ID (ms|worker|seq)
-  payload      JSONB    NOT NULL,  -- 例: { "type":"reply","userId":"11111","postId":"22222","replyToUserId":"33333","replyToPostId":"44444" }
+  partition_id SMALLINT NOT NULL,
+  event_id BIGINT NOT NULL,
+  payload JSONB NOT NULL,
   PRIMARY KEY (partition_id, event_id),
   UNIQUE (event_id),
   CHECK (partition_id BETWEEN 0 AND 255),
@@ -76,27 +76,25 @@ CREATE TABLE event_logs (
 );
 
 CREATE TABLE event_log_cursors (
-  consumer     VARCHAR(50) NOT NULL,  -- 例: 'notification'
-  partition_id SMALLINT    NOT NULL,  -- 0..255 ; ワーカー割当は運用で制御
-  last_event_id BIGINT     NOT NULL DEFAULT 0,  -- event_logs.event_id を参照（FKにはしない）
-  updated_at   TIMESTAMPTZ NOT NULL DEFAULT now(),  -- 追跡用
-  PRIMARY KEY (consumer, partition_id),
-  CHECK (partition_id BETWEEN 0 AND 255),
-  CHECK (last_event_id >= 0)
+  consumer VARCHAR(50) NOT NULL,
+  partition_id SMALLINT NOT NULL,
+  last_event_id BIGINT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, partition_id)
 );
 
 CREATE TABLE notifications (
-  user_id   VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  slot      VARCHAR(100) NOT NULL,  -- 例: 'like:<postId>', 'reply:<postId>', 'follow'
-  day       DATE NOT NULL,          -- event_id 由来のUTC日付（集約キー）
-  is_read   BOOLEAN NOT NULL DEFAULT FALSE, -- カードをクリック/明示操作で TRUE。新規イベントでUPSERT時に FALSEへ戻す
-  payload   JSONB   NOT NULL,       -- 例: { "count": int, "posts": [ {"userId":"...","postId":"...?"}, ... ] } ; postsはFIFOで最大10件
-  updated_at TIMESTAMPTZ NOT NULL,  -- event_id 由来の時刻（並び替えはこれで）
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),  -- 追跡用
+  user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slot VARCHAR(100) NOT NULL,
+  day DATE NOT NULL,
+  is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  payload JSONB NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, slot, day)
 );
-CREATE INDEX idx_notifications_unread ON notifications (user_id, is_read, updated_at DESC);
-CREATE INDEX idx_notifications_recent ON notifications (user_id, updated_at DESC);
+CREATE INDEX idx_notifications_user_read_ts ON notifications(user_id, is_read, updated_at);
+CREATE INDEX idx_notifications_created_at ON notifications(created_at);
 
 CREATE TABLE ai_actions (
   user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,

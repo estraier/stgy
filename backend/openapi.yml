@@ -178,6 +178,26 @@ components:
         - limitSingleBytes
         - limitMonthlyBytes
 
+    NotificationUserRecord:
+      type: object
+      properties:
+        userId: { type: string }
+        ts: { type: number }
+      required: [userId, ts]
+
+    NotificationPostRecord:
+      type: object
+      properties:
+        userId: { type: string }
+        postId: { type: string }
+        ts: { type: number }
+      required: [userId, postId, ts]
+
+    NotificationRecord:
+      oneOf:
+        - $ref: "#/components/schemas/NotificationUserRecord"
+        - $ref: "#/components/schemas/NotificationPostRecord"
+
   responses:
     Error400:
       description: Bad request
@@ -1790,3 +1810,68 @@ paths:
           $ref: "#/components/responses/Error403"
         "404":
           $ref: "#/components/responses/Error404"
+
+  /notification/feed:
+    get:
+      summary: Get notifications feed for current user
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Notifications feed
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Notification"
+        "401":
+          $ref: "#/components/responses/Error401"
+
+  /notification/mark:
+    post:
+      summary: Mark a single notification read/unread
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                slot: { type: string }
+                day:
+                  type: string
+                  format: date
+                isRead: { type: boolean }
+              required: [slot, day, isRead]
+      responses:
+        "204":
+          description: Updated
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+
+  /notification/mark-all:
+    post:
+      summary: Mark all notifications read/unread for current user
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                isRead: { type: boolean }
+              required: [isRead]
+      responses:
+        "204":
+          description: Updated
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"

@@ -1,4 +1,3 @@
-// src/notificationWorker.ts
 import { Client } from "pg";
 import { Config } from "./config";
 import { IdIssueService } from "./services/idIssue";
