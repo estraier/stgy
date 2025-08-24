@@ -1,4 +1,3 @@
-// src/components/NotificationBell.tsx
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
@@ -6,7 +5,7 @@ import { FiBell, FiMoreHorizontal } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import type { Notification, NotificationAnyRecord } from "@/api/models";
 import {
-  getNotificationFeedSince, // ポーリング時のみ newerThan を付ける
+  getNotificationFeedSince,
   markNotification,
   markAllNotifications,
 } from "@/api/notifications";
@@ -41,13 +40,15 @@ function computeLatestUpdatedAt(arr: Notification[]): string | null {
   return m;
 }
 
+type PossibleNick = { userNickname?: string };
 function uniqueTopNicknames(n: Notification, max = 3): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const r of n.records) {
     if (!seen.has(r.userId)) {
       seen.add(r.userId);
-      out.push((r as any).userNickname || r.userId);
+      const nick = (r as PossibleNick).userNickname ?? r.userId;
+      out.push(nick);
       if (out.length >= max) break;
     }
   }
@@ -75,8 +76,8 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
   const fetchFull = useCallback(async () => {
     try {
       setError(null);
-      const { changed, data } = await getNotificationFeedSince(undefined);
-      const next = Array.isArray(data) ? data : [];
+      const res = await getNotificationFeedSince(undefined);
+      const next = Array.isArray(res.data) ? res.data : [];
       setFeed(next);
       latestRef.current = computeLatestUpdatedAt(next);
     } catch (e) {
@@ -110,7 +111,8 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
       }
     };
     if (document.visibilityState === "visible") start();
-    const onVis = () => (document.visibilityState === "visible" ? (pollRefresh(), start()) : stop());
+    const onVis = () =>
+      document.visibilityState === "visible" ? (pollRefresh(), start()) : stop();
     document.addEventListener("visibilitychange", onVis);
     return () => {
       stop();
@@ -209,7 +211,6 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
 
       {open && (
         <div className="absolute right-0 top-full mt-2 w-[380px] max-h-[70vh] overflow-auto bg-white border rounded shadow-lg z-50">
-          {/* ヘッダー（タブ＋…） */}
           <div className="flex items-center justify-between px-3 py-2 border-b bg-gray-50 sticky top-0">
             <div className="flex gap-1">
               <button
@@ -261,10 +262,8 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
             </div>
           </div>
 
-          {/* エラー表示 */}
           {error && <div className="px-4 py-2 text-sm text-red-600">{error}</div>}
 
-          {/* リスト */}
           {filtered.length === 0 ? (
             <div className="px-4 py-6 text-sm text-gray-500">No notifications.</div>
           ) : (
@@ -296,7 +295,6 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
                       onClick={() => handleCardClick(n)}
                     >
                       <div className="flex items-start gap-2">
-                        {/* 常に固定幅のインジケータ列を置いてインデントを揃える */}
                         <div className="mt-1 w-2 h-2 flex-shrink-0">
                           {!n.isRead ? (
                             <span className="block w-2 h-2 rounded-full bg-blue-500" />
