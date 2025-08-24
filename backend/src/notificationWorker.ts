@@ -1,3 +1,4 @@
+// src/notificationWorker.ts
 import { Client } from "pg";
 import { Config } from "./config";
 import { IdIssueService } from "./services/idIssue";
@@ -24,21 +25,77 @@ function isoDateUTC(ms: number): string {
 
 type UserRecord = { userId: string; ts: number };
 type PostRecord = { userId: string; postId: string; ts: number };
-type NotificationRecord = UserRecord | PostRecord;
-type NotificationPayload = { countUsers: number; countPosts: number; records: NotificationRecord[] };
 
-function slotOf(payload: AnyEventPayload): { slot: string } {
+type NotificationPayloadFollowLike = { countUsers: number; records: UserRecord[] };
+type NotificationPayloadReply = { countUsers: number; countPosts: number; records: PostRecord[] };
+
+function isObject(v: unknown): v is Record<string, unknown> {
+  return typeof v === "object" && v !== null;
+}
+
+function isUserRecord(v: unknown): v is UserRecord {
+  return (
+    isObject(v) &&
+    typeof v.userId === "string" &&
+    typeof v.ts === "number" &&
+    (!("postId" in v) || typeof (v as Record<string, unknown>).postId !== "string")
+  );
+}
+
+function isPostRecord(v: unknown): v is PostRecord {
+  return (
+    isObject(v) &&
+    typeof v.userId === "string" &&
+    typeof v.postId === "string" &&
+    typeof v.ts === "number"
+  );
+}
+
+function parsePayloadFollowLike(raw: unknown): NotificationPayloadFollowLike {
+  if (!isObject(raw)) return { countUsers: 0, records: [] };
+  const countUsers =
+    typeof raw.countUsers === "number" && Number.isFinite(raw.countUsers) ? raw.countUsers : 0;
+  const arr = Array.isArray((raw as Record<string, unknown>).records)
+    ? ((raw as Record<string, unknown>).records as unknown[])
+    : [];
+  const records: UserRecord[] = [];
+  for (const r of arr) {
+    if (isUserRecord(r)) records.push(r);
+  }
+  return { countUsers, records };
+}
+
+function parsePayloadReply(raw: unknown): NotificationPayloadReply {
+  if (!isObject(raw)) return { countUsers: 0, countPosts: 0, records: [] };
+  const countUsers =
+    typeof raw.countUsers === "number" && Number.isFinite(raw.countUsers) ? raw.countUsers : 0;
+  const countPosts =
+    typeof raw.countPosts === "number" && Number.isFinite(raw.countPosts) ? raw.countPosts : 0;
+  const arr = Array.isArray((raw as Record<string, unknown>).records)
+    ? ((raw as Record<string, unknown>).records as unknown[])
+    : [];
+  const records: PostRecord[] = [];
+  for (const r of arr) {
+    if (isPostRecord(r)) records.push(r);
+  }
+  return { countUsers, countPosts, records };
+}
+
+function slotOf(payload: AnyEventPayload): string {
   switch (payload.type) {
     case "follow":
-      return { slot: "follow" };
+      return "follow";
     case "like":
-      return { slot: `like:${payload.postId}` };
+      return `like:${payload.postId}`;
     case "reply":
-      return { slot: `reply:${payload.replyToPostId}` };
+      return `reply:${payload.replyToPostId}`;
   }
 }
 
-async function resolveRecipientUserId(pg: Client, payload: AnyEventPayload): Promise<string | null> {
+async function resolveRecipientUserId(
+  pg: Client,
+  payload: AnyEventPayload,
+): Promise<string | null> {
   if (payload.type === "follow") return payload.followeeId;
   if (payload.type === "like") {
     const res = await pg.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
@@ -52,43 +109,33 @@ async function resolveRecipientUserId(pg: Client, payload: AnyEventPayload): Pro
   return res.rows[0]?.owned_by ?? null;
 }
 
-function makeEntry(payload: AnyEventPayload, ts: number): NotificationRecord | null {
+function makeEntry(payload: AnyEventPayload, ts: number): UserRecord | PostRecord | null {
   if (payload.type === "follow") return { userId: payload.followerId, ts };
-  if (payload.type === "like") return { userId: payload.userId, postId: payload.postId, ts };
+  if (payload.type === "like") return { userId: payload.userId, ts };
   if (payload.type === "reply") return { userId: payload.userId, postId: payload.postId, ts };
   return null;
 }
 
-const keyOf = (r: NotificationRecord) => ("postId" in r ? `${r.userId}|${r.postId}` : r.userId);
-const isReplySlot = (slot: string) => slot.startsWith("reply:");
-
-function parsePayload(raw: unknown): NotificationPayload {
-  const obj = (raw ?? {}) as any;
-  const countUsers = typeof obj.countUsers === "number" ? obj.countUsers : 0;
-  const countPosts = typeof obj.countPosts === "number" ? obj.countPosts : 0;
-  const recordsIn = Array.isArray(obj.records) ? obj.records : [];
-  const records: NotificationRecord[] = [];
-  for (const r of recordsIn) {
-    if (!r || typeof r !== "object") continue;
-    const ts = typeof (r as any).ts === "number" ? (r as any).ts : 0;
-    const userId = typeof (r as any).userId === "string" ? (r as any).userId : null;
-    const postId =
-      "postId" in (r as any) && typeof (r as any).postId === "string" ? (r as any).postId : null;
-    if (userId && postId) records.push({ userId, postId, ts });
-    else if (userId) records.push({ userId, ts });
-  }
-  return { countUsers, countPosts, records };
-}
-
-function dedupeAndCap(records: NotificationRecord[], cap: number): NotificationRecord[] {
-  const byKey = new Map<string, NotificationRecord>();
+function dedupeUsers(records: UserRecord[], cap: number): UserRecord[] {
+  const byKey = new Map<string, UserRecord>();
   for (const r of records) {
-    const k = keyOf(r);
+    const k = r.userId;
     const prev = byKey.get(k);
     if (!prev || r.ts >= prev.ts) byKey.set(k, r);
   }
-  let deduped = Array.from(byKey.values());
-  deduped.sort((a, b) => b.ts - a.ts);
+  let deduped = Array.from(byKey.values()).sort((a, b) => b.ts - a.ts);
+  if (deduped.length > cap) deduped = deduped.slice(0, cap);
+  return deduped;
+}
+
+function dedupeReplies(records: PostRecord[], cap: number): PostRecord[] {
+  const byKey = new Map<string, PostRecord>();
+  for (const r of records) {
+    const k = `${r.userId}|${r.postId}`;
+    const prev = byKey.get(k);
+    if (!prev || r.ts >= prev.ts) byKey.set(k, r);
+  }
+  let deduped = Array.from(byKey.values()).sort((a, b) => b.ts - a.ts);
   if (deduped.length > cap) deduped = deduped.slice(0, cap);
   return deduped;
 }
@@ -99,7 +146,7 @@ async function upsertNotification(
   slot: string,
   dayISO: string,
   updatedAtMs: number,
-  entry: NotificationRecord,
+  entry: UserRecord | PostRecord,
 ): Promise<void> {
   const sel = await pg.query<{ payload: unknown }>(
     `SELECT payload
@@ -114,47 +161,69 @@ async function upsertNotification(
 
   if (sel.rows.length === 0) {
     console.log(`[notificationworker] inserting a new record for ${userId}`);
-    const payload: NotificationPayload = {
-      countUsers: 1,
-      countPosts: isReplySlot(slot) && "postId" in entry ? 1 : 0,
-      records: [entry],
-    };
-    await pg.query(
-      `INSERT INTO notifications (user_id, slot, day, is_read, payload, updated_at)
-       VALUES ($1, $2, $3, FALSE, $4::jsonb, $5)`,
-      [userId, slot, dayISO, JSON.stringify(payload), updatedAtISO],
-    );
-    return;
+    if (slot.startsWith("reply:")) {
+      const e = entry as PostRecord;
+      const payload: NotificationPayloadReply = { countUsers: 1, countPosts: 1, records: [e] };
+      await pg.query(
+        `INSERT INTO notifications (user_id, slot, day, is_read, payload, updated_at)
+         VALUES ($1, $2, $3, FALSE, $4::jsonb, $5)`,
+        [userId, slot, dayISO, JSON.stringify(payload), updatedAtISO],
+      );
+      return;
+    } else {
+      const e = entry as UserRecord;
+      const payload: NotificationPayloadFollowLike = { countUsers: 1, records: [e] };
+      await pg.query(
+        `INSERT INTO notifications (user_id, slot, day, is_read, payload, updated_at)
+         VALUES ($1, $2, $3, FALSE, $4::jsonb, $5)`,
+        [userId, slot, dayISO, JSON.stringify(payload), updatedAtISO],
+      );
+      return;
+    }
   }
 
   console.log(`[notificationworker] updating ${sel.rows.length} records for ${userId}`);
-  const current = parsePayload(sel.rows[0]!.payload);
-  const beforeUserKeys = new Set(current.records.map((r) => r.userId));
-  const isNewUser = !beforeUserKeys.has(entry.userId);
 
-  let isNewPost = false;
-  if (isReplySlot(slot) && "postId" in entry) {
-    const beforePostIds = new Set(
-      current.records.filter((r): r is PostRecord => "postId" in r).map((r) => r.postId),
+  if (slot.startsWith("reply:")) {
+    const current = parsePayloadReply(sel.rows[0].payload);
+    const e = entry as PostRecord;
+    const userSet = new Set(current.records.map((r) => r.userId));
+    const postSet = new Set(current.records.map((r) => r.postId));
+    const isNewUser = !userSet.has(e.userId);
+    const isNewPost = !postSet.has(e.postId);
+    const nextRecords = dedupeReplies([...current.records, e], cap);
+    const nextPayload: NotificationPayloadReply = {
+      countUsers: current.countUsers + (isNewUser ? 1 : 0),
+      countPosts: current.countPosts + (isNewPost ? 1 : 0),
+      records: nextRecords,
+    };
+    await pg.query(
+      `UPDATE notifications
+          SET is_read = FALSE,
+              payload = $4::jsonb,
+              updated_at = $5
+        WHERE user_id = $1 AND slot = $2 AND day = $3`,
+      [userId, slot, dayISO, JSON.stringify(nextPayload), updatedAtISO],
     );
-    isNewPost = !beforePostIds.has(entry.postId);
+  } else {
+    const current = parsePayloadFollowLike(sel.rows[0].payload);
+    const e = entry as UserRecord;
+    const userSet = new Set(current.records.map((r) => r.userId));
+    const isNewUser = !userSet.has(e.userId);
+    const nextRecords = dedupeUsers([...current.records, e], cap);
+    const nextPayload: NotificationPayloadFollowLike = {
+      countUsers: current.countUsers + (isNewUser ? 1 : 0),
+      records: nextRecords,
+    };
+    await pg.query(
+      `UPDATE notifications
+          SET is_read = FALSE,
+              payload = $4::jsonb,
+              updated_at = $5
+        WHERE user_id = $1 AND slot = $2 AND day = $3`,
+      [userId, slot, dayISO, JSON.stringify(nextPayload), updatedAtISO],
+    );
   }
-
-  const nextRecords = dedupeAndCap([...current.records, entry], cap);
-  const nextPayload: NotificationPayload = {
-    countUsers: current.countUsers + (isNewUser ? 1 : 0),
-    countPosts: current.countPosts + (isNewPost ? 1 : 0),
-    records: nextRecords,
-  };
-
-  await pg.query(
-    `UPDATE notifications
-        SET is_read = FALSE,
-            payload = $4::jsonb,
-            updated_at = $5
-      WHERE user_id = $1 AND slot = $2 AND day = $3`,
-    [userId, slot, dayISO, JSON.stringify(nextPayload), updatedAtISO],
-  );
 }
 
 const CONSUMER = "notification";
@@ -222,7 +291,7 @@ async function processPartition(pg: Client, partitionId: number): Promise<number
         last = eid;
         continue;
       }
-      const { slot } = slotOf(payload);
+      const slot = slotOf(payload);
       const ms = eventMsFromId(eid);
       const day = isoDateUTC(ms);
       const entry = makeEntry(payload, ms);
