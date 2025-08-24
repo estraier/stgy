@@ -1829,6 +1829,11 @@ paths:
       summary: Get notification feed (merged unread/read)
       security:
         - sessionCookie: []
+      parameters:
+        - name: newerThan
+          in: query
+          required: false
+          schema: { type: string, format: date-time }
       responses:
         "200":
           description: Notification feed (sorted by updatedAt desc)
@@ -1838,6 +1843,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/Notification"
+        "304":
+          description: Not Modified (no updates since newerThan)
         "401":
           $ref: "#/components/responses/Error401"
 

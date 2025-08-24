@@ -40,9 +40,9 @@ function parsePayload(raw: unknown): ParsedPayload {
     const postId = typeof rec.postId === "string" ? rec.postId : undefined;
     if (!userId || ts === undefined) continue;
     if (postId) {
-      records.push({ userId, postId, ts } as NotificationPostRecord);
+      records.push({ userId, postId, ts } as unknown as NotificationPostRecord);
     } else {
-      records.push({ userId, ts } as NotificationUserRecord);
+      records.push({ userId, ts } as unknown as NotificationUserRecord);
     }
   }
   return { countUsers, countPosts, records };
@@ -86,10 +86,40 @@ function mergeByUpdatedAtDesc(a: Notification[], b: Notification[]): Notificatio
   return out;
 }
 
+async function hydrateUserNicknames(pg: Client, list: Notification[]): Promise<Notification[]> {
+  const ids = new Set<string>();
+  for (const n of list) for (const r of n.records) ids.add(r.userId);
+  if (ids.size === 0) return list;
+  const idArr = Array.from(ids);
+  const res = await pg.query<{ id: string; nickname: string }>(
+    `SELECT id, nickname FROM users WHERE id = ANY($1::text[])`,
+    [idArr],
+  );
+  const map = new Map(res.rows.map((r) => [r.id, r.nickname]));
+  return list.map((n) => ({
+    ...n,
+    records: n.records.map((r) => {
+      const userNickname = map.get(r.userId) ?? "";
+      return { ...r, userNickname } as NotificationAnyRecord;
+    }),
+  }));
+}
+
 export class NotificationService {
   constructor(private readonly pg: Client) {}
 
-  async listFeed(userId: string): Promise<Notification[]> {
+  async listFeed(userId: string, opts?: { newerThan?: Date }): Promise<Notification[] | null> {
+    if (opts?.newerThan) {
+      const exists = await this.pg.query(
+        `SELECT 1
+           FROM notifications
+          WHERE user_id = $1
+            AND updated_at > $2
+          LIMIT 1`,
+        [userId, opts.newerThan],
+      );
+      if (exists.rowCount === 0) return null;
+    }
     const unreadRes = await this.pg.query<Row>(
       `SELECT slot, term, is_read, payload, updated_at, created_at
          FROM notifications
@@ -108,7 +138,8 @@ export class NotificationService {
     );
     const unread = unreadRes.rows.map(rowToNotification);
     const read = readRes.rows.map(rowToNotification);
-    return mergeByUpdatedAtDesc(unread, read);
+    const merged = mergeByUpdatedAtDesc(unread, read);
+    return hydrateUserNicknames(this.pg, merged);
   }
 
   async markNotification(input: MarkNotificationInput): Promise<void> {

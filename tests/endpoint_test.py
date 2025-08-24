@@ -526,13 +526,16 @@ def test_notifications():
   nf = by_slot[follow_slot]
   assert nf["isRead"] is False
   assert nf.get("countUsers") == 1
+  assert any(r.get("userNickname") == "admin" for r in nf["records"])
   nl = by_slot[like_slot]
   assert nl["isRead"] is False
   assert nl.get("countUsers") == 1
+  assert any(r.get("userNickname") == "admin" for r in nl["records"])
   nr = by_slot[reply_slot]
   assert nr["isRead"] is False
   assert nr.get("countUsers") == 1
   assert nr.get("countPosts") == 2
+  assert any(r.get("userNickname") == "admin" for r in nr["records"])
   res = requests.post(
     f"{BASE_URL}/notification/mark",
     json={"slot": follow_slot, "term": nf["term"], "isRead": True},
@@ -557,6 +560,35 @@ def test_notifications():
   feed3 = res.json()
   assert all(n["isRead"] is True for n in feed3), f"not all read: {feed3}"
   print("[notifications] marking read OK")
+  latest = max(n["updatedAt"] for n in feed3)
+  print("[notifications] latest updatedAt =", latest)
+  res = requests.get(
+    f"{BASE_URL}/notification/feed",
+    params={"newerThan": latest},
+    cookies=user_cookies,
+  )
+  assert res.status_code == 304, f"expected 304, got {res.status_code}: {res.text}"
+  print("[notifications] newerThan=latest -> 304 OK")
+  res = requests.post(
+    f"{BASE_URL}/posts",
+    json={"content": "third reply for 304 check", "replyTo": post_id, "tags": ["r"]},
+    headers=headers,
+    cookies=admin_cookies,
+  )
+  assert res.status_code == 201, res.text
+  time.sleep(0.1)
+  res = requests.get(
+    f"{BASE_URL}/notification/feed",
+    params={"newerThan": latest},
+    cookies=user_cookies,
+  )
+  assert res.status_code == 200, f"expected 200 after new notification, got {res.status_code}"
+  feed4 = res.json()
+  assert isinstance(feed4, list)
+  by_slot4 = {n["slot"]: n for n in feed4}
+  assert reply_slot in by_slot4, f"missing {reply_slot} after new reply"
+  assert by_slot4[reply_slot].get("countPosts") == 3, f"expected 3 replies, got {by_slot4[reply_slot].get('countPosts')}"
+  print("[notifications] newerThan=latest -> 200 after new notification OK")
   res = requests.delete(f"{BASE_URL}/users/{new_user_id}", headers=headers, cookies=admin_cookies)
   assert res.status_code == 200, res.text
   print("[notifications] cleanup user deleted")

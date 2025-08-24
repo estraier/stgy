@@ -1,3 +1,4 @@
+// src/routes/notifications.ts
 import { Router, Request, Response } from "express";
 import { Client } from "pg";
 import Redis from "ioredis";
@@ -5,10 +6,6 @@ import { NotificationService } from "../services/notifications";
 import { UsersService } from "../services/users";
 import { AuthService } from "../services/auth";
 import { AuthHelpers } from "./authHelpers";
-
-function isTerm(value: unknown): value is string {
-  return typeof value === "string" && value.length > 0 && value.length <= 20;
-}
 
 export default function createNotificationRouter(pgClient: Client, redis: Redis) {
   const router = Router();
@@ -20,8 +17,19 @@ export default function createNotificationRouter(pgClient: Client, redis: Redis)
   router.get("/feed", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    const notifications = await notificationService.listFeed(loginUser.id);
-    res.json(notifications);
+    let newerThan: Date | undefined;
+    if (typeof req.query.newerThan === "string") {
+      const d = new Date(req.query.newerThan);
+      if (Number.isNaN(d.getTime())) {
+        return res
+          .status(400)
+          .json({ error: "newerThan must be a valid ISO8601 date-time string" });
+      }
+      newerThan = d;
+    }
+    const notifications = await notificationService.listFeed(loginUser.id, { newerThan });
+    if (notifications === null) return res.status(304).end();
+    return res.json(notifications);
   });
 
   router.post("/mark", async (req: Request, res: Response) => {
@@ -31,18 +39,13 @@ export default function createNotificationRouter(pgClient: Client, redis: Redis)
     if (typeof slot !== "string" || slot.length === 0) {
       return res.status(400).json({ error: "slot is required" });
     }
-    if (!isTerm(term)) {
-      return res.status(400).json({ error: "term must be a non-empty string up to 20 chars" });
+    if (typeof term !== "string" || term.length === 0) {
+      return res.status(400).json({ error: "term is required" });
     }
     if (typeof isRead !== "boolean") {
       return res.status(400).json({ error: "isRead must be boolean" });
     }
-    await notificationService.markNotification({
-      userId: loginUser.id,
-      slot,
-      term,
-      isRead,
-    });
+    await notificationService.markNotification({ userId: loginUser.id, slot, term, isRead });
     res.status(204).end();
   });
 
@@ -53,10 +56,7 @@ export default function createNotificationRouter(pgClient: Client, redis: Redis)
     if (typeof isRead !== "boolean") {
       return res.status(400).json({ error: "isRead must be boolean" });
     }
-    await notificationService.markAllNotifications({
-      userId: loginUser.id,
-      isRead,
-    });
+    await notificationService.markAllNotifications({ userId: loginUser.id, isRead });
     res.status(204).end();
   });
 

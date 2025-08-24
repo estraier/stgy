@@ -25,7 +25,7 @@ describe("NotificationService (happy paths)", () => {
     ],
   };
 
-  test("listFeed: merges unread/read by updated_at desc and applies limit", async () => {
+  test("listFeed: merges unread/read by updated_at desc, applies limit, and hydrates userNickname", async () => {
     const unreadRows = [
       {
         slot: "follow",
@@ -63,13 +63,21 @@ describe("NotificationService (happy paths)", () => {
       },
     ];
 
+    // 1) 未読 2) 既読 3) users nickname ルックアップ
     const q = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: unreadRows })
-      .mockResolvedValueOnce({ rows: readRows });
+      .mockResolvedValueOnce({ rows: readRows })
+      .mockResolvedValueOnce({
+        rows: [
+          { id: "u1", nickname: "User One" },
+          { id: "u2", nickname: "User Two" },
+        ],
+      });
 
     const { svc, query } = mkSvc(q);
     const out = await svc.listFeed("USER-1");
 
+    // クエリ順と引数
     expect(query).toHaveBeenNthCalledWith(1, expect.stringMatching(/FROM notifications/i), [
       "USER-1",
       3,
@@ -78,22 +86,101 @@ describe("NotificationService (happy paths)", () => {
       "USER-1",
       3,
     ]);
+    expect(query).toHaveBeenNthCalledWith(
+      3,
+      expect.stringMatching(/SELECT\s+id,\s*nickname\s+FROM\s+users/i),
+      [expect.arrayContaining(["u1", "u2"])],
+    );
 
-    expect(out.map((n) => n.updatedAt)).toEqual([
+    // マージ順
+    expect(out!.map((n) => n.updatedAt)).toEqual([
       "2025-08-24T12:00:00.000Z",
       "2025-08-24T11:00:00.000Z",
       "2025-08-24T10:00:00.000Z",
       "2025-08-24T09:00:00.000Z",
     ]);
 
-    const first = out[0]!;
+    const first = out![0]!;
     expect(first.slot).toBe("follow");
     expect(first.isRead).toBe(false);
     expect(first.countUsers).toBe(2);
     expect(first.countPosts).toBe(1);
     expect(first.records).toHaveLength(2);
-    expect(typeof first.records[0]!.userId).toBe("string");
-    expect(typeof first.records[0]!.ts).toBe("number");
+
+    // userNickname が埋まっていること
+    const nicknames = first.records.map((r) => r.userNickname);
+    expect(nicknames).toEqual(["User One", "User Two"]);
+  });
+
+  test("listFeed: newerThan specified and no newer rows -> returns null and only existence check runs", async () => {
+    const existsNone = { rowCount: 0, rows: [] };
+
+    const q = (jest.fn() as any).mockResolvedValueOnce(existsNone);
+
+    const { svc, query } = mkSvc(q);
+    const newerThan = new Date("2025-08-24T12:34:56.000Z");
+    const out = await svc.listFeed("U-NT", { newerThan });
+
+    expect(out).toBeNull();
+    // 存在チェックのみ
+    expect(query).toHaveBeenCalledTimes(1);
+    expect(query).toHaveBeenCalledWith(
+      expect.stringMatching(/SELECT\s+1\s+FROM\s+notifications[\s\S]*updated_at\s*>\s*\$2/i),
+      ["U-NT", newerThan],
+    );
+  });
+
+  test("listFeed: newerThan specified and newer rows exist -> runs existence check + unread + read + users lookup", async () => {
+    const existsYes = { rowCount: 1, rows: [{ "?": 1 }] };
+    const unreadRows = [
+      {
+        slot: "follow",
+        term: "2025-08-25",
+        is_read: false,
+        payload: samplePayload,
+        updated_at: "2025-08-25T01:00:00.000Z",
+        created_at: "2025-08-25T00:30:00.000Z",
+      },
+    ];
+    const readRows: any[] = [];
+
+    const q = (jest.fn() as any)
+      .mockResolvedValueOnce(existsYes) // existence
+      .mockResolvedValueOnce({ rows: unreadRows }) // unread
+      .mockResolvedValueOnce({ rows: readRows }) // read
+      .mockResolvedValueOnce({
+        rows: [
+          { id: "u1", nickname: "User One" },
+          { id: "u2", nickname: "User Two" },
+        ],
+      }); // users
+
+    const { svc, query } = mkSvc(q);
+    const newerThan = new Date("2025-08-24T23:59:59.000Z");
+    const out = await svc.listFeed("U-OK", { newerThan });
+
+    expect(out).not.toBeNull();
+    expect(out!.length).toBe(1);
+    expect(out![0]!.records.map((r) => r.userNickname)).toEqual(["User One", "User Two"]);
+
+    expect(query).toHaveBeenNthCalledWith(
+      1,
+      expect.stringMatching(/SELECT\s+1\s+FROM\s+notifications[\s\S]*updated_at\s*>\s*\$2/i),
+      ["U-OK", newerThan],
+    );
+    expect(query).toHaveBeenNthCalledWith(2, expect.stringMatching(/FROM notifications/i), [
+      "U-OK",
+      3,
+    ]);
+    expect(query).toHaveBeenNthCalledWith(3, expect.stringMatching(/FROM notifications/i), [
+      "U-OK",
+      3,
+    ]);
+    expect(query).toHaveBeenNthCalledWith(
+      4,
+      expect.stringMatching(/SELECT\s+id,\s*nickname\s+FROM\s+users/i),
+      [expect.arrayContaining(["u1", "u2"])],
+    );
   });
 
   test("markNotification: updates a single notification", async () => {
