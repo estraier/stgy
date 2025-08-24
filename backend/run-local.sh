@@ -22,5 +22,6 @@ trap cleanup INT TERM EXIT
 
 npm run mail-worker &
 npm run media-worker &
+npm run notification-worker &
 
 npm run dev

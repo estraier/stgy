@@ -10,6 +10,7 @@
     "dev": "nodemon --exec ts-node src/index.ts",
     "mail-worker": "ts-node src/mailWorker.ts",
     "media-worker": "ts-node src/mediaWorker.ts",
+    "notification-worker": "ts-node src/notificationWorker.ts",
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",

@@ -104,6 +104,22 @@ services:
     command: ["node", "dist/mediaWorker.js"]
     restart: unless-stopped
 
+  notificationworker:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      FAKEBOOK_DATABASE_HOST: ${FAKEBOOK_DATABASE_HOST}
+      FAKEBOOK_DATABASE_USER: ${FAKEBOOK_DATABASE_USER}
+      FAKEBOOK_DATABASE_PASSWORD: ${FAKEBOOK_DATABASE_PASSWORD}
+      FAKEBOOK_DATABASE_NAME: ${FAKEBOOK_DATABASE_NAME}
+      FAKEBOOK_DATABASE_PORT: ${FAKEBOOK_DATABASE_PORT}
+    command: ["node", "dist/notificationWorker.js"]
+    restart: unless-stopped
+
   backend:
     build:
       dockerfile: backend/Dockerfile

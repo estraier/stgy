@@ -103,7 +103,7 @@ CREATE TABLE ai_actions (
   done_at TIMESTAMPTZ NOT NULL,
   action JSONB NOT NULL
 );
-CREATE INDEX idx_past_actions_user_id_done_at ON past_actions(user_id, done_at);
+CREATE INDEX idx_ai_actions_user_id_done_at ON ai_actions(user_id, done_at);
 
 CREATE OR REPLACE FUNCTION trg_user_follows_counter()
 RETURNS TRIGGER AS $$

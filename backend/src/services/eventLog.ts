@@ -1,27 +1,12 @@
 import { Config } from "../config";
 import { IdIssueService } from "./idIssue";
+import type {
+  AnyEventPayload,
+  ReplyEventPayload,
+  LikeEventPayload,
+  FollowEventPayload,
+} from "../models/eventLog";
 import { Client } from "pg";
-
-export type ReplyEventPayload = {
-  type: "reply";
-  userId: string;
-  postId: string;
-  replyToPostId: string;
-};
-
-export type LikeEventPayload = {
-  type: "like";
-  userId: string;
-  postId: string;
-};
-
-export type FollowEventPayload = {
-  type: "follow";
-  followerId: string;
-  followeeId: string;
-};
-
-export type AnyEventPayload = ReplyEventPayload | LikeEventPayload | FollowEventPayload;
 
 export class EventLogService {
   private pgClient: Client;
