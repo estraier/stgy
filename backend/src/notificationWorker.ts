@@ -1,4 +1,3 @@
-// src/notificationWorker.ts
 import { Client } from "pg";
 import { Config } from "./config";
 import { IdIssueService } from "./services/idIssue";
@@ -20,7 +19,6 @@ function eventMsFromId(eventId: string | bigint): number {
 }
 
 function formatTermInTz(ms: number, tz: string): string {
-  // en-CA は "YYYY-MM-DD" を返す
   return new Intl.DateTimeFormat("en-CA", {
     timeZone: tz,
     year: "numeric",
