@@ -34,7 +34,7 @@ const redis = new Redis({
 });
 
 const storageService = makeStorageService(Config.STORAGE_DRIVER);
-const eventLogService = new EventLogService(pgClient);
+const eventLogService = new EventLogService(pgClient, redis);
 
 app.use(
   cors({

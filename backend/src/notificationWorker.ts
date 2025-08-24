@@ -1,4 +1,5 @@
 import { Client } from "pg";
+import Redis from "ioredis";
 import { Config } from "./config";
 import { IdIssueService } from "./services/idIssue";
 import type { AnyEventPayload } from "./models/eventLog";
@@ -10,6 +11,14 @@ function makePg(): Client {
     user: Config.DATABASE_USER,
     password: Config.DATABASE_PASSWORD,
     database: Config.DATABASE_NAME,
+  });
+}
+
+function makeRedis(): Redis {
+  return new Redis({
+    host: Config.REDIS_HOST,
+    port: Config.REDIS_PORT,
+    password: Config.REDIS_PASSWORD,
   });
 }
 
@@ -144,6 +153,17 @@ function dedupeReplies(records: PostRecord[], cap: number): PostRecord[] {
   return deduped;
 }
 
+function isSelfInteraction(payload: AnyEventPayload, recipientUserId: string): boolean {
+  switch (payload.type) {
+    case "follow":
+      return payload.followerId === recipientUserId;
+    case "like":
+      return payload.userId === recipientUserId;
+    case "reply":
+      return payload.userId === recipientUserId;
+  }
+}
+
 async function upsertNotification(
   pg: Client,
   userId: string,
@@ -164,7 +184,6 @@ async function upsertNotification(
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
 
   if (sel.rows.length === 0) {
-    console.log(`[notificationworker] inserting a new record for ${userId}`);
     if (slot.startsWith("reply:")) {
       const e = entry as PostRecord;
       const payload: NotificationPayloadReply = { countUsers: 1, countPosts: 1, records: [e] };
@@ -185,8 +204,6 @@ async function upsertNotification(
       return;
     }
   }
-
-  console.log(`[notificationworker] updating ${sel.rows.length} records for ${userId}`);
 
   if (slot.startsWith("reply:")) {
     const current = parsePayloadReply(sel.rows[0].payload);
@@ -287,11 +304,18 @@ async function processPartition(pg: Client, partitionId: number): Promise<number
       return 0;
     }
     let last = cursor;
+    console.log(
+      `[notificationworker] processing: p=${partitionId}, c=${cursor}, count=${batch.length}`,
+    );
     for (const row of batch) {
       const eid = BigInt(row.event_id);
       const payload = row.payload;
       const recipient = await resolveRecipientUserId(pg, payload);
       if (!recipient) {
+        last = eid;
+        continue;
+      }
+      if (isSelfInteraction(payload, recipient)) {
         last = eid;
         continue;
       }
@@ -323,21 +347,63 @@ function assignedPartitions(workerIndex: number): number[] {
   return out;
 }
 
+async function drain(pg: Client, partitionId: number): Promise<void> {
+  for (;;) {
+    const n = await processPartition(pg, partitionId);
+    if (n === 0) break;
+  }
+}
+
 async function runWorker(workerIndex: number): Promise<void> {
   console.log(`[notificationworker] worker ${workerIndex} started`);
   const pg = makePg();
   await pg.connect();
+
   const parts = assignedPartitions(workerIndex);
-  for (;;) {
-    for (const p of parts) {
-      try {
-        await processPartition(pg, p);
-      } catch {
-        await new Promise((r) => setTimeout(r, 250));
-      }
-    }
-    await new Promise((r) => setTimeout(r, 500));
+  for (const p of parts) {
+    try {
+      await drain(pg, p);
+    } catch {}
   }
+
+  const sub = makeRedis();
+  const channel = `notifications:wake:${workerIndex}`;
+  const inFlight = new Set<number>();
+  const pending = new Set<number>();
+
+  await sub.subscribe(channel);
+
+  sub.on("message", async (_chan, msg) => {
+    const p = Number.parseInt(String(msg), 10);
+    if (!Number.isInteger(p)) return;
+    if (!parts.includes(p)) return;
+    if (inFlight.has(p)) {
+      pending.add(p);
+      return;
+    }
+    inFlight.add(p);
+    (async () => {
+      try {
+        for (;;) {
+          await drain(pg, p);
+          if (!pending.delete(p)) break;
+        }
+      } catch {
+      } finally {
+        inFlight.delete(p);
+      }
+    })();
+  });
+
+  process.on("SIGINT", async () => {
+    try {
+      await sub.unsubscribe(channel);
+      sub.disconnect();
+      await pg.end();
+    } finally {
+      process.exit(0);
+    }
+  });
 }
 
 async function main(): Promise<void> {

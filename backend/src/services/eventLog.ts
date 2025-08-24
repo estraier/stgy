@@ -7,13 +7,16 @@ import type {
   FollowEventPayload,
 } from "../models/eventLog";
 import { Client } from "pg";
+import Redis from "ioredis";
 
 export class EventLogService {
   private pgClient: Client;
   private idIssueService: IdIssueService;
+  private redis: Redis;
 
-  constructor(pgClient: Client) {
+  constructor(pgClient: Client, redis: Redis) {
     this.pgClient = pgClient;
+    this.redis = redis;
     this.idIssueService = new IdIssueService(Config.ID_ISSUE_WORKER_ID);
   }
 
@@ -26,15 +29,10 @@ export class EventLogService {
     for (let i = 0; i < hex.length; i++) {
       const c = hex.charCodeAt(i);
       let v: number;
-      if (c >= 48 && c <= 57) {
-        v = c - 48;
-      } else if (c >= 65 && c <= 70) {
-        v = c - 55;
-      } else if (c >= 97 && c <= 102) {
-        v = c - 87;
-      } else {
-        continue;
-      }
+      if (c >= 48 && c <= 57) v = c - 48;
+      else if (c >= 65 && c <= 70) v = c - 55;
+      else if (c >= 97 && c <= 102) v = c - 87;
+      else continue;
       acc = (acc * 16 + v) % mod;
     }
     return acc;
@@ -56,11 +54,7 @@ export class EventLogService {
   }
 
   async recordLike(input: { userId: string; postId: string }): Promise<bigint> {
-    const payload: LikeEventPayload = {
-      type: "like",
-      userId: input.userId,
-      postId: input.postId,
-    };
+    const payload: LikeEventPayload = { type: "like", userId: input.userId, postId: input.postId };
     const partitionId = this.partitionForId(input.postId);
     return this.insert(partitionId, payload);
   }
@@ -101,6 +95,20 @@ export class EventLogService {
     }
   }
 
+  private wakeChannel(workerIndex: number): string {
+    return `notifications:wake:${workerIndex}`;
+  }
+
+  private workerIndexOfPartition(partitionId: number): number {
+    const n = Math.max(1, (Config.NOTIFICATION_WORKERS as number) | 0);
+    return ((partitionId % n) + n) % n;
+  }
+
+  private async notifyPartition(partitionId: number): Promise<void> {
+    const idx = this.workerIndexOfPartition(partitionId);
+    await this.redis.publish(this.wakeChannel(idx), String(partitionId));
+  }
+
   private async insert(partitionId: number, payload: AnyEventPayload): Promise<bigint> {
     const idBig = await this.idIssueService.issueBigint();
     const eventId = idBig.toString();
@@ -108,6 +116,7 @@ export class EventLogService {
       "INSERT INTO event_logs (partition_id, event_id, payload) VALUES ($1, $2, $3::jsonb)",
       [partitionId, eventId, JSON.stringify(payload)],
     );
+    await this.notifyPartition(partitionId);
     return idBig;
   }
 }
