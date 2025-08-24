@@ -178,14 +178,14 @@ components:
         - limitSingleBytes
         - limitMonthlyBytes
 
-    NotificationUserRecord:
+    NotificationRecordUser:
       type: object
       properties:
         userId: { type: string }
         ts: { type: number }
       required: [userId, ts]
 
-    NotificationPostRecord:
+    NotificationRecordPost:
       type: object
       properties:
         userId: { type: string }
@@ -193,10 +193,23 @@ components:
         ts: { type: number }
       required: [userId, postId, ts]
 
-    NotificationRecord:
-      oneOf:
-        - $ref: "#/components/schemas/NotificationUserRecord"
-        - $ref: "#/components/schemas/NotificationPostRecord"
+    Notification:
+      type: object
+      properties:
+        slot: { type: string }
+        term: { type: string }
+        isRead: { type: boolean }
+        updatedAt: { type: string, format: date-time }
+        createdAt: { type: string, format: date-time }
+        countUsers: { type: integer }
+        countPosts: { type: integer }
+        records:
+          type: array
+          items:
+            anyOf:
+              - $ref: "#/components/schemas/NotificationRecordUser"
+              - $ref: "#/components/schemas/NotificationRecordPost"
+      required: [slot, term, isRead, updatedAt, createdAt, records]
 
   responses:
     Error400:
@@ -1813,12 +1826,12 @@ paths:
 
   /notification/feed:
     get:
-      summary: Get notifications feed for current user
+      summary: Get notification feed (merged unread/read)
       security:
         - sessionCookie: []
       responses:
         "200":
-          description: Notifications feed
+          description: Notification feed (sorted by updatedAt desc)
           content:
             application/json:
               schema:
@@ -1830,7 +1843,7 @@ paths:
 
   /notification/mark:
     post:
-      summary: Mark a single notification read/unread
+      summary: Mark a single notification (by slot + term)
       security:
         - sessionCookie: []
       requestBody:
@@ -1841,11 +1854,11 @@ paths:
               type: object
               properties:
                 slot: { type: string }
-                day:
+                term:
                   type: string
-                  format: date
+                  maxLength: 20
                 isRead: { type: boolean }
-              required: [slot, day, isRead]
+              required: [slot, term, isRead]
       responses:
         "204":
           description: Updated
@@ -1856,7 +1869,7 @@ paths:
 
   /notification/mark-all:
     post:
-      summary: Mark all notifications read/unread for current user
+      summary: Mark all notifications for current user
       security:
         - sessionCookie: []
       requestBody:

@@ -11,11 +11,11 @@ import {
 
 type Row = {
   slot: string;
-  day: string;
+  term: string;
   is_read: boolean;
   payload: unknown;
-  updated_at: string;
-  created_at: string;
+  updated_at: unknown;
+  created_at: unknown;
 };
 
 type ParsedPayload = {
@@ -48,22 +48,22 @@ function parsePayload(raw: unknown): ParsedPayload {
   return { countUsers, countPosts, records };
 }
 
+function toIso(input: unknown): string {
+  if (input instanceof Date) return input.toISOString();
+  if (typeof input === "string" || typeof input === "number") {
+    return new Date(input).toISOString();
+  }
+  return new Date(String(input)).toISOString();
+}
+
 function rowToNotification(r: Row): Notification {
   const p = parsePayload(r.payload);
-  const updatedAtIso =
-    typeof r.updated_at === "string"
-      ? new Date(r.updated_at).toISOString()
-      : new Date(r.updated_at).toISOString();
-  const createdAtIso =
-    typeof r.created_at === "string"
-      ? new Date(r.created_at).toISOString()
-      : new Date(r.created_at).toISOString();
   return {
     slot: r.slot,
-    day: r.day,
+    term: r.term,
     isRead: r.is_read,
-    updatedAt: updatedAtIso,
-    createdAt: createdAtIso,
+    updatedAt: toIso(r.updated_at),
+    createdAt: toIso(r.created_at),
     countUsers: p.countUsers,
     countPosts: p.countPosts,
     records: p.records,
@@ -91,7 +91,7 @@ export class NotificationService {
 
   async listFeed(userId: string): Promise<Notification[]> {
     const unreadRes = await this.pg.query<Row>(
-      `SELECT slot, day, is_read, payload, updated_at, created_at
+      `SELECT slot, term, is_read, payload, updated_at, created_at
          FROM notifications
         WHERE user_id = $1 AND is_read = FALSE
         ORDER BY updated_at DESC
@@ -99,7 +99,7 @@ export class NotificationService {
       [userId, Config.NOTIFICATION_SHOWN_RECORDS],
     );
     const readRes = await this.pg.query<Row>(
-      `SELECT slot, day, is_read, payload, updated_at, created_at
+      `SELECT slot, term, is_read, payload, updated_at, created_at
          FROM notifications
         WHERE user_id = $1 AND is_read = TRUE
         ORDER BY updated_at DESC
@@ -115,8 +115,8 @@ export class NotificationService {
     await this.pg.query(
       `UPDATE notifications
           SET is_read = $4
-        WHERE user_id = $1 AND slot = $2 AND day = $3`,
-      [input.userId, input.slot, input.day, input.isRead],
+        WHERE user_id = $1 AND slot = $2 AND term = $3`,
+      [input.userId, input.slot, input.term, input.isRead],
     );
   }
 

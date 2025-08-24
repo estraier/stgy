@@ -13,7 +13,7 @@ export type NotificationAnyRecord = NotificationUserRecord | NotificationPostRec
 
 export type Notification = {
   slot: string;
-  day: string;
+  term: string;
   isRead: boolean;
   updatedAt: string;
   createdAt: string;
@@ -25,7 +25,7 @@ export type Notification = {
 export type MarkNotificationInput = {
   userId: string;
   slot: string;
-  day: string;
+  term: string;
   isRead: boolean;
 };
 

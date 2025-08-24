@@ -6,8 +6,8 @@ import { UsersService } from "../services/users";
 import { AuthService } from "../services/auth";
 import { AuthHelpers } from "./authHelpers";
 
-function isDay(value: unknown): value is string {
-  return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+function isTerm(value: unknown): value is string {
+  return typeof value === "string" && value.length > 0 && value.length <= 20;
 }
 
 export default function createNotificationRouter(pgClient: Client, redis: Redis) {
@@ -27,12 +27,12 @@ export default function createNotificationRouter(pgClient: Client, redis: Redis)
   router.post("/mark", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    const { slot, day, isRead } = req.body ?? {};
+    const { slot, term, isRead } = req.body ?? {};
     if (typeof slot !== "string" || slot.length === 0) {
       return res.status(400).json({ error: "slot is required" });
     }
-    if (!isDay(day)) {
-      return res.status(400).json({ error: "day must be YYYY-MM-DD" });
+    if (!isTerm(term)) {
+      return res.status(400).json({ error: "term must be a non-empty string up to 20 chars" });
     }
     if (typeof isRead !== "boolean") {
       return res.status(400).json({ error: "isRead must be boolean" });
@@ -40,7 +40,7 @@ export default function createNotificationRouter(pgClient: Client, redis: Redis)
     await notificationService.markNotification({
       userId: loginUser.id,
       slot,
-      day,
+      term,
       isRead,
     });
     res.status(204).end();

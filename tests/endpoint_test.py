@@ -447,6 +447,156 @@ def test_media():
   logout(session_id)
   print("[test_media] OK")
 
+def test_notifications():
+  print("[notifications] admin login")
+  admin_session = login()
+  admin_cookies = {"session_id": admin_session}
+  headers = {"Content-Type": "application/json"}
+
+  # create a user
+  email = f"notif_user+{int(time.time())}@fakebook.xyz"
+  password = "pw1-notif"
+  user_input = {
+    "email": email,
+    "nickname": "notif-user",
+    "isAdmin": False,
+    "introduction": "hello",
+    "aiModel": "gpt-4.1",
+    "aiPersonality": "curious",
+    "password": password,
+  }
+  res = requests.post(f"{BASE_URL}/users", json=user_input, headers=headers, cookies=admin_cookies)
+  assert res.status_code == 201, res.text
+  new_user = res.json()
+  new_user_id = new_user["id"]
+  print(f"[notifications] created user: {new_user_id}")
+
+  # login as created user
+  res = requests.post(f"{BASE_URL}/auth", json={"email": email, "password": password})
+  assert res.status_code == 200, res.text
+  user_session = res.cookies.get("session_id")
+  assert user_session
+  user_cookies = {"session_id": user_session}
+  print("[notifications] created user login OK")
+
+  # user posts one
+  post_input = {"content": "hello from notif test", "replyTo": None, "tags": ["t1"]}
+  res = requests.post(f"{BASE_URL}/posts", json=post_input, headers=headers, cookies=user_cookies)
+  assert res.status_code == 201, res.text
+  post = res.json()
+  post_id = post["id"]
+  print(f"[notifications] user posted: {post_id}")
+
+  # admin follow -> unfollow -> follow
+  res = requests.post(f"{BASE_URL}/users/{new_user_id}/follow", headers=headers, cookies=admin_cookies)
+  assert res.status_code == 200, res.text
+  res = requests.delete(f"{BASE_URL}/users/{new_user_id}/follow", headers=headers, cookies=admin_cookies)
+  assert res.status_code == 200, res.text
+  res = requests.post(f"{BASE_URL}/users/{new_user_id}/follow", headers=headers, cookies=admin_cookies)
+  assert res.status_code == 200, res.text
+  print("[notifications] follow/unfollow/follow done")
+
+  # admin like -> unlike -> like
+  res = requests.post(f"{BASE_URL}/posts/{post_id}/like", headers=headers, cookies=admin_cookies)
+  assert res.status_code == 200, res.text
+  res = requests.delete(f"{BASE_URL}/posts/{post_id}/like", headers=headers, cookies=admin_cookies)
+  assert res.status_code == 200, res.text
+  res = requests.post(f"{BASE_URL}/posts/{post_id}/like", headers=headers, cookies=admin_cookies)
+  assert res.status_code == 200, res.text
+  print("[notifications] like/unlike/like done")
+
+  # admin reply twice
+  res = requests.post(
+    f"{BASE_URL}/posts",
+    json={"content": "first reply", "replyTo": post_id, "tags": ["r"]},
+    headers=headers,
+    cookies=admin_cookies,
+  )
+  assert res.status_code == 201, res.text
+  res = requests.post(
+    f"{BASE_URL}/posts",
+    json={"content": "second reply", "replyTo": post_id, "tags": ["r"]},
+    headers=headers,
+    cookies=admin_cookies,
+  )
+  assert res.status_code == 201, res.text
+  print("[notifications] two replies done")
+
+  time.sleep(1)
+
+  # fetch notifications
+  res = requests.get(f"{BASE_URL}/notification/feed", cookies=user_cookies)
+  assert res.status_code == 200, res.text
+  feed = res.json()
+  print("[notifications] feed:", feed)
+  assert isinstance(feed, list)
+  # Expect exactly 3 slots: follow, like:postId, reply:postId
+  assert len(feed) == 3, f"expected 3 notifications, got {len(feed)}"
+
+  by_slot = {n["slot"]: n for n in feed}
+  follow_slot = "follow"
+  like_slot = f"like:{post_id}"
+  reply_slot = f"reply:{post_id}"
+  assert follow_slot in by_slot, f"missing {follow_slot}"
+  assert like_slot in by_slot, f"missing {like_slot}"
+  assert reply_slot in by_slot, f"missing {reply_slot}"
+
+  # follow: one unique user
+  nf = by_slot[follow_slot]
+  assert nf["isRead"] is False
+  assert nf.get("countUsers") == 1
+
+  # like: one unique user on that post
+  nl = by_slot[like_slot]
+  assert nl["isRead"] is False
+  assert nl.get("countUsers") == 1
+
+  # reply: same user twice => countUsers=1, countPosts=2
+  nr = by_slot[reply_slot]
+  assert nr["isRead"] is False
+  assert nr.get("countUsers") == 1
+  assert nr.get("countPosts") == 2
+
+  # mark follow as read
+  res = requests.post(
+    f"{BASE_URL}/notification/mark",
+    json={"slot": follow_slot, "term": nf["term"], "isRead": True},
+    headers=headers,
+    cookies=user_cookies,
+  )
+  assert res.status_code == 204, res.text
+
+  # fetch again, follow should be read
+  res = requests.get(f"{BASE_URL}/notification/feed", cookies=user_cookies)
+  assert res.status_code == 200, res.text
+  feed2 = res.json()
+  by_slot2 = {n["slot"]: n for n in feed2}
+  assert by_slot2[follow_slot]["isRead"] is True
+
+  # mark all as read
+  res = requests.post(
+    f"{BASE_URL}/notification/mark-all",
+    json={"isRead": True},
+    headers=headers,
+    cookies=user_cookies,
+  )
+  assert res.status_code == 204, res.text
+
+  # fetch again, all should be read
+  res = requests.get(f"{BASE_URL}/notification/feed", cookies=user_cookies)
+  assert res.status_code == 200, res.text
+  feed3 = res.json()
+  assert all(n["isRead"] is True for n in feed3), f"not all read: {feed3}"
+  print("[notifications] marking read OK")
+
+  # cleanup
+  res = requests.delete(f"{BASE_URL}/users/{new_user_id}", headers=headers, cookies=admin_cookies)
+  assert res.status_code == 200, res.text
+  print("[notifications] cleanup user deleted")
+
+  logout(admin_session)
+  print("[test_notifications] OK")
+
 def main():
   test_funcs = {name: fn for name, fn in globals().items() if name.startswith("test_") and callable(fn)}
   if len(sys.argv) < 2:

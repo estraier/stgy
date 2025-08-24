@@ -29,7 +29,7 @@ describe("NotificationService (happy paths)", () => {
     const unreadRows = [
       {
         slot: "follow",
-        day: "2025-08-24",
+        term: "2025-08-24",
         is_read: false,
         payload: samplePayload,
         updated_at: "2025-08-24T12:00:00.000Z",
@@ -37,7 +37,7 @@ describe("NotificationService (happy paths)", () => {
       },
       {
         slot: "like:postA",
-        day: "2025-08-24",
+        term: "2025-08-24",
         is_read: false,
         payload: samplePayload,
         updated_at: "2025-08-24T10:00:00.000Z",
@@ -47,7 +47,7 @@ describe("NotificationService (happy paths)", () => {
     const readRows = [
       {
         slot: "reply:root1",
-        day: "2025-08-24",
+        term: "2025-08-24",
         is_read: true,
         payload: samplePayload,
         updated_at: "2025-08-24T11:00:00.000Z",
@@ -55,7 +55,7 @@ describe("NotificationService (happy paths)", () => {
       },
       {
         slot: "follow",
-        day: "2025-08-23",
+        term: "2025-08-23",
         is_read: true,
         payload: samplePayload,
         updated_at: "2025-08-24T09:00:00.000Z",
@@ -101,7 +101,7 @@ describe("NotificationService (happy paths)", () => {
     await svc.markNotification({
       userId: "U",
       slot: "like:POST-1",
-      day: "2025-08-24",
+      term: "2025-08-24",
       isRead: true,
     });
     expect(query).toHaveBeenCalledTimes(1);

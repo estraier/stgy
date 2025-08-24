@@ -85,13 +85,13 @@ CREATE TABLE event_log_cursors (
 
 CREATE TABLE notifications (
   user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  slot VARCHAR(100) NOT NULL,
-  day DATE NOT NULL,
+  slot VARCHAR(50) NOT NULL,
+  term VARCHAR(50) NOT NULL,
   is_read BOOLEAN NOT NULL DEFAULT FALSE,
   payload JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (user_id, slot, day)
+  PRIMARY KEY (user_id, slot, term)
 );
 CREATE INDEX idx_notifications_user_read_ts ON notifications(user_id, is_read, updated_at);
 CREATE INDEX idx_notifications_created_at ON notifications(created_at);

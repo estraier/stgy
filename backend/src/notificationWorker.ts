@@ -1,3 +1,4 @@
+// src/notificationWorker.ts
 import { Client } from "pg";
 import { Config } from "./config";
 import { IdIssueService } from "./services/idIssue";
@@ -18,8 +19,14 @@ function eventMsFromId(eventId: string | bigint): number {
   return IdIssueService.bigIntToDate(big).getTime();
 }
 
-function isoDateUTC(ms: number): string {
-  return new Date(ms).toISOString().slice(0, 10);
+function formatTermInTz(ms: number, tz: string): string {
+  // en-CA は "YYYY-MM-DD" を返す
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(ms));
 }
 
 type UserRecord = { userId: string; ts: number };
@@ -143,16 +150,16 @@ async function upsertNotification(
   pg: Client,
   userId: string,
   slot: string,
-  dayISO: string,
+  term: string,
   updatedAtMs: number,
   entry: UserRecord | PostRecord,
 ): Promise<void> {
   const sel = await pg.query<{ payload: unknown }>(
     `SELECT payload
        FROM notifications
-      WHERE user_id = $1 AND slot = $2 AND day = $3
+      WHERE user_id = $1 AND slot = $2 AND term = $3
       FOR UPDATE`,
-    [userId, slot, dayISO],
+    [userId, slot, term],
   );
 
   const updatedAtISO = new Date(updatedAtMs).toISOString();
@@ -164,18 +171,18 @@ async function upsertNotification(
       const e = entry as PostRecord;
       const payload: NotificationPayloadReply = { countUsers: 1, countPosts: 1, records: [e] };
       await pg.query(
-        `INSERT INTO notifications (user_id, slot, day, is_read, payload, updated_at)
+        `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
          VALUES ($1, $2, $3, FALSE, $4::jsonb, $5)`,
-        [userId, slot, dayISO, JSON.stringify(payload), updatedAtISO],
+        [userId, slot, term, JSON.stringify(payload), updatedAtISO],
       );
       return;
     } else {
       const e = entry as UserRecord;
       const payload: NotificationPayloadFollowLike = { countUsers: 1, records: [e] };
       await pg.query(
-        `INSERT INTO notifications (user_id, slot, day, is_read, payload, updated_at)
+        `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
          VALUES ($1, $2, $3, FALSE, $4::jsonb, $5)`,
-        [userId, slot, dayISO, JSON.stringify(payload), updatedAtISO],
+        [userId, slot, term, JSON.stringify(payload), updatedAtISO],
       );
       return;
     }
@@ -201,8 +208,8 @@ async function upsertNotification(
           SET is_read = FALSE,
               payload = $4::jsonb,
               updated_at = $5
-        WHERE user_id = $1 AND slot = $2 AND day = $3`,
-      [userId, slot, dayISO, JSON.stringify(nextPayload), updatedAtISO],
+        WHERE user_id = $1 AND slot = $2 AND term = $3`,
+      [userId, slot, term, JSON.stringify(nextPayload), updatedAtISO],
     );
   } else {
     const current = parsePayloadFollowLike(sel.rows[0].payload);
@@ -219,8 +226,8 @@ async function upsertNotification(
           SET is_read = FALSE,
               payload = $4::jsonb,
               updated_at = $5
-        WHERE user_id = $1 AND slot = $2 AND day = $3`,
-      [userId, slot, dayISO, JSON.stringify(nextPayload), updatedAtISO],
+        WHERE user_id = $1 AND slot = $2 AND term = $3`,
+      [userId, slot, term, JSON.stringify(nextPayload), updatedAtISO],
     );
   }
 }
@@ -292,13 +299,13 @@ async function processPartition(pg: Client, partitionId: number): Promise<number
       }
       const slot = slotOf(payload);
       const ms = eventMsFromId(eid);
-      const day = isoDateUTC(ms);
+      const term = formatTermInTz(ms, Config.SYSTEM_TIMEZONE);
       const entry = makeEntry(payload, ms);
       if (!entry) {
         last = eid;
         continue;
       }
-      await upsertNotification(pg, recipient, slot, day, ms, entry);
+      await upsertNotification(pg, recipient, slot, term, ms, entry);
       last = eid;
     }
     await saveCursor(pg, partitionId, last);

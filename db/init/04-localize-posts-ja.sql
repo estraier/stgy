@@ -578,19 +578,19 @@ consumerはワーカーの種類をを識別するためにあるが、現状で
 ```
 CREATE TABLE notifications (
   user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  slot VARCHAR(100) NOT NULL,
-  day DATE NOT NULL,
+  slot VARCHAR(50) NOT NULL,
+  term VARCHAR(50) NOT NULL,
   is_read BOOLEAN NOT NULL DEFAULT FALSE,
   payload JSONB NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (user_id, slot, day)
+  PRIMARY KEY (user_id, slot, term)
 );
-CREATE INDEX idx_notifications_user_read_ts ON notifications (user_id, is_read, updated_at);
+CREATE INDEX idx_notifications_user_read_ts ON notifications(user_id, is_read, updated_at);
 CREATE INDEX idx_notifications_created_at ON notifications(created_at);
 ```
 
-ユーザはuser_idで識別する。slotはリソース種別を表し、ユーザ自信が対象であるフォローでは「follow」という決め打ちの値で、投稿が対象であれば「like:{postId}」や「reply:{postId}」の形式の値になる。dayはUTCベースの日付だ。is_readは未読既読の管理フラグで、updated_atとcreated_atは更新時刻と作成時刻だ。user_idとis_readとupdated_atの複合インデックスがあることで、各ユーザの既読通知の一覧と未読通知の一覧を効率的に取得できる。
+ユーザはuser_idで識別する。slotはリソース種別を表し、ユーザ自信が対象であるフォローでは「follow」という決め打ちの値で、投稿が対象であれば「like:{postId}」や「reply:{postId}」の形式の値になる。termはローカル時間の日付だ。スキーマ上は日付じゃなくても適当な期間ラベルをつけられるようになっている。is_readは未読既読の管理フラグで、updated_atとcreated_atは更新時刻と作成時刻だ。user_idとis_readとupdated_atの複合インデックスがあることで、各ユーザの既読通知の一覧と未読通知の一覧を効率的に取得できる。
 
 通知のpayloadはJSONデータであり、その通知レコードに関わるユーザ数や投稿数とともに、最新10件の履歴を入れる。例を示す。
 
