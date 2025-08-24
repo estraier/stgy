@@ -6,6 +6,7 @@ import { getSessionInfo, logout } from "@/api/auth";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { FiSettings, FiSearch } from "react-icons/fi";
 import type { SessionInfo } from "@/api/models";
+import NotificationBell from "@/components/NotificationBell";
 
 export default function Navbar() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
@@ -106,6 +107,7 @@ export default function Navbar() {
             {nickname}
           </span>
         )}
+        {userId && <NotificationBell userId={userId} />}
         <button
           className="p-2 rounded hover:bg-gray-200 cursor-pointer"
           aria-label="Settings"
