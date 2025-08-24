@@ -5,7 +5,12 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { FiBell, FiMoreHorizontal } from "react-icons/fi";
 import { useRouter } from "next/navigation";
 import type { Notification, NotificationAnyRecord } from "@/api/models";
-import { getNotificationFeed, markNotification, markAllNotifications } from "@/api/notifications";
+import {
+  getNotificationFeedSince, // ポーリング時のみ newerThan を付ける
+  markNotification,
+  markAllNotifications,
+} from "@/api/notifications";
+import { formatDateTime } from "@/utils/format";
 
 type Props = {
   userId: string;
@@ -30,6 +35,25 @@ function pickLatestRecord(records: NotificationAnyRecord[]): NotificationAnyReco
   return records.reduce((a, b) => (a.ts >= b.ts ? a : b));
 }
 
+function computeLatestUpdatedAt(arr: Notification[]): string | null {
+  let m: string | null = null;
+  for (const n of arr) if (!m || n.updatedAt > m) m = n.updatedAt;
+  return m;
+}
+
+function uniqueTopNicknames(n: Notification, max = 3): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const r of n.records) {
+    if (!seen.has(r.userId)) {
+      seen.add(r.userId);
+      out.push((r as any).userNickname || r.userId);
+      if (out.length >= max) break;
+    }
+  }
+  return out;
+}
+
 export default function NotificationBell({ userId, intervalMs = 30_000 }: Props) {
   const [open, setOpen] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
@@ -39,6 +63,7 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
 
   const router = useRouter();
   const anchorRef = useRef<HTMLDivElement | null>(null);
+  const latestRef = useRef<string | null>(null);
 
   const unreadCount = useMemo(() => feed.filter((n) => !n.isRead).length, [feed]);
   const unreadBadge = unreadCount >= 100 ? "99+" : String(unreadCount);
@@ -47,22 +72,36 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
     [feed, unreadOnly],
   );
 
-  const refresh = useCallback(async () => {
+  const fetchFull = useCallback(async () => {
     try {
       setError(null);
-      const data = await getNotificationFeed();
-      setFeed(Array.isArray(data) ? data : []);
+      const { changed, data } = await getNotificationFeedSince(undefined);
+      const next = Array.isArray(data) ? data : [];
+      setFeed(next);
+      latestRef.current = computeLatestUpdatedAt(next);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e));
+    }
+  }, []);
+
+  const pollRefresh = useCallback(async () => {
+    try {
+      const newerThan = latestRef.current ?? undefined;
+      const { changed, data } = await getNotificationFeedSince(newerThan);
+      if (!changed) return;
+      const next = Array.isArray(data) ? data : [];
+      setFeed(next);
+      latestRef.current = computeLatestUpdatedAt(next);
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     }
   }, []);
 
   useEffect(() => {
-    refresh();
+    fetchFull();
     let timer: ReturnType<typeof setInterval> | null = null;
-
     const start = () => {
-      if (!timer) timer = setInterval(() => refresh(), intervalMs);
+      if (!timer) timer = setInterval(() => pollRefresh(), intervalMs);
     };
     const stop = () => {
       if (timer) {
@@ -70,16 +109,14 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
         timer = null;
       }
     };
-
     if (document.visibilityState === "visible") start();
-    const onVis = () => (document.visibilityState === "visible" ? (refresh(), start()) : stop());
+    const onVis = () => (document.visibilityState === "visible" ? (pollRefresh(), start()) : stop());
     document.addEventListener("visibilitychange", onVis);
-
     return () => {
       stop();
       document.removeEventListener("visibilitychange", onVis);
     };
-  }, [refresh, intervalMs]);
+  }, [fetchFull, pollRefresh, intervalMs]);
 
   useEffect(() => {
     const base = "fakebook";
@@ -109,10 +146,8 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
       } else if (slotInfo.kind === "like") {
         if (slotInfo.postId) target = `/posts/${slotInfo.postId}`;
       } else if (slotInfo.kind === "reply") {
-        const latest = pickLatestRecord(n.records);
-        const replyPostId =
-          latest && "postId" in latest && latest.postId ? latest.postId : slotInfo.postId;
-        if (replyPostId) target = `/posts/${replyPostId}`;
+        const rootPostId = slotInfo.postId;
+        if (rootPostId) target = `/posts/${rootPostId}`;
       }
 
       setFeed((prev) =>
@@ -174,6 +209,7 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
 
       {open && (
         <div className="absolute right-0 top-full mt-2 w-[380px] max-h-[70vh] overflow-auto bg-white border rounded shadow-lg z-50">
+          {/* ヘッダー（タブ＋…） */}
           <div className="flex items-center justify-between px-3 py-2 border-b bg-gray-50 sticky top-0">
             <div className="flex gap-1">
               <button
@@ -225,8 +261,10 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
             </div>
           </div>
 
+          {/* エラー表示 */}
           {error && <div className="px-4 py-2 text-sm text-red-600">{error}</div>}
 
+          {/* リスト */}
           {filtered.length === 0 ? (
             <div className="px-4 py-6 text-sm text-gray-500">No notifications.</div>
           ) : (
@@ -246,6 +284,9 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
                   title = `${countPosts} repl${countPosts === 1 ? "y" : "ies"} to your post`;
                 }
 
+                const names = uniqueTopNicknames(n, 3);
+                const label = slotInfo.kind === "follow" ? "" : "by ";
+
                 return (
                   <li key={`${n.slot}:${n.term}`}>
                     <button
@@ -255,14 +296,29 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
                       onClick={() => handleCardClick(n)}
                     >
                       <div className="flex items-start gap-2">
-                        {!n.isRead && (
-                          <span className="mt-1 w-2 h-2 rounded-full bg-blue-500 flex-shrink-0" />
-                        )}
+                        {/* 常に固定幅のインジケータ列を置いてインデントを揃える */}
+                        <div className="mt-1 w-2 h-2 flex-shrink-0">
+                          {!n.isRead ? (
+                            <span className="block w-2 h-2 rounded-full bg-blue-500" />
+                          ) : null}
+                        </div>
+
                         <div className="min-w-0">
                           <div className="font-medium text-gray-900 truncate">{title}</div>
+
+                          {names.length > 0 && (
+                            <div
+                              className="text-[13px] text-gray-700 whitespace-nowrap overflow-hidden text-ellipsis"
+                              title={`${label}${names.join(", ")}`}
+                            >
+                              {label}
+                              {names.join(", ")}
+                            </div>
+                          )}
+
                           <div className="text-xs text-gray-500 mt-0.5">
-                            {slotInfo.kind.toUpperCase()} • {n.term}
-                            {latest ? ` • ${new Date(latest.ts).toLocaleString()}` : ""}
+                            {n.term}
+                            {latest ? ` • ${formatDateTime(new Date(latest.ts * 1000))}` : ""}
                           </div>
                         </div>
                       </div>

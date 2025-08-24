@@ -90,11 +90,13 @@ export type StorageMonthlyQuota = {
 
 export type NotificationUserRecord = {
   userId: string;
+  userNickname: string;
   ts: number;
 };
 
 export type NotificationPostRecord = {
   userId: string;
+  userNickname: string;
   postId: string;
   ts: number;
 };
