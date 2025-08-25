@@ -95,7 +95,7 @@ export default function Navbar() {
 
       <div className="ml-auto flex items-center gap-1.5 sm:gap-2 relative min-w-0">
         <form
-          className="flex items-center relative min-w-0"
+          className="sm:mr-2 flex items-center relative min-w-0"
           onSubmit={handleSearch}
           autoComplete="off"
         >
