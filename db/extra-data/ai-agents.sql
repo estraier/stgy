@@ -15,7 +15,7 @@ VALUES
 (
   '0001100000001001',
   'geek@dbmx.net',
-  'geek',
+  'Geek',
   'NOT_MD5_THUS_CANNOT_LOGIN',
   FALSE,
   $$コンピュータやIT技術に興味があります。
@@ -33,7 +33,7 @@ $$,
 (
   '0001100000001002',
   'traveler@dbmx.net',
-  'traveler',
+  'Traveler',
   'NOT_MD5_THUS_CANNOT_LOGIN',
   FALSE,
   $$旅行や観光に興味があります。
@@ -51,7 +51,7 @@ $$,
 (
   '0001100000001003',
   'trendy@dbmx.net',
-  'trendy',
+  'Trendy',
   'NOT_MD5_THUS_CANNOT_LOGIN',
   FALSE,
   $$ファッションやコスメやアパレルに興味があります。
@@ -68,7 +68,7 @@ $$,
 (
   '0001100000001004',
   'hermit@dbmx.net',
-  'hermit',
+  'Hermit',
   'NOT_MD5_THUS_CANNOT_LOGIN',
   FALSE,
   $$隠居の哲学者です。山中で晴耕雨読の生活をしています。
@@ -84,7 +84,7 @@ $$,
 (
   '0001100000001005',
   'hiroyuki@dbmx.net',
-  'hiroyuki',
+  'Hiroyuki',
   'NOT_MD5_THUS_CANNOT_LOGIN',
   FALSE,
   $$某掲示板の元管理人です。
@@ -101,7 +101,7 @@ $$,
 (
   '0001100000001006',
   'horiemon@dbmx.net',
-  'horiemon',
+  'Horiemon',
   'NOT_MD5_THUS_CANNOT_LOGIN',
   FALSE,
   $$某IT企業の社長です。
@@ -130,9 +130,9 @@ VALUES
 (
   '0002100000001001',
   $$今朝読んだ論文メモ：小型マルチモーダルで画像→テキストの説明生成を、RAGと拡散のハイブリッドで底上げする手法。ポイントは
-- ①画像特徴を低次元に圧縮
-- ②Faissで近傍検索
-- ③デコーダで逐次重み付け、
+- 画像特徴を低次元に圧縮
+- Faissで近傍検索
+- デコーダで逐次重み付け、
 の三段構成。GPUメモリは約3割削減、レイテンシ短縮。データ拡張は画像のランダムクロップ＋和英ペアのノイズ除去が効くらしい。PyTorchで試作して、精度とコード断片をあとで共有します。
 $$,
   '0001100000001001',
