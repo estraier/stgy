@@ -95,6 +95,22 @@ body {
   font-size: 90%;
   border: 1px solid #eee;
 }
+.markdown-body pre[data-pre-mode$=":xsmall"],
+.markdown-body pre[data-pre-mode*=":xsmall:"] {
+  font-size: 70%;
+}
+.markdown-body pre[data-pre-mode$=":small"],
+.markdown-body pre[data-pre-mode*=":small:"] {
+  font-size: 80%;
+}
+.markdown-body pre[data-pre-mode$=":large"],
+.markdown-body pre[data-pre-mode*=":large:"] {
+  font-size: 100%;
+}
+.markdown-body pre[data-pre-mode$=":xlarge"],
+.markdown-body pre[data-pre-mode*=":xlarge:"] {
+  font-size: 110%;
+}
 
 .markdown-body table {
   margin: 1ex 0.5ex;
@@ -224,7 +240,7 @@ body {
 }
 
 .markdown-body code {
-  font-size: 95%;
+  font-size: 90%;
   background: #eee;
 }
 

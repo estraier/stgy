@@ -90,7 +90,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
 
   for (let i = 0; i < lines.length; ++i) {
     const line = lines[i];
-    const codeFence = line.match(/^```(\w*)/);
+    const codeFence = line.match(/^```([\w:]*)/);
     if (codeFence) {
       flushPara();
       flushList();
