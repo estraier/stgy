@@ -192,14 +192,13 @@ export default function PageBody() {
   }
 
   return (
-    <main className="max-w-3xl mx-auto mt-8 p-4">
+    <main className="max-w-3xl mx-auto mt-8 p-1 sm:p-4">
       <div className="flex gap-1 mb-2">
         {TAB_VALUES.map((t) => (
           <button
             key={t}
-            className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
+            className={`px-3 py-1 rounded-t min-w-0 sm:min-w-[110px] text-sm font-normal cursor-pointer
               ${tab === t && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
-            style={{ minWidth: 110 }}
             onClick={() => handleTabChange(t)}
           >
             {t.charAt(0).toUpperCase() + t.slice(1)}

@@ -40,7 +40,7 @@ export default function PostCard({
   }
   return (
     <article
-      className={`pt-4 pb-2 pl-4 pr-3 border rounded bg-white shadow-sm ${clickable ? "cursor-pointer" : ""} ${className}`}
+      className={`p-2 sm:pt-4 sm:pb-2 sm:pl-4 sm:pr-3 border rounded bg-white shadow-sm ${clickable ? "cursor-pointer" : ""} ${className}`}
       onClick={clickable ? handleCardClick : undefined}
       tabIndex={clickable ? 0 : -1}
       role={clickable ? "button" : undefined}

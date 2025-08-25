@@ -1,12 +1,12 @@
+// src/components/Navbar.tsx
 "use client";
-
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getSessionInfo, logout } from "@/api/auth";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { FiSettings, FiSearch } from "react-icons/fi";
 import type { SessionInfo } from "@/api/models";
-import NotificationBell from "@/components/NotificationBell";
+import NotificationBell from "@/components/NotificationBell"; // ← 追加
 
 export default function Navbar() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
@@ -60,30 +60,53 @@ export default function Navbar() {
   }
 
   return (
-    <nav className="w-full h-12 flex items-center px-4 bg-white border-b border-gray-500 shadow z-10">
-      <Link href="/" className="font-bold text-lg text-blue-600 mr-6 select-none" tabIndex={0}>
+    <nav
+      className="
+        w-full h-12 flex flex-nowrap items-center
+        px-2 sm:px-4 bg-white border-b border-gray-500 shadow z-10
+      "
+    >
+      <Link
+        href="/"
+        className="font-bold text-base sm:text-lg text-blue-600 mr-3 sm:mr-6 select-none shrink-0"
+        tabIndex={0}
+      >
         Fakebook
       </Link>
-      <div className="flex gap-2">
+
+      <div className="flex gap-1.5 sm:gap-2 shrink-0">
         <Link
           href="/posts"
-          className={`px-3 py-2 rounded ${isActive("/posts") ? "bg-blue-100 font-semibold" : ""}`}
+          className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded text-sm ${
+            isActive("/posts") ? "bg-blue-100 font-semibold" : "hover:bg-blue-50"
+          }`}
         >
           Posts
         </Link>
         <Link
           href="/users"
-          className={`px-3 py-2 rounded ${isActive("/users") ? "bg-blue-100 font-semibold" : ""}`}
+          className={`px-2 sm:px-3 py-1.5 sm:py-2 rounded text-sm ${
+            isActive("/users") ? "bg-blue-100 font-semibold" : "hover:bg-blue-50"
+          }`}
         >
           Users
         </Link>
       </div>
-      <div className="ml-auto flex items-center gap-2 relative">
-        <form className="flex items-center relative" onSubmit={handleSearch} autoComplete="off">
+
+      <div className="ml-auto flex items-center gap-1.5 sm:gap-2 relative min-w-0">
+        <form
+          className="flex items-center relative min-w-0"
+          onSubmit={handleSearch}
+          autoComplete="off"
+        >
           <input
             type="text"
             name="q"
-            className="pl-9 pr-3 py-1 border border-gray-400 rounded bg-gray-50 focus:outline-none focus:ring-2 focus:ring-blue-200 text-sm w-28 sm:w-48"
+            className="
+              pl-8 pr-3 py-1 border border-gray-300 rounded bg-gray-50
+              focus:outline-none focus:ring-2 focus:ring-blue-200 text-sm
+              w-[clamp(80px,20vw,200px)] sm:w-[clamp(120px,30vw,240px)]
+            "
             placeholder="Search…"
             value={searchValue}
             onChange={(e) => setSearchValue(e.target.value)}
@@ -98,26 +121,32 @@ export default function Navbar() {
             <FiSearch size={18} />
           </button>
         </form>
+
         {nickname && (
           <span
-            className="text-sm text-gray-700 min-w-[10ex] max-w-[20ex] truncate text-ellipsis text-right block"
+            className="
+              hidden sm:block text-sm text-gray-700 max-w-[18ch]
+              truncate text-ellipsis text-right min-w-0
+            "
             title={nickname}
-            style={{ display: "inline-block" }}
           >
             {nickname}
           </span>
         )}
-        {userId && <NotificationBell userId={userId} />}
+
+        {userId && <NotificationBell userId={userId} intervalMs={30_000} />}
+
         <button
-          className="p-2 rounded hover:bg-gray-200 cursor-pointer"
+          className="p-2 rounded hover:bg-gray-200 cursor-pointer shrink-0"
           aria-label="Settings"
           onClick={() => setMenuOpen((v) => !v)}
         >
           <FiSettings size={22} />
         </button>
+
         {menuOpen && (
           <div
-            className="absolute top-0 right-0 mt-2 bg-white border rounded shadow py-2 min-w-[140px] z-50"
+            className="absolute top-0 right-0 mt-12 bg-white border rounded shadow py-2 min-w-[140px] z-50"
             onMouseLeave={() => setMenuOpen(false)}
           >
             <Link

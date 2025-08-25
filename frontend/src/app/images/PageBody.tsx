@@ -189,7 +189,7 @@ export default function PageBody() {
       : null;
 
   return (
-    <main className="max-w-5xl mx-auto mt-8 p-4">
+    <main className="max-w-5xl mx-auto mt-8 p-2 sm:p-4">
       <div className="mb-4 flex items-start gap-4 flex-wrap">
         <div className="min-w-[260px]">
           <h1 className="text-xl font-semibold">Images</h1>

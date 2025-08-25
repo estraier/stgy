@@ -310,7 +310,7 @@ export default function PageBody() {
   }
 
   return (
-    <main className="max-w-3xl mx-auto mt-8 p-4">
+    <main className="max-w-3xl mx-auto mt-8 p-1 sm:p-4">
       <UserCard user={user} truncated={false} focusUserId={userId} clickable={false} />
 
       {canEdit && !editing && (
@@ -342,9 +342,8 @@ export default function PageBody() {
         {TAB_VALUES.map((t) => (
           <button
             key={t}
-            className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
+            className={`px-3 py-1 rounded-t min-w-0 sm:min-w-[110px] text-sm font-normal cursor-pointer
               ${tab === t ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
-            style={{ minWidth: 110 }}
             onClick={() => handleTabChange(t)}
           >
             {tabLabel(t)}

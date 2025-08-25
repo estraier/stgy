@@ -362,7 +362,7 @@ export default function PageBody() {
   if (status.state !== "authenticated") return null;
 
   return (
-    <main className="max-w-3xl mx-auto mt-4 p-4" onClick={clearError}>
+    <main className="max-w-3xl mx-auto mt-4 p-1 sm:p-4" onClick={clearError}>
       <PostForm
         body={body}
         setBody={setBody}
@@ -377,9 +377,8 @@ export default function PageBody() {
         {TAB_VALUES.map((t) => (
           <button
             key={t}
-            className={`px-3 py-1 rounded-t text-sm font-normal cursor-pointer
+            className={`px-3 py-1 min-w-0 sm:min-w-[110px] rounded-t text-sm font-normal cursor-pointer
               ${tab === t && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
-            style={{ minWidth: 110 }}
             onClick={() =>
               setQuery({
                 tab: t,

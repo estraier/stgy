@@ -350,7 +350,7 @@ export default function PageBody() {
   }
 
   return (
-    <main className="max-w-3xl mx-auto mt-8 p-4">
+    <main className="max-w-3xl mx-auto mt-8 p-1 sm:p-4">
       <PostCard
         post={post}
         avatarVersion={post.ownedBy === userId ? (updatedAt ?? undefined) : undefined}
@@ -419,7 +419,7 @@ export default function PageBody() {
 
       {post.allowReplies ? (
         <>
-          <div className="mt-8 mb-2 flex items中心 gap-2">
+          <div className="mt-8 mb-2 flex items-center gap-2">
             <span className="font-bold text-lg">Replies</span>
             <label className="flex items-center gap-1 text-sm cursor-pointer ml-4">
               <input
