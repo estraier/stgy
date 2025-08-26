@@ -38,7 +38,7 @@ Set: http://example.com/
 |We|__live__|in|**Tokyo**|[Shinjuku](https://ja.wikipedia.org/wiki/%E6%96%B0%E5%AE%BF)|
 |one|**two**|three|four|five|
 
-![これはロゴです](https://dbmx.net/parallelbook/ej-logo.svg)
+![これはロゴです](/data/logo-square.svg)
 
 \`\`\`sql
 コードブロック
