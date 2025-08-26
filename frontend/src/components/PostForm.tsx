@@ -1,7 +1,7 @@
 "use client";
 
 import React, { useRef, useState, useEffect, useMemo } from "react";
-import { renderHtml } from "@/utils/markdown";
+import { makeArticleHtmlFromMarkdown } from "@/utils/article";
 import { parseBodyAndTags } from "@/utils/parse";
 import UserMentionButton from "@/components/UserMentionButton";
 import ImageEmbedButton from "@/components/ImageEmbedButton";
@@ -208,7 +208,7 @@ export default function PostForm({
           <div className="border rounded bg-white mt-1 p-3 markdown-body max-h-[50ex] overflow-y-auto">
             <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
             <div
-              dangerouslySetInnerHTML={{ __html: renderHtml(content) }}
+              dangerouslySetInnerHTML={{ __html: makeArticleHtmlFromMarkdown(content) }}
               style={{ minHeight: 32 }}
             />
             {tags.length > 0 && (

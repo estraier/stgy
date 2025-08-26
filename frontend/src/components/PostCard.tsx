@@ -5,7 +5,7 @@ import type { PostDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
 import { Heart, MessageCircle } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
-import { renderHtml } from "@/utils/markdown";
+import { makeArticleHtmlFromMarkdown, makeSnippetHtmlFromMarkdown } from "@/utils/article";
 
 type PostCardProps = {
   post: PostDetail;
@@ -104,8 +104,8 @@ export default function PostCard({
         style={{ minHeight: 36, userSelect: "text" }}
         dangerouslySetInnerHTML={{
           __html: truncated
-            ? renderHtml(post.content, { maxLen: 200, maxHeight: 10, pickupThumbnail: true })
-            : renderHtml(post.content),
+            ? makeSnippetHtmlFromMarkdown(post.content)
+            : makeArticleHtmlFromMarkdown(post.content),
         }}
       />
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">

@@ -4,7 +4,7 @@ import React, { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import type { User } from "@/api/models";
 import { listFriendsByNicknamePrefix } from "@/api/users";
 import AvatarImg from "@/components/AvatarImg";
-import { renderText } from "@/utils/markdown";
+import { makeSnippetTextFromMarkdown } from "@/utils/article";
 
 type UserMentionButtonProps = {
   onInsert: (markdown: string) => void;
@@ -101,7 +101,7 @@ export default function UserMentionButton({
     return (
       <ul className="max-h-64 overflow-auto divide-y">
         {items.map((u) => {
-          const intro = introSnippet(u.introduction);
+          const intro = makeSnippetTextFromMarkdown(u.introduction);
           const hasAvatar = !!u.avatar;
           const avatarVersion = u.updatedAt ?? null;
 
@@ -174,10 +174,4 @@ export default function UserMentionButton({
 
 function escapeLabelForMarkdown(label: string): string {
   return label.replace(/([\[\]])/g, "_");
-}
-
-function introSnippet(s: string): string {
-  const text = renderText(s || "");
-  const flat = text.replace(/\s+/g, " ").trim();
-  return flat.length > 50 ? flat.slice(0, 50) + "…" : flat;
 }

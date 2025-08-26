@@ -11,50 +11,7 @@ type Node =
       children: Node[];
     };
 
-type CompatOptions = {
-  maxLen?: number;
-  maxHeight?: number;
-  imgLen?: number;
-  imgHeight?: number;
-  rewriteImageUrl?: boolean;
-  pickupThumbnail?: boolean;
-};
-
-export function renderHtml(mdText: string, options?: CompatOptions): string {
-  return renderHtmlCompat(mdText, options);
-}
-
-export function renderHtmlCompat(mdText: string, options?: CompatOptions): string {
-  const {
-    maxLen,
-    maxHeight,
-    imgLen = 50,
-    imgHeight = 6,
-    rewriteImageUrl = true,
-    pickupThumbnail = false,
-  } = options || {};
-
-  let nodes = parseMarkdownBlocks(mdText);
-  if (rewriteImageUrl) {
-    const useThumbnail = pickupThumbnail;
-    nodes = rewriteMediaUrlsObj(nodes, useThumbnail);
-  }
-  nodes = groupImageGridObj(nodes);
-  if (pickupThumbnail) {
-    nodes = filterNodesForThumbnailObj(nodes);
-  }
-  if (typeof maxLen === "number" || typeof maxHeight === "number") {
-    nodes = cutOffMarkdownNodes(nodes, { maxLen, maxHeight, imgLen, imgHeight });
-  }
-  return renderHtmlNew(nodes);
-}
-
-export function renderText(mdText: string): string {
-  const nodes = parseMarkdownBlocks(mdText);
-  return textFromNodes(nodes);
-}
-
-function textFromNodes(nodes: Node[]): string {
+export function renderText(nodes: Node[]): string {
   const out: string[] = [];
   const DOUBLE_AFTER = new Set([
     "p",
@@ -70,7 +27,6 @@ function textFromNodes(nodes: Node[]): string {
     "table",
   ]);
   const SINGLE_AFTER = new Set(["tr", "ul", "hr"]);
-
   function walk(n: Node): void {
     if (n.type === "text") {
       out.push(n.text);
@@ -98,7 +54,6 @@ function textFromNodes(nodes: Node[]): string {
         return;
     }
   }
-
   nodes.forEach(walk);
   const text = out.join("");
   return text
@@ -117,7 +72,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
   let currPara: string[] = [];
   let currTable: string[][] = [];
   let currQuote: string[] = [];
-
   function flushPara() {
     if (currPara.length) {
       nodes.push({ type: "element", tag: "p", children: parseInline(currPara.join("\n")) });
@@ -163,10 +117,8 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       currQuote = [];
     }
   }
-
   const imageMacroRe = /^!\[([^\]]*)\]\s*\(([^)]+)\)\s*(?:\{([^\}]*)\})?$/;
   const videoExts = /\.(mpg|mp4|m4a|mov|avi|wmv|webm)(\?.*)?$/i;
-
   for (let i = 0; i < lines.length; ++i) {
     const line = lines[i];
     const codeFence = line.match(/^```([\w:]*)/);
@@ -193,7 +145,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       codeLines.push(line);
       continue;
     }
-
     const hr = line.match(/^-{3,}$/);
     if (hr) {
       flushPara(); flushList(); flushTable(); flushQuote();
@@ -202,14 +153,11 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       nodes.push({ type: "element", tag: "hr", attrs: { "hr-level": level }, children: [] });
       continue;
     }
-
     const img = line.match(imageMacroRe);
     if (img) {
       flushPara(); flushList(); flushTable(); flushQuote();
-
       const desc = img[1] || "";
       const url = img[2];
-
       const macro: Record<string, string | boolean> = {};
       if (img[3]) {
         for (const pair of img[3].split(",")) {
@@ -220,7 +168,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
           }
         }
       }
-
       const isVideo = macro["media"] === "video" || videoExts.test(url);
       const mediaAttrs: Attrs = isVideo
         ? { src: url, "aria-label": "", controls: true }
@@ -229,7 +176,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       for (const [k, v] of Object.entries(macro)) {
         mediaAttrs[k] = v;
       }
-
       const figureChildren: Node[] = [
         { type: "element", tag: isVideo ? "video" : "img", attrs: mediaAttrs, children: [] },
       ];
@@ -248,7 +194,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       });
       continue;
     }
-
     const tableRow = line.match(/^\|(.+)\|$/);
     if (tableRow) {
       flushPara(); flushList(); flushQuote();
@@ -257,7 +202,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     } else if (currTable.length) {
       flushTable();
     }
-
     const quote = line.match(/^> (.*)$/);
     if (quote) {
       flushPara(); flushList(); flushTable();
@@ -266,12 +210,10 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     } else if (currQuote.length) {
       flushQuote();
     }
-
     if (/^\s*$/.test(line)) {
       flushPara(); flushList(); flushTable(); flushQuote();
       continue;
     }
-
     const h = line.match(/^(#{1,3}) (.+)$/);
     if (h) {
       flushPara(); flushList(); flushTable(); flushQuote();
@@ -279,12 +221,10 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       nodes.push({ type: "element", tag: `h${level}`, children: parseInline(h[2]) });
       continue;
     }
-
     const li = line.match(/^(\s*)- (.+)$/);
     if (li) {
       flushPara(); flushTable(); flushQuote();
       const level = Math.floor(li[1].length / 2);
-
       while (currList.length > 0 && currList[currList.length - 1].level > level) {
         const done = currList.pop();
         if (currList.length === 0) {
@@ -298,11 +238,9 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
           }
         }
       }
-
       if (currList.length === 0 || currList[currList.length - 1].level < level) {
         currList.push({ level, items: [] });
       }
-
       currList[currList.length - 1].items.push({
         type: "element",
         tag: "li",
@@ -310,15 +248,12 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       });
       continue;
     }
-
     if (currList.length > 0) {
       flushList();
     }
     currPara.push(line);
   }
-
   flushPara(); flushList(); flushTable(); flushQuote();
-
   if (inCode && codeLines.length > 0) {
     nodes.push({
       type: "element",
@@ -341,7 +276,6 @@ export function cutOffMarkdownNodes(
 ): Node[] {
   const imgLen = params?.imgLen ?? 50;
   const imgHeight = params?.imgHeight ?? 6;
-
   const state = {
     remain: typeof params?.maxLen === "number" ? params.maxLen! : Number.POSITIVE_INFINITY,
     height: 0,
@@ -349,7 +283,6 @@ export function cutOffMarkdownNodes(
     cut: false,
     omittedInserted: false,
   };
-
   const blockTags = new Set([
     "p",
     "pre",
@@ -364,7 +297,6 @@ export function cutOffMarkdownNodes(
     "li",
     "hr",
   ]);
-
   function getKind(attrs?: string | Record<string, any>): string | undefined {
     if (!attrs) return undefined;
     if (typeof attrs === "string") return undefined;
@@ -380,15 +312,12 @@ export function cutOffMarkdownNodes(
     }
     return undefined;
   }
-
   function isThumbnailFigure(el: Extract<Node, { type: "element" }>): boolean {
     return el.tag === "figure" && getKind(el.attrs) === "thumbnail-block";
   }
-
   function isMedia(el: Extract<Node, { type: "element" }>): boolean {
     return el.tag === "img" || el.tag === "video";
   }
-
   function computeTextMetrics(nodes: Node[]): { length: number; newlines: number } {
     let length = 0;
     let newlines = 0;
@@ -404,14 +333,12 @@ export function cutOffMarkdownNodes(
     }
     return { length, newlines };
   }
-
   function bumpHeight(inc: number): boolean {
     const next = state.height + inc;
     if (next > state.maxHeight) return false;
     state.height = next;
     return true;
   }
-
   function consumeImageBudget(): boolean {
     const nextRemain = state.remain - imgLen;
     const nextHeight = state.height + imgHeight;
@@ -420,11 +347,9 @@ export function cutOffMarkdownNodes(
     state.height = nextHeight;
     return true;
   }
-
   function makeOmittedNode(): Node {
     return { type: "element", tag: "omitted", children: [] };
   }
-
   function cutTextContent(s: string, charge: boolean): { text: string; cut: boolean } {
     if (!charge) return { text: s, cut: false };
     if (state.remain <= 0) {
@@ -444,7 +369,6 @@ export function cutOffMarkdownNodes(
     state.remain -= s.length;
     return { text: s, cut: false };
   }
-
   function walk(n: Node, freeMedia: boolean, freeText: boolean): Node | null {
     if (state.cut) return null;
 
@@ -453,9 +377,7 @@ export function cutOffMarkdownNodes(
       if (text === "" && cut) return null;
       return { ...n, text };
     }
-
     const el = n;
-
     if (el.tag === "br") {
       if (!freeText) {
         if (!bumpHeight(1)) {
@@ -465,7 +387,6 @@ export function cutOffMarkdownNodes(
       }
       return { ...el, children: [] };
     }
-
     if (!freeText && blockTags.has(el.tag)) {
       const { length: contentLength, newlines } = computeTextMetrics(el.children || []);
       let inc = 1 + Math.floor(contentLength / 100);
@@ -475,17 +396,14 @@ export function cutOffMarkdownNodes(
         return null;
       }
     }
-
     if (isMedia(el) && !freeMedia) {
       if (!consumeImageBudget()) {
         state.cut = true;
         return null;
       }
     }
-
     const childFreeMedia = freeMedia || isThumbnailFigure(el) || el.tag === "figcaption";
     const childFreeText = freeText || el.tag === "figcaption";
-
     const outChildren: Node[] = [];
     for (const c of el.children || []) {
       const cc = walk(c, childFreeMedia, childFreeText);
@@ -500,7 +418,6 @@ export function cutOffMarkdownNodes(
     }
     return { ...el, children: outChildren };
   }
-
   const out: Node[] = [];
   for (const n of nodes) {
     if (state.cut) break;
@@ -514,17 +431,15 @@ export function cutOffMarkdownNodes(
       break;
     }
   }
-
   return out;
 }
 
-export function renderHtmlNew(nodes: Node[]): string {
+export function renderHtml(nodes: Node[]): string {
   function serializeAll(arr: Node[]): string {
     let html = "";
     for (const n of arr) html += serializeOne(n);
     return html;
   }
-
   function serializeOne(n: Node): string {
     if (n.type === "text") {
       return escapeHTML(n.text);
@@ -575,7 +490,6 @@ export function renderHtmlNew(nodes: Node[]): string {
     }
     return `<${n.tag}${attrsToString(n.attrs)}>${serializeAll(n.children || [])}</${n.tag}>`;
   }
-
   function serializeMedia(n: Extract<Node, { type: "element" }>): string {
     const a = n.attrs || {};
     const src = a.src ? String(a.src) : "";
@@ -586,7 +500,6 @@ export function renderHtmlNew(nodes: Node[]): string {
       return `<video${attrsToString(base)}></video>`;
     }
   }
-
   function attrsToString(attrs?: Attrs): string {
     if (!attrs) return "";
     let out = "";
@@ -601,7 +514,6 @@ export function renderHtmlNew(nodes: Node[]): string {
     }
     return out;
   }
-
   function mediaDataAttrs(mediaAttrs: Attrs): Attrs {
     const out: Attrs = {};
     for (const [k, v] of Object.entries(mediaAttrs)) {
@@ -611,11 +523,10 @@ export function renderHtmlNew(nodes: Node[]): string {
     }
     return out;
   }
-
   return serializeAll(nodes);
 }
 
-function rewriteMediaUrlsObj(nodes: Node[], useThumbnail: boolean): Node[] {
+export function rewriteMediaUrls(nodes: Node[], useThumbnail: boolean): Node[] {
   function rewriteOne(n: Node): Node {
     if (n.type !== "element") return n;
     if (n.tag === "img" || n.tag === "video") {
@@ -647,7 +558,7 @@ function rewriteMediaUrlsObj(nodes: Node[], useThumbnail: boolean): Node[] {
   return nodes.map(rewriteOne);
 }
 
-function groupImageGridObj(nodes: Node[]): Node[] {
+export function groupImageGrid(nodes: Node[]): Node[] {
   function isFigureImageBlock(n: Node): n is Extract<Node, { type: "element" }> {
     return n.type === "element" && n.tag === "figure" && n.attrs?.class === "image-block";
   }
@@ -659,7 +570,6 @@ function groupImageGridObj(nodes: Node[]): Node[] {
     if (!a) return false;
     return !!a["grid"];
   }
-
   function groupInArray(arr: Node[]): Node[] {
     const out: Node[] = [];
     for (let i = 0; i < arr.length; ) {
@@ -684,7 +594,6 @@ function groupImageGridObj(nodes: Node[]): Node[] {
           continue;
         }
       }
-
       if (node.type === "element" && node.children) {
         out.push({ ...node, children: groupInArray(node.children) });
       } else {
@@ -697,9 +606,8 @@ function groupImageGridObj(nodes: Node[]): Node[] {
   return groupInArray(nodes);
 }
 
-function filterNodesForThumbnailObj(nodes: Node[]): Node[] {
+export function filterNodesForThumbnail(nodes: Node[]): Node[] {
   let thumbnailFig: Node | null = null;
-
   function isFigureImageBlock(n: Node): boolean {
     return n.type === "element" && n.tag === "figure" && n.attrs?.class === "image-block";
   }
@@ -707,7 +615,6 @@ function filterNodesForThumbnailObj(nodes: Node[]): Node[] {
     if (!n || n.type !== "element") return undefined;
     return (n.children || []).find(isMediaElement);
   }
-
   function findThumbnailFig(arr: Node[]): Node | null {
     for (const node of arr) {
       if (isFigureImageBlock(node)) {
@@ -738,9 +645,7 @@ function filterNodesForThumbnailObj(nodes: Node[]): Node[] {
     }
     return null;
   }
-
   thumbnailFig = findThumbnailFig(nodes) || findFirstFig(nodes);
-
   function removeImageBlocks(arr: Node[]): Node[] {
     const out: Node[] = [];
     for (const n of arr) {
@@ -750,7 +655,6 @@ function filterNodesForThumbnailObj(nodes: Node[]): Node[] {
     }
     return out;
   }
-
   const body = removeImageBlocks(nodes);
   if (thumbnailFig && thumbnailFig.type === "element") {
     const thumb: Node = {
@@ -775,7 +679,6 @@ function parseInline(text: string): Node[] {
   const underline = /__([^_]+)__/;
   const strike = /~~([^~]+)~~/;
   const code = /`([^`]+)`/;
-
   let m: RegExpExecArray | null;
   if ((m = esc.exec(text))) {
     return [
@@ -819,11 +722,9 @@ function parseInline(text: string): Node[] {
       ...parseInline(text.slice(m.index + m[0]!.length)),
     ];
   }
-
   const linkRe = /\[([^\]]+)\]\(((?:https?:\/\/[^\s)]+|\/[^\s)]+|[-_a-z0-9]+))\)/gi;
   const nodes: Node[] = [];
   let last = 0;
-
   const resolveSpecialHref = (raw: string, anchor: string): string | null => {
     const toWiki = (lang: "en" | "ja", title: string) =>
       `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
@@ -832,7 +733,6 @@ function parseInline(text: string): Node[] {
     if (raw === "google") return `https://www.google.com/search?q=${encodeURIComponent(anchor)}`;
     return null;
   };
-
   let match: RegExpExecArray | null;
   while ((match = linkRe.exec(text))) {
     if (match.index > last) nodes.push(...parseInlineText(text.slice(last, match.index)));
@@ -843,7 +743,6 @@ function parseInline(text: string): Node[] {
     last = match.index + match[0]!.length;
   }
   text = text.slice(last);
-
   const urlRe = /(https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+)/g;
   last = 0;
   while ((match = urlRe.exec(text))) {
@@ -853,7 +752,6 @@ function parseInline(text: string): Node[] {
     last = match.index + match[0]!.length;
   }
   if (last < text.length) nodes.push({ type: "text", text: text.slice(last) });
-
   return nodes.flatMap<Node>((n) =>
     n.type === "text"
       ? n.text.split(/\n/).flatMap<Node>((frag, i) =>
