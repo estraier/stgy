@@ -259,8 +259,7 @@ body {
 }
 
 .markdown-body .omitted {
-  margin: 1ex 0.5ex;
-  color: #666;
+  margin: 0 0.2ex;
 }
 
 span[aria-label="Identicon"] > svg {

@@ -86,7 +86,7 @@ function textFromNodes(nodes: Node[]): string {
         out.push("\n");
         return;
       case "omitted":
-        out.push("...");
+        out.push("…");
         return;
       default:
         (n.children || []).forEach(walk);
@@ -365,24 +365,9 @@ export function cutOffMarkdownNodes(
     "hr",
   ]);
 
-  function hasClassInAttrString(attr: string, className: string): boolean {
-    if (!attr) return false;
-    if (/class\s*=/.test(attr)) {
-      const m = attr.match(/class\s*=\s*"([^"]*)"/);
-      if (m && m[1]) {
-        return m[1].split(/\s+/).includes(className);
-      }
-    }
-    return attr.includes(className);
-  }
-
   function getKind(attrs?: string | Record<string, any>): string | undefined {
     if (!attrs) return undefined;
-    if (typeof attrs === "string") {
-      if (hasClassInAttrString(attrs, "thumbnail-block")) return "thumbnail-block";
-      if (hasClassInAttrString(attrs, "image-block")) return "image-block";
-      return undefined;
-    }
+    if (typeof attrs === "string") return undefined;
     const a = attrs as Record<string, any>;
     if (typeof a.kind === "string") return a.kind;
     if (typeof a.class === "string") {
@@ -440,31 +425,31 @@ export function cutOffMarkdownNodes(
     return { type: "element", tag: "omitted", children: [] };
   }
 
-  function cutTextContent(s: string): { text: string; cut: boolean; truncated: boolean } {
+  function cutTextContent(s: string, charge: boolean): { text: string; cut: boolean } {
+    if (!charge) return { text: s, cut: false };
     if (state.remain <= 0) {
       state.cut = true;
-      return { text: "", cut: true, truncated: false };
+      return { text: "", cut: true };
     }
     if (s.length > state.remain) {
       const sliceLen = Math.max(0, state.remain);
       let part = s.slice(0, sliceLen);
-      const truncated = part.length < s.length;
-      if (truncated) {
-        part = part + "...";
+      if (part.length < s.length) {
+        part = part + "…";
       }
       state.remain = 0;
       state.cut = true;
-      return { text: part, cut: true, truncated };
+      return { text: part, cut: true };
     }
     state.remain -= s.length;
-    return { text: s, cut: false, truncated: false };
+    return { text: s, cut: false };
   }
 
-  function walk(n: Node, freeMedia: boolean): Node | null {
+  function walk(n: Node, freeMedia: boolean, freeText: boolean): Node | null {
     if (state.cut) return null;
 
     if (n.type === "text") {
-      const { text, cut } = cutTextContent(n.text);
+      const { text, cut } = cutTextContent(n.text, !freeText);
       if (text === "" && cut) return null;
       return { ...n, text };
     }
@@ -472,14 +457,16 @@ export function cutOffMarkdownNodes(
     const el = n;
 
     if (el.tag === "br") {
-      if (!bumpHeight(1)) {
-        state.cut = true;
-        return null;
+      if (!freeText) {
+        if (!bumpHeight(1)) {
+          state.cut = true;
+          return null;
+        }
       }
       return { ...el, children: [] };
     }
 
-    if (blockTags.has(el.tag)) {
+    if (!freeText && blockTags.has(el.tag)) {
       const { length: contentLength, newlines } = computeTextMetrics(el.children || []);
       let inc = 1 + Math.floor(contentLength / 100);
       if (el.tag === "pre" && newlines > 1) inc = Math.max(inc, newlines);
@@ -496,11 +483,12 @@ export function cutOffMarkdownNodes(
       }
     }
 
-    const childFree = freeMedia || isThumbnailFigure(el);
+    const childFreeMedia = freeMedia || isThumbnailFigure(el) || el.tag === "figcaption";
+    const childFreeText = freeText || el.tag === "figcaption";
 
     const outChildren: Node[] = [];
     for (const c of el.children || []) {
-      const cc = walk(c, childFree);
+      const cc = walk(c, childFreeMedia, childFreeText);
       if (cc) outChildren.push(cc);
       if (state.cut) {
         if (!state.omittedInserted) {
@@ -516,11 +504,11 @@ export function cutOffMarkdownNodes(
   const out: Node[] = [];
   for (const n of nodes) {
     if (state.cut) break;
-    const nn = walk(n, false);
+    const nn = walk(n, false, false);
     if (nn) out.push(nn);
     if (state.cut) {
       if (!state.omittedInserted) {
-        out.push({ type: "element", tag: "omitted", children: [] });
+        out.push(makeOmittedNode());
         state.omittedInserted = true;
       }
       break;
@@ -542,7 +530,7 @@ export function renderHtmlNew(nodes: Node[]): string {
       return escapeHTML(n.text);
     }
     if (n.type === "element" && n.tag === "omitted") {
-      return `<span class="omitted">...</span>`;
+      return `<span class="omitted">…</span>`;
     }
     if (n.type === "element" && n.tag === "br") {
       return `<br>`;
