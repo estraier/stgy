@@ -1,11 +1,14 @@
+// src/utils/markdown.ts
 import { Config } from "@/config";
+
+type Attrs = Record<string, string | number | boolean>;
 
 type Node =
   | { type: "text"; text: string }
   | {
       type: "element";
       tag: string;
-      attrs?: string;
+      attrs?: Attrs;
       children: Node[];
       isThumbnailBlock?: boolean;
     };
@@ -42,7 +45,8 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
           children: list.items,
         });
       } else {
-        const lastLi = currList[currList.length - 1].items.at(-1);
+        const parentItems = currList[currList.length - 1].items;
+        const lastLi = parentItems.length > 0 ? parentItems[parentItems.length - 1] : undefined;
         if (lastLi && lastLi.type === "element" && lastLi.tag === "li") {
           if (!lastLi.children) lastLi.children = [];
           lastLi.children.push({
@@ -104,7 +108,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
         nodes.push({
           type: "element",
           tag: "pre",
-          attrs: codeLang ? ` data-pre-mode="${escapeHTML(codeLang)}"` : undefined,
+          attrs: codeLang ? { "data-pre-mode": codeLang } : undefined,
           children: [{ type: "text", text: codeLines.join("\n") }],
         });
         inCode = false;
@@ -129,7 +133,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       nodes.push({
         type: "element",
         tag: "hr",
-        attrs: ` data-hr-level="${level}"`,
+        attrs: { "data-hr-level": level },
         children: [],
       });
       continue;
@@ -142,56 +146,50 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
       flushTable();
       flushQuote();
 
+      const [, descRaw, urlRaw, macroRaw] = img;
+      const desc = descRaw || "";
+      const url = urlRaw;
+
       const macro: Record<string, string | boolean> = {};
-      if (img[3]) {
-        for (const pair of img[3].split(",")) {
-          const m = pair.match(/^\s*([a-z][a-z0-9-]*)(?:=([^,]+))?\s*$/);
+      if (macroRaw) {
+        for (const pair of macroRaw.split(",")) {
+          const m = pair.match(/^\s*([a-z][a-z0-9-]*)(?:=([^,]+))?\s*$/i);
           if (m) {
-            if (m[2] === undefined) {
-              macro[m[1]] = true;
-            } else {
-              macro[m[1]] = m[2].replace(/\s+/g, " ");
-            }
+            if (m[2] === undefined) macro[m[1]!.toLowerCase()] = true;
+            else macro[m[1]!.toLowerCase()] = m[2]!.replace(/\s+/g, " ");
           }
         }
       }
 
-      const isVideo = macro["media"] === "video" || videoExts.test(img[2]);
-      const dataAttrs = Object.entries(macro)
-        .map(([k, v]) => (v === true ? ` data-${k}` : ` data-${k}="${escapeHTML(String(v))}"`))
-        .join("");
-      const desc = img[1] || "";
+      const isVideo = macro["media"] === "video" || videoExts.test(url);
+      const mediaAttrs: Attrs = isVideo
+        ? { src: url, ...prefixDataAttrs(macro) }
+        : { src: url, alt: "", ...prefixDataAttrs(macro) };
+      const mediaNode: Node = {
+        type: "element",
+        tag: isVideo ? "video" : "img",
+        attrs: mediaAttrs,
+        children: [],
+      };
+
+      const figureChildren: Node[] = [mediaNode];
+      if (desc) {
+        figureChildren.push({
+          type: "element",
+          tag: "figcaption",
+          children: [{ type: "text", text: desc }],
+        });
+      }
+
       nodes.push({
         type: "element",
         tag: "figure",
-        attrs: ` class="image-block"`,
-        children: [
-          isVideo
-            ? {
-                type: "element",
-                tag: "video",
-                attrs: ` src="${escapeHTML(img[2])}" aria-label="" controls` + dataAttrs,
-                children: [],
-              }
-            : {
-                type: "element",
-                tag: "img",
-                attrs: ` src="${escapeHTML(img[2])}" alt=""` + dataAttrs,
-                children: [],
-              },
-          ...(desc
-            ? [
-                {
-                  type: "element",
-                  tag: "figcaption",
-                  children: [{ type: "text", text: desc }],
-                } as Node,
-              ]
-            : []),
-        ],
+        attrs: { class: "image-block" },
+        children: figureChildren,
       });
       continue;
     }
+
     const tableRow = line.match(/^\|(.+)\|$/);
     if (tableRow) {
       flushPara();
@@ -249,7 +247,8 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
             children: done!.items,
           });
         } else {
-          const lastLi = currList[currList.length - 1].items.at(-1);
+          const parentItems = currList[currList.length - 1].items;
+          const lastLi = parentItems.length > 0 ? parentItems[parentItems.length - 1] : undefined;
           if (lastLi && lastLi.type === "element" && lastLi.tag === "li") {
             if (!lastLi.children) lastLi.children = [];
             lastLi.children.push({
@@ -285,7 +284,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     nodes.push({
       type: "element",
       tag: "pre",
-      attrs: codeLang ? ` data-pre-mode="${escapeHTML(codeLang)}"` : undefined,
+      attrs: codeLang ? { "data-pre-mode": codeLang } : undefined,
       children: [{ type: "text", text: codeLines.join("\n") }],
     });
   }
@@ -296,13 +295,12 @@ function rewriteMediaUrls(nodes: Node[], useThumbnail: boolean): Node[] {
   function rewriteOne(n: Node): Node {
     if (n.type !== "element") return n;
     if (n.tag === "img" || n.tag === "video") {
-      const srcMatch = n.attrs?.match(/\bsrc="([^"]*)"/);
-      const src = srcMatch?.[1] ?? "";
+      const src = String(n.attrs?.src ?? "");
       if (!/^\/(data|images|videos)\//.test(src)) {
         return {
           type: "element",
           tag: "img",
-          attrs: ` src="${escapeHTML("/data/no-image.svg")}"`,
+          attrs: { src: "/data/no-image.svg" },
           children: [],
         };
       }
@@ -319,14 +317,9 @@ function rewriteMediaUrls(nodes: Node[], useThumbnail: boolean): Node[] {
             return `/${base}_image.webp`;
           });
           const thumbSrc = thumbPath + suffix;
-          const newAttrsThumb = (n.attrs || "").replace(
-            /\bsrc="[^"]*"/,
-            ` src="${escapeHTML(thumbSrc)}"`,
-          );
-          return { ...n, attrs: newAttrsThumb };
+          return { ...n, attrs: { ...(n.attrs || {}), src: thumbSrc } };
         }
-        const newAttrs = (n.attrs || "").replace(/\bsrc="[^"]*"/, ` src="${escapeHTML(newSrc)}"`);
-        return { ...n, attrs: newAttrs };
+        return { ...n, attrs: { ...(n.attrs || {}), src: newSrc } };
       }
       return n;
     }
@@ -335,7 +328,6 @@ function rewriteMediaUrls(nodes: Node[], useThumbnail: boolean): Node[] {
   return nodes.map(rewriteOne);
 }
 
-/** ---------- any排除のための型ガードとグリッド化 ---------- */
 type ElementNode = Extract<Node, { type: "element" }>;
 function isElement(node: Node): node is ElementNode {
   return node.type === "element";
@@ -346,14 +338,15 @@ function isMediaElement(node: Node): node is ElementNode & { tag: "img" | "video
 
 function groupImageGrid(nodes: Node[]): Node[] {
   function isFigureImageBlock(n: Node): n is ElementNode {
-    return isElement(n) && n.tag === "figure" && !!n.attrs && n.attrs.includes("image-block");
+    return isElement(n) && n.tag === "figure" && !!n.attrs && String(n.attrs.class || "").includes("image-block");
   }
   function findMedia(n: Node | undefined): (ElementNode & { tag: "img" | "video" }) | undefined {
     if (!n || !isElement(n)) return undefined;
     return (n.children || []).find(isMediaElement);
   }
-  function hasGridFlag(attrs?: string): boolean {
-    return !!attrs && /\bdata-grid(?:=| |\b)/i.test(attrs);
+  function hasGridFlag(attrs?: Attrs): boolean {
+    if (!attrs) return false;
+    return "data-grid" in attrs;
   }
 
   function groupInArray(arr: Node[]): Node[] {
@@ -377,7 +370,7 @@ function groupImageGrid(nodes: Node[]): Node[] {
           out.push({
             type: "element",
             tag: "div",
-            attrs: ` class="image-grid" data-cols="${cols}"`,
+            attrs: { class: "image-grid", "data-cols": cols },
             children: group,
           });
           i = j;
@@ -401,26 +394,25 @@ function groupImageGrid(nodes: Node[]): Node[] {
 function filterNodesForThumbnail(nodes: Node[]): Node[] {
   let thumbnailFig: Node | null = null;
 
+  function isImageBlockFigure(n: Node): n is ElementNode {
+    return isElement(n) && n.tag === "figure" && String(n.attrs?.class || "").includes("image-block");
+  }
+
   function findThumbnailFig(nodes: Node[]): Node | null {
     for (const node of nodes) {
-      if (
-        node.type === "element" &&
-        node.tag === "figure" &&
-        node.attrs &&
-        node.attrs.includes("image-block")
-      ) {
+      if (isImageBlockFigure(node)) {
         const imgOrVideo = node.children[0];
         if (
           imgOrVideo &&
           imgOrVideo.type === "element" &&
           (imgOrVideo.tag === "img" || imgOrVideo.tag === "video") &&
           imgOrVideo.attrs &&
-          /\bdata-thumbnail\b/.test(imgOrVideo.attrs)
+          imgOrVideo.attrs["data-thumbnail"]
         ) {
           return node;
         }
       }
-      if (node.type === "element" && node.children) {
+      if (isElement(node) && node.children) {
         const res = findThumbnailFig(node.children);
         if (res) return res;
       }
@@ -430,20 +422,16 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
 
   function findFirstFig(nodes: Node[]): Node | null {
     for (const node of nodes) {
-      if (
-        node.type === "element" &&
-        node.tag === "figure" &&
-        node.attrs &&
-        node.attrs.includes("image-block")
-      ) {
+      if (isImageBlockFigure(node)) {
         const imgOrVideo = node.children[0];
         if (
           imgOrVideo &&
           imgOrVideo.type === "element" &&
           (imgOrVideo.tag === "img" || imgOrVideo.tag === "video")
         ) {
-          const a = imgOrVideo.attrs || "";
-          if (/\bdata-no-thumbnail\b/.test(a)) {
+          const a = imgOrVideo.attrs || {};
+          if (a["data-no-thumbnail"]) {
+            // skip
           } else {
             return node;
           }
@@ -451,7 +439,7 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
           return node;
         }
       }
-      if (node.type === "element" && node.children) {
+      if (isElement(node) && node.children) {
         const res = findFirstFig(node.children);
         if (res) return res;
       }
@@ -463,20 +451,14 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
   function removeImageBlocks(nodes: Node[]): Node[] {
     const result: Node[] = [];
     for (const node of nodes) {
-      if (
-        node.type === "element" &&
-        node.tag === "figure" &&
-        node.attrs &&
-        node.attrs.includes("image-block")
-      ) {
+      if (isImageBlockFigure(node)) {
         continue;
       }
-      if (node.type === "element" && node.children) {
+      if (isElement(node) && node.children) {
         const children = removeImageBlocks(node.children);
         if (
           node.tag === "div" &&
-          node.attrs &&
-          node.attrs.includes("image-grid") &&
+          String(node.attrs?.class || "").includes("image-grid") &&
           children.length === 0
         ) {
           continue;
@@ -492,10 +474,11 @@ function filterNodesForThumbnail(nodes: Node[]): Node[] {
   const bodyNodes = removeImageBlocks(nodes);
 
   if (thumbnailFig && thumbnailFig.type === "element") {
+    const cls = String(thumbnailFig.attrs?.class || "");
     const thumb: Node = {
       type: "element",
       tag: thumbnailFig.tag,
-      attrs: (thumbnailFig.attrs || "").replace("image-block", "thumbnail-block"),
+      attrs: { ...(thumbnailFig.attrs || {}), class: cls.replace("image-block", "thumbnail-block") },
       children: thumbnailFig.children,
       isThumbnailBlock: true,
     };
@@ -615,7 +598,7 @@ function parseInline(text: string): Node[] {
     nodes.push({
       type: "element",
       tag: "a",
-      attrs: ` href="${escapeHTML(resolved)}"`,
+      attrs: { href: resolved },
       children: [{ type: "text", text: anchor }],
     });
     last = match.index + match[0].length;
@@ -631,7 +614,7 @@ function parseInline(text: string): Node[] {
     nodes.push({
       type: "element",
       tag: "a",
-      attrs: ` href="${escapeHTML(match[0])}"`,
+      attrs: { href: match[0] },
       children: [{ type: "text", text: match[0] }],
     });
     last = match.index + match[0].length;
@@ -667,20 +650,53 @@ function escapeHTML(text: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function collectDataAttrs(attrStr?: string): string {
-  if (!attrStr) return "";
-  const re = /\sdata-([a-z0-9-]+)(?:="([^"]*)")?/gi;
-  const seen = new Set<string>();
-  const parts: string[] = [];
-  let m: RegExpExecArray | null;
-  while ((m = re.exec(attrStr))) {
-    const k = m[1].toLowerCase();
-    if (seen.has(k)) continue;
-    const v = m[2];
-    parts.push(v === undefined ? ` data-${k}` : ` data-${k}="${v}"`);
-    seen.add(k);
+function prefixDataAttrs(macro: Record<string, string | boolean>): Attrs {
+  const out: Attrs = {};
+  for (const [k, v] of Object.entries(macro)) {
+    out[`data-${k}`] = v;
   }
-  return parts.join("");
+  return out;
+}
+
+function attrsToString(attrs?: Attrs): string {
+  if (!attrs) return "";
+  // class を先頭に、残りはキー昇順で安定化
+  const keys = Object.keys(attrs);
+  keys.sort();
+  if ("class" in attrs) {
+    const i = keys.indexOf("class");
+    if (i > 0) {
+      keys.splice(i, 1);
+      keys.unshift("class");
+    }
+  }
+  let s = "";
+  for (const k of keys) {
+    const v = attrs[k];
+    if (typeof v === "boolean") {
+      if (v) s += ` ${k}`;
+    } else {
+      s += ` ${k}="${escapeHTML(String(v))}"`;
+    }
+  }
+  return s;
+}
+
+function collectDataAttrsFromMap(attrs?: Attrs): string {
+  if (!attrs) return "";
+  const entries = Object.entries(attrs).filter(([k]) => k.startsWith("data-"));
+  if (entries.length === 0) return "";
+  // data-* のみ、キー昇順で
+  entries.sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
+  let s = "";
+  for (const [k, v] of entries) {
+    if (typeof v === "boolean") {
+      if (v) s += ` ${k}`;
+    } else {
+      s += ` ${k}="${escapeHTML(String(v))}"`;
+    }
+  }
+  return s;
 }
 
 export function renderHtml(
@@ -777,11 +793,11 @@ export function renderHtml(
               break;
             }
           }
-          const figExtra = collectDataAttrs(media?.attrs);
+          const figExtra = collectDataAttrsFromMap(media?.attrs);
           html += `<figure class="thumbnail-block"${figExtra}>`;
           for (const child of node.children || []) {
             if (child.type === "element" && (child.tag === "img" || child.tag === "video")) {
-              const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
+              const src = String(child.attrs?.src ?? "");
               if (child.tag === "img") {
                 html += `<img src="${escapeHTML(src)}" alt="">`;
               } else {
@@ -799,7 +815,8 @@ export function renderHtml(
         if (
           node.tag === "figure" &&
           node.attrs &&
-          (node.attrs.includes("image-block") || node.attrs.includes("thumbnail-block"))
+          String(node.attrs.class || "").includes("image-block") ||
+          (node.attrs && String(node.attrs.class || "").includes("thumbnail-block"))
         ) {
           const media = (node.children || []).find(isMediaElement);
           if (media) {
@@ -812,12 +829,12 @@ export function renderHtml(
               break;
             }
           }
-          const figExtra = collectDataAttrs(media?.attrs);
-          const figAttrs = (node.attrs || "") + figExtra;
+          const figExtra = collectDataAttrsFromMap(media?.attrs);
+          const figAttrs = attrsToString(node.attrs) + figExtra;
           html += `<figure${figAttrs}>`;
           for (const child of node.children || []) {
             if (child.type === "element" && (child.tag === "img" || child.tag === "video")) {
-              const src = child.attrs?.match(/src="([^"]*)"/)?.[1] ?? "";
+              const src = String(child.attrs?.src ?? "");
               if (child.tag === "img") {
                 html += `<img src="${escapeHTML(src)}" alt="">`;
               } else {
@@ -841,7 +858,7 @@ export function renderHtml(
             }
             break;
           }
-          const src = node.attrs.match(/src="([^"]*)"/)?.[1] ?? "";
+          const src = String(node.attrs.src ?? "");
           if (node.tag === "img") {
             html += `<img src="${escapeHTML(src)}" alt="">`;
           } else {
@@ -896,11 +913,11 @@ export function renderHtml(
         }
 
         if (node.tag === "hr") {
-          html += `<hr${node.attrs || ""}>`;
+          html += `<hr${attrsToString(node.attrs)}>`;
           continue;
         }
 
-        html += `<${node.tag}${node.attrs || ""}>`;
+        html += `<${node.tag}${attrsToString(node.attrs)}>`;
         html += htmlFromNodes(node.children || []);
         html += `</${node.tag}>`;
         if (state.cut) break;
