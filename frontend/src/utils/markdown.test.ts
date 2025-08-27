@@ -151,7 +151,6 @@ ika</pre><h2>H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul><li>e</li><
   });
 });
 
-
 /*
   it("thumbnail", () => {
     const mdText = `abc

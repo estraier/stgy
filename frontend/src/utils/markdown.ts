@@ -63,7 +63,11 @@ export function parseMarkdown(mdText: string): MdNode[] {
   }
   function flushQuote() {
     if (currQuote.length) {
-      nodes.push({ type: "element", tag: "blockquote", children: parseInline(currQuote.join("\n")) });
+      nodes.push({
+        type: "element",
+        tag: "blockquote",
+        children: parseInline(currQuote.join("\n")),
+      });
       currQuote = [];
     }
   }
@@ -73,7 +77,10 @@ export function parseMarkdown(mdText: string): MdNode[] {
     const line = lines[i];
     const codeFence = line.match(/^```([\w:]*)/);
     if (codeFence) {
-      flushPara(); flushList(); flushTable(); flushQuote();
+      flushPara();
+      flushList();
+      flushTable();
+      flushQuote();
       if (!inCode) {
         inCode = true;
         codeLines = [];
@@ -97,7 +104,10 @@ export function parseMarkdown(mdText: string): MdNode[] {
     }
     const hr = line.match(/^-{3,}$/);
     if (hr) {
-      flushPara(); flushList(); flushTable(); flushQuote();
+      flushPara();
+      flushList();
+      flushTable();
+      flushQuote();
       const dashCount = hr[0].length;
       const level = dashCount === 3 ? 1 : dashCount === 4 ? 2 : 3;
       nodes.push({ type: "element", tag: "hr", attrs: { "hr-level": level }, children: [] });
@@ -105,7 +115,10 @@ export function parseMarkdown(mdText: string): MdNode[] {
     }
     const img = line.match(imageMacroRe);
     if (img) {
-      flushPara(); flushList(); flushTable(); flushQuote();
+      flushPara();
+      flushList();
+      flushTable();
+      flushQuote();
       const desc = img[1] || "";
       const url = img[2];
       const macro: Record<string, string | boolean> = {};
@@ -145,7 +158,9 @@ export function parseMarkdown(mdText: string): MdNode[] {
     }
     const tableRow = line.match(/^\|(.+)\|$/);
     if (tableRow) {
-      flushPara(); flushList(); flushQuote();
+      flushPara();
+      flushList();
+      flushQuote();
       currTable.push(tableRow[1].split("|"));
       continue;
     } else if (currTable.length) {
@@ -153,26 +168,36 @@ export function parseMarkdown(mdText: string): MdNode[] {
     }
     const quote = line.match(/^> (.*)$/);
     if (quote) {
-      flushPara(); flushList(); flushTable();
+      flushPara();
+      flushList();
+      flushTable();
       currQuote.push(quote[1]);
       continue;
     } else if (currQuote.length) {
       flushQuote();
     }
     if (/^\s*$/.test(line)) {
-      flushPara(); flushList(); flushTable(); flushQuote();
+      flushPara();
+      flushList();
+      flushTable();
+      flushQuote();
       continue;
     }
     const h = line.match(/^(#{1,3}) (.+)$/);
     if (h) {
-      flushPara(); flushList(); flushTable(); flushQuote();
+      flushPara();
+      flushList();
+      flushTable();
+      flushQuote();
       const level = h[1].length;
       nodes.push({ type: "element", tag: `h${level}`, children: parseInline(h[2]) });
       continue;
     }
     const li = line.match(/^(\s*)- (.+)$/);
     if (li) {
-      flushPara(); flushTable(); flushQuote();
+      flushPara();
+      flushTable();
+      flushQuote();
       const level = Math.floor(li[1].length / 2);
       while (currList.length > 0 && currList[currList.length - 1].level > level) {
         const done = currList.pop();
@@ -202,7 +227,10 @@ export function parseMarkdown(mdText: string): MdNode[] {
     }
     currPara.push(line);
   }
-  flushPara(); flushList(); flushTable(); flushQuote();
+  flushPara();
+  flushList();
+  flushTable();
+  flushQuote();
   if (inCode && codeLines.length > 0) {
     nodes.push({
       type: "element",
@@ -230,8 +258,7 @@ export function mdRenderText(nodes: MdNode[]): string {
     "table",
   ]);
   const SINGLE_AFTER = new Set(["tr", "ul", "hr"]);
-  const endsWithNewline = () =>
-    out.length > 0 && out[out.length - 1]!.endsWith("\n");
+  const endsWithNewline = () => out.length > 0 && out[out.length - 1]!.endsWith("\n");
   const ensureNewline = () => {
     if (!endsWithNewline()) out.push("\n");
   };
@@ -394,7 +421,12 @@ export function mdRewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNo
       const a = n.attrs || {};
       const src = typeof a.src === "string" ? a.src : "";
       if (!/^\/(data|images|videos)\//.test(src)) {
-        return { type: "element", tag: "img", attrs: { src: "/data/no-image.svg", alt: "" }, children: [] };
+        return {
+          type: "element",
+          tag: "img",
+          attrs: { src: "/data/no-image.svg", alt: "" },
+          children: [],
+        };
       }
       if (/^\/images\//.test(src)) {
         const baseUrl = `${Config.STORAGE_S3_PUBLIC_BASE_URL}/${Config.MEDIA_BUCKET_IMAGES}`;
@@ -439,7 +471,11 @@ export function mdGroupImageGrid(nodes: MdNode[]): MdNode[] {
       if (isFigureImageBlock(node) && hasGridFlag(findMedia(node)?.attrs)) {
         const group: MdNode[] = [node];
         let j = i + 1;
-        while (j < arr.length && isFigureImageBlock(arr[j]) && hasGridFlag(findMedia(arr[j])?.attrs)) {
+        while (
+          j < arr.length &&
+          isFigureImageBlock(arr[j]) &&
+          hasGridFlag(findMedia(arr[j])?.attrs)
+        ) {
           group.push(arr[j]);
           j++;
         }
@@ -511,7 +547,8 @@ export function mdFilterForThumbnail(nodes: MdNode[]): MdNode[] {
     const out: MdNode[] = [];
     for (const n of arr) {
       if (isFigureImageBlock(n)) continue;
-      if (n.type === "element" && n.children?.length) out.push({ ...n, children: removeImageBlocks(n.children) });
+      if (n.type === "element" && n.children?.length)
+        out.push({ ...n, children: removeImageBlocks(n.children) });
       else out.push(n);
     }
     return out;
@@ -811,7 +848,12 @@ function parseInline(text: string): MdNode[] {
     const anchor = match[1]!;
     const rawHref = match[2]!;
     const resolved = resolveSpecialHref(rawHref, anchor) ?? rawHref;
-    nodes.push({ type: "element", tag: "a", attrs: { href: resolved }, children: [{ type: "text", text: anchor }] });
+    nodes.push({
+      type: "element",
+      tag: "a",
+      attrs: { href: resolved },
+      children: [{ type: "text", text: anchor }],
+    });
     last = match.index + match[0]!.length;
   }
   text = text.slice(last);
@@ -820,7 +862,12 @@ function parseInline(text: string): MdNode[] {
   while ((match = urlRe.exec(text))) {
     if (match.index > last) nodes.push({ type: "text", text: text.slice(last, match.index) });
     const url = match[0]!;
-    nodes.push({ type: "element", tag: "a", attrs: { href: url }, children: [{ type: "text", text: url }] });
+    nodes.push({
+      type: "element",
+      tag: "a",
+      attrs: { href: url },
+      children: [{ type: "text", text: url }],
+    });
     last = match.index + match[0]!.length;
   }
   if (last < text.length) nodes.push({ type: "text", text: text.slice(last) });
@@ -829,7 +876,10 @@ function parseInline(text: string): MdNode[] {
       ? n.text.split(/\n/).flatMap<MdNode>((frag, i) =>
           i === 0
             ? [{ type: "text", text: frag }]
-            : [{ type: "element", tag: "br", children: [] }, { type: "text", text: frag }],
+            : [
+                { type: "element", tag: "br", children: [] },
+                { type: "text", text: frag },
+              ],
         )
       : [n],
   );

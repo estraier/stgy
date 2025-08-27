@@ -6,7 +6,7 @@ import {
   mdFilterForThumbnail,
   mdCutOff,
   mdRenderHtml,
-  mdRenderText
+  mdRenderText,
 } from "@/utils/markdown";
 
 export function dummy() {
