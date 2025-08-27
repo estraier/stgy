@@ -11,85 +11,6 @@ type Node =
       children: Node[];
     };
 
-export function renderText(nodes: Node[]): string {
-  const out: string[] = [];
-  const DOUBLE_AFTER = new Set([
-    "p",
-    "pre",
-    "blockquote",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "figure",
-    "table",
-  ]);
-  const SINGLE_AFTER = new Set(["tr", "ul", "hr"]);
-  const endsWithNewline = () =>
-    out.length > 0 && out[out.length - 1]!.endsWith("\n");
-  const ensureNewline = () => {
-    if (!endsWithNewline()) out.push("\n");
-  };
-  function walk(n: Node, depth = 0): void {
-    if (n.type === "text") {
-      out.push(n.text);
-      return;
-    }
-    switch (n.tag) {
-      case "br": {
-        out.push("\n");
-        return;
-      }
-      case "omitted": {
-        out.push("…");
-        return;
-      }
-      case "ul": {
-        for (const child of n.children || []) {
-          walk(child, depth + 1);
-        }
-        ensureNewline();
-        return;
-      }
-      case "li": {
-        out.push("  ".repeat(Math.max(0, depth - 1)) + "- ");
-        let lastChildWasUL = false;
-        for (const child of n.children || []) {
-          if (child.type === "element" && child.tag === "ul") {
-            ensureNewline();
-            walk(child, depth);
-            lastChildWasUL = true;
-          } else {
-            walk(child, depth);
-            lastChildWasUL = false;
-          }
-        }
-        if (!lastChildWasUL) out.push("\n");
-        return;
-      }
-      default: {
-        for (const child of n.children || []) {
-          walk(child, depth);
-        }
-        if (DOUBLE_AFTER.has(n.tag)) {
-          out.push("\n\n");
-        } else if (SINGLE_AFTER.has(n.tag)) {
-          ensureNewline();
-        }
-        return;
-      }
-    }
-  }
-  for (const n of nodes) walk(n, 0);
-  const text = out.join("");
-  return text
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
 export function parseMarkdownBlocks(mdText: string): Node[] {
   const lines = mdText.replace(/\r\n/g, "\n").split("\n");
   const nodes: Node[] = [];
@@ -293,6 +214,85 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
   return nodes;
 }
 
+export function renderText(nodes: Node[]): string {
+  const out: string[] = [];
+  const DOUBLE_AFTER = new Set([
+    "p",
+    "pre",
+    "blockquote",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "figure",
+    "table",
+  ]);
+  const SINGLE_AFTER = new Set(["tr", "ul", "hr"]);
+  const endsWithNewline = () =>
+    out.length > 0 && out[out.length - 1]!.endsWith("\n");
+  const ensureNewline = () => {
+    if (!endsWithNewline()) out.push("\n");
+  };
+  function walk(n: Node, depth = 0): void {
+    if (n.type === "text") {
+      out.push(n.text);
+      return;
+    }
+    switch (n.tag) {
+      case "br": {
+        out.push("\n");
+        return;
+      }
+      case "omitted": {
+        out.push("…");
+        return;
+      }
+      case "ul": {
+        for (const child of n.children || []) {
+          walk(child, depth + 1);
+        }
+        ensureNewline();
+        return;
+      }
+      case "li": {
+        out.push("  ".repeat(Math.max(0, depth - 1)) + "- ");
+        let lastChildWasUL = false;
+        for (const child of n.children || []) {
+          if (child.type === "element" && child.tag === "ul") {
+            ensureNewline();
+            walk(child, depth);
+            lastChildWasUL = true;
+          } else {
+            walk(child, depth);
+            lastChildWasUL = false;
+          }
+        }
+        if (!lastChildWasUL) out.push("\n");
+        return;
+      }
+      default: {
+        for (const child of n.children || []) {
+          walk(child, depth);
+        }
+        if (DOUBLE_AFTER.has(n.tag)) {
+          out.push("\n\n");
+        } else if (SINGLE_AFTER.has(n.tag)) {
+          ensureNewline();
+        }
+        return;
+      }
+    }
+  }
+  for (const n of nodes) walk(n, 0);
+  const text = out.join("");
+  return text
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
 export function renderHtml(nodes: Node[]): string {
   function serializeAll(arr: Node[]): string {
     let html = "";
@@ -311,19 +311,21 @@ export function renderHtml(nodes: Node[]): string {
     }
     if (n.type === "element" && n.tag === "hr") {
       const a = n.attrs || {};
-      const attrs = { ...a };
+      const attrs: Attrs = { ...a };
       if (attrs["hr-level"] !== undefined) {
-        (attrs as any)[`data-hr-level`] = attrs["hr-level"];
-        delete (attrs as any)["hr-level"];
+        const v = attrs["hr-level"];
+        delete attrs["hr-level"];
+        attrs["data-hr-level"] = v;
       }
       return `<hr${attrsToString(attrs)}>`;
     }
     if (n.type === "element" && n.tag === "pre") {
       const a = n.attrs || {};
-      const attrs = { ...a };
+      const attrs: Attrs = { ...a };
       if (attrs["pre-mode"] !== undefined) {
-        (attrs as any)[`data-pre-mode`] = attrs["pre-mode"];
-        delete (attrs as any)["pre-mode"];
+        const v = attrs["pre-mode"];
+        delete attrs["pre-mode"];
+        attrs["data-pre-mode"] = v;
       }
       return `<pre${attrsToString(attrs)}>${serializeAll(n.children || [])}</pre>`;
     }
@@ -331,7 +333,7 @@ export function renderHtml(nodes: Node[]): string {
       const media = (n.children || []).find(isMediaElement);
       const figBase = n.attrs || {};
       const figExtra = media ? mediaDataAttrs(media.attrs || {}) : {};
-      const figAttrs = { ...figBase, ...figExtra };
+      const figAttrs: Attrs = { ...figBase, ...figExtra };
       let inner = "";
       for (const c of n.children || []) {
         if (c.type === "element" && (c.tag === "img" || c.tag === "video")) {
@@ -564,17 +566,21 @@ export function cutOffMarkdownNodes(
     "hr",
   ]);
 
-  function getKind(attrs?: Record<string, any>): string | undefined {
+  function getKind(attrs?: Attrs): string | undefined {
     if (!attrs) return undefined;
-    if (typeof attrs.kind === "string") return attrs.kind;
-    if (typeof attrs.class === "string") {
-      if (attrs.class.split(/\s+/).includes("thumbnail-block")) return "thumbnail-block";
-      if (attrs.class.split(/\s+/).includes("image-block")) return "image-block";
+    const k = attrs["kind"];
+    if (typeof k === "string") return k;
+    const cls = attrs["class"];
+    if (typeof cls === "string") {
+      const parts = cls.split(/\s+/);
+      if (parts.includes("thumbnail-block")) return "thumbnail-block";
+      if (parts.includes("image-block")) return "image-block";
     }
-    if (typeof (attrs as any).className === "string") {
-      const cn = String((attrs as any).className);
-      if (cn.split(/\s+/).includes("thumbnail-block")) return "thumbnail-block";
-      if (cn.split(/\s+/).includes("image-block")) return "image-block";
+    const clsName = attrs["className"];
+    if (typeof clsName === "string") {
+      const parts = clsName.split(/\s+/);
+      if (parts.includes("thumbnail-block")) return "thumbnail-block";
+      if (parts.includes("image-block")) return "image-block";
     }
     return undefined;
   }
@@ -678,8 +684,6 @@ export function cutOffMarkdownNodes(
       return { ...el, children: [] };
     }
 
-    // figure は高さ課金対象外のまま
-    // ただし動的画像コストモードなら、ここで「画像コスト＝figcaption長」を先に課金しておく
     let chargedAtFigure = false;
     if (
       el.tag === "figure" &&
@@ -693,7 +697,7 @@ export function cutOffMarkdownNodes(
         state.cut = true;
         return null;
       }
-      chargedAtFigure = true; // 子の img/video ではもう課金しない
+      chargedAtFigure = true;
     }
 
     if (!freeText && blockTags.has(el.tag)) {
@@ -706,11 +710,8 @@ export function cutOffMarkdownNodes(
       }
     }
 
-    // 固定モードでは img/video で課金（figure では課金しない）
-    // 動的モードでは、figure 外の素の img/video は「文字数 0・高さのみ」課金にする
     if (isMedia(el) && !freeMedia) {
       if (dynamicImgCost) {
-        // 文字数は 0、ただし高さは課金
         if (!bumpHeight(imgHeight)) {
           state.cut = true;
           return null;
@@ -727,9 +728,8 @@ export function cutOffMarkdownNodes(
       freeMedia ||
       isThumbnailFigure(el) ||
       (el.tag === "figure" && chargedAtFigure) ||
-      el.tag === "figcaption"; // figcaption 配下はメディア課金しない
-
-    const childFreeText = freeText || el.tag === "figcaption"; // figcaption テキストは常に free
+      el.tag === "figcaption";
+    const childFreeText = freeText || el.tag === "figcaption";
 
     const outChildren: Node[] = [];
     for (const c of el.children || []) {

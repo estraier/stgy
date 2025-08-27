@@ -9,6 +9,10 @@ import {
   renderText
 } from "@/utils/markdown";
 
+export function dummy() {
+  console.log(Config);
+}
+
 export function makeArticleHtmlFromMarkdown(mdText: string) {
   let nodes = parseMarkdownBlocks(mdText);
   nodes = rewriteMediaUrls(nodes, true);
@@ -29,7 +33,8 @@ export function makeSnippetHtmlFromMarkdown(mdText: string) {
   return renderHtml(nodes);
 }
 
-export function makeSnippetTextFromMarkdown(mdText: string, maxLen: number) {
+export function makeSnippetTextFromMarkdown(mdText: string) {
+  const maxLen = 50;
   const nodes = parseMarkdownBlocks(mdText);
   const text = renderText(nodes);
   const flat = text.replace(/\s+/g, " ").trim();
