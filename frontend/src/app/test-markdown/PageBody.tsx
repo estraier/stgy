@@ -156,6 +156,6 @@ function makeHtml(mdText: string, maxLen?: number, useThumbnail?: boolean) {
 
 function makeText(mdText: string, maxLen?: number) {
   let nodes = parseMarkdownBlocks(mdText);
-  nodes = cutOffMarkdownNodes(nodes, { maxLen });
+  nodes = cutOffMarkdownNodes(nodes, { maxLen, imgLen: -1, imgHeight: 1 });
   return renderText(nodes);
 }

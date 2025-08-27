@@ -27,34 +27,62 @@ export function renderText(nodes: Node[]): string {
     "table",
   ]);
   const SINGLE_AFTER = new Set(["tr", "ul", "hr"]);
-  function walk(n: Node): void {
+  const endsWithNewline = () =>
+    out.length > 0 && out[out.length - 1]!.endsWith("\n");
+  const ensureNewline = () => {
+    if (!endsWithNewline()) out.push("\n");
+  };
+  function walk(n: Node, depth = 0): void {
     if (n.type === "text") {
       out.push(n.text);
       return;
     }
     switch (n.tag) {
-      case "br":
+      case "br": {
         out.push("\n");
         return;
-      case "li":
-        out.push("- ");
-        (n.children || []).forEach(walk);
-        out.push("\n");
-        return;
-      case "omitted":
+      }
+      case "omitted": {
         out.push("…");
         return;
-      default:
-        (n.children || []).forEach(walk);
+      }
+      case "ul": {
+        for (const child of n.children || []) {
+          walk(child, depth + 1);
+        }
+        ensureNewline();
+        return;
+      }
+      case "li": {
+        out.push("  ".repeat(Math.max(0, depth - 1)) + "- ");
+        let lastChildWasUL = false;
+        for (const child of n.children || []) {
+          if (child.type === "element" && child.tag === "ul") {
+            ensureNewline();
+            walk(child, depth);
+            lastChildWasUL = true;
+          } else {
+            walk(child, depth);
+            lastChildWasUL = false;
+          }
+        }
+        if (!lastChildWasUL) out.push("\n");
+        return;
+      }
+      default: {
+        for (const child of n.children || []) {
+          walk(child, depth);
+        }
         if (DOUBLE_AFTER.has(n.tag)) {
           out.push("\n\n");
         } else if (SINGLE_AFTER.has(n.tag)) {
-          out.push("\n");
+          ensureNewline();
         }
         return;
+      }
     }
   }
-  nodes.forEach(walk);
+  for (const n of nodes) walk(n, 0);
   const text = out.join("");
   return text
     .replace(/[ \t]+\n/g, "\n")
@@ -263,175 +291,6 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
     });
   }
   return nodes;
-}
-
-export function cutOffMarkdownNodes(
-  nodes: Node[],
-  params?: {
-    maxLen?: number;
-    maxHeight?: number;
-    imgLen?: number;
-    imgHeight?: number;
-  },
-): Node[] {
-  const imgLen = params?.imgLen ?? 50;
-  const imgHeight = params?.imgHeight ?? 6;
-  const state = {
-    remain: typeof params?.maxLen === "number" ? params.maxLen! : Number.POSITIVE_INFINITY,
-    height: 0,
-    maxHeight: typeof params?.maxHeight === "number" ? params!.maxHeight : Number.POSITIVE_INFINITY,
-    cut: false,
-    omittedInserted: false,
-  };
-  const blockTags = new Set([
-    "p",
-    "pre",
-    "blockquote",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "tr",
-    "li",
-    "hr",
-  ]);
-  function getKind(attrs?: string | Record<string, any>): string | undefined {
-    if (!attrs) return undefined;
-    if (typeof attrs === "string") return undefined;
-    const a = attrs as Record<string, any>;
-    if (typeof a.kind === "string") return a.kind;
-    if (typeof a.class === "string") {
-      if (a.class.split(/\s+/).includes("thumbnail-block")) return "thumbnail-block";
-      if (a.class.split(/\s+/).includes("image-block")) return "image-block";
-    }
-    if (typeof a.className === "string") {
-      if (a.className.split(/\s+/).includes("thumbnail-block")) return "thumbnail-block";
-      if (a.className.split(/\s+/).includes("image-block")) return "image-block";
-    }
-    return undefined;
-  }
-  function isThumbnailFigure(el: Extract<Node, { type: "element" }>): boolean {
-    return el.tag === "figure" && getKind(el.attrs) === "thumbnail-block";
-  }
-  function isMedia(el: Extract<Node, { type: "element" }>): boolean {
-    return el.tag === "img" || el.tag === "video";
-  }
-  function computeTextMetrics(nodes: Node[]): { length: number; newlines: number } {
-    let length = 0;
-    let newlines = 0;
-    for (const n of nodes) {
-      if (n.type === "text") {
-        length += n.text.length;
-        newlines += n.text.match(/\n/g)?.length ?? 0;
-      } else {
-        const r = computeTextMetrics(n.children || []);
-        length += r.length;
-        newlines += r.newlines;
-      }
-    }
-    return { length, newlines };
-  }
-  function bumpHeight(inc: number): boolean {
-    const next = state.height + inc;
-    if (next > state.maxHeight) return false;
-    state.height = next;
-    return true;
-  }
-  function consumeImageBudget(): boolean {
-    const nextRemain = state.remain - imgLen;
-    const nextHeight = state.height + imgHeight;
-    if (nextRemain < 0 || nextHeight > state.maxHeight) return false;
-    state.remain = nextRemain;
-    state.height = nextHeight;
-    return true;
-  }
-  function makeOmittedNode(): Node {
-    return { type: "element", tag: "omitted", children: [] };
-  }
-  function cutTextContent(s: string, charge: boolean): { text: string; cut: boolean } {
-    if (!charge) return { text: s, cut: false };
-    if (state.remain <= 0) {
-      state.cut = true;
-      return { text: "", cut: true };
-    }
-    if (s.length > state.remain) {
-      const sliceLen = Math.max(0, state.remain);
-      let part = s.slice(0, sliceLen);
-      if (part.length < s.length) {
-        part = part + "…";
-      }
-      state.remain = 0;
-      state.cut = true;
-      return { text: part, cut: true };
-    }
-    state.remain -= s.length;
-    return { text: s, cut: false };
-  }
-  function walk(n: Node, freeMedia: boolean, freeText: boolean): Node | null {
-    if (state.cut) return null;
-
-    if (n.type === "text") {
-      const { text, cut } = cutTextContent(n.text, !freeText);
-      if (text === "" && cut) return null;
-      return { ...n, text };
-    }
-    const el = n;
-    if (el.tag === "br") {
-      if (!freeText) {
-        if (!bumpHeight(1)) {
-          state.cut = true;
-          return null;
-        }
-      }
-      return { ...el, children: [] };
-    }
-    if (!freeText && blockTags.has(el.tag)) {
-      const { length: contentLength, newlines } = computeTextMetrics(el.children || []);
-      let inc = 1 + Math.floor(contentLength / 100);
-      if (el.tag === "pre" && newlines > 1) inc = Math.max(inc, newlines);
-      if (!bumpHeight(inc)) {
-        state.cut = true;
-        return null;
-      }
-    }
-    if (isMedia(el) && !freeMedia) {
-      if (!consumeImageBudget()) {
-        state.cut = true;
-        return null;
-      }
-    }
-    const childFreeMedia = freeMedia || isThumbnailFigure(el) || el.tag === "figcaption";
-    const childFreeText = freeText || el.tag === "figcaption";
-    const outChildren: Node[] = [];
-    for (const c of el.children || []) {
-      const cc = walk(c, childFreeMedia, childFreeText);
-      if (cc) outChildren.push(cc);
-      if (state.cut) {
-        if (!state.omittedInserted) {
-          outChildren.push(makeOmittedNode());
-          state.omittedInserted = true;
-        }
-        break;
-      }
-    }
-    return { ...el, children: outChildren };
-  }
-  const out: Node[] = [];
-  for (const n of nodes) {
-    if (state.cut) break;
-    const nn = walk(n, false, false);
-    if (nn) out.push(nn);
-    if (state.cut) {
-      if (!state.omittedInserted) {
-        out.push(makeOmittedNode());
-        state.omittedInserted = true;
-      }
-      break;
-    }
-  }
-  return out;
 }
 
 export function renderHtml(nodes: Node[]): string {
@@ -666,6 +525,241 @@ export function filterNodesForThumbnail(nodes: Node[]): Node[] {
     return [thumb, ...body];
   }
   return body;
+}
+
+export function cutOffMarkdownNodes(
+  nodes: Node[],
+  params?: {
+    maxLen?: number;
+    maxHeight?: number;
+    imgLen?: number;
+    imgHeight?: number;
+  },
+): Node[] {
+  const imgLenParam = params?.imgLen ?? 50;
+  const dynamicImgCost = imgLenParam < 0;
+  const fixedImgLen = Math.max(0, imgLenParam);
+  const imgHeight = params?.imgHeight ?? 6;
+
+  const state = {
+    remain: typeof params?.maxLen === "number" ? params.maxLen! : Number.POSITIVE_INFINITY,
+    height: 0,
+    maxHeight: typeof params?.maxHeight === "number" ? params!.maxHeight : Number.POSITIVE_INFINITY,
+    cut: false,
+    omittedInserted: false,
+  };
+
+  const blockTags = new Set([
+    "p",
+    "pre",
+    "blockquote",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "tr",
+    "li",
+    "hr",
+  ]);
+
+  function getKind(attrs?: Record<string, any>): string | undefined {
+    if (!attrs) return undefined;
+    if (typeof attrs.kind === "string") return attrs.kind;
+    if (typeof attrs.class === "string") {
+      if (attrs.class.split(/\s+/).includes("thumbnail-block")) return "thumbnail-block";
+      if (attrs.class.split(/\s+/).includes("image-block")) return "image-block";
+    }
+    if (typeof (attrs as any).className === "string") {
+      const cn = String((attrs as any).className);
+      if (cn.split(/\s+/).includes("thumbnail-block")) return "thumbnail-block";
+      if (cn.split(/\s+/).includes("image-block")) return "image-block";
+    }
+    return undefined;
+  }
+  function isThumbnailFigure(el: Extract<Node, { type: "element" }>): boolean {
+    return el.tag === "figure" && getKind(el.attrs) === "thumbnail-block";
+  }
+  function isMedia(el: Extract<Node, { type: "element" }>): boolean {
+    return el.tag === "img" || el.tag === "video";
+  }
+
+  function computeTextMetrics(nodes: Node[]): { length: number; newlines: number } {
+    let length = 0;
+    let newlines = 0;
+    for (const n of nodes) {
+      if (n.type === "text") {
+        length += n.text.length;
+        newlines += n.text.match(/\n/g)?.length ?? 0;
+      } else {
+        const r = computeTextMetrics(n.children || []);
+        length += r.length;
+        newlines += r.newlines;
+      }
+    }
+    return { length, newlines };
+  }
+  const captionLengthOfFigure = (el: Extract<Node, { type: "element" }>): number => {
+    const cap = (el.children || []).find(
+      (c) => c.type === "element" && c.tag === "figcaption",
+    ) as Extract<Node, { type: "element" }> | undefined;
+    if (!cap) return 0;
+    return computeTextMetrics(cap.children || []).length;
+  };
+  const figureHasMedia = (el: Extract<Node, { type: "element" }>): boolean =>
+    (el.children || []).some((c) => c.type === "element" && (c.tag === "img" || c.tag === "video"));
+
+  function bumpHeight(inc: number): boolean {
+    const next = state.height + inc;
+    if (next > state.maxHeight) return false;
+    state.height = next;
+    return true;
+  }
+
+  function consumeFixedImageBudget(): boolean {
+    const nextRemain = state.remain - fixedImgLen;
+    const nextHeight = state.height + imgHeight;
+    if (nextRemain < 0 || nextHeight > state.maxHeight) return false;
+    state.remain = nextRemain;
+    state.height = nextHeight;
+    return true;
+  }
+
+  function consumeDynamicImageBudget(captionLen: number): boolean {
+    const nextRemain = state.remain - captionLen;
+    const nextHeight = state.height + imgHeight;
+    if (nextRemain < 0 || nextHeight > state.maxHeight) return false;
+    state.remain = nextRemain;
+    state.height = nextHeight;
+    return true;
+  }
+
+  function makeOmittedNode(): Node {
+    return { type: "element", tag: "omitted", children: [] };
+  }
+
+  function cutTextContent(s: string, charge: boolean): { text: string; cut: boolean } {
+    if (!charge) return { text: s, cut: false };
+    if (state.remain <= 0) {
+      state.cut = true;
+      return { text: "", cut: true };
+    }
+    if (s.length > state.remain) {
+      const sliceLen = Math.max(0, state.remain);
+      let part = s.slice(0, sliceLen);
+      if (part.length < s.length) part = part + "…";
+      state.remain = 0;
+      state.cut = true;
+      return { text: part, cut: true };
+    }
+    state.remain -= s.length;
+    return { text: s, cut: false };
+  }
+
+  function walk(n: Node, freeMedia: boolean, freeText: boolean): Node | null {
+    if (state.cut) return null;
+
+    if (n.type === "text") {
+      const { text, cut } = cutTextContent(n.text, !freeText);
+      if (text === "" && cut) return null;
+      return { ...n, text };
+    }
+
+    const el = n;
+
+    if (el.tag === "br") {
+      if (!freeText) {
+        if (!bumpHeight(1)) {
+          state.cut = true;
+          return null;
+        }
+      }
+      return { ...el, children: [] };
+    }
+
+    // figure は高さ課金対象外のまま
+    // ただし動的画像コストモードなら、ここで「画像コスト＝figcaption長」を先に課金しておく
+    let chargedAtFigure = false;
+    if (
+      el.tag === "figure" &&
+      !freeMedia &&
+      dynamicImgCost &&
+      !isThumbnailFigure(el) &&
+      figureHasMedia(el)
+    ) {
+      const capLen = captionLengthOfFigure(el);
+      if (!consumeDynamicImageBudget(capLen)) {
+        state.cut = true;
+        return null;
+      }
+      chargedAtFigure = true; // 子の img/video ではもう課金しない
+    }
+
+    if (!freeText && blockTags.has(el.tag)) {
+      const { length: contentLength, newlines } = computeTextMetrics(el.children || []);
+      let inc = 1 + Math.floor(contentLength / 100);
+      if (el.tag === "pre" && newlines > 1) inc = Math.max(inc, newlines);
+      if (!bumpHeight(inc)) {
+        state.cut = true;
+        return null;
+      }
+    }
+
+    // 固定モードでは img/video で課金（figure では課金しない）
+    // 動的モードでは、figure 外の素の img/video は「文字数 0・高さのみ」課金にする
+    if (isMedia(el) && !freeMedia) {
+      if (dynamicImgCost) {
+        // 文字数は 0、ただし高さは課金
+        if (!bumpHeight(imgHeight)) {
+          state.cut = true;
+          return null;
+        }
+      } else {
+        if (!consumeFixedImageBudget()) {
+          state.cut = true;
+          return null;
+        }
+      }
+    }
+
+    const childFreeMedia =
+      freeMedia ||
+      isThumbnailFigure(el) ||
+      (el.tag === "figure" && chargedAtFigure) ||
+      el.tag === "figcaption"; // figcaption 配下はメディア課金しない
+
+    const childFreeText = freeText || el.tag === "figcaption"; // figcaption テキストは常に free
+
+    const outChildren: Node[] = [];
+    for (const c of el.children || []) {
+      const cc = walk(c, childFreeMedia, childFreeText);
+      if (cc) outChildren.push(cc);
+      if (state.cut) {
+        if (!state.omittedInserted) {
+          outChildren.push(makeOmittedNode());
+          state.omittedInserted = true;
+        }
+        break;
+      }
+    }
+    return { ...el, children: outChildren };
+  }
+
+  const out: Node[] = [];
+  for (const n of nodes) {
+    if (state.cut) break;
+    const nn = walk(n, false, false);
+    if (nn) out.push(nn);
+    if (state.cut) {
+      if (!state.omittedInserted) {
+        out.push(makeOmittedNode());
+        state.omittedInserted = true;
+      }
+      break;
+    }
+  }
+  return out;
 }
 
 function isMediaElement(n: Node): n is Extract<Node, { type: "element"; tag: "img" | "video" }> {
