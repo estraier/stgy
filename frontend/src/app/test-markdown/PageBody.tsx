@@ -2,13 +2,13 @@
 
 import { useState } from "react";
 import {
-  parseMarkdownBlocks,
-  rewriteMediaUrls,
-  groupImageGrid,
-  filterNodesForThumbnail,
-  cutOffMarkdownNodes,
-  renderHtml,
-  renderText,
+  parseMarkdown,
+  mdRewriteMediaUrls,
+  mdGroupImageGrid,
+  mdFilterForThumbnail,
+  mdCutOff,
+  mdRenderHtml,
+  mdRenderText,
 } from "@/utils/markdown";
 
 export default function PageBody() {
@@ -144,18 +144,18 @@ We live in Tokyo.
 }
 
 function makeHtml(mdText: string, maxLen?: number, useThumbnail?: boolean) {
-  let nodes = parseMarkdownBlocks(mdText);
-  nodes = rewriteMediaUrls(nodes, !!useThumbnail);
-  nodes = groupImageGrid(nodes);
+  let nodes = parseMarkdown(mdText);
+  nodes = mdRewriteMediaUrls(nodes, !!useThumbnail);
+  nodes = mdGroupImageGrid(nodes);
   if (useThumbnail) {
-    nodes = filterNodesForThumbnail(nodes);
+    nodes = mdFilterForThumbnail(nodes);
   }
-  nodes = cutOffMarkdownNodes(nodes, { maxLen });
-  return renderHtml(nodes);
+  nodes = mdCutOff(nodes, { maxLen });
+  return mdRenderHtml(nodes);
 }
 
 function makeText(mdText: string, maxLen?: number) {
-  let nodes = parseMarkdownBlocks(mdText);
-  nodes = cutOffMarkdownNodes(nodes, { maxLen, imgLen: -1, imgHeight: 1 });
-  return renderText(nodes);
+  let nodes = parseMarkdown(mdText);
+  nodes = mdCutOff(nodes, { maxLen, imgLen: -1, imgHeight: 1 });
+  return mdRenderText(nodes);
 }

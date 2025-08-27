@@ -1,16 +1,16 @@
-import { parseMarkdownBlocks, renderText, renderHtml } from "./markdown";
+import { parseMarkdown, mdRenderText, mdRenderHtml } from "./markdown";
 
 function makeText(mdText: string) {
-  const nodes = parseMarkdownBlocks(mdText);
-  return renderText(nodes);
+  const nodes = parseMarkdown(mdText);
+  return mdRenderText(nodes);
 }
 
 function makeHtml(mdText: string) {
-  const nodes = parseMarkdownBlocks(mdText);
-  return renderHtml(nodes);
+  const nodes = parseMarkdown(mdText);
+  return mdRenderHtml(nodes);
 }
 
-describe("renderText basics", () => {
+describe("mdRenderText basics", () => {
   it("empty body", () => {
     const mdText = "";
     expect(makeText(mdText)).toBe("");
@@ -37,7 +37,7 @@ describe("renderText basics", () => {
   });
 });
 
-describe("renderHtml basics", () => {
+describe("mdRenderHtml basics", () => {
   it("empty body", () => {
     const mdText = "";
     expect(makeHtml(mdText)).toBe("");
@@ -117,7 +117,7 @@ describe("renderHtml basics", () => {
   });
 });
 
-describe("renderHtml advanced", () => {
+describe("mdRenderHtml advanced", () => {
   it("various formats", () => {
     const mdText = `# H1
 abc

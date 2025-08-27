@@ -1,23 +1,24 @@
 import { Config } from "@/config";
 
-type Attrs = Record<string, string | number | boolean>;
+export type MdAttrs = Record<string, string | number | boolean>;
 
-type Node =
-  | { type: "text"; text: string }
-  | {
-      type: "element";
-      tag: string;
-      attrs?: Attrs;
-      children: Node[];
-    };
+export type MdTextNode = { type: "text"; text: string };
+export type MdElementNode = {
+  type: "element";
+  tag: string;
+  attrs?: MdAttrs;
+  children: MdNode[];
+};
+export type MdMediaElement = MdElementNode & { tag: "img" | "video" };
+export type MdNode = MdTextNode | MdElementNode;
 
-export function parseMarkdownBlocks(mdText: string): Node[] {
+export function parseMarkdown(mdText: string): MdNode[] {
   const lines = mdText.replace(/\r\n/g, "\n").split("\n");
-  const nodes: Node[] = [];
+  const nodes: MdNode[] = [];
   let inCode = false,
     codeLines: string[] = [],
     codeLang: string | undefined;
-  const currList: { level: number; items: Node[] }[] = [];
+  const currList: { level: number; items: MdNode[] }[] = [];
   let currPara: string[] = [];
   let currTable: string[][] = [];
   let currQuote: string[] = [];
@@ -118,14 +119,13 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
         }
       }
       const isVideo = macro["media"] === "video" || videoExts.test(url);
-      const mediaAttrs: Attrs = isVideo
+      const mediaAttrs: MdAttrs = isVideo
         ? { src: url, "aria-label": "", controls: true }
         : { src: url, alt: "" };
-
       for (const [k, v] of Object.entries(macro)) {
         mediaAttrs[k] = v;
       }
-      const figureChildren: Node[] = [
+      const figureChildren: MdNode[] = [
         { type: "element", tag: isVideo ? "video" : "img", attrs: mediaAttrs, children: [] },
       ];
       if (desc) {
@@ -214,7 +214,7 @@ export function parseMarkdownBlocks(mdText: string): Node[] {
   return nodes;
 }
 
-export function renderText(nodes: Node[]): string {
+export function mdRenderText(nodes: MdNode[]): string {
   const out: string[] = [];
   const DOUBLE_AFTER = new Set([
     "p",
@@ -235,7 +235,7 @@ export function renderText(nodes: Node[]): string {
   const ensureNewline = () => {
     if (!endsWithNewline()) out.push("\n");
   };
-  function walk(n: Node, depth = 0): void {
+  function walk(n: MdNode, depth = 0): void {
     if (n.type === "text") {
       out.push(n.text);
       return;
@@ -293,13 +293,13 @@ export function renderText(nodes: Node[]): string {
     .trim();
 }
 
-export function renderHtml(nodes: Node[]): string {
-  function serializeAll(arr: Node[]): string {
+export function mdRenderHtml(nodes: MdNode[]): string {
+  function serializeAll(arr: MdNode[]): string {
     let html = "";
     for (const n of arr) html += serializeOne(n);
     return html;
   }
-  function serializeOne(n: Node): string {
+  function serializeOne(n: MdNode): string {
     if (n.type === "text") {
       return escapeHTML(n.text);
     }
@@ -311,21 +311,21 @@ export function renderHtml(nodes: Node[]): string {
     }
     if (n.type === "element" && n.tag === "hr") {
       const a = n.attrs || {};
-      const attrs: Attrs = { ...a };
+      const attrs: MdAttrs = { ...a };
       if (attrs["hr-level"] !== undefined) {
         const v = attrs["hr-level"];
         delete attrs["hr-level"];
-        attrs["data-hr-level"] = v;
+        (attrs as MdAttrs)["data-hr-level"] = v;
       }
       return `<hr${attrsToString(attrs)}>`;
     }
     if (n.type === "element" && n.tag === "pre") {
       const a = n.attrs || {};
-      const attrs: Attrs = { ...a };
+      const attrs: MdAttrs = { ...a };
       if (attrs["pre-mode"] !== undefined) {
         const v = attrs["pre-mode"];
         delete attrs["pre-mode"];
-        attrs["data-pre-mode"] = v;
+        (attrs as MdAttrs)["data-pre-mode"] = v;
       }
       return `<pre${attrsToString(attrs)}>${serializeAll(n.children || [])}</pre>`;
     }
@@ -333,10 +333,10 @@ export function renderHtml(nodes: Node[]): string {
       const media = (n.children || []).find(isMediaElement);
       const figBase = n.attrs || {};
       const figExtra = media ? mediaDataAttrs(media.attrs || {}) : {};
-      const figAttrs: Attrs = { ...figBase, ...figExtra };
+      const figAttrs: MdAttrs = { ...figBase, ...figExtra };
       let inner = "";
       for (const c of n.children || []) {
-        if (c.type === "element" && (c.tag === "img" || c.tag === "video")) {
+        if (c.type === "element" && isMediaElement(c)) {
           inner += serializeMedia(c);
         } else if (c.type === "element" && c.tag === "figcaption") {
           inner += `<figcaption>${serializeAll(c.children || [])}</figcaption>`;
@@ -346,22 +346,22 @@ export function renderHtml(nodes: Node[]): string {
       }
       return `<figure${attrsToString(figAttrs)}>${inner}</figure>`;
     }
-    if (n.type === "element" && (n.tag === "img" || n.tag === "video")) {
+    if (n.type === "element" && isMediaElement(n)) {
       return serializeMedia(n);
     }
     return `<${n.tag}${attrsToString(n.attrs)}>${serializeAll(n.children || [])}</${n.tag}>`;
   }
-  function serializeMedia(n: Extract<Node, { type: "element" }>): string {
+  function serializeMedia(n: MdMediaElement): string {
     const a = n.attrs || {};
     const src = a.src ? String(a.src) : "";
     if (n.tag === "img") {
       return `<img src="${escapeHTML(src)}" alt="">`;
     } else {
-      const base: Attrs = { src, "aria-label": "" as const, controls: true };
+      const base: MdAttrs = { src, "aria-label": "" as const, controls: true };
       return `<video${attrsToString(base)}></video>`;
     }
   }
-  function attrsToString(attrs?: Attrs): string {
+  function attrsToString(attrs?: MdAttrs): string {
     if (!attrs) return "";
     let out = "";
     for (const [k, v] of Object.entries(attrs)) {
@@ -375,8 +375,8 @@ export function renderHtml(nodes: Node[]): string {
     }
     return out;
   }
-  function mediaDataAttrs(mediaAttrs: Attrs): Attrs {
-    const out: Attrs = {};
+  function mediaDataAttrs(mediaAttrs: MdAttrs): MdAttrs {
+    const out: MdAttrs = {};
     for (const [k, v] of Object.entries(mediaAttrs)) {
       if (k === "src" || k === "alt" || k === "aria-label" || k === "controls") continue;
       const dataName = `data-${k}`;
@@ -387,8 +387,8 @@ export function renderHtml(nodes: Node[]): string {
   return serializeAll(nodes);
 }
 
-export function rewriteMediaUrls(nodes: Node[], useThumbnail: boolean): Node[] {
-  function rewriteOne(n: Node): Node {
+export function mdRewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {
+  function rewriteOne(n: MdNode): MdNode {
     if (n.type !== "element") return n;
     if (n.tag === "img" || n.tag === "video") {
       const a = n.attrs || {};
@@ -419,25 +419,25 @@ export function rewriteMediaUrls(nodes: Node[], useThumbnail: boolean): Node[] {
   return nodes.map(rewriteOne);
 }
 
-export function groupImageGrid(nodes: Node[]): Node[] {
-  function isFigureImageBlock(n: Node): n is Extract<Node, { type: "element" }> {
+export function mdGroupImageGrid(nodes: MdNode[]): MdNode[] {
+  function isFigureImageBlock(n: MdNode): n is MdElementNode & { tag: "figure" } {
     return n.type === "element" && n.tag === "figure" && n.attrs?.class === "image-block";
   }
-  function findMedia(n: Node | undefined) {
+  function findMedia(n: MdNode | undefined): MdMediaElement | undefined {
     if (!n || n.type !== "element") return undefined;
     return (n.children || []).find(isMediaElement);
   }
-  function hasGridFlag(a?: Attrs): boolean {
+  function hasGridFlag(a?: MdAttrs): boolean {
     if (!a) return false;
     return !!a["grid"];
   }
-  function groupInArray(arr: Node[]): Node[] {
-    const out: Node[] = [];
+  function groupInArray(arr: MdNode[]): MdNode[] {
+    const out: MdNode[] = [];
     for (let i = 0; i < arr.length; ) {
       const node = arr[i];
 
       if (isFigureImageBlock(node) && hasGridFlag(findMedia(node)?.attrs)) {
-        const group: Node[] = [node];
+        const group: MdNode[] = [node];
         let j = i + 1;
         while (j < arr.length && isFigureImageBlock(arr[j]) && hasGridFlag(findMedia(arr[j])?.attrs)) {
           group.push(arr[j]);
@@ -467,16 +467,16 @@ export function groupImageGrid(nodes: Node[]): Node[] {
   return groupInArray(nodes);
 }
 
-export function filterNodesForThumbnail(nodes: Node[]): Node[] {
-  let thumbnailFig: Node | null = null;
-  function isFigureImageBlock(n: Node): boolean {
+export function mdFilterForThumbnail(nodes: MdNode[]): MdNode[] {
+  let thumbnailFig: MdNode | null = null;
+  function isFigureImageBlock(n: MdNode): n is MdElementNode & { tag: "figure" } {
     return n.type === "element" && n.tag === "figure" && n.attrs?.class === "image-block";
   }
-  function findMedia(n: Node | undefined) {
+  function findMedia(n: MdNode | undefined): MdMediaElement | undefined {
     if (!n || n.type !== "element") return undefined;
     return (n.children || []).find(isMediaElement);
   }
-  function findThumbnailFig(arr: Node[]): Node | null {
+  function findThumbnailFig(arr: MdNode[]): MdNode | null {
     for (const node of arr) {
       if (isFigureImageBlock(node)) {
         const media = findMedia(node);
@@ -489,7 +489,7 @@ export function filterNodesForThumbnail(nodes: Node[]): Node[] {
     }
     return null;
   }
-  function findFirstFig(arr: Node[]): Node | null {
+  function findFirstFig(arr: MdNode[]): MdNode | null {
     for (const node of arr) {
       if (isFigureImageBlock(node)) {
         const media = findMedia(node);
@@ -507,8 +507,8 @@ export function filterNodesForThumbnail(nodes: Node[]): Node[] {
     return null;
   }
   thumbnailFig = findThumbnailFig(nodes) || findFirstFig(nodes);
-  function removeImageBlocks(arr: Node[]): Node[] {
-    const out: Node[] = [];
+  function removeImageBlocks(arr: MdNode[]): MdNode[] {
+    const out: MdNode[] = [];
     for (const n of arr) {
       if (isFigureImageBlock(n)) continue;
       if (n.type === "element" && n.children?.length) out.push({ ...n, children: removeImageBlocks(n.children) });
@@ -518,7 +518,7 @@ export function filterNodesForThumbnail(nodes: Node[]): Node[] {
   }
   const body = removeImageBlocks(nodes);
   if (thumbnailFig && thumbnailFig.type === "element") {
-    const thumb: Node = {
+    const thumb: MdElementNode = {
       type: "element",
       tag: "figure",
       attrs: { ...(thumbnailFig.attrs || {}), class: "thumbnail-block" },
@@ -529,20 +529,19 @@ export function filterNodesForThumbnail(nodes: Node[]): Node[] {
   return body;
 }
 
-export function cutOffMarkdownNodes(
-  nodes: Node[],
+export function mdCutOff(
+  nodes: MdNode[],
   params?: {
     maxLen?: number;
     maxHeight?: number;
     imgLen?: number;
     imgHeight?: number;
   },
-): Node[] {
+): MdNode[] {
   const imgLenParam = params?.imgLen ?? 50;
   const dynamicImgCost = imgLenParam < 0;
   const fixedImgLen = Math.max(0, imgLenParam);
   const imgHeight = params?.imgHeight ?? 6;
-
   const state = {
     remain: typeof params?.maxLen === "number" ? params.maxLen! : Number.POSITIVE_INFINITY,
     height: 0,
@@ -550,7 +549,6 @@ export function cutOffMarkdownNodes(
     cut: false,
     omittedInserted: false,
   };
-
   const blockTags = new Set([
     "p",
     "pre",
@@ -565,8 +563,7 @@ export function cutOffMarkdownNodes(
     "li",
     "hr",
   ]);
-
-  function getKind(attrs?: Attrs): string | undefined {
+  function getKind(attrs?: MdAttrs): string | undefined {
     if (!attrs) return undefined;
     const k = attrs["kind"];
     if (typeof k === "string") return k;
@@ -584,17 +581,13 @@ export function cutOffMarkdownNodes(
     }
     return undefined;
   }
-  function isThumbnailFigure(el: Extract<Node, { type: "element" }>): boolean {
+  function isThumbnailFigure(el: MdElementNode): boolean {
     return el.tag === "figure" && getKind(el.attrs) === "thumbnail-block";
   }
-  function isMedia(el: Extract<Node, { type: "element" }>): boolean {
-    return el.tag === "img" || el.tag === "video";
-  }
-
-  function computeTextMetrics(nodes: Node[]): { length: number; newlines: number } {
+  function computeTextMetrics(ns: MdNode[]): { length: number; newlines: number } {
     let length = 0;
     let newlines = 0;
-    for (const n of nodes) {
+    for (const n of ns) {
       if (n.type === "text") {
         length += n.text.length;
         newlines += n.text.match(/\n/g)?.length ?? 0;
@@ -606,23 +599,21 @@ export function cutOffMarkdownNodes(
     }
     return { length, newlines };
   }
-  const captionLengthOfFigure = (el: Extract<Node, { type: "element" }>): number => {
+  const captionLengthOfFigure = (el: MdElementNode): number => {
     const cap = (el.children || []).find(
-      (c) => c.type === "element" && c.tag === "figcaption",
-    ) as Extract<Node, { type: "element" }> | undefined;
+      (c): c is MdElementNode => c.type === "element" && c.tag === "figcaption",
+    );
     if (!cap) return 0;
     return computeTextMetrics(cap.children || []).length;
   };
-  const figureHasMedia = (el: Extract<Node, { type: "element" }>): boolean =>
+  const figureHasMedia = (el: MdElementNode): boolean =>
     (el.children || []).some((c) => c.type === "element" && (c.tag === "img" || c.tag === "video"));
-
   function bumpHeight(inc: number): boolean {
     const next = state.height + inc;
     if (next > state.maxHeight) return false;
     state.height = next;
     return true;
   }
-
   function consumeFixedImageBudget(): boolean {
     const nextRemain = state.remain - fixedImgLen;
     const nextHeight = state.height + imgHeight;
@@ -631,7 +622,6 @@ export function cutOffMarkdownNodes(
     state.height = nextHeight;
     return true;
   }
-
   function consumeDynamicImageBudget(captionLen: number): boolean {
     const nextRemain = state.remain - captionLen;
     const nextHeight = state.height + imgHeight;
@@ -640,11 +630,9 @@ export function cutOffMarkdownNodes(
     state.height = nextHeight;
     return true;
   }
-
-  function makeOmittedNode(): Node {
+  function makeOmittedNode(): MdElementNode {
     return { type: "element", tag: "omitted", children: [] };
   }
-
   function cutTextContent(s: string, charge: boolean): { text: string; cut: boolean } {
     if (!charge) return { text: s, cut: false };
     if (state.remain <= 0) {
@@ -662,18 +650,14 @@ export function cutOffMarkdownNodes(
     state.remain -= s.length;
     return { text: s, cut: false };
   }
-
-  function walk(n: Node, freeMedia: boolean, freeText: boolean): Node | null {
+  function walk(n: MdNode, freeMedia: boolean, freeText: boolean): MdNode | null {
     if (state.cut) return null;
-
     if (n.type === "text") {
       const { text, cut } = cutTextContent(n.text, !freeText);
       if (text === "" && cut) return null;
       return { ...n, text };
     }
-
-    const el = n;
-
+    const el = n as MdElementNode;
     if (el.tag === "br") {
       if (!freeText) {
         if (!bumpHeight(1)) {
@@ -683,7 +667,6 @@ export function cutOffMarkdownNodes(
       }
       return { ...el, children: [] };
     }
-
     let chargedAtFigure = false;
     if (
       el.tag === "figure" &&
@@ -699,7 +682,6 @@ export function cutOffMarkdownNodes(
       }
       chargedAtFigure = true;
     }
-
     if (!freeText && blockTags.has(el.tag)) {
       const { length: contentLength, newlines } = computeTextMetrics(el.children || []);
       let inc = 1 + Math.floor(contentLength / 100);
@@ -709,8 +691,7 @@ export function cutOffMarkdownNodes(
         return null;
       }
     }
-
-    if (isMedia(el) && !freeMedia) {
+    if ((el.tag === "img" || el.tag === "video") && !freeMedia) {
       if (dynamicImgCost) {
         if (!bumpHeight(imgHeight)) {
           state.cut = true;
@@ -723,15 +704,13 @@ export function cutOffMarkdownNodes(
         }
       }
     }
-
     const childFreeMedia =
       freeMedia ||
       isThumbnailFigure(el) ||
       (el.tag === "figure" && chargedAtFigure) ||
       el.tag === "figcaption";
     const childFreeText = freeText || el.tag === "figcaption";
-
-    const outChildren: Node[] = [];
+    const outChildren: MdNode[] = [];
     for (const c of el.children || []) {
       const cc = walk(c, childFreeMedia, childFreeText);
       if (cc) outChildren.push(cc);
@@ -745,8 +724,7 @@ export function cutOffMarkdownNodes(
     }
     return { ...el, children: outChildren };
   }
-
-  const out: Node[] = [];
+  const out: MdNode[] = [];
   for (const n of nodes) {
     if (state.cut) break;
     const nn = walk(n, false, false);
@@ -762,11 +740,11 @@ export function cutOffMarkdownNodes(
   return out;
 }
 
-function isMediaElement(n: Node): n is Extract<Node, { type: "element"; tag: "img" | "video" }> {
+function isMediaElement(n: MdNode): n is MdMediaElement {
   return n.type === "element" && (n.tag === "img" || n.tag === "video");
 }
 
-function parseInline(text: string): Node[] {
+function parseInline(text: string): MdNode[] {
   const esc = /\\([\\~`*_\[\](){}#+\-.!])/;
   const bold = /\*\*([^\*]+)\*\*/;
   const italic = /\*([^\*]+)\*/;
@@ -817,7 +795,7 @@ function parseInline(text: string): Node[] {
     ];
   }
   const linkRe = /\[([^\]]+)\]\(((?:https?:\/\/[^\s)]+|\/[^\s)]+|[-_a-z0-9]+))\)/gi;
-  const nodes: Node[] = [];
+  const nodes: MdNode[] = [];
   let last = 0;
   const resolveSpecialHref = (raw: string, anchor: string): string | null => {
     const toWiki = (lang: "en" | "ja", title: string) =>
@@ -846,9 +824,9 @@ function parseInline(text: string): Node[] {
     last = match.index + match[0]!.length;
   }
   if (last < text.length) nodes.push({ type: "text", text: text.slice(last) });
-  return nodes.flatMap<Node>((n) =>
+  return nodes.flatMap<MdNode>((n) =>
     n.type === "text"
-      ? n.text.split(/\n/).flatMap<Node>((frag, i) =>
+      ? n.text.split(/\n/).flatMap<MdNode>((frag, i) =>
           i === 0
             ? [{ type: "text", text: frag }]
             : [{ type: "element", tag: "br", children: [] }, { type: "text", text: frag }],
@@ -857,7 +835,7 @@ function parseInline(text: string): Node[] {
   );
 }
 
-function parseInlineText(text: string): Node[] {
+function parseInlineText(text: string): MdNode[] {
   return text === "" ? [] : [{ type: "text", text }];
 }
 

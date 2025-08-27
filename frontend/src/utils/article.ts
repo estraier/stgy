@@ -1,12 +1,12 @@
 import { Config } from "@/config";
 import {
-  parseMarkdownBlocks,
-  rewriteMediaUrls,
-  groupImageGrid,
-  filterNodesForThumbnail,
-  cutOffMarkdownNodes,
-  renderHtml,
-  renderText
+  parseMarkdown,
+  mdRewriteMediaUrls,
+  mdGroupImageGrid,
+  mdFilterForThumbnail,
+  mdCutOff,
+  mdRenderHtml,
+  mdRenderText
 } from "@/utils/markdown";
 
 export function dummy() {
@@ -14,10 +14,10 @@ export function dummy() {
 }
 
 export function makeArticleHtmlFromMarkdown(mdText: string) {
-  let nodes = parseMarkdownBlocks(mdText);
-  nodes = rewriteMediaUrls(nodes, true);
-  nodes = groupImageGrid(nodes);
-  return renderHtml(nodes);
+  let nodes = parseMarkdown(mdText);
+  nodes = mdRewriteMediaUrls(nodes, true);
+  nodes = mdGroupImageGrid(nodes);
+  return mdRenderHtml(nodes);
 }
 
 export function makeSnippetHtmlFromMarkdown(mdText: string) {
@@ -25,18 +25,18 @@ export function makeSnippetHtmlFromMarkdown(mdText: string) {
   const maxHeight = 10;
   const imgLen = 50;
   const imgHeight = 6;
-  let nodes = parseMarkdownBlocks(mdText);
-  nodes = rewriteMediaUrls(nodes, true);
-  nodes = groupImageGrid(nodes);
-  nodes = filterNodesForThumbnail(nodes);
-  nodes = cutOffMarkdownNodes(nodes, { maxLen, maxHeight, imgLen, imgHeight });
-  return renderHtml(nodes);
+  let nodes = parseMarkdown(mdText);
+  nodes = mdRewriteMediaUrls(nodes, true);
+  nodes = mdGroupImageGrid(nodes);
+  nodes = mdFilterForThumbnail(nodes);
+  nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen, imgHeight });
+  return mdRenderHtml(nodes);
 }
 
 export function makeSnippetTextFromMarkdown(mdText: string) {
   const maxLen = 50;
-  const nodes = parseMarkdownBlocks(mdText);
-  const text = renderText(nodes);
+  const nodes = parseMarkdown(mdText);
+  const text = mdRenderText(nodes);
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length > maxLen ? flat.slice(0, maxLen) + "…" : flat;
 }
