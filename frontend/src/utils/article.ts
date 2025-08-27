@@ -9,7 +9,7 @@ import {
   mdCutOff,
   mdRenderHtml,
   mdRenderText,
-} from "@/utils/markdown";
+} from "fakebook-markdown";
 
 export function makeArticleHtmlFromMarkdown(mdText: string) {
   let nodes = parseMarkdown(mdText);

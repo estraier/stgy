@@ -1,4 +1,4 @@
-import { parseMarkdown, mdRenderText, mdRenderHtml } from "./markdown";
+import { parseMarkdown, mdRenderText, mdRenderHtml } from "./index";
 
 function makeText(mdText: string) {
   const nodes = parseMarkdown(mdText);

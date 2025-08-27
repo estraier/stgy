@@ -8,7 +8,7 @@ import {
   mdCutOff,
   mdRenderHtml,
   mdRenderText,
-} from "@/utils/markdown";
+} from "fakebook-markdown";
 
 export default function PageBody() {
   const [text, setText] = useState(`# ヘッダ

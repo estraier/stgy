@@ -32,7 +32,8 @@
     "nodemailer": "^7.0.5",
     "pg": "^8",
     "sharp": "^0.34.3",
-    "uuid": "^11"
+    "uuid": "^11",
+    "fakebook-markdown": "^0"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1",
