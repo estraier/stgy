@@ -2,9 +2,9 @@
   "name": "fakebook",
   "private": true,
   "workspaces": [
-    "frontend",
+    "packages/*",
     "backend",
-    "packages/*"
+    "frontend"
   ],
   "scripts": {
     "docker:reset": "docker-compose down -v && docker-compose build --no-cache",
@@ -21,7 +21,8 @@
     "reset-data-test": "./db/reset-data.sh && ./minio/reset-data.sh && ./db/add-extra-data.sh",
     "endpoint-test": "./tests/endpoint_test.py",
     "psql": "docker-compose exec db psql -U fakebook fakebook",
-    "build": "npm run build --workspace",
+    "prepare": "npm run build --workspaces --if-present --workspace packages/*",
+    "build": "npm run build --workspaces",
     "clean": "rm -rf node_modules package-lock.json dist && npm run clean --workspaces && find . -name '*~' -type f -delete"
   }
 }
