@@ -3,7 +3,6 @@
 import { useState } from "react";
 import {
   parseMarkdown,
-  mdRewriteMediaUrls,
   mdGroupImageGrid,
   mdFilterForThumbnail,
   mdCutOff,
@@ -161,7 +160,6 @@ We live in Tokyo.
 
 function makeHtml(mdText: string, maxLen?: number, maxHeight?: number, useThumbnail?: boolean) {
   let nodes = parseMarkdown(mdText);
-  nodes = mdRewriteMediaUrls(nodes, !!useThumbnail);
   nodes = mdGroupImageGrid(nodes);
   if (useThumbnail) {
     nodes = mdFilterForThumbnail(nodes);

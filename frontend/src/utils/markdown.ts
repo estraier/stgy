@@ -1,7 +1,4 @@
-import { Config } from "@/config";
-
 export type MdAttrs = Record<string, string | number | boolean>;
-
 export type MdTextNode = { type: "text"; text: string };
 export type MdElementNode = {
   type: "element";
@@ -414,40 +411,38 @@ export function mdRenderHtml(nodes: MdNode[]): string {
   return serializeAll(nodes);
 }
 
-export function mdRewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {
-  function rewriteOne(n: MdNode): MdNode {
+export type MdMediaRewriteRule = {
+  pattern: RegExp;
+  replacement: string;
+};
+
+export type MdMediaRewriteOptions = {
+  allowedPatterns: RegExp[];
+  alternativeImage: string;
+  rewriteRules: MdMediaRewriteRule[];
+};
+
+export function mdRewriteMediaUrls(nodes: MdNode[], opts: MdMediaRewriteOptions): MdNode[] {
+  const isAllowed = (src: string) => opts.allowedPatterns.some((re) => re.test(src));
+  const applyRules = (src: string) =>
+    opts.rewriteRules.reduce((u, r) => u.replace(r.pattern, r.replacement), src);
+  const rewriteOne = (n: MdNode): MdNode => {
     if (n.type !== "element") return n;
     if (n.tag === "img" || n.tag === "video") {
       const a = n.attrs || {};
       const src = typeof a.src === "string" ? a.src : "";
-      if (!/^\/(data|images|videos)\//.test(src)) {
+      if (!isAllowed(src)) {
         return {
           type: "element",
           tag: "img",
-          attrs: { src: "/data/no-image.svg", alt: "" },
+          attrs: { src: opts.alternativeImage, alt: "" },
           children: [],
         };
       }
-      if (/^\/images\//.test(src)) {
-        const baseUrl = `${Config.STORAGE_S3_PUBLIC_BASE_URL}/${Config.MEDIA_BUCKET_IMAGES}`;
-        const newSrc = src.replace(/^\/images\//, `${baseUrl}/`);
-        if (useThumbnail && /\/masters\//.test(newSrc)) {
-          const qpos = newSrc.search(/[?#]/);
-          const pathPart = qpos >= 0 ? newSrc.slice(0, qpos) : newSrc;
-          const suffix = qpos >= 0 ? newSrc.slice(qpos) : "";
-          let thumbPath = pathPart.replace(/\/masters\//, "/thumbs/");
-          thumbPath = thumbPath.replace(/\/([^\/?#]+)$/, (_m, filename: string) => {
-            const base = filename.replace(/\.[^.]+$/, "");
-            return `/${base}_image.webp`;
-          });
-          return { ...n, attrs: { ...a, src: thumbPath + suffix } };
-        }
-        return { ...n, attrs: { ...a, src: newSrc } };
-      }
-      return n;
+      return { ...n, attrs: { ...a, src: applyRules(src) } };
     }
     return { ...n, children: (n.children || []).map(rewriteOne) };
-  }
+  };
   return nodes.map(rewriteOne);
 }
 

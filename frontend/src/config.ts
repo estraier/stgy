@@ -28,6 +28,8 @@ export class Config {
   );
   static readonly POSTS_PAGE_SIZE = envNum("NEXT_PUBLIC_POSTS_PAGE_SIZE", 20);
   static readonly USERS_PAGE_SIZE = envNum("NEXT_PUBLIC_USERS_PAGE_SIZE", 20);
+  static readonly SNIPPET_MAX_LENGTH = envNum("NEXT_PUBLIC_SNIPPET_MAX_LENGTH", 200);
+  static readonly SNIPPET_MAX_HEIGHT = envNum("NEXT_PUBLIC_SNIPPET_MAX_HEIGHT", 10);
   static readonly LIKERS_LIST_FIRST_LIMIT = envNum("NEXT_PUBLIC_LIKERS_FIRST_LIMIT", 10);
   static readonly LIKERS_LIST_SECOND_LIMIT = envNum("NEXT_PUBLIC_LIKERS_SECOND_LIMIT", 100);
   static readonly IMAGES_PAGE_SIZE = envNum("NEXT_PUBLIC_IMAGES_PAGE_SIZE", 30);
