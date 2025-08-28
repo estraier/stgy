@@ -1,4 +1,15 @@
-import { parseMarkdown, mdRenderText, mdRenderHtml } from "./index";
+import {
+  parseMarkdown,
+  mdGroupImageGrid,
+  MdMediaRewriteOptions,
+  mdRewriteMediaUrls,
+  mdFilterForFeatured,
+  mdCutOff,
+  mdRenderText,
+  mdRenderHtml,
+  serializeMdNodes,
+  deserializeMdNodes,
+} from "./index";
 
 function makeText(mdText: string) {
   const nodes = parseMarkdown(mdText);
@@ -9,6 +20,458 @@ function makeHtml(mdText: string) {
   const nodes = parseMarkdown(mdText);
   return mdRenderHtml(nodes);
 }
+
+describe("parseMarkdown", () => {
+  it("empty body", () => {
+    const mdText = "";
+    expect(parseMarkdown(mdText)).toStrictEqual([]);
+  });
+
+  it("paragraph", () => {
+    const mdText = "hello world";
+    const expected = [
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "hello world",
+          },
+        ],
+      },
+    ];
+    expect(parseMarkdown(mdText)).toStrictEqual(expected);
+  });
+
+  it("list", () => {
+    const mdText = "- hello world\n- me too";
+    const expected = [
+      {
+        type: "element",
+        tag: "ul",
+        children: [
+          {
+            type: "element",
+            tag: "li",
+            children: [
+              {
+                type: "text",
+                text: "hello world",
+              },
+            ],
+          },
+          {
+            type: "element",
+            tag: "li",
+            children: [
+              {
+                type: "text",
+                text: "me too",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    expect(parseMarkdown(mdText)).toStrictEqual(expected);
+  });
+});
+
+describe("mdGroupImageGrid", () => {
+  it("single", () => {
+    const mdText = "![img1](/data/logo1.jpg){grid}";
+    const expected = [
+      {
+        type: "element",
+        tag: "figure",
+        attrs: {
+          class: "image-block",
+        },
+        children: [
+          {
+            type: "element",
+            tag: "img",
+            attrs: {
+              src: "/data/logo1.jpg",
+              grid: true,
+            },
+            children: [],
+          },
+          {
+            type: "element",
+            tag: "figcaption",
+            children: [
+              {
+                type: "text",
+                text: "img1",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    expect(mdGroupImageGrid(parseMarkdown(mdText))).toStrictEqual(expected);
+  });
+
+  it("double", () => {
+    const mdText = `![img1](/data/logo1.jpg){grid}
+![img2](/data/logo2.jpg){grid}`;
+    const expected = [
+      {
+        type: "element",
+        tag: "div",
+        attrs: {
+          class: "image-grid",
+          "data-cols": 2,
+        },
+        children: [
+          {
+            type: "element",
+            tag: "figure",
+            attrs: {
+              class: "image-block",
+            },
+            children: [
+              {
+                type: "element",
+                tag: "img",
+                attrs: {
+                  src: "/data/logo1.jpg",
+                  grid: true,
+                },
+                children: [],
+              },
+              {
+                type: "element",
+                tag: "figcaption",
+                children: [
+                  {
+                    type: "text",
+                    text: "img1",
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            type: "element",
+            tag: "figure",
+            attrs: {
+              class: "image-block",
+            },
+            children: [
+              {
+                type: "element",
+                tag: "img",
+                attrs: {
+                  src: "/data/logo2.jpg",
+                  grid: true,
+                },
+                children: [],
+              },
+              {
+                type: "element",
+                tag: "figcaption",
+                children: [
+                  {
+                    type: "text",
+                    text: "img2",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    expect(mdGroupImageGrid(parseMarkdown(mdText))).toStrictEqual(expected);
+  });
+});
+
+describe("mdRewriteMediaUrls", () => {
+  const rewriteOptions: MdMediaRewriteOptions = {
+    allowedPatterns: [/^\/(data)/],
+    alternativeImage: "/data/missing.jpg",
+    rewriteRules: [{ pattern: /\.jpg$/, replacement: ".png" }],
+  };
+
+  it("missing", () => {
+    const mdText = "![img](http://dbmx.net/logo.jpg)";
+    const expected = [
+      {
+        type: "element",
+        tag: "figure",
+        attrs: {
+          class: "image-block",
+        },
+        children: [
+          {
+            type: "element",
+            tag: "img",
+            attrs: {
+              src: "/data/missing.jpg",
+            },
+            children: [],
+          },
+          {
+            type: "element",
+            tag: "figcaption",
+            children: [
+              {
+                type: "text",
+                text: "img",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    expect(mdRewriteMediaUrls(parseMarkdown(mdText), rewriteOptions)).toStrictEqual(expected);
+  });
+
+  it("replace", () => {
+    const mdText = "![img](/data/logo.jpg)";
+    const expected = [
+      {
+        type: "element",
+        tag: "figure",
+        attrs: {
+          class: "image-block",
+        },
+        children: [
+          {
+            type: "element",
+            tag: "img",
+            attrs: {
+              src: "/data/logo.png",
+            },
+            children: [],
+          },
+          {
+            type: "element",
+            tag: "figcaption",
+            children: [
+              {
+                type: "text",
+                text: "img",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    expect(mdRewriteMediaUrls(parseMarkdown(mdText), rewriteOptions)).toStrictEqual(expected);
+  });
+});
+
+describe("mdFilterForFeatured", () => {
+  it("pickup the first image", () => {
+    const mdText = `abc
+![alt](/data/first.jpg)
+def
+![alt](/data/second.jpg)
+`;
+    const expected = [
+      {
+        type: "element",
+        tag: "figure",
+        attrs: {
+          class: "featured-block",
+        },
+        children: [
+          {
+            type: "element",
+            tag: "img",
+            attrs: {
+              src: "/data/first.jpg",
+            },
+            children: [],
+          },
+          {
+            type: "element",
+            tag: "figcaption",
+            children: [
+              {
+                type: "text",
+                text: "alt",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "abc",
+          },
+        ],
+      },
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "def",
+          },
+        ],
+      },
+    ];
+    expect(mdFilterForFeatured(parseMarkdown(mdText))).toStrictEqual(expected);
+  });
+
+  it("pickup a tagged image", () => {
+    const mdText = `abc
+![alt](/data/first.jpg)
+def
+![alt](/data/second.jpg){featured}
+`;
+    const expected = [
+      {
+        type: "element",
+        tag: "figure",
+        attrs: {
+          class: "featured-block",
+        },
+        children: [
+          {
+            type: "element",
+            tag: "img",
+            attrs: {
+              src: "/data/second.jpg",
+              featured: true,
+            },
+            children: [],
+          },
+          {
+            type: "element",
+            tag: "figcaption",
+            children: [
+              {
+                type: "text",
+                text: "alt",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "abc",
+          },
+        ],
+      },
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "def",
+          },
+        ],
+      },
+    ];
+    expect(mdFilterForFeatured(parseMarkdown(mdText))).toStrictEqual(expected);
+  });
+
+  it("pickup no image", () => {
+    const mdText = `abc
+![alt](/data/first.jpg){no-featured}
+def
+![alt](/data/second.jpg){no-featured}
+`;
+    const expected = [
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "abc",
+          },
+        ],
+      },
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "def",
+          },
+        ],
+      },
+    ];
+    expect(mdFilterForFeatured(parseMarkdown(mdText))).toStrictEqual(expected);
+  });
+});
+
+describe("mdCutOff", () => {
+  it("mdCutOff by length", () => {
+    const mdText = "- hello world\n- me too";
+    const expected = [
+      {
+        type: "element",
+        tag: "ul",
+        children: [
+          {
+            type: "element",
+            tag: "li",
+            children: [
+              {
+                type: "text",
+                text: "hello…",
+              },
+              {
+                type: "element",
+                tag: "omitted",
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    expect(mdCutOff(parseMarkdown(mdText), { maxLen: 5 })).toStrictEqual(expected);
+  });
+
+  it("mdCutOff by height", () => {
+    const mdText = "- hello world\n- me too";
+    const expected = [
+      {
+        type: "element",
+        tag: "ul",
+        children: [
+          {
+            type: "element",
+            tag: "li",
+            children: [
+              {
+                type: "text",
+                text: "hello world",
+              },
+            ],
+          },
+          {
+            type: "element",
+            tag: "omitted",
+            children: [],
+          },
+        ],
+      },
+    ];
+    expect(mdCutOff(parseMarkdown(mdText), { maxHeight: 1 })).toStrictEqual(expected);
+  });
+});
 
 describe("mdRenderText basics", () => {
   it("empty body", () => {
@@ -23,6 +486,16 @@ describe("mdRenderText basics", () => {
 
   it("header 1", () => {
     const mdText = "# hello world";
+    expect(makeText(mdText)).toBe("hello world");
+  });
+
+  it("header 2", () => {
+    const mdText = "## hello world";
+    expect(makeText(mdText)).toBe("hello world");
+  });
+
+  it("header 3", () => {
+    const mdText = "### hello world";
     expect(makeText(mdText)).toBe("hello world");
   });
 
@@ -151,15 +624,80 @@ ika</pre><h2>H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul><li>e</li><
   });
 });
 
-/*
-  it("thumbnail", () => {
-    const mdText = `abc
-![first](/data/first.jpg)
-def
-![second](/data/first.jpg){thumbnail}
-ghi`;
-    const expected =
-      '<figure class="thumbnail-block" data-thumbnail><img src="/data/first.jpg" alt=""><figcaption>second</figcaption></figure><p>abc</p><p>def</p><p>ghi</p>';
-    expect(makeHtml(mdText, { pickupThumbnail: true })).toBe(expected);
+describe("serialization", () => {
+  it("empty body", () => {
+    const mdText = "";
+    const nodes = parseMarkdown(mdText);
+    const serialized = serializeMdNodes(nodes);
+    const deserialized = deserializeMdNodes(serialized);
+    expect(deserialized).toStrictEqual(nodes);
   });
-*/
+
+  it("paragraph", () => {
+    const mdText = "hello world";
+    const nodes = parseMarkdown(mdText);
+    const serialized = serializeMdNodes(nodes);
+    expect(serialized).toBe('[{"T":"p","X":"hello world"}]');
+    const deserialized = deserializeMdNodes(serialized);
+    expect(deserialized).toStrictEqual(nodes);
+  });
+
+  it("list", () => {
+    const mdText = "- hello world\n- me too";
+    const nodes = parseMarkdown(mdText);
+    const serialized = serializeMdNodes(nodes);
+    expect(serialized).toBe(
+      '[{"T":"ul","C":[{"T":"li","X":"hello world"},{"T":"li","X":"me too"}]}]',
+    );
+    const deserialized = deserializeMdNodes(serialized);
+    expect(deserialized).toStrictEqual(nodes);
+  });
+
+  it("grid", () => {
+    const mdText = `![img1](/data/img1.jpg){grid}
+![img2](/data/img2.jpg){grid}`;
+    const nodes = mdGroupImageGrid(parseMarkdown(mdText));
+    const serialized = serializeMdNodes(nodes);
+    expect(serialized).toBe(
+      '[{"T":"div","C":[{"T":"figure","C":[{"T":"img","SR":"/data/img1.jpg","GD":true},{"T":"figcaption","X":"img1"}],"CL":"image-block"},{"T":"figure","C":[{"T":"img","SR":"/data/img2.jpg","GD":true},{"T":"figcaption","X":"img2"}],"CL":"image-block"}],"CL":"image-grid","DC":2}]',
+    );
+    const deserialized = deserializeMdNodes(serialized);
+    expect(deserialized).toStrictEqual(nodes);
+  });
+
+  it("complex", () => {
+    const mdText = `hello world
+fetch *me* **my** __hat__.
+line2
+
+paragraph2
+# first
+## second
+### third
+- hop step
+- \`jump\`
+|one|two|
+![img1](/data/tako.jpg){featured}
+![img2](/xyz/tako.jpg){grid}{no-featured}
+![video](/data/tako.mp4){grid}
+----
+> foo bar
+> __baz__
+EOF
+`;
+    let nodes = parseMarkdown(mdText);
+    const rewriteOptions: MdMediaRewriteOptions = {
+      allowedPatterns: [/^\/(data)/],
+      alternativeImage: "/data/missing.jpg",
+      rewriteRules: [{ pattern: /\.jpg$/, replacement: ".png" }],
+    };
+    nodes = mdRewriteMediaUrls(nodes, rewriteOptions);
+    nodes = mdGroupImageGrid(nodes);
+    const serialized = serializeMdNodes(nodes);
+    expect(serialized).toBe(
+      '[{"T":"p","C":[{"X":"hello world"},{"T":"br"},{"X":"fetch "},{"T":"em","X":"me"},{"X":" "},{"T":"strong","X":"my"},{"X":" "},{"T":"u","X":"hat"},{"X":"."},{"T":"br"},{"X":"line2"}]},{"T":"p","X":"paragraph2"},{"T":"h1","X":"first"},{"T":"h2","X":"second"},{"T":"h3","X":"third"},{"T":"ul","C":[{"T":"li","X":"hop step"},{"T":"li","C":[{"T":"code","X":"jump"}]}]},{"T":"table","C":[{"T":"tr","C":[{"T":"td","X":"one"},{"T":"td","X":"two"}]}]},{"T":"figure","C":[{"T":"img","SR":"/data/tako.png","FE":true},{"T":"figcaption","X":"img1"}],"CL":"image-block"},{"T":"p","C":[{"X":"!"},{"T":"a","X":"img2","HF":"/xyz/tako.jpg"},{"X":"{grid}{no-featured}"}]},{"T":"figure","C":[{"T":"video","SR":"/data/tako.mp4","GD":true},{"T":"figcaption","X":"video"}],"CL":"image-block"},{"T":"hr","HL":2},{"T":"blockquote","C":[{"X":"foo bar"},{"T":"br"},{"T":"u","X":"baz"}]},{"T":"p","X":"EOF"}]',
+    );
+    const deserialized = deserializeMdNodes(serialized);
+    expect(deserialized).toStrictEqual(nodes);
+  });
+});

@@ -129,9 +129,7 @@ export function parseMarkdown(mdText: string): MdNode[] {
         }
       }
       const isVideo = macro["media"] === "video" || videoExts.test(url);
-      const mediaAttrs: MdAttrs = isVideo
-        ? { src: url, "aria-label": "", controls: true }
-        : { src: url, alt: "" };
+      const mediaAttrs: MdAttrs = { src: url };
       for (const [k, v] of Object.entries(macro)) {
         mediaAttrs[k] = v;
       }
@@ -239,178 +237,6 @@ export function parseMarkdown(mdText: string): MdNode[] {
   return nodes;
 }
 
-export function mdRenderText(nodes: MdNode[]): string {
-  const out: string[] = [];
-  const DOUBLE_AFTER = new Set([
-    "p",
-    "pre",
-    "blockquote",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-    "figure",
-    "table",
-  ]);
-  const SINGLE_AFTER = new Set(["tr", "ul", "hr"]);
-  const endsWithNewline = () => out.length > 0 && out[out.length - 1]!.endsWith("\n");
-  const ensureNewline = () => {
-    if (!endsWithNewline()) out.push("\n");
-  };
-  function walk(n: MdNode, depth = 0): void {
-    if (n.type === "text") {
-      out.push(n.text);
-      return;
-    }
-    switch (n.tag) {
-      case "br": {
-        out.push("\n");
-        return;
-      }
-      case "omitted": {
-        out.push("…");
-        return;
-      }
-      case "ul": {
-        for (const child of n.children || []) {
-          walk(child, depth + 1);
-        }
-        ensureNewline();
-        return;
-      }
-      case "li": {
-        out.push("  ".repeat(Math.max(0, depth - 1)) + "- ");
-        let lastChildWasUL = false;
-        for (const child of n.children || []) {
-          if (child.type === "element" && child.tag === "ul") {
-            ensureNewline();
-            walk(child, depth);
-            lastChildWasUL = true;
-          } else {
-            walk(child, depth);
-            lastChildWasUL = false;
-          }
-        }
-        if (!lastChildWasUL) out.push("\n");
-        return;
-      }
-      default: {
-        for (const child of n.children || []) {
-          walk(child, depth);
-        }
-        if (DOUBLE_AFTER.has(n.tag)) {
-          out.push("\n\n");
-        } else if (SINGLE_AFTER.has(n.tag)) {
-          ensureNewline();
-        }
-        return;
-      }
-    }
-  }
-  for (const n of nodes) walk(n, 0);
-  const text = out.join("");
-  return text
-    .replace(/[ \t]+\n/g, "\n")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
-}
-
-export function mdRenderHtml(nodes: MdNode[]): string {
-  function serializeAll(arr: MdNode[]): string {
-    let html = "";
-    for (const n of arr) html += serializeOne(n);
-    return html;
-  }
-  function serializeOne(n: MdNode): string {
-    if (n.type === "text") {
-      return escapeHTML(n.text);
-    }
-    if (n.type === "element" && n.tag === "omitted") {
-      return `<span class="omitted">…</span>`;
-    }
-    if (n.type === "element" && n.tag === "br") {
-      return `<br>`;
-    }
-    if (n.type === "element" && n.tag === "hr") {
-      const a = n.attrs || {};
-      const attrs: MdAttrs = { ...a };
-      if (attrs["hr-level"] !== undefined) {
-        const v = attrs["hr-level"];
-        delete attrs["hr-level"];
-        (attrs as MdAttrs)["data-hr-level"] = v;
-      }
-      return `<hr${attrsToString(attrs)}>`;
-    }
-    if (n.type === "element" && n.tag === "pre") {
-      const a = n.attrs || {};
-      const attrs: MdAttrs = { ...a };
-      if (attrs["pre-mode"] !== undefined) {
-        const v = attrs["pre-mode"];
-        delete attrs["pre-mode"];
-        (attrs as MdAttrs)["data-pre-mode"] = v;
-      }
-      return `<pre${attrsToString(attrs)}>${serializeAll(n.children || [])}</pre>`;
-    }
-    if (n.type === "element" && n.tag === "figure") {
-      const media = (n.children || []).find(isMediaElement);
-      const figBase = n.attrs || {};
-      const figExtra = media ? mediaDataAttrs(media.attrs || {}) : {};
-      const figAttrs: MdAttrs = { ...figBase, ...figExtra };
-      let inner = "";
-      for (const c of n.children || []) {
-        if (c.type === "element" && isMediaElement(c)) {
-          inner += serializeMedia(c);
-        } else if (c.type === "element" && c.tag === "figcaption") {
-          inner += `<figcaption>${serializeAll(c.children || [])}</figcaption>`;
-        } else {
-          inner += serializeOne(c);
-        }
-      }
-      return `<figure${attrsToString(figAttrs)}>${inner}</figure>`;
-    }
-    if (n.type === "element" && isMediaElement(n)) {
-      return serializeMedia(n);
-    }
-    return `<${n.tag}${attrsToString(n.attrs)}>${serializeAll(n.children || [])}</${n.tag}>`;
-  }
-  function serializeMedia(n: MdMediaElement): string {
-    const a = n.attrs || {};
-    const src = a.src ? String(a.src) : "";
-    if (n.tag === "img") {
-      return `<img src="${escapeHTML(src)}" alt="">`;
-    } else {
-      const base: MdAttrs = { src, "aria-label": "" as const, controls: true };
-      return `<video${attrsToString(base)}></video>`;
-    }
-  }
-  function attrsToString(attrs?: MdAttrs): string {
-    if (!attrs) return "";
-    let out = "";
-    for (const [k, v] of Object.entries(attrs)) {
-      if (v === false || v === undefined || v === null) continue;
-      const name = k;
-      if (v === true) {
-        out += ` ${name}`;
-      } else {
-        out += ` ${name}="${escapeHTML(String(v))}"`;
-      }
-    }
-    return out;
-  }
-  function mediaDataAttrs(mediaAttrs: MdAttrs): MdAttrs {
-    const out: MdAttrs = {};
-    for (const [k, v] of Object.entries(mediaAttrs)) {
-      if (k === "src" || k === "alt" || k === "aria-label" || k === "controls") continue;
-      const dataName = `data-${k}`;
-      out[dataName] = v === true ? true : String(v);
-    }
-    return out;
-  }
-  return serializeAll(nodes);
-}
-
 export type MdMediaRewriteRule = {
   pattern: RegExp;
   replacement: string;
@@ -432,12 +258,7 @@ export function mdRewriteMediaUrls(nodes: MdNode[], opts: MdMediaRewriteOptions)
       const a = n.attrs || {};
       const src = typeof a.src === "string" ? a.src : "";
       if (!isAllowed(src)) {
-        return {
-          type: "element",
-          tag: "img",
-          attrs: { src: opts.alternativeImage, alt: "" },
-          children: [],
-        };
+        return { type: "element", tag: "img", attrs: { src: opts.alternativeImage }, children: [] };
       }
       return { ...n, attrs: { ...a, src: applyRules(src) } };
     }
@@ -462,7 +283,6 @@ export function mdGroupImageGrid(nodes: MdNode[]): MdNode[] {
     const out: MdNode[] = [];
     for (let i = 0; i < arr.length; ) {
       const node = arr[i];
-
       if (isFigureImageBlock(node) && hasGridFlag(findMedia(node)?.attrs)) {
         const group: MdNode[] = [node];
         let j = i + 1;
@@ -498,8 +318,8 @@ export function mdGroupImageGrid(nodes: MdNode[]): MdNode[] {
   return groupInArray(nodes);
 }
 
-export function mdFilterForThumbnail(nodes: MdNode[]): MdNode[] {
-  let thumbnailFig: MdNode | null = null;
+export function mdFilterForFeatured(nodes: MdNode[]): MdNode[] {
+  let featuredFig: MdNode | null = null;
   function isFigureImageBlock(n: MdNode): n is MdElementNode & { tag: "figure" } {
     return n.type === "element" && n.tag === "figure" && n.attrs?.class === "image-block";
   }
@@ -507,14 +327,14 @@ export function mdFilterForThumbnail(nodes: MdNode[]): MdNode[] {
     if (!n || n.type !== "element") return undefined;
     return (n.children || []).find(isMediaElement);
   }
-  function findThumbnailFig(arr: MdNode[]): MdNode | null {
+  function findFeaturedFig(arr: MdNode[]): MdNode | null {
     for (const node of arr) {
       if (isFigureImageBlock(node)) {
         const media = findMedia(node);
-        if (media && media.attrs && media.attrs["thumbnail"]) return node;
+        if (media && media.attrs && media.attrs["featured"]) return node;
       }
       if (node.type === "element" && node.children?.length) {
-        const r = findThumbnailFig(node.children);
+        const r = findFeaturedFig(node.children);
         if (r) return r;
       }
     }
@@ -525,7 +345,7 @@ export function mdFilterForThumbnail(nodes: MdNode[]): MdNode[] {
       if (isFigureImageBlock(node)) {
         const media = findMedia(node);
         if (media) {
-          if (!media.attrs || !media.attrs["no-thumbnail"]) return node;
+          if (!media.attrs || !media.attrs["no-featured"]) return node;
         } else {
           return node;
         }
@@ -537,7 +357,7 @@ export function mdFilterForThumbnail(nodes: MdNode[]): MdNode[] {
     }
     return null;
   }
-  thumbnailFig = findThumbnailFig(nodes) || findFirstFig(nodes);
+  featuredFig = findFeaturedFig(nodes) || findFirstFig(nodes);
   function removeImageBlocks(arr: MdNode[]): MdNode[] {
     const out: MdNode[] = [];
     for (const n of arr) {
@@ -549,12 +369,12 @@ export function mdFilterForThumbnail(nodes: MdNode[]): MdNode[] {
     return out;
   }
   const body = removeImageBlocks(nodes);
-  if (thumbnailFig && thumbnailFig.type === "element") {
+  if (featuredFig && featuredFig.type === "element") {
     const thumb: MdElementNode = {
       type: "element",
       tag: "figure",
-      attrs: { ...(thumbnailFig.attrs || {}), class: "thumbnail-block" },
-      children: thumbnailFig.children,
+      attrs: { ...(featuredFig.attrs || {}), class: "featured-block" },
+      children: featuredFig.children,
     };
     return [thumb, ...body];
   }
@@ -602,19 +422,13 @@ export function mdCutOff(
     const cls = attrs["class"];
     if (typeof cls === "string") {
       const parts = cls.split(/\s+/);
-      if (parts.includes("thumbnail-block")) return "thumbnail-block";
-      if (parts.includes("image-block")) return "image-block";
-    }
-    const clsName = attrs["className"];
-    if (typeof clsName === "string") {
-      const parts = clsName.split(/\s+/);
-      if (parts.includes("thumbnail-block")) return "thumbnail-block";
+      if (parts.includes("featured-block")) return "featured-block";
       if (parts.includes("image-block")) return "image-block";
     }
     return undefined;
   }
-  function isThumbnailFigure(el: MdElementNode): boolean {
-    return el.tag === "figure" && getKind(el.attrs) === "thumbnail-block";
+  function isFeaturedFigure(el: MdElementNode): boolean {
+    return el.tag === "figure" && getKind(el.attrs) === "featured-block";
   }
   function computeTextMetrics(ns: MdNode[]): { length: number; newlines: number } {
     let length = 0;
@@ -704,7 +518,7 @@ export function mdCutOff(
       el.tag === "figure" &&
       !freeMedia &&
       dynamicImgCost &&
-      !isThumbnailFigure(el) &&
+      !isFeaturedFigure(el) &&
       figureHasMedia(el)
     ) {
       const capLen = captionLengthOfFigure(el);
@@ -738,7 +552,7 @@ export function mdCutOff(
     }
     const childFreeMedia =
       freeMedia ||
-      isThumbnailFigure(el) ||
+      isFeaturedFigure(el) ||
       (el.tag === "figure" && chargedAtFigure) ||
       el.tag === "figcaption";
     const childFreeText = freeText || el.tag === "figcaption";
@@ -770,6 +584,157 @@ export function mdCutOff(
     }
   }
   return out;
+}
+
+export function mdRenderText(nodes: MdNode[]): string {
+  const out: string[] = [];
+  const DOUBLE_AFTER = new Set([
+    "p",
+    "pre",
+    "blockquote",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "figure",
+    "table",
+  ]);
+  const SINGLE_AFTER = new Set(["tr", "ul", "hr"]);
+  const endsWithNewline = () => out.length > 0 && out[out.length - 1]!.endsWith("\n");
+  const ensureNewline = () => {
+    if (!endsWithNewline()) out.push("\n");
+  };
+  function walk(n: MdNode, depth = 0): void {
+    if (n.type === "text") {
+      out.push(n.text);
+      return;
+    }
+    switch (n.tag) {
+      case "br": {
+        out.push("\n");
+        return;
+      }
+      case "omitted": {
+        out.push("…");
+        return;
+      }
+      case "ul": {
+        for (const child of n.children || []) walk(child, depth + 1);
+        ensureNewline();
+        return;
+      }
+      case "li": {
+        out.push("  ".repeat(Math.max(0, depth - 1)) + "- ");
+        let lastChildWasUL = false;
+        for (const child of n.children || []) {
+          if (child.type === "element" && child.tag === "ul") {
+            ensureNewline();
+            walk(child, depth);
+            lastChildWasUL = true;
+          } else {
+            walk(child, depth);
+            lastChildWasUL = false;
+          }
+        }
+        if (!lastChildWasUL) out.push("\n");
+        return;
+      }
+      default: {
+        for (const child of n.children || []) walk(child, depth);
+        if (DOUBLE_AFTER.has(n.tag)) out.push("\n\n");
+        else if (SINGLE_AFTER.has(n.tag)) ensureNewline();
+        return;
+      }
+    }
+  }
+  for (const n of nodes) walk(n, 0);
+  const text = out.join("");
+  return text
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+export function mdRenderHtml(nodes: MdNode[]): string {
+  function serializeAll(arr: MdNode[]): string {
+    let html = "";
+    for (const n of arr) html += serializeOne(n);
+    return html;
+  }
+  function serializeOne(n: MdNode): string {
+    if (n.type === "text") return escapeHTML(n.text);
+    if (n.type === "element" && n.tag === "omitted") return `<span class="omitted">…</span>`;
+    if (n.type === "element" && n.tag === "br") return `<br>`;
+    if (n.type === "element" && n.tag === "hr") {
+      const a = n.attrs || {};
+      const attrs: MdAttrs = { ...a };
+      if (attrs["hr-level"] !== undefined) {
+        const v = attrs["hr-level"];
+        delete attrs["hr-level"];
+        (attrs as MdAttrs)["data-hr-level"] = v;
+      }
+      return `<hr${attrsToString(attrs)}>`;
+    }
+    if (n.type === "element" && n.tag === "pre") {
+      const a = n.attrs || {};
+      const attrs: MdAttrs = { ...a };
+      if (attrs["pre-mode"] !== undefined) {
+        const v = attrs["pre-mode"];
+        delete attrs["pre-mode"];
+        (attrs as MdAttrs)["data-pre-mode"] = v;
+      }
+      return `<pre${attrsToString(attrs)}>${serializeAll(n.children || [])}</pre>`;
+    }
+    if (n.type === "element" && n.tag === "figure") {
+      const media = (n.children || []).find(isMediaElement);
+      const figBase = n.attrs || {};
+      const figExtra = media ? mediaDataAttrs(media.attrs || {}) : {};
+      const figAttrs: MdAttrs = { ...figBase, ...figExtra };
+      let inner = "";
+      for (const c of n.children || []) {
+        if (c.type === "element" && isMediaElement(c)) inner += serializeMedia(c);
+        else if (c.type === "element" && c.tag === "figcaption")
+          inner += `<figcaption>${serializeAll(c.children || [])}</figcaption>`;
+        else inner += serializeOne(c);
+      }
+      return `<figure${attrsToString(figAttrs)}>${inner}</figure>`;
+    }
+    if (n.type === "element" && isMediaElement(n)) return serializeMedia(n);
+    return `<${n.tag}${attrsToString(n.attrs)}>${serializeAll(n.children || [])}</${n.tag}>`;
+  }
+  function serializeMedia(n: MdMediaElement): string {
+    const a = n.attrs || {};
+    const src = a.src ? String(a.src) : "";
+    if (n.tag === "img") {
+      return `<img src="${escapeHTML(src)}" alt="">`;
+    } else {
+      const base: MdAttrs = { src, "aria-label": "" as const, controls: true };
+      return `<video${attrsToString(base)}></video>`;
+    }
+  }
+  function attrsToString(attrs?: MdAttrs): string {
+    if (!attrs) return "";
+    let out = "";
+    for (const [k, v] of Object.entries(attrs)) {
+      if (v === false || v === undefined || v === null) continue;
+      const name = k;
+      if (v === true) out += ` ${name}`;
+      else out += ` ${name}="${escapeHTML(String(v))}"`;
+    }
+    return out;
+  }
+  function mediaDataAttrs(mediaAttrs: MdAttrs): MdAttrs {
+    const out: MdAttrs = {};
+    for (const [k, v] of Object.entries(mediaAttrs)) {
+      if (k === "src" || k === "alt" || k === "aria-label" || k === "controls") continue;
+      const dataName = `data-${k}`;
+      out[dataName] = v === true ? true : String(v);
+    }
+    return out;
+  }
+  return serializeAll(nodes);
 }
 
 function isMediaElement(n: MdNode): n is MdMediaElement {
@@ -866,18 +831,17 @@ function parseInline(text: string): MdNode[] {
     last = match.index + match[0]!.length;
   }
   if (last < text.length) nodes.push({ type: "text", text: text.slice(last) });
-  return nodes.flatMap<MdNode>((n) =>
-    n.type === "text"
-      ? n.text.split(/\n/).flatMap<MdNode>((frag, i) =>
-          i === 0
-            ? [{ type: "text", text: frag }]
-            : [
-                { type: "element", tag: "br", children: [] },
-                { type: "text", text: frag },
-              ],
-        )
-      : [n],
-  );
+  return nodes.flatMap<MdNode>((n) => {
+    if (n.type !== "text") return [n];
+    const parts = n.text.split(/\n/);
+    const out: MdNode[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      if (i > 0) out.push({ type: "element", tag: "br", children: [] });
+      const frag = parts[i]!;
+      if (frag !== "") out.push({ type: "text", text: frag });
+    }
+    return out;
+  });
 }
 
 function parseInlineText(text: string): MdNode[] {
@@ -891,4 +855,103 @@ function escapeHTML(text: string): string {
     .replace(/>/g, "&gt;")
     .replace(/"/g, "&quot;")
     .replace(/'/g, "&#39;");
+}
+
+const NODE_KEY_TAG = "T";
+const NODE_KEY_CHILDREN = "C";
+const NODE_KEY_TEXT = "X";
+
+const ATTR_ENC: Record<string, string> = {
+  src: "SR",
+  alt: "AT",
+  href: "HF",
+  controls: "CT",
+  "aria-label": "AL",
+  class: "CL",
+  grid: "GD",
+  "data-cols": "DC",
+  featured: "FE",
+  "no-featured": "NF",
+  "pre-mode": "PM",
+  "hr-level": "HL",
+};
+
+const ATTR_DEC: Record<string, string> = Object.fromEntries(
+  Object.entries(ATTR_ENC).map(([k, v]) => [v, k]),
+);
+
+const UNKNOWN_ATTR_BUCKET = "A";
+
+type EncodedNode =
+  | { [NODE_KEY_TEXT]: string }
+  | ({ [NODE_KEY_TAG]: string } & { [NODE_KEY_CHILDREN]?: EncodedNode[] } & Record<string, any>);
+
+export function serializeMdNodes(nodes: MdNode[]): string {
+  const enc = nodes.map(encodeNode);
+  return JSON.stringify(enc);
+}
+
+export function deserializeMdNodes(data: string): MdNode[] {
+  const arr = JSON.parse(data) as EncodedNode[];
+  return arr.map(decodeNode);
+}
+
+function encodeNode(n: MdNode): EncodedNode {
+  if (n.type === "text") {
+    return { [NODE_KEY_TEXT]: n.text };
+  }
+  const out: any = { [NODE_KEY_TAG]: n.tag };
+  const children = n.children ?? [];
+  if (children.length === 1 && children[0].type === "text") {
+    out[NODE_KEY_TEXT] = (children[0] as MdTextNode).text;
+  } else if (children.length > 0) {
+    out[NODE_KEY_CHILDREN] = children.map(encodeNode);
+  }
+  if (n.attrs && Object.keys(n.attrs).length > 0) {
+    let unknown: Record<string, string | number | boolean> | null = null;
+    for (const [k, v] of Object.entries(n.attrs)) {
+      if (v === undefined || v === null || v === false) continue;
+      if (v === "" || (Array.isArray(v) && (v as any).length === 0)) continue;
+      const code = ATTR_ENC[k];
+      if (code) out[code] = v;
+      else (unknown ??= {})[k] = v;
+    }
+    if (unknown && Object.keys(unknown).length > 0) out[UNKNOWN_ATTR_BUCKET] = unknown;
+  }
+  return out;
+}
+
+function decodeNode(e: EncodedNode): MdNode {
+  if ((e as any)[NODE_KEY_TAG] !== undefined) {
+    const tag = (e as any)[NODE_KEY_TAG] as string;
+    const rawChildren = (e as any)[NODE_KEY_CHILDREN] as EncodedNode[] | undefined;
+    const textInline = (e as any)[NODE_KEY_TEXT] as string | undefined;
+    const children: MdNode[] = rawChildren
+      ? rawChildren.map(decodeNode)
+      : textInline !== undefined
+        ? [{ type: "text", text: String(textInline) }]
+        : [];
+    let attrs: Record<string, string | number | boolean> | undefined;
+    for (const [k, v] of Object.entries(e as any)) {
+      if (k === NODE_KEY_TAG || k === NODE_KEY_CHILDREN || k === NODE_KEY_TEXT) continue;
+      if (k === UNKNOWN_ATTR_BUCKET) continue;
+      const orig = ATTR_DEC[k];
+      if (!orig) continue;
+      if (v === "" || v === false || v === null || v === undefined) continue;
+      (attrs ??= {})[orig] = v as any;
+    }
+    const unknown = (e as any)[UNKNOWN_ATTR_BUCKET] as Record<string, any> | undefined;
+    if (unknown) {
+      for (const [k, v] of Object.entries(unknown)) {
+        if (v === "" || v === false || v === null || v === undefined) continue;
+        (attrs ??= {})[k] = v as any;
+      }
+    }
+    return attrs ? { type: "element", tag, attrs, children } : { type: "element", tag, children };
+  }
+  if ((e as any)[NODE_KEY_TEXT] !== undefined) {
+    const txt = (e as any)[NODE_KEY_TEXT];
+    return { type: "text", text: String(txt) };
+  }
+  return { type: "text", text: "" };
 }
