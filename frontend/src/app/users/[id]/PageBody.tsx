@@ -2,9 +2,9 @@
 
 import { Config } from "@/config";
 import { useEffect, useState } from "react";
-import { getUserDetail, listFollowers, listFollowees } from "@/api/users";
+import { getUser, listFollowers, listFollowees } from "@/api/users";
 import { listPostsDetail, addLike, removeLike, createPost } from "@/api/posts";
-import type { UserDetail, PostDetail } from "@/api/models";
+import type { User, PostDetail } from "@/api/models";
 import { notFound, useParams, useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import UserCard from "@/components/UserCard";
@@ -29,7 +29,7 @@ export default function PageBody() {
   const isAdmin = status && status.state === "authenticated" && status.session.userIsAdmin;
   const updatedAt = status.state === "authenticated" ? status.session.userUpdatedAt : null;
 
-  const [user, setUser] = useState<UserDetail | null>(null);
+  const [user, setUser] = useState<User | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
@@ -62,8 +62,8 @@ export default function PageBody() {
   const { tab, oldestFirst, page } = getQuery();
 
   const [posts, setPosts] = useState<PostDetail[]>([]);
-  const [followers, setFollowers] = useState<UserDetail[]>([]);
-  const [followees, setFollowees] = useState<UserDetail[]>([]);
+  const [followers, setFollowers] = useState<User[]>([]);
+  const [followees, setFollowees] = useState<User[]>([]);
   const [listLoading, setListLoading] = useState(true);
   const [listError, setListError] = useState<string | null>(null);
   const [hasNext, setHasNext] = useState(false);
@@ -81,7 +81,7 @@ export default function PageBody() {
     let canceled = false;
     setLoading(true);
     setError(null);
-    getUserDetail(id, userId)
+    getUser(id, userId)
       .then((data) => {
         if (!canceled) setUser(data);
       })
@@ -96,8 +96,8 @@ export default function PageBody() {
             notFound();
             return;
           }
-          if (err instanceof Error) setError(err.message || "Failed to fetch user detail.");
-          else setError(String(err) || "Failed to fetch user detail.");
+          if (err instanceof Error) setError(err.message || "Failed to fetch user.");
+          else setError(String(err) || "Failed to fetch user.");
         }
       })
       .finally(() => {

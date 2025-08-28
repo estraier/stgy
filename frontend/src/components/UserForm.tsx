@@ -2,8 +2,8 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Image from "next/image";
-import type { UserDetail } from "@/api/models";
-import { updateUser, getUserDetail, deleteUser } from "@/api/users";
+import type { User } from "@/api/models";
+import { updateUser, getUser, deleteUser } from "@/api/users";
 import { listAIModels } from "@/api/aiModels";
 import {
   presignProfileUpload,
@@ -15,10 +15,10 @@ import {
 import Link from "next/link";
 
 type UserFormProps = {
-  user: UserDetail;
+  user: User;
   isAdmin: boolean;
   isSelf: boolean;
-  onUpdated?: (user?: UserDetail) => void | Promise<void>;
+  onUpdated?: (user?: User) => void | Promise<void>;
   onCancel: () => void;
 };
 
@@ -110,7 +110,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
       }
       await updateUser(user.id, input);
 
-      const updatedUser = await getUserDetail(user.id, user.id);
+      const updatedUser = await getUser(user.id, user.id);
       if (onUpdated) {
         await onUpdated(updatedUser);
       }

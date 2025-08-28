@@ -1,7 +1,6 @@
 import { Config } from "../config";
 import {
   User,
-  UserDetail,
   CountUsersInput,
   CreateUserInput,
   UpdateUserInput,
@@ -64,19 +63,9 @@ export class UsersService {
     return Number(res.rows[0].count);
   }
 
-  async getUser(id: string): Promise<User | null> {
-    const res = await this.pgClient.query(
-      `SELECT id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at
-       FROM users WHERE id = $1`,
-      [id],
-    );
-    if (!res.rows[0]) return null;
-    return snakeToCamel<User>(res.rows[0]);
-  }
-
-  async getUserDetail(id: string, focusUserId?: string): Promise<UserDetail | null> {
+  async getUser(id: string, focusUserId?: string): Promise<User | null> {
     const userRes = await this.pgClient.query(
-      `SELECT id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees, count_posts
+      `SELECT id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees, count_posts, count_followers, count_followees, count_posts
        FROM users WHERE id = $1`,
       [id],
     );
@@ -92,65 +81,10 @@ export class UsersService {
       user.isFollowedByFocusUser = followRes.rows[0].is_followed_by_focus_user;
       user.isFollowingFocusUser = followRes.rows[0].is_following_focus_user;
     }
-    return user as UserDetail;
+    return user as User;
   }
 
   async listUsers(input?: ListUsersInput, focusUserId?: string): Promise<User[]> {
-    const offset = input?.offset ?? 0;
-    const limit = input?.limit ?? 100;
-    const order = input?.order ?? "desc";
-    const query = input?.query?.trim();
-    const nickname = input?.nickname?.trim();
-    const nicknamePrefix = input?.nicknamePrefix?.trim();
-
-    let baseSelect = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at
-      FROM users u
-    `;
-    const params: unknown[] = [];
-    const wheres: string[] = [];
-
-    if (query) {
-      const escapedQuery = escapeForLike(query);
-      wheres.push("(u.nickname ILIKE $1 OR u.introduction ILIKE $2)");
-      params.push(`%${escapedQuery}%`, `%${escapedQuery}%`);
-    } else if (nickname) {
-      const escapedQuery = escapeForLike(nickname);
-      wheres.push(`u.nickname ILIKE $${params.length + 1}`);
-      params.push(`%${escapedQuery}%`);
-    } else if (nicknamePrefix) {
-      const escapedQuery = escapeForLike(nicknamePrefix.toLowerCase());
-      wheres.push(`LOWER(u.nickname) LIKE $${params.length + 1}`);
-      params.push(`${escapedQuery}%`);
-    }
-    let orderClause = "";
-    if (order === "social" && focusUserId) {
-      baseSelect += `
-        LEFT JOIN user_follows f1 ON f1.follower_id = $${params.length + 1} AND f1.followee_id = u.id
-        LEFT JOIN user_follows f2 ON f2.follower_id = u.id AND f2.followee_id = $${params.length + 1}
-      `;
-      params.push(focusUserId);
-      orderClause =
-        `ORDER BY (u.id = $${params.length + 1}) DESC, ` +
-        `(f1.follower_id IS NOT NULL) DESC, ` +
-        `(f2.follower_id IS NOT NULL) DESC, ` +
-        `u.id ASC`;
-      params.push(focusUserId);
-    } else {
-      const dir = order.toLowerCase() === "asc" ? "ASC" : "DESC";
-      orderClause = `ORDER BY u.id ${dir}`;
-    }
-
-    let sql = baseSelect;
-    if (wheres.length > 0) sql += " WHERE " + wheres.join(" AND ");
-    sql += ` ${orderClause} OFFSET $${params.length + 1} LIMIT $${params.length + 2}`;
-    params.push(offset, limit);
-
-    const res = await this.pgClient.query(sql, params);
-    return res.rows.map((row: Record<string, unknown>) => snakeToCamel<User>(row));
-  }
-
-  async listUsersDetail(input?: ListUsersInput, focusUserId?: string): Promise<UserDetail[]> {
     const offset = input?.offset ?? 0;
     const limit = input?.limit ?? 100;
     const order = input?.order ?? "desc";
@@ -203,7 +137,7 @@ export class UsersService {
     params.push(offset, limit);
 
     const res = await this.pgClient.query(sql, params);
-    const users = res.rows.map((row: Record<string, unknown>) => snakeToCamel<UserDetail>(row));
+    const users = res.rows.map((row: Record<string, unknown>) => snakeToCamel<User>(row));
 
     if (users.length === 0) return [];
 
@@ -253,7 +187,7 @@ export class UsersService {
     const res = await this.pgClient.query(
       `INSERT INTO users (id, email, nickname, password, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at)
        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL)
-       RETURNING id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at`,
+       RETURNING id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees, count_posts`,
       [
         id,
         input.email,
@@ -312,7 +246,7 @@ export class UsersService {
     values.push(input.id);
 
     const sql = `UPDATE users SET ${columns.join(", ")} WHERE id = $${idx}
-                 RETURNING id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at`;
+                 RETURNING id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees, count_posts`;
     const res = await this.pgClient.query(sql, values);
     return res.rows[0] ? snakeToCamel<User>(res.rows[0]) : null;
   }
@@ -432,10 +366,7 @@ export class UsersService {
     if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
   }
 
-  async listFolloweesDetail(
-    input: ListFolloweesInput,
-    focusUserId?: string,
-  ): Promise<UserDetail[]> {
+  async listFollowees(input: ListFolloweesInput, focusUserId?: string): Promise<User[]> {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
@@ -448,7 +379,7 @@ export class UsersService {
       OFFSET $2 LIMIT $3
     `;
     const res = await this.pgClient.query(sql, [input.followerId, offset, limit]);
-    const users = res.rows.map((row: Record<string, unknown>) => snakeToCamel<UserDetail>(row));
+    const users = res.rows.map((row: Record<string, unknown>) => snakeToCamel<User>(row));
 
     if (users.length === 0) return [];
 
@@ -474,10 +405,7 @@ export class UsersService {
     return users;
   }
 
-  async listFollowersDetail(
-    input: ListFollowersInput,
-    focusUserId?: string,
-  ): Promise<UserDetail[]> {
+  async listFollowers(input: ListFollowersInput, focusUserId?: string): Promise<User[]> {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
@@ -490,7 +418,7 @@ export class UsersService {
       OFFSET $2 LIMIT $3
     `;
     const res = await this.pgClient.query(sql, [input.followeeId, offset, limit]);
-    const users = res.rows.map((row: Record<string, unknown>) => snakeToCamel<UserDetail>(row));
+    const users = res.rows.map((row: Record<string, unknown>) => snakeToCamel<User>(row));
 
     if (users.length === 0) return [];
 
@@ -607,7 +535,8 @@ export class UsersService {
       )
       SELECT
         u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar,
-        u.ai_model, u.ai_personality, u.created_at, u.updated_at
+        u.ai_model, u.ai_personality, u.created_at, u.updated_at,
+        u.count_followers, u.count_followees, u.count_posts
       FROM page p
       JOIN users u ON u.id = p.id
       ORDER BY p.prio, p.nkey, u.id;`;

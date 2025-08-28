@@ -4,8 +4,8 @@ import { Config } from "@/config";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
-import { listUsersDetail, listFollowers, listFollowees } from "@/api/users";
-import type { UserDetail } from "@/api/models";
+import { listUsers, listFollowers, listFollowees } from "@/api/users";
+import type { User } from "@/api/models";
 import { parseUserSearchQuery, serializeUserSearchQuery } from "@/utils/parse";
 import UserCard from "@/components/UserCard";
 
@@ -39,7 +39,7 @@ export default function PageBody() {
 
   const effectiveTab = isSearchMode ? "all" : tab;
 
-  const [users, setUsers] = useState<UserDetail[]>([]);
+  const [users, setUsers] = useState<User[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasNext, setHasNext] = useState(false);
@@ -86,12 +86,12 @@ export default function PageBody() {
       focusUserId: userId,
     };
 
-    let fetcher: Promise<UserDetail[]>;
+    let fetcher: Promise<User[]>;
     if (isSearchMode) {
       if ("query" in searchQueryObj && searchQueryObj.query) params.query = searchQueryObj.query;
       if ("nickname" in searchQueryObj && searchQueryObj.nickname)
         params.nickname = searchQueryObj.nickname;
-      fetcher = listUsersDetail(params);
+      fetcher = listUsers(params);
     } else if (effectiveTab === "followees") {
       fetcher = listFollowees(userId!, {
         offset: params.offset,
@@ -107,7 +107,7 @@ export default function PageBody() {
         focusUserId: userId,
       });
     } else {
-      fetcher = listUsersDetail(params);
+      fetcher = listUsers(params);
     }
 
     fetcher

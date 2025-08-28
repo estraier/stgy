@@ -1,16 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { UserDetail } from "@/api/models";
+import type { User } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
 import { formatDateTime, normalizeLinefeeds } from "@/utils/format";
 import { makeArticleHtmlFromMarkdown, makeSnippetHtmlFromMarkdown } from "@/utils/article";
 
 type UserCardProps = {
-  user: UserDetail;
+  user: User;
   truncated?: boolean;
   className?: string;
-  onClick?: (user: UserDetail) => void;
+  onClick?: (user: User) => void;
   focusUserId?: string;
   clickable?: boolean;
 };

@@ -8,13 +8,7 @@ import { AuthService } from "../services/auth";
 import { AuthHelpers } from "./authHelpers";
 import { EventLogService } from "../services/eventLog";
 import { SendMailService } from "../services/sendMail";
-import {
-  User,
-  UserDetail,
-  CreateUserInput,
-  UpdateUserInput,
-  UpdatePasswordInput,
-} from "../models/user";
+import { User, CreateUserInput, UpdateUserInput, UpdatePasswordInput } from "../models/user";
 import {
   validateEmail,
   normalizeEmail,
@@ -57,39 +51,6 @@ export default function createUsersRouter(
     res.json({ count });
   });
 
-  router.get("/detail", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    const offset = parseInt((req.query.offset as string) ?? "0", 10);
-    const limit = parseInt((req.query.limit as string) ?? "100", 10);
-    const order =
-      req.query.order === "asc" || req.query.order === "desc" || req.query.order === "social"
-        ? req.query.order
-        : "desc";
-    const query =
-      typeof req.query.query === "string" && req.query.query.trim() !== ""
-        ? req.query.query.trim()
-        : undefined;
-    const nickname =
-      typeof req.query.nickname === "string" && req.query.nickname.trim() !== ""
-        ? req.query.nickname.trim()
-        : undefined;
-    const nicknamePrefix =
-      typeof req.query.nicknamePrefix === "string" && req.query.nicknamePrefix.trim() !== ""
-        ? req.query.nicknamePrefix.trim()
-        : undefined;
-    const focusUserId =
-      typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
-        ? req.query.focusUserId.trim()
-        : undefined;
-    let users = await usersService.listUsersDetail(
-      { offset, limit, order, query, nickname, nicknamePrefix },
-      focusUserId,
-    );
-    users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
-    res.json(users);
-  });
-
   router.get("/friends/by-nickname-prefix", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
@@ -128,20 +89,11 @@ export default function createUsersRouter(
   router.get("/:id", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    let user = await usersService.getUser(req.params.id);
-    if (!user) return res.status(404).json({ error: "not found" });
-    user = maskUserSensitiveInfo(user, loginUser.isAdmin, loginUser.id);
-    res.json(user);
-  });
-
-  router.get("/:id/detail", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
     const focusUserId =
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
-    let user = await usersService.getUserDetail(req.params.id, focusUserId);
+    let user = await usersService.getUser(req.params.id, focusUserId);
     if (!user) return res.status(404).json({ error: "not found" });
     user = maskUserSensitiveInfo(user, loginUser.isAdmin, loginUser.id);
     res.json(user);
@@ -399,7 +351,7 @@ export default function createUsersRouter(
     }
   });
 
-  router.get("/:id/followees/detail", async (req: Request, res: Response) => {
+  router.get("/:id/followees", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const followerId = req.params.id;
@@ -410,15 +362,12 @@ export default function createUsersRouter(
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
-    let users = await usersService.listFolloweesDetail(
-      { followerId, offset, limit, order },
-      focusUserId,
-    );
+    let users = await usersService.listFollowees({ followerId, offset, limit, order }, focusUserId);
     users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
     res.json(users);
   });
 
-  router.get("/:id/followers/detail", async (req: Request, res: Response) => {
+  router.get("/:id/followers", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const followeeId = req.params.id;
@@ -429,10 +378,7 @@ export default function createUsersRouter(
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
-    let users = await usersService.listFollowersDetail(
-      { followeeId, offset, limit, order },
-      focusUserId,
-    );
+    let users = await usersService.listFollowers({ followeeId, offset, limit, order }, focusUserId);
     users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
     res.json(users);
   });
@@ -440,23 +386,15 @@ export default function createUsersRouter(
   return router;
 }
 
-function maskUserSensitiveInfo<T extends User | UserDetail>(
-  user: T,
-  isAdmin: boolean,
-  loginUserId: string,
-): T {
+function maskUserSensitiveInfo(user: User, isAdmin: boolean, loginUserId: string): User {
   if (!user) return user;
   if (isAdmin || user.id === loginUserId) return user;
   return {
     ...user,
     email: maskEmailByHash(user.email),
-  } as T;
+  } as User;
 }
 
-function maskUserListSensitiveInfo<T extends User | UserDetail>(
-  users: T[],
-  isAdmin: boolean,
-  loginUserId: string,
-): T[] {
+function maskUserListSensitiveInfo(users: User[], isAdmin: boolean, loginUserId: string): User[] {
   return users.map((u) => maskUserSensitiveInfo(u, isAdmin, loginUserId));
 }

@@ -25,9 +25,6 @@ export type User = {
   aiPersonality: string | null;
   createdAt: string;
   updatedAt: string | null;
-};
-
-export type UserDetail = User & {
   countFollowers: number;
   countFollowees: number;
   countPosts: number;

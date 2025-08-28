@@ -24,6 +24,9 @@ class MockPgClient {
         aiPersonality: "A",
         createdAt: "2020-01-01T00:00:00Z",
         updatedAt: null,
+        countFollowers: 0,
+        countFollowees: 0,
+        countPosts: 0,
       },
       {
         id: "bob",
@@ -36,6 +39,9 @@ class MockPgClient {
         aiPersonality: "B",
         createdAt: "2020-01-02T00:00:00Z",
         updatedAt: null,
+        countFollowers: 0,
+        countFollowees: 0,
+        countPosts: 0,
       },
       {
         id: "carol",
@@ -48,6 +54,9 @@ class MockPgClient {
         aiPersonality: "C",
         createdAt: "2020-01-03T00:00:00Z",
         updatedAt: null,
+        countFollowers: 0,
+        countFollowees: 0,
+        countPosts: 0,
       },
     ];
     this.follows = [
@@ -329,6 +338,9 @@ class MockPgClient {
         aiPersonality,
         createdAt: new Date().toISOString(),
         updatedAt: null,
+        countFollowers: 0,
+        countFollowees: 0,
+        countPosts: 0,
       };
       this.users.push(user);
       this.passwords[user.id] = password;
@@ -466,48 +478,35 @@ describe("UsersService", () => {
     expect(await service.countUsers({ query: "introA" })).toBe(1);
   });
 
-  test("getUser", async () => {
-    const user = await service.getUser("alice");
+  test("getUser (with focusUserId)", async () => {
+    const user = await service.getUser("alice", "bob");
     expect(user?.id).toBe("alice");
-    expect(await service.getUser("no-such-id")).toBeNull();
+    expect(user?.countFollowers).toBe(2);
+    expect(user?.countFollowees).toBe(2);
+    expect(user?.countPosts).toBe(0);
+    expect(user?.isFollowedByFocusUser).toBe(true);
+    expect(user?.isFollowingFocusUser).toBe(true);
   });
 
-  test("getUserDetail (with focusUserId)", async () => {
-    const detail = await service.getUserDetail("alice", "bob");
-    expect(detail?.id).toBe("alice");
-    expect(detail?.countFollowers).toBe(2);
-    expect(detail?.countFollowees).toBe(2);
-    expect(detail?.countPosts).toBe(0);
-    expect(detail?.isFollowedByFocusUser).toBe(true);
-    expect(detail?.isFollowingFocusUser).toBe(true);
-  });
-
-  test("listUsers", async () => {
-    const users = await service.listUsers();
-    expect(users.length).toBe(3);
-    expect(users[0].id).toBe("carol");
-    expect(users[2].id).toBe("alice");
-  });
-
-  test("listUsersDetail (with focusUserId)", async () => {
-    const details = await service.listUsersDetail({}, "bob");
-    const aliceDetail = details.find((u) => u.id === "alice")!;
-    expect(aliceDetail.countFollowees).toBe(2);
-    expect(aliceDetail.countPosts).toBe(0);
-    expect(aliceDetail.isFollowedByFocusUser).toBe(true);
-    expect(aliceDetail.isFollowingFocusUser).toBe(true);
-    const bobDetail = details.find((u) => u.id === "bob")!;
-    expect(bobDetail.countFollowers).toBe(1);
-    expect(bobDetail.countFollowees).toBe(1);
-    expect(bobDetail.countPosts).toBe(0);
-    expect(bobDetail.isFollowedByFocusUser).toBeUndefined();
-    expect(bobDetail.isFollowingFocusUser).toBeUndefined();
-    const carolDetail = details.find((u) => u.id === "carol")!;
-    expect(carolDetail.countFollowers).toBe(1);
-    expect(carolDetail.countFollowees).toBe(1);
-    expect(carolDetail.countPosts).toBe(0);
-    expect(carolDetail.isFollowedByFocusUser).toBe(false);
-    expect(carolDetail.isFollowingFocusUser).toBe(false);
+  test("listUsers (with focusUserId)", async () => {
+    const users = await service.listUsers({}, "bob");
+    const alice = users.find((u) => u.id === "alice")!;
+    expect(alice.countFollowees).toBe(2);
+    expect(alice.countPosts).toBe(0);
+    expect(alice.isFollowedByFocusUser).toBe(true);
+    expect(alice.isFollowingFocusUser).toBe(true);
+    const bob = users.find((u) => u.id === "bob")!;
+    expect(bob.countFollowers).toBe(1);
+    expect(bob.countFollowees).toBe(1);
+    expect(bob.countPosts).toBe(0);
+    expect(bob.isFollowedByFocusUser).toBeUndefined();
+    expect(bob.isFollowingFocusUser).toBeUndefined();
+    const carol = users.find((u) => u.id === "carol")!;
+    expect(carol.countFollowers).toBe(1);
+    expect(carol.countFollowees).toBe(1);
+    expect(carol.countPosts).toBe(0);
+    expect(carol.isFollowedByFocusUser).toBe(false);
+    expect(carol.isFollowingFocusUser).toBe(false);
   });
 
   test("createUser", async () => {
@@ -645,8 +644,8 @@ describe("UsersService", () => {
     await expect(service.deleteUser("no-such-id")).rejects.toThrow(/User not found/i);
   });
 
-  test("listFolloweesDetail (with focusUserId)", async () => {
-    const res = await service.listFolloweesDetail({ followerId: "alice" }, "bob");
+  test("listFollowees (with focusUserId)", async () => {
+    const res = await service.listFollowees({ followerId: "alice" }, "bob");
     expect(res.length).toBe(2);
     expect(res.some((u) => u.id === "bob")).toBe(true);
     expect(res.some((u) => u.id === "carol")).toBe(true);
@@ -654,8 +653,8 @@ describe("UsersService", () => {
     expect(res.every((u) => typeof u.countPosts === "number")).toBe(true);
   });
 
-  test("listFollowersDetail (with focusUserId)", async () => {
-    const res = await service.listFollowersDetail({ followeeId: "alice" }, "bob");
+  test("listFollowers (with focusUserId)", async () => {
+    const res = await service.listFollowers({ followeeId: "alice" }, "bob");
     expect(res.length).toBe(2);
     expect(res.some((u) => u.id === "bob")).toBe(true);
     expect(res.some((u) => u.id === "carol")).toBe(true);
