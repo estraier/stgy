@@ -140,7 +140,7 @@ body {
   clear: both;
   cursor: zoom-out;
 }
-.markdown-body .thumbnail-block {
+.markdown-body .featured-block {
   float: right;
   max-width: 20ex;
   max-height: 20ex;
@@ -219,15 +219,15 @@ body {
   border: 1px solid #ddd;
   border-radius: 0.7ex;
 }
-.markdown-body .thumbnail-block img,
-.markdown-body .thumbnail-block video {
+.markdown-body .featured-block img,
+.markdown-body .featured-block video {
   display: block;
   width: 100%;
   height: auto;
   border: 1px solid #ddd;
   border-radius: 0.5ex;
 }
-.markdown-body .thumbnail-block figcaption {
+.markdown-body .featured-block figcaption {
   display: none;
 }
 

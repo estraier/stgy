@@ -73,7 +73,7 @@ Fakebookの登録にはメールアドレスが必要で、それを入力すれ
 
 ログイン直後には投稿一覧画面が表示されます。ログインさえしていれば、全てのユーザの全ての投稿を読むことができます。
 
-![基本画面](/data/help-posts-firstview.png){thumbnail}
+![基本画面](/data/help-posts-firstview.png){featured}
 
 投稿一覧の上端には、新規投稿フォームがあります。フォームに本文を書き込んで「Post」ボタンを押すと、記事が投稿されます。「Preview」ボタンを押すと、執筆中の返信のプレビューが表示されます。記事の本文はMarkdown形式です。また、記事の最後の行に「#abc, #def」などと書いてタグを指定できます。詳細については[投稿の書式](/posts/0002000000000003)の記事を御覧ください。
 
@@ -309,16 +309,28 @@ HTMLの`<pre>`のように改行をそのまま表現したい場合には、そ
 ![Fakebookロゴ](/data/logo-square.svg){size=large}
 ![Fakebookロゴ](/data/logo-square.svg){size=xlarge}
 
+画像を小さく表示したい場合には、`{size=small}` や `{size=xsmall}` マクロを指定できます。
+
+```
+![Fakebookロゴ](/data/logo-square.svg){size=small}
+![Fakebookロゴ](/data/logo-square.svg){size=xsmall}
+```
+
+![Fakebookロゴ](/data/logo-square.svg){size=small}
+![Fakebookロゴ](/data/logo-square.svg){size=xsmall}
+
+
+
 画像をフローティングさせて文字を回り込みさせたい場合、`{float=left}` や `{size=right}`マクロを指定できます。回り込みを解除したい場合、「`---`」の見えない罫線を引くと良いでしょう。
 
 ```
-![Fakebookロゴ](/data/logo-square.svg){float=left}
+![Fakebookロゴ](/data/logo-square.svg){float=left,size=small}
 渚のハイカラ人魚
 キュートなヒップにズキンドキン
 渚のハイカラ人魚
 まぶしい素足にズキンドキン
 ---
-![Fakebookロゴ](/data/logo-square.svg){float=right}
+![Fakebookロゴ](/data/logo-square.svg){float=right,size=small}
 I will follow you
 あなたに追いてゆきたい
 I will follow you
@@ -326,13 +338,13 @@ I will follow you
 ---
 ```
 
-![Fakebookロゴ](/data/logo-square.svg){float=left}
+![Fakebookロゴ](/data/logo-square.svg){float=left,size=small}
 渚のハイカラ人魚
 キュートなヒップにズキンドキン
 渚のハイカラ人魚
 まぶしい素足にズキンドキン
 ---
-![Fakebookロゴ](/data/logo-square.svg){float=right}
+![Fakebookロゴ](/data/logo-square.svg){float=right,size=small}
 I will follow you
 あなたに追いてゆきたい
 I will follow you
@@ -369,7 +381,7 @@ I will follow you
 ![Fakebookロゴ](/data/logo-square.svg){grid}
 ---
 
-投稿詳細画面には記事内の全ての画像が表示されますが、投稿一覧画像にはひとつの代表画像のサムネイルしか表示されません。デフォルトでは、最初の画像がサムネイル画像になります。最初の画像以外をサムネイル画像にしたい場合には、その画像に `{thumbnail}` マクロを付与します。あるいは、サムネイル画像にしたくない画像に `{no-thumbnail}` をつけても良いでしょう。全ての画像に `{no-thumbnail}` をつければ、サムネイル画像は表示されなくなります。
+投稿詳細画面には記事内の全ての画像が表示されますが、投稿一覧画像にはひとつの代表画像のサムネイルしか表示されません。デフォルトでは、最初の画像が代表画像になります。最初の画像以外を代表画像にしたい場合には、その画像に `{featured}` マクロを付与します。あるいは、代表画像にしたくない画像に `{no-featured}` をつけても良いでしょう。全ての画像に `{no-featured}` をつければ、代表画像は表示されなくなります。
 
 Next: [Fakebookのアーキテクチャ](/posts/0002000000000011)
 $$ WHERE id = '0002000000000003';

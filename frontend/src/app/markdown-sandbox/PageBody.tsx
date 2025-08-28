@@ -4,7 +4,7 @@ import { useState } from "react";
 import {
   parseMarkdown,
   mdGroupImageGrid,
-  mdFilterForThumbnail,
+  mdFilterForFeatured,
   mdCutOff,
   mdRenderHtml,
   mdRenderText,
@@ -45,7 +45,7 @@ Set: http://example.com/
 |We|__live__|in|**Tokyo**|[Shinjuku](https://ja.wikipedia.org/wiki/%E6%96%B0%E5%AE%BF)|
 |one|**two**|three|four|five|
 
-![これはロゴです](/data/logo-square.svg)
+![これはロゴです](/data/logo-square.svg){size=small}
 
 \`\`\`sql
 コードブロック
@@ -54,11 +54,15 @@ Set: http://example.com/
 \`\`\`
 
 We live in Tokyo.
+
+![ロゴ1](/data/logo-square.svg){grid}
+![ロゴ2](/data/logo-square.svg){grid,featured}
+![ロゴ3](/data/logo-square.svg){grid}
 `);
   const [mode, setMode] = useState<"html" | "text">("html");
   const [maxLen, setMaxLen] = useState<number | undefined>(undefined);
   const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
-  const [useThumbnail, setUseThumbnail] = useState<boolean>(false);
+  const [useFeatured, setUseFeatured] = useState<boolean>(false);
 
   return (
     <main className="max-w-2xl mx-auto p-4">
@@ -120,11 +124,11 @@ We live in Tokyo.
         <label className="inline-flex items-center gap-2 select-none cursor-pointer">
           <input
             type="checkbox"
-            checked={useThumbnail}
-            onChange={(e) => setUseThumbnail(e.target.checked)}
+            checked={useFeatured}
+            onChange={(e) => setUseFeatured(e.target.checked)}
             disabled={mode !== "html"}
           />
-          <span className="text-sm">useThumbnail</span>
+          <span className="text-sm">useFeatured</span>
         </label>
       </div>
 
@@ -133,7 +137,7 @@ We live in Tokyo.
           <label className="block text-sm mb-1">Preview HTML</label>
           <div
             className="markdown-body"
-            dangerouslySetInnerHTML={{ __html: makeHtml(text, maxLen, maxHeight, useThumbnail) }}
+            dangerouslySetInnerHTML={{ __html: makeHtml(text, maxLen, maxHeight, useFeatured) }}
             style={{
               background: "#fff",
               border: "1px solid #888",
@@ -158,11 +162,11 @@ We live in Tokyo.
   );
 }
 
-function makeHtml(mdText: string, maxLen?: number, maxHeight?: number, useThumbnail?: boolean) {
+function makeHtml(mdText: string, maxLen?: number, maxHeight?: number, useFeatured?: boolean) {
   let nodes = parseMarkdown(mdText);
   nodes = mdGroupImageGrid(nodes);
-  if (useThumbnail) {
-    nodes = mdFilterForThumbnail(nodes);
+  if (useFeatured) {
+    nodes = mdFilterForFeatured(nodes);
   }
   nodes = mdCutOff(nodes, { maxLen, maxHeight });
   return mdRenderHtml(nodes);

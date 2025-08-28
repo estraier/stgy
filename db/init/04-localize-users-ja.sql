@@ -1,6 +1,9 @@
 UPDATE users
-SET introduction = $$このサイトの管理者です。
+SET introduction = $$![](/data/logo-square.svg){float=right,size=xsmall}
+このサイトの管理者です。
 運用上の報告や注意点についてお知らせします。
+
+Fakebookは用法用量を守って正しくお使いください。
 $$
 WHERE id = '0001000000000001';
 

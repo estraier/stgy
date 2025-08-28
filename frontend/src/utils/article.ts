@@ -5,7 +5,7 @@ import {
   MdMediaRewriteOptions,
   mdRewriteMediaUrls,
   mdGroupImageGrid,
-  mdFilterForThumbnail,
+  mdFilterForFeatured,
   mdCutOff,
   mdRenderHtml,
   mdRenderText,
@@ -26,7 +26,7 @@ export function makeSnippetHtmlFromMarkdown(mdText: string) {
   let nodes = parseMarkdown(mdText);
   nodes = rewriteMediaUrls(nodes, true);
   nodes = mdGroupImageGrid(nodes);
-  nodes = mdFilterForThumbnail(nodes);
+  nodes = mdFilterForFeatured(nodes);
   nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen, imgHeight });
   return mdRenderHtml(nodes);
 }
