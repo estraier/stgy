@@ -882,9 +882,19 @@ const ATTR_DEC: Record<string, string> = Object.fromEntries(
 
 const UNKNOWN_ATTR_BUCKET = "A";
 
-type EncodedNode =
-  | { [NODE_KEY_TEXT]: string }
-  | ({ [NODE_KEY_TAG]: string } & { [NODE_KEY_CHILDREN]?: EncodedNode[] } & Record<string, any>);
+type Primitive = string | number | boolean;
+type UnknownAttrs = Record<string, Primitive>;
+
+// 「要素」側のエンコード表現（動的キーを許す）
+type EncodedElement = {
+  [NODE_KEY_TAG]: string;
+  [NODE_KEY_CHILDREN]?: EncodedNode[];
+} & {
+  [code: string]: Primitive | UnknownAttrs | EncodedNode[] | undefined;
+};
+
+type EncodedText = { [NODE_KEY_TEXT]: string };
+type EncodedNode = EncodedText | EncodedElement;
 
 export function serializeMdNodes(nodes: MdNode[]): string {
   const enc = nodes.map(encodeNode);
@@ -900,58 +910,67 @@ function encodeNode(n: MdNode): EncodedNode {
   if (n.type === "text") {
     return { [NODE_KEY_TEXT]: n.text };
   }
-  const out: any = { [NODE_KEY_TAG]: n.tag };
+  const out: EncodedElement = { [NODE_KEY_TAG]: n.tag };
   const children = n.children ?? [];
   if (children.length === 1 && children[0].type === "text") {
-    out[NODE_KEY_TEXT] = (children[0] as MdTextNode).text;
+    out[NODE_KEY_TEXT] = children[0].text;
   } else if (children.length > 0) {
     out[NODE_KEY_CHILDREN] = children.map(encodeNode);
   }
   if (n.attrs && Object.keys(n.attrs).length > 0) {
-    let unknown: Record<string, string | number | boolean> | null = null;
-    for (const [k, v] of Object.entries(n.attrs)) {
+    let unknown: UnknownAttrs | null = null;
+    for (const k of Object.keys(n.attrs)) {
+      const v = n.attrs[k] as Primitive;
       if (v === undefined || v === null || v === false) continue;
-      if (v === "" || (Array.isArray(v) && (v as any).length === 0)) continue;
+      if (typeof v === "string" && v === "") continue;
       const code = ATTR_ENC[k];
-      if (code) out[code] = v;
-      else (unknown ??= {})[k] = v;
+      if (code) {
+        out[code] = v;
+      } else {
+        (unknown ??= {})[k] = v;
+      }
     }
-    if (unknown && Object.keys(unknown).length > 0) out[UNKNOWN_ATTR_BUCKET] = unknown;
+    if (unknown && Object.keys(unknown).length > 0) {
+      out[UNKNOWN_ATTR_BUCKET] = unknown;
+    }
   }
   return out;
 }
 
 function decodeNode(e: EncodedNode): MdNode {
-  if ((e as any)[NODE_KEY_TAG] !== undefined) {
-    const tag = (e as any)[NODE_KEY_TAG] as string;
-    const rawChildren = (e as any)[NODE_KEY_CHILDREN] as EncodedNode[] | undefined;
-    const textInline = (e as any)[NODE_KEY_TEXT] as string | undefined;
+  if (NODE_KEY_TAG in e) {
+    const elm = e as EncodedElement;
+    const rawChildren = elm[NODE_KEY_CHILDREN];
+    const inlineText =
+      typeof elm[NODE_KEY_TEXT] === "string" ? (elm[NODE_KEY_TEXT] as string) : undefined;
     const children: MdNode[] = rawChildren
       ? rawChildren.map(decodeNode)
-      : textInline !== undefined
-        ? [{ type: "text", text: String(textInline) }]
+      : inlineText !== undefined
+        ? [{ type: "text", text: inlineText }]
         : [];
-    let attrs: Record<string, string | number | boolean> | undefined;
-    for (const [k, v] of Object.entries(e as any)) {
+    let attrs: MdAttrs | undefined;
+    for (const [k, v] of Object.entries(elm)) {
       if (k === NODE_KEY_TAG || k === NODE_KEY_CHILDREN || k === NODE_KEY_TEXT) continue;
       if (k === UNKNOWN_ATTR_BUCKET) continue;
       const orig = ATTR_DEC[k];
       if (!orig) continue;
-      if (v === "" || v === false || v === null || v === undefined) continue;
-      (attrs ??= {})[orig] = v as any;
-    }
-    const unknown = (e as any)[UNKNOWN_ATTR_BUCKET] as Record<string, any> | undefined;
-    if (unknown) {
-      for (const [k, v] of Object.entries(unknown)) {
-        if (v === "" || v === false || v === null || v === undefined) continue;
-        (attrs ??= {})[k] = v as any;
+      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+        if (v === "" || v === false) continue;
+        (attrs ??= {})[orig] = v;
       }
     }
+    const unknown = elm[UNKNOWN_ATTR_BUCKET];
+    if (unknown && typeof unknown === "object" && !Array.isArray(unknown)) {
+      for (const [k, v] of Object.entries(unknown as UnknownAttrs)) {
+        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+          if (v === "" || v === false) continue;
+          (attrs ??= {})[k] = v;
+        }
+      }
+    }
+    const tag = elm[NODE_KEY_TAG] as string;
     return attrs ? { type: "element", tag, attrs, children } : { type: "element", tag, children };
   }
-  if ((e as any)[NODE_KEY_TEXT] !== undefined) {
-    const txt = (e as any)[NODE_KEY_TEXT];
-    return { type: "text", text: String(txt) };
-  }
-  return { type: "text", text: "" };
+  const txt = (e as EncodedText)[NODE_KEY_TEXT];
+  return { type: "text", text: String(txt) };
 }
