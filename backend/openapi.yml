@@ -36,30 +36,20 @@ components:
         aiPersonality: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time, nullable: true }
+        countFollowers:
+          type: integer
+        countFollowees:
+          type: integer
+        countPosts:
+          type: integer
+        isFollowedByFocusUser:
+          type: boolean
+          nullable: true
+        isFollowingFocusUser:
+          type: boolean
+          nullable: true
       required:
-        [id, email, nickname, isAdmin, introduction, avatar, aiModel, aiPersonality, createdAt]
-
-    UserDetail:
-      allOf:
-        - $ref: "#/components/schemas/User"
-        - type: object
-          properties:
-            countFollowers:
-              type: integer
-            countFollowees:
-              type: integer
-            countPosts:
-              type: integer
-            isFollowedByFocusUser:
-              type: boolean
-              nullable: true
-            isFollowingFocusUser:
-              type: boolean
-              nullable: true
-          required:
-            - countFollowers
-            - countFollowees
-            - countPosts
+        [id, email, nickname, isAdmin, introduction, avatar, aiModel, aiPersonality, createdAt, countFollowers, countFollowees, countPosts]
 
     Post:
       type: object
@@ -74,29 +64,22 @@ components:
         allowReplies: { type: boolean }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time, nullable: true }
-      required: [id, content, ownedBy, replyTo, allowLikes, allowReplies, createdAt, updatedAt]
-
-    PostDetail:
-      allOf:
-        - $ref: "#/components/schemas/Post"
-        - type: object
-          properties:
-            ownerNickname: { type: string }
-            replyToOwnerNickname:
-              type: string
-              nullable: true
-            countLikes: { type: integer }
-            countReplies: { type: integer }
-            tags:
-              type: array
-              items: { type: string }
-            isLikedByFocusUser:
-              type: boolean
-              nullable: true
-            isRepliedByFocusUser:
-              type: boolean
-              nullable: true
-          required: [ownerNickname, countLikes, countReplies, tags]
+        ownerNickname: { type: string }
+        replyToOwnerNickname:
+          type: string
+          nullable: true
+        countLikes: { type: integer }
+        countReplies: { type: integer }
+        tags:
+          type: array
+          items: { type: string }
+        isLikedByFocusUser:
+          type: boolean
+          nullable: true
+        isRepliedByFocusUser:
+          type: boolean
+          nullable: true
+      required: [id, content, ownedBy, replyTo, allowLikes, allowReplies, createdAt, updatedAt, ownerNickname, countLikes, countReplies, tags]
 
     AIModel:
       type: object
@@ -182,16 +165,18 @@ components:
       type: object
       properties:
         userId: { type: string }
+        userNickname: { type: string }
         ts: { type: number }
-      required: [userId, ts]
+      required: [userId, userNickname, ts]
 
     NotificationRecordPost:
       type: object
       properties:
         userId: { type: string }
+        userNickname: { type: string }
         postId: { type: string }
         ts: { type: number }
-      required: [userId, postId, ts]
+      required: [userId, userNickname, postId, ts]
 
     Notification:
       type: object
@@ -325,6 +310,8 @@ paths:
                   signupId: { type: string }
         "400":
           $ref: "#/components/responses/Error400"
+        "403":
+          $ref: "#/components/responses/Error403"
 
   /signup/verify:
     post:
@@ -350,6 +337,8 @@ paths:
                   userId: { type: string }
         "400":
           $ref: "#/components/responses/Error400"
+        "403":
+          $ref: "#/components/responses/Error403"
 
   /users/count:
     get:
@@ -448,7 +437,7 @@ paths:
                 aiModel: { type: string, nullable: true }
                 aiPersonality: { type: string, nullable: true }
               required:
-                [email, nickname, password, isAdmin, introduction, avatar, aiModel, aiPersonality]
+                [email, nickname, password, isAdmin, introduction]
       responses:
         "201":
           description: User created
@@ -548,84 +537,6 @@ paths:
         "404":
           $ref: "#/components/responses/Error404"
 
-  /users/{id}/detail:
-    get:
-      summary: Get user detail by id
-      description: |
-        Returns detailed user info, including follower/followee count and (optionally) mutual follow state for a focus user.
-      security:
-        - sessionCookie: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-        - name: focusUserId
-          in: query
-          required: false
-          schema: { type: string }
-          description: (Optional) Used to get isFollowedByFocusUser/isFollowingFocusUser
-      responses:
-        "200":
-          description: User detail object
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/UserDetail"
-        "401":
-          $ref: "#/components/responses/Error401"
-        "404":
-          $ref: "#/components/responses/Error404"
-
-  /users/detail:
-    get:
-      summary: List users with detail
-      description: |
-        Returns list of users with detail info (follower/followee count and mutual follow state for focus user if specified).
-      security:
-        - sessionCookie: []
-      parameters:
-        - name: offset
-          in: query
-          required: false
-          schema: { type: integer, default: 0 }
-        - name: limit
-          in: query
-          required: false
-          schema: { type: integer, default: 100 }
-        - name: order
-          in: query
-          required: false
-          schema: { type: string, enum: [asc, desc, social], default: desc }
-        - name: query
-          in: query
-          required: false
-          schema: { type: string }
-        - name: nickname
-          in: query
-          required: false
-          schema: { type: string }
-        - name: nicknamePrefix
-          in: query
-          schema: { type: string }
-          required: false
-        - name: focusUserId
-          in: query
-          required: false
-          schema: { type: string }
-          description: (Optional) Used to get isFollowedByFocusUser/isFollowingFocusUser
-      responses:
-        "200":
-          description: List of user detail objects
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/UserDetail"
-        "401":
-          $ref: "#/components/responses/Error401"
-
   /users/{id}/email/start:
     post:
       summary: Start email update (send verification code)
@@ -698,8 +609,6 @@ paths:
           $ref: "#/components/responses/Error401"
         "403":
           $ref: "#/components/responses/Error403"
-        "404":
-          $ref: "#/components/responses/Error404"
 
   /users/{id}/password:
     put:
@@ -765,6 +674,8 @@ paths:
                     type: string
                     description: Verification code for password reset
                 required: [resetPasswordId, webCode]
+        "400":
+          $ref: "#/components/responses/Error400"
 
   /users/password/reset/verify:
     post:
@@ -793,8 +704,6 @@ paths:
                   result: { type: string }
         "400":
           $ref: "#/components/responses/Error400"
-        "404":
-          $ref: "#/components/responses/Error404"
 
   /users/{id}/follow:
     post:
@@ -842,9 +751,9 @@ paths:
         "404":
           $ref: "#/components/responses/Error404"
 
-  /users/{id}/followees/detail:
+  /users/{id}/followees:
     get:
-      summary: List followees (with detail)
+      summary: List followees
       security:
         - sessionCookie: []
       parameters:
@@ -877,13 +786,13 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/UserDetail"
+                  $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Error401"
 
-  /users/{id}/followers/detail:
+  /users/{id}/followers:
     get:
-      summary: List followers (with detail)
+      summary: List followers
       security:
         - sessionCookie: []
       parameters:
@@ -916,7 +825,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/UserDetail"
+                  $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Error401"
 
@@ -1045,6 +954,11 @@ paths:
             If empty string (""): only posts with no replyTo (not a reply).
             If "*": only posts with any replyTo (replies).
             Otherwise: only posts with replyTo equal to the given value.
+        - name: focusUserId
+          in: query
+          required: false
+          schema: { type: string }
+          description: (Optional) Used for personalization (e.g., isLikedByFocusUser / isRepliedByFocusUser).
       responses:
         "200":
           description: Posts list
@@ -1088,66 +1002,12 @@ paths:
                 $ref: "#/components/schemas/Post"
         "400":
           $ref: "#/components/responses/Error400"
+        "403":
+          $ref: "#/components/responses/Error403"
 
-  /posts/detail:
+  /posts/by-followees:
     get:
-      summary: List posts (with detail)
-      security:
-        - sessionCookie: []
-      parameters:
-        - name: offset
-          in: query
-          schema: { type: integer, default: 0 }
-          required: false
-        - name: limit
-          in: query
-          schema: { type: integer, default: 100 }
-          required: false
-        - name: order
-          in: query
-          schema: { type: string, enum: [asc, desc], default: desc }
-          required: false
-        - name: query
-          in: query
-          schema: { type: string }
-          required: false
-        - name: ownedBy
-          in: query
-          schema: { type: string }
-          required: false
-        - name: tag
-          in: query
-          schema: { type: string }
-          required: false
-        - name: replyTo
-          in: query
-          schema: { type: string }
-          required: false
-          description: |
-            If omitted: include all posts.
-            If empty string (""): only posts with no replyTo (not a reply).
-            If "*": only posts with any replyTo (replies).
-            Otherwise: only posts with replyTo equal to the given value.
-        - name: focusUserId
-          in: query
-          schema: { type: string }
-          required: false
-          description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
-      responses:
-        "200":
-          description: Posts detail list
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: "#/components/schemas/PostDetail"
-        "401":
-          $ref: "#/components/responses/Error401"
-
-  /posts/by-followees/detail:
-    get:
-      summary: List posts by followees (with detail)
+      summary: List posts by followees
       security:
         - sessionCookie: []
       parameters:
@@ -1182,21 +1042,21 @@ paths:
           description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
       responses:
         "200":
-          description: Posts detail list by followees
+          description: Posts list by followees
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/PostDetail"
+                  $ref: "#/components/schemas/Post"
         "400":
           $ref: "#/components/responses/Error400"
         "401":
           $ref: "#/components/responses/Error401"
 
-  /posts/liked/detail:
+  /posts/liked:
     get:
-      summary: List posts liked by user (with detail)
+      summary: List posts liked by user
       security:
         - sessionCookie: []
       parameters:
@@ -1227,44 +1087,17 @@ paths:
           description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
       responses:
         "200":
-          description: Posts liked by user (detail)
+          description: Posts liked by user
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/PostDetail"
+                  $ref: "#/components/schemas/Post"
         "400":
           $ref: "#/components/responses/Error400"
         "401":
           $ref: "#/components/responses/Error401"
-
-  /posts/{id}/detail:
-    get:
-      summary: Get post detail by id
-      security:
-        - sessionCookie: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-        - name: focusUserId
-          in: query
-          schema: { type: string }
-          required: false
-          description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
-      responses:
-        "200":
-          description: Post detail
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/PostDetail"
-        "401":
-          $ref: "#/components/responses/Error401"
-        "404":
-          $ref: "#/components/responses/Error404"
 
   /posts/{id}:
     get:
@@ -1379,6 +1212,8 @@ paths:
           $ref: "#/components/responses/Error401"
         "400":
           $ref: "#/components/responses/Error400"
+        "403":
+          $ref: "#/components/responses/Error403"
     delete:
       summary: Remove like from a post
       security:
@@ -1647,8 +1482,6 @@ paths:
           $ref: "#/components/responses/Error401"
         "403":
           $ref: "#/components/responses/Error403"
-        "404":
-          $ref: "#/components/responses/Error404"
     delete:
       summary: Delete a specific image master (and its thumbnails)
       description: Deletes the master image and any thumbnails under `/thumbs/` derived from it.
@@ -1790,8 +1623,6 @@ paths:
           $ref: "#/components/responses/Error401"
         "403":
           $ref: "#/components/responses/Error403"
-        "404":
-          $ref: "#/components/responses/Error404"
     delete:
       summary: Delete profile master image (avatar) and its thumbnails, and clear users.avatar
       security:
@@ -1821,8 +1652,6 @@ paths:
           $ref: "#/components/responses/Error401"
         "403":
           $ref: "#/components/responses/Error403"
-        "404":
-          $ref: "#/components/responses/Error404"
 
   /notification/feed:
     get:
