@@ -209,6 +209,11 @@ class MockPgClientMain {
                 allow_replies: post.allowReplies,
                 created_at: post.createdAt,
                 updated_at: post.updatedAt,
+                owner_nickname: post.ownerNickname,
+                reply_to_owner_nickname: post.replyToOwnerNickname,
+                count_replies: post.countReplies,
+                count_likes: post.countLikes,
+                tags: post.tags,
               },
             ]
           : [],

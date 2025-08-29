@@ -175,7 +175,7 @@ def test_posts():
   res = requests.post(f"{BASE_URL}/posts/{post_id}/like", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[posts] like: ok")
-  res = requests.get(f"{BASE_URL}/posts/liked/detail?limit=2000&userId={user_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/posts/liked?limit=2000&userId={user_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   liked_posts = res.json()
   print("[posts] liked:", liked_posts)
@@ -196,7 +196,7 @@ def test_posts():
   assert res.status_code == 200, res.text
   got = res.json()
   assert got["content"] == post_input["content"]
-  res = requests.get(f"{BASE_URL}/posts/{post_id}/detail", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200
   user = res.json()
   assert user["id"] == post_id
@@ -205,7 +205,7 @@ def test_posts():
   assert "countLikes" in user
   assert "countReplies" in user
   assert set(user["tags"]) == {"hop", "step"}
-  res = requests.get(f"{BASE_URL}/posts/by-followees/detail?limit=2000&userId={user_id}&includeSelf=true", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/posts/by-followees?limit=2000&userId={user_id}&includeSelf=true", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   by_followees = res.json()
   print("[posts] by-followees (self):", by_followees)
@@ -224,7 +224,7 @@ def test_posts():
   post_updated = res.json()
   assert post_updated["id"] == post_id
   assert post_updated["content"] == update_input["content"]
-  res = requests.get(f"{BASE_URL}/posts/{post_id}/detail", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200
   user = res.json()
   assert user["id"] == post_id
