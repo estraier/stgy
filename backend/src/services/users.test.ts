@@ -196,15 +196,6 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at FROM users WHERE id = $1",
-      )
-    ) {
-      const user = this.users.find((u) => u.id === params[0]);
-      return { rows: user ? [user] : [] };
-    }
-
-    if (
-      sql.startsWith(
         "SELECT id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1",
       )
     ) {
@@ -237,30 +228,6 @@ class MockPgClient {
           },
         ],
       };
-    }
-
-    if (
-      sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at FROM users u",
-      )
-    ) {
-      let list = [...this.users];
-      if (sql.includes("WHERE (u.nickname ILIKE $1 OR u.introduction ILIKE $2)")) {
-        const [pat1, pat2] = params
-          .slice(0, 2)
-          .map((s: string) => s.toLowerCase().replace(/%/g, ""));
-        list = list.filter(
-          (u) =>
-            u.nickname.toLowerCase().includes(pat1) || u.introduction.toLowerCase().includes(pat2),
-        );
-      } else if (sql.includes("WHERE u.nickname ILIKE")) {
-        const pat = params[0].toLowerCase().replace(/%/g, "");
-        list = list.filter((u) => u.nickname.toLowerCase().includes(pat));
-      }
-      list.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
-      const offset = params[params.length - 2] || 0;
-      const limit = params[params.length - 1] || 100;
-      return { rows: list.slice(offset, offset + limit) };
     }
 
     if (

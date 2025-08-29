@@ -65,8 +65,7 @@ export class UsersService {
 
   async getUser(id: string, focusUserId?: string): Promise<User | null> {
     const userRes = await this.pgClient.query(
-      `SELECT id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees, count_posts, count_followers, count_followees, count_posts
-       FROM users WHERE id = $1`,
+      `SELECT id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1`,
       [id],
     );
     if (userRes.rows.length === 0) return null;

@@ -7,9 +7,6 @@ export type Post = {
   allowReplies: boolean;
   createdAt: string;
   updatedAt: string | null;
-};
-
-export type PostDetail = Post & {
   ownerNickname: string;
   replyToOwnerNickname: string | null;
   countLikes: number;
@@ -55,13 +52,13 @@ export type UpdatePostInput = {
   tags?: string[];
 };
 
-export type ListPostsByFolloweesDetailInput = {
+export type ListPostsByFolloweesInput = {
   userId: string;
   includeSelf?: boolean;
   includeReplies?: boolean;
 } & PostPagination;
 
-export type ListPostsLikedByUserDetailInput = {
+export type ListPostsLikedByUserInput = {
   userId: string;
   includeReplies?: boolean;
 } & PostPagination;

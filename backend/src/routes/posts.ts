@@ -93,43 +93,11 @@ export default function createPostsRouter(
         ? req.query.tag.trim()
         : undefined;
     const replyTo = getReplyToParam(req);
-
-    const posts = await postsService.listPosts({
-      offset,
-      limit,
-      order,
-      query,
-      ownedBy,
-      tag,
-      replyTo,
-    });
-    res.json(posts);
-  });
-
-  router.get("/detail", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
-    const offset = parseInt((req.query.offset as string) ?? "0", 10);
-    const limit = parseInt((req.query.limit as string) ?? "100", 10);
-    const order = (req.query.order as string) === "asc" ? "asc" : "desc";
-    const query =
-      typeof req.query.query === "string" && req.query.query.trim() !== ""
-        ? req.query.query.trim()
-        : undefined;
-    const ownedBy =
-      typeof req.query.ownedBy === "string" && req.query.ownedBy.trim() !== ""
-        ? req.query.ownedBy.trim()
-        : undefined;
-    const tag =
-      typeof req.query.tag === "string" && req.query.tag.trim() !== ""
-        ? req.query.tag.trim()
-        : undefined;
-    const replyTo = getReplyToParam(req);
     const focusUserId =
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
-    const posts = await postsService.listPostsDetail(
+    const posts = await postsService.listPosts(
       {
         offset,
         limit,
@@ -144,7 +112,7 @@ export default function createPostsRouter(
     res.json(posts);
   });
 
-  router.get("/by-followees/detail", async (req, res) => {
+  router.get("/by-followees", async (req, res) => {
     const loginUser = await requireLogin(req, res);
     if (!loginUser) return;
     const userId =
@@ -163,7 +131,7 @@ export default function createPostsRouter(
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
-    const result = await postsService.listPostsByFolloweesDetail(
+    const result = await postsService.listPostsByFollowees(
       {
         userId,
         offset,
@@ -177,7 +145,7 @@ export default function createPostsRouter(
     res.json(result);
   });
 
-  router.get("/liked/detail", async (req, res) => {
+  router.get("/liked", async (req, res) => {
     const loginUser = await requireLogin(req, res);
     if (!loginUser) return;
     const userId =
@@ -195,7 +163,7 @@ export default function createPostsRouter(
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
-    const result = await postsService.listPostsLikedByUserDetail(
+    const result = await postsService.listPostsLikedByUser(
       {
         userId,
         offset,
@@ -208,22 +176,14 @@ export default function createPostsRouter(
     res.json(result);
   });
 
-  router.get("/:id/detail", async (req, res) => {
+  router.get("/:id", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
     const focusUserId =
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
-    const post = await postsService.getPostDetail(req.params.id, focusUserId);
-    if (!post) return res.status(404).json({ error: "not found" });
-    res.json(post);
-  });
-
-  router.get("/:id", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
-    const post = await postsService.getPost(req.params.id);
+    const post = await postsService.getPost(req.params.id, focusUserId);
     if (!post) return res.status(404).json({ error: "not found" });
     res.json(post);
   });

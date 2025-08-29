@@ -4,9 +4,8 @@ import {
   Post,
   CreatePostInput,
   UpdatePostInput,
-  ListPostsInput,
-  ListPostsByFolloweesDetailInput,
-  ListPostsLikedByUserDetailInput,
+  ListPostsByFolloweesInput,
+  ListPostsLikedByUserInput,
   ListLikersInput,
 } from "../models/post";
 import { User } from "../models/user";
@@ -59,6 +58,11 @@ class MockPgClientMain {
         allowReplies: true,
         createdAt: new Date().toISOString(),
         updatedAt: null,
+        ownerNickname: params![2],
+        replyToOwnerNickname: params![3] ?? null,
+        countLikes: 0,
+        countReplies: 0,
+        tags: [] as string[],
       };
       this.data.push(newPost);
       return { rows: [newPost] };
@@ -303,9 +307,10 @@ class MockPgClientMain {
     }
 
     if (sql.includes("FROM posts p") && sql.includes("JOIN users u ON p.owned_by = u.id")) {
-      const result = this.data.map((p) => {
+      const mWhereId = sql.match(/WHERE\s+p\.id\s*=\s*\$(\d+)/i);
+      const buildRow = (p: Post) => {
         const replyToPost = this.data.find((pp) => pp.id === p.replyTo);
-        const replyToNickname = replyToPost
+        const reply_to_owner_nickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
         return {
@@ -318,7 +323,7 @@ class MockPgClientMain {
           created_at: p.createdAt,
           updated_at: p.updatedAt,
           owner_nickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
-          reply_to_owner_nickname: replyToNickname,
+          reply_to_owner_nickname,
           count_replies: this.countRepliesFor(p.id),
           count_likes: this.countLikesFor(p.id),
           tags: this.tags
@@ -326,8 +331,17 @@ class MockPgClientMain {
             .map((t) => t.name)
             .sort(),
         };
-      });
-      return { rows: result };
+      };
+      if (mWhereId) {
+        const idx = parseInt(mWhereId[1], 10) - 1;
+        const id = params![idx];
+        const p = this.data.find((x) => x.id === id);
+        return { rows: p ? [buildRow(p)] : [] };
+      }
+      const offset = params && params.length >= 2 ? (params[params.length - 2] ?? 0) : 0;
+      const limit = params && params.length >= 1 ? (params[params.length - 1] ?? 100) : 100;
+      const rows = this.data.map(buildRow).slice(offset, offset + limit);
+      return { rows };
     }
 
     if (sql.includes("FROM posts p") && !sql.includes("JOIN users u ON p.owned_by = u.id")) {
@@ -392,6 +406,11 @@ describe("posts service", () => {
       allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
+      ownerNickname: "user-1",
+      replyToOwnerNickname: null,
+      countLikes: 0,
+      countReplies: 0,
+      tags: [] as string[],
     };
     pgClient.data.push({ ...postSample });
     pgClient.tags.push({ postId: postSample.id, name: "tag1" });
@@ -410,22 +429,12 @@ describe("posts service", () => {
     expect(posts[0].content).toBe(postSample.content);
   });
 
-  test("listPosts: offset/limit", async () => {
-    for (let i = 0; i < 3; ++i) {
-      pgClient.data.push({ ...postSample, id: uuidv4(), content: `p${i}` });
-    }
-    const input: ListPostsInput = { offset: 1, limit: 2 };
-    const posts = await postsService.listPosts(input);
-    expect(posts.length).toBe(2);
-    expect(posts[0].content).toBe("p0");
-  });
-
-  test("listPostsDetail: basic", async () => {
-    const details = await postsService.listPostsDetail();
-    expect(details.length).toBeGreaterThanOrEqual(1);
-    expect(details[0].ownerNickname).toBe("Alice");
-    expect(details[0].tags).toContain("tag1");
-    expect(details[0].countLikes).toBeGreaterThanOrEqual(1);
+  test("listPosts: basic", async () => {
+    const posts = await postsService.listPosts();
+    expect(posts.length).toBeGreaterThanOrEqual(1);
+    expect(posts[0].ownerNickname).toBe("Alice");
+    expect(posts[0].tags).toContain("tag1");
+    expect(posts[0].countLikes).toBeGreaterThanOrEqual(1);
   });
 
   test("createPost", async () => {
@@ -529,7 +538,7 @@ describe("posts service", () => {
   });
 });
 
-describe("listPostsByFolloweesDetail", () => {
+describe("listPostsByFollowees", () => {
   let pgClient: MockPgClientMain;
   let redis: MockRedis;
   let postsService: PostsService;
@@ -560,6 +569,11 @@ describe("listPostsByFolloweesDetail", () => {
       allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
+      ownerNickname: "alice",
+      replyToOwnerNickname: null,
+      countLikes: 0,
+      countReplies: 0,
+      tags: [] as string[],
     };
     postBob = {
       id: uuidv4(),
@@ -570,6 +584,11 @@ describe("listPostsByFolloweesDetail", () => {
       allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
+      ownerNickname: "bob",
+      replyToOwnerNickname: null,
+      countLikes: 0,
+      countReplies: 0,
+      tags: [] as string[],
     };
     postCarol = {
       id: uuidv4(),
@@ -580,40 +599,45 @@ describe("listPostsByFolloweesDetail", () => {
       allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
+      ownerNickname: "carol",
+      replyToOwnerNickname: null,
+      countLikes: 0,
+      countReplies: 0,
+      tags: [] as string[],
     };
     pgClient.data.push(postAlice, postBob, postCarol);
   });
 
   test("should not include self posts when includeSelf is false", async () => {
-    const input: ListPostsByFolloweesDetailInput = {
+    const input: ListPostsByFolloweesInput = {
       userId: alice,
       includeSelf: false,
       offset: 0,
       limit: 10,
       order: "desc",
     };
-    const result = await postsService.listPostsByFolloweesDetail(input);
+    const result = await postsService.listPostsByFollowees(input);
     expect(result.some((p) => p.ownedBy === alice)).toBe(false);
     expect(result.some((p) => p.ownedBy === bob)).toBe(true);
     expect(result.some((p) => p.ownedBy === carol)).toBe(false);
   });
 
   test("should include self posts when includeSelf is true", async () => {
-    const input: ListPostsByFolloweesDetailInput = {
+    const input: ListPostsByFolloweesInput = {
       userId: alice,
       includeSelf: true,
       offset: 0,
       limit: 10,
       order: "desc",
     };
-    const result = await postsService.listPostsByFolloweesDetail(input);
+    const result = await postsService.listPostsByFollowees(input);
     expect(result.some((p) => p.ownedBy === alice)).toBe(true);
     expect(result.some((p) => p.ownedBy === bob)).toBe(true);
     expect(result.some((p) => p.ownedBy === carol)).toBe(false);
   });
 });
 
-describe("listPostsLikedByUserDetail", () => {
+describe("listPostsLikedByUser", () => {
   let pgClient: MockPgClientMain;
   let redis: MockRedis;
   let postsService: PostsService;
@@ -639,6 +663,11 @@ describe("listPostsLikedByUserDetail", () => {
       allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
+      ownerNickname: "user-1",
+      replyToOwnerNickname: null,
+      countLikes: 0,
+      countReplies: 0,
+      tags: [] as string[],
     };
     post2 = {
       id: uuidv4(),
@@ -649,6 +678,11 @@ describe("listPostsLikedByUserDetail", () => {
       allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
+      ownerNickname: "user-1",
+      replyToOwnerNickname: null,
+      countLikes: 0,
+      countReplies: 0,
+      tags: [] as string[],
     };
     pgClient.data.push(post1, post2);
 
@@ -656,32 +690,32 @@ describe("listPostsLikedByUserDetail", () => {
   });
 
   test("should return posts liked by the user", async () => {
-    const input: ListPostsLikedByUserDetailInput = {
+    const input: ListPostsLikedByUserInput = {
       userId: alice,
       offset: 0,
       limit: 10,
       order: "desc",
     };
-    const result = await postsService.listPostsLikedByUserDetail(input);
+    const result = await postsService.listPostsLikedByUser(input);
     expect(Array.isArray(result)).toBe(true);
     expect(result.some((p) => p.id === post1.id)).toBe(true);
     expect(result.some((p) => p.id === post2.id)).toBe(false);
   });
 
   test("should return empty array if user has not liked any posts", async () => {
-    const input: ListPostsLikedByUserDetailInput = {
+    const input: ListPostsLikedByUserInput = {
       userId: bob,
       offset: 0,
       limit: 10,
       order: "desc",
     };
-    const result = await postsService.listPostsLikedByUserDetail(input);
+    const result = await postsService.listPostsLikedByUser(input);
     expect(result.length).toBe(0);
   });
 });
 
-describe("getPostDetail", () => {
-  class MockPgClientDetail {
+describe("getPost", () => {
+  class MockPgClient {
     posts: Post[] = [];
     users: { id: string; nickname: string }[] = [];
     postLikes: { postId: string; likedBy: string }[] = [];
@@ -725,14 +759,14 @@ describe("getPostDetail", () => {
     }
   }
 
-  let pgClient: MockPgClientDetail;
+  let pgClient: MockPgClient;
   let redis: MockRedis;
   let postsService: PostsService;
   let post: Post;
   let owner: { id: string; nickname: string };
 
   beforeEach(() => {
-    pgClient = new MockPgClientDetail();
+    pgClient = new MockPgClient();
     redis = new MockRedis();
     postsService = new PostsService(pgClient as any, redis as any);
 
@@ -741,13 +775,18 @@ describe("getPostDetail", () => {
 
     post = {
       id: uuidv4(),
-      content: "detail content",
+      content: "content",
       ownedBy: owner.id,
       replyTo: null,
       allowLikes: true,
       allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
+      ownerNickname: "user-1",
+      replyToOwnerNickname: null,
+      countLikes: 0,
+      countReplies: 0,
+      tags: [] as string[],
     };
     pgClient.posts.push(post);
 
@@ -768,6 +807,11 @@ describe("getPostDetail", () => {
         allowReplies: true,
         createdAt: new Date().toISOString(),
         updatedAt: null,
+        ownerNickname: "user-2",
+        replyToOwnerNickname: "user-1",
+        countLikes: 0,
+        countReplies: 0,
+        tags: [] as string[],
       },
       {
         id: uuidv4(),
@@ -778,26 +822,31 @@ describe("getPostDetail", () => {
         allowReplies: true,
         createdAt: new Date().toISOString(),
         updatedAt: null,
+        ownerNickname: "user-2",
+        replyToOwnerNickname: "user-1",
+        countLikes: 0,
+        countReplies: 0,
+        tags: [] as string[],
       },
     );
   });
 
-  test("getPostDetail returns all meta correctly", async () => {
-    const detail = await postsService.getPostDetail(post.id);
-    expect(detail).not.toBeNull();
-    expect(detail!.id).toBe(post.id);
-    expect(detail!.ownerNickname).toBe(owner.nickname);
-    expect(detail!.countReplies).toBe(2);
-    expect(detail!.countLikes).toBe(2);
-    expect(detail!.tags.sort()).toEqual(["tag1", "tag2"]);
+  test("getPost returns all meta correctly", async () => {
+    const result = await postsService.getPost(post.id);
+    expect(result).not.toBeNull();
+    expect(result!.id).toBe(post.id);
+    expect(result!.ownerNickname).toBe(owner.nickname);
+    expect(result!.countReplies).toBe(2);
+    expect(result!.countLikes).toBe(2);
+    expect(result!.tags.sort()).toEqual(["tag1", "tag2"]);
   });
 
-  test("getPostDetail: not found returns null", async () => {
-    const detail = await postsService.getPostDetail("no-such-id");
-    expect(detail).toBeNull();
+  test("getPost: not found returns null", async () => {
+    const result = await postsService.getPost("no-such-id");
+    expect(result).toBeNull();
   });
 
-  test("getPostDetail: no likes, no replies, no tags", async () => {
+  test("getPost: no likes, no replies, no tags", async () => {
     const anotherOwner = { id: uuidv4(), nickname: "Nobody" };
     pgClient.users.push(anotherOwner);
     const p2: Post = {
@@ -809,15 +858,19 @@ describe("getPostDetail", () => {
       allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
+      ownerNickname: "user-1",
+      replyToOwnerNickname: null,
+      countLikes: 0,
+      countReplies: 0,
+      tags: [] as string[],
     };
     pgClient.posts.push(p2);
-
-    const detail = await postsService.getPostDetail(p2.id);
-    expect(detail).not.toBeNull();
-    expect(detail!.ownerNickname).toBe("Nobody");
-    expect(detail!.countReplies).toBe(0);
-    expect(detail!.countLikes).toBe(0);
-    expect(detail!.tags).toEqual([]);
+    const post = await postsService.getPost(p2.id);
+    expect(post).not.toBeNull();
+    expect(post!.ownerNickname).toBe("Nobody");
+    expect(post!.countReplies).toBe(0);
+    expect(post!.countLikes).toBe(0);
+    expect(post!.tags).toEqual([]);
   });
 });
 
@@ -872,6 +925,9 @@ describe("listLikers", () => {
       aiModel: "",
       createdAt: new Date().toISOString(),
       updatedAt: null,
+      countFollowers: 0,
+      countFollowees: 0,
+      countPosts: 0,
     };
     user2 = {
       id: uuidv4(),
@@ -884,6 +940,9 @@ describe("listLikers", () => {
       aiModel: "",
       createdAt: new Date().toISOString(),
       updatedAt: null,
+      countFollowers: 0,
+      countFollowees: 0,
+      countPosts: 0,
     };
     user3 = {
       id: uuidv4(),
@@ -896,9 +955,11 @@ describe("listLikers", () => {
       aiModel: "",
       createdAt: new Date().toISOString(),
       updatedAt: null,
+      countFollowers: 0,
+      countFollowees: 0,
+      countPosts: 0,
     };
     postId = uuidv4();
-
     pgClient.users.push(user1, user2, user3);
     pgClient.postLikes.push(
       { postId: postId, likedBy: user1.id, createdAt: "2024-01-01T12:00:00Z" },
