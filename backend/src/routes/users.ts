@@ -1,3 +1,4 @@
+import { Config } from "../config";
 import { Router, Request, Response } from "express";
 import { Client } from "pg";
 import Redis from "ioredis";
@@ -142,7 +143,7 @@ export default function createUsersRouter(
         email: normalizeEmail(normalizeOneLiner(req.body.email) ?? ""),
         nickname: normalizeOneLiner(req.body.nickname) ?? "",
         password: normalizeText(req.body.password) ?? "",
-        isAdmin: parseBoolean(req.body.isAdmin, false),
+        isAdmin: !!req.body.isAdmin,
         introduction: normalizeMultiLines(req.body.introduction) ?? "",
         avatar: normalizeOneLiner(req.body.avatar) ?? null,
         aiModel: normalizeOneLiner(req.body.aiModel) ?? null,
@@ -170,16 +171,30 @@ export default function createUsersRouter(
     if (!loginUser.isAdmin && !loginUser.aiModel && req.body.aiPersonality !== undefined) {
       return res.status(403).json({ error: "forbidden to change aiPersonality" });
     }
+    let introduction;
+    if (req.body.introduction) {
+      introduction = normalizeMultiLines(req.body.introduction) ?? "";
+      if (!loginUser.isAdmin && introduction.length > Config.INTRODUCTION_LENGTH_LIMIT) {
+        return res.status(400).json({ error: "introduction is too long" });
+      }
+    }
+    let aiPersonality;
+    if (req.body.aiPersonality) {
+      aiPersonality = normalizeMultiLines(req.body.aiPersonality) ?? "";
+      if (!loginUser.isAdmin && aiPersonality.length > Config.AI_PERSONALITY_LENGTH_LIMIT) {
+        return res.status(400).json({ error: "aiPersonality is too long" });
+      }
+    }
     try {
       const input: UpdateUserInput = {
         id: req.params.id,
         email: req.body.email ? normalizeEmail(normalizeOneLiner(req.body.email) ?? "") : undefined,
         nickname: normalizeOneLiner(req.body.nickname) ?? undefined,
-        isAdmin: req.body.isAdmin === undefined ? undefined : parseBoolean(req.body.isAdmin, false),
-        introduction: normalizeMultiLines(req.body.introduction) ?? undefined,
+        isAdmin: req.body.isAdmin === undefined ? undefined : req.body.isAdmin,
+        introduction: introduction,
         avatar: normalizeOneLiner(req.body.avatar),
         aiModel: normalizeOneLiner(req.body.aiModel),
-        aiPersonality: normalizeMultiLines(req.body.aiPersonality),
+        aiPersonality: aiPersonality,
       };
       const updated = await usersService.updateUser(input);
       if (!updated) return res.status(404).json({ error: "not found" });

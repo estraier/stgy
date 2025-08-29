@@ -3,7 +3,6 @@ import { Router, Request, Response } from "express";
 import { Client } from "pg";
 import Redis from "ioredis";
 import type { StorageService } from "../services/storage";
-import { strToBool } from "./utils";
 import { PostsService } from "../services/posts";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
@@ -125,8 +124,8 @@ export default function createPostsRouter(
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
-    const includeSelf = strToBool(req.query.includeSelf as string, false);
-    const includeReplies = strToBool(req.query.includeReplies as string, true);
+    const includeSelf = parseBoolean(req.query.includeSelf as string, false);
+    const includeReplies = parseBoolean(req.query.includeReplies as string, true);
     const focusUserId =
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
@@ -158,7 +157,7 @@ export default function createPostsRouter(
     const offset = parseInt((req.query.offset as string) ?? "0", 10);
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const order = (req.query.order as string) === "asc" ? "asc" : "desc";
-    const includeReplies = strToBool(req.query.includeReplies as string, true);
+    const includeReplies = parseBoolean(req.query.includeReplies as string, true);
     const focusUserId =
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()

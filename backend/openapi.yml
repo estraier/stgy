@@ -49,7 +49,20 @@ components:
           type: boolean
           nullable: true
       required:
-        [id, email, nickname, isAdmin, introduction, avatar, aiModel, aiPersonality, createdAt, countFollowers, countFollowees, countPosts]
+        [
+          id,
+          email,
+          nickname,
+          isAdmin,
+          introduction,
+          avatar,
+          aiModel,
+          aiPersonality,
+          createdAt,
+          countFollowers,
+          countFollowees,
+          countPosts,
+        ]
 
     Post:
       type: object
@@ -79,7 +92,21 @@ components:
         isRepliedByFocusUser:
           type: boolean
           nullable: true
-      required: [id, content, ownedBy, replyTo, allowLikes, allowReplies, createdAt, updatedAt, ownerNickname, countLikes, countReplies, tags]
+      required:
+        [
+          id,
+          content,
+          ownedBy,
+          replyTo,
+          allowLikes,
+          allowReplies,
+          createdAt,
+          updatedAt,
+          ownerNickname,
+          countLikes,
+          countReplies,
+          tags,
+        ]
 
     AIModel:
       type: object
@@ -436,8 +463,7 @@ paths:
                 avatar: { type: string, nullable: true }
                 aiModel: { type: string, nullable: true }
                 aiPersonality: { type: string, nullable: true }
-              required:
-                [email, nickname, password, isAdmin, introduction]
+              required: [email, nickname, password, isAdmin, introduction]
       responses:
         "201":
           description: User created

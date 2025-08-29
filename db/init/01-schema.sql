@@ -11,7 +11,7 @@ CREATE TABLE users (
   nickname VARCHAR(50) NOT NULL,
   password VARCHAR(50) NOT NULL,
   is_admin BOOLEAN NOT NULL,
-  introduction VARCHAR(2000) NOT NULL,
+  introduction VARCHAR(65535) NOT NULL,
   avatar VARCHAR(100),
   ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
   ai_personality VARCHAR(2000),
