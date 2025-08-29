@@ -3,8 +3,8 @@
 import { Config } from "@/config";
 import { useEffect, useState } from "react";
 import { getUser, listFollowers, listFollowees } from "@/api/users";
-import { listPostsDetail, addLike, removeLike, createPost } from "@/api/posts";
-import type { User, PostDetail } from "@/api/models";
+import { listPosts, addLike, removeLike, createPost } from "@/api/posts";
+import type { User, Post } from "@/api/models";
 import { notFound, useParams, useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import UserCard from "@/components/UserCard";
@@ -61,7 +61,7 @@ export default function PageBody() {
   }
   const { tab, oldestFirst, page } = getQuery();
 
-  const [posts, setPosts] = useState<PostDetail[]>([]);
+  const [posts, setPosts] = useState<Post[]>([]);
   const [followers, setFollowers] = useState<User[]>([]);
   const [followees, setFollowees] = useState<User[]>([]);
   const [listLoading, setListLoading] = useState(true);
@@ -130,7 +130,7 @@ export default function PageBody() {
       };
       if (tab === "posts") params.replyTo = "";
       if (tab === "replies") params.replyTo = "*";
-      listPostsDetail(params)
+      listPosts(params)
         .then((data) => {
           setPosts(data.slice(0, Config.POSTS_PAGE_SIZE));
           setHasNext(data.length > Config.POSTS_PAGE_SIZE);
@@ -190,7 +190,7 @@ export default function PageBody() {
     };
   }, []);
 
-  async function handleLike(post: PostDetail) {
+  async function handleLike(post: Post) {
     const oldCountLikes = post.countLikes ?? 0;
     setPosts((prev) =>
       prev.map((p) =>
@@ -210,7 +210,7 @@ export default function PageBody() {
         await addLike(post.id);
       }
       setTimeout(() => {
-        listPostsDetail({
+        listPosts({
           ownedBy: user?.id,
           offset: (page - 1) * Config.POSTS_PAGE_SIZE,
           limit: Config.POSTS_PAGE_SIZE + 1,
@@ -251,7 +251,7 @@ export default function PageBody() {
       setReplyBody("");
       setReplyTo(null);
       setTimeout(() => {
-        listPostsDetail({
+        listPosts({
           ownedBy: user?.id,
           offset: (page - 1) * Config.POSTS_PAGE_SIZE,
           limit: Config.POSTS_PAGE_SIZE + 1,

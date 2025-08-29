@@ -3,15 +3,15 @@
 import { Config } from "@/config";
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import {
-  listPostsDetail,
-  listPostsByFolloweesDetail,
-  listPostsLikedByUserDetail,
+  listPosts,
+  listPostsByFollowees,
+  listPostsLikedByUser,
   createPost,
   addLike,
   removeLike,
 } from "@/api/posts";
 import { listUsers } from "@/api/users";
-import type { PostDetail } from "@/api/models";
+import type { Post } from "@/api/models";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { parseBodyAndTags } from "@/utils/parse";
@@ -34,7 +34,7 @@ export default function PageBody() {
   const searchParams = useSearchParams();
   const isAdmin = status && status.state === "authenticated" && status.session.userIsAdmin;
 
-  const [posts, setPosts] = useState<PostDetail[]>([]);
+  const [posts, setPosts] = useState<Post[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [body, setBody] = useState("");
@@ -144,7 +144,7 @@ export default function PageBody() {
       order: oldestFirst ? "asc" : "desc",
       focusUserId: userId,
     };
-    let fetcher: Promise<PostDetail[]>;
+    let fetcher: Promise<Post[]>;
     let effectiveOwnedBy = searchQueryObj.ownedBy;
 
     if (
@@ -170,22 +170,22 @@ export default function PageBody() {
       if (searchQueryObj.tag) params.tag = searchQueryObj.tag;
       if (effectiveOwnedBy) params.ownedBy = effectiveOwnedBy;
       if (!includingReplies) params.replyTo = "";
-      fetcher = listPostsDetail(params);
+      fetcher = listPosts(params);
     } else if (effectiveTab === "following") {
-      fetcher = listPostsByFolloweesDetail({
+      fetcher = listPostsByFollowees({
         userId: userId!,
         ...params,
         includeSelf: true,
         includeReplies: includingReplies,
       });
     } else if (effectiveTab === "liked") {
-      fetcher = listPostsLikedByUserDetail({
+      fetcher = listPostsLikedByUser({
         userId: userId!,
         ...params,
         includeReplies: includingReplies,
       });
     } else {
-      fetcher = listPostsDetail({
+      fetcher = listPosts({
         ...params,
         ...(includingReplies ? {} : { replyTo: "" }),
       });
@@ -323,7 +323,7 @@ export default function PageBody() {
     }
   }
 
-  async function handleLike(post: PostDetail) {
+  async function handleLike(post: Post) {
     const oldCountLikes = post.countLikes ?? 0;
     setPosts((prev) =>
       prev.map((p) =>

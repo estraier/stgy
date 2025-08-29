@@ -41,9 +41,6 @@ export type Post = {
   allowReplies: boolean;
   createdAt: string;
   updatedAt: string | null;
-};
-
-export type PostDetail = Post & {
   ownerNickname: string;
   replyToOwnerNickname: string | null;
   countLikes: number;

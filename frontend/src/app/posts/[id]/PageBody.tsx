@@ -3,16 +3,16 @@
 import { Config } from "@/config";
 import { useEffect, useMemo, useState } from "react";
 import {
-  getPostDetail,
+  getPost,
   listLikers,
   addLike,
   removeLike,
   updatePost,
   createPost,
   deletePost,
-  listPostsDetail,
+  listPosts,
 } from "@/api/posts";
-import type { PostDetail, User } from "@/api/models";
+import type { Post, User } from "@/api/models";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import PostCard from "@/components/PostCard";
@@ -42,7 +42,7 @@ export default function PageBody() {
     [searchParams],
   );
 
-  const [post, setPost] = useState<PostDetail | null>(null);
+  const [post, setPost] = useState<Post | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -59,7 +59,7 @@ export default function PageBody() {
   const [replyHasNext, setReplyHasNext] = useState(false);
   const [replyLoading, setReplyLoading] = useState(false);
 
-  const [replies, setReplies] = useState<PostDetail[]>([]);
+  const [replies, setReplies] = useState<Post[]>([]);
   const [replyingTo, setReplyingTo] = useState<string | null>(null);
   const [replyBody, setReplyBody] = useState("");
   const [replyError, setReplyError] = useState<string | null>(null);
@@ -69,7 +69,7 @@ export default function PageBody() {
     if (!userId) return;
     setLoading(true);
     setError(null);
-    getPostDetail(postId, userId)
+    getPost(postId, userId)
       .then((data) => {
         setPost(data);
         const tagLine = data.tags && data.tags.length > 0 ? "\n\n#" + data.tags.join(", #") : "";
@@ -113,7 +113,7 @@ export default function PageBody() {
       return;
     }
     setReplyLoading(true);
-    listPostsDetail({
+    listPosts({
       replyTo: post.id,
       offset: (replyPage - 1) * Config.POSTS_PAGE_SIZE,
       limit: Config.POSTS_PAGE_SIZE + 1,
@@ -140,7 +140,7 @@ export default function PageBody() {
     return () => document.body.removeEventListener("click", handler);
   }, []);
 
-  async function handleLike(p: PostDetail) {
+  async function handleLike(p: Post) {
     if (!userId || !post) return;
     if (!post.allowLikes) return;
 
@@ -179,7 +179,7 @@ export default function PageBody() {
     }
   }
 
-  async function handleReplyLike(reply: PostDetail) {
+  async function handleReplyLike(reply: Post) {
     if (!userId) return;
 
     const oldLiked = reply.isLikedByFocusUser;
@@ -233,7 +233,7 @@ export default function PageBody() {
       }
       await updatePost(postId, { content, tags });
       setEditing(false);
-      getPostDetail(postId, userId).then(setPost);
+      getPost(postId, userId).then(setPost);
     } catch (err: unknown) {
       if (err instanceof Error) {
         setEditError(err.message ?? "Failed to update post.");
@@ -289,8 +289,8 @@ export default function PageBody() {
         }
         router.replace(`?${sp.toString()}`, { scroll: false });
 
-        getPostDetail(postId, userId).then(setPost);
-        listPostsDetail({
+        getPost(postId, userId).then(setPost);
+        listPosts({
           replyTo: postId,
           offset: 0,
           limit: Config.POSTS_PAGE_SIZE + 1,

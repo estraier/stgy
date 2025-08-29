@@ -1,18 +1,18 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import type { PostDetail } from "@/api/models";
+import type { Post } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
 import { Heart, MessageCircle } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
 import { makeArticleHtmlFromMarkdown, makeSnippetHtmlFromMarkdown } from "@/utils/article";
 
 type PostCardProps = {
-  post: PostDetail;
+  post: Post;
   truncated?: boolean;
   showActions?: boolean;
-  onLike?: (post: PostDetail) => void;
-  onReply?: (post: PostDetail) => void;
+  onLike?: (post: Post) => void;
+  onReply?: (post: Post) => void;
   isReplying?: boolean;
   children?: React.ReactNode;
   className?: string;
