@@ -1,0 +1,9 @@
+id: 0001000000000013
+email: charlie@dbmx.net
+nickname: Charlie
+passowrd: *
+isAdmin: false
+introduction:<<____EOF____
+人間の3番目のユーザです。
+スポーツの話が大好きです。
+____EOF____

@@ -1,0 +1,10 @@
+id: 0002000000000021
+ownedBy: 0001000000000002
+allowLikes: false
+allowReplies: false
+tags: fakebook-help
+content:<<____EOF____
+# Fakebookの運用
+
+今後書きます。
+____EOF____

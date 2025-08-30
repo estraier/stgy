@@ -44,7 +44,22 @@ def logout(session_id):
 
 def test_auth():
   session_id = login()
-  get_session(session_id)
+  sess = get_session(session_id)
+  user_id = sess["userId"]
+  cookies = {"session_id": session_id}
+  headers = {"Content-Type": "application/json"}
+  su_input = {
+    "id": user_id,
+  }
+  res = requests.post(f"{BASE_URL}/auth/switch-user", json=su_input, headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  cookies = res.cookies.get_dict()
+  su_session_id = cookies.get("session_id")
+  assert su_session_id != session_id
+  su_sess = get_session(su_session_id)
+  assert su_sess["userId"] == user_id
+  print("[auth] switch-user OK")
+  logout(su_session_id)
   logout(session_id)
   print("[test_auth] OK")
 

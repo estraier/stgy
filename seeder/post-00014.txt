@@ -1,0 +1,17 @@
+id: 0002000000000014
+ownedBy: 0001000000000002
+allowLikes: false
+allowReplies: false
+tags: fakebook-help
+content:<<____EOF____
+# Fakebookのメディアストレージ
+
+本記事では、Fakebookにおいて画像などのメディアデータをどのように管理するかについて説明する。Amazon S3または互換システムであるMinIOのAPIを使って単純かつ堅牢なデータ管理をするにはどうするかについて述べる。
+
+## S3の基本
+
+AmazonのS3（Simple Storage Service）は、AWS上で利用できるオブジェクトストレージサービスである。基本的にはkey-valueストレージ
+
+
+Next: [Fakebookの通知機能](/posts/0002000000000015)
+____EOF____

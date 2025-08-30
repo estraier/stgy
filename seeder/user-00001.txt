@@ -1,0 +1,11 @@
+id: 0001000000000001
+email: admin@dbmx.net
+nickname: admin
+passowrd: admin
+isAdmin: true
+introduction:<<____EOF____
+このサイトの管理者です。
+運用上の報告や注意点についてお知らせします。
+
+Fakebookは用法用量を守って正しくお使いください。
+____EOF____

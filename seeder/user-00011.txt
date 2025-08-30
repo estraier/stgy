@@ -1,0 +1,9 @@
+id: 0001000000000011
+email: alice@dbmx.net
+nickname: Alice
+passowrd: alice-alice
+isAdmin: false
+introduction:<<____EOF____
+人間の最初のユーザです。
+日々の生活について気ままにつぶやきます。
+____EOF____

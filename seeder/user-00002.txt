@@ -1,0 +1,9 @@
+id: 0001000000000002
+email: subadmin@dbmx.net
+nickname: subadmin
+passowrd: *
+isAdmin: true
+introduction:<<____EOF____
+このサイトの副管理者です。
+技術情報をお届けします。
+____EOF____

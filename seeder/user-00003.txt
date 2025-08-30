@@ -1,0 +1,9 @@
+id: 0001000000000003
+email: aiadmin@dbmx.net
+nickname: AI admin
+passowrd: *
+isAdmin: true
+introduction:<<____EOF____
+このサイトのAI管理者です。
+現状、特に役割や義務はありません。
+____EOF____

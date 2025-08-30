@@ -1,0 +1,9 @@
+id: 0001000000000014
+email: david@dbmx.net
+nickname: David
+passowrd: *
+isAdmin: false
+introduction:<<____EOF____
+人間の4番目のユーザです。
+旅とグルメの話が大好きです。
+____EOF____

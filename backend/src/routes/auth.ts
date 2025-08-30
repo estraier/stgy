@@ -2,10 +2,32 @@ import { Router, Request, Response } from "express";
 import { Client } from "pg";
 import Redis from "ioredis";
 import { AuthService } from "../services/auth";
+import { UsersService } from "../services/users";
+import { AuthHelpers } from "./authHelpers";
 
 export default function createAuthRouter(pgClient: Client, redis: Redis) {
   const router = Router();
+  const usersService = new UsersService(pgClient, redis);
   const authService = new AuthService(pgClient, redis);
+  const authHelpers = new AuthHelpers(authService, usersService);
+
+  router.post("/switch-user", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser || !loginUser.isAdmin) {
+      return res.status(403).json({ error: "admin only" });
+    }
+    const id = typeof req.body?.id === "string" ? req.body.id.trim() : "";
+    if (!id) return res.status(400).json({ error: "id is required" });
+    try {
+      const { sessionId } = await authService.switchUser(id);
+      res.cookie("session_id", sessionId, makeCookieOptions(req));
+      res.json({ sessionId });
+    } catch (e) {
+      const message = e instanceof Error ? e.message : String(e);
+      const status = /user not found/i.test(message) ? 404 : 400;
+      res.status(status).json({ error: message });
+    }
+  });
 
   router.post("/", async (req: Request, res: Response) => {
     const { email, password } = req.body;

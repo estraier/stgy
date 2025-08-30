@@ -1,0 +1,9 @@
+id: 0001000000000012
+email: bob@dbmx.net
+nickname: Bob
+passowrd: *
+isAdmin: false
+introduction:<<____EOF____
+人間の2番目のユーザです。
+特売情報が大好きです。
+____EOF____

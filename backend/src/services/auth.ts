@@ -43,6 +43,32 @@ export class AuthService {
     return { sessionId, userId };
   }
 
+  async switchUser(userId: string): Promise<LoginResult> {
+    const result = await this.pgClient.query(
+      "SELECT id, email, nickname, is_admin, updated_at FROM users WHERE id=$1",
+      [userId],
+    );
+    if (result.rows.length === 0) throw new Error("user not found");
+    const {
+      id,
+      email: userEmail,
+      nickname: userNickname,
+      is_admin: userIsAdmin,
+      updated_at: userUpdatedAt,
+    } = result.rows[0];
+    const sessionId = crypto.randomBytes(32).toString("hex");
+    const sessionInfo: SessionInfo = {
+      userId: id,
+      userEmail,
+      userNickname,
+      userIsAdmin: !!userIsAdmin,
+      userUpdatedAt: userUpdatedAt ? new Date(userUpdatedAt).toISOString() : null,
+      loggedInAt: new Date().toISOString(),
+    };
+    await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", SESSION_TTL);
+    return { sessionId, userId: id };
+  }
+
   async getSessionInfo(sessionId: string): Promise<SessionInfo | null> {
     if (!sessionId) return null;
     const value = await this.redis.getex(`session:${sessionId}`, "EX", SESSION_TTL);

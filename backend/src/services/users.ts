@@ -215,7 +215,7 @@ export class UsersService {
     let idDateISO: string;
     if (input.id && input.id.trim() !== "") {
       const hexId = input.id.trim();
-      if (!/^[0-9a-fA-F]+$/.test(hexId)) {
+      if (!/^[0-9A-F]{16}$/.test(hexId)) {
         throw new Error("invalid id format");
       }
       id = hexId;

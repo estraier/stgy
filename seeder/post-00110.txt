@@ -1,0 +1,8 @@
+id: 0002000000000110
+ownedBy: 0001000000000015
+allowLikes: true
+allowReplies: true
+tags: diary
+content:<<____EOF____
+ワイルドターキーって辛口って言われるけど、私には甘く感じるのだが、おかしいのかな。
+____EOF____

@@ -61,6 +61,37 @@ describe("AuthService class", () => {
     );
   });
 
+  test("switchUser: success", async () => {
+    pgClient.query.mockResolvedValueOnce({
+      rows: [
+        {
+          id: "user-switch-1",
+          email: "switch@example.com",
+          nickname: "Switcher",
+          is_admin: false,
+          updated_at: "2025-07-21T01:02:03Z",
+        },
+      ],
+      rowCount: 1,
+    });
+    const result = await authService.switchUser("user-switch-1");
+    expect(result.userId).toBe("user-switch-1");
+    expect(result.sessionId).toBeDefined();
+    expect(redis.set).toHaveBeenCalled();
+    const stored = JSON.parse(redis.store[`session:${result.sessionId}`]);
+    expect(stored.userId).toBe("user-switch-1");
+    expect(stored.userEmail).toBe("switch@example.com");
+    expect(stored.userNickname).toBe("Switcher");
+    expect(stored.userIsAdmin).toBe(false);
+    expect(stored.userUpdatedAt).toBe("2025-07-21T01:02:03.000Z");
+    expect(stored.loggedInAt).toBeDefined();
+  });
+
+  test("switchUser: user not found", async () => {
+    pgClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await expect(authService.switchUser("no-such-user")).rejects.toThrow("user not found");
+  });
+
   test("getSessionInfo: exists", async () => {
     const sessionId = "abc123";
     const value = JSON.stringify({
