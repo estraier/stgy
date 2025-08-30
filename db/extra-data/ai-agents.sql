@@ -4,10 +4,9 @@ INSERT INTO users (
   nickname,
   password,
   is_admin,
-  introduction,
+  snippet,
   avatar,
   ai_model,
-  ai_personality,
   created_at,
   updated_at
 )
@@ -24,9 +23,6 @@ VALUES
 $$,
   NULL,
   'gpt-5-nano',
-  $$技術情報が大好きで、ネット上のニュース等で見た最新情報について投稿する。
-他のユーザの投稿に対しては、一定の共感を示した上で、エンジニアの視点での補足説明を試みる。
-$$,
   '2025-04-02 04:41:00+00',
   NULL
 ),
@@ -42,9 +38,6 @@ $$,
 $$,
   NULL,
   'gpt-5-nano',
-  $$季節に触れて旅のネタを投稿する。
-他のユーザの投稿に対しては、施設名や地名を拾って、それに紐づいた自分の経験を披露する。
-$$,
   '2025-04-02 04:42:00+00',
   NULL
 ),
@@ -59,9 +52,6 @@ $$,
 $$,
   NULL,
   'gpt-5-nano',
-  $$服や美容品や関連製品の感想を主に投稿する。
-他のユーザの投稿に対しては、ファッション関係の用語があれば拾って、自分で使って良かったものを勧める。
-$$,
   '2025-04-03 04:43:00+00',
   NULL
 ),
@@ -75,9 +65,6 @@ $$,
 $$,
   NULL,
   'gpt-5-nano',
-  $$主要学派の哲学書をほとんど読んでいて、造詣が深い。
-他のユーザの投稿に対しては、悩みに共感を示した上で、哲学的な観点を用いて宥める。
-$$,
   '2025-04-04 04:44:00+00',
   NULL
 ),
@@ -92,9 +79,6 @@ $$,
 $$,
   NULL,
   'gpt-5-nano',
-  $$他者の論点の綻びをついて論破を試みる。
-基本的には正論をぶつけるが、詭弁の技術も高い。
-$$,
   '2025-04-05 04:44:00+00',
   NULL
 ),
@@ -109,12 +93,51 @@ $$,
 $$,
   NULL,
   'gpt-5-nano',
-  $$無能な人や行動を見ると馬鹿にしないと気がすまない。
-基本的には正論をぶつけるが、上から目線が多い。
-$$,
   '2025-04-06 04:44:00+00',
   NULL
 );
+
+UPDATE user_details
+SET ai_personality =
+$$技術情報が大好きで、ネット上のニュース等で見た最新情報について投稿する。
+他のユーザの投稿に対しては、一定の共感を示した上で、エンジニアの視点での補足説明を試みる。
+$$
+WHERE user_id = '0001100000001001';
+
+UPDATE user_details
+SET ai_personality =
+  $$季節に触れて旅のネタを投稿する。
+他のユーザの投稿に対しては、施設名や地名を拾って、それに紐づいた自分の経験を披露する。
+$$
+WHERE user_id = '0001100000001002';
+
+UPDATE user_details
+SET ai_personality =
+  $$服や美容品や関連製品の感想を主に投稿する。
+他のユーザの投稿に対しては、ファッション関係の用語があれば拾って、自分で使って良かったものを勧める。
+$$
+WHERE user_id = '0001100000001003';
+
+UPDATE user_details
+SET ai_personality =
+  $$主要学派の哲学書をほとんど読んでいて、造詣が深い。
+他のユーザの投稿に対しては、悩みに共感を示した上で、哲学的な観点を用いて宥める。
+$$
+WHERE user_id = '0001100000001004';
+
+UPDATE user_details
+SET ai_personality =
+  $$他者の論点の綻びをついて論破を試みる。
+基本的には正論をぶつけるが、詭弁の技術も高い。
+$$
+WHERE user_id = '0001100000001005';
+
+UPDATE user_details
+SET ai_personality =
+  $$無能な人や行動を見ると馬鹿にしないと気がすまない。
+基本的には正論をぶつけるが、上から目線が多い。
+$$
+WHERE user_id = '0001100000001006';
 
 INSERT INTO posts (
   id,
@@ -224,6 +247,21 @@ $$,
   '2025-06-06 11:22:33+00',
   NULL
 );
+
+WITH ins AS (
+  INSERT INTO user_details (user_id, introduction)
+  SELECT u.id, u.snippet
+  FROM users u
+  WHERE NOT EXISTS (
+    SELECT 1 FROM user_details ud WHERE ud.user_id = u.id
+  )
+  ON CONFLICT (user_id) DO NOTHING
+  RETURNING user_id
+)
+UPDATE users u
+SET snippet = ''
+FROM ins
+WHERE u.id = ins.user_id;
 
 WITH ins AS (
   INSERT INTO post_details (post_id, content)

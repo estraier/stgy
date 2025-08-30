@@ -1,16 +1,16 @@
 SELECT set_config('seed.n_dummies', '1000', false);
 
 INSERT INTO users (
-  id, email, nickname, password, is_admin, introduction, avatar,
-  ai_model, ai_personality, created_at, updated_at
+  id, email, nickname, password, is_admin, snippet, avatar,
+  ai_model, created_at, updated_at
 ) VALUES
 (
   '9901000000000001', 'taro@example.com', 'taro', md5('taro'), FALSE,
-  'volume test user', NULL, NULL, NULL, '2025-05-11 00:00:00+00', NULL
+  'volume test user', NULL, NULL, '2025-05-11 00:00:00+00', NULL
 ),
 (
   '9901000000000002', 'jiro@example.com', 'jiro', md5('jiro'), TRUE,
-  'sub admin user', NULL, NULL, NULL, '2025-05-12 00:00:00+00', '2025-05-12 01:00:00+00'
+  'sub admin user', NULL, NULL, '2025-05-12 00:00:00+00', '2025-05-12 01:00:00+00'
 );
 
 INSERT INTO posts (
@@ -49,8 +49,8 @@ BEGIN
   FOR i IN 1..n LOOP
     uid  := '99011' || lpad(i::text, 11, '0');
     INSERT INTO users (
-      id, email, nickname, password, is_admin, introduction, avatar,
-      ai_model, ai_personality, created_at, updated_at
+      id, email, nickname, password, is_admin, snippet, avatar,
+      ai_model, created_at, updated_at
     ) VALUES (
       uid,
       'user' || i || '@example.com',
@@ -58,7 +58,7 @@ BEGIN
       md5('user' || i),
       FALSE,
       'I am a dummy user ' || i,
-      NULL, NULL, NULL, now(), NULL
+      NULL, NULL, now(), NULL
     )
     ON CONFLICT (id) DO NOTHING;
 
@@ -120,6 +120,21 @@ BEGIN
     ON CONFLICT DO NOTHING;
   END LOOP;
 END $$;
+
+WITH ins AS (
+  INSERT INTO user_details (user_id, introduction)
+  SELECT u.id, u.snippet
+  FROM users u
+  WHERE NOT EXISTS (
+    SELECT 1 FROM user_details ud WHERE ud.user_id = u.id
+  )
+  ON CONFLICT (user_id) DO NOTHING
+  RETURNING user_id
+)
+UPDATE users u
+SET snippet = ''
+FROM ins
+WHERE u.id = ins.user_id;
 
 WITH ins AS (
   INSERT INTO post_details (post_id, content)
