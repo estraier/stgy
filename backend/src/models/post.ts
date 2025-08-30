@@ -40,6 +40,7 @@ export type CountPostsInput = PostFilter;
 export type ListPostsInput = PostFilter & PostPagination;
 
 export type CreatePostInput = {
+  id?: string;
   content: string;
   ownedBy: string;
   replyTo: string | null;

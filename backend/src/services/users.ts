@@ -211,8 +211,21 @@ export class UsersService {
       throw new Error("introduction is required");
     }
 
-    const { id, ms } = await this.idIssueService.issue();
-    const idDate = new Date(ms).toISOString();
+    let id: string;
+    let idDateISO: string;
+    if (input.id && input.id.trim() !== "") {
+      const hexId = input.id.trim();
+      if (!/^[0-9a-fA-F]+$/.test(hexId)) {
+        throw new Error("invalid id format");
+      }
+      id = hexId;
+      const asBigInt = BigInt("0x" + hexId);
+      idDateISO = IdIssueService.bigIntToDate(asBigInt).toISOString();
+    } else {
+      const issued = await this.idIssueService.issue();
+      id = issued.id;
+      idDateISO = new Date(issued.ms).toISOString();
+    }
     const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
     const snippet = makeSnippetJsonFromMarkdown(input.introduction ?? "");
 
@@ -231,10 +244,9 @@ export class UsersService {
           snippet,
           input.avatar,
           input.aiModel,
-          idDate,
+          idDateISO,
         ],
       );
-
       await this.pgClient.query(
         `INSERT INTO user_details (user_id, introduction, ai_personality)
          VALUES ($1, $2, $3)
@@ -243,7 +255,6 @@ export class UsersService {
                ai_personality = EXCLUDED.ai_personality`,
         [id, input.introduction, input.aiPersonality ?? null],
       );
-
       await this.pgClient.query("COMMIT");
       return snakeToCamel<User>(res.rows[0]);
     } catch (e) {

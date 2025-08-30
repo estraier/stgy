@@ -42,6 +42,7 @@ export type CountUsersInput = UserFilter;
 export type ListUsersInput = UserFilter & UserPagination;
 
 export type CreateUserInput = {
+  id?: string;
   email: string;
   nickname: string;
   password: string;

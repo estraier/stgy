@@ -201,6 +201,9 @@ export default function createPostsRouter(
     if (!user.isAdmin && !(await postsThrottleService.canDo(user.id))) {
       return res.status(403).json({ error: "too often posts" });
     }
+    if (!user.isAdmin && req.body.id) {
+      return res.status(400).json({ error: "id setting is for admin only" });
+    }
     try {
       let ownedBy = user.id;
       if (user.isAdmin && req.body.ownedBy && typeof req.body.ownedBy === "string") {

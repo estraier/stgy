@@ -248,14 +248,28 @@ export class PostsService {
     if (typeof input.ownedBy !== "string" || input.ownedBy.trim() === "") {
       throw new Error("ownedBy is required");
     }
-    const client = this.pgClient;
-    const { id, ms } = await this.idIssueService.issue();
-    const idDate = new Date(ms).toISOString();
+
+    let id: string;
+    let idDate: string;
+    if (input.id && input.id.trim() !== "") {
+      const hexId = input.id.trim();
+      if (!/^[0-9a-fA-F]+$/.test(hexId)) {
+        throw new Error("invalid id format");
+      }
+      id = hexId;
+      const asBigInt = BigInt("0x" + hexId);
+      idDate = IdIssueService.bigIntToDate(asBigInt).toISOString();
+    } else {
+      const issued = await this.idIssueService.issue();
+      id = issued.id;
+      idDate = new Date(issued.ms).toISOString();
+    }
     const snippet = makeSnippetJsonFromMarkdown(input.content);
-    await client.query("BEGIN");
+
+    await this.pgClient.query("BEGIN");
     try {
       if (input.replyTo != null) {
-        const chk = await client.query<{ allow_replies: boolean }>(
+        const chk = await this.pgClient.query<{ allow_replies: boolean }>(
           `SELECT allow_replies FROM posts WHERE id = $1`,
           [input.replyTo],
         );
@@ -266,26 +280,26 @@ export class PostsService {
           throw new Error("replies are not allowed for the target post");
         }
       }
-      const res = await client.query(
+      const res = await this.pgClient.query(
         `INSERT INTO posts (id, snippet, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
          RETURNING id, snippet, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at`,
         [id, snippet, input.ownedBy, input.replyTo, input.allowLikes, input.allowReplies, idDate],
       );
-      await client.query(
+      await this.pgClient.query(
         `INSERT INTO post_details (post_id, content) VALUES ($1, $2)
          ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
         [id, input.content],
       );
       if (input.tags && input.tags.length > 0) {
-        await client.query(
+        await this.pgClient.query(
           `INSERT INTO post_tags (post_id, name) VALUES ${input.tags
             .map((_, i) => `($1, $${i + 2})`)
             .join(", ")}`,
           [id, ...input.tags],
         );
       }
-      await client.query("COMMIT");
+      await this.pgClient.query("COMMIT");
       if (this.eventLogService && input.replyTo) {
         try {
           this.eventLogService.recordReply({
@@ -297,17 +311,16 @@ export class PostsService {
       }
       return snakeToCamel<Post>(res.rows[0]);
     } catch (e) {
-      await client.query("ROLLBACK");
+      await this.pgClient.query("ROLLBACK");
       throw e;
     }
   }
 
   async updatePost(input: UpdatePostInput): Promise<PostDetail | null> {
-    const client = this.pgClient;
-    await client.query("BEGIN");
+    await this.pgClient.query("BEGIN");
     try {
       if (input.replyTo != null && input.replyTo !== undefined) {
-        const chk = await client.query<{ allow_replies: boolean }>(
+        const chk = await this.pgClient.query<{ allow_replies: boolean }>(
           `SELECT allow_replies FROM posts WHERE id = $1`,
           [input.replyTo],
         );
@@ -329,7 +342,7 @@ export class PostsService {
         const snippet = makeSnippetJsonFromMarkdown(input.content);
         columns.push(`snippet = $${idx++}`);
         values.push(snippet);
-        await client.query(
+        await this.pgClient.query(
           `INSERT INTO post_details (post_id, content)
              VALUES ($1, $2)
              ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
@@ -360,12 +373,12 @@ export class PostsService {
       if (columns.length > 0) {
         const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx}
                      RETURNING id`;
-        await client.query(sql, values);
+        await this.pgClient.query(sql, values);
       }
       if (input.tags !== undefined) {
-        await client.query(`DELETE FROM post_tags WHERE post_id = $1`, [input.id]);
+        await this.pgClient.query(`DELETE FROM post_tags WHERE post_id = $1`, [input.id]);
         if (input.tags.length > 0) {
-          await client.query(
+          await this.pgClient.query(
             `INSERT INTO post_tags (post_id, name) VALUES ${input.tags
               .map((_, i) => `($1, $${i + 2})`)
               .join(", ")}`,
@@ -373,10 +386,10 @@ export class PostsService {
           );
         }
       }
-      await client.query("COMMIT");
+      await this.pgClient.query("COMMIT");
       return this.getPost(input.id);
     } catch (e) {
-      await client.query("ROLLBACK");
+      await this.pgClient.query("ROLLBACK");
       throw e;
     }
   }
