@@ -737,6 +737,16 @@ export function mdRenderHtml(nodes: MdNode[]): string {
   return serializeAll(nodes);
 }
 
+export function serializeMdNodes(nodes: MdNode[]): string {
+  const enc = nodes.map(encodeNode);
+  return JSON.stringify(enc);
+}
+
+export function deserializeMdNodes(data: string): MdNode[] {
+  const arr = JSON.parse(data) as EncodedNode[];
+  return arr.map(decodeNode);
+}
+
 function isMediaElement(n: MdNode): n is MdMediaElement {
   return n.type === "element" && (n.tag === "img" || n.tag === "video");
 }
@@ -894,16 +904,6 @@ type EncodedElement = {
 
 type EncodedText = { [NODE_KEY_TEXT]: string };
 type EncodedNode = EncodedText | EncodedElement;
-
-export function serializeMdNodes(nodes: MdNode[]): string {
-  const enc = nodes.map(encodeNode);
-  return JSON.stringify(enc);
-}
-
-export function deserializeMdNodes(data: string): MdNode[] {
-  const arr = JSON.parse(data) as EncodedNode[];
-  return arr.map(decodeNode);
-}
 
 function encodeNode(n: MdNode): EncodedNode {
   if (n.type === "text") {
