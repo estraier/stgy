@@ -30,18 +30,14 @@ components:
         email: { type: string }
         nickname: { type: string }
         isAdmin: { type: boolean }
-        introduction: { type: string }
+        snippet: { type: string }
         avatar: { type: string, nullable: true }
         aiModel: { type: string, nullable: true }
-        aiPersonality: { type: string, nullable: true }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time, nullable: true }
-        countFollowers:
-          type: integer
-        countFollowees:
-          type: integer
-        countPosts:
-          type: integer
+        countFollowers: { type: integer }
+        countFollowees: { type: integer }
+        countPosts: { type: integer }
         isFollowedByFocusUser:
           type: boolean
           nullable: true
@@ -54,33 +50,61 @@ components:
           email,
           nickname,
           isAdmin,
-          introduction,
+          snippet,
           avatar,
           aiModel,
-          aiPersonality,
           createdAt,
           countFollowers,
           countFollowees,
-          countPosts,
+          countPosts
+        ]
+
+    UserDetail:
+      allOf:
+        - $ref: "#/components/schemas/User"
+        - type: object
+          properties:
+            introduction: { type: string }
+            aiPersonality: { type: string, nullable: true }
+          required: [introduction]
+
+    UserLite:
+      type: object
+      properties:
+        id: { type: string }
+        email: { type: string }
+        nickname: { type: string }
+        isAdmin: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+        countFollowers: { type: integer }
+        countFollowees: { type: integer }
+        countPosts: { type: integer }
+      required:
+        [
+          id,
+          email,
+          nickname,
+          isAdmin,
+          createdAt,
+          countFollowers,
+          countFollowees,
+          countPosts
         ]
 
     Post:
       type: object
       properties:
         id: { type: string }
-        content: { type: string }
+        snippet: { type: string }
         ownedBy: { type: string }
-        replyTo:
-          type: string
-          nullable: true
+        replyTo: { type: string, nullable: true }
         allowLikes: { type: boolean }
         allowReplies: { type: boolean }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time, nullable: true }
         ownerNickname: { type: string }
-        replyToOwnerNickname:
-          type: string
-          nullable: true
+        replyToOwnerNickname: { type: string, nullable: true }
         countLikes: { type: integer }
         countReplies: { type: integer }
         tags:
@@ -95,7 +119,7 @@ components:
       required:
         [
           id,
-          content,
+          snippet,
           ownedBy,
           replyTo,
           allowLikes,
@@ -105,7 +129,47 @@ components:
           ownerNickname,
           countLikes,
           countReplies,
-          tags,
+          tags
+        ]
+
+    PostDetail:
+      allOf:
+        - $ref: "#/components/schemas/Post"
+        - type: object
+          properties:
+            content: { type: string }
+          required: [content]
+
+    PostLite:
+      type: object
+      properties:
+        id: { type: string }
+        ownedBy: { type: string }
+        replyTo: { type: string, nullable: true }
+        allowLikes: { type: boolean }
+        allowReplies: { type: boolean }
+        createdAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time, nullable: true }
+        ownerNickname: { type: string }
+        replyToOwnerNickname: { type: string, nullable: true }
+        countLikes: { type: integer }
+        countReplies: { type: integer }
+        tags:
+          type: array
+          items: { type: string }
+      required:
+        [
+          id,
+          ownedBy,
+          replyTo,
+          allowLikes,
+          allowReplies,
+          createdAt,
+          updatedAt,
+          ownerNickname,
+          countLikes,
+          countReplies,
+          tags
         ]
 
     AIModel:
@@ -113,12 +177,8 @@ components:
       properties:
         name: { type: string }
         description: { type: string }
-        inputCost:
-          type: number
-          format: float
-        outputCost:
-          type: number
-          format: float
+        inputCost: { type: number, format: float }
+        outputCost: { type: number, format: float }
       required: [name, description, inputCost, outputCost]
 
     StorageObjectMetadata:
@@ -127,19 +187,10 @@ components:
         bucket: { type: string }
         key: { type: string }
         size: { type: integer }
-        etag:
-          type: string
-          nullable: true
-        lastModified:
-          type: string
-          format: date-time
-          nullable: true
-        storageClass:
-          type: string
-          nullable: true
-        contentType:
-          type: string
-          nullable: true
+        etag: { type: string, nullable: true }
+        lastModified: { type: string, format: date-time, nullable: true }
+        storageClass: { type: string, nullable: true }
+        contentType: { type: string, nullable: true }
       required: [bucket, key, size]
 
     MediaObject:
@@ -156,12 +207,9 @@ components:
         url: { type: string }
         fields:
           type: object
-          additionalProperties:
-            type: string
+          additionalProperties: { type: string }
         objectKey: { type: string }
-        maxBytes:
-          type: integer
-          nullable: true
+        maxBytes: { type: integer, nullable: true }
         expiresInSec: { type: integer }
       required: [url, fields, objectKey, expiresInSec]
 
@@ -173,20 +221,18 @@ components:
         bytesMasters: { type: integer }
         bytesThumbs: { type: integer }
         bytesTotal: { type: integer }
-        limitSingleBytes:
-          type: integer
-          nullable: true
-        limitMonthlyBytes:
-          type: integer
-          nullable: true
+        limitSingleBytes: { type: integer, nullable: true }
+        limitMonthlyBytes: { type: integer, nullable: true }
       required:
-        - userId
-        - yyyymm
-        - bytesMasters
-        - bytesThumbs
-        - bytesTotal
-        - limitSingleBytes
-        - limitMonthlyBytes
+        [
+          userId,
+          yyyymm,
+          bytesMasters,
+          bytesThumbs,
+          bytesTotal,
+          limitSingleBytes,
+          limitMonthlyBytes
+        ]
 
     NotificationRecordUser:
       type: object
@@ -376,15 +422,12 @@ paths:
         - name: query
           in: query
           schema: { type: string }
-          required: false
         - name: nickname
           in: query
           schema: { type: string }
-          required: false
         - name: nicknamePrefix
           in: query
           schema: { type: string }
-          required: false
       responses:
         "200":
           description: User count
@@ -406,30 +449,23 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
-          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
-          required: false
         - name: order
           in: query
           schema: { type: string, enum: [asc, desc, social], default: desc }
-          required: false
         - name: query
           in: query
           schema: { type: string }
-          required: false
         - name: nickname
           in: query
           schema: { type: string }
-          required: false
         - name: nicknamePrefix
           in: query
           schema: { type: string }
-          required: false
         - name: focusUserId
           in: query
-          required: false
           schema: { type: string }
           description: (Optional) Used with order=social to prioritize followees and followers.
       responses:
@@ -476,6 +512,28 @@ paths:
         "400":
           $ref: "#/components/responses/Error400"
 
+  /users/{id}/lite:
+    get:
+      summary: Get user lite
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: User lite info
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserLite"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "404":
+          $ref: "#/components/responses/Error404"
+
   /users/{id}:
     get:
       summary: Get user basics
@@ -486,13 +544,17 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: focusUserId
+          in: query
+          required: false
+          schema: { type: string }
       responses:
         "200":
           description: User info
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/User"
+                $ref: "#/components/schemas/UserDetail"
         "401":
           $ref: "#/components/responses/Error401"
         "404":
@@ -521,7 +583,6 @@ paths:
                 avatar: { type: string, nullable: true }
                 aiModel: { type: string, nullable: true }
                 aiPersonality: { type: string, nullable: true }
-              required: []
       responses:
         "200":
           description: User updated
@@ -627,51 +688,13 @@ paths:
                 type: object
                 properties:
                   result: { type: string }
-                example:
-                  result: ok
+                example: { result: ok }
         "400":
           $ref: "#/components/responses/Error400"
         "401":
           $ref: "#/components/responses/Error401"
         "403":
           $ref: "#/components/responses/Error403"
-
-  /users/{id}/password:
-    put:
-      summary: Update user password
-      security:
-        - sessionCookie: []
-      parameters:
-        - name: id
-          in: path
-          required: true
-          schema: { type: string }
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              properties:
-                password: { type: string }
-              required: [password]
-      responses:
-        "200":
-          description: Password updated
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  result: { type: string }
-        "401":
-          $ref: "#/components/responses/Error401"
-        "403":
-          $ref: "#/components/responses/Error403"
-        "404":
-          $ref: "#/components/responses/Error404"
-        "400":
-          $ref: "#/components/responses/Error400"
 
   /users/password/reset/start:
     post:
@@ -728,6 +751,43 @@ paths:
                 type: object
                 properties:
                   result: { type: string }
+        "400":
+          $ref: "#/components/responses/Error400"
+
+  /users/{id}/password:
+    put:
+      summary: Update user password
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                password: { type: string }
+              required: [password]
+      responses:
+        "200":
+          description: Password updated
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
         "400":
           $ref: "#/components/responses/Error400"
 
@@ -790,18 +850,14 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
-          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
-          required: false
         - name: order
           in: query
           schema: { type: string, enum: [asc, desc], default: desc }
-          required: false
         - name: focusUserId
           in: query
-          required: false
           schema: { type: string }
           description: (Optional) Used to get isFollowedByFocusUser/isFollowingFocusUser
       responses:
@@ -829,18 +885,14 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
-          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
-          required: false
         - name: order
           in: query
           schema: { type: string, enum: [asc, desc], default: desc }
-          required: false
         - name: focusUserId
           in: query
-          required: false
           schema: { type: string }
           description: (Optional) Used to get isFollowedByFocusUser/isFollowingFocusUser
       responses:
@@ -863,29 +915,23 @@ paths:
       parameters:
         - name: nicknamePrefix
           in: query
-          required: false
           schema: { type: string }
         - name: offset
           in: query
-          required: false
           schema: { type: integer, default: 0 }
         - name: limit
           in: query
-          required: false
           schema: { type: integer, default: 100 }
         - name: focusUserId
           in: query
-          required: false
           schema: { type: string }
           description: (Optional) Base user whose followees are prioritized. Defaults to current user.
         - name: omitSelf
           in: query
-          required: false
           schema: { type: boolean, default: false }
           description: If true, excludes the self group entirely.
         - name: omitOthers
           in: query
-          required: false
           schema: { type: boolean, default: false }
           description: If true, excludes the others group entirely.
       responses:
@@ -911,19 +957,15 @@ paths:
         - name: query
           in: query
           schema: { type: string }
-          required: false
         - name: ownedBy
           in: query
           schema: { type: string }
-          required: false
         - name: tag
           in: query
           schema: { type: string }
-          required: false
         - name: replyTo
           in: query
           schema: { type: string }
-          required: false
           description: |
             If omitted: include all posts.
             If empty string (""): only posts with no replyTo (not a reply).
@@ -950,31 +992,24 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
-          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
-          required: false
         - name: order
           in: query
           schema: { type: string, enum: [asc, desc], default: desc }
-          required: false
         - name: query
           in: query
           schema: { type: string }
-          required: false
         - name: ownedBy
           in: query
           schema: { type: string }
-          required: false
         - name: tag
           in: query
           schema: { type: string }
-          required: false
         - name: replyTo
           in: query
           schema: { type: string }
-          required: false
           description: |
             If omitted: include all posts.
             If empty string (""): only posts with no replyTo (not a reply).
@@ -982,7 +1017,6 @@ paths:
             Otherwise: only posts with replyTo equal to the given value.
         - name: focusUserId
           in: query
-          required: false
           schema: { type: string }
           description: (Optional) Used for personalization (e.g., isLikedByFocusUser / isRepliedByFocusUser).
       responses:
@@ -1010,9 +1044,7 @@ paths:
               properties:
                 content: { type: string }
                 ownedBy: { type: string }
-                replyTo:
-                  type: string
-                  nullable: true
+                replyTo: { type: string, nullable: true }
                 allowLikes: { type: boolean }
                 allowReplies: { type: boolean }
                 tags:
@@ -1044,27 +1076,21 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
-          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
-          required: false
         - name: order
           in: query
           schema: { type: string, enum: [asc, desc], default: desc }
-          required: false
         - name: includeSelf
           in: query
           schema: { type: boolean, default: false }
-          required: false
         - name: includeReplies
           in: query
           schema: { type: boolean, default: true }
-          required: false
         - name: focusUserId
           in: query
           schema: { type: string }
-          required: false
           description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
       responses:
         "200":
@@ -1093,23 +1119,18 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
-          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
-          required: false
         - name: order
           in: query
           schema: { type: string, enum: [asc, desc], default: desc }
-          required: false
         - name: includeReplies
           in: query
           schema: { type: boolean, default: true }
-          required: false
         - name: focusUserId
           in: query
           schema: { type: string }
-          required: false
           description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
       responses:
         "200":
@@ -1125,6 +1146,28 @@ paths:
         "401":
           $ref: "#/components/responses/Error401"
 
+  /posts/{id}/lite:
+    get:
+      summary: Get post lite by id
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Post lite
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostLite"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "404":
+          $ref: "#/components/responses/Error404"
+
   /posts/{id}:
     get:
       summary: Get post by id
@@ -1135,13 +1178,17 @@ paths:
           in: path
           required: true
           schema: { type: string }
+        - name: focusUserId
+          in: query
+          required: false
+          schema: { type: string }
       responses:
         "200":
-          description: Post summary
+          description: Post detail
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Post"
+                $ref: "#/components/schemas/PostDetail"
         "401":
           $ref: "#/components/responses/Error401"
         "404":
@@ -1165,22 +1212,19 @@ paths:
               properties:
                 content: { type: string }
                 ownedBy: { type: string }
-                replyTo:
-                  type: string
-                  nullable: true
+                replyTo: { type: string, nullable: true }
                 allowLikes: { type: boolean }
                 allowReplies: { type: boolean }
                 tags:
                   type: array
                   items: { type: string }
-              required: []
       responses:
         "200":
           description: Post updated
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Post"
+                $ref: "#/components/schemas/PostDetail"
         "401":
           $ref: "#/components/responses/Error401"
         "403":
@@ -1276,15 +1320,12 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
-          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
-          required: false
         - name: order
           in: query
           schema: { type: string, enum: [asc, desc], default: desc }
-          required: false
       responses:
         "200":
           description: Users who liked this post
@@ -1420,11 +1461,9 @@ paths:
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
-          required: false
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
-          required: false
       responses:
         "200":
           description: List of media objects
@@ -1451,8 +1490,7 @@ paths:
         - name: userId
           in: path
           required: true
-          schema:
-            type: string
+          schema: { type: string }
         - name: yyyymm
           in: query
           required: false
@@ -1495,13 +1533,9 @@ paths:
           description: Image bytes
           content:
             image/*:
-              schema:
-                type: string
-                format: binary
+              schema: { type: string, format: binary }
             application/octet-stream:
-              schema:
-                type: string
-                format: binary
+              schema: { type: string, format: binary }
         "400":
           $ref: "#/components/responses/Error400"
         "401":
@@ -1636,13 +1670,9 @@ paths:
           description: Image bytes
           content:
             image/*:
-              schema:
-                type: string
-                format: binary
+              schema: { type: string, format: binary }
             application/octet-stream:
-              schema:
-                type: string
-                format: binary
+              schema: { type: string, format: binary }
         "400":
           $ref: "#/components/responses/Error400"
         "401":
@@ -1687,7 +1717,6 @@ paths:
       parameters:
         - name: newerThan
           in: query
-          required: false
           schema: { type: string, format: date-time }
       responses:
         "200":
@@ -1716,9 +1745,7 @@ paths:
               type: object
               properties:
                 slot: { type: string }
-                term:
-                  type: string
-                  maxLength: 20
+                term: { type: string, maxLength: 20 }
                 isRead: { type: boolean }
               required: [slot, term, isRead]
       responses:
