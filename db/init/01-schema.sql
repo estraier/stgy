@@ -11,10 +11,9 @@ CREATE TABLE users (
   nickname VARCHAR(50) NOT NULL,
   password VARCHAR(50) NOT NULL,
   is_admin BOOLEAN NOT NULL,
-  introduction VARCHAR(65535) NOT NULL,
+  snippet VARCHAR(65535) NOT NULL,
   avatar VARCHAR(100),
   ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
-  ai_personality VARCHAR(2000),
   created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ,
   count_followers INT NOT NULL DEFAULT 0,
@@ -22,6 +21,13 @@ CREATE TABLE users (
   count_posts INT NOT NULL DEFAULT 0
 );
 CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, nickname, id);
+
+CREATE TABLE user_details (
+  user_id VARCHAR(50) PRIMARY KEY,
+  introduction VARCHAR(65535) NOT NULL,
+  ai_personality VARCHAR(2000),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
 
 CREATE TABLE user_follows (
   follower_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
@@ -34,7 +40,7 @@ CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, 
 
 CREATE TABLE posts (
   id VARCHAR(50) PRIMARY KEY,
-  content VARCHAR(65535) NOT NULL,
+  snippet VARCHAR(2000) NOT NULL,
   owned_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reply_to VARCHAR(50) REFERENCES posts(id) ON DELETE SET NULL,
   allow_likes BOOLEAN NOT NULL,
@@ -48,6 +54,12 @@ CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
 CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
 CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
+
+CREATE TABLE post_details (
+  post_id VARCHAR(50) PRIMARY KEY,
+  content VARCHAR(65535) NOT NULL,
+  FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
+);
 
 CREATE TABLE post_tags (
   post_id VARCHAR(50) NOT NULL REFERENCES posts(id) ON DELETE CASCADE,

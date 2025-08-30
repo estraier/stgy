@@ -14,10 +14,9 @@ INSERT INTO users (
   nickname,
   password,
   is_admin,
-  introduction,
+  snippet,
   avatar,
   ai_model,
-  ai_personality,
   created_at,
   updated_at
 )
@@ -31,7 +30,6 @@ VALUES
   $$I am the administrator of this site.
 I notify reports and issues on operation.
 $$,
-  NULL,
   NULL,
   NULL,
   '2025-04-01 03:40:00+00',
@@ -48,7 +46,6 @@ I provide technical information.
 $$,
   NULL,
   NULL,
-  NULL,
   '2025-04-02 04:40:00+00',
   NULL
 ),
@@ -63,10 +60,28 @@ There is no specific role/duty so far.
 $$,
   NULL,
   'gpt-5-mini',
-  'There is no specific role/duty so far.',
   '2025-04-02 04:40:00+00',
   NULL
 );
+
+WITH ins AS (
+  INSERT INTO user_details (user_id, introduction)
+  SELECT u.id, u.snippet
+  FROM users u
+  WHERE NOT EXISTS (
+    SELECT 1 FROM user_details ud WHERE ud.user_id = u.id
+  )
+  ON CONFLICT (user_id) DO NOTHING
+  RETURNING user_id
+)
+UPDATE users u
+SET snippet = ''
+FROM ins
+WHERE u.id = ins.user_id;
+
+UPDATE user_details
+SET ai_personality = 'Diligent to crawl around the site to keep it safe.'
+WHERE user_id = '0001000000000003';
 
 INSERT INTO user_follows (
   follower_id,

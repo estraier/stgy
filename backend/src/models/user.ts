@@ -3,10 +3,9 @@ export type User = {
   email: string;
   nickname: string;
   isAdmin: boolean;
-  introduction: string;
+  snippet: string;
   avatar: string | null;
   aiModel: string | null;
-  aiPersonality: string | null;
   createdAt: string;
   updatedAt: string | null;
   countFollowers: number;
@@ -14,6 +13,14 @@ export type User = {
   countPosts: number;
   isFollowedByFocusUser?: boolean;
   isFollowingFocusUser?: boolean;
+};
+
+export type UserLite =
+  Omit<User, "snippet" | "avatar" | "isFollowedByFocusUser" | "isFollowingFocusUser">;
+
+export type UserDetail = User & {
+  introduction: string;
+  aiPersonality: string | null;
 };
 
 export type UserFilter = {

@@ -1,6 +1,8 @@
 import { Config } from "../config";
 import {
   User,
+  UserLite,
+  UserDetail,
   CountUsersInput,
   CreateUserInput,
   UpdateUserInput,
@@ -42,34 +44,60 @@ export class UsersService {
     const query = input?.query?.trim();
     const nickname = input?.nickname?.trim();
     const nicknamePrefix = input?.nicknamePrefix?.trim();
-    let sql = `SELECT COUNT(*) FROM users`;
+
+    let sql = `SELECT COUNT(*) FROM users u`;
     const params: unknown[] = [];
-    let where = "";
+    const wheres: string[] = [];
+
     if (query) {
-      const escapedQuery = escapeForLike(query);
-      where = "WHERE nickname ILIKE $1 OR introduction ILIKE $2";
-      params.push(`%${escapedQuery}%`, `%${escapedQuery}%`);
+      const q = `%${escapeForLike(query)}%`;
+      sql += ` LEFT JOIN user_details d ON d.user_id = u.id`;
+      wheres.push(`(u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)`);
+      params.push(q);
     } else if (nickname) {
-      const escapedQuery = escapeForLike(nickname);
-      where = "WHERE nickname ILIKE $1";
-      params.push(`%${escapedQuery}%`);
+      const q = `%${escapeForLike(nickname)}%`;
+      wheres.push(`u.nickname ILIKE $1`);
+      params.push(q);
     } else if (nicknamePrefix) {
-      const escapedQuery = escapeForLike(nicknamePrefix.toLowerCase());
-      where = "WHERE LOWER(nickname) LIKE $1";
-      params.push(`${escapedQuery}%`);
+      const q = `${escapeForLike(nicknamePrefix.toLowerCase())}%`;
+      wheres.push(`LOWER(u.nickname) LIKE $1`);
+      params.push(q);
     }
-    sql += ` ${where}`;
+
+    if (wheres.length > 0) sql += " WHERE " + wheres.join(" AND ");
     const res = await this.pgClient.query(sql, params);
     return Number(res.rows[0].count);
   }
 
-  async getUser(id: string, focusUserId?: string): Promise<User | null> {
+  async getUserLite(id: string): Promise<UserLite | null> {
     const userRes = await this.pgClient.query(
-      `SELECT id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1`,
+      `SELECT
+         id, email, nickname, is_admin, ai_model,
+         created_at, updated_at, count_followers, count_followees, count_posts
+       FROM users
+       WHERE id = $1`,
       [id],
     );
     if (userRes.rows.length === 0) return null;
     const user: Record<string, unknown> = snakeToCamel(userRes.rows[0]);
+    return user as UserLite;
+  }
+
+  async getUser(id: string, focusUserId?: string): Promise<UserDetail | null> {
+    const userRes = await this.pgClient.query(
+      `SELECT
+         u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model,
+         u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts,
+         d.introduction, d.ai_personality
+       FROM users u
+       LEFT JOIN user_details d ON d.user_id = u.id
+       WHERE u.id = $1`,
+      [id],
+    );
+    if (userRes.rows.length === 0) return null;
+
+    const user: Record<string, unknown> = snakeToCamel(userRes.rows[0]);
+
     if (focusUserId && focusUserId !== id) {
       const followRes = await this.pgClient.query(
         `SELECT
@@ -80,7 +108,8 @@ export class UsersService {
       user.isFollowedByFocusUser = followRes.rows[0].is_followed_by_focus_user;
       user.isFollowingFocusUser = followRes.rows[0].is_following_focus_user;
     }
-    return user as User;
+
+    return user as UserDetail;
   }
 
   async listUsers(input?: ListUsersInput, focusUserId?: string): Promise<User[]> {
@@ -92,24 +121,26 @@ export class UsersService {
     const nicknamePrefix = input?.nicknamePrefix?.trim();
 
     let baseSelect = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model,
+             u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
       FROM users u
     `;
     const params: unknown[] = [];
     const wheres: string[] = [];
 
     if (query) {
-      const escapedQuery = escapeForLike(query);
-      wheres.push("(u.nickname ILIKE $1 OR u.introduction ILIKE $2)");
-      params.push(`%${escapedQuery}%`, `%${escapedQuery}%`);
+      baseSelect += ` LEFT JOIN user_details d ON d.user_id = u.id`;
+      const q = `%${escapeForLike(query)}%`;
+      wheres.push(`(u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)`);
+      params.push(q);
     } else if (nickname) {
-      const escapedQuery = escapeForLike(nickname);
+      const q = `%${escapeForLike(nickname)}%`;
       wheres.push(`u.nickname ILIKE $${params.length + 1}`);
-      params.push(`%${escapedQuery}%`);
+      params.push(q);
     } else if (nicknamePrefix) {
-      const escapedQuery = escapeForLike(nicknamePrefix.toLowerCase());
+      const q = `${escapeForLike(nicknamePrefix.toLowerCase())}%`;
       wheres.push(`LOWER(u.nickname) LIKE $${params.length + 1}`);
-      params.push(`${escapedQuery}%`);
+      params.push(q);
     }
 
     let orderClause = "";
@@ -182,72 +213,107 @@ export class UsersService {
     const { id, ms } = await this.idIssueService.issue();
     const idDate = new Date(ms).toISOString();
     const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
+    const snippet = (input.introduction ?? "").slice(0, 2000);
 
-    const res = await this.pgClient.query(
-      `INSERT INTO users (id, email, nickname, password, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL)
-       RETURNING id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees, count_posts`,
-      [
-        id,
-        input.email,
-        input.nickname,
-        passwordHash,
-        input.isAdmin,
-        input.introduction,
-        input.avatar,
-        input.aiModel,
-        input.aiPersonality,
-        idDate,
-      ],
-    );
-    return snakeToCamel<User>(res.rows[0]);
+    await this.pgClient.query("BEGIN");
+    try {
+      const res = await this.pgClient.query(
+        `INSERT INTO users (id, email, nickname, password, is_admin, snippet, avatar, ai_model, created_at, updated_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL)
+         RETURNING id, email, nickname, is_admin, snippet, avatar, ai_model, created_at, updated_at, count_followers, count_followees, count_posts`,
+        [
+          id,
+          input.email,
+          input.nickname,
+          passwordHash,
+          input.isAdmin,
+          snippet,
+          input.avatar,
+          input.aiModel,
+          idDate,
+        ],
+      );
+
+      await this.pgClient.query(
+        `INSERT INTO user_details (user_id, introduction, ai_personality)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (user_id) DO UPDATE
+           SET introduction = EXCLUDED.introduction,
+               ai_personality = EXCLUDED.ai_personality`,
+        [id, input.introduction, input.aiPersonality ?? null],
+      );
+
+      await this.pgClient.query("COMMIT");
+      return snakeToCamel<User>(res.rows[0]);
+    } catch (e) {
+      await this.pgClient.query("ROLLBACK");
+      throw e;
+    }
   }
 
   async updateUser(input: UpdateUserInput): Promise<User | null> {
-    const columns: string[] = [];
-    const values: unknown[] = [];
-    let idx = 1;
+    const userCols: string[] = [];
+    const userVals: unknown[] = [];
+    let uidx = 1;
 
     if (input.email !== undefined) {
       if (!input.email || input.email.trim() === "") throw new Error("email is required");
       if (!validateEmail(input.email)) throw new Error("given email is invalid");
-      columns.push(`email = $${idx++}`);
-      values.push(input.email);
+      userCols.push(`email = $${uidx++}`);
+      userVals.push(input.email);
     }
     if (input.nickname !== undefined) {
       if (!input.nickname || input.nickname.trim() === "") throw new Error("nickname is required");
-      columns.push(`nickname = $${idx++}`);
-      values.push(input.nickname);
+      userCols.push(`nickname = $${uidx++}`);
+      userVals.push(input.nickname);
     }
     if (input.isAdmin !== undefined) {
-      columns.push(`is_admin = $${idx++}`);
-      values.push(input.isAdmin);
-    }
-    if (input.introduction !== undefined) {
-      if (typeof input.introduction !== "string") throw new Error("introduction is required");
-      columns.push(`introduction = $${idx++}`);
-      values.push(input.introduction);
+      userCols.push(`is_admin = $${uidx++}`);
+      userVals.push(input.isAdmin);
     }
     if (input.avatar !== undefined) {
-      columns.push(`avatar = $${idx++}`);
-      values.push(input.avatar);
+      userCols.push(`avatar = $${uidx++}`);
+      userVals.push(input.avatar);
     }
     if (input.aiModel !== undefined) {
-      columns.push(`ai_model = $${idx++}`);
-      values.push(input.aiModel);
-    }
-    if (input.aiPersonality !== undefined) {
-      columns.push(`ai_personality = $${idx++}`);
-      values.push(input.aiPersonality);
+      userCols.push(`ai_model = $${uidx++}`);
+      userVals.push(input.aiModel);
     }
 
-    columns.push(`updated_at = now()`);
-    values.push(input.id);
+    const touchSnippet = input.introduction !== undefined;
 
-    const sql = `UPDATE users SET ${columns.join(", ")} WHERE id = $${idx}
-                 RETURNING id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees, count_posts`;
-    const res = await this.pgClient.query(sql, values);
-    return res.rows[0] ? snakeToCamel<User>(res.rows[0]) : null;
+    await this.pgClient.query("BEGIN");
+    try {
+      if (input.introduction !== undefined || input.aiPersonality !== undefined) {
+        await this.pgClient.query(
+          `INSERT INTO user_details (user_id, introduction, ai_personality)
+           VALUES ($1, $2, $3)
+           ON CONFLICT (user_id) DO UPDATE
+             SET introduction = COALESCE(EXCLUDED.introduction, user_details.introduction),
+                 ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)`,
+          [input.id, input.introduction ?? null, input.aiPersonality ?? null],
+        );
+      }
+
+      if (touchSnippet && typeof input.introduction === "string") {
+        userCols.push(`snippet = $${uidx++}`);
+        userVals.push(input.introduction.slice(0, 2000));
+      }
+
+      userCols.push(`updated_at = now()`);
+      userVals.push(input.id);
+
+      const sql =
+        `UPDATE users SET ${userCols.join(", ")} WHERE id = $${uidx} ` +
+        `RETURNING id, email, nickname, is_admin, snippet, avatar, ai_model, created_at, updated_at, count_followers, count_followees, count_posts`;
+
+      const res = await this.pgClient.query(sql, userVals);
+      await this.pgClient.query("COMMIT");
+      return res.rows[0] ? snakeToCamel<User>(res.rows[0]) : null;
+    } catch (e) {
+      await this.pgClient.query("ROLLBACK");
+      throw e;
+    }
   }
 
   async startUpdateEmail(userId: string, newEmail: string): Promise<{ updateEmailId: string }> {
@@ -370,7 +436,8 @@ export class UsersService {
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     const sql = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model,
+             u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
       FROM user_follows f
       JOIN users u ON f.followee_id = u.id
       WHERE f.follower_id = $1
@@ -409,7 +476,8 @@ export class UsersService {
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     const sql = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model,
+             u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
       FROM user_follows f
       JOIN users u ON f.follower_id = u.id
       WHERE f.followee_id = $1
@@ -533,8 +601,8 @@ export class UsersService {
         LIMIT $4
       )
       SELECT
-        u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar,
-        u.ai_model, u.ai_personality, u.created_at, u.updated_at,
+        u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar,
+        u.ai_model, u.created_at, u.updated_at,
         u.count_followers, u.count_followees, u.count_posts
       FROM page p
       JOIN users u ON u.id = p.id

@@ -108,6 +108,12 @@ def test_users():
   got_admin_user = res.json()
   assert got_admin_user["id"] == admin_id
   for key, value in got_admin_user.items():
+    if key in ["introduction", "aiPersonality"]: continue
+    assert admin_user[key] == value
+  res = requests.get(f"{BASE_URL}/users/{admin_id}/lite", headers=headers, cookies=cookies)
+  lite_admin_user = res.json()
+  assert lite_admin_user["id"] == admin_id
+  for key, value in lite_admin_user.items():
     assert admin_user[key] == value
   res = requests.post(f"{BASE_URL}/users/{admin_id}/follow", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
@@ -194,17 +200,20 @@ def test_posts():
   print("[posts] unlike again: not found (expected)")
   res = requests.get(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
-  got = res.json()
-  assert got["content"] == post_input["content"]
-  res = requests.get(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
-  assert res.status_code == 200
-  user = res.json()
-  assert user["id"] == post_id
-  assert user["content"] == post_input["content"]
-  assert user["ownerNickname"] == "admin"
-  assert "countLikes" in user
-  assert "countReplies" in user
-  assert set(user["tags"]) == {"hop", "step"}
+  post = res.json()
+  assert post["id"] == post_id
+  assert "hello" in post["snippet"]
+  assert post["content"] == post_input["content"]
+  assert post["ownerNickname"] == "admin"
+  assert "countLikes" in post
+  assert "countReplies" in post
+  assert set(post["tags"]) == {"hop", "step"}
+  res = requests.get(f"{BASE_URL}/posts/{post_id}/lite", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  lite_post = res.json()
+  assert lite_post["id"] == post_id
+  for key, value in lite_post.items():
+    assert post[key] == value
   res = requests.get(f"{BASE_URL}/posts/by-followees?limit=2000&userId={user_id}&includeSelf=true", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   by_followees = res.json()
@@ -224,12 +233,13 @@ def test_posts():
   post_updated = res.json()
   assert post_updated["id"] == post_id
   assert post_updated["content"] == update_input["content"]
+  assert "edited" in post_updated["snippet"]
   res = requests.get(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200
-  user = res.json()
-  assert user["id"] == post_id
-  assert user["content"] == update_input["content"]
-  assert set(user["tags"]) == set(update_input["tags"])
+  post = res.json()
+  assert post["id"] == post_id
+  assert post["content"] == update_input["content"]
+  assert set(post["tags"]) == set(update_input["tags"])
   res = requests.delete(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[posts] deleted")

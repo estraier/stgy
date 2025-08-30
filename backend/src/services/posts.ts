@@ -1,6 +1,8 @@
 import { Config } from "../config";
 import {
   Post,
+  PostLite,
+  PostDetail,
   CountPostsInput,
   CreatePostInput,
   UpdatePostInput,
@@ -15,6 +17,11 @@ import { EventLogService } from "./eventLog";
 import { snakeToCamel, escapeForLike } from "../utils/format";
 import { Client } from "pg";
 import Redis from "ioredis";
+
+function makeSnippet(content: string, maxLen = 100): string {
+  if (typeof content !== "string") return "";
+  return content.slice(0, maxLen);
+}
 
 export class PostsService {
   private pgClient: Client;
@@ -35,10 +42,14 @@ export class PostsService {
     const where: string[] = [];
     const params: unknown[] = [];
     let idx = 1;
+
     if (tag) {
       sql += ` JOIN post_tags pt ON pt.post_id = p.id`;
       where.push(`pt.name = $${idx++}`);
       params.push(tag);
+    }
+    if (query) {
+      sql += ` JOIN post_details pc ON pc.post_id = p.id`;
     }
     if (ownedBy) {
       where.push(`p.owned_by = $${idx++}`);
@@ -56,7 +67,7 @@ export class PostsService {
     }
     if (query) {
       const escapedQuery = escapeForLike(query);
-      where.push(`p.content ILIKE $${idx++}`);
+      where.push(`pc.content ILIKE $${idx++}`);
       params.push(`%${escapedQuery}%`);
     }
     if (where.length > 0) {
@@ -66,12 +77,11 @@ export class PostsService {
     return Number(res.rows[0].count);
   }
 
-  async getPost(id: string, focusUserId?: string): Promise<Post | null> {
+  async getPostLite(id: string): Promise<PostLite | null> {
     const res = await this.pgClient.query(
       `
       SELECT
         p.id,
-        p.content,
         p.owned_by,
         p.reply_to,
         p.allow_likes,
@@ -87,14 +97,48 @@ export class PostsService {
         ) AS tags
       FROM posts p
       JOIN users u ON p.owned_by = u.id
-      LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
-      LEFT JOIN users pu ON parent_post.owned_by = pu.id
+      LEFT JOIN posts pp ON p.reply_to = pp.id
+      LEFT JOIN users pu ON pp.owned_by = pu.id
       WHERE p.id = $1
       `,
       [id],
     );
     if (res.rows.length === 0) return null;
     const post = snakeToCamel<Post>(res.rows[0]);
+    return post;
+  }
+
+  async getPost(id: string, focusUserId?: string): Promise<PostDetail | null> {
+    const res = await this.pgClient.query(
+      `
+      SELECT
+        p.id,
+        p.snippet,
+        p.owned_by,
+        p.reply_to,
+        p.allow_likes,
+        p.allow_replies,
+        p.created_at,
+        p.updated_at,
+        u.nickname AS owner_nickname,
+        pu.nickname AS reply_to_owner_nickname,
+        p.count_replies AS count_replies,
+        p.count_likes AS count_likes,
+        ARRAY(
+          SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name
+        ) AS tags,
+        pc.content AS content
+      FROM posts p
+      JOIN users u ON p.owned_by = u.id
+      LEFT JOIN posts pp ON p.reply_to = pp.id
+      LEFT JOIN users pu ON pp.owned_by = pu.id
+      LEFT JOIN post_details pc ON pc.post_id = p.id
+      WHERE p.id = $1
+      `,
+      [id],
+    );
+    if (res.rows.length === 0) return null;
+    const post = snakeToCamel<PostDetail>(res.rows[0]);
     if (focusUserId) {
       const likeRes = await this.pgClient.query(
         "SELECT 1 FROM post_likes WHERE post_id = $1 AND liked_by = $2 LIMIT 1",
@@ -118,10 +162,11 @@ export class PostsService {
     const ownedBy = options?.ownedBy;
     const tag = options?.tag;
     const replyTo = options?.replyTo;
+
     let sql = `
       SELECT
         p.id,
-        p.content,
+        p.snippet,
         p.owned_by,
         p.reply_to,
         p.allow_likes,
@@ -137,16 +182,20 @@ export class PostsService {
         ) AS tags
       FROM posts p
       JOIN users u ON p.owned_by = u.id
-      LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
-      LEFT JOIN users pu ON parent_post.owned_by = pu.id
+      LEFT JOIN posts pp ON p.reply_to = pp.id
+      LEFT JOIN users pu ON pp.owned_by = pu.id
     `;
     const where: string[] = [];
     const params: unknown[] = [];
     let paramIdx = 1;
+
     if (tag) {
       sql += ` JOIN post_tags pt ON pt.post_id = p.id`;
       where.push(`pt.name = $${paramIdx++}`);
       params.push(tag);
+    }
+    if (query) {
+      sql += ` JOIN post_details pc ON pc.post_id = p.id`;
     }
     if (ownedBy) {
       where.push(`p.owned_by = $${paramIdx++}`);
@@ -164,7 +213,7 @@ export class PostsService {
     }
     if (query) {
       const escapedQuery = escapeForLike(query);
-      where.push(`p.content ILIKE $${paramIdx++}`);
+      where.push(`pc.content ILIKE $${paramIdx++}`);
       params.push(`%${escapedQuery}%`);
     }
     if (where.length > 0) {
@@ -172,9 +221,12 @@ export class PostsService {
     }
     sql += ` ORDER BY p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
+
     const res = await this.pgClient.query(sql, params);
     const posts = snakeToCamel<Post[]>(res.rows);
+
     if (!focusUserId || posts.length === 0) return posts;
+
     const postIds = posts.map((p) => p.id);
     const likeRes = await this.pgClient.query(
       `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
@@ -203,6 +255,7 @@ export class PostsService {
     const client = this.pgClient;
     const { id, ms } = await this.idIssueService.issue();
     const idDate = new Date(ms).toISOString();
+    const snippet = makeSnippet(input.content);
     await client.query("BEGIN");
     try {
       if (input.replyTo != null) {
@@ -218,18 +271,15 @@ export class PostsService {
         }
       }
       const res = await client.query(
-        `INSERT INTO posts (id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at)
+        `INSERT INTO posts (id, snippet, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
-         RETURNING id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at`,
-        [
-          id,
-          input.content,
-          input.ownedBy,
-          input.replyTo,
-          input.allowLikes,
-          input.allowReplies,
-          idDate,
-        ],
+         RETURNING id, snippet, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at`,
+        [id, snippet, input.ownedBy, input.replyTo, input.allowLikes, input.allowReplies, idDate],
+      );
+      await client.query(
+        `INSERT INTO post_details (post_id, content) VALUES ($1, $2)
+         ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
+        [id, input.content],
       );
       if (input.tags && input.tags.length > 0) {
         await client.query(
@@ -256,7 +306,7 @@ export class PostsService {
     }
   }
 
-  async updatePost(input: UpdatePostInput): Promise<Post | null> {
+  async updatePost(input: UpdatePostInput): Promise<PostDetail | null> {
     const client = this.pgClient;
     await client.query("BEGIN");
     try {
@@ -275,12 +325,20 @@ export class PostsService {
       const columns: string[] = [];
       const values: unknown[] = [];
       let idx = 1;
+
       if (input.content !== undefined) {
         if (typeof input.content !== "string" || input.content.trim() === "") {
           throw new Error("content is required");
         }
-        columns.push(`content = $${idx++}`);
-        values.push(input.content);
+        const snippet = makeSnippet(input.content);
+        columns.push(`snippet = $${idx++}`);
+        values.push(snippet);
+        await client.query(
+          `INSERT INTO post_details (post_id, content)
+             VALUES ($1, $2)
+             ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
+          [input.id, input.content],
+        );
       }
       if (input.ownedBy !== undefined) {
         if (typeof input.ownedBy !== "string" || input.ownedBy.trim() === "") {
@@ -303,8 +361,11 @@ export class PostsService {
       }
       columns.push(`updated_at = now()`);
       values.push(input.id);
-      const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id, content, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at`;
-      await client.query(sql, values);
+      if (columns.length > 0) {
+        const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx}
+                     RETURNING id`;
+        await client.query(sql, values);
+      }
       if (input.tags !== undefined) {
         await client.query(`DELETE FROM post_tags WHERE post_id = $1`, [input.id]);
         if (input.tags.length > 0) {
@@ -413,7 +474,7 @@ export class PostsService {
       )
       SELECT
         p.id,
-        p.content,
+        p.snippet,
         p.owned_by,
         p.reply_to,
         p.allow_likes,
@@ -430,14 +491,16 @@ export class PostsService {
       FROM top t
       JOIN posts p ON p.id = t.id
       JOIN users u ON p.owned_by = u.id
-      LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
-      LEFT JOIN users pu ON parent_post.owned_by = pu.id
+      LEFT JOIN posts pp ON p.reply_to = pp.id
+      LEFT JOIN users pu ON pp.owned_by = pu.id
       ORDER BY t.id ${orderDir}
     `;
     const params = [userId, activeFolloweeLimit, perFolloweeLimit, offset, limit];
     const res = await this.pgClient.query(sql, params);
     const posts = snakeToCamel<Post[]>(res.rows);
+
     if (!focusUserId || posts.length === 0) return posts;
+
     const postIds = posts.map((p) => p.id);
     const likeRes = await this.pgClient.query(
       `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
@@ -464,10 +527,11 @@ export class PostsService {
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     const includeReplies = input.includeReplies !== false;
+
     let sql = `
       SELECT
         p.id,
-        p.content,
+        p.snippet,
         p.owned_by,
         p.reply_to,
         p.allow_likes,
@@ -484,20 +548,24 @@ export class PostsService {
       FROM post_likes pl
       JOIN posts p ON pl.post_id = p.id
       JOIN users u ON p.owned_by = u.id
-      LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
-      LEFT JOIN users pu ON parent_post.owned_by = pu.id
+      LEFT JOIN posts pp ON p.reply_to = pp.id
+      LEFT JOIN users pu ON pp.owned_by = pu.id
       WHERE pl.liked_by = $1
     `;
     const params: unknown[] = [input.userId];
     let paramIdx = 2;
+
     if (!includeReplies) {
       sql += ` AND p.reply_to IS NULL`;
     }
     sql += ` ORDER BY p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
+
     const res = await this.pgClient.query(sql, params);
     const posts = snakeToCamel<Post[]>(res.rows);
+
     if (!focusUserId || posts.length === 0) return posts;
+
     const postIds = posts.map((p) => p.id);
     const likeRes = await this.pgClient.query(
       `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,

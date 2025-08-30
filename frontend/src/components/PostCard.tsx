@@ -1,14 +1,14 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import type { Post } from "@/api/models";
+import type { Post, PostDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
 import { Heart, MessageCircle } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
 import { makeArticleHtmlFromMarkdown, makeSnippetHtmlFromMarkdown } from "@/utils/article";
 
 type PostCardProps = {
-  post: Post;
+  post: Post | PostDetail;
   truncated?: boolean;
   showActions?: boolean;
   onLike?: (post: Post) => void;
@@ -33,6 +33,12 @@ export default function PostCard({
   avatarVersion,
 }: PostCardProps) {
   const router = useRouter();
+  const hasContent =
+    "content" in post && typeof post.content === "string" && post.content.length > 0;
+  const raw = hasContent ? post.content : post.snippet;
+  const bodyHtml = truncated
+    ? makeSnippetHtmlFromMarkdown(raw)
+    : makeArticleHtmlFromMarkdown(raw);
   function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
@@ -103,9 +109,7 @@ export default function PostCard({
         className={`markdown-body post-content${truncated ? " excerpt" : ""}`}
         style={{ minHeight: 36, userSelect: "text" }}
         dangerouslySetInnerHTML={{
-          __html: truncated
-            ? makeSnippetHtmlFromMarkdown(post.content)
-            : makeArticleHtmlFromMarkdown(post.content),
+          __html: bodyHtml,
         }}
       />
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">

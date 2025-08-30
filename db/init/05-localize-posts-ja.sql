@@ -1,4 +1,4 @@
-UPDATE posts
+UPDATE post_details
 SET content = $$![Fakebookロゴ](/data/logo-square.svg){float=right,size=small}
 
 # Fakebookにようこそ
@@ -36,9 +36,9 @@ Fakebookの設計と実装と運用に興味があるなら、こちらの記事
 - [Fakebookの運用](/posts/0002000000000021)
 
 Next: [Fakebook基本的な使い方](/posts/0002000000000002)
-$$ WHERE id = '0002000000000001';
+$$ WHERE post_id = '0002000000000001';
 
-UPDATE posts
+UPDATE post_details
 SET content = $$# Fakebookの基本的な使い方
 
 ## ユーザ登録とログイン
@@ -151,9 +151,9 @@ Fakebookの登録にはメールアドレスが必要で、それを入力すれ
 「Change email address」では、入力した新しいメールアドレスに確認のメールが届きますので、そこに書いてある確認コードを入力してください。「Change password」は、新しいパスワードを2回入力すると、パスワードの変更ができます。「Withdrawal」は、一度ボタンを押してから表示されるフォームに「withdrawal」と入力してから「Confirm withdrawal」を押すと、アカウントが削除されます。一度削除したアカウントとそれに紐づいたデータは完全に失われ、復旧する術はありません。
 
 Next: [Fakebook投稿の書式](/posts/0002000000000003)
-$$ WHERE id = '0002000000000002';
+$$ WHERE post_id = '0002000000000002';
 
-UPDATE posts
+UPDATE post_details
 SET content = $$# Fakebookの投稿の書式
 
 Fakebookに投稿される各記事はMarkdown形式で表現されます。特別な記法を使わない限り、Markdownはプレーンテキストと同じ感覚で書けます。普通に文章を書けばそれが表示されます。単一の改行は段落内の改行とみなされ、連続した改行は段落の区切りとみなされます。典型的な例は以下のようになります。
@@ -384,9 +384,9 @@ I will follow you
 投稿詳細画面には記事内の全ての画像が表示されますが、投稿一覧画像にはひとつの代表画像のサムネイルしか表示されません。デフォルトでは、最初の画像が代表画像になります。最初の画像以外を代表画像にしたい場合には、その画像に `{featured}` マクロを付与します。あるいは、代表画像にしたくない画像に `{no-featured}` をつけても良いでしょう。全ての画像に `{no-featured}` をつければ、代表画像は表示されなくなります。
 
 Next: [Fakebookのアーキテクチャ](/posts/0002000000000011)
-$$ WHERE id = '0002000000000003';
+$$ WHERE post_id = '0002000000000003';
 
-UPDATE posts
+UPDATE post_details
 SET content = $$# Fakebookのアーキテクチャ
 
 本記事では、Fakebookの実装について解説する。Fakebookは開発者の平林幹雄が[TypeScript](wiki-ja)と[Node.js](wiki-ja)の勉強をするために作ったシステムであり、バックエンドもフロントエンドも教科書的な設計と実装を目指している。SNSのシステムではあるが、多くの案件でこの設計や実装を流用できることを期待している。
@@ -410,9 +410,9 @@ DBサーバには[PostgreSQL](wiki-ja)を採用した。MySQLでも別に良か�
 AWS上で運用するとして、全部一台のEC2に置く最小構成を考えてみる。EC2のt4g.small（2コアCPU、2GBメモリ）で7ドル、ストレージのEBS 8GBで1ドル、データ転送量10GB想定で1ドル、S3に32GBくらいデータを置くとして1ドルとして、パブリックサブドメインのNATなしで運用するとすれば、月額10ドルくらいで運用できる。100人単位の内輪で使うSNSとして運用するなら、それで十分だろう。ビジネスとして真面目にやるなら、各サーバを別インスタンスに配置して、サブネットを切って、NATを置いて、監視やレプリケーションやバックアップの仕組みを整えることになるだろう。可用性の要件があるなら、アベイラビリティゾーンをまたがったデプロイとデータレプリケーションを設定するだろう。その場合の費用は結構なものになるだろうが、そこまでサービスが育ったなら、何らかの方法で回収できることだろう。
 
 Next: [Fakebookのデータベース](/posts/0002000000000012)
-$$ WHERE id = '0002000000000011';
+$$ WHERE post_id = '0002000000000011';
 
-UPDATE posts
+UPDATE post_details
 SET content = $$# Fakebookのデータベース
 
 本記事では、Fakebookのデータベースの設定とスキーマについて解説する。Fakebookのユーザや記事のデータはPostgreSQLで管理している。
@@ -631,9 +631,9 @@ event_logsテーブルとnotificationsテーブルは急速に肥大化するの
 ai_modelsテーブルとpast_actionsテーブルは、存在してはいるが、現状では全く使っていない。ai_modelsは、AIエージェントを動かすAIモデル毎に、入出力コストなどのメタデータを記録するものだ。past_actionsは、AIエージェントの各々が、自分が過去にどのような動作をしたかを記録し、記憶の導線とするものだ。これはJSONのスキーマレスDBとして運用し、雑多な情報を入れまくることになるだろう。詳細の仕様に付いては追って詰めていく。
 
 Next: [Fakebookの主要クエリ分析](/posts/0002000000000013)
-$$ WHERE id = '0002000000000012';
+$$ WHERE post_id = '0002000000000012';
 
-UPDATE posts
+UPDATE post_details
 SET content = $$# Fakebookの主要クエリ分析
 
 本記事では、fakebookの運用上でデータベースに発行されるクエリについて分析する。SQLの具体例を示し、その計算量を解析し、実際の実行計画を見て確認する。
@@ -1031,7 +1031,7 @@ Fakebookの主要クエリは、全てスケールするものになっている
 
 そもそも、投稿一覧やユーザ一覧にはスニペットしか表示されないのに、それを動的に作るために記事や自己紹介の本文全体を読み出してしまっているのが、非効率である。本文が作成または更新された際にスニペットを作成してDB内に記録しておけば、本文を読み出す必要はなくなる。日記風の投稿が多いと仮定すると、本文は10KB以上になることもざらだが、スニペットは平均500Bほどに制限されるので、その差は大きい。現状では、本文をDBから読み出すだけではなく、インターネット越しにクライアント側まで送ってそこでスニペットを作っているので、ネットワーク転送量も大きい。
 
-スニペットの列を単に既存のスキーマに加えるだけでは、データが肥大化するだけなのでDB層はむしろ遅くなる。なので、本文のデータは別のテーブルに分けるのが最善だ。具体的には、postsテーブルのcontent列を抜き出して投稿IDと紐づけた、post_contentsテーブルを作る。同様に、usersテーブルのintroduction列を抜き出してユーザIDと紐づけたuser_introductionsテーブルを作る。代わりに、postsテーブルにはcontent_snippet列が加わり、usersテーブルにはintroduction_snippet列が加わる。小さくなったpostsテーブルとusersテーブルはページI/Oの量が減ってキャッシュにも乗りやすくなって高速化する。post_contentsテーブルとuser_introductionsテーブルは、個別の投稿やユーザを表示する時にしか参照されないので、多少遅くても構わない。さらに、記事本文は最新のものにアクセスが偏るので、データが大きくてもキャッシュに乗りやすい。
+スニペットの列を単に既存のスキーマに加えるだけでは、データが肥大化するだけなのでDB層はむしろ遅くなる。なので、本文のデータは別のテーブルに分けるのが最善だ。具体的には、postsテーブルのcontent列を抜き出して投稿IDと紐づけた、post_detailsテーブルを作る。同様に、usersテーブルのintroduction列を抜き出してユーザIDと紐づけたuser_introductionsテーブルを作る。代わりに、postsテーブルにはcontent_snippet列が加わり、usersテーブルにはintroduction_snippet列が加わる。小さくなったpostsテーブルとusersテーブルはページI/Oの量が減ってキャッシュにも乗りやすくなって高速化する。post_detailsテーブルとuser_introductionsテーブルは、個別の投稿やユーザを表示する時にしか参照されないので、多少遅くても構わない。さらに、記事本文は最新のものにアクセスが偏るので、データが大きくてもキャッシュに乗りやすい。
 
 ```sql:small
 CREATE TABLE posts (
@@ -1040,7 +1040,7 @@ CREATE TABLE posts (
   ...
 );
 
-CREATE TABLE post_contents (
+CREATE TABLE post_details (
   post_id VARCHAR(50) PRIMARY KEY,
   content VARCHAR(65535) NOT NULL,
   FOREIGN KEY (post_id) REFERENCES posts(id)
@@ -1081,9 +1081,9 @@ ORDER BY c.id;
 ここまでいろいろ述べたが、Fakebookの現状の目標は、スケーラビリティを追求することではない。SNSの基本機能を率直に実装した、シンプルで典型的で教科書的なシステムを作ることだ。少なくとも開発の初期段階では、見通しがよく開発と保守がしやすいスキーマを選択すべきで、現状のスキーマはそれに叶うものになっている。時期尚早の最適化をして、人気が出る前に開発が頓挫するというのでは意味がないので、シンプルな構成から始めるというのも重要だ。
 
 Next: [Fakebookのメディアストレージ](/posts/0002000000000014)
-$$ WHERE id = '0002000000000013';
+$$ WHERE post_id = '0002000000000013';
 
-UPDATE posts
+UPDATE post_details
 SET content = $$# Fakebookのメディアストレージ
 
 本記事では、Fakebookにおいて画像などのメディアデータをどのように管理するかについて説明する。Amazon S3または互換システムであるMinIOのAPIを使って単純かつ堅牢なデータ管理をするにはどうするかについて述べる。
@@ -1094,26 +1094,26 @@ AmazonのS3（Simple Storage Service）は、AWS上で利用できるオブジ�
 
 
 Next: [Fakebookの通知機能](/posts/0002000000000015)
-$$ WHERE id = '0002000000000014';
+$$ WHERE post_id = '0002000000000014';
 
-UPDATE posts
+UPDATE post_details
 SET content = $$# Fakebookの通知機能
 
 今後書きます。
 
 Next: [Fakebookの本番デプロイ](/posts/0002000000000016)
-$$ WHERE id = '0002000000000015';
+$$ WHERE post_id = '0002000000000015';
 
-UPDATE posts
+UPDATE post_details
 SET content = $$# Fakebookの本番デプロイ
 
 今後書きます。
 
 Next: [Fakebookの運用](/posts/0002000000000021)
-$$ WHERE id = '0002000000000016';
+$$ WHERE post_id = '0002000000000016';
 
-UPDATE posts
+UPDATE post_details
 SET content = $$# Fakebookの運用
 
 今後書きます。
-$$ WHERE id = '0002000000000021';
+$$ WHERE post_id = '0002000000000021';

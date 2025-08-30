@@ -1,6 +1,6 @@
 export type Post = {
   id: string;
-  content: string;
+  snippet: string;
   ownedBy: string;
   replyTo: string | null;
   allowLikes: boolean;
@@ -14,6 +14,13 @@ export type Post = {
   tags: string[];
   isLikedByFocusUser?: boolean;
   isRepliedByFocusUser?: boolean;
+};
+
+export type PostLite =
+  Omit<Post, "snippet" | "isLikedByFocusUser?" | "isRepliedByFocusUser">;
+
+export type PostDetail = Post & {
+  content: string;
 };
 
 export type PostFilter = {

@@ -9,7 +9,11 @@ import { AuthService } from "../services/auth";
 import { AuthHelpers } from "./authHelpers";
 import { EventLogService } from "../services/eventLog";
 import { SendMailService } from "../services/sendMail";
-import { User, CreateUserInput, UpdateUserInput, UpdatePasswordInput } from "../models/user";
+import {
+  CreateUserInput,
+  UpdateUserInput,
+  UpdatePasswordInput,
+} from "../models/user";
 import {
   validateEmail,
   normalizeEmail,
@@ -79,6 +83,15 @@ export default function createUsersRouter(
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "list friends failed" });
     }
+  });
+
+  router.get("/:id/lite", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    let user = await usersService.getUserLite(req.params.id);
+    if (!user) return res.status(404).json({ error: "not found" });
+    user = maskUserSensitiveInfo(user, loginUser.isAdmin, loginUser.id);
+    res.json(user);
   });
 
   router.get("/:id", async (req: Request, res: Response) => {
@@ -395,15 +408,23 @@ export default function createUsersRouter(
   return router;
 }
 
-function maskUserSensitiveInfo(user: User, isAdmin: boolean, loginUserId: string): User {
+function maskUserSensitiveInfo<T extends { id: string; email: string }>(
+  user: T,
+  isAdmin: boolean,
+  loginUserId: string,
+): T {
   if (!user) return user;
   if (isAdmin || user.id === loginUserId) return user;
   return {
     ...user,
     email: maskEmailByHash(user.email),
-  } as User;
+  };
 }
 
-function maskUserListSensitiveInfo(users: User[], isAdmin: boolean, loginUserId: string): User[] {
+function maskUserListSensitiveInfo<T extends { id: string; email: string }>(
+  users: T[],
+  isAdmin: boolean,
+  loginUserId: string,
+): T[] {
   return users.map((u) => maskUserSensitiveInfo(u, isAdmin, loginUserId));
 }

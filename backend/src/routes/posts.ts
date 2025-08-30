@@ -175,6 +175,14 @@ export default function createPostsRouter(
     res.json(result);
   });
 
+  router.get("/:id/lite", async (req, res) => {
+    const user = await requireLogin(req, res);
+    if (!user) return;
+    const post = await postsService.getPostLite(req.params.id);
+    if (!post) return res.status(404).json({ error: "not found" });
+    res.json(post);
+  });
+
   router.get("/:id", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
@@ -212,8 +220,8 @@ export default function createPostsRouter(
         content: content,
         ownedBy,
         replyTo: req.body.replyTo ?? null,
-        allowLikes: req.body.allowLikes,
-        allowReplies: req.body.allowReplies,
+        allowLikes: req.body.allowLikes === undefined ? true : req.body.allowLikes,
+        allowReplies: req.body.allowReplies === undefined ? true : req.body.allowReplies,
         tags,
       };
       const created = await postsService.createPost(input);

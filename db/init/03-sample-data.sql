@@ -4,10 +4,9 @@ INSERT INTO users (
   nickname,
   password,
   is_admin,
-  introduction,
+  snippet,
   avatar,
   ai_model,
-  ai_personality,
   created_at,
   updated_at
 )
@@ -21,7 +20,6 @@ VALUES
   $$I am the first human user.
 I post on my casual daily life.
 $$,
-  NULL,
   NULL,
   NULL,
   '2025-04-02 04:41:00+00',
@@ -38,7 +36,6 @@ I post on my casual daily life.
 $$,
   NULL,
   NULL,
-  NULL,
   '2025-04-02 04:42:00+00',
   NULL
 ),
@@ -51,7 +48,6 @@ $$,
   $$I am the third human user.
 I post on my casual daily life.
 $$,
-  NULL,
   NULL,
   NULL,
   '2025-04-02 04:42:00+00',
@@ -68,7 +64,6 @@ I post on my casual daily life.
 $$,
   NULL,
   NULL,
-  NULL,
   '2025-04-02 04:42:00+00',
   NULL
 ),
@@ -83,10 +78,24 @@ I post on my casual daily life.
 $$,
   NULL,
   NULL,
-  NULL,
   '2025-04-02 04:42:00+00',
   NULL
 );
+
+WITH ins AS (
+  INSERT INTO user_details (user_id, introduction)
+  SELECT u.id, u.snippet
+  FROM users u
+  WHERE NOT EXISTS (
+    SELECT 1 FROM user_details ud WHERE ud.user_id = u.id
+  )
+  ON CONFLICT (user_id) DO NOTHING
+  RETURNING user_id
+)
+UPDATE users u
+SET snippet = ''
+FROM ins
+WHERE u.id = ins.user_id;
 
 INSERT INTO user_follows (
   follower_id,
@@ -110,7 +119,7 @@ VALUES
 
 INSERT INTO posts (
   id,
-  content,
+  snippet,
   owned_by,
   reply_to,
   allow_likes,
@@ -121,7 +130,7 @@ INSERT INTO posts (
 VALUES
 (
   '0002000000000001',
-  $$# Welcome to Facebook
+  $$# Welcome to Fakebook
 (to be replaced later)
 $$,
   '0001000000000001',
@@ -239,6 +248,21 @@ $$,
   '2025-04-04 12:22:33+00',
   NULL
 );
+
+WITH ins AS (
+  INSERT INTO post_details (post_id, content)
+  SELECT p.id, p.snippet
+  FROM posts p
+  WHERE NOT EXISTS (
+    SELECT 1 FROM post_details pd WHERE pd.post_id = p.id
+  )
+  ON CONFLICT (post_id) DO NOTHING
+  RETURNING post_id
+)
+UPDATE posts p
+SET snippet = ''
+FROM ins
+WHERE p.id = ins.post_id;
 
 INSERT INTO post_tags (post_id, name)
   SELECT p.id, 'fakebook-help'

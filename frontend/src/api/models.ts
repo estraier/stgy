@@ -34,7 +34,7 @@ export type User = {
 
 export type Post = {
   id: string;
-  content: string;
+  snippet: string;
   ownedBy: string;
   replyTo: string | null;
   allowLikes: boolean;
@@ -48,6 +48,10 @@ export type Post = {
   tags: string[];
   isLikedByFocusUser?: boolean | null;
   isRepliedByFocusUser?: boolean | null;
+};
+
+export type PostDetail = Post & {
+  content: string;
 };
 
 export type StorageObjectMetadata = {

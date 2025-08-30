@@ -64,7 +64,7 @@ export async function deletePost(id: string): Promise<{ result: string }> {
   return res.json();
 }
 
-export async function getPost(id: string, focusUserId?: string): Promise<Post> {
+export async function getPost(id: string, focusUserId?: string): Promise<PostDetail> {
   const search = new URLSearchParams();
   if (focusUserId) search.append("focusUserId", focusUserId);
   const res = await apiFetch(`/posts/${id}${search.toString() ? `?${search.toString()}` : ""}`, {

@@ -118,7 +118,7 @@ $$,
 
 INSERT INTO posts (
   id,
-  content,
+  snippet,
   owned_by,
   reply_to,
   allow_likes,
@@ -224,3 +224,18 @@ $$,
   '2025-06-06 11:22:33+00',
   NULL
 );
+
+WITH ins AS (
+  INSERT INTO post_details (post_id, content)
+  SELECT p.id, p.snippet
+  FROM posts p
+  WHERE NOT EXISTS (
+    SELECT 1 FROM post_details pd WHERE pd.post_id = p.id
+  )
+  ON CONFLICT (post_id) DO NOTHING
+  RETURNING post_id
+)
+UPDATE posts p
+SET snippet = ''
+FROM ins
+WHERE p.id = ins.post_id;
