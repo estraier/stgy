@@ -885,7 +885,6 @@ const UNKNOWN_ATTR_BUCKET = "A";
 type Primitive = string | number | boolean;
 type UnknownAttrs = Record<string, Primitive>;
 
-// 「要素」側のエンコード表現（動的キーを許す）
 type EncodedElement = {
   [NODE_KEY_TAG]: string;
   [NODE_KEY_CHILDREN]?: EncodedNode[];
