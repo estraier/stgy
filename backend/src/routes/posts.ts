@@ -212,9 +212,8 @@ export default function createPostsRouter(
         content: content,
         ownedBy,
         replyTo: req.body.replyTo ?? null,
-        allowLikes: req.body.allowLikes === undefined ? true : parseBoolean(req.body.allowLikes),
-        allowReplies:
-          req.body.allowReplies === undefined ? true : parseBoolean(req.body.allowReplies),
+        allowLikes: req.body.allowLikes,
+        allowReplies: req.body.allowReplies,
         tags,
       };
       const created = await postsService.createPost(input);
@@ -260,10 +259,8 @@ export default function createPostsRouter(
         content: content,
         ownedBy: req.body.ownedBy,
         replyTo: req.body.replyTo,
-        allowLikes:
-          req.body.allowLikes === undefined ? undefined : parseBoolean(req.body.allowLikes),
-        allowReplies:
-          req.body.allowReplies === undefined ? undefined : parseBoolean(req.body.allowReplies),
+        allowLikes: req.body.allowLikes,
+        allowReplies: req.body.allowReplies,
         tags,
       };
       const updated = await postsService.updatePost(input);

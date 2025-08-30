@@ -63,14 +63,8 @@ export default function createUsersRouter(
     const limit = parseInt((req.query.limit as string) ?? "100", 10);
     const nicknamePrefix =
       typeof req.query.nicknamePrefix === "string" ? req.query.nicknamePrefix.trim() : "";
-    const omitSelf = parseBoolean(
-      typeof req.query.omitSelf === "string" ? req.query.omitSelf : undefined,
-      false,
-    );
-    const omitOthers = parseBoolean(
-      typeof req.query.omitOthers === "string" ? req.query.omitOthers : undefined,
-      false,
-    );
+    const omitSelf = parseBoolean(req.query.omitSelf as string, false);
+    const omitOthers = parseBoolean(req.query.omitOthers as string, false);
     try {
       let users = await usersService.listFriendsByNicknamePrefix({
         focusUserId,
