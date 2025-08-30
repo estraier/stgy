@@ -22,6 +22,7 @@ import {
   snakeToCamel,
   escapeForLike,
 } from "../utils/format";
+import { makeSnippetJsonFromMarkdown } from "../utils/snippet";
 import { Client } from "pg";
 import Redis from "ioredis";
 import { v4 as uuidv4 } from "uuid";
@@ -213,7 +214,7 @@ export class UsersService {
     const { id, ms } = await this.idIssueService.issue();
     const idDate = new Date(ms).toISOString();
     const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
-    const snippet = (input.introduction ?? "").slice(0, 2000);
+    const snippet = makeSnippetJsonFromMarkdown(input.introduction ?? "");
 
     await this.pgClient.query("BEGIN");
     try {
@@ -297,7 +298,8 @@ export class UsersService {
 
       if (touchSnippet && typeof input.introduction === "string") {
         userCols.push(`snippet = $${uidx++}`);
-        userVals.push(input.introduction.slice(0, 2000));
+        const snippet = makeSnippetJsonFromMarkdown(input.introduction);
+        userVals.push(snippet);
       }
 
       userCols.push(`updated_at = now()`);

@@ -15,13 +15,9 @@ import { User } from "../models/user";
 import { IdIssueService } from "./idIssue";
 import { EventLogService } from "./eventLog";
 import { snakeToCamel, escapeForLike } from "../utils/format";
+import { makeSnippetJsonFromMarkdown } from "../utils/snippet";
 import { Client } from "pg";
 import Redis from "ioredis";
-
-function makeSnippet(content: string, maxLen = 100): string {
-  if (typeof content !== "string") return "";
-  return content.slice(0, maxLen);
-}
 
 export class PostsService {
   private pgClient: Client;
@@ -255,7 +251,7 @@ export class PostsService {
     const client = this.pgClient;
     const { id, ms } = await this.idIssueService.issue();
     const idDate = new Date(ms).toISOString();
-    const snippet = makeSnippet(input.content);
+    const snippet = makeSnippetJsonFromMarkdown(input.content);
     await client.query("BEGIN");
     try {
       if (input.replyTo != null) {
@@ -330,7 +326,7 @@ export class PostsService {
         if (typeof input.content !== "string" || input.content.trim() === "") {
           throw new Error("content is required");
         }
-        const snippet = makeSnippet(input.content);
+        const snippet = makeSnippetJsonFromMarkdown(input.content);
         columns.push(`snippet = $${idx++}`);
         values.push(snippet);
         await client.query(
