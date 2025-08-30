@@ -1,11 +1,5 @@
 import { Config } from "../config";
-import {
-  parseMarkdown,
-  mdGroupImageGrid,
-  mdFilterForFeatured,
-  mdCutOff,
-  serializeMdNodes,
-} from "fakebook-markdown";
+import { parseMarkdown, mdFilterForFeatured, mdCutOff, serializeMdNodes } from "fakebook-markdown";
 
 export function makeSnippetJsonFromMarkdown(mdText: string) {
   const maxLen = Config.SNIPPET_MAX_LENGTH;
@@ -15,5 +9,5 @@ export function makeSnippetJsonFromMarkdown(mdText: string) {
   let nodes = parseMarkdown(mdText);
   nodes = mdFilterForFeatured(nodes);
   nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen, imgHeight });
-  return serializeMdNodes(nodes)
+  return serializeMdNodes(nodes);
 }

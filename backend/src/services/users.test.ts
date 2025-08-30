@@ -6,8 +6,14 @@ function md5(s: string) {
   return crypto.createHash("md5").update(s).digest("hex");
 }
 
+type UserDetailRow = {
+  introduction: string;
+  aiPersonality: string | null;
+};
+
 class MockPgClient {
   users: User[];
+  details: Record<string, UserDetailRow>;
   follows: { followerId: string; followeeId: string }[];
   passwords: Record<string, string>;
 
@@ -18,10 +24,9 @@ class MockPgClient {
         email: "alice@example.com",
         nickname: "Alice",
         isAdmin: false,
-        introduction: "introA",
+        snippet: "introA",
         avatar: null,
         aiModel: "gpt-4.1",
-        aiPersonality: "A",
         createdAt: "2020-01-01T00:00:00Z",
         updatedAt: null,
         countFollowers: 0,
@@ -33,10 +38,9 @@ class MockPgClient {
         email: "bob@example.com",
         nickname: "Bob",
         isAdmin: false,
-        introduction: "introB",
+        snippet: "introB",
         avatar: null,
         aiModel: "gpt-4.1",
-        aiPersonality: "B",
         createdAt: "2020-01-02T00:00:00Z",
         updatedAt: null,
         countFollowers: 0,
@@ -48,10 +52,9 @@ class MockPgClient {
         email: "carol@example.com",
         nickname: "Carol",
         isAdmin: false,
-        introduction: "introC",
+        snippet: "introC",
         avatar: null,
         aiModel: "gpt-4.1",
-        aiPersonality: "C",
         createdAt: "2020-01-03T00:00:00Z",
         updatedAt: null,
         countFollowers: 0,
@@ -59,6 +62,11 @@ class MockPgClient {
         countPosts: 0,
       },
     ];
+    this.details = {
+      alice: { introduction: "introA", aiPersonality: "A" },
+      bob: { introduction: "introB", aiPersonality: "B" },
+      carol: { introduction: "introC", aiPersonality: "C" },
+    };
     this.follows = [
       { followerId: "alice", followeeId: "bob" },
       { followerId: "alice", followeeId: "carol" },
@@ -81,6 +89,10 @@ class MockPgClient {
 
   async query(sql: string, params: any[] = []) {
     sql = sql.replace(/\s+/g, " ").trim();
+
+    if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+      return { rows: [] };
+    }
 
     if (
       sql.startsWith("WITH") &&
@@ -149,39 +161,50 @@ class MockPgClient {
           id: u.id,
           email: u.email,
           nickname: u.nickname,
-          isAdmin: u.isAdmin,
-          introduction: u.introduction,
+          is_admin: u.isAdmin,
+          snippet: u.snippet,
           avatar: u.avatar,
-          aiModel: u.aiModel,
-          aiPersonality: u.aiPersonality,
-          createdAt: u.createdAt,
-          updatedAt: u.updatedAt,
+          ai_model: u.aiModel,
+          created_at: u.createdAt,
+          updated_at: u.updatedAt,
+          count_followers: this.cntFollowers(u.id),
+          count_followees: this.cntFollowees(u.id),
+          count_posts: 0,
         }));
       return { rows };
     }
 
-    if (sql.startsWith("SELECT COUNT(*) FROM users")) {
-      if (sql.includes("WHERE nickname ILIKE $1 OR introduction ILIKE $2")) {
-        const [pat1, pat2] = params.map((s: string) => s.toLowerCase().replace(/%/g, ""));
+    if (sql.startsWith("SELECT COUNT(*) FROM users u")) {
+      if (
+        sql.includes("WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)")
+      ) {
+        const pat = params[0].toLowerCase().replace(/%/g, "");
         return {
           rows: [
             {
               count: this.users.filter(
                 (u) =>
-                  u.nickname.toLowerCase().includes(pat1) ||
-                  u.introduction.toLowerCase().includes(pat2),
+                  u.nickname.toLowerCase().includes(pat) ||
+                  (u.snippet ?? "").toLowerCase().includes(pat) ||
+                  (this.details[u.id]?.introduction ?? "").toLowerCase().includes(pat),
               ).length,
             },
           ],
         };
       }
-      if (sql.includes("WHERE nickname ILIKE")) {
+      if (sql.includes("WHERE u.nickname ILIKE $1")) {
         const pat = params[0].toLowerCase().replace(/%/g, "");
         return {
           rows: [
-            {
-              count: this.users.filter((u) => u.nickname.toLowerCase().includes(pat)).length,
-            },
+            { count: this.users.filter((u) => u.nickname.toLowerCase().includes(pat)).length },
+          ],
+        };
+      }
+      if (sql.includes("WHERE LOWER(u.nickname) LIKE $1")) {
+        const pat = params[0].toLowerCase().replace(/%/g, "");
+        return {
+          rows: [
+            { count: this.users.filter((u) => u.nickname.toLowerCase().startsWith(pat)).length },
           ],
         };
       }
@@ -194,15 +217,22 @@ class MockPgClient {
       return { rows: [{ id: user.id }] };
     }
 
+    // getUserLite
     if (
       sql.startsWith(
-        "SELECT id, email, nickname, is_admin, introduction, avatar, ai_model, ai_personality, created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1",
+        "SELECT id, email, nickname, is_admin, ai_model, created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1",
       )
     ) {
       const user = this.users.find((u) => u.id === params[0]);
       if (!user) return { rows: [] };
       const row = {
-        ...user,
+        id: user.id,
+        email: user.email,
+        nickname: user.nickname,
+        is_admin: user.isAdmin,
+        ai_model: user.aiModel,
+        created_at: user.createdAt,
+        updated_at: user.updatedAt,
         count_followers: this.cntFollowers(user.id),
         count_followees: this.cntFollowees(user.id),
         count_posts: 0,
@@ -210,6 +240,35 @@ class MockPgClient {
       return { rows: [row] };
     }
 
+    // getUser (detail)
+    if (
+      sql.startsWith(
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts, d.introduction, d.ai_personality FROM users u LEFT JOIN user_details d ON d.user_id = u.id WHERE u.id = $1",
+      )
+    ) {
+      const user = this.users.find((u) => u.id === params[0]);
+      if (!user) return { rows: [] };
+      const d = this.details[user.id] ?? { introduction: "", aiPersonality: null };
+      const row = {
+        id: user.id,
+        email: user.email,
+        nickname: user.nickname,
+        is_admin: user.isAdmin,
+        snippet: user.snippet,
+        avatar: user.avatar,
+        ai_model: user.aiModel,
+        created_at: user.createdAt,
+        updated_at: user.updatedAt,
+        count_followers: this.cntFollowers(user.id),
+        count_followees: this.cntFollowees(user.id),
+        count_posts: 0,
+        introduction: d.introduction,
+        ai_personality: d.aiPersonality,
+      };
+      return { rows: [row] };
+    }
+
+    // getUser: focusUser との相互フォロー関係チェック（EXISTS…AS … クエリ）
     if (
       sql.startsWith(
         "SELECT EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $1 AND followee_id = $2) AS is_followed_by_focus_user",
@@ -232,27 +291,40 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM users u",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM users u",
       )
     ) {
       let list = [...this.users];
-      if (sql.includes("WHERE (u.nickname ILIKE $1 OR u.introduction ILIKE $2)")) {
-        const [pat1, pat2] = params
-          .slice(0, 2)
-          .map((s: string) => s.toLowerCase().replace(/%/g, ""));
+      if (
+        sql.includes("WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)")
+      ) {
+        const pat = params[0].toLowerCase().replace(/%/g, "");
         list = list.filter(
           (u) =>
-            u.nickname.toLowerCase().includes(pat1) || u.introduction.toLowerCase().includes(pat2),
+            u.nickname.toLowerCase().includes(pat) ||
+            (u.snippet ?? "").toLowerCase().includes(pat) ||
+            (this.details[u.id]?.introduction ?? "").toLowerCase().includes(pat),
         );
       } else if (sql.includes("WHERE u.nickname ILIKE")) {
         const pat = params[0].toLowerCase().replace(/%/g, "");
         list = list.filter((u) => u.nickname.toLowerCase().includes(pat));
+      } else if (sql.includes("WHERE LOWER(u.nickname) LIKE")) {
+        const pat = params[0].toLowerCase().replace(/%/g, "");
+        list = list.filter((u) => u.nickname.toLowerCase().startsWith(pat));
       }
-      list.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+      list.sort((a, b) => b.id.localeCompare(a.id));
       const offset = params[params.length - 2] || 0;
       const limit = params[params.length - 1] || 100;
       const rows = list.slice(offset, offset + limit).map((u) => ({
-        ...u,
+        id: u.id,
+        email: u.email,
+        nickname: u.nickname,
+        is_admin: u.isAdmin,
+        snippet: u.snippet,
+        avatar: u.avatar,
+        ai_model: u.aiModel,
+        created_at: u.createdAt,
+        updated_at: u.updatedAt,
         count_followers: this.cntFollowers(u.id),
         count_followees: this.cntFollowees(u.id),
         count_posts: 0,
@@ -291,19 +363,21 @@ class MockPgClient {
       return { rows: exists ? [1] : [] };
     }
 
-    if (sql.startsWith("INSERT INTO users")) {
-      const [id, email, nickname, password, isAdmin, introduction, avatar, aiModel, aiPersonality] =
-        params;
+    if (
+      sql.startsWith(
+        "INSERT INTO users (id, email, nickname, password, is_admin, snippet, avatar, ai_model, created_at, updated_at) VALUES",
+      )
+    ) {
+      const [id, email, nickname, password, isAdmin, snippet, avatar, aiModel, idDate] = params;
       const user: User = {
         id,
         email,
         nickname,
         isAdmin,
-        introduction,
+        snippet,
         avatar,
         aiModel,
-        aiPersonality,
-        createdAt: new Date().toISOString(),
+        createdAt: idDate,
         updatedAt: null,
         countFollowers: 0,
         countFollowees: 0,
@@ -311,7 +385,37 @@ class MockPgClient {
       };
       this.users.push(user);
       this.passwords[user.id] = password;
-      return { rows: [user] };
+      return {
+        rows: [
+          {
+            ...user,
+            is_admin: user.isAdmin,
+            ai_model: user.aiModel,
+            created_at: user.createdAt,
+            updated_at: user.updatedAt,
+            count_followers: user.countFollowers,
+            count_followees: user.countFollowees,
+            count_posts: user.countPosts,
+          },
+        ],
+      };
+    }
+
+    if (sql.startsWith("INSERT INTO user_details (user_id, introduction, ai_personality)")) {
+      const [userId, introduction, aiPersonality] = params;
+      const hasCoalesce = sql.includes("COALESCE(EXCLUDED.introduction");
+      const prev = this.details[userId] ?? { introduction: "", aiPersonality: null };
+      this.details[userId] = {
+        introduction:
+          hasCoalesce && (introduction === null || introduction === undefined)
+            ? prev.introduction
+            : (introduction ?? ""),
+        aiPersonality:
+          hasCoalesce && (aiPersonality === null || aiPersonality === undefined)
+            ? prev.aiPersonality
+            : (aiPersonality ?? null),
+      };
+      return { rowCount: 1, rows: [] };
     }
 
     if (sql.startsWith("UPDATE users SET password = $1 WHERE id = $2")) {
@@ -323,16 +427,42 @@ class MockPgClient {
     }
 
     if (sql.startsWith("UPDATE users SET")) {
-      const columns = sql
-        .substring(sql.indexOf("SET ") + 4, sql.indexOf(" WHERE"))
-        .split(", ")
-        .map((col) => col.split("=")[0].trim());
       const user = this.users.find((u) => u.id === params[params.length - 1]);
       if (!user) return { rows: [] };
-      for (let i = 0; i < columns.length; ++i) {
-        (user as any)[columns[i]] = params[i];
+      if (sql.includes("email = $1")) user.email = params[0];
+      if (sql.includes("nickname = $2") || sql.includes("nickname = $1"))
+        user.nickname =
+          params.find((p: any) => typeof p === "string" && p.includes("@") === false) ??
+          user.nickname;
+      if (sql.includes("is_admin ="))
+        user.isAdmin = !!params.find((p: any) => typeof p === "boolean");
+      if (sql.includes("avatar ="))
+        user.avatar = params.find((p: any) => p === null || typeof p === "string") ?? user.avatar;
+      if (sql.includes("ai_model ="))
+        user.aiModel = params.find((p: any) => typeof p === "string") ?? user.aiModel;
+      if (sql.includes("snippet =")) {
+        const i = sql.split(",").findIndex((seg) => seg.includes("snippet ="));
+        user.snippet = params[i >= 0 ? i : 0] ?? user.snippet;
       }
-      return { rows: [user], rowCount: 1 };
+      return {
+        rows: [
+          {
+            id: user.id,
+            email: user.email,
+            nickname: user.nickname,
+            is_admin: user.isAdmin,
+            snippet: user.snippet,
+            avatar: user.avatar,
+            ai_model: user.aiModel,
+            created_at: user.createdAt,
+            updated_at: new Date().toISOString(),
+            count_followers: this.cntFollowers(user.id),
+            count_followees: this.cntFollowees(user.id),
+            count_posts: 0,
+          },
+        ],
+        rowCount: 1,
+      };
     }
 
     if (sql.startsWith("DELETE FROM users WHERE id = $1")) {
@@ -341,13 +471,14 @@ class MockPgClient {
       if (idx === -1) return { rowCount: 0 };
       this.users.splice(idx, 1);
       delete this.passwords[id];
+      delete this.details[id];
       this.follows = this.follows.filter((f) => f.followerId !== id && f.followeeId !== id);
       return { rowCount: 1 };
     }
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
       )
     ) {
       const followerId = params[0];
@@ -359,7 +490,15 @@ class MockPgClient {
       const offset = params[1] || 0;
       const limit = params[2] || 100;
       const rows = list.slice(offset, offset + limit).map((u) => ({
-        ...u,
+        id: u.id,
+        email: u.email,
+        nickname: u.nickname,
+        is_admin: u.isAdmin,
+        snippet: u.snippet,
+        avatar: u.avatar,
+        ai_model: u.aiModel,
+        created_at: u.createdAt,
+        updated_at: u.updatedAt,
         count_followers: this.cntFollowers(u.id),
         count_followees: this.cntFollowees(u.id),
         count_posts: 0,
@@ -369,7 +508,7 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar, u.ai_model, u.ai_personality, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
       )
     ) {
       const followeeId = params[0];
@@ -381,7 +520,15 @@ class MockPgClient {
       const offset = params[1] || 0;
       const limit = params[2] || 100;
       const rows = list.slice(offset, offset + limit).map((u) => ({
-        ...u,
+        id: u.id,
+        email: u.email,
+        nickname: u.nickname,
+        is_admin: u.isAdmin,
+        snippet: u.snippet,
+        avatar: u.avatar,
+        ai_model: u.aiModel,
+        created_at: u.createdAt,
+        updated_at: u.updatedAt,
         count_followers: this.cntFollowers(u.id),
         count_followees: this.cntFollowees(u.id),
         count_posts: 0,
@@ -445,6 +592,13 @@ describe("UsersService", () => {
     expect(await service.countUsers({ query: "introA" })).toBe(1);
   });
 
+  test("getUserLite", async () => {
+    const u = await service.getUserLite("alice");
+    expect(u?.id).toBe("alice");
+    expect(u?.email).toBe("alice@example.com");
+    expect(u?.aiModel).toBe("gpt-4.1");
+  });
+
   test("getUser (with focusUserId)", async () => {
     const user = await service.getUser("alice", "bob");
     expect(user?.id).toBe("alice");
@@ -453,6 +607,7 @@ describe("UsersService", () => {
     expect(user?.countPosts).toBe(0);
     expect(user?.isFollowedByFocusUser).toBe(true);
     expect(user?.isFollowingFocusUser).toBe(true);
+    expect(user?.introduction).toBe("introA");
   });
 
   test("listUsers (with focusUserId)", async () => {
@@ -490,9 +645,11 @@ describe("UsersService", () => {
     expect(user.email).toBe("dan@example.com");
     expect(pg.users.find((u) => u.email === "dan@example.com")).toBeDefined();
     expect(pg.passwords[user.id]).toBe(md5("danpass"));
+    expect(pg.details[user.id]?.introduction).toBe("introD");
+    expect(pg.details[user.id]?.aiPersonality).toBe("D");
   });
 
-  test("updateUser", async () => {
+  test("updateUser (including details)", async () => {
     const user = await service.updateUser({
       id: "alice",
       email: "alice2@example.com",
@@ -505,7 +662,9 @@ describe("UsersService", () => {
     });
     expect(user?.email).toBe("alice2@example.com");
     expect(user?.isAdmin).toBe(true);
-    expect(user?.introduction).toBe("introX");
+    const detail = await service.getUser("alice");
+    expect(detail?.introduction).toBe("introX");
+    expect(detail?.aiPersonality).toBe("X");
   });
 
   test("startUpdateEmail stores verification info in Redis and queues mail", async () => {

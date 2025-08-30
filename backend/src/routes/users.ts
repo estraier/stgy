@@ -9,11 +9,7 @@ import { AuthService } from "../services/auth";
 import { AuthHelpers } from "./authHelpers";
 import { EventLogService } from "../services/eventLog";
 import { SendMailService } from "../services/sendMail";
-import {
-  CreateUserInput,
-  UpdateUserInput,
-  UpdatePasswordInput,
-} from "../models/user";
+import { CreateUserInput, UpdateUserInput, UpdatePasswordInput } from "../models/user";
 import {
   validateEmail,
   normalizeEmail,

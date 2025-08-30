@@ -15,8 +15,10 @@ export type User = {
   isFollowingFocusUser?: boolean;
 };
 
-export type UserLite =
-  Omit<User, "snippet" | "avatar" | "isFollowedByFocusUser" | "isFollowingFocusUser">;
+export type UserLite = Omit<
+  User,
+  "snippet" | "avatar" | "isFollowedByFocusUser" | "isFollowingFocusUser"
+>;
 
 export type UserDetail = User & {
   introduction: string;

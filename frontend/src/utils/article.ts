@@ -25,7 +25,6 @@ export function makeSnippetHtmlFromMarkdown(mdText: string) {
   const imgHeight = Config.SNIPPET_MAX_HEIGHT / 4;
   let nodes = parseMarkdown(mdText);
   nodes = rewriteMediaUrls(nodes, true);
-  nodes = mdGroupImageGrid(nodes);
   nodes = mdFilterForFeatured(nodes);
   nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen, imgHeight });
   return mdRenderHtml(nodes);
