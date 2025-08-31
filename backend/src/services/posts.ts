@@ -567,7 +567,7 @@ export class PostsService {
     if (!includeReplies) {
       sql += ` AND p.reply_to IS NULL`;
     }
-    sql += ` ORDER BY p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
+    sql += ` ORDER BY pl.created_at ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
 
     const res = await this.pgClient.query(sql, params);

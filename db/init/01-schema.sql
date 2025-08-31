@@ -1,3 +1,6 @@
+SELECT current_database() AS db \gset
+ALTER DATABASE :"db" SET default_toast_compression = 'lz4';
+
 CREATE TABLE ai_models (
   name VARCHAR(50) PRIMARY KEY,
   description VARCHAR(500) NOT NULL,
@@ -7,11 +10,11 @@ CREATE TABLE ai_models (
 
 CREATE TABLE users (
   id VARCHAR(50) PRIMARY KEY,
-  email VARCHAR(50) NOT NULL UNIQUE,
+  email VARCHAR(100) NOT NULL UNIQUE,
   nickname VARCHAR(50) NOT NULL,
-  password VARCHAR(50) NOT NULL,
+  password VARCHAR(100) NOT NULL,
   is_admin BOOLEAN NOT NULL,
-  snippet VARCHAR(2048) NOT NULL,
+  snippet VARCHAR(4096) NOT NULL,
   avatar VARCHAR(100),
   ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL,
@@ -25,7 +28,7 @@ CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, ni
 CREATE TABLE user_details (
   user_id VARCHAR(50) PRIMARY KEY,
   introduction VARCHAR(65535) NOT NULL,
-  ai_personality VARCHAR(2000),
+  ai_personality VARCHAR(5000),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
@@ -40,7 +43,7 @@ CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, 
 
 CREATE TABLE posts (
   id VARCHAR(50) PRIMARY KEY,
-  snippet VARCHAR(2048) NOT NULL,
+  snippet VARCHAR(4096) NOT NULL,
   owned_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reply_to VARCHAR(50) REFERENCES posts(id) ON DELETE SET NULL,
   allow_likes BOOLEAN NOT NULL,
@@ -63,7 +66,7 @@ CREATE TABLE post_details (
 
 CREATE TABLE post_tags (
   post_id VARCHAR(50) NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-  name VARCHAR(100) NOT NULL,
+  name VARCHAR(50) NOT NULL,
   PRIMARY KEY (post_id, name)
 );
 CREATE INDEX idx_post_tags_name_post_id ON post_tags(name, post_id);
@@ -82,9 +85,7 @@ CREATE TABLE event_logs (
   event_id BIGINT NOT NULL,
   payload JSONB NOT NULL,
   PRIMARY KEY (partition_id, event_id),
-  UNIQUE (event_id),
-  CHECK (partition_id BETWEEN 0 AND 255),
-  CHECK (event_id > 0)
+  UNIQUE (event_id)
 );
 
 CREATE TABLE event_log_cursors (

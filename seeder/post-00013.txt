@@ -6,15 +6,15 @@ tags: fakebook-help
 content:<<____EOF____
 # Fakebookの主要クエリ分析
 
-本記事では、fakebookの運用上でデータベースに発行されるクエリについて分析する。SQLの具体例を示し、その計算量を解析し、実際の実行計画を見て確認する。
+本記事では、Fakebookの運用上でデータベースに発行されるクエリについて分析する。SQLの具体例を示し、その計算量を解析し、実際の実行計画を見て確認する。
 
-## listPosts
+## listPostsLite
 
-全ての投稿の中から最新20件を取り出す処理を考える。バックエンドのpostsService.listPostsというメソッドでそれは実装されている。デフォルトでは返信以外の投稿を一覧するため、reply_toがNULLであるという条件をつける。実際のクエリは以下のものだ。
+全ての投稿の中から最新20件を取り出す処理を考える。バックエンドのpostsService.listPostsLiteというメソッドでそれは実装されている。デフォルトでは返信以外の投稿を一覧するため、reply_toがNULLであるという条件をつける。実際のクエリは以下のものだ。
 
 ```sql:small
 SELECT
-  p.id, p.content, p.owned_by, p.reply_to,
+  p.id, p.owned_by, p.reply_to,
   p.allow_likes, p.allow_replies, p.created_at, p.updated_at
 FROM posts p
 WHERE reply_to IS NULL
@@ -30,13 +30,13 @@ Limit (cost=0.28..3.56 rows=20 width=96)
  -> Index Scan Backward using idx_posts_root_id on posts p (cost=0.28..496.23 rows=3021 width=96)
 ```
 
-## listPostsDetail
+## listPosts
 
-実運用上は、各投稿の著者のユーザIDを名前に解決したり、各投稿につけられたタグ情報を結果に含めるために、別のテーブルをJOINすることになる。それを実装しているのが、listPostDetailメソッドだ。reply_toがNULLであるという条件をつけると、実際のクエリは以下のものになる。
+実運用上は、各投稿の著者のユーザIDを名前に解決したり、各投稿につけられたタグ情報を結果に含めるために、別のテーブルをJOINすることになる。それを実装しているのが、listPostsメソッドだ。reply_toがNULLであるという条件をつけると、実際のクエリは以下のものになる。
 
 ```sql:small
 SELECT
-  p.id, p.content, p.owned_by, p.reply_to,
+  p.id, p.snippet, p.owned_by, p.reply_to,
   p.allow_likes, p.allow_replies, p.created_at, p.updated_at,
   u.nickname AS owner_nickname, pu.nickname AS reply_to_owner_nickname,
   p.count_replies AS count_replies, p.count_likes AS count_likes,
@@ -50,9 +50,9 @@ WHERE p.reply_to IS NULL
 ORDER BY p.id DESC OFFSET 0 LIMIT 20;
 ```
 
-listPostsの場合と同様にインデックスが使われて、結果を返却するはずだ。その過程で、post_tagsテーブルとusersテーブルを結合している。タグに関しては返却の各行に対応して投稿IDが一致するタグをサブクエリで調べて取得して埋め込んでいる。ユーザ名に関しては、owned_byのIDをユーザ名に解決するためと、reply_toの投稿のowned_byのIDをユーザ名に解決するために、2回に分けてJOINしている。
+listPostsLiteの場合と同様にインデックスが使われて、結果を返却するはずだ。その過程で、post_tagsテーブルとusersテーブルを結合している。タグに関しては返却の各行に対応して投稿IDが一致するタグをサブクエリで調べて取得して埋め込んでいる。ユーザ名に関しては、owned_byのIDをユーザ名に解決するためと、reply_toの投稿のowned_byのIDをユーザ名に解決するために、2回に分けてJOINしている。
 
-これの計算量を考えよう。全ユーザ数をUと置き、全投稿数をPと置く。タグの数はおそらく投稿数の1%くらいの数になるだろうが、Pに比例するのでPとして扱う。まず、該当の投稿のリストを得るのに、インデックスが利けば、O(log(P))+O(20)の計算量がかかる。20は定数なので消えて、O(log(P))になる。そして、ヒットした20件の各々に対し、タグとユーザ名を解決する。インデックスが利けば、タグ取得はO(20\*log(P))で、ユーザ名取得はO(20\*log(U))だ。20は定数なので消えて、O(log(P))とO(log(U))になる。UはPよりも十分に少ないと仮定すると、全体の支配項はO(log(P))ということになる。つまり、計算量はlitPostsの時と同じである。
+これの計算量を考えよう。全ユーザ数をUと置き、全投稿数をPと置く。タグの数はおそらく投稿数の1%くらいの数になるだろうが、Pに比例するのでPとして扱う。まず、該当の投稿のリストを得るのに、インデックスが利けば、O(log(P))+O(20)の計算量がかかる。20は定数なので消えて、O(log(P))になる。そして、ヒットした20件の各々に対し、タグとユーザ名を解決する。インデックスが利けば、タグ取得はO(20\*log(P))で、ユーザ名取得はO(20\*log(U))だ。20は定数なので消えて、O(log(P))とO(log(U))になる。UはPよりも十分に少ないと仮定すると、全体の支配項はO(log(P))ということになる。つまり、計算量はlistPostsの時と同じである。
 
 EXPLAIN文で実行計画を調べると、以下の出力が得られる。投稿でヒットしたレコードの各々に対して処理を行うNested Loopがあり、そこでJOINの処理を行っている。結合先のテーブルからデータを取り出すにあたっては全てインデックスが使われ、一部はキャッシュも使われていて、DB本体のシーケンシャルスキャン（Seq Scan）やインデックスのシーケンシャルスキャン（Filter）がひとつもなく、全てがインデックスの条件付き絞り込み（Index Cond）の理想的な処理になっていることがわかる。
 
@@ -82,11 +82,11 @@ Limit (cost=1.14..106.13 rows=20 width=150)
         Index Cond: (post_id = (p.id)::text)
 ```
 
-## listPostsByFolloweesDetail
+## listPostsByFollowees
 
 FakebookのSNSとしての典型的なビューは、「自分がフォローしているユーザの投稿の一覧」を見ることである。これがログイン直後のデフォルトのビューでもある。このクエリが効率的に処理できるかどうかがSNSの性能を決めると言って良い。
 
-基本戦略としては、表示件数が20件という定数であることを利用して計算量の削減を図る。全フォロワーの中から直近の投稿が新しい20人を選び、その20人の各々の最新の投稿20件を取り出すことで、最大400件のソートしかしないことが保証できる。実際のクエリは以下のものだ。
+基本戦略としては、表示件数が20件という定数であることを利用して計算量の削減を図る。全フォロイーの中から直近の投稿が新しい20人を選び、その20人の各々の最新の投稿20件を取り出すことで、最大400件のソートしかしないことが保証できる。実際のクエリは以下のものだ。
 
 ```sql:small
 WITH
@@ -116,7 +116,7 @@ top AS (
   FROM cand
   ORDER BY id DESC OFFSET 0 LIMIT 20)
 SELECT
-  p.id, p.content, p.owned_by, p.reply_to,
+  p.id, p.snippet, p.owned_by, p.reply_to,
   p.allow_likes, p.allow_replies, p.created_at, p.updated_at,
   u.nickname AS owner_nickname, pu.nickname AS reply_to_owner_nickname,
   p.count_replies AS count_replies, p.count_likes AS count_likes,
@@ -135,11 +135,11 @@ ORDER BY t.id DESC;
 - フォローしているユーザのIDの一覧をfというビューとして作る。
 - fの各々について最新の投稿IDを紐づけたactiveというビューを作る。
 - activeの内容を投稿IDでソートして、最も最近に投稿をしたトップ20人のユーザIDの集合であるtop_followeesというビューを作る。
-- top_followeesの各ユーザIDにJOIN LATERALして、各ユーザの最新投IDを20件ずつ取り出したcandというビューを作る。
+- top_followeesの各ユーザIDにJOIN LATERALして、各ユーザの最新投稿IDを20件ずつ取り出したcandというビューを作る。
 - candの最大400件の投稿IDをソートして、最新20件に絞ったtopというビューを作る。
-- topの各々のIDに対して、listPostsDetailと同様に、各種属性を肉付けする。
+- topの各々のIDに対して、listPostsと同様に、各種属性を肉付けする。
 
-これの計算量を考えよう。全ユーザ数をUと置き、全投稿数をPと置き、フォローしているユーザ数をFと置く。フォローしているユーザの一覧を引くのは、インデックスが利けば、O(log(U))だ。フォローしているユーザの各々の最新投稿を調べるのは、インデックスが利けば、O(F\*Log(P))だ。F人から最新アクティブユーザ20人を選ぶのはtop-kヒープなので、O(F\*log(20)) で、20は定数なので、O(F)だ。最新アクティブユーザ20人の各々の最新投稿20件を取り出すと、400件が取れる。400件から20件を選ぶのもtop-kヒープなので、O(400\*log(20))で、400も20も定数なので、O(1)だ。そして20件の各々に肉付けする処理は、全てインデックスが利くなら、O(20\*log(P))で、20は定数なので、O(log(P))だ。つまり、UはPよりも少ないと仮定すると、全体の計算量の支配項はO(F\*log(P))ということになる。Pは莫大に大きくても大丈夫だし、Fはそこそこ大きくても大丈夫ということになる。
+これの計算量を考えよう。全ユーザ数をUと置き、全投稿数をPと置き、フォローしているユーザ数をFと置く。フォローしているユーザの一覧を引くのは、インデックスが利けば、O(log(U))だ。フォローしているユーザの各々の最新投稿を調べるのは、インデックスが利けば、O(F\*log(P))だ。F人から最新アクティブユーザ20人を選ぶのはtop-kヒープなので、O(F\*log(20)) で、20は定数なので、O(F)だ。最新アクティブユーザ20人の各々の最新投稿20件を取り出すと、400件が取れる。400件から20件を選ぶのもtop-kヒープなので、O(400\*log(20))で、400も20も定数なので、O(1)だ。そして20件の各々に肉付けする処理は、全てインデックスが利くなら、O(20\*log(P))で、20は定数なので、O(log(P))だ。つまり、UはPよりも少ないと仮定すると、全体の計算量の支配項はO(F\*log(P))ということになる。Pは莫大に大きくても大丈夫だし、Fはそこそこ大きくても大丈夫ということになる。
 
 あとは、各処理でちゃんとインデックスが効いているかどうかを確かめれば良い。上述のクエリをEXPLAINにかけてみると、以下の出力が得られる。全てがIndex Condの理想的な実行計画になっていることが確かめられた。
 
@@ -183,62 +183,58 @@ Nested Loop Left Join (cost=9461.18..9727.60 rows=20 width=167)
    Index Cond: (post_id = (p.id)::text)
 ```
 
-## listPostsLikedByUserDetail
+## listPostsLikedByUser
 
 自分がイイネした投稿の一覧を得るには、以下のクエリが使われる。
 
 ```sql:small
 SELECT
-  p.id, p.content, p.owned_by, p.reply_to,
+  p.id, p.snippet, p.owned_by, p.reply_to,
   p.allow_likes, p.allow_replies, p.created_at, p.updated_at,
   u.nickname AS owner_nickname, pu.nickname AS reply_to_owner_nickname,
-  p.count_replies AS count_replies,
-  p.count_likes AS count_likes,
+  p.count_replies AS count_replies, p.count_likes AS count_likes,
   ARRAY(SELECT pt.name FROM post_tags pt
     WHERE pt.post_id = p.id ORDER BY pt.name) AS tags
 FROM post_likes pl
 JOIN posts p ON pl.post_id = p.id
 JOIN users u ON p.owned_by = u.id
-LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
-LEFT JOIN users pu ON parent_post.owned_by = pu.id
+LEFT JOIN posts pp ON p.reply_to = pp.id
+LEFT JOIN users pu ON pp.owned_by = pu.id
 WHERE pl.liked_by = '9901000000000001'
-ORDER BY p.id DESC OFFSET 0 LIMIT 20;
+ORDER BY pl.created_at DESC OFFSET 0 LIMIT 20;
 ```
 
 liked_byでの絞り込みにインデックスが利きさえすれば、計算量はlistPostsと同じくO(log(P))で済むはずだ。あとは実行計画見れば、それが確認できる。
 
 ```:xsmall
-Limit (cost=1.40..140.43 rows=20 width=150)
- -> Nested Loop Left Join (cost=1.40..6952.62 rows=1000 width=150)
-    -> Nested Loop Left Join (cost=1.13..1975.82 rows=1000 width=128)
-       -> Nested Loop (cost=0.85..1538.82 rows=1000 width=111)
-          -> Nested Loop (cost=0.57..879.52 rows=1000 width=104)
-             -> Index Only Scan Backward using post_likes_pkey on post_likes pl (cost=0.28..113.28 rows=1000 width=17)
-                Index Cond: (liked_by = '9901000000000001'::text)
-             -> Memoize (cost=0.29..1.00 rows=1 width=104)
-                Cache Key: pl.post_id
-                Cache Mode: logical
-                -> Index Scan using posts_pkey on posts p (cost=0.28..0.99 rows=1 width=104)
-                   Index Cond: ((id)::text = (pl.post_id)::text)
-          -> Index Scan using users_pkey on users u (cost=0.28..0.66 rows=1 width=24)
+Limit (cost=1.40..26.01 rows=1 width=181)
+ -> Nested Loop Left Join (cost=1.40..26.01 rows=1 width=181)
+    -> Nested Loop Left Join (cost=1.12..17.36 rows=1 width=157)
+       -> Nested Loop (cost=0.84..16.96 rows=1 width=140)
+          -> Nested Loop (cost=0.56..16.60 rows=1 width=131)
+             -> Index Scan Backward using idx_post_likes_liked_by_created_at on post_likes pl (cost=0.28..8.30 rows=1 width=25)
+                Index Cond: ((liked_by)::text = '9901000000000001'::text)
+             -> Index Scan using posts_pkey on posts p (cost=0.28..8.30 rows=1 width=123)
+                Index Cond: ((id)::text = (pl.post_id)::text)
+          -> Index Scan using users_pkey on users u (cost=0.28..0.36 rows=1 width=26)
              Index Cond: ((id)::text = (p.owned_by)::text)
-       -> Index Scan using posts_pkey on posts parent_post (cost=0.28..0.44 rows=1 width=34)
+       -> Index Scan using posts_pkey on posts pp (cost=0.28..0.40 rows=1 width=34)
           Index Cond: ((id)::text = (p.reply_to)::text)
-    -> Index Scan using users_pkey on users pu (cost=0.28..0.66 rows=1 width=24)
-       Index Cond: ((id)::text = (parent_post.owned_by)::text)
+    -> Index Scan using users_pkey on users pu (cost=0.28..0.36 rows=1 width=26)
+       Index Cond: ((id)::text = (pp.owned_by)::text)
     SubPlan 1
-     -> Index Only Scan using post_tags_pkey on post_tags pt (cost=0.28..4.32 rows=2 width=6)
+     -> Index Only Scan using post_tags_pkey on post_tags pt (cost=0.28..8.30 rows=1 width=5)
         Index Cond: (post_id = (p.id)::text)
 ```
 
 ## listUsers
 
-usersテーブルを操作するusersSerivceという実装にも各種メソッドがあって、それぞれクエリを発行している。どれも軽い処理だが、ユーザの一覧を出すlistUsersだけは、注意を要する。例えば、ユーザのニックネームの前方一致条件で絞り込みを行いつつ、フォロイーもしくはフォロワーを優先して表示するという特殊機能がある。そのクエリは以下のものだ。
+usersテーブルを操作するusersServiceという実装にも各種メソッドがあって、それぞれクエリを発行している。どれも軽い処理だが、ユーザの一覧を出すlistUsersだけは、注意を要する。例えば、ユーザのニックネームの前方一致条件で絞り込みを行いつつ、フォロイーもしくはフォロワーを優先して表示するという特殊機能がある。そのクエリは以下のものだ。
 
 ```sql:small
 SELECT
-  u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar,
-  u.ai_model, u.ai_personality, u.created_at, u.updated_at
+  u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar,
+  u.ai_model, u.created_at, u.updated_at
 FROM users u
 LEFT JOIN user_follows f1 ON
   f1.follower_id = '9901000000000001' AND f1.followee_id = u.id
@@ -252,7 +248,7 @@ ORDER BY
   u.id ASC OFFSET 0 LIMIT 20;
 ```
 
-LIKE演算子による前方一致は、インデックスが利くので、絞り込みを効率的に行うことができる。また、フォロー関係を使った順位付けも、ヒープスキャンを使うので、効率的に動くことが期待できる。EXPLAIN文の結果は以下である。
+LIKE演算子による前方一致は、インデックスが利くので、絞り込みを効率的に行うことができる。また、フォロー関係の結合はビットマップインデックスとハッシュジョインで絞り、最後にソートで順位付けするため、ヒット件数が少なければ高速に動く。EXPLAIN文の結果は以下である。
 
 ```:xsmall
 Limit (cost=494.27..494.32 rows=20 width=487)
@@ -340,8 +336,8 @@ WITH
     FROM dedup
     ORDER BY prio, nkey, id OFFSET 0 LIMIT 20 )
 SELECT
-  u.id, u.email, u.nickname, u.is_admin, u.introduction, u.avatar,
-  u.ai_model, u.ai_personality, u.created_at, u.updated_at
+  u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar,
+  u.ai_model, u.created_at, u.updated_at
 FROM page p
 JOIN users u ON u.id = p.id
 ORDER BY p.prio, p.nkey, u.id;
@@ -389,37 +385,19 @@ Nested Loop (cost=114.05..247.88 rows=20 width=520)
 
 ## 総評
 
-Fakebookの主要クエリは、全てスケールするものになっている。きちんとインデックスを張っているので、全体の最新投稿を一覧で使うlistPostsDetailの計算量はO(log(P))だ。自分がフォローしているユーザの最新投稿を一覧で使うlistPostsByFolloweesDetailの計算量も何とO(log(P))で済んでいる。イイネした投稿の一覧で使うlistPostsLikedByUserDetailの計算量もO(log(P))だ。その他、全ての投稿一覧はO(log(P))以下の計算量に留めている。ユーザ一覧に関しても同様で、全文検索以外で最も重いlistFriendsByNicknamePrefixの計算量もO(log(U))に留めている。
+ここまで見てきたように、記事IDやユーザIDのリストを取得するための検索操作は全てインデックス上で行えるように、スキーマとクエリを設計している。各々のインデックスは小さいので、大部分がメモリ上にキャッシュされて、高速にランダムアクセスできる。よって、Fakebookの主要クエリは、全てスケールするものになっていると言える。
 
-最も重いlistPostsLikedByUserDetailとlistFriendsByNicknamePrefixの計算量はフォロイー数に比例する。したがって、フォロイー数を定数項にするために、上限値を決める必要がある。現実的には100人以上フォローしても使い勝手が悪くなるだけなので、200人くらいを上限値にすれば問題ないだろう。
+全体の最新投稿を一覧で使うlistPostsの計算量はO(log(P))だ。自分がフォローしているユーザの最新投稿を一覧で使うlistPostsByFolloweesの計算量も何とO(log(P))で済んでいる。イイネした投稿の一覧で使うlistPostsLikedByUserの計算量もO(log(P))だ。その他、全ての投稿一覧はO(log(P))以下の計算量に留めている。ユーザ一覧に関しても同様で、全文検索以外で最も重いlistFriendsByNicknamePrefixの計算量もO(log(U))に留めている。
 
-## スキーマ改良案
+最も重いlistPostsByFolloweesとlistFriendsByNicknamePrefixの計算量はフォロイー数に比例する。したがって、フォロイー数を定数項にするために、上限値を決める必要がある。現実的には100人以上フォローしても使い勝手が悪くなるだけなので、200人くらいを上限値にすれば問題ないだろう。
 
-ここまで見てきたように、記事IDやユーザIDのリストを取得するための検索操作は全てインデックス上で行えるように、スキーマとクエリを設計している。各々のインデックスは小さいので、大部分がメモリ上にキャッシュされて、高速にランダムアクセスできる。一方、スケーラビリティにおいて最初に問題になるのは、投稿記事の本文やユーザ自己紹介の本文などのでかいデータを取得する操作だ。
+投稿記事の本文やユーザ自己紹介の本文などのでかいデータを取得する操作も、スケーラビリティの制限要因になる。主キーに紐づいたテーブル本体のレコードを読み出すという操作は、レコード数Nに対してO(log(N))の計算量に過ぎない。しかし、データの規模が大きいと遅くなる。メモリ上のキャッシュに乗り切らないので、毎回のアクセスでストレージにアクセスするからだ。HDDであればシークタイムも加算される。読み出しのデータが大きいと、ストレージとメモリの間のデータ転送量が増えることでも遅くなる。postsとusersテーブルに本文を入れずにスニペットだけを入れるのは、この問題に対する緩和策だ。
 
-主キーに紐づいたテーブル本体のレコードを読み出すという操作は、レコード数Nに対してO(log(N))の計算量に過ぎない。しかし、データの規模が大きいと遅くなる。メモリ上のキャッシュに乗り切らないので、毎回のアクセスでストレージにアクセスするからだ。HDDであればシークタイムも加算される。読み出しのデータが大きいと、ストレージとメモリの間のデータ転送量が増えることでも遅くなる。DBから読み出したデータをネットワーク越しにクライアントに送るデータ転送量が増えることでも遅くなる。
+## 余談
 
-そもそも、投稿一覧やユーザ一覧にはスニペットしか表示されないのに、それを動的に作るために記事や自己紹介の本文全体を読み出してしまっているのが、非効率である。本文が作成または更新された際にスニペットを作成してDB内に記録しておけば、本文を読み出す必要はなくなる。日記風の投稿が多いと仮定すると、本文は10KB以上になることもざらだが、スニペットは平均500Bほどに制限されるので、その差は大きい。現状では、本文をDBから読み出すだけではなく、インターネット越しにクライアント側まで送ってそこでスニペットを作っているので、ネットワーク転送量も大きい。
+スニペットをDBに保存するということは、「どう表示するか」というフロントエンド側のプレゼンテーションの知識をバックエンド側で持つことを意味するため、責任分割の観点では気持ち悪い。スニペットの形式や文字数制限を変えた際にDBのレコードを入れ直さなきゃならないのも嫌だ。しかし、その気持ち悪さを飲んでもやらねばならない。
 
-スニペットの列を単に既存のスキーマに加えるだけでは、データが肥大化するだけなのでDB層はむしろ遅くなる。なので、本文のデータは別のテーブルに分けるのが最善だ。具体的には、postsテーブルのcontent列を抜き出して投稿IDと紐づけた、post_detailsテーブルを作る。同様に、usersテーブルのintroduction列を抜き出してユーザIDと紐づけたuser_introductionsテーブルを作る。代わりに、postsテーブルにはcontent_snippet列が加わり、usersテーブルにはintroduction_snippet列が加わる。小さくなったpostsテーブルとusersテーブルはページI/Oの量が減ってキャッシュにも乗りやすくなって高速化する。post_detailsテーブルとuser_introductionsテーブルは、個別の投稿やユーザを表示する時にしか参照されないので、多少遅くても構わない。さらに、記事本文は最新のものにアクセスが偏るので、データが大きくてもキャッシュに乗りやすい。
-
-```sql:small
-CREATE TABLE posts (
-  id VARCHAR(50) PRIMARY KEY,
-  snippet VARCHAR(512) NOT NULL,
-  ...
-);
-
-CREATE TABLE post_details (
-  post_id VARCHAR(50) PRIMARY KEY,
-  content VARCHAR(65535) NOT NULL,
-  FOREIGN KEY (post_id) REFERENCES posts(id)
-);
-```
-
-スニペットをDBに保存するということは、「どう表示するか」というフロントエンド側のプレゼンテーションの知識をバックエンド側で持つことを意味するため、責任分割の観点では気持ち悪い。スニペットの形式や文字数制限を変えた際にDBのレコードを入れ直さなきゃならないのも嫌だ。しかし、その気持ち悪さを飲んでもなおやる価値があるくらい、スニペットを保存して本文を分離することの効果は大きい。とはいえ現状でそれをやっていないのは、スニペットの形式がころころ変わるかもしれないからと、本文の平均的なデータサイズがまだ見えてないからという理由がある。折衷案として、スキーマはそのままにしておいて、バックエンド側でスニペットを作ってクライアントに返すことも考えられる。そうすればネットワーク帯域だけは節約できる。
-
-投稿記事やユーザ自己紹介の本文を分離するという手法は、いわゆる垂直分散の一種である。属性データの特性に合わせて管理方法を分割するのだ。本文だけDBサーバを分けてもいいし、列指向DBに入れてもいいし、S3に入れてクライアントに直接取得させたっていい。古い記事の本文は圧縮した上でアーカイブ用のストレージに入れてもいい。post_likesやuser_followsといったテーブルを別サーバで管理するのも良いだろう。
+投稿記事やユーザ自己紹介の本文を分離するという手法は、いわゆる垂直分散の一種である。属性データの特性に合わせて管理方法を分割する手法とも言える。本文だけDBサーバを分けてもいいし、列指向DBに入れてもいいし、S3に入れてクライアントに直接取得させたっていい。古い記事の本文は圧縮した上でアーカイブ用のストレージに入れてもいい。post_likesやuser_followsといったテーブルを別サーバで管理するのも良いだろう。
 
 以上のことを鑑みると、リソースのリストを取得する処理は、常に二段構えで考えるべきだ。条件に該当するIDのリストを生成する段と、そのIDに紐づけて属性を収集する段だ。RDB1台運用だとその2段が一発のクエリでできるが、それでもサブクエリを使って敢えて2段に分けて書くのも良い考えだ。以下の二つのクエリは等価で、後者の方が若干遅いかもしれないが、いずれ垂直分散する際は、後者の書き方をしておく方がバグりにくい。
 
@@ -429,22 +407,25 @@ FROM USERS WHERE id > '0001000000000002'
 ORDER BY id LIMIT 10;
 
 WITH cand_ids AS (
-  SELECT id
-  FROM USERS
+  SELECT id FROM users
   WHERE id > '0001000000000002'
   ORDER BY id LIMIT 10
 )
 SELECT u.id, u.nickname, u.introduction
-FROM USERS AS u
-JOIN cand_ids AS c ON u.id = c.id;
+FROM users AS u
+JOIN cand_ids AS c ON u.id = c.id
 ORDER BY c.id;
 ```
 
-なお、PostgreSQLでは、TOASTという機能があり、2KB以上の大きい列データを暗黙的に圧縮したり別テーブルに移動したりして、個々のレコードが単一ページに収まるように努力してくれる。よって、明示的に分割しなくても、ある程度の最適化は勝手になされる。しかし、それでもなお、明示的に分割した方が良い。スニペットさえあればリスト取得時には本文を一切参照する必要がないので、短くても長くても別テーブルにした方が、主テーブルのページ読み出し量が少なくて済むからだ。
+なお、PostgreSQLでは、TOASTという機能があり、2KB以上の大きい列データを暗黙的に圧縮したり別テーブルに移動したりして、個々のレコードが単一ページに収まるように努力してくれる。よって、明示的に分割しなくても、ある程度の最適化は勝手になされる。しかし、それでもなお、大きさや参照頻度が異なるデータは明示的に分割した方が良い。今回の例では、スニペットさえあればリスト取得時には本文を一切参照する必要がないので、短くても長くても別テーブルにした方が、主テーブルのページ読み出し量が少なくて済む。
+
+![TOAST図解](/data/help-postgres-toast.png){size=large}
+
+指定した列の短いデータも強制的にTOASTしてくれれば、わざわざテーブル分割しなくても済むのにと思ったが、そのような指定はできない。また、テーブル分割した先では、TOASTしなくてもよいとも思ったが、そのような指定もできない。TOASTの本来の目的は参照局所性の向上ではなく、主テーブルの各レコードのサイズをページサイズ（8KB）以下に抑えることだからだ。なお、TOASTは圧縮もしてくれるが、そのデフォルトの圧縮方式はpglz（LZ77）で、遅い割には圧縮率があまり良くない。なので、今回はDB全体の圧縮設定をLZ4に変更している。LZ4は無圧縮に近い速度で動く割には、自然言語の文字列を半分くらいに圧縮する能力があるので、LZ4に変更する利点は大きい。
 
 垂直分割をしても処理しきれなくなってきたら、いよいよ水平分割をすることになる。ユーザIDを使ってパーティショニングを行うのが率直な方法だろう。ハッシュ値などで機械的に割り振っても良いが、各ユーザがどのパーティションに居るのかを管理するuser_partitionsテーブルを作るか、それに相当するKVSを運用するのが率直だ。usersテーブルを引く時はユーザIDでパーティションを特定してからそのDBサーバにアクセスし、postsテーブルを引く時は著者のユーザIDでパーティションを特定してからそのDBサーバにアクセスする。フォロー関係は、フォロー元のユーザとフォロー先のユーザのDBに二重化して持たせれば良い。垂直分割を経ているならば、もはやJOINするクエリは少なくなっていて、IDのリストを取り出してから別のDBにアクセスする作法は確立しているはずだ。あとはそのアクセス先を個々のIDに紐づいたパーティションにするだけだ。ユーザに紐づいた一連のデータをパーティション間で移動するユーティリティさえ書いておけば、運用はそんなに難しくない。
 
-規模が大きくなると、投稿一覧の「All」のビューがほとんど意味をなさなくなってくる。見知らぬ人の投稿を全て見る奴は居ない。どなると、「Pickup」とか「Topics」とかいう位置づけのビューを代わりに置くことになるだろう。最近の投稿だけを集めた小さいデータベースを作っておいて、質が高いものや個々のユーザの興味に近そうなものをバッチ処理で計算して、それを提示するのだ。
+規模が大きくなると、投稿一覧の「All」のビューがほとんど意味をなさなくなってくる。見知らぬ人の投稿を全て見る奴は居ない。となると、「Pickup」とか「Topics」とかいう位置づけのビューを代わりに置くことになるだろう。最近の投稿だけを集めた小さいデータベースを作っておいて、質が高いものや個々のユーザの興味に近そうなものをバッチ処理で計算して、それを提示するのだ。
 
 記事本文やユーザプロファイル本文を対象とする全文検索は、DB本体で頑張るよりは、別システムに移譲した方がよい。別ホストで運用し、そこにバッチ処理で定期的にデータを流し込めば良い。検索エンジンが重くなっても主たる機能の運用に影響がないというのは実運用上で非常に重要だ。
 
