@@ -1,4 +1,4 @@
-import type { User } from "./models";
+import type { User, UserDetail } from "./models";
 import { apiFetch, extractError } from "./client";
 
 export async function listUsers(

@@ -2,7 +2,7 @@
 
 import React, { useEffect, useRef, useState } from "react";
 import Image from "next/image";
-import type { User } from "@/api/models";
+import type { UserDetail } from "@/api/models";
 import { updateUser, getUser, deleteUser } from "@/api/users";
 import { listAIModels } from "@/api/aiModels";
 import {
@@ -15,10 +15,10 @@ import {
 import Link from "next/link";
 
 type UserFormProps = {
-  user: User;
+  user: UserDetail;
   isAdmin: boolean;
   isSelf: boolean;
-  onUpdated?: (user?: User) => void | Promise<void>;
+  onUpdated?: (user?: UserDetail) => void | Promise<void>;
   onCancel: () => void;
 };
 

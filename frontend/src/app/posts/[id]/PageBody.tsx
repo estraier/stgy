@@ -12,7 +12,7 @@ import {
   deletePost,
   listPosts,
 } from "@/api/posts";
-import type { Post, User } from "@/api/models";
+import type { Post, PostDetail, User } from "@/api/models";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import PostCard from "@/components/PostCard";
@@ -42,7 +42,7 @@ export default function PageBody() {
     [searchParams],
   );
 
-  const [post, setPost] = useState<Post | null>(null);
+  const [post, setPost] = useState<PostDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 

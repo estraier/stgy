@@ -39,6 +39,11 @@ export function makeSnippetTextFromMarkdown(mdText: string) {
   return flat.length > maxLen ? flat.slice(0, maxLen) + "…" : flat;
 }
 
+export function makeTextFromJsonSnippet(snippet: string) {
+  const nodes = deserializeMdNodes(snippet);
+  return mdRenderText(nodes).slice(0, 50);
+}
+
 export function makeHtmlFromJsonSnippet(snippet: string) {
   let nodes = deserializeMdNodes(snippet);
   nodes = rewriteMediaUrls(nodes, true);

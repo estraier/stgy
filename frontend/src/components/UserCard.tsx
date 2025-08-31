@@ -228,12 +228,15 @@ export default function UserCard({
         </div>
       )}
 
-      {!truncated && "aiPersonality" in user && user.aiPersonality && user.aiPersonality.trim() !== "" && (
-        <div className="text-xs text-gray-600 mt-2">
-          <div className="font-semibold">AI Personality:</div>
-          <div className="pl-2 whitespace-pre-line">{normalizeLinefeeds(user.aiPersonality)}</div>
-        </div>
-      )}
+      {!truncated &&
+        "aiPersonality" in user &&
+        user.aiPersonality &&
+        user.aiPersonality.trim() !== "" && (
+          <div className="text-xs text-gray-600 mt-2">
+            <div className="font-semibold">AI Personality:</div>
+            <div className="pl-2 whitespace-pre-line">{normalizeLinefeeds(user.aiPersonality)}</div>
+          </div>
+        )}
 
       {!truncated && (
         <div className="text-xs text-gray-500 mt-2">

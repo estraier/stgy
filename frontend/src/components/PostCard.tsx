@@ -36,9 +36,10 @@ export default function PostCard({
 
   const hasContent =
     "content" in post && typeof post.content === "string" && post.content.length > 0;
-  const bodyHtml = !truncated && hasContent
-    ? makeArticleHtmlFromMarkdown(post.content)
-    : makeHtmlFromJsonSnippet(post.snippet);
+  const bodyHtml =
+    !truncated && hasContent
+      ? makeArticleHtmlFromMarkdown(post.content)
+      : makeHtmlFromJsonSnippet(post.snippet);
 
   function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;

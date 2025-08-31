@@ -1,4 +1,4 @@
-import type { Post, User } from "./models";
+import type { Post, PostDetail, User } from "./models";
 import { apiFetch, extractError } from "./client";
 
 function buildPostQuery(

@@ -180,7 +180,7 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
     } finally {
       setMenuOpen(false);
     }
-  }, [userId]);
+  }, []);
 
   const onMarkAllUnread = useCallback(async () => {
     try {
@@ -189,7 +189,7 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
     } finally {
       setMenuOpen(false);
     }
-  }, [userId]);
+  }, []);
 
   return (
     <div className="relative" ref={anchorRef}>

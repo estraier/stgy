@@ -220,7 +220,7 @@ export default function createPostsRouter(
         return res.status(400).json({ error: "content is too long" });
       }
       const input: CreatePostInput = {
-        id: typeof req.body.id === "string" ? normalizeOneLiner(req.body.id) ?? "" : undefined,
+        id: typeof req.body.id === "string" ? (normalizeOneLiner(req.body.id) ?? "") : undefined,
         content: content,
         ownedBy,
         replyTo: req.body.replyTo ?? null,

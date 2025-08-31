@@ -4,7 +4,7 @@ import { Config } from "@/config";
 import { useEffect, useState } from "react";
 import { getUser, listFollowers, listFollowees } from "@/api/users";
 import { listPosts, addLike, removeLike, createPost } from "@/api/posts";
-import type { User, Post } from "@/api/models";
+import type { User, UserDetail, Post } from "@/api/models";
 import { notFound, useParams, useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import UserCard from "@/components/UserCard";
@@ -29,7 +29,7 @@ export default function PageBody() {
   const isAdmin = status && status.state === "authenticated" && status.session.userIsAdmin;
   const updatedAt = status.state === "authenticated" ? status.session.userUpdatedAt : null;
 
-  const [user, setUser] = useState<User | null>(null);
+  const [user, setUser] = useState<UserDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);

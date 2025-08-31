@@ -143,7 +143,7 @@ export default function createUsersRouter(
     }
     try {
       const input: CreateUserInput = {
-        id: typeof req.body.id === "string" ? normalizeOneLiner(req.body.id) ?? "" : undefined,
+        id: typeof req.body.id === "string" ? (normalizeOneLiner(req.body.id) ?? "") : undefined,
         email: normalizeEmail(normalizeOneLiner(req.body.email) ?? ""),
         nickname: normalizeOneLiner(req.body.nickname) ?? "",
         password: normalizeText(req.body.password) ?? "",
