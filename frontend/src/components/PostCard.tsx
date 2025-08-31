@@ -5,7 +5,7 @@ import type { Post, PostDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
 import { Heart, MessageCircle } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
-import { makeArticleHtmlFromMarkdown, makeSnippetHtmlFromMarkdown } from "@/utils/article";
+import { makeArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
 
 type PostCardProps = {
   post: Post | PostDetail;
@@ -33,17 +33,19 @@ export default function PostCard({
   avatarVersion,
 }: PostCardProps) {
   const router = useRouter();
+
   const hasContent =
     "content" in post && typeof post.content === "string" && post.content.length > 0;
-  const raw = hasContent ? post.content : post.snippet;
-  const bodyHtml = truncated
-    ? makeSnippetHtmlFromMarkdown(raw)
-    : makeArticleHtmlFromMarkdown(raw);
+  const bodyHtml = !truncated && hasContent
+    ? makeArticleHtmlFromMarkdown(post.content)
+    : makeHtmlFromJsonSnippet(post.snippet);
+
   function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
     router.push(`/posts/${post.id}`);
   }
+
   return (
     <article
       className={`p-2 sm:pt-4 sm:pb-2 sm:pl-4 sm:pr-3 border rounded bg-white shadow-sm ${clickable ? "cursor-pointer" : ""} ${className}`}
@@ -108,9 +110,7 @@ export default function PostCard({
       <div
         className={`markdown-body post-content${truncated ? " excerpt" : ""}`}
         style={{ minHeight: 36, userSelect: "text" }}
-        dangerouslySetInnerHTML={{
-          __html: bodyHtml,
-        }}
+        dangerouslySetInnerHTML={{ __html: bodyHtml }}
       />
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
         {post.tags && post.tags.length > 0 && (

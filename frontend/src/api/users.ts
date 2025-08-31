@@ -51,7 +51,7 @@ export async function listFriendsByNicknamePrefix(
   return res.json();
 }
 
-export async function getUser(id: string, focusUserId?: string): Promise<User> {
+export async function getUser(id: string, focusUserId?: string): Promise<UserDetail> {
   const search = new URLSearchParams();
   if (focusUserId) search.append("focusUserId", focusUserId);
   const q = search.toString();

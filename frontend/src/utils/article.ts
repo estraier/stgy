@@ -9,6 +9,7 @@ import {
   mdCutOff,
   mdRenderHtml,
   mdRenderText,
+  deserializeMdNodes,
 } from "fakebook-markdown";
 
 export function makeArticleHtmlFromMarkdown(mdText: string) {
@@ -36,6 +37,12 @@ export function makeSnippetTextFromMarkdown(mdText: string) {
   const text = mdRenderText(nodes);
   const flat = text.replace(/\s+/g, " ").trim();
   return flat.length > maxLen ? flat.slice(0, maxLen) + "…" : flat;
+}
+
+export function makeHtmlFromJsonSnippet(snippet: string) {
+  let nodes = deserializeMdNodes(snippet);
+  nodes = rewriteMediaUrls(nodes, true);
+  return mdRenderHtml(nodes);
 }
 
 function rewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {

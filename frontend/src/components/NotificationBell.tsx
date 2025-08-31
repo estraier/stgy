@@ -157,7 +157,7 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
       );
 
       try {
-        await markNotification({ userId, slot: n.slot, term: n.term, isRead: true });
+        await markNotification({ slot: n.slot, term: n.term, isRead: true });
       } catch {
         setFeed((prev) =>
           prev.map((x) =>
@@ -175,7 +175,7 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
 
   const onMarkAllRead = useCallback(async () => {
     try {
-      await markAllNotifications({ userId, isRead: true });
+      await markAllNotifications({ isRead: true });
       setFeed((prev) => prev.map((x) => ({ ...x, isRead: true })));
     } finally {
       setMenuOpen(false);
@@ -184,7 +184,7 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
 
   const onMarkAllUnread = useCallback(async () => {
     try {
-      await markAllNotifications({ userId, isRead: false });
+      await markAllNotifications({ isRead: false });
       setFeed((prev) => prev.map((x) => ({ ...x, isRead: false })));
     } finally {
       setMenuOpen(false);

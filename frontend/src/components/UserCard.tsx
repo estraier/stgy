@@ -1,16 +1,16 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import type { User } from "@/api/models";
+import type { User, UserDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
 import { formatDateTime, normalizeLinefeeds } from "@/utils/format";
-import { makeArticleHtmlFromMarkdown, makeSnippetHtmlFromMarkdown } from "@/utils/article";
+import { makeArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
 
 type UserCardProps = {
-  user: User;
+  user: User | UserDetail;
   truncated?: boolean;
   className?: string;
-  onClick?: (user: User) => void;
+  onClick?: (user: User | UserDetail) => void;
   focusUserId?: string;
   clickable?: boolean;
 };
@@ -25,7 +25,7 @@ export default function UserCard({
 }: UserCardProps) {
   const [hovering, setHovering] = useState(false);
   const [submitting, setSubmitting] = useState(false);
-  const [user, setUser] = useState(initialUser);
+  const [user, setUser] = useState<User | UserDetail>(initialUser);
   const [avatarExpanded, setAvatarExpanded] = useState(false);
 
   useEffect(() => {
@@ -93,6 +93,10 @@ export default function UserCard({
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
     onClick?.(user);
   }
+
+  const hasIntro = "introduction" in user && typeof user.introduction === "string";
+  const introHtml = hasIntro ? makeArticleHtmlFromMarkdown(user.introduction as string) : "";
+  const snippetHtml = makeHtmlFromJsonSnippet(user.snippet || "[]");
 
   return (
     <article
@@ -213,23 +217,24 @@ export default function UserCard({
       <div
         className={`markdown-body user-introduction${truncated ? " excerpt" : ""}`}
         dangerouslySetInnerHTML={{
-          __html: truncated
-            ? makeSnippetHtmlFromMarkdown(user.introduction ?? "")
-            : makeArticleHtmlFromMarkdown(user.introduction ?? ""),
+          __html: truncated ? snippetHtml : introHtml || snippetHtml,
         }}
       />
+
       {!truncated && user.aiModel && user.aiModel.trim() !== "" && (
         <div className="text-xs text-gray-600 mt-2">
           <div className="font-semibold">AI Model:</div>
           <div className="pl-2">{user.aiModel}</div>
         </div>
       )}
-      {!truncated && user.aiPersonality && user.aiPersonality.trim() !== "" && (
+
+      {!truncated && "aiPersonality" in user && user.aiPersonality && user.aiPersonality.trim() !== "" && (
         <div className="text-xs text-gray-600 mt-2">
           <div className="font-semibold">AI Personality:</div>
           <div className="pl-2 whitespace-pre-line">{normalizeLinefeeds(user.aiPersonality)}</div>
         </div>
       )}
+
       {!truncated && (
         <div className="text-xs text-gray-500 mt-2">
           <div className="font-semibold">Created:</div>

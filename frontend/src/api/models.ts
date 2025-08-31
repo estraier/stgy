@@ -19,10 +19,9 @@ export type User = {
   email: string;
   nickname: string;
   isAdmin: boolean;
-  introduction: string;
+  snippet: string;
   avatar: string | null;
   aiModel: string | null;
-  aiPersonality: string | null;
   createdAt: string;
   updatedAt: string | null;
   countFollowers: number;
@@ -30,6 +29,11 @@ export type User = {
   countPosts: number;
   isFollowedByFocusUser?: boolean | null;
   isFollowingFocusUser?: boolean | null;
+};
+
+export type UserDetail = User & {
+  introduction: string;
+  aiPersonality: string | null;
 };
 
 export type Post = {
@@ -113,13 +117,11 @@ export type Notification = {
 };
 
 export type MarkNotificationInput = {
-  userId: string;
   slot: string;
   term: string;
   isRead: boolean;
 };
 
 export type MarkAllNotificationsInput = {
-  userId: string;
   isRead: boolean;
 };
