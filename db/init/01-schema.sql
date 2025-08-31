@@ -11,7 +11,7 @@ CREATE TABLE users (
   nickname VARCHAR(50) NOT NULL,
   password VARCHAR(50) NOT NULL,
   is_admin BOOLEAN NOT NULL,
-  snippet VARCHAR(65535) NOT NULL,
+  snippet VARCHAR(2048) NOT NULL,
   avatar VARCHAR(100),
   ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
   created_at TIMESTAMPTZ NOT NULL,
@@ -40,7 +40,7 @@ CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, 
 
 CREATE TABLE posts (
   id VARCHAR(50) PRIMARY KEY,
-  snippet VARCHAR(2000) NOT NULL,
+  snippet VARCHAR(2048) NOT NULL,
   owned_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reply_to VARCHAR(50) REFERENCES posts(id) ON DELETE SET NULL,
   allow_likes BOOLEAN NOT NULL,

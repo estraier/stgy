@@ -388,12 +388,14 @@ export function mdCutOff(
     maxHeight?: number;
     imgLen?: number;
     imgHeight?: number;
+    maxCaption?: number;
   },
 ): MdNode[] {
   const imgLenParam = params?.imgLen ?? 50;
   const dynamicImgCost = imgLenParam < 0;
   const fixedImgLen = Math.max(0, imgLenParam);
   const imgHeight = params?.imgHeight ?? 6;
+  const maxCaption = params?.maxCaption ?? 20;
   const state = {
     remain: typeof params?.maxLen === "number" ? params.maxLen! : Number.POSITIVE_INFINITY,
     height: 0,
@@ -496,6 +498,14 @@ export function mdCutOff(
     state.remain -= s.length;
     return { text: s, cut: false };
   }
+  function trimCaptionChildren(children: MdNode[]): MdNode[] {
+    if (dynamicImgCost) return children;
+    if (maxCaption < 0) return children;
+    const total = computeTextMetrics(children).length;
+    if (total <= maxCaption) return children;
+    const text = mdRenderText([{ type: "element", tag: "span", children }]).slice(0, maxCaption) + "…";
+    return [{ type: "text", text }];
+  }
   function walk(n: MdNode, freeMedia: boolean, freeText: boolean): MdNode | null {
     if (state.cut) return null;
     if (n.type === "text") {
@@ -568,7 +578,8 @@ export function mdCutOff(
         break;
       }
     }
-    return { ...el, children: outChildren };
+    const finalChildren = el.tag === "figcaption" ? trimCaptionChildren(outChildren) : outChildren;
+    return { ...el, children: finalChildren };
   }
   const out: MdNode[] = [];
   for (const n of nodes) {
