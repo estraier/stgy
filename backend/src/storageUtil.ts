@@ -10,7 +10,7 @@ function bufferToArrayBuffer(buf: Buffer): ArrayBuffer {
 }
 
 function parseStoragePath(p: string): StorageObjectId {
-  const m = /^([^:]+):\/(.+)$/.exec(p);
+  const m = /^([^:]+):(.+)$/.exec(p);
   if (!m) throw new Error(`invalid storage path: ${p}`);
   return { bucket: m[1], key: m[2] };
 }
@@ -19,14 +19,14 @@ async function main() {
   const args = process.argv.slice(2);
   if (args.length < 2) {
     console.error(`Usage:
-  ts-node src/storageUtil.ts head <bucket:/key>
-  ts-node src/storageUtil.ts list <bucket:/key> [offset limit]
-  ts-node src/storageUtil.ts save <bucket:/key> localPath
-  ts-node src/storageUtil.ts load <bucket:/key> localPath
-  ts-node src/storageUtil.ts copy <bucket:/srcKey> <bucket:/dstKey>
-  ts-node src/storageUtil.ts move <bucket:/srcKey> <bucket:/dstKey>
-  ts-node src/storageUtil.ts delete <bucket:/srcKey>
-  ts-node src/storageUtil.ts presigned-post <bucket:/key> localPath
+  ts-node src/storageUtil.ts head <bucket:key>
+  ts-node src/storageUtil.ts list <bucket:key> [offset limit]
+  ts-node src/storageUtil.ts save <bucket:key> localPath
+  ts-node src/storageUtil.ts load <bucket:key> localPath
+  ts-node src/storageUtil.ts copy <bucket:srcKey> <bucket:dstKey>
+  ts-node src/storageUtil.ts move <bucket:srcKey> <bucket:dstKey>
+  ts-node src/storageUtil.ts delete <bucket:srcKey>
+  ts-node src/storageUtil.ts presigned-post <bucket:key> localPath
 `);
     process.exit(1);
   }
