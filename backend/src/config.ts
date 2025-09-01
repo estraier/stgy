@@ -23,13 +23,13 @@ export class Config {
     "FAKEBOOK_STORAGE_S3_SECRET_ACCESS_KEY",
     "minio_password",
   );
-  static readonly STORAGE_S3_FORCE_PATH_STYLE = envStr(
+  static readonly STORAGE_S3_FORCE_PATH_STYLE = envBool(
     "FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLE",
-    "true",
+    true,
   );
-  static readonly STORAGE_S3_PUBLIC_BASE_URL = envStr(
-    "FAKEBOOK_STORAGE_S3_PUBLIC_BASE_URL",
-    "http://localhost:9000",
+  static readonly STORAGE_S3_PUBLIC_URL_PREFIX = envStr(
+    "FAKEBOOK_STORAGE_S3_PUBLIC_URL_PREFIX",
+    "http://localhost:9000/{bucket}/",
   );
   static readonly STORAGE_S3_BUCKET_PREFIX = envStr(
     "FAKEBOOK_STORAGE_S3_BUCKET_PREFIX",

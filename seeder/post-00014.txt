@@ -8,6 +8,8 @@ content:<<____EOF____
 
 本記事では、Fakebookにおいて画像などのメディアデータをどのように管理するかについて説明する。Amazon S3または互換システムであるMinIOのAPIを使って単純かつ堅牢なデータ管理をするにはどうするかについて述べる。
 
+![画像一覧画面](/data/help-images-list.png){float=right}
+
 ## 前提条件
 
 画像などのメディアデータを扱う場合、データベースにバイナリを入れたり、ファイルシステムにファイルを置いたりする方法だと、運用が面倒くさい。可用性の確保や容量制限やバックアップの作成に独自の手順を必要とするからだ。それよりは、いわゆるクラウドストレージを使ったほうが楽だ。
@@ -26,7 +28,7 @@ S3は、バケットという単位の中に任意の名前付きオブジェク
 `{userId}` はユーザIDである。`{revYYYYMM}` は、作成日時のYYYYMM値を999999から引いた値である。`{time8}` は月内のタイムスタンプを最大値から引いた8桁の16進数である。`{hash8}` は衝突回避のための8桁の16進数である。以下に例を示す。`{ext}` は画像形式に対応する拡張子である。
 
 - 0001000000000002/masters/797491/8244600348025c20d1da7.jpg
-- 0001000000000002/thumb/797491/8244600348025c20d1da7_image.webp
+- 0001000000000002/thumbs/797491/8244600348025c20d1da7_image.webp
 
 S3では、キーは文字列の辞書順で並べられる。前方一致検索ができるので、キーにユーザIDを接頭させると、ユーザごとのオブジェクトを検索できるようになる。また、その後に固定長の日付をつければ、ユーザ毎に日付の順番にオブジェクトが並べられることになる。逆順に辿るAPIは無いので、新しい順で見たい場合には、日付の最大値から現在の日付を引いた値を使えば良いことになる。また、YYYYMMを単位とすることで、月ごとにオブジェクトが分類できるので、月のクォータ管理ができる。
 
@@ -58,15 +60,15 @@ SNSでの画像置き場としての利用では、S3単体で問題ないと判
 
 - ユーザは、ローカルファイルシステムから、アップロードしたいファイルを選ぶ。
 - クライアントは、アップロードするファイルの情報をバックエンドに送る。
-- バックエンドは、S3直PUTの署名付きPOST情報のpresignをS3から取得し、クライアントに返す。
+- バックエンドは、S3直PUTの署名付きPOST情報のpresignをS3から取得し、クライアントに返す。前処理として以下を行う：
   - ファイル単体のサイズが制限値（10MB）以下か確認する。
-  - 新規のファイルサイズと当月全ての登録ファイルの合計が月間クォータの制限内か確認する。
+  - 新規のファイルサイズと当月全ての登録ファイルの合計が月間クォータ（100MB）の制限内か確認する。
   - 拡張子に対応するMIMEタイプがJPEG、PNG、WEBP、HEICのどれかであるか確認する。
 - クライアントは、署名情報に基づき、S3のステージング領域へ直接アップロードする。
 - クライアントは、バックエンドに操作完了を報告する。
-- バックエンドは、ステージング領域のデータを本番領域に移動させる。
+- バックエンドは、ステージング領域のデータを本番領域に移動させる。前処理として以下を行う：
   - パスがステージング領域のものか確認する。
-  - 単体のデータサイズと月間クォータが制限値以内か確認する。
+  - 単体のデータサイズと月間クォータが制限値以内か再確認する。
   - ファイルの先頭データを見て、ファイル形式を判定する。
   - エラーがあれば、ステージングのデータを削除して終了する。
 - バックエンドは、登録画像に対応するサムネイルを作るジョブキューをRedisに登録する。
@@ -74,87 +76,68 @@ SNSでの画像置き場としての利用では、S3単体で問題ないと判
 
 ## その他の処理
 
-画像を削除する際には、マスター画像を削除するとともに、サムネイルも削除する。
+画像を削除する際には、マスター画像を削除するとともに、サムネイルも削除する。また、ユーザを削除する際には、そのユーザが持っている画像を全て削除する。
 
-画像を一覧する際には、
+画像を一覧する際には、"{userId}/masters/" の前方一致でオブジェクトのリストを取得する。S3におけるキーのリスト取得ののAPI（ListObjectsV2Command）では、取得数（MaxKeys）と継続トークン（ContinuationToken）をパラメータとして渡すことになっている。2ページを表示する際には、1ページ目を表示する際に返された継続トークンを渡すというインターフェイスになっている。なので、2ページ目以降をいきなり表示する場合、前のページまでのリスト取得を暗黙的に繰り返す必要がある。
 
+通常の運用では、オブジェクトの作成はpresigned-POSTを介してクライアントがS3に対して直接通信して行い、オブジェクトのデータの取得は、公開URLを介してクライアントがS3に対して直接通信して行われる。しかし、管理用に、バックエンドがS3に対して直接データの保存やデータ取得を行うAPIも用意してある。
 
-Redis キュー media-thumb-queue に { type: "image", bucket, originalKey } を push。
+## ストレージサービスのラッパー
 
-一覧時は masters/{revMM}/ を前方一致で見る。revMM と r8 の逆順化により 辞書順＝新しい順 を維持できる。
+Fakebookは、S3やその互換のMinIOを利用することを前提としている。本番でAWS上で運用するならそれでよいが、GCP上だと困る。そこで、少しの変更でGCS（Google Cloud Storage）も利用できるように、ストレージ層を抽象化している。
 
-3) サムネイル
+```typescript
+// src/models/storage.ts -- other structures are also defined
+export type PresignedPostRequest = {
+  bucket: string;
+  key: string;
+  contentTypeWhitelist: string;
+  maxBytes?: number;
+  expiresInSec?: number;
+};
 
-サムネは thumbs/{revMM}/{r8}{hash8}_{WxH}.webp のように サイズ別に複数生成（_icon 固定名ではない）。
+export type PresignedPostResult = {
+  url: string;
+  fields: Record<string, string>;
+  objectKey: string;
+  maxBytes: number;
+  expiresInSec: number;
+};
 
-画像削除時は、マスターの {revMM} とファイル名（拡張子除去）から _{…} で始まる全サムネを一括削除。
+export type StorageObjectId = {
+  bucket: string;
+  key: string;
+};
 
-4) 一覧・取得・削除（投稿画像）
+// src/services/storage.ts
+export interface StorageService {
+  createPresignedPost(req: PresignedPostRequest): Promise<PresignedPostResult>;
 
-一覧: listImages(userId, offset, limit)
-/{userId}/masters/ を前方一致でページング。
+  headObject(objId: StorageObjectId): Promise<StorageObjectMetadata>;
 
-取得: getImageBytes(userId, keyWithoutUserPrefix)
-/{userId}/masters/… または /{userId}/thumbs/… のみ許可。staging は拒否。
+  publicUrl(objId: StorageObjectId): string;
 
-削除: deleteImage(userId, keyWithoutUserPrefix)
-マスター削除後、対応する thumbs の 該当サイズを全削除。
+  listObjects(objId: StorageObjectId, range?: StorageObjectListRange):
+    Promise<StorageObjectMetadata[]>;
 
-5) プロファイル画像（アバター等）
+  loadObject(objId: StorageObjectId, range?: StorageObjectDataRange):
+    Promise<Uint8Array>;
 
-presign: presignProfileUpload(userId, slot, filename, sizeBytes, sizeLimitBytes?)
-profiles-staging/{userId}/{slot}/{UUID}.{ext} に対する署名付きPOST。
-月間上限なし（単体サイズ制限のみ）。
+  saveObject(objId: StorageObjectId, content: Uint8Array, contentType?: string):
+    Promise<void>;
 
-finalize: finalizeProfile(userId, slot, stagingKey, sizeLimitBytes?)
-スニフ → /{userId}/masters/{slot}.{ext} に move →
-Redis に { type: "icon", bucket, originalKey } を push。
-サムネは /{userId}/thumbs/{slot}_{WxH}.webp という サイズ別複数。
+  copyObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void>;
 
-取得/削除
-取得は masters/{slot}.* をリストして現物を読む。
-削除はマスターを消し、thumbs/{slot}_* をまとめて削除。
+  moveObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void>;
 
-6) 月間クォータ
+  deleteObject(objId: StorageObjectId): Promise<void>;
+}
 
-calculateMonthlyQuota(userId, yyyymm?)
+// src/services/storageFactory.ts
+export function makeStorageService(driver: string): StorageService { ... }
+```
 
-対象月の revMM を計算し、masters/{revMM}/ と thumbs/{revMM}/ の合計バイトを算出。
-
-返り値に単体上限/月間上限も含め、UI から現状と残量を表示できる。
-
-7) セキュリティと失敗時の挙動
-
-ユーザ配下パスの強制（isKeyUnder）で 越境アクセスを遮断。
-
-staging 直読み不可。
-
-サイズ/フォーマットに失敗したら staging を必ず削除 して終了（中間ゴミを残さない）。
-
-拡張子は スニフ優先で偽装に強い。
-
-8) クライアント実装の注意
-
-署名の有効期限は5分。すぐにアップロードする。
-
-finalize 後すぐは、サムネ生成が未完の場合あり。
-必要に応じて マスターを表示するか、軽いリトライでサムネの出現を待つ。
-（例：アバター更新でリトライしていた waitForAvatarReady）
-
-この仕様で、S3のみで完全管理（DB不要）、新しい順表示と月次クォータ、安全な検証・清掃まで一貫して担保できます。
-
-
-
-
-
-
-
-
-
-
-
-
-
+StorageServiceインターフェイスを実装するクラスのオブジェクトをmakeStorageServiceが返すようになっていて、現状ではS3のAPIを使う実装であるStorageServiceS3のみをサポートしている。GCSのAPIを使う実装であるStorageServiceGcpとかいうのを実装して返すようにすれば、他を一切変更しなくても対応できるはずだ。
 
 ## 本番環境での設定
 
@@ -162,7 +145,7 @@ finalize 後すぐは、サムネ生成が未完の場合あり。
 
 バックエンドに渡す環境変数は以下のものである。
 
-- FAKEBOOK_STORAGE_DRIVER : 現状、"s3" 決め打ち
+- FAKEBOOK_STORAGE_DRIVER : 現状、"s3" 決め打ち。
 - FAKEBOOK_STORAGE_S3_ENDPOINT : S3のAPIを叩くエンドポイント
 - FAKEBOOK_STORAGE_S3_REGION : リージョンの識別子
 - FAKEBOOK_STORAGE_S3_ACCESS_KEY_ID : S3を使うAWSのアカウントID
@@ -174,19 +157,19 @@ finalize 後すぐは、サムネ生成が未完の場合あり。
 本番環境では、以下の設定が無難である。
 
 - FAKEBOOK_STORAGE_DRIVER=S3
-- FAKEBOOK_STORAGE_S3_ENDPOINT= (空文字列にすると自動選択される）
-- FAKEBOOK_STORAGE_S3_REGION=
-- FAKEBOOK_STORAGE_S3_ACCESS_KEY_ID :
-- FAKEBOOK_STORAGE_S3_SECRET_ACCESS_KEY :
-- FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLE :
-- FAKEBOOK_STORAGE_S3_BUCKET_PREFIX :
-- FAKEBOOK_STORAGE_S3_PUBLIC_BASE_URL :
+- FAKEBOOK_STORAGE_S3_ENDPOINT=
+- FAKEBOOK_STORAGE_S3_REGION=ap-northeast-1
+- FAKEBOOK_STORAGE_S3_ACCESS_KEY_ID=...(aws_account_id)...
+- FAKEBOOK_STORAGE_S3_SECRET_ACCESS_KEY=...(aws_secret_key)...
+- FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLE=false
+- FAKEBOOK_STORAGE_S3_BUCKET_PREFIX=fakebook
+- FAKEBOOK_STORAGE_S3_PUBLIC_BASE_URL=https://s3.ap-northeast-1.amazonaws.com
+
+MinIOではなくS3を使う場合、FAKEBOOK_STORAGE_S3_ENDPOINTは空文字列にすると、自動選択される。FAKEBOOK_STORAGE_S3_REGIONは、バックエンドが動いているリージョンと同一にしておく。FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLEは、
 
 
 
-
-
-
+AWSの権限の設定はこれ？
 
 
 

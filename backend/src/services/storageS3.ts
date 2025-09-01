@@ -37,7 +37,7 @@ export class StorageS3Service implements StorageService {
         accessKeyId: Config.STORAGE_S3_ACCESS_KEY_ID,
         secretAccessKey: Config.STORAGE_S3_SECRET_ACCESS_KEY,
       },
-      forcePathStyle: Config.STORAGE_S3_FORCE_PATH_STYLE === "true",
+      forcePathStyle: Config.STORAGE_S3_FORCE_PATH_STYLE,
     });
   }
 
@@ -90,7 +90,8 @@ export class StorageS3Service implements StorageService {
   }
 
   publicUrl(objId: StorageObjectId): string {
-    return `${Config.STORAGE_S3_PUBLIC_BASE_URL}/${objId.bucket}/${objId.key}`;
+    const keyEsc = objId.key.split("/").map(encodeURIComponent).join("/");
+    return Config.STORAGE_S3_PUBLIC_URL_PREFIX.replace(/\{bucket\}/g, objId.bucket) + keyEsc;
   }
 
   async listObjects(

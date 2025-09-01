@@ -2,6 +2,7 @@ import { Config } from "@/config";
 import {
   MdNode,
   parseMarkdown,
+  MdMediaRewriteRule,
   MdMediaRewriteOptions,
   mdRewriteMediaUrls,
   mdGroupImageGrid,
@@ -51,28 +52,25 @@ export function makeHtmlFromJsonSnippet(snippet: string) {
 }
 
 function rewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {
-  const base = `${Config.STORAGE_S3_PUBLIC_BASE_URL}/${Config.MEDIA_BUCKET_IMAGES}`;
+  const imagesPrefix = Config.STORAGE_S3_PUBLIC_URL_PREFIX.replace(
+    /\{bucket\}/g,
+    Config.MEDIA_BUCKET_IMAGES,
+  );
+  const rewriteRules: MdMediaRewriteRule[] = [];
+  if (useThumbnail) {
+    rewriteRules.push({
+      pattern: /^\/images\/(.*?)\/masters\/((?:[^\/?#]+\/)*)([^\/?#]+?)(?:\.[^\/?#]+)?(?:[?#].*)?$/,
+      replacement: "/images/$1/thumbs/$2$3_image.webp",
+    });
+  }
+  rewriteRules.push({
+    pattern: /^\/images\//,
+    replacement: imagesPrefix,
+  });
   const opts: MdMediaRewriteOptions = {
     allowedPatterns: [/^\/(data|images|videos)\//],
     alternativeImage: "/data/no-image.svg",
-    rewriteRules: useThumbnail
-      ? [
-          {
-            pattern:
-              /^\/images\/(.*?)\/masters\/((?:[^\/?#]+\/)*)([^\/?#]+?)(?:\.[^\/?#]+)?(?:[?#].*)?$/,
-            replacement: `${base}/$1/thumbs/$2$3_image.webp`,
-          },
-          {
-            pattern: /^\/images\//,
-            replacement: `${base}/`,
-          },
-        ]
-      : [
-          {
-            pattern: /^\/images\//,
-            replacement: `${base}/`,
-          },
-        ],
+    rewriteRules,
   };
   return mdRewriteMediaUrls(nodes, opts);
 }

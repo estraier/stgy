@@ -26,7 +26,6 @@ export default function AvatarImg({
   avatarPath,
   className = "",
 }: Props) {
-  const base = Config.STORAGE_S3_PUBLIC_BASE_URL;
   const [error, setError] = useState(false);
 
   const suffix =
@@ -34,13 +33,27 @@ export default function AvatarImg({
 
   const src = useMemo(() => {
     if (!hasAvatar) return "";
+
     if (useThumb) {
-      return `${base}/${Config.MEDIA_BUCKET_PROFILES}/${encodeURIComponent(
-        userId,
-      )}/thumbs/avatar_icon.webp${suffix}`;
+      const prefix = Config.STORAGE_S3_PUBLIC_URL_PREFIX.replace(
+        "{bucket}",
+        Config.MEDIA_BUCKET_PROFILES,
+      );
+      return `${prefix}${encodeURIComponent(userId)}/thumbs/avatar_icon.webp${suffix}`;
     }
-    return avatarPath ? `${base}/${avatarPath}${suffix}` : "";
-  }, [base, hasAvatar, useThumb, userId, avatarPath, suffix]);
+
+    if (avatarPath) {
+      const p = avatarPath.replace(/^\/+/, "");
+      const i = p.indexOf("/");
+      if (i <= 0) return "";
+      const bucket = p.slice(0, i);
+      const key = p.slice(i + 1);
+      const prefix = Config.STORAGE_S3_PUBLIC_URL_PREFIX.replace("{bucket}", bucket);
+      return `${prefix}${key}${suffix}`;
+    }
+
+    return "";
+  }, [hasAvatar, useThumb, userId, avatarPath, suffix]);
 
   if (!hasAvatar || error || !src) {
     return (
