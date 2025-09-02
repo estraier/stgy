@@ -16,7 +16,7 @@ import {
 export function makeArticleHtmlFromMarkdown(mdText: string) {
   let nodes = parseMarkdown(mdText);
   nodes = rewriteMediaUrls(nodes, false);
-  nodes = mdGroupImageGrid(nodes);
+  nodes = mdGroupImageGrid(nodes, {maxElements: 4});
   return mdRenderHtml(nodes);
 }
 
@@ -71,6 +71,7 @@ function rewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {
     allowedPatterns: [/^\/(data|images|videos)\//],
     alternativeImage: "/data/no-image.svg",
     rewriteRules,
+    maxObjects: Config.MAX_MEDIA_OBJECTS_PER_POST,
   };
   return mdRewriteMediaUrls(nodes, opts);
 }

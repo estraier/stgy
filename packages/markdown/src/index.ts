@@ -246,10 +246,17 @@ export type MdMediaRewriteOptions = {
   allowedPatterns: RegExp[];
   alternativeImage: string;
   rewriteRules: MdMediaRewriteRule[];
+  maxObjects?: number;
 };
 
 export function mdRewriteMediaUrls(nodes: MdNode[], opts: MdMediaRewriteOptions): MdNode[] {
-  const isAllowed = (src: string) => opts.allowedPatterns.some((re) => re.test(src));
+  let mediaCount = 0;
+  const allowedByPattern = (src: string) => opts.allowedPatterns.some((re) => re.test(src));
+  const isAllowedNow = (src: string) => {
+    mediaCount += 1;
+    if (opts.maxObjects !== undefined && mediaCount > opts.maxObjects) return false;
+    return allowedByPattern(src);
+  };
   const applyRules = (src: string) =>
     opts.rewriteRules.reduce((u, r) => u.replace(r.pattern, r.replacement), src);
   const rewriteOne = (n: MdNode): MdNode => {
@@ -257,17 +264,19 @@ export function mdRewriteMediaUrls(nodes: MdNode[], opts: MdMediaRewriteOptions)
     if (n.tag === "img" || n.tag === "video") {
       const a = n.attrs || {};
       const src = typeof a.src === "string" ? a.src : "";
-      if (!isAllowed(src)) {
+      if (!isAllowedNow(src)) {
         return { type: "element", tag: "img", attrs: { src: opts.alternativeImage }, children: [] };
       }
       return { ...n, attrs: { ...a, src: applyRules(src) } };
     }
     return { ...n, children: (n.children || []).map(rewriteOne) };
   };
+
   return nodes.map(rewriteOne);
 }
 
-export function mdGroupImageGrid(nodes: MdNode[]): MdNode[] {
+export function mdGroupImageGrid(nodes: MdNode[], opts?: { maxElements?: number }): MdNode[] {
+  const maxElements = Math.max(1, opts?.maxElements ?? 100);
   function isFigureImageBlock(n: MdNode): n is MdElementNode & { tag: "figure" } {
     return n.type === "element" && n.tag === "figure" && n.attrs?.class === "image-block";
   }
@@ -295,13 +304,19 @@ export function mdGroupImageGrid(nodes: MdNode[]): MdNode[] {
           j++;
         }
         if (group.length >= 2) {
-          const cols = group.length;
-          out.push({
-            type: "element",
-            tag: "div",
-            attrs: { class: "image-grid", "data-cols": cols },
-            children: group,
-          });
+          for (let k = 0; k < group.length; k += maxElements) {
+            const chunk = group.slice(k, k + maxElements);
+            if (chunk.length >= 2) {
+              out.push({
+                type: "element",
+                tag: "div",
+                attrs: { class: "image-grid", "data-cols": chunk.length },
+                children: chunk,
+              });
+            } else {
+              out.push(chunk[0]!);
+            }
+          }
           i = j;
           continue;
         }
@@ -720,7 +735,8 @@ export function mdRenderHtml(nodes: MdNode[]): string {
     const a = n.attrs || {};
     const src = a.src ? String(a.src) : "";
     if (n.tag === "img") {
-      return `<img src="${escapeHTML(src)}" alt="">`;
+      const base: MdAttrs = { src, alt: "", loading: "lazy", decoding: "async" };
+      return `<img${attrsToString(base)}>`;
     } else {
       const base: MdAttrs = { src, "aria-label": "" as const, controls: true };
       return `<video${attrsToString(base)}></video>`;
@@ -728,12 +744,17 @@ export function mdRenderHtml(nodes: MdNode[]): string {
   }
   function attrsToString(attrs?: MdAttrs): string {
     if (!attrs) return "";
+    const priority: Record<string, number> = { src: 0, alt: 1 };
+    const keys = Object.keys(attrs).sort(
+      (a, b) => (priority[a] ?? 10) - (priority[b] ?? 10) || a.localeCompare(b),
+    );
+    const a: Record<string, string | number | boolean | null | undefined> = attrs;
     let out = "";
-    for (const [k, v] of Object.entries(attrs)) {
+    for (const k of keys) {
+      const v = a[k];
       if (v === false || v === undefined || v === null) continue;
-      const name = k;
-      if (v === true) out += ` ${name}`;
-      else out += ` ${name}="${escapeHTML(String(v))}"`;
+      if (v === true) out += ` ${k}`;
+      else out += ` ${k}="${escapeHTML(String(v))}"`;
     }
     return out;
   }

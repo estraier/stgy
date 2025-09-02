@@ -40,6 +40,7 @@ export class Config {
   static readonly TAGS_NUMBER_LIMIT = envNum("NEXT_PUBLIC_TAGS_NUMBER_LIMIT", 5);
   static readonly SNIPPET_MAX_LENGTH = envNum("NEXT_PUBLIC_SNIPPET_MAX_LENGTH", 200);
   static readonly SNIPPET_MAX_HEIGHT = envNum("NEXT_PUBLIC_SNIPPET_MAX_HEIGHT", 10);
+  static readonly MAX_MEDIA_OBJECTS_PER_POST = envNum("NEXT_PUBLIC_MAX_MEDIA_OBJECTS_PER_POST", 30);
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {

@@ -554,7 +554,7 @@ describe("mdRenderHtml basics", () => {
   it("image", () => {
     const mdText = "![tako](/data/tako.jpg)";
     expect(makeHtml(mdText)).toBe(
-      '<figure class="image-block"><img src="/data/tako.jpg" alt=""><figcaption>tako</figcaption></figure>',
+      '<figure class="image-block"><img src="/data/tako.jpg" alt="" decoding="async" loading="lazy"><figcaption>tako</figcaption></figure>',
     );
   });
 
@@ -619,7 +619,7 @@ abc
 ### H3
 `;
     const expected = `<h1>H1</h1><p>abc<br>def</p><p>xyz</p><pre data-pre-mode="xml">&lt;a&gt;tako&lt;/a&gt;
-ika</pre><h2>H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul><li>e</li></ul></li><li>f</li></ul></li><li>g</li><li>h<ul><li>j<ul><li>k</li></ul></li></ul></li></ul><p>abc</p><table><tr><td><em>a</em></td><td>b</td></tr><tr><td>c</td><td><strong>d</strong></td></tr></table><figure class="image-block" data-thumbnail><img src="/data/def/ghi" alt=""><figcaption>abc</figcaption></figure><h3>H3</h3>`;
+ika</pre><h2>H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul><li>e</li></ul></li><li>f</li></ul></li><li>g</li><li>h<ul><li>j<ul><li>k</li></ul></li></ul></li></ul><p>abc</p><table><tr><td><em>a</em></td><td>b</td></tr><tr><td>c</td><td><strong>d</strong></td></tr></table><figure class="image-block" data-thumbnail><img src="/data/def/ghi" alt="" decoding="async" loading="lazy"><figcaption>abc</figcaption></figure><h3>H3</h3>`;
     expect(makeHtml(mdText)).toBe(expected);
   });
 });
