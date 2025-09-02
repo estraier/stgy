@@ -13,6 +13,7 @@ import {
   fetchProfileBinary,
 } from "@/api/media";
 import Link from "next/link";
+import { Config } from "@/config";
 
 type UserFormProps = {
   user: UserDetail;
@@ -94,6 +95,15 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
       setFormError("Introduction is required.");
       return;
     }
+    if (!isAdmin && introduction.length > Config.INTRODUCTION_LENGTH_LIMIT) {
+      setFormError(`Introduction is too long (max ${Config.INTRODUCTION_LENGTH_LIMIT} chars).`);
+      return;
+    }
+    if (aiModel && !isAdmin && aiPersonality.length > Config.AI_PERSONALITY_LENGTH_LIMIT) {
+      setFormError(`AI Personality is too long (max ${Config.AI_PERSONALITY_LENGTH_LIMIT} chars).`);
+      return;
+    }
+
     setSubmitting(true);
     try {
       const input: Record<string, unknown> = {
@@ -299,7 +309,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
                      disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed break-all"
           value={introduction}
           onChange={(e) => setIntroduction(e.target.value)}
-          maxLength={2000}
+          maxLength={isAdmin ? undefined : Config.INTRODUCTION_LENGTH_LIMIT}
           required
           onFocus={handleClearFormError}
         />
@@ -345,7 +355,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
             required
             onFocus={handleClearFormError}
             placeholder="Describe AI personality"
-            maxLength={2000}
+            maxLength={isAdmin ? undefined : Config.AI_PERSONALITY_LENGTH_LIMIT}
           />
         </div>
       )}
