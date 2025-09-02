@@ -244,10 +244,10 @@ export default function PageBody() {
       if (!content.trim()) {
         throw new Error("Content is required.");
       }
-      if (content.length > Config.CONTENT_LENGTH_LIMIT) {
+      if (!isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
         throw new Error(`Content is too long (max ${Config.CONTENT_LENGTH_LIMIT} chars).`);
       }
-      if (tags.length > Config.TAGS_NUMBER_LIMIT) {
+      if (!isAdmin && tags.length > Config.TAGS_NUMBER_LIMIT) {
         throw new Error(`You can specify up to ${Config.TAGS_NUMBER_LIMIT} tags.`);
       }
       for (const tag of tags) {
