@@ -229,9 +229,15 @@ export default function PageBody() {
     setEditError(null);
     try {
       const { content, tags, attrs } = parseBodyAndTags(editBody);
-      if (!content.trim()) throw new Error("Content is required.");
-      if (content.length > 5000) throw new Error("Content is too long (max 5000 chars).");
-      if (tags.length > 5) throw new Error("You can specify up to 5 tags.");
+      if (!content.trim()) {
+        throw new Error("Content is required.");
+      }
+      if (content.length > Config.CONTENT_LENGTH_LIMIT) {
+        throw new Error(`Content is too long (max ${Config.CONTENT_LENGTH_LIMIT} chars).`);
+      }
+      if (tags.length > Config.TAGS_NUMBER_LIMIT) {
+        throw new Error(`You can specify up to ${Config.TAGS_NUMBER_LIMIT} tags.`);
+      }
       for (const tag of tags) {
         if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
       }
@@ -284,9 +290,15 @@ export default function PageBody() {
     setReplyError(null);
     try {
       const { content, tags, attrs } = parseBodyAndTags(replyBody);
-      if (!content.trim()) throw new Error("Content is required.");
-      if (content.length > 5000) throw new Error("Content is too long (max 5000 chars).");
-      if (tags.length > 5) throw new Error("You can specify up to 5 tags.");
+      if (!content.trim()) {
+        throw new Error("Content is required.");
+      }
+      if (content.length > Config.CONTENT_LENGTH_LIMIT) {
+        throw new Error(`Content is too long (max ${Config.CONTENT_LENGTH_LIMIT} chars).`);
+      }
+      if (tags.length > Config.TAGS_NUMBER_LIMIT) {
+        throw new Error(`You can specify up to ${Config.TAGS_NUMBER_LIMIT} tags.`);
+      }
       for (const tag of tags) {
         if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
       }

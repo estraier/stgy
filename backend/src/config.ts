@@ -68,6 +68,7 @@ export class Config {
     2500,
   );
   static readonly CONTENT_LENGTH_LIMIT = envNum("FAKEBOOK_CONTENT_LENGTH_LIMIT", 10000);
+  static readonly TAGS_NUMBER_LIMIT = envNum("FAKEBOOK_TAGS_NUMBER_LIMIT", 5);
   static readonly SNIPPET_MAX_LENGTH = envNum("FAKEBOOK_SNIPPET_MAX_LENGTH", 200);
   static readonly SNIPPET_MAX_HEIGHT = envNum("FAKEBOOK_SNIPPET_MAX_HEIGHT", 10);
   static readonly HOURLY_SIGNUP_LIMIT = envNum("FAKEBOOK_HOURLY_SIGNUP_LIMIT", 100);

@@ -215,6 +215,9 @@ export default function createPostsRouter(
       const tags = req.body.tags
         .filter((tag: unknown) => typeof tag === "string")
         .map((tag: string) => normalizeOneLiner(tag));
+      if (tags.length > Config.TAGS_NUMBER_LIMIT) {
+        return res.status(400).json({ error: "tags are too many" });
+      }
       const content = normalizeMultiLines(req.body.content) ?? "";
       if (!user.isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
         return res.status(400).json({ error: "content is too long" });
@@ -250,6 +253,13 @@ export default function createPostsRouter(
       return res.status(403).json({ error: "forbidden" });
     }
     try {
+      let content;
+      if (req.body.content) {
+        content = normalizeMultiLines(req.body.content) ?? "";
+        if (!user.isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
+          return res.status(400).json({ error: "content is too long" });
+        }
+      }
       let tags;
       if ("tags" in req.body) {
         if (!Array.isArray(req.body.tags)) {
@@ -258,12 +268,9 @@ export default function createPostsRouter(
         tags = req.body.tags
           .filter((tag: unknown) => typeof tag === "string")
           .map((tag: string) => normalizeOneLiner(tag));
-      }
-      let content;
-      if (req.body.content) {
-        content = normalizeMultiLines(req.body.content) ?? "";
-        if (!user.isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
-          return res.status(400).json({ error: "content is too long" });
+
+        if (tags.length > Config.TAGS_NUMBER_LIMIT) {
+          return res.status(400).json({ error: "tags are too many" });
         }
       }
       const input: UpdatePostInput = {
