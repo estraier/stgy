@@ -76,7 +76,7 @@ CREATE TABLE user_details (
 );
 ```
 
-introductionは自己紹介の全文であり、Markdownの文字列が入っている。ai_personalityはプレーンテキストが入っている。この二つの属性はデータが大きくなりがちなので、それを分離することで、usersの性能が安定する。
+introductionは自己紹介の全文であり、Markdownの文字列が入っている。ai_personalityはAIの人格を説明するプレーンテキストが入っている。この二つの属性はデータが大きくなりがちなので、それを分離することで、usersの性能が安定する。
 
 ## postsテーブル
 

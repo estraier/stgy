@@ -146,13 +146,18 @@ StorageServiceインターフェイスを実装するクラスのオブジェク
 バックエンドに渡す環境変数は以下のものである。
 
 - FAKEBOOK_STORAGE_DRIVER : 現状、"s3" 決め打ち。
-- FAKEBOOK_STORAGE_S3_ENDPOINT : S3のAPIを叩くエンドポイント
-- FAKEBOOK_STORAGE_S3_REGION : リージョンの識別子
-- FAKEBOOK_STORAGE_S3_ACCESS_KEY_ID : S3を使うAWSのアカウントID
-- FAKEBOOK_STORAGE_S3_SECRET_ACCESS_KEY : S3のアクセスパスワード（秘匿情報）
+- FAKEBOOK_STORAGE_S3_ENDPOINT : S3のAPIを叩くエンドポイント。
+- FAKEBOOK_STORAGE_S3_REGION : リージョンの識別子。
+- FAKEBOOK_STORAGE_S3_ACCESS_KEY_ID : S3を使うAWSのアカウントID。
+- FAKEBOOK_STORAGE_S3_SECRET_ACCESS_KEY : S3のアクセスパスワード（秘匿情報）。
 - FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLE : 公開URLの "ENDPOINT/BUCKET/KEY" と "BUCKET.ENDPOINT/KEY" の切り替え
-- FAKEBOOK_STORAGE_S3_BUCKET_PREFIX : バケット名の接頭辞
-- FAKEBOOK_STORAGE_S3_PUBLIC_BASE_URL : 公開URLの接頭辞
+- FAKEBOOK_STORAGE_S3_BUCKET_PREFIX : バケット名の接頭辞。
+- FAKEBOOK_STORAGE_S3_PUBLIC_URL_PREFIX : 公開URLの接頭辞。"{bucket}"はバケット名に置換。
+
+フロントエンドにわたす環境変数は以下のものである。
+
+- NEXT_PUBLIC_STORAGE_S3_BUCKET_PREFIX : バケット名の接頭辞
+- NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX : 公開URLの接頭辞。"{bucket}"はバケット名に置換。
 
 本番環境では、以下の設定が無難である。
 
@@ -163,13 +168,12 @@ StorageServiceインターフェイスを実装するクラスのオブジェク
 - FAKEBOOK_STORAGE_S3_SECRET_ACCESS_KEY=...(aws_secret_key)...
 - FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLE=false
 - FAKEBOOK_STORAGE_S3_BUCKET_PREFIX=fakebook
-- FAKEBOOK_STORAGE_S3_PUBLIC_BASE_URL=https://s3.ap-northeast-1.amazonaws.com
+- FAKEBOOK_STORAGE_S3_PUBLIC_URL_PREFIX=https://{bucket}.s3.ap-northeast-1.amazonaws.com/
 
-MinIOではなくS3を使う場合、FAKEBOOK_STORAGE_S3_ENDPOINTは空文字列にすると、自動選択される。FAKEBOOK_STORAGE_S3_REGIONは、バックエンドが動いているリージョンと同一にしておく。FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLEは、
+- NEXT_PUBLIC_STORAGE_S3_BUCKET_PREFIX=fakebook
+- NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX=https://{bucket}.s3.ap-northeast-1.amazonaws.com/
 
-
-
-AWSの権限の設定はこれ？
+MinIOではなくS3を使う場合、FAKEBOOK_STORAGE_S3_ENDPOINTは空文字列にすると、自動選択される。FAKEBOOK_STORAGE_S3_REGIONは、バックエンドが動いているリージョンと同一にしておく。FAKEBOOK_STORAGE_S3_BUCKET_PREFIXはデフォルトのfakebookのままでOK。FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLEはfalseにしてバケット名を仮想ホストと紐づけるようにすると、AWSの各種サービスと連携しやすい。それに合わせて、FAKEBOOK_STORAGE_S3_PUBLIC_URL_PREFIXは "https://{bucket}.s3.ap-northeast-1.amazonaws.com/" というパターンにしておく。CroudFrontなどのリバースプロクシを挟んでデータを配信する場合、そのURLのパターンを記述する。
 
 
 

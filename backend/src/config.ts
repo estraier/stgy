@@ -27,13 +27,13 @@ export class Config {
     "FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLE",
     true,
   );
-  static readonly STORAGE_S3_PUBLIC_URL_PREFIX = envStr(
-    "FAKEBOOK_STORAGE_S3_PUBLIC_URL_PREFIX",
-    "http://localhost:9000/{bucket}/",
-  );
   static readonly STORAGE_S3_BUCKET_PREFIX = envStr(
     "FAKEBOOK_STORAGE_S3_BUCKET_PREFIX",
     "fakebook",
+  );
+  static readonly STORAGE_S3_PUBLIC_URL_PREFIX = envStr(
+    "FAKEBOOK_STORAGE_S3_PUBLIC_URL_PREFIX",
+    "http://localhost:9000/{bucket}/",
   );
   static readonly REDIS_HOST = envStr("FAKEBOOK_REDIS_HOST", "localhost");
   static readonly REDIS_PORT = envNum("FAKEBOOK_REDIS_PORT", 6379);
