@@ -88,7 +88,7 @@ export class Config {
   static readonly SYSTEM_TIMEZONE = envStr("FAKEBOOK_SYSTEM_TIMEZONE", "Asia/Tokyo");
 }
 
-export function envStr(name: string, def?: string, treatEmptyAsUndefined = true): string {
+export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {
   const v = process.env[name];
   if (v === undefined || (treatEmptyAsUndefined && v === "")) {
     if (def !== undefined) return def;
@@ -97,7 +97,7 @@ export function envStr(name: string, def?: string, treatEmptyAsUndefined = true)
   return v;
 }
 
-export function envNum(name: string, def?: number, treatEmptyAsUndefined = true): number {
+export function envNum(name: string, def?: number, treatEmptyAsUndefined = false): number {
   const v = process.env[name];
   if (v === undefined || (treatEmptyAsUndefined && v === "")) {
     if (def !== undefined) return def;
@@ -111,7 +111,7 @@ export function envNum(name: string, def?: number, treatEmptyAsUndefined = true)
   return n;
 }
 
-export function envBool(name: string, def?: boolean, treatEmptyAsUndefined = true): boolean {
+export function envBool(name: string, def?: boolean, treatEmptyAsUndefined = false): boolean {
   const v = process.env[name];
   if (v === undefined || (treatEmptyAsUndefined && v === "")) {
     if (def !== undefined) return def;
@@ -124,7 +124,7 @@ export function envBool(name: string, def?: boolean, treatEmptyAsUndefined = tru
   throw new Error(`Env var ${name} is not a valid boolean: ${v}`);
 }
 
-export function envStrCsv(name: string, def?: string[], treatEmptyAsUndefined = true): string[] {
+export function envStrCsv(name: string, def?: string[], treatEmptyAsUndefined = false): string[] {
   const v = process.env[name];
   if (v === undefined || (treatEmptyAsUndefined && v === "")) {
     if (def !== undefined) return def;
