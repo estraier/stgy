@@ -22,6 +22,7 @@ type PostFormProps = {
   deletable?: boolean;
   onDelete?: () => void;
   contentLengthLimit?: number;
+  autoFocus?: boolean;
 };
 
 export default function PostForm({
@@ -39,6 +40,7 @@ export default function PostForm({
   deletable = false,
   onDelete,
   contentLengthLimit,
+  autoFocus = false,
 }: PostFormProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const [showPreview, setShowPreview] = useState(false);
@@ -48,9 +50,30 @@ export default function PostForm({
     if (body.trim() === "") setShowPreview(false);
   }, [body]);
 
-  const { content, tags } = useMemo(() => parseBodyAndTags(body), [body]);
+  useEffect(() => {
+    if (autoFocus && textareaRef.current) {
+      const ta = textareaRef.current;
+      ta.focus();
+      const pos = ta.value.length;
+      ta.setSelectionRange(pos, pos);
+    }
+  }, [autoFocus]);
+
+  const { content, tags, attrs } = useMemo(() => parseBodyAndTags(body), [body]);
   const contentLength = content.length;
   const overLimit = contentLengthLimit != null ? contentLength > contentLengthLimit : false;
+
+  const attrLabels = useMemo(() => {
+    return Object.entries(attrs || {})
+      .map(([k, v]) =>
+        typeof v === "boolean"
+          ? v
+            ? `${k.toLowerCase()}`
+            : undefined
+          : `${k.toLowerCase()}=${String(v)}`,
+      )
+      .filter(Boolean) as string[];
+  }, [attrs]);
 
   function handleFocus() {
     if (!hasFocusedOnce) setHasFocusedOnce(true);
@@ -211,8 +234,16 @@ export default function PostForm({
               dangerouslySetInnerHTML={{ __html: makeArticleHtmlFromMarkdown(content) }}
               style={{ minHeight: 32 }}
             />
-            {tags.length > 0 && (
+            {(attrLabels.length > 0 || tags.length > 0) && (
               <div className="mt-3 flex flex-wrap gap-2">
+                {attrLabels.map((label) => (
+                  <span
+                    key={`attr:${label}`}
+                    className="inline-block rounded px-2 py-0.5 text-sm border bg-purple-50 text-purple-800 border-purple-200"
+                  >
+                    {label}
+                  </span>
+                ))}
                 {tags.map((tag) => (
                   <span
                     key={tag}

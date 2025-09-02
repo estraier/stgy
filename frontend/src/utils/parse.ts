@@ -142,7 +142,11 @@ export function serializeUserSearchQuery(params: { query?: string; nickname?: st
   return tokens.join(" ");
 }
 
-export function parseBodyAndTags(body: string): { content: string; tags: string[] } {
+export function parseBodyAndTags(body: string): {
+  content: string;
+  tags: string[];
+  attrs: Record<string, string | number | boolean>;
+} {
   const lines = body.split(/\r?\n/);
   const reverseLines: string[] = [];
   const tagLines: string[] = [];
@@ -159,18 +163,30 @@ export function parseBodyAndTags(body: string): { content: string; tags: string[
     }
   }
   const bodyLines = reverseLines.reverse();
-  const tags: string[] = [];
+  const collectedTags: string[] = [];
   const uniqueTags = new Set<string>();
+
   for (let tagLine of tagLines) {
     tagLine = tagLine.replace(/^#/, "");
     for (let tag of tagLine.split(/, *#/g)) {
       tag = tag.replace(/\s+/g, " ").trim();
       if (tag && !uniqueTags.has(tag)) {
-        tags.push(tag);
+        collectedTags.push(tag);
         uniqueTags.add(tag);
       }
     }
   }
+  const attrs: Record<string, string | number | boolean> = {};
+  const tags: string[] = [];
+  for (const t of collectedTags) {
+    if (t === "[nolikes]") {
+      attrs.noLikes = true;
+    } else if (t === "[noreplies]") {
+      attrs.noReplies = true;
+    } else {
+      tags.push(t);
+    }
+  }
   const content = bodyLines.join("\n");
-  return { content, tags };
+  return { content, tags, attrs };
 }

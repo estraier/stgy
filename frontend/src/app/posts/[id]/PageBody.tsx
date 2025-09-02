@@ -72,7 +72,11 @@ export default function PageBody() {
     getPost(postId, userId)
       .then((data) => {
         setPost(data);
-        const tagLine = data.tags && data.tags.length > 0 ? "\n\n#" + data.tags.join(", #") : "";
+        const specials: string[] = [];
+        if (data.allowLikes === false) specials.push("[nolikes]");
+        if (data.allowReplies === false) specials.push("[noreplies]");
+        const allTags = [...specials, ...(data.tags ?? [])];
+        const tagLine = allTags.length > 0 ? "\n\n#" + allTags.join(", #") : "";
         setEditBody(data.content + tagLine);
       })
       .catch((err) => setError(err?.message ?? "Failed to fetch post."))
@@ -224,14 +228,25 @@ export default function PageBody() {
     setEditSubmitting(true);
     setEditError(null);
     try {
-      const { content, tags } = parseBodyAndTags(editBody);
+      const { content, tags, attrs } = parseBodyAndTags(editBody);
       if (!content.trim()) throw new Error("Content is required.");
       if (content.length > 5000) throw new Error("Content is too long (max 5000 chars).");
       if (tags.length > 5) throw new Error("You can specify up to 5 tags.");
       for (const tag of tags) {
         if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
       }
-      await updatePost(postId, { content, tags });
+      const patch: {
+        content: string;
+        tags: string[];
+        allowLikes: boolean;
+        allowReplies: boolean;
+      } = {
+        content,
+        tags,
+        allowLikes: attrs.noLikes === true ? false : true,
+        allowReplies: attrs.noReplies === true ? false : true,
+      };
+      await updatePost(postId, patch);
       setEditing(false);
       getPost(postId, userId).then(setPost);
     } catch (err: unknown) {
@@ -268,14 +283,16 @@ export default function PageBody() {
     setReplySubmitting(true);
     setReplyError(null);
     try {
-      const { content, tags } = parseBodyAndTags(replyBody);
+      const { content, tags, attrs } = parseBodyAndTags(replyBody);
       if (!content.trim()) throw new Error("Content is required.");
       if (content.length > 5000) throw new Error("Content is too long (max 5000 chars).");
       if (tags.length > 5) throw new Error("You can specify up to 5 tags.");
       for (const tag of tags) {
         if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
       }
-      await createPost({ content, tags, replyTo: replyingTo });
+      const allowLikes = attrs.noLikes === true ? false : true;
+      const allowReplies = attrs.noReplies === true ? false : true;
+      await createPost({ content, tags, replyTo: replyingTo, allowLikes, allowReplies });
       setReplyBody("");
       setReplyingTo(null);
 
@@ -378,6 +395,7 @@ export default function PageBody() {
             }}
             buttonLabel="Reply"
             placeholder="Write your reply. Use #tag lines for tags."
+            autoFocus
           />
         </div>
       )}
@@ -388,8 +406,11 @@ export default function PageBody() {
             className="px-4 py-1 rounded border bg-sky-100 text-gray-700 hover:bg-sky-200 transition"
             onClick={() => {
               if (post) {
-                const tagLine =
-                  post.tags && post.tags.length > 0 ? "\n\n#" + post.tags.join(", #") : "";
+                const specials: string[] = [];
+                if (post.allowLikes === false) specials.push("[nolikes]");
+                if (post.allowReplies === false) specials.push("[noreplies]");
+                const allTags = [...specials, ...(post.tags ?? [])];
+                const tagLine = allTags.length > 0 ? "\n\n#" + allTags.join(", #") : "";
                 setEditBody(post.content + tagLine);
               }
               setEditing(true);
@@ -413,6 +434,7 @@ export default function PageBody() {
             deletable={true}
             isEdit={true}
             onDelete={handleDelete}
+            autoFocus
           />
         </div>
       )}
@@ -462,6 +484,7 @@ export default function PageBody() {
                         buttonLabel="Reply"
                         placeholder="Write your reply. Use #tag lines for tags."
                         className="mt-2 flex flex-col gap-2 pt-3"
+                        autoFocus
                       />
                     </div>
                   )}

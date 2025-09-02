@@ -30,6 +30,8 @@ function buildPostQuery(
 export async function createPost(post: {
   content: string;
   tags: string[];
+  allowLikes: boolean;
+  allowReplies: boolean;
   replyTo?: string | null;
   ownedBy?: string;
 }): Promise<Post> {
@@ -46,6 +48,8 @@ export async function updatePost(
   post: {
     content?: string;
     tags?: string[];
+    allowLikes?: boolean;
+    allowReplies?: boolean;
     ownedBy?: string;
     replyTo?: string | null;
   },

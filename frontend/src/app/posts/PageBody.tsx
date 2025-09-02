@@ -264,14 +264,16 @@ export default function PageBody() {
     setSubmitting(true);
     setError(null);
     try {
-      const { content, tags } = parseBodyAndTags(body);
+      const { content, tags, attrs } = parseBodyAndTags(body);
       if (!content.trim()) throw new Error("Content is required.");
       if (content.length > 5000) throw new Error("Content is too long (max 5000 chars).");
       if (tags.length > 5) throw new Error("You can specify up to 5 tags.");
       for (const tag of tags) {
         if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
       }
-      await createPost({ content, tags });
+      const allowLikes = attrs.noLikes === true ? false : true;
+      const allowReplies = attrs.noReplies === true ? false : true;
+      await createPost({ content, tags, allowLikes, allowReplies });
       setBody("");
       setQuery({
         tab: "following",
@@ -301,14 +303,16 @@ export default function PageBody() {
     setReplySubmitting(true);
     setReplyError(null);
     try {
-      const { content, tags } = parseBodyAndTags(replyBody);
+      const { content, tags, attrs } = parseBodyAndTags(replyBody);
       if (!content.trim()) throw new Error("Content is required.");
       if (content.length > 5000) throw new Error("Content is too long (max 5000 chars).");
       if (tags.length > 5) throw new Error("You can specify up to 5 tags.");
       for (const tag of tags) {
         if (tag.length > 50) throw new Error(`Tag "${tag}" is too long (max 50 chars).`);
       }
-      await createPost({ content, tags, replyTo });
+      const allowLikes = attrs.noLikes === true ? false : true;
+      const allowReplies = attrs.noReplies === true ? false : true;
+      await createPost({ content, tags, replyTo, allowLikes, allowReplies });
       setReplyBody("");
       setReplyTo(null);
       setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100);
@@ -452,6 +456,7 @@ export default function PageBody() {
                     setReplyError(null);
                   }}
                   contentLengthLimit={isAdmin ? undefined : Config.CONTENT_LENGTH_LIMIT}
+                  autoFocus
                 />
               )}
             </li>
