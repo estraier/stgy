@@ -44,12 +44,24 @@ function isKeyUnder(prefix: string, key: string) {
   return key === prefix || key.startsWith(prefix + "/");
 }
 
+function u32be(bytes: Uint8Array, off: number): number {
+  if (off + 4 > bytes.length) return -1;
+  return (
+    ((bytes[off] << 24) | (bytes[off + 1] << 16) | (bytes[off + 2] << 8) | bytes[off + 3]) >>> 0
+  );
+}
+
+function fourCC(bytes: Uint8Array, off: number): string {
+  if (off + 4 > bytes.length) return "";
+  return String.fromCharCode(bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]);
+}
+
 function sniffFormat(bytes: Uint8Array): { ok: boolean; mime?: string } {
   if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
     return { ok: true, mime: "image/jpeg" };
   }
   if (
-    bytes.length >= 8 &&
+    bytes.length >= 24 &&
     bytes[0] === 0x89 &&
     bytes[1] === 0x50 &&
     bytes[2] === 0x4e &&
@@ -58,28 +70,32 @@ function sniffFormat(bytes: Uint8Array): { ok: boolean; mime?: string } {
     bytes[5] === 0x0a &&
     bytes[6] === 0x1a &&
     bytes[7] === 0x0a
-  )
-    return { ok: true, mime: "image/png" };
-  if (
-    bytes.length >= 12 &&
-    bytes[0] === 0x52 &&
-    bytes[1] === 0x49 &&
-    bytes[2] === 0x46 &&
-    bytes[3] === 0x46 &&
-    bytes[8] === 0x57 &&
-    bytes[9] === 0x45 &&
-    bytes[10] === 0x42 &&
-    bytes[11] === 0x50
-  )
-    return { ok: true, mime: "image/webp" };
-  if (
-    bytes.length >= 12 &&
-    bytes[4] === 0x66 &&
-    bytes[5] === 0x74 &&
-    bytes[6] === 0x79 &&
-    bytes[7] === 0x70
   ) {
-    return { ok: true, mime: "image/heic" };
+    const ihdrLen = u32be(bytes, 8);
+    const ihdrType = fourCC(bytes, 12);
+    if (ihdrLen === 13 && ihdrType === "IHDR") return { ok: true, mime: "image/png" };
+    return { ok: false };
+  }
+  if (bytes.length >= 16 && fourCC(bytes, 0) === "RIFF" && fourCC(bytes, 8) === "WEBP") {
+    const chunkTag = fourCC(bytes, 12);
+    if (chunkTag === "VP8 " || chunkTag === "VP8L" || chunkTag === "VP8X") {
+      return { ok: true, mime: "image/webp" };
+    }
+    return { ok: false };
+  }
+  if (bytes.length >= 20) {
+    const boxSize = u32be(bytes, 0);
+    const boxType = fourCC(bytes, 4);
+    if (boxType === "ftyp" && boxSize >= 16) {
+      const major = fourCC(bytes, 8);
+      const allowed = new Set(["heic", "heix", "hevc", "hevx", "mif1", "msf1", "heif", "heis"]);
+      if (allowed.has(major)) return { ok: true, mime: "image/heic" };
+      const end = Math.min(bytes.length, boxSize);
+      for (let p = 16; p + 4 <= end; p += 4) {
+        if (allowed.has(fourCC(bytes, p))) return { ok: true, mime: "image/heic" };
+      }
+      return { ok: false };
+    }
   }
   return { ok: false };
 }
@@ -141,6 +157,39 @@ export class MediaService {
       await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
       throw new Error("invalid image data");
     }
+    const declaredCt = allowedImageMime(head.contentType ?? null);
+    if (!declaredCt) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
+      throw new Error("unsupported content type");
+    }
+    if (sniff.mime && declaredCt !== sniff.mime) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
+      throw new Error("content-type mismatch");
+    }
+    const m = stagingKey.match(/\.([A-Za-z0-9]+)$/);
+    const extInKey = m ? m[1].toLowerCase() : null;
+    if (!extInKey) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
+      throw new Error("file extension required");
+    }
+    const aliasSet = (mime: string) => {
+      switch (mime) {
+        case "image/jpeg":
+          return new Set(["jpg", "jpeg"]);
+        case "image/png":
+          return new Set(["png"]);
+        case "image/webp":
+          return new Set(["webp"]);
+        case "image/heic":
+          return new Set(["heic", "heif"]);
+        default:
+          return new Set<string>();
+      }
+    };
+    if (!aliasSet(sniff.mime || declaredCt).has(extInKey)) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
+      throw new Error("file extension mismatch");
+    }
     const now = new Date();
     const yyyymmStr = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
     const limitMonthly = Number(Config.MEDIA_IMAGE_BYTE_LIMIT_PER_MONTH ?? 0) || null;
@@ -153,10 +202,8 @@ export class MediaService {
     }
     const revMM = toRevMM(now);
     const hash8 = crypto.createHash("md5").update(stagingKey).digest("hex").slice(0, 8);
-    const finalExt = extFromFilenameOrMime(
-      undefined,
-      sniff.mime || head.contentType || "application/octet-stream",
-    );
+    const finalMime = sniff.mime ?? declaredCt;
+    const finalExt = extFromFilenameOrMime(undefined, finalMime || "application/octet-stream");
     const r8 = revHexWithinMonth(now);
     const finalKey = `${pathUserId}/masters/${revMM}/${r8}${hash8}${finalExt}`;
     await this.storage.moveObject(
@@ -276,10 +323,65 @@ export class MediaService {
       await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });
       throw new Error("invalid image data");
     }
-    const finalExt = extFromFilenameOrMime(
-      undefined,
-      sniff.mime || head.contentType || "application/octet-stream",
-    );
+    const declaredCt = allowedImageMime(head.contentType ?? null);
+    if (!declaredCt) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });
+      throw new Error("unsupported content type");
+    }
+    if (sniff.mime && declaredCt !== sniff.mime) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });
+      throw new Error("content-type mismatch");
+    }
+    const m = stagingKey.match(/\.([A-Za-z0-9]+)$/);
+    const extInKey = m ? m[1].toLowerCase() : null;
+    if (!extInKey) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });
+      throw new Error("file extension required");
+    }
+    const aliasSet = (mime: string) => {
+      switch (mime) {
+        case "image/jpeg":
+          return new Set(["jpg", "jpeg"]);
+        case "image/png":
+          return new Set(["png"]);
+        case "image/webp":
+          return new Set(["webp"]);
+        case "image/heic":
+          return new Set(["heic", "heif"]);
+        default:
+          return new Set<string>();
+      }
+    };
+    if (!aliasSet(sniff.mime || declaredCt).has(extInKey)) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });
+      throw new Error("file extension mismatch");
+    }
+    const existingPrefix = `${pathUserId}/masters/${slot}`;
+    const existing = await this.storage.listObjects({
+      bucket: Config.MEDIA_BUCKET_PROFILES,
+      key: existingPrefix,
+    });
+    if (existing && existing.length > 0) {
+      await Promise.allSettled(
+        existing.map((o) =>
+          this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: o.key }),
+        ),
+      );
+    }
+    const thumbsPrefix = `${pathUserId}/thumbs/${slot}_`;
+    const oldThumbs = await this.storage.listObjects({
+      bucket: Config.MEDIA_BUCKET_PROFILES,
+      key: thumbsPrefix,
+    });
+    if (oldThumbs && oldThumbs.length > 0) {
+      await Promise.allSettled(
+        oldThumbs.map((t) =>
+          this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: t.key }),
+        ),
+      );
+    }
+    const finalMime = sniff.mime ?? declaredCt;
+    const finalExt = extFromFilenameOrMime(undefined, finalMime || "application/octet-stream");
     const masterKey = `${pathUserId}/masters/${slot}${finalExt}`;
     await this.storage.moveObject(
       { bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey },

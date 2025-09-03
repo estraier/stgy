@@ -379,7 +379,7 @@ def test_media():
   user_id = sess["userId"]
   img_b64 = "UklGRlQAAABXRUJQVlA4IEgAAADwAwCdASpAAEAAPm02mEkkIqKhIggAgA2JaQDVqoAAEDdTUAV4hbkAAP7ni//43m81s4//+wd/+g7/9B3+yiX+GARoQAAAAAA="
   img_bytes = base64.b64decode(img_b64)
-  filename = "sample.png"
+  filename = "sample.webp"
   size_bytes = len(img_bytes)
   presigned_url = f"{BASE_URL}/media/{user_id}/images/presigned"
   res = requests.post(
@@ -393,7 +393,7 @@ def test_media():
   upload_url = pres["url"]
   fields = pres["fields"]
   files = {
-    "file": (filename, img_bytes, "image/png"),
+    "file": (filename, img_bytes, "image/webp"),
   }
   res = requests.post(upload_url, data=fields, files=files)
   assert res.status_code in (200, 201, 204), f"upload failed: {res.status_code} {res.text}"
@@ -433,7 +433,7 @@ def test_media():
   res = requests.get(get_url, cookies=cookies)
   assert res.status_code in (404, 400), f"expected not found, got {res.status_code}"
   print("[media] inexistence OK")
-  avatar_filename = "avatar.png"
+  avatar_filename = "avatar.webp"
   avatar_bytes = img_bytes
   avatar_size = len(avatar_bytes)
   pres_url = f"{BASE_URL}/media/{user_id}/profiles/avatar/presigned"
@@ -447,7 +447,7 @@ def test_media():
   print("[media] avatar presigned:", pres)
   avatar_upload_url = pres["url"]
   avatar_fields = pres["fields"]
-  files = {"file": (avatar_filename, avatar_bytes, "image/png")}
+  files = {"file": (avatar_filename, avatar_bytes, "image/webp")}
   res = requests.post(avatar_upload_url, data=avatar_fields, files=files)
   assert res.status_code in (200, 201, 204), f"avatar upload failed: {res.status_code} {res.text}"
   print("[media] avatar uploaded to storage")
