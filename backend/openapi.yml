@@ -1692,7 +1692,7 @@ paths:
         "403":
           $ref: "#/components/responses/Error403"
 
-  /notification/feed:
+  /notifications/feed:
     get:
       summary: Get notification feed (merged unread/read)
       security:
@@ -1715,7 +1715,7 @@ paths:
         "401":
           $ref: "#/components/responses/Error401"
 
-  /notification/mark:
+  /notifications/mark:
     post:
       summary: Mark a single notification (by slot + term)
       security:
@@ -1739,7 +1739,7 @@ paths:
         "401":
           $ref: "#/components/responses/Error401"
 
-  /notification/mark-all:
+  /notifications/mark-all:
     post:
       summary: Mark all notifications for current user
       security:

@@ -6,7 +6,7 @@ export async function getNotificationFeedSince(
 ): Promise<{ changed: boolean; data?: Notification[] }> {
   const qs = new URLSearchParams();
   if (newerThan) qs.set("newerThan", newerThan);
-  const res = await apiFetch(`/notification/feed${qs.toString() ? `?${qs}` : ""}`, {
+  const res = await apiFetch(`/notifications/feed${qs.toString() ? `?${qs}` : ""}`, {
     method: "GET",
   });
   if (res.status === 304) return { changed: false };
@@ -16,7 +16,7 @@ export async function getNotificationFeedSince(
 }
 
 export async function markNotification(input: MarkNotificationInput): Promise<void> {
-  const res = await apiFetch(`/notification/mark`, {
+  const res = await apiFetch(`/notifications/mark`, {
     method: "POST",
     body: JSON.stringify({
       slot: input.slot,
@@ -28,7 +28,7 @@ export async function markNotification(input: MarkNotificationInput): Promise<vo
 }
 
 export async function markAllNotifications(input: MarkAllNotificationsInput): Promise<void> {
-  const res = await apiFetch(`/notification/mark-all`, {
+  const res = await apiFetch(`/notifications/mark-all`, {
     method: "POST",
     body: JSON.stringify({ isRead: input.isRead }),
   });

@@ -535,7 +535,7 @@ def test_notifications():
   assert res.status_code == 201, res.text
   print("[notifications] two replies done")
   time.sleep(0.1)
-  res = requests.get(f"{BASE_URL}/notification/feed", cookies=user_cookies)
+  res = requests.get(f"{BASE_URL}/notifications/feed", cookies=user_cookies)
   assert res.status_code == 200, res.text
   feed = res.json()
   print("[notifications] feed:", feed)
@@ -562,25 +562,25 @@ def test_notifications():
   assert nr.get("countPosts") == 2
   assert any(r.get("userNickname") == "admin" for r in nr["records"])
   res = requests.post(
-    f"{BASE_URL}/notification/mark",
+    f"{BASE_URL}/notifications/mark",
     json={"slot": follow_slot, "term": nf["term"], "isRead": True},
     headers=headers,
     cookies=user_cookies,
   )
   assert res.status_code == 204, res.text
-  res = requests.get(f"{BASE_URL}/notification/feed", cookies=user_cookies)
+  res = requests.get(f"{BASE_URL}/notifications/feed", cookies=user_cookies)
   assert res.status_code == 200, res.text
   feed2 = res.json()
   by_slot2 = {n["slot"]: n for n in feed2}
   assert by_slot2[follow_slot]["isRead"] is True
   res = requests.post(
-    f"{BASE_URL}/notification/mark-all",
+    f"{BASE_URL}/notifications/mark-all",
     json={"isRead": True},
     headers=headers,
     cookies=user_cookies,
   )
   assert res.status_code == 204, res.text
-  res = requests.get(f"{BASE_URL}/notification/feed", cookies=user_cookies)
+  res = requests.get(f"{BASE_URL}/notifications/feed", cookies=user_cookies)
   assert res.status_code == 200, res.text
   feed3 = res.json()
   assert all(n["isRead"] is True for n in feed3), f"not all read: {feed3}"
@@ -588,7 +588,7 @@ def test_notifications():
   latest = max(n["updatedAt"] for n in feed3)
   print("[notifications] latest updatedAt =", latest)
   res = requests.get(
-    f"{BASE_URL}/notification/feed",
+    f"{BASE_URL}/notifications/feed",
     params={"newerThan": latest},
     cookies=user_cookies,
   )
@@ -603,7 +603,7 @@ def test_notifications():
   assert res.status_code == 201, res.text
   time.sleep(0.1)
   res = requests.get(
-    f"{BASE_URL}/notification/feed",
+    f"{BASE_URL}/notifications/feed",
     params={"newerThan": latest},
     cookies=user_cookies,
   )

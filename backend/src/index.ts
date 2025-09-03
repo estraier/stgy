@@ -52,7 +52,7 @@ app.use("/ai-models", createAIModelsRouter(pgClient, redis));
 app.use("/users", createUsersRouter(pgClient, redis, storageService, eventLogService));
 app.use("/posts", createPostsRouter(pgClient, redis, storageService, eventLogService));
 app.use("/media", createMediaRouter(pgClient, redis, storageService));
-app.use("/notification", createNotificationsRouter(pgClient, redis));
+app.use("/notifications", createNotificationsRouter(pgClient, redis));
 
 const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
   console.error("[API ERROR]", err);
