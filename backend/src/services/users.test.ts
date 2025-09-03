@@ -217,7 +217,6 @@ class MockPgClient {
       return { rows: [{ id: user.id }] };
     }
 
-    // getUserLite
     if (
       sql.startsWith(
         "SELECT id, email, nickname, is_admin, ai_model, created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1",
@@ -240,7 +239,6 @@ class MockPgClient {
       return { rows: [row] };
     }
 
-    // getUser (detail)
     if (
       sql.startsWith(
         "SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts, d.introduction, d.ai_personality FROM users u LEFT JOIN user_details d ON d.user_id = u.id WHERE u.id = $1",
@@ -268,7 +266,6 @@ class MockPgClient {
       return { rows: [row] };
     }
 
-    // getUser: focusUser との相互フォロー関係チェック（EXISTS…AS … クエリ）
     if (
       sql.startsWith(
         "SELECT EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $1 AND followee_id = $2) AS is_followed_by_focus_user",

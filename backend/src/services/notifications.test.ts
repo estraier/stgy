@@ -63,7 +63,6 @@ describe("NotificationService (happy paths)", () => {
       },
     ];
 
-    // 1) 未読 2) 既読 3) users nickname ルックアップ
     const q = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: unreadRows })
       .mockResolvedValueOnce({ rows: readRows })
@@ -77,7 +76,6 @@ describe("NotificationService (happy paths)", () => {
     const { svc, query } = mkSvc(q);
     const out = await svc.listFeed("USER-1");
 
-    // クエリ順と引数
     expect(query).toHaveBeenNthCalledWith(1, expect.stringMatching(/FROM notifications/i), [
       "USER-1",
       3,
@@ -92,7 +90,6 @@ describe("NotificationService (happy paths)", () => {
       [expect.arrayContaining(["u1", "u2"])],
     );
 
-    // マージ順
     expect(out!.map((n) => n.updatedAt)).toEqual([
       "2025-08-24T12:00:00.000Z",
       "2025-08-24T11:00:00.000Z",
@@ -107,7 +104,6 @@ describe("NotificationService (happy paths)", () => {
     expect(first.countPosts).toBe(1);
     expect(first.records).toHaveLength(2);
 
-    // userNickname が埋まっていること
     const nicknames = first.records.map((r) => r.userNickname);
     expect(nicknames).toEqual(["User One", "User Two"]);
   });
@@ -122,7 +118,6 @@ describe("NotificationService (happy paths)", () => {
     const out = await svc.listFeed("U-NT", { newerThan });
 
     expect(out).toBeNull();
-    // 存在チェックのみ
     expect(query).toHaveBeenCalledTimes(1);
     expect(query).toHaveBeenCalledWith(
       expect.stringMatching(/SELECT\s+1\s+FROM\s+notifications[\s\S]*updated_at\s*>\s*\$2/i),
@@ -145,15 +140,15 @@ describe("NotificationService (happy paths)", () => {
     const readRows: any[] = [];
 
     const q = (jest.fn() as any)
-      .mockResolvedValueOnce(existsYes) // existence
-      .mockResolvedValueOnce({ rows: unreadRows }) // unread
-      .mockResolvedValueOnce({ rows: readRows }) // read
+      .mockResolvedValueOnce(existsYes)
+      .mockResolvedValueOnce({ rows: unreadRows })
+      .mockResolvedValueOnce({ rows: readRows })
       .mockResolvedValueOnce({
         rows: [
           { id: "u1", nickname: "User One" },
           { id: "u2", nickname: "User Two" },
         ],
-      }); // users
+      });
 
     const { svc, query } = mkSvc(q);
     const newerThan = new Date("2025-08-24T23:59:59.000Z");
