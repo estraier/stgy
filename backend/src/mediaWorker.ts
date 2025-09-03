@@ -97,33 +97,61 @@ async function handleTask(task: ThumbQueueTask) {
   console.log("[mediaworker] unknown task type", _exhaustive);
 }
 
+let shuttingDown = false;
+const inflight = new Set<Promise<void>>();
+
 async function processQueue(queue: string) {
-  while (true) {
+  while (!shuttingDown) {
     try {
-      const res = await redis.brpop(queue, 10);
-      if (!res) continue;
-      const payload = res[1];
-      let msg: unknown;
-      try {
-        msg = JSON.parse(payload);
-      } catch {
-        console.log(`[mediaworker] invalid payload in ${queue}:`, payload);
+      if (inflight.size >= Config.MEDIA_WORKER_CONCURRENCY) {
+        await Promise.race(inflight);
         continue;
       }
-      if (typeof msg === "object" && msg !== null && "type" in msg) {
-        await handleTask(msg as ThumbQueueTask);
-      } else {
-        console.log(`[mediaworker] invalid task object in ${queue}:`, payload);
-      }
+      const res = await redis.brpop(queue, 5);
+      if (!res) continue;
+      const payload = res[1];
+      const p = (async () => {
+        try {
+          let msg: unknown = JSON.parse(payload);
+          if (typeof msg === "object" && msg !== null && "type" in msg) {
+            await handleTask(msg as ThumbQueueTask);
+          } else {
+            console.log(`[mediaworker] invalid task object in ${queue}:`, payload);
+          }
+        } catch (e) {
+          console.log(`[mediaworker] error processing task:`, e);
+        }
+      })();
+      inflight.add(p);
+      p.finally(() => inflight.delete(p));
     } catch (e) {
+      if (shuttingDown) break;
       console.log(`[mediaworker] error processing ${queue}:`, e);
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
   }
 }
 
+async function shutdown() {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  try {
+    redis.disconnect();
+  } catch {}
+  try {
+    await Promise.allSettled(Array.from(inflight));
+  } finally {
+    process.exit(0);
+  }
+}
+
+process.on("SIGINT", shutdown);
+process.on("SIGTERM", shutdown);
+
 async function main() {
-  console.log("[mediaworker] Fakebook media thumbnail worker started");
+  console.log(
+    `[mediaworker] Fakebook media thumbnail worker started (concurrency=${Config.MEDIA_WORKER_CONCURRENCY})`,
+  );
   await processQueue(QUEUE);
 }
 
