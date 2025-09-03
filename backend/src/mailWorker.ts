@@ -1,6 +1,5 @@
-import { Config } from "./config";
-import Redis from "ioredis";
 import { SendMailService } from "./services/sendMail";
+import { makeRedis } from "./utils/servers";
 
 type MailTask =
   | { type: "signup"; email: string; verificationCode: string }
@@ -9,11 +8,7 @@ type MailTask =
 
 const MAIL_QUEUE = "mail-queue";
 
-const redis = new Redis({
-  host: Config.REDIS_HOST,
-  port: Config.REDIS_PORT,
-  password: Config.REDIS_PASSWORD,
-});
+const redis = makeRedis();
 
 const sendMailService = new SendMailService(redis);
 const mailTransporter = SendMailService.createTransport();

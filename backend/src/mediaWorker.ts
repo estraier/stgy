@@ -1,8 +1,8 @@
 import { Config } from "./config";
-import Redis from "ioredis";
 import sharp from "sharp";
 import { makeStorageService } from "./services/storageFactory";
 import type { StorageService } from "./services/storage";
+import { makeRedis } from "./utils/servers";
 
 type ThumbQueueTask =
   | { type: "image"; bucket: string; originalKey: string }
@@ -12,11 +12,7 @@ const QUEUE = "media-thumb-queue";
 const MAX_PIXELS_IMAGE = 512 * 512;
 const MAX_PIXELS_ICON = 96 * 96;
 
-const redis = new Redis({
-  host: Config.REDIS_HOST,
-  port: Config.REDIS_PORT,
-  password: Config.REDIS_PASSWORD,
-});
+const redis = makeRedis();
 
 const storage: StorageService = makeStorageService(Config.STORAGE_DRIVER);
 

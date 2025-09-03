@@ -1,30 +1,12 @@
+import { Config } from "./config";
 import { Client } from "pg";
 import Redis from "ioredis";
-import { Config } from "./config";
 import { IdIssueService } from "./services/idIssue";
 import type { AnyEventPayload } from "./models/eventLog";
-
-function makePg(): Client {
-  return new Client({
-    host: Config.DATABASE_HOST,
-    port: Config.DATABASE_PORT,
-    user: Config.DATABASE_USER,
-    password: Config.DATABASE_PASSWORD,
-    database: Config.DATABASE_NAME,
-  });
-}
-
-function makeRedis(): Redis {
-  return new Redis({
-    host: Config.REDIS_HOST,
-    port: Config.REDIS_PORT,
-    password: Config.REDIS_PASSWORD,
-  });
-}
+import { connectPgWithRetry, makeRedis } from "./utils/servers";
 
 async function acquireSingletonLock(): Promise<Client> {
-  const pg = makePg();
-  await pg.connect();
+  const pg = await connectPgWithRetry(60_000);
   const res = await pg.query<{ ok: boolean }>(
     `SELECT pg_try_advisory_lock(hashtext($1), 0) AS ok`,
     ["fakebook:notification"],
@@ -373,8 +355,7 @@ async function drain(pg: Client, partitionId: number): Promise<void> {
 
 async function runWorker(workerIndex: number): Promise<void> {
   console.log(`[notificationworker] worker ${workerIndex} started`);
-  const pg = makePg();
-  await pg.connect();
+  const pg = await connectPgWithRetry(60_000);
 
   const parts = assignedPartitions(workerIndex);
   for (const p of parts) {
