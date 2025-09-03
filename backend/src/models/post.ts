@@ -16,7 +16,7 @@ export type Post = {
   isRepliedByFocusUser?: boolean;
 };
 
-export type PostLite = Omit<Post, "snippet" | "isLikedByFocusUser?" | "isRepliedByFocusUser">;
+export type PostLite = Omit<Post, "snippet" | "isLikedByFocusUser" | "isRepliedByFocusUser">;
 
 export type PostDetail = Post & {
   content: string;

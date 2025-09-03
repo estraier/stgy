@@ -142,20 +142,6 @@ export default function createUsersRouter(
       return res.status(403).json({ error: "admin only" });
     }
     try {
-      if (
-        !loginUser.isAdmin &&
-        req.body.introduction &&
-        req.body.introduction.length > Config.INTRODUCTION_LENGTH_LIMIT
-      ) {
-        return res.status(400).json({ error: "introduction is too long" });
-      }
-      if (
-        !loginUser.isAdmin &&
-        req.body.aiPersonality &&
-        req.body.aiPersonality.length > Config.AI_PERSONALITY_LENGTH_LIMIT
-      ) {
-        return res.status(400).json({ error: "aiPersonality is too long" });
-      }
       const input: CreateUserInput = {
         id: typeof req.body.id === "string" ? (normalizeOneLiner(req.body.id) ?? "") : undefined,
         email: normalizeEmail(normalizeOneLiner(req.body.email) ?? ""),
