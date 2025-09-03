@@ -22,6 +22,21 @@ function makeRedis(): Redis {
   });
 }
 
+async function acquireSingletonLock(): Promise<Client> {
+  const pg = makePg();
+  await pg.connect();
+  const res = await pg.query<{ ok: boolean }>(
+    `SELECT pg_try_advisory_lock(hashtext($1), 0) AS ok`,
+    ["fakebook:notification"],
+  );
+  if (!res.rows[0]?.ok) {
+    console.log("[notificationworker] another instance is running; exiting");
+    await pg.end();
+    process.exit(0);
+  }
+  return pg;
+}
+
 function eventMsFromId(eventId: string | bigint): number {
   const big = typeof eventId === "bigint" ? eventId : BigInt(eventId);
   return IdIssueService.bigIntToDate(big).getTime();
@@ -295,48 +310,50 @@ async function fetchBatch(
 }
 
 async function processPartition(pg: Client, partitionId: number): Promise<number> {
-  await pg.query("BEGIN");
-  try {
-    const cursor = await loadCursor(pg, partitionId);
-    const batch = await fetchBatch(pg, partitionId, cursor);
-    if (batch.length === 0) {
-      await pg.query("COMMIT");
-      return 0;
-    }
-    let last = cursor;
-    console.log(
-      `[notificationworker] processing: p=${partitionId}, c=${cursor}, count=${batch.length}`,
-    );
-    for (const row of batch) {
-      const eid = BigInt(row.event_id);
+  const cursor = await loadCursor(pg, partitionId);
+  const batch = await fetchBatch(pg, partitionId, cursor);
+  if (batch.length === 0) {
+    return 0;
+  }
+
+  console.log(
+    `[notificationworker] processing: p=${partitionId}, c=${cursor}, count=${batch.length}`,
+  );
+
+  let processed = 0;
+
+  for (const row of batch) {
+    const eid = BigInt(row.event_id);
+    await pg.query("BEGIN");
+    try {
       const payload = row.payload;
       const recipient = await resolveRecipientUserId(pg, payload);
-      if (!recipient) {
-        last = eid;
+
+      if (!recipient || isSelfInteraction(payload, recipient)) {
+        await saveCursor(pg, partitionId, eid);
+        await pg.query("COMMIT");
+        processed++;
         continue;
       }
-      if (isSelfInteraction(payload, recipient)) {
-        last = eid;
-        continue;
-      }
+
       const slot = slotOf(payload);
       const ms = eventMsFromId(eid);
       const term = formatTermInTz(ms, Config.SYSTEM_TIMEZONE);
       const entry = makeEntry(payload, ms);
-      if (!entry) {
-        last = eid;
-        continue;
+
+      if (entry) {
+        await upsertNotification(pg, recipient, slot, term, ms, entry);
       }
-      await upsertNotification(pg, recipient, slot, term, ms, entry);
-      last = eid;
+      await saveCursor(pg, partitionId, eid);
+      await pg.query("COMMIT");
+      processed++;
+    } catch (e) {
+      await pg.query("ROLLBACK");
+      throw e;
     }
-    await saveCursor(pg, partitionId, last);
-    await pg.query("COMMIT");
-    return batch.length;
-  } catch (e) {
-    await pg.query("ROLLBACK");
-    throw e;
   }
+
+  return processed;
 }
 
 function assignedPartitions(workerIndex: number): number[] {
@@ -407,11 +424,13 @@ async function runWorker(workerIndex: number): Promise<void> {
 }
 
 async function main(): Promise<void> {
+  const lockConn = await acquireSingletonLock();
   const runners: Promise<void>[] = [];
   for (let i = 0; i < Config.NOTIFICATION_WORKERS; i++) {
     runners.push(runWorker(i));
   }
   await Promise.all(runners);
+  await lockConn.end();
 }
 
 main().catch((e) => {
