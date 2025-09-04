@@ -1,9 +1,12 @@
 import { Config } from "./config";
+import { createLogger } from "./utils/logger";
 import { StorageObjectId, StorageObjectListRange } from "./models/storage";
 import { makeStorageService } from "./services/storageFactory";
 import path from "path";
 import { readFile, writeFile } from "fs/promises";
 import { lookup as mimeLookup } from "mime-types";
+
+const logger = createLogger({ file: "storageUtil" });
 
 function bufferToArrayBuffer(buf: Buffer): ArrayBuffer {
   return buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
@@ -18,7 +21,7 @@ function parseStoragePath(p: string): StorageObjectId {
 async function main() {
   const args = process.argv.slice(2);
   if (args.length < 2) {
-    console.error(`Usage:
+    console.log(`Usage:
   ts-node src/storageUtil.ts head <bucket:key>
   ts-node src/storageUtil.ts list <bucket:key> [offset limit]
   ts-node src/storageUtil.ts save <bucket:key> localPath
@@ -39,7 +42,7 @@ async function main() {
     case "head": {
       const meta = await svc.headObject(id);
       const outObj = { ...meta, publicUrl: svc.publicUrl(id) };
-      console.log(JSON.stringify(outObj, null, 2));
+      logger.info(JSON.stringify(outObj, null, 2));
       break;
     }
     case "list": {
@@ -52,14 +55,14 @@ async function main() {
         ...obj,
         publicUrl: svc.publicUrl({ bucket: obj.bucket, key: obj.key }),
       }));
-      console.log(JSON.stringify(sliced, null, 2));
+      logger.info(JSON.stringify(sliced, null, 2));
       break;
     }
     case "load": {
       if (!localPath) throw new Error("localPath required");
       const bytes = await svc.loadObject(id);
       await writeFile(localPath, bytes);
-      console.log(`saved -> ${localPath} (${bytes.length} bytes)`);
+      logger.info(`saved -> ${localPath} (${bytes.length} bytes)`);
       break;
     }
     case "save": {
@@ -67,26 +70,26 @@ async function main() {
       const buf = await readFile(localPath);
       const ct = mimeLookup(localPath) || "application/octet-stream";
       await svc.saveObject(id, new Uint8Array(buf), ct);
-      console.log(`uploaded <- ${localPath} (${buf.byteLength} bytes)`);
+      logger.info(`uploaded <- ${localPath} (${buf.byteLength} bytes)`);
       break;
     }
     case "copy": {
       if (!localPath) throw new Error("destination key required");
       const dstId = parseStoragePath(localPath);
       await svc.copyObject(id, dstId);
-      console.log(`copied ${storagePath} -> ${localPath}`);
+      logger.info(`copied ${storagePath} -> ${localPath}`);
       break;
     }
     case "move": {
       if (!localPath) throw new Error("destination key required");
       const dstId = parseStoragePath(localPath);
       await svc.moveObject(id, dstId);
-      console.log(`moved ${storagePath} -> ${localPath}`);
+      logger.info(`moved ${storagePath} -> ${localPath}`);
       break;
     }
     case "delete": {
       await svc.deleteObject(id);
-      console.log("deleted");
+      logger.info("deleted");
       break;
     }
     case "presigned-post": {
@@ -110,7 +113,7 @@ async function main() {
         const text = await resp.text();
         throw new Error(`upload failed: ${resp.status} ${resp.statusText}\n${text}`);
       }
-      console.log("uploaded via presigned POST");
+      logger.info("uploaded via presigned POST");
       break;
     }
     default: {
@@ -120,6 +123,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.error(e);
+  logger.info(`Fatal error: ${e}`);
   process.exit(1);
 });

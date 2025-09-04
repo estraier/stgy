@@ -113,6 +113,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  logger.info(`[api] Fatal error: ${e}`);
+  logger.info(`Fatal error: ${e}`);
   process.exit(1);
 });

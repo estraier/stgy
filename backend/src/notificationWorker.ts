@@ -5,7 +5,7 @@ import { IdIssueService } from "./services/idIssue";
 import type { AnyEventPayload } from "./models/eventLog";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 
-const logger = createLogger({ file: "mediaWorker" });
+const logger = createLogger({ file: "notificationWorker" });
 
 async function acquireSingletonLock(): Promise<Client> {
   const pg = await connectPgWithRetry();

@@ -4,9 +4,6 @@ describe("makeSnippetJsonFromMarkdown", () => {
   it("simple", () => {
     const mdText = "hello world";
     const expected = '[{"T":"p","X":"hello world"}]';
-
-    console.log(makeSnippetJsonFromMarkdown(mdText));
-
     expect(makeSnippetJsonFromMarkdown(mdText)).toStrictEqual(expected);
   });
 
