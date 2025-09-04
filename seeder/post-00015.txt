@@ -1,4 +1,4 @@
-id: 0002000000000014
+id: 0002000000000015
 ownedBy: 0001000000000002
 allowLikes: false
 allowReplies: false
@@ -235,5 +235,5 @@ MinIOではなくS3を使う場合、FAKEBOOK_STORAGE_S3_ENDPOINTは空文字列
 ```
 
 
-Next: [Fakebookの通知機能](/posts/0002000000000015)
+Next: [Fakebookの通知機能](/posts/0002000000000016)
 ____EOF____

@@ -1,0 +1,16 @@
+id: 0002000000000014
+ownedBy: 0001000000000002
+allowLikes: false
+allowReplies: false
+tags: fakebook-help
+content:<<____EOF____
+# Fakebookのバックエンドサーバ
+
+本記事では、Fakebookのバックエンドサーバの機能と構成について説明する。
+
+## 概要
+
+これから書きます。
+
+Next: [Fakebookのメディアストレージ](/posts/0002000000000015)
+____EOF____
