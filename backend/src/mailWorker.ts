@@ -1,5 +1,7 @@
 import { SendMailService } from "./services/sendMail";
-import { makeRedis } from "./utils/servers";
+import { connectRedisWithRetry } from "./utils/servers";
+import type Redis from "ioredis";
+import type { Transporter } from "nodemailer";
 
 type MailTask =
   | { type: "signup"; email: string; verificationCode: string }
@@ -8,29 +10,28 @@ type MailTask =
 
 const MAIL_QUEUE = "mail-queue";
 
-const redis = makeRedis();
-
-const sendMailService = new SendMailService(redis);
-const mailTransporter = SendMailService.createTransport();
-
-async function handleMailTask(msg: MailTask) {
+async function handleMailTask(
+  msg: MailTask,
+  sendMailService: SendMailService,
+  mailTransporter: Transporter,
+) {
   switch (msg.type) {
     case "signup": {
       const subject = "Fakebook Signup Verification Code";
       const text = `Thank you for signing up for Fakebook.\nYour verification code: ${msg.verificationCode}\nPlease enter this code within 5 minutes.`;
-      await sendMailWithRecord(msg.email, subject, text);
+      await sendMailWithRecord(sendMailService, mailTransporter, msg.email, subject, text);
       break;
     }
     case "update-email": {
       const subject = "Fakebook Email Change Verification";
       const text = `Your verification code for email update: ${msg.verificationCode}\nPlease enter this code within 5 minutes.`;
-      await sendMailWithRecord(msg.newEmail, subject, text);
+      await sendMailWithRecord(sendMailService, mailTransporter, msg.newEmail, subject, text);
       break;
     }
     case "reset-password": {
       const subject = "Fakebook Password Reset Verification";
       const text = `A password reset was requested for your Fakebook account.\nVerification code: ${msg.mailCode}\nPlease enter this code within 5 minutes.`;
-      await sendMailWithRecord(msg.email, subject, text);
+      await sendMailWithRecord(sendMailService, mailTransporter, msg.email, subject, text);
       break;
     }
     default: {
@@ -40,7 +41,13 @@ async function handleMailTask(msg: MailTask) {
   }
 }
 
-async function sendMailWithRecord(address: string, subject: string, body: string) {
+async function sendMailWithRecord(
+  sendMailService: SendMailService,
+  mailTransporter: Transporter,
+  address: string,
+  subject: string,
+  body: string,
+) {
   try {
     const canSend = await sendMailService.canSendMail(address);
     if (!canSend.ok) {
@@ -55,7 +62,12 @@ async function sendMailWithRecord(address: string, subject: string, body: string
   }
 }
 
-async function processQueue(queue: string) {
+async function processQueue(
+  queue: string,
+  redis: Redis,
+  sendMailService: SendMailService,
+  mailTransporter: Transporter,
+) {
   while (true) {
     try {
       const res = await redis.brpop(queue, 10);
@@ -69,7 +81,7 @@ async function processQueue(queue: string) {
         continue;
       }
       if (typeof msg === "object" && msg !== null && "type" in msg) {
-        await handleMailTask(msg as MailTask);
+        await handleMailTask(msg as MailTask, sendMailService, mailTransporter);
       } else {
         console.log(`[mailworker] invalid task object in ${queue}:`, payload);
       }
@@ -82,7 +94,10 @@ async function processQueue(queue: string) {
 
 async function main() {
   console.log("[mailworker] Fakebook mail worker started");
-  await processQueue(MAIL_QUEUE);
+  const redis = await connectRedisWithRetry();
+  const sendMailService = new SendMailService(redis);
+  const mailTransporter: Transporter = SendMailService.createTransport();
+  await processQueue(MAIL_QUEUE, redis, sendMailService, mailTransporter);
 }
 
 main().catch((e) => {

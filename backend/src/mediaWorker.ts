@@ -2,7 +2,8 @@ import { Config } from "./config";
 import sharp from "sharp";
 import { makeStorageService } from "./services/storageFactory";
 import type { StorageService } from "./services/storage";
-import { makeRedis } from "./utils/servers";
+import { connectRedisWithRetry } from "./utils/servers";
+import type Redis from "ioredis";
 
 type ThumbQueueTask =
   | { type: "image"; bucket: string; originalKey: string }
@@ -11,10 +12,6 @@ type ThumbQueueTask =
 const QUEUE = "media-thumb-queue";
 const MAX_PIXELS_IMAGE = 512 * 512;
 const MAX_PIXELS_ICON = 96 * 96;
-
-const redis = makeRedis();
-
-const storage: StorageService = makeStorageService(Config.STORAGE_DRIVER);
 
 function stripExt(file: string): string {
   return file.replace(/\.[^.]+$/, "");
@@ -59,7 +56,12 @@ function calcTargetSize(
   return { width: w, height: h };
 }
 
-async function generateKind(bucket: string, originalKey: string, kind: "image" | "icon") {
+async function generateKind(
+  storage: StorageService,
+  bucket: string,
+  originalKey: string,
+  kind: "image" | "icon",
+) {
   const outKey = deriveOutKey(originalKey, kind);
   const maxPixels = kind === "image" ? MAX_PIXELS_IMAGE : MAX_PIXELS_ICON;
 
@@ -70,8 +72,7 @@ async function generateKind(bucket: string, originalKey: string, kind: "image" |
   }
 
   const srcBytes = await storage.loadObject({ bucket, key: originalKey });
-
-  const base = sharp(Buffer.from(srcBytes));
+  const base = sharp(Buffer.from(srcBytes), { limitInputPixels: Config.MEDIA_INPUT_MAX_PIXELS });
   const meta = await base.metadata();
   const { width: tw, height: th } = calcTargetSize(meta.width, meta.height, maxPixels);
 
@@ -84,9 +85,9 @@ async function generateKind(bucket: string, originalKey: string, kind: "image" |
   console.log(`[mediaworker] wrote ${bucket}/${outKey} (${outBuf.length} bytes)`);
 }
 
-async function handleTask(task: ThumbQueueTask) {
+async function handleTask(storage: StorageService, task: ThumbQueueTask) {
   if (task.type === "image" || task.type === "icon") {
-    await generateKind(task.bucket, task.originalKey, task.type);
+    await generateKind(storage, task.bucket, task.originalKey, task.type);
     return;
   }
   const _exhaustive: never = task as never;
@@ -96,7 +97,7 @@ async function handleTask(task: ThumbQueueTask) {
 let shuttingDown = false;
 const inflight = new Set<Promise<void>>();
 
-async function processQueue(queue: string) {
+async function processQueue(queue: string, redis: Redis, storage: StorageService) {
   while (!shuttingDown) {
     try {
       if (inflight.size >= Config.MEDIA_WORKER_CONCURRENCY) {
@@ -110,7 +111,7 @@ async function processQueue(queue: string) {
         try {
           let msg: unknown = JSON.parse(payload);
           if (typeof msg === "object" && msg !== null && "type" in msg) {
-            await handleTask(msg as ThumbQueueTask);
+            await handleTask(storage, msg as ThumbQueueTask);
           } else {
             console.log(`[mediaworker] invalid task object in ${queue}:`, payload);
           }
@@ -128,7 +129,7 @@ async function processQueue(queue: string) {
   }
 }
 
-async function shutdown() {
+async function shutdown(redis: Redis) {
   if (shuttingDown) return;
   shuttingDown = true;
   try {
@@ -141,14 +142,16 @@ async function shutdown() {
   }
 }
 
-process.on("SIGINT", shutdown);
-process.on("SIGTERM", shutdown);
-
 async function main() {
   console.log(
     `[mediaworker] Fakebook media thumbnail worker started (concurrency=${Config.MEDIA_WORKER_CONCURRENCY})`,
   );
-  await processQueue(QUEUE);
+  const redis = await connectRedisWithRetry();
+  const storage: StorageService = makeStorageService(Config.STORAGE_DRIVER);
+  const onSig = () => shutdown(redis);
+  process.on("SIGINT", onSig);
+  process.on("SIGTERM", onSig);
+  await processQueue(QUEUE, redis, storage);
 }
 
 main().catch((e) => {

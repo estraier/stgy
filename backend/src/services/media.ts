@@ -4,6 +4,7 @@ import crypto from "crypto";
 import { PresignedPostResult, StorageObjectMetadata, StorageMonthlyQuota } from "../models/storage";
 import type { StorageService } from "./storage";
 import { Config } from "../config";
+import { sniffFormat, readDimensions } from "../utils/image";
 
 function toRevMM(d: Date) {
   const y = d.getUTCFullYear();
@@ -42,62 +43,6 @@ function extFromFilenameOrMime(filename: string | undefined, mime: string): stri
 
 function isKeyUnder(prefix: string, key: string) {
   return key === prefix || key.startsWith(prefix + "/");
-}
-
-function u32be(bytes: Uint8Array, off: number): number {
-  if (off + 4 > bytes.length) return -1;
-  return (
-    ((bytes[off] << 24) | (bytes[off + 1] << 16) | (bytes[off + 2] << 8) | bytes[off + 3]) >>> 0
-  );
-}
-
-function fourCC(bytes: Uint8Array, off: number): string {
-  if (off + 4 > bytes.length) return "";
-  return String.fromCharCode(bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]);
-}
-
-function sniffFormat(bytes: Uint8Array): { ok: boolean; mime?: string } {
-  if (bytes.length >= 3 && bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) {
-    return { ok: true, mime: "image/jpeg" };
-  }
-  if (
-    bytes.length >= 24 &&
-    bytes[0] === 0x89 &&
-    bytes[1] === 0x50 &&
-    bytes[2] === 0x4e &&
-    bytes[3] === 0x47 &&
-    bytes[4] === 0x0d &&
-    bytes[5] === 0x0a &&
-    bytes[6] === 0x1a &&
-    bytes[7] === 0x0a
-  ) {
-    const ihdrLen = u32be(bytes, 8);
-    const ihdrType = fourCC(bytes, 12);
-    if (ihdrLen === 13 && ihdrType === "IHDR") return { ok: true, mime: "image/png" };
-    return { ok: false };
-  }
-  if (bytes.length >= 16 && fourCC(bytes, 0) === "RIFF" && fourCC(bytes, 8) === "WEBP") {
-    const chunkTag = fourCC(bytes, 12);
-    if (chunkTag === "VP8 " || chunkTag === "VP8L" || chunkTag === "VP8X") {
-      return { ok: true, mime: "image/webp" };
-    }
-    return { ok: false };
-  }
-  if (bytes.length >= 20) {
-    const boxSize = u32be(bytes, 0);
-    const boxType = fourCC(bytes, 4);
-    if (boxType === "ftyp" && boxSize >= 16) {
-      const major = fourCC(bytes, 8);
-      const allowed = new Set(["heic", "heix", "hevc", "hevx", "mif1", "msf1", "heif", "heis"]);
-      if (allowed.has(major)) return { ok: true, mime: "image/heic" };
-      const end = Math.min(bytes.length, boxSize);
-      for (let p = 16; p + 4 <= end; p += 4) {
-        if (allowed.has(fourCC(bytes, p))) return { ok: true, mime: "image/heic" };
-      }
-      return { ok: false };
-    }
-  }
-  return { ok: false };
 }
 
 export class MediaService {
@@ -150,13 +95,29 @@ export class MediaService {
     }
     const sniffBytes = await this.storage.loadObject(
       { bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey },
-      { offset: 0, length: 65536 },
+      { offset: 0, length: 512 * 1024 },
     );
     const sniff = sniffFormat(sniffBytes);
     if (!sniff.ok) {
       await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
       throw new Error("invalid image data");
     }
+    const dim = readDimensions(sniffBytes, sniff.mime!);
+    if (!dim) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
+      throw new Error("cannot determine image dimensions");
+    }
+    const maxSide = Number(Config.MEDIA_INPUT_MAX_DIMENTION ?? 0) || 0;
+    const maxPixels = Number(Config.MEDIA_INPUT_MAX_PIXELS ?? 0) || 0;
+    if (maxSide && (dim.w > maxSide || dim.h > maxSide)) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
+      throw new Error("image too large (dimension)");
+    }
+    if (maxPixels && dim.w * dim.h > maxPixels) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
+      throw new Error("image too large (pixels)");
+    }
+
     const declaredCt = allowedImageMime(head.contentType ?? null);
     if (!declaredCt) {
       await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
@@ -316,13 +277,29 @@ export class MediaService {
     }
     const sniffBytes = await this.storage.loadObject(
       { bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey },
-      { offset: 0, length: 65536 },
+      { offset: 0, length: 512 * 1024 },
     );
     const sniff = sniffFormat(sniffBytes);
     if (!sniff.ok) {
       await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });
       throw new Error("invalid image data");
     }
+    const dim = readDimensions(sniffBytes, sniff.mime!);
+    if (!dim) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });
+      throw new Error("cannot determine image dimensions");
+    }
+    const maxSide = Number(Config.MEDIA_INPUT_MAX_DIMENTION ?? 0) || 0;
+    const maxPixels = Number(Config.MEDIA_INPUT_MAX_PIXELS ?? 0) || 0;
+    if (maxSide && (dim.w > maxSide || dim.h > maxSide)) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });
+      throw new Error("image too large (dimension)");
+    }
+    if (maxPixels && dim.w * dim.h > maxPixels) {
+      await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });
+      throw new Error("image too large (pixels)");
+    }
+
     const declaredCt = allowedImageMime(head.contentType ?? null);
     if (!declaredCt) {
       await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });

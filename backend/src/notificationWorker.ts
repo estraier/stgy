@@ -1,12 +1,11 @@
 import { Config } from "./config";
 import { Client } from "pg";
-import Redis from "ioredis";
 import { IdIssueService } from "./services/idIssue";
 import type { AnyEventPayload } from "./models/eventLog";
-import { connectPgWithRetry, makeRedis } from "./utils/servers";
+import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 
 async function acquireSingletonLock(): Promise<Client> {
-  const pg = await connectPgWithRetry(60_000);
+  const pg = await connectPgWithRetry();
   const res = await pg.query<{ ok: boolean }>(
     `SELECT pg_try_advisory_lock(hashtext($1), 0) AS ok`,
     ["fakebook:notification"],
@@ -364,7 +363,7 @@ async function runWorker(workerIndex: number): Promise<void> {
     } catch {}
   }
 
-  const sub = makeRedis();
+  const sub = await connectRedisWithRetry();
   const channel = `notifications:wake:${workerIndex}`;
   const inFlight = new Set<number>();
   const pending = new Set<number>();
