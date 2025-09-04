@@ -1,4 +1,4 @@
-id: 0002000000000015
+id: 0002000000000014
 ownedBy: 0001000000000002
 allowLikes: false
 allowReplies: false
@@ -6,7 +6,234 @@ tags: fakebook-help
 content:<<____EOF____
 # Fakebookのメディアストレージ
 
-今後書きます。
+本記事では、Fakebookにおいて画像などのメディアデータをどのように管理するかについて説明する。Amazon S3または互換システムであるMinIOのAPIを使って単純かつ堅牢なデータ管理をするにはどうするかについて述べる。
 
-Next: [Fakebookの通知機能](/posts/0002000000000016)
+![画像一覧画面](/data/help-images-list.png){float=right}
+
+## 前提条件
+
+画像などのメディアデータを扱う場合、データベースにバイナリを入れたり、ファイルシステムにファイルを置いたりする方法だと、運用が面倒くさい。可用性の確保や容量制限やバックアップの作成に独自の手順を必要とするからだ。それよりは、いわゆるクラウドストレージを使ったほうが楽だ。
+
+FakebookではストレージサービスとしてAmazon S3（Simple Storage Service）を使うことにしていて、開発中はMinIOのDockerインスタンスを立ててS3のエミュレーションをしている。ここではその構成でのデータ管理の概要について述べる。また、開発環境および本番環境での構築と運用についても述べる。
+
+## S3のデータ管理の概要
+
+S3は、バケットという単位の中に任意の名前付きオブジェクトを格納する仕組みである。言い換えると、バケット毎にkey-valueストアがあり、キーがファイル名、valueがオブジェクトのバイナリということになる。キーには "/" で区切ったディレクトリ構造を模した文字列を使うことが通例だが、"/" に特別な意味はなく、オブジェクトはキーの完全一致で識別されるとともに、キーの前方一致によるリスト機能が提供されるだけである。
+
+投稿内に埋め込む画像は "fakebook-images" バケット内に置かれる。その中に、以下の構造でオブジェクトが置かれる。元画像はクライアントから直接アップロードされ、サムネイルはシステム側で自動的に作られる。
+
+- {userId}/masters/{revYYYYMM}/{time8}{hash8}.{ext}
+- {userId}/thumbs/{revYYYYMM}/{time8}{hash8}_image.webp
+
+`{userId}` はユーザIDである。`{revYYYYMM}` は、作成日時のYYYYMM値を999999から引いた値である。`{time8}` は月内のタイムスタンプを最大値から引いた8桁の16進数である。`{hash8}` は衝突回避のための8桁の16進数である。以下に例を示す。`{ext}` は画像形式に対応する拡張子である。
+
+- 0001000000000002/masters/797491/8244600348025c20d1da7.jpg
+- 0001000000000002/thumbs/797491/8244600348025c20d1da7_image.webp
+
+S3では、キーは文字列の辞書順で並べられる。前方一致検索ができるので、キーにユーザIDを接頭させると、ユーザごとのオブジェクトを検索できるようになる。また、その後に固定長の日付をつければ、ユーザ毎に日付の順番にオブジェクトが並べられることになる。逆順に辿るAPIは無いので、新しい順で見たい場合には、日付の最大値から現在の日付を引いた値を使えば良いことになる。また、YYYYMMを単位とすることで、月ごとにオブジェクトが分類できるので、月のクォータ管理ができる。
+
+アバター画像など、個々のユーザが一つずつしか持たないプロファイル系の画像は、"fakebook-profiles" というバケット内に置かれる。その中に、以下の構造でオブジェクトが置かれる。元画像はクライアントから直接アップロードされ、サムネイルはシステム側で自動的に作られる。
+
+- {userId}/masters/{type}.{ext}
+- {userId}/thumbs/{type}_icon.webp
+
+`{userId}` はユーザIDである。`{type} は、データの種類を表すが、現状では "avatar" のみである。`{ext}` は画像形式に対応する拡張子である。以下に例を示す。
+
+- 0001000000000002/masters/avatar.png
+- 0001000000000002/thumbs/avatar_icon.webp
+
+プロファイル系の画像は、ユーザと種別ごとに単一なので、画像単体のサイズのみが制限され、クォータの制限はない。
+
+以上の命名規則によって、DBでキーやメタデータを管理することなく、ストレージサービスのみで、メディアデータを管理することができる。
+
+## S3単体管理 vs DBでのメタデータ管理
+
+どのユーザがどのファイルを登録したかというメタデータをDBのテーブルで管理すれば、キーの前方一致検索しかできないというS3の制限に対する回避策は必要なくなる。しかし、そうしないと行けないという理由がないのなら、DBでのメタデータ管理は導入したくない。S3側とDB側にまたがるトランザクションの整合性を確保するのが結構面倒くさいからだ。例えば新しいオブジェクトを登録するなら、DB側にメタデータを入れる予約をして、それに基づいてS3にオブジェクトを作って、成功したらメタデータを確定させるという処理になる。そのそれぞれの過程の中間状態でシステムクラッシュが起きうるので、予約状態のメタデータに対応するS3オブジェクトを破棄したり、予約状態のメタデータを破棄したりといったゴミ掃除も必要になる。
+
+S3単体だと、中間状態がないので、管理が簡単だ。オブジェクトの登録・更新・削除の処理の原子性はS3が確保してくれるので、それ以外のデータとの整合性を気にしなくて良いならば、面倒くさい多層コミット的な処理は必要ないし、明示的なゴミ掃除も必要ない。ただし、それはS3の貧弱な検索機能を受け入れるという意味でもある。リスト表示機能は、予め決めておいた単一の順序でしか行えない。今回はファイルを新しい順に表示するUIだけを提供すると割り切っている。古いファイルを探すには何ページもめくってサムネイルを眺める必要がある。アップロードしたデータのローカルでのファイル名は失われているので、ファイル名で文字列検索することもできない。
+
+SNSでの画像置き場としての利用では、S3単体で問題ないと判断している。基本的には記事を執筆するUIで画像をアップロードして、その瞬間に画像を参照するマーカーが記事に埋め込まれるので、画像単体を検索できる必要はあまりない。記事の方を検索すればよいのだ。ほとんどのユーザは、メールやメッセージアプリの添付ファイルのようなノリで画像を記事に貼り付けて、その記事を関係者に閲覧させる。そしてその記事の賞味期限が過ぎたら、貼り付けた画像のことは忘れてしまう。わざわざ古い画像を検索して再利用した記事を書く頻度は低いだろう。記事を消したとしても、そこで使った画像をわざわざ消すような律儀なユーザはほとんどいないだろう。なので、新しい順で画像一覧が表示できて、かつユーザごとの容量管理ができれば良く、それらはS3単体で実現できる。
+
+## 画像アップロード処理
+
+画像をS3にアップロードするにあたっては、一定のプロトコルが必要になる。巨大なデータをS3にアップロードするとなると、バックエンドサーバが一旦データを預かってからS3に転送するという方法は取りたくない。よって、クライアントが直接S3にデータをアップロードすることになるが、好き勝手にアップロードさせるわけには行かない。そこで、最初に、「どのキーにどんなデータをアップロードするか」を決めて、それを示すpresignをS3に発行させる。実際には、ステージング領域にデータをアップロードするというpresignを作る。そして、クライアントにpresignを渡し、クライアントはpresignのトークンを使って、許可されたアップロード操作をS3に行う。それが完了したら、バックエンド側の責任で、ステージング環境のデータを本番環境に移動させる。具体的な流れを以下に箇条書きする。
+
+- ユーザは、ローカルファイルシステムから、アップロードしたいファイルを選ぶ。
+- クライアントは、アップロードするファイルの情報をバックエンドに送る。
+- バックエンドは、S3直PUTの署名付きPOST情報のpresignをS3から取得し、クライアントに返す。前処理として以下を行う：
+  - ファイル単体のサイズが制限値（10MB）以下か確認する。
+  - 新規のファイルサイズと当月全ての登録ファイルの合計が月間クォータ（100MB）の制限内か確認する。
+  - 拡張子に対応するMIMEタイプがJPEG、PNG、WEBP、HEICのどれかであるか確認する。
+- クライアントは、署名情報に基づき、S3のステージング領域へ直接アップロードする。
+- クライアントは、バックエンドに操作完了を報告する。
+- バックエンドは、ステージング領域のデータを本番領域に移動させる。前処理として以下を行う：
+  - パスがステージング領域のものか確認する。
+  - 単体のデータサイズと月間クォータが制限値以内か再確認する。
+  - ファイルの先頭データを見て、ファイル形式を判定する。
+    - クライアントが報告したMIMEと、拡張子のMIMEと、ファイル先頭から判定したMIMEの全てが同一か。
+  - エラーがあれば、ステージングのデータを削除して終了する。
+- バックエンドは、登録画像に対応するサムネイルを作るジョブキューをRedisに登録する。
+- メディアワーカーは、ジョブキューを読んで非同期的にサムネイルを作成する。
+
+アバター画像に許される画像形式も通常画像とぢょうようにJPEGやPNGなどである。ただし、ファイルサイズの上限は1MBである。アバター画像はユーザ毎に1枚であり、新しいアバター画像が登録される際には、古いものは削除される。よって、クォータの管理は行わない。
+
+## サムネイル作成
+
+サムネイルの作成処理は、mediaWorkerという別プロセスが担当する。mediaWorkerはRedisのキューを監視し、新規の通常画像やアバター画像が登録された直後にそれを読み出して、対応する場所にサムネイル画像を生成する。通常画像のサムネイルのサイズは512*512のサイズで、アバター画像のサムネイルのサイズは96*96である。入力画像が正方形ではない場合、長辺が制限一杯の長さになるように縮小される。画像形式はWEBPになる。入力のピクセル数は64MPに制限される。
+
+サムネイルの作成処理はSharpというライブラリを使って行われる。Node.jsはシングルスレッドで動作するが、Sharpは内部でネイティブスレッドを立てて動作し、任意の並列数でサムネイル作成処理が実行される。デフォルトの並列数は2である。Redisのキューを複数プロセスで監視できるため、必要であればプロセスを増やしたり、別サーバで同一キューを監視させて、並列度を上げることが可能である。
+
+## その他の処理
+
+画像を削除する際には、マスター画像を削除するとともに、サムネイルも削除する。また、ユーザを削除する際には、そのユーザが持っている画像を全て削除する。
+
+画像を一覧する際には、"{userId}/masters/" の前方一致でオブジェクトのリストを取得する。S3におけるキーのリスト取得ののAPI（ListObjectsV2Command）では、取得数（MaxKeys）と継続トークン（ContinuationToken）をパラメータとして渡すことになっている。2ページを表示する際には、1ページ目を表示する際に返された継続トークンを渡すというインターフェイスになっている。なので、2ページ目以降をいきなり表示する場合、前のページまでのリスト取得を暗黙的に繰り返す必要がある。
+
+通常の運用では、オブジェクトの作成はpresigned-POSTを介してクライアントがS3に対して直接通信して行い、オブジェクトのデータの取得は、公開URLを介してクライアントがS3に対して直接通信して行われる。しかし、管理用に、バックエンドがS3に対して直接データの保存やデータ取得を行うAPIも用意してある。
+
+## セキュリティ向上策
+
+ユーザがアップロードした任意の画像ファイルが他のユーザのブラウザに表示されるので、悪意のあるユーザがブラウザクラッシャーを埋め込まないように対策する必要がある。SVGはブラウザに高負荷の計算を強いる余地があるため、ユーザからの投稿は受け付けないようにする。JPEG、PNG、WEBP、HEICに関してはその問題はないが、ピクセル数を上げることでメモリを消費させる余地があるため、総ピクセル数を50MBに制限する。
+
+
+
+## ストレージサービスのラッパー
+
+Fakebookは、S3やその互換のMinIOを利用することを前提としている。本番でAWS上で運用するならそれでよいが、GCP上だと困る。そこで、少しの変更でGCS（Google Cloud Storage）も利用できるように、ストレージ層を抽象化している。
+
+```typescript
+// src/models/storage.ts -- other structures are also defined
+export type PresignedPostRequest = {
+  bucket: string;
+  key: string;
+  contentTypeWhitelist: string;
+  maxBytes?: number;
+  expiresInSec?: number;
+};
+
+export type PresignedPostResult = {
+  url: string;
+  fields: Record<string, string>;
+  objectKey: string;
+  maxBytes: number;
+  expiresInSec: number;
+};
+
+export type StorageObjectId = {
+  bucket: string;
+  key: string;
+};
+
+// src/services/storage.ts
+export interface StorageService {
+  createPresignedPost(req: PresignedPostRequest): Promise<PresignedPostResult>;
+
+  headObject(objId: StorageObjectId): Promise<StorageObjectMetadata>;
+
+  publicUrl(objId: StorageObjectId): string;
+
+  listObjects(objId: StorageObjectId, range?: StorageObjectListRange):
+    Promise<StorageObjectMetadata[]>;
+
+  loadObject(objId: StorageObjectId, range?: StorageObjectDataRange):
+    Promise<Uint8Array>;
+
+  saveObject(objId: StorageObjectId, content: Uint8Array, contentType?: string):
+    Promise<void>;
+
+  copyObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void>;
+
+  moveObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void>;
+
+  deleteObject(objId: StorageObjectId): Promise<void>;
+}
+
+// src/services/storageFactory.ts
+export function makeStorageService(driver: string): StorageService { ... }
+```
+
+StorageServiceインターフェイスを実装するクラスのオブジェクトをmakeStorageServiceが返すようになっていて、現状ではS3のAPIを使う実装であるStorageServiceS3のみをサポートしている。GCSのAPIを使う実装であるStorageServiceGcpとかいうのを実装して返すようにすれば、他を一切変更しなくても対応できる。
+
+## 開発環境での設定
+
+
+
+メディア関係の設定も環境変数で管理されている。開発中には.envファイルを使い、MinIO前提の設定が書いてある。本番環境では、バックエンドとフロントエンドに渡す環境変数をS3用に書き換えることになる。
+
+バックエンドに渡す環境変数は以下のものである。
+
+- FAKEBOOK_STORAGE_DRIVER : 現状、"s3" 決め打ち。
+- FAKEBOOK_STORAGE_S3_ENDPOINT : S3のAPIを叩くエンドポイント。
+- FAKEBOOK_STORAGE_S3_REGION : リージョンの識別子。
+- FAKEBOOK_STORAGE_S3_ACCESS_KEY_ID : S3を使うAWSのアカウントID。
+- FAKEBOOK_STORAGE_S3_SECRET_ACCESS_KEY : S3のアクセスパスワード（秘匿情報）。
+- FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLE : 公開URLの "ENDPOINT/BUCKET/KEY" と "BUCKET.ENDPOINT/KEY" の切り替え
+- FAKEBOOK_STORAGE_S3_BUCKET_PREFIX : バケット名の接頭辞。
+- FAKEBOOK_STORAGE_S3_PUBLIC_URL_PREFIX : 公開URLの接頭辞。"{bucket}"はバケット名に置換。
+
+フロントエンドにわたす環境変数は以下のものである。
+
+- NEXT_PUBLIC_STORAGE_S3_BUCKET_PREFIX : バケット名の接頭辞
+- NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX : 公開URLの接頭辞。"{bucket}"はバケット名に置換。
+
+本番環境では、以下の設定が無難である。
+
+- FAKEBOOK_STORAGE_DRIVER=S3
+- FAKEBOOK_STORAGE_S3_ENDPOINT=
+- FAKEBOOK_STORAGE_S3_REGION=ap-northeast-1
+- FAKEBOOK_STORAGE_S3_ACCESS_KEY_ID=...(aws_account_id)...
+- FAKEBOOK_STORAGE_S3_SECRET_ACCESS_KEY=...(aws_secret_key)...
+- FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLE=false
+- FAKEBOOK_STORAGE_S3_BUCKET_PREFIX=fakebook
+- FAKEBOOK_STORAGE_S3_PUBLIC_URL_PREFIX=https://{bucket}.s3.ap-northeast-1.amazonaws.com/
+
+- NEXT_PUBLIC_STORAGE_S3_BUCKET_PREFIX=fakebook
+- NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX=https://{bucket}.s3.ap-northeast-1.amazonaws.com/
+
+MinIOではなくS3を使う場合、FAKEBOOK_STORAGE_S3_ENDPOINTは空文字列にすると、自動選択される。FAKEBOOK_STORAGE_S3_REGIONは、バックエンドが動いているリージョンと同一にしておく。FAKEBOOK_STORAGE_S3_BUCKET_PREFIXはデフォルトのfakebookのままでOK。FAKEBOOK_STORAGE_S3_FORCE_PATH_STYLEはfalseにしてバケット名を仮想ホストと紐づけるようにすると、AWSの各種サービスと連携しやすい。それに合わせて、FAKEBOOK_STORAGE_S3_PUBLIC_URL_PREFIXは "https://{bucket}.s3.ap-northeast-1.amazonaws.com/" というパターンにしておく。CroudFrontなどのリバースプロクシを挟んでデータを配信する場合、そのURLのパターンを記述する。
+
+
+
+
+```
+{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Sid": "AllowGetFromOurSite",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": ["s3:GetObject"],
+      "Resource": [
+        "arn:aws:s3:::fakebook-images/*",
+        "arn:aws:s3:::fakebook-profiles/*"
+      ],
+      "Condition": {
+        "StringLike": {
+          "aws:Referer": [
+            "https://fakebook.example/*",
+            "https://www.fakebook.example/*"
+          ]
+        }
+      }
+    },
+    {
+      "Sid": "AllowGetWhenRefererIsEmpty",
+      "Effect": "Allow",
+      "Principal": "*",
+      "Action": ["s3:GetObject"],
+      "Resource": [
+        "arn:aws:s3:::fakebook-images/*",
+        "arn:aws:s3:::fakebook-profiles/*"
+      ],
+      "Condition": {
+        "Null": { "aws:Referer": "true" }
+      }
+    }
+  ]
+}
+```
+
+
+Next: [Fakebookの通知機能](/posts/0002000000000015)
 ____EOF____

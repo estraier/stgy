@@ -1,12 +1,12 @@
-id: 0002000000000016
+id: 0002000000000015
 ownedBy: 0001000000000002
 allowLikes: false
 allowReplies: false
 tags: fakebook-help
 content:<<____EOF____
-# Fakebookの通知機能
+# Fakebookのメディアストレージ
 
 今後書きます。
 
-Next: [Fakebookの本番デプロイ](/posts/0002000000000017)
+Next: [Fakebookの通知機能](/posts/0002000000000016)
 ____EOF____
