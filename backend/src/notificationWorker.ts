@@ -1,8 +1,11 @@
 import { Config } from "./config";
+import { createLogger } from "./utils/logger";
 import { Client } from "pg";
 import { IdIssueService } from "./services/idIssue";
 import type { AnyEventPayload } from "./models/eventLog";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
+
+const logger = createLogger({ file: "mediaWorker" });
 
 async function acquireSingletonLock(): Promise<Client> {
   const pg = await connectPgWithRetry();
@@ -11,7 +14,7 @@ async function acquireSingletonLock(): Promise<Client> {
     ["fakebook:notification"],
   );
   if (!res.rows[0]?.ok) {
-    console.log("[notificationworker] another instance is running; exiting");
+    logger.warn("[notificationworker] another instance is running; exiting");
     await pg.end();
     process.exit(0);
   }
@@ -297,7 +300,7 @@ async function processPartition(pg: Client, partitionId: number): Promise<number
     return 0;
   }
 
-  console.log(
+  logger.info(
     `[notificationworker] processing: p=${partitionId}, c=${cursor}, count=${batch.length}`,
   );
 
@@ -353,7 +356,7 @@ async function drain(pg: Client, partitionId: number): Promise<void> {
 }
 
 async function runWorker(workerIndex: number): Promise<void> {
-  console.log(`[notificationworker] worker ${workerIndex} started`);
+  logger.info(`Fakebook notification worker ${workerIndex} started`);
   const pg = await connectPgWithRetry(60_000);
 
   const parts = assignedPartitions(workerIndex);
@@ -414,6 +417,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-  console.log("[notificationworker] Fatal error:", e);
+  logger.error(`[notificationworker] Fatal error: ${e}`);
   process.exit(1);
 });

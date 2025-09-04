@@ -1,6 +1,9 @@
 import { Client } from "pg";
 import Redis from "ioredis";
 import { Config } from "../config";
+import { createLogger } from "./logger";
+
+const logger = createLogger({ file: "servers" });
 
 export function makePg(): Client {
   return new Client({
@@ -17,6 +20,7 @@ function sleep(ms: number) {
 }
 
 export async function connectPgWithRetry(timeout = 60): Promise<Client> {
+  logger.info(`pg connect: ${Config.DATABASE_HOST}:${Config.DATABASE_PORT}`);
   const deadline = Date.now() + timeout * 1000;
   let attempt = 0;
   for (;;) {
@@ -34,7 +38,7 @@ export async function connectPgWithRetry(timeout = 60): Promise<Client> {
           `pg connect failed for ${timeout} sec: ${(e as Error)?.message ?? String(e)}`,
         );
       }
-      console.log(`[servers] pg connect failed (attempt ${attempt})`);
+      logger.warn(`[servers] pg connect failed (attempt ${attempt})`);
       await sleep(1000);
     }
   }
@@ -50,6 +54,7 @@ export function makeRedis(): Redis {
 }
 
 export async function connectRedisWithRetry(timeout = 60): Promise<Redis> {
+  logger.info(`redis connect: ${Config.REDIS_HOST}:${Config.REDIS_PORT}`);
   const deadline = Date.now() + timeout * 1000;
   let attempt = 0;
   for (;;) {
@@ -85,7 +90,7 @@ export async function connectRedisWithRetry(timeout = 60): Promise<Redis> {
           `redis connect failed for ${timeout} sec: ${(e as Error)?.message ?? String(e)}`,
         );
       }
-      console.log(`[servers] redis connect failed (attempt ${attempt})`);
+      logger.warn(`[servers] redis connect failed (attempt ${attempt})`);
       await sleep(1000);
     }
   }

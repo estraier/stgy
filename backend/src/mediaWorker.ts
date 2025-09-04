@@ -1,9 +1,12 @@
 import { Config } from "./config";
+import { createLogger } from "./utils/logger";
 import sharp from "sharp";
 import { makeStorageService } from "./services/storageFactory";
 import type { StorageService } from "./services/storage";
 import { connectRedisWithRetry } from "./utils/servers";
 import type Redis from "ioredis";
+
+const logger = createLogger({ file: "mediaWorker" });
 
 type ThumbQueueTask =
   | { type: "image"; bucket: string; originalKey: string }
@@ -67,7 +70,7 @@ async function generateKind(
 
   const head = await storage.headObject({ bucket, key: originalKey });
   if (!head || head.size <= 0) {
-    console.log(`[mediaworker] not found or empty: ${bucket}/${originalKey}`);
+    logger.warn(`not found or empty: ${bucket}/${originalKey}`);
     return;
   }
 
@@ -82,7 +85,7 @@ async function generateKind(
     .toBuffer();
 
   await storage.saveObject({ bucket, key: outKey }, new Uint8Array(outBuf), "image/webp");
-  console.log(`[mediaworker] wrote ${bucket}/${outKey} (${outBuf.length} bytes)`);
+  logger.info(`wrote ${bucket}/${outKey} (${outBuf.length} bytes)`);
 }
 
 async function handleTask(storage: StorageService, task: ThumbQueueTask) {
@@ -91,7 +94,7 @@ async function handleTask(storage: StorageService, task: ThumbQueueTask) {
     return;
   }
   const _exhaustive: never = task as never;
-  console.log("[mediaworker] unknown task type", _exhaustive);
+  logger.warn("unknown task type", _exhaustive);
 }
 
 let shuttingDown = false;
@@ -113,17 +116,17 @@ async function processQueue(queue: string, redis: Redis, storage: StorageService
           if (typeof msg === "object" && msg !== null && "type" in msg) {
             await handleTask(storage, msg as ThumbQueueTask);
           } else {
-            console.log(`[mediaworker] invalid task object in ${queue}:`, payload);
+            logger.error(`invalid task object in ${queue}: ${payload}`);
           }
         } catch (e) {
-          console.log(`[mediaworker] error processing task:`, e);
+          logger.error(`error processing task: ${e}`);
         }
       })();
       inflight.add(p);
       p.finally(() => inflight.delete(p));
     } catch (e) {
       if (shuttingDown) break;
-      console.log(`[mediaworker] error processing ${queue}:`, e);
+      logger.error(`error processing ${queue}: ${e}`);
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
   }
@@ -143,9 +146,7 @@ async function shutdown(redis: Redis) {
 }
 
 async function main() {
-  console.log(
-    `[mediaworker] Fakebook media thumbnail worker started (concurrency=${Config.MEDIA_WORKER_CONCURRENCY})`,
-  );
+  logger.info(`Fakebook media worker started (concurrency=${Config.MEDIA_WORKER_CONCURRENCY})`);
   const redis = await connectRedisWithRetry();
   const storage: StorageService = makeStorageService(Config.STORAGE_DRIVER);
   const onSig = () => shutdown(redis);
@@ -155,6 +156,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.log("[mediaworker] Fatal error:", e);
+  logger.error(`Fatal error: ${e}`);
   process.exit(1);
 });

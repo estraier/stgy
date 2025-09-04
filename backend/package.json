@@ -27,13 +27,14 @@
     "cookie-parser": "^1",
     "cors": "^2",
     "express": "^5",
+    "fakebook-markdown": "^0",
     "ioredis": "^5.6.1",
     "mime-types": "^3.0.1",
     "nodemailer": "^7.0.5",
     "pg": "^8",
+    "pino": "^9.9.1",
     "sharp": "^0.34.3",
-    "uuid": "^11",
-    "fakebook-markdown": "^0"
+    "uuid": "^11"
   },
   "devDependencies": {
     "@types/cookie-parser": "^1",
@@ -51,6 +52,7 @@
     "eslint": "^9",
     "jest": "^29",
     "nodemon": "^3",
+    "pino-pretty": "^13.1.1",
     "prettier": "^3",
     "ts-jest": "^29",
     "ts-node": "^10",

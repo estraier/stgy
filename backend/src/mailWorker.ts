@@ -1,7 +1,10 @@
+import { createLogger } from "./utils/logger";
 import { SendMailService } from "./services/sendMail";
 import { connectRedisWithRetry } from "./utils/servers";
 import type Redis from "ioredis";
 import type { Transporter } from "nodemailer";
+
+const logger = createLogger({ file: "mailWorker" });
 
 type MailTask =
   | { type: "signup"; email: string; verificationCode: string }
@@ -36,7 +39,7 @@ async function handleMailTask(
     }
     default: {
       const _exhaustiveCheck: never = msg;
-      console.log("[mailworker] unknown mail type:", _exhaustiveCheck);
+      logger.warn(`unknown mail type: ${_exhaustiveCheck}`);
     }
   }
 }
@@ -51,14 +54,14 @@ async function sendMailWithRecord(
   try {
     const canSend = await sendMailService.canSendMail(address);
     if (!canSend.ok) {
-      console.log(`[mailworker] throttle: cannot send to ${address}: ${canSend.reason}`);
+      logger.warn(`throttle: cannot send to ${address}: ${canSend.reason}`);
       return;
     }
     await sendMailService.send(mailTransporter, address, subject, body);
     await sendMailService.recordSend(address);
-    console.log(`[mailworker] sent mail to ${address} [${subject}]`);
+    logger.info(`sent mail to ${address} [${subject}]`);
   } catch (e) {
-    console.log(`[mailworker] failed to send mail to ${address}:`, e);
+    logger.warn(`failed to send mail to ${address}: ${e}`);
   }
 }
 
@@ -77,23 +80,23 @@ async function processQueue(
       try {
         msg = JSON.parse(payload);
       } catch {
-        console.log(`[mailworker] invalid payload in ${queue}:`, payload);
+        logger.error(`invalid payload in ${queue}: ${payload}`);
         continue;
       }
       if (typeof msg === "object" && msg !== null && "type" in msg) {
         await handleMailTask(msg as MailTask, sendMailService, mailTransporter);
       } else {
-        console.log(`[mailworker] invalid task object in ${queue}:`, payload);
+        logger.error(`invalid task object in ${queue}: ${payload}`);
       }
     } catch (e) {
-      console.log(`[mailworker] error processing ${queue}:`, e);
+      logger.error(`error processing ${queue}: ${e}`);
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
   }
 }
 
 async function main() {
-  console.log("[mailworker] Fakebook mail worker started");
+  logger.info("Fakebook mail worker started");
   const redis = await connectRedisWithRetry();
   const sendMailService = new SendMailService(redis);
   const mailTransporter: Transporter = SendMailService.createTransport();
@@ -101,6 +104,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.log("[mailworker] Fatal error:", e);
+  logger.error(`Fatal error: ${e}`);
   process.exit(1);
 });

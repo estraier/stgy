@@ -1,4 +1,5 @@
 import { Config } from "./config";
+import { createLogger } from "./utils/logger";
 import express, { ErrorRequestHandler } from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
@@ -12,6 +13,8 @@ import createSignupRouter from "./routes/signup";
 import createMediaRouter from "./routes/media";
 import createNotificationsRouter from "./routes/notifications";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
+
+const logger = createLogger({ file: "index" });
 
 async function main() {
   const pgClient = await connectPgWithRetry();
@@ -43,7 +46,7 @@ async function main() {
   app.use("/notifications", createNotificationsRouter(pgClient, redis));
 
   const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
-    console.error("[API ERROR]", err);
+    logger.error(`[API ERROR] ${err}`);
     if (res.headersSent) return next(err);
     const status = (err as { statusCode?: number }).statusCode || 500;
     res.status(status).json({
@@ -57,47 +60,47 @@ async function main() {
       if (key.endsWith("_PASSWORD")) {
         value = "****";
       }
-      console.log(`[config] ${key}: ${JSON.stringify(value)}`);
+      logger.info(`[config] ${key}: ${JSON.stringify(value)}`);
     });
-    console.log(`Server running on http://${Config.BACKEND_HOST}:${Config.BACKEND_PORT}`);
+    logger.info(`Server running on http://${Config.BACKEND_HOST}:${Config.BACKEND_PORT}`);
   });
 
   let shuttingDown = false;
   function shutdown(signal: NodeJS.Signals | "SIGUSR2") {
     if (shuttingDown) return;
     shuttingDown = true;
-    console.log(`\n[shutdown] Received ${signal}. Closing server...`);
+    logger.info(`\n[shutdown] Received ${signal}. Closing server...`);
     server.close((err?: Error) => {
       if (err) {
-        console.error("[shutdown] HTTP server close error:", err);
+        logger.error(`[shutdown] HTTP server close error: ${err}`);
         process.exit(1);
       }
       Promise.resolve()
         .then(async () => {
           try {
-            console.log("[shutdown] Closing PostgreSQL...");
+            logger.info("[shutdown] Closing PostgreSQL...");
             await pgClient.end();
           } catch (e) {
-            console.error("[shutdown] pgClient.end error:", e);
+            logger.error(`[shutdown] pgClient.end error: ${e}`);
           }
         })
         .then(async () => {
           try {
-            console.log("[shutdown] Closing Redis...");
+            logger.info("[shutdown] Closing Redis...");
             await redis.quit();
           } catch (e) {
-            console.error("[shutdown] redis.quit error:", e);
+            logger.error(`[shutdown] redis.quit error: ${e}`);
           }
         })
         .finally(() => {
-          console.log("[shutdown] Done. Bye.");
+          logger.info("[shutdown] Done. Bye.");
           process.exit(0);
         });
     });
     setTimeout(() => {
-      console.warn("[shutdown] Force exiting after 10s");
+      logger.warn("[shutdown] Force exiting after 10s");
       process.exit(1);
-    }, 10_000).unref();
+    }, 10000).unref();
   }
 
   process.on("SIGTERM", () => shutdown("SIGTERM"));
@@ -110,6 +113,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  console.log("[api] Fatal error:", e);
+  logger.info(`[api] Fatal error: ${e}`);
   process.exit(1);
 });

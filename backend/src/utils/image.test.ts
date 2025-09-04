@@ -82,10 +82,10 @@ function makeWebP_VP8(w: number, h: number): Uint8Array {
 
 function makeWebP_VP8L(w: number, h: number): Uint8Array {
   const riff = fourCC("RIFF");
-  const size = u32le(5 + 4 + 4 + 4); // payload(5) + 'WEBP'(4) + 'VP8L'(4) + chunkSize(4)
+  const size = u32le(5 + 4 + 4 + 4);
   const webp = fourCC("WEBP");
   const vp8l = fourCC("VP8L");
-  const chunkSize = u32le(5); // 0x2f + 4 packed bytes
+  const chunkSize = u32le(5);
   const bitsW = (w - 1) & 0x3fff;
   const bitsH = (h - 1) & 0x3fff;
   const bits = (bitsW | (bitsH << 14)) >>> 0;

@@ -4,3 +4,5 @@ module.exports = {
   testEnvironment: "node",
   testMatch: ["**/src/**/*.test.ts"],
 };
+
+process.env.LOG_LEVEL ??= "silent";
