@@ -8,5 +8,5 @@ content:<<____EOF____
 
 今後書きます。
 
-Next: [Fakebookの通知機能](/posts/0002000000000017)
+Next: [Fakebookの本番環境](/posts/0002000000000021)
 ____EOF____

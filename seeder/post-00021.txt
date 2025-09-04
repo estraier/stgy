@@ -4,7 +4,7 @@ allowLikes: false
 allowReplies: false
 tags: fakebook-help
 content:<<____EOF____
-# Fakebookの運用
+# Fakebookの本番環境
 
 今後書きます。
 ____EOF____
