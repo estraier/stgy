@@ -1,4 +1,4 @@
-import { makeSnippetJsonFromMarkdown } from "./snippet";
+import { makeSnippetJsonFromMarkdown, makeTextFromJsonSnippet } from "./snippet";
 
 describe("makeSnippetJsonFromMarkdown", () => {
   it("simple", () => {
@@ -17,5 +17,13 @@ P
     const expected =
       '[{"T":"figure","C":[{"T":"img","SR":"/URL"},{"T":"figcaption","X":"ALT"}],"CL":"featured-block"},{"T":"h1","X":"H"},{"T":"p","X":"P"},{"T":"ul","C":[{"T":"li","X":"li1"},{"T":"li","X":"li2"}]}]';
     expect(makeSnippetJsonFromMarkdown(mdText)).toStrictEqual(expected);
+  });
+});
+
+describe("makeTextFromJsonSnippet", () => {
+  it("simple", () => {
+    const snippet = '[{"T":"p","X":"hello world"}]';
+    const expected = "hello world";
+    expect(makeTextFromJsonSnippet(snippet)).toStrictEqual(expected);
   });
 });

@@ -556,11 +556,13 @@ def test_notifications():
   assert nl["isRead"] is False
   assert nl.get("countUsers") == 1
   assert any(r.get("userNickname") == "admin" for r in nl["records"])
+  assert any(r.get("postSnippet") == "hello from notif test" for r in nl["records"])
   nr = by_slot[reply_slot]
   assert nr["isRead"] is False
   assert nr.get("countUsers") == 1
   assert nr.get("countPosts") == 2
   assert any(r.get("userNickname") == "admin" for r in nr["records"])
+  assert any(r.get("postSnippet") == "second reply" for r in nr["records"])
   res = requests.post(
     f"{BASE_URL}/notifications/mark",
     json={"slot": follow_slot, "term": nf["term"], "isRead": True},

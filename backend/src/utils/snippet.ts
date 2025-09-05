@@ -1,5 +1,12 @@
 import { Config } from "../config";
-import { parseMarkdown, mdFilterForFeatured, mdCutOff, serializeMdNodes } from "fakebook-markdown";
+import {
+  parseMarkdown,
+  mdFilterForFeatured,
+  mdCutOff,
+  serializeMdNodes,
+  deserializeMdNodes,
+  mdRenderText,
+} from "fakebook-markdown";
 
 export function makeSnippetJsonFromMarkdown(mdText: string) {
   const maxLen = Config.SNIPPET_MAX_LENGTH;
@@ -10,4 +17,9 @@ export function makeSnippetJsonFromMarkdown(mdText: string) {
   nodes = mdFilterForFeatured(nodes);
   nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen, imgHeight });
   return serializeMdNodes(nodes);
+}
+
+export function makeTextFromJsonSnippet(snippet: string) {
+  const nodes = deserializeMdNodes(snippet);
+  return mdRenderText(nodes).slice(0, 50);
 }

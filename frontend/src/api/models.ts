@@ -100,6 +100,7 @@ export type NotificationPostRecord = {
   userId: string;
   userNickname: string;
   postId: string;
+  postSnippet: string;
   ts: number;
 };
 

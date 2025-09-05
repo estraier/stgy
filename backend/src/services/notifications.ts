@@ -3,8 +3,6 @@ import { Client } from "pg";
 import {
   Notification,
   NotificationAnyRecord,
-  NotificationPostRecord,
-  NotificationUserRecord,
   MarkAllNotificationsInput,
   MarkNotificationInput,
 } from "../models/notifications";
@@ -36,13 +34,15 @@ function parsePayload(raw: unknown): ParsedPayload {
     if (!it || typeof it !== "object") continue;
     const rec = it as Record<string, unknown>;
     const userId = typeof rec.userId === "string" ? rec.userId : undefined;
-    const ts = typeof rec.ts === "number" ? rec.ts / 1000 : undefined;
+    const userNickname = typeof rec.userNickname === "string" ? rec.userNickname : "";
+    const ts = typeof rec.ts === "number" ? rec.ts : undefined; // seconds
     const postId = typeof rec.postId === "string" ? rec.postId : undefined;
+    const postSnippet = typeof rec.postSnippet === "string" ? rec.postSnippet : undefined;
     if (!userId || ts === undefined) continue;
     if (postId) {
-      records.push({ userId, postId, ts } as unknown as NotificationPostRecord);
+      records.push({ userId, userNickname, postId, postSnippet: postSnippet ?? "", ts });
     } else {
-      records.push({ userId, ts } as unknown as NotificationUserRecord);
+      records.push({ userId, userNickname, ts });
     }
   }
   return { countUsers, countPosts, records };
@@ -86,25 +86,6 @@ function mergeByUpdatedAtDesc(a: Notification[], b: Notification[]): Notificatio
   return out;
 }
 
-async function hydrateUserNicknames(pg: Client, list: Notification[]): Promise<Notification[]> {
-  const ids = new Set<string>();
-  for (const n of list) for (const r of n.records) ids.add(r.userId);
-  if (ids.size === 0) return list;
-  const idArr = Array.from(ids);
-  const res = await pg.query<{ id: string; nickname: string }>(
-    `SELECT id, nickname FROM users WHERE id = ANY($1::text[])`,
-    [idArr],
-  );
-  const map = new Map(res.rows.map((r) => [r.id, r.nickname]));
-  return list.map((n) => ({
-    ...n,
-    records: n.records.map((r) => {
-      const userNickname = map.get(r.userId) ?? "";
-      return { ...r, userNickname } as NotificationAnyRecord;
-    }),
-  }));
-}
-
 export class NotificationService {
   constructor(private readonly pg: Client) {}
 
@@ -138,8 +119,7 @@ export class NotificationService {
     );
     const unread = unreadRes.rows.map(rowToNotification);
     const read = readRes.rows.map(rowToNotification);
-    const merged = mergeByUpdatedAtDesc(unread, read);
-    return hydrateUserNicknames(this.pg, merged);
+    return mergeByUpdatedAtDesc(unread, read);
   }
 
   async markNotification(input: MarkNotificationInput): Promise<void> {

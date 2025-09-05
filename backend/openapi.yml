@@ -231,8 +231,9 @@ components:
         userId: { type: string }
         userNickname: { type: string }
         postId: { type: string }
+        postSnippet: { type: string }
         ts: { type: number }
-      required: [userId, userNickname, postId, ts]
+      required: [userId, userNickname, postId, postSnippet, ts]
 
     Notification:
       type: object

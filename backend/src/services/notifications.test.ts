@@ -20,12 +20,18 @@ describe("NotificationService (happy paths)", () => {
     countUsers: 2,
     countPosts: 1,
     records: [
-      { userId: "u1", ts: 1000 },
-      { userId: "u2", postId: "p1", ts: 2000 },
+      { userId: "u1", userNickname: "User One", ts: 1000 },
+      {
+        userId: "u2",
+        userNickname: "User Two",
+        postId: "p1",
+        postSnippet: "hello world",
+        ts: 2000,
+      },
     ],
   };
 
-  test("listFeed: merges unread/read by updated_at desc, applies limit, and hydrates userNickname", async () => {
+  test("listFeed: merges unread/read by updated_at desc and applies limit", async () => {
     const unreadRows = [
       {
         slot: "follow",
@@ -65,13 +71,7 @@ describe("NotificationService (happy paths)", () => {
 
     const q = (jest.fn() as any)
       .mockResolvedValueOnce({ rows: unreadRows })
-      .mockResolvedValueOnce({ rows: readRows })
-      .mockResolvedValueOnce({
-        rows: [
-          { id: "u1", nickname: "User One" },
-          { id: "u2", nickname: "User Two" },
-        ],
-      });
+      .mockResolvedValueOnce({ rows: readRows });
 
     const { svc, query } = mkSvc(q);
     const out = await svc.listFeed("USER-1");
@@ -84,11 +84,6 @@ describe("NotificationService (happy paths)", () => {
       "USER-1",
       3,
     ]);
-    expect(query).toHaveBeenNthCalledWith(
-      3,
-      expect.stringMatching(/SELECT\s+id,\s*nickname\s+FROM\s+users/i),
-      [expect.arrayContaining(["u1", "u2"])],
-    );
 
     expect(out!.map((n) => n.updatedAt)).toEqual([
       "2025-08-24T12:00:00.000Z",
@@ -125,8 +120,8 @@ describe("NotificationService (happy paths)", () => {
     );
   });
 
-  test("listFeed: newerThan specified and newer rows exist -> runs existence check + unread + read + users lookup", async () => {
-    const existsYes = { rowCount: 1, rows: [{ "?": 1 }] };
+  test("listFeed: newerThan specified and newer rows exist -> runs existence check + unread + read", async () => {
+    const existsYes = { rowCount: 1, rows: [{ ok: 1 }] };
     const unreadRows = [
       {
         slot: "follow",
@@ -142,13 +137,7 @@ describe("NotificationService (happy paths)", () => {
     const q = (jest.fn() as any)
       .mockResolvedValueOnce(existsYes)
       .mockResolvedValueOnce({ rows: unreadRows })
-      .mockResolvedValueOnce({ rows: readRows })
-      .mockResolvedValueOnce({
-        rows: [
-          { id: "u1", nickname: "User One" },
-          { id: "u2", nickname: "User Two" },
-        ],
-      });
+      .mockResolvedValueOnce({ rows: readRows });
 
     const { svc, query } = mkSvc(q);
     const newerThan = new Date("2025-08-24T23:59:59.000Z");
@@ -171,11 +160,6 @@ describe("NotificationService (happy paths)", () => {
       "U-OK",
       3,
     ]);
-    expect(query).toHaveBeenNthCalledWith(
-      4,
-      expect.stringMatching(/SELECT\s+id,\s*nickname\s+FROM\s+users/i),
-      [expect.arrayContaining(["u1", "u2"])],
-    );
   });
 
   test("markNotification: updates a single notification", async () => {

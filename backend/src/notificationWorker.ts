@@ -2,8 +2,15 @@ import { Config } from "./config";
 import { createLogger } from "./utils/logger";
 import { Client } from "pg";
 import { IdIssueService } from "./services/idIssue";
-import type { AnyEventPayload } from "./models/eventLog";
+import type {
+  AnyEventPayload,
+  FollowEventPayload,
+  LikeEventPayload,
+  ReplyEventPayload,
+} from "./models/eventLog";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
+import { NotificationPostRecord, NotificationUserRecord } from "./models/notifications";
+import { makeTextFromJsonSnippet } from "./utils/snippet";
 
 const logger = createLogger({ file: "notificationWorker" });
 
@@ -35,74 +42,314 @@ function formatTermInTz(ms: number, tz: string): string {
   }).format(new Date(ms));
 }
 
-type UserRecord = { userId: string; ts: number };
-type PostRecord = { userId: string; postId: string; ts: number };
-
-type NotificationPayloadFollowLike = { countUsers: number; records: UserRecord[] };
-type NotificationPayloadReply = { countUsers: number; countPosts: number; records: PostRecord[] };
-
 function isObject(v: unknown): v is Record<string, unknown> {
   return typeof v === "object" && v !== null;
 }
 
-function isUserRecord(v: unknown): v is UserRecord {
-  return (
-    isObject(v) &&
-    typeof v.userId === "string" &&
-    typeof v.ts === "number" &&
-    (!("postId" in v) || typeof (v as Record<string, unknown>).postId !== "string")
-  );
+function isSelfInteraction(payload: AnyEventPayload, recipientUserId: string): boolean {
+  switch (payload.type) {
+    case "follow":
+      return payload.followerId === recipientUserId;
+    case "like":
+      return payload.userId === recipientUserId;
+    case "reply":
+      return payload.userId === recipientUserId;
+  }
 }
 
-function isPostRecord(v: unknown): v is PostRecord {
-  return (
-    isObject(v) &&
-    typeof v.userId === "string" &&
-    typeof v.postId === "string" &&
-    typeof v.ts === "number"
-  );
+async function getUserNickname(pg: Client, userId: string): Promise<string> {
+  const u = await pg.query<{ nickname: string }>(`SELECT nickname FROM users WHERE id = $1`, [
+    userId,
+  ]);
+  return u.rows[0]?.nickname ?? "";
 }
 
-function parsePayloadFollowLike(raw: unknown): NotificationPayloadFollowLike {
-  if (!isObject(raw)) return { countUsers: 0, records: [] };
-  const countUsers =
-    typeof raw.countUsers === "number" && Number.isFinite(raw.countUsers) ? raw.countUsers : 0;
-  const arr = Array.isArray((raw as Record<string, unknown>).records)
-    ? ((raw as Record<string, unknown>).records as unknown[])
+async function getPostSnippet(pg: Client, postId: string): Promise<string> {
+  const pres = await pg.query<{ snippet: string }>(`SELECT snippet FROM posts WHERE id = $1`, [
+    postId,
+  ]);
+  const snippetJson = pres.rows[0]?.snippet ?? "";
+  return typeof snippetJson === "string" && snippetJson.length > 0
+    ? makeTextFromJsonSnippet(snippetJson)
+    : "";
+}
+
+function dedupeFollow(records: NotificationUserRecord[], cap: number): NotificationUserRecord[] {
+  const byUser = new Map<string, NotificationUserRecord>();
+  for (const r of records) {
+    const prev = byUser.get(r.userId);
+    if (!prev || r.ts >= prev.ts) byUser.set(r.userId, r);
+  }
+  let arr = Array.from(byUser.values()).sort((a, b) => b.ts - a.ts);
+  if (arr.length > cap) arr = arr.slice(0, cap);
+  return arr;
+}
+
+function dedupePerPost(records: NotificationPostRecord[], cap: number): NotificationPostRecord[] {
+  const byKey = new Map<string, NotificationPostRecord>();
+  for (const r of records) {
+    const k = `${r.userId}|${r.postId}`;
+    const prev = byKey.get(k);
+    if (!prev || r.ts >= prev.ts) byKey.set(k, r);
+  }
+  let arr = Array.from(byKey.values()).sort((a, b) => b.ts - a.ts);
+  if (arr.length > cap) arr = arr.slice(0, cap);
+  return arr;
+}
+
+type FollowPayload = { countUsers: number; records: NotificationUserRecord[] };
+type LikePayload = { countUsers: number; records: NotificationPostRecord[] };
+type ReplyPayload = { countUsers: number; countPosts: number; records: NotificationPostRecord[] };
+
+function parseFollowPayload(raw: unknown): FollowPayload {
+  const obj = isObject(raw) ? raw : {};
+  const countUsers = typeof obj.countUsers === "number" ? obj.countUsers : 0;
+  const arr = Array.isArray((obj as { records?: unknown }).records)
+    ? ((obj as { records: unknown[] }).records as unknown[])
     : [];
-  const records: UserRecord[] = [];
-  for (const r of arr) {
-    if (isUserRecord(r)) records.push(r);
+  const records: NotificationUserRecord[] = [];
+  for (const it of arr) {
+    if (!isObject(it)) continue;
+    const r = it as Record<string, unknown>;
+    const userId = typeof r.userId === "string" ? r.userId : undefined;
+    const userNickname = typeof r.userNickname === "string" ? r.userNickname : "";
+    const ts = typeof r.ts === "number" ? r.ts : undefined;
+    if (!userId || ts === undefined) continue;
+    records.push({ userId, userNickname, ts });
   }
   return { countUsers, records };
 }
 
-function parsePayloadReply(raw: unknown): NotificationPayloadReply {
-  if (!isObject(raw)) return { countUsers: 0, countPosts: 0, records: [] };
-  const countUsers =
-    typeof raw.countUsers === "number" && Number.isFinite(raw.countUsers) ? raw.countUsers : 0;
-  const countPosts =
-    typeof raw.countPosts === "number" && Number.isFinite(raw.countPosts) ? raw.countPosts : 0;
-  const arr = Array.isArray((raw as Record<string, unknown>).records)
-    ? ((raw as Record<string, unknown>).records as unknown[])
+function parseLikePayload(raw: unknown): LikePayload {
+  const obj = isObject(raw) ? raw : {};
+  const countUsers = typeof obj.countUsers === "number" ? obj.countUsers : 0;
+  const arr = Array.isArray((obj as { records?: unknown }).records)
+    ? ((obj as { records: unknown[] }).records as unknown[])
     : [];
-  const records: PostRecord[] = [];
-  for (const r of arr) {
-    if (isPostRecord(r)) records.push(r);
+  const records: NotificationPostRecord[] = [];
+  for (const it of arr) {
+    if (!isObject(it)) continue;
+    const r = it as Record<string, unknown>;
+    const userId = typeof r.userId === "string" ? r.userId : undefined;
+    const userNickname = typeof r.userNickname === "string" ? r.userNickname : "";
+    const postId = typeof r.postId === "string" ? r.postId : undefined;
+    const postSnippet = typeof r.postSnippet === "string" ? r.postSnippet : "";
+    const ts = typeof r.ts === "number" ? r.ts : undefined;
+    if (!userId || !postId || ts === undefined) continue;
+    records.push({ userId, userNickname, postId, postSnippet, ts });
+  }
+  return { countUsers, records };
+}
+
+function parseReplyPayload(raw: unknown): ReplyPayload {
+  const obj = isObject(raw) ? raw : {};
+  const countUsers = typeof obj.countUsers === "number" ? obj.countUsers : 0;
+  const countPosts = typeof obj.countPosts === "number" ? obj.countPosts : 0;
+  const arr = Array.isArray((obj as { records?: unknown }).records)
+    ? ((obj as { records: unknown[] }).records as unknown[])
+    : [];
+  const records: NotificationPostRecord[] = [];
+  for (const it of arr) {
+    if (!isObject(it)) continue;
+    const r = it as Record<string, unknown>;
+    const userId = typeof r.userId === "string" ? r.userId : undefined;
+    const userNickname = typeof r.userNickname === "string" ? r.userNickname : "";
+    const postId = typeof r.postId === "string" ? r.postId : undefined;
+    const postSnippet = typeof r.postSnippet === "string" ? r.postSnippet : "";
+    const ts = typeof r.ts === "number" ? r.ts : undefined;
+    if (!userId || !postId || ts === undefined) continue;
+    records.push({ userId, userNickname, postId, postSnippet, ts });
   }
   return { countUsers, countPosts, records };
 }
 
-function slotOf(payload: AnyEventPayload): string {
-  switch (payload.type) {
-    case "follow":
-      return "follow";
-    case "like":
-      return `like:${payload.postId}`;
-    case "reply":
-      return `reply:${payload.replyToPostId}`;
+async function upsertFollow(
+  pg: Client,
+  recipientUserId: string,
+  term: string,
+  eventMs: number,
+  entry: { userId: string; ts: number },
+): Promise<void> {
+  const sel = await pg.query<{ payload: unknown }>(
+    `SELECT payload FROM notifications
+      WHERE user_id = $1 AND slot = 'follow' AND term = $2
+      FOR UPDATE`,
+    [recipientUserId, term],
+  );
+  const updatedAtISO = new Date(eventMs).toISOString();
+  const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
+
+  if (sel.rows.length === 0) {
+    const nick = await getUserNickname(pg, entry.userId);
+    const rec: NotificationUserRecord = { userId: entry.userId, userNickname: nick, ts: entry.ts };
+    const payload: FollowPayload = { countUsers: 1, records: [rec] };
+    await pg.query(
+      `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
+       VALUES ($1, 'follow', $2, FALSE, $3::jsonb, $4)`,
+      [recipientUserId, term, JSON.stringify(payload), updatedAtISO],
+    );
+    return;
   }
+
+  const current = parseFollowPayload(sel.rows[0].payload);
+  const existing = current.records.find((r) => r.userId === entry.userId);
+  const userNickname = existing ? existing.userNickname : await getUserNickname(pg, entry.userId);
+  const rec: NotificationUserRecord = { userId: entry.userId, userNickname, ts: entry.ts };
+  const isNewUser = !existing;
+  const nextRecords = dedupeFollow([...current.records, rec], cap);
+  const nextPayload: FollowPayload = {
+    countUsers:
+      (current.countUsers ?? new Set(current.records.map((r) => r.userId)).size) +
+      (isNewUser ? 1 : 0),
+    records: nextRecords,
+  };
+  await pg.query(
+    `UPDATE notifications
+       SET is_read = FALSE, payload = $3::jsonb, updated_at = $4
+     WHERE user_id = $1 AND slot = 'follow' AND term = $2`,
+    [recipientUserId, term, JSON.stringify(nextPayload), updatedAtISO],
+  );
 }
+
+async function upsertLike(
+  pg: Client,
+  recipientUserId: string,
+  postId: string,
+  term: string,
+  eventMs: number,
+  entry: { userId: string; ts: number },
+): Promise<void> {
+  const slot = `like:${postId}`;
+  const sel = await pg.query<{ payload: unknown }>(
+    `SELECT payload FROM notifications
+      WHERE user_id = $1 AND slot = $2 AND term = $3
+      FOR UPDATE`,
+    [recipientUserId, slot, term],
+  );
+  const updatedAtISO = new Date(eventMs).toISOString();
+  const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
+
+  if (sel.rows.length === 0) {
+    const nick = await getUserNickname(pg, entry.userId);
+    const snippet = await getPostSnippet(pg, postId);
+    const rec: NotificationPostRecord = {
+      userId: entry.userId,
+      userNickname: nick,
+      postId,
+      postSnippet: snippet,
+      ts: entry.ts,
+    };
+    const payload: LikePayload = { countUsers: 1, records: [rec] };
+    await pg.query(
+      `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
+       VALUES ($1, $2, $3, FALSE, $4::jsonb, $5)`,
+      [recipientUserId, slot, term, JSON.stringify(payload), updatedAtISO],
+    );
+    return;
+  }
+
+  const current = parseLikePayload(sel.rows[0].payload);
+  const records = current.records;
+  const existingUser = records.find((r) => r.userId === entry.userId);
+  const userNickname = existingUser
+    ? existingUser.userNickname
+    : await getUserNickname(pg, entry.userId);
+  const postSnippet = records[0]?.postSnippet ?? (await getPostSnippet(pg, postId));
+  const rec: NotificationPostRecord = {
+    userId: entry.userId,
+    userNickname,
+    postId,
+    postSnippet,
+    ts: entry.ts,
+  };
+  const isNewUser = !existingUser;
+  const nextRecords = dedupePerPost([...records, rec], cap);
+  const nextPayload: LikePayload = {
+    countUsers:
+      (current.countUsers ?? new Set(records.map((r) => r.userId)).size) + (isNewUser ? 1 : 0),
+    records: nextRecords,
+  };
+  await pg.query(
+    `UPDATE notifications
+       SET is_read = FALSE, payload = $4::jsonb, updated_at = $5
+     WHERE user_id = $1 AND slot = $2 AND term = $3`,
+    [recipientUserId, slot, term, JSON.stringify(nextPayload), updatedAtISO],
+  );
+}
+
+async function upsertReply(
+  pg: Client,
+  recipientUserId: string,
+  replyToPostId: string,
+  term: string,
+  eventMs: number,
+  entry: { userId: string; postId: string; ts: number },
+): Promise<void> {
+  const slot = `reply:${replyToPostId}`;
+  const sel = await pg.query<{ payload: unknown }>(
+    `SELECT payload FROM notifications
+      WHERE user_id = $1 AND slot = $2 AND term = $3
+      FOR UPDATE`,
+    [recipientUserId, slot, term],
+  );
+  const updatedAtISO = new Date(eventMs).toISOString();
+  const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
+
+  if (sel.rows.length === 0) {
+    const nick = await getUserNickname(pg, entry.userId);
+    const snippet = await getPostSnippet(pg, replyToPostId);
+    const rec: NotificationPostRecord = {
+      userId: entry.userId,
+      userNickname: nick,
+      postId: entry.postId,
+      postSnippet: snippet,
+      ts: entry.ts,
+    };
+    const payload: ReplyPayload = { countUsers: 1, countPosts: 1, records: [rec] };
+    await pg.query(
+      `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
+       VALUES ($1, $2, $3, FALSE, $4::jsonb, $5)`,
+      [recipientUserId, slot, term, JSON.stringify(payload), updatedAtISO],
+    );
+    return;
+  }
+
+  const current = parseReplyPayload(sel.rows[0].payload);
+  const records = current.records;
+  const existingUser = records.find((r) => r.userId === entry.userId);
+  const userNickname = existingUser
+    ? existingUser.userNickname
+    : await getUserNickname(pg, entry.userId);
+  const postSnippet = records[0]?.postSnippet ?? (await getPostSnippet(pg, replyToPostId));
+
+  const rec: NotificationPostRecord = {
+    userId: entry.userId,
+    userNickname,
+    postId: entry.postId,
+    postSnippet,
+    ts: entry.ts,
+  };
+
+  const userSet = new Set(records.map((r) => r.userId));
+  const postSet = new Set(records.map((r) => r.postId));
+  const isNewUser = !userSet.has(entry.userId);
+  const isNewPost = !postSet.has(entry.postId);
+
+  const nextRecords = dedupePerPost([...records, rec], cap);
+  const nextPayload: ReplyPayload = {
+    countUsers: (current.countUsers ?? userSet.size) + (isNewUser ? 1 : 0),
+    countPosts: (current.countPosts ?? postSet.size) + (isNewPost ? 1 : 0),
+    records: nextRecords,
+  };
+  await pg.query(
+    `UPDATE notifications
+       SET is_read = FALSE, payload = $4::jsonb, updated_at = $5
+     WHERE user_id = $1 AND slot = $2 AND term = $3`,
+    [recipientUserId, slot, term, JSON.stringify(nextPayload), updatedAtISO],
+  );
+}
+
+const CONSUMER = "notification";
 
 async function resolveRecipientUserId(
   pg: Client,
@@ -121,132 +368,45 @@ async function resolveRecipientUserId(
   return res.rows[0]?.owned_by ?? null;
 }
 
-function makeEntry(payload: AnyEventPayload, ts: number): UserRecord | PostRecord | null {
-  if (payload.type === "follow") return { userId: payload.followerId, ts };
-  if (payload.type === "like") return { userId: payload.userId, ts };
-  if (payload.type === "reply") return { userId: payload.userId, postId: payload.postId, ts };
-  return null;
-}
-
-function dedupeUsers(records: UserRecord[], cap: number): UserRecord[] {
-  const byKey = new Map<string, UserRecord>();
-  for (const r of records) {
-    const k = r.userId;
-    const prev = byKey.get(k);
-    if (!prev || r.ts >= prev.ts) byKey.set(k, r);
-  }
-  let deduped = Array.from(byKey.values()).sort((a, b) => b.ts - a.ts);
-  if (deduped.length > cap) deduped = deduped.slice(0, cap);
-  return deduped;
-}
-
-function dedupeReplies(records: PostRecord[], cap: number): PostRecord[] {
-  const byKey = new Map<string, PostRecord>();
-  for (const r of records) {
-    const k = `${r.userId}|${r.postId}`;
-    const prev = byKey.get(k);
-    if (!prev || r.ts >= prev.ts) byKey.set(k, r);
-  }
-  let deduped = Array.from(byKey.values()).sort((a, b) => b.ts - a.ts);
-  if (deduped.length > cap) deduped = deduped.slice(0, cap);
-  return deduped;
-}
-
-function isSelfInteraction(payload: AnyEventPayload, recipientUserId: string): boolean {
-  switch (payload.type) {
-    case "follow":
-      return payload.followerId === recipientUserId;
-    case "like":
-      return payload.userId === recipientUserId;
-    case "reply":
-      return payload.userId === recipientUserId;
-  }
-}
-
-async function upsertNotification(
+async function processFollowEvent(
   pg: Client,
-  userId: string,
-  slot: string,
+  recipientUserId: string,
+  payload: FollowEventPayload,
+  eventMs: number,
   term: string,
-  updatedAtMs: number,
-  entry: UserRecord | PostRecord,
 ): Promise<void> {
-  const sel = await pg.query<{ payload: unknown }>(
-    `SELECT payload
-       FROM notifications
-      WHERE user_id = $1 AND slot = $2 AND term = $3
-      FOR UPDATE`,
-    [userId, slot, term],
-  );
-
-  const updatedAtISO = new Date(updatedAtMs).toISOString();
-  const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
-
-  if (sel.rows.length === 0) {
-    if (slot.startsWith("reply:")) {
-      const e = entry as PostRecord;
-      const payload: NotificationPayloadReply = { countUsers: 1, countPosts: 1, records: [e] };
-      await pg.query(
-        `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
-         VALUES ($1, $2, $3, FALSE, $4::jsonb, $5)`,
-        [userId, slot, term, JSON.stringify(payload), updatedAtISO],
-      );
-      return;
-    } else {
-      const e = entry as UserRecord;
-      const payload: NotificationPayloadFollowLike = { countUsers: 1, records: [e] };
-      await pg.query(
-        `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
-         VALUES ($1, $2, $3, FALSE, $4::jsonb, $5)`,
-        [userId, slot, term, JSON.stringify(payload), updatedAtISO],
-      );
-      return;
-    }
-  }
-
-  if (slot.startsWith("reply:")) {
-    const current = parsePayloadReply(sel.rows[0].payload);
-    const e = entry as PostRecord;
-    const userSet = new Set(current.records.map((r) => r.userId));
-    const postSet = new Set(current.records.map((r) => r.postId));
-    const isNewUser = !userSet.has(e.userId);
-    const isNewPost = !postSet.has(e.postId);
-    const nextRecords = dedupeReplies([...current.records, e], cap);
-    const nextPayload: NotificationPayloadReply = {
-      countUsers: current.countUsers + (isNewUser ? 1 : 0),
-      countPosts: current.countPosts + (isNewPost ? 1 : 0),
-      records: nextRecords,
-    };
-    await pg.query(
-      `UPDATE notifications
-          SET is_read = FALSE,
-              payload = $4::jsonb,
-              updated_at = $5
-        WHERE user_id = $1 AND slot = $2 AND term = $3`,
-      [userId, slot, term, JSON.stringify(nextPayload), updatedAtISO],
-    );
-  } else {
-    const current = parsePayloadFollowLike(sel.rows[0].payload);
-    const e = entry as UserRecord;
-    const userSet = new Set(current.records.map((r) => r.userId));
-    const isNewUser = !userSet.has(e.userId);
-    const nextRecords = dedupeUsers([...current.records, e], cap);
-    const nextPayload: NotificationPayloadFollowLike = {
-      countUsers: current.countUsers + (isNewUser ? 1 : 0),
-      records: nextRecords,
-    };
-    await pg.query(
-      `UPDATE notifications
-          SET is_read = FALSE,
-              payload = $4::jsonb,
-              updated_at = $5
-        WHERE user_id = $1 AND slot = $2 AND term = $3`,
-      [userId, slot, term, JSON.stringify(nextPayload), updatedAtISO],
-    );
-  }
+  await upsertFollow(pg, recipientUserId, term, eventMs, {
+    userId: payload.followerId,
+    ts: Math.floor(eventMs / 1000),
+  });
 }
 
-const CONSUMER = "notification";
+async function processLikeEvent(
+  pg: Client,
+  recipientUserId: string,
+  payload: LikeEventPayload,
+  eventMs: number,
+  term: string,
+): Promise<void> {
+  await upsertLike(pg, recipientUserId, payload.postId, term, eventMs, {
+    userId: payload.userId,
+    ts: Math.floor(eventMs / 1000),
+  });
+}
+
+async function processReplyEvent(
+  pg: Client,
+  recipientUserId: string,
+  payload: ReplyEventPayload,
+  eventMs: number,
+  term: string,
+): Promise<void> {
+  await upsertReply(pg, recipientUserId, payload.replyToPostId, term, eventMs, {
+    userId: payload.userId,
+    postId: payload.postId,
+    ts: Math.floor(eventMs / 1000),
+  });
+}
 
 async function loadCursor(pg: Client, partitionId: number): Promise<bigint> {
   const res = await pg.query<{ last_event_id: string }>(
@@ -312,7 +472,6 @@ async function processPartition(pg: Client, partitionId: number): Promise<number
     try {
       const payload = row.payload;
       const recipient = await resolveRecipientUserId(pg, payload);
-
       if (!recipient || isSelfInteraction(payload, recipient)) {
         await saveCursor(pg, partitionId, eid);
         await pg.query("COMMIT");
@@ -320,14 +479,21 @@ async function processPartition(pg: Client, partitionId: number): Promise<number
         continue;
       }
 
-      const slot = slotOf(payload);
       const ms = eventMsFromId(eid);
       const term = formatTermInTz(ms, Config.SYSTEM_TIMEZONE);
-      const entry = makeEntry(payload, ms);
 
-      if (entry) {
-        await upsertNotification(pg, recipient, slot, term, ms, entry);
+      if (payload.type === "reply") {
+        await processReplyEvent(pg, recipient, payload, ms, term);
+      } else if (payload.type === "like") {
+        await processLikeEvent(pg, recipient, payload, ms, term);
+      } else if (payload.type === "follow") {
+        await processFollowEvent(pg, recipient, payload, ms, term);
+      } else {
+        logger.warn(
+          `[notificationworker] unknown payload type: ${(payload as { type?: string }).type}`,
+        );
       }
+
       await saveCursor(pg, partitionId, eid);
       await pg.query("COMMIT");
       processed++;

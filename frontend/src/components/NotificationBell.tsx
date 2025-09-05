@@ -41,7 +41,7 @@ function computeLatestUpdatedAt(arr: Notification[]): string | null {
 }
 
 type PossibleNick = { userNickname?: string };
-function uniqueTopNicknames(n: Notification, max = 3): string[] {
+function uniqueTopNicknames(n: Notification, max: number): string[] {
   const seen = new Set<string>();
   const out: string[] = [];
   for (const r of n.records) {
@@ -53,6 +53,12 @@ function uniqueTopNicknames(n: Notification, max = 3): string[] {
     }
   }
   return out;
+}
+
+function hasPost(
+  r: NotificationAnyRecord,
+): r is NotificationAnyRecord & { postId: string; postSnippet?: string } {
+  return Object.prototype.hasOwnProperty.call(r, "postId");
 }
 
 export default function NotificationBell({ userId, intervalMs = 30_000 }: Props) {
@@ -271,8 +277,13 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
               {filtered.map((n) => {
                 const slotInfo = parseSlot(n.slot);
                 const latest = pickLatestRecord(n.records);
+
+                const latestPost =
+                  latest && hasPost(latest) ? latest : n.records.find(hasPost) || null;
+                const snippet = latestPost?.postSnippet || "";
+
                 const countUsers = n.countUsers ?? n.records.filter((r) => "userId" in r).length;
-                const countPosts = n.countPosts ?? n.records.filter((r) => "postId" in r).length;
+                const countPosts = n.countPosts ?? n.records.filter(hasPost).length;
 
                 let title = "";
                 if (slotInfo.kind === "follow") {
@@ -283,7 +294,10 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
                   title = `${countPosts} repl${countPosts === 1 ? "y" : "ies"} to your post`;
                 }
 
-                const names = uniqueTopNicknames(n, 3);
+                const fullTitle =
+                  slotInfo.kind !== "follow" && snippet ? `${title} “${snippet}”` : title;
+
+                const names = uniqueTopNicknames(n, 5);
                 const label = slotInfo.kind === "follow" ? "" : "by ";
 
                 return (
@@ -302,7 +316,9 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
                         </div>
 
                         <div className="min-w-0">
-                          <div className="font-medium text-gray-900 truncate">{title}</div>
+                          <div className="font-medium text-gray-900 truncate" title={fullTitle}>
+                            {fullTitle}
+                          </div>
 
                           {names.length > 0 && (
                             <div
