@@ -16,7 +16,7 @@ import {
 export function makeArticleHtmlFromMarkdown(mdText: string) {
   let nodes = parseMarkdown(mdText);
   nodes = rewriteMediaUrls(nodes, false);
-  nodes = mdGroupImageGrid(nodes, {maxElements: 4});
+  nodes = mdGroupImageGrid(nodes, {maxElements: 5});
   return mdRenderHtml(nodes);
 }
 

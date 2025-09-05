@@ -126,25 +126,20 @@ body {
 .markdown-body .image-block {
   position: relative;
   margin: 1ex 0.5ex;
-  max-width: 40ex;
+  width: 40ex;
   max-height: 40ex;
   cursor: zoom-in;
 }
-.markdown-body.excerpt .image-block {
-  max-width: 18ex;
-  max-height: 18ex;
-}
 .markdown-body .image-block.expanded {
-  max-width: 98%;
+  width: 98%;
   max-height: 80ex;
   clear: both;
   cursor: zoom-out;
 }
 .markdown-body .featured-block {
   float: right;
-  width: 20ex;
-  max-width: 50%;
-  max-height: 20ex;
+  width: min(20ex, 40%);
+  max-height: 24ex;
   margin: 0.5ex 0 0.5ex 0.5ex;
 }
 .markdown-body .image-block figcaption {
@@ -165,29 +160,31 @@ body {
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-float="left"] {
   float: left;
   margin: 0.3ex 1.2ex 0.3ex 0;
-  width: 35ex;
-  max-width: 50%;
+  width: min(35ex, 50%);
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-float="right"] {
   float: right;
   margin: 0.3ex 0 0.3ex 1.2ex;
-  width: 35ex;
-  max-width: 50%;
+  width: min(35ex, 50%);
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="xsmall"] {
-  max-width: 20ex;
-  max-height: 20ex;
+  width: min(26ex, 32%);
+  max-height: 26ex;
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="small"] {
-  max-width: 30ex;
-  max-height: 30ex;
+  width: min(32ex, 40%);
+  max-height: 32ex;
+}
+.markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="medium"] {
+  width: min(40ex, 50%);
+  max-height: 40ex;
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="large"] {
-  max-width: 55ex;
+  width: min(55ex, 60%);
   max-height: 55ex;
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="xlarge"] {
-  max-width: 70ex;
+  width: min(70ex, 70%);
   max-height: 70ex;
 }
 
@@ -205,6 +202,9 @@ body {
 }
 .markdown-body:not(.excerpt) .image-grid[data-cols="4"] {
   grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+.markdown-body:not(.excerpt) .image-grid[data-cols="5"] {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
 }
 .markdown-body:not(.excerpt) .image-grid figure.image-block {
   float: none;

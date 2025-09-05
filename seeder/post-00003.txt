@@ -201,7 +201,7 @@ I will follow you
 ちょっぴり気が弱いけど
 ---
 
-画像を横並びで表示したい場合には、`{grid}` マクロを使います。`{grid}` がついた画像が連続すると、それを1行にまとめます。最大4列までサポートしています。
+画像を横並びで表示したい場合には、`{grid}` マクロを使います。`{grid}` がついた画像が連続すると、それを1行にまとめます。最大5列までサポートしています。
 
 ```
 ![Fakebookロゴ](/data/logo-square.svg){grid}
@@ -216,6 +216,12 @@ I will follow you
 ![Fakebookロゴ](/data/logo-square.svg){grid}
 ![Fakebookロゴ](/data/logo-square.svg){grid}
 ---
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+---
 ```
 
 ![Fakebookロゴ](/data/logo-square.svg){grid}
@@ -225,6 +231,12 @@ I will follow you
 ![Fakebookロゴ](/data/logo-square.svg){grid}
 ![Fakebookロゴ](/data/logo-square.svg){grid}
 ---
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+![Fakebookロゴ](/data/logo-square.svg){grid}
+---
+![Fakebookロゴ](/data/logo-square.svg){grid}
 ![Fakebookロゴ](/data/logo-square.svg){grid}
 ![Fakebookロゴ](/data/logo-square.svg){grid}
 ![Fakebookロゴ](/data/logo-square.svg){grid}
