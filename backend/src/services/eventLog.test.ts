@@ -163,9 +163,7 @@ describe("EventLogService (cursor & batch helpers)", () => {
 
   test("loadCursor inserts default when missing and returns 0n", async () => {
     const { svc, query } = mkSvc();
-    (query as any)
-      .mockResolvedValueOnce({ rows: [] })
-      .mockResolvedValueOnce({});
+    (query as any).mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({});
 
     const out = await svc.loadCursor("notification", 3);
     expect(out).toBe(BigInt(0));
@@ -182,7 +180,7 @@ describe("EventLogService (cursor & batch helpers)", () => {
 
   test("saveCursor updates row using provided transaction client", async () => {
     const { svc, pg } = mkSvc();
-    const txQuery = jest.fn(async () => ({} as any));
+    const txQuery = jest.fn(async () => ({}) as any);
     const tx = { query: txQuery } as any;
 
     await svc.saveCursor(tx, "notification", 9, BigInt(777));
@@ -199,7 +197,10 @@ describe("EventLogService (cursor & batch helpers)", () => {
     const { svc, query } = mkSvc();
     const rows = [
       { event_id: "101", payload: { type: "like", userId: "u1", postId: "p1" } },
-      { event_id: "102", payload: { type: "reply", userId: "u2", postId: "p2", replyToPostId: "r1" } },
+      {
+        event_id: "102",
+        payload: { type: "reply", userId: "u2", postId: "p2", replyToPostId: "r1" },
+      },
     ];
     (query as any).mockResolvedValueOnce({ rows });
 

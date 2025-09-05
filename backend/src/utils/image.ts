@@ -2,22 +2,31 @@ function u16be(bytes: Uint8Array, off: number): number {
   if (off + 2 > bytes.length) return -1;
   return ((bytes[off] << 8) | bytes[off + 1]) >>> 0;
 }
+
+function u16le(bytes: Uint8Array, off: number): number {
+  if (off + 2 > bytes.length) return -1;
+  return (bytes[off] | (bytes[off + 1] << 8)) >>> 0;
+}
+
 function u24le(bytes: Uint8Array, off: number): number {
   if (off + 3 > bytes.length) return -1;
   return (bytes[off] | (bytes[off + 1] << 8) | (bytes[off + 2] << 16)) >>> 0;
 }
+
 function u32be(bytes: Uint8Array, off: number): number {
   if (off + 4 > bytes.length) return -1;
   return (
     ((bytes[off] << 24) | (bytes[off + 1] << 16) | (bytes[off + 2] << 8) | bytes[off + 3]) >>> 0
   );
 }
+
 function u32le(bytes: Uint8Array, off: number): number {
   if (off + 4 > bytes.length) return -1;
   return (
     (bytes[off] | (bytes[off + 1] << 8) | (bytes[off + 2] << 16) | (bytes[off + 3] << 24)) >>> 0
   );
 }
+
 function fourCC(bytes: Uint8Array, off: number): string {
   if (off + 4 > bytes.length) return "";
   return String.fromCharCode(bytes[off], bytes[off + 1], bytes[off + 2], bytes[off + 3]);
@@ -81,40 +90,44 @@ function readPngDimensions(bytes: Uint8Array): { w: number; h: number } | null {
 function readWebpDimensions(bytes: Uint8Array): { w: number; h: number } | null {
   if (fourCC(bytes, 0) !== "RIFF" || fourCC(bytes, 8) !== "WEBP") return null;
   const tag = fourCC(bytes, 12);
+
   if (tag === "VP8X") {
-    if (bytes.length < 30) return null;
-    const w = u24le(bytes, 24) + 1;
-    const h = u24le(bytes, 27) + 1;
+    const chunkSize = u32le(bytes, 16);
+    const payload = 20;
+    if (chunkSize < 10 || bytes.length < payload + 10) return null;
+    const w = u24le(bytes, payload + 4) + 1;
+    const h = u24le(bytes, payload + 7) + 1;
     if (w <= 0 || h <= 0) return null;
     return { w, h };
-  } else if (tag === "VP8 ") {
+  }
+
+  if (tag === "VP8 ") {
     const chunkSize = u32le(bytes, 16);
-    const dataOff = 20;
-    if (bytes.length < dataOff + 10 || chunkSize < 10) return null;
-    const searchEnd = Math.min(bytes.length, dataOff + 64);
-    for (let i = dataOff; i + 9 < searchEnd; i++) {
+    const payload = 20;
+    if (chunkSize < 10 || bytes.length < payload + 10) return null;
+    const searchEnd = Math.min(bytes.length, payload + chunkSize);
+    for (let i = payload; i + 9 < searchEnd; i++) {
       if (bytes[i + 3] === 0x9d && bytes[i + 4] === 0x01 && bytes[i + 5] === 0x2a) {
-        const w = u16be(bytes, i + 6);
-        const h = u16be(bytes, i + 8);
+        const w = u16le(bytes, i + 6) & 0x3fff;
+        const h = u16le(bytes, i + 8) & 0x3fff;
         if (w <= 0 || h <= 0) return null;
         return { w, h };
       }
     }
     return null;
-  } else if (tag === "VP8L") {
-    const dataOff = 20;
-    if (bytes.length < dataOff + 5) return null;
-    if (bytes[dataOff] !== 0x2f) return null;
-    const bits =
-      bytes[dataOff + 1] |
-      (bytes[dataOff + 2] << 8) |
-      (bytes[dataOff + 3] << 16) |
-      (bytes[dataOff + 4] << 24);
+  }
+
+  if (tag === "VP8L") {
+    const payload = 20;
+    if (bytes.length < payload + 5) return null;
+    if (bytes[payload] !== 0x2f) return null;
+    const bits = u32le(bytes, payload + 1);
     const w = (bits & 0x3fff) + 1;
     const h = ((bits >> 14) & 0x3fff) + 1;
     if (w <= 0 || h <= 0) return null;
     return { w, h };
   }
+
   return null;
 }
 

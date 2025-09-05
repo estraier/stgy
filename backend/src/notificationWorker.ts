@@ -408,7 +408,11 @@ async function processReplyEvent(
   });
 }
 
-async function processPartition(ev: EventLogService, pg: Client, partitionId: number): Promise<number> {
+async function processPartition(
+  ev: EventLogService,
+  pg: Client,
+  partitionId: number,
+): Promise<number> {
   const cursor = await ev.loadCursor(CONSUMER, partitionId);
   const batch = await ev.fetchBatch(partitionId, cursor, Config.NOTIFICATION_BATCH_SIZE);
   if (batch.length === 0) {
