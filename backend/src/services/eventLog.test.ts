@@ -8,6 +8,7 @@ jest.mock("../config", () => ({
     EVENT_LOG_RETENTION_DAYS: 90,
     ID_ISSUE_WORKER_ID: 0,
     NOTIFICATION_WORKERS: 3,
+    NOTIFICATION_BATCH_SIZE: 50,
   },
 }));
 
@@ -135,5 +136,81 @@ describe("EventLogService (with Redis publish)", () => {
     expect(seenDate).not.toBeNull();
     const ninetyDaysMs = 90 * 24 * 60 * 60 * 1000;
     expect(seenDate!.getTime()).toBe(nowMs - ninetyDaysMs);
+  });
+});
+
+describe("EventLogService (cursor & batch helpers)", () => {
+  function mkSvc() {
+    const query = (jest.fn() as any).mockResolvedValue({ rows: [] });
+    const pg = { query } as any;
+    const redis = { publish: jest.fn() as any } as any;
+    const svc = new EventLogService(pg, redis);
+    return { svc, pg, query };
+  }
+
+  test("loadCursor returns existing bigint when present", async () => {
+    const { svc, query } = mkSvc();
+    (query as any).mockResolvedValueOnce({ rows: [{ last_event_id: "1234567890123" }] });
+
+    const out = await svc.loadCursor("notification", 7);
+    expect(out).toBe(BigInt("1234567890123"));
+
+    const [sql, params] = (query as any).mock.calls[0] as [string, any[]];
+    expect(sql).toMatch(/SELECT\s+last_event_id\s+FROM\s+event_log_cursors/i);
+    expect(params).toEqual(["notification", 7]);
+    expect((query as any).mock.calls).toHaveLength(1);
+  });
+
+  test("loadCursor inserts default when missing and returns 0n", async () => {
+    const { svc, query } = mkSvc();
+    (query as any)
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({});
+
+    const out = await svc.loadCursor("notification", 3);
+    expect(out).toBe(BigInt(0));
+
+    const [selSql, selParams] = (query as any).mock.calls[0] as [string, any[]];
+    expect(selSql).toMatch(/SELECT\s+last_event_id/i);
+    expect(selParams).toEqual(["notification", 3]);
+
+    const [insSql, insParams] = (query as any).mock.calls[1] as [string, any[]];
+    expect(insSql).toMatch(/INSERT INTO event_log_cursors/i);
+    expect(insSql).toMatch(/ON CONFLICT \(consumer, partition_id\) DO NOTHING/i);
+    expect(insParams).toEqual(["notification", 3, "0"]);
+  });
+
+  test("saveCursor updates row using provided transaction client", async () => {
+    const { svc, pg } = mkSvc();
+    const txQuery = jest.fn(async () => ({} as any));
+    const tx = { query: txQuery } as any;
+
+    await svc.saveCursor(tx, "notification", 9, BigInt(777));
+
+    expect(tx.query).toHaveBeenCalledTimes(1);
+    const [sql, params] = (tx.query as any).mock.calls[0] as [string, any[]];
+    expect(sql).toMatch(/UPDATE\s+event_log_cursors/i);
+    expect(params).toEqual(["notification", 9, "777"]);
+
+    expect(pg.query).not.toHaveBeenCalled();
+  });
+
+  test("fetchBatch queries with params and returns rows", async () => {
+    const { svc, query } = mkSvc();
+    const rows = [
+      { event_id: "101", payload: { type: "like", userId: "u1", postId: "p1" } },
+      { event_id: "102", payload: { type: "reply", userId: "u2", postId: "p2", replyToPostId: "r1" } },
+    ];
+    (query as any).mockResolvedValueOnce({ rows });
+
+    const out = await svc.fetchBatch(4, BigInt(100), 2);
+
+    expect(out).toEqual(rows);
+
+    const [sql, params] = (query as any).mock.calls[0] as [string, any[]];
+    expect(sql).toMatch(/SELECT\s+event_id,\s*payload\s+FROM\s+event_logs/i);
+    expect(sql).toMatch(/ORDER BY event_id ASC/i);
+    expect(sql).toMatch(/LIMIT \$3/i);
+    expect(params).toEqual([4, "100", 2]);
   });
 });

@@ -289,9 +289,9 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
                 if (slotInfo.kind === "follow") {
                   title = `${countUsers} new follower${countUsers === 1 ? "" : "s"}`;
                 } else if (slotInfo.kind === "like") {
-                  title = `${countUsers} like${countUsers === 1 ? "" : "s"} on your post`;
+                  title = `${countUsers} like${countUsers === 1 ? "" : "s"} on`;
                 } else if (slotInfo.kind === "reply") {
-                  title = `${countPosts} repl${countPosts === 1 ? "y" : "ies"} to your post`;
+                  title = `${countPosts} repl${countPosts === 1 ? "y" : "ies"} to`;
                 }
 
                 const fullTitle =

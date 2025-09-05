@@ -11,8 +11,10 @@ import type {
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 import { NotificationPostRecord, NotificationUserRecord } from "./models/notifications";
 import { makeTextFromJsonSnippet } from "./utils/snippet";
+import { EventLogService } from "./services/eventLog";
 
 const logger = createLogger({ file: "notificationWorker" });
+const CONSUMER = "notification";
 
 async function acquireSingletonLock(): Promise<Client> {
   const pg = await connectPgWithRetry();
@@ -349,8 +351,6 @@ async function upsertReply(
   );
 }
 
-const CONSUMER = "notification";
-
 async function resolveRecipientUserId(
   pg: Client,
   payload: AnyEventPayload,
@@ -408,54 +408,9 @@ async function processReplyEvent(
   });
 }
 
-async function loadCursor(pg: Client, partitionId: number): Promise<bigint> {
-  const res = await pg.query<{ last_event_id: string }>(
-    `SELECT last_event_id
-       FROM event_log_cursors
-      WHERE consumer = $1 AND partition_id = $2`,
-    [CONSUMER, partitionId],
-  );
-  if (res.rows.length === 0) {
-    await pg.query(
-      `INSERT INTO event_log_cursors (consumer, partition_id, last_event_id)
-       VALUES ($1, $2, $3)
-       ON CONFLICT (consumer, partition_id) DO NOTHING`,
-      [CONSUMER, partitionId, "0"],
-    );
-    return BigInt(0);
-  }
-  return BigInt(res.rows[0].last_event_id);
-}
-
-async function saveCursor(pg: Client, partitionId: number, lastId: bigint): Promise<void> {
-  await pg.query(
-    `UPDATE event_log_cursors
-        SET last_event_id = $3, updated_at = now()
-      WHERE consumer = $1 AND partition_id = $2`,
-    [CONSUMER, partitionId, lastId.toString()],
-  );
-}
-
-async function fetchBatch(
-  pg: Client,
-  partitionId: number,
-  afterId: bigint,
-): Promise<Array<{ event_id: string; payload: AnyEventPayload }>> {
-  const res = await pg.query<{ event_id: string; payload: AnyEventPayload }>(
-    `SELECT event_id, payload
-       FROM event_logs
-      WHERE partition_id = $1
-        AND event_id > $2::bigint
-      ORDER BY event_id ASC
-      LIMIT $3`,
-    [partitionId, afterId.toString(), Config.NOTIFICATION_BATCH_SIZE],
-  );
-  return res.rows;
-}
-
-async function processPartition(pg: Client, partitionId: number): Promise<number> {
-  const cursor = await loadCursor(pg, partitionId);
-  const batch = await fetchBatch(pg, partitionId, cursor);
+async function processPartition(ev: EventLogService, pg: Client, partitionId: number): Promise<number> {
+  const cursor = await ev.loadCursor(CONSUMER, partitionId);
+  const batch = await ev.fetchBatch(partitionId, cursor, Config.NOTIFICATION_BATCH_SIZE);
   if (batch.length === 0) {
     return 0;
   }
@@ -473,7 +428,7 @@ async function processPartition(pg: Client, partitionId: number): Promise<number
       const payload = row.payload;
       const recipient = await resolveRecipientUserId(pg, payload);
       if (!recipient || isSelfInteraction(payload, recipient)) {
-        await saveCursor(pg, partitionId, eid);
+        await ev.saveCursor(pg, CONSUMER, partitionId, eid);
         await pg.query("COMMIT");
         processed++;
         continue;
@@ -494,7 +449,7 @@ async function processPartition(pg: Client, partitionId: number): Promise<number
         );
       }
 
-      await saveCursor(pg, partitionId, eid);
+      await ev.saveCursor(pg, CONSUMER, partitionId, eid);
       await pg.query("COMMIT");
       processed++;
     } catch (e) {
@@ -514,9 +469,9 @@ function assignedPartitions(workerIndex: number): number[] {
   return out;
 }
 
-async function drain(pg: Client, partitionId: number): Promise<void> {
+async function drain(ev: EventLogService, pg: Client, partitionId: number): Promise<void> {
   for (;;) {
-    const n = await processPartition(pg, partitionId);
+    const n = await processPartition(ev, pg, partitionId);
     if (n === 0) break;
   }
 }
@@ -524,15 +479,16 @@ async function drain(pg: Client, partitionId: number): Promise<void> {
 async function runWorker(workerIndex: number): Promise<void> {
   logger.info(`Fakebook notification worker ${workerIndex} started`);
   const pg = await connectPgWithRetry(60_000);
+  const sub = await connectRedisWithRetry();
+  const ev = new EventLogService(pg, sub);
 
   const parts = assignedPartitions(workerIndex);
   for (const p of parts) {
     try {
-      await drain(pg, p);
+      await drain(ev, pg, p);
     } catch {}
   }
 
-  const sub = await connectRedisWithRetry();
   const channel = `notifications:wake:${workerIndex}`;
   const inFlight = new Set<number>();
   const pending = new Set<number>();
@@ -551,7 +507,7 @@ async function runWorker(workerIndex: number): Promise<void> {
     (async () => {
       try {
         for (;;) {
-          await drain(pg, p);
+          await drain(ev, pg, p);
           if (!pending.delete(p)) break;
         }
       } catch {

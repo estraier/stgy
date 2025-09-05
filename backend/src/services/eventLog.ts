@@ -119,4 +119,54 @@ export class EventLogService {
     await this.notifyPartition(partitionId);
     return idBig;
   }
+
+  async loadCursor(consumer: string, partitionId: number): Promise<bigint> {
+    const res = await this.pgClient.query<{ last_event_id: string }>(
+      `SELECT last_event_id
+         FROM event_log_cursors
+        WHERE consumer = $1 AND partition_id = $2`,
+      [consumer, partitionId],
+    );
+    if (res.rows.length === 0) {
+      await this.pgClient.query(
+        `INSERT INTO event_log_cursors (consumer, partition_id, last_event_id)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (consumer, partition_id) DO NOTHING`,
+        [consumer, partitionId, "0"],
+      );
+      return BigInt(0);
+    }
+    return BigInt(res.rows[0].last_event_id);
+  }
+
+  async saveCursor(
+    tx: Client,
+    consumer: string,
+    partitionId: number,
+    lastEventId: bigint,
+  ): Promise<void> {
+    await tx.query(
+      `UPDATE event_log_cursors
+          SET last_event_id = $3, updated_at = now()
+        WHERE consumer = $1 AND partition_id = $2`,
+      [consumer, partitionId, lastEventId.toString()],
+    );
+  }
+
+  async fetchBatch(
+    partitionId: number,
+    afterId: bigint,
+    limit: number = Config.NOTIFICATION_BATCH_SIZE,
+  ): Promise<Array<{ event_id: string; payload: AnyEventPayload }>> {
+    const res = await this.pgClient.query<{ event_id: string; payload: AnyEventPayload }>(
+      `SELECT event_id, payload
+         FROM event_logs
+        WHERE partition_id = $1
+          AND event_id > $2::bigint
+        ORDER BY event_id ASC
+        LIMIT $3`,
+      [partitionId, afterId.toString(), limit],
+    );
+    return res.rows;
+  }
 }
