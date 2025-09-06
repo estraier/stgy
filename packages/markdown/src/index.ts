@@ -303,23 +303,17 @@ export function mdGroupImageGrid(nodes: MdNode[], opts?: { maxElements?: number 
           group.push(arr[j]);
           j++;
         }
-        if (group.length >= 2) {
-          for (let k = 0; k < group.length; k += maxElements) {
-            const chunk = group.slice(k, k + maxElements);
-            if (chunk.length >= 2) {
-              out.push({
-                type: "element",
-                tag: "div",
-                attrs: { class: "image-grid", "data-cols": chunk.length },
-                children: chunk,
-              });
-            } else {
-              out.push(chunk[0]!);
-            }
-          }
-          i = j;
-          continue;
+        for (let k = 0; k < group.length; k += maxElements) {
+          const chunk = group.slice(k, k + maxElements);
+          out.push({
+            type: "element",
+            tag: "div",
+            attrs: { class: "image-grid", "data-cols": chunk.length },
+            children: chunk,
+          });
         }
+        i = j;
+        continue;
       }
       if (node.type === "element" && node.children) {
         out.push({ ...node, children: groupInArray(node.children) });

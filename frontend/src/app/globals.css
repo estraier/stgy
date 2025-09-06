@@ -199,6 +199,17 @@ body {
   max-width: 100%;
   max-height: none;
 }
+.markdown-body:not(.excerpt) .image-grid[data-cols="1"] {
+  grid-template-columns: minmax(0, 1fr);
+  width: 60%;
+  margin-left: auto;
+  margin-right: auto;
+}
+@media (max-width: 640px) {
+  .markdown-body:not(.excerpt) .image-grid[data-cols="1"] {
+    width: 80%;
+  }
+}
 .markdown-body:not(.excerpt) .image-grid[data-cols="2"] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }

@@ -63,21 +63,19 @@ function makeWebP_VP8X(w: number, h: number): Uint8Array {
 
 function makeWebP_VP8(w: number, h: number): Uint8Array {
   const riff = fourCC("RIFF");
-  const size = u32le(40);
   const webp = fourCC("WEBP");
   const vp8 = fourCC("VP8 ");
-  const chunkSize = u32le(20);
-  const header = new Array(20).fill(0);
-  const data = new Array(20).fill(0);
-  data[3] = 0x9d;
-  data[4] = 0x01;
-  data[5] = 0x2a;
-  const [wh1, wh2] = [u16be(w), u16be(h)];
-  data[6] = wh1[0];
-  data[7] = wh1[1];
-  data[8] = wh2[0];
-  data[9] = wh2[1];
-  return new Uint8Array([...riff, ...size, ...webp, ...vp8, ...chunkSize, ...header, ...data]);
+  const payload = new Array(10).fill(0);
+  payload[3] = 0x9d;
+  payload[4] = 0x01;
+  payload[5] = 0x2a;
+  payload[6] = w & 0xff;
+  payload[7] = (w >>> 8) & 0xff;
+  payload[8] = h & 0xff;
+  payload[9] = (h >>> 8) & 0xff;
+  const chunkSize = u32le(payload.length);
+  const riffSize = u32le(4 + 4 + 4 + payload.length);
+  return new Uint8Array([...riff, ...riffSize, ...webp, ...vp8, ...chunkSize, ...payload]);
 }
 
 function makeWebP_VP8L(w: number, h: number): Uint8Array {

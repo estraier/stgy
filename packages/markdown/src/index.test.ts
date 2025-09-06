@@ -84,29 +84,39 @@ describe("mdGroupImageGrid", () => {
     const expected = [
       {
         type: "element",
-        tag: "figure",
+        tag: "div",
         attrs: {
-          class: "image-block",
+          class: "image-grid",
+          "data-cols": 1,
         },
         children: [
           {
             type: "element",
-            tag: "img",
+            tag: "figure",
             attrs: {
-              src: "/data/logo1.jpg",
-              grid: true,
+              class: "image-block",
             },
-            children: [],
-          },
-          {
-            type: "element",
-            tag: "figcaption",
             children: [
               {
-                type: "text",
-                text: "img1",
+                type: "element",
+                tag: "img",
+                attrs: {
+                  src: "/data/logo1.jpg",
+                  grid: true,
+                },
+                children: [],
               },
-            ],
+              {
+                type: "element",
+                tag: "figcaption",
+                children: [
+                  {
+                    type: "text",
+                    text: "img1",
+                  },
+                ],
+              },
+            ]
           },
         ],
       },
@@ -694,9 +704,7 @@ EOF
     nodes = mdRewriteMediaUrls(nodes, rewriteOptions);
     nodes = mdGroupImageGrid(nodes);
     const serialized = serializeMdNodes(nodes);
-    expect(serialized).toBe(
-      '[{"T":"p","C":[{"X":"hello world"},{"T":"br"},{"X":"fetch "},{"T":"em","X":"me"},{"X":" "},{"T":"strong","X":"my"},{"X":" "},{"T":"u","X":"hat"},{"X":"."},{"T":"br"},{"X":"line2"}]},{"T":"p","X":"paragraph2"},{"T":"h1","X":"first"},{"T":"h2","X":"second"},{"T":"h3","X":"third"},{"T":"ul","C":[{"T":"li","X":"hop step"},{"T":"li","C":[{"T":"code","X":"jump"}]}]},{"T":"table","C":[{"T":"tr","C":[{"T":"td","X":"one"},{"T":"td","X":"two"}]}]},{"T":"figure","C":[{"T":"img","SR":"/data/tako.png","FE":true},{"T":"figcaption","X":"img1"}],"CL":"image-block"},{"T":"p","C":[{"X":"!"},{"T":"a","X":"img2","HF":"/xyz/tako.jpg"},{"X":"{grid}{no-featured}"}]},{"T":"figure","C":[{"T":"video","SR":"/data/tako.mp4","GD":true},{"T":"figcaption","X":"video"}],"CL":"image-block"},{"T":"hr","HL":2},{"T":"blockquote","C":[{"X":"foo bar"},{"T":"br"},{"T":"u","X":"baz"}]},{"T":"p","X":"EOF"}]',
-    );
+    expect(serialized).toBe("[{\"T\":\"p\",\"C\":[{\"X\":\"hello world\"},{\"T\":\"br\"},{\"X\":\"fetch \"},{\"T\":\"em\",\"X\":\"me\"},{\"X\":\" \"},{\"T\":\"strong\",\"X\":\"my\"},{\"X\":\" \"},{\"T\":\"u\",\"X\":\"hat\"},{\"X\":\".\"},{\"T\":\"br\"},{\"X\":\"line2\"}]},{\"T\":\"p\",\"X\":\"paragraph2\"},{\"T\":\"h1\",\"X\":\"first\"},{\"T\":\"h2\",\"X\":\"second\"},{\"T\":\"h3\",\"X\":\"third\"},{\"T\":\"ul\",\"C\":[{\"T\":\"li\",\"X\":\"hop step\"},{\"T\":\"li\",\"C\":[{\"T\":\"code\",\"X\":\"jump\"}]}]},{\"T\":\"table\",\"C\":[{\"T\":\"tr\",\"C\":[{\"T\":\"td\",\"X\":\"one\"},{\"T\":\"td\",\"X\":\"two\"}]}]},{\"T\":\"figure\",\"C\":[{\"T\":\"img\",\"SR\":\"/data/tako.png\",\"FE\":true},{\"T\":\"figcaption\",\"X\":\"img1\"}],\"CL\":\"image-block\"},{\"T\":\"p\",\"C\":[{\"X\":\"!\"},{\"T\":\"a\",\"X\":\"img2\",\"HF\":\"/xyz/tako.jpg\"},{\"X\":\"{grid}{no-featured}\"}]},{\"T\":\"div\",\"C\":[{\"T\":\"figure\",\"C\":[{\"T\":\"video\",\"SR\":\"/data/tako.mp4\",\"GD\":true},{\"T\":\"figcaption\",\"X\":\"video\"}],\"CL\":\"image-block\"}],\"CL\":\"image-grid\",\"DC\":1},{\"T\":\"hr\",\"HL\":2},{\"T\":\"blockquote\",\"C\":[{\"X\":\"foo bar\"},{\"T\":\"br\"},{\"T\":\"u\",\"X\":\"baz\"}]},{\"T\":\"p\",\"X\":\"EOF\"}]");
     const deserialized = deserializeMdNodes(serialized);
     expect(deserialized).toStrictEqual(nodes);
   });
