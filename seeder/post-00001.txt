@@ -4,7 +4,7 @@ allowLikes: false
 allowReplies: false
 tags: fakebook-help
 content:<<____EOF____
-![Fakebookロゴ](/data/logo-square.svg){float=right,size=small}
+![Fakebookロゴ](/data/logo-square.png){float=right,size=small}
 
 # Fakebookにようこそ
 
