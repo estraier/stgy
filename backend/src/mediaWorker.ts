@@ -64,7 +64,8 @@ async function generateKind(
   kind: "image" | "icon",
 ) {
   const outKey = deriveOutKey(originalKey, kind);
-  const maxPixels = kind === "image" ? Config.MEDIA_THUMB_MAX_PIXELS_IMAGE : Config.MEDIA_THUMB_MAX_PIXELS_ICON;
+  const maxPixels =
+    kind === "image" ? Config.MEDIA_THUMB_MAX_PIXELS_IMAGE : Config.MEDIA_THUMB_MAX_PIXELS_ICON;
 
   const head = await storage.headObject({ bucket, key: originalKey });
   if (!head || head.size <= 0) {
@@ -87,8 +88,6 @@ async function generateKind(
 }
 
 async function handleTask(storage: StorageService, task: ThumbQueueTask) {
-  const typeForLog: unknown = (task as { type?: unknown }).type;
-
   switch (task.type) {
     case "image":
     case "icon": {
@@ -96,9 +95,7 @@ async function handleTask(storage: StorageService, task: ThumbQueueTask) {
       return;
     }
     default: {
-      const _exhaustive: never = task as never; // 網羅性チェック用
-      void _exhaustive;
-      logger.warn(`unknown task type: ${String(typeForLog)}`);
+      logger.warn(`unknown task: ${String(task)}`);
     }
   }
 }
