@@ -4,16 +4,10 @@ import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import Image from "next/image";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import type { MediaObject, StorageMonthlyQuota } from "@/api/models";
-import {
-  listImages,
-  presignImageUpload,
-  uploadToPresigned,
-  finalizeImage,
-  deleteImage,
-  getImagesMonthlyQuota,
-} from "@/api/media";
+import { listImages, deleteImage, getImagesMonthlyQuota } from "@/api/media";
 import { formatDateTime, formatBytes } from "@/utils/format";
 import { Config } from "@/config";
+import ImageUploadButton from "@/components/ImageUploadButton";
 
 const PAGE_SIZE = 30;
 
@@ -35,7 +29,6 @@ export default function PageBody() {
   const [error, setError] = useState<string | null>(null);
   const [page, setPage] = useState(1);
   const [hasNext, setHasNext] = useState(false);
-  const [uploading, setUploading] = useState(false);
   const [previewObj, setPreviewObj] = useState<MediaObject | null>(null);
   const [quota, setQuota] = useState<StorageMonthlyQuota | null>(null);
   const [quotaLoading, setQuotaLoading] = useState(false);
@@ -44,7 +37,6 @@ export default function PageBody() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
   const offset = useMemo(() => (page - 1) * PAGE_SIZE, [page]);
 
@@ -95,73 +87,6 @@ export default function PageBody() {
   useEffect(() => {
     loadQuota();
   }, [loadQuota]);
-
-  async function handleFiles(files: FileList) {
-    if (status.state !== "authenticated" || !userId) return;
-    if (!files.length) return;
-
-    // ---- client-side limits ----
-    const countLimit = Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE ?? Infinity;
-    const perFileLimit = Config.MEDIA_IMAGE_BYTE_LIMIT ?? Infinity;
-    const perMonthLimit = Config.MEDIA_IMAGE_BYTE_LIMIT_PER_MONTH ?? Infinity;
-
-    if (files.length > countLimit) {
-      setError(`You can upload up to ${countLimit} images at once.`);
-      return;
-    }
-
-    const tooLarge = Array.from(files).filter((f) => f.size > perFileLimit);
-    if (tooLarge.length > 0) {
-      const f = tooLarge[0];
-      setError(
-        `File exceeds per-file limit (${formatBytes(perFileLimit)}): ${f.name} (${formatBytes(
-          f.size,
-        )})`,
-      );
-      return;
-    }
-
-    const totalSelected = Array.from(files).reduce((a, f) => a + f.size, 0);
-    if (totalSelected > perMonthLimit) {
-      setError(
-        `Total selected size (${formatBytes(totalSelected)}) exceeds per-upload cap (${formatBytes(
-          perMonthLimit,
-        )}).`,
-      );
-      return;
-    }
-
-    if (quota && quota.limitMonthlyBytes) {
-      const remaining = Math.max(0, quota.limitMonthlyBytes - quota.bytesTotal);
-      if (totalSelected > remaining) {
-        setError(
-          `Total selected size (${formatBytes(totalSelected)}) exceeds your remaining monthly quota (${formatBytes(
-            remaining,
-          )}).`,
-        );
-        return;
-      }
-    }
-    // ---- /client-side limits ----
-
-    setUploading(true);
-    setError(null);
-    try {
-      for (const file of Array.from(files)) {
-        const presigned = await presignImageUpload(userId, file.name, file.size);
-        await uploadToPresigned(presigned, file, file.name, file.type);
-        await finalizeImage(userId, presigned.objectKey);
-      }
-      setPage(1);
-      await loadList();
-      await loadQuota();
-    } catch (e: unknown) {
-      setError(e instanceof Error ? e.message : "Failed to upload.");
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  }
 
   async function actuallyDelete(obj: MediaObject) {
     if (status.state !== "authenticated" || !userId) return;
@@ -227,28 +152,20 @@ export default function PageBody() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <input
-            ref={fileInputRef}
-            type="file"
-            accept="image/*"
-            multiple
-            className="hidden"
-            onChange={(e) => e.target.files && handleFiles(e.target.files)}
-            disabled={uploading}
+          <ImageUploadButton
+            userId={userId!}
+            maxCount={Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE ?? 20}
+            buttonLabel="Upload images"
+            className="px-3 py-1 rounded border transition bg-gray-300 text-gray-900 border-gray-700 hover:bg-gray-400"
+            onComplete={async () => {
+              setPage(1);
+              await loadList();
+              await loadQuota();
+            }}
+            onCancel={() => {
+              /* no-op */
+            }}
           />
-          <button
-            type="button"
-            onClick={() => fileInputRef.current?.click()}
-            disabled={uploading}
-            className={`px-3 py-1 rounded border transition ${
-              uploading
-                ? "bg-gray-200 text-gray-400 border-gray-300 cursor-not-allowed"
-                : "bg-gray-300 text-gray-900 border-gray-700 hover:bg-gray-400"
-            }`}
-            title=""
-          >
-            {uploading ? "Uploading…" : "Upload images"}
-          </button>
         </div>
       </div>
 
