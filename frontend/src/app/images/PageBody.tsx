@@ -142,7 +142,7 @@ export default function PageBody() {
       <input
         ref={fileInputRef}
         type="file"
-        accept="image/*"
+        accept={Config.IMAGE_ALLOWED_TYPES}
         multiple
         className="hidden"
         onChange={(e) => onFilesChosen(e.target.files)}

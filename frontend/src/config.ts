@@ -61,6 +61,8 @@ export class Config {
     "NEXT_PUBLIC_IMAGE_OPTIMIZE_TARGET_PIXELS",
     5000000,
   );
+  static readonly IMAGE_ALLOWED_TYPES =
+    "image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif";
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {

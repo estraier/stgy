@@ -1,5 +1,6 @@
 "use client";
 
+import { Config } from "@/config";
 import React, { useRef, useState, useCallback } from "react";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import ImageUploadDialog, { DialogFileItem, UploadResult } from "@/components/ImageUploadDialog";
@@ -57,17 +58,10 @@ export default function ImageEmbedButton({
         const mdParts: string[] = [];
 
         if (oks.length > 0) {
-          mdParts.push(
-            ...oks.map((r) => `![](/images/${r.objectKey})${useGrid ? "{grid}" : ""}`),
-          );
+          mdParts.push(...oks.map((r) => `![](/images/${r.objectKey})${useGrid ? "{grid}" : ""}`));
         }
-        console.log(errs);
         if (errs.length > 0) {
-          mdParts.push(
-            ...errs.map(
-              (e) => `> Upload error: **${e.name}** — ${e.error}`,
-            ),
-          );
+          mdParts.push(...errs.map((e) => `> Upload error: **${e.name}** — ${e.error}`));
         }
 
         onInsert(mdParts.join("\n") + "\n");
@@ -91,7 +85,7 @@ export default function ImageEmbedButton({
       <input
         ref={inputRef}
         type="file"
-        accept="image/*"
+        accept={Config.IMAGE_ALLOWED_TYPES}
         multiple
         className="hidden"
         onChange={(e) => onFilesChosen(e.target.files)}

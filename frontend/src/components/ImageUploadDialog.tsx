@@ -220,12 +220,8 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
   useEffect(() => {
     let cancelled = false;
     (async () => {
-      const next = [...items];
-      for (let i = 0; i < next.length; i++) {
-        const it = next[i];
-        if (it.status !== "pending") continue;
-
-        const meta = await readMeta(it.file);
+      for (const f of files.slice(0, maxCount)) {
+        const meta = await readMeta(f.file);
         if (cancelled) return;
 
         if (meta.previewUrl) revokeQueue.current.push(meta.previewUrl);
@@ -233,43 +229,58 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         const needs = shouldAutoOptimize({
           width: meta.width,
           height: meta.height,
-          size: it.size,
+          size: f.size,
         });
 
-        next[i] = {
-          ...it,
-          previewUrl: meta.previewUrl,
-          decodable: meta.decodable,
-          width: meta.width,
-          height: meta.height,
-          needsAutoOptimize: needs,
-          optimize: needs,
-          status: needs && meta.decodable ? "optimizing" : "ready",
-        };
-        setItems([...next]);
+        setItems((prev) =>
+          prev.map((x) =>
+            x.id === f.id
+              ? {
+                  ...x,
+                  previewUrl: meta.previewUrl,
+                  decodable: meta.decodable,
+                  width: meta.width,
+                  height: meta.height,
+                  needsAutoOptimize: needs,
+                  optimize: needs,
+                  status: meta.decodable ? "optimizing" : "ready",
+                }
+              : x,
+          ),
+        );
 
-        if (needs && meta.decodable) {
+        if (meta.decodable) {
           try {
-            const out = await rasterToWebp(it.file, meta.width!, meta.height!);
+            const out = await rasterToWebp(f.file, meta.width!, meta.height!);
             if (cancelled) return;
-            next[i] = {
-              ...next[i],
-              optimized: {
-                blob: out.blob,
-                size: out.blob.size,
-                width: out.width,
-                height: out.height,
-              },
-              status: "ready",
-            };
-            setItems([...next]);
+            setItems((prev) =>
+              prev.map((x) =>
+                x.id === f.id
+                  ? {
+                      ...x,
+                      optimized: {
+                        blob: out.blob,
+                        size: out.blob.size,
+                        width: out.width,
+                        height: out.height,
+                      },
+                      status: "ready",
+                    }
+                  : x,
+              ),
+            );
           } catch {
-            next[i] = {
-              ...next[i],
-              status: "ready",
-              optimized: undefined,
-            };
-            setItems([...next]);
+            setItems((prev) =>
+              prev.map((x) =>
+                x.id === f.id
+                  ? {
+                      ...x,
+                      status: "ready",
+                      optimized: undefined,
+                    }
+                  : x,
+              ),
+            );
           }
         }
       }
@@ -277,8 +288,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     return () => {
       cancelled = true;
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [files, maxCount]);
 
   useEffect(() => {
     return () => {
