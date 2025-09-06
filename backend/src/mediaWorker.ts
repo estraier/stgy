@@ -87,12 +87,20 @@ async function generateKind(
 }
 
 async function handleTask(storage: StorageService, task: ThumbQueueTask) {
-  if (task.type === "image" || task.type === "icon") {
-    await generateKind(storage, task.bucket, task.originalKey, task.type);
-    return;
+  const typeForLog: unknown = (task as { type?: unknown }).type;
+
+  switch (task.type) {
+    case "image":
+    case "icon": {
+      await generateKind(storage, task.bucket, task.originalKey, task.type);
+      return;
+    }
+    default: {
+      const _exhaustive: never = task as never; // 網羅性チェック用
+      void _exhaustive;
+      logger.warn(`unknown task type: ${String(typeForLog)}`);
+    }
   }
-  const _exhaustive: never = task as never;
-  logger.warn("unknown task type", _exhaustive);
 }
 
 let shuttingDown = false;
