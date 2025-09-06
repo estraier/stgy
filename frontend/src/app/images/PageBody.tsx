@@ -1,15 +1,15 @@
 "use client";
 
-import { useEffect, useMemo, useState, useCallback } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import Image from "next/image";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import type { MediaObject, StorageMonthlyQuota } from "@/api/models";
 import { listImages, deleteImage, getImagesMonthlyQuota } from "@/api/media";
 import { formatDateTime, formatBytes } from "@/utils/format";
 import { Config } from "@/config";
-import ImageUploadButton from "@/components/ImageUploadButton";
+import ImageUploadDialog, { DialogFileItem, UploadResult } from "@/components/ImageUploadDialog";
 
-const PAGE_SIZE = 30;
+const PAGE_SIZE = Config.IMAGES_PAGE_SIZE || 30;
 
 function parseIsoToDate(iso?: string | null): Date | null {
   if (!iso) return null;
@@ -37,8 +37,12 @@ export default function PageBody() {
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
 
+  const fileInputRef = useRef<HTMLInputElement>(null);
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
   const offset = useMemo(() => (page - 1) * PAGE_SIZE, [page]);
+
+  const [showUpload, setShowUpload] = useState(false);
+  const [dialogFiles, setDialogFiles] = useState<DialogFileItem[] | null>(null);
 
   const copyMarkdownFor = useCallback(async (key: string) => {
     const imageUrl = "/images/" + key;
@@ -88,6 +92,26 @@ export default function PageBody() {
     loadQuota();
   }, [loadQuota]);
 
+  function openUploadPicker() {
+    if (!userId) return;
+    fileInputRef.current?.click();
+  }
+
+  function onFilesChosen(list: FileList | null) {
+    if (!list || list.length === 0 || !userId) return;
+    const files = Array.from(list).slice(0, Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE || 10);
+    const mapped: DialogFileItem[] = files.map((f) => ({
+      id: cryptoRandomId(),
+      file: f,
+      name: f.name,
+      type: f.type,
+      size: f.size,
+    }));
+    setDialogFiles(mapped);
+    setShowUpload(true);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   async function actuallyDelete(obj: MediaObject) {
     if (status.state !== "authenticated" || !userId) return;
     setDeleting(true);
@@ -115,6 +139,15 @@ export default function PageBody() {
 
   return (
     <main className="max-w-5xl mx-auto mt-8 p-2 sm:p-4">
+      <input
+        ref={fileInputRef}
+        type="file"
+        accept="image/*"
+        multiple
+        className="hidden"
+        onChange={(e) => onFilesChosen(e.target.files)}
+      />
+
       <div className="mb-4 flex items-start gap-4 flex-wrap">
         <div className="min-w-[260px]">
           <h1 className="text-xl font-semibold">Images</h1>
@@ -152,18 +185,14 @@ export default function PageBody() {
         </div>
 
         <div className="ml-auto flex items-center gap-2">
-          <ImageUploadButton
-            userId={userId!}
-            maxCount={Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE ?? 10}
-            buttonLabel="Upload images"
-            className="px-3 py-1 rounded border transition bg-gray-300 text-gray-900 border-gray-700 hover:bg-gray-400"
-            onComplete={async () => {
-              setPage(1);
-              await loadList();
-              await loadQuota();
-            }}
-            onCancel={() => {}}
-          />
+          <button
+            type="button"
+            onClick={openUploadPicker}
+            className="px-3 py-1 rounded border bg-gray-300 text-gray-900"
+            title=""
+          >
+            Upload images
+          </button>
         </div>
       </div>
 
@@ -324,6 +353,33 @@ export default function PageBody() {
           </div>
         </div>
       )}
+
+      {showUpload && dialogFiles && userId && (
+        <ImageUploadDialog
+          userId={userId}
+          files={dialogFiles}
+          maxCount={Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE || 10}
+          onClose={() => {
+            setShowUpload(false);
+            setDialogFiles(null);
+          }}
+          onComplete={(results: UploadResult[]) => {
+            setShowUpload(false);
+            setDialogFiles(null);
+            const anyOk = results.some((r) => r.ok);
+            if (anyOk) {
+              setPage(1);
+              loadList();
+              loadQuota();
+            }
+          }}
+        />
+      )}
     </main>
   );
+}
+
+function cryptoRandomId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return Math.random().toString(36).slice(2);
 }

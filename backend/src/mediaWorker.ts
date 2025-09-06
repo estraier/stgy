@@ -13,8 +13,6 @@ type ThumbQueueTask =
   | { type: "icon"; bucket: string; originalKey: string };
 
 const QUEUE = "media-thumb-queue";
-const MAX_PIXELS_IMAGE = 512 * 512;
-const MAX_PIXELS_ICON = 96 * 96;
 
 function stripExt(file: string): string {
   return file.replace(/\.[^.]+$/, "");
@@ -66,7 +64,7 @@ async function generateKind(
   kind: "image" | "icon",
 ) {
   const outKey = deriveOutKey(originalKey, kind);
-  const maxPixels = kind === "image" ? MAX_PIXELS_IMAGE : MAX_PIXELS_ICON;
+  const maxPixels = kind === "image" ? Config.MEDIA_THUMB_MAX_PIXELS_IMAGE : Config.MEDIA_THUMB_MAX_PIXELS_ICON;
 
   const head = await storage.headObject({ bucket, key: originalKey });
   if (!head || head.size <= 0) {

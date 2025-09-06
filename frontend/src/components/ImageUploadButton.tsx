@@ -1,19 +1,22 @@
 "use client";
 
-import { useCallback, useMemo, useRef, useState, useEffect } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
-import { FiUploadCloud, FiX, FiAlertTriangle } from "react-icons/fi";
 import { formatBytes } from "@/utils/format";
 import { presignImageUpload, uploadToPresigned, finalizeImage } from "@/api/media";
+import { Config } from "@/config";
 
-type Props = {
-  userId: string;
-  maxCount: number;
-  buttonLabel?: string;
-  className?: string;
-  onComplete?: () => Promise<void> | void;
-  onCancel?: () => void;
+export type DialogFileItem = {
+  id: string;
+  file: File;
+  name: string;
+  type: string;
+  size: number;
 };
+
+export type UploadResult =
+  | { ok: true; objectKey: string }
+  | { ok: false; error: string; name: string };
 
 type Meta = {
   mime: string;
@@ -25,340 +28,68 @@ type Meta = {
 type SelectedItem = {
   id: string;
   file: File;
-  url: string;
-  original: Meta;
+  name: string;
+  type: string;
+  size: number;
+
+  url?: string;
+  original?: Meta;
+
   optimized?: Meta & { blob: Blob };
+
   processing: boolean;
   error?: string | null;
   optimizeChecked: boolean;
+  status: "pending" | "optimizing" | "ready" | "uploading" | "done" | "error";
 };
 
-const TRIGGER_BYTES = 3_000_000;
-const TRIGGER_LONGSIDE = 3000;
-const TRIGGER_PIXELS = 8_000_000;
-const TARGET_LONGSIDE = 2600;
-const TARGET_PIXELS = 5_000_000;
+type Props = {
+  userId: string;
+  files: DialogFileItem[];
+  maxCount: number;
+  onClose: () => void;
+  onComplete: (result: UploadResult[]) => void;
+};
 
-export default function ImageUploadButton({
-  userId,
-  maxCount,
-  buttonLabel = "Upload images",
-  className = "",
-  onComplete,
-  onCancel,
-}: Props) {
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
-  const [open, setOpen] = useState(false);
-  const [items, setItems] = useState<SelectedItem[]>([]);
-  const [busy, setBusy] = useState(false);
-  const [globalError, setGlobalError] = useState<string | null>(null);
-
-  const reset = useCallback(() => {
-    setItems((prev) => {
-      prev.forEach((i) => URL.revokeObjectURL(i.url));
-      return [];
-    });
-    setGlobalError(null);
-    setBusy(false);
-    setOpen(false);
-  }, []);
-
-  useEffect(() => {
-    return () => {
-      items.forEach((i) => URL.revokeObjectURL(i.url));
-    };
-  }, [items]);
-
-  const pickFiles = useCallback(() => {
-    setGlobalError(null);
-    fileInputRef.current?.click();
-  }, []);
-
-  const handleFilesChosen = useCallback(
-    async (list: FileList | null) => {
-      if (!list || list.length === 0) return;
-      const files = Array.from(list).slice(0, maxCount);
-      const prepared: SelectedItem[] = [];
-
-      for (const file of files) {
-        const url = URL.createObjectURL(file);
-        try {
-          const original = await readMetaFromUrl(url, file.type || "");
-          const suggestOn =
-            original.size > TRIGGER_BYTES ||
-            Math.max(original.w, original.h) > TRIGGER_LONGSIDE ||
-            original.w * original.h > TRIGGER_PIXELS;
-
-          prepared.push({
-            id: cryptoRandomId(),
-            file,
-            url,
-            original,
-            processing: true,
-            optimizeChecked: suggestOn,
-          });
-        } catch (e) {
-          prepared.push({
-            id: cryptoRandomId(),
-            file,
-            url,
-            original: { mime: file.type || "image/*", size: file.size, w: 0, h: 0 },
-            processing: false,
-            error: (e as Error)?.message || "Failed to read image",
-            optimizeChecked: false,
-          });
-        }
-      }
-
-      setItems(prepared);
-      setOpen(true);
-
-      void Promise.all(
-        prepared.map(async (it) => {
-          try {
-            const out = await optimizeToWebFriendly(it.file, it.original);
-            setItems((prev) =>
-              prev.map((x) =>
-                x.id === it.id ? { ...x, optimized: out, processing: false, error: null } : x,
-              ),
-            );
-          } catch (e) {
-            setItems((prev) =>
-              prev.map((x) =>
-                x.id === it.id
-                  ? {
-                      ...x,
-                      processing: false,
-                      error: (e as Error)?.message || "Optimization failed",
-                    }
-                  : x,
-              ),
-            );
-          }
-        }),
-      );
-    },
-    [maxCount],
-  );
-
-  const toggleOptimize = useCallback((id: string) => {
-    setItems((prev) =>
-      prev.map((x) => (x.id === id ? { ...x, optimizeChecked: !x.optimizeChecked } : x)),
-    );
-  }, []);
-
-  const canUpload = useMemo(() => {
-    if (busy) return false;
-    if (items.length === 0) return false;
-    return items.every((it) => !it.processing && !it.error);
-  }, [items, busy]);
-
-  const totalUploadBytes = useMemo(() => {
-    let total = 0;
-    for (const it of items) {
-      total += it.optimizeChecked && it.optimized ? it.optimized.size : it.original.size;
-    }
-    return total;
-  }, [items]);
-
-  const onUpload = useCallback(async () => {
-    if (!canUpload) return;
-    setBusy(true);
-    setGlobalError(null);
-    try {
-      for (const it of items) {
-        const useOptimized = it.optimizeChecked && !!it.optimized;
-        const blob = useOptimized ? it.optimized!.blob : it.file;
-        const mime = useOptimized
-          ? it.optimized!.mime
-          : it.original.mime || it.file.type || "image/jpeg";
-        const fileName = deriveUploadName(
-          it.file.name,
-          useOptimized ? it.optimized!.mime : it.original.mime,
-        );
-
-        const presigned = await presignImageUpload(userId, fileName, blob.size);
-        const uploadBlob = blob instanceof File ? blob : new File([blob], fileName, { type: mime });
-        await uploadToPresigned(presigned, uploadBlob, fileName, mime);
-        await finalizeImage(userId, presigned.objectKey);
-      }
-      await onComplete?.();
-      reset();
-    } catch (e) {
-      setGlobalError((e as Error)?.message || "Upload failed");
-      setBusy(false);
-    }
-  }, [canUpload, items, onComplete, reset, userId]);
-
-  const onCancelAll = useCallback(() => {
-    if (busy) return;
-    reset();
-    onCancel?.();
-  }, [busy, onCancel, reset]);
-
+function shouldSuggestOptimize(m: Meta): boolean {
   return (
-    <>
-      <input
-        ref={fileInputRef}
-        type="file"
-        accept="image/*"
-        multiple
-        className="hidden"
-        onChange={(e) => handleFilesChosen(e.target.files)}
-      />
-      <button
-        type="button"
-        onClick={pickFiles}
-        className={className || "px-3 py-1 rounded border bg-gray-300 text-gray-900"}
-      >
-        {buttonLabel}
-      </button>
-
-      {open && (
-        <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-          <div
-            className="bg-white w-full max-w-5xl max-h-[90vh] rounded shadow flex flex-col"
-            role="dialog"
-            aria-modal="true"
-          >
-            <div className="px-4 py-3 border-b flex items-center justify-between">
-              <div className="font-semibold">Upload images</div>
-              <button
-                onClick={onCancelAll}
-                className="p-2 rounded hover:bg-gray-100"
-                aria-label="Close"
-                disabled={busy}
-              >
-                <FiX />
-              </button>
-            </div>
-
-            <div className="px-4 py-3 text-sm text-gray-700 flex items-center gap-3 border-b">
-              <div className="flex items-center gap-2">
-                <FiUploadCloud />
-                <span>
-                  {items.length} file{items.length === 1 ? "" : "s"} selected
-                </span>
-              </div>
-              <span className="text-gray-400">•</span>
-              <span>Total to upload: {formatBytes(totalUploadBytes)}</span>
-              {!canUpload && (
-                <span className="ml-auto text-[12px] text-gray-500">preparing images…</span>
-              )}
-            </div>
-
-            {globalError && (
-              <div className="px-4 py-2 text-sm text-red-600 border-b">{globalError}</div>
-            )}
-
-            <div className="p-4 overflow-auto">
-              <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-                {items.map((it) => (
-                  <li
-                    key={it.id}
-                    className="rounded border bg-white overflow-hidden hover:shadow-sm transition"
-                  >
-                    <div className="relative w-full aspect-video bg-gray-50">
-                      <Image
-                        src={it.url}
-                        alt=""
-                        fill
-                        unoptimized
-                        className="object-contain"
-                        sizes="(max-width: 768px) 50vw, 33vw"
-                      />
-                    </div>
-
-                    <div className="p-3 text-sm text-gray-800 space-y-2">
-                      <div className="font-medium break-all">{it.file.name}</div>
-
-                      <div className="text-[12px] text-gray-700">
-                        <MetaLine meta={it.original} label="Original" />
-                      </div>
-
-                      <div className="flex items-center gap-2">
-                        <label className="inline-flex items-center gap-2 cursor-pointer">
-                          <input
-                            type="checkbox"
-                            className="accent-blue-600"
-                            checked={it.optimizeChecked}
-                            onChange={() => toggleOptimize(it.id)}
-                            disabled={it.processing}
-                          />
-                          <span className="text-[13px]">Optimize for Web</span>
-                        </label>
-                        {it.processing && (
-                          <span className="text-[12px] text-gray-500">processing…</span>
-                        )}
-                        {it.error && (
-                          <span className="text-[12px] text-red-600 flex items-center gap-1">
-                            <FiAlertTriangle /> {it.error}
-                          </span>
-                        )}
-                      </div>
-
-                      <div
-                        className={`text-[12px] ${it.optimizeChecked ? "text-gray-800" : "text-gray-400"}`}
-                      >
-                        <MetaLine
-                          meta={
-                            it.optimized ?? {
-                              mime: "image/webp",
-                              size: it.original.size,
-                              w: it.original.w,
-                              h: it.original.h,
-                            }
-                          }
-                          label="Optimized"
-                        />
-                      </div>
-                    </div>
-                  </li>
-                ))}
-              </ul>
-            </div>
-
-            <div className="px-4 py-3 border-t flex items-center justify-end gap-2">
-              <button
-                className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-50"
-                onClick={onCancelAll}
-                disabled={busy}
-              >
-                Cancel
-              </button>
-              <button
-                className="px-3 py-1 rounded border border-blue-700 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
-                onClick={onUpload}
-                disabled={!canUpload}
-              >
-                {busy ? "Uploading…" : "Upload"}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-    </>
+    m.size > Config.IMAGE_OPTIMIZE_TRIGGER_BYTES ||
+    Math.max(m.w, m.h) > Config.IMAGE_OPTIMIZE_TRIGGER_LONGSIDE ||
+    m.w * m.h > Config.IMAGE_OPTIMIZE_TRIGGER_PIXELS
   );
 }
 
-function MetaLine({ meta, label }: { meta: Meta; label: string }) {
-  const geom = meta.w > 0 && meta.h > 0 ? ` • ${meta.w}×${meta.h}` : "";
-  return (
-    <div>
-      <span className="text-gray-500">{label}:</span>{" "}
-      <span className="font-mono">{meta.mime || "image/*"}</span> •{" "}
-      <span className="font-mono">{formatBytes(meta.size)}</span>
-      {geom}
-    </div>
-  );
+function computeResize(w: number, h: number) {
+  const maxSideScale = Config.IMAGE_OPTIMIZE_TARGET_LONGSIDE / Math.max(w, h);
+  const pixelScale = Math.sqrt(Config.IMAGE_OPTIMIZE_TARGET_PIXELS / (w * h));
+  const scale = Math.min(1, maxSideScale, pixelScale);
+  const outW = Math.max(1, Math.round(w * scale));
+  const outH = Math.max(1, Math.round(h * scale));
+  return { outW, outH };
 }
 
-function cryptoRandomId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
-  return Math.random().toString(36).slice(2);
+function mimeToExt(mime: string) {
+  switch (mime.toLowerCase()) {
+    case "image/jpeg":
+      return ".jpg";
+    case "image/png":
+      return ".png";
+    case "image/webp":
+      return ".webp";
+    case "image/heic":
+      return ".heic";
+    default:
+      return ".img";
+  }
 }
 
-async function readMetaFromUrl(url: string, mimeHint: string): Promise<Meta> {
+function changeExt(name: string, nextMime: string): string {
+  const base = name.replace(/\.[^.]+$/, "");
+  return `${base}${mimeToExt(nextMime)}`;
+}
+
+async function readMetaFromFile(file: File): Promise<Meta & { url: string }> {
+  const url = URL.createObjectURL(file);
   const img = document.createElement("img");
   img.decoding = "async";
   img.src = url;
@@ -369,23 +100,19 @@ async function readMetaFromUrl(url: string, mimeHint: string): Promise<Meta> {
         img.onerror = () => reject(new Error("decode failed"));
       }),
   );
-  const resp = await fetch(url);
-  const blob = await resp.blob();
   return {
-    mime: blob.type || mimeHint || "image/*",
-    size: blob.size,
+    url,
+    mime: file.type || "image/*",
+    size: file.size,
     w: img.naturalWidth,
     h: img.naturalHeight,
   };
 }
 
-function computeResize(w: number, h: number) {
-  const maxSideScale = TARGET_LONGSIDE / Math.max(w, h);
-  const pixelScale = Math.sqrt(TARGET_PIXELS / (w * h));
-  const scale = Math.min(1, maxSideScale, pixelScale);
-  const outW = Math.max(1, Math.round(w * scale));
-  const outH = Math.max(1, Math.round(h * scale));
-  return { outW, outH };
+function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob> {
+  return new Promise((resolve, reject) =>
+    canvas.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), type, quality),
+  );
 }
 
 async function optimizeToWebFriendly(file: File, original: Meta): Promise<Meta & { blob: Blob }> {
@@ -411,45 +138,352 @@ async function optimizeToWebFriendly(file: File, original: Meta): Promise<Meta &
     if (!ctx) throw new Error("no canvas context");
     ctx.drawImage(img, 0, 0, outW, outH);
 
-    let blob: Blob | null = await canvasToBlob(canvas, "image/webp", 0.82);
-    let mime = "image/webp";
-    if (!blob) {
+    let blob: Blob;
+    try {
+      blob = await canvasToBlob(canvas, "image/webp", 0.82);
+      return { mime: "image/webp", size: blob.size, w: outW, h: outH, blob };
+    } catch {
       blob = await canvasToBlob(canvas, "image/jpeg", 0.86);
-      mime = "image/jpeg";
-      if (!blob) throw new Error("encoding failed");
+      return { mime: "image/jpeg", size: blob.size, w: outW, h: outH, blob };
     }
-
-    return { mime, size: blob.size, w: outW, h: outH, blob };
   } finally {
     URL.revokeObjectURL(srcUrl);
   }
 }
 
-function canvasToBlob(
-  canvas: HTMLCanvasElement,
-  type: string,
-  quality?: number,
-): Promise<Blob | null> {
-  return new Promise((resolve) => canvas.toBlob((b) => resolve(b), type, quality));
+export default function ImageUploadDialog({ userId, files, maxCount, onClose, onComplete }: Props) {
+  const revokeRef = useRef<string[]>([]);
+  const seed = useMemo(() => files.slice(0, maxCount), [files, maxCount]);
+
+  const [items, setItems] = useState<SelectedItem[]>(
+    seed.map((f) => ({
+      id: f.id,
+      file: f.file,
+      name: f.name,
+      type: f.type,
+      size: f.size,
+      processing: true,
+      optimizeChecked: false,
+      status: "pending",
+    })),
+  );
+  const [busy, setBusy] = useState(false);
+  const [globalError, setGlobalError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    (async () => {
+      const next: SelectedItem[] = [];
+      for (const it of seed) {
+        const meta = await readMetaFromFile(it.file).catch(() => null);
+        if (cancelled) return;
+        if (!meta) {
+          next.push({
+            id: it.id,
+            file: it.file,
+            name: it.name,
+            type: it.type,
+            size: it.size,
+            processing: false,
+            error: "Failed to read image",
+            optimizeChecked: false,
+            status: "ready",
+          });
+          continue;
+        }
+        revokeRef.current.push(meta.url);
+        const original: Meta = { mime: meta.mime, size: meta.size, w: meta.w, h: meta.h };
+        const suggestOn = shouldSuggestOptimize(original);
+
+        const base: SelectedItem = {
+          id: it.id,
+          file: it.file,
+          name: it.name,
+          type: it.type,
+          size: it.size,
+          url: meta.url,
+          original,
+          processing: true,
+          optimizeChecked: suggestOn,
+          status: suggestOn ? "optimizing" : "ready",
+        };
+        next.push(base);
+      }
+      setItems(next);
+
+      const updated: SelectedItem[] = [...next];
+      await Promise.all(
+        updated.map(async (it, idx) => {
+          if (!it.original) return;
+          if (!it.optimizeChecked) {
+            updated[idx] = { ...it, processing: false, status: "ready" };
+            return;
+          }
+          try {
+            const out = await optimizeToWebFriendly(it.file, it.original);
+            updated[idx] = {
+              ...it,
+              optimized: out,
+              processing: false,
+              status: "ready",
+            };
+          } catch {
+            updated[idx] = { ...it, processing: false, status: "ready" };
+          }
+        }),
+      );
+      if (!cancelled) setItems(updated);
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [seed]);
+
+  useEffect(() => {
+    return () => {
+      for (const url of revokeRef.current) URL.revokeObjectURL(url);
+      revokeRef.current = [];
+    };
+  }, []);
+
+  const toggleOptimize = useCallback((id: string) => {
+    setItems((prev) =>
+      prev.map((x) => (x.id === id ? { ...x, optimizeChecked: !x.optimizeChecked } : x)),
+    );
+  }, []);
+
+  const canUpload = useMemo(() => {
+    if (busy) return false;
+    if (items.length === 0) return false;
+    return items.every((it) => it.status !== "optimizing" && !it.processing && !it.error);
+  }, [items, busy]);
+
+  const totalUploadBytes = useMemo(() => {
+    let total = 0;
+    for (const it of items) {
+      const size =
+        it.optimizeChecked && it.optimized ? it.optimized.size : (it.original?.size ?? it.size);
+      total += size;
+    }
+    return total;
+  }, [items]);
+
+  const onUpload = useCallback(async () => {
+    if (!canUpload) return;
+    setBusy(true);
+    setGlobalError(null);
+
+    const results: UploadResult[] = [];
+    try {
+      const next = [...items];
+
+      for (let i = 0; i < next.length; i++) {
+        const it = next[i];
+        next[i] = { ...it, status: "uploading" };
+        setItems([...next]);
+
+        try {
+          const useOptimized = it.optimizeChecked && it.optimized;
+          const blob = useOptimized ? it.optimized!.blob : it.file;
+          const mime = useOptimized
+            ? it.optimized!.mime
+            : it.original?.mime || it.type || "application/octet-stream";
+          const name = useOptimized
+            ? changeExt(it.name, useOptimized ? it.optimized!.mime : mime)
+            : it.name;
+
+          const presigned = await presignImageUpload(userId, name, blob.size);
+          const upBlob = blob instanceof File ? blob : new File([blob], name, { type: mime });
+          await uploadToPresigned(presigned, upBlob, name, mime);
+          const obj = await finalizeImage(userId, presigned.objectKey);
+
+          next[i] = { ...next[i], status: "done" };
+          setItems([...next]);
+          results.push({ ok: true, objectKey: obj.key });
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : "Upload failed";
+          next[i] = { ...next[i], status: "error", error: msg };
+          setItems([...next]);
+          results.push({ ok: false, error: msg, name: it.name });
+        }
+      }
+
+      onComplete(results);
+    } catch (e) {
+      setGlobalError(e instanceof Error ? e.message : "Upload failed");
+    } finally {
+      setBusy(false);
+    }
+  }, [canUpload, items, onComplete, userId]);
+
+  return (
+    <div
+      className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4"
+      onClick={onClose}
+      role="dialog"
+      aria-modal="true"
+    >
+      <div
+        className="bg-white w-full max-w-5xl max-h-[90vh] rounded shadow flex flex-col"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="px-4 py-3 border-b flex items-center justify-between">
+          <div className="font-semibold">Upload images</div>
+          <button
+            onClick={onClose}
+            className="px-2 py-0.5 rounded border border-gray-300 hover:bg-gray-100"
+            disabled={busy}
+          >
+            Close
+          </button>
+        </div>
+
+        <div className="px-4 py-3 text-sm text-gray-700 flex items-center gap-3 border-b">
+          <div className="flex items-center gap-2">
+            <svg width="18" height="18" viewBox="0 0 24 24" aria-hidden className="opacity-80">
+              <path
+                fill="currentColor"
+                d="M19.35 10.04C18.67 6.59 15.64 4 12 4C9.11 4 6.6 5.64 5.35 8.04C2.34 8.36 0 10.91 0 14C0 17.31 2.69 20 6 20H19C21.76 20 24 17.76 24 15C24 12.36 21.95 10.22 19.35 10.04M19 18H6C4.34 18 3 16.66 3 15C3 13.34 4.34 12 6 12H6.71C7.37 9.72 9.48 8 12 8C14.76 8 17 10.24 17 13H19C20.66 13 22 14.34 22 16C22 17.66 20.66 19 19 19V18Z"
+              />
+            </svg>
+            <span>
+              {items.length} file{items.length === 1 ? "" : "s"} selected
+            </span>
+          </div>
+          <span className="text-gray-400">•</span>
+          <span>Total to upload: {formatBytes(totalUploadBytes)}</span>
+          {!canUpload && (
+            <span className="ml-auto text-[12px] text-gray-500">preparing images…</span>
+          )}
+        </div>
+
+        {globalError && (
+          <div className="px-4 py-2 text-sm text-red-600 border-b">{globalError}</div>
+        )}
+
+        <div className="p-4 overflow-auto">
+          <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+            {items.map((it) => {
+              const original = it.original;
+              return (
+                <li
+                  key={it.id}
+                  className="rounded border bg-white overflow-hidden hover:shadow-sm transition"
+                >
+                  <div className="relative w-full aspect-video bg-gray-50">
+                    {it.url ? (
+                      <Image
+                        src={it.url}
+                        alt=""
+                        fill
+                        unoptimized
+                        className="object-contain"
+                        sizes="(max-width: 768px) 50vw, 33vw"
+                      />
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-500">
+                        No preview
+                      </div>
+                    )}
+                    {(it.status === "optimizing" || it.processing) && (
+                      <div className="absolute inset-0 bg-white/70 flex items-center justify-center text-xs">
+                        Optimizing…
+                      </div>
+                    )}
+                    {it.status === "uploading" && (
+                      <div className="absolute inset-0 bg-white/70 flex items-center justify-center text-xs">
+                        Uploading…
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="p-3 text-sm text-gray-800 space-y-2">
+                    <div className="font-medium break-all">{it.name}</div>
+
+                    <div className="text-[12px] text-gray-700">
+                      {original ? (
+                        <MetaLine meta={original} label="Original" />
+                      ) : (
+                        <div className="text-gray-500">—</div>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="accent-blue-600"
+                          checked={it.optimizeChecked}
+                          onChange={() => toggleOptimize(it.id)}
+                          disabled={it.processing || it.status === "uploading"}
+                        />
+                        <span className="text-[13px]">Optimize for Web</span>
+                      </label>
+                      {it.error && (
+                        <span className="text-[12px] text-red-600 break-all">{it.error}</span>
+                      )}
+                    </div>
+
+                    <div
+                      className={`text-[12px] ${
+                        it.optimizeChecked ? "text-gray-800" : "text-gray-400"
+                      }`}
+                    >
+                      <MetaLine
+                        meta={
+                          it.optimized ??
+                          original ?? {
+                            mime: it.type || "image/*",
+                            size: it.size,
+                            w: 0,
+                            h: 0,
+                          }
+                        }
+                        label="Optimized"
+                      />
+                    </div>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+
+        <div className="px-4 py-3 border-t flex items-center justify-end gap-2">
+          <button
+            className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
+            onClick={onClose}
+            disabled={busy}
+          >
+            Cancel
+          </button>
+          <button
+            className={`px-3 py-1 rounded border ${
+              canUpload
+                ? "border-blue-700 bg-blue-600 text-white hover:bg-blue-700"
+                : "border-gray-300 bg-gray-200 text-gray-500 cursor-not-allowed"
+            }`}
+            onClick={onUpload}
+            disabled={!canUpload}
+          >
+            {busy ? "Uploading…" : "Upload"}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
 }
 
-function deriveUploadName(originalName: string, mime: string | undefined) {
-  const base = originalName.replace(/\.[^.]+$/, "");
-  const ext = mimeToExt(mime || "");
-  return `${base}${ext}`;
-}
-
-function mimeToExt(mime: string) {
-  switch ((mime || "").toLowerCase()) {
-    case "image/jpeg":
-      return ".jpg";
-    case "image/png":
-      return ".png";
-    case "image/webp":
-      return ".webp";
-    case "image/heic":
-      return ".heic";
-    default:
-      return ".img";
-  }
+function MetaLine({ meta, label }: { meta: Meta; label: string }) {
+  const geom = meta.w > 0 && meta.h > 0 ? ` • ${meta.w}×${meta.h}` : "";
+  return (
+    <div>
+      <span className="text-gray-500">{label}:</span>{" "}
+      <span className="font-mono">{meta.mime || "image/*"}</span> •{" "}
+      <span className="font-mono">{formatBytes(meta.size)}</span>
+      {geom}
+    </div>
+  );
 }
