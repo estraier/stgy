@@ -50,12 +50,29 @@ export default function ImageEmbedButton({
   const handleComplete = useCallback(
     (results: UploadResult[]) => {
       const oks = results.filter((r): r is Extract<UploadResult, { ok: true }> => r.ok);
-      if (oks.length > 0) {
+      const errs = results.filter((r): r is Extract<UploadResult, { ok: false }> => !r.ok);
+
+      if (oks.length > 0 || errs.length > 0) {
         const useGrid = oks.length >= 2;
-        const md =
-          oks.map((r) => `![](/images/${r.objectKey})${useGrid ? "{grid}" : ""}`).join("\n") + "\n";
-        onInsert(md);
+        const mdParts: string[] = [];
+
+        if (oks.length > 0) {
+          mdParts.push(
+            ...oks.map((r) => `![](/images/${r.objectKey})${useGrid ? "{grid}" : ""}`),
+          );
+        }
+        console.log(errs);
+        if (errs.length > 0) {
+          mdParts.push(
+            ...errs.map(
+              (e) => `> Upload error: **${e.name}** — ${e.error}`,
+            ),
+          );
+        }
+
+        onInsert(mdParts.join("\n") + "\n");
       }
+
       setShowDialog(false);
       setDialogFiles(null);
     },
