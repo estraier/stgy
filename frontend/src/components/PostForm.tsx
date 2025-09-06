@@ -4,8 +4,8 @@ import React, { useRef, useState, useEffect, useMemo } from "react";
 import { makeArticleHtmlFromMarkdown } from "@/utils/article";
 import { parseBodyAndTags } from "@/utils/parse";
 import UserMentionButton from "@/components/UserMentionButton";
-import ImageEmbedButton from "@/components/ImageEmbedButton";
-import { AtSign, Image as ImageIcon } from "lucide-react";
+import ExistingImageEmbedButton from "@/components/ExistingImageEmbedButton";
+import UploadImageEmbedButton from "@/components/UploadImageEmbedButton";
 
 type PostFormProps = {
   body: string;
@@ -151,12 +151,9 @@ export default function PostForm({
       >
         <div className="hidden group-focus-within:flex absolute right-0 top-0 -translate-y-full items-center gap-1">
           <div className="px-1.5 text-gray-600 backdrop-blur-sm flex items-center gap-1">
-            <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)}>
-              <AtSign size={16} aria-hidden className="opacity-80" />
-            </UserMentionButton>
-            <ImageEmbedButton onInsert={(md) => insertAtCursor(md)}>
-              <ImageIcon size={16} aria-hidden className="opacity-80" />
-            </ImageEmbedButton>
+            <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)} />
+            <ExistingImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
+            <UploadImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
           </div>
         </div>
         <textarea

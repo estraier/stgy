@@ -31,7 +31,11 @@ export default function AvatarCropDialog({
   const [containerSize, setContainerSize] = useState<{ w: number; h: number }>({ w: 600, h: 600 });
 
   const [displayed, setDisplayed] = useState<Rect>({ x: 0, y: 0, w: 0, h: 0 });
-  const [crop, setCrop] = useState<{ x: number; y: number; size: number }>({ x: 0, y: 0, size: 100 });
+  const [crop, setCrop] = useState<{ x: number; y: number; size: number }>({
+    x: 0,
+    y: 0,
+    size: 100,
+  });
 
   const dragState = useRef<
     | null
@@ -217,7 +221,9 @@ export default function AvatarCropDialog({
   }, [crop, containerSize.w, containerSize.h]);
 
   const toWebpBlob = async (canvas: HTMLCanvasElement, q = 0.9): Promise<Blob> => {
-    const b1 = await new Promise<Blob | null>((res) => canvas.toBlob((b) => res(b), "image/webp", q));
+    const b1 = await new Promise<Blob | null>((res) =>
+      canvas.toBlob((b) => res(b), "image/webp", q),
+    );
     if (b1) return b1;
     const url = canvas.toDataURL("image/webp", q);
     const bin = atob(url.split(",")[1] || "");
@@ -271,14 +277,20 @@ export default function AvatarCropDialog({
   if (!mounted) return null;
 
   return createPortal(
-    <div className="fixed inset-0 bg-black/70 z-[1000] flex items-center justify-center p-4" onClick={onCancel}>
+    <div
+      className="fixed inset-0 bg-black/70 z-[1000] flex items-center justify-center p-4"
+      onClick={onCancel}
+    >
       <div
         className="bg-white rounded shadow max-w-[95vw] max-h-[95vh] w-full sm:w-auto p-3"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between gap-3">
           <h2 className="text-base font-semibold">{title}</h2>
-          <button className="px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100" onClick={onCancel}>
+          <button
+            className="px-2 py-0.5 text-sm rounded border border-gray-300 hover:bg-gray-100"
+            onClick={onCancel}
+          >
             Close
           </button>
         </div>
@@ -301,12 +313,24 @@ export default function AvatarCropDialog({
                   height: `${displayed.h}px`,
                 }}
               >
-                <Image src={imgUrl} alt="" fill unoptimized sizes="80vmin" className="object-fill" priority />
+                <Image
+                  src={imgUrl}
+                  alt=""
+                  fill
+                  unoptimized
+                  sizes="80vmin"
+                  className="object-fill"
+                  priority
+                />
               </div>
             )}
 
             <svg className="absolute inset-0" width="100%" height="100%" aria-hidden>
-              <path d={`${overlayPath.outer} ${overlayPath.inner}`} fill="rgba(0,0,0,0.5)" fillRule="evenodd" />
+              <path
+                d={`${overlayPath.outer} ${overlayPath.inner}`}
+                fill="rgba(0,0,0,0.5)"
+                fillRule="evenodd"
+              />
             </svg>
 
             <div
@@ -334,12 +358,18 @@ export default function AvatarCropDialog({
                   c === "nw"
                     ? "left-[-8px] top-[-8px] cursor-nwse-resize"
                     : c === "ne"
-                    ? "right-[-8px] top-[-8px] cursor-nesw-resize"
-                    : c === "sw"
-                    ? "left-[-8px] bottom-[-8px] cursor-nesw-resize"
-                    : "right-[-8px] bottom-[-8px] cursor-nwse-resize";
+                      ? "right-[-8px] top-[-8px] cursor-nesw-resize"
+                      : c === "sw"
+                        ? "left-[-8px] bottom-[-8px] cursor-nesw-resize"
+                        : "right-[-8px] bottom-[-8px] cursor-nwse-resize";
                 const label =
-                  c === "nw" ? "Resize handle northwest" : c === "ne" ? "Resize handle northeast" : c === "sw" ? "Resize handle southwest" : "Resize handle southeast";
+                  c === "nw"
+                    ? "Resize handle northwest"
+                    : c === "ne"
+                      ? "Resize handle northeast"
+                      : c === "sw"
+                        ? "Resize handle southwest"
+                        : "Resize handle southeast";
                 return (
                   <div
                     key={c}
@@ -363,7 +393,10 @@ export default function AvatarCropDialog({
         </div>
 
         <div className="mt-3 flex justify-end gap-2">
-          <button className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100" onClick={onCancel}>
+          <button
+            className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
+            onClick={onCancel}
+          >
             Cancel
           </button>
           <button

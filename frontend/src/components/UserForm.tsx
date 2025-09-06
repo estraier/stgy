@@ -337,7 +337,9 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
         <div className="flex flex-col gap-1">
           <div className="flex flex-row items-center justify-between">
             <label className="font-bold text-sm">AI Model</label>
-            {!isAdmin && <span className="text-xs text-gray-400 ml-2">(Only admin can change)</span>}
+            {!isAdmin && (
+              <span className="text-xs text-gray-400 ml-2">(Only admin can change)</span>
+            )}
           </div>
           {aiModelsLoading ? (
             <div className="text-gray-400 text-xs">Loading models…</div>

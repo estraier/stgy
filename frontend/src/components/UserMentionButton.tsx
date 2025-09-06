@@ -5,17 +5,16 @@ import type { User } from "@/api/models";
 import { listFriendsByNicknamePrefix } from "@/api/users";
 import AvatarImg from "@/components/AvatarImg";
 import { makeTextFromJsonSnippet } from "@/utils/article";
+import { AtSign } from "lucide-react";
 
 type UserMentionButtonProps = {
   onInsert: (markdown: string) => void;
-  children: React.ReactNode;
   className?: string;
   title?: string;
 };
 
 export default function UserMentionButton({
   onInsert,
-  children,
   className = "",
   title = "Mention user",
 }: UserMentionButtonProps) {
@@ -140,13 +139,13 @@ export default function UserMentionButton({
     <div ref={containerRef} className={"relative inline-block " + className}>
       <button
         type="button"
-        className="px-2 py-1 rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50"
+        className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
         onClick={() => setOpen((v) => !v)}
         title={title}
         aria-haspopup="dialog"
         aria-expanded={open}
       >
-        {children}
+        <AtSign size={16} aria-hidden className="opacity-80" />
       </button>
 
       {open && (
