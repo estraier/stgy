@@ -67,8 +67,7 @@ export default function ImageUploadButton({
     return () => {
       items.forEach((i) => URL.revokeObjectURL(i.url));
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+  }, [items]);
 
   const pickFiles = useCallback(() => {
     setGlobalError(null);
@@ -127,7 +126,11 @@ export default function ImageUploadButton({
             setItems((prev) =>
               prev.map((x) =>
                 x.id === it.id
-                  ? { ...x, processing: false, error: (e as Error)?.message || "Optimization failed" }
+                  ? {
+                      ...x,
+                      processing: false,
+                      error: (e as Error)?.message || "Optimization failed",
+                    }
                   : x,
               ),
             );
@@ -166,8 +169,13 @@ export default function ImageUploadButton({
       for (const it of items) {
         const useOptimized = it.optimizeChecked && !!it.optimized;
         const blob = useOptimized ? it.optimized!.blob : it.file;
-        const mime = useOptimized ? it.optimized!.mime : it.original.mime || it.file.type || "image/jpeg";
-        const fileName = deriveUploadName(it.file.name, useOptimized ? it.optimized!.mime : it.original.mime);
+        const mime = useOptimized
+          ? it.optimized!.mime
+          : it.original.mime || it.file.type || "image/jpeg";
+        const fileName = deriveUploadName(
+          it.file.name,
+          useOptimized ? it.optimized!.mime : it.original.mime,
+        );
 
         const presigned = await presignImageUpload(userId, fileName, blob.size);
         const uploadBlob = blob instanceof File ? blob : new File([blob], fileName, { type: mime });
@@ -208,10 +216,19 @@ export default function ImageUploadButton({
 
       {open && (
         <div className="fixed inset-0 z-50 bg-black/60 flex items-center justify-center p-4">
-          <div className="bg-white w-full max-w-5xl max-h-[90vh] rounded shadow flex flex-col" role="dialog" aria-modal="true">
+          <div
+            className="bg-white w-full max-w-5xl max-h-[90vh] rounded shadow flex flex-col"
+            role="dialog"
+            aria-modal="true"
+          >
             <div className="px-4 py-3 border-b flex items-center justify-between">
               <div className="font-semibold">Upload images</div>
-              <button onClick={onCancelAll} className="p-2 rounded hover:bg-gray-100" aria-label="Close" disabled={busy}>
+              <button
+                onClick={onCancelAll}
+                className="p-2 rounded hover:bg-gray-100"
+                aria-label="Close"
+                disabled={busy}
+              >
                 <FiX />
               </button>
             </div>
@@ -219,23 +236,28 @@ export default function ImageUploadButton({
             <div className="px-4 py-3 text-sm text-gray-700 flex items-center gap-3 border-b">
               <div className="flex items-center gap-2">
                 <FiUploadCloud />
-                <span>{items.length} file{items.length === 1 ? "" : "s"} selected</span>
+                <span>
+                  {items.length} file{items.length === 1 ? "" : "s"} selected
+                </span>
               </div>
               <span className="text-gray-400">•</span>
               <span>Total to upload: {formatBytes(totalUploadBytes)}</span>
               {!canUpload && (
-                <span className="ml-auto text-[12px] text-gray-500">
-                  preparing images…
-                </span>
+                <span className="ml-auto text-[12px] text-gray-500">preparing images…</span>
               )}
             </div>
 
-            {globalError && <div className="px-4 py-2 text-sm text-red-600 border-b">{globalError}</div>}
+            {globalError && (
+              <div className="px-4 py-2 text-sm text-red-600 border-b">{globalError}</div>
+            )}
 
             <div className="p-4 overflow-auto">
               <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
                 {items.map((it) => (
-                  <li key={it.id} className="rounded border bg-white overflow-hidden hover:shadow-sm transition">
+                  <li
+                    key={it.id}
+                    className="rounded border bg-white overflow-hidden hover:shadow-sm transition"
+                  >
                     <div className="relative w-full aspect-video bg-gray-50">
                       <Image
                         src={it.url}
@@ -265,7 +287,9 @@ export default function ImageUploadButton({
                           />
                           <span className="text-[13px]">Optimize for Web</span>
                         </label>
-                        {it.processing && <span className="text-[12px] text-gray-500">processing…</span>}
+                        {it.processing && (
+                          <span className="text-[12px] text-gray-500">processing…</span>
+                        )}
                         {it.error && (
                           <span className="text-[12px] text-red-600 flex items-center gap-1">
                             <FiAlertTriangle /> {it.error}
@@ -273,7 +297,9 @@ export default function ImageUploadButton({
                         )}
                       </div>
 
-                      <div className={`text-[12px] ${it.optimizeChecked ? "text-gray-800" : "text-gray-400"}`}>
+                      <div
+                        className={`text-[12px] ${it.optimizeChecked ? "text-gray-800" : "text-gray-400"}`}
+                      >
                         <MetaLine
                           meta={
                             it.optimized ?? {
@@ -293,10 +319,18 @@ export default function ImageUploadButton({
             </div>
 
             <div className="px-4 py-3 border-t flex items-center justify-end gap-2">
-              <button className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-50" onClick={onCancelAll} disabled={busy}>
+              <button
+                className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-50"
+                onClick={onCancelAll}
+                disabled={busy}
+              >
                 Cancel
               </button>
-              <button className="px-3 py-1 rounded border border-blue-700 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50" onClick={onUpload} disabled={!canUpload}>
+              <button
+                className="px-3 py-1 rounded border border-blue-700 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                onClick={onUpload}
+                disabled={!canUpload}
+              >
                 {busy ? "Uploading…" : "Upload"}
               </button>
             </div>
@@ -373,11 +407,10 @@ async function optimizeToWebFriendly(file: File, original: Meta): Promise<Meta &
     canvas.width = outW;
     canvas.height = outH;
 
-    const ctx = canvas.getContext("2d", { alpha: false, colorSpace: "srgb" as any });
+    const ctx = canvas.getContext("2d");
     if (!ctx) throw new Error("no canvas context");
     ctx.drawImage(img, 0, 0, outW, outH);
 
-    // WebP 優先、ダメなら JPEG
     let blob: Blob | null = await canvasToBlob(canvas, "image/webp", 0.82);
     let mime = "image/webp";
     if (!blob) {
@@ -392,7 +425,11 @@ async function optimizeToWebFriendly(file: File, original: Meta): Promise<Meta &
   }
 }
 
-function canvasToBlob(canvas: HTMLCanvasElement, type: string, quality?: number): Promise<Blob | null> {
+function canvasToBlob(
+  canvas: HTMLCanvasElement,
+  type: string,
+  quality?: number,
+): Promise<Blob | null> {
   return new Promise((resolve) => canvas.toBlob((b) => resolve(b), type, quality));
 }
 

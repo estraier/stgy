@@ -79,7 +79,7 @@ async function readMeta(file: File): Promise<{
     objectUrl = URL.createObjectURL(file);
     if ("createImageBitmap" in window) {
       try {
-        const bmp = await createImageBitmap(file, { imageOrientation: "from-image" as any });
+        const bmp = await createImageBitmap(file);
         const out = {
           decodable: true,
           width: bmp.width,
@@ -88,12 +88,9 @@ async function readMeta(file: File): Promise<{
         };
         bmp.close?.();
         return out;
-      } catch {
-        // fall through
-      }
+      } catch {}
     }
-    // Fallback via <img>
-    const img = new Image();
+    const img = document.createElement("img");
     img.decoding = "async";
     const meta = await new Promise<{ w?: number; h?: number; ok: boolean }>((resolve) => {
       img.onload = () => resolve({ w: img.naturalWidth, h: img.naturalHeight, ok: true });
@@ -117,41 +114,58 @@ function computeScale(w: number, h: number): number {
   return Math.min(1, s1, s2);
 }
 
+type OffscreenCanvasCtor = new (width: number, height: number) => OffscreenCanvas;
+type OffscreenCanvasWithConvert = OffscreenCanvas & {
+  convertToBlob: (options: { type: string; quality?: number }) => Promise<Blob>;
+};
+
 async function rasterToWebp(
   file: File,
   srcW: number,
   srcH: number,
   quality = 0.8,
 ): Promise<{ blob: Blob; width: number; height: number }> {
-  const bmp = await createImageBitmap(file, { imageOrientation: "from-image" as any });
+  const bmp = await createImageBitmap(file);
   const scale = computeScale(srcW, srcH);
   const dw = Math.max(1, Math.round(srcW * scale));
   const dh = Math.max(1, Math.round(srcH * scale));
 
-  // Prefer OffscreenCanvas if available
-  let blob: Blob | null = null;
-  if ("OffscreenCanvas" in window) {
-    const osc = new (window as any).OffscreenCanvas(dw, dh);
-    const ctx = osc.getContext("2d")!;
+  let blob: Blob;
+  const OffscreenCanvasImpl = (globalThis as unknown as { OffscreenCanvas?: OffscreenCanvasCtor })
+    .OffscreenCanvas;
+
+  if (OffscreenCanvasImpl) {
+    const osc = new OffscreenCanvasImpl(dw, dh) as OffscreenCanvasWithConvert;
+    const ctx = osc.getContext("2d");
+    if (!ctx) {
+      bmp.close?.();
+      throw new Error("no 2d context");
+    }
     ctx.drawImage(bmp, 0, 0, dw, dh);
     blob = await osc.convertToBlob({ type: "image/webp", quality });
   } else {
     const cv = document.createElement("canvas");
     cv.width = dw;
     cv.height = dh;
-    const ctx = cv.getContext("2d")!;
+    const ctx = cv.getContext("2d");
+    if (!ctx) {
+      bmp.close?.();
+      throw new Error("no 2d context");
+    }
     ctx.drawImage(bmp, 0, 0, dw, dh);
     blob = await new Promise<Blob>((resolve, reject) =>
-      cv.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/webp", quality),
+      cv.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error("toBlob failed"))),
+        "image/webp",
+        quality,
+      ),
     );
   }
   bmp.close?.();
-  return { blob: blob!, width: dw, height: dh };
+  return { blob, width: dw, height: dh };
 }
 
-function shouldAutoOptimize(
-  meta: Pick<SelectedItem, "width" | "height" | "size">,
-): boolean {
+function shouldAutoOptimize(meta: Pick<SelectedItem, "width" | "height" | "size">): boolean {
   const { width, height, size } = meta;
   const pixelCount = (width ?? 0) * (height ?? 0);
   const longSide = Math.max(width ?? 0, height ?? 0);
@@ -188,7 +202,6 @@ export default function ImageUploadDialog({
 
   const revokeQueue = useRef<string[]>([]);
 
-  // Load quota
   useEffect(() => {
     let mounted = true;
     getImagesMonthlyQuota(userId)
@@ -207,7 +220,6 @@ export default function ImageUploadDialog({
     };
   }, [userId]);
 
-  // Read meta + decide auto optimize; precompute if needed
   useEffect(() => {
     let cancelled = false;
 
@@ -255,11 +267,10 @@ export default function ImageUploadDialog({
               status: "ready",
             };
             setItems([...next]);
-          } catch (e) {
+          } catch {
             next[i] = {
               ...next[i],
               status: "ready",
-              // 最適化失敗時はそのままアップロード可能にする
               optimized: undefined,
             };
             setItems([...next]);
@@ -267,7 +278,6 @@ export default function ImageUploadDialog({
         }
       }
 
-      // グローバルチェックの初期値
       const all = next.every((x) => x.optimize);
       const none = next.every((x) => !x.optimize);
       setGlobalOptimize(all ? true : none ? false : "mixed");
@@ -276,7 +286,7 @@ export default function ImageUploadDialog({
     return () => {
       cancelled = true;
     };
-  }, []); // initial
+  }, [items]);
 
   useEffect(() => {
     return () => {
@@ -298,8 +308,7 @@ export default function ImageUploadDialog({
   }, [bytesMonthlyLimit, bytesMonthlyUsed, projectedUploadBytes]);
 
   const toggleGlobalOptimize = useCallback(() => {
-    const target =
-      globalOptimize === true ? false : globalOptimize === false ? true : true;
+    const target = globalOptimize === true ? false : globalOptimize === false ? true : true;
     const next = items.map((it) => ({ ...it, optimize: target }));
     setItems(next);
     setGlobalOptimize(target);
@@ -307,9 +316,7 @@ export default function ImageUploadDialog({
 
   const toggleItemOptimize = useCallback(
     (id: string) => {
-      const next = items.map((it) =>
-        it.id === id ? { ...it, optimize: !it.optimize } : it,
-      );
+      const next = items.map((it) => (it.id === id ? { ...it, optimize: !it.optimize } : it));
       setItems(next);
       const all = next.every((x) => x.optimize);
       const none = next.every((x) => !x.optimize);
@@ -321,7 +328,6 @@ export default function ImageUploadDialog({
   const canUpload = useMemo(() => {
     if (busy) return false;
     if (quotaExceeded) return false;
-    // すべて ready/done/error のどれかであること（optimizingが終わっている）
     return items.every((it) => it.status !== "optimizing");
   }, [busy, items, quotaExceeded]);
 
@@ -348,18 +354,14 @@ export default function ImageUploadDialog({
         const name = useOptimized ? changeExtToWebp(it.name) : it.name;
         const type = useOptimized ? "image/webp" : it.type || "application/octet-stream";
 
-        const presigned = await presignImageUpload(
-          userId,
-          name,
-          blob.size,
-        );
+        const presigned = await presignImageUpload(userId, name, blob.size);
         await uploadToPresigned(presigned, blob, name, type);
         await finalizeImage(userId, presigned.objectKey);
 
         next[idx] = { ...next[idx], status: "done" };
         setItems([...next]);
         results.push({ ok: true, objectKey: presigned.objectKey });
-      } catch (e: any) {
+      } catch (e: unknown) {
         const msg = e instanceof Error ? e.message : String(e);
         next[idx] = { ...next[idx], status: "error", error: msg };
         setItems([...next]);
@@ -387,8 +389,9 @@ export default function ImageUploadDialog({
     try {
       await pump();
       onComplete(results);
-    } catch (e: any) {
-      setError(e?.message ?? "Upload failed.");
+    } catch (e: unknown) {
+      const msg = e instanceof Error ? e.message : String(e);
+      setError(msg ?? "Upload failed.");
     } finally {
       setBusy(false);
     }
@@ -446,9 +449,7 @@ export default function ImageUploadDialog({
           </div>
 
           {quotaExceeded && (
-            <div className="text-sm text-red-600">
-              Projected total exceeds your monthly quota.
-            </div>
+            <div className="text-sm text-red-600">Projected total exceeds your monthly quota.</div>
           )}
 
           <ul className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
@@ -488,9 +489,7 @@ export default function ImageUploadDialog({
                     {(it.optimize && it.optimized ? "image/webp" : it.type || "unknown") +
                       " • " +
                       formatBytes(it.optimize && it.optimized ? it.optimized.size : it.size) +
-                      (it.optimize && it.optimized
-                        ? ` (→ ${formatBytes(it.size)})`
-                        : "")}
+                      (it.optimize && it.optimized ? ` (→ ${formatBytes(it.size)})` : "")}
                     {" • "}
                     {it.width && it.height ? `${it.width}×${it.height}` : "—"}
                   </div>
@@ -499,7 +498,9 @@ export default function ImageUploadDialog({
                     <input
                       type="checkbox"
                       checked={it.optimize}
-                      disabled={!it.decodable || it.status === "optimizing" || it.status === "uploading"}
+                      disabled={
+                        !it.decodable || it.status === "optimizing" || it.status === "uploading"
+                      }
                       onChange={() => toggleItemOptimize(it.id)}
                     />
                     <span>Optimize for Web</span>

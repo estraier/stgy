@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState, useCallback } from "react";
+import { useEffect, useMemo, useState, useCallback } from "react";
 import Image from "next/image";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import type { MediaObject, StorageMonthlyQuota } from "@/api/models";
@@ -154,7 +154,7 @@ export default function PageBody() {
         <div className="ml-auto flex items-center gap-2">
           <ImageUploadButton
             userId={userId!}
-            maxCount={Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE ?? 20}
+            maxCount={Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE ?? 10}
             buttonLabel="Upload images"
             className="px-3 py-1 rounded border transition bg-gray-300 text-gray-900 border-gray-700 hover:bg-gray-400"
             onComplete={async () => {
@@ -162,9 +162,7 @@ export default function PageBody() {
               await loadList();
               await loadQuota();
             }}
-            onCancel={() => {
-              /* no-op */
-            }}
+            onCancel={() => {}}
           />
         </div>
       </div>
