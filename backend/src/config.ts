@@ -84,7 +84,7 @@ export class Config {
   );
   static readonly MEDIA_THUMB_MAX_PIXELS_ICON = envNum(
     "FAKEBOOK_MEDIA_THUMB_MAX_PIXELS_ICON",
-    96 * 96,
+    128 * 128,
   );
   static readonly EVENT_LOG_PARTITIONS = envNum("FAKEBOOK_EVENT_LOG_PARTITIONS", 256);
   static readonly EVENT_LOG_RETENTION_DAYS = envNum("FAKEBOOK_EVENT_LOG_RETENTION_DAYS", 31);
