@@ -1,5 +1,6 @@
 import {
   S3Client,
+  type S3ClientConfig,
   HeadObjectCommand,
   GetObjectCommand,
   GetObjectCommandInput,
@@ -30,15 +31,20 @@ export class StorageS3Service implements StorageService {
   private s3: S3Client;
 
   constructor() {
-    this.s3 = new S3Client({
-      ...(Config.STORAGE_S3_ENDPOINT ? { endpoint: Config.STORAGE_S3_ENDPOINT } : {}),
+    const opt: S3ClientConfig = {
       region: Config.STORAGE_S3_REGION,
-      credentials: {
-        accessKeyId: Config.STORAGE_S3_ACCESS_KEY_ID,
-        secretAccessKey: Config.STORAGE_S3_SECRET_ACCESS_KEY,
-      },
-      forcePathStyle: Config.STORAGE_S3_FORCE_PATH_STYLE,
-    });
+    };
+    if (Config.STORAGE_S3_ENDPOINT) {
+      opt.endpoint = Config.STORAGE_S3_ENDPOINT;
+      opt.forcePathStyle = Config.STORAGE_S3_FORCE_PATH_STYLE;
+      if (Config.STORAGE_S3_ACCESS_KEY_ID && Config.STORAGE_S3_SECRET_ACCESS_KEY) {
+        opt.credentials = {
+          accessKeyId: Config.STORAGE_S3_ACCESS_KEY_ID,
+          secretAccessKey: Config.STORAGE_S3_SECRET_ACCESS_KEY,
+        };
+      }
+    }
+    this.s3 = new S3Client(opt);
   }
 
   async createPresignedPost(req: PresignedPostRequest): Promise<PresignedPostResult> {
