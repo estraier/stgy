@@ -241,7 +241,7 @@ export default function AvatarCropDialog({
     const sw = Math.max(1, Math.min(natural.w - sx, crop.size * scaleX));
     const sh = Math.max(1, Math.min(natural.h - sy, crop.size * scaleY));
     const srcSide = Math.min(sw, sh);
-    const targetSide = srcSide > 2000 ? 1600 : Math.round(srcSide);
+    const targetSide = srcSide > 1600 ? 1200 : Math.round(srcSide);
     const canvas = document.createElement("canvas");
     canvas.width = targetSide;
     canvas.height = targetSide;

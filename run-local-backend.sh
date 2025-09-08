@@ -3,7 +3,7 @@
 set -euo pipefail
 
 set -a
-[ -f ../.env ] && source ../.env
+[ -f .env ] && source .env
 set +a
 
 CMD="dev"
@@ -17,7 +17,7 @@ while [[ $# -gt 0 ]]; do
       CMD="start"
       shift
       ;;
-    --port|-p)
+    --port)
       [[ $# -ge 2 ]] || { echo "Error: --port requires a value" >&2; exit 1; }
       PORT="$2"
       shift 2
@@ -53,15 +53,16 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-npm run mail-worker &
-npm run media-worker &
-npm run notification-worker &
+echo "[run-local-backend] running workers"
+npm run backend:mail-worker &
+npm run backend:media-worker &
+npm run backend:notification-worker &
 
-echo "[run-local] port=${FAKEBOOK_BACKEND_PORT}  cmd=${CMD}"
-echo "[run-local] npm run ${CMD} -- ${PASS_ARGS[*]-}"
+echo "[run-local-backend] port=${FAKEBOOK_BACKEND_PORT}  cmd=${CMD}"
+echo "[run-local-backend] npm run ${CMD} -- ${PASS_ARGS[*]-}"
 
 if ((${#PASS_ARGS[@]})); then
-  npm run "${CMD}" -- "${PASS_ARGS[@]}"
+  npm run "backend:${CMD}" -- "${PASS_ARGS[@]}"
 else
-  npm run "${CMD}"
+  npm run "backend:${CMD}"
 fi

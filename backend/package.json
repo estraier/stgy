@@ -1,7 +1,7 @@
 {
   "name": "backend",
   "version": "1.0.0",
-  "description": "",
+  "private": true,
   "main": "index.js",
   "scripts": {
     "build": "tsc",
@@ -11,6 +11,7 @@
     "mail-worker": "ts-node src/mailWorker.ts",
     "media-worker": "ts-node src/mediaWorker.ts",
     "notification-worker": "ts-node src/notificationWorker.ts",
+    "storage-util": "ts-node src/storageUtil.ts",
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",

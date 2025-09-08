@@ -1,10 +1,12 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Image from "next/image";
 import type { User, UserDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
 import { formatDateTime, normalizeLinefeeds } from "@/utils/format";
 import { makeArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
+import { Config } from "@/config";
 
 type UserCardProps = {
   user: User | UserDetail;
@@ -98,6 +100,21 @@ export default function UserCard({
   const introHtml = hasIntro ? makeArticleHtmlFromMarkdown(user.introduction as string) : "";
   const snippetHtml = makeHtmlFromJsonSnippet(user.snippet || "[]");
 
+  const masterSrc = (() => {
+    if (!user.avatar) return "";
+    const p = user.avatar.replace(/^\/+/, "");
+    const i = p.indexOf("/");
+    if (i <= 0) return "";
+    const bucket = p.slice(0, i);
+    const key = p.slice(i + 1);
+    const prefix = Config.STORAGE_S3_PUBLIC_URL_PREFIX.replace("{bucket}", bucket);
+    const suffix =
+      user.updatedAt != null && String(user.updatedAt) !== ""
+        ? `?v=${encodeURIComponent(String(user.updatedAt))}`
+        : "";
+    return `${prefix}${key}${suffix}`;
+  })();
+
   return (
     <article
       className={`p-2 pt-3 sm:p-4 sm:pt-4 border rounded shadow-sm bg-white ${clickable ? "cursor-pointer" : ""} ${className}`}
@@ -122,7 +139,6 @@ export default function UserCard({
             nickname={user.nickname}
             hasAvatar={!!user.avatar}
             size={32}
-            useThumb={true}
             version={user.updatedAt}
             className="-mt-2 -ml-1 mr-2 flex-shrink-0"
           />
@@ -142,9 +158,7 @@ export default function UserCard({
               nickname={user.nickname}
               hasAvatar={!!user.avatar}
               size={64}
-              useThumb={false}
               version={user.updatedAt}
-              avatarPath={user.avatar || null}
             />
           </button>
         )}
@@ -201,16 +215,17 @@ export default function UserCard({
           aria-label="Close large avatar"
           title="Click to close"
         >
-          <AvatarImg
-            userId={user.id}
-            nickname={user.nickname}
-            hasAvatar={!!user.avatar}
-            size={480}
-            useThumb={false}
-            version={user.updatedAt}
-            avatarPath={user.avatar || null}
-            className="rounded-lg"
-          />
+          <div className="mt-3 p-2 border rounded-lg bg-gray-50 inline-block">
+            <Image
+              src={masterSrc}
+              alt={`${user.nickname}'s avatar`}
+              width={600}
+              height={600}
+              className="rounded-lg object-contain"
+              priority
+              unoptimized
+            />
+          </div>
         </div>
       )}
 

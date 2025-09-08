@@ -118,7 +118,6 @@ export default function UserMentionButton({
                     nickname={u.nickname}
                     hasAvatar={hasAvatar}
                     size={32}
-                    useThumb={true}
                     version={avatarVersion}
                     className="shrink-0"
                   />

@@ -1,11 +1,11 @@
 {
   "name": "frontend",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
-    "dev": "next dev --turbopack",
     "build": "next build",
     "start": "next start",
+    "dev": "next dev --turbopack",
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",

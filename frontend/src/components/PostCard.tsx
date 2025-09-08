@@ -75,7 +75,6 @@ export default function PostCard({
             nickname={post.ownerNickname}
             hasAvatar={true}
             size={32}
-            useThumb={true}
             className="-mt-1 -ml-1 mr-2 flex-shrink-0"
             version={avatarVersion}
           />

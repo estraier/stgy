@@ -43,23 +43,23 @@ export class Config {
   static readonly MAX_MEDIA_OBJECTS_PER_POST = envNum("NEXT_PUBLIC_MAX_MEDIA_OBJECTS_PER_POST", 30);
   static readonly IMAGE_OPTIMIZE_TRIGGER_BYTES = envNum(
     "NEXT_PUBLIC_IMAGE_OPTIMIZE_TRIGGER_BYTES",
-    3000000,
+    2.5 * 1024 * 1024,
   );
   static readonly IMAGE_OPTIMIZE_TRIGGER_LONGSIDE = envNum(
     "NEXT_PUBLIC_IMAGE_OPTIMIZE_TRIGGER_LONGSIDE",
-    3000,
+    2800,
   );
   static readonly IMAGE_OPTIMIZE_TRIGGER_PIXELS = envNum(
     "NEXT_PUBLIC_IMAGE_OPTIMIZE_TRIGGER_PIXELS",
-    8000000,
+    6.0 * 1000 * 1000,
   );
   static readonly IMAGE_OPTIMIZE_TARGET_LONGSIDE = envNum(
     "NEXT_PUBLIC_IMAGE_OPTIMIZE_TARGET_LONGSIDE",
-    2600,
+    2400,
   );
   static readonly IMAGE_OPTIMIZE_TARGET_PIXELS = envNum(
     "NEXT_PUBLIC_IMAGE_OPTIMIZE_TARGET_PIXELS",
-    5000000,
+    4.5 * 1000 * 1000,
   );
   static readonly IMAGE_ALLOWED_TYPES =
     "image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif";
