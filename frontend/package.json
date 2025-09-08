@@ -9,7 +9,7 @@
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
-    "clean": "rm -rf node_modules package-lock.json dist out .next .turbo"
+    "clean": "rm -rf node_modules dist out .next .turbo"
   },
   "dependencies": {
     "jdenticon": "^3.3.0",

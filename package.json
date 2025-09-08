@@ -43,7 +43,7 @@
     "test": "npm run test --workspaces",
     "fmt": "npm run fmt --workspaces",
     "lint": "npm run lint --workspaces",
-    "clean": "npm run clean --workspaces && rm -rf node_modules package-lock.json dist && find . -name '*~' -type f -delete",
+    "clean": "npm run clean --workspaces && rm -rf node_modules dist && find . -name '*~' -type f -delete",
     "log:backend": "docker-compose logs backend",
     "log:frontend": "docker-compose logs frontend",
     "log:db": "docker-compose logs db",
