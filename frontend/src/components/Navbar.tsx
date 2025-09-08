@@ -1,4 +1,3 @@
-// src/components/Navbar.tsx
 "use client";
 import { useEffect, useState } from "react";
 import Link from "next/link";
@@ -6,7 +5,7 @@ import { getSessionInfo, logout } from "@/api/auth";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { FiSettings, FiSearch } from "react-icons/fi";
 import type { SessionInfo } from "@/api/models";
-import NotificationBell from "@/components/NotificationBell"; // ← 追加
+import NotificationBell from "@/components/NotificationBell";
 
 export default function Navbar() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);

@@ -1,4 +1,3 @@
-// src/components/UploadImageEmbedButton.tsx
 "use client";
 
 import { Config } from "@/config";

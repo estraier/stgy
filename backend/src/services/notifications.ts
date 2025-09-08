@@ -35,7 +35,7 @@ function parsePayload(raw: unknown): ParsedPayload {
     const rec = it as Record<string, unknown>;
     const userId = typeof rec.userId === "string" ? rec.userId : undefined;
     const userNickname = typeof rec.userNickname === "string" ? rec.userNickname : "";
-    const ts = typeof rec.ts === "number" ? rec.ts : undefined; // seconds
+    const ts = typeof rec.ts === "number" ? rec.ts : undefined;
     const postId = typeof rec.postId === "string" ? rec.postId : undefined;
     const postSnippet = typeof rec.postSnippet === "string" ? rec.postSnippet : undefined;
     if (!userId || ts === undefined) continue;

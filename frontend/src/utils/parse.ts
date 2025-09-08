@@ -30,8 +30,8 @@ export function parsePostSearchQuery(q: string): {
       ownedBy = token.slice(1);
       continue;
     }
-    if ((token.startsWith("\#") || token.startsWith("\@")) && token.length >= 3) {
-      token = token.slice(2);
+    if ((token.startsWith("\\#") || token.startsWith("\\@")) && token.length >= 2) {
+      token = token.slice(1);
     }
     queryParts.push(token);
   }
@@ -104,8 +104,8 @@ export function parseUserSearchQuery(q: string): {
       nickname = token.slice(1);
       continue;
     }
-    if (token.startsWith("\@") && token.length >= 3) {
-      token = token.slice(2);
+    if (token.startsWith("\\@") && token.length >= 2) {
+      token = token.slice(1);
     }
     queryParts.push(token);
   }

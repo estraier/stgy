@@ -1,4 +1,3 @@
-// src/routes/notifications.ts
 import { Router, Request, Response } from "express";
 import { Client } from "pg";
 import Redis from "ioredis";

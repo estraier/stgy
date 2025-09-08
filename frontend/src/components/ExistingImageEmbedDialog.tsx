@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import Image from "next/image";
 import { Config } from "@/config";
@@ -44,8 +44,11 @@ export default function ExistingImageEmbedDialog({ userId, onClose, onEmbed }: P
 
   const offset = useMemo(() => (page - 1) * PAGE_SIZE, [page]);
 
+  const loadingRef = useRef(false);
+
   const load = useCallback(async () => {
-    if (!userId || loading) return;
+    if (!userId || loadingRef.current) return;
+    loadingRef.current = true;
     setLoading(true);
     setErr(null);
     try {
@@ -53,20 +56,20 @@ export default function ExistingImageEmbedDialog({ userId, onClose, onEmbed }: P
       const nextHasNext = data.length > PAGE_SIZE;
       const pageItems = data.slice(0, PAGE_SIZE);
       setHasNext(nextHasNext);
-      setItems((prev) => (page === 1 ? pageItems : [...prev, ...pageItems]));
+      setItems((prev) => (offset === 0 ? pageItems : [...prev, ...pageItems]));
     } catch (e) {
-      setItems((prev) => (page === 1 ? [] : prev));
+      setItems((prev) => (offset === 0 ? [] : prev));
       setHasNext(false);
       setErr(e instanceof Error ? e.message : "Failed to load images.");
     } finally {
+      loadingRef.current = false;
       setLoading(false);
     }
-  }, [userId, offset, page, loading]);
+  }, [userId, offset]);
 
   useEffect(() => {
     if (mounted && visible) load();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [mounted, visible, page]);
+  }, [mounted, visible, load]);
 
   const toggle = useCallback((key: string) => {
     setSelected((prev) => {

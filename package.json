@@ -38,6 +38,12 @@
     "frontend:fmt": "npm run fmt --workspace frontend",
     "frontend:lint": "npm run lint --workspace frontend",
     "frontend:clean": "npm run clean --workspace frontend",
+    "build": "npm run build --workspaces",
+    "pretest": "npm run packages:build",
+    "test": "npm run test --workspaces",
+    "fmt": "npm run fmt --workspaces",
+    "lint": "npm run lint --workspaces",
+    "clean": "npm run clean --workspaces && rm -rf node_modules package-lock.json dist && find . -name '*~' -type f -delete",
     "log:backend": "docker-compose logs backend",
     "log:frontend": "docker-compose logs frontend",
     "log:db": "docker-compose logs db",
@@ -45,8 +51,6 @@
     "reset-data": "./scripts/reset-data.sh && ./scripts/reset-minio-data.sh && ./scripts/edit_users.py seeder/user-0*.txt && ./scripts/edit_posts.py seeder/post-0*.txt && ./scripts/user_actions.py seeder/action-*.txt",
     "reset-data-test": "npm run reset-data && ./scripts/make_volume_test.py",
     "endpoint-test": "./tests/endpoint_test.py",
-    "psql": "docker-compose exec db psql -U fakebook fakebook",
-    "build": "npm run build --workspaces",
-    "clean": "rm -rf node_modules package-lock.json dist && npm run clean --workspaces && find . -name '*~' -type f -delete"
+    "psql": "docker-compose exec db psql -U fakebook fakebook"
   }
 }
