@@ -62,7 +62,7 @@ export class Config {
     4.5 * 1000 * 1000,
   );
   static readonly IMAGE_ALLOWED_TYPES =
-    "image/jpeg,image/png,image/webp,image/heic,image/heif,.jpg,.jpeg,.png,.webp,.heic,.heif";
+    "image/jpeg,image/png,image/webp,image/heic,image/heif,image/tiff,image/gif,image/bmp,image/svg+xml,.jpg,.jpeg,.png,.webp,.heic,.heif,.tif,.tiff,.gif,.bmp,.svg";
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {

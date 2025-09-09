@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import NextImage from "next/image"; // ← React用。DOMのimgはdocument.createElementで作る
 import { createPortal } from "react-dom";
-import Image from "next/image";
 import { formatBytes } from "@/utils/format";
 import { Config } from "@/config";
 import {
@@ -34,14 +34,19 @@ type SelectedItem = {
   decodable: boolean;
   width?: number;
   height?: number;
-  optimize: boolean;
-  needsAutoOptimize: boolean;
+
+  // Optimization flags
+  optimize: boolean; // current toggle state
+  needsAutoOptimize: boolean; // auto-on reasons (threshold/half-size rule)
+  forceOptimize: boolean; // non JPEG/PNG/WebP -> must optimize (checkbox locked)
+
   optimized?: {
     blob: Blob;
     size: number;
     width: number;
     height: number;
   };
+
   status: "pending" | "optimizing" | "ready" | "uploading" | "done" | "error";
   error?: string;
 };
@@ -58,6 +63,82 @@ function changeExtToWebp(name: string): string {
   return name.replace(/\.[^.]+$/, "") + ".webp";
 }
 
+/** Pass-through whitelist: ONLY JPEG/PNG/WebP may upload original. Others are forced to WebP. */
+const PASS_THROUGH_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
+const PASS_THROUGH_EXTS = new Set(["jpg", "jpeg", "png", "webp"]);
+function isPassThroughType(name: string, type: string): boolean {
+  const t = (type || "").toLowerCase();
+  if (PASS_THROUGH_MIMES.has(t)) return true;
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  return PASS_THROUGH_EXTS.has(ext);
+}
+
+function isSvg(name: string, type: string) {
+  const t = (type || "").toLowerCase();
+  if (t === "image/svg+xml") return true;
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  return ext === "svg";
+}
+
+/** SVGのwidth/heightを決める。viewBoxやwidth/height属性から決定。 */
+function parseSvgSize(svg: string): { w: number; h: number } | null {
+  try {
+    const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+    const svgEl = doc.documentElement;
+    if (!svgEl || svgEl.tagName.toLowerCase() !== "svg") return null;
+
+    const parseLen = (v?: string | null) => {
+      if (!v) return NaN;
+      const m = String(v)
+        .trim()
+        .match(/^([0-9.]+)(px|pt|pc|cm|mm|in|%)?$/i);
+      if (!m) return NaN;
+      const n = parseFloat(m[1]);
+      // px以外の単位はここではざっくりpx扱い（必要なら係数対応）
+      return Number.isFinite(n) ? n : NaN;
+    };
+
+    let w = parseLen(svgEl.getAttribute("width"));
+    let h = parseLen(svgEl.getAttribute("height"));
+
+    if (!Number.isFinite(w) || !Number.isFinite(h)) {
+      const vb = (svgEl.getAttribute("viewBox") || "").split(/\s+/).map(Number);
+      if (vb.length === 4 && vb.every((x) => Number.isFinite(x))) {
+        const vbW = Math.max(1, Math.round(vb[2]));
+        const vbH = Math.max(1, Math.round(vb[3]));
+        w = Number.isFinite(w) ? w : vbW;
+        h = Number.isFinite(h) ? h : vbH;
+      }
+    }
+
+    if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+      return null;
+    }
+    return { w: Math.round(w), h: Math.round(h) };
+  } catch {
+    return null;
+  }
+}
+
+/** SVGにwidth/heightを明示付与（無い場合の対策） */
+function normalizeSvg(svg: string, targetW: number, targetH: number): string {
+  try {
+    const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
+    const svgEl = doc.documentElement;
+    if (!svgEl || svgEl.tagName.toLowerCase() !== "svg") return svg;
+    svgEl.setAttribute("width", String(targetW));
+    svgEl.setAttribute("height", String(targetH));
+    // viewBoxが無ければ付与
+    if (!svgEl.getAttribute("viewBox")) {
+      svgEl.setAttribute("viewBox", `0 0 ${targetW} ${targetH}`);
+    }
+    const ser = new XMLSerializer();
+    return ser.serializeToString(svgEl);
+  } catch {
+    return svg;
+  }
+}
+
 async function readMeta(file: File): Promise<{
   decodable: boolean;
   width?: number;
@@ -67,6 +148,7 @@ async function readMeta(file: File): Promise<{
   let objectUrl: string | undefined;
   try {
     objectUrl = URL.createObjectURL(file);
+    // createImageBitmap でまず試す（多くの形式が一発）
     if ("createImageBitmap" in window) {
       try {
         const bmp = await createImageBitmap(file);
@@ -80,6 +162,7 @@ async function readMeta(file: File): Promise<{
         return out;
       } catch {}
     }
+    // フォールバック: <img> でメタ取得
     const img = document.createElement("img");
     img.decoding = "async";
     const meta = await new Promise<{ w?: number; h?: number; ok: boolean }>((resolve) => {
@@ -110,16 +193,145 @@ function getOffscreenCanvasCtor(): OffscreenCanvasCtor | null {
   return typeof g.OffscreenCanvas === "function" ? g.OffscreenCanvas : null;
 }
 
+/** Fallback decode via <img> when createImageBitmap fails (also rasterizes SVG/GIF). */
+async function decodeViaImg(file: File): Promise<HTMLImageElement> {
+  const url = URL.createObjectURL(file);
+  try {
+    const img = document.createElement("img"); // ← ここが重要: DOMのimg
+    img.crossOrigin = "anonymous";
+    img.decoding = "async";
+    const ok = await new Promise<boolean>((resolve) => {
+      img.onload = () => resolve(true);
+      img.onerror = () => resolve(false);
+      img.src = url;
+    });
+    if (!ok || !img.naturalWidth || !img.naturalHeight) {
+      throw new Error("image decode failed");
+    }
+    return img;
+  } finally {
+    setTimeout(() => URL.revokeObjectURL(url), 0);
+  }
+}
+
+async function rasterizeSvgToWebp(
+  file: File,
+  quality = 0.8,
+): Promise<{ blob: Blob; width: number; height: number }> {
+  const svgText = await file.text();
+  let size = parseSvgSize(svgText);
+  if (!size) {
+    // コンフィグのフォールバック長辺（無ければ 1024）
+    const fallback = Math.max(1, Number(Config.IMAGE_OPTIMIZE_TARGET_LONGSIDE) || 1024);
+    size = { w: fallback, h: fallback };
+  }
+  const normalizedSvg = normalizeSvg(svgText, size.w, size.h);
+  const svgBlob = new Blob([normalizedSvg], { type: "image/svg+xml" });
+
+  // createImageBitmap 優先
+  let w = size.w;
+  let h = size.h;
+  let source: CanvasImageSource | null = null;
+  try {
+    const bmp = await createImageBitmap(svgBlob);
+    source = bmp;
+    w = bmp.width || w;
+    h = bmp.height || h;
+  } catch {
+    // <img> で読み直し
+    const url = URL.createObjectURL(svgBlob);
+    try {
+      const img = document.createElement("img");
+      img.decoding = "async";
+      const ok = await new Promise<boolean>((resolve) => {
+        img.onload = () => resolve(true);
+        img.onerror = () => resolve(false);
+        img.src = url;
+      });
+      if (!ok) throw new Error("svg decode via <img> failed");
+      source = img;
+      w = img.naturalWidth || w;
+      h = img.naturalHeight || h;
+    } finally {
+      setTimeout(() => URL.revokeObjectURL(url), 0);
+    }
+  }
+
+  const scale = computeScale(w, h);
+  const dw = Math.max(1, Math.round(w * scale));
+  const dh = Math.max(1, Math.round(h * scale));
+
+  let blob: Blob | null = null;
+  const OSC = getOffscreenCanvasCtor();
+  if (OSC) {
+    const osc = new OSC(dw, dh);
+    const ctx = osc.getContext("2d");
+    if (!ctx) throw new Error("2D context unavailable");
+    ctx.drawImage(source as CanvasImageSource, 0, 0, dw, dh);
+    if ("convertToBlob" in osc) {
+      type EncodeOpts = { type?: string; quality?: number };
+      const conv = (osc as OffscreenCanvas & { convertToBlob(options?: EncodeOpts): Promise<Blob> })
+        .convertToBlob;
+      blob = await conv.call(osc, { type: "image/webp", quality });
+    }
+  }
+  if (!blob) {
+    const cv = document.createElement("canvas");
+    cv.width = dw;
+    cv.height = dh;
+    const ctx2d = cv.getContext("2d");
+    if (!ctx2d) throw new Error("2D context unavailable");
+    ctx2d.drawImage(source as CanvasImageSource, 0, 0, dw, dh);
+    blob = await new Promise<Blob>((resolve, reject) =>
+      cv.toBlob(
+        (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
+        "image/webp",
+        quality,
+      ),
+    );
+  }
+
+  if (!blob || !blob.size || !dw || !dh) {
+    throw new Error("invalid optimized output");
+  }
+
+  (source as ImageBitmap)?.close?.();
+  return { blob, width: dw, height: dh };
+}
+
 async function rasterToWebp(
   file: File,
   srcW: number,
   srcH: number,
   quality = 0.8,
+  name?: string,
+  type?: string,
 ): Promise<{ blob: Blob; width: number; height: number }> {
-  const bmp = await createImageBitmap(file);
-  const scale = computeScale(srcW, srcH);
-  const dw = Math.max(1, Math.round(srcW * scale));
-  const dh = Math.max(1, Math.round(srcH * scale));
+  if (isSvg(name || "", type || "")) {
+    // SVGは専用経路で確実にラスタライズ
+    return rasterizeSvgToWebp(file, quality);
+  }
+
+  // Note: animated GIF will become a single-frame still image.
+  let source: CanvasImageSource | null = null;
+  let w = srcW;
+  let h = srcH;
+
+  try {
+    const bmp = await createImageBitmap(file);
+    source = bmp;
+    w = bmp.width;
+    h = bmp.height;
+  } catch {
+    const img = await decodeViaImg(file);
+    source = img;
+    w = img.naturalWidth;
+    h = img.naturalHeight;
+  }
+
+  const scale = computeScale(w, h);
+  const dw = Math.max(1, Math.round(w * scale));
+  const dh = Math.max(1, Math.round(h * scale));
 
   let blob: Blob | null = null;
   const OSC = getOffscreenCanvasCtor();
@@ -127,17 +339,13 @@ async function rasterToWebp(
   if (OSC) {
     const osc = new OSC(dw, dh);
     const ctx = osc.getContext("2d");
-    if (ctx) {
-      ctx.drawImage(bmp, 0, 0, dw, dh);
-      if ("convertToBlob" in osc) {
-        type EncodeOpts = { type?: string; quality?: number };
-        const conv = (
-          osc as OffscreenCanvas & {
-            convertToBlob(options?: EncodeOpts): Promise<Blob>;
-          }
-        ).convertToBlob;
-        blob = await conv.call(osc, { type: "image/webp", quality });
-      }
+    if (!ctx) throw new Error("2D context unavailable");
+    ctx.drawImage(source as CanvasImageSource, 0, 0, dw, dh);
+    if ("convertToBlob" in osc) {
+      type EncodeOpts = { type?: string; quality?: number };
+      const conv = (osc as OffscreenCanvas & { convertToBlob(options?: EncodeOpts): Promise<Blob> })
+        .convertToBlob;
+      blob = await conv.call(osc, { type: "image/webp", quality });
     }
   }
 
@@ -146,18 +354,22 @@ async function rasterToWebp(
     cv.width = dw;
     cv.height = dh;
     const ctx2d = cv.getContext("2d");
-    if (!ctx2d) throw new Error("canvas context not available");
-    ctx2d.drawImage(bmp, 0, 0, dw, dh);
+    if (!ctx2d) throw new Error("2D context unavailable");
+    ctx2d.drawImage(source as CanvasImageSource, 0, 0, dw, dh);
     blob = await new Promise<Blob>((resolve, reject) =>
       cv.toBlob(
-        (b) => (b ? resolve(b) : reject(new Error("toBlob failed"))),
+        (b) => (b ? resolve(b) : reject(new Error("toBlob returned null"))),
         "image/webp",
         quality,
       ),
     );
   }
 
-  bmp.close?.();
+  if (!blob || !blob.size || !dw || !dh) {
+    throw new Error("invalid optimized output");
+  }
+
+  (source as ImageBitmap)?.close?.();
   return { blob, width: dw, height: dh };
 }
 
@@ -179,18 +391,24 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
   }, []);
 
   const [items, setItems] = useState<SelectedItem[]>(
-    files.slice(0, maxCount).map((f) => ({
-      id: f.id,
-      file: f.file,
-      name: f.name,
-      type: f.type,
-      size: f.size,
-      decodable: true,
-      optimize: false,
-      needsAutoOptimize: false,
-      status: "pending",
-    })),
+    files.slice(0, maxCount).map((f) => {
+      const pass = isPassThroughType(f.name, f.type);
+      const force = !pass; // non JPEG/PNG/WebP -> must optimize
+      return {
+        id: f.id,
+        file: f.file,
+        name: f.name,
+        type: f.type,
+        size: f.size,
+        decodable: true,
+        optimize: force ? true : false, // forced types start ON (locked)
+        needsAutoOptimize: force, // will refine after meta & half-size rule
+        forceOptimize: force,
+        status: "pending",
+      };
+    }),
   );
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -226,7 +444,11 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
 
         if (meta.previewUrl) revokeQueue.current.push(meta.previewUrl);
 
-        const needs = shouldAutoOptimize({
+        const pass = isPassThroughType(f.name, f.type);
+        const force = !pass;
+
+        // Always try optimization (regardless of pass/force).
+        const needByThreshold = shouldAutoOptimize({
           width: meta.width,
           height: meta.height,
           size: f.size,
@@ -241,47 +463,70 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                   decodable: meta.decodable,
                   width: meta.width,
                   height: meta.height,
-                  needsAutoOptimize: needs,
-                  optimize: needs,
-                  status: meta.decodable ? "optimizing" : "ready",
+                  needsAutoOptimize: force ? true : needByThreshold,
+                  forceOptimize: force,
+                  status: "optimizing",
+                  error: undefined,
                 }
               : x,
           ),
         );
 
-        if (meta.decodable) {
-          try {
-            const out = await rasterToWebp(f.file, meta.width!, meta.height!);
-            if (cancelled) return;
-            setItems((prev) =>
-              prev.map((x) =>
-                x.id === f.id
+        try {
+          const out = await rasterToWebp(
+            f.file,
+            meta.width ?? 0,
+            meta.height ?? 0,
+            0.8,
+            f.name,
+            f.type,
+          );
+          if (cancelled) return;
+
+          setItems((prev) =>
+            prev.map((x) => {
+              if (x.id !== f.id) return x;
+              // Half-size rule: optimized <= 1/2 original => default ON
+              const isHalfOrLess = out.blob.size * 2 <= f.size;
+              const auto = x.forceOptimize ? true : x.needsAutoOptimize || isHalfOrLess;
+              return {
+                ...x,
+                optimized: {
+                  blob: out.blob,
+                  size: out.blob.size,
+                  width: out.width,
+                  height: out.height,
+                },
+                needsAutoOptimize: auto,
+                optimize: x.forceOptimize ? true : auto,
+                status: "ready",
+                error: undefined,
+              };
+            }),
+          );
+        } catch {
+          // Forced types: must fail if we cannot produce WebP.
+          setItems((prev) =>
+            prev.map((x) =>
+              x.id === f.id
+                ? x.forceOptimize
                   ? {
                       ...x,
-                      optimized: {
-                        blob: out.blob,
-                        size: out.blob.size,
-                        width: out.width,
-                        height: out.height,
-                      },
-                      status: "ready",
+                      status: "error",
+                      optimized: undefined,
+                      error:
+                        "This format requires optimization, but a WebP could not be produced. Please convert to JPEG/PNG/WebP and try again.",
                     }
-                  : x,
-              ),
-            );
-          } catch {
-            setItems((prev) =>
-              prev.map((x) =>
-                x.id === f.id
-                  ? {
+                  : {
+                      // Pass-through: allow original upload if optimization failed.
                       ...x,
                       status: "ready",
                       optimized: undefined,
+                      optimize: false,
                     }
-                  : x,
-              ),
-            );
-          }
+                : x,
+            ),
+          );
         }
       }
     })();
@@ -310,9 +555,11 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
   }, [bytesMonthlyLimit, bytesMonthlyUsed, projectedUploadBytes]);
 
   const canUpload = useMemo(() => {
-    if (busy) return false;
-    if (quotaExceeded) return false;
-    return items.every((it) => it.status !== "optimizing");
+    if (busy || quotaExceeded) return false;
+    const anyOptimizing = items.some((it) => it.status === "optimizing");
+    const anyReady = items.some((it) => it.status === "ready");
+    // At least one ready, and none optimizing.
+    return !anyOptimizing && anyReady;
   }, [busy, items, quotaExceeded]);
 
   const onUpload = useCallback(async () => {
@@ -323,11 +570,37 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
 
     for (let idx = 0; idx < next.length; idx++) {
       const it = next[idx];
+
+      if (it.status === "error" || it.status === "optimizing") {
+        results.push({ ok: false, error: it.error || "unavailable", name: it.name });
+        continue;
+      }
+
+      // Policy:
+      // - forceOptimize: must upload optimized; error if not present.
+      // - pass-through: if optimize && optimized -> upload WebP; else upload original.
+      let useOptimized = false;
+      if (it.forceOptimize) {
+        if (!it.optimized) {
+          next[idx] = {
+            ...it,
+            status: "error",
+            error:
+              "This format requires optimization, but a converted image is not available. Please convert to JPEG/PNG/WebP and try again.",
+          };
+          setItems([...next]);
+          results.push({ ok: false, error: next[idx].error!, name: it.name });
+          continue;
+        }
+        useOptimized = true;
+      } else {
+        useOptimized = !!(it.optimize && it.optimized);
+      }
+
       next[idx] = { ...it, status: "uploading" };
       setItems([...next]);
 
       try {
-        const useOptimized = it.optimize && it.optimized;
         const blob = useOptimized ? it.optimized!.blob : it.file;
         const name = useOptimized ? changeExtToWebp(it.name) : it.name;
         const type = useOptimized ? "image/webp" : it.type || "application/octet-stream";
@@ -399,7 +672,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
               <li key={it.id} className="rounded border bg-white overflow-hidden">
                 <div className="relative w-[70vw] sm:w-[44vw] md:w-[28vw] lg:w-[24vw] xl:w-[22vw] aspect-video bg-gray-50">
                   {it.previewUrl && it.decodable ? (
-                    <Image
+                    <NextImage
                       src={it.previewUrl}
                       alt=""
                       fill
@@ -422,7 +695,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                 <div className="p-3 text-sm text-gray-800 space-y-2 min-w-[260px]">
                   <div className="font-medium break-all">{it.name}</div>
 
-                  <div className="text-[12px] text-gray-700">
+                  <div className="text-[12px] text-gray-700 space-y-1">
                     <div>
                       <span className="text-gray-500">Original:</span>{" "}
                       <span className="font-mono">{it.type || "image/*"}</span> •{" "}
@@ -430,6 +703,11 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                       {" • "}
                       {it.width && it.height ? `${it.width}×${it.height}` : "—"}
                     </div>
+                    {it.type?.toLowerCase() === "image/gif" && (
+                      <div className="text-[11px] text-gray-500">
+                        * Animated GIF will be uploaded as a still image (first frame).
+                      </div>
+                    )}
                   </div>
 
                   <div className="flex items-center gap-2">
@@ -440,18 +718,27 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                         checked={it.optimize}
                         onChange={() =>
                           setItems((prev) =>
-                            prev.map((x) => (x.id === it.id ? { ...x, optimize: !x.optimize } : x)),
+                            prev.map((x) =>
+                              x.id === it.id
+                                ? { ...x, optimize: x.forceOptimize ? true : !x.optimize }
+                                : x,
+                            ),
                           )
                         }
                         disabled={
-                          !it.decodable || it.status === "optimizing" || it.status === "uploading"
+                          it.forceOptimize || // non JPEG/PNG/WebP cannot switch to original
+                          it.status === "optimizing" ||
+                          it.status === "uploading"
                         }
                       />
-                      <span className="text-[13px]">Optimize for Web</span>
+                      <span className="text-[13px]">
+                        Optimize for Web{" "}
+                        {it.forceOptimize && <span className="text-gray-500">(required)</span>}
+                      </span>
                     </label>
                   </div>
 
-                  <div className={`text-[12px] ${it.optimize ? "text-gray-800" : "text-gray-400"}`}>
+                  <div className={`text:[12px] ${it.optimize ? "text-gray-800" : "text-gray-400"}`}>
                     <div>
                       <span className="text-gray-500">Optimized:</span>{" "}
                       <span className="font-mono">
