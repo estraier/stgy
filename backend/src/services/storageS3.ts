@@ -61,15 +61,20 @@ export class StorageS3Service implements StorageService {
     if (maxBytes !== undefined) {
       Conditions.push(["content-length-range", 1, maxBytes]);
     }
-    const { url, fields } = await awsCreatePresignedPost(this.s3, {
+    const { fields } = await awsCreatePresignedPost(this.s3, {
       Bucket: bucket,
       Key: key,
       Fields,
       Conditions,
       Expires: expiresInSec,
     });
+    const pfx = Config.STORAGE_S3_PUBLIC_URL_PREFIX;
+    if (!pfx || !pfx.includes("{bucket}")) {
+      throw new Error("STORAGE_S3_PUBLIC_URL_PREFIX must include {bucket}");
+    }
+    const actionUrl = pfx.replace(/\{bucket\}/g, bucket).replace(/\/+$/, "");
     return {
-      url,
+      url: actionUrl,
       fields,
       objectKey: key,
       maxBytes: maxBytes ?? 0,

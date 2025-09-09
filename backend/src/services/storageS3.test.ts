@@ -75,7 +75,7 @@ describe("StorageS3Service", () => {
       expiresInSec: 300,
     });
     expect(res).toEqual({
-      url,
+      url: "http://localhost:9000/test-bucket",
       fields,
       objectKey: key,
       maxBytes: 1024 * 1024,
