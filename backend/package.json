@@ -42,7 +42,7 @@
     "@types/cors": "^2",
     "@types/express": "^5",
     "@types/ioredis": "^4",
-    "@types/jest": "^29",
+    "@types/jest": "^29.5.14",
     "@types/mime-types": "^3.0.1",
     "@types/node": "^24",
     "@types/nodemailer": "^6.4.17",
