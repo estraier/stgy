@@ -1,4 +1,5 @@
 import { AuthService } from "./auth";
+import { decToHex, hexToDec } from "../utils/format";
 
 class MockPgClient {
   query = jest.fn();
@@ -29,10 +30,12 @@ describe("AuthService class", () => {
   });
 
   test("login: success", async () => {
+    const dbIdDec = "1234567890123456";
+    const userIdHex = decToHex(dbIdDec);
     pgClient.query.mockResolvedValueOnce({
       rows: [
         {
-          id: "user-123",
+          id: dbIdDec,
           email: "test@example.com",
           nickname: "TestNick",
           is_admin: true,
@@ -42,11 +45,11 @@ describe("AuthService class", () => {
       rowCount: 1,
     });
     const result = await authService.login("test@example.com", "password");
-    expect(result.userId).toBe("user-123");
+    expect(result.userId).toBe(userIdHex);
     expect(redis.set).toHaveBeenCalled();
     const sessionId = result.sessionId;
     const session = JSON.parse(redis.store[`session:${sessionId}`]);
-    expect(session.userId).toBe("user-123");
+    expect(session.userId).toBe(userIdHex);
     expect(session.userEmail).toBe("test@example.com");
     expect(session.userNickname).toBe("TestNick");
     expect(session.userIsAdmin).toBe(true);
@@ -62,10 +65,12 @@ describe("AuthService class", () => {
   });
 
   test("switchUser: success", async () => {
+    const dbIdDec = "9876543210000000";
+    const userHex = decToHex(dbIdDec);
     pgClient.query.mockResolvedValueOnce({
       rows: [
         {
-          id: "user-switch-1",
+          id: dbIdDec,
           email: "switch@example.com",
           nickname: "Switcher",
           is_admin: false,
@@ -74,12 +79,12 @@ describe("AuthService class", () => {
       ],
       rowCount: 1,
     });
-    const result = await authService.switchUser("user-switch-1");
-    expect(result.userId).toBe("user-switch-1");
+    const result = await authService.switchUser(userHex);
+    expect(result.userId).toBe(userHex);
     expect(result.sessionId).toBeDefined();
     expect(redis.set).toHaveBeenCalled();
     const stored = JSON.parse(redis.store[`session:${result.sessionId}`]);
-    expect(stored.userId).toBe("user-switch-1");
+    expect(stored.userId).toBe(userHex);
     expect(stored.userEmail).toBe("switch@example.com");
     expect(stored.userNickname).toBe("Switcher");
     expect(stored.userIsAdmin).toBe(false);
@@ -88,14 +93,15 @@ describe("AuthService class", () => {
   });
 
   test("switchUser: user not found", async () => {
+    const userHex = decToHex("42");
     pgClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
-    await expect(authService.switchUser("no-such-user")).rejects.toThrow("user not found");
+    await expect(authService.switchUser(userHex)).rejects.toThrow("user not found");
   });
 
   test("getSessionInfo: exists", async () => {
     const sessionId = "abc123";
     const value = JSON.stringify({
-      userId: "u1",
+      userId: decToHex("1"),
       userEmail: "e@example.com",
       userNickname: "TestNick",
       userIsAdmin: true,
@@ -104,7 +110,7 @@ describe("AuthService class", () => {
     });
     redis.store[`session:${sessionId}`] = value;
     const session = await authService.getSessionInfo(sessionId);
-    expect(session?.userId).toBe("u1");
+    expect(session?.userId).toBe(decToHex("1"));
     expect(session?.userEmail).toBe("e@example.com");
     expect(session?.userNickname).toBe("TestNick");
     expect(session?.userIsAdmin).toBe(true);
@@ -125,9 +131,11 @@ describe("AuthService class", () => {
   });
 
   test("refreshSessionInfo: updates fields and preserves loggedInAt", async () => {
+    const dbIdDec = "1001";
+    const userHex = decToHex(dbIdDec);
     const sessionId = "sess-1";
     const original = {
-      userId: "u1",
+      userId: userHex,
       userEmail: "old@example.com",
       userNickname: "OldNick",
       userIsAdmin: false,
@@ -152,11 +160,11 @@ describe("AuthService class", () => {
     expect(refreshed).not.toBeNull();
     expect(pgClient.query).toHaveBeenCalledWith(
       "SELECT email, nickname, is_admin, updated_at FROM users WHERE id=$1",
-      ["u1"],
+      [hexToDec(userHex)],
     );
 
     const stored = JSON.parse(redis.store[`session:${sessionId}`]);
-    expect(stored.userId).toBe("u1");
+    expect(stored.userId).toBe(userHex);
     expect(stored.userEmail).toBe("new@example.com");
     expect(stored.userNickname).toBe("NewNick");
     expect(stored.userIsAdmin).toBe(true);
@@ -171,9 +179,11 @@ describe("AuthService class", () => {
   });
 
   test("refreshSessionInfo: returns null when user not found in DB", async () => {
+    const dbIdDec = "2002";
+    const userHex = decToHex(dbIdDec);
     const sessionId = "sess-2";
     const original = {
-      userId: "u2",
+      userId: userHex,
       userEmail: "x@example.com",
       userNickname: "X",
       userIsAdmin: false,

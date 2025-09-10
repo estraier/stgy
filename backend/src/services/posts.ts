@@ -14,7 +14,7 @@ import {
 import { User } from "../models/user";
 import { IdIssueService } from "./idIssue";
 import { EventLogService } from "./eventLog";
-import { snakeToCamel, escapeForLike } from "../utils/format";
+import { snakeToCamel, escapeForLike, hexToDec, decToHex, hexArrayToDec } from "../utils/format";
 import { makeSnippetJsonFromMarkdown } from "../utils/snippet";
 import { Client } from "pg";
 import Redis from "ioredis";
@@ -49,7 +49,7 @@ export class PostsService {
     }
     if (ownedBy) {
       where.push(`p.owned_by = $${idx++}`);
-      params.push(ownedBy);
+      params.push(hexToDec(ownedBy));
     }
     if (replyTo !== undefined) {
       if (replyTo === null) {
@@ -58,7 +58,7 @@ export class PostsService {
         where.push(`p.reply_to IS NOT NULL`);
       } else {
         where.push(`p.reply_to = $${idx++}`);
-        params.push(replyTo);
+        params.push(hexToDec(String(replyTo)));
       }
     }
     if (query) {
@@ -97,10 +97,14 @@ export class PostsService {
       LEFT JOIN users pu ON pp.owned_by = pu.id
       WHERE p.id = $1
       `,
-      [id],
+      [hexToDec(id)],
     );
     if (res.rows.length === 0) return null;
-    const post = snakeToCamel<Post>(res.rows[0]);
+    const row = res.rows[0];
+    row.id = decToHex(row.id);
+    row.owned_by = decToHex(row.owned_by);
+    row.reply_to = row.reply_to == null ? null : decToHex(row.reply_to);
+    const post = snakeToCamel<Post>(row);
     return post;
   }
 
@@ -131,19 +135,23 @@ export class PostsService {
       LEFT JOIN post_details pc ON pc.post_id = p.id
       WHERE p.id = $1
       `,
-      [id],
+      [hexToDec(id)],
     );
     if (res.rows.length === 0) return null;
-    const post = snakeToCamel<PostDetail>(res.rows[0]);
+    const row = res.rows[0];
+    row.id = decToHex(row.id);
+    row.owned_by = decToHex(row.owned_by);
+    row.reply_to = row.reply_to == null ? null : decToHex(row.reply_to);
+    const post = snakeToCamel<PostDetail>(row);
     if (focusUserId) {
       const likeRes = await this.pgClient.query(
         "SELECT 1 FROM post_likes WHERE post_id = $1 AND liked_by = $2 LIMIT 1",
-        [id, focusUserId],
+        [hexToDec(id), hexToDec(focusUserId)],
       );
       post.isLikedByFocusUser = likeRes.rows.length > 0;
       const replyRes = await this.pgClient.query(
         "SELECT 1 FROM posts WHERE reply_to = $1 AND owned_by = $2 LIMIT 1",
-        [id, focusUserId],
+        [hexToDec(id), hexToDec(focusUserId)],
       );
       post.isRepliedByFocusUser = replyRes.rows.length > 0;
     }
@@ -195,7 +203,7 @@ export class PostsService {
     }
     if (ownedBy) {
       where.push(`p.owned_by = $${paramIdx++}`);
-      params.push(ownedBy);
+      params.push(hexToDec(ownedBy));
     }
     if (replyTo !== undefined) {
       if (replyTo === null) {
@@ -204,7 +212,7 @@ export class PostsService {
         where.push(`p.reply_to IS NOT NULL`);
       } else {
         where.push(`p.reply_to = $${paramIdx++}`);
-        params.push(replyTo);
+        params.push(hexToDec(String(replyTo)));
       }
     }
     if (query) {
@@ -219,26 +227,32 @@ export class PostsService {
     params.push(offset, limit);
 
     const res = await this.pgClient.query(sql, params);
-    const posts = snakeToCamel<Post[]>(res.rows);
+    const posts = res.rows.map((r) => {
+      r.id = decToHex(r.id);
+      r.owned_by = decToHex(r.owned_by);
+      r.reply_to = r.reply_to == null ? null : decToHex(r.reply_to);
+      return r;
+    });
+    const out = snakeToCamel<Post[]>(posts);
 
-    if (!focusUserId || posts.length === 0) return posts;
+    if (!focusUserId || out.length === 0) return out;
 
-    const postIds = posts.map((p) => p.id);
+    const postIds = out.map((p) => p.id);
     const likeRes = await this.pgClient.query(
       `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
-      [postIds, focusUserId],
+      [hexArrayToDec(postIds), hexToDec(focusUserId)],
     );
-    const likedPostIds = new Set(likeRes.rows.map((r) => r.post_id));
+    const likedPostIds = new Set(likeRes.rows.map((r) => decToHex(r.post_id)));
     const replyRes = await this.pgClient.query(
       `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
-      [postIds, focusUserId],
+      [hexArrayToDec(postIds), hexToDec(focusUserId)],
     );
-    const repliedPostIds = new Set(replyRes.rows.map((r) => r.reply_to));
-    for (const d of posts) {
+    const repliedPostIds = new Set(replyRes.rows.map((r) => decToHex(r.reply_to)));
+    for (const d of out) {
       d.isLikedByFocusUser = likedPostIds.has(d.id);
       d.isRepliedByFocusUser = repliedPostIds.has(d.id);
     }
-    return posts;
+    return out;
   }
 
   async createPost(input: CreatePostInput): Promise<Post> {
@@ -271,7 +285,7 @@ export class PostsService {
       if (input.replyTo != null) {
         const chk = await this.pgClient.query<{ allow_replies: boolean }>(
           `SELECT allow_replies FROM posts WHERE id = $1`,
-          [input.replyTo],
+          [hexToDec(input.replyTo)],
         );
         if (chk.rows.length === 0) {
           throw new Error("parent post not found");
@@ -284,19 +298,27 @@ export class PostsService {
         `INSERT INTO posts (id, snippet, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
          RETURNING id, snippet, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at`,
-        [id, snippet, input.ownedBy, input.replyTo, input.allowLikes, input.allowReplies, idDate],
+        [
+          hexToDec(id),
+          snippet,
+          hexToDec(input.ownedBy),
+          input.replyTo == null ? null : hexToDec(input.replyTo),
+          input.allowLikes,
+          input.allowReplies,
+          idDate,
+        ],
       );
       await this.pgClient.query(
         `INSERT INTO post_details (post_id, content) VALUES ($1, $2)
          ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
-        [id, input.content],
+        [hexToDec(id), input.content],
       );
       if (input.tags && input.tags.length > 0) {
         await this.pgClient.query(
           `INSERT INTO post_tags (post_id, name) VALUES ${input.tags
             .map((_, i) => `($1, $${i + 2})`)
             .join(", ")}`,
-          [id, ...input.tags],
+          [hexToDec(id), ...input.tags],
         );
       }
       await this.pgClient.query("COMMIT");
@@ -309,7 +331,11 @@ export class PostsService {
           });
         } catch {}
       }
-      return snakeToCamel<Post>(res.rows[0]);
+      const row = res.rows[0];
+      row.id = decToHex(row.id);
+      row.owned_by = decToHex(row.owned_by);
+      row.reply_to = row.reply_to == null ? null : decToHex(row.reply_to);
+      return snakeToCamel<Post>(row);
     } catch (e) {
       await this.pgClient.query("ROLLBACK");
       throw e;
@@ -322,7 +348,7 @@ export class PostsService {
       if (input.replyTo != null && input.replyTo !== undefined) {
         const chk = await this.pgClient.query<{ allow_replies: boolean }>(
           `SELECT allow_replies FROM posts WHERE id = $1`,
-          [input.replyTo],
+          [hexToDec(input.replyTo)],
         );
         if (chk.rows.length === 0) {
           throw new Error("parent post not found");
@@ -346,7 +372,7 @@ export class PostsService {
           `INSERT INTO post_details (post_id, content)
              VALUES ($1, $2)
              ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
-          [input.id, input.content],
+          [hexToDec(input.id), input.content],
         );
       }
       if (input.ownedBy !== undefined) {
@@ -354,11 +380,11 @@ export class PostsService {
           throw new Error("ownedBy is required");
         }
         columns.push(`owned_by = $${idx++}`);
-        values.push(input.ownedBy);
+        values.push(hexToDec(input.ownedBy));
       }
       if (input.replyTo !== undefined) {
         columns.push(`reply_to = $${idx++}`);
-        values.push(input.replyTo);
+        values.push(input.replyTo == null ? null : hexToDec(input.replyTo));
       }
       if (input.allowLikes !== undefined) {
         columns.push(`allow_likes = $${idx++}`);
@@ -369,20 +395,20 @@ export class PostsService {
         values.push(input.allowReplies);
       }
       columns.push(`updated_at = now()`);
-      values.push(input.id);
+      values.push(hexToDec(input.id));
       if (columns.length > 0) {
         const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx}
                      RETURNING id`;
         await this.pgClient.query(sql, values);
       }
       if (input.tags !== undefined) {
-        await this.pgClient.query(`DELETE FROM post_tags WHERE post_id = $1`, [input.id]);
+        await this.pgClient.query(`DELETE FROM post_tags WHERE post_id = $1`, [hexToDec(input.id)]);
         if (input.tags.length > 0) {
           await this.pgClient.query(
             `INSERT INTO post_tags (post_id, name) VALUES ${input.tags
               .map((_, i) => `($1, $${i + 2})`)
               .join(", ")}`,
-            [input.id, ...input.tags],
+            [hexToDec(input.id), ...input.tags],
           );
         }
       }
@@ -395,19 +421,21 @@ export class PostsService {
   }
 
   async deletePost(id: string): Promise<void> {
-    const res = await this.pgClient.query(`DELETE FROM posts WHERE id = $1`, [id]);
+    const res = await this.pgClient.query(`DELETE FROM posts WHERE id = $1`, [hexToDec(id)]);
     if ((res.rowCount ?? 0) === 0) throw new Error("Post not found");
   }
 
   async addLike(postId: string, userId: string): Promise<void> {
-    const chk = await this.pgClient.query(`SELECT allow_likes FROM posts WHERE id = $1`, [postId]);
+    const chk = await this.pgClient.query(`SELECT allow_likes FROM posts WHERE id = $1`, [
+      hexToDec(postId),
+    ]);
     if (chk.rows.length === 0) throw new Error("post not found");
     if (!chk.rows[0].allow_likes) throw new Error("likes are not allowed for the target post");
     const res = await this.pgClient.query(
       `INSERT INTO post_likes (post_id, liked_by, created_at)
        VALUES ($1, $2, $3)
        ON CONFLICT DO NOTHING`,
-      [postId, userId, new Date().toISOString()],
+      [hexToDec(postId), hexToDec(userId), new Date().toISOString()],
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("already liked");
     if (this.eventLogService) {
@@ -423,7 +451,7 @@ export class PostsService {
   async removeLike(postId: string, userId: string): Promise<void> {
     const res = await this.pgClient.query(
       `DELETE FROM post_likes WHERE post_id = $1 AND liked_by = $2`,
-      [postId, userId],
+      [hexToDec(postId), hexToDec(userId)],
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("not liked");
   }
@@ -504,23 +532,29 @@ export class PostsService {
       LEFT JOIN users pu ON pp.owned_by = pu.id
       ORDER BY t.id ${orderDir}
     `;
-    const params = [userId, activeFolloweeLimit, perFolloweeLimit, offset, limit];
+    const params = [hexToDec(userId), activeFolloweeLimit, perFolloweeLimit, offset, limit];
     const res = await this.pgClient.query(sql, params);
-    const posts = snakeToCamel<Post[]>(res.rows);
+    const rows = res.rows.map((r) => {
+      r.id = decToHex(r.id);
+      r.owned_by = decToHex(r.owned_by);
+      r.reply_to = r.reply_to == null ? null : decToHex(r.reply_to);
+      return r;
+    });
+    const posts = snakeToCamel<Post[]>(rows);
 
     if (!focusUserId || posts.length === 0) return posts;
 
     const postIds = posts.map((p) => p.id);
     const likeRes = await this.pgClient.query(
       `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
-      [postIds, focusUserId],
+      [hexArrayToDec(postIds), hexToDec(focusUserId)],
     );
-    const likedPostIds = new Set(likeRes.rows.map((r) => r.post_id));
+    const likedPostIds = new Set(likeRes.rows.map((r) => decToHex(r.post_id)));
     const replyRes = await this.pgClient.query(
       `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
-      [postIds, focusUserId],
+      [hexArrayToDec(postIds), hexToDec(focusUserId)],
     );
-    const repliedPostIds = new Set(replyRes.rows.map((r) => r.reply_to));
+    const repliedPostIds = new Set(replyRes.rows.map((r) => decToHex(r.reply_to)));
     for (const d of posts) {
       d.isLikedByFocusUser = likedPostIds.has(d.id);
       d.isRepliedByFocusUser = repliedPostIds.has(d.id);
@@ -561,7 +595,7 @@ export class PostsService {
       LEFT JOIN users pu ON pp.owned_by = pu.id
       WHERE pl.liked_by = $1
     `;
-    const params: unknown[] = [input.userId];
+    const params: unknown[] = [hexToDec(input.userId)];
     let paramIdx = 2;
 
     if (!includeReplies) {
@@ -571,21 +605,27 @@ export class PostsService {
     params.push(offset, limit);
 
     const res = await this.pgClient.query(sql, params);
-    const posts = snakeToCamel<Post[]>(res.rows);
+    const rows = res.rows.map((r) => {
+      r.id = decToHex(r.id);
+      r.owned_by = decToHex(r.owned_by);
+      r.reply_to = r.reply_to == null ? null : decToHex(r.reply_to);
+      return r;
+    });
+    const posts = snakeToCamel<Post[]>(rows);
 
     if (!focusUserId || posts.length === 0) return posts;
 
     const postIds = posts.map((p) => p.id);
     const likeRes = await this.pgClient.query(
       `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
-      [postIds, focusUserId],
+      [hexArrayToDec(postIds), hexToDec(focusUserId)],
     );
-    const likedPostIds = new Set(likeRes.rows.map((r) => r.post_id));
+    const likedPostIds = new Set(likeRes.rows.map((r) => decToHex(r.post_id)));
     const replyRes = await this.pgClient.query(
       `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
-      [postIds, focusUserId],
+      [hexArrayToDec(postIds), hexToDec(focusUserId)],
     );
-    const repliedPostIds = new Set(replyRes.rows.map((r) => r.reply_to));
+    const repliedPostIds = new Set(replyRes.rows.map((r) => decToHex(r.reply_to)));
     for (const d of posts) {
       d.isLikedByFocusUser = likedPostIds.has(d.id);
       d.isRepliedByFocusUser = repliedPostIds.has(d.id);
@@ -604,7 +644,11 @@ export class PostsService {
       ORDER BY pl.created_at ${orderDir}, u.id ${orderDir}
       OFFSET $2 LIMIT $3
     `;
-    const res = await this.pgClient.query(sql, [postId, offset, limit]);
-    return snakeToCamel<User[]>(res.rows);
+    const res = await this.pgClient.query(sql, [hexToDec(postId), offset, limit]);
+    const rows = res.rows.map((r) => {
+      r.id = decToHex(r.id);
+      return r;
+    });
+    return snakeToCamel<User[]>(rows);
   }
 }

@@ -22,7 +22,7 @@ INSERT INTO users (
 )
 VALUES
 (
-  '0001000000000001',
+  0x1000000000001,
   'admin@dbmx.net',
   'admin',
   md5('admin'),
@@ -42,7 +42,7 @@ INSERT INTO user_details (
 )
 VALUES
 (
-  '0001000000000001',
+  0x1000000000001,
   'I am the administrator of Fakebook. I notify reports and issues on operation.',
   NULL
 );

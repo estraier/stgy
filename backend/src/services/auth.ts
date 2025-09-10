@@ -2,6 +2,7 @@ import { Client } from "pg";
 import Redis from "ioredis";
 import crypto from "crypto";
 import type { SessionInfo } from "../models/session";
+import { hexToDec, decToHex } from "../utils/format";
 
 export type LoginResult = { sessionId: string; userId: string };
 
@@ -29,13 +30,13 @@ export class AuthService {
       is_admin: userIsAdmin,
       updated_at: userUpdatedAt,
     } = result.rows[0];
-    const userId = id;
+    const userId = decToHex(id);
     const sessionId = crypto.randomBytes(32).toString("hex");
     const sessionInfo: SessionInfo = {
       userId,
       userEmail,
       userNickname,
-      userIsAdmin,
+      userIsAdmin: !!userIsAdmin,
       userUpdatedAt: userUpdatedAt ? new Date(userUpdatedAt).toISOString() : null,
       loggedInAt: new Date().toISOString(),
     };
@@ -46,7 +47,7 @@ export class AuthService {
   async switchUser(userId: string): Promise<LoginResult> {
     const result = await this.pgClient.query(
       "SELECT id, email, nickname, is_admin, updated_at FROM users WHERE id=$1",
-      [userId],
+      [hexToDec(userId)],
     );
     if (result.rows.length === 0) throw new Error("user not found");
     const {
@@ -58,7 +59,7 @@ export class AuthService {
     } = result.rows[0];
     const sessionId = crypto.randomBytes(32).toString("hex");
     const sessionInfo: SessionInfo = {
-      userId: id,
+      userId: decToHex(id),
       userEmail,
       userNickname,
       userIsAdmin: !!userIsAdmin,
@@ -66,7 +67,7 @@ export class AuthService {
       loggedInAt: new Date().toISOString(),
     };
     await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", SESSION_TTL);
-    return { sessionId, userId: id };
+    return { sessionId, userId: sessionInfo.userId };
   }
 
   async getSessionInfo(sessionId: string): Promise<SessionInfo | null> {
@@ -86,7 +87,7 @@ export class AuthService {
     if (!current) return null;
     const result = await this.pgClient.query(
       "SELECT email, nickname, is_admin, updated_at FROM users WHERE id=$1",
-      [current.userId],
+      [hexToDec(current.userId)],
     );
     if (result.rows.length === 0) return null;
     const {

@@ -1,4 +1,7 @@
 import {
+  hexToDec,
+  decToHex,
+  hexArrayToDec,
   generateVerificationCode,
   validateEmail,
   normalizeEmail,
@@ -10,6 +13,35 @@ import {
   snakeToCamel,
   escapeForLike,
 } from "./format";
+
+describe("hexToDec, decToHex, hexArrayToDec", () => {
+  it("hexToDec converts hex (with/without 0x, any case) to decimal string", () => {
+    expect(hexToDec("00000000000000A1")).toBe("161");
+    expect(hexToDec("00000000000000b0")).toBe("176");
+    expect(hexToDec("0x00000000000000c0")).toBe("192");
+    expect(hexToDec("7FFFFFFFFFFFFFFF")).toBe("9223372036854775807");
+  });
+
+  it("decToHex converts decimal-like input to 16-char uppercase hex", () => {
+    expect(decToHex("161")).toBe("00000000000000A1");
+    expect(decToHex(176)).toBe("00000000000000B0");
+    expect(decToHex(192)).toBe("00000000000000C0");
+    expect(decToHex("9223372036854775807")).toBe("7FFFFFFFFFFFFFFF");
+  });
+
+  it("round-trips: decToHex(hexToDec(x)) === normalized hex", () => {
+    const hexes = ["00000000000000a1", "00000000000000B0", "7fffffffffffffff"];
+    const norm = ["00000000000000A1", "00000000000000B0", "7FFFFFFFFFFFFFFF"];
+    hexes.forEach((h, i) => {
+      expect(decToHex(hexToDec(h))).toBe(norm[i]);
+    });
+  });
+
+  it("hexArrayToDec maps an array of hex strings to decimal strings", () => {
+    const arr = ["00000000000000A1", "00000000000000B0", "0x00000000000000C0"];
+    expect(hexArrayToDec(arr)).toEqual(["161", "176", "192"]);
+  });
+});
 
 describe("generateVerificationCode", () => {
   it("returns a 6-digit string", () => {

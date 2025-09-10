@@ -9,7 +9,7 @@ CREATE TABLE ai_models (
 );
 
 CREATE TABLE users (
-  id VARCHAR(50) PRIMARY KEY,
+  id BIGINT PRIMARY KEY,
   email VARCHAR(100) NOT NULL UNIQUE,
   nickname VARCHAR(50) NOT NULL,
   password VARCHAR(100) NOT NULL,
@@ -26,15 +26,15 @@ CREATE TABLE users (
 CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, nickname, id);
 
 CREATE TABLE user_details (
-  user_id VARCHAR(50) PRIMARY KEY,
+  user_id BIGINT PRIMARY KEY,
   introduction VARCHAR(65535) NOT NULL,
   ai_personality VARCHAR(5000),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
 CREATE TABLE user_follows (
-  follower_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  followee_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  follower_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  followee_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (follower_id, followee_id)
 );
@@ -42,10 +42,10 @@ CREATE INDEX idx_user_follows_followee_created_at ON user_follows (followee_id, 
 CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, created_at);
 
 CREATE TABLE posts (
-  id VARCHAR(50) PRIMARY KEY,
+  id BIGINT PRIMARY KEY,
   snippet VARCHAR(4096) NOT NULL,
-  owned_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  reply_to VARCHAR(50) REFERENCES posts(id) ON DELETE SET NULL,
+  owned_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reply_to BIGINT REFERENCES posts(id) ON DELETE SET NULL,
   allow_likes BOOLEAN NOT NULL,
   allow_replies BOOLEAN NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
@@ -59,21 +59,21 @@ CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
 
 CREATE TABLE post_details (
-  post_id VARCHAR(50) PRIMARY KEY,
+  post_id BIGINT PRIMARY KEY,
   content VARCHAR(65535) NOT NULL,
   FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
 );
 
 CREATE TABLE post_tags (
-  post_id VARCHAR(50) NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
   name VARCHAR(50) NOT NULL,
   PRIMARY KEY (post_id, name)
 );
 CREATE INDEX idx_post_tags_name_post_id ON post_tags(name, post_id);
 
 CREATE TABLE post_likes (
-  post_id VARCHAR(50) NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-  liked_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  liked_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (post_id, liked_by)
 );
@@ -97,7 +97,7 @@ CREATE TABLE event_log_cursors (
 );
 
 CREATE TABLE notifications (
-  user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   slot VARCHAR(50) NOT NULL,
   term VARCHAR(50) NOT NULL,
   is_read BOOLEAN NOT NULL DEFAULT FALSE,
@@ -110,7 +110,7 @@ CREATE INDEX idx_notifications_user_read_ts ON notifications(user_id, is_read, u
 CREATE INDEX idx_notifications_created_at ON notifications(created_at);
 
 CREATE TABLE ai_actions (
-  user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   done_at TIMESTAMPTZ NOT NULL,
   action JSONB NOT NULL
 );

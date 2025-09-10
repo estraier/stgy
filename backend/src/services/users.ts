@@ -17,6 +17,9 @@ import {
 import { IdIssueService } from "./idIssue";
 import { EventLogService } from "./eventLog";
 import {
+  hexToDec,
+  decToHex,
+  hexArrayToDec,
   generateVerificationCode,
   validateEmail,
   snakeToCamel,
@@ -77,10 +80,12 @@ export class UsersService {
          created_at, updated_at, count_followers, count_followees, count_posts
        FROM users
        WHERE id = $1`,
-      [id],
+      [hexToDec(id)],
     );
     if (userRes.rows.length === 0) return null;
-    const user: Record<string, unknown> = snakeToCamel(userRes.rows[0]);
+    const row = userRes.rows[0];
+    row.id = decToHex(row.id);
+    const user: Record<string, unknown> = snakeToCamel(row);
     return user as UserLite;
   }
 
@@ -93,18 +98,20 @@ export class UsersService {
        FROM users u
        LEFT JOIN user_details d ON d.user_id = u.id
        WHERE u.id = $1`,
-      [id],
+      [hexToDec(id)],
     );
     if (userRes.rows.length === 0) return null;
 
-    const user: Record<string, unknown> = snakeToCamel(userRes.rows[0]);
+    const row = userRes.rows[0];
+    row.id = decToHex(row.id);
+    const user: Record<string, unknown> = snakeToCamel(row);
 
     if (focusUserId && focusUserId !== id) {
       const followRes = await this.pgClient.query(
         `SELECT
            EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $1 AND followee_id = $2) AS is_followed_by_focus_user,
            EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $2 AND followee_id = $1) AS is_following_focus_user`,
-        [focusUserId, id],
+        [hexToDec(focusUserId), hexToDec(id)],
       );
       user.isFollowedByFocusUser = followRes.rows[0].is_followed_by_focus_user;
       user.isFollowingFocusUser = followRes.rows[0].is_following_focus_user;
@@ -150,13 +157,14 @@ export class UsersService {
         LEFT JOIN user_follows f1 ON f1.follower_id = $${params.length + 1} AND f1.followee_id = u.id
         LEFT JOIN user_follows f2 ON f2.follower_id = u.id AND f2.followee_id = $${params.length + 1}
       `;
-      params.push(focusUserId);
+      const dec = hexToDec(focusUserId);
+      params.push(dec);
       orderClause =
         `ORDER BY (u.id = $${params.length + 1}) DESC, ` +
         `(f1.follower_id IS NOT NULL) DESC, ` +
         `(f2.follower_id IS NOT NULL) DESC, ` +
         `u.id ASC`;
-      params.push(focusUserId);
+      params.push(dec);
     } else {
       const dir = order.toLowerCase() === "asc" ? "ASC" : "DESC";
       orderClause = `ORDER BY u.id ${dir}`;
@@ -168,7 +176,10 @@ export class UsersService {
     params.push(offset, limit);
 
     const res = await this.pgClient.query(sql, params);
-    const users = res.rows.map((row: Record<string, unknown>) => snakeToCamel<User>(row));
+    const users = res.rows.map((row: Record<string, unknown>) => {
+      row.id = decToHex(row.id);
+      return snakeToCamel<User>(row);
+    });
 
     if (users.length === 0) return [];
 
@@ -176,14 +187,18 @@ export class UsersService {
       const ids = users.map((u) => u.id);
       const fwRes = await this.pgClient.query(
         `SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)`,
-        [focusUserId, ids],
+        [hexToDec(focusUserId), hexArrayToDec(ids)],
       );
-      const followedSet = new Set(fwRes.rows.map((r: { followee_id: string }) => r.followee_id));
+      const followedSet = new Set(
+        fwRes.rows.map((r: { followee_id: string }) => decToHex(r.followee_id) as string),
+      );
       const fgRes = await this.pgClient.query(
         `SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2`,
-        [ids, focusUserId],
+        [hexArrayToDec(ids), hexToDec(focusUserId)],
       );
-      const followingSet = new Set(fgRes.rows.map((r: { follower_id: string }) => r.follower_id));
+      const followingSet = new Set(
+        fgRes.rows.map((r: { follower_id: string }) => decToHex(r.follower_id) as string),
+      );
       for (const u of users) {
         if (u.id === focusUserId) continue;
         u.isFollowedByFocusUser = followedSet.has(u.id);
@@ -236,7 +251,7 @@ export class UsersService {
          VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL)
          RETURNING id, email, nickname, is_admin, snippet, avatar, ai_model, created_at, updated_at, count_followers, count_followees, count_posts`,
         [
-          id,
+          hexToDec(id),
           input.email,
           input.nickname,
           passwordHash,
@@ -253,10 +268,12 @@ export class UsersService {
          ON CONFLICT (user_id) DO UPDATE
            SET introduction = EXCLUDED.introduction,
                ai_personality = EXCLUDED.ai_personality`,
-        [id, input.introduction, input.aiPersonality ?? null],
+        [hexToDec(id), input.introduction, input.aiPersonality ?? null],
       );
       await this.pgClient.query("COMMIT");
-      return snakeToCamel<User>(res.rows[0]);
+      const row = res.rows[0];
+      row.id = decToHex(row.id);
+      return snakeToCamel<User>(row);
     } catch (e) {
       await this.pgClient.query("ROLLBACK");
       throw e;
@@ -303,7 +320,7 @@ export class UsersService {
            ON CONFLICT (user_id) DO UPDATE
              SET introduction = COALESCE(EXCLUDED.introduction, user_details.introduction),
                  ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)`,
-          [input.id, input.introduction ?? null, input.aiPersonality ?? null],
+          [hexToDec(input.id), input.introduction ?? null, input.aiPersonality ?? null],
         );
       }
 
@@ -314,7 +331,7 @@ export class UsersService {
       }
 
       userCols.push(`updated_at = now()`);
-      userVals.push(input.id);
+      userVals.push(hexToDec(input.id));
 
       const sql =
         `UPDATE users SET ${userCols.join(", ")} WHERE id = $${uidx} ` +
@@ -322,7 +339,10 @@ export class UsersService {
 
       const res = await this.pgClient.query(sql, userVals);
       await this.pgClient.query("COMMIT");
-      return res.rows[0] ? snakeToCamel<User>(res.rows[0]) : null;
+      if (!res.rows[0]) return null;
+      const row = res.rows[0];
+      row.id = decToHex(row.id);
+      return snakeToCamel<User>(row);
     } catch (e) {
       await this.pgClient.query("ROLLBACK");
       throw e;
@@ -365,7 +385,7 @@ export class UsersService {
 
     const res = await this.pgClient.query(
       `UPDATE users SET email = $1, updated_at = now() WHERE id = $2`,
-      [data.newEmail, data.userId],
+      [data.newEmail, hexToDec(data.userId)],
     );
     await this.redis.del(key);
     if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
@@ -378,7 +398,7 @@ export class UsersService {
     const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
     const res = await this.pgClient.query(`UPDATE users SET password = $1 WHERE id = $2`, [
       passwordHash,
-      input.id,
+      hexToDec(input.id),
     ]);
     if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
   }
@@ -386,7 +406,7 @@ export class UsersService {
   async startResetPassword(email: string): Promise<{ resetPasswordId: string; webCode: string }> {
     const res = await this.pgClient.query(`SELECT id FROM users WHERE email = $1`, [email]);
     if (!res.rows[0] || !res.rows[0].id) throw new Error("User not found");
-    const userId: string = res.rows[0].id;
+    const userId: string = decToHex(res.rows[0].id) as string;
     const resetPasswordId = uuidv4();
     const webCode = generateVerificationCode();
     const mailCode = generateVerificationCode();
@@ -433,14 +453,14 @@ export class UsersService {
     const passwordHash = crypto.createHash("md5").update(newPassword).digest("hex");
     const res = await this.pgClient.query(`UPDATE users SET password = $1 WHERE id = $2`, [
       passwordHash,
-      data.userId,
+      hexToDec(data.userId),
     ]);
     await this.redis.del(key);
     if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
   }
 
   async deleteUser(id: string): Promise<void> {
-    const res = await this.pgClient.query(`DELETE FROM users WHERE id = $1`, [id]);
+    const res = await this.pgClient.query(`DELETE FROM users WHERE id = $1`, [hexToDec(id)]);
     if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
   }
 
@@ -457,8 +477,11 @@ export class UsersService {
       ORDER BY f.created_at ${order}, f.followee_id ${order}
       OFFSET $2 LIMIT $3
     `;
-    const res = await this.pgClient.query(sql, [input.followerId, offset, limit]);
-    const users = res.rows.map((row: Record<string, unknown>) => snakeToCamel<User>(row));
+    const res = await this.pgClient.query(sql, [hexToDec(input.followerId), offset, limit]);
+    const users = res.rows.map((row: Record<string, unknown>) => {
+      row.id = decToHex(row.id);
+      return snakeToCamel<User>(row);
+    });
 
     if (users.length === 0) return [];
 
@@ -466,14 +489,18 @@ export class UsersService {
       const ids = users.map((u) => u.id);
       const fwRes = await this.pgClient.query(
         `SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)`,
-        [focusUserId, ids],
+        [hexToDec(focusUserId), hexArrayToDec(ids)],
       );
-      const followedSet = new Set(fwRes.rows.map((r: { followee_id: string }) => r.followee_id));
+      const followedSet = new Set(
+        fwRes.rows.map((r: { followee_id: string }) => decToHex(r.followee_id) as string),
+      );
       const fgRes = await this.pgClient.query(
         `SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2`,
-        [ids, focusUserId],
+        [hexArrayToDec(ids), hexToDec(focusUserId)],
       );
-      const followingSet = new Set(fgRes.rows.map((r: { follower_id: string }) => r.follower_id));
+      const followingSet = new Set(
+        fgRes.rows.map((r: { follower_id: string }) => decToHex(r.follower_id) as string),
+      );
       for (const u of users) {
         if (u.id === focusUserId) continue;
         u.isFollowedByFocusUser = followedSet.has(u.id);
@@ -497,8 +524,11 @@ export class UsersService {
       ORDER BY f.created_at ${order}, f.follower_id ${order}
       OFFSET $2 LIMIT $3
     `;
-    const res = await this.pgClient.query(sql, [input.followeeId, offset, limit]);
-    const users = res.rows.map((row: Record<string, unknown>) => snakeToCamel<User>(row));
+    const res = await this.pgClient.query(sql, [hexToDec(input.followeeId), offset, limit]);
+    const users = res.rows.map((row: Record<string, unknown>) => {
+      row.id = decToHex(row.id);
+      return snakeToCamel<User>(row);
+    });
 
     if (users.length === 0) return [];
 
@@ -506,14 +536,18 @@ export class UsersService {
       const ids = users.map((u) => u.id);
       const fwRes = await this.pgClient.query(
         `SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)`,
-        [focusUserId, ids],
+        [hexToDec(focusUserId), hexArrayToDec(ids)],
       );
-      const followedSet = new Set(fwRes.rows.map((r: { followee_id: string }) => r.followee_id));
+      const followedSet = new Set(
+        fwRes.rows.map((r: { followee_id: string }) => decToHex(r.followee_id) as string),
+      );
       const fgRes = await this.pgClient.query(
         `SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2`,
-        [ids, focusUserId],
+        [hexArrayToDec(ids), hexToDec(focusUserId)],
       );
-      const followingSet = new Set(fgRes.rows.map((r: { follower_id: string }) => r.follower_id));
+      const followingSet = new Set(
+        fgRes.rows.map((r: { follower_id: string }) => decToHex(r.follower_id) as string),
+      );
       for (const u of users) {
         if (u.id === focusUserId) continue;
         u.isFollowedByFocusUser = followedSet.has(u.id);
@@ -531,7 +565,7 @@ export class UsersService {
       `INSERT INTO user_follows (follower_id, followee_id, created_at)
        VALUES ($1, $2, now())
        ON CONFLICT DO NOTHING`,
-      [input.followerId, input.followeeId],
+      [hexToDec(input.followerId), hexToDec(input.followeeId)],
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("already following");
     if (this.eventLogService) {
@@ -547,7 +581,7 @@ export class UsersService {
   async removeFollower(input: RemoveFollowerInput): Promise<void> {
     const res = await this.pgClient.query(
       `DELETE FROM user_follows WHERE follower_id = $1 AND followee_id = $2`,
-      [input.followerId, input.followeeId],
+      [hexToDec(input.followerId), hexToDec(input.followeeId)],
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("not following");
   }
@@ -620,8 +654,11 @@ export class UsersService {
       FROM page p
       JOIN users u ON u.id = p.id
       ORDER BY p.prio, p.nkey, u.id;`;
-    const params = [likePattern, focusUserId, offset, limit, k];
+    const params = [likePattern, hexToDec(focusUserId), offset, limit, k];
     const res = await this.pgClient.query(sql, params);
-    return res.rows.map((row: Record<string, unknown>) => snakeToCamel<User>(row));
+    return res.rows.map((row: Record<string, unknown>) => {
+      row.id = decToHex(row.id);
+      return snakeToCamel<User>(row);
+    });
   }
 }

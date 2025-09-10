@@ -1,4 +1,3 @@
-import { v4 as uuidv4 } from "uuid";
 import { PostsService } from "./posts";
 import {
   CreatePostInput,
@@ -8,10 +7,14 @@ import {
   ListLikersInput,
 } from "../models/post";
 import { User } from "../models/user";
+import crypto from "crypto";
+import { hexToDec } from "../utils/format";
 
 function normalizeSql(sql: string) {
   return sql.replace(/\s+/g, " ").trim();
 }
+const hex16 = () => crypto.randomBytes(8).toString("hex").toUpperCase();
+const toDecStr = (hex: string) => String(hexToDec(hex));
 
 type MockPostRow = {
   id: string;
@@ -428,33 +431,50 @@ describe("posts service", () => {
   let postsService: PostsService;
   let postSample: MockPostRow;
 
+  let user1Hex: string, user2Hex: string, user3Hex: string;
+
   beforeEach(() => {
     pgClient = new MockPgClientMain();
     redis = new MockRedis();
     postsService = new PostsService(pgClient as any, redis as any);
 
-    pgClient.users.push({ id: "user-1", nickname: "Alice" });
-    pgClient.users.push({ id: "user-2", nickname: "Bob" });
-    pgClient.users.push({ id: "user-3", nickname: "Carol" });
+    user1Hex = hex16();
+    user2Hex = hex16();
+    user3Hex = hex16();
+
+    pgClient.users.push({ id: toDecStr(user1Hex), nickname: "Alice" });
+    pgClient.users.push({ id: toDecStr(user2Hex), nickname: "Bob" });
+    pgClient.users.push({ id: toDecStr(user3Hex), nickname: "Carol" });
 
     postSample = {
-      id: uuidv4(),
+      id: hex16(),
       content: "test post content",
-      ownedBy: "user-1",
+      ownedBy: user1Hex,
       replyTo: null,
       allowLikes: true,
       allowReplies: true,
       createdAt: new Date().toISOString(),
       updatedAt: null,
     };
-    pgClient.data.push({ ...postSample });
-    pgClient.tags.push({ postId: postSample.id, name: "tag1" });
-    pgClient.likes.push({ postId: postSample.id, likedBy: uuidv4() });
+    pgClient.data.push({
+      ...postSample,
+      id: toDecStr(postSample.id),
+      ownedBy: toDecStr(postSample.ownedBy),
+      replyTo: postSample.replyTo ? toDecStr(postSample.replyTo) : null,
+    });
+    pgClient.tags.push({ postId: toDecStr(postSample.id), name: "tag1" });
+    pgClient.likes.push({ postId: toDecStr(postSample.id), likedBy: toDecStr(hex16()) });
   });
 
   test("countPosts", async () => {
     expect(await postsService.countPosts()).toBe(1);
-    pgClient.data.push({ ...postSample, id: uuidv4() });
+    const another = { ...postSample, id: hex16() };
+    pgClient.data.push({
+      ...another,
+      id: toDecStr(another.id),
+      ownedBy: toDecStr(another.ownedBy),
+      replyTo: another.replyTo ? toDecStr(another.replyTo) : null,
+    });
     expect(await postsService.countPosts()).toBe(2);
   });
 
@@ -477,21 +497,24 @@ describe("posts service", () => {
   });
 
   test("createPost (then getPost for content)", async () => {
+    const parentId = postSample.id;
     const input: CreatePostInput = {
       content: "new post content",
-      ownedBy: "user-2",
-      replyTo: postSample.id,
+      ownedBy: user2Hex,
+      replyTo: parentId,
       allowLikes: true,
       allowReplies: true,
       tags: ["hello", "world"],
     };
     const created = await postsService.createPost(input);
-    expect(created.ownedBy).toBe("user-2");
-    expect(created.replyTo).toBe(postSample.id);
+    expect(created.ownedBy).toBe(user2Hex);
+    expect(created.replyTo).toBe(parentId);
 
     const detail = await postsService.getPost(created.id);
     expect(detail!.content).toBe("new post content");
-    expect(pgClient.tags.some((t) => t.postId === created.id && t.name === "hello")).toBe(true);
+    expect(pgClient.tags.some((t) => t.postId === toDecStr(created.id) && t.name === "hello")).toBe(
+      true,
+    );
   });
 
   test("getPost", async () => {
@@ -501,7 +524,7 @@ describe("posts service", () => {
   });
 
   test("getPost: not found", async () => {
-    const post = await postsService.getPost("no-such-id");
+    const post = await postsService.getPost(hex16());
     expect(post).toBeNull();
   });
 
@@ -516,7 +539,9 @@ describe("posts service", () => {
     expect(post).not.toBeNull();
     expect(post!.content).toBe("updated content");
     expect(post!.replyTo).toBe(postSample.id);
-    expect(pgClient.tags.some((t) => t.postId === postSample.id && t.name === "foo")).toBe(true);
+    expect(
+      pgClient.tags.some((t) => t.postId === toDecStr(postSample.id) && t.name === "foo"),
+    ).toBe(true);
   });
 
   test("updatePost: partial", async () => {
@@ -531,7 +556,7 @@ describe("posts service", () => {
 
   test("updatePost: not found", async () => {
     const input: UpdatePostInput = {
-      id: "no-such-id",
+      id: hex16(),
       content: "xxx",
     };
     const post = await postsService.updatePost(input);
@@ -541,40 +566,44 @@ describe("posts service", () => {
   test("deletePost", async () => {
     await postsService.deletePost(postSample.id);
     expect(pgClient.data.length).toBe(0);
-    expect(pgClient.tags.some((t) => t.postId === postSample.id)).toBe(false);
-    await expect(postsService.deletePost("no-such-id")).rejects.toThrow(/post not found/i);
+    expect(pgClient.tags.some((t) => t.postId === toDecStr(postSample.id))).toBe(false);
+    await expect(postsService.deletePost(hex16())).rejects.toThrow(/post not found/i);
   });
 
   test("addLike: normal", async () => {
-    const userId = "user-2";
+    const userId = user2Hex;
     await postsService.addLike(postSample.id, userId);
-    expect(pgClient.likes.some((l) => l.postId === postSample.id && l.likedBy === userId)).toBe(
-      true,
-    );
+    expect(
+      pgClient.likes.some(
+        (l) => l.postId === toDecStr(postSample.id) && l.likedBy === toDecStr(userId),
+      ),
+    ).toBe(true);
   });
 
   test("addLike: duplicate should throw", async () => {
-    const userId = "user-2";
+    const userId = user2Hex;
     await postsService.addLike(postSample.id, userId);
     await expect(postsService.addLike(postSample.id, userId)).rejects.toThrow(/already liked/i);
     expect(
-      pgClient.likes.filter((l) => l.postId === postSample.id && l.likedBy === userId).length,
+      pgClient.likes.filter(
+        (l) => l.postId === toDecStr(postSample.id) && l.likedBy === toDecStr(userId),
+      ).length,
     ).toBe(1);
   });
 
   test("removeLike: normal", async () => {
-    const userId = "user-2";
+    const userId = user2Hex;
     await postsService.addLike(postSample.id, userId);
     await postsService.removeLike(postSample.id, userId);
-    expect(pgClient.likes.some((l) => l.postId === postSample.id && l.likedBy === userId)).toBe(
-      false,
-    );
+    expect(
+      pgClient.likes.some(
+        (l) => l.postId === toDecStr(postSample.id) && l.likedBy === toDecStr(userId),
+      ),
+    ).toBe(false);
   });
 
   test("removeLike: not found should throw", async () => {
-    await expect(postsService.removeLike(postSample.id, "no-such-user")).rejects.toThrow(
-      /not liked/i,
-    );
+    await expect(postsService.removeLike(postSample.id, hex16())).rejects.toThrow(/not liked/i);
   });
 });
 
@@ -590,18 +619,18 @@ describe("listPostsByFollowees", () => {
     redis = new MockRedis();
     postsService = new PostsService(pgClient as any, redis as any);
 
-    pgClient.users.push({ id: "user-1", nickname: "Alice" });
-    pgClient.users.push({ id: "user-2", nickname: "Bob" });
-    pgClient.users.push({ id: "user-3", nickname: "Carol" });
+    alice = hex16();
+    bob = hex16();
+    carol = hex16();
 
-    alice = "user-1";
-    bob = "user-2";
-    carol = "user-3";
+    pgClient.users.push({ id: toDecStr(alice), nickname: "Alice" });
+    pgClient.users.push({ id: toDecStr(bob), nickname: "Bob" });
+    pgClient.users.push({ id: toDecStr(carol), nickname: "Carol" });
 
-    pgClient.follows.push({ followerId: alice, followeeId: bob });
+    pgClient.follows.push({ followerId: toDecStr(alice), followeeId: toDecStr(bob) });
 
     postAlice = {
-      id: uuidv4(),
+      id: hex16(),
       content: "post-alice",
       ownedBy: alice,
       replyTo: null,
@@ -611,7 +640,7 @@ describe("listPostsByFollowees", () => {
       updatedAt: null,
     };
     postBob = {
-      id: uuidv4(),
+      id: hex16(),
       content: "post-bob",
       ownedBy: bob,
       replyTo: null,
@@ -621,7 +650,7 @@ describe("listPostsByFollowees", () => {
       updatedAt: null,
     };
     postCarol = {
-      id: uuidv4(),
+      id: hex16(),
       content: "post-carol",
       ownedBy: carol,
       replyTo: null,
@@ -630,7 +659,23 @@ describe("listPostsByFollowees", () => {
       createdAt: new Date().toISOString(),
       updatedAt: null,
     };
-    pgClient.data.push(postAlice, postBob, postCarol);
+    pgClient.data.push(
+      {
+        ...postAlice,
+        id: toDecStr(postAlice.id),
+        ownedBy: toDecStr(postAlice.ownedBy),
+      },
+      {
+        ...postBob,
+        id: toDecStr(postBob.id),
+        ownedBy: toDecStr(postBob.ownedBy),
+      },
+      {
+        ...postCarol,
+        id: toDecStr(postCarol.id),
+        ownedBy: toDecStr(postCarol.ownedBy),
+      },
+    );
   });
 
   test("should not include self posts when includeSelf is false", async () => {
@@ -674,13 +719,14 @@ describe("listPostsLikedByUser", () => {
     redis = new MockRedis();
     postsService = new PostsService(pgClient as any, redis as any);
 
-    pgClient.users.push({ id: "user-1", nickname: "Alice" });
-    pgClient.users.push({ id: "user-2", nickname: "Bob" });
+    alice = hex16();
+    bob = hex16();
 
-    alice = "user-1";
-    bob = "user-2";
+    pgClient.users.push({ id: toDecStr(alice), nickname: "Alice" });
+    pgClient.users.push({ id: toDecStr(bob), nickname: "Bob" });
+
     post1 = {
-      id: uuidv4(),
+      id: hex16(),
       content: "liked-by-alice",
       ownedBy: bob,
       replyTo: null,
@@ -690,7 +736,7 @@ describe("listPostsLikedByUser", () => {
       updatedAt: null,
     };
     post2 = {
-      id: uuidv4(),
+      id: hex16(),
       content: "not-liked",
       ownedBy: bob,
       replyTo: null,
@@ -699,9 +745,12 @@ describe("listPostsLikedByUser", () => {
       createdAt: new Date().toISOString(),
       updatedAt: null,
     };
-    pgClient.data.push(post1, post2);
+    pgClient.data.push(
+      { ...post1, id: toDecStr(post1.id), ownedBy: toDecStr(post1.ownedBy) },
+      { ...post2, id: toDecStr(post2.id), ownedBy: toDecStr(post2.ownedBy) },
+    );
 
-    pgClient.likes.push({ postId: post1.id, likedBy: alice });
+    pgClient.likes.push({ postId: toDecStr(post1.id), likedBy: toDecStr(alice) });
   });
 
   test("should return posts liked by the user", async () => {
@@ -795,11 +844,11 @@ describe("getPost", () => {
     redis = new MockRedis();
     postsService = new PostsService(pgClient as any, redis as any);
 
-    owner = { id: uuidv4(), nickname: "Poster" };
-    pgClient.users.push(owner);
+    owner = { id: hex16(), nickname: "Poster" };
+    pgClient.users.push({ id: toDecStr(owner.id), nickname: owner.nickname });
 
     post = {
-      id: uuidv4(),
+      id: hex16(),
       content: "content",
       ownedBy: owner.id,
       replyTo: null,
@@ -808,31 +857,38 @@ describe("getPost", () => {
       createdAt: new Date().toISOString(),
       updatedAt: null,
     };
-    pgClient.posts.push(post);
+    pgClient.posts.push({
+      ...post,
+      id: toDecStr(post.id),
+      ownedBy: toDecStr(post.ownedBy),
+    });
 
     pgClient.postLikes.push(
-      { postId: post.id, likedBy: uuidv4() },
-      { postId: post.id, likedBy: uuidv4() },
+      { postId: toDecStr(post.id), likedBy: toDecStr(hex16()) },
+      { postId: toDecStr(post.id), likedBy: toDecStr(hex16()) },
     );
 
-    pgClient.postTags.push({ postId: post.id, name: "tag1" }, { postId: post.id, name: "tag2" });
+    pgClient.postTags.push(
+      { postId: toDecStr(post.id), name: "tag1" },
+      { postId: toDecStr(post.id), name: "tag2" },
+    );
 
     pgClient.posts.push(
       {
-        id: uuidv4(),
+        id: toDecStr(hex16()),
         content: "reply1",
-        ownedBy: uuidv4(),
-        replyTo: post.id,
+        ownedBy: toDecStr(hex16()),
+        replyTo: toDecStr(post.id),
         allowLikes: true,
         allowReplies: true,
         createdAt: new Date().toISOString(),
         updatedAt: null,
       },
       {
-        id: uuidv4(),
+        id: toDecStr(hex16()),
         content: "reply2",
-        ownedBy: uuidv4(),
-        replyTo: post.id,
+        ownedBy: toDecStr(hex16()),
+        replyTo: toDecStr(post.id),
         allowLikes: true,
         allowReplies: true,
         createdAt: new Date().toISOString(),
@@ -852,15 +908,15 @@ describe("getPost", () => {
   });
 
   test("getPost: not found returns null", async () => {
-    const result = await postsService.getPost("no-such-id");
+    const result = await postsService.getPost(hex16());
     expect(result).toBeNull();
   });
 
   test("getPost: no likes, no replies, no tags", async () => {
-    const anotherOwner = { id: uuidv4(), nickname: "Nobody" };
-    pgClient.users.push(anotherOwner);
+    const anotherOwner = { id: hex16(), nickname: "Nobody" };
+    pgClient.users.push({ id: toDecStr(anotherOwner.id), nickname: anotherOwner.nickname });
     const p2: MockPostRow = {
-      id: uuidv4(),
+      id: hex16(),
       content: "empty",
       ownedBy: anotherOwner.id,
       replyTo: null,
@@ -869,13 +925,13 @@ describe("getPost", () => {
       createdAt: new Date().toISOString(),
       updatedAt: null,
     };
-    pgClient.posts.push(p2);
-    const post = await postsService.getPost(p2.id);
-    expect(post).not.toBeNull();
-    expect(post!.ownerNickname).toBe("Nobody");
-    expect(post!.countReplies).toBe(0);
-    expect(post!.countLikes).toBe(0);
-    expect(post!.tags).toEqual([]);
+    pgClient.posts.push({ ...p2, id: toDecStr(p2.id), ownedBy: toDecStr(p2.ownedBy) });
+    const got = await postsService.getPost(p2.id);
+    expect(got).not.toBeNull();
+    expect(got!.ownerNickname).toBe("Nobody");
+    expect(got!.countReplies).toBe(0);
+    expect(got!.countLikes).toBe(0);
+    expect(got!.tags).toEqual([]);
   });
 });
 
@@ -898,7 +954,7 @@ class MockPgClientLikers {
         .sort((a, b) => b.createdAt.localeCompare(a.createdAt))
         .slice(offset, offset + limit);
       const likedUserIds = likes.map((l) => l.likedBy);
-      const result = this.users.filter((u) => likedUserIds.includes(u.id));
+      const result = this.users.filter((u) => likedUserIds.includes((u as any).id));
       return { rows: result };
     }
     return { rows: [] };
@@ -916,7 +972,7 @@ describe("listLikers", () => {
     redis = new MockRedis();
     postsService = new PostsService(pgClient as any, redis as any);
     user1 = {
-      id: uuidv4(),
+      id: hex16(),
       email: "alice@example.com",
       nickname: "Alice",
       isAdmin: false,
@@ -930,7 +986,7 @@ describe("listLikers", () => {
       countPosts: 0,
     } as unknown as User;
     user2 = {
-      id: uuidv4(),
+      id: hex16(),
       email: "bob@example.com",
       nickname: "Bob",
       isAdmin: false,
@@ -944,7 +1000,7 @@ describe("listLikers", () => {
       countPosts: 0,
     } as unknown as User;
     user3 = {
-      id: uuidv4(),
+      id: hex16(),
       email: "carol@example.com",
       nickname: "Carol",
       isAdmin: false,
@@ -957,11 +1013,15 @@ describe("listLikers", () => {
       countFollowees: 0,
       countPosts: 0,
     } as unknown as User;
-    postId = uuidv4();
-    pgClient.users.push(user1, user2, user3);
+    postId = hex16();
+    (pgClient.users as any).push(
+      { ...user1, id: toDecStr(user1.id) },
+      { ...user2, id: toDecStr(user2.id) },
+      { ...user3, id: toDecStr(user3.id) },
+    );
     pgClient.postLikes.push(
-      { postId: postId, likedBy: user1.id, createdAt: "2024-01-01T12:00:00Z" },
-      { postId: postId, likedBy: user2.id, createdAt: "2024-01-02T12:00:00Z" },
+      { postId: toDecStr(postId), likedBy: toDecStr(user1.id), createdAt: "2024-01-01T12:00:00Z" },
+      { postId: toDecStr(postId), likedBy: toDecStr(user2.id), createdAt: "2024-01-02T12:00:00Z" },
     );
   });
 
@@ -998,7 +1058,7 @@ describe("listLikers", () => {
 
   test("should return empty array if no likes", async () => {
     const users = await postsService.listLikers({
-      postId: uuidv4(),
+      postId: hex16(),
       offset: 0,
       limit: 10,
       order: "desc",

@@ -6,6 +6,7 @@ import {
   MarkAllNotificationsInput,
   MarkNotificationInput,
 } from "../models/notifications";
+import { decToHex, hexToDec } from "../utils/format";
 
 type Row = {
   slot: string;
@@ -33,10 +34,12 @@ function parsePayload(raw: unknown): ParsedPayload {
   for (const it of arr) {
     if (!it || typeof it !== "object") continue;
     const rec = it as Record<string, unknown>;
-    const userId = typeof rec.userId === "string" ? rec.userId : undefined;
+    const userIdRaw = typeof rec.userId === "string" ? rec.userId : undefined;
+    const userId = userIdRaw ? decToHex(userIdRaw) : undefined;
     const userNickname = typeof rec.userNickname === "string" ? rec.userNickname : "";
     const ts = typeof rec.ts === "number" ? rec.ts : undefined;
-    const postId = typeof rec.postId === "string" ? rec.postId : undefined;
+    const postIdRaw = typeof rec.postId === "string" ? rec.postId : undefined;
+    const postId = postIdRaw ? decToHex(postIdRaw) : undefined;
     const postSnippet = typeof rec.postSnippet === "string" ? rec.postSnippet : undefined;
     if (!userId || ts === undefined) continue;
     if (postId) {
@@ -90,6 +93,7 @@ export class NotificationService {
   constructor(private readonly pg: Client) {}
 
   async listFeed(userId: string, opts?: { newerThan?: Date }): Promise<Notification[] | null> {
+    const dbUserId = hexToDec(userId);
     if (opts?.newerThan) {
       const exists = await this.pg.query(
         `SELECT 1
@@ -97,7 +101,7 @@ export class NotificationService {
           WHERE user_id = $1
             AND updated_at > $2
           LIMIT 1`,
-        [userId, opts.newerThan],
+        [dbUserId, opts.newerThan],
       );
       if (exists.rowCount === 0) return null;
     }
@@ -107,7 +111,7 @@ export class NotificationService {
         WHERE user_id = $1 AND is_read = FALSE
         ORDER BY updated_at DESC
         LIMIT $2`,
-      [userId, Config.NOTIFICATION_SHOWN_RECORDS],
+      [dbUserId, Config.NOTIFICATION_SHOWN_RECORDS],
     );
     const readRes = await this.pg.query<Row>(
       `SELECT slot, term, is_read, payload, updated_at, created_at
@@ -115,7 +119,7 @@ export class NotificationService {
         WHERE user_id = $1 AND is_read = TRUE
         ORDER BY updated_at DESC
         LIMIT $2`,
-      [userId, Config.NOTIFICATION_SHOWN_RECORDS],
+      [dbUserId, Config.NOTIFICATION_SHOWN_RECORDS],
     );
     const unread = unreadRes.rows.map(rowToNotification);
     const read = readRes.rows.map(rowToNotification);
@@ -127,7 +131,7 @@ export class NotificationService {
       `UPDATE notifications
           SET is_read = $4
         WHERE user_id = $1 AND slot = $2 AND term = $3`,
-      [input.userId, input.slot, input.term, input.isRead],
+      [hexToDec(input.userId), input.slot, input.term, input.isRead],
     );
   }
 
@@ -137,7 +141,7 @@ export class NotificationService {
           SET is_read = $2
         WHERE user_id = $1
           AND is_read = $3`,
-      [input.userId, input.isRead, !input.isRead],
+      [hexToDec(input.userId), input.isRead, !input.isRead],
     );
   }
 

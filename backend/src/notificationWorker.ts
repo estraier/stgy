@@ -12,6 +12,7 @@ import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 import { NotificationPostRecord, NotificationUserRecord } from "./models/notifications";
 import { makeTextFromJsonSnippet } from "./utils/snippet";
 import { EventLogService } from "./services/eventLog";
+import { hexToDec, decToHex } from "./utils/format";
 
 const logger = createLogger({ file: "notificationWorker" });
 const CONSUMER = "notification";
@@ -59,9 +60,9 @@ function isSelfInteraction(payload: AnyEventPayload, recipientUserId: string): b
   }
 }
 
-async function getUserNickname(pg: Client, userId: string): Promise<string> {
+async function getUserNickname(pg: Client, userIdHex: string): Promise<string> {
   const u = await pg.query<{ nickname: string }>(`SELECT nickname FROM users WHERE id = $1`, [
-    userId,
+    hexToDec(userIdHex),
   ]);
   return u.rows[0]?.nickname ?? "";
 }
@@ -167,7 +168,7 @@ function parseReplyPayload(raw: unknown): ReplyPayload {
 
 async function upsertFollow(
   pg: Client,
-  recipientUserId: string,
+  recipientUserIdHex: string,
   term: string,
   eventMs: number,
   entry: { userId: string; ts: number },
@@ -176,7 +177,7 @@ async function upsertFollow(
     `SELECT payload FROM notifications
       WHERE user_id = $1 AND slot = 'follow' AND term = $2
       FOR UPDATE`,
-    [recipientUserId, term],
+    [hexToDec(recipientUserIdHex), term],
   );
   const updatedAtISO = new Date(eventMs).toISOString();
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
@@ -188,7 +189,7 @@ async function upsertFollow(
     await pg.query(
       `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
        VALUES ($1, 'follow', $2, FALSE, $3::jsonb, $4)`,
-      [recipientUserId, term, JSON.stringify(payload), updatedAtISO],
+      [hexToDec(recipientUserIdHex), term, JSON.stringify(payload), updatedAtISO],
     );
     return;
   }
@@ -209,13 +210,13 @@ async function upsertFollow(
     `UPDATE notifications
        SET is_read = FALSE, payload = $3::jsonb, updated_at = $4
      WHERE user_id = $1 AND slot = 'follow' AND term = $2`,
-    [recipientUserId, term, JSON.stringify(nextPayload), updatedAtISO],
+    [hexToDec(recipientUserIdHex), term, JSON.stringify(nextPayload), updatedAtISO],
   );
 }
 
 async function upsertLike(
   pg: Client,
-  recipientUserId: string,
+  recipientUserIdHex: string,
   postId: string,
   term: string,
   eventMs: number,
@@ -226,7 +227,7 @@ async function upsertLike(
     `SELECT payload FROM notifications
       WHERE user_id = $1 AND slot = $2 AND term = $3
       FOR UPDATE`,
-    [recipientUserId, slot, term],
+    [hexToDec(recipientUserIdHex), slot, term],
   );
   const updatedAtISO = new Date(eventMs).toISOString();
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
@@ -245,7 +246,7 @@ async function upsertLike(
     await pg.query(
       `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
        VALUES ($1, $2, $3, FALSE, $4::jsonb, $5)`,
-      [recipientUserId, slot, term, JSON.stringify(payload), updatedAtISO],
+      [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(payload), updatedAtISO],
     );
     return;
   }
@@ -275,13 +276,13 @@ async function upsertLike(
     `UPDATE notifications
        SET is_read = FALSE, payload = $4::jsonb, updated_at = $5
      WHERE user_id = $1 AND slot = $2 AND term = $3`,
-    [recipientUserId, slot, term, JSON.stringify(nextPayload), updatedAtISO],
+    [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(nextPayload), updatedAtISO],
   );
 }
 
 async function upsertReply(
   pg: Client,
-  recipientUserId: string,
+  recipientUserIdHex: string,
   replyToPostId: string,
   term: string,
   eventMs: number,
@@ -292,7 +293,7 @@ async function upsertReply(
     `SELECT payload FROM notifications
       WHERE user_id = $1 AND slot = $2 AND term = $3
       FOR UPDATE`,
-    [recipientUserId, slot, term],
+    [hexToDec(recipientUserIdHex), slot, term],
   );
   const updatedAtISO = new Date(eventMs).toISOString();
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
@@ -311,7 +312,7 @@ async function upsertReply(
     await pg.query(
       `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
        VALUES ($1, $2, $3, FALSE, $4::jsonb, $5)`,
-      [recipientUserId, slot, term, JSON.stringify(payload), updatedAtISO],
+      [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(payload), updatedAtISO],
     );
     return;
   }
@@ -347,7 +348,7 @@ async function upsertReply(
     `UPDATE notifications
        SET is_read = FALSE, payload = $4::jsonb, updated_at = $5
      WHERE user_id = $1 AND slot = $2 AND term = $3`,
-    [recipientUserId, slot, term, JSON.stringify(nextPayload), updatedAtISO],
+    [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(nextPayload), updatedAtISO],
   );
 }
 
@@ -360,12 +361,12 @@ async function resolveRecipientUserId(
     const res = await pg.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
       payload.postId,
     ]);
-    return res.rows[0]?.owned_by ?? null;
+    return res.rows[0]?.owned_by ? (decToHex(res.rows[0].owned_by) as string) : null;
   }
   const res = await pg.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
     payload.replyToPostId,
   ]);
-  return res.rows[0]?.owned_by ?? null;
+  return res.rows[0]?.owned_by ? (decToHex(res.rows[0].owned_by) as string) : null;
 }
 
 async function processFollowEvent(

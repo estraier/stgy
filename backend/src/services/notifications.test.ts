@@ -8,7 +8,7 @@ jest.mock("../config", () => ({
   },
 }));
 
-describe("NotificationService (happy paths)", () => {
+describe("NotificationService", () => {
   function mkSvc(withQueryMock?: jest.Mock) {
     const query = (withQueryMock ?? (jest.fn() as any)) as any;
     const pg = { query } as any;
@@ -20,16 +20,18 @@ describe("NotificationService (happy paths)", () => {
     countUsers: 2,
     countPosts: 1,
     records: [
-      { userId: "u1", userNickname: "User One", ts: 1000 },
+      { userId: "123", userNickname: "User One", ts: 1000 },
       {
-        userId: "u2",
+        userId: "456",
         userNickname: "User Two",
-        postId: "p1",
+        postId: "789",
         postSnippet: "hello world",
         ts: 2000,
       },
     ],
   };
+
+  const UID_HEX = "00000000000000A1";
 
   test("listFeed: merges unread/read by updated_at desc and applies limit", async () => {
     const unreadRows = [
@@ -74,14 +76,14 @@ describe("NotificationService (happy paths)", () => {
       .mockResolvedValueOnce({ rows: readRows });
 
     const { svc, query } = mkSvc(q);
-    const out = await svc.listFeed("USER-1");
+    const out = await svc.listFeed(UID_HEX);
 
     expect(query).toHaveBeenNthCalledWith(1, expect.stringMatching(/FROM notifications/i), [
-      "USER-1",
+      expect.stringMatching(/^\d+$/),
       3,
     ]);
     expect(query).toHaveBeenNthCalledWith(2, expect.stringMatching(/FROM notifications/i), [
-      "USER-1",
+      expect.stringMatching(/^\d+$/),
       3,
     ]);
 
@@ -110,13 +112,13 @@ describe("NotificationService (happy paths)", () => {
 
     const { svc, query } = mkSvc(q);
     const newerThan = new Date("2025-08-24T12:34:56.000Z");
-    const out = await svc.listFeed("U-NT", { newerThan });
+    const out = await svc.listFeed(UID_HEX, { newerThan });
 
     expect(out).toBeNull();
     expect(query).toHaveBeenCalledTimes(1);
     expect(query).toHaveBeenCalledWith(
       expect.stringMatching(/SELECT\s+1\s+FROM\s+notifications[\s\S]*updated_at\s*>\s*\$2/i),
-      ["U-NT", newerThan],
+      [expect.stringMatching(/^\d+$/), newerThan],
     );
   });
 
@@ -141,7 +143,7 @@ describe("NotificationService (happy paths)", () => {
 
     const { svc, query } = mkSvc(q);
     const newerThan = new Date("2025-08-24T23:59:59.000Z");
-    const out = await svc.listFeed("U-OK", { newerThan });
+    const out = await svc.listFeed(UID_HEX, { newerThan });
 
     expect(out).not.toBeNull();
     expect(out!.length).toBe(1);
@@ -150,14 +152,14 @@ describe("NotificationService (happy paths)", () => {
     expect(query).toHaveBeenNthCalledWith(
       1,
       expect.stringMatching(/SELECT\s+1\s+FROM\s+notifications[\s\S]*updated_at\s*>\s*\$2/i),
-      ["U-OK", newerThan],
+      [expect.stringMatching(/^\d+$/), newerThan],
     );
     expect(query).toHaveBeenNthCalledWith(2, expect.stringMatching(/FROM notifications/i), [
-      "U-OK",
+      expect.stringMatching(/^\d+$/),
       3,
     ]);
     expect(query).toHaveBeenNthCalledWith(3, expect.stringMatching(/FROM notifications/i), [
-      "U-OK",
+      expect.stringMatching(/^\d+$/),
       3,
     ]);
   });
@@ -165,7 +167,7 @@ describe("NotificationService (happy paths)", () => {
   test("markNotification: updates a single notification", async () => {
     const { svc, query } = mkSvc();
     await svc.markNotification({
-      userId: "U",
+      userId: UID_HEX,
       slot: "like:POST-1",
       term: "2025-08-24",
       isRead: true,
@@ -173,19 +175,19 @@ describe("NotificationService (happy paths)", () => {
     expect(query).toHaveBeenCalledTimes(1);
     expect(query).toHaveBeenCalledWith(
       expect.stringMatching(/UPDATE notifications\s+SET is_read/i),
-      ["U", "like:POST-1", "2025-08-24", true],
+      [expect.stringMatching(/^\d+$/), "like:POST-1", "2025-08-24", true],
     );
   });
 
   test("markAllNotifications: bulk update only rows with differing state", async () => {
     const { svc, query } = mkSvc();
-    await svc.markAllNotifications({ userId: "U2", isRead: false });
+    await svc.markAllNotifications({ userId: UID_HEX, isRead: false });
     expect(query).toHaveBeenCalledTimes(1);
     expect(query).toHaveBeenCalledWith(
       expect.stringMatching(
         /UPDATE notifications[\s\S]*WHERE user_id = \$1[\s\S]*AND is_read = \$3/i,
       ),
-      ["U2", false, true],
+      [expect.stringMatching(/^\d+$/), false, true],
     );
   });
 

@@ -1,6 +1,28 @@
 import { Config } from "../config";
 import crypto from "crypto";
 
+export function hexToDec(hex: string): string {
+  const s = String(hex).trim();
+  if (!/^(?:0x)?[0-9a-fA-F]{1,16}$/.test(s)) {
+    throw new Error("invalid hex string");
+  }
+  const normalized = s.replace(/^0x/i, "");
+  return BigInt("0x" + normalized).toString();
+}
+
+export function hexArrayToDec(arr: string[]): string[] {
+  return arr.map(hexToDec);
+}
+
+export function decToHex(dec: unknown): string {
+  if (dec === null || dec === undefined) throw new Error("invalid decimal value");
+  const n = BigInt(String(dec));
+  if (n < 0) throw new Error("negative id is not allowed");
+  const hex = n.toString(16).toUpperCase();
+  if (hex.length > 16) throw new Error("value exceeds 64-bit range");
+  return hex.padStart(16, "0");
+}
+
 export function generateVerificationCode(): string {
   if (Config.TEST_SIGNUP_CODE.length > 0) {
     return Config.TEST_SIGNUP_CODE;

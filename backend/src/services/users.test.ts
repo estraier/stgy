@@ -1,10 +1,15 @@
 import { UsersService } from "./users";
 import { User } from "../models/user";
+import { hexToDec, decToHex } from "../utils/format";
 import crypto from "crypto";
 
 function md5(s: string) {
   return crypto.createHash("md5").update(s).digest("hex");
 }
+
+const ALICE = "00000000000000A1";
+const BOB = "00000000000000B0";
+const CAROL = "00000000000000C0";
 
 type UserDetailRow = {
   introduction: string;
@@ -20,7 +25,7 @@ class MockPgClient {
   constructor() {
     this.users = [
       {
-        id: "alice",
+        id: ALICE,
         email: "alice@example.com",
         nickname: "Alice",
         isAdmin: false,
@@ -34,7 +39,7 @@ class MockPgClient {
         countPosts: 0,
       },
       {
-        id: "bob",
+        id: BOB,
         email: "bob@example.com",
         nickname: "Bob",
         isAdmin: false,
@@ -48,7 +53,7 @@ class MockPgClient {
         countPosts: 0,
       },
       {
-        id: "carol",
+        id: CAROL,
         email: "carol@example.com",
         nickname: "Carol",
         isAdmin: false,
@@ -63,28 +68,28 @@ class MockPgClient {
       },
     ];
     this.details = {
-      alice: { introduction: "introA", aiPersonality: "A" },
-      bob: { introduction: "introB", aiPersonality: "B" },
-      carol: { introduction: "introC", aiPersonality: "C" },
+      [ALICE]: { introduction: "introA", aiPersonality: "A" },
+      [BOB]: { introduction: "introB", aiPersonality: "B" },
+      [CAROL]: { introduction: "introC", aiPersonality: "C" },
     };
     this.follows = [
-      { followerId: "alice", followeeId: "bob" },
-      { followerId: "alice", followeeId: "carol" },
-      { followerId: "bob", followeeId: "alice" },
-      { followerId: "carol", followeeId: "alice" },
+      { followerId: ALICE, followeeId: BOB },
+      { followerId: ALICE, followeeId: CAROL },
+      { followerId: BOB, followeeId: ALICE },
+      { followerId: CAROL, followeeId: ALICE },
     ];
     this.passwords = {
-      alice: md5("alicepass"),
-      bob: md5("bobpass"),
-      carol: md5("carolpass"),
+      [ALICE]: md5("alicepass"),
+      [BOB]: md5("bobpass"),
+      [CAROL]: md5("carolpass"),
     };
   }
 
-  private cntFollowers(id: string) {
-    return this.follows.filter((f) => f.followeeId === id).length;
+  private cntFollowers(idHex: string) {
+    return this.follows.filter((f) => f.followeeId === idHex).length;
   }
-  private cntFollowees(id: string) {
-    return this.follows.filter((f) => f.followerId === id).length;
+  private cntFollowees(idHex: string) {
+    return this.follows.filter((f) => f.followerId === idHex).length;
   }
 
   async query(sql: string, params: any[] = []) {
@@ -101,7 +106,7 @@ class MockPgClient {
       sql.includes("JOIN users u ON u.id = p.id")
     ) {
       const likePattern: string = params[0];
-      const focusUserId: string = params[1];
+      const focusUserIdHex: string = decToHex(params[1]);
       const offset: number = params[2] ?? 0;
       const limit: number = params[3] ?? 20;
       const k: number = params[4] ?? offset + limit;
@@ -111,13 +116,13 @@ class MockPgClient {
       const hasOthers = sql.includes("others AS (");
       const candidates: Array<{ prio: number; id: string; nkey: string }> = [];
       if (hasSelf) {
-        const selfUser = this.users.find((u) => u.id === focusUserId && match(u));
+        const selfUser = this.users.find((u) => u.id === focusUserIdHex && match(u));
         if (selfUser) {
           candidates.push({ prio: 0, id: selfUser.id, nkey: selfUser.nickname.toLowerCase() });
         }
       }
       const followeeIds = this.follows
-        .filter((f) => f.followerId === focusUserId)
+        .filter((f) => f.followerId === focusUserIdHex)
         .map((f) => f.followeeId);
       const followees = this.users
         .filter((u) => followeeIds.includes(u.id) && match(u))
@@ -125,7 +130,7 @@ class MockPgClient {
           (a, b) =>
             a.nickname.toLowerCase().localeCompare(b.nickname.toLowerCase()) ||
             a.nickname.localeCompare(b.nickname) ||
-            a.id.localeCompare(b.id),
+            (BigInt("0x" + a.id) > BigInt("0x" + b.id) ? 1 : -1),
         )
         .slice(0, k);
       for (const u of followees) {
@@ -138,7 +143,7 @@ class MockPgClient {
             (a, b) =>
               a.nickname.toLowerCase().localeCompare(b.nickname.toLowerCase()) ||
               a.nickname.localeCompare(b.nickname) ||
-              a.id.localeCompare(b.id),
+              (BigInt("0x" + a.id) > BigInt("0x" + b.id) ? 1 : -1),
           )
           .slice(0, k);
         for (const u of others) {
@@ -151,14 +156,17 @@ class MockPgClient {
         if (!prev || c.prio < prev.prio) bestById.set(c.id, c);
       }
       const deduped = Array.from(bestById.values()).sort(
-        (a, b) => a.prio - b.prio || a.nkey.localeCompare(b.nkey) || a.id.localeCompare(b.id),
+        (a, b) =>
+          a.prio - b.prio ||
+          a.nkey.localeCompare(b.nkey) ||
+          (BigInt("0x" + a.id) > BigInt("0x" + b.id) ? 1 : -1),
       );
       const page = deduped.slice(offset, offset + limit);
       const rows = page
         .map((p) => this.users.find((u) => u.id === p.id))
         .filter((u): u is User => !!u)
         .map((u) => ({
-          id: u.id,
+          id: hexToDec(u.id),
           email: u.email,
           nickname: u.nickname,
           is_admin: u.isAdmin,
@@ -214,7 +222,7 @@ class MockPgClient {
     if (sql.startsWith("SELECT id FROM users WHERE email = $1")) {
       const user = this.users.find((u) => u.email === params[0]);
       if (!user) return { rows: [] };
-      return { rows: [{ id: user.id }] };
+      return { rows: [{ id: hexToDec(user.id) }] };
     }
 
     if (
@@ -222,10 +230,11 @@ class MockPgClient {
         "SELECT id, email, nickname, is_admin, ai_model, created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1",
       )
     ) {
-      const user = this.users.find((u) => u.id === params[0]);
+      const idHex = decToHex(params[0]);
+      const user = this.users.find((u) => u.id === idHex);
       if (!user) return { rows: [] };
       const row = {
-        id: user.id,
+        id: hexToDec(user.id),
         email: user.email,
         nickname: user.nickname,
         is_admin: user.isAdmin,
@@ -244,11 +253,12 @@ class MockPgClient {
         "SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts, d.introduction, d.ai_personality FROM users u LEFT JOIN user_details d ON d.user_id = u.id WHERE u.id = $1",
       )
     ) {
-      const user = this.users.find((u) => u.id === params[0]);
+      const idHex = decToHex(params[0]);
+      const user = this.users.find((u) => u.id === idHex);
       if (!user) return { rows: [] };
       const d = this.details[user.id] ?? { introduction: "", aiPersonality: null };
       const row = {
-        id: user.id,
+        id: hexToDec(user.id),
         email: user.email,
         nickname: user.nickname,
         is_admin: user.isAdmin,
@@ -271,15 +281,17 @@ class MockPgClient {
         "SELECT EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $1 AND followee_id = $2) AS is_followed_by_focus_user",
       )
     ) {
-      const [focusUserId, id] = params;
+      const [focusUserIdDec, idDec] = params;
+      const focusUserId = decToHex(focusUserIdDec);
+      const idHex = decToHex(idDec);
       return {
         rows: [
           {
             is_followed_by_focus_user: this.follows.some(
-              (f) => f.followerId === focusUserId && f.followeeId === id,
+              (f) => f.followerId === focusUserId && f.followeeId === idHex,
             ),
             is_following_focus_user: this.follows.some(
-              (f) => f.followerId === id && f.followeeId === focusUserId,
+              (f) => f.followerId === idHex && f.followeeId === focusUserId,
             ),
           },
         ],
@@ -309,11 +321,11 @@ class MockPgClient {
         const pat = params[0].toLowerCase().replace(/%/g, "");
         list = list.filter((u) => u.nickname.toLowerCase().startsWith(pat));
       }
-      list.sort((a, b) => b.id.localeCompare(a.id));
+      list.sort((a, b) => (BigInt("0x" + b.id) > BigInt("0x" + a.id) ? 1 : -1));
       const offset = params[params.length - 2] || 0;
       const limit = params[params.length - 1] || 100;
       const rows = list.slice(offset, offset + limit).map((u) => ({
-        id: u.id,
+        id: hexToDec(u.id),
         email: u.email,
         nickname: u.nickname,
         is_admin: u.isAdmin,
@@ -334,11 +346,12 @@ class MockPgClient {
         "SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)",
       )
     ) {
-      const [focusUserId, ids] = params;
+      const focusUserId = decToHex(params[0]);
+      const idsHex: string[] = (params[1] as any[]).map(decToHex);
       return {
         rows: this.follows
-          .filter((f) => f.followerId === focusUserId && ids.includes(f.followeeId))
-          .map((f) => ({ followee_id: f.followeeId })),
+          .filter((f) => f.followerId === focusUserId && idsHex.includes(f.followeeId))
+          .map((f) => ({ followee_id: hexToDec(f.followeeId) })),
       };
     }
     if (
@@ -346,11 +359,12 @@ class MockPgClient {
         "SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2",
       )
     ) {
-      const [ids, focusUserId] = params;
+      const idsHex: string[] = (params[0] as any[]).map(decToHex);
+      const focusUserId = decToHex(params[1]);
       return {
         rows: this.follows
-          .filter((f) => ids.includes(f.followerId) && f.followeeId === focusUserId)
-          .map((f) => ({ follower_id: f.followerId })),
+          .filter((f) => idsHex.includes(f.followerId) && f.followeeId === focusUserId)
+          .map((f) => ({ follower_id: hexToDec(f.followerId) })),
       };
     }
 
@@ -365,9 +379,10 @@ class MockPgClient {
         "INSERT INTO users (id, email, nickname, password, is_admin, snippet, avatar, ai_model, created_at, updated_at) VALUES",
       )
     ) {
-      const [id, email, nickname, password, isAdmin, snippet, avatar, aiModel, idDate] = params;
+      const [idDec, email, nickname, password, isAdmin, snippet, avatar, aiModel, idDate] = params;
+      const idHex = decToHex(idDec);
       const user: User = {
-        id,
+        id: idHex,
         email,
         nickname,
         isAdmin,
@@ -385,8 +400,12 @@ class MockPgClient {
       return {
         rows: [
           {
-            ...user,
+            id: idDec,
+            email: user.email,
+            nickname: user.nickname,
             is_admin: user.isAdmin,
+            snippet: user.snippet,
+            avatar: user.avatar,
             ai_model: user.aiModel,
             created_at: user.createdAt,
             updated_at: user.updatedAt,
@@ -399,7 +418,8 @@ class MockPgClient {
     }
 
     if (sql.startsWith("INSERT INTO user_details (user_id, introduction, ai_personality)")) {
-      const [userId, introduction, aiPersonality] = params;
+      const [userIdDec, introduction, aiPersonality] = params;
+      const userId = decToHex(userIdDec);
       const hasCoalesce = sql.includes("COALESCE(EXCLUDED.introduction");
       const prev = this.details[userId] ?? { introduction: "", aiPersonality: null };
       this.details[userId] = {
@@ -416,7 +436,8 @@ class MockPgClient {
     }
 
     if (sql.startsWith("UPDATE users SET password = $1 WHERE id = $2")) {
-      const [password, id] = params;
+      const [password, idDec] = params;
+      const id = decToHex(idDec);
       const exists = this.users.some((u) => u.id === id);
       if (!exists) return { rowCount: 0 };
       this.passwords[id] = password;
@@ -424,13 +445,14 @@ class MockPgClient {
     }
 
     if (sql.startsWith("UPDATE users SET")) {
-      const user = this.users.find((u) => u.id === params[params.length - 1]);
+      const id = decToHex(params[params.length - 1]);
+      const user = this.users.find((u) => u.id === id);
       if (!user) return { rows: [] };
       if (sql.includes("email = $1")) user.email = params[0];
-      if (sql.includes("nickname = $2") || sql.includes("nickname = $1"))
-        user.nickname =
-          params.find((p: any) => typeof p === "string" && p.includes("@") === false) ??
-          user.nickname;
+      if (sql.includes("nickname =")) {
+        const nick = params.find((p: any) => typeof p === "string" && !p.includes("@"));
+        if (nick) user.nickname = nick;
+      }
       if (sql.includes("is_admin ="))
         user.isAdmin = !!params.find((p: any) => typeof p === "boolean");
       if (sql.includes("avatar ="))
@@ -444,7 +466,7 @@ class MockPgClient {
       return {
         rows: [
           {
-            id: user.id,
+            id: hexToDec(user.id),
             email: user.email,
             nickname: user.nickname,
             is_admin: user.isAdmin,
@@ -463,13 +485,14 @@ class MockPgClient {
     }
 
     if (sql.startsWith("DELETE FROM users WHERE id = $1")) {
-      const id = params[0];
+      const id = decToHex(params[0]);
       const idx = this.users.findIndex((u) => u.id === id);
       if (idx === -1) return { rowCount: 0 };
+      const hex = this.users[idx].id;
       this.users.splice(idx, 1);
-      delete this.passwords[id];
-      delete this.details[id];
-      this.follows = this.follows.filter((f) => f.followerId !== id && f.followeeId !== id);
+      delete this.passwords[hex];
+      delete this.details[hex];
+      this.follows = this.follows.filter((f) => f.followerId !== hex && f.followeeId !== hex);
       return { rowCount: 1 };
     }
 
@@ -478,16 +501,20 @@ class MockPgClient {
         "SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
       )
     ) {
-      const followerId = params[0];
+      const followerId = decToHex(params[0]);
       const list = this.follows
         .filter((f) => f.followerId === followerId)
         .map((f) => this.users.find((u) => u.id === f.followeeId))
         .filter((u): u is User => !!u);
-      list.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+      list.sort(
+        (a, b) =>
+          b.createdAt.localeCompare(a.createdAt) ||
+          (BigInt("0x" + b.id) > BigInt("0x" + a.id) ? 1 : -1),
+      );
       const offset = params[1] || 0;
       const limit = params[2] || 100;
       const rows = list.slice(offset, offset + limit).map((u) => ({
-        id: u.id,
+        id: hexToDec(u.id),
         email: u.email,
         nickname: u.nickname,
         is_admin: u.isAdmin,
@@ -508,16 +535,20 @@ class MockPgClient {
         "SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
       )
     ) {
-      const followeeId = params[0];
+      const followeeId = decToHex(params[0]);
       const list = this.follows
         .filter((f) => f.followeeId === followeeId)
         .map((f) => this.users.find((u) => u.id === f.followerId))
         .filter((u): u is User => !!u);
-      list.sort((a, b) => b.createdAt.localeCompare(a.createdAt) || b.id.localeCompare(a.id));
+      list.sort(
+        (a, b) =>
+          b.createdAt.localeCompare(a.createdAt) ||
+          (BigInt("0x" + b.id) > BigInt("0x" + a.id) ? 1 : -1),
+      );
       const offset = params[1] || 0;
       const limit = params[2] || 100;
       const rows = list.slice(offset, offset + limit).map((u) => ({
-        id: u.id,
+        id: hexToDec(u.id),
         email: u.email,
         nickname: u.nickname,
         is_admin: u.isAdmin,
@@ -534,14 +565,17 @@ class MockPgClient {
     }
 
     if (sql.startsWith("INSERT INTO user_follows")) {
-      const [followerId, followeeId] = params;
+      const [followerIdDec, followeeIdDec] = params;
+      const followerId = decToHex(followerIdDec);
+      const followeeId = decToHex(followeeIdDec);
       if (!this.follows.some((f) => f.followerId === followerId && f.followeeId === followeeId)) {
         this.follows.push({ followerId, followeeId });
       }
       return { rowCount: 1 };
     }
     if (sql.startsWith("DELETE FROM user_follows WHERE follower_id = $1 AND followee_id = $2")) {
-      const [followerId, followeeId] = params;
+      const followerId = decToHex(params[0]);
+      const followeeId = decToHex(params[1]);
       const prev = this.follows.length;
       this.follows = this.follows.filter(
         (f) => !(f.followerId === followerId && f.followeeId === followeeId),
@@ -590,15 +624,15 @@ describe("UsersService", () => {
   });
 
   test("getUserLite", async () => {
-    const u = await service.getUserLite("alice");
-    expect(u?.id).toBe("alice");
+    const u = await service.getUserLite(ALICE);
+    expect(u?.id).toBe(ALICE);
     expect(u?.email).toBe("alice@example.com");
     expect(u?.aiModel).toBe("gpt-4.1");
   });
 
   test("getUser (with focusUserId)", async () => {
-    const user = await service.getUser("alice", "bob");
-    expect(user?.id).toBe("alice");
+    const user = await service.getUser(ALICE, BOB);
+    expect(user?.id).toBe(ALICE);
     expect(user?.countFollowers).toBe(2);
     expect(user?.countFollowees).toBe(2);
     expect(user?.countPosts).toBe(0);
@@ -608,19 +642,19 @@ describe("UsersService", () => {
   });
 
   test("listUsers (with focusUserId)", async () => {
-    const users = await service.listUsers({}, "bob");
-    const alice = users.find((u) => u.id === "alice")!;
+    const users = await service.listUsers({}, BOB);
+    const alice = users.find((u) => u.id === ALICE)!;
     expect(alice.countFollowees).toBe(2);
     expect(alice.countPosts).toBe(0);
     expect(alice.isFollowedByFocusUser).toBe(true);
     expect(alice.isFollowingFocusUser).toBe(true);
-    const bob = users.find((u) => u.id === "bob")!;
+    const bob = users.find((u) => u.id === BOB)!;
     expect(bob.countFollowers).toBe(1);
     expect(bob.countFollowees).toBe(1);
     expect(bob.countPosts).toBe(0);
     expect(bob.isFollowedByFocusUser).toBeUndefined();
     expect(bob.isFollowingFocusUser).toBeUndefined();
-    const carol = users.find((u) => u.id === "carol")!;
+    const carol = users.find((u) => u.id === CAROL)!;
     expect(carol.countFollowers).toBe(1);
     expect(carol.countFollowees).toBe(1);
     expect(carol.countPosts).toBe(0);
@@ -648,7 +682,7 @@ describe("UsersService", () => {
 
   test("updateUser (including details)", async () => {
     const user = await service.updateUser({
-      id: "alice",
+      id: ALICE,
       email: "alice2@example.com",
       nickname: "Alice2",
       isAdmin: true,
@@ -659,13 +693,13 @@ describe("UsersService", () => {
     });
     expect(user?.email).toBe("alice2@example.com");
     expect(user?.isAdmin).toBe(true);
-    const detail = await service.getUser("alice");
+    const detail = await service.getUser(ALICE);
     expect(detail?.introduction).toBe("introX");
     expect(detail?.aiPersonality).toBe("X");
   });
 
   test("startUpdateEmail stores verification info in Redis and queues mail", async () => {
-    const userId = "alice";
+    const userId = ALICE;
     const newEmail = "alice_new@example.com";
     const result = await service.startUpdateEmail(userId, newEmail);
     expect(result).toHaveProperty("updateEmailId");
@@ -680,25 +714,25 @@ describe("UsersService", () => {
 
   test("verifyUpdateEmail: updates email if code matches & email unused", async () => {
     await redis.hmset("updateEmail:xyz", {
-      userId: "alice",
+      userId: ALICE,
       newEmail: "alice2@example.com",
       verificationCode: "123456",
       createdAt: new Date().toISOString(),
     });
-    await new UsersService(pg as any, redis as any).verifyUpdateEmail("alice", "xyz", "123456");
-    expect(pg.users.find((u) => u.id === "alice")?.email).toBe("alice2@example.com");
+    await new UsersService(pg as any, redis as any).verifyUpdateEmail(ALICE, "xyz", "123456");
+    expect(pg.users.find((u) => u.id === ALICE)?.email).toBe("alice2@example.com");
     expect(await redis.hgetall("updateEmail:xyz")).toEqual({});
   });
 
   test("verifyUpdateEmail: throws if code mismatch", async () => {
     await redis.hmset("updateEmail:abc", {
-      userId: "alice",
+      userId: ALICE,
       newEmail: "alice3@example.com",
       verificationCode: "654321",
       createdAt: new Date().toISOString(),
     });
     await expect(
-      new UsersService(pg as any, redis as any).verifyUpdateEmail("alice", "abc", "wrongcode"),
+      new UsersService(pg as any, redis as any).verifyUpdateEmail(ALICE, "abc", "wrongcode"),
     ).rejects.toThrow(/mismatch/i);
   });
 
@@ -706,13 +740,13 @@ describe("UsersService", () => {
     const id = pg.users[0].id;
     await service.updateUserPassword({ id, password: "newpass" });
     expect(pg.passwords[id]).toBe(md5("newpass"));
-    await expect(service.updateUserPassword({ id: "no-such-id", password: "x" })).rejects.toThrow(
-      /User not found/i,
-    );
+    await expect(
+      service.updateUserPassword({ id: "00000000000000DD", password: "x" }),
+    ).rejects.toThrow(/User not found/i);
   });
 
   test("startResetPassword stores verification info in Redis and queues mail", async () => {
-    const userId = "alice";
+    const userId = ALICE;
     const email = "alice@example.com";
     const { resetPasswordId, webCode } = await service.startResetPassword(email);
     const stored = redis.store[`resetPassword:${resetPasswordId}`];
@@ -740,7 +774,7 @@ describe("UsersService", () => {
     const stored = redis.store[`resetPassword:${resetPasswordId}`];
     const mailCode = stored.mailCode;
     await service.verifyResetPassword(email, resetPasswordId, webCode, mailCode, "newsecurepass");
-    expect(pg.passwords["alice"]).toBe(md5("newsecurepass"));
+    expect(pg.passwords[ALICE]).toBe(md5("newsecurepass"));
   });
 
   test("verifyResetPassword: throws if webCode does not match", async () => {
@@ -764,37 +798,37 @@ describe("UsersService", () => {
     const id = pg.users[0].id;
     await service.deleteUser(id);
     expect(pg.users.find((u) => u.id === id)).toBeUndefined();
-    await expect(service.deleteUser("no-such-id")).rejects.toThrow(/User not found/i);
+    await expect(service.deleteUser("00000000000000DD")).rejects.toThrow(/User not found/i);
   });
 
   test("listFollowees (with focusUserId)", async () => {
-    const res = await service.listFollowees({ followerId: "alice" }, "bob");
+    const res = await service.listFollowees({ followerId: ALICE }, BOB);
     expect(res.length).toBe(2);
-    expect(res.some((u) => u.id === "bob")).toBe(true);
-    expect(res.some((u) => u.id === "carol")).toBe(true);
+    expect(res.some((u) => u.id === BOB)).toBe(true);
+    expect(res.some((u) => u.id === CAROL)).toBe(true);
     expect(res.every((u) => typeof u.countFollowers === "number")).toBe(true);
     expect(res.every((u) => typeof u.countPosts === "number")).toBe(true);
   });
 
   test("listFollowers (with focusUserId)", async () => {
-    const res = await service.listFollowers({ followeeId: "alice" }, "bob");
+    const res = await service.listFollowers({ followeeId: ALICE }, BOB);
     expect(res.length).toBe(2);
-    expect(res.some((u) => u.id === "bob")).toBe(true);
-    expect(res.some((u) => u.id === "carol")).toBe(true);
+    expect(res.some((u) => u.id === BOB)).toBe(true);
+    expect(res.some((u) => u.id === CAROL)).toBe(true);
     expect(res.every((u) => typeof u.countFollowers === "number")).toBe(true);
     expect(res.every((u) => typeof u.countPosts === "number")).toBe(true);
   });
 
   test("addFollower/removeFollower", async () => {
-    await service.addFollower({ followerId: "bob", followeeId: "carol" });
-    expect(pg.follows.some((f) => f.followerId === "bob" && f.followeeId === "carol")).toBe(true);
-    await service.removeFollower({ followerId: "bob", followeeId: "carol" });
-    expect(pg.follows.some((f) => f.followerId === "bob" && f.followeeId === "carol")).toBe(false);
+    await service.addFollower({ followerId: BOB, followeeId: CAROL });
+    expect(pg.follows.some((f) => f.followerId === BOB && f.followeeId === CAROL)).toBe(true);
+    await service.removeFollower({ followerId: BOB, followeeId: CAROL });
+    expect(pg.follows.some((f) => f.followerId === BOB && f.followeeId === CAROL)).toBe(false);
   });
 
   test("listFriendsByNicknamePrefix (typical)", async () => {
     const res = await service.listFriendsByNicknamePrefix({
-      focusUserId: "alice",
+      focusUserId: ALICE,
       nicknamePrefix: "b",
       offset: 0,
       limit: 20,
@@ -802,6 +836,6 @@ describe("UsersService", () => {
       omitOthers: false,
     });
     expect(res.length).toBe(1);
-    expect(res[0].id).toBe("bob");
+    expect(res[0].id).toBe(BOB);
   });
 });
