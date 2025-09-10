@@ -1,7 +1,7 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import NextImage from "next/image"; // ← React用。DOMのimgはdocument.createElementで作る
+import NextImage from "next/image";
 import { createPortal } from "react-dom";
 import { formatBytes } from "@/utils/format";
 import { Config } from "@/config";
@@ -34,19 +34,15 @@ type SelectedItem = {
   decodable: boolean;
   width?: number;
   height?: number;
-
-  // Optimization flags
-  optimize: boolean; // current toggle state
-  needsAutoOptimize: boolean; // auto-on reasons (threshold/half-size rule)
-  forceOptimize: boolean; // non JPEG/PNG/WebP -> must optimize (checkbox locked)
-
+  optimize: boolean;
+  needsAutoOptimize: boolean;
+  forceOptimize: boolean;
   optimized?: {
     blob: Blob;
     size: number;
     width: number;
     height: number;
   };
-
   status: "pending" | "optimizing" | "ready" | "uploading" | "done" | "error";
   error?: string;
 };
@@ -63,7 +59,6 @@ function changeExtToWebp(name: string): string {
   return name.replace(/\.[^.]+$/, "") + ".webp";
 }
 
-/** Pass-through whitelist: ONLY JPEG/PNG/WebP may upload original. Others are forced to WebP. */
 const PASS_THROUGH_MIMES = new Set(["image/jpeg", "image/png", "image/webp"]);
 const PASS_THROUGH_EXTS = new Set(["jpg", "jpeg", "png", "webp"]);
 function isPassThroughType(name: string, type: string): boolean {
@@ -80,7 +75,6 @@ function isSvg(name: string, type: string) {
   return ext === "svg";
 }
 
-/** SVGのwidth/heightを決める。viewBoxやwidth/height属性から決定。 */
 function parseSvgSize(svg: string): { w: number; h: number } | null {
   try {
     const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
@@ -94,7 +88,6 @@ function parseSvgSize(svg: string): { w: number; h: number } | null {
         .match(/^([0-9.]+)(px|pt|pc|cm|mm|in|%)?$/i);
       if (!m) return NaN;
       const n = parseFloat(m[1]);
-      // px以外の単位はここではざっくりpx扱い（必要なら係数対応）
       return Number.isFinite(n) ? n : NaN;
     };
 
@@ -120,7 +113,6 @@ function parseSvgSize(svg: string): { w: number; h: number } | null {
   }
 }
 
-/** SVGにwidth/heightを明示付与（無い場合の対策） */
 function normalizeSvg(svg: string, targetW: number, targetH: number): string {
   try {
     const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
@@ -128,7 +120,6 @@ function normalizeSvg(svg: string, targetW: number, targetH: number): string {
     if (!svgEl || svgEl.tagName.toLowerCase() !== "svg") return svg;
     svgEl.setAttribute("width", String(targetW));
     svgEl.setAttribute("height", String(targetH));
-    // viewBoxが無ければ付与
     if (!svgEl.getAttribute("viewBox")) {
       svgEl.setAttribute("viewBox", `0 0 ${targetW} ${targetH}`);
     }
@@ -148,7 +139,6 @@ async function readMeta(file: File): Promise<{
   let objectUrl: string | undefined;
   try {
     objectUrl = URL.createObjectURL(file);
-    // createImageBitmap でまず試す（多くの形式が一発）
     if ("createImageBitmap" in window) {
       try {
         const bmp = await createImageBitmap(file);
@@ -162,7 +152,6 @@ async function readMeta(file: File): Promise<{
         return out;
       } catch {}
     }
-    // フォールバック: <img> でメタ取得
     const img = document.createElement("img");
     img.decoding = "async";
     const meta = await new Promise<{ w?: number; h?: number; ok: boolean }>((resolve) => {
@@ -193,11 +182,10 @@ function getOffscreenCanvasCtor(): OffscreenCanvasCtor | null {
   return typeof g.OffscreenCanvas === "function" ? g.OffscreenCanvas : null;
 }
 
-/** Fallback decode via <img> when createImageBitmap fails (also rasterizes SVG/GIF). */
 async function decodeViaImg(file: File): Promise<HTMLImageElement> {
   const url = URL.createObjectURL(file);
   try {
-    const img = document.createElement("img"); // ← ここが重要: DOMのimg
+    const img = document.createElement("img");
     img.crossOrigin = "anonymous";
     img.decoding = "async";
     const ok = await new Promise<boolean>((resolve) => {
@@ -221,14 +209,12 @@ async function rasterizeSvgToWebp(
   const svgText = await file.text();
   let size = parseSvgSize(svgText);
   if (!size) {
-    // コンフィグのフォールバック長辺（無ければ 1024）
-    const fallback = Math.max(1, Number(Config.IMAGE_OPTIMIZE_TARGET_LONGSIDE) || 1024);
+    const fallback = Math.max(1, Number(Config.IMAGE_OPTIMIZE_TARGET_LONGSIDE) || 1200);
     size = { w: fallback, h: fallback };
   }
   const normalizedSvg = normalizeSvg(svgText, size.w, size.h);
   const svgBlob = new Blob([normalizedSvg], { type: "image/svg+xml" });
 
-  // createImageBitmap 優先
   let w = size.w;
   let h = size.h;
   let source: CanvasImageSource | null = null;
@@ -238,7 +224,6 @@ async function rasterizeSvgToWebp(
     w = bmp.width || w;
     h = bmp.height || h;
   } catch {
-    // <img> で読み直し
     const url = URL.createObjectURL(svgBlob);
     try {
       const img = document.createElement("img");
@@ -308,11 +293,9 @@ async function rasterToWebp(
   type?: string,
 ): Promise<{ blob: Blob; width: number; height: number }> {
   if (isSvg(name || "", type || "")) {
-    // SVGは専用経路で確実にラスタライズ
     return rasterizeSvgToWebp(file, quality);
   }
 
-  // Note: animated GIF will become a single-frame still image.
   let source: CanvasImageSource | null = null;
   let w = srcW;
   let h = srcH;
@@ -393,7 +376,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
   const [items, setItems] = useState<SelectedItem[]>(
     files.slice(0, maxCount).map((f) => {
       const pass = isPassThroughType(f.name, f.type);
-      const force = !pass; // non JPEG/PNG/WebP -> must optimize
+      const force = !pass;
       return {
         id: f.id,
         file: f.file,
@@ -401,8 +384,8 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         type: f.type,
         size: f.size,
         decodable: true,
-        optimize: force ? true : false, // forced types start ON (locked)
-        needsAutoOptimize: force, // will refine after meta & half-size rule
+        optimize: force ? true : false,
+        needsAutoOptimize: force,
         forceOptimize: force,
         status: "pending",
       };
@@ -447,7 +430,6 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         const pass = isPassThroughType(f.name, f.type);
         const force = !pass;
 
-        // Always try optimization (regardless of pass/force).
         const needByThreshold = shouldAutoOptimize({
           width: meta.width,
           height: meta.height,
@@ -486,7 +468,6 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
           setItems((prev) =>
             prev.map((x) => {
               if (x.id !== f.id) return x;
-              // Half-size rule: optimized <= 1/2 original => default ON
               const isHalfOrLess = out.blob.size * 2 <= f.size;
               const auto = x.forceOptimize ? true : x.needsAutoOptimize || isHalfOrLess;
               return {
@@ -505,7 +486,6 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
             }),
           );
         } catch {
-          // Forced types: must fail if we cannot produce WebP.
           setItems((prev) =>
             prev.map((x) =>
               x.id === f.id
@@ -518,7 +498,6 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                         "This format requires optimization, but a WebP could not be produced. Please convert to JPEG/PNG/WebP and try again.",
                     }
                   : {
-                      // Pass-through: allow original upload if optimization failed.
                       ...x,
                       status: "ready",
                       optimized: undefined,
@@ -558,7 +537,6 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     if (busy || quotaExceeded) return false;
     const anyOptimizing = items.some((it) => it.status === "optimizing");
     const anyReady = items.some((it) => it.status === "ready");
-    // At least one ready, and none optimizing.
     return !anyOptimizing && anyReady;
   }, [busy, items, quotaExceeded]);
 
@@ -576,9 +554,6 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         continue;
       }
 
-      // Policy:
-      // - forceOptimize: must upload optimized; error if not present.
-      // - pass-through: if optimize && optimized -> upload WebP; else upload original.
       let useOptimized = false;
       if (it.forceOptimize) {
         if (!it.optimized) {
@@ -726,7 +701,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                           )
                         }
                         disabled={
-                          it.forceOptimize || // non JPEG/PNG/WebP cannot switch to original
+                          it.forceOptimize ||
                           it.status === "optimizing" ||
                           it.status === "uploading"
                         }
@@ -738,7 +713,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                     </label>
                   </div>
 
-                  <div className={`text:[12px] ${it.optimize ? "text-gray-800" : "text-gray-400"}`}>
+                  <div className={`text-[12px] ${it.optimize ? "text-gray-800" : "text-gray-400"}`}>
                     <div>
                       <span className="text-gray-500">Optimized:</span>{" "}
                       <span className="font-mono">

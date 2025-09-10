@@ -91,32 +91,6 @@ function makeWebP_VP8L(w: number, h: number): Uint8Array {
   return new Uint8Array([...riff, ...size, ...webp, ...vp8l, ...chunkSize, ...payload]);
 }
 
-function makeHEIC_ftyp(): Uint8Array {
-  return new Uint8Array([
-    ...u32be(24),
-    ...fourCC("ftyp"),
-    ...fourCC("heic"),
-    0x00,
-    0x00,
-    0x00,
-    0x00,
-    ...fourCC("heic"),
-  ]);
-}
-
-function makeHEIC_ispe(w: number, h: number): Uint8Array {
-  return new Uint8Array([
-    ...u32be(20),
-    ...fourCC("ispe"),
-    0x00,
-    0x00,
-    0x00,
-    0x00,
-    ...u32be(w),
-    ...u32be(h),
-  ]);
-}
-
 describe("sniffFormat", () => {
   test("JPEG", () => {
     const bytes = makeJPEG(400, 300);
@@ -161,11 +135,6 @@ describe("sniffFormat", () => {
     expect(sniffFormat(bytes)).toEqual({ ok: true, mime: "image/webp" });
   });
 
-  test("HEIC (ftyp)", () => {
-    const bytes = makeHEIC_ftyp();
-    expect(sniffFormat(bytes)).toEqual({ ok: true, mime: "image/heic" });
-  });
-
   test("unknown bytes -> not ok", () => {
     expect(sniffFormat(new Uint8Array([1, 2, 3, 4, 5])).ok).toBe(false);
   });
@@ -205,13 +174,6 @@ describe("readDimensions", () => {
       h = 222;
     const bytes = makeWebP_VP8L(w, h);
     expect(readDimensions(bytes, "image/webp")).toEqual({ w, h });
-  });
-
-  test("HEIC dimensions (ispe box)", () => {
-    const w = 1999,
-      h = 1111;
-    const bytes = makeHEIC_ispe(w, h);
-    expect(readDimensions(bytes, "image/heic")).toEqual({ w, h });
   });
 
   test("mismatched mime -> null", () => {

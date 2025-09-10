@@ -59,20 +59,6 @@ export function sniffFormat(bytes: Uint8Array): { ok: boolean; mime?: string } {
     }
     return { ok: false };
   }
-  if (bytes.length >= 20) {
-    const boxSize = u32be(bytes, 0);
-    const boxType = fourCC(bytes, 4);
-    if (boxType === "ftyp" && boxSize >= 16) {
-      const major = fourCC(bytes, 8);
-      const allowed = new Set(["heic", "heix", "hevc", "hevx", "mif1", "msf1", "heif", "heis"]);
-      if (allowed.has(major)) return { ok: true, mime: "image/heic" };
-      const end = Math.min(bytes.length, boxSize);
-      for (let p = 16; p + 4 <= end; p += 4) {
-        if (allowed.has(fourCC(bytes, p))) return { ok: true, mime: "image/heic" };
-      }
-      return { ok: false };
-    }
-  }
   return { ok: false };
 }
 
@@ -158,27 +144,6 @@ function readJpegDimensions(bytes: Uint8Array): { w: number; h: number } | null 
   return null;
 }
 
-function readHeicDimensions(bytes: Uint8Array): { w: number; h: number } | null {
-  const limit = bytes.length;
-  let i = 0;
-  while (i + 12 <= limit) {
-    const size = u32be(bytes, i);
-    const type = fourCC(bytes, i + 4);
-    if (size < 8) return null;
-    const end = i + size;
-    if (end > limit) return null;
-    if (type === "ispe") {
-      if (i + 20 > limit) return null;
-      const w = u32be(bytes, i + 12);
-      const h = u32be(bytes, i + 16);
-      if (w <= 0 || h <= 0) return null;
-      return { w, h };
-    }
-    i = end;
-  }
-  return null;
-}
-
 export function readDimensions(bytes: Uint8Array, mime: string): { w: number; h: number } | null {
   switch (mime) {
     case "image/png":
@@ -187,8 +152,6 @@ export function readDimensions(bytes: Uint8Array, mime: string): { w: number; h:
       return readWebpDimensions(bytes);
     case "image/jpeg":
       return readJpegDimensions(bytes);
-    case "image/heic":
-      return readHeicDimensions(bytes);
     default:
       return null;
   }

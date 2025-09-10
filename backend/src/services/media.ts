@@ -29,7 +29,6 @@ function allowedImageMime(ct: string | false | null): string | null {
   if (!ct) return null;
   const lower = String(ct).toLowerCase();
   if (lower === "image/jpeg" || lower === "image/png" || lower === "image/webp") return lower;
-  if (lower === "image/heic" || lower === "image/heif") return "image/heic";
   return null;
 }
 
@@ -141,8 +140,6 @@ export class MediaService {
           return new Set(["png"]);
         case "image/webp":
           return new Set(["webp"]);
-        case "image/heic":
-          return new Set(["heic", "heif"]);
         default:
           return new Set<string>();
       }
@@ -323,8 +320,6 @@ export class MediaService {
           return new Set(["png"]);
         case "image/webp":
           return new Set(["webp"]);
-        case "image/heic":
-          return new Set(["heic", "heif"]);
         default:
           return new Set<string>();
       }
