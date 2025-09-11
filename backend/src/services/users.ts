@@ -10,8 +10,8 @@ import {
   ListUsersInput,
   ListFolloweesInput,
   ListFollowersInput,
-  AddFollowInput,
-  RemoveFollowInput,
+  FollowUserPair,
+  BlockUserPair,
   ListFriendsByNicknamePrefixInput,
 } from "../models/user";
 import { IdIssueService } from "./idIssue";
@@ -107,14 +107,19 @@ export class UsersService {
     const user: Record<string, unknown> = snakeToCamel(row);
 
     if (focusUserId && focusUserId !== id) {
-      const followRes = await this.pgClient.query(
+      const res = await this.pgClient.query(
         `SELECT
            EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $1 AND followee_id = $2) AS is_followed_by_focus_user,
-           EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $2 AND followee_id = $1) AS is_following_focus_user`,
+           EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $2 AND followee_id = $1) AS is_following_focus_user,
+           EXISTS (SELECT 1 FROM user_blocks  WHERE blocker_id  = $1 AND blockee_id  = $2) AS is_blocked_by_focus_user,
+           EXISTS (SELECT 1 FROM user_blocks  WHERE blocker_id  = $2 AND blockee_id  = $1) AS is_blocking_focus_user`,
         [hexToDec(focusUserId), hexToDec(id)],
       );
-      user.isFollowedByFocusUser = followRes.rows[0].is_followed_by_focus_user;
-      user.isFollowingFocusUser = followRes.rows[0].is_following_focus_user;
+      const r = res.rows[0];
+      user.isFollowedByFocusUser = r.is_followed_by_focus_user;
+      user.isFollowingFocusUser = r.is_following_focus_user;
+      user.isBlockedByFocusUser = r.is_blocked_by_focus_user;
+      user.isBlockingFocusUser = r.is_blocking_focus_user;
     }
 
     return user as UserDetail;
@@ -199,10 +204,26 @@ export class UsersService {
       const followingSet = new Set(
         fgRes.rows.map((r: { follower_id: string }) => decToHex(r.follower_id) as string),
       );
+      const blByRes = await this.pgClient.query(
+        `SELECT blockee_id FROM user_blocks WHERE blocker_id = $1 AND blockee_id = ANY($2)`,
+        [hexToDec(focusUserId), hexArrayToDec(ids)],
+      );
+      const blockedByFocusSet = new Set(
+        blByRes.rows.map((r: { blockee_id: string }) => decToHex(r.blockee_id) as string),
+      );
+      const blToRes = await this.pgClient.query(
+        `SELECT blocker_id FROM user_blocks WHERE blocker_id = ANY($1) AND blockee_id = $2`,
+        [hexArrayToDec(ids), hexToDec(focusUserId)],
+      );
+      const blockingFocusSet = new Set(
+        blToRes.rows.map((r: { blocker_id: string }) => decToHex(r.blocker_id) as string),
+      );
       for (const u of users) {
         if (u.id === focusUserId) continue;
         u.isFollowedByFocusUser = followedSet.has(u.id);
         u.isFollowingFocusUser = followingSet.has(u.id);
+        u.isBlockedByFocusUser = blockedByFocusSet.has(u.id);
+        u.isBlockingFocusUser = blockingFocusSet.has(u.id);
       }
     }
 
@@ -506,10 +527,26 @@ export class UsersService {
       const followingSet = new Set(
         fgRes.rows.map((r: { follower_id: string }) => decToHex(r.follower_id) as string),
       );
+      const blByRes = await this.pgClient.query(
+        `SELECT blockee_id FROM user_blocks WHERE blocker_id = $1 AND blockee_id = ANY($2)`,
+        [hexToDec(focusUserId), hexArrayToDec(ids)],
+      );
+      const blockedByFocusSet = new Set(
+        blByRes.rows.map((r: { blockee_id: string }) => decToHex(r.blockee_id) as string),
+      );
+      const blToRes = await this.pgClient.query(
+        `SELECT blocker_id FROM user_blocks WHERE blocker_id = ANY($1) AND blockee_id = $2`,
+        [hexArrayToDec(ids), hexToDec(focusUserId)],
+      );
+      const blockingFocusSet = new Set(
+        blToRes.rows.map((r: { blocker_id: string }) => decToHex(r.blocker_id) as string),
+      );
       for (const u of users) {
         if (u.id === focusUserId) continue;
         u.isFollowedByFocusUser = followedSet.has(u.id);
         u.isFollowingFocusUser = followingSet.has(u.id);
+        u.isBlockedByFocusUser = blockedByFocusSet.has(u.id);
+        u.isBlockingFocusUser = blockingFocusSet.has(u.id);
       }
     }
 
@@ -553,16 +590,32 @@ export class UsersService {
       const followingSet = new Set(
         fgRes.rows.map((r: { follower_id: string }) => decToHex(r.follower_id) as string),
       );
+      const blByRes = await this.pgClient.query(
+        `SELECT blockee_id FROM user_blocks WHERE blocker_id = $1 AND blockee_id = ANY($2)`,
+        [hexToDec(focusUserId), hexArrayToDec(ids)],
+      );
+      const blockedByFocusSet = new Set(
+        blByRes.rows.map((r: { blockee_id: string }) => decToHex(r.blockee_id) as string),
+      );
+      const blToRes = await this.pgClient.query(
+        `SELECT blocker_id FROM user_blocks WHERE blocker_id = ANY($1) AND blockee_id = $2`,
+        [hexArrayToDec(ids), hexToDec(focusUserId)],
+      );
+      const blockingFocusSet = new Set(
+        blToRes.rows.map((r: { blocker_id: string }) => decToHex(r.blocker_id) as string),
+      );
       for (const u of users) {
         if (u.id === focusUserId) continue;
         u.isFollowedByFocusUser = followedSet.has(u.id);
         u.isFollowingFocusUser = followingSet.has(u.id);
+        u.isBlockedByFocusUser = blockedByFocusSet.has(u.id);
+        u.isBlockingFocusUser = blockingFocusSet.has(u.id);
       }
     }
     return users;
   }
 
-  async addFollow(input: AddFollowInput): Promise<void> {
+  async addFollow(input: FollowUserPair): Promise<void> {
     if (input.followerId === input.followeeId) {
       throw new Error("cannot follow yourself");
     }
@@ -583,12 +636,49 @@ export class UsersService {
     }
   }
 
-  async removeFollow(input: RemoveFollowInput): Promise<void> {
+  async removeFollow(input: FollowUserPair): Promise<void> {
     const res = await this.pgClient.query(
       `DELETE FROM user_follows WHERE follower_id = $1 AND followee_id = $2`,
       [hexToDec(input.followerId), hexToDec(input.followeeId)],
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("not following");
+  }
+
+  async checkFollow(input: FollowUserPair): Promise<boolean> {
+    const r = await this.pgClient.query(
+      `SELECT 1 FROM user_follows WHERE follower_id = $1 AND followee_id = $2 LIMIT 1`,
+      [hexToDec(input.followerId), hexToDec(input.followeeId)],
+    );
+    return (r.rowCount ?? 0) > 0;
+  }
+
+  async addBlock(input: BlockUserPair): Promise<void> {
+    if (input.blockerId === input.blockeeId) {
+      throw new Error("cannot block yourself");
+    }
+    const res = await this.pgClient.query(
+      `INSERT INTO user_blocks (blocker_id, blockee_id, created_at)
+       VALUES ($1, $2, now())
+       ON CONFLICT DO NOTHING`,
+      [hexToDec(input.blockerId), hexToDec(input.blockeeId)],
+    );
+    if ((res.rowCount ?? 0) === 0) throw new Error("already blocked");
+  }
+
+  async removeBlock(input: BlockUserPair): Promise<void> {
+    const res = await this.pgClient.query(
+      `DELETE FROM user_blocks WHERE blocker_id = $1 AND blockee_id = $2`,
+      [hexToDec(input.blockerId), hexToDec(input.blockeeId)],
+    );
+    if ((res.rowCount ?? 0) === 0) throw new Error("not blocking");
+  }
+
+  async checkBlock(input: BlockUserPair): Promise<boolean> {
+    const r = await this.pgClient.query(
+      `SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blockee_id = $2 LIMIT 1`,
+      [hexToDec(input.blockerId), hexToDec(input.blockeeId)],
+    );
+    return (r.rowCount ?? 0) > 0;
   }
 
   async listFriendsByNicknamePrefix(input: ListFriendsByNicknamePrefixInput): Promise<User[]> {

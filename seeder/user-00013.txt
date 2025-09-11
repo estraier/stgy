@@ -1,7 +1,7 @@
 id: 0001000000000013
 email: charlie@dbmx.net
 nickname: Charlie
-passowrd: *
+passowrd: charlie-charlie
 isAdmin: false
 blockStrangers: false
 introduction:<<____EOF____

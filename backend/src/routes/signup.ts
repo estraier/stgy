@@ -21,7 +21,7 @@ export default function createSignupRouter(pgClient: Client, redis: Redis) {
       return res.status(400).json({ error: "email and password are needed" });
     }
     if (!validateEmail(email)) {
-      throw res.status(400).json({ error: "invalid e-mail address" });
+      return res.status(400).json({ error: "invalid e-mail address" });
     }
     if (!(await throttleService.canDo("0"))) {
       return res.status(403).json({ error: "too often signups" });

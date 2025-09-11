@@ -30,6 +30,8 @@ export type User = {
   countPosts: number;
   isFollowedByFocusUser?: boolean | null;
   isFollowingFocusUser?: boolean | null;
+  isBlockedByFocusUser?: boolean | null;
+  isBlockingFocusUser?: boolean | null;
 };
 
 export type UserDetail = User & {

@@ -319,7 +319,6 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
                           <div className="font-medium text-gray-900 truncate" title={fullTitle}>
                             {fullTitle}
                           </div>
-
                           {names.length > 0 && (
                             <div
                               className="text-[13px] text-gray-700 whitespace-nowrap overflow-hidden text-ellipsis"
@@ -329,10 +328,8 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
                               {names.join(", ")}
                             </div>
                           )}
-
                           <div className="text-xs text-gray-500 mt-0.5">
-                            {n.term}
-                            {latest ? ` • ${formatDateTime(new Date(latest.ts * 1000))}` : ""}
+                            {latest ? formatDateTime(new Date(latest.ts * 1000)) : n.term}
                           </div>
                         </div>
                       </div>

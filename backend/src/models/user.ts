@@ -14,6 +14,8 @@ export type User = {
   countPosts: number;
   isFollowedByFocusUser?: boolean;
   isFollowingFocusUser?: boolean;
+  isBlockedByFocusUser?: boolean;
+  isBlockingFocusUser?: boolean;
 };
 
 export type UserLite = Omit<
@@ -80,14 +82,14 @@ export type ListFollowersInput = {
   followeeId: string;
 } & UserPagination;
 
-export type AddFollowInput = {
+export type FollowUserPair = {
   followerId: string;
   followeeId: string;
 };
 
-export type RemoveFollowInput = {
-  followerId: string;
-  followeeId: string;
+export type BlockUserPair = {
+  blockerId: string;
+  blockeeId: string;
 };
 
 export type ListFriendsByNicknamePrefixInput = {

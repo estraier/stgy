@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import Image from "next/image";
 import type { User, UserDetail } from "@/api/models";
+import { addFollow, removeFollow } from "@/api/users";
 import AvatarImg from "@/components/AvatarImg";
 import { formatDateTime, normalizeLinefeeds } from "@/utils/format";
 import { makeArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
@@ -29,9 +30,11 @@ export default function UserCard({
   const [submitting, setSubmitting] = useState(false);
   const [user, setUser] = useState<User | UserDetail>(initialUser);
   const [avatarExpanded, setAvatarExpanded] = useState(false);
+  const [blockedByTarget, setBlockedByTarget] = useState(false);
 
   useEffect(() => {
     setUser(initialUser);
+    setBlockedByTarget(false);
   }, [initialUser]);
 
   const isAdmin = user.isAdmin;
@@ -43,6 +46,8 @@ export default function UserCard({
   const isFriend = isFollowing && isFollowed;
   const isFollower = isFollowed && !isFollowing;
   const isFollowee = isFollowing && !isFollowed;
+  const isBlocking = !!user.isBlockedByFocusUser;
+  const isBlocked = !!user.isBlockingFocusUser;
 
   let followButton: React.ReactNode = null;
   if (!isSelf) {
@@ -57,7 +62,7 @@ export default function UserCard({
             if (submitting) return;
             setSubmitting(true);
             try {
-              await (await import("@/api/users")).removeFollow(user.id);
+              await removeFollow(user.id);
               setUser({ ...user, isFollowedByFocusUser: false });
             } finally {
               setSubmitting(false);
@@ -68,7 +73,7 @@ export default function UserCard({
           {hovering ? "Unfollow" : "Following"}
         </button>
       );
-    } else {
+    } else if (!(isBlocked || blockedByTarget)) {
       followButton = (
         <button
           className="ml-2 px-2 py-1 bg-blue-600 text-white rounded text-xs border border-blue-700 hover:bg-blue-700 transition"
@@ -77,8 +82,13 @@ export default function UserCard({
             if (submitting) return;
             setSubmitting(true);
             try {
-              await (await import("@/api/users")).addFollow(user.id);
+              await addFollow(user.id);
               setUser({ ...user, isFollowedByFocusUser: true });
+            } catch (err: unknown) {
+              const msg = err instanceof Error ? err.message : String(err);
+              if (/block/i.test(msg)) {
+                setBlockedByTarget(true);
+              }
             } finally {
               setSubmitting(false);
             }
@@ -204,6 +214,21 @@ export default function UserCard({
         {isFollowee && (
           <span className="-mt-1 ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs opacity-90">
             followee
+          </span>
+        )}
+        {isBlocking && isBlocked && (
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90">
+            break
+          </span>
+        )}
+        {isBlocked && !isBlocking && (
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90">
+            blocker
+          </span>
+        )}
+        {isBlocking && !isBlocked && (
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90">
+            blockee
           </span>
         )}
         <span className="ml-auto">{followButton}</span>

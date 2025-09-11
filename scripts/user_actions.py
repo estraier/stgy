@@ -49,6 +49,13 @@ def do_follow(cookies, target_user_id):
     return True, "ok"
   return False, f"{res.status_code} {res.text}"
 
+def do_block(cookies, target_user_id):
+  url = f"{BASE_URL}/users/{target_user_id}/block"
+  res = requests.post(url, cookies=cookies)
+  if res.status_code == 200:
+    return True, "ok"
+  return False, f"{res.status_code} {res.text}"
+
 def delete_user(admin_cookies, user_id):
   url = f"{BASE_URL}/users/{user_id}"
   res = requests.delete(url, cookies=admin_cookies)
@@ -126,6 +133,24 @@ def main():
             print(f"[follow] {actor_id} -> user {target_id}: ok")
           else:
             print(f"[follow] {actor_id} -> user {target_id}: {msg}")
+
+        elif k == "block":
+          try:
+            actor_id, target_id = parse_csv_ids(v)
+          except Exception as e:
+            print(f"[follow] skip malformed '{raw.strip()}': {e}")
+            continue
+          if actor_id not in switched_cache:
+            try:
+              switched_cache[actor_id] = switch_user(admin_cookies, actor_id)
+            except Exception as e:
+              print(f"[switch-user] {actor_id}: {e}")
+              continue
+          ok, msg = do_block(switched_cache[actor_id], target_id)
+          if ok:
+            print(f"[block] {actor_id} -> user {target_id}: ok")
+          else:
+            print(f"[block] {actor_id} -> user {target_id}: {msg}")
 
         elif k == "delete-user":
           user_id = v

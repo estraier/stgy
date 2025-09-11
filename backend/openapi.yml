@@ -45,6 +45,12 @@ components:
         isFollowingFocusUser:
           type: boolean
           nullable: true
+        isBlockedByFocusUser:
+          type: boolean
+          nullable: true
+        isBlockingFocusUser:
+          type: boolean
+          nullable: true
       required:
         [
           id,
@@ -84,7 +90,17 @@ components:
         countFollowees: { type: integer }
         countPosts: { type: integer }
       required:
-        [id, email, nickname, isAdmin, blockStrangers, createdAt, countFollowers, countFollowees, countPosts]
+        [
+          id,
+          email,
+          nickname,
+          isAdmin,
+          blockStrangers,
+          createdAt,
+          countFollowers,
+          countFollowees,
+          countPosts,
+        ]
 
     Post:
       type: object
@@ -848,7 +864,7 @@ paths:
         - name: focusUserId
           in: query
           schema: { type: string }
-          description: (Optional) Used to get isFollowedByFocusUser/isFollowingFocusUser
+          description: (Optional) Used to get isFollowedByFocusUser etc.
       responses:
         "200":
           description: Followees list
@@ -883,7 +899,7 @@ paths:
         - name: focusUserId
           in: query
           schema: { type: string }
-          description: (Optional) Used to get isFollowedByFocusUser/isFollowingFocusUser
+          description: (Optional) Used to get isFollowedByFocusUser etc.
       responses:
         "200":
           description: Followers list
@@ -895,6 +911,52 @@ paths:
                   $ref: "#/components/schemas/User"
         "401":
           $ref: "#/components/responses/Error401"
+
+  /users/{id}/block:
+    post:
+      summary: Block user
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Blocked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "401":
+          $ref: "#/components/responses/Error401"
+        "400":
+          $ref: "#/components/responses/Error400"
+    delete:
+      summary: Unblock user
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Unblocked
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+        "401":
+          $ref: "#/components/responses/Error401"
+        "404":
+          $ref: "#/components/responses/Error404"
 
   /users/friends/by-nickname-prefix:
     get:

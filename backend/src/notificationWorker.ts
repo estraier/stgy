@@ -69,7 +69,7 @@ async function getUserNickname(pg: Client, userIdHex: string): Promise<string> {
 
 async function getPostSnippet(pg: Client, postId: string): Promise<string> {
   const pres = await pg.query<{ snippet: string }>(`SELECT snippet FROM posts WHERE id = $1`, [
-    postId,
+    hexToDec(postId),
   ]);
   const snippetJson = pres.rows[0]?.snippet ?? "";
   return typeof snippetJson === "string" && snippetJson.length > 0
@@ -359,12 +359,12 @@ async function resolveRecipientUserId(
   if (payload.type === "follow") return payload.followeeId;
   if (payload.type === "like") {
     const res = await pg.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
-      payload.postId,
+      hexToDec(payload.postId),
     ]);
     return res.rows[0]?.owned_by ? (decToHex(res.rows[0].owned_by) as string) : null;
   }
   const res = await pg.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
-    payload.replyToPostId,
+    hexToDec(payload.replyToPostId),
   ]);
   return res.rows[0]?.owned_by ? (decToHex(res.rows[0].owned_by) as string) : null;
 }

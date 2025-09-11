@@ -133,6 +133,9 @@ def test_users():
   res = requests.post(f"{BASE_URL}/users/{admin_id}/follow", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   print(f"[users] user1 followed admin: {admin_id}")
+  res = requests.post(f"{BASE_URL}/users/{admin_id}/block", headers=headers, cookies=user1_cookies)
+  assert res.status_code == 200, res.text
+  print(f"[users] user1 blocked admin: {admin_id}")
   res = requests.get(f"{BASE_URL}/users/{user1_id}/followees?limit=2000", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   followees = res.json()
@@ -150,6 +153,8 @@ def test_users():
   assert "countFollowees" in admin
   assert admin["isFollowedByFocusUser"] == True
   assert admin["isFollowingFocusUser"] == False
+  assert admin["isBlockedByFocusUser"] == True
+  assert admin["isBlockingFocusUser"] == False
   res = requests.get(f"{BASE_URL}/users?limit=2000&focusUserId={admin_id}&order=social", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   users = res.json()
@@ -162,6 +167,9 @@ def test_users():
   res = requests.delete(f"{BASE_URL}/users/{admin_id}/follow", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   print(f"[users] user1 unfollowed admin: {admin_id}")
+  res = requests.delete(f"{BASE_URL}/users/{admin_id}/block", headers=headers, cookies=user1_cookies)
+  assert res.status_code == 200, res.text
+  print(f"[users] user1 unblocked admin: {admin_id}")
   res = requests.get(f"{BASE_URL}/users/{user1_id}/followees?limit=2000", headers=headers, cookies=user1_cookies)
   assert all(u["id"] != admin_id for u in res.json())
   res = requests.get(f"{BASE_URL}/users/{admin_id}/followers?limit=2000", headers=headers, cookies=cookies)

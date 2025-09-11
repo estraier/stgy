@@ -1,7 +1,7 @@
 id: 0001000000000015
 email: eve@dbmx.net
 nickname: Eve
-passowrd: *
+passowrd: eve-eve
 isAdmin: false
 blockStrangers: true
 introduction:<<____EOF____

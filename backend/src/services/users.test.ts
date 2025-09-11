@@ -20,6 +20,7 @@ class MockPgClient {
   users: User[];
   details: Record<string, UserDetailRow>;
   follows: { followerId: string; followeeId: string }[];
+  blocks: { blockerId: string; blockeeId: string }[];
   passwords: Record<string, string>;
 
   constructor() {
@@ -81,6 +82,7 @@ class MockPgClient {
       { followerId: BOB, followeeId: ALICE },
       { followerId: CAROL, followeeId: ALICE },
     ];
+    this.blocks = [];
     this.passwords = {
       [ALICE]: md5("alicepass"),
       [BOB]: md5("bobpass"),
@@ -290,18 +292,29 @@ class MockPgClient {
       const [focusUserIdDec, idDec] = params;
       const focusUserId = decToHex(focusUserIdDec);
       const idHex = decToHex(idDec);
-      return {
-        rows: [
-          {
-            is_followed_by_focus_user: this.follows.some(
-              (f) => f.followerId === focusUserId && f.followeeId === idHex,
-            ),
-            is_following_focus_user: this.follows.some(
-              (f) => f.followerId === idHex && f.followeeId === focusUserId,
-            ),
-          },
-        ],
+      const isFollowed = this.follows.some(
+        (f) => f.followerId === focusUserId && f.followeeId === idHex,
+      );
+      const isFollowing = this.follows.some(
+        (f) => f.followerId === idHex && f.followeeId === focusUserId,
+      );
+      const includeBlocks =
+        sql.includes("is_blocked_by_focus_user") || sql.includes("is_blocking_focus_user");
+      const isBlockedByFocus = this.blocks.some(
+        (b) => b.blockerId === focusUserId && b.blockeeId === idHex,
+      );
+      const isBlockingFocus = this.blocks.some(
+        (b) => b.blockerId === idHex && b.blockeeId === focusUserId,
+      );
+      const row: any = {
+        is_followed_by_focus_user: isFollowed,
+        is_following_focus_user: isFollowing,
       };
+      if (includeBlocks) {
+        row.is_blocked_by_focus_user = isBlockedByFocus;
+        row.is_blocking_focus_user = isBlockingFocus;
+      }
+      return { rows: [row] };
     }
 
     if (
@@ -375,6 +388,33 @@ class MockPgClient {
       };
     }
 
+    if (
+      sql.startsWith(
+        "SELECT blockee_id FROM user_blocks WHERE blocker_id = $1 AND blockee_id = ANY($2)",
+      )
+    ) {
+      const focusUserId = decToHex(params[0]);
+      const idsHex: string[] = (params[1] as any[]).map(decToHex);
+      return {
+        rows: this.blocks
+          .filter((b) => b.blockerId === focusUserId && idsHex.includes(b.blockeeId))
+          .map((b) => ({ blockee_id: hexToDec(b.blockeeId) })),
+      };
+    }
+    if (
+      sql.startsWith(
+        "SELECT blocker_id FROM user_blocks WHERE blocker_id = ANY($1) AND blockee_id = $2",
+      )
+    ) {
+      const idsHex: string[] = (params[0] as any[]).map(decToHex);
+      const focusUserId = decToHex(params[1]);
+      return {
+        rows: this.blocks
+          .filter((b) => idsHex.includes(b.blockerId) && b.blockeeId === focusUserId)
+          .map((b) => ({ blocker_id: hexToDec(b.blockerId) })),
+      };
+    }
+
     if (sql.startsWith("SELECT 1 FROM users WHERE email = $1")) {
       const email = params[0];
       const exists = this.users.some((u) => u.email === email);
@@ -386,7 +426,18 @@ class MockPgClient {
         "INSERT INTO users (id, email, nickname, password, is_admin, block_strangers, snippet, avatar, ai_model, created_at, updated_at) VALUES",
       )
     ) {
-      const [idDec, email, nickname, password, isAdmin, blockStrangers, snippet, avatar, aiModel, idDate] = params;
+      const [
+        idDec,
+        email,
+        nickname,
+        password,
+        isAdmin,
+        blockStrangers,
+        snippet,
+        avatar,
+        aiModel,
+        idDate,
+      ] = params;
       const idHex = decToHex(idDec);
       const user: User = {
         id: idHex,
@@ -505,6 +556,7 @@ class MockPgClient {
       delete this.passwords[hex];
       delete this.details[hex];
       this.follows = this.follows.filter((f) => f.followerId !== hex && f.followeeId !== hex);
+      this.blocks = this.blocks.filter((b) => b.blockerId !== hex && b.blockeeId !== hex);
       return { rowCount: 1 };
     }
 
@@ -584,8 +636,9 @@ class MockPgClient {
       const followeeId = decToHex(followeeIdDec);
       if (!this.follows.some((f) => f.followerId === followerId && f.followeeId === followeeId)) {
         this.follows.push({ followerId, followeeId });
+        return { rowCount: 1 };
       }
-      return { rowCount: 1 };
+      return { rowCount: 0 };
     }
     if (sql.startsWith("DELETE FROM user_follows WHERE follower_id = $1 AND followee_id = $2")) {
       const followerId = decToHex(params[0]);
@@ -595,6 +648,42 @@ class MockPgClient {
         (f) => !(f.followerId === followerId && f.followeeId === followeeId),
       );
       return { rowCount: prev - this.follows.length };
+    }
+    if (sql.startsWith("SELECT 1 FROM user_follows WHERE follower_id = $1 AND followee_id = $2")) {
+      const followerId = decToHex(params[0]);
+      const followeeId = decToHex(params[1]);
+      const exists = this.follows.some(
+        (f) => f.followerId === followerId && f.followeeId === followeeId,
+      );
+      return { rowCount: exists ? 1 : 0, rows: exists ? [{ ok: 1 }] : [] };
+    }
+
+    if (sql.startsWith("INSERT INTO user_blocks")) {
+      const [blockerIdDec, blockeeIdDec] = params;
+      const blockerId = decToHex(blockerIdDec);
+      const blockeeId = decToHex(blockeeIdDec);
+      if (!this.blocks.some((b) => b.blockerId === blockerId && b.blockeeId === blockeeId)) {
+        this.blocks.push({ blockerId, blockeeId });
+        return { rowCount: 1 };
+      }
+      return { rowCount: 0 };
+    }
+    if (sql.startsWith("DELETE FROM user_blocks WHERE blocker_id = $1 AND blockee_id = $2")) {
+      const blockerId = decToHex(params[0]);
+      const blockeeId = decToHex(params[1]);
+      const prev = this.blocks.length;
+      this.blocks = this.blocks.filter(
+        (b) => !(b.blockerId === blockerId && b.blockeeId === blockeeId),
+      );
+      return { rowCount: prev - this.blocks.length };
+    }
+    if (sql.startsWith("SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blockee_id = $2")) {
+      const blockerId = decToHex(params[0]);
+      const blockeeId = decToHex(params[1]);
+      const exists = this.blocks.some(
+        (b) => b.blockerId === blockerId && b.blockeeId === blockeeId,
+      );
+      return { rowCount: exists ? 1 : 0, rows: exists ? [{ ok: 1 }] : [] };
     }
 
     throw new Error("Unknown SQL: " + sql);
@@ -854,5 +943,31 @@ describe("UsersService", () => {
     });
     expect(res.length).toBe(1);
     expect(res[0].id).toBe(BOB);
+  });
+
+  test("addBlock/removeBlock and block flags in getUser/listUsers", async () => {
+    await service.addBlock({ blockerId: BOB, blockeeId: CAROL });
+    expect(pg.blocks.some((b) => b.blockerId === BOB && b.blockeeId === CAROL)).toBe(true);
+
+    const u = await service.getUser(CAROL, BOB);
+    expect(u?.isBlockedByFocusUser).toBe(true);
+    expect(u?.isBlockingFocusUser).toBe(false);
+
+    const list = await service.listUsers({}, BOB);
+    const carol = list.find((x) => x.id === CAROL)!;
+    expect(carol.isBlockedByFocusUser).toBe(true);
+    expect(carol.isBlockingFocusUser).toBe(false);
+
+    await service.removeBlock({ blockerId: BOB, blockeeId: CAROL });
+    expect(pg.blocks.some((b) => b.blockerId === BOB && b.blockeeId === CAROL)).toBe(false);
+  });
+
+  test("checkBlock/checkFollow", async () => {
+    expect(await service.checkFollow({ followerId: ALICE, followeeId: BOB })).toBe(true);
+    expect(await service.checkFollow({ followerId: BOB, followeeId: CAROL })).toBe(false);
+
+    await service.addBlock({ blockerId: ALICE, blockeeId: BOB });
+    expect(await service.checkBlock({ blockerId: ALICE, blockeeId: BOB })).toBe(true);
+    expect(await service.checkBlock({ blockerId: BOB, blockeeId: ALICE })).toBe(false);
   });
 });

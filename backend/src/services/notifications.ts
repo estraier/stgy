@@ -6,7 +6,7 @@ import {
   MarkAllNotificationsInput,
   MarkNotificationInput,
 } from "../models/notifications";
-import { decToHex, hexToDec } from "../utils/format";
+import { hexToDec } from "../utils/format";
 
 type Row = {
   slot: string;
@@ -34,12 +34,10 @@ function parsePayload(raw: unknown): ParsedPayload {
   for (const it of arr) {
     if (!it || typeof it !== "object") continue;
     const rec = it as Record<string, unknown>;
-    const userIdRaw = typeof rec.userId === "string" ? rec.userId : undefined;
-    const userId = userIdRaw ? decToHex(userIdRaw) : undefined;
+    const userId = typeof rec.userId === "string" ? rec.userId : undefined;
     const userNickname = typeof rec.userNickname === "string" ? rec.userNickname : "";
     const ts = typeof rec.ts === "number" ? rec.ts : undefined;
-    const postIdRaw = typeof rec.postId === "string" ? rec.postId : undefined;
-    const postId = postIdRaw ? decToHex(postIdRaw) : undefined;
+    const postId = typeof rec.postId === "string" ? rec.postId : undefined;
     const postSnippet = typeof rec.postSnippet === "string" ? rec.postSnippet : undefined;
     if (!userId || ts === undefined) continue;
     if (postId) {

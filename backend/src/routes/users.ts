@@ -227,7 +227,7 @@ export default function createUsersRouter(
       return res.status(400).json({ error: "email required" });
     }
     if (!validateEmail(email)) {
-      throw res.status(400).json({ error: "invalid e-mail address" });
+      return res.status(400).json({ error: "invalid e-mail address" });
     }
     const normEmail = normalizeEmail(email);
     const check = await sendMailService.canSendMail(normEmail);
@@ -266,7 +266,7 @@ export default function createUsersRouter(
       return res.status(400).json({ error: "email required" });
     }
     if (!validateEmail(email)) {
-      throw res.status(400).json({ error: "invalid e-mail address" });
+      return res.status(400).json({ error: "invalid e-mail address" });
     }
     const normEmail = normalizeEmail(email);
     const check = await sendMailService.canSendMail(normEmail);
@@ -349,6 +349,11 @@ export default function createUsersRouter(
     if (followerId === followeeId) {
       return res.status(400).json({ error: "cannot follow yourself" });
     }
+
+    if (await usersService.checkBlock({ blockerId: followeeId, blockeeId: followerId })) {
+      return res.status(400).json({ error: "blocked by the user" });
+    }
+
     try {
       await usersService.addFollow({ followerId, followeeId });
       res.json({ result: "ok" });
@@ -402,6 +407,37 @@ export default function createUsersRouter(
     let users = await usersService.listFollowers({ followeeId, offset, limit, order }, focusUserId);
     users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
     res.json(users);
+  });
+
+  router.post("/:id/block", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const blockeeId = req.params.id;
+    const blockerId = loginUser.id;
+    if (blockerId === blockeeId) {
+      return res.status(400).json({ error: "cannot block yourself" });
+    }
+    try {
+      await usersService.addBlock({ blockerId, blockeeId });
+      res.json({ result: "ok" });
+    } catch (e: unknown) {
+      res.status(400).json({ error: (e as Error).message || "block failed" });
+    }
+  });
+
+  router.delete("/:id/block", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const blockeeId = req.params.id;
+    const blockerId = loginUser.id;
+    try {
+      await usersService.removeBlock({ blockerId, blockeeId });
+      res.json({ result: "ok" });
+    } catch (e: unknown) {
+      const msg = (e as Error).message || "";
+      if (/not blocking/i.test(msg)) return res.status(404).json({ error: "not blocked" });
+      res.status(400).json({ error: msg || "unblock failed" });
+    }
   });
 
   return router;
