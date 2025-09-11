@@ -349,11 +349,9 @@ export default function createUsersRouter(
     if (followerId === followeeId) {
       return res.status(400).json({ error: "cannot follow yourself" });
     }
-
-    if (await usersService.checkBlock({ blockerId: followeeId, blockeeId: followerId })) {
+    if (!loginUser.isAdmin && (await authHelpers.checkBlock(followeeId, followerId))) {
       return res.status(400).json({ error: "blocked by the user" });
     }
-
     try {
       await usersService.addFollow({ followerId, followeeId });
       res.json({ result: "ok" });

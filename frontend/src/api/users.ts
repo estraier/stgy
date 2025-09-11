@@ -204,6 +204,18 @@ export async function listFollowers(
   return res.json();
 }
 
+export async function addBlock(id: string): Promise<{ result: string }> {
+  const res = await apiFetch(`/users/${id}/block`, { method: "POST" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function removeBlock(id: string): Promise<{ result: string }> {
+  const res = await apiFetch(`/users/${id}/block`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
 export async function countUsers(
   params: { query?: string; nickname?: string; nicknamePrefix?: string } = {},
 ): Promise<number> {

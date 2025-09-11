@@ -204,6 +204,12 @@ export default function createPostsRouter(
     if (!user.isAdmin && req.body.id) {
       return res.status(400).json({ error: "id setting is for admin only" });
     }
+    if (!user.isAdmin && req.body.replyTo) {
+      const post = await postsService.getPostLite(req.body.replyTo);
+      if (post && (await authHelpers.checkBlock(post.ownedBy, user.id))) {
+        return res.status(400).json({ error: "blocked by the owner" });
+      }
+    }
     try {
       let ownedBy = user.id;
       if (user.isAdmin && req.body.ownedBy && typeof req.body.ownedBy === "string") {
@@ -313,6 +319,12 @@ export default function createPostsRouter(
     if (!user) return;
     if (!user.isAdmin && !(await likesThrottleService.canDo(user.id))) {
       return res.status(403).json({ error: "too often likes" });
+    }
+    if (!user.isAdmin) {
+      const post = await postsService.getPostLite(req.params.id);
+      if (post && (await authHelpers.checkBlock(post.ownedBy, user.id))) {
+        return res.status(400).json({ error: "blocked by the owner" });
+      }
     }
     try {
       await postsService.addLike(req.params.id, user.id);

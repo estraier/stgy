@@ -28,4 +28,22 @@ export class AuthHelpers {
     if (!sessionInfo || !sessionInfo.userId) return null;
     return await this.usersService.getUserLite(sessionInfo.userId);
   }
+
+  async checkBlock(blockerId: string, blockeeId: string): Promise<boolean> {
+    if (blockerId === blockeeId) {
+      return false;
+    }
+    if (await this.usersService.checkBlock({ blockerId, blockeeId })) {
+      return true;
+    }
+    const user = await this.usersService.getUserLite(blockerId);
+    if (user && user.blockStrangers) {
+      if (
+        !(await this.usersService.checkFollow({ followerId: blockerId, followeeId: blockeeId }))
+      ) {
+        return true;
+      }
+    }
+    return false;
+  }
 }

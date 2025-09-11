@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useState, useRef } from "react";
 import Image from "next/image";
 import type { User, UserDetail } from "@/api/models";
-import { addFollow, removeFollow } from "@/api/users";
+import { addFollow, removeFollow, addBlock, removeBlock } from "@/api/users";
 import AvatarImg from "@/components/AvatarImg";
 import { formatDateTime, normalizeLinefeeds } from "@/utils/format";
 import { makeArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
@@ -28,14 +28,29 @@ export default function UserCard({
 }: UserCardProps) {
   const [hovering, setHovering] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [blockingSubmitting, setBlockingSubmitting] = useState(false);
   const [user, setUser] = useState<User | UserDetail>(initialUser);
   const [avatarExpanded, setAvatarExpanded] = useState(false);
   const [blockedByTarget, setBlockedByTarget] = useState(false);
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     setUser(initialUser);
     setBlockedByTarget(false);
+    setMenuOpen(false);
   }, [initialUser]);
+
+  useEffect(() => {
+    function onDocMouseDown(e: MouseEvent) {
+      if (!menuOpen) return;
+      if (!menuRef.current) return;
+      if (menuRef.current.contains(e.target as Node)) return;
+      setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [menuOpen]);
 
   const isAdmin = user.isAdmin;
   const blockStrangers = !!user.blockStrangers;
@@ -48,6 +63,35 @@ export default function UserCard({
   const isFollowee = isFollowing && !isFollowed;
   const isBlocking = !!user.isBlockedByFocusUser;
   const isBlocked = !!user.isBlockingFocusUser;
+
+  async function copyToClipboard(text: string) {
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+    } catch {}
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      document.execCommand("copy");
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
+
+  function absoluteUrl(path: string): string {
+    if (typeof window !== "undefined" && window.location) {
+      const base = window.location.origin.replace(/\/+$/, "");
+      return `${base}${path.startsWith("/") ? "" : "/"}${path}`;
+    }
+    return path.startsWith("/") ? path : `/${path}`;
+  }
 
   let followButton: React.ReactNode = null;
   if (!isSelf) {
@@ -73,7 +117,7 @@ export default function UserCard({
           {hovering ? "Unfollow" : "Following"}
         </button>
       );
-    } else if (!(isBlocked || blockedByTarget)) {
+    } else if (!(isBlocked || blockedByTarget || (blockStrangers && !isFollowed))) {
       followButton = (
         <button
           className="ml-2 px-2 py-1 bg-blue-600 text-white rounded text-xs border border-blue-700 hover:bg-blue-700 transition"
@@ -125,6 +169,61 @@ export default function UserCard({
         : "";
     return `${prefix}${key}${suffix}`;
   })();
+
+  const menu = (
+    <div
+      ref={menuRef}
+      className={`absolute right-0 top-full mt-1 w-56 rounded-md border bg-white shadow-lg z-20 ${
+        menuOpen ? "block" : "hidden"
+      }`}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={async () => {
+          const url = absoluteUrl(`/users/${user.id}`);
+          await copyToClipboard(url);
+          setMenuOpen(false);
+        }}
+      >
+        Copy link to profile
+      </button>
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={async () => {
+          const md = `[@${user.nickname}](/users/${user.id})`;
+          await copyToClipboard(md);
+          setMenuOpen(false);
+        }}
+      >
+        Copy mention Markdown
+      </button>
+      {!isSelf && (
+        <button
+          className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded disabled:opacity-50"
+          disabled={blockingSubmitting}
+          onClick={async () => {
+            if (blockingSubmitting) return;
+            setBlockingSubmitting(true);
+            try {
+              if (isBlocking) {
+                await removeBlock(user.id);
+                setUser({ ...user, isBlockedByFocusUser: false });
+              } else {
+                await addBlock(user.id);
+                setUser({ ...user, isBlockedByFocusUser: true });
+              }
+            } finally {
+              setBlockingSubmitting(false);
+              setMenuOpen(false);
+            }
+          }}
+        >
+          {isBlocking ? "Unblock this user" : "Block this user"}
+        </button>
+      )}
+    </div>
+  );
 
   return (
     <article
@@ -231,7 +330,25 @@ export default function UserCard({
             blockee
           </span>
         )}
-        <span className="ml-auto">{followButton}</span>
+        <div className="ml-auto relative flex items-center gap-1">
+          <button
+            type="button"
+            className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-200 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuOpen((v) => !v);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setMenuOpen(false);
+            }}
+          >
+            ⋯
+          </button>
+          {menu}
+          {followButton}
+        </div>
       </div>
 
       {!truncated && avatarExpanded && user.avatar && (
