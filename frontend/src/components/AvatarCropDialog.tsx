@@ -24,7 +24,10 @@ export default function AvatarCropDialog({
   buttonLabel = "Use this crop",
 }: Props) {
   const [mounted, setMounted] = useState(false);
+
+  const [baseUrl, setBaseUrl] = useState<string>("");
   const [imgUrl, setImgUrl] = useState<string>("");
+
   const [natural, setNatural] = useState<{ w: number; h: number } | null>(null);
 
   const containerRef = useRef<HTMLDivElement>(null);
@@ -55,14 +58,25 @@ export default function AvatarCropDialog({
 
   useEffect(() => setMounted(true), []);
 
+  // 元画像のURLとサイズ取得
   useEffect(() => {
     const url = URL.createObjectURL(file);
-    setImgUrl(url);
+    setBaseUrl(url);
     const img = new window.Image();
     img.decoding = "async";
     img.src = url;
-    const onLoad = () => setNatural({ w: img.naturalWidth, h: img.naturalHeight });
-    const onError = () => setNatural(null);
+    const onLoad = () => {
+      // ロード完了後、余白付きキャンバスへ貼り付けて imgUrl / natural を設定
+      preparePaddedImage({ w: img.naturalWidth, h: img.naturalHeight }, url).catch(() => {
+        // フォールバック（そのまま）
+        setImgUrl(url);
+        setNatural({ w: img.naturalWidth, h: img.naturalHeight });
+      });
+    };
+    const onError = () => {
+      setImgUrl(url);
+      setNatural(null);
+    };
     img.addEventListener("load", onLoad);
     img.addEventListener("error", onError);
     return () => {
@@ -70,8 +84,61 @@ export default function AvatarCropDialog({
       img.removeEventListener("error", onError);
       URL.revokeObjectURL(url);
     };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file]);
 
+  // 余白付きキャンバスを作る（常時有効）
+  const preparePaddedImage = useCallback(async (base: { w: number; h: number }, url: string) => {
+    const ratio = 1.2;
+    const extra = 100;
+    const pw = Math.max(1, Math.round(base.w * ratio + extra));
+    const ph = Math.max(1, Math.round(base.h * ratio + extra));
+
+    const cvs = document.createElement("canvas");
+    cvs.width = pw;
+    cvs.height = ph;
+    const ctx = cvs.getContext("2d");
+    if (!ctx) {
+      setImgUrl(url);
+      setNatural(base);
+      return;
+    }
+
+    ctx.fillStyle = "#ffffff";
+    ctx.fillRect(0, 0, pw, ph);
+
+    const img = new window.Image();
+    img.decoding = "async";
+    img.src = url;
+    await new Promise<void>((res, rej) => {
+      img.onload = () => res();
+      img.onerror = () => rej();
+    });
+
+    const dx = Math.floor((pw - base.w) / 2);
+    const dy = Math.floor((ph - base.h) / 2);
+    ctx.imageSmoothingQuality = "high";
+    ctx.drawImage(img, dx, dy);
+
+    const blob: Blob = await new Promise((resolve) =>
+      cvs.toBlob((b) => resolve(b as Blob), "image/png"),
+    );
+    const paddedUrl = URL.createObjectURL(blob);
+
+    setImgUrl(paddedUrl);
+    setNatural({ w: pw, h: ph });
+
+    return () => URL.revokeObjectURL(paddedUrl);
+  }, []);
+
+  // paddedUrl の revoke
+  useEffect(() => {
+    return () => {
+      if (imgUrl && imgUrl !== baseUrl) URL.revokeObjectURL(imgUrl);
+    };
+  }, [imgUrl, baseUrl]);
+
+  // リサイズ監視
   useEffect(() => {
     if (!containerRef.current) return;
     const ro = new ResizeObserver((entries) => {
@@ -99,6 +166,7 @@ export default function AvatarCropDialog({
     }
   }, []);
 
+  // 表示領域と初期クロップ
   useEffect(() => {
     if (!natural) return;
     const d = fitImage(natural, containerSize.w, containerSize.h);
