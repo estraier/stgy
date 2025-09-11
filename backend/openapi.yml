@@ -126,6 +126,9 @@ components:
         isRepliedByFocusUser:
           type: boolean
           nullable: true
+        isBlockingFocusUser:
+          type: boolean
+          nullable: true
       required:
         [
           id,
@@ -1069,7 +1072,7 @@ paths:
         - name: focusUserId
           in: query
           schema: { type: string }
-          description: (Optional) Used for personalization (e.g., isLikedByFocusUser / isRepliedByFocusUser).
+          description: (Optional) Used for personalization isLikedByFocusUser etc.
       responses:
         "200":
           description: Posts list
@@ -1142,7 +1145,7 @@ paths:
         - name: focusUserId
           in: query
           schema: { type: string }
-          description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
+          description: (Optional) Used for personalization isLikedByFocusUser etc.
       responses:
         "200":
           description: Posts list by followees
@@ -1182,7 +1185,7 @@ paths:
         - name: focusUserId
           in: query
           schema: { type: string }
-          description: (Optional) Used for personalization (e.g., isLikedByFocusUser)
+          description: (Optional) Used for personalization isLikedByFocusUser etc.
       responses:
         "200":
           description: Posts liked by user

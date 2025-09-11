@@ -109,8 +109,7 @@ export class PostsService {
   }
 
   async getPost(id: string, focusUserId?: string): Promise<PostDetail | null> {
-    const res = await this.pgClient.query(
-      `
+    let sql = `
       SELECT
         p.id,
         p.snippet,
@@ -128,15 +127,30 @@ export class PostsService {
           SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name
         ) AS tags,
         pc.content AS content
+    `;
+    const params: unknown[] = [hexToDec(id)];
+    if (focusUserId) {
+      sql += `,
+        (
+          EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = p.owned_by AND b.blockee_id = $2)
+          OR (u.block_strangers = TRUE AND NOT EXISTS (
+                SELECT 1 FROM user_follows f
+                  WHERE f.follower_id = p.owned_by AND f.followee_id = $2
+              ))
+        ) AS is_blocking_focus_user
+      `;
+    }
+    sql += `
       FROM posts p
       JOIN users u ON p.owned_by = u.id
       LEFT JOIN posts pp ON p.reply_to = pp.id
       LEFT JOIN users pu ON pp.owned_by = pu.id
       LEFT JOIN post_details pc ON pc.post_id = p.id
       WHERE p.id = $1
-      `,
-      [hexToDec(id)],
-    );
+    `;
+    if (focusUserId) params.push(hexToDec(focusUserId));
+
+    const res = await this.pgClient.query(sql, params);
     if (res.rows.length === 0) return null;
     const row = res.rows[0];
     row.id = decToHex(row.id);
@@ -184,14 +198,31 @@ export class PostsService {
         ARRAY(
           SELECT pt2.name FROM post_tags pt2 WHERE pt2.post_id = p.id ORDER BY pt2.name
         ) AS tags
+    `;
+    const where: string[] = [];
+    const params: unknown[] = [];
+    let paramIdx = 1;
+
+    if (focusUserId) {
+      sql += `,
+        (
+          EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = p.owned_by AND b.blockee_id = $${paramIdx})
+          OR (u.block_strangers = TRUE AND NOT EXISTS (
+                SELECT 1 FROM user_follows f
+                  WHERE f.follower_id = p.owned_by AND f.followee_id = $${paramIdx}
+              ))
+        ) AS is_blocking_focus_user
+      `;
+      params.push(hexToDec(focusUserId));
+      paramIdx++;
+    }
+
+    sql += `
       FROM posts p
       JOIN users u ON p.owned_by = u.id
       LEFT JOIN posts pp ON p.reply_to = pp.id
       LEFT JOIN users pu ON pp.owned_by = pu.id
     `;
-    const where: string[] = [];
-    const params: unknown[] = [];
-    let paramIdx = 1;
 
     if (tag) {
       sql += ` JOIN post_tags pt ON pt.post_id = p.id`;
@@ -472,6 +503,8 @@ export class PostsService {
     const activeFolloweeLimit = limit;
     const perFolloweeLimit = Math.max(limit + offset, limit);
     const repliesFilter = includeReplies === false ? "AND p2.reply_to IS NULL" : "";
+    const focusParamIndex = 6;
+
     const sql = `
       WITH f AS (
         SELECT followee_id FROM user_follows WHERE follower_id = $1
@@ -525,6 +558,18 @@ export class PostsService {
         ARRAY(
           SELECT pt2.name FROM post_tags pt2 WHERE pt2.post_id = p.id ORDER BY pt2.name
         ) AS tags
+        ${
+          focusUserId
+            ? `,
+        (
+          EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = p.owned_by AND b.blockee_id = $${focusParamIndex})
+          OR (u.block_strangers = TRUE AND NOT EXISTS (
+                SELECT 1 FROM user_follows f
+                  WHERE f.follower_id = p.owned_by AND f.followee_id = $${focusParamIndex}
+              ))
+        ) AS is_blocking_focus_user`
+            : ""
+        }
       FROM top t
       JOIN posts p ON p.id = t.id
       JOIN users u ON p.owned_by = u.id
@@ -532,7 +577,14 @@ export class PostsService {
       LEFT JOIN users pu ON pp.owned_by = pu.id
       ORDER BY t.id ${orderDir}
     `;
-    const params = [hexToDec(userId), activeFolloweeLimit, perFolloweeLimit, offset, limit];
+    const params: unknown[] = [
+      hexToDec(userId),
+      activeFolloweeLimit,
+      perFolloweeLimit,
+      offset,
+      limit,
+    ];
+    if (focusUserId) params.push(hexToDec(focusUserId));
     const res = await this.pgClient.query(sql, params);
     const rows = res.rows.map((r) => {
       r.id = decToHex(r.id);
@@ -588,6 +640,25 @@ export class PostsService {
         ARRAY(
           SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name
         ) AS tags
+    `;
+    const params: unknown[] = [hexToDec(input.userId)];
+    let paramIdx = 2;
+
+    if (focusUserId) {
+      sql += `,
+        (
+          EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = p.owned_by AND b.blockee_id = $${paramIdx})
+          OR (u.block_strangers = TRUE AND NOT EXISTS (
+                SELECT 1 FROM user_follows f
+                  WHERE f.follower_id = p.owned_by AND f.followee_id = $${paramIdx}
+              ))
+        ) AS is_blocking_focus_user
+      `;
+      params.push(hexToDec(focusUserId));
+      paramIdx++;
+    }
+
+    sql += `
       FROM post_likes pl
       JOIN posts p ON pl.post_id = p.id
       JOIN users u ON p.owned_by = u.id
@@ -595,8 +666,6 @@ export class PostsService {
       LEFT JOIN users pu ON pp.owned_by = pu.id
       WHERE pl.liked_by = $1
     `;
-    const params: unknown[] = [hexToDec(input.userId)];
-    let paramIdx = 2;
 
     if (!includeReplies) {
       sql += ` AND p.reply_to IS NULL`;

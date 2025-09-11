@@ -14,9 +14,13 @@ export type Post = {
   tags: string[];
   isLikedByFocusUser?: boolean;
   isRepliedByFocusUser?: boolean;
+  isBlockingFocusUser?: boolean;
 };
 
-export type PostLite = Omit<Post, "snippet" | "isLikedByFocusUser" | "isRepliedByFocusUser">;
+export type PostLite = Omit<
+  Post,
+  "snippet" | "isLikedByFocusUser" | "isRepliedByFocusUser" | "isBlockingFocusUser"
+>;
 
 export type PostDetail = Post & {
   content: string;

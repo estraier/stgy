@@ -41,6 +41,8 @@ export default function PostCard({
       ? makeArticleHtmlFromMarkdown(post.content)
       : makeHtmlFromJsonSnippet(post.snippet);
 
+  const isBlockedForFocusUser = !!post.isBlockingFocusUser;
+
   function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
@@ -139,8 +141,14 @@ export default function PostCard({
               }}
               type="button"
               aria-label={post.isLikedByFocusUser ? "Unlike" : "Like"}
-              disabled={!post.allowLikes}
-              title={!post.allowLikes ? "Likes are disabled by the author" : undefined}
+              disabled={!post.allowLikes || isBlockedForFocusUser}
+              title={
+                !post.allowLikes
+                  ? "Likes are disabled by the author"
+                  : isBlockedForFocusUser
+                    ? "You cannot like this post"
+                    : undefined
+              }
             >
               {post.isLikedByFocusUser ? (
                 <Heart fill="currentColor" size={18} />
@@ -156,8 +164,14 @@ export default function PostCard({
               }}
               type="button"
               aria-label="Reply"
-              disabled={!post.allowReplies}
-              title={!post.allowReplies ? "Replies are disabled by the author" : undefined}
+              disabled={!post.allowReplies || isBlockedForFocusUser}
+              title={
+                !post.allowReplies
+                  ? "Replies are disabled by the author"
+                  : isBlockedForFocusUser
+                    ? "You cannot reply to this post"
+                    : undefined
+              }
               className={`flex items-center gap-1 px-2 py-1 rounded
                 ${post.isRepliedByFocusUser ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100"}
                 disabled:opacity-40 disabled:cursor-not-allowed`}

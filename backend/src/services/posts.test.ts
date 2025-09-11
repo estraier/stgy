@@ -33,6 +33,8 @@ class MockPgClientMain {
   likes: { postId: string; likedBy: string }[] = [];
   follows: { followerId: string; followeeId: string }[] = [];
   users: { id: string; nickname: string }[] = [];
+  blocks: { blockerId: string; blockeeId: string }[] = [];
+  userBlockStrangers: Record<string, boolean> = {};
   txCount = 0;
 
   private countRepliesFor(postId: string) {
@@ -40,6 +42,19 @@ class MockPgClientMain {
   }
   private countLikesFor(postId: string) {
     return this.likes.filter((l) => l.postId === postId).length;
+  }
+  private selectsBlockingFlag(sql: string) {
+    return /\bas\s+is_blocking_focus_user\b/i.test(sql);
+  }
+  private computeIsBlocking(authorId: string, focusId: string) {
+    const authorBlocks = this.blocks.some(
+      (b) => b.blockerId === authorId && b.blockeeId === focusId,
+    );
+    const blockStrangers = !!this.userBlockStrangers[authorId];
+    const authorFollowsFocus = this.follows.some(
+      (f) => f.followerId === authorId && f.followeeId === focusId,
+    );
+    return authorBlocks || (blockStrangers && !authorFollowsFocus);
   }
 
   async query(sql: string, params?: any[]) {
@@ -163,6 +178,8 @@ class MockPgClientMain {
       const activeLimit = includesTopActive ? (params?.[1] ?? Number.MAX_SAFE_INTEGER) : undefined;
       const offset = includesTopActive ? (params?.[3] ?? 0) : (params?.[2] ?? 0);
       const limit = includesTopActive ? (params?.[4] ?? 100) : (params?.[3] ?? 100);
+      const includeBlocking = this.selectsBlockingFlag(sql);
+      const focusUserId = includeBlocking ? params?.[5] : undefined;
 
       let followeeIds = this.follows
         .filter((f) => f.followerId === userId)
@@ -209,7 +226,7 @@ class MockPgClientMain {
         const reply_to_owner_nickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
-        return {
+        const base = {
           id: p.id,
           owned_by: p.ownedBy,
           reply_to: p.replyTo,
@@ -225,7 +242,11 @@ class MockPgClientMain {
             .filter((t) => t.postId === p.id)
             .map((t) => t.name)
             .sort(),
-        };
+        } as any;
+        if (includeBlocking && focusUserId) {
+          base.is_blocking_focus_user = this.computeIsBlocking(p.ownedBy, focusUserId);
+        }
+        return base;
       });
 
       return { rows };
@@ -238,43 +259,47 @@ class MockPgClientMain {
       sql.includes("WHERE p.id = $1")
     ) {
       const id = params![0];
+      const includeBlocking = this.selectsBlockingFlag(sql);
+      const focusUserId = includeBlocking ? params?.[1] : undefined;
       const post = this.data.find((p) => p.id === id);
       if (!post) return { rows: [] };
       const replyToPost = this.data.find((pp) => pp.id === post.replyTo);
       const reply_to_owner_nickname = replyToPost
         ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
         : null;
-      return {
-        rows: [
-          {
-            id: post.id,
-            owned_by: post.ownedBy,
-            reply_to: post.replyTo,
-            allow_likes: post.allowLikes,
-            allow_replies: post.allowReplies,
-            created_at: post.createdAt,
-            updated_at: post.updatedAt,
-            owner_nickname: this.users.find((u) => u.id === post.ownedBy)?.nickname ?? "",
-            reply_to_owner_nickname,
-            count_replies: this.countRepliesFor(post.id),
-            count_likes: this.countLikesFor(post.id),
-            tags: this.tags
-              .filter((t) => t.postId === post.id)
-              .map((t) => t.name)
-              .sort(),
-          },
-        ],
+      const row: any = {
+        id: post.id,
+        owned_by: post.ownedBy,
+        reply_to: post.replyTo,
+        allow_likes: post.allowLikes,
+        allow_replies: post.allowReplies,
+        created_at: post.createdAt,
+        updated_at: post.updatedAt,
+        owner_nickname: this.users.find((u) => u.id === post.ownedBy)?.nickname ?? "",
+        reply_to_owner_nickname,
+        count_replies: this.countRepliesFor(post.id),
+        count_likes: this.countLikesFor(post.id),
+        tags: this.tags
+          .filter((t) => t.postId === post.id)
+          .map((t) => t.name)
+          .sort(),
       };
+      if (includeBlocking && focusUserId) {
+        row.is_blocking_focus_user = this.computeIsBlocking(post.ownedBy, focusUserId);
+      }
+      return { rows: [row] };
     }
 
     if (sql.includes("FROM posts p") && sql.includes("JOIN users u ON p.owned_by = u.id")) {
+      const includeBlocking = this.selectsBlockingFlag(sql);
+      const focusUserId = includeBlocking ? params?.[0] : undefined;
       const mWhereId = sql.match(/WHERE\s+p\.id\s*=\s*\$(\d+)/i);
       const buildRow = (p: MockPostRow) => {
         const replyToPost = this.data.find((pp) => pp.id === p.replyTo);
         const reply_to_owner_nickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
-        return {
+        const row: any = {
           id: p.id,
           content: p.content,
           owned_by: p.ownedBy,
@@ -292,6 +317,10 @@ class MockPgClientMain {
             .map((t) => t.name)
             .sort(),
         };
+        if (includeBlocking && focusUserId) {
+          row.is_blocking_focus_user = this.computeIsBlocking(p.ownedBy, focusUserId);
+        }
+        return row;
       };
       if (mWhereId) {
         const idx = parseInt(mWhereId[1], 10) - 1;
@@ -361,9 +390,12 @@ class MockPgClientMain {
     }
 
     if (sql.includes("FROM post_likes pl") && sql.includes("JOIN posts p ON pl.post_id = p.id")) {
+      const includeBlocking = this.selectsBlockingFlag(sql);
       const userId = params![0];
-      const offset = params![1] ?? 0;
-      const limit = params![2] ?? 100;
+      const offset = params![params!.length - 2] ?? 0;
+      const limit = params![params!.length - 1] ?? 100;
+      const focusUserId = includeBlocking ? params![1] : undefined;
+
       const likedPostIds = this.likes.filter((l) => l.likedBy === userId).map((l) => l.postId);
       const posts = this.data.filter((p) => likedPostIds.includes(p.id));
       const rows = posts.map((p) => {
@@ -371,7 +403,7 @@ class MockPgClientMain {
         const replyToNickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
-        return {
+        const row: any = {
           id: p.id,
           content: p.content,
           owned_by: p.ownedBy,
@@ -389,6 +421,10 @@ class MockPgClientMain {
             .map((t) => t.name)
             .sort(),
         };
+        if (includeBlocking && focusUserId) {
+          row.is_blocking_focus_user = this.computeIsBlocking(p.ownedBy, focusUserId);
+        }
+        return row;
       });
       return { rows: rows.slice(offset, offset + limit) };
     }
@@ -605,6 +641,31 @@ describe("posts service", () => {
   test("removeLike: not found should throw", async () => {
     await expect(postsService.removeLike(postSample.id, hex16())).rejects.toThrow(/not liked/i);
   });
+
+  test("listPosts: isBlockingFocusUser true when author blocks focus user", async () => {
+    pgClient.blocks.push({
+      blockerId: toDecStr(user1Hex),
+      blockeeId: toDecStr(user2Hex),
+    });
+    const posts = await postsService.listPosts({}, user2Hex);
+    expect(posts[0].isBlockingFocusUser).toBe(true);
+  });
+
+  test("listPosts: isBlockingFocusUser with blockStrangers + not followed", async () => {
+    pgClient.userBlockStrangers[toDecStr(user1Hex)] = true;
+    const posts = await postsService.listPosts({}, user2Hex);
+    expect(posts[0].isBlockingFocusUser).toBe(true);
+  });
+
+  test("listPosts: blockStrangers but author follows focus => not blocking", async () => {
+    pgClient.userBlockStrangers[toDecStr(user1Hex)] = true;
+    pgClient.follows.push({
+      followerId: toDecStr(user1Hex),
+      followeeId: toDecStr(user2Hex),
+    });
+    const posts = await postsService.listPosts({}, user2Hex);
+    expect(posts[0].isBlockingFocusUser).toBe(false);
+  });
 });
 
 describe("listPostsByFollowees", () => {
@@ -705,6 +766,20 @@ describe("listPostsByFollowees", () => {
     expect(result.some((p) => p.ownedBy === bob)).toBe(true);
     expect(result.some((p) => p.ownedBy === carol)).toBe(false);
   });
+
+  test("listPostsByFollowees: isBlockingFocusUser computed", async () => {
+    pgClient.blocks.push({ blockerId: toDecStr(bob), blockeeId: toDecStr(alice) });
+    const input: ListPostsByFolloweesInput = {
+      userId: alice,
+      includeSelf: false,
+      offset: 0,
+      limit: 10,
+      order: "desc",
+    };
+    const result = await postsService.listPostsByFollowees(input, alice);
+    const bobPost = result.find((p) => p.ownedBy === bob);
+    expect(bobPost?.isBlockingFocusUser).toBe(true);
+  });
 });
 
 describe("listPostsLikedByUser", () => {
@@ -776,6 +851,18 @@ describe("listPostsLikedByUser", () => {
     const result = await postsService.listPostsLikedByUser(input);
     expect(result.length).toBe(0);
   });
+
+  test("listPostsLikedByUser: isBlockingFocusUser computed", async () => {
+    pgClient.blocks.push({ blockerId: toDecStr(bob), blockeeId: toDecStr(alice) });
+    const input: ListPostsLikedByUserInput = {
+      userId: alice,
+      offset: 0,
+      limit: 10,
+      order: "desc",
+    };
+    const result = await postsService.listPostsLikedByUser(input, alice);
+    expect(result.find((p) => p.id === post1.id)?.isBlockingFocusUser).toBe(true);
+  });
 });
 
 describe("getPost", () => {
@@ -784,10 +871,29 @@ describe("getPost", () => {
     users: { id: string; nickname: string }[] = [];
     postLikes: { postId: string; likedBy: string }[] = [];
     postTags: { postId: string; name: string }[] = [];
+    blocks: { blockerId: string; blockeeId: string }[] = [];
+    follows: { followerId: string; followeeId: string }[] = [];
+    userBlockStrangers: Record<string, boolean> = {};
+
+    private selectsBlockingFlag(sql: string) {
+      return /\bas\s+is_blocking_focus_user\b/i.test(sql);
+    }
+    private computeIsBlocking(authorId: string, focusId: string) {
+      const authorBlocks = this.blocks.some(
+        (b) => b.blockerId === authorId && b.blockeeId === focusId,
+      );
+      const blockStrangers = !!this.userBlockStrangers[authorId];
+      const authorFollowsFocus = this.follows.some(
+        (f) => f.followerId === authorId && f.followeeId === focusId,
+      );
+      return authorBlocks || (blockStrangers && !authorFollowsFocus);
+    }
 
     async query(sql: string, params?: any[]) {
       sql = normalizeSql(sql);
       if (sql.includes("FROM posts p") && sql.includes("JOIN users u ON p.owned_by = u.id")) {
+        const includeBlocking = this.selectsBlockingFlag(sql);
+        const focusUserId = includeBlocking ? params?.[1] : undefined;
         const id = params![0];
         const p = this.posts.find((x) => x.id === id);
         if (!p) return { rows: [] };
@@ -802,7 +908,7 @@ describe("getPost", () => {
         const reply_to_owner_nickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
-        const row = {
+        const row: any = {
           id: p.id,
           content: p.content,
           owned_by: p.ownedBy,
@@ -817,6 +923,9 @@ describe("getPost", () => {
           count_likes,
           tags,
         };
+        if (includeBlocking && focusUserId) {
+          row.is_blocking_focus_user = this.computeIsBlocking(p.ownedBy, focusUserId);
+        }
         return { rows: [row] };
       }
       if (sql.startsWith("SELECT 1 FROM post_likes WHERE post_id = $1 AND liked_by = $2")) {
@@ -932,6 +1041,24 @@ describe("getPost", () => {
     expect(got!.countReplies).toBe(0);
     expect(got!.countLikes).toBe(0);
     expect(got!.tags).toEqual([]);
+  });
+
+  test("getPost: isBlockingFocusUser true when blocked by author", async () => {
+    const focus = hex16();
+    pgClient.blocks.push({ blockerId: toDecStr(owner.id), blockeeId: toDecStr(focus) });
+    const got = await postsService.getPost(post.id, focus);
+    expect(got?.isBlockingFocusUser).toBe(true);
+  });
+
+  test("getPost: blockStrangers + not followed => true; followed => false", async () => {
+    const focus = hex16();
+    pgClient.userBlockStrangers[toDecStr(owner.id)] = true;
+    const got1 = await postsService.getPost(post.id, focus);
+    expect(got1?.isBlockingFocusUser).toBe(true);
+
+    pgClient.follows.push({ followerId: toDecStr(owner.id), followeeId: toDecStr(focus) });
+    const got2 = await postsService.getPost(post.id, focus);
+    expect(got2?.isBlockingFocusUser).toBe(false);
   });
 });
 

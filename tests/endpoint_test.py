@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#! /usr/bin/env python3
 
 import requests
 import os
@@ -221,7 +221,7 @@ def test_posts():
   res = requests.delete(f"{BASE_URL}/posts/{post_id}/like", headers=headers, cookies=cookies)
   assert res.status_code == 404, res.text
   print("[posts] unlike again: not found (expected)")
-  res = requests.get(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
+  res = requests.get(f"{BASE_URL}/posts/{post_id}?focusUserId={user_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   post = res.json()
   assert post["id"] == post_id
@@ -231,6 +231,9 @@ def test_posts():
   assert "countLikes" in post
   assert "countReplies" in post
   assert set(post["tags"]) == {"hop", "step"}
+  assert post["isLikedByFocusUser"] == False
+  assert post["isRepliedByFocusUser"] == False
+  assert post["isBlockingFocusUser"] == False
   res = requests.get(f"{BASE_URL}/posts/{post_id}/lite", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   lite_post = res.json()

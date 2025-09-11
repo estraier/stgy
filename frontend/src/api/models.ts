@@ -55,6 +55,7 @@ export type Post = {
   tags: string[];
   isLikedByFocusUser?: boolean | null;
   isRepliedByFocusUser?: boolean | null;
+  isBlockingFocusUser?: boolean | null;
 };
 
 export type PostDetail = Post & {
