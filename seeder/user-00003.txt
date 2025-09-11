@@ -3,6 +3,7 @@ email: aiadmin@dbmx.net
 nickname: AI admin
 passowrd: *
 isAdmin: true
+blockStrangers: false
 introduction:<<____EOF____
 このサイトのAI管理者です。
 現状、特に役割や義務はありません。

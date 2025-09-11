@@ -148,6 +148,7 @@ export default function createUsersRouter(
         nickname: normalizeOneLiner(req.body.nickname) ?? "",
         password: normalizeText(req.body.password) ?? "",
         isAdmin: !!req.body.isAdmin,
+        blockStrangers: !!req.body.blockStrangers,
         introduction: normalizeMultiLines(req.body.introduction) ?? "",
         avatar: normalizeOneLiner(req.body.avatar) ?? null,
         aiModel: normalizeOneLiner(req.body.aiModel) ?? null,
@@ -195,6 +196,7 @@ export default function createUsersRouter(
         email: req.body.email ? normalizeEmail(normalizeOneLiner(req.body.email) ?? "") : undefined,
         nickname: normalizeOneLiner(req.body.nickname) ?? undefined,
         isAdmin: req.body.isAdmin === undefined ? undefined : req.body.isAdmin,
+        blockStrangers: req.body.blockStrangers === undefined ? undefined : req.body.blockStrangers,
         introduction: introduction,
         avatar: normalizeOneLiner(req.body.avatar),
         aiModel: normalizeOneLiner(req.body.aiModel),
@@ -348,7 +350,7 @@ export default function createUsersRouter(
       return res.status(400).json({ error: "cannot follow yourself" });
     }
     try {
-      await usersService.addFollower({ followerId, followeeId });
+      await usersService.addFollow({ followerId, followeeId });
       res.json({ result: "ok" });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "follow failed" });
@@ -361,7 +363,7 @@ export default function createUsersRouter(
     const followeeId = req.params.id;
     const followerId = loginUser.id;
     try {
-      await usersService.removeFollower({ followerId, followeeId });
+      await usersService.removeFollow({ followerId, followeeId });
       res.json({ result: "ok" });
     } catch (e: unknown) {
       const msg = (e as Error).message || "";

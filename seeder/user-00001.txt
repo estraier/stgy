@@ -3,6 +3,7 @@ email: admin@dbmx.net
 nickname: admin
 passowrd: admin
 isAdmin: true
+blockStrangers: false
 introduction:<<____EOF____
 このサイトの管理者です。
 運用上の報告や注意点についてお知らせします。

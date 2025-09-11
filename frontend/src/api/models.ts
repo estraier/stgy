@@ -19,6 +19,7 @@ export type User = {
   email: string;
   nickname: string;
   isAdmin: boolean;
+  blockStrangers: boolean;
   snippet: string;
   avatar: string | null;
   aiModel: string | null;

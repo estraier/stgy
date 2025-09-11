@@ -30,6 +30,7 @@ components:
         email: { type: string }
         nickname: { type: string }
         isAdmin: { type: boolean }
+        blockStrangers: { type: boolean }
         snippet: { type: string }
         avatar: { type: string, nullable: true }
         aiModel: { type: string, nullable: true }
@@ -50,6 +51,7 @@ components:
           email,
           nickname,
           isAdmin,
+          blockStrangers,
           snippet,
           avatar,
           aiModel,
@@ -75,13 +77,14 @@ components:
         email: { type: string }
         nickname: { type: string }
         isAdmin: { type: boolean }
+        blockStrangers: { type: boolean }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time, nullable: true }
         countFollowers: { type: integer }
         countFollowees: { type: integer }
         countPosts: { type: integer }
       required:
-        [id, email, nickname, isAdmin, createdAt, countFollowers, countFollowees, countPosts]
+        [id, email, nickname, isAdmin, blockStrangers, createdAt, countFollowers, countFollowees, countPosts]
 
     Post:
       type: object
@@ -479,11 +482,12 @@ paths:
                 nickname: { type: string }
                 password: { type: string }
                 isAdmin: { type: boolean }
+                blockStrangers: { type: boolean }
                 introduction: { type: string }
                 avatar: { type: string, nullable: true }
                 aiModel: { type: string, nullable: true }
                 aiPersonality: { type: string, nullable: true }
-              required: [email, nickname, password, isAdmin, introduction]
+              required: [email, nickname, password, isAdmin, blockStrangers, introduction]
       responses:
         "201":
           description: User created
@@ -563,6 +567,7 @@ paths:
                 email: { type: string }
                 nickname: { type: string }
                 isAdmin: { type: boolean }
+                blockStrangers: { type: boolean }
                 introduction: { type: string }
                 avatar: { type: string, nullable: true }
                 aiModel: { type: string, nullable: true }

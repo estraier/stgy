@@ -3,6 +3,7 @@ email: hiroyuki@dbmx.net
 nickname: Hiroyuki
 passowrd: *
 isAdmin: false
+blockStrangers: false
 introduction:<<____EOF____
 某掲示板の元管理人です。
 フランス在住で、たまに日本に来ます。

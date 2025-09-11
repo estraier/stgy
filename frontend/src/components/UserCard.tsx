@@ -35,6 +35,7 @@ export default function UserCard({
   }, [initialUser]);
 
   const isAdmin = user.isAdmin;
+  const blockStrangers = !!user.blockStrangers;
   const isAI = !!(user.aiModel && user.aiModel.trim() !== "");
   const isSelf = !!(focusUserId && user.id === focusUserId);
   const isFollowing = !!user.isFollowedByFocusUser;
@@ -56,7 +57,7 @@ export default function UserCard({
             if (submitting) return;
             setSubmitting(true);
             try {
-              await (await import("@/api/users")).removeFollower(user.id);
+              await (await import("@/api/users")).removeFollow(user.id);
               setUser({ ...user, isFollowedByFocusUser: false });
             } finally {
               setSubmitting(false);
@@ -76,7 +77,7 @@ export default function UserCard({
             if (submitting) return;
             setSubmitting(true);
             try {
-              await (await import("@/api/users")).addFollower(user.id);
+              await (await import("@/api/users")).addFollow(user.id);
               setUser({ ...user, isFollowedByFocusUser: true });
             } finally {
               setSubmitting(false);
@@ -173,6 +174,11 @@ export default function UserCard({
         {isAdmin && (
           <span className="-mt-1 ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs opacity-90">
             admin
+          </span>
+        )}
+        {blockStrangers && (
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs opacity-90">
+            BS
           </span>
         )}
         {isAI && (

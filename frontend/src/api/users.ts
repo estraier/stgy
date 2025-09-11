@@ -152,13 +152,13 @@ export async function verifyResetPassword(params: {
   return res.json();
 }
 
-export async function addFollower(id: string): Promise<{ result: string }> {
+export async function addFollow(id: string): Promise<{ result: string }> {
   const res = await apiFetch(`/users/${id}/follow`, { method: "POST" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
 
-export async function removeFollower(id: string): Promise<{ result: string }> {
+export async function removeFollow(id: string): Promise<{ result: string }> {
   const res = await apiFetch(`/users/${id}/follow`, { method: "DELETE" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();

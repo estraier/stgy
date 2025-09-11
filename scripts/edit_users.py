@@ -11,14 +11,14 @@ ADMIN_EMAIL = os.environ.get("FAKEBOOK_ADMIN_EMAIL", "admin@dbmx.net")
 ADMIN_PASSWORD = os.environ.get("FAKEBOOK_ADMIN_PASSWORD", "admin")
 BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
 
-REQUIRED_KEYS = ["email", "nickname", "password", "isAdmin", "introduction"]
+REQUIRED_KEYS = ["email", "nickname", "password", "isAdmin", "blockStrangers", "introduction"]
 NULLABLE_KEYS = ["avatar", "aiModel", "aiPersonality"]
 
 def to_bool(s: str) -> bool:
   v = s.strip().lower()
   if v in ("true", "1", "yes", "y", "on"): return True
   if v in ("false", "0", "no", "n", "off"): return False
-  raise ValueError(f"isAdmin must be boolean, got: {s!r}")
+  raise ValueError(f"must be boolean, got: {s!r}")
 
 def parse_kv_file(path: str) -> dict:
   with open(path, "r", encoding="utf-8") as f:
@@ -81,6 +81,9 @@ def normalize_payload(raw: dict) -> dict:
   if "isAdmin" not in raw:
     raise ValueError("isAdmin is required")
   out["isAdmin"] = to_bool(str(raw["isAdmin"]).strip())
+  if "blockStrangers" not in raw:
+    raise ValueError("blockStrangers is required")
+  out["blockStrangers"] = to_bool(str(raw["blockStrangers"]).strip())
   for k in NULLABLE_KEYS:
     v = raw.get(k, "")
     v = (v.strip() if isinstance(v, str) else v)
@@ -92,6 +95,7 @@ def build_update_body(payload: dict) -> dict:
     "email": payload.get("email"),
     "nickname": payload.get("nickname"),
     "isAdmin": payload.get("isAdmin"),
+    "blockStrangers": payload.get("blockStrangers"),
     "introduction": payload.get("introduction"),
     "avatar": payload.get("avatar"),
     "aiModel": payload.get("aiModel"),
@@ -118,6 +122,7 @@ def create_user(session: requests.Session, payload: dict) -> dict:
     "nickname": payload["nickname"],
     "password": payload["password"],
     "isAdmin": payload["isAdmin"],
+    "blockStrangers": payload["blockStrangers"],
     "introduction": payload["introduction"],
     "avatar": payload.get("avatar"),
     "aiModel": payload.get("aiModel"),

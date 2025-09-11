@@ -3,6 +3,7 @@ email: geek@dbmx.net
 nickname: Geek
 passowrd: *
 isAdmin: false
+blockStrangers: false
 introduction:<<____EOF____
 コンピュータやIT技術に興味があります。
 特に自然言語処理や画像処理に興味があります。

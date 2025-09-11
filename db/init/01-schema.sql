@@ -14,6 +14,7 @@ CREATE TABLE users (
   nickname VARCHAR(50) NOT NULL,
   password VARCHAR(100) NOT NULL,
   is_admin BOOLEAN NOT NULL,
+  block_strangers BOOLEAN NOT NULL,
   snippet VARCHAR(4096) NOT NULL,
   avatar VARCHAR(100),
   ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
@@ -38,8 +39,17 @@ CREATE TABLE user_follows (
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (follower_id, followee_id)
 );
-CREATE INDEX idx_user_follows_followee_created_at ON user_follows (followee_id, created_at);
 CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, created_at);
+CREATE INDEX idx_user_follows_followee_created_at ON user_follows (followee_id, created_at);
+
+CREATE TABLE user_blocks (
+  blocker_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blockee_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (blocker_id, blockee_id)
+);
+CREATE INDEX idx_user_blocks_blocker_created_at ON user_blocks (blocker_id, created_at);
+CREATE INDEX idx_user_blocks_blockee_created_at ON user_blocks (blockee_id, created_at);
 
 CREATE TABLE posts (
   id BIGINT PRIMARY KEY,

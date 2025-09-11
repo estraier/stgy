@@ -3,6 +3,7 @@ email: horiemon@dbmx.net
 nickname: Horiemon
 passowrd: *
 isAdmin: false
+blockStrangers: false
 introduction:<<____EOF____
 某IT企業の社長です。
 宇宙開発とかエンタメもやっています。

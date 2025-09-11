@@ -29,6 +29,7 @@ class MockPgClient {
         email: "alice@example.com",
         nickname: "Alice",
         isAdmin: false,
+        blockStrangers: false,
         snippet: "introA",
         avatar: null,
         aiModel: "gpt-4.1",
@@ -43,6 +44,7 @@ class MockPgClient {
         email: "bob@example.com",
         nickname: "Bob",
         isAdmin: false,
+        blockStrangers: false,
         snippet: "introB",
         avatar: null,
         aiModel: "gpt-4.1",
@@ -57,6 +59,7 @@ class MockPgClient {
         email: "carol@example.com",
         nickname: "Carol",
         isAdmin: false,
+        blockStrangers: false,
         snippet: "introC",
         avatar: null,
         aiModel: "gpt-4.1",
@@ -170,6 +173,7 @@ class MockPgClient {
           email: u.email,
           nickname: u.nickname,
           is_admin: u.isAdmin,
+          block_strangers: u.blockStrangers,
           snippet: u.snippet,
           avatar: u.avatar,
           ai_model: u.aiModel,
@@ -227,7 +231,7 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT id, email, nickname, is_admin, ai_model, created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1",
+        "SELECT id, email, nickname, is_admin, block_strangers, ai_model, created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1",
       )
     ) {
       const idHex = decToHex(params[0]);
@@ -238,6 +242,7 @@ class MockPgClient {
         email: user.email,
         nickname: user.nickname,
         is_admin: user.isAdmin,
+        block_strangers: user.blockStrangers,
         ai_model: user.aiModel,
         created_at: user.createdAt,
         updated_at: user.updatedAt,
@@ -250,7 +255,7 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts, d.introduction, d.ai_personality FROM users u LEFT JOIN user_details d ON d.user_id = u.id WHERE u.id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts, d.introduction, d.ai_personality FROM users u LEFT JOIN user_details d ON d.user_id = u.id WHERE u.id = $1",
       )
     ) {
       const idHex = decToHex(params[0]);
@@ -262,6 +267,7 @@ class MockPgClient {
         email: user.email,
         nickname: user.nickname,
         is_admin: user.isAdmin,
+        block_strangers: user.blockStrangers,
         snippet: user.snippet,
         avatar: user.avatar,
         ai_model: user.aiModel,
@@ -300,7 +306,7 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM users u",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM users u",
       )
     ) {
       let list = [...this.users];
@@ -329,6 +335,7 @@ class MockPgClient {
         email: u.email,
         nickname: u.nickname,
         is_admin: u.isAdmin,
+        block_strangers: u.blockStrangers,
         snippet: u.snippet,
         avatar: u.avatar,
         ai_model: u.aiModel,
@@ -376,16 +383,17 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "INSERT INTO users (id, email, nickname, password, is_admin, snippet, avatar, ai_model, created_at, updated_at) VALUES",
+        "INSERT INTO users (id, email, nickname, password, is_admin, block_strangers, snippet, avatar, ai_model, created_at, updated_at) VALUES",
       )
     ) {
-      const [idDec, email, nickname, password, isAdmin, snippet, avatar, aiModel, idDate] = params;
+      const [idDec, email, nickname, password, isAdmin, blockStrangers, snippet, avatar, aiModel, idDate] = params;
       const idHex = decToHex(idDec);
       const user: User = {
         id: idHex,
         email,
         nickname,
         isAdmin,
+        blockStrangers,
         snippet,
         avatar,
         aiModel,
@@ -404,6 +412,7 @@ class MockPgClient {
             email: user.email,
             nickname: user.nickname,
             is_admin: user.isAdmin,
+            block_strangers: user.blockStrangers,
             snippet: user.snippet,
             avatar: user.avatar,
             ai_model: user.aiModel,
@@ -455,6 +464,8 @@ class MockPgClient {
       }
       if (sql.includes("is_admin ="))
         user.isAdmin = !!params.find((p: any) => typeof p === "boolean");
+      if (sql.includes("block_strangers ="))
+        user.blockStrangers = !!params.find((p: any) => typeof p === "boolean");
       if (sql.includes("avatar ="))
         user.avatar = params.find((p: any) => p === null || typeof p === "string") ?? user.avatar;
       if (sql.includes("ai_model ="))
@@ -470,6 +481,7 @@ class MockPgClient {
             email: user.email,
             nickname: user.nickname,
             is_admin: user.isAdmin,
+            block_strangers: user.blockStrangers,
             snippet: user.snippet,
             avatar: user.avatar,
             ai_model: user.aiModel,
@@ -498,7 +510,7 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
       )
     ) {
       const followerId = decToHex(params[0]);
@@ -518,6 +530,7 @@ class MockPgClient {
         email: u.email,
         nickname: u.nickname,
         is_admin: u.isAdmin,
+        block_strangers: u.blockStrangers,
         snippet: u.snippet,
         avatar: u.avatar,
         ai_model: u.aiModel,
@@ -532,7 +545,7 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
       )
     ) {
       const followeeId = decToHex(params[0]);
@@ -552,6 +565,7 @@ class MockPgClient {
         email: u.email,
         nickname: u.nickname,
         is_admin: u.isAdmin,
+        block_strangers: u.blockStrangers,
         snippet: u.snippet,
         avatar: u.avatar,
         ai_model: u.aiModel,
@@ -668,6 +682,7 @@ describe("UsersService", () => {
       nickname: "Dan",
       password: "danpass",
       isAdmin: false,
+      blockStrangers: false,
       introduction: "introD",
       avatar: null,
       aiModel: "gpt-4.1",
@@ -686,6 +701,7 @@ describe("UsersService", () => {
       email: "alice2@example.com",
       nickname: "Alice2",
       isAdmin: true,
+      blockStrangers: true,
       introduction: "introX",
       avatar: null,
       aiModel: "gpt-4.1-mini",
@@ -693,6 +709,7 @@ describe("UsersService", () => {
     });
     expect(user?.email).toBe("alice2@example.com");
     expect(user?.isAdmin).toBe(true);
+    expect(user?.blockStrangers).toBe(true);
     const detail = await service.getUser(ALICE);
     expect(detail?.introduction).toBe("introX");
     expect(detail?.aiPersonality).toBe("X");
@@ -819,10 +836,10 @@ describe("UsersService", () => {
     expect(res.every((u) => typeof u.countPosts === "number")).toBe(true);
   });
 
-  test("addFollower/removeFollower", async () => {
-    await service.addFollower({ followerId: BOB, followeeId: CAROL });
+  test("addFollow/removeFollow", async () => {
+    await service.addFollow({ followerId: BOB, followeeId: CAROL });
     expect(pg.follows.some((f) => f.followerId === BOB && f.followeeId === CAROL)).toBe(true);
-    await service.removeFollower({ followerId: BOB, followeeId: CAROL });
+    await service.removeFollow({ followerId: BOB, followeeId: CAROL });
     expect(pg.follows.some((f) => f.followerId === BOB && f.followeeId === CAROL)).toBe(false);
   });
 

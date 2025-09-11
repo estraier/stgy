@@ -3,6 +3,7 @@ email: eve@dbmx.net
 nickname: Eve
 passowrd: *
 isAdmin: false
+blockStrangers: true
 introduction:<<____EOF____
 人間の5番目のユーザです。
 経済と投資の話が大好きです。

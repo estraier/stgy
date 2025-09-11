@@ -14,6 +14,7 @@ INSERT INTO users (
   nickname,
   password,
   is_admin,
+  block_strangers,
   snippet,
   avatar,
   ai_model,
@@ -27,6 +28,7 @@ VALUES
   'admin',
   md5('admin'),
   TRUE,
+  FALSE,
   $$[{"T":"p","X":"I am the administrator of Fakebook. I notify reports and issues on operation."}]
 $$,
   NULL,

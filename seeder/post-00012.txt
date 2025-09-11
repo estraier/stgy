@@ -28,13 +28,13 @@ SNSの文脈では、DBに投げるクエリは2種類に大別して考える�
 
 Snowflake IDは、単一の発番器が同一ミリ秒に4096回の発番が可能で、256個まで発番器を同時稼働させられるので、実運用上の衝突のリスクはゼロにできる。そして、プライマリキーの順序が時系列と一致すると、created_atのような従属属性を参照しなくてもソートができるため、より効率的なクエリが書けるようになる。
 
-UUIDの利点は、協調型の採番方法でなくてもユニーク性が担保できることと、予測不能な乱数を含むので、秘密情報としても利用できることだ。逆に言えば、協調型の採番方法が採れて、IDを公開情報にする場合は、UUIDでなくても良いということになる。UUIDの欠点は、文字列にすると長いことと、それがブラウザのアドレスバーに出てくるとダサいことだ。効率だけではなく、美観のためにFnowflake IDを採用した部分も大きい。
+UUIDの利点は、協調型の採番方法でなくてもユニーク性が担保できることと、予測不能な乱数を含むので、秘密情報としても利用できることだ。逆に言えば、協調型の採番方法ができて、IDを公開情報にする場合は、UUIDでなくても良いということになる。UUIDの欠点は、文字列にすると長いことと、それがブラウザのアドレスバーに出てくるとダサいことだ。効率だけではなく、美観のためにFnowflake IDを採用した部分も大きい。
 
-DBの処理効率を上げるには、IDは数値型で扱った方が良い。IDはインデックスにも格納されることが多いが、インデックスが小さくなれば、それだけキャッシュに乗るレコード数が多くなる。また、数値の方が比較関数のCPU効率も良くなる。二つの文字列を比較すると数10クロックかかるが、数値比較は1クロックでできる。とはいえ、インデックスのデータ量は主テーブルに比べればとても小さく、また比較関数のCPU負荷がボトルネックになることは稀だ。
+DBの処理効率を上げるには、IDは数値型で扱った方が良い。IDはインデックスにも格納されることが多いが、インデックスが小さくなれば、それだけキャッシュに乗せられるレコード数が多くなる。例えば、平均10バイトのニックネームと数値型8バイトのIDの複合インデックスはレコードあたり最低18バイトの空間が必要だが、IDを文字列の16バイトにすると最低26バイトの空間が必要になる。また、数値の方が比較関数のCPU効率も良くなる。二つの文字列を比較すると数10クロックかかるが、数値比較は1クロックでできる。とはいえ、インデックスのデータ量は主テーブルに比べればとても小さく、また比較関数のCPU負荷がボトルネックになることは稀だ。
 
 IDを文字列型で扱うのにも合理性がある。TypeScriptのnumber型の精度は53ビットなので、64ビットの値を数値として扱うにはbigint型にする必要がある。文字列ならば、数値の型の違いでバグるリスクが避けられるし、JSONに入れるのも楽だ。さらに、将来的に任意の採番方法に乗り換えるのも容易だ。
 
-今回は、IDをDB内部では数値型として扱うが、DB操作を隠蔽するサービス層のメソッドの入出力ではIDは常に16進数文字列として表現することにした。それなら、型を気にしなければいけない部分はサービス層に隠蔽され、上層でJSONなどに入れる際にも文字列なので、気軽に扱える。採番方向を変えるとしても、サービス層の内部に変更が隠蔽される。
+今回は、IDをDB内部では数値型として扱うが、DB操作を隠蔽するサービス層のメソッドの入出力ではIDは常に16進数文字列として表現することにした。それなら、型を気にしなければいけない部分はサービス層に隠蔽され、その上層のAPI層でJSONなどに入れる際には文字列を扱うので、不整合は起き得ない。採番方向を変えるとしても、サービス層の内部に変更が隠蔽されていれば、APIを変える必要はない。
 
 ## usersテーブル
 
@@ -42,11 +42,12 @@ IDを文字列型で扱うのにも合理性がある。TypeScriptのnumber型�
 
 ```sql:small
 CREATE TABLE users (
-  id VARCHAR(100) PRIMARY KEY,
+  id BIGINT PRIMARY KEY,
   email VARCHAR(100) NOT NULL UNIQUE,
   nickname VARCHAR(50) NOT NULL,
   password VARCHAR(100) NOT NULL,
   is_admin BOOLEAN NOT NULL,
+  block_strangers BOOLEAN NOT NULL,
   snippet VARCHAR(4096) NOT NULL,
   avatar VARCHAR(100),
   ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
@@ -71,13 +72,15 @@ count_followers、count_followees、count_postsは、それぞれ、自分をフ
 
 is_adminは、管理者かどうかのフラグである。ガチなサービスであれば、権限を細かく分けて運用するべきなのだろうけども、管理しきれなくなるリスクもある。AWSやGCPのロールの管理で辟易しているので、それへのアンチテーゼとして、管理者ユーザと一般ユーザの2種類で済ませた。何でもできる管理者と、自分のリソースしか扱えない一般ユーザの区分けだけでも、SNSとしての運用はできる。
 
+block_strangersは、自分がフォローしているユーザ以外からのイイネや返信を禁止するフラグだ。見知らぬ人に絡まれすぎるとSNS疲れするので、それを避けるためにこの機能がある。投稿単位でこのフラグを管理することも考えたが、過去の投稿のフラグを変えて回るのは大変だし、機械的にやるにしても処理が重くなるので、アカウント単位にした。
+
 その他の属性は、表示用のものだ。snippetは、ユーザの自己紹介のスニペットで、Markdownを解析した後のJSON文字列が入っている。avatarは、アバター画像（アイコン）の保管場所を示す。通常はS3上のパスが入る。created_atとかupdated_atは、ユーザの作成日時と更新日時だ。created_atはSnowflake IDの生成時と同じタイムスタンプで生成しているため、両者の順序は確実に整合する。ai_modelは、AIエージェントが読んで自分の行動パターンを決めるのにも用いる。
 
 ユーザ一覧画面で表示する属性は全てusersテーブルにあり、ユーザ詳細画面でのみ表示する属性はuser_detailsテーブルに逃している。
 
 ```sql:small
 CREATE TABLE user_details (
-  user_id VARCHAR(50) PRIMARY KEY,
+  user_id BIGINT PRIMARY KEY,
   introduction VARCHAR(65535) NOT NULL,
   ai_personality VARCHAR(5000),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
@@ -94,10 +97,10 @@ emailとpasswordもリスト表示で使われないので、それらをuser_se
 
 ```sql:small
 CREATE TABLE posts (
-  id VARCHAR(50) PRIMARY KEY,
+  id BIGINT PRIMARY KEY,
   snippet VARCHAR(4096) NOT NULL,
-  owned_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  reply_to VARCHAR(50) REFERENCES posts(id) ON DELETE SET NULL,
+  owned_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reply_to BIGINT REFERENCES posts(id) ON DELETE SET NULL,
   allow_likes BOOLEAN NOT NULL,
   allow_replies BOOLEAN NOT NULL,
   created_at TIMESTAMPTZ NOT NULL,
@@ -127,7 +130,7 @@ count_likesとcount_repliesは、それぞれイイネと返信の数を格納�
 
 ```sql:small
 CREATE TABLE post_details (
-  post_id VARCHAR(50) PRIMARY KEY,
+  post_id BIGINT PRIMARY KEY,
   content VARCHAR(65535) NOT NULL,
   FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
 );
@@ -147,22 +150,37 @@ contentは投稿記事の全文であり、Markdownの文字列が入ってい�
 
 なお、現状では、全文検索のために、pg_trgmなどのq-gramインデックスを貼っているわけではないので、全文検索のクエリはボトルネックになっている。インデックスを貼ればマシになるのは明らかなのにそうしていないのは、それによって更新処理が重くなるからだ。全文検索機能に関しては、バッチ処理でデータを抜き出して作った外部検索エンジンを使うのが無難だ。検索エンジンが重くなってもSNSの主たる機能に影響がないというのは実運用上で非常に重要だ。リアルタイム性が必要であれば、最新のデータだけを扱うオンメモリ検索と組み合わせればよい。検索エンジンにデータを流し込む際には、MarkdownからASTを構築すれば、タイトル等を属性として扱うなどの任意の後処理ができる。
 
-## user_followsテーブル
+## user_followsテーブルとuser_blocksテーブル
 
 ユーザ同士のフォロー関係を管理するuser_followsテーブルに着目しよう。その実際のスキーマは以下のものだ。
 
 ```sql:small
 CREATE TABLE user_follows (
-  follower_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  followee_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  follower_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  followee_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (follower_id, followee_id)
 );
-CREATE INDEX idx_user_follows_followee_created_at ON user_follows (followee_id, created_at);
 CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, created_at);
+CREATE INDEX idx_user_follows_followee_created_at ON user_follows (followee_id, created_at);
 ```
 
 フォロイー（自分がフォローしているユーザ）の一覧と、フォロワー（自分をフォローしているユーザ）の一覧を見るためには、このテーブルが必要だ。usersテーブルにfollowersやfolloweesという属性を持たせて中に配列を入れるという運用もできなくはないが、第1正規形に違反する構造で運用すると確実に破綻するので、テーブル分割が必要だ。フォロワーとフォロイーのペアが主キーになっているので、一意性はそこで保証される。また、フォロイーとフォロワーの一覧をそれぞれ時系列で取得するクエリを効率化するためのインデックスが、created_atとの複合インデックスとして設けられている。
+
+特定のユーザからのイイネや返信をブロックする機能もある。これもブロッカー（ブロックするユーザ）とブロッキー（ブロックされるユーザ）のペアになっていて、それぞれをキーにして一覧が取得しやすいようにインデックスが張られている。
+
+```sql:small
+CREATE TABLE user_blocks (
+  blocker_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blockee_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (blocker_id, blockee_id)
+);
+CREATE INDEX idx_user_blocks_blocker_created_at ON user_blocks (blocker_id, created_at);
+CREATE INDEX idx_user_blocks_blockee_created_at ON user_blocks (blockee_id, created_at);
+```
+
+粘着質のユーザをブロックしても、ブロック機能だけでは、アカウントを複数作って攻撃されるのは防げない。これに対する根本的な対策はない。ほとぼりが冷めるまでは、フォロイー以外からのイイネや返信を拒絶するのが望ましいが、そのためにusersテーブルのblock_strangersがある。特定ユーザのブロック機能とユーザ属性としての他人ブロック機能は相補的な関係にある。
 
 ## post_tagsテーブル
 
@@ -170,7 +188,7 @@ CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, 
 
 ```sql:small
 CREATE TABLE post_tags (
-  post_id VARCHAR(50) NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
   name VARCHAR(50) NOT NULL,
   PRIMARY KEY (post_id, name)
 );
@@ -189,8 +207,8 @@ CREATE INDEX idx_post_tags_name_post_id ON post_tags(name, post_id);
 
 ```sql:small
 CREATE TABLE post_likes (
-  post_id VARCHAR(50) NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-  liked_by VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  liked_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   created_at TIMESTAMPTZ NOT NULL,
   PRIMARY KEY (post_id, liked_by)
 );
@@ -242,7 +260,7 @@ consumerはワーカーの種類を識別するためにあるが、現状では
 
 ```sql:small
 CREATE TABLE notifications (
-  user_id VARCHAR(50) NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   slot VARCHAR(50) NOT NULL,
   term VARCHAR(50) NOT NULL,
   is_read BOOLEAN NOT NULL DEFAULT FALSE,

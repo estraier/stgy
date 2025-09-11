@@ -52,6 +52,7 @@ export class SignupService {
       password: data.password,
       nickname: data.email.split("@")[0],
       isAdmin: false,
+      blockStrangers: false,
       introduction: "brand new user",
       avatar: null,
       aiModel: null,

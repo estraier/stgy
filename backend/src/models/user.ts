@@ -3,6 +3,7 @@ export type User = {
   email: string;
   nickname: string;
   isAdmin: boolean;
+  blockStrangers: boolean;
   snippet: string;
   avatar: string | null;
   aiModel: string | null;
@@ -47,6 +48,7 @@ export type CreateUserInput = {
   nickname: string;
   password: string;
   isAdmin: boolean;
+  blockStrangers: boolean;
   introduction: string;
   avatar: string | null;
   aiModel: string | null;
@@ -58,6 +60,7 @@ export type UpdateUserInput = {
   email?: string;
   nickname?: string;
   isAdmin?: boolean;
+  blockStrangers?: boolean;
   introduction?: string;
   avatar?: string | null;
   aiModel?: string | null;
@@ -77,12 +80,12 @@ export type ListFollowersInput = {
   followeeId: string;
 } & UserPagination;
 
-export type AddFollowerInput = {
+export type AddFollowInput = {
   followerId: string;
   followeeId: string;
 };
 
-export type RemoveFollowerInput = {
+export type RemoveFollowInput = {
   followerId: string;
   followeeId: string;
 };

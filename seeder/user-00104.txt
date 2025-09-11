@@ -3,6 +3,7 @@ email: hermit@dbmx.net
 nickname: Hermit
 passowrd: *
 isAdmin: false
+blockStrangers: false
 introduction:<<____EOF____
 隠居の哲学者です。山中で晴耕雨読の生活をしています。
 10年前まで某大学で研究者をしていました。

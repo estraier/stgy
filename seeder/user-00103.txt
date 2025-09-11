@@ -3,6 +3,7 @@ email: trendy@dbmx.net
 nickname: Trendy
 passowrd: *
 isAdmin: false
+blockStrangers: false
 introduction:<<____EOF____
 ファッションやコスメやアパレルに興味があります。
 巷で流行っている服飾関係や美容関連の情報をつぶやきます。

@@ -10,8 +10,8 @@ import {
   ListUsersInput,
   ListFolloweesInput,
   ListFollowersInput,
-  AddFollowerInput,
-  RemoveFollowerInput,
+  AddFollowInput,
+  RemoveFollowInput,
   ListFriendsByNicknamePrefixInput,
 } from "../models/user";
 import { IdIssueService } from "./idIssue";
@@ -76,7 +76,7 @@ export class UsersService {
   async getUserLite(id: string): Promise<UserLite | null> {
     const userRes = await this.pgClient.query(
       `SELECT
-         id, email, nickname, is_admin, ai_model,
+         id, email, nickname, is_admin, block_strangers, ai_model,
          created_at, updated_at, count_followers, count_followees, count_posts
        FROM users
        WHERE id = $1`,
@@ -92,7 +92,7 @@ export class UsersService {
   async getUser(id: string, focusUserId?: string): Promise<UserDetail | null> {
     const userRes = await this.pgClient.query(
       `SELECT
-         u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model,
+         u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model,
          u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts,
          d.introduction, d.ai_personality
        FROM users u
@@ -129,7 +129,7 @@ export class UsersService {
     const nicknamePrefix = input?.nicknamePrefix?.trim();
 
     let baseSelect = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model,
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model,
              u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
       FROM users u
     `;
@@ -247,15 +247,16 @@ export class UsersService {
     await this.pgClient.query("BEGIN");
     try {
       const res = await this.pgClient.query(
-        `INSERT INTO users (id, email, nickname, password, is_admin, snippet, avatar, ai_model, created_at, updated_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,NULL)
-         RETURNING id, email, nickname, is_admin, snippet, avatar, ai_model, created_at, updated_at, count_followers, count_followees, count_posts`,
+        `INSERT INTO users (id, email, nickname, password, is_admin, block_strangers, snippet, avatar, ai_model, created_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL)
+         RETURNING id, email, nickname, is_admin, block_strangers, snippet, avatar, ai_model, created_at, updated_at, count_followers, count_followees, count_posts`,
         [
           hexToDec(id),
           input.email,
           input.nickname,
           passwordHash,
           input.isAdmin,
+          input.blockStrangers,
           snippet,
           input.avatar,
           input.aiModel,
@@ -300,6 +301,10 @@ export class UsersService {
       userCols.push(`is_admin = $${uidx++}`);
       userVals.push(input.isAdmin);
     }
+    if (input.blockStrangers !== undefined) {
+      userCols.push(`block_strangers = $${uidx++}`);
+      userVals.push(input.blockStrangers);
+    }
     if (input.avatar !== undefined) {
       userCols.push(`avatar = $${uidx++}`);
       userVals.push(input.avatar);
@@ -335,7 +340,7 @@ export class UsersService {
 
       const sql =
         `UPDATE users SET ${userCols.join(", ")} WHERE id = $${uidx} ` +
-        `RETURNING id, email, nickname, is_admin, snippet, avatar, ai_model, created_at, updated_at, count_followers, count_followees, count_posts`;
+        `RETURNING id, email, nickname, is_admin, block_strangers, snippet, avatar, ai_model, created_at, updated_at, count_followers, count_followees, count_posts`;
 
       const res = await this.pgClient.query(sql, userVals);
       await this.pgClient.query("COMMIT");
@@ -469,7 +474,7 @@ export class UsersService {
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     const sql = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model,
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model,
              u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
       FROM user_follows f
       JOIN users u ON f.followee_id = u.id
@@ -516,7 +521,7 @@ export class UsersService {
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     const sql = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar, u.ai_model,
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model,
              u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
       FROM user_follows f
       JOIN users u ON f.follower_id = u.id
@@ -557,7 +562,7 @@ export class UsersService {
     return users;
   }
 
-  async addFollower(input: AddFollowerInput): Promise<void> {
+  async addFollow(input: AddFollowInput): Promise<void> {
     if (input.followerId === input.followeeId) {
       throw new Error("cannot follow yourself");
     }
@@ -578,7 +583,7 @@ export class UsersService {
     }
   }
 
-  async removeFollower(input: RemoveFollowerInput): Promise<void> {
+  async removeFollow(input: RemoveFollowInput): Promise<void> {
     const res = await this.pgClient.query(
       `DELETE FROM user_follows WHERE follower_id = $1 AND followee_id = $2`,
       [hexToDec(input.followerId), hexToDec(input.followeeId)],
@@ -648,7 +653,7 @@ export class UsersService {
         LIMIT $4
       )
       SELECT
-        u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar,
+        u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar,
         u.ai_model, u.created_at, u.updated_at,
         u.count_followers, u.count_followees, u.count_posts
       FROM page p

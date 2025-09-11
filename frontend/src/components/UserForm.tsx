@@ -31,6 +31,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
   const [aiPersonality, setAIPersonality] = useState(user.aiPersonality ?? "");
   const [aiModel, setAIModel] = useState(user.aiModel ?? "");
   const [admin, setIsAdmin] = useState(user.isAdmin ?? false);
+  const [blockStrangers, setBlockStrangers] = useState(user.blockStrangers ?? false);
 
   const [aiModels, setAIModels] = useState<{ name: string; description: string }[]>([]);
   const [aiModelsLoading, setAIModelsLoading] = useState(true);
@@ -113,6 +114,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
       const input: Record<string, unknown> = {
         nickname,
         introduction,
+        blockStrangers,
       };
       if (isAdmin) {
         input.email = email;
@@ -378,6 +380,22 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
               placeholder="Describe AI personality"
               maxLength={isAdmin ? undefined : Config.AI_PERSONALITY_LENGTH_LIMIT}
             />
+          </div>
+        )}
+
+        {(isSelf || isAdmin) && (
+          <div className="flex flex-row items-center gap-2">
+            <input
+              type="checkbox"
+              id="blockStrangers"
+              checked={blockStrangers}
+              onChange={(e) => setBlockStrangers(e.target.checked)}
+              className="mr-2"
+              disabled={submitting}
+            />
+            <label htmlFor="blockStrangers" className="font-semibold text-sm">
+              Block strangers (only allow followees to like/reply)
+            </label>
           </div>
         )}
 
