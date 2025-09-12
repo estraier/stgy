@@ -23,11 +23,11 @@ ORDER BY p.id DESC OFFSET 0 LIMIT 20;
 
 postsテーブルには、reply_toがNULLのレコードだけを対象としたIDの部分インデックスが設けられているため、そのインデックスを引くだけで処理が完了する。全ての投稿数をPと置くと、計算量はO(log(P))で済む。これは、Pが莫大になっても性能に問題が出ないことを意味している。
 
-PostgreSQLでは、クエリごとの実行計画をEXPLAIN文で調べることができる。以下の出力が得られる。インデックスを使って済むと言っている。推定3021件のレコードを持つインデックスを逆向きに操作して、20件がヒットした段階で処理を打ち切ることが示唆されている。つまりめちゃくちゃ効率的に動くということだ。
+PostgreSQLでは、クエリごとの実行計画をEXPLAIN文で調べることができる。以下の出力が得られる。インデックスを使って済むと言っている。推定3024件のレコードを持つインデックスを逆向きに操作して、20件がヒットした段階で処理を打ち切ることが示唆されている。つまりめちゃくちゃ効率的に動くということだ。
 
 ```:xsmall
-Limit (cost=0.28..3.56 rows=20 width=96)
- -> Index Scan Backward using idx_posts_root_id on posts p (cost=0.28..496.23 rows=3021 width=96)
+Limit  (cost=0.28..2.86 rows=20 width=42)
+  ->  Index Scan Backward using idx_posts_root_id on posts p  (cost=0.28..389.77 rows=3024 width=42)
 ```
 
 ## listPosts
@@ -57,29 +57,26 @@ ORDER BY p.id DESC OFFSET 0 LIMIT 20;
 EXPLAIN文で実行計画を調べると、以下の出力が得られる。投稿でヒットしたレコードの各々に対して処理を行うNested Loopがあり、そこでJOINの処理を行っている。結合先のテーブルからデータを取り出すにあたっては全てインデックスが使われ、一部はキャッシュも使われていて、DB本体のシーケンシャルスキャン（Seq Scan）やインデックスのシーケンシャルスキャン（Filter）がひとつもなく、全てがインデックスの条件付き絞り込み（Index Cond）の理想的な処理になっていることがわかる。
 
 ```:xsmall
-Limit (cost=1.14..106.13 rows=20 width=150)
- -> Nested Loop Left Join (cost=1.14..15858.95 rows=3021 width=150)
-    -> Nested Loop Left Join (cost=0.86..2073.97 rows=3021 width=128)
-       -> Nested Loop (cost=0.57..1474.58 rows=3021 width=111)
-          -> Index Scan Backward using idx_posts_root_id on posts p (cost=0.28..496.23 rows=3021 width=104)
-          -> Memoize (cost=0.29..0.91 rows=1 width=24)
-             Cache Key: p.owned_by
-             Cache Mode: logical
-             -> Index Scan using users_pkey on users u (cost=0.28..0.90 rows=1 width=24)
-                Index Cond: ((id)::text = (p.owned_by)::text)
-       -> Memoize (cost=0.29..0.54 rows=1 width=34)
-          Cache Key: p.reply_to
-          Cache Mode: logical
-          -> Index Scan using posts_pkey on posts parent_post (cost=0.28..0.53 rows=1 width=34)
-             Index Cond: ((id)::text = (p.reply_to)::text)
-    -> Memoize (cost=0.29..0.67 rows=1 width=24)
-       Cache Key: parent_post.owned_by
+Limit (cost=1.14..104.15 rows=20 width=143)
+ -> Nested Loop Left Join (cost=1.14..15576.46 rows=3024 width=143)
+  -> Nested Loop Left Join (cost=0.86..1454.71 rows=3024 width=110)
+    -> Nested Loop (cost=0.57..1375.89 rows=3024 width=102)
+     -> Index Scan Backward using idx_posts_root_id on posts p (cost=0.28..389.77 rows=3024 width=93)
+     -> Memoize (cost=0.29..0.41 rows=1 width=17)
+       Cache Key: p.owned_by
        Cache Mode: logical
-       -> Index Scan using users_pkey on users pu (cost=0.28..0.66 rows=1 width=24)
-          Index Cond: ((id)::text = (parent_post.owned_by)::text)
-    SubPlan 1
-     -> Index Only Scan using post_tags_pkey on post_tags pt2 (cost=0.28..4.32 rows=2 width=6)
-        Index Cond: (post_id = (p.id)::text)
+       -> Index Scan using users_pkey on users u (cost=0.28..0.40 rows=1 width=17)
+        Index Cond: (id = p.owned_by)
+    -> Memoize (cost=0.29..0.47 rows=1 width=16)
+     Cache Key: p.reply_to
+     Cache Mode: logical
+     -> Index Scan using posts_pkey on posts parent_post (cost=0.28..0.46 rows=1 width=16)
+       Index Cond: (id = p.reply_to)
+  -> Index Scan using users_pkey on users pu (cost=0.28..0.35 rows=1 width=17)
+    Index Cond: (id = parent_post.owned_by)
+  SubPlan 1
+   -> Index Only Scan using post_tags_pkey on post_tags pt2 (cost=0.29..4.32 rows=2 width=7)
+    Index Cond: (post_id = p.id)
 ```
 
 ## listPostsByFollowees
@@ -93,7 +90,7 @@ WITH
 f AS (
   SELECT followee_id
   FROM user_follows
-  WHERE follower_id = '9901000000000001'),
+  WHERE follower_id = 0x0001000000000013),
 active AS (
   SELECT DISTINCT ON (p2.owned_by) p2.owned_by, p2.id AS last_id
   FROM posts p2
@@ -144,43 +141,40 @@ ORDER BY t.id DESC;
 あとは、各処理でちゃんとインデックスが効いているかどうかを確かめれば良い。上述のクエリをEXPLAINにかけてみると、以下の出力が得られる。全てがIndex Condの理想的な実行計画になっていることが確かめられた。
 
 ```:xsmall
-Nested Loop Left Join (cost=9461.18..9727.60 rows=20 width=167)
- -> Nested Loop Left Join (cost=9460.90..9628.05 rows=20 width=145)
-  -> Nested Loop (cost=9460.62..9619.31 rows=20 width=128)
-    -> Nested Loop (cost=9460.35..9606.12 rows=20 width=121)
-     -> Limit (cost=9460.06..9460.11 rows=20 width=17)
-       -> Sort (cost=9460.06..9460.31 rows=100 width=17)
+Nested Loop Left Join (cost=30.61..84.30 rows=4 width=151)
+ -> Nested Loop Left Join (cost=30.33..65.62 rows=4 width=118)
+  -> Nested Loop (cost=30.05..64.09 rows=4 width=110)
+    -> Nested Loop (cost=29.77..62.70 rows=4 width=101)
+     -> Limit (cost=29.48..29.49 rows=4 width=8)
+       -> Sort (cost=29.48..29.49 rows=4 width=8)
         Sort Key: p2_1.id DESC
-        -> Nested Loop (cost=9369.04..9457.40 rows=100 width=17)
-          -> Limit (cost=9368.75..9368.80 rows=20 width=34)
-           -> Sort (cost=9368.75..9371.28 rows=1010 width=34)
+        -> Nested Loop (cost=13.03..29.44 rows=4 width=8)
+          -> Limit (cost=12.74..12.75 rows=2 width=16)
+           -> Sort (cost=12.74..12.75 rows=2 width=16)
              Sort Key: p2.id DESC
-             -> Unique (cost=7.29..9341.88 rows=1010 width=34)
-              -> Incremental Sort (cost=7.29..8918.21 rows=169466 width=34)
+             -> Unique (cost=6.61..12.73 rows=2 width=16)
+              -> Incremental Sort (cost=6.61..12.73 rows=2 width=16)
                 Sort Key: p2.owned_by, p2.id DESC
                 Presorted Key: p2.owned_by
-                -> Nested Loop (cost=0.58..517.50 rows=169466 width=34)
-                 -> Index Only Scan using user_follows_pkey on user_follows (cost=0.29..69.78 rows=1000 width=17)
-                   Index Cond: (follower_id = '9901000000000001'::text)
-                 -> Memoize (cost=0.29..0.58 rows=5 width=34)
-                   Cache Key: user_follows.followee_id
-                   Cache Mode: logical
-                   -> Index Only Scan using idx_posts_owned_by_id on posts p2 (cost=0.28..0.57 rows=5 width=34)
-                    Index Cond: (owned_by = (user_follows.followee_id)::text)
-          -> Limit (cost=0.28..4.37 rows=5 width=17)
-           -> Index Only Scan Backward using idx_posts_owned_by_id on posts p2_1 (cost=0.28..4.37 rows=5 width=17)
-             Index Cond: (owned_by = (p2.owned_by)::text)
-     -> Index Scan using posts_pkey on posts p (cost=0.28..7.30 rows=1 width=104)
-       Index Cond: ((id)::text = (p2_1.id)::text)
-    -> Index Scan using users_pkey on users u (cost=0.28..0.66 rows=1 width=24)
-     Index Cond: ((id)::text = (p.owned_by)::text)
-  -> Index Scan using posts_pkey on posts parent_post (cost=0.28..0.44 rows=1 width=34)
-    Index Cond: ((id)::text = (p.reply_to)::text)
- -> Index Scan using users_pkey on users pu (cost=0.28..0.66 rows=1 width=24)
-  Index Cond: ((id)::text = (parent_post.owned_by)::text)
+                -> Nested Loop (cost=0.56..12.64 rows=2 width=16)
+                 -> Index Only Scan using user_follows_pkey on user_follows (cost=0.28..4.30 rows=1 width=8)
+                   Index Cond: (follower_id = '281474976710675'::bigint)
+                 -> Index Only Scan using idx_posts_owned_by_id on posts p2 (cost=0.28..8.32 rows=2 width=16)
+                   Index Cond: (owned_by = user_follows.followee_id)
+          -> Limit (cost=0.28..8.32 rows=2 width=8)
+           -> Index Only Scan Backward using idx_posts_owned_by_id on posts p2_1 (cost=0.28..8.32 rows=2 width=8)
+             Index Cond: (owned_by = p2.owned_by)
+     -> Index Scan using posts_pkey on posts p (cost=0.28..8.30 rows=1 width=93)
+       Index Cond: (id = p2_1.id)
+    -> Index Scan using users_pkey on users u (cost=0.28..0.35 rows=1 width=17)
+     Index Cond: (id = p.owned_by)
+  -> Index Scan using posts_pkey on posts parent_post (cost=0.28..0.38 rows=1 width=16)
+    Index Cond: (id = p.reply_to)
+ -> Index Scan using users_pkey on users pu (cost=0.28..0.35 rows=1 width=17)
+  Index Cond: (id = parent_post.owned_by)
  SubPlan 1
- -> Index Only Scan using post_tags_pkey on post_tags pt2 (cost=0.28..4.32 rows=2 width=6)
-   Index Cond: (post_id = (p.id)::text)
+ -> Index Only Scan using post_tags_pkey on post_tags pt2 (cost=0.29..4.32 rows=2 width=7)
+   Index Cond: (post_id = p.id)
 ```
 
 ## listPostsLikedByUser
@@ -200,31 +194,31 @@ JOIN posts p ON pl.post_id = p.id
 JOIN users u ON p.owned_by = u.id
 LEFT JOIN posts pp ON p.reply_to = pp.id
 LEFT JOIN users pu ON pp.owned_by = pu.id
-WHERE pl.liked_by = '9901000000000001'
+WHERE pl.liked_by = 0x0001000000000013
 ORDER BY pl.created_at DESC OFFSET 0 LIMIT 20;
 ```
 
 liked_byでの絞り込みにインデックスが利きさえすれば、計算量はlistPostsと同じくO(log(P))で済むはずだ。あとは実行計画見れば、それが確認できる。
 
 ```:xsmall
-Limit (cost=1.40..26.01 rows=1 width=181)
- -> Nested Loop Left Join (cost=1.40..26.01 rows=1 width=181)
-    -> Nested Loop Left Join (cost=1.12..17.36 rows=1 width=157)
-       -> Nested Loop (cost=0.84..16.96 rows=1 width=140)
-          -> Nested Loop (cost=0.56..16.60 rows=1 width=131)
-             -> Index Scan Backward using idx_post_likes_liked_by_created_at on post_likes pl (cost=0.28..8.30 rows=1 width=25)
-                Index Cond: ((liked_by)::text = '9901000000000001'::text)
-             -> Index Scan using posts_pkey on posts p (cost=0.28..8.30 rows=1 width=123)
-                Index Cond: ((id)::text = (pl.post_id)::text)
-          -> Index Scan using users_pkey on users u (cost=0.28..0.36 rows=1 width=26)
-             Index Cond: ((id)::text = (p.owned_by)::text)
-       -> Index Scan using posts_pkey on posts pp (cost=0.28..0.40 rows=1 width=34)
-          Index Cond: ((id)::text = (p.reply_to)::text)
-    -> Index Scan using users_pkey on users pu (cost=0.28..0.36 rows=1 width=26)
-       Index Cond: ((id)::text = (pp.owned_by)::text)
-    SubPlan 1
-     -> Index Only Scan using post_tags_pkey on post_tags pt (cost=0.28..8.30 rows=1 width=5)
-        Index Cond: (post_id = (p.id)::text)
+Limit (cost=1.41..22.00 rows=1 width=151)
+ -> Nested Loop Left Join (cost=1.41..22.00 rows=1 width=151)
+  -> Nested Loop Left Join (cost=1.13..17.33 rows=1 width=118)
+    -> Nested Loop (cost=0.84..16.95 rows=1 width=110)
+     -> Nested Loop (cost=0.56..16.60 rows=1 width=101)
+       -> Index Scan Backward using idx_post_likes_liked_by_created_at on post_likes pl (cost=0.28..8.30 rows=1 width=16)
+        Index Cond: (liked_by = '281474976710675'::bigint)
+       -> Index Scan using posts_pkey on posts p (cost=0.28..8.30 rows=1 width=93)
+        Index Cond: (id = pl.post_id)
+     -> Index Scan using users_pkey on users u (cost=0.28..0.35 rows=1 width=17)
+       Index Cond: (id = p.owned_by)
+    -> Index Scan using posts_pkey on posts pp (cost=0.28..0.38 rows=1 width=16)
+     Index Cond: (id = p.reply_to)
+  -> Index Scan using users_pkey on users pu (cost=0.28..0.35 rows=1 width=17)
+    Index Cond: (id = pp.owned_by)
+  SubPlan 1
+   -> Index Only Scan using post_tags_pkey on post_tags pt (cost=0.29..4.32 rows=2 width=7)
+    Index Cond: (post_id = p.id)
 ```
 
 ## listUsers
@@ -237,12 +231,12 @@ SELECT
   u.ai_model, u.created_at, u.updated_at
 FROM users u
 LEFT JOIN user_follows f1 ON
-  f1.follower_id = '9901000000000001' AND f1.followee_id = u.id
+  f1.follower_id = 0x0001000000000013 AND f1.followee_id = u.id
 LEFT JOIN user_follows f2 ON
-  f2.follower_id = u.id AND f2.followee_id = '9901000000000001'
-WHERE LOWER(u.nickname) LIKE 'user2%'
+  f2.follower_id = u.id AND f2.followee_id = 0x0001000000000013
+WHERE LOWER(u.nickname) LIKE 'user0002%'
 ORDER BY
-  (u.id = '9901000000000001') DESC,
+  (u.id = 0x0001000000000013) DESC,
   (f1.follower_id IS NOT NULL) DESC,
   (f2.follower_id IS NOT NULL) DESC,
   u.id ASC OFFSET 0 LIMIT 20;
@@ -251,25 +245,20 @@ ORDER BY
 LIKE演算子による前方一致は、インデックスが利くので、絞り込みを効率的に行うことができる。また、フォロー関係の結合はビットマップインデックスとハッシュジョインで絞り、最後にソートで順位付けするため、ヒット件数が少なければ高速に動く。EXPLAIN文の結果は以下である。
 
 ```:xsmall
-Limit (cost=494.27..494.32 rows=20 width=487)
- -> Sort (cost=494.27..494.55 rows=112 width=487)
-    Sort Key: (((u.id)::text = '9901000000000001'::text)) DESC, ((f1.follower_id IS NOT NULL)) DESC, ((f2.follower_id IS NOT NULL)) DESC, u.id
-    -> Hash Right Join (cost=360.65..491.29 rows=112 width=487)
-       Hash Cond: ((f2.follower_id)::text = (u.id)::text)
-       -> Bitmap Heap Scan on user_follows f2 (cost=20.04..145.53 rows=1000 width=17)
-          Recheck Cond: ((followee_id)::text = '9901000000000001'::text)
-          -> Bitmap Index Scan on idx_user_follows_followee_created_at (cost=0.00..19.79 rows=1000 width=0)
-             Index Cond: ((followee_id)::text = '9901000000000001'::text)
-       -> Hash (cost=339.21..339.21 rows=112 width=501)
-          -> Hash Right Join (cost=267.08..339.21 rows=112 width=501)
-             Hash Cond: ((f1.followee_id)::text = (u.id)::text)
-             -> Index Only Scan using user_follows_pkey on user_follows f1 (cost=0.29..69.78 rows=1000 width=34)
-                Index Cond: (follower_id = '9901000000000001'::text)
-             -> Hash (cost=265.39..265.39 rows=112 width=484)
-                -> Bitmap Heap Scan on users u (cost=9.40..265.39 rows=112 width=484)
-                   Filter: (lower((nickname)::text) ~~ 'user2%'::text)
-                   -> Bitmap Index Scan on idx_users_nickname_id (cost=0.00..9.38 rows=110 width=0)
-                      Index Cond: ((lower((nickname)::text) ~>=~ 'user2'::text) AND (lower((nickname)::text) ~<~ 'user3'::text))
+Limit (cost=20.94..20.95 rows=1 width=317)
+ -> Sort (cost=20.94..20.95 rows=1 width=317)
+  Sort Key: ((u.id = '281474976710675'::bigint)) DESC, ((f1.follower_id IS NOT NULL)) DESC, ((f2.follower_id IS NOT NULL)) DESC, u.id
+  -> Nested Loop Left Join (cost=0.84..20.93 rows=1 width=317)
+    Join Filter: (f2.follower_id = u.id)
+    -> Nested Loop Left Join (cost=0.56..12.62 rows=1 width=322)
+     Join Filter: (f1.followee_id = u.id)
+     -> Index Scan using idx_users_nickname_id on users u (cost=0.28..8.30 rows=1 width=314)
+       Index Cond: ((lower((nickname)::text) ~>=~ 'user0002'::text) AND (lower((nickname)::text) ~<~ 'user0003'::text))
+       Filter: (lower((nickname)::text) ~~ 'user0002%'::text)
+     -> Index Only Scan using user_follows_pkey on user_follows f1 (cost=0.28..4.30 rows=1 width=16)
+       Index Cond: (follower_id = '281474976710675'::bigint)
+    -> Index Scan using idx_user_follows_followee_created_at on user_follows f2 (cost=0.28..8.30 rows=1 width=8)
+     Index Cond: (followee_id = '281474976710675'::bigint)
 ```
 
 さて、多くの処理がインデックスを使って行われているので、このクエリは一見速そうだ。実際、絞り込みの文字列が十分に長くてヒット件数が少ない場合には、最下層の文字列インデックスが効率的に働いて、少ない数のレコードを一瞬で返し、ハッシュマップを使って各々のレコードに効率的にスコアリングを施した上で、一瞬で処理を返してくれるだろう。問題は、絞り込みの文字列が短く、ヒット数が多い場合である。その場合、ヒットしたレコードの全てにスコアリングをしてからソートすることになるため、遅くなる。全ユーザ数をUとした場合、絞り込み文字列が1文字なら、Uの何割かがヒットしてしまうので、空間計算量はO(U)となる。それをtop-kヒープでソートする時間計算量は、kが20と小さいので、O(U)である。
@@ -279,19 +268,20 @@ Limit (cost=494.27..494.32 rows=20 width=487)
 コレーションを無効化したとしても、大文字と小文字の違いを無視するILIKE演算子には、デフォルトのインデックスは使えない。よって、nicknameのインデックスは `LOWER(nickname) text_pattern_ops` として小文字に正規化したものにしている。小文字に正規化したインデックスを十全に働かせるには、上述のクエリのように、クエリ内の条件も小文字に正規化する必要がある。そうでない場合、インデックスが使われない。
 
 ```x:small
-# explain SELECT id, nickname FROM users WHERE LOWER(nickname) LIKE 'user2%' ORDER BY ID LIMIT 3;
-
-Limit (cost=12.47..12.48 rows=3 width=24)
- -> Sort (cost=12.47..12.75 rows=112 width=24)
+# EXPLAIN SELECT id FROM users WHERE LOWER(nickname) LIKE 'user0002%' ORDER BY ID LIMIT 3;
+Limit (cost=8.31..8.32 rows=1 width=8)
+ -> Sort (cost=8.31..8.32 rows=1 width=8)
     Sort Key: id
-    -> Index Only Scan using idx_users_nickname_id on users (cost=0.28..11.03 rows=112 width=24)
-       Index Cond: (((lower((nickname)::text)) ~>=~ 'user2'::text) AND ((lower((nickname)::text)) ~<~ 'user3'::text))
-       Filter: ((lower((nickname)::text)) ~~ 'user2%'::text)
+    -> Index Scan using idx_users_nickname_id on users (cost=0.28..8.30 rows=1 width=8)
+       Index Cond: ((lower((nickname)::text) ~>=~ 'user0002'::text) AND (lower((nickname)::text) ~<~ 'user0003'::text))
+       Filter: (lower((nickname)::text) ~~ 'user0002%'::text)
 
-# explain SELECT id, nickname FROM users WHERE nickname LIKE 'user2%' ORDER BY ID LIMIT 3;
-Limit (cost=0.28..18.67 rows=3 width=24)
- -> Index Scan using users_pkey on users (cost=0.28..686.93 rows=112 width=24)
-    Filter: ((nickname)::text ~~ 'user2%'::text)
+# EXPLAIN SELECT id FROM users WHERE nickname LIKE 'user0002%' ORDER BY ID LIMIT 3;
+Limit (cost=105.70..105.70 rows=1 width=8)
+ -> Sort (cost=105.70..105.70 rows=1 width=8)
+    Sort Key: id
+    -> Seq Scan on users (cost=0.00..105.69 rows=1 width=8)
+       Filter: ((nickname)::text ~~ 'user0002%'::text)
 ```
 
 # listFriendsByNicknamePrefix
@@ -305,19 +295,19 @@ WITH
       0 AS prio,
       u.id, lower(u.nickname) AS nkey
     FROM users u
-    WHERE u.id = '9901000000000001' AND lower(u.nickname) LIKE 'user2%' ),
+    WHERE u.id = 0x0001000000000013 AND lower(u.nickname) LIKE 'user0002%' ),
   followees AS (
     SELECT
       1 AS prio, u.id, lower(u.nickname) AS nkey
     FROM user_follows f
     JOIN users u ON u.id = f.followee_id
-    WHERE f.follower_id = '9901000000000001' AND lower(u.nickname) LIKE 'user2%'
+    WHERE f.follower_id = 0x0001000000000013 AND lower(u.nickname) LIKE 'user0002%'
     ORDER BY lower(u.nickname), u.nickname, u.id LIMIT 20 ),
   others AS (
     SELECT
       3 AS prio, u.id, lower(u.nickname) AS nkey
     FROM users u
-    WHERE lower(u.nickname) LIKE 'user2%'
+    WHERE lower(u.nickname) LIKE 'user0002%'
     ORDER BY lower(u.nickname), u.nickname, u.id LIMIT 20 ),
   candidates AS (
     SELECT * FROM self
@@ -348,39 +338,100 @@ selfとfolloweesとothersの3つの枝のそれぞれで最大20件のレコー�
 これの計算量を考えよう。全ユーザ数をUと置き、フォロイー数をFと置く。自分を調べるのは、O(log(U))だ。フォロイーの一覧を引くのは、O(log(U)+F)だ。検索文字列が短い場合、ほとんど絞り込みが働かないので、フォロイー全員のニックネームを調べることになる。よって、その計算量はO(F･log(U))だ。フォロイーのヒット全てを並び替える計算量はO(F･log(F))だ。全員を調べる枝では、検索文字列が短い場合でも、確実に早期終了するので、計算量はO(log(U))だ。つまり、FはUより十分に小さいと仮定すると、支配項はO(F･log(U))ということになる。EXPLAIN文の結果は以下である。全ての枝（Subquery）でIndex Condが働いていて、早期終了するので、効率は最善だ。フォロイーの枝でフォロイー毎にレコードを調べているのもわかる。
 
 ```:xsmall
-Nested Loop (cost=114.05..247.88 rows=20 width=520)
- -> Limit (cost=113.77..113.82 rows=20 width=53)
-  -> Sort (cost=113.77..113.87 rows=41 width=53)
+Nested Loop (cost=29.65..54.31 rows=3 width=350)
+ -> Limit (cost=29.37..29.38 rows=3 width=44)
+  -> Sort (cost=29.37..29.38 rows=3 width=44)
     Sort Key: "*SELECT* 1".prio, "*SELECT* 1".nkey, "*SELECT* 1".id
-    -> Unique (cost=112.48..112.68 rows=41 width=53)
-     -> Sort (cost=112.48..112.58 rows=41 width=53)
+    -> Unique (cost=29.33..29.35 rows=3 width=44)
+     -> Sort (cost=29.33..29.34 rows=3 width=44)
        Sort Key: "*SELECT* 1".id, "*SELECT* 1".prio
-       -> Append (cost=0.28..111.38 rows=41 width=53)
-        -> Subquery Scan on "*SELECT* 1" (cost=0.28..8.31 rows=1 width=53)
-          -> Index Scan using users_pkey on users u_1 (cost=0.28..8.30 rows=1 width=53)
-           Index Cond: ((id)::text = '9901000000000001'::text)
-           Filter: (lower((nickname)::text) ~~ 'user2%'::text)
-        -> Subquery Scan on followees (cost=88.08..88.33 rows=20 width=53)
-          -> Limit (cost=88.08..88.13 rows=20 width=60)
-           -> Sort (cost=88.08..88.35 rows=111 width=60)
+       -> Append (cost=0.28..29.31 rows=3 width=44)
+        -> Subquery Scan on "*SELECT* 1" (cost=0.28..8.31 rows=1 width=44)
+          -> Index Scan using users_pkey on users u_1 (cost=0.28..8.30 rows=1 width=44)
+           Index Cond: (id = '281474976710675'::bigint)
+           Filter: (lower((nickname)::text) ~~ 'user0002%'::text)
+        -> Subquery Scan on followees (cost=12.63..12.64 rows=1 width=44)
+          -> Limit (cost=12.63..12.63 rows=1 width=53)
+           -> Sort (cost=12.63..12.63 rows=1 width=53)
              Sort Key: (lower((u_2.nickname)::text)), u_2.nickname, u_2.id
-             -> Hash Join (cost=12.71..85.12 rows=111 width=60)
-              Hash Cond: ((f.followee_id)::text = (u_2.id)::text)
-              -> Index Only Scan using user_follows_pkey on user_follows f (cost=0.29..69.78 rows=1000 width=17)
-                Index Cond: (follower_id = '9901000000000001'::text)
-              -> Hash (cost=11.03..11.03 rows=112 width=24)
-                -> Index Only Scan using idx_users_nickname_id on users u_2 (cost=0.28..11.03 rows=112 width=24)
-                 Index Cond: (((lower((nickname)::text)) ~>=~ 'user2'::text) AND ((lower((nickname)::text)) ~<~ 'user3'::text))
-                 Filter: ((lower((nickname)::text)) ~~ 'user2%'::text)
-        -> Subquery Scan on others (cost=14.29..14.54 rows=20 width=53)
-          -> Limit (cost=14.29..14.34 rows=20 width=60)
-           -> Sort (cost=14.29..14.57 rows=112 width=60)
+             -> Nested Loop (cost=0.56..12.62 rows=1 width=53)
+              Join Filter: (f.followee_id = u_2.id)
+              -> Index Only Scan using user_follows_pkey on user_follows f (cost=0.28..4.30 rows=1 width=8)
+                Index Cond: (follower_id = '281474976710675'::bigint)
+              -> Index Scan using idx_users_nickname_id on users u_2 (cost=0.28..8.30 rows=1 width=17)
+                Index Cond: ((lower((nickname)::text) ~>=~ 'user0002'::text) AND (lower((nickname)::text) ~<~ 'user0003'::text))
+                Filter: (lower((nickname)::text) ~~ 'user0002%'::text)
+        -> Subquery Scan on others (cost=8.32..8.33 rows=1 width=44)
+          -> Limit (cost=8.32..8.32 rows=1 width=53)
+           -> Sort (cost=8.32..8.32 rows=1 width=53)
              Sort Key: (lower((u_3.nickname)::text)), u_3.nickname, u_3.id
-             -> Index Only Scan using idx_users_nickname_id on users u_3 (cost=0.28..11.30 rows=112 width=60)
-              Index Cond: (((lower((nickname)::text)) ~>=~ 'user2'::text) AND ((lower((nickname)::text)) ~<~ 'user3'::text))
-              Filter: ((lower((nickname)::text)) ~~ 'user2%'::text)
- -> Index Scan using users_pkey on users u (cost=0.28..6.69 rows=1 width=484)
-  Index Cond: ((id)::text = ("*SELECT* 1".id)::text)
+             -> Index Scan using idx_users_nickname_id on users u_3 (cost=0.28..8.31 rows=1 width=53)
+              Index Cond: ((lower((nickname)::text) ~>=~ 'user0002'::text) AND (lower((nickname)::text) ~<~ 'user0003'::text))
+              Filter: (lower((nickname)::text) ~~ 'user0002%'::text)
+ -> Index Scan using users_pkey on users u (cost=0.28..8.30 rows=1 width=314)
+  Index Cond: (id = "*SELECT* 1".id)
+```
+
+## fetchBatch
+
+通知を作成するワーカーがイベントログを読み出す際には、以下のようなクエリが実行される。
+
+```sql:small
+SELECT
+  event_id, payload
+FROM event_logs
+WHERE partition_id = 2 AND event_id > 1843013374800035840
+ORDER BY partition_id, event_id
+LIMIT 100;
+```
+
+主キーがpartition_idとevent_idの複合キーなので、そのインデックスを使えば効率的な実行計画になるはずだ。イベントログの件数をEとすると、計算量はO(log(E))で済む。非同期処理なので読み出すレコードの数は何件でもよいのだが、何らか理由でワーカーの起動が遅延した際に未処理のイベントを適度なペースで処理するには、100件くらいが丁度よいだろう。
+
+このクエリには落とし穴がある。event_id単体での検索性を確保するためにevent_idにユニーク制約をつけると、そのインデックスを使ってevent_idの対象範囲をスキャンしながら該当のpartition_idのものを拾ってしまうのだ。そこで、そのユニーク制約を除外したところ、以下のような効率的な実行計画になることが確認できた。更新イベントが発生する度にこのクエリは実行されるので、この処理が非効率だと洒落にならない負荷になってしまう。理論的に最善であろうインデックスを張って安心しては不十分で、きちんと実行計画を確認しないと後で地獄を見る。
+
+```:xsmall
+Limit (cost=0.29..7.58 rows=20 width=103)
+ -> Index Scan using event_logs_pkey on event_logs (cost=0.29..1102.74 rows=3023 width=103)
+  Index Cond: ((partition_id = 2) AND (event_id > '1843013374800035840'::bigint))
+```
+
+## listFeed
+
+作成された通知を読み出す際には、以下のようなクエリが実行される。
+
+```sql:small
+SELECT
+  slot, term, is_read, payload, updated_at, created_at
+FROM notifications
+WHERE user_id = 0x0001000000000013 AND is_read = FALSE
+ORDER BY updated_at DESC
+LIMIT 20;
+```
+
+新規通知の有無は定期的に調べられるので、このクエリの効率も重要だ。user_id、is_read、updated_atの複合インデックスを設けているので、そのインデックスが使われるはずだ。通知件数をNとすると、計算量はO(log(N))になる。実行計画を見ても、そのことが確認できる。なお、未読リストと既読リストはis_readの条件値を変えて2回のクエリに分けて取得し、結合結果をIDでソートして最新20件を提示する。この方法だと、ページ送り機能がないUIでも、ひとつひとつ既読にしていくことで、全ての通知を閲覧できる。
+
+```:xsmall
+Limit (cost=0.28..11.84 rows=2 width=214)
+ -> Index Scan Backward using idx_notifications_user_read_ts on notifications (cost=0.28..11.84 rows=2 width=214)
+    Index Cond: ((user_id = '281474976710675'::bigint) AND (is_read = false))
+```
+
+新着通知を調べる際に、毎回同じデータを返すのは無駄だ。よって、クライアントが最後に取得した通知の最新のupdated_atをパラメータとして渡すAPIになっていて、それより新しい未読レコードがなければ304を返すという仕様になっている。
+
+```sql:small
+SELECT 1
+FROM notifications
+WHERE user_id = 0x0001000000000013 AND is_read = FALSE
+AND updated_at > '2025-09-12 04:17:15.536+00'
+LIMIT 1;
+```
+
+この計算量も当然O(log(N))である。実行計画を見てもインデックスが適切に効いていることがわかる。ここで重要なのは、is_read = FALSEを指定して、未読だけを調べていることだ。インデックスの構造に合わせた条件を全て指定することでインデックスがIndex Only Scanにしている。最新の通知は常に未読なので、未読だけ調べれば十分だ。
+
+```
+Limit (cost=0.28..2.30 rows=1 width=4)
+ -> Index Only Scan using idx_notifications_user_read_ts on notifications (cost=0.28..4.33 rows=2 width=4)
+    Index Cond: ((user_id = '281474976710675'::bigint) AND (is_read = false) AND (updated_at > '2025-09-12 04:17:15.536+00'::timestamp with time zone))
 ```
 
 ## 総評

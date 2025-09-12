@@ -24,7 +24,7 @@ CREATE TABLE users (
   count_followees INT NOT NULL DEFAULT 0,
   count_posts INT NOT NULL DEFAULT 0
 );
-CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, nickname, id);
+CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, id);
 
 CREATE TABLE user_details (
   user_id BIGINT PRIMARY KEY,
@@ -94,9 +94,9 @@ CREATE TABLE event_logs (
   partition_id SMALLINT NOT NULL,
   event_id BIGINT NOT NULL,
   payload JSONB NOT NULL,
-  PRIMARY KEY (partition_id, event_id),
-  UNIQUE (event_id)
+  PRIMARY KEY (partition_id, event_id)
 );
+CREATE INDEX event_logs_event_id_hash ON event_logs USING HASH (event_id);
 
 CREATE TABLE event_log_cursors (
   consumer VARCHAR(50) NOT NULL,

@@ -96,8 +96,7 @@ export class NotificationService {
       const exists = await this.pg.query(
         `SELECT 1
            FROM notifications
-          WHERE user_id = $1
-            AND updated_at > $2
+          WHERE user_id = $1 AND is_read = FALSE AND updated_at > $2
           LIMIT 1`,
         [dbUserId, opts.newerThan],
       );
