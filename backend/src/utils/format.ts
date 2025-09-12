@@ -21,13 +21,17 @@ export async function generatePasswordHash(text: string): Promise<Uint8Array> {
     const saltLen = parseInt(params[0], 10);
     const coreLen = parseInt(params[1], 10);
     const cost = parseInt(params[2], 10);
-    const round = parseInt(params[3], 10);
+    const blockSize = parseInt(params[3], 10);
     const parallelism = parseInt(params[4], 10);
     const passwordBytes = Buffer.from(text, "utf8");
     const saltBytes = Buffer.from(randomBytes(saltLen));
     const hashBytes: Buffer = await new Promise((resolve, reject) => {
-      crypto.scrypt(passwordBytes, saltBytes, coreLen, { N: cost, r: round, p: parallelism }, (err, dk) =>
-        err ? reject(err) : resolve(dk as Buffer),
+      crypto.scrypt(
+        passwordBytes,
+        saltBytes,
+        coreLen,
+        { N: cost, r: blockSize, p: parallelism },
+        (err, dk) => (err ? reject(err) : resolve(dk as Buffer)),
       );
     });
     return Buffer.concat([hashBytes, saltBytes]);
@@ -55,14 +59,18 @@ export async function checkPasswordHash(text: string, hash: Uint8Array): Promise
     }
     const coreLen = parseInt(params[1], 10);
     const cost = parseInt(params[2], 10);
-    const round = parseInt(params[3], 10);
+    const blockSize = parseInt(params[3], 10);
     const parallelism = parseInt(params[4], 10);
     const storedHashBytes = hashBuffer.subarray(0, coreLen);
     const storedSaltBytes = hashBuffer.subarray(coreLen);
     const passwordBytes = Buffer.from(text, "utf8");
     const derivedHashBytes: Buffer = await new Promise((resolve, reject) => {
-      crypto.scrypt(passwordBytes, storedSaltBytes, coreLen, { N: cost, r: round, p: parallelism }, (err, dk) =>
-        err ? reject(err) : resolve(dk as Buffer),
+      crypto.scrypt(
+        passwordBytes,
+        storedSaltBytes,
+        coreLen,
+        { N: cost, r: blockSize, p: parallelism },
+        (err, dk) => (err ? reject(err) : resolve(dk as Buffer)),
       );
     });
     if (storedHashBytes.length !== derivedHashBytes.length) return false;
