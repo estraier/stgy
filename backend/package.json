@@ -34,6 +34,7 @@
     "nodemailer": "^7.0.5",
     "pg": "^8",
     "pino": "^9.9.1",
+    "scrypt-js": "^3.0.1",
     "sharp": "^0.34.3",
     "uuid": "^11"
   },
@@ -44,7 +45,7 @@
     "@types/ioredis": "^4",
     "@types/jest": "^29.5.14",
     "@types/mime-types": "^3.0.1",
-    "@types/node": "^24",
+    "@types/node": "^24.3.1",
     "@types/nodemailer": "^6.4.17",
     "@types/pg": "^8",
     "@types/uuid": "^10",

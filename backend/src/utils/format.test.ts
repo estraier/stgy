@@ -1,3 +1,5 @@
+import { jest } from "@jest/globals";
+import { Config } from "../config";
 import {
   hexToDec,
   decToHex,
@@ -13,6 +15,66 @@ import {
   snakeToCamel,
   escapeForLike,
 } from "./format";
+
+describe("generatePasswordHash, checkPasswordHash", () => {
+  beforeEach(() => {
+    jest.resetModules();
+  });
+
+  it("md5", async () => {
+    jest.doMock("../config", () => ({
+      Config: {
+        PASSWORD_CONFIG: "md5:2",
+      },
+    }));
+    const { generatePasswordHash, checkPasswordHash } = await import("./format");
+    const hash1 = await generatePasswordHash("abc");
+    const hash2 = await generatePasswordHash("hello");
+    expect(hash1.length).toBe(18);
+    expect(hash2.length).toBe(18);
+    expect(hash1).not.toEqual(hash2);
+    expect(await checkPasswordHash("abc", hash1)).toBe(true);
+    expect(await checkPasswordHash("hello", hash1)).toBe(false);
+    expect(await checkPasswordHash("hello", hash2)).toBe(true);
+    expect(await checkPasswordHash("abc", hash2)).toBe(false);
+  });
+
+  it("sha256", async () => {
+    jest.doMock("../config", () => ({
+      Config: {
+        PASSWORD_CONFIG: "sha256:4",
+      },
+    }));
+    const { generatePasswordHash, checkPasswordHash } = await import("./format");
+    const hash1 = await generatePasswordHash("abc");
+    const hash2 = await generatePasswordHash("hello");
+    expect(hash1.length).toBe(36);
+    expect(hash2.length).toBe(36);
+    expect(hash1).not.toEqual(hash2);
+    expect(await checkPasswordHash("abc", hash1)).toBe(true);
+    expect(await checkPasswordHash("hello", hash1)).toBe(false);
+    expect(await checkPasswordHash("hello", hash2)).toBe(true);
+    expect(await checkPasswordHash("abc", hash2)).toBe(false);
+  });
+
+  it("scrypt", async () => {
+    jest.doMock("../config", () => ({
+      Config: {
+        PASSWORD_CONFIG: "scrypt:4:16:1024:4:1",
+      },
+    }));
+    const { generatePasswordHash, checkPasswordHash } = await import("./format");
+    const hash1 = await generatePasswordHash("abc");
+    const hash2 = await generatePasswordHash("hello");
+    expect(hash1.length).toBe(20);
+    expect(hash2.length).toBe(20);
+    expect(hash1).not.toEqual(hash2);
+    expect(await checkPasswordHash("abc", hash1)).toBe(true);
+    expect(await checkPasswordHash("hello", hash1)).toBe(false);
+    expect(await checkPasswordHash("hello", hash2)).toBe(true);
+    expect(await checkPasswordHash("abc", hash2)).toBe(false);
+  });
+});
 
 describe("hexToDec, decToHex, hexArrayToDec", () => {
   it("hexToDec converts hex (with/without 0x, any case) to decimal string", () => {

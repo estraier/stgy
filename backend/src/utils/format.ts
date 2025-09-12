@@ -1,5 +1,84 @@
 import { Config } from "../config";
-import crypto from "crypto";
+import { Buffer } from "buffer";
+import crypto, { randomBytes } from "crypto";
+import * as scrypt from "scrypt-js";
+
+export async function generatePasswordHash(text: string): Promise<Uint8Array> {
+  const [name, ...params] = Config.PASSWORD_CONFIG.split(":");
+  if (name === "md5" || name === "sha256") {
+    if (params.length !== 1) {
+      throw new Error(`${name}: bad params: ${params}`);
+    }
+    const saltLen = parseInt(params[0], 10);
+    const saltBytes = Buffer.from(randomBytes(saltLen));
+    const combined = Buffer.concat([Buffer.from(text, "utf8"), saltBytes]);
+    const hash = crypto.createHash(name);
+    hash.update(combined);
+    const hashBytes = hash.digest();
+    return Buffer.concat([hashBytes, saltBytes]);
+  }
+  if (name === "scrypt") {
+    if (params.length != 5) throw new Error(`${name}: bad params: ${params}`);
+    const saltLen = parseInt(params[0]);
+    const coreLen = parseInt(params[1]);
+    const cost = parseInt(params[2]);
+    const round = parseInt(params[3]);
+    const parallelism = parseInt(params[4]);
+    const passwordBytes = Buffer.from(text, "utf8");
+    const saltBytes = Buffer.from(randomBytes(saltLen));
+    const hashBytes = await scrypt.scrypt(
+      passwordBytes,
+      saltBytes,
+      cost,
+      round,
+      parallelism,
+      coreLen,
+    );
+    return Buffer.concat([hashBytes, saltBytes]);
+  }
+  throw new Error(`unknown algorithm: ${name}`);
+}
+
+export async function checkPasswordHash(text: string, hash: Uint8Array): Promise<boolean> {
+  const hashBuffer = Buffer.from(hash);
+  const [name, ...params] = Config.PASSWORD_CONFIG.split(":");
+  if (name === "md5" || name === "sha256") {
+    if (params.length !== 1) {
+      throw new Error(`${name}: bad params: ${params}`);
+    }
+    const saltLen = parseInt(params[0], 10);
+    const hashLen = name === "md5" ? 16 : 32;
+    const storedHashBytes = hashBuffer.subarray(0, hashLen);
+    const storedSaltBytes = hashBuffer.subarray(hashLen);
+    const combined = Buffer.concat([Buffer.from(text, "utf8"), storedSaltBytes]);
+    const derivedHashBytes = crypto.createHash(name).update(combined).digest();
+    return storedHashBytes.equals(derivedHashBytes);
+  }
+  if (name === "scrypt") {
+    if (params.length !== 5) {
+      throw new Error(`${name}: bad params: ${params}`);
+    }
+    const saltLen = parseInt(params[0], 10);
+    const coreLen = parseInt(params[1], 10);
+    const cost = parseInt(params[2], 10);
+    const round = parseInt(params[3], 10);
+    const parallelism = parseInt(params[4], 10);
+    const hashLen = coreLen;
+    const storedHashBytes = hashBuffer.subarray(0, hashLen);
+    const storedSaltBytes = hashBuffer.subarray(hashLen);
+    const passwordBytes = Buffer.from(text, "utf8");
+    const derivedHashBytes = await scrypt.scrypt(
+      passwordBytes,
+      storedSaltBytes,
+      cost,
+      round,
+      parallelism,
+      coreLen,
+    );
+    return Buffer.from(derivedHashBytes).equals(storedHashBytes);
+  }
+  throw new Error(`unknown algorithm: ${name}`);
+}
 
 export function hexToDec(hex: string): string {
   const s = String(hex).trim();

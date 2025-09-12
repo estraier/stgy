@@ -97,6 +97,7 @@ export class Config {
   );
   static readonly NOTIFICATION_RETENTION_DAYS = envNum("FAKEBOOK_NOTIFICATION_RETENTION_DAYS", 31);
   static readonly NOTIFICATION_SHOWN_RECORDS = envNum("FAKEBOOK_NOTIFICATION_SHOWN_RECORDS", 50);
+  static readonly PASSWORD_CONFIG = envStr("FAKEBOOK_PASSWORD_CONFIG", "scrypt:12:20:4096:8:1");
   static readonly SYSTEM_TIMEZONE = envStr("FAKEBOOK_SYSTEM_TIMEZONE", "Asia/Tokyo");
 }
 
