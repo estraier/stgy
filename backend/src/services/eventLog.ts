@@ -113,7 +113,7 @@ export class EventLogService {
     const idBig = await this.idIssueService.issueBigint();
     const eventId = idBig.toString();
     await this.pgClient.query(
-      "INSERT INTO event_logs (partition_id, event_id, payload) VALUES ($1, $2, $3::jsonb)",
+      "INSERT INTO event_logs (partition_id, event_id, payload) VALUES ($1, $2, $3)",
       [partitionId, eventId, JSON.stringify(payload)],
     );
     await this.notifyPartition(partitionId);
@@ -159,7 +159,7 @@ export class EventLogService {
     limit: number = Config.NOTIFICATION_BATCH_SIZE,
   ): Promise<Array<{ event_id: string; payload: AnyEventPayload }>> {
     const res = await this.pgClient.query<{ event_id: string; payload: AnyEventPayload }>(
-      `SELECT event_id, payload
+      `SELECT event_id, payload::json AS payload
          FROM event_logs
         WHERE partition_id = $1
           AND event_id > $2::bigint

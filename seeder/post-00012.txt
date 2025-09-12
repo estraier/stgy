@@ -232,7 +232,7 @@ CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_
 CREATE TABLE event_logs (
   partition_id SMALLINT NOT NULL,
   event_id BIGINT NOT NULL,
-  payload JSONB NOT NULL,
+  payload VARCHAR(65535) NOT NULL,
   PRIMARY KEY (partition_id, event_id)
 );
 CREATE INDEX event_logs_event_id_hash ON event_logs USING HASH (event_id);
@@ -272,7 +272,7 @@ CREATE TABLE notifications (
   slot VARCHAR(50) NOT NULL,
   term VARCHAR(50) NOT NULL,
   is_read BOOLEAN NOT NULL DEFAULT FALSE,
-  payload JSONB NOT NULL,
+  payload VARCHAR(65535) NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, slot, term)
@@ -305,7 +305,7 @@ PostgreSQLの主テーブルのシリアライズ方式において、可変長�
 
 VARCHARとTEXTのどちらを使うべきかという議論があるが、空間効率も処理性能も同じなので、どちらでも良い。VARCHARは文字数の制限があり、TEXTにはそれがない。DBを対象とする全ての入力はデータサイズに制限を設けるべきだが、その制限方法によってVARCHARとTEXTのどちらを使うべきかが決まる。アプリケーション層で文字数の制限をしているなら、VARCHARでも制限するのは二重管理になるのでTEXTが良いという考え方がある。一方で、アプリケーション層では文字数の制限を一切せずに、DB層だけで制限するという考え方もある。
 
-今回は折衷案を取っていて、多くの場所でVARCHARを使っている一方で、アプリケーション層でもデータサイズの制限をしている。基本的にはアプリケーション層で制限をするのだが、万が一忘れてしまった場合でも、致命的なセキュリティホールにならないように、DB層でも緩めの制限をかけるという建付けだ。悪く言えば二重管理なのだが、その管理コストを払ってでも、TEXTよりはVARCHAR(65535)とすることで、事故によるサービス停止のリスクを低減している。一部でBYTEAやJSONBの列があるが、ユーザがデータサイズを直接指定できない場合のみに限定している。
+今回は折衷案を取っていて、多くの場所でVARCHARを使っている一方で、アプリケーション層でもデータサイズの制限をしている。基本的にはアプリケーション層で制限をするのだが、万が一忘れてしまった場合でも、致命的なセキュリティホールにならないように、DB層でも緩めの制限をかけるという建付けだ。悪く言えば二重管理なのだが、その管理コストを払ってでも、TEXTよりはVARCHAR(65535)とすることで、事故によるサービス停止のリスクを低減している。
 
 なお、JSONをVARCHARやTEXTとして記録するか、JSONBとして記録するかでは、空間効率に差が出る。VARCHAR等の場合にはJSONの文字列そのものが記録される一方、JSONBの場合はJSONをオブジェクトとして解釈した後にバイナリシリアライザをかけたデータが記録される。JSONBの方がデシリアライズが速いので、そのオブジェクトの中身をクエリの検索条件にしたり、オブジェクトの中身をインデックスに加えたりするような場合は、JSONBに利点がある。しかし、空間効率は文字列としてのJSONの方が良い場合がほとんどなので、検索条件にしないなら、文字列として扱った方が良い。そして、そもそも検索条件にするフィールドを含むなら、そのフィールドの値を列として独立させたほうが良い。
 

@@ -2,6 +2,16 @@ import { UsersService } from "./users";
 import { User } from "../models/user";
 import { hexToDec, decToHex } from "../utils/format";
 import crypto from "crypto";
+import { jest } from "@jest/globals";
+
+jest.mock("../utils/format", () => {
+  const actual = jest.requireActual("../utils/format") as Record<string, unknown>;
+  return Object.assign({}, actual, {
+    generatePasswordHash: jest.fn(async (password: string) =>
+      Buffer.from(crypto.createHash("md5").update(password).digest("hex"), "hex"),
+    ),
+  });
+});
 
 function md5(s: string) {
   return crypto.createHash("md5").update(s).digest("hex");
@@ -455,7 +465,12 @@ class MockPgClient {
         countPosts: 0,
       };
       this.users.push(user);
-      this.passwords[user.id] = password;
+      const pwHex = Buffer.isBuffer(password)
+        ? password.toString("hex")
+        : typeof password === "string"
+          ? password
+          : String(password);
+      this.passwords[user.id] = pwHex;
       return {
         rows: [
           {
@@ -500,7 +515,12 @@ class MockPgClient {
       const id = decToHex(idDec);
       const exists = this.users.some((u) => u.id === id);
       if (!exists) return { rowCount: 0 };
-      this.passwords[id] = password;
+      const pwHex = Buffer.isBuffer(password)
+        ? password.toString("hex")
+        : typeof password === "string"
+          ? password
+          : String(password);
+      this.passwords[id] = pwHex;
       return { rowCount: 1 };
     }
 

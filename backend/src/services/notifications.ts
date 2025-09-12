@@ -103,7 +103,7 @@ export class NotificationService {
       if (exists.rowCount === 0) return null;
     }
     const unreadRes = await this.pg.query<Row>(
-      `SELECT slot, term, is_read, payload, updated_at, created_at
+      `SELECT slot, term, is_read, payload::json AS payload, updated_at, created_at
          FROM notifications
         WHERE user_id = $1 AND is_read = FALSE
         ORDER BY updated_at DESC
@@ -111,7 +111,7 @@ export class NotificationService {
       [dbUserId, Config.NOTIFICATION_SHOWN_RECORDS],
     );
     const readRes = await this.pg.query<Row>(
-      `SELECT slot, term, is_read, payload, updated_at, created_at
+      `SELECT slot, term, is_read, payload::json AS payload, updated_at, created_at
          FROM notifications
         WHERE user_id = $1 AND is_read = TRUE
         ORDER BY updated_at DESC

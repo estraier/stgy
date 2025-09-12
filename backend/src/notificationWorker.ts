@@ -174,7 +174,7 @@ async function upsertFollow(
   entry: { userId: string; ts: number },
 ): Promise<void> {
   const sel = await pg.query<{ payload: unknown }>(
-    `SELECT payload FROM notifications
+    `SELECT payload::json AS payload FROM notifications
       WHERE user_id = $1 AND slot = 'follow' AND term = $2
       FOR UPDATE`,
     [hexToDec(recipientUserIdHex), term],
@@ -188,7 +188,7 @@ async function upsertFollow(
     const payload: FollowPayload = { countUsers: 1, records: [rec] };
     await pg.query(
       `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
-       VALUES ($1, 'follow', $2, FALSE, $3::jsonb, $4)`,
+       VALUES ($1, 'follow', $2, FALSE, $3, $4)`,
       [hexToDec(recipientUserIdHex), term, JSON.stringify(payload), updatedAtISO],
     );
     return;
@@ -208,7 +208,7 @@ async function upsertFollow(
   };
   await pg.query(
     `UPDATE notifications
-       SET is_read = FALSE, payload = $3::jsonb, updated_at = $4
+       SET is_read = FALSE, payload = $3, updated_at = $4
      WHERE user_id = $1 AND slot = 'follow' AND term = $2`,
     [hexToDec(recipientUserIdHex), term, JSON.stringify(nextPayload), updatedAtISO],
   );
@@ -224,7 +224,7 @@ async function upsertLike(
 ): Promise<void> {
   const slot = `like:${postId}`;
   const sel = await pg.query<{ payload: unknown }>(
-    `SELECT payload FROM notifications
+    `SELECT payload::json AS payload FROM notifications
       WHERE user_id = $1 AND slot = $2 AND term = $3
       FOR UPDATE`,
     [hexToDec(recipientUserIdHex), slot, term],
@@ -245,7 +245,7 @@ async function upsertLike(
     const payload: LikePayload = { countUsers: 1, records: [rec] };
     await pg.query(
       `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
-       VALUES ($1, $2, $3, FALSE, $4::jsonb, $5)`,
+       VALUES ($1, $2, $3, FALSE, $4, $5)`,
       [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(payload), updatedAtISO],
     );
     return;
@@ -274,7 +274,7 @@ async function upsertLike(
   };
   await pg.query(
     `UPDATE notifications
-       SET is_read = FALSE, payload = $4::jsonb, updated_at = $5
+       SET is_read = FALSE, payload = $4, updated_at = $5
      WHERE user_id = $1 AND slot = $2 AND term = $3`,
     [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(nextPayload), updatedAtISO],
   );
@@ -290,7 +290,7 @@ async function upsertReply(
 ): Promise<void> {
   const slot = `reply:${replyToPostId}`;
   const sel = await pg.query<{ payload: unknown }>(
-    `SELECT payload FROM notifications
+    `SELECT payload::json AS payload FROM notifications
       WHERE user_id = $1 AND slot = $2 AND term = $3
       FOR UPDATE`,
     [hexToDec(recipientUserIdHex), slot, term],
@@ -311,7 +311,7 @@ async function upsertReply(
     const payload: ReplyPayload = { countUsers: 1, countPosts: 1, records: [rec] };
     await pg.query(
       `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
-       VALUES ($1, $2, $3, FALSE, $4::jsonb, $5)`,
+       VALUES ($1, $2, $3, FALSE, $4, $5)`,
       [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(payload), updatedAtISO],
     );
     return;
@@ -346,7 +346,7 @@ async function upsertReply(
   };
   await pg.query(
     `UPDATE notifications
-       SET is_read = FALSE, payload = $4::jsonb, updated_at = $5
+       SET is_read = FALSE, payload = $4, updated_at = $5
      WHERE user_id = $1 AND slot = $2 AND term = $3`,
     [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(nextPayload), updatedAtISO],
   );

@@ -1,18 +1,34 @@
 import { AuthService } from "./auth";
 import { decToHex, hexToDec } from "../utils/format";
 
+jest.mock("../utils/format", () => {
+  const actual = jest.requireActual("../utils/format") as Record<string, unknown>;
+  return Object.assign({}, actual, {
+    checkPasswordHash: jest.fn(async (_password: string, _stored: unknown) => true),
+  });
+});
+
 class MockPgClient {
-  query = jest.fn();
+  query: jest.Mock<Promise<any>, any[]> = jest.fn();
 }
+
 class MockRedis {
   store: { [key: string]: string } = {};
-  set = jest.fn((key: string, value: string) => {
+
+  set: jest.Mock<Promise<string>, any[]> = jest.fn((key: string, value: string) => {
     this.store[key] = value;
     return Promise.resolve("OK");
   });
-  get = jest.fn((key: string) => Promise.resolve(this.store[key]));
-  getex = jest.fn((key: string, ..._args: any[]) => Promise.resolve(this.store[key]));
-  del = jest.fn((key: string) => {
+
+  get: jest.Mock<Promise<string | undefined>, any[]> = jest.fn((key: string) =>
+    Promise.resolve(this.store[key]),
+  );
+
+  getex: jest.Mock<Promise<string | undefined>, any[]> = jest.fn((key: string, ..._args: any[]) =>
+    Promise.resolve(this.store[key]),
+  );
+
+  del: jest.Mock<Promise<number>, any[]> = jest.fn((key: string) => {
     delete this.store[key];
     return Promise.resolve(1);
   });
@@ -32,7 +48,7 @@ describe("AuthService class", () => {
   test("login: success", async () => {
     const dbIdDec = "1234567890123456";
     const userIdHex = decToHex(dbIdDec);
-    pgClient.query.mockResolvedValueOnce({
+    (pgClient.query as jest.Mock).mockResolvedValueOnce({
       rows: [
         {
           id: dbIdDec,
@@ -40,6 +56,7 @@ describe("AuthService class", () => {
           nickname: "TestNick",
           is_admin: true,
           updated_at: null,
+          // password(BYTEA) は不要（checkPasswordHash をモックしているため）
         },
       ],
       rowCount: 1,
@@ -58,7 +75,7 @@ describe("AuthService class", () => {
   });
 
   test("login: fail", async () => {
-    pgClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    (pgClient.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
     await expect(authService.login("bad@example.com", "bad")).rejects.toThrow(
       "authentication failed",
     );
@@ -67,7 +84,7 @@ describe("AuthService class", () => {
   test("switchUser: success", async () => {
     const dbIdDec = "9876543210000000";
     const userHex = decToHex(dbIdDec);
-    pgClient.query.mockResolvedValueOnce({
+    (pgClient.query as jest.Mock).mockResolvedValueOnce({
       rows: [
         {
           id: dbIdDec,
@@ -94,7 +111,7 @@ describe("AuthService class", () => {
 
   test("switchUser: user not found", async () => {
     const userHex = decToHex("42");
-    pgClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    (pgClient.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
     await expect(authService.switchUser(userHex)).rejects.toThrow("user not found");
   });
 
@@ -144,7 +161,7 @@ describe("AuthService class", () => {
     };
     redis.store[`session:${sessionId}`] = JSON.stringify(original);
 
-    pgClient.query.mockResolvedValueOnce({
+    (pgClient.query as jest.Mock).mockResolvedValueOnce({
       rows: [
         {
           email: "new@example.com",
@@ -192,7 +209,7 @@ describe("AuthService class", () => {
     };
     redis.store[`session:${sessionId}`] = JSON.stringify(original);
 
-    pgClient.query.mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    (pgClient.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
 
     const out = await authService.refreshSessionInfo(sessionId);
     expect(out).toBeNull();

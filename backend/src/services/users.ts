@@ -30,7 +30,6 @@ import { makeSnippetJsonFromMarkdown } from "../utils/snippet";
 import { Client } from "pg";
 import Redis from "ioredis";
 import { v4 as uuidv4 } from "uuid";
-import crypto from "crypto";
 
 export class UsersService {
   private pgClient: Client;

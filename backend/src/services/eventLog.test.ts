@@ -209,7 +209,9 @@ describe("EventLogService (cursor & batch helpers)", () => {
     expect(out).toEqual(rows);
 
     const [sql, params] = (query as any).mock.calls[0] as [string, any[]];
-    expect(sql).toMatch(/SELECT\s+event_id,\s*payload\s+FROM\s+event_logs/i);
+    expect(sql).toMatch(
+      /SELECT\s+event_id,\s*payload(?:::\s*json\s+AS\s+payload)?\s+FROM\s+event_logs/i,
+    );
     expect(sql).toMatch(/ORDER BY event_id ASC/i);
     expect(sql).toMatch(/LIMIT \$3/i);
     expect(params).toEqual([4, "100", 2]);

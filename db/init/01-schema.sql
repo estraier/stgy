@@ -93,7 +93,7 @@ CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_
 CREATE TABLE event_logs (
   partition_id SMALLINT NOT NULL,
   event_id BIGINT NOT NULL,
-  payload JSONB NOT NULL,
+  payload VARCHAR(65535) NOT NULL,
   PRIMARY KEY (partition_id, event_id)
 );
 CREATE INDEX event_logs_event_id_hash ON event_logs USING HASH (event_id);
@@ -111,7 +111,7 @@ CREATE TABLE notifications (
   slot VARCHAR(50) NOT NULL,
   term VARCHAR(50) NOT NULL,
   is_read BOOLEAN NOT NULL DEFAULT FALSE,
-  payload JSONB NOT NULL,
+  payload VARCHAR(65535) NOT NULL,
   updated_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, slot, term)
@@ -122,7 +122,7 @@ CREATE INDEX idx_notifications_created_at ON notifications(created_at);
 CREATE TABLE ai_actions (
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   done_at TIMESTAMPTZ NOT NULL,
-  action JSONB NOT NULL
+  action VARCHAR(65535) NOT NULL
 );
 CREATE INDEX idx_ai_actions_user_id_done_at ON ai_actions(user_id, done_at);
 
