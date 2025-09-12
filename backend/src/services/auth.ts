@@ -2,7 +2,7 @@ import { Client } from "pg";
 import Redis from "ioredis";
 import crypto from "crypto";
 import type { SessionInfo } from "../models/session";
-import { hexToDec, decToHex } from "../utils/format";
+import { hexToDec, decToHex, checkPasswordHash } from "../utils/format";
 
 export type LoginResult = { sessionId: string; userId: string };
 
@@ -19,17 +19,20 @@ export class AuthService {
 
   async login(email: string, password: string): Promise<LoginResult> {
     const result = await this.pgClient.query(
-      "SELECT id, email, nickname, is_admin, updated_at FROM users WHERE email=$1 AND password=md5($2)",
-      [email, password],
+      "SELECT id, email, nickname, is_admin, updated_at, password FROM users WHERE email=$1",
+      [email],
     );
     if (result.rows.length === 0) throw new Error("authentication failed");
+    const row = result.rows[0];
+    const ok = await checkPasswordHash(password, row.password);
+    if (!ok) throw new Error("authentication failed");
     const {
       id,
       email: userEmail,
       nickname: userNickname,
       is_admin: userIsAdmin,
       updated_at: userUpdatedAt,
-    } = result.rows[0];
+    } = row;
     const userId = decToHex(id);
     const sessionId = crypto.randomBytes(32).toString("hex");
     const sessionInfo: SessionInfo = {

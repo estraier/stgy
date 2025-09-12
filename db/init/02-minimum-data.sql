@@ -26,7 +26,7 @@ VALUES
   0x1000000000001,
   'admin@dbmx.net',
   'admin',
-  md5('admin'),
+  decode('1ed069b2fb66520e9b16b5a0267efcef80d16dc6ae0ee06c47d329c12bceb6c3','hex'),
   TRUE,
   FALSE,
   $$[{"T":"p","X":"I am the administrator of Fakebook. I notify reports and issues on operation."}]

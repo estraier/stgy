@@ -1,7 +1,6 @@
 import { Config } from "../config";
 import { Buffer } from "buffer";
-import crypto, { randomBytes } from "crypto";
-import * as scrypt from "scrypt-js";
+import crypto, { randomBytes, timingSafeEqual } from "crypto";
 
 export async function generatePasswordHash(text: string): Promise<Uint8Array> {
   const [name, ...params] = Config.PASSWORD_CONFIG.split(":");
@@ -9,7 +8,7 @@ export async function generatePasswordHash(text: string): Promise<Uint8Array> {
     if (params.length !== 1) {
       throw new Error(`${name}: bad params: ${params}`);
     }
-    const saltLen = parseInt(params[0]);
+    const saltLen = parseInt(params[0], 10);
     const saltBytes = Buffer.from(randomBytes(saltLen));
     const combined = Buffer.concat([Buffer.from(text, "utf8"), saltBytes]);
     const hash = crypto.createHash(name);
@@ -19,21 +18,18 @@ export async function generatePasswordHash(text: string): Promise<Uint8Array> {
   }
   if (name === "scrypt") {
     if (params.length != 5) throw new Error(`${name}: bad params: ${params}`);
-    const saltLen = parseInt(params[0]);
-    const coreLen = parseInt(params[1]);
-    const cost = parseInt(params[2]);
-    const round = parseInt(params[3]);
-    const parallelism = parseInt(params[4]);
+    const saltLen = parseInt(params[0], 10);
+    const coreLen = parseInt(params[1], 10);
+    const cost = parseInt(params[2], 10);
+    const round = parseInt(params[3], 10);
+    const parallelism = parseInt(params[4], 10);
     const passwordBytes = Buffer.from(text, "utf8");
     const saltBytes = Buffer.from(randomBytes(saltLen));
-    const hashBytes = await scrypt.scrypt(
-      passwordBytes,
-      saltBytes,
-      cost,
-      round,
-      parallelism,
-      coreLen,
-    );
+    const hashBytes: Buffer = await new Promise((resolve, reject) => {
+      crypto.scrypt(passwordBytes, saltBytes, coreLen, { N: cost, r: round, p: parallelism }, (err, dk) =>
+        err ? reject(err) : resolve(dk as Buffer),
+      );
+    });
     return Buffer.concat([hashBytes, saltBytes]);
   }
   throw new Error(`unknown algorithm: ${name}`);
@@ -61,19 +57,16 @@ export async function checkPasswordHash(text: string, hash: Uint8Array): Promise
     const cost = parseInt(params[2], 10);
     const round = parseInt(params[3], 10);
     const parallelism = parseInt(params[4], 10);
-    const hashLen = coreLen;
-    const storedHashBytes = hashBuffer.subarray(0, hashLen);
-    const storedSaltBytes = hashBuffer.subarray(hashLen);
+    const storedHashBytes = hashBuffer.subarray(0, coreLen);
+    const storedSaltBytes = hashBuffer.subarray(coreLen);
     const passwordBytes = Buffer.from(text, "utf8");
-    const derivedHashBytes = await scrypt.scrypt(
-      passwordBytes,
-      storedSaltBytes,
-      cost,
-      round,
-      parallelism,
-      coreLen,
-    );
-    return Buffer.from(derivedHashBytes).equals(storedHashBytes);
+    const derivedHashBytes: Buffer = await new Promise((resolve, reject) => {
+      crypto.scrypt(passwordBytes, storedSaltBytes, coreLen, { N: cost, r: round, p: parallelism }, (err, dk) =>
+        err ? reject(err) : resolve(dk as Buffer),
+      );
+    });
+    if (storedHashBytes.length !== derivedHashBytes.length) return false;
+    return timingSafeEqual(storedHashBytes, derivedHashBytes);
   }
   throw new Error(`unknown algorithm: ${name}`);
 }

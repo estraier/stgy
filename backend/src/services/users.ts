@@ -17,6 +17,7 @@ import {
 import { IdIssueService } from "./idIssue";
 import { EventLogService } from "./eventLog";
 import {
+  generatePasswordHash,
   hexToDec,
   decToHex,
   hexArrayToDec,
@@ -262,7 +263,7 @@ export class UsersService {
       id = issued.id;
       idDateISO = new Date(issued.ms).toISOString();
     }
-    const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
+    const passwordHash = await generatePasswordHash(input.password);
     const snippet = makeSnippetJsonFromMarkdown(input.introduction ?? "");
 
     await this.pgClient.query("BEGIN");
@@ -421,7 +422,7 @@ export class UsersService {
     if (input.password.trim() === "") {
       throw new Error("password is mustn't be empty");
     }
-    const passwordHash = crypto.createHash("md5").update(input.password).digest("hex");
+    const passwordHash = await generatePasswordHash(input.password);
     const res = await this.pgClient.query(`UPDATE users SET password = $1 WHERE id = $2`, [
       passwordHash,
       hexToDec(input.id),
@@ -476,7 +477,7 @@ export class UsersService {
     if (data.mailCode !== mailCode) throw new Error("Mail verification code mismatch");
     if (!newPassword || newPassword.trim().length < 6)
       throw new Error("Password must be at least 6 characters");
-    const passwordHash = crypto.createHash("md5").update(newPassword).digest("hex");
+    const passwordHash = await generatePasswordHash(newPassword);
     const res = await this.pgClient.query(`UPDATE users SET password = $1 WHERE id = $2`, [
       passwordHash,
       hexToDec(data.userId),

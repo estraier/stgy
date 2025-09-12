@@ -12,7 +12,7 @@ CREATE TABLE users (
   id BIGINT PRIMARY KEY,
   email VARCHAR(100) NOT NULL UNIQUE,
   nickname VARCHAR(50) NOT NULL,
-  password VARCHAR(100) NOT NULL,
+  password BYTEA NOT NULL,
   is_admin BOOLEAN NOT NULL,
   block_strangers BOOLEAN NOT NULL,
   snippet VARCHAR(4096) NOT NULL,
