@@ -9,7 +9,7 @@ export async function generatePasswordHash(text: string): Promise<Uint8Array> {
     if (params.length !== 1) {
       throw new Error(`${name}: bad params: ${params}`);
     }
-    const saltLen = parseInt(params[0], 10);
+    const saltLen = parseInt(params[0]);
     const saltBytes = Buffer.from(randomBytes(saltLen));
     const combined = Buffer.concat([Buffer.from(text, "utf8"), saltBytes]);
     const hash = crypto.createHash(name);
@@ -46,7 +46,6 @@ export async function checkPasswordHash(text: string, hash: Uint8Array): Promise
     if (params.length !== 1) {
       throw new Error(`${name}: bad params: ${params}`);
     }
-    const saltLen = parseInt(params[0], 10);
     const hashLen = name === "md5" ? 16 : 32;
     const storedHashBytes = hashBuffer.subarray(0, hashLen);
     const storedSaltBytes = hashBuffer.subarray(hashLen);
@@ -58,7 +57,6 @@ export async function checkPasswordHash(text: string, hash: Uint8Array): Promise
     if (params.length !== 5) {
       throw new Error(`${name}: bad params: ${params}`);
     }
-    const saltLen = parseInt(params[0], 10);
     const coreLen = parseInt(params[1], 10);
     const cost = parseInt(params[2], 10);
     const round = parseInt(params[3], 10);
@@ -78,6 +76,23 @@ export async function checkPasswordHash(text: string, hash: Uint8Array): Promise
     return Buffer.from(derivedHashBytes).equals(storedHashBytes);
   }
   throw new Error(`unknown algorithm: ${name}`);
+}
+
+export function bytesToHex(ary: Uint8Array): string {
+  return Buffer.from(ary).toString("hex");
+}
+
+export function hexToBytes(str: string): Uint8Array | null {
+  const normalizedStr = str.replace(/[^0-9a-fA-F]/g, "");
+  if (normalizedStr.length % 2 !== 0) {
+    return null;
+  }
+  try {
+    const buffer = Buffer.from(normalizedStr, "hex");
+    return new Uint8Array(buffer);
+  } catch {
+    return null;
+  }
 }
 
 export function hexToDec(hex: string): string {

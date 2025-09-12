@@ -1,6 +1,7 @@
 import { jest } from "@jest/globals";
-import { Config } from "../config";
 import {
+  bytesToHex,
+  hexToBytes,
   hexToDec,
   decToHex,
   hexArrayToDec,
@@ -73,6 +74,35 @@ describe("generatePasswordHash, checkPasswordHash", () => {
     expect(await checkPasswordHash("hello", hash1)).toBe(false);
     expect(await checkPasswordHash("hello", hash2)).toBe(true);
     expect(await checkPasswordHash("abc", hash2)).toBe(false);
+  });
+});
+
+describe("bytesToHex, hexToBytes", () => {
+  it("bytesToHex", () => {
+    const arr = new Uint8Array([0x00, 0x0a, 0xff, 0x1c]);
+    const hex = bytesToHex(arr);
+    expect(hex).toBe("000aff1c");
+  });
+
+  it("hexToBytes success", () => {
+    expect(hexToBytes("48656c6c6f")).toEqual(new Uint8Array([72, 101, 108, 108, 111]));
+    expect(hexToBytes("\\x48656c6c6f")).toEqual(new Uint8Array([72, 101, 108, 108, 111]));
+    expect(hexToBytes("x48656c6c6f")).toEqual(new Uint8Array([72, 101, 108, 108, 111]));
+    expect(hexToBytes("48 65 6C 6C 6F")).toEqual(new Uint8Array([72, 101, 108, 108, 111]));
+  });
+
+  it("hexToBytes failure", () => {
+    expect(hexToBytes("48656c6c6")).toBeNull();
+    expect(hexToBytes("48656c6c6g")).toBeNull();
+  });
+
+  it("bidirection", () => {
+    const arrays = [new Uint8Array([0]), new Uint8Array([0, 1, 2, 128, 255])];
+    for (const array of arrays) {
+      const hex = bytesToHex(array);
+      const restored = hexToBytes(hex);
+      expect(restored).toEqual(array);
+    }
   });
 });
 
