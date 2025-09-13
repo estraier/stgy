@@ -18,7 +18,6 @@ CREATE TABLE users (
   snippet VARCHAR(4096) NOT NULL,
   avatar VARCHAR(100),
   ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
-  created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ,
   count_followers INT NOT NULL DEFAULT 0,
   count_followees INT NOT NULL DEFAULT 0,
@@ -58,7 +57,6 @@ CREATE TABLE posts (
   reply_to BIGINT REFERENCES posts(id) ON DELETE SET NULL,
   allow_likes BOOLEAN NOT NULL,
   allow_replies BOOLEAN NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL,
   updated_at TIMESTAMPTZ,
   count_likes INT NOT NULL DEFAULT 0,
   count_replies INT NOT NULL DEFAULT 0
@@ -243,3 +241,14 @@ FOR EACH ROW EXECUTE FUNCTION trg_post_replies_counter();
 CREATE TRIGGER trg_post_replies_counter_upd
 AFTER UPDATE OF reply_to ON posts
 FOR EACH ROW EXECUTE FUNCTION trg_post_replies_counter();
+
+CREATE OR REPLACE FUNCTION id_to_timestamp(id BIGINT)
+RETURNS timestamptz
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+  SELECT timestamptz 'epoch'
+       + (id >> 20) * interval '1 millisecond';
+$$;

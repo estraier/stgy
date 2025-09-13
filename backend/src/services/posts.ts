@@ -82,7 +82,7 @@ export class PostsService {
         p.reply_to,
         p.allow_likes,
         p.allow_replies,
-        p.created_at,
+        id_to_timestamp(p.id) AS created_at,
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
@@ -117,7 +117,7 @@ export class PostsService {
         p.reply_to,
         p.allow_likes,
         p.allow_replies,
-        p.created_at,
+        id_to_timestamp(p.id) AS created_at,
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
@@ -189,7 +189,7 @@ export class PostsService {
         p.reply_to,
         p.allow_likes,
         p.allow_replies,
-        p.created_at,
+        id_to_timestamp(p.id) AS created_at,
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
@@ -295,19 +295,14 @@ export class PostsService {
     }
 
     let id: string;
-    let idDate: string;
     if (input.id && input.id.trim() !== "") {
       const hexId = input.id.trim();
       if (!/^[0-9A-F]{16}$/.test(hexId)) {
         throw new Error("invalid id format");
       }
       id = hexId;
-      const asBigInt = BigInt("0x" + hexId);
-      idDate = IdIssueService.bigIntToDate(asBigInt).toISOString();
     } else {
-      const issued = await this.idIssueService.issue();
-      id = issued.id;
-      idDate = new Date(issued.ms).toISOString();
+      id = await this.idIssueService.issueId();
     }
     const snippet = makeSnippetJsonFromMarkdown(input.content);
 
@@ -326,9 +321,9 @@ export class PostsService {
         }
       }
       const res = await this.pgClient.query(
-        `INSERT INTO posts (id, snippet, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
-         RETURNING id, snippet, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at`,
+        `INSERT INTO posts (id, snippet, owned_by, reply_to, allow_likes, allow_replies, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, NULL)
+         RETURNING id, snippet, owned_by, reply_to, allow_likes, allow_replies, id_to_timestamp(id) AS created_at, updated_at`,
         [
           hexToDec(id),
           snippet,
@@ -336,7 +331,6 @@ export class PostsService {
           input.replyTo == null ? null : hexToDec(input.replyTo),
           input.allowLikes,
           input.allowReplies,
-          idDate,
         ],
       );
       await this.pgClient.query(
@@ -549,7 +543,7 @@ export class PostsService {
         p.reply_to,
         p.allow_likes,
         p.allow_replies,
-        p.created_at,
+        id_to_timestamp(p.id) AS created_at,
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
@@ -631,7 +625,7 @@ export class PostsService {
         p.reply_to,
         p.allow_likes,
         p.allow_replies,
-        p.created_at,
+        id_to_timestamp(p.id) AS created_at,
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
@@ -706,7 +700,20 @@ export class PostsService {
     const { postId, offset = 0, limit = 100, order = "desc" } = input;
     const orderDir = order && order.toLowerCase() === "asc" ? "ASC" : "DESC";
     const sql = `
-      SELECT u.*
+      SELECT
+        u.id,
+        u.email,
+        u.nickname,
+        u.is_admin,
+        u.block_strangers,
+        u.snippet,
+        u.avatar,
+        u.ai_model,
+        id_to_timestamp(u.id) AS created_at,
+        u.updated_at,
+        u.count_followers,
+        u.count_followees,
+        u.count_posts
       FROM post_likes pl
       JOIN users u ON pl.liked_by = u.id
       WHERE pl.post_id = $1

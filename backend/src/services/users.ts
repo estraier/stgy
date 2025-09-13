@@ -56,7 +56,7 @@ export class UsersService {
     if (query) {
       const q = `%${escapeForLike(query)}%`;
       sql += ` LEFT JOIN user_details d ON d.user_id = u.id`;
-      wheres.push(`(u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)`);
+      wheres.push(`(u.nickname ILIKE $1 OR d.introduction ILIKE $1)`);
       params.push(q);
     } else if (nickname) {
       const q = `%${escapeForLike(nickname)}%`;
@@ -77,7 +77,8 @@ export class UsersService {
     const userRes = await this.pgClient.query(
       `SELECT
          id, email, nickname, is_admin, block_strangers, ai_model,
-         created_at, updated_at, count_followers, count_followees, count_posts
+         id_to_timestamp(id) AS created_at, updated_at,
+         count_followers, count_followees, count_posts
        FROM users
        WHERE id = $1`,
       [hexToDec(id)],
@@ -92,8 +93,10 @@ export class UsersService {
   async getUser(id: string, focusUserId?: string): Promise<UserDetail | null> {
     const userRes = await this.pgClient.query(
       `SELECT
-         u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model,
-         u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts,
+         u.id, u.email, u.nickname, u.is_admin, u.block_strangers,
+         u.snippet, u.avatar, u.ai_model,
+         id_to_timestamp(u.id) AS created_at, u.updated_at,
+         u.count_followers, u.count_followees, u.count_posts,
          d.introduction, d.ai_personality
        FROM users u
        LEFT JOIN user_details d ON d.user_id = u.id
@@ -134,8 +137,11 @@ export class UsersService {
     const nicknamePrefix = input?.nicknamePrefix?.trim();
 
     let baseSelect = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model,
-             u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
+      SELECT
+        u.id, u.email, u.nickname, u.is_admin, u.block_strangers,
+        u.snippet, u.avatar, u.ai_model,
+        id_to_timestamp(u.id) AS created_at, u.updated_at,
+        u.count_followers, u.count_followees, u.count_posts
       FROM users u
     `;
     const params: unknown[] = [];
@@ -144,7 +150,7 @@ export class UsersService {
     if (query) {
       baseSelect += ` LEFT JOIN user_details d ON d.user_id = u.id`;
       const q = `%${escapeForLike(query)}%`;
-      wheres.push(`(u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)`);
+      wheres.push(`(u.nickname ILIKE $1 OR d.introduction ILIKE $1)`);
       params.push(q);
     } else if (nickname) {
       const q = `%${escapeForLike(nickname)}%`;
@@ -248,19 +254,14 @@ export class UsersService {
     }
 
     let id: string;
-    let idDateISO: string;
     if (input.id && input.id.trim() !== "") {
       const hexId = input.id.trim();
       if (!/^[0-9A-F]{16}$/.test(hexId)) {
         throw new Error("invalid id format");
       }
       id = hexId;
-      const asBigInt = BigInt("0x" + hexId);
-      idDateISO = IdIssueService.bigIntToDate(asBigInt).toISOString();
     } else {
-      const issued = await this.idIssueService.issue();
-      id = issued.id;
-      idDateISO = new Date(issued.ms).toISOString();
+      id = await this.idIssueService.issueId();
     }
     const passwordHash = await generatePasswordHash(input.password);
     const snippet = makeSnippetJsonFromMarkdown(input.introduction ?? "");
@@ -268,9 +269,12 @@ export class UsersService {
     await this.pgClient.query("BEGIN");
     try {
       const res = await this.pgClient.query(
-        `INSERT INTO users (id, email, nickname, password, is_admin, block_strangers, snippet, avatar, ai_model, created_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, NULL)
-         RETURNING id, email, nickname, is_admin, block_strangers, snippet, avatar, ai_model, created_at, updated_at, count_followers, count_followees, count_posts`,
+        `INSERT INTO users (id, email, nickname, password, is_admin, block_strangers,
+          snippet, avatar, ai_model, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, NULL)
+         RETURNING id, email, nickname, is_admin, block_strangers, snippet, avatar, ai_model,
+           id_to_timestamp(id) AS created_at, updated_at,
+           count_followers, count_followees, count_posts`,
         [
           hexToDec(id),
           input.email,
@@ -281,7 +285,6 @@ export class UsersService {
           snippet,
           input.avatar,
           input.aiModel,
-          idDateISO,
         ],
       );
       await this.pgClient.query(
@@ -361,7 +364,10 @@ export class UsersService {
 
       const sql =
         `UPDATE users SET ${userCols.join(", ")} WHERE id = $${uidx} ` +
-        `RETURNING id, email, nickname, is_admin, block_strangers, snippet, avatar, ai_model, created_at, updated_at, count_followers, count_followees, count_posts`;
+        `RETURNING
+          id, email, nickname, is_admin, block_strangers, snippet, avatar, ai_model,
+          id_to_timestamp(id) AS created_at, updated_at,
+          count_followers, count_followees, count_posts`;
 
       const res = await this.pgClient.query(sql, userVals);
       await this.pgClient.query("COMMIT");
@@ -495,8 +501,10 @@ export class UsersService {
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     const sql = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model,
-             u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers,
+        u.snippet, u.avatar, u.ai_model,
+        id_to_timestamp(u.id) AS created_at, u.updated_at,
+        u.count_followers, u.count_followees, u.count_posts
       FROM user_follows f
       JOIN users u ON f.followee_id = u.id
       WHERE f.follower_id = $1
@@ -558,8 +566,10 @@ export class UsersService {
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
     const sql = `
-      SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model,
-             u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts
+      SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers,
+        u.snippet, u.avatar, u.ai_model,
+        id_to_timestamp(u.id) AS created_at, u.updated_at,
+        u.count_followers, u.count_followees, u.count_posts
       FROM user_follows f
       JOIN users u ON f.follower_id = u.id
       WHERE f.followee_id = $1
@@ -709,7 +719,7 @@ export class UsersService {
         JOIN users u ON u.id = f.followee_id
         WHERE f.follower_id = $2
           AND lower(u.nickname) LIKE $1
-        ORDER BY lower(u.nickname), u.nickname, u.id
+        ORDER BY lower(u.nickname), u.id
         LIMIT $5
       )`);
     unions.push(`SELECT * FROM followees`);
@@ -719,7 +729,7 @@ export class UsersService {
           SELECT 3 AS prio, u.id, lower(u.nickname) AS nkey
           FROM users u
           WHERE lower(u.nickname) LIKE $1
-          ORDER BY lower(u.nickname), u.nickname, u.id
+          ORDER BY lower(u.nickname), u.id
           LIMIT $5
         )`);
       unions.push(`SELECT * FROM others`);
@@ -743,8 +753,9 @@ export class UsersService {
         LIMIT $4
       )
       SELECT
-        u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar,
-        u.ai_model, u.created_at, u.updated_at,
+        u.id, u.email, u.nickname, u.is_admin, u.block_strangers,
+        u.snippet, u.avatar, u.ai_model,
+        id_to_timestamp(u.id) AS created_at, u.updated_at,
         u.count_followers, u.count_followees, u.count_posts
       FROM page p
       JOIN users u ON u.id = p.id

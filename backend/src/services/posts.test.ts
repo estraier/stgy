@@ -78,10 +78,11 @@ class MockPgClientMain {
 
     if (
       sql.startsWith(
-        "INSERT INTO posts (id, snippet, owned_by, reply_to, allow_likes, allow_replies, created_at, updated_at)",
+        "INSERT INTO posts (id, snippet, owned_by, reply_to, allow_likes, allow_replies, updated_at) VALUES",
       )
     ) {
-      const [id, _snippet, ownedBy, replyTo, allowLikes, allowReplies, createdAt] = params!;
+      const [id, _snippet, ownedBy, replyTo, allowLikes, allowReplies] = params!;
+      const createdAt = new Date().toISOString();
       const newPost: MockPostRow = {
         id,
         ownedBy,
@@ -156,6 +157,10 @@ class MockPgClientMain {
         const col = assignment.split("=")[0].trim().replace(/"/g, "");
         if (col === "snippet") {
           paramCursor++;
+          continue;
+        }
+        if (col === "updated_at") {
+          post.updatedAt = new Date().toISOString();
           continue;
         }
         const key = colMap[col];

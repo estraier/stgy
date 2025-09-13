@@ -18,7 +18,6 @@ INSERT INTO users (
   snippet,
   avatar,
   ai_model,
-  created_at,
   updated_at
 )
 VALUES
@@ -33,7 +32,6 @@ VALUES
 $$,
   NULL,
   NULL,
-  '2025-04-01 03:40:00+00',
   '2025-04-01 08:45:00+00'
 );
 

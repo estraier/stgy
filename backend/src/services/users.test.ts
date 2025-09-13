@@ -200,7 +200,8 @@ class MockPgClient {
 
     if (sql.startsWith("SELECT COUNT(*) FROM users u")) {
       if (
-        sql.includes("WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)")
+        sql.includes("WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)") ||
+        sql.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)")
       ) {
         const pat = params[0].toLowerCase().replace(/%/g, "");
         return {
@@ -243,7 +244,7 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT id, email, nickname, is_admin, block_strangers, ai_model, created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1",
+        "SELECT id, email, nickname, is_admin, block_strangers, ai_model, id_to_timestamp(id) AS created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1",
       )
     ) {
       const idHex = decToHex(params[0]);
@@ -267,7 +268,60 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts, d.introduction, d.ai_personality FROM users u LEFT JOIN user_details d ON d.user_id = u.id WHERE u.id = $1",
+        "SELECT id, email, nickname, is_admin, block_strangers, ai_model, id_to_timestamp(id) AS created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1",
+      )
+    ) {
+      const idHex = decToHex(params[0]);
+      const user = this.users.find((u) => u.id === idHex);
+      if (!user) return { rows: [] };
+      const row = {
+        id: hexToDec(user.id),
+        email: user.email,
+        nickname: user.nickname,
+        is_admin: user.isAdmin,
+        block_strangers: user.blockStrangers,
+        ai_model: user.aiModel,
+        created_at: user.createdAt,
+        updated_at: user.updatedAt,
+        count_followers: this.cntFollowers(user.id),
+        count_followees: this.cntFollowees(user.id),
+        count_posts: 0,
+      };
+      return { rows: [row] };
+    }
+
+    if (
+      sql.startsWith(
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts, d.introduction, d.ai_personality FROM users u LEFT JOIN user_details d ON d.user_id = u.id WHERE u.id = $1",
+      )
+    ) {
+      const idHex = decToHex(params[0]);
+      const user = this.users.find((u) => u.id === idHex);
+      if (!user) return { rows: [] };
+      const d = this.details[user.id] ?? { introduction: "", aiPersonality: null };
+      const row = {
+        id: hexToDec(user.id),
+        email: user.email,
+        nickname: user.nickname,
+        is_admin: user.isAdmin,
+        block_strangers: user.blockStrangers,
+        snippet: user.snippet,
+        avatar: user.avatar,
+        ai_model: user.aiModel,
+        created_at: user.createdAt,
+        updated_at: user.updatedAt,
+        count_followers: this.cntFollowers(user.id),
+        count_followees: this.cntFollowees(user.id),
+        count_posts: 0,
+        introduction: d.introduction,
+        ai_personality: d.aiPersonality,
+      };
+      return { rows: [row] };
+    }
+
+    if (
+      sql.startsWith(
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts, d.introduction, d.ai_personality FROM users u LEFT JOIN user_details d ON d.user_id = u.id WHERE u.id = $1",
       )
     ) {
       const idHex = decToHex(params[0]);
@@ -329,12 +383,58 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM users u",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM users u",
       )
     ) {
       let list = [...this.users];
       if (
-        sql.includes("WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)")
+        sql.includes("WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)") ||
+        sql.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)")
+      ) {
+        const pat = params[0].toLowerCase().replace(/%/g, "");
+        list = list.filter(
+          (u) =>
+            u.nickname.toLowerCase().includes(pat) ||
+            (u.snippet ?? "").toLowerCase().includes(pat) ||
+            (this.details[u.id]?.introduction ?? "").toLowerCase().includes(pat),
+        );
+      } else if (sql.includes("WHERE u.nickname ILIKE")) {
+        const pat = params[0].toLowerCase().replace(/%/g, "");
+        list = list.filter((u) => u.nickname.toLowerCase().includes(pat));
+      } else if (sql.includes("WHERE LOWER(u.nickname) LIKE")) {
+        const pat = params[0].toLowerCase().replace(/%/g, "");
+        list = list.filter((u) => u.nickname.toLowerCase().startsWith(pat));
+      }
+      list.sort((a, b) => (BigInt("0x" + b.id) > BigInt("0x" + a.id) ? 1 : -1));
+      const offset = params[params.length - 2] || 0;
+      const limit = params[params.length - 1] || 100;
+      const rows = list.slice(offset, offset + limit).map((u) => ({
+        id: hexToDec(u.id),
+        email: u.email,
+        nickname: u.nickname,
+        is_admin: u.isAdmin,
+        block_strangers: u.blockStrangers,
+        snippet: u.snippet,
+        avatar: u.avatar,
+        ai_model: u.aiModel,
+        created_at: u.createdAt,
+        updated_at: u.updatedAt,
+        count_followers: this.cntFollowers(u.id),
+        count_followees: this.cntFollowees(u.id),
+        count_posts: 0,
+      }));
+      return { rows };
+    }
+
+    if (
+      sql.startsWith(
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM users u",
+      )
+    ) {
+      let list = [...this.users];
+      if (
+        sql.includes("WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)") ||
+        sql.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)")
       ) {
         const pat = params[0].toLowerCase().replace(/%/g, "");
         list = list.filter(
@@ -433,7 +533,7 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "INSERT INTO users (id, email, nickname, password, is_admin, block_strangers, snippet, avatar, ai_model, created_at, updated_at) VALUES",
+        "INSERT INTO users (id, email, nickname, password, is_admin, block_strangers, snippet, avatar, ai_model, updated_at) VALUES",
       )
     ) {
       const [
@@ -459,6 +559,67 @@ class MockPgClient {
         avatar,
         aiModel,
         createdAt: idDate,
+        updatedAt: null,
+        countFollowers: 0,
+        countFollowees: 0,
+        countPosts: 0,
+      };
+      this.users.push(user);
+      const pwHex = Buffer.isBuffer(password)
+        ? password.toString("hex")
+        : typeof password === "string"
+          ? password
+          : String(password);
+      this.passwords[user.id] = pwHex;
+      return {
+        rows: [
+          {
+            id: idDec,
+            email: user.email,
+            nickname: user.nickname,
+            is_admin: user.isAdmin,
+            block_strangers: user.blockStrangers,
+            snippet: user.snippet,
+            avatar: user.avatar,
+            ai_model: user.aiModel,
+            created_at: user.createdAt,
+            updated_at: user.updatedAt,
+            count_followers: user.countFollowers,
+            count_followees: user.countFollowees,
+            count_posts: user.countPosts,
+          },
+        ],
+      };
+    }
+
+    if (
+      sql.startsWith(
+        "INSERT INTO users (id, email, nickname, password, is_admin, block_strangers, snippet, avatar, ai_model, updated_at) VALUES",
+      )
+    ) {
+      const [
+        idDec,
+        email,
+        nickname,
+        password,
+        isAdmin,
+        blockStrangers,
+        snippet,
+        avatar,
+        aiModel,
+      ] = params;
+      const idHex = decToHex(idDec);
+      const createdAt = new Date().toISOString();
+      const user: User = {
+        id: idHex,
+        email,
+        nickname,
+        isAdmin,
+        blockStrangers,
+        snippet,
+        avatar,
+        aiModel,
+        createdAt,
         updatedAt: null,
         countFollowers: 0,
         countFollowees: 0,
@@ -582,7 +743,7 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
       )
     ) {
       const followerId = decToHex(params[0]);
@@ -617,7 +778,77 @@ class MockPgClient {
 
     if (
       sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, u.created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
+      )
+    ) {
+      const followerId = decToHex(params[0]);
+      const list = this.follows
+        .filter((f) => f.followerId === followerId)
+        .map((f) => this.users.find((u) => u.id === f.followeeId))
+        .filter((u): u is User => !!u);
+      list.sort(
+        (a, b) =>
+          b.createdAt.localeCompare(a.createdAt) ||
+          (BigInt("0x" + b.id) > BigInt("0x" + a.id) ? 1 : -1),
+      );
+      const offset = params[1] || 0;
+      const limit = params[2] || 100;
+      const rows = list.slice(offset, offset + limit).map((u) => ({
+        id: hexToDec(u.id),
+        email: u.email,
+        nickname: u.nickname,
+        is_admin: u.isAdmin,
+        block_strangers: u.blockStrangers,
+        snippet: u.snippet,
+        avatar: u.avatar,
+        ai_model: u.aiModel,
+        created_at: u.createdAt,
+        updated_at: u.updatedAt,
+        count_followers: this.cntFollowers(u.id),
+        count_followees: this.cntFollowees(u.id),
+        count_posts: 0,
+      }));
+      return { rows };
+    }
+
+    if (
+      sql.startsWith(
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
+      )
+    ) {
+      const followeeId = decToHex(params[0]);
+      const list = this.follows
+        .filter((f) => f.followeeId === followeeId)
+        .map((f) => this.users.find((u) => u.id === f.followerId))
+        .filter((u): u is User => !!u);
+      list.sort(
+        (a, b) =>
+          b.createdAt.localeCompare(a.createdAt) ||
+          (BigInt("0x" + b.id) > BigInt("0x" + a.id) ? 1 : -1),
+      );
+      const offset = params[1] || 0;
+      const limit = params[2] || 100;
+      const rows = list.slice(offset, offset + limit).map((u) => ({
+        id: hexToDec(u.id),
+        email: u.email,
+        nickname: u.nickname,
+        is_admin: u.isAdmin,
+        block_strangers: u.blockStrangers,
+        snippet: u.snippet,
+        avatar: u.avatar,
+        ai_model: u.aiModel,
+        created_at: u.createdAt,
+        updated_at: u.updatedAt,
+        count_followers: this.cntFollowers(u.id),
+        count_followees: this.cntFollowees(u.id),
+        count_posts: 0,
+      }));
+      return { rows };
+    }
+
+    if (
+      sql.startsWith(
+        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
       )
     ) {
       const followeeId = decToHex(params[0]);
