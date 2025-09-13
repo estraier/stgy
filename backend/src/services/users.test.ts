@@ -200,7 +200,9 @@ class MockPgClient {
 
     if (sql.startsWith("SELECT COUNT(*) FROM users u")) {
       if (
-        sql.includes("WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)") ||
+        sql.includes(
+          "WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)",
+        ) ||
         sql.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)")
       ) {
         const pat = params[0].toLowerCase().replace(/%/g, "");
@@ -388,7 +390,9 @@ class MockPgClient {
     ) {
       let list = [...this.users];
       if (
-        sql.includes("WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)") ||
+        sql.includes(
+          "WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)",
+        ) ||
         sql.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)")
       ) {
         const pat = params[0].toLowerCase().replace(/%/g, "");
@@ -433,7 +437,9 @@ class MockPgClient {
     ) {
       let list = [...this.users];
       if (
-        sql.includes("WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)") ||
+        sql.includes(
+          "WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)",
+        ) ||
         sql.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)")
       ) {
         const pat = params[0].toLowerCase().replace(/%/g, "");
@@ -597,17 +603,8 @@ class MockPgClient {
         "INSERT INTO users (id, email, nickname, password, is_admin, block_strangers, snippet, avatar, ai_model, updated_at) VALUES",
       )
     ) {
-      const [
-        idDec,
-        email,
-        nickname,
-        password,
-        isAdmin,
-        blockStrangers,
-        snippet,
-        avatar,
-        aiModel,
-      ] = params;
+      const [idDec, email, nickname, password, isAdmin, blockStrangers, snippet, avatar, aiModel] =
+        params;
       const idHex = decToHex(idDec);
       const createdAt = new Date().toISOString();
       const user: User = {

@@ -131,13 +131,16 @@ export class PostsService {
     const params: unknown[] = [hexToDec(id)];
     if (focusUserId) {
       sql += `,
-        (
-          EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = p.owned_by AND b.blockee_id = $2)
-          OR (u.block_strangers = TRUE AND NOT EXISTS (
-                SELECT 1 FROM user_follows f
-                  WHERE f.follower_id = p.owned_by AND f.followee_id = $2
-              ))
-        ) AS is_blocking_focus_user
+        CASE
+          WHEN p.owned_by = $2 THEN FALSE
+          ELSE (
+            EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = p.owned_by AND b.blockee_id = $2)
+            OR (u.block_strangers = TRUE AND NOT EXISTS (
+                  SELECT 1 FROM user_follows f
+                    WHERE f.follower_id = p.owned_by AND f.followee_id = $2
+                ))
+          )
+        END AS is_blocking_focus_user
       `;
     }
     sql += `
@@ -205,13 +208,16 @@ export class PostsService {
 
     if (focusUserId) {
       sql += `,
-        (
-          EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = p.owned_by AND b.blockee_id = $${paramIdx})
-          OR (u.block_strangers = TRUE AND NOT EXISTS (
-                SELECT 1 FROM user_follows f
-                  WHERE f.follower_id = p.owned_by AND f.followee_id = $${paramIdx}
-              ))
-        ) AS is_blocking_focus_user
+        CASE
+          WHEN p.owned_by = $${paramIdx} THEN FALSE
+          ELSE (
+            EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = p.owned_by AND b.blockee_id = $${paramIdx})
+            OR (u.block_strangers = TRUE AND NOT EXISTS (
+                  SELECT 1 FROM user_follows f
+                    WHERE f.follower_id = p.owned_by AND f.followee_id = $${paramIdx}
+                ))
+          )
+        END AS is_blocking_focus_user
       `;
       params.push(hexToDec(focusUserId));
       paramIdx++;
@@ -555,13 +561,16 @@ export class PostsService {
         ${
           focusUserId
             ? `,
-        (
-          EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = p.owned_by AND b.blockee_id = $${focusParamIndex})
-          OR (u.block_strangers = TRUE AND NOT EXISTS (
-                SELECT 1 FROM user_follows f
-                  WHERE f.follower_id = p.owned_by AND f.followee_id = $${focusParamIndex}
-              ))
-        ) AS is_blocking_focus_user`
+        CASE
+          WHEN p.owned_by = $${focusParamIndex} THEN FALSE
+          ELSE (
+            EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = p.owned_by AND b.blockee_id = $${focusParamIndex})
+            OR (u.block_strangers = TRUE AND NOT EXISTS (
+                  SELECT 1 FROM user_follows f
+                    WHERE f.follower_id = p.owned_by AND f.followee_id = $${focusParamIndex}
+                ))
+          )
+        END AS is_blocking_focus_user`
             : ""
         }
       FROM top t
@@ -640,13 +649,16 @@ export class PostsService {
 
     if (focusUserId) {
       sql += `,
-        (
-          EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = p.owned_by AND b.blockee_id = $${paramIdx})
-          OR (u.block_strangers = TRUE AND NOT EXISTS (
-                SELECT 1 FROM user_follows f
-                  WHERE f.follower_id = p.owned_by AND f.followee_id = $${paramIdx}
-              ))
-        ) AS is_blocking_focus_user
+        CASE
+          WHEN p.owned_by = $${paramIdx} THEN FALSE
+          ELSE (
+            EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = p.owned_by AND b.blockee_id = $${paramIdx})
+            OR (u.block_strangers = TRUE AND NOT EXISTS (
+                  SELECT 1 FROM user_follows f
+                    WHERE f.follower_id = p.owned_by AND f.followee_id = $${paramIdx}
+                ))
+          )
+        END AS is_blocking_focus_user
       `;
       params.push(hexToDec(focusUserId));
       paramIdx++;
