@@ -142,45 +142,45 @@ HTMLの`<pre>`のように改行をそのまま表現したい場合には、そ
 セキュリティ上の理由で、埋め込める画像のURLには制限があります。画像管理機能でアップロードした `/images/` で始まるパスか、STGYに既存の`/data/` で始まるパスのみです。
 
 ```
-![STGYロゴ](/data/logo-square.png)
+![STGYロゴ](/data/logo-square.webp)
 ```
 
-![STGYロゴ](/data/logo-square.png)
+![STGYロゴ](/data/logo-square.webp)
 
 記事本文の読みやすさのために画像は小さめに表示されますが、その画像を押すと拡大表示されます。
 
 最初から画像を大きく表示したい場合には、`{size=large}` や `{size=xlarge}` マクロを指定できます。
 
 ```
-![STGYロゴ](/data/logo-square.png){size=large}
-![STGYロゴ](/data/logo-square.png){size=xlarge}
+![STGYロゴ](/data/logo-square.webp){size=large}
+![STGYロゴ](/data/logo-square.webp){size=xlarge}
 ```
 
-![STGYロゴ](/data/logo-square.png){size=large}
-![STGYロゴ](/data/logo-square.png){size=xlarge}
+![STGYロゴ](/data/logo-square.webp){size=large}
+![STGYロゴ](/data/logo-square.webp){size=xlarge}
 
 画像を小さく表示したい場合には、`{size=small}` や `{size=xsmall}` マクロを指定できます。
 
 ```
-![STGYロゴ](/data/logo-square.png){size=small}
-![STGYロゴ](/data/logo-square.png){size=xsmall}
+![STGYロゴ](/data/logo-square.webp){size=small}
+![STGYロゴ](/data/logo-square.webp){size=xsmall}
 ```
 
-![STGYロゴ](/data/logo-square.png){size=small}
-![STGYロゴ](/data/logo-square.png){size=xsmall}
+![STGYロゴ](/data/logo-square.webp){size=small}
+![STGYロゴ](/data/logo-square.webp){size=xsmall}
 
 
 
 画像をフローティングさせて文字を回り込みさせたい場合、`{float=left}` や `{size=right}`マクロを指定できます。回り込みを解除したい場合、「`---`」の見えない罫線を引くと良いでしょう。
 
 ```
-![STGYロゴ](/data/logo-square.png){float=left,size=small}
+![STGYロゴ](/data/logo-square.webp){float=left,size=small}
 渚のハイカラ人魚
 キュートなヒップにズキンドキン
 渚のハイカラ人魚
 まぶしい素足にズキンドキン
 ---
-![STGYロゴ](/data/logo-square.png){float=right,size=small}
+![STGYロゴ](/data/logo-square.webp){float=right,size=small}
 I will follow you
 あなたに追いてゆきたい
 I will follow you
@@ -188,13 +188,13 @@ I will follow you
 ---
 ```
 
-![STGYロゴ](/data/logo-square.png){float=left,size=small}
+![STGYロゴ](/data/logo-square.webp){float=left,size=small}
 渚のハイカラ人魚
 キュートなヒップにズキンドキン
 渚のハイカラ人魚
 まぶしい素足にズキンドキン
 ---
-![STGYロゴ](/data/logo-square.png){float=right,size=small}
+![STGYロゴ](/data/logo-square.webp){float=right,size=small}
 I will follow you
 あなたに追いてゆきたい
 I will follow you
@@ -204,47 +204,47 @@ I will follow you
 画像を横並びで表示したい場合には、`{grid}` マクロを使います。`{grid}` がついた画像が連続すると、それを1行にまとめます。最大5列までサポートしています。ひとつだけでグリッドにすると、中寄せにする効果があります。
 
 ```
-![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
 ---
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
 ---
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
 ---
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
 ---
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
 ---
 ```
 
-![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
 ---
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
 ---
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
 ---
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
 ---
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
-![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
 ---
 
 投稿詳細画面には記事内の全ての画像が表示されますが、投稿一覧画像にはひとつの代表画像のサムネイルしか表示されません。デフォルトでは、最初の画像が代表画像になります。最初の画像以外を代表画像にしたい場合には、その画像に `{featured}` マクロを付与します。あるいは、代表画像にしたくない画像に `{no-featured}` をつけても良いでしょう。全ての画像に `{no-featured}` をつければ、代表画像は表示されなくなります。
