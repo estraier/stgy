@@ -286,7 +286,7 @@ Limit (cost=984.21..984.22 rows=3 width=8)
        Filter: ((nickname)::text ~~ 'user0002%'::text)
 ```
 
-# listFriendsByNicknamePrefix
+## listFriendsByNicknamePrefix
 
 さて、上述のlistUsersメソッドは、それに与えられた外部仕様を満たすためには最善の実装ではあるが、SNSの実運用に供するには効率が悪すぎる。そこで、仕様を単純化したlistFriendsByNicknamePrefixという専用メソッドを設けた。ユーザリストはIDの昇順か降順で返すという原則を崩して、自分、フォロイー、その他の分類順で、各分類の中ではニックネームの辞書順にするという特殊仕様だ。あまりこういう専用メソッドを作りたくはないのだが、こればっかりはやらないと仕方がない。基本戦略としては、自分、フォロイー、その他大勢、を別々に処理して絞り込んでから、最後にUNION ALL結合する。具体的なクエリは以下のものだ。
 

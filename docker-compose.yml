@@ -62,6 +62,19 @@ services:
     ports:
       - "${FAKEBOOK_SMTP_PORT}:587"
 
+  caddy:
+    image: caddy:2
+    depends_on:
+      frontend:
+        condition: service_started
+      backend:
+        condition: service_started
+    ports:
+      - "${FAKEBOOK_CADDY_PORT}:8080"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+    restart: unless-stopped
+
   mailworker:
     build:
       context: .

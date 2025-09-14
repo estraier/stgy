@@ -1,0 +1,30 @@
+# === VCS / OS
+.git
+.gitignore
+.DS_Store
+
+# === Node / monorepo
+node_modules
+**/node_modules
+npm-debug.log*
+yarn-error.log*
+.pnpm-store
+
+# === Build outputs
+dist
+**/dist
+.next
+**/.next
+.turbo
+out
+coverage
+.cache
+.tmp
+
+# === Env / local
+.env
+.env.*
+*.local
+
+# === Docker noise
+docker-compose.override.yml

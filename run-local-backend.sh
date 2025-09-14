@@ -41,9 +41,9 @@ fi
 export FAKEBOOK_FRONTEND_HOST=localhost
 export FAKEBOOK_BACKEND_HOST=localhost
 export FAKEBOOK_DATABASE_HOST=localhost
-export FAKEBOOK_MINIO_HOST=localhost
 export FAKEBOOK_STORAGE_S3_ENDPOINT=http://localhost:9000
 export FAKEBOOK_REDIS_HOST=localhost
+export FAKEBOOK_STORAGE_S3_PUBLIC_URL_PREFIX=http://localhost:9000/{bucket}/
 export FAKEBOOK_SMTP_HOST=localhost
 export FAKEBOOK_BACKEND_PORT="$PORT"
 
