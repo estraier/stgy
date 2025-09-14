@@ -15,7 +15,7 @@ import {
   makeTextFromJsonSnippet,
   makeHtmlFromJsonSnippet,
 } from "./article";
-import { serializeMdNodes } from "fakebook-markdown";
+import { serializeMdNodes } from "stgy-markdown";
 
 describe("article utils (normal cases)", () => {
   test("makeArticleHtmlFromMarkdown", () => {

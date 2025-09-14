@@ -1,5 +1,5 @@
 id: 0001000000000106
-email: horiemon@dbmx.net
+email: horiemon@stgy.jp
 nickname: Horiemon
 passowrd: *
 isAdmin: false

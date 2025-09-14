@@ -149,7 +149,7 @@ async function shutdown(redis: Redis) {
 }
 
 async function main() {
-  logger.info(`Fakebook media worker started (concurrency=${Config.MEDIA_WORKER_CONCURRENCY})`);
+  logger.info(`STGY media worker started (concurrency=${Config.MEDIA_WORKER_CONCURRENCY})`);
   const redis = await connectRedisWithRetry();
   const storage: StorageService = makeStorageService(Config.STORAGE_DRIVER);
   const onSig = () => shutdown(redis);

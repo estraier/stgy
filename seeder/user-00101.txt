@@ -1,5 +1,5 @@
 id: 0001000000000101
-email: geek@dbmx.net
+email: geek@stgy.jp
 nickname: Geek
 passowrd: *
 isAdmin: false

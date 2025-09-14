@@ -7,7 +7,7 @@ jest.mock("../config", () => ({
   Config: {
     SMTP_HOST: "localhost",
     SMTP_PORT: 587,
-    MAIL_SENDER_ADDRESS: "noreply-test@dbmx.net",
+    MAIL_SENDER_ADDRESS: "noreply-test@stgy.jp",
     MAIL_ADDRESS_LIMIT_PER_MIN: 1,
     MAIL_DOMAIN_LIMIT_PER_MIN: 10,
     MAIL_GLOBAL_LIMIT_PER_MIN: 100,
@@ -113,7 +113,7 @@ describe("SendMailService.send", () => {
     await sendMailService.send(mockTransporter, toAddress, subject, body);
     expect(mockSendMail).toHaveBeenCalledTimes(1);
     expect(mockSendMail).toHaveBeenCalledWith({
-      from: "noreply-test@dbmx.net",
+      from: "noreply-test@stgy.jp",
       to: toAddress,
       subject,
       text: body,

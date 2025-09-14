@@ -5,10 +5,10 @@ import sys
 import secrets
 import requests
 
-APP_HOST = os.environ.get("FAKEBOOK_APP_HOST", "localhost")
-APP_PORT = int(os.environ.get("FAKEBOOK_APP_PORT", 3001))
-ADMIN_EMAIL = os.environ.get("FAKEBOOK_ADMIN_EMAIL", "admin@dbmx.net")
-ADMIN_PASSWORD = os.environ.get("FAKEBOOK_ADMIN_PASSWORD", "admin")
+APP_HOST = os.environ.get("STGY_APP_HOST", "localhost")
+APP_PORT = int(os.environ.get("STGY_APP_PORT", 3001))
+ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
+ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "admin")
 BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
 
 REQUIRED_KEYS = ["email", "nickname", "password", "isAdmin", "blockStrangers", "introduction"]

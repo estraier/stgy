@@ -34,11 +34,11 @@ $ sudo systemctl enable postfix
 $ sudo systemctl start postfix
 ```
 
-/etc/postfix/main.cfを編集する。単純化のために、dbmx.netというドメインで、サブドメインを作らずに運用する。Webサーバ用に取得したLet's Encryptの証明書を再利用する。サブドメインを作らなければそれが容易になる。
+/etc/postfix/main.cfを編集する。単純化のために、stgy.jpというドメインで、サブドメインを作らずに運用する。Webサーバ用に取得したLet's Encryptの証明書を再利用する。サブドメインを作らなければそれが容易になる。
 
 ```
-myhostname = dbmx.net
-mydomain = dbmx.net
+myhostname = stgy.jp
+mydomain = stgy.jp
 myorigin = $mydomain
 
 mydestination = $myhostname, localhost.$mydomain, localhost, $mydomain
@@ -64,8 +64,8 @@ smtpd_sasl_path = smtpd
 broken_sasl_auth_clients = yes
 
 # TLS通信の設定
-smtpd_tls_cert_file = /etc/letsencrypt/live/dbmx.net/fullchain.pem
-smtpd_tls_key_file  = /etc/letsencrypt/live/dbmx.net/privkey.pem
+smtpd_tls_cert_file = /etc/letsencrypt/live/stgy.jp/fullchain.pem
+smtpd_tls_key_file  = /etc/letsencrypt/live/stgy.jp/privkey.pem
 smtpd_use_tls = yes
 smtpd_tls_security_level = may
 smtp_tls_security_level = may
@@ -91,13 +91,13 @@ submission inet n       -       n       -       -       smtpd
   -o smtpd_recipient_restrictions=permit_mynetworks,permit_sasl_authenticated,reject_unauth_destination
 ```
 
-SASL認証のためのアカウントを作る必要がある。ここでは postfix@dbmx.net というアカウントを作る
+SASL認証のためのアカウントを作る必要がある。ここでは postfix@stgy.jp というアカウントを作る
 
 ```
-$ sudo saslpasswd2 postfix -u dbmx.net
+$ sudo saslpasswd2 postfix -u stgy.jp
 ```
 
-確認は以下のコマンドで行う。"postfix@dbmx.net: userPassword" と表示されたら成功である。
+確認は以下のコマンドで行う。"postfix@stgy.jp: userPassword" と表示されたら成功である。
 
 ```
 $ sudo sasldblistusers2
@@ -118,12 +118,12 @@ v=spf1 ip4:49.212.133.108 -all
 nslookupで、設定が反映されていることを確認する。
 
 ```
-$ nslookup -type=TXT dbmx.net
+$ nslookup -type=TXT stgy.jp
 Server:		10.52.1.50
 Address:	10.52.1.50#53
 
 Non-authoritative answer:
-dbmx.net	text = "v=spf1 ip4:49.212.133.108 -all"
+stgy.jp	text = "v=spf1 ip4:49.212.133.108 -all"
 ```
 
 ファイアウォールを設定して、25番ポートと587番ポートを開く。
@@ -142,7 +142,7 @@ $ sudo ufw status
 リモートの適当なマシンから疎通確認を行う。swaskコマンドを使うと以下のようになる。宛先とパスワードの部分は実際の値に読み替えること。
 
 ```
-$ swaks --to youraddress@example.com --server dbmx.net:587 --from noreply@dbmx.net --auth-user postfix@dbmx.net --auth-password abcdefg --auth PLAIN --header "Subject: test" --body "test1" --tls
+$ swaks --to youraddress@example.com --server stgy.jp:587 --from noreply@stgy.jp --auth-user postfix@stgy.jp --auth-password abcdefg --auth PLAIN --header "Subject: test" --body "test1" --tls
 ```
 
 リモートマシンとリレー用SMTPサーバとの通信に失敗するなら、swaskにエラーログが出る。swaskが成功してもメールが届かなければ、サーバ上の /var/log/mail.log にエラーが出ているので、それに応じて対処する。
@@ -156,10 +156,10 @@ $ swaks --to youraddress@example.com --server dbmx.net:587 --from noreply@dbmx.n
     image: boky/postfix
     restart: always
     environment:
-      RELAYHOST: [dbmx.net]:587
-      RELAYHOST_USERNAME: postfix@dbmx.net
+      RELAYHOST: [stgy.jp]:587
+      RELAYHOST_USERNAME: postfix@stgy.jp
       RELAYHOST_PASSWORD: abcdef
-      ALLOWED_SENDER_DOMAINS: dbmx.net
+      ALLOWED_SENDER_DOMAINS: stgy.jp
     ports:
       - 587:587
 ```
@@ -172,9 +172,9 @@ Webシステムからメールを投げる際には、Webサービスとして�
     depends_on:
       - smtp
     environment:
-      - FAKEBOOK_SMTP_HOST=smtp
-      - FAKEBOOK_SMTP_PORT=587
-      - FAKEBOOK_SMTP_SENDER_ADDRESS=noreply@dbmx.net
+      - STGY_SMTP_HOST=smtp
+      - STGY_SMTP_PORT=587
+      - STGY_SMTP_SENDER_ADDRESS=noreply@stgy.jp
     volumes:
       - ./backend:/app
     command: npm run mail-worker
@@ -186,8 +186,8 @@ Node.jsでSMTPを喋るには、以下のようなコードを書くことにな
 import nodemailer, { Transporter } from "nodemailer";
 
 const transporter: Transporter = nodemailer.createTransport({
-  host: process.env.FAKEBOOK_SMTP_HOST,
-  port: Number(process.env.FAKEBOOK_SMTP_PORT),
+  host: process.env.STGY_SMTP_HOST,
+  port: Number(process.env.STGY_SMTP_PORT),
   secure: false,
   tls: {
     rejectUnauthorized: false,
@@ -195,7 +195,7 @@ const transporter: Transporter = nodemailer.createTransport({
 });
 
 await transporter.sendMail({
-  from: process.env.FAKEBOOK_SMTP_SENDER_ADDRESS,
+  from: process.env.STGY_SMTP_SENDER_ADDRESS,
   to: "foobar@example.com",
   subject: "Hello World",
   text: "This is a pen.",

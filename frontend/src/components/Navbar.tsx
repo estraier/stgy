@@ -70,7 +70,7 @@ export default function Navbar() {
         className="font-bold text-base sm:text-lg text-blue-600 mr-3 sm:mr-6 select-none shrink-0"
         tabIndex={0}
       >
-        Fakebook
+        STGY
       </Link>
 
       <div className="flex gap-1.5 sm:gap-2 shrink-0">

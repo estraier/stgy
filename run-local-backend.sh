@@ -7,7 +7,7 @@ set -a
 set +a
 
 CMD="dev"
-PORT="${FAKEBOOK_BACKEND_PORT:-3001}"
+PORT="${STGY_BACKEND_PORT:-3001}"
 
 declare -a PASS_ARGS=()
 
@@ -38,14 +38,14 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
   exit 1
 fi
 
-export FAKEBOOK_FRONTEND_HOST=localhost
-export FAKEBOOK_BACKEND_HOST=localhost
-export FAKEBOOK_DATABASE_HOST=localhost
-export FAKEBOOK_STORAGE_S3_ENDPOINT=http://localhost:9000
-export FAKEBOOK_REDIS_HOST=localhost
-export FAKEBOOK_STORAGE_S3_PUBLIC_URL_PREFIX=http://localhost:9000/{bucket}/
-export FAKEBOOK_SMTP_HOST=localhost
-export FAKEBOOK_BACKEND_PORT="$PORT"
+export STGY_FRONTEND_HOST=localhost
+export STGY_BACKEND_HOST=localhost
+export STGY_DATABASE_HOST=localhost
+export STGY_STORAGE_S3_ENDPOINT=http://localhost:9000
+export STGY_REDIS_HOST=localhost
+export STGY_STORAGE_S3_PUBLIC_URL_PREFIX=http://localhost:9000/{bucket}/
+export STGY_SMTP_HOST=localhost
+export STGY_BACKEND_PORT="$PORT"
 
 cleanup() {
   trap - INT TERM EXIT
@@ -58,7 +58,7 @@ npm run backend:mail-worker &
 npm run backend:media-worker &
 npm run backend:notification-worker &
 
-echo "[run-local-backend] port=${FAKEBOOK_BACKEND_PORT}  cmd=${CMD}"
+echo "[run-local-backend] port=${STGY_BACKEND_PORT}  cmd=${CMD}"
 echo "[run-local-backend] npm run ${CMD} -- ${PASS_ARGS[*]-}"
 
 if ((${#PASS_ARGS[@]})); then

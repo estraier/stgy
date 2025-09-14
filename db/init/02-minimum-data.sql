@@ -23,7 +23,7 @@ INSERT INTO users (
 VALUES
 (
   0x1000000000001,
-  'admin@dbmx.net',
+  'admin@stgy.jp',
   'admin',
   decode('1ed069b2fb66520e9b16b5a0267efcef80d16dc6ae0ee06c47d329c12bceb6c3','hex'),
   TRUE,

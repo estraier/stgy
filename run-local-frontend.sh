@@ -7,7 +7,7 @@ set -a
 set +a
 
 CMD="dev"
-PORT="${FAKEBOOK_FRONTEND_PORT:-3000}"
+PORT="${STGY_FRONTEND_PORT:-3000}"
 
 declare -a PASS_ARGS=()
 
@@ -38,7 +38,7 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
   exit 1
 fi
 
-echo "[run-local-frontend] port=${FAKEBOOK_BACKEND_PORT}  cmd=${CMD}"
+echo "[run-local-frontend] port=${STGY_BACKEND_PORT}  cmd=${CMD}"
 echo "[run-local-frontend] npm run ${CMD} -- ${PASS_ARGS[*]-}"
 
 if ((${#PASS_ARGS[@]})); then

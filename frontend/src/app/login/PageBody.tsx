@@ -32,7 +32,7 @@ export default function PageBody() {
   return (
     <main className="flex flex-col items-center justify-center min-h-screen">
       <form className="w-full max-w-sm bg-white p-8 rounded shadow" onSubmit={handleSubmit}>
-        <h1 className="text-2xl font-bold mb-6 text-center">Log in to Fakebook</h1>
+        <h1 className="text-2xl font-bold mb-6 text-center">Log in to STGY</h1>
         <label className="block mb-2 font-medium">Email</label>
         <input
           type="email"

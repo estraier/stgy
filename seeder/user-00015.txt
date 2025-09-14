@@ -1,5 +1,5 @@
 id: 0001000000000015
-email: eve@dbmx.net
+email: eve@stgy.jp
 nickname: Eve
 passowrd: eve-eve
 isAdmin: false

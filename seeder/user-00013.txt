@@ -1,5 +1,5 @@
 id: 0001000000000013
-email: charlie@dbmx.net
+email: charlie@stgy.jp
 nickname: Charlie
 passowrd: charlie-charlie
 isAdmin: false

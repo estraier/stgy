@@ -1,5 +1,5 @@
 id: 0001000000000105
-email: hiroyuki@dbmx.net
+email: hiroyuki@stgy.jp
 nickname: Hiroyuki
 passowrd: *
 isAdmin: false

@@ -1,5 +1,5 @@
 id: 0001000000000003
-email: aiadmin@dbmx.net
+email: aiadmin@stgy.jp
 nickname: AI admin
 passowrd: *
 isAdmin: true

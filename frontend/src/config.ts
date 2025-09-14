@@ -3,7 +3,7 @@ export class Config {
     "NEXT_PUBLIC_BACKEND_API_BASE_URL",
     "http://localhost:3001",
   );
-  static readonly STORAGE_S3_BUCKET_PREFIX = envStr("NEXT_PUBLIC_S3_BUCKET_PREFIX", "fakebook");
+  static readonly STORAGE_S3_BUCKET_PREFIX = envStr("NEXT_PUBLIC_S3_BUCKET_PREFIX", "stgy");
   static readonly STORAGE_S3_PUBLIC_URL_PREFIX = envStr(
     "NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX",
     "http://localhost:9000/{bucket}/",

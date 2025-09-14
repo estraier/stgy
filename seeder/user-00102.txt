@@ -1,5 +1,5 @@
 id: 0001000000000102
-email: traveler@dbmx.net
+email: traveler@stgy.jp
 nickname: Traveler
 passowrd: *
 isAdmin: false

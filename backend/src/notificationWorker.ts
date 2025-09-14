@@ -21,7 +21,7 @@ async function acquireSingletonLock(): Promise<Client> {
   const pg = await connectPgWithRetry();
   const res = await pg.query<{ ok: boolean }>(
     `SELECT pg_try_advisory_lock(hashtext($1), 0) AS ok`,
-    ["fakebook:notification"],
+    ["stgy:notification"],
   );
   if (!res.rows[0]?.ok) {
     logger.warn("[notificationworker] another instance is running; exiting");
@@ -482,7 +482,7 @@ async function drain(ev: EventLogService, pg: Client, partitionId: number): Prom
 }
 
 async function runWorker(workerIndex: number): Promise<void> {
-  logger.info(`Fakebook notification worker ${workerIndex} started`);
+  logger.info(`stgy notification worker ${workerIndex} started`);
   const pg = await connectPgWithRetry(60_000);
   const sub = await connectRedisWithRetry();
   const ev = new EventLogService(pg, sub);

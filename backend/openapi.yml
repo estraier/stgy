@@ -1,9 +1,9 @@
 openapi: 3.1.0
 info:
-  title: Fakebook API
+  title: STGY API
   version: 1.0.0
   description: |
-    Fakebook SNS backend API (Express/TypeScript)
+    STGY SNS backend API (Express/TypeScript)
     - Cookie authentication: session_id
 
 servers:

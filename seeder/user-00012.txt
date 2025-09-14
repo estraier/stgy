@@ -1,5 +1,5 @@
 id: 0001000000000012
-email: bob@dbmx.net
+email: bob@stgy.jp
 nickname: Bob
 passowrd: bob-bob
 isAdmin: false

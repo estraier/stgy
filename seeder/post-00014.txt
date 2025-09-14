@@ -2,15 +2,15 @@ id: 0002000000000014
 ownedBy: 0001000000000002
 allowLikes: false
 allowReplies: false
-tags: fakebook-help
+tags: stgy-help
 content:<<____EOF____
-# Fakebookのバックエンドサーバ
+# STGYのバックエンドサーバ
 
-本記事では、Fakebookのバックエンドサーバの機能と構成について説明する。
+本記事では、STGYのバックエンドサーバの機能と構成について説明する。
 
 ## 概要
 
 これから書きます。
 
-Next: [Fakebookのメディアストレージ](/posts/0002000000000015)
+Next: [STGYのメディアストレージ](/posts/0002000000000015)
 ____EOF____

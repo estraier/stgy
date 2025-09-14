@@ -6,11 +6,11 @@ import sys
 import time
 import base64
 
-APP_HOST = os.environ.get("FAKEBOOK_APP_HOST", "localhost")
-APP_PORT = int(os.environ.get("FAKEBOOK_APP_PORT", 3001))
-ADMIN_EMAIL = os.environ.get("FAKEBOOK_ADMIN_EMAIL", "admin@dbmx.net")
-ADMIN_PASSWORD = os.environ.get("FAKEBOOK_ADMIN_PASSWORD", "admin")
-TEST_SIGNUP_CODE = os.environ.get("FAKEBOOK_TEST_SIGNUP_CODE", "000000")
+APP_HOST = os.environ.get("STGY_APP_HOST", "localhost")
+APP_PORT = int(os.environ.get("STGY_APP_PORT", 3001))
+ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
+ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "admin")
+TEST_SIGNUP_CODE = os.environ.get("STGY_TEST_SIGNUP_CODE", "000000")
 BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
 
 def login():
@@ -95,7 +95,7 @@ def test_users():
   headers = {"Content-Type": "application/json"}
   cookies = {"session_id": session_id}
   user_input = {
-    "email": f"user1-{session_id[:8]}@fakebook.com",
+    "email": f"user1-{session_id[:8]}@stgy.com",
     "nickname": "user1",
     "isAdmin": False,
     "introduction": "hi!",
@@ -283,7 +283,7 @@ def test_signup():
   session = res.json()
   print(f"[session] {session}")
   admin_id = session["userId"]
-  email = f"signup_test+{int(time.time())}@fakebook.xyz"
+  email = f"signup_test+{int(time.time())}@stgy.xyz"
   password = "signup_pw1"
   res = requests.post(
     f"{BASE_URL}/signup/start",
@@ -488,7 +488,7 @@ def test_notifications():
   admin_session = login()
   admin_cookies = {"session_id": admin_session}
   headers = {"Content-Type": "application/json"}
-  email = f"notif_user+{int(time.time())}@fakebook.xyz"
+  email = f"notif_user+{int(time.time())}@stgy.xyz"
   password = "pw1-notif"
   user_input = {
     "email": email,

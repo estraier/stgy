@@ -20,20 +20,20 @@ async function handleMailTask(
 ) {
   switch (msg.type) {
     case "signup": {
-      const subject = "Fakebook Signup Verification Code";
-      const text = `Thank you for signing up for Fakebook.\nYour verification code: ${msg.verificationCode}\nPlease enter this code within 5 minutes.`;
+      const subject = "STGY Signup Verification Code";
+      const text = `Thank you for signing up for STGY.\nYour verification code: ${msg.verificationCode}\nPlease enter this code within 5 minutes.`;
       await sendMailWithRecord(sendMailService, mailTransporter, msg.email, subject, text);
       break;
     }
     case "update-email": {
-      const subject = "Fakebook Email Change Verification";
+      const subject = "STGY Email Change Verification";
       const text = `Your verification code for email update: ${msg.verificationCode}\nPlease enter this code within 5 minutes.`;
       await sendMailWithRecord(sendMailService, mailTransporter, msg.newEmail, subject, text);
       break;
     }
     case "reset-password": {
-      const subject = "Fakebook Password Reset Verification";
-      const text = `A password reset was requested for your Fakebook account.\nVerification code: ${msg.mailCode}\nPlease enter this code within 5 minutes.`;
+      const subject = "STGY Password Reset Verification";
+      const text = `A password reset was requested for your STGY account.\nVerification code: ${msg.mailCode}\nPlease enter this code within 5 minutes.`;
       await sendMailWithRecord(sendMailService, mailTransporter, msg.email, subject, text);
       break;
     }
@@ -96,7 +96,7 @@ async function processQueue(
 }
 
 async function main() {
-  logger.info("Fakebook mail worker started");
+  logger.info("STGY mail worker started");
   const redis = await connectRedisWithRetry();
   const sendMailService = new SendMailService(redis);
   const mailTransporter: Transporter = SendMailService.createTransport();

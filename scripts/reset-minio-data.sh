@@ -6,7 +6,7 @@ docker-compose exec -T minio sh -lc "
   mc alias set local 'http://localhost:9000' \"\$MINIO_ROOT_USER\" \"\$MINIO_ROOT_PASSWORD\" >/dev/null
 "
 
-BUCKETS="fakebook-test fakebook-images fakebook-profiles"
+BUCKETS="stgy-test stgy-images stgy-profiles"
 
 for b in $BUCKETS; do
   docker-compose exec -T minio sh -lc "

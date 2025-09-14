@@ -2,11 +2,11 @@ id: 0002000000000003
 ownedBy: 0001000000000001
 allowLikes: false
 allowReplies: false
-tags: fakebook-help
+tags: stgy-help
 content:<<____EOF____
-# Fakebookの投稿の書式
+# STGYの投稿の書式
 
-Fakebookに投稿される各記事はMarkdown形式で表現されます。特別な記法を使わない限り、Markdownはプレーンテキストと同じ感覚で書けます。普通に文章を書けばそれが表示されます。単一の改行は段落内の改行とみなされ、連続した改行は段落の区切りとみなされます。典型的な例は以下のようになります。
+STGYに投稿される各記事はMarkdown形式で表現されます。特別な記法を使わない限り、Markdownはプレーンテキストと同じ感覚で書けます。普通に文章を書けばそれが表示されます。単一の改行は段落内の改行とみなされ、連続した改行は段落の区切りとみなされます。典型的な例は以下のようになります。
 
 ```
 今日の天気予報：
@@ -79,7 +79,7 @@ Markdownは標準規格ではないので、変種が多数あります。ここ
 |千葉県|県庁所在地は千葉市。ピーナツで有名|
 |埼玉県|県庁所在地はさいたま市。特徴は特にない。|
 
-ハイパーリンクを表現するには、`[` と `]` でアンカー文字列を挟んでから、直後に `(` と `)` で挟んでURLを書きます。Fakebook内のページにも、外部サイトへも、リンクを貼ることができます。
+ハイパーリンクを表現するには、`[` と `]` でアンカー文字列を挟んでから、直後に `(` と `)` で挟んでURLを書きます。STGY内のページにも、外部サイトへも、リンクを貼ることができます。
 
 ```
 私は[ChatGPT](https://ja.wikipedia.org/wiki/ChatGPT)を使っています。
@@ -139,48 +139,48 @@ HTMLの`<pre>`のように改行をそのまま表現したい場合には、そ
 
 記事内に画像を埋め込むには、![キャプション]\(URL) 記法を用います。キャプションは空文字列でも構いません。投稿メニューの画像ツールを使うと、画像のアップロードと埋め込み記法の執筆が一度でできます。
 
-セキュリティ上の理由で、埋め込める画像のURLには制限があります。画像管理機能でアップロードした `/images/` で始まるパスか、Fakebookに既存の`/data/` で始まるパスのみです。
+セキュリティ上の理由で、埋め込める画像のURLには制限があります。画像管理機能でアップロードした `/images/` で始まるパスか、STGYに既存の`/data/` で始まるパスのみです。
 
 ```
-![Fakebookロゴ](/data/logo-square.png)
+![STGYロゴ](/data/logo-square.png)
 ```
 
-![Fakebookロゴ](/data/logo-square.png)
+![STGYロゴ](/data/logo-square.png)
 
 記事本文の読みやすさのために画像は小さめに表示されますが、その画像を押すと拡大表示されます。
 
 最初から画像を大きく表示したい場合には、`{size=large}` や `{size=xlarge}` マクロを指定できます。
 
 ```
-![Fakebookロゴ](/data/logo-square.png){size=large}
-![Fakebookロゴ](/data/logo-square.png){size=xlarge}
+![STGYロゴ](/data/logo-square.png){size=large}
+![STGYロゴ](/data/logo-square.png){size=xlarge}
 ```
 
-![Fakebookロゴ](/data/logo-square.png){size=large}
-![Fakebookロゴ](/data/logo-square.png){size=xlarge}
+![STGYロゴ](/data/logo-square.png){size=large}
+![STGYロゴ](/data/logo-square.png){size=xlarge}
 
 画像を小さく表示したい場合には、`{size=small}` や `{size=xsmall}` マクロを指定できます。
 
 ```
-![Fakebookロゴ](/data/logo-square.png){size=small}
-![Fakebookロゴ](/data/logo-square.png){size=xsmall}
+![STGYロゴ](/data/logo-square.png){size=small}
+![STGYロゴ](/data/logo-square.png){size=xsmall}
 ```
 
-![Fakebookロゴ](/data/logo-square.png){size=small}
-![Fakebookロゴ](/data/logo-square.png){size=xsmall}
+![STGYロゴ](/data/logo-square.png){size=small}
+![STGYロゴ](/data/logo-square.png){size=xsmall}
 
 
 
 画像をフローティングさせて文字を回り込みさせたい場合、`{float=left}` や `{size=right}`マクロを指定できます。回り込みを解除したい場合、「`---`」の見えない罫線を引くと良いでしょう。
 
 ```
-![Fakebookロゴ](/data/logo-square.png){float=left,size=small}
+![STGYロゴ](/data/logo-square.png){float=left,size=small}
 渚のハイカラ人魚
 キュートなヒップにズキンドキン
 渚のハイカラ人魚
 まぶしい素足にズキンドキン
 ---
-![Fakebookロゴ](/data/logo-square.png){float=right,size=small}
+![STGYロゴ](/data/logo-square.png){float=right,size=small}
 I will follow you
 あなたに追いてゆきたい
 I will follow you
@@ -188,13 +188,13 @@ I will follow you
 ---
 ```
 
-![Fakebookロゴ](/data/logo-square.png){float=left,size=small}
+![STGYロゴ](/data/logo-square.png){float=left,size=small}
 渚のハイカラ人魚
 キュートなヒップにズキンドキン
 渚のハイカラ人魚
 まぶしい素足にズキンドキン
 ---
-![Fakebookロゴ](/data/logo-square.png){float=right,size=small}
+![STGYロゴ](/data/logo-square.png){float=right,size=small}
 I will follow you
 あなたに追いてゆきたい
 I will follow you
@@ -204,50 +204,50 @@ I will follow you
 画像を横並びで表示したい場合には、`{grid}` マクロを使います。`{grid}` がついた画像が連続すると、それを1行にまとめます。最大5列までサポートしています。ひとつだけでグリッドにすると、中寄せにする効果があります。
 
 ```
-![Fakebookロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
 ---
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
 ---
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
 ---
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
 ---
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
 ---
 ```
 
-![Fakebookロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
 ---
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
 ---
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
 ---
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
 ---
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
-![Fakebookロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
+![STGYロゴ](/data/logo-square.png){grid}
 ---
 
 投稿詳細画面には記事内の全ての画像が表示されますが、投稿一覧画像にはひとつの代表画像のサムネイルしか表示されません。デフォルトでは、最初の画像が代表画像になります。最初の画像以外を代表画像にしたい場合には、その画像に `{featured}` マクロを付与します。あるいは、代表画像にしたくない画像に `{no-featured}` をつけても良いでしょう。全ての画像に `{no-featured}` をつければ、代表画像は表示されなくなります。
 
-Next: [Fakebookのアーキテクチャ](/posts/0002000000000011)
+Next: [STGYのアーキテクチャ](/posts/0002000000000011)
 ____EOF____

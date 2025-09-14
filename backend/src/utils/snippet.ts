@@ -6,7 +6,7 @@ import {
   serializeMdNodes,
   deserializeMdNodes,
   mdRenderText,
-} from "fakebook-markdown";
+} from "stgy-markdown";
 
 export function makeSnippetJsonFromMarkdown(mdText: string) {
   const maxLen = Config.SNIPPET_MAX_LENGTH;

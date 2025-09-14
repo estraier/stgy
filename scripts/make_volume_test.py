@@ -6,10 +6,10 @@ import sys
 import time
 import requests
 
-APP_HOST = os.environ.get("FAKEBOOK_APP_HOST", "localhost")
-APP_PORT = int(os.environ.get("FAKEBOOK_APP_PORT", 3001))
-ADMIN_EMAIL = os.environ.get("FAKEBOOK_ADMIN_EMAIL", "admin@dbmx.net")
-ADMIN_PASSWORD = os.environ.get("FAKEBOOK_ADMIN_PASSWORD", "admin")
+APP_HOST = os.environ.get("STGY_APP_HOST", "localhost")
+APP_PORT = int(os.environ.get("STGY_APP_PORT", 3001))
+ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
+ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "admin")
 BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
 
 NUM_DUMMY_USERS = 30000
@@ -164,7 +164,7 @@ def main(argv: list[str]) -> int:
   taro = ensure_user(
     admin,
     user_id=TARO_ID,
-    email="taro@dbmx.net",
+    email="taro@stgy.jp",
     nickname="taro",
     password="taro-taro",
     is_admin=True,
@@ -205,7 +205,7 @@ def main(argv: list[str]) -> int:
     u = ensure_user(
       admin,
       user_id=uid,
-      email=f"{name}@dbmx.net",
+      email=f"{name}@stgy.jp",
       nickname=name,
       password=f"{name}-pw",
       is_admin=i % 10 == 0,

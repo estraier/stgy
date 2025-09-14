@@ -11,7 +11,7 @@ import {
   mdRenderHtml,
   mdRenderText,
   deserializeMdNodes,
-} from "fakebook-markdown";
+} from "stgy-markdown";
 
 export function makeArticleHtmlFromMarkdown(mdText: string) {
   let nodes = parseMarkdown(mdText);

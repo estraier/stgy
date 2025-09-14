@@ -1,5 +1,5 @@
 id: 0001000000000011
-email: alice@dbmx.net
+email: alice@stgy.jp
 nickname: Alice
 passowrd: alice-alice
 isAdmin: false

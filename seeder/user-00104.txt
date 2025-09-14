@@ -1,5 +1,5 @@
 id: 0001000000000104
-email: hermit@dbmx.net
+email: hermit@stgy.jp
 nickname: Hermit
 passowrd: *
 isAdmin: false

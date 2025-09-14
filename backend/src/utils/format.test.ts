@@ -198,7 +198,7 @@ describe("validateEmail", () => {
 
 describe("normalizeEmail", () => {
   it("normalize", () => {
-    expect(normalizeEmail("  ADMIN@dbmX.net  ")).toBe("admin@dbmx.net");
+    expect(normalizeEmail("  ADMIN@stgy.jp  ")).toBe("admin@stgy.jp");
   });
 });
 
@@ -295,8 +295,8 @@ describe("maskEmailByHash", () => {
   });
 
   it("returns different masked values for different inputs", () => {
-    const masked1 = maskEmailByHash("foo@fakebook.com");
-    const masked2 = maskEmailByHash("bar@fakebook.com");
+    const masked1 = maskEmailByHash("foo@stgy.jp");
+    const masked2 = maskEmailByHash("bar@stgy.jp");
     expect(masked1).not.toBe(masked2);
   });
 });

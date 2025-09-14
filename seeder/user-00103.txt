@@ -1,5 +1,5 @@
 id: 0001000000000103
-email: trendy@dbmx.net
+email: trendy@stgy.jp
 nickname: Trendy
 passowrd: *
 isAdmin: false

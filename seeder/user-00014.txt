@@ -1,5 +1,5 @@
 id: 0001000000000014
-email: david@dbmx.net
+email: david@stgy.jp
 nickname: David
 passowrd: david-david
 isAdmin: false

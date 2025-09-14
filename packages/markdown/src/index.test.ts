@@ -207,7 +207,7 @@ describe("mdRewriteMediaUrls", () => {
   };
 
   it("missing", () => {
-    const mdText = "![img](http://dbmx.net/logo.jpg)";
+    const mdText = "![img](http://stgy.jp/logo.jpg)";
     const expected = [
       {
         type: "element",
