@@ -53,8 +53,6 @@ def parse_kv_file(path: str) -> dict:
       continue
     data[key] = val.strip()
     i += 1
-  if "password" not in data and "passowrd" in data:
-    data["password"] = data.pop("passowrd").strip()
   return data
 
 def normalize_payload(raw: dict) -> dict:

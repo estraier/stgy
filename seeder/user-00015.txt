@@ -1,7 +1,7 @@
 id: 0001000000000015
 email: eve@stgy.jp
 nickname: Eve
-passowrd: eve-eve
+password: *
 isAdmin: false
 blockStrangers: true
 introduction:<<____EOF____

@@ -1,7 +1,7 @@
 id: 0001000000000105
 email: hiroyuki@stgy.jp
 nickname: Hiroyuki
-passowrd: *
+password: *
 isAdmin: false
 blockStrangers: false
 introduction:<<____EOF____

@@ -1,7 +1,7 @@
 id: 0001000000000003
 email: aiadmin@stgy.jp
 nickname: AI admin
-passowrd: *
+password: *
 isAdmin: true
 blockStrangers: false
 introduction:<<____EOF____

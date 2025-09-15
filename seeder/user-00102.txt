@@ -1,7 +1,7 @@
 id: 0001000000000102
 email: traveler@stgy.jp
 nickname: Traveler
-passowrd: *
+password: *
 isAdmin: false
 blockStrangers: false
 introduction:<<____EOF____

@@ -1,7 +1,7 @@
 id: 0001000000000013
 email: charlie@stgy.jp
 nickname: Charlie
-passowrd: charlie-charlie
+password: *
 isAdmin: false
 blockStrangers: false
 introduction:<<____EOF____

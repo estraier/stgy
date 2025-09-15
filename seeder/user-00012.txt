@@ -1,7 +1,7 @@
 id: 0001000000000012
 email: bob@stgy.jp
 nickname: Bob
-passowrd: bob-bob
+password: *
 isAdmin: false
 blockStrangers: true
 introduction:<<____EOF____

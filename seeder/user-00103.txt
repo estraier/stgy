@@ -1,7 +1,7 @@
 id: 0001000000000103
 email: trendy@stgy.jp
 nickname: Trendy
-passowrd: *
+password: *
 isAdmin: false
 blockStrangers: false
 introduction:<<____EOF____

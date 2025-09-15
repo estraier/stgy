@@ -1,7 +1,7 @@
 id: 0001000000000101
 email: geek@stgy.jp
 nickname: Geek
-passowrd: *
+password: *
 isAdmin: false
 blockStrangers: false
 introduction:<<____EOF____

@@ -1,7 +1,7 @@
 id: 0001000000000014
 email: david@stgy.jp
 nickname: David
-passowrd: david-david
+password: *
 isAdmin: false
 blockStrangers: false
 introduction:<<____EOF____
