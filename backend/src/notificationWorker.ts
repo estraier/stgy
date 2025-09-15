@@ -12,9 +12,11 @@ import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 import { NotificationPostRecord, NotificationUserRecord } from "./models/notifications";
 import { makeTextFromJsonSnippet } from "./utils/snippet";
 import { EventLogService } from "./services/eventLog";
+import { NotificationsService } from "./services/notifications";
 import { hexToDec, decToHex } from "./utils/format";
 
 const logger = createLogger({ file: "notificationWorker" });
+let purgeScore = 0;
 const CONSUMER = "notification";
 
 async function acquireSingletonLock(): Promise<Client> {
@@ -410,12 +412,12 @@ async function processReplyEvent(
 }
 
 async function processPartition(
-  ev: EventLogService,
+  eventLogService: EventLogService,
   pg: Client,
   partitionId: number,
 ): Promise<number> {
-  const cursor = await ev.loadCursor(CONSUMER, partitionId);
-  const batch = await ev.fetchBatch(partitionId, cursor, Config.NOTIFICATION_BATCH_SIZE);
+  const cursor = await eventLogService.loadCursor(CONSUMER, partitionId);
+  const batch = await eventLogService.fetchBatch(partitionId, cursor, Config.NOTIFICATION_BATCH_SIZE);
   if (batch.length === 0) {
     return 0;
   }
@@ -433,7 +435,7 @@ async function processPartition(
       const payload = row.payload;
       const recipient = await resolveRecipientUserId(pg, payload);
       if (!recipient || isSelfInteraction(payload, recipient)) {
-        await ev.saveCursor(pg, CONSUMER, partitionId, eid);
+        await eventLogService.saveCursor(pg, CONSUMER, partitionId, eid);
         await pg.query("COMMIT");
         processed++;
         continue;
@@ -454,7 +456,7 @@ async function processPartition(
         );
       }
 
-      await ev.saveCursor(pg, CONSUMER, partitionId, eid);
+      await eventLogService.saveCursor(pg, CONSUMER, partitionId, eid);
       await pg.query("COMMIT");
       processed++;
     } catch (e) {
@@ -474,10 +476,29 @@ function assignedPartitions(workerIndex: number): number[] {
   return out;
 }
 
-async function drain(ev: EventLogService, pg: Client, partitionId: number): Promise<void> {
+async function drain(
+  eventLogService: EventLogService,
+  pg: Client,
+  partitionId: number,
+  notifications: NotificationsService,
+): Promise<void> {
   for (;;) {
-    const n = await processPartition(ev, pg, partitionId);
+    const n = await processPartition(eventLogService, pg, partitionId);
     if (n === 0) break;
+    purgeScore += n;
+    try {
+      await eventLogService.purgeOldRecords(partitionId);
+    } catch (e) {
+      logger.error(`[notificationworker] purge event logs error (p=${partitionId}): ${e}`);
+    }
+  }
+  if (purgeScore >= 100) {
+    purgeScore = 0;
+    try {
+      await notifications.purgeOldRecords();
+    } catch (e) {
+      logger.error(`[notificationworker] purge notifications error: ${e}`);
+    }
   }
 }
 
@@ -485,13 +506,16 @@ async function runWorker(workerIndex: number): Promise<void> {
   logger.info(`stgy notification worker ${workerIndex} started`);
   const pg = await connectPgWithRetry(60_000);
   const sub = await connectRedisWithRetry();
-  const ev = new EventLogService(pg, sub);
+  const eventLogService = new EventLogService(pg, sub);
+  const notificationsService = new NotificationsService(pg);
 
   const parts = assignedPartitions(workerIndex);
   for (const p of parts) {
     try {
-      await drain(ev, pg, p);
-    } catch {}
+      await drain(eventLogService, pg, p, notificationsService);
+    } catch (e) {
+      logger.error(`[notificationworker] drain error: ${e}`);
+    }
   }
 
   const channel = `notifications:wake:${workerIndex}`;
@@ -512,7 +536,7 @@ async function runWorker(workerIndex: number): Promise<void> {
     (async () => {
       try {
         for (;;) {
-          await drain(ev, pg, p);
+          await drain(eventLogService, pg, p, notificationsService);
           if (!pending.delete(p)) break;
         }
       } catch {

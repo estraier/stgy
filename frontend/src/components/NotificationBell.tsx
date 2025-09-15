@@ -127,7 +127,7 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
   }, [fetchFull, pollRefresh, intervalMs]);
 
   useEffect(() => {
-    const base = "stgy";
+    const base = "STGY";
     document.title = unreadCount > 0 ? `${base} (${unreadBadge})` : base;
   }, [unreadCount, unreadBadge]);
 

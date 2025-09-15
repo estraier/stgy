@@ -87,7 +87,7 @@ function mergeByUpdatedAtDesc(a: Notification[], b: Notification[]): Notificatio
   return out;
 }
 
-export class NotificationService {
+export class NotificationsService {
   constructor(private readonly pg: Client) {}
 
   async listFeed(userId: string, opts?: { newerThan?: Date }): Promise<Notification[] | null> {
@@ -142,19 +142,19 @@ export class NotificationService {
     );
   }
 
-  async purgeOldRecords(pg: Client): Promise<number> {
-    await pg.query("BEGIN");
+  async purgeOldRecords(): Promise<number> {
+    await this.pg.query("BEGIN");
     try {
-      await pg.query("SET LOCAL statement_timeout = 10000");
-      const res = await pg.query(
+      await this.pg.query("SET LOCAL statement_timeout = 10000");
+      const res = await this.pg.query(
         `DELETE FROM notifications
          WHERE created_at < (now() - make_interval(days => $1))`,
         [Config.NOTIFICATION_RETENTION_DAYS],
       );
-      await pg.query("COMMIT");
+      await this.pg.query("COMMIT");
       return res.rowCount ?? 0;
     } catch (e) {
-      await pg.query("ROLLBACK");
+      await this.pg.query("ROLLBACK");
       throw e;
     }
   }

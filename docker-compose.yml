@@ -21,7 +21,6 @@ services:
 
   minio:
     image: minio/minio:RELEASE.2025-07-23T15-54-02Z
-    container_name: minio
     environment:
       MINIO_ROOT_USER: ${STGY_MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${STGY_MINIO_ROOT_PASSWORD}
@@ -52,15 +51,24 @@ services:
       retries: 20
 
   smtp:
-    image: boky/postfix
+    image: axllent/mailpit:v1.27
     restart: always
     environment:
-      RELAYHOST: ${STGY_SMTP_RELAYHOST}
-      RELAYHOST_USERNAME: ${STGY_SMTP_RELAYHOST_USERNAME}
-      RELAYHOST_PASSWORD: ${STGY_SMTP_RELAYHOST_PASSWORD}
-      ALLOWED_SENDER_DOMAINS: ${STGY_SMTP_SENDER_DOMAINS}
+      MP_SMTP_BIND_ADDR: 0.0.0.0:587
+      MP_UI_BIND_ADDR: 0.0.0.0:8025
     ports:
       - "${STGY_SMTP_PORT}:587"
+      - "8025:8025"
+      # - MP_SMTP_RELAY_HOST: dbmx.net
+      # - MP_SMTP_RELAY_PORT: 587
+      # - MP_SMTP_RELAY_STARTTLS: true
+      # - MP_SMTP_RELAY_AUTH: plain
+      # - MP_SMTP_RELAY_USERNAME: postfix@dbmx.net
+      # - MP_SMTP_RELAY_PASSWORD: ********
+      # - MP_SMTP_RELAY_OVERRIDE_FROM: noreply@dbmx.net
+      # - MP_SMTP_RELAY_ALL: true
+    volumes:
+      - mailpit_data:/data
 
   caddy:
     image: caddy:2
@@ -196,3 +204,4 @@ volumes:
   db_data:
   minio_data:
   redis_data:
+  mailpit_data:

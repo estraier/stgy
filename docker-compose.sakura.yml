@@ -1,0 +1,30 @@
+services:
+  db:
+    ports: []
+
+  redis:
+    ports: []
+
+  minio:
+    ports: []
+    expose:
+      - "9000"
+      - "9001"
+    environment:
+      MINIO_SERVER_URL: https://s3.stgy.jp
+
+  smtp:
+    ports: []
+
+  backend:
+    ports: []
+
+  frontend:
+    ports: []
+
+  caddy:
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./Caddyfile.sakura:/etc/caddy/Caddyfile:ro

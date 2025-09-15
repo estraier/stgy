@@ -1,7 +1,7 @@
 import { Router, Request, Response } from "express";
 import { Client } from "pg";
 import Redis from "ioredis";
-import { NotificationService } from "../services/notifications";
+import { NotificationsService } from "../services/notifications";
 import { UsersService } from "../services/users";
 import { AuthService } from "../services/auth";
 import { AuthHelpers } from "./authHelpers";
@@ -11,7 +11,7 @@ export default function createNotificationRouter(pgClient: Client, redis: Redis)
   const usersService = new UsersService(pgClient, redis);
   const authService = new AuthService(pgClient, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
-  const notificationService = new NotificationService(pgClient);
+  const notificationsService = new NotificationsService(pgClient);
 
   router.get("/feed", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
@@ -26,7 +26,7 @@ export default function createNotificationRouter(pgClient: Client, redis: Redis)
       }
       newerThan = d;
     }
-    const notifications = await notificationService.listFeed(loginUser.id, { newerThan });
+    const notifications = await notificationsService.listFeed(loginUser.id, { newerThan });
     if (notifications === null) return res.status(304).end();
     return res.json(notifications);
   });
@@ -44,7 +44,7 @@ export default function createNotificationRouter(pgClient: Client, redis: Redis)
     if (typeof isRead !== "boolean") {
       return res.status(400).json({ error: "isRead must be boolean" });
     }
-    await notificationService.markNotification({ userId: loginUser.id, slot, term, isRead });
+    await notificationsService.markNotification({ userId: loginUser.id, slot, term, isRead });
     res.status(204).end();
   });
 
@@ -55,7 +55,7 @@ export default function createNotificationRouter(pgClient: Client, redis: Redis)
     if (typeof isRead !== "boolean") {
       return res.status(400).json({ error: "isRead must be boolean" });
     }
-    await notificationService.markAllNotifications({ userId: loginUser.id, isRead });
+    await notificationsService.markAllNotifications({ userId: loginUser.id, isRead });
     res.status(204).end();
   });
 

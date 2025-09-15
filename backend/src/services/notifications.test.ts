@@ -198,9 +198,8 @@ describe("NotificationService", () => {
       .mockResolvedValueOnce({ rowCount: 5, rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     const pg = { query: q } as any;
-    const dummy = { query: jest.fn() } as any;
-    const svc = new NotificationService(dummy);
-    const deleted = await svc.purgeOldRecords(pg as any);
+    const svc = new NotificationService(pg);
+    const deleted = await svc.purgeOldRecords();
     expect(deleted).toBe(5);
     expect(q).toHaveBeenNthCalledWith(1, "BEGIN");
     expect(q).toHaveBeenNthCalledWith(2, "SET LOCAL statement_timeout = 10000");
