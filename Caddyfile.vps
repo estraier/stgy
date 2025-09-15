@@ -1,17 +1,5 @@
-{
-  email admin@stgy.jp
-  # staging CA. Comment this out for production.
-  acme_ca https://acme-staging-v02.api.letsencrypt.org/directory
-}
-
 stgy.jp {
   encode zstd gzip
-
-  tls {
-    issuer acme {
-      disable_tlsalpn_challenge
-    }
-  }
 
   redir /mailpit /mailpit/
   handle_path /mailpit/* {
@@ -38,12 +26,6 @@ stgy.jp {
 
 s3.stgy.jp {
   encode zstd gzip
-
-  tls {
-    issuer acme {
-      disable_tlsalpn_challenge
-    }
-  }
 
   reverse_proxy http://minio:9000 {
     header_up Host {http.request.host}
