@@ -2,17 +2,21 @@ stgy.jp {
   encode zstd gzip
 
   handle_path /backend* {
-    reverse_proxy http://backend:3001
+    reverse_proxy backend:3001 {
+      header_up Host {http.request.host}
+      header_up X-Forwarded-Proto {scheme}
+      header_up X-Forwarded-For {remote}
+      header_up X-Forwarded-Host {http.request.host}
+    }
   }
 
   handle {
-    reverse_proxy http://frontend:3000
+    reverse_proxy frontend:3000
   }
 }
 
 s3.stgy.jp {
   encode zstd gzip
-
   reverse_proxy http://minio:9000 {
     header_up Host {http.request.host}
     flush_interval -1
