@@ -9,7 +9,7 @@ docker compose exec -T minio sh -lc "
 BUCKETS="stgy-test stgy-images stgy-profiles"
 
 for b in $BUCKETS; do
-  docker-compose exec -T minio sh -lc "
+  docker compose exec -T minio sh -lc "
     mc rb --force local/$b >/dev/null 2>&1 || true
     mc mb local/$b >/dev/null 2>&1 || true
     mc anonymous set download local/$b >/dev/null 2>&1 || true
