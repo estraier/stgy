@@ -157,18 +157,35 @@ def upsert_user(session: requests.Session, payload: dict) -> tuple[str, str]:
   created = create_user(session, payload)
   return ("CREATED", created.get("id"))
 
+def parse_cli(argv: list[str]) -> tuple[bool, list[str]]:
+  """returns: (insecure_password, files)"""
+  insecure = False
+  files: list[str] = []
+  for a in argv[1:]:
+    if a == "--insecure-password":
+      insecure = True
+    else:
+      files.append(a)
+  return insecure, files
+
 def main(argv: list[str]) -> int:
-  if len(argv) < 2:
-    print(f"usage: {argv[0]} <user1.md> [user2.md ...]")
+  insecure, files = parse_cli(argv)
+  if not files:
+    print(f"usage: {argv[0]} [--insecure-password] <user1.md> [user2.md ...]")
     return 2
-  files = sorted(argv[1:])
   sess = requests.Session()
   login_admin(sess)
   ok = 0
   err = 0
-  for path in files:
+  for path in sorted(files):
     try:
       raw = parse_kv_file(path)
+      if insecure:
+        # nickname を小文字化して password を上書き
+        nick = str(raw.get("nickname", "")).strip()
+        if not nick:
+          raise ValueError("nickname is required to derive insecure password")
+        raw["password"] = nick.lower()
       payload = normalize_payload(raw)
       action, uid = upsert_user(sess, payload)
       email = payload.get("email")

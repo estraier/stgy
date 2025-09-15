@@ -181,9 +181,7 @@ export function maskEmailByHash(email: string): string {
     .replace(/[^0-9]/g, "")
     .padEnd(8, "0")
     .slice(0, 8);
-  const domains = [".com", ".net", ".org", ".gov", ".mil", ".int", ".info", ".biz", ".pro", ".jp"];
-  const domain = domains[Number(hashInt % BigInt(domains.length))];
-  return `${alpha}${num}@example${domain}`;
+  return `${alpha}${num}@stgy.jp`;
 }
 
 export function snakeToCamel<T = Record<string, unknown>>(obj: unknown): T {

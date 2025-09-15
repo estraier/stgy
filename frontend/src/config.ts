@@ -31,10 +31,7 @@ export class Config {
   );
   static readonly POSTS_PAGE_SIZE = normNum(process.env.NEXT_PUBLIC_POSTS_PAGE_SIZE, 20);
   static readonly USERS_PAGE_SIZE = normNum(process.env.NEXT_PUBLIC_USERS_PAGE_SIZE, 20);
-  static readonly LIKERS_LIST_FIRST_LIMIT = normNum(
-    process.env.NEXT_PUBLIC_LIKERS_FIRST_LIMIT,
-    10,
-  );
+  static readonly LIKERS_LIST_FIRST_LIMIT = normNum(process.env.NEXT_PUBLIC_LIKERS_FIRST_LIMIT, 10);
   static readonly LIKERS_LIST_SECOND_LIMIT = normNum(
     process.env.NEXT_PUBLIC_LIKERS_SECOND_LIMIT,
     100,
@@ -53,10 +50,7 @@ export class Config {
     10000,
   );
   static readonly TAGS_NUMBER_LIMIT = normNum(process.env.NEXT_PUBLIC_TAGS_NUMBER_LIMIT, 5);
-  static readonly SNIPPET_MAX_LENGTH = normNum(
-    process.env.NEXT_PUBLIC_SNIPPET_MAX_LENGTH,
-    200,
-  );
+  static readonly SNIPPET_MAX_LENGTH = normNum(process.env.NEXT_PUBLIC_SNIPPET_MAX_LENGTH, 200);
   static readonly SNIPPET_MAX_HEIGHT = normNum(process.env.NEXT_PUBLIC_SNIPPET_MAX_HEIGHT, 10);
   static readonly MAX_MEDIA_OBJECTS_PER_POST = normNum(
     process.env.NEXT_PUBLIC_MAX_MEDIA_OBJECTS_PER_POST,

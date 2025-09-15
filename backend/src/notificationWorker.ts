@@ -417,7 +417,11 @@ async function processPartition(
   partitionId: number,
 ): Promise<number> {
   const cursor = await eventLogService.loadCursor(CONSUMER, partitionId);
-  const batch = await eventLogService.fetchBatch(partitionId, cursor, Config.NOTIFICATION_BATCH_SIZE);
+  const batch = await eventLogService.fetchBatch(
+    partitionId,
+    cursor,
+    Config.NOTIFICATION_BATCH_SIZE,
+  );
   if (batch.length === 0) {
     return 0;
   }

@@ -1,5 +1,5 @@
 import { jest } from "@jest/globals";
-import { NotificationService } from "./notifications";
+import { NotificationsService } from "./notifications";
 
 jest.mock("../config", () => ({
   Config: {
@@ -8,11 +8,11 @@ jest.mock("../config", () => ({
   },
 }));
 
-describe("NotificationService", () => {
+describe("NotificationsService", () => {
   function mkSvc(withQueryMock?: jest.Mock) {
     const query = (withQueryMock ?? (jest.fn() as any)) as any;
     const pg = { query } as any;
-    const svc = new NotificationService(pg);
+    const svc = new NotificationsService(pg);
     return { svc, query };
   }
 
@@ -198,7 +198,7 @@ describe("NotificationService", () => {
       .mockResolvedValueOnce({ rowCount: 5, rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     const pg = { query: q } as any;
-    const svc = new NotificationService(pg);
+    const svc = new NotificationsService(pg);
     const deleted = await svc.purgeOldRecords();
     expect(deleted).toBe(5);
     expect(q).toHaveBeenNthCalledWith(1, "BEGIN");
