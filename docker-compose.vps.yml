@@ -15,6 +15,10 @@ services:
 
   smtp:
     ports: []
+    expose:
+      - "8025"
+    environment:
+      MP_WEBROOT: /mailpit/
 
   backend:
     ports: []

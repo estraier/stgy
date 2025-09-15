@@ -56,17 +56,17 @@ services:
     environment:
       MP_SMTP_BIND_ADDR: 0.0.0.0:587
       MP_UI_BIND_ADDR: 0.0.0.0:8025
+      # MP_SMTP_RELAY_HOST: dbmx.net
+      # MP_SMTP_RELAY_PORT: 587
+      # MP_SMTP_RELAY_STARTTLS: true
+      # MP_SMTP_RELAY_AUTH: plain
+      # MP_SMTP_RELAY_USERNAME: postfix@dbmx.net
+      # MP_SMTP_RELAY_PASSWORD: ********
+      # MP_SMTP_RELAY_OVERRIDE_FROM: noreply@dbmx.net
+      # MP_SMTP_RELAY_ALL: true
     ports:
       - "${STGY_SMTP_PORT}:587"
       - "8025:8025"
-      # - MP_SMTP_RELAY_HOST: dbmx.net
-      # - MP_SMTP_RELAY_PORT: 587
-      # - MP_SMTP_RELAY_STARTTLS: true
-      # - MP_SMTP_RELAY_AUTH: plain
-      # - MP_SMTP_RELAY_USERNAME: postfix@dbmx.net
-      # - MP_SMTP_RELAY_PASSWORD: ********
-      # - MP_SMTP_RELAY_OVERRIDE_FROM: noreply@dbmx.net
-      # - MP_SMTP_RELAY_ALL: true
     volumes:
       - mailpit_data:/data
 
@@ -81,6 +81,8 @@ services:
       - "${STGY_CADDY_PORT}:8080"
     volumes:
       - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
     restart: unless-stopped
 
   mailworker:
@@ -205,3 +207,5 @@ volumes:
   minio_data:
   redis_data:
   mailpit_data:
+  caddy_data:
+  caddy_config:

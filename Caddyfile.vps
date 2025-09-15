@@ -1,6 +1,15 @@
 stgy.jp {
   encode zstd gzip
 
+  redir /mailpit /mailpit/
+  handle_path /mailpit/* {
+    basicauth {
+      user1 $2a$14$7WdPrVS4krK1MxcW1dtoZ.xH9vQmZTf.T9I0CBLHpSXQbCj3VPtry
+    }
+    rewrite * /mailpit{path}
+    reverse_proxy smtp:8025
+  }
+
   handle_path /backend* {
     reverse_proxy backend:3001 {
       header_up Host {http.request.host}
