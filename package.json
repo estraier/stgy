@@ -61,12 +61,12 @@
     "reset-cache": "./scripts/reset-cache.sh",
     "endpoint-test": "./tests/endpoint_test.py",
     "psql": "docker compose exec db psql -U stgy stgy",
-    "sakura:docker:up": "docker compose -f docker-compose.yml -f docker-compose.sakura.yml --env-file env-sakura.txt up -d --build --remove-orphans",
-    "sakura:docker:down": "docker compose -f docker-compose.yml -f docker-compose.sakura.yml --env-file env-sakura.txt down",
-    "sakura:docker:reset": "docker compose -f docker-compose.yml -f docker-compose.sakura.yml --env-file env-sakura.txt down -v --rmi all --remove-orphans && DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -f docker-compose.yml -f docker-compose.sakura.yml --env-file env-sakura.txt build --no-cache && docker compose -f docker-compose.yml -f docker-compose.sakura.yml --env-file env-sakura.txt create",
-    "sakura:docker:start": "docker compose -f docker-compose.yml -f docker-compose.sakura.yml --env-file env-sakura.txt start",
-    "sakura:docker:stop": "docker compose -f docker-compose.yml -f docker-compose.sakura.yml --env-file env-sakura.txt stop",
-    "sakura:docker:logs": "docker compose -f docker-compose.yml -f docker-compose.sakura.yml --env-file env-sakura.txt logs -f --tail=100",
-    "sakura:docker:ps": "docker compose -f docker-compose.yml -f docker-compose.sakura.yml --env-file env-sakura.txt ps"
+    "vps:docker:up": "docker compose -f docker-compose.yml -f docker-compose.vps.yml --env-file env-vps.txt up -d --build --remove-orphans",
+    "vps:docker:down": "docker compose -f docker-compose.yml -f docker-compose.vps.yml --env-file env-vps.txt down",
+    "vps:docker:reset": "docker compose -f docker-compose.yml -f docker-compose.vps.yml --env-file env-vps.txt down -v --rmi all --remove-orphans && DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -f docker-compose.yml -f docker-compose.vps.yml --env-file env-vps.txt build --no-cache && docker compose -f docker-compose.yml -f docker-compose.vps.yml --env-file env-vps.txt create",
+    "vps:docker:start": "docker compose -f docker-compose.yml -f docker-compose.vps.yml --env-file env-vps.txt start",
+    "vps:docker:stop": "docker compose -f docker-compose.yml -f docker-compose.vps.yml --env-file env-vps.txt stop",
+    "vps:docker:logs": "docker compose -f docker-compose.yml -f docker-compose.vps.yml --env-file env-vps.txt logs -f --tail=100",
+    "vps:docker:ps": "docker compose -f docker-compose.yml -f docker-compose.vps.yml --env-file env-vps.txt ps"
   }
 }
