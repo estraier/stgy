@@ -5,6 +5,7 @@ import cookieParser from "cookie-parser";
 import cors from "cors";
 import { EventLogService } from "./services/eventLog";
 import { makeStorageService } from "./services/storageFactory";
+import createRootRouter from "./routes/root";
 import createAuthRouter from "./routes/auth";
 import createAIModelsRouter from "./routes/aiModels";
 import createUsersRouter from "./routes/users";
@@ -12,7 +13,7 @@ import createPostsRouter from "./routes/posts";
 import createSignupRouter from "./routes/signup";
 import createMediaRouter from "./routes/media";
 import createNotificationsRouter from "./routes/notifications";
-import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
+import { getSampleAddr, connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 
 const logger = createLogger({ file: "index" });
 
@@ -36,7 +37,7 @@ async function main() {
   if (Config.TRUST_PROXY_HOPS > 0) {
     app.set("trust proxy", Config.TRUST_PROXY_HOPS);
   }
-
+  app.use("/", createRootRouter());
   app.use("/auth", createAuthRouter(pgClient, redis));
   app.use("/signup", createSignupRouter(pgClient, redis));
   app.use("/ai-models", createAIModelsRouter(pgClient, redis));
@@ -55,14 +56,15 @@ async function main() {
   };
   app.use(errorHandler);
 
-  const server = app.listen(Config.BACKEND_PORT, () => {
+  const server = app.listen(Config.BACKEND_PORT, "0.0.0.0", () => {
     Object.entries(Config).forEach(([key, value]) => {
       if (key.endsWith("_PASSWORD")) {
         value = "****";
       }
       logger.info(`[config] ${key}: ${JSON.stringify(value)}`);
     });
-    logger.info(`Server running on http://${Config.BACKEND_HOST}:${Config.BACKEND_PORT}`);
+    const addr = getSampleAddr();
+    logger.info(`Server running on http://${addr}:${Config.BACKEND_PORT}`);
   });
 
   let shuttingDown = false;

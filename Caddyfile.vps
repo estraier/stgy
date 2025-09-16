@@ -1,30 +1,31 @@
-stgy.jp {
+https://stgy.jp {
   encode zstd gzip
 
-  redir /mailpit /mailpit/
-  handle_path /mailpit/* {
+  handle /mailpit/* {
     basicauth {
-      user1 $2a$14$7WdPrVS4krK1MxcW1dtoZ.xH9vQmZTf.T9I0CBLHpSXQbCj3VPtry
+      stgy $2a$14$uuicMQhEHEbzlvNfISPcue77In..Te9ZMzAKzppaRilla5wBlXdoa
     }
-    rewrite * /mailpit{path}
-    reverse_proxy smtp:8025
+    reverse_proxy http://smtp:8025
   }
 
-  handle_path /backend* {
-    reverse_proxy backend:3001 {
+  handle_path /backend/* {
+    reverse_proxy http://backend:3001 {
+      lb_policy first
+      health_uri /health
       header_up Host {http.request.host}
-      header_up X-Forwarded-Proto {scheme}
-      header_up X-Forwarded-For {remote}
-      header_up X-Forwarded-Host {http.request.host}
     }
   }
 
   handle {
-    reverse_proxy frontend:3000
+    reverse_proxy http://frontend:3000 {
+      lb_policy first
+      health_uri /
+      header_up Host {http.request.host}
+    }
   }
 }
 
-s3.stgy.jp {
+https://s3.stgy.jp {
   encode zstd gzip
 
   reverse_proxy http://minio:9000 {

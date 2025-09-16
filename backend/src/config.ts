@@ -1,6 +1,5 @@
 export class Config {
   static readonly FRONTEND_ORIGIN = envStrCsv("STGY_FRONTEND_ORIGIN", ["http://localhost:3000"]);
-  static readonly BACKEND_HOST = envStr("STGY_BACKEND_HOST", "localhost");
   static readonly BACKEND_PORT = envNum("STGY_BACKEND_PORT", 3001);
   static readonly DATABASE_HOST = envStr("STGY_DATABASE_HOST", "localhost");
   static readonly DATABASE_PORT = envNum("STGY_DATABASE_PORT", 5432);

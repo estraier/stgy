@@ -1,9 +1,22 @@
 import { Client } from "pg";
+import os from "os";
 import Redis from "ioredis";
 import { Config } from "../config";
 import { createLogger } from "./logger";
 
 const logger = createLogger({ file: "servers" });
+
+export function getSampleAddr(): string {
+  const ifs = os.networkInterfaces();
+  for (const addrs of Object.values(ifs)) {
+    for (const a of addrs ?? []) {
+      if (!a.internal && a.family === "IPv4") {
+        return a.address;
+      }
+    }
+  }
+  return "127.0.0.1";
+}
 
 export function makePg(): Client {
   return new Client({

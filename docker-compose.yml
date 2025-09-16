@@ -56,6 +56,7 @@ services:
     environment:
       MP_SMTP_BIND_ADDR: 0.0.0.0:587
       MP_UI_BIND_ADDR: 0.0.0.0:8025
+      MP_WEBROOT: /mailpit/
       # MP_SMTP_RELAY_HOST: dbmx.net
       # MP_SMTP_RELAY_PORT: 587
       # MP_SMTP_RELAY_STARTTLS: true
@@ -72,11 +73,6 @@ services:
 
   caddy:
     image: caddy:2
-    depends_on:
-      frontend:
-        condition: service_started
-      backend:
-        condition: service_started
     ports:
       - "${STGY_CADDY_PORT}:8080"
     volumes:
@@ -137,10 +133,10 @@ services:
         condition: service_healthy
     environment:
       STGY_DATABASE_HOST: ${STGY_DATABASE_HOST}
+      STGY_DATABASE_PORT: ${STGY_DATABASE_PORT}
       STGY_DATABASE_USER: ${STGY_DATABASE_USER}
       STGY_DATABASE_PASSWORD: ${STGY_DATABASE_PASSWORD}
       STGY_DATABASE_NAME: ${STGY_DATABASE_NAME}
-      STGY_DATABASE_PORT: ${STGY_DATABASE_PORT}
     command: ["node", "dist/notificationWorker.js"]
     restart: unless-stopped
 
@@ -161,10 +157,10 @@ services:
       STGY_BACKEND_HOST: ${STGY_BACKEND_HOST}
       STGY_BACKEND_PORT: ${STGY_BACKEND_PORT}
       STGY_DATABASE_HOST: ${STGY_DATABASE_HOST}
+      STGY_DATABASE_PORT: ${STGY_DATABASE_PORT}
       STGY_DATABASE_USER: ${STGY_DATABASE_USER}
       STGY_DATABASE_PASSWORD: ${STGY_DATABASE_PASSWORD}
       STGY_DATABASE_NAME: ${STGY_DATABASE_NAME}
-      STGY_DATABASE_PORT: ${STGY_DATABASE_PORT}
       STGY_STORAGE_DRIVER: ${STGY_STORAGE_DRIVER}
       STGY_STORAGE_S3_ENDPOINT: ${STGY_STORAGE_S3_ENDPOINT}
       STGY_STORAGE_S3_REGION: ${STGY_STORAGE_S3_REGION}

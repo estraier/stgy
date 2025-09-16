@@ -40,6 +40,13 @@ jest.mock("ioredis", () => {
   return { __esModule: true, default: ctor };
 });
 
+describe("network utils", () => {
+  test("getSampleHost", async () => {
+    const { getSampleAddr } = await import("./servers");
+    expect(getSampleAddr()).toMatch(/\d+\.\d+\.\d+\.\d+/);
+  });
+});
+
 describe("servers utils", () => {
   beforeEach(() => {
     jest.resetModules();

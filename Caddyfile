@@ -1,11 +1,27 @@
-:8080 {
+http://:8080 {
   encode zstd gzip
 
-  handle_path /backend* {
-    reverse_proxy backend:3001
+  handle /mailpit/* {
+    basicauth {
+      stgy $2a$14$uuicMQhEHEbzlvNfISPcue77In..Te9ZMzAKzppaRilla5wBlXdoa
+    }
+    reverse_proxy http://smtp:8025
   }
+
+  handle_path /backend/* {
+    reverse_proxy http://backend:3001 http://host.docker.internal:3001 http://host.lima.internal:3001 {
+      lb_policy first
+      health_uri /health
+      header_up Host {http.request.host}
+    }
+  }
+
   handle {
-    reverse_proxy frontend:3000
+    reverse_proxy http://frontend:3000 http://host.docker.internal:3000 http://host.lima.internal:3000 {
+      lb_policy first
+      health_uri /
+      header_up Host {http.request.host}
+    }
   }
 }
 
