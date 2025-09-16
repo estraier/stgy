@@ -14,7 +14,7 @@ STGY_DATABASE_NAME=stgy
 STGY_MINIO_ROOT_USER=minio-admin
 STGY_MINIO_ROOT_PASSWORD=minio-stgystgy
 STGY_MINIO_CORS_ALLOW_ORIGIN=https://stgy.jp,https://s3.stgy.jp,https://s3-console.stgy.jp
-STGY_MINIO_BROWSER_REDIRECT_URL=https://s3-console.stgy
+STGY_MINIO_BROWSER_REDIRECT_URL=https://s3-console.stgy.jp
 
 STGY_STORAGE_DRIVER=s3
 STGY_STORAGE_S3_ENDPOINT=http://minio:9000
