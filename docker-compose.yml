@@ -1,5 +1,5 @@
 services:
-  db:
+  postgres:
     image: postgres:16
     restart: always
     environment:
@@ -10,8 +10,8 @@ services:
     ports:
       - "${STGY_DATABASE_PORT}:5432"
     volumes:
-      - db_data:/var/lib/postgresql/data
-      - ./db/init:/docker-entrypoint-initdb.d
+      - postgres_data:/var/lib/postgresql/data
+      - ./postgres/init:/docker-entrypoint-initdb.d
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${STGY_DATABASE_USER} -d ${STGY_DATABASE_NAME}"]
       interval: 5s
@@ -24,7 +24,8 @@ services:
     environment:
       MINIO_ROOT_USER: ${STGY_MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${STGY_MINIO_ROOT_PASSWORD}
-      MINIO_API_CORS_ALLOW_ORIGIN: ${STGY_MINIO_ALLOW_ORIGIN}
+      MINIO_API_CORS_ALLOW_ORIGIN: ${STGY_MINIO_CORS_ALLOW_ORIGIN}
+      MINIO_BROWSER_REDIRECT_URL: ${STGY_MINIO_BROWSER_REDIRECT_URL}
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     command: ["minio", "server", "/data", "--console-address", ":9001"]
     ports:
@@ -129,7 +130,7 @@ services:
       context: .
       dockerfile: backend/Dockerfile
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
     environment:
       STGY_DATABASE_HOST: ${STGY_DATABASE_HOST}
@@ -144,7 +145,7 @@ services:
     build:
       dockerfile: backend/Dockerfile
     depends_on:
-      db:
+      postgres:
         condition: service_healthy
       minio:
         condition: service_started
@@ -154,7 +155,6 @@ services:
       - "${STGY_BACKEND_PORT}:${STGY_BACKEND_PORT}"
     environment:
       STGY_FRONTEND_ORIGIN: ${STGY_FRONTEND_ORIGIN}
-      STGY_BACKEND_HOST: ${STGY_BACKEND_HOST}
       STGY_BACKEND_PORT: ${STGY_BACKEND_PORT}
       STGY_DATABASE_HOST: ${STGY_DATABASE_HOST}
       STGY_DATABASE_PORT: ${STGY_DATABASE_PORT}
@@ -199,7 +199,7 @@ services:
     restart: unless-stopped
 
 volumes:
-  db_data:
+  postgres_data:
   minio_data:
   redis_data:
   mailpit_data:

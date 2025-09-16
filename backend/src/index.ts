@@ -18,13 +18,17 @@ import { getSampleAddr, connectPgWithRetry, connectRedisWithRetry } from "./util
 const logger = createLogger({ file: "index" });
 
 async function main() {
+  Object.entries(Config).forEach(([key, value]) => {
+    if (key.endsWith("_PASSWORD")) {
+      value = "****";
+    }
+    logger.info(`[config] ${key}: ${JSON.stringify(value)}`);
+  });
   const pgClient = await connectPgWithRetry();
   const redis = await connectRedisWithRetry();
-
   const app = express();
   app.use(express.json());
   app.use(cookieParser());
-
   const storageService = makeStorageService(Config.STORAGE_DRIVER);
   const eventLogService = new EventLogService(pgClient, redis);
 
@@ -57,12 +61,6 @@ async function main() {
   app.use(errorHandler);
 
   const server = app.listen(Config.BACKEND_PORT, "0.0.0.0", () => {
-    Object.entries(Config).forEach(([key, value]) => {
-      if (key.endsWith("_PASSWORD")) {
-        value = "****";
-      }
-      logger.info(`[config] ${key}: ${JSON.stringify(value)}`);
-    });
     const addr = getSampleAddr();
     logger.info(`Server running on http://${addr}:${Config.BACKEND_PORT}`);
   });

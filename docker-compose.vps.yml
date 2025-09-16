@@ -1,5 +1,5 @@
 services:
-  db:
+  postgres:
     ports: []
 
   redis:

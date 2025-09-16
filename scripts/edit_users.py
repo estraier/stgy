@@ -8,7 +8,7 @@ import requests
 APP_HOST = os.environ.get("STGY_APP_HOST", "localhost")
 APP_PORT = int(os.environ.get("STGY_APP_PORT", 3001))
 ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
-ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "admin")
+ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "stgystgy")
 BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
 
 REQUIRED_KEYS = ["email", "nickname", "password", "isAdmin", "blockStrangers", "introduction"]
@@ -180,8 +180,7 @@ def main(argv: list[str]) -> int:
   for path in sorted(files):
     try:
       raw = parse_kv_file(path)
-      if insecure:
-        # nickname を小文字化して password を上書き
+      if raw["password"] == "*" and insecure:
         nick = str(raw.get("nickname", "")).strip()
         if not nick:
           raise ValueError("nickname is required to derive insecure password")

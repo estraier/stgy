@@ -35,7 +35,7 @@ async function main() {
         }
       } else if (password) {
         const hex = bytesToHex(await generatePasswordHash(password));
-        console.log(`'\\x${hex}'`);
+        console.log(hex);
       } else {
         throw new Error("password is required");
       }

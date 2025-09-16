@@ -25,7 +25,7 @@ VALUES
   0x1000000000001,
   'admin@stgy.jp',
   'admin',
-  decode('1ed069b2fb66520e9b16b5a0267efcef80d16dc6ae0ee06c47d329c12bceb6c3','hex'),
+  decode('65d80ec850339f4f9f3a1d0b7ca185b352d3c42dffad2882d4cd768f243acd0a','hex'),
   TRUE,
   FALSE,
   $$[{"T":"p","X":"I am the administrator of Fakebook. I notify reports and issues on operation."}]

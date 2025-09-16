@@ -2,7 +2,7 @@ https://stgy.jp {
   encode zstd gzip
 
   handle /mailpit/* {
-    basicauth {
+    basic_auth {
       stgy $2a$14$uuicMQhEHEbzlvNfISPcue77In..Te9ZMzAKzppaRilla5wBlXdoa
     }
     reverse_proxy http://smtp:8025
@@ -29,6 +29,15 @@ https://s3.stgy.jp {
   encode zstd gzip
 
   reverse_proxy http://minio:9000 {
+    header_up Host {http.request.host}
+    flush_interval -1
+  }
+}
+
+https://s3-console.stgy.jp {
+  encode zstd gzip
+
+  reverse_proxy http://minio:9001 {
     header_up Host {http.request.host}
     flush_interval -1
   }

@@ -4,16 +4,13 @@ export class Config {
   static readonly DATABASE_HOST = envStr("STGY_DATABASE_HOST", "localhost");
   static readonly DATABASE_PORT = envNum("STGY_DATABASE_PORT", 5432);
   static readonly DATABASE_USER = envStr("STGY_DATABASE_USER", "stgy");
-  static readonly DATABASE_PASSWORD = envStr("STGY_DATABASE_PASSWORD", "db_password");
+  static readonly DATABASE_PASSWORD = envStr("STGY_DATABASE_PASSWORD", "*");
   static readonly DATABASE_NAME = envStr("STGY_DATABASE_NAME", "stgy");
   static readonly STORAGE_DRIVER = envStr("STGY_STORAGE_DRIVER", "s3");
   static readonly STORAGE_S3_ENDPOINT = envStr("STGY_STORAGE_S3_ENDPOINT", "http://localhost:9000");
   static readonly STORAGE_S3_REGION = envStr("STGY_STORAGE_S3_REGION", "us-east-1");
   static readonly STORAGE_S3_ACCESS_KEY_ID = envStr("STGY_STORAGE_S3_ACCESS_KEY_ID", "stgy");
-  static readonly STORAGE_S3_SECRET_ACCESS_KEY = envStr(
-    "STGY_STORAGE_S3_SECRET_ACCESS_KEY",
-    "minio_password",
-  );
+  static readonly STORAGE_S3_SECRET_ACCESS_KEY = envStr("STGY_STORAGE_S3_SECRET_ACCESS_KEY", "*");
   static readonly STORAGE_S3_FORCE_PATH_STYLE = envBool("STGY_STORAGE_S3_FORCE_PATH_STYLE", true);
   static readonly STORAGE_S3_BUCKET_PREFIX = envStr("STGY_STORAGE_S3_BUCKET_PREFIX", "stgy");
   static readonly STORAGE_S3_PUBLIC_URL_PREFIX = envStr(
@@ -22,7 +19,7 @@ export class Config {
   );
   static readonly REDIS_HOST = envStr("STGY_REDIS_HOST", "localhost");
   static readonly REDIS_PORT = envNum("STGY_REDIS_PORT", 6379);
-  static readonly REDIS_PASSWORD = envStr("STGY_REDIS_PASSWORD", "redis_password");
+  static readonly REDIS_PASSWORD = envStr("STGY_REDIS_PASSWORD", "*");
   static readonly SMTP_HOST = envStr("STGY_SMTP_HOST", "localhost");
   static readonly SMTP_PORT = envNum("STGY_SMTP_PORT", 587);
   static readonly MAIL_SENDER_ADDRESS = envStr("STGY_MAIL_SENDER_ADDRESS", "noreply@stgy.jp");

@@ -7,7 +7,7 @@ import requests
 APP_HOST = os.environ.get("STGY_APP_HOST", "localhost")
 APP_PORT = int(os.environ.get("STGY_APP_PORT", 3001))
 ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
-ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "admin")
+ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "stgystgy")
 BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
 
 def admin_login():

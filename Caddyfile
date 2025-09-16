@@ -1,13 +1,15 @@
 http://:8080 {
   encode zstd gzip
 
+  redir /mailpit /mailpit/
   handle /mailpit/* {
-    basicauth {
+    basic_auth {
       stgy $2a$14$uuicMQhEHEbzlvNfISPcue77In..Te9ZMzAKzppaRilla5wBlXdoa
     }
     reverse_proxy http://smtp:8025
   }
 
+  redir /backend /backend/
   handle_path /backend/* {
     reverse_proxy http://backend:3001 http://host.docker.internal:3001 http://host.lima.internal:3001 {
       lb_policy first
@@ -27,8 +29,14 @@ http://:8080 {
 
 http://s3.localhost:8080 {
   encode zstd gzip
+
   reverse_proxy http://minio:9000 {
-    header_up Host {http.request.host}
     flush_interval -1
   }
+}
+
+http://s3-console.localhost:8080 {
+  encode zstd gzip
+
+  reverse_proxy http://minio:9001
 }
