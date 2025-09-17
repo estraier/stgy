@@ -5,6 +5,7 @@ import {
   StorageObjectMetadata,
   StorageObjectListRange,
   StorageObjectDataRange,
+  StorageOverwriteAttributes,
 } from "../models/storage";
 
 export interface StorageService {
@@ -23,9 +24,17 @@ export interface StorageService {
 
   saveObject(objId: StorageObjectId, content: Uint8Array, contentType?: string): Promise<void>;
 
-  copyObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void>;
+  copyObject(
+    srcId: StorageObjectId,
+    dstId: StorageObjectId,
+    attrs?: StorageOverwriteAttributes,
+  ): Promise<void>;
 
-  moveObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void>;
+  moveObject(
+    srcId: StorageObjectId,
+    dstId: StorageObjectId,
+    attrs?: StorageOverwriteAttributes,
+  ): Promise<void>;
 
   deleteObject(objId: StorageObjectId): Promise<void>;
 }

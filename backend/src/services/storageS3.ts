@@ -19,6 +19,7 @@ import {
   StorageObjectMetadata,
   StorageObjectListRange,
   StorageObjectDataRange,
+  StorageOverwriteAttributes,
 } from "../models/storage";
 import type { StorageService } from "./storage";
 import { Config } from "../config";
@@ -97,6 +98,7 @@ export class StorageS3Service implements StorageService {
       lastModified: res.LastModified?.toISOString(),
       storageClass: res.StorageClass,
       contentType: res.ContentType,
+      metadata: (res.Metadata as Record<string, string> | undefined) ?? undefined,
     };
   }
 
@@ -176,18 +178,30 @@ export class StorageS3Service implements StorageService {
     );
   }
 
-  async copyObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void> {
+  async copyObject(
+    srcId: StorageObjectId,
+    dstId: StorageObjectId,
+    attrs?: StorageOverwriteAttributes,
+  ): Promise<void> {
+    const needReplace = Boolean(attrs?.metadata || attrs?.contentType);
     await this.s3.send(
       new CopyObjectCommand({
         Bucket: dstId.bucket,
         Key: dstId.key,
         CopySource: `/${encodeURIComponent(srcId.bucket)}/${encodeURIComponent(srcId.key)}`,
+        MetadataDirective: needReplace ? "REPLACE" : undefined,
+        Metadata: attrs?.metadata,
+        ContentType: attrs?.contentType,
       }),
     );
   }
 
-  async moveObject(srcId: StorageObjectId, dstId: StorageObjectId): Promise<void> {
-    await this.copyObject(srcId, dstId);
+  async moveObject(
+    srcId: StorageObjectId,
+    dstId: StorageObjectId,
+    attrs?: StorageOverwriteAttributes,
+  ): Promise<void> {
+    await this.copyObject(srcId, dstId, attrs);
     await this.deleteObject(srcId);
   }
 

@@ -167,6 +167,10 @@ export class MediaService {
     await this.storage.moveObject(
       { bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey },
       { bucket: Config.MEDIA_BUCKET_IMAGES, key: finalKey },
+      {
+        contentType: finalMime,
+        metadata: { "image-width": String(dim.w), "image-height": String(dim.h) },
+      },
     );
     const meta = await this.storage.headObject({
       bucket: Config.MEDIA_BUCKET_IMAGES,
@@ -296,7 +300,6 @@ export class MediaService {
       await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });
       throw new Error("image too large (pixels)");
     }
-
     const declaredCt = allowedImageMime(head.contentType ?? null);
     if (!declaredCt) {
       await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey });
@@ -358,6 +361,10 @@ export class MediaService {
     await this.storage.moveObject(
       { bucket: Config.MEDIA_BUCKET_PROFILES, key: stagingKey },
       { bucket: Config.MEDIA_BUCKET_PROFILES, key: masterKey },
+      {
+        contentType: finalMime,
+        metadata: { "image-width": String(dim.w), "image-height": String(dim.h) },
+      },
     );
     const meta = await this.storage.headObject({
       bucket: Config.MEDIA_BUCKET_PROFILES,

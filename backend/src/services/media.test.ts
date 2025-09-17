@@ -335,6 +335,7 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
     expect(storage.moveObject).toHaveBeenCalledWith(
       { bucket: profileBucket, key: stagingKey },
       { bucket: profileBucket, key: "u1/masters/avatar.png" },
+      { contentType: "image/png", metadata: { "image-height": "1", "image-width": "1" } },
     );
     expect(out).toEqual(masterMeta);
 

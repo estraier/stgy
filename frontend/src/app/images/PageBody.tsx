@@ -44,6 +44,13 @@ export default function PageBody() {
   const [showUpload, setShowUpload] = useState(false);
   const [dialogFiles, setDialogFiles] = useState<DialogFileItem[] | null>(null);
 
+  const [headMeta, setHeadMeta] = useState<{
+    contentType?: string;
+    width?: number;
+    height?: number;
+  } | null>(null);
+  const imgNaturalRef = useRef<{ w?: number; h?: number }>({});
+
   const copyMarkdownFor = useCallback(async (key: string) => {
     const imageUrl = "/images/" + key;
     try {
@@ -91,6 +98,41 @@ export default function PageBody() {
   useEffect(() => {
     loadQuota();
   }, [loadQuota]);
+
+  useEffect(() => {
+    setHeadMeta(null);
+    imgNaturalRef.current = {};
+    if (!previewObj) return;
+
+    let aborted = false;
+    (async () => {
+      try {
+        const res = await fetch(previewObj.publicUrl, { method: "HEAD" });
+        const ct = res.headers.get("content-type") || undefined;
+        const wStr =
+          res.headers.get("x-amz-meta-image-width") ?? res.headers.get("x-amz-meta-width");
+        const hStr =
+          res.headers.get("x-amz-meta-image-height") ??
+          res.headers.get("x-amz-meta-imageheight") ??
+          res.headers.get("x-amz-meta-height");
+        const width = wStr ? Number(wStr) : undefined;
+        const height = hStr ? Number(hStr) : undefined;
+        if (!aborted) {
+          setHeadMeta({
+            contentType: ct,
+            width: Number.isFinite(width) ? width : undefined,
+            height: Number.isFinite(height) ? height : undefined,
+          });
+        }
+      } catch {
+        if (!aborted) setHeadMeta(null);
+      }
+    })();
+
+    return () => {
+      aborted = true;
+    };
+  }, [previewObj]);
 
   function openUploadPicker() {
     if (!userId) return;
@@ -289,6 +331,10 @@ export default function PageBody() {
                   unoptimized
                   className="object-contain"
                   sizes="(max-width: 1024px) 85vw, 70vw"
+                  onLoad={(e) => {
+                    const img = e.currentTarget as HTMLImageElement;
+                    imgNaturalRef.current = { w: img.naturalWidth, h: img.naturalHeight };
+                  }}
                 />
               </div>
               <div className="text-sm text-gray-700 space-y-1">
@@ -298,12 +344,22 @@ export default function PageBody() {
                 </div>
                 <div>
                   <span className="text-gray-500">Size:</span> {formatBytes(previewObj.size)}
-                </div>
-                <div>
-                  <span className="text-gray-500">Type:</span> {previewObj.contentType || "unknown"}
-                </div>
-                <div>
-                  <span className="text-gray-500">Last Modified:</span>{" "}
+                  {(() => {
+                    const ct = headMeta?.contentType || previewObj.contentType || "unknown";
+                    const w = headMeta?.width ?? imgNaturalRef.current.w;
+                    const h = headMeta?.height ?? imgNaturalRef.current.h;
+                    return (
+                      <>
+                        <span className="ml-3 text-gray-500">Type:</span> {ct}
+                        {Number.isFinite(w) && Number.isFinite(h) ? (
+                          <>
+                            <span className="ml-3 text-gray-500">Geometry:</span> {w}x{h}
+                          </>
+                        ) : null}
+                      </>
+                    );
+                  })()}
+                  <span className="ml-3 text-gray-500">Timestamp:</span>{" "}
                   {(() => {
                     const d = parseIsoToDate(previewObj.lastModified);
                     return d ? formatDateTime(d) : "—";

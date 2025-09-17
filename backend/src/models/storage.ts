@@ -25,6 +25,7 @@ export type StorageObjectMetadata = StorageObjectId & {
   lastModified?: string;
   storageClass?: string;
   contentType?: string;
+  metadata?: Record<string, string>;
 };
 
 export type StorageObjectListRange = {
@@ -35,6 +36,11 @@ export type StorageObjectListRange = {
 export type StorageObjectDataRange = {
   offset: number;
   length: number;
+};
+
+export type StorageOverwriteAttributes = {
+  contentType?: string;
+  metadata?: Record<string, string>;
 };
 
 export type StorageMonthlyQuota = {
