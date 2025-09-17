@@ -64,7 +64,7 @@ services:
       # MP_SMTP_RELAY_AUTH: plain
       # MP_SMTP_RELAY_USERNAME: postfix@dbmx.net
       # MP_SMTP_RELAY_PASSWORD: ********
-      # MP_SMTP_RELAY_OVERRIDE_FROM: noreply@dbmx.net
+      # MP_SMTP_RELAY_OVERRIDE_FROM: noreply@stgy.jp
       # MP_SMTP_RELAY_ALL: true
     ports:
       - "${STGY_SMTP_PORT}:587"
