@@ -28,8 +28,8 @@ export class Config {
   static readonly MAIL_GLOBAL_LIMIT_PER_MIN = envNum("STGY_MAIL_GLOBAL_LIMIT_PER_MIN", 100);
   static readonly SESSION_TTL = envNum("STGY_SESSION_TTL", 60 * 60 * 24 * 7);
   static readonly TRUST_PROXY_HOPS = envNum("STGY_TRUST_PROXY_HOPS", 1);
-  static readonly TEST_SIGNUP_CODE = envStr("STGY_TEST_SIGNUP_CODE", "");
   static readonly ID_ISSUE_WORKER_ID = envNum("STGY_ID_ISSUE_WORKER_ID", 0);
+  static readonly TEST_SIGNUP_CODE = envStr("STGY_TEST_SIGNUP_CODE", "");
   static readonly MEDIA_BUCKET_IMAGES = Config.STORAGE_S3_BUCKET_PREFIX + "-images";
   static readonly MEDIA_BUCKET_PROFILES = Config.STORAGE_S3_BUCKET_PREFIX + "-profiles";
   static readonly MEDIA_IMAGE_BYTE_LIMIT = envNum("STGY_MEDIA_IMAGE_BYTE_LIMIT", 10 * 1024 * 1024);

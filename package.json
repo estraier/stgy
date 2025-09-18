@@ -8,7 +8,6 @@
     "frontend"
   ],
   "scripts": {
-    "docker:init": "bash -lc 'docker compose down -v --rmi all --remove-orphans || true; ids=$(docker ps -aq); [ -n \"$ids\" ] && docker rm -f $ids || true; imgs=$(docker images -aq); [ -n \"$imgs\" ] && docker rmi -f $imgs || true; docker builder prune -a -f || true; (docker buildx version >/dev/null 2>&1 && docker buildx prune -a -f || true); docker system prune -a --volumes -f || true",
     "docker:init": "docker compose down -v --rmi all --remove-orphans || true ; bash -lc 'ids=$(docker ps -aq); [ -n \"$ids\" ] && docker rm -f $ids; docker system prune -a --volumes -f; (docker buildx version >/dev/null 2>&1 && docker buildx prune -a -f || true)'",
     "docker:reset": "docker compose down -v --rmi all --remove-orphans && docker compose build --no-cache && docker compose create",
     "docker:build": "docker compose build",
