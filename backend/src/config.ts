@@ -3,7 +3,7 @@ export class Config {
   static readonly BACKEND_PORT = envNum("STGY_BACKEND_PORT", 3001);
   static readonly DATABASE_HOST = envStr("STGY_DATABASE_HOST", "localhost");
   static readonly DATABASE_PORT = envNum("STGY_DATABASE_PORT", 5432);
-  static readonly DATABASE_USER = envStr("STGY_DATABASE_USER", "stgy");
+  static readonly DATABASE_USER = envStr("STGY_DATABASE_USER", "admin");
   static readonly DATABASE_PASSWORD = envStr("STGY_DATABASE_PASSWORD", "*");
   static readonly DATABASE_NAME = envStr("STGY_DATABASE_NAME", "stgy");
   static readonly STORAGE_DRIVER = envStr("STGY_STORAGE_DRIVER", "s3");

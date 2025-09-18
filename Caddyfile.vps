@@ -1,10 +1,14 @@
+{
+  auto_https disable_redirects
+}
+
 https://stgy.jp {
   encode zstd gzip
 
   redir /mailpit /mailpit/
   handle /mailpit/* {
     basic_auth {
-      stgy $2a$14$uuicMQhEHEbzlvNfISPcue77In..Te9ZMzAKzppaRilla5wBlXdoa
+      admin $2a$14$uuicMQhEHEbzlvNfISPcue77In..Te9ZMzAKzppaRilla5wBlXdoa
     }
     reverse_proxy http://smtp:8025
   }

@@ -4,7 +4,7 @@ http://:8080 {
   redir /mailpit /mailpit/
   handle /mailpit/* {
     basic_auth {
-      stgy $2a$14$uuicMQhEHEbzlvNfISPcue77In..Te9ZMzAKzppaRilla5wBlXdoa
+      admin $2a$14$uuicMQhEHEbzlvNfISPcue77In..Te9ZMzAKzppaRilla5wBlXdoa
     }
     reverse_proxy http://smtp:8025
   }
