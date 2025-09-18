@@ -53,8 +53,8 @@ services:
     image: axllent/mailpit:v1.27
     restart: always
     environment:
-      MP_SMTP_BIND_ADDR: 0.0.0.0:587
-      MP_UI_BIND_ADDR: 0.0.0.0:8025
+      MP_SMTP_BIND_ADDR: 0.0.0.0:${STGY_SMTP_PORT:-5587}
+      MP_UI_BIND_ADDR: 0.0.0.0:${STGY_MAILPIT_CONSOLE_PORT:-8025}
       MP_WEBROOT: /mailpit/
       # MP_SMTP_RELAY_HOST: dbmx.net
       # MP_SMTP_RELAY_PORT: 587
@@ -65,8 +65,8 @@ services:
       # MP_SMTP_RELAY_OVERRIDE_FROM: noreply@stgy.jp
       # MP_SMTP_RELAY_ALL: true
     ports:
-      - "${STGY_SMTP_PORT:-587}:587"
-      - "${STGY_MAILPIT_CONSOLE_PORT:-8025}:8025"
+      - "${STGY_SMTP_PORT:-5587}:${STGY_SMTP_PORT:-5587}"
+      - "${STGY_MAILPIT_CONSOLE_PORT:-8025}:${STGY_MAILPIT_CONSOLE_PORT:-8025}"
 
   caddy:
     image: caddy:2

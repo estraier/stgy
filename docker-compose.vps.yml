@@ -26,7 +26,6 @@ services:
 
   caddy:
     ports:
-      - "80:80"
       - "443:443"
     volumes:
       - ./Caddyfile.vps:/etc/caddy/Caddyfile:ro
