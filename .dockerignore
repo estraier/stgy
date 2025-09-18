@@ -1,30 +1,39 @@
-# === VCS / OS
 .git
 .gitignore
+.gitattributes
 .DS_Store
+*.swp
+*~
 
-# === Node / monorepo
-node_modules
-**/node_modules
-npm-debug.log*
-yarn-error.log*
-.pnpm-store
-
-# === Build outputs
-dist
-**/dist
-.next
-**/.next
-.turbo
-out
-coverage
-.cache
-.tmp
-
-# === Env / local
 .env
 .env.*
-*.local
+!.env.example
+*.pem
+*.key
+*.crt
 
-# === Docker noise
-docker-compose.override.yml
+node_modules/
+**/node_modules/
+.pnpm-store/
+.pnp.*
+.npm/
+.yarn/
+.turbo/
+.cache/
+.tmp/
+
+dist/
+**/dist/
+frontend/.next/
+**/.next/
+out/
+coverage/
+.vitest/
+.jest/
+*.tsbuildinfo
+
+*.log
+**/*.log
+
+.vscode/
+.idea/

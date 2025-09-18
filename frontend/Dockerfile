@@ -5,7 +5,8 @@ COPY frontend/package.json frontend/package.json
 COPY packages/markdown/package.json packages/markdown/package.json
 RUN npm config set registry https://registry.npmjs.org/
 RUN npm ci --workspaces --include-workspace-root
-COPY . .
+COPY frontend ./frontend
+COPY packages/markdown ./packages/markdown
 ARG NEXT_PUBLIC_BACKEND_API_BASE_URL
 ARG NEXT_PUBLIC_STORAGE_S3_BUCKET_PREFIX
 ARG NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX

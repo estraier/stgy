@@ -30,4 +30,3 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile.vps:/etc/caddy/Caddyfile:ro
-      - /home/www:/home/www

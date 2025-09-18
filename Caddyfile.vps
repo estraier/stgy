@@ -40,12 +40,3 @@ https://s3-console.stgy.jp {
 
   reverse_proxy http://minio:9001
 }
-
-https://www.stgy.jp {
-  encode zstd gzip
-
-  root * /home/www
-  file_server {
-    index index.xhtml index.html
-  }
-}

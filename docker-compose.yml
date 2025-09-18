@@ -10,8 +10,8 @@ services:
     ports:
       - "${STGY_DATABASE_PORT:-5432}:5432"
     volumes:
-      - postgres_data:/var/lib/postgresql/data
       - ./postgres/init:/docker-entrypoint-initdb.d
+      - postgres_data:/var/lib/postgresql/data
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${STGY_DATABASE_USER:?} -d ${STGY_DATABASE_NAME:?}"]
       interval: 5s
@@ -32,9 +32,9 @@ services:
       - "${STGY_MINIO_PORT:-9000}:9000"
       - "${STGY_MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
-      - minio_data:/data
       - ./minio/entrypoint.sh:/entrypoint.sh:ro
       - ./minio/init.sh:/init.sh:ro
+      - minio_data:/data
     restart: unless-stopped
 
   redis:
@@ -43,8 +43,6 @@ services:
     ports:
       - "${STGY_REDIS_PORT:-6379}:6379"
     command: ["redis-server", "--requirepass", "${STGY_REDIS_PASSWORD:?}"]
-    volumes:
-      - redis_data:/data
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a ${STGY_REDIS_PASSWORD:?} PING || exit 1"]
       interval: 5s
@@ -69,8 +67,6 @@ services:
     ports:
       - "${STGY_SMTP_PORT:-587}:587"
       - "${STGY_MAILPIT_CONSOLE_PORT:-8025}:8025"
-    volumes:
-      - mailpit_data:/data
 
   caddy:
     image: caddy:2
@@ -201,7 +197,5 @@ services:
 volumes:
   postgres_data:
   minio_data:
-  redis_data:
-  mailpit_data:
   caddy_data:
   caddy_config:
