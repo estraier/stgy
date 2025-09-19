@@ -197,9 +197,11 @@ Docker関係のコマンドを利用目的別に整理する。
   - 止める時はnpm run docker:stopを実行する。
 - ./scripts/run-local-backend.sh
   - backendサービスと各種ワーカをローカルホストで起動する。
+  - --startオプションをつけると、ビルド結果を実行する。
   - 止める時はCtrl-Cで落とす。
 - ./scripts/run-local-backend.sh
   - frontendサービスをローカルホストで起動する。
+  - --startオプションをつけると、ビルド結果を実行する。
   - 止める時はCtrl-Cで落とす。
 - npm run reset-data
   - DBとオブジェクトストレージを初期化して、初期データを投入する。
