@@ -491,6 +491,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
             f.name,
             f.type,
           );
+
           if (cancelled) return;
 
           const optimizedPreviewUrl = URL.createObjectURL(out.blob);
@@ -564,22 +565,29 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     return items.reduce((a, it) => a + effectiveUploadSize(it), 0);
   }, [items, effectiveUploadSize]);
 
+  const allOptimizingDone = useMemo(
+    () => items.every((it) => it.status !== "optimizing" && it.status !== "pending"),
+    [items],
+  );
+
   const oversizedItems = useMemo(() => {
     if (!SINGLE_LIMIT) return [];
+    if (!allOptimizingDone) return []; // ここで最適化完了まで非表示
     return items.filter((it) => effectiveUploadSize(it) > SINGLE_LIMIT);
-  }, [items, SINGLE_LIMIT, effectiveUploadSize]);
+  }, [items, SINGLE_LIMIT, effectiveUploadSize, allOptimizingDone]);
 
   const quotaExceeded = useMemo(() => {
+    if (!allOptimizingDone) return false; // ここで最適化完了まで非表示
     if (!bytesMonthlyLimit || bytesMonthlyUsed == null) return false;
     return bytesMonthlyUsed + projectedUploadBytes > bytesMonthlyLimit;
-  }, [bytesMonthlyLimit, bytesMonthlyUsed, projectedUploadBytes]);
+  }, [bytesMonthlyLimit, bytesMonthlyUsed, projectedUploadBytes, allOptimizingDone]);
 
   const canUpload = useMemo(() => {
     if (busy || quotaExceeded) return false;
     if (oversizedItems.length > 0) return false;
-    const anyOptimizing = items.some((it) => it.status === "optimizing");
+    const anyOptim = items.some((it) => it.status === "optimizing");
     const anyReady = items.some((it) => it.status === "ready");
-    return !anyOptimizing && anyReady;
+    return !anyOptim && anyReady;
   }, [busy, items, quotaExceeded, oversizedItems.length]);
 
   const onUpload = useCallback(async () => {
@@ -689,7 +697,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
           {quotaExceeded && (
             <div className="text-red-600">Projected total exceeds your monthly quota.</div>
           )}
-          {SINGLE_LIMIT && oversizedItems.length > 0 && (
+          {SINGLE_LIMIT && allOptimizingDone && oversizedItems.length > 0 && (
             <div className="text-red-600">
               {oversizedItems.length} file(s) exceed the single-file limit (
               {formatBytes(SINGLE_LIMIT)}).
@@ -702,6 +710,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
             {items.map((it) => {
               const effSize = effectiveUploadSize(it);
               const isOver = SINGLE_LIMIT ? effSize > SINGLE_LIMIT : false;
+              const showOver = isOver && allOptimizingDone;
               return (
                 <li key={it.id} className="rounded border bg-white overflow-hidden">
                   <div className="relative w-[70vw] sm:w-[44vw] md:w-[28vw] lg:w-[24vw] xl:w-[22vw] aspect-video bg-gray-50">
@@ -781,7 +790,9 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                           {it.optimized ? "image/webp" : it.type || "image/*"}
                         </span>{" "}
                         •{" "}
-                        <span className={`font-mono ${isOver ? "text-red-600 font-semibold" : ""}`}>
+                        <span
+                          className={`font-mono ${showOver ? "text-red-600 font-semibold" : ""}`}
+                        >
                           {formatBytes(effSize)}
                         </span>
                         {" • "}
@@ -790,7 +801,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                           : it.width && it.height
                             ? `${it.width}×${it.height}`
                             : "—"}
-                        {isOver && SINGLE_LIMIT && (
+                        {showOver && SINGLE_LIMIT && (
                           <div className="text-[11px] text-red-600 mt-0.5">
                             Exceeds single-file limit ({formatBytes(SINGLE_LIMIT)}).
                           </div>
