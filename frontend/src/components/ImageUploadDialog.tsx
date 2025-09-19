@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState, useCallback } from "react";
 import NextImage from "next/image";
 import { createPortal } from "react-dom";
 import { formatBytes } from "@/utils/format";
@@ -75,12 +75,18 @@ function isSvg(name: string, type: string) {
   return ext === "svg";
 }
 
+function isTiff(name: string, type: string) {
+  const t = (type || "").toLowerCase();
+  if (t === "image/tiff" || t === "image/tif") return true;
+  const ext = (name.split(".").pop() || "").toLowerCase();
+  return ext === "tif" || ext === "tiff";
+}
+
 function parseSvgSize(svg: string): { w: number; h: number } | null {
   try {
     const doc = new DOMParser().parseFromString(svg, "image/svg+xml");
     const svgEl = doc.documentElement;
     if (!svgEl || svgEl.tagName.toLowerCase() !== "svg") return null;
-
     const parseLen = (v?: string | null) => {
       if (!v) return NaN;
       const m = String(v)
@@ -90,10 +96,8 @@ function parseSvgSize(svg: string): { w: number; h: number } | null {
       const n = parseFloat(m[1]);
       return Number.isFinite(n) ? n : NaN;
     };
-
     let w = parseLen(svgEl.getAttribute("width"));
     let h = parseLen(svgEl.getAttribute("height"));
-
     if (!Number.isFinite(w) || !Number.isFinite(h)) {
       const vb = (svgEl.getAttribute("viewBox") || "").split(/\s+/).map(Number);
       if (vb.length === 4 && vb.every((x) => Number.isFinite(x))) {
@@ -103,7 +107,6 @@ function parseSvgSize(svg: string): { w: number; h: number } | null {
         h = Number.isFinite(h) ? h : vbH;
       }
     }
-
     if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
       return null;
     }
@@ -214,7 +217,6 @@ async function rasterizeSvgToWebp(
   }
   const normalizedSvg = normalizeSvg(svgText, size.w, size.h);
   const svgBlob = new Blob([normalizedSvg], { type: "image/svg+xml" });
-
   let w = size.w;
   let h = size.h;
   let source: CanvasImageSource | null = null;
@@ -241,11 +243,9 @@ async function rasterizeSvgToWebp(
       setTimeout(() => URL.revokeObjectURL(url), 0);
     }
   }
-
   const scale = computeScale(w, h);
   const dw = Math.max(1, Math.round(w * scale));
   const dh = Math.max(1, Math.round(h * scale));
-
   let blob: Blob | null = null;
   const OSC = getOffscreenCanvasCtor();
   if (OSC) {
@@ -275,12 +275,45 @@ async function rasterizeSvgToWebp(
       ),
     );
   }
-
   if (!blob || !blob.size || !dw || !dh) {
     throw new Error("invalid optimized output");
   }
-
   (source as ImageBitmap)?.close?.();
+  return { blob, width: dw, height: dh };
+}
+
+async function tiffToWebp(
+  file: File,
+  quality = 0.8,
+): Promise<{ blob: Blob; width: number; height: number }> {
+  const UTIF: typeof import("utif") = await import("utif");
+  const buf = await file.arrayBuffer();
+  const ifds = UTIF.decode(buf);
+  if (!ifds || ifds.length === 0) throw new Error("TIFF decode failed: no IFD");
+  UTIF.decodeImage(buf, ifds[0]);
+  type TiffIFDSize = { width: number; height: number };
+  const { width, height } = ifds[0] as TiffIFDSize;
+  if (!width || !height) throw new Error("TIFF decode failed: invalid size");
+  const rgba = UTIF.toRGBA8(ifds[0]);
+  const scale = computeScale(width, height);
+  const dw = Math.max(1, Math.round(width * scale));
+  const dh = Math.max(1, Math.round(height * scale));
+  const src = document.createElement("canvas");
+  src.width = width;
+  src.height = height;
+  const sctx = src.getContext("2d");
+  if (!sctx) throw new Error("2D context unavailable");
+  const id = new ImageData(new Uint8ClampedArray(rgba), width, height);
+  sctx.putImageData(id, 0, 0);
+  const dst = document.createElement("canvas");
+  dst.width = dw;
+  dst.height = dh;
+  const dctx = dst.getContext("2d");
+  if (!dctx) throw new Error("2D context unavailable");
+  dctx.drawImage(src, 0, 0, dw, dh);
+  const blob: Blob = await new Promise((resolve, reject) =>
+    dst.toBlob((b) => (b ? resolve(b) : reject(new Error("toBlob failed"))), "image/webp", quality),
+  );
   return { blob, width: dw, height: dh };
 }
 
@@ -292,14 +325,15 @@ async function rasterToWebp(
   name?: string,
   type?: string,
 ): Promise<{ blob: Blob; width: number; height: number }> {
+  if (isTiff(name || "", type || "")) {
+    return tiffToWebp(file, quality);
+  }
   if (isSvg(name || "", type || "")) {
     return rasterizeSvgToWebp(file, quality);
   }
-
   let source: CanvasImageSource | null = null;
   let w = srcW;
   let h = srcH;
-
   try {
     const bmp = await createImageBitmap(file);
     source = bmp;
@@ -311,14 +345,11 @@ async function rasterToWebp(
     w = img.naturalWidth;
     h = img.naturalHeight;
   }
-
   const scale = computeScale(w, h);
   const dw = Math.max(1, Math.round(w * scale));
   const dh = Math.max(1, Math.round(h * scale));
-
   let blob: Blob | null = null;
   const OSC = getOffscreenCanvasCtor();
-
   if (OSC) {
     const osc = new OSC(dw, dh);
     const ctx = osc.getContext("2d");
@@ -331,7 +362,6 @@ async function rasterToWebp(
       blob = await conv.call(osc, { type: "image/webp", quality });
     }
   }
-
   if (!blob) {
     const cv = document.createElement("canvas");
     cv.width = dw;
@@ -347,11 +377,9 @@ async function rasterToWebp(
       ),
     );
   }
-
   if (!blob || !blob.size || !dw || !dh) {
     throw new Error("invalid optimized output");
   }
-
   (source as ImageBitmap)?.close?.();
   return { blob, width: dw, height: dh };
 }
@@ -465,6 +493,9 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
           );
           if (cancelled) return;
 
+          const optimizedPreviewUrl = URL.createObjectURL(out.blob);
+          revokeQueue.current.push(optimizedPreviewUrl);
+
           setItems((prev) =>
             prev.map((x) => {
               if (x.id !== f.id) return x;
@@ -472,6 +503,8 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
               const auto = x.forceOptimize ? true : x.needsAutoOptimize || isHalfOrLess;
               return {
                 ...x,
+                previewUrl: x.previewUrl && x.decodable ? x.previewUrl : optimizedPreviewUrl,
+                decodable: true,
                 optimized: {
                   blob: out.blob,
                   size: out.blob.size,
@@ -521,12 +554,20 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     };
   }, []);
 
+  const SINGLE_LIMIT = Number(Config.MEDIA_IMAGE_BYTE_LIMIT || 0) || null;
+
+  const effectiveUploadSize = useCallback((it: SelectedItem) => {
+    return it.optimize && it.optimized ? it.optimized.size : it.size;
+  }, []);
+
   const projectedUploadBytes = useMemo(() => {
-    return items.reduce((a, it) => {
-      const size = it.optimize && it.optimized ? it.optimized.size : it.size;
-      return a + size;
-    }, 0);
-  }, [items]);
+    return items.reduce((a, it) => a + effectiveUploadSize(it), 0);
+  }, [items, effectiveUploadSize]);
+
+  const oversizedItems = useMemo(() => {
+    if (!SINGLE_LIMIT) return [];
+    return items.filter((it) => effectiveUploadSize(it) > SINGLE_LIMIT);
+  }, [items, SINGLE_LIMIT, effectiveUploadSize]);
 
   const quotaExceeded = useMemo(() => {
     if (!bytesMonthlyLimit || bytesMonthlyUsed == null) return false;
@@ -535,10 +576,11 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
 
   const canUpload = useMemo(() => {
     if (busy || quotaExceeded) return false;
+    if (oversizedItems.length > 0) return false;
     const anyOptimizing = items.some((it) => it.status === "optimizing");
     const anyReady = items.some((it) => it.status === "ready");
     return !anyOptimizing && anyReady;
-  }, [busy, items, quotaExceeded]);
+  }, [busy, items, quotaExceeded, oversizedItems.length]);
 
   const onUpload = useCallback(async () => {
     setBusy(true);
@@ -551,6 +593,14 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
 
       if (it.status === "error" || it.status === "optimizing") {
         results.push({ ok: false, error: it.error || "unavailable", name: it.name });
+        continue;
+      }
+
+      if (SINGLE_LIMIT && effectiveUploadSize(it) > SINGLE_LIMIT) {
+        const msg = `File exceeds the single-file limit (${formatBytes(SINGLE_LIMIT)}).`;
+        next[idx] = { ...it, status: "error", error: msg };
+        setItems([...next]);
+        results.push({ ok: false, error: msg, name: it.name });
         continue;
       }
 
@@ -597,7 +647,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
 
     setBusy(false);
     onComplete(results);
-  }, [items, onComplete, userId]);
+  }, [items, onComplete, userId, SINGLE_LIMIT, effectiveUploadSize]);
 
   if (!mounted) return null;
 
@@ -639,105 +689,122 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
           {quotaExceeded && (
             <div className="text-red-600">Projected total exceeds your monthly quota.</div>
           )}
+          {SINGLE_LIMIT && oversizedItems.length > 0 && (
+            <div className="text-red-600">
+              {oversizedItems.length} file(s) exceed the single-file limit (
+              {formatBytes(SINGLE_LIMIT)}).
+            </div>
+          )}
         </div>
 
         <div className="mt-3 overflow-auto max-h-[60vh]">
           <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
-            {items.map((it) => (
-              <li key={it.id} className="rounded border bg-white overflow-hidden">
-                <div className="relative w-[70vw] sm:w-[44vw] md:w-[28vw] lg:w-[24vw] xl:w-[22vw] aspect-video bg-gray-50">
-                  {it.previewUrl && it.decodable ? (
-                    <NextImage
-                      src={it.previewUrl}
-                      alt=""
-                      fill
-                      unoptimized
-                      className="object-contain"
-                      sizes="(max-width: 640px) 70vw, (max-width: 1024px) 44vw, 28vw"
-                    />
-                  ) : (
-                    <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-500">
-                      No preview
-                    </div>
-                  )}
-                  {(it.status === "optimizing" || it.status === "uploading") && (
-                    <div className="absolute inset-0 bg-white/70 flex items-center justify-center text-xs">
-                      {it.status === "optimizing" ? "Optimizing…" : "Uploading…"}
-                    </div>
-                  )}
-                </div>
-
-                <div className="p-3 text-sm text-gray-800 space-y-2 min-w-[260px]">
-                  <div className="font-medium break-all">{it.name}</div>
-
-                  <div className="text-[12px] text-gray-700 space-y-1">
-                    <div>
-                      <span className="text-gray-500">Original:</span>{" "}
-                      <span className="font-mono">{it.type || "image/*"}</span> •{" "}
-                      <span className="font-mono">{formatBytes(it.size)}</span>
-                      {" • "}
-                      {it.width && it.height ? `${it.width}×${it.height}` : "—"}
-                    </div>
-                    {it.type?.toLowerCase() === "image/gif" && (
-                      <div className="text-[11px] text-gray-500">
-                        * Animated GIF will be uploaded as a still image (first frame).
+            {items.map((it) => {
+              const effSize = effectiveUploadSize(it);
+              const isOver = SINGLE_LIMIT ? effSize > SINGLE_LIMIT : false;
+              return (
+                <li key={it.id} className="rounded border bg-white overflow-hidden">
+                  <div className="relative w-[70vw] sm:w-[44vw] md:w-[28vw] lg:w-[24vw] xl:w-[22vw] aspect-video bg-gray-50">
+                    {it.previewUrl && it.decodable ? (
+                      <NextImage
+                        src={it.previewUrl}
+                        alt=""
+                        fill
+                        unoptimized
+                        className="object-contain"
+                        sizes="(max-width: 640px) 70vw, (max-width: 1024px) 44vw, 28vw"
+                      />
+                    ) : (
+                      <div className="absolute inset-0 flex items-center justify-center text-xs text-gray-500">
+                        No preview
+                      </div>
+                    )}
+                    {(it.status === "optimizing" || it.status === "uploading") && (
+                      <div className="absolute inset-0 bg-white/70 flex items-center justify-center text-xs">
+                        {it.status === "optimizing" ? "Optimizing…" : "Uploading…"}
                       </div>
                     )}
                   </div>
 
-                  <div className="flex items-center gap-2">
-                    <label className="inline-flex items-center gap-2 cursor-pointer">
-                      <input
-                        type="checkbox"
-                        className="accent-blue-600"
-                        checked={it.optimize}
-                        onChange={() =>
-                          setItems((prev) =>
-                            prev.map((x) =>
-                              x.id === it.id
-                                ? { ...x, optimize: x.forceOptimize ? true : !x.optimize }
-                                : x,
-                            ),
-                          )
-                        }
-                        disabled={
-                          it.forceOptimize ||
-                          it.status === "optimizing" ||
-                          it.status === "uploading"
-                        }
-                      />
-                      <span className="text-[13px]">
-                        Optimize for Web{" "}
-                        {it.forceOptimize && <span className="text-gray-500">(required)</span>}
-                      </span>
-                    </label>
-                  </div>
+                  <div className="p-3 text-sm text-gray-800 space-y-2 min-w-[260px]">
+                    <div className="font-medium break-all">{it.name}</div>
 
-                  <div className={`text-[12px] ${it.optimize ? "text-gray-800" : "text-gray-400"}`}>
-                    <div>
-                      <span className="text-gray-500">Optimized:</span>{" "}
-                      <span className="font-mono">
-                        {it.optimized ? "image/webp" : it.type || "image/*"}
-                      </span>{" "}
-                      •{" "}
-                      <span className="font-mono">
-                        {formatBytes(it.optimized ? it.optimized.size : it.size)}
-                      </span>
-                      {" • "}
-                      {it.optimized
-                        ? `${it.optimized.width}×${it.optimized.height}`
-                        : it.width && it.height
-                          ? `${it.width}×${it.height}`
-                          : "—"}
+                    <div className="text-[12px] text-gray-700 space-y-1">
+                      <div>
+                        <span className="text-gray-500">Original:</span>{" "}
+                        <span className="font-mono">{it.type || "image/*"}</span> •{" "}
+                        <span className="font-mono">{formatBytes(it.size)}</span>
+                        {" • "}
+                        {it.width && it.height ? `${it.width}×${it.height}` : "—"}
+                      </div>
+                      {it.type?.toLowerCase() === "image/gif" && (
+                        <div className="text-[11px] text-gray-500">
+                          * Animated GIF will be uploaded as a still image (first frame).
+                        </div>
+                      )}
                     </div>
-                  </div>
 
-                  {it.status === "error" && it.error && (
-                    <div className="text-[11px] text-red-600 break-all">{it.error}</div>
-                  )}
-                </div>
-              </li>
-            ))}
+                    <div className="flex items-center gap-2">
+                      <label className="inline-flex items-center gap-2 cursor-pointer">
+                        <input
+                          type="checkbox"
+                          className="accent-blue-600"
+                          checked={it.optimize}
+                          onChange={() =>
+                            setItems((prev) =>
+                              prev.map((x) =>
+                                x.id === it.id
+                                  ? { ...x, optimize: x.forceOptimize ? true : !x.optimize }
+                                  : x,
+                              ),
+                            )
+                          }
+                          disabled={
+                            it.forceOptimize ||
+                            it.status === "optimizing" ||
+                            it.status === "uploading"
+                          }
+                        />
+                        <span className="text-[13px]">
+                          Optimize for Web{" "}
+                          {it.forceOptimize && <span className="text-gray-500">(required)</span>}
+                        </span>
+                      </label>
+                    </div>
+
+                    <div
+                      className={`text-[12px] ${it.optimize ? "text-gray-800" : "text-gray-400"}`}
+                    >
+                      <div>
+                        <span className="text-gray-500">Optimized:</span>{" "}
+                        <span className="font-mono">
+                          {it.optimized ? "image/webp" : it.type || "image/*"}
+                        </span>{" "}
+                        •{" "}
+                        <span className={`font-mono ${isOver ? "text-red-600 font-semibold" : ""}`}>
+                          {formatBytes(effSize)}
+                        </span>
+                        {" • "}
+                        {it.optimized
+                          ? `${it.optimized.width}×${it.optimized.height}`
+                          : it.width && it.height
+                            ? `${it.width}×${it.height}`
+                            : "—"}
+                        {isOver && SINGLE_LIMIT && (
+                          <div className="text-[11px] text-red-600 mt-0.5">
+                            Exceeds single-file limit ({formatBytes(SINGLE_LIMIT)}).
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
+                    {it.status === "error" && it.error && (
+                      <div className="text-[11px] text-red-600">{it.error}</div>
+                    )}
+                  </div>
+                </li>
+              );
+            })}
           </ul>
         </div>
 
