@@ -4,490 +4,351 @@ allowLikes: false
 allowReplies: false
 tags: stgy-help
 content:<<____EOF____
-# STGYの主要クエリ分析
+# STGYのデータベース
 
-本記事では、STGYの運用上でデータベースに発行されるクエリについて分析する。SQLの具体例を示し、その計算量を解析し、実際の実行計画を見て確認する。
+本記事では、STGYのデータベースの設定とスキーマについて解説する。STGYのユーザや記事のデータはPostgreSQLで管理している。
 
-## 最も単純な例
+## 概要と方針
 
-全ての投稿の中から最新20件を取り出す処理を考える。以下のクエリは実際には使われてないが、説明のための単純化したものを紹介する。デフォルトでは返信以外の投稿を一覧するため、reply_toがNULLであるという条件をつける。
+データベースのスキーマのER図を以下に示す。主なテーブルは三つで、ユーザを管理するusersテーブルと、各ユーザが投稿した記事を管理するpostsテーブルと、通知を管理するnotificationsテーブルである。その他のテーブルは、正規化と性能最適化の過程でその三つのテーブルから分離されたものだ。
+
+![ER図](/data/help-schema-er.png){size=large}
+
+DBのスキーマを設計するにあたり、正規化と性能最適化について理解し区別する必要がある。正規化の目的は、データの多重管理を避けて、すなわち出所を一元化して、不整合が起きにくくすることだ。正規化を進めるとDBの保守性が良くなることが多いが、性能が良くなるとは限らず、むしろ悪化する可能性もある。一方で、性能最適化は、実際に実行するクエリの効率を上げるためにスキーマを変えることで、結果として正規形に違反するスキーマになることもある。多重管理が過ぎると不具合の温床になるし、一元化を追求すると実運用に耐えない性能になるので、両者のバランスを取ることが重要だ。
+
+SNSの文脈では、DBに投げるクエリは2種類に大別して考える。リスト系のクエリと、個別レコード操作のクエリだ。重いのはリスト系の操作で、それがスケーラビリティを決めるので、リスト系クエリをいかに効率化するかを考えてDB設計することになる。今回の例では、ユーザのリスト表示で参照するデータはusersテーブルに集め、ユーザの詳細画面でしか表示しないデータはuser_detailsテーブルに逃がしている。同様に、投稿のリスト表示で参照するデータはpostsテーブルに集め、投稿の詳細画面でしか表示しないデータはpost_detailsテーブルに逃がしている。リスト系クエリで読み込むテーブルを小さくすると、参照局所性が上がり、ストレージ層の入出力のデータ量が減少し、各層のキャッシュが利きやすくなり、結果として性能が上がる。
+
+適切なテーブル分割ができたら、あとはクエリに合わせてインデックスを貼るだけだ。リスト系クエリでの全ての絞り込み操作はインデックスのみを参照するように設計する必要がある。インデックスは参照局所性が高いが、主テーブルは、上述の最適化をもってしても、参照局所性は相対的に低くなる。なので、主テーブルを参照しても良いのは、絞り込みが終わってから、表示するレコードの分だけということにする。この方針に違反したクエリは潜在的にボトルネックになるので、そうならないようにクエリ毎の実行計画を確認しておくことが重要だ。
+
+## Snowflake ID
+
+個々のテーブルのスキーマを解説する前に、レコードのIDの採番方法について知ることが有益だ。STGYでは、Twitterが開発した[Snowflake ID](wiki-ja)の変種を用いる。具体的には、0固定の符号ビットで始まり、その後ろに43ビットで表現したミリ秒のタイムスタンプの後ろにをつけ、その後ろに8ビットで表現したワーカーIDをつけ、その後ろに12ビットのシーケンス番号をつけた、合計64ビットのデータである。これを16進数の文字列で表すと、`198C2E846EE00000` のような16文字になる。
+
+固定桁のタイムスタンプを接頭させることで、数値として比較すると発番の時系列と順序が一致する。10進数や16進数の文字列にした場合でも、固定桁にすれば、辞書順が時系列の順に一致する。この特徴はUUIDv7でも同じだが、Snowflake IDの方が空間効率が良い。Snowflake IDは、数値では8バイトで格納され、文字列（16進数）では16文字とVARLENAメタデータ1バイトの計17バイトで格納される。[UUID](wiki-en)は数値では16バイトで格納され、文字列では36文字とVARLENAメタデータ1バイトの計37バイトで格納される。
+
+今回のSnowflake ID改では、単一の発番器が同一ミリ秒に4096回の発番が可能で、256個まで発番器を同時稼働させられるので、実運用上の衝突のリスクはゼロにできる。そして、プライマリキーの順序が時系列と一致すると、created_atのような従属属性を参照しなくてもソートができるため、より効率的なクエリが書けるようになる。
+
+UUIDの利点は、協調型の採番方法でなくてもユニーク性が担保できることと、予測不能な乱数を含むので、秘密情報としても利用できることだ。逆に言えば、協調型の採番方法ができて、IDを公開情報にする場合は、UUIDでなくても良いということになる。UUIDの欠点は、文字列にすると長いことと、それがブラウザのアドレスバーに出てくるとダサいことだ。効率だけではなく、美観のためにSnowflake IDを採用した部分も大きい。
+
+DBの処理効率を上げるには、IDは数値型で扱った方が良い。IDはインデックスにも格納されることが多いが、インデックスが小さくなれば、それだけキャッシュに乗せられるレコード数が多くなる。例えば、平均10バイトのニックネームと数値型8バイトのIDの複合インデックスはレコードあたり最低18バイトの空間が必要だが、IDを文字列の16バイトにすると最低26バイトの空間が必要になる。実際にはメタデータやパディングが入るので18/26=70%ほどの比率にはならないが、IDを数値型にする方が明白に空間効率が良くなる。また、数値の方が比較関数のCPU効率も良くなる。
+
+とはいえ、インデックスのデータ量は主テーブルに比べればとても小さく、また比較関数のCPU負荷がボトルネックになることは稀だ。IDを文字列型で扱うのにも合理性がある。TypeScriptのnumber型の精度は53ビットなので、64ビットの値を数値として扱うにはbigint型にする必要がある。文字列ならば、数値の型の違いでバグるリスクが避けられるし、JSONに入れるのも楽だ。さらに、将来的に任意の採番方法に乗り換えるのも容易だ。
+
+今回は、IDをDB内部では数値型として扱うが、DB操作を隠蔽するサービス層のメソッドの入出力ではIDは常に16進数文字列として表現することにした。それなら、双方の良いとこ取りになる。型を気にしなければいけない部分はサービス層に隠蔽され、その上層のAPI層でJSONなどに入れる際には文字列を扱うので、不整合は起き得ない。採番方向を変えるとしても、サービス層の内部に変更が隠蔽されていれば、APIを変える必要はない。
+
+元来のSnowflake IDは41ビットでタイムスタンプを扱うので、エポックから2^41ミリ秒後（=69.681年後）にオーバーフローする。2010-11-04T01:42:54がエポックであるTwitterでは、2080年6月にオーバーフローする。2080年問題があるということだ。今回使うFakebook IDの変種は43ビットのタイムスタンプを使うので、寿命は4倍の278.729年となる。1970-00-00T00:00:00がエポックなので、2248年9月まで使える。なお、最上位1ビットを0に固定している仕様なので、そのビットをタイムスタンプで使うと宣言すれば、寿命が2倍になって、2527年6月まで延命できる。ただし、その際にはDB内部のbigintが負数になるので、予めnumeric型やvarchar型にスキーマ変更する必要がある。
+
+Snowflake IDを主キーとするテーブルのレコードは、そもそもcreated_atに相当する列を持たせないという選択ができる。IDから計算すれば良いからだ。created_atを削ると主テーブルの各レコードが8バイト小さくなり、多少ながら性能が向上することになる。インデックスの空間効率に比べれば主テーブルの空間効率の重要性は低いが、小さいは正義である。それに、Snowflake IDがタイムスタンプとワーカーIDとシーケンスIDの複合キーであると捉えると、その一部分であるタイムスタンプに従属するcreated_atを持っている事態は第2正規形違反とも言える。つまり、IDを変更せずにcreated_atが変更できるというのが不整合の潜在的なリスクになっているわけで、それを解消するのは性能だけじゃなくて保守性も良くする。アプリ側のコードが若干複雑になるという懸念はあるが、Snowflake IDをタイムスタンプに変換する以下のような関数を使うと解決する。あたかもcreated_atという列があるかのようにDBに振る舞わせることができるのだ。
 
 ```sql:small
+CREATE OR REPLACE FUNCTION id_to_timestamp(id BIGINT)
+RETURNS timestamptz
+LANGUAGE sql
+IMMUTABLE
+STRICT
+PARALLEL SAFE
+AS $$
+  SELECT timestamptz 'epoch'
+       + (id >> 20) * interval '1 millisecond';
+$$;
+
 SELECT
-  p.id, p.owned_by, p.reply_to,
-  p.allow_likes, p.allow_replies, p.updated_at
-FROM posts p
-WHERE reply_to IS NULL
-ORDER BY p.id DESC OFFSET 0 LIMIT 20;
+  id, id_to_timestamp(id) AS created_at
+FROM users;
 ```
 
-postsテーブルには、reply_toがNULLのレコードだけを対象としたIDの部分インデックスが設けられているため、そのインデックスを引くだけで処理が完了する。全ての投稿数をPと置くと、計算量はO(log(P))で済む。これは、Pが莫大になっても性能に問題が出ないことを意味している。
+## usersテーブル
 
-PostgreSQLでは、クエリごとの実行計画をEXPLAIN文で調べることができる。以下の出力が得られる。インデックスを使って済むと言っている。推定3024件のレコードを持つインデックスを逆向きに操作して、20件がヒットした段階で処理を打ち切ることが示唆されている。つまりめちゃくちゃ効率的に動くということだ。
+ユーザを管理するusersテーブルに着目しよう。その実際のスキーマは以下のものだ。
+
+```sql:small
+CREATE TABLE users (
+  id BIGINT PRIMARY KEY,
+  email VARCHAR(100) NOT NULL UNIQUE,
+  nickname VARCHAR(50) NOT NULL,
+  password BYTEA NOT NULL,
+  is_admin BOOLEAN NOT NULL,
+  block_strangers BOOLEAN NOT NULL,
+  snippet VARCHAR(4096) NOT NULL,
+  avatar VARCHAR(100),
+  ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
+  updated_at TIMESTAMPTZ,
+  count_followers INT NOT NULL DEFAULT 0,
+  count_followees INT NOT NULL DEFAULT 0,
+  count_posts INT NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, id);
+```
+
+プライマリキーであるidはSnowflake IDだ。ユーザ登録時に指定したメアドを使ってログイン操作を行うが、以後のユーザの識別は全てidを用いる。emailにはUNIQUE制約がついているので、自動的にインデックスが張られ、emailによる検索が効率化する。
+
+ほとんどのメールサービスでは、メアドの大文字と小文字を区別しないので、emailは小文字に正規化して格納する。大文字と小文字を区別するサービスで大文字のメアドを使っている人は、確認メールが届かないので、このシステムを利用できないことになるが、仕方ない。もし大文字小文字の違いを許してしまうと、区別しないサーバでは、同じメアドで大量のアカウントが作れてしまう。
+
+nicknameにはUNIQUE制約がないので、同一のニックネームのユーザが複数いることが許される。この点はTwitterのハンドルネームとは明確に異なる。名前の取り合いを避けるためにそうした。ユーザをニックネームで検索する機能があるので、nicknameにはインデックスを貼っている。大文字小文字の違いを無視して検索を効率化したいので、インデックス内の値は小文字に正規化している。また、idとの複合インデックスになっている。検索には必ず順序指定が伴うので、その順序として使われるidとの複合インデックスにすることで検索が効率化する。そうでないと該当の全件をソートすることになってしまう。
+
+passwordにはハッシュ化したパスワードを記録している。ハッシュ値さえあれば、パスワードそのものを保管していなくても、入力されたパスワードに同じハッシュ関数を適用した結果が一致するかどうかでログイン処理は完遂できる。ハッシュ関数はDBの機能に任せずにアプリ側で任意の関数を呼ぶ方が保守性が良い。
+
+count_followers、count_followees、count_postsは、それぞれ、自分をフォローしたユーザ数、自分がフォローしたユーザ数、自分が投稿した記事数を表している。フォロワーと記事はそれぞれuser_followsとpostsという別テーブルになっていて、他テーブルから導出可能な値を二重管理していることになる。PostgreSQLのストアドファンクションでそれらの自動更新がなされるようになっているので、アプリ側で複雑な処理を書かなくてもトランザクション内で整合性が保たれる。なお、これらの属性は、他テーブルの集合演算結果への推移的従属をしている。これは、第5正規形までのルールには違反していないとしても、広い意味でのドメインキー正規形には違反している。それでも敢行しているのは、そうしないとまともな性能が出ないからだ。ユーザの一覧を表示する度に各ユーザのフォロワー数や投稿数を数え直していたら、すぐに破綻してしまうだろう。
+
+is_adminは、管理者かどうかのフラグである。ガチなサービスであれば、権限を細かく分けて運用するべきなのだろうけども、管理しきれなくなるリスクもある。AWSやGCPのロールの管理で辟易しているので、それへのアンチテーゼとして、管理者ユーザと一般ユーザの2種類で済ませた。何でもできる管理者と、自分のリソースしか扱えない一般ユーザの区分だけでも、SNSとしての運用はできる。
+
+block_strangersは、自分がフォローしているユーザ以外からのイイネや返信を禁止するフラグだ。見知らぬ人に絡まれすぎるとSNS疲れするので、それを避けるためにこの機能がある。投稿単位でこのフラグを管理することも考えたが、過去の投稿のフラグを変えて回るのは大変だし、機械的にやるにしても処理が重くなるので、アカウント単位にした。
+
+その他の属性は、表示用のものだ。snippetは、ユーザの自己紹介のスニペットで、Markdownを解析した後のJSON文字列が入っている。avatarは、アバター画像（アイコン）の保管場所を示す。通常はS3上のパスが入る。ユーザの作成日時を示すcreated_atは列としては存在しないが、`id_to_timestamp(id) AS created_at` などとして同等の値を抽出する。updated_atは、ユーザの更新日時だ。ai_modelは、AIエージェントが読んで自分の行動パターンを決めるのにも用いる。
+
+ユーザ一覧画面で表示する属性は全てusersテーブルにあり、ユーザ詳細画面でのみ表示する属性はuser_detailsテーブルに逃している。
+
+```sql:small
+CREATE TABLE user_details (
+  user_id BIGINT PRIMARY KEY,
+  introduction VARCHAR(65535) NOT NULL,
+  ai_personality VARCHAR(5000),
+  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+);
+```
+
+introductionは自己紹介の全文であり、Markdownの文字列が入っている。ai_personalityはAIの人格を説明するプレーンテキストが入っている。この二つの属性はデータが大きくなりがちなので、それを分離することで、usersの性能が安定する。
+
+emailとpasswordもリスト表示で使われないので、それらをuser_secretsとかいうテーブルに逃がすという案も考えられる。そうすればリスト系クエリの処理効率は少し上がるはずだ。しかし、emailとpasswordは長くならないので、現状ではその分割は敢えてやっていない。最適化による運用コスト削減効果がテーブル数が増えることによるエンジニアリングコストを上回るかどうかが判断材料になる。
+
+## postsテーブル
+
+投稿された記事を管理するpostsテーブルに着目しよう。その実際のスキーマは以下のものだ。
+
+```sql:small
+CREATE TABLE posts (
+  id BIGINT PRIMARY KEY,
+  snippet VARCHAR(4096) NOT NULL,
+  owned_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  reply_to BIGINT REFERENCES posts(id) ON DELETE SET NULL,
+  allow_likes BOOLEAN NOT NULL,
+  allow_replies BOOLEAN NOT NULL,
+  updated_at TIMESTAMPTZ,
+  count_likes INT NOT NULL DEFAULT 0,
+  count_replies INT NOT NULL DEFAULT 0
+);
+CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
+CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
+CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
+CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
+```
+
+プライマリキーであるidはSnowflake IDだ。usersと同様にリストを返す全てのクエリは `ORDER BY id` をすることになり、その順序が時系列になるのは便利だ。
+
+owned_byは、その投稿を書いたユーザのIDだ。ユーザ毎の投稿の一覧を出すクエリのために、当然それにインデックスを貼る必要がある。その際にもID順でデータを返すので、owned_byとidの複合インデックスにすべきだ。
+
+reply_toは返信先の投稿IDだ。返信ではない投稿はreply_toにNULLを持つ。投稿毎の返信の一覧を出すクエリのために、当然それにIDとの複合インデックスを貼る必要がある。また、ログイン後のUIのデフォルト状態では、返信ではない投稿の一覧を出したい。そのクエリを効率化するため、NULL値に限定した、IDとの複合インデックスを作っている。
+
+allow_likesとallow_repliesは、それぞれイイネと返信を受け付けるか否かを示している。ヘルプ記事などは多くのユーザに見られるだろうが、そこにイイネや返信をつけるスパム行為が予期されるため、任意のページのイイネや返信をブロックする機能は必須だ。
+
+その他の属性は、表示用のものだ。snippetは、投稿本文のスニペットで、Markdownを解析した後のJSON文字列が入っている。投稿の作成日時を示すcreated_atは存在しないが、postsと同様にid_to_timestamp関数で動的に生成する。updated_atは更新時刻を意味する。作成時刻を表示したいのは自明だが、更新時刻も重要だ。イイネや返信を集めた後に内容を書き換えると悪戯や意図せぬ誤解の元になるため、少なくとも更新した事実を表示することで警戒を促すべきだ。
+
+count_likesとcount_repliesは、それぞれイイネと返信の数を格納している。usersのcount_followersなどと同様に、ストアドファンクションで値を自動更新している。こちらもドメインキー正規形に違反しているが、投稿のリスト表示で毎回数えるわけにはいかないので、仕方がない。
+
+投稿一覧画面で表示する属性は全てpostsテーブルにあり、投稿詳細画面でのみ表示する属性はpost_detailsテーブルに逃している。
+
+```sql:small
+CREATE TABLE post_details (
+  post_id BIGINT PRIMARY KEY,
+  content VARCHAR(65535) NOT NULL,
+  FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
+);
+```
+
+contentは投稿記事の全文であり、Markdownの文字列が入っている。現状ではそれだけだ。この属性はデータが大きくなりがちなので、それを分離することで、postsの性能が安定する。
+
+## MarkdownとJSONの使い分け
+
+ユーザの自己紹介や投稿の記事の本文はMarkdownである。そのスニペットを作るのは、実はかなり複雑な問題を孕んでいる。単に文字列の長さで前方を抽出すると、マーキングの記号の途中で切られる可能性があり、構造が崩れてしまう。また、記号を文字数に数えると、本来の表示する長さで切ることができない。よって、MarkdownをAST（抽象構文木）として表して、それを走査しながら文字数を数える。ノードの途中で打ち切る際には、中身の文字列のみを切って、ノード自体は生き残らせるという処理を行う。HTMLとして表示する際には、ASTをHTMLに変換すればよい。本文全体をHTMLに変換する際にも、全く同じ手順でASTを介して行う。これによって、本文がMarkdownなのに、表示が決して崩れないスニペットを実現できる。
+
+本文をDBに保存する際には、Markdown文字列をそのまま保存する。ASTをJSONとして保存することもできるが、編集する際に再度Markdownに戻すためにはJSONからMarkdownに変換する完全逆写像を実現する必要があり、それを保証するのが大変だ。また、Markdownをそのまま保存した方がデータ量も小さい。
+
+一方で、スニペットをDBに保存する際には、ASTをJSONとして保存する。スニペットをMarkdownに変換することも考えたが、ASTのままの方が無難だ。こちらも完全逆写像の保証が難しいのと、スニペットを編集することはないのが理由だ。ただし、`{"type":"element","tag":"p","text":"Hello World"}` のような文字列をそのまま保存すると効率が悪いので、JSONの体裁のまま圧縮を掛けている。具体的には、`{"T":"p","X":"Hello World"}` のように、構造の圧縮と属性名の辞書変換をかけている。これは可逆圧縮なので、これによって表示が崩れることはない。
+
+ところで、投稿のタイトルなどの構造をDBスキーマとして表現しないのも、設計の工夫のひとつだ。Markdownの中にはタイトル（H1ヘッダ）が本文に含まれる時もあるし、含まれない時もある。おそらく含まれないことの方が多い。構造に制約を持たせないことで、保守性を高めている。また、全文検索との相性も良い。本文を対象とする中間一致の全文検索（`content ILIKE '%xxx%'`）もサポートするが、タイトルと区別しないことで、クエリが単純になる。
+
+なお、現状では、全文検索のために、pg_trgmなどのq-gramインデックスを貼っているわけではないので、全文検索のクエリはボトルネックになっている。インデックスを貼ればマシになるのは明らかなのにそうしていないのは、それによって更新処理が重くなるからだ。全文検索機能に関しては、バッチ処理でデータを抜き出して作った外部検索エンジンを使うのが無難だ。検索エンジンが重くなってもSNSの主たる機能に影響がないというのは実運用上で非常に重要だ。リアルタイム性が必要であれば、最新のデータだけを扱うオンメモリ検索と組み合わせればよい。検索エンジンにデータを流し込む際には、MarkdownからASTを構築すれば、タイトル等を属性として扱うなどの任意の後処理ができる。
+
+## user_followsテーブルとuser_blocksテーブル
+
+ユーザ同士のフォロー関係を管理するuser_followsテーブルに着目しよう。その実際のスキーマは以下のものだ。
+
+```sql:small
+CREATE TABLE user_follows (
+  follower_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  followee_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (follower_id, followee_id)
+);
+CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, created_at);
+CREATE INDEX idx_user_follows_followee_created_at ON user_follows (followee_id, created_at);
+```
+
+フォロイー（自分がフォローしているユーザ）の一覧と、フォロワー（自分をフォローしているユーザ）の一覧を見るためには、このテーブルが必要だ。usersテーブルにfollowersやfolloweesという属性を持たせて中に配列を入れるという運用もできなくはないが、第1正規形に違反する構造で運用すると確実に破綻するので、テーブル分割が必要だ。フォロワーとフォロイーのペアが主キーになっているので、一意性はそこで保証される。また、フォロイーとフォロワーの一覧をそれぞれ時系列で取得するクエリを効率化するためのインデックスが、created_atとの複合インデックスとして設けられている。
+
+特定のユーザからのイイネや返信をブロックする機能もある。これもブロッカー（ブロックするユーザ）とブロッキー（ブロックされるユーザ）のペアになっていて、それぞれをキーにして一覧が取得しやすいようにインデックスが張られている。
+
+```sql:small
+CREATE TABLE user_blocks (
+  blocker_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  blockee_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (blocker_id, blockee_id)
+);
+CREATE INDEX idx_user_blocks_blocker_created_at ON user_blocks (blocker_id, created_at);
+CREATE INDEX idx_user_blocks_blockee_created_at ON user_blocks (blockee_id, created_at);
+```
+
+粘着質のユーザをブロックしても、ブロック機能だけでは、アカウントを複数作って攻撃されるのは防げない。これに対する根本的な対策はない。ほとぼりが冷めるまでは、フォロイー以外からのイイネや返信を拒絶するのが望ましいが、そのためにusersテーブルのblock_strangersがある。特定ユーザのブロック機能とユーザ属性としての他人ブロック機能は相補的な関係にある。
+
+ブロックしたユーザも依然として自分の投稿を読むことはできる。この挙動はTwitterと同じであり、ブロック機能に情報隠匿の機能がないことは明言しておかねばならない。Twitterでブロック相手も記事が読める仕様変更を時には物議を醸したが、私はこの仕様は妥当だと思う。アカウントを複数作るか第三者にコピペやスクショを頼むだけで簡単に回避できてしまうような隠匿機能に頼るべきではない。そもそも、特定の相手に見られて困るような内容は、不特定多数に見せるべきではない。
+
+## post_tagsテーブル
+
+投稿につけられるタグを管理するpost_tagsテーブルに着目しよう。その実際のスキーマは以下のものだ。
+
+```sql:small
+CREATE TABLE post_tags (
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  name VARCHAR(50) NOT NULL,
+  PRIMARY KEY (post_id, name)
+);
+CREATE INDEX idx_post_tags_name_post_id ON post_tags(name, post_id);
+```
+
+記事を分類するにあたって、カテゴリとタグのどちらを使うべきかという議論がある。どちらも曖昧な概念ではあるが、その区別は重要だ。一般論として、カテゴリは、記事をフォルダ的に分類するものである。つまり、カテゴリを設ける場合、各記事は1つのカテゴリを必ず持つ。カテゴリがない記事は「その他」とかいったカテゴリをつけ、カテゴリが複数ありそうな記事も、便宜上、代表的なカテゴリを1つ選んでそれに所属させることになる。必然的に、カテゴリの種類を予め決めておいて、記事を執筆する際にどれかのカテゴリを選ぶというUXになる。一方で、タグは、記事を投稿する際に思いつきで決めるものだ。タグが無い記事があっても良いし、タグが複数個ある記事があっても良い。管理者不在で不特定多数が記事を投稿するSNSでは、カテゴリは運用しづらい。よって、タグを採用することになる。Twitterがタグ運用なのも同じ理由だろう。
+
+タグは予め定義するものではなく、投稿の属性の位置づけだが、第1正規形を満たすためと、検索性を持たせるために、テーブルを分離する必要がある。一方で、タグをエンティティとしては扱わないので、タグにIDや作成日時のようなメタデータが付くことはない。よって、post_idとnameのペアを主キーとする。
+
+タグ名で記事の一覧を取得するクエリを効率化するために、nameとpost_idの複合インデックスを張っている。複合インデックスにするのは、post_idでの順序付けを効率化するためだ。もしもpost_idがインデックスに含まれないと、nameに一致する投稿を全て取得してからソートすることになり、頻出のタグではすぐ破綻してしまうだろう。
+
+## post_likesテーブル
+
+投稿につけられるイイネを管理するpost_likesテーブルに着目しよう。その実際のスキーマは以下のものだ。
+
+```sql:small
+CREATE TABLE post_likes (
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  liked_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at TIMESTAMPTZ NOT NULL,
+  PRIMARY KEY (post_id, liked_by)
+);
+CREATE INDEX idx_post_likes_post_id_created_at ON post_likes(post_id, created_at);
+CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_at);
+```
+
+個々の記事にイイネをつけたユーザの一覧を出すクエリを効率化すべく、post_idとcreated_atの複合インデックスが貼られている。これもソートを省く必要性のために存在する。また、自分がイイネした記事の一覧ができると、ブックマーク的に使えて便利だ。そのクエリを効率化するために、liked_byとcreated_atの複合インデックスも貼られている。
+
+## event_logsテーブルとnotificationsテーブル
+
+自分がフォローされたり、自分の投稿がイイネされたり、自分の投稿に返信をもらったりした場合、その通知を受け取る機能がある。それらの個々のイベントを全て通知されても鬱陶しいので、通知は日付とリソースの単位でまとめられる。「18 people including Alice, Bob, Nancy have given likes to your post "..." (2025-08-22)」みたいな通知カードになる。ユーザが個々の通知カードをクリックすると、未読状態から既読状態になる。
+
+以上の要件を満たすため、まずはフォローとイイネと返信のイベントを、event_logsテーブルに入れる。そのスキーマは以下のものだ。
+
+```sql:small
+CREATE TABLE event_logs (
+  partition_id SMALLINT NOT NULL,
+  event_id BIGINT NOT NULL,
+  payload VARCHAR(65535) NOT NULL,
+  PRIMARY KEY (partition_id, event_id)
+);
+CREATE INDEX event_logs_event_id_hash ON event_logs USING HASH (event_id);
+```
+
+partition_idは、通知先のユーザIDに対する256の剰余で、[0,255] の値を持つ。event_idはイベント発生時刻を元にしたSnowflake IDだ。partition_idとevent_idの複合キーが主キーであり、勝手にインデックスが張られる。よって、特定のpartition_idに属するレコードをevent_idの昇順で取得するクエリが効率化する。
+
+event_idにハッシュインデックスを張っていることは特筆すべきだ。これは普段のクエリでは使わないが、何らかのログ解析の際にイベントIDで効率的に検索するために存在する。なお、event_idにユニーク制約をつけてもインデックスが作られるので検索性は確保できる。しかし、それでBツリーインデックスが作られると、そちらを使って非効率なクエリ実行計画が立てられる不都合が発覚したので、仕方なくハッシュインデックスにしている。PostgreSQLにはMySQLのようなUSE INDEX文がないのが悔やまれる。
+
+payloadにはイベントの内容のJSONが入っている。例を示す。
 
 ```:xsmall
-Limit (cost=0.29..2.61 rows=20 width=34)
- -> Index Scan Backward using idx_posts_root_id on posts p (cost=0.29..3512.64 rows=30210 width=34)
+{"type": "follow", "followeeId": "9901000000000001", "followerId": "0001000000000003"}
+{"type": "like", "postId": "9902500000001000", "userId": "0001000000000003"}
+{"type": "reply", "postId": "198D9E3364600000", "userId": "0001000000000004", "replyToPostId": "9902500000001000"}
 ```
 
-## listPosts
-
-実運用上は、各投稿の著者のユーザIDを名前に解決したり、各投稿につけられたタグ情報を結果に含めるために、別のテーブルをJOINすることになる。それを実装しているのが、バックエンドのpostsService.listPostsメソッドだ。reply_toがNULLであるという条件をつけると、実際のクエリは以下のものになる。
+イベントログを読み取るワーカーは複数居て、並列処理を行う。各ワーカーは自分が担当するpartition_idの範囲を知っていて、それに相当するRedisのレコードを監視している。各ワーカーは、イベントログの追加が通知される度に、該当の各パーティションで最大100個のイベントを読み込む。したがって、各パーティションで最後に読んだIDを記録するために、event_log_cursorsテーブルを用意する。
 
 ```sql:small
-SELECT
-  p.id, p.snippet, p.owned_by, p.reply_to,
-  p.allow_likes, p.allow_replies, p.updated_at,
-  u.nickname AS owner_nickname, pu.nickname AS reply_to_owner_nickname,
-  p.count_replies AS count_replies, p.count_likes AS count_likes,
-  ARRAY(SELECT pt2.name FROM post_tags pt2
-    WHERE pt2.post_id = p.id ORDER BY pt2.name) AS tags
-FROM posts p
-JOIN users u ON p.owned_by = u.id
-LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
-LEFT JOIN users pu ON parent_post.owned_by = pu.id
-WHERE p.reply_to IS NULL
-ORDER BY p.id DESC OFFSET 0 LIMIT 20;
+CREATE TABLE event_log_cursors (
+  consumer VARCHAR(50) NOT NULL,
+  partition_id SMALLINT NOT NULL,
+  last_event_id BIGINT NOT NULL DEFAULT 0,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (consumer, partition_id)
+);
 ```
 
-最も単純な例と同様にインデックスが使われて、結果を返却するはずだ。その過程で、post_tagsテーブルとusersテーブルを結合している。タグに関しては返却の各行に対応して投稿IDが一致するタグをサブクエリで調べて取得して埋め込んでいる。ユーザ名に関しては、owned_byのIDをユーザ名に解決するためと、reply_toの投稿のowned_byのIDをユーザ名に解決するために、2回に分けてJOINしている。
+consumerはワーカーの種類を識別するためにあるが、現状では "notification" しかない。それとpartition_idの複合キーが主キーなので、両者を指定すると効率的にレコードが取得できる。値として重要なのはlast_event_idだけだ。これは最後に処理したevent_idが入っていて、それより大きいIDのイベントログから読み始めれば良いとわかる。updated_atは追跡用の飾りだ。
 
-これの計算量を考えよう。全ユーザ数をUと置き、全投稿数をPと置く。タグの数はおそらく投稿数の1%くらいの数になるだろうが、Pに比例するのでPとして扱う。まず、該当の投稿のリストを得るのに、インデックスが利けば、O(log(P))+O(20)の計算量がかかる。20は定数なので消えて、O(log(P))になる。そして、ヒットした20件の各々に対し、タグとユーザ名を解決する。インデックスが利けば、タグ取得はO(20･log(P))で、ユーザ名取得はO(20･log(U))だ。20は定数なので消えて、O(log(P))とO(log(U))になる。UはPよりも十分に少ないと仮定すると、全体の支配項はO(log(P))ということになる。つまり、計算量は最も単純な例の時と同じである。
+読み出したイベントは、各ユーザの各リソースの各日を単位としてまとめて通知レコードになる。それを格納するのがnotificationsテーブルだ。
 
-EXPLAIN文で実行計画を調べると、以下の出力が得られる。投稿でヒットしたレコードの各々に対して処理を行うNested Loopがあり、そこでJOINの処理を行っている。結合先のテーブルからデータを取り出すにあたっては全てインデックスが使われ、一部はキャッシュも使われていて、DB本体のシーケンシャルスキャン（Seq Scan）やインデックスのシーケンシャルスキャン（Filter）がひとつもなく、全てがインデックスの条件付き絞り込み（Index Cond）の理想的な処理になっていることがわかる。
+```sql:small
+CREATE TABLE notifications (
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  slot VARCHAR(50) NOT NULL,
+  term VARCHAR(50) NOT NULL,
+  is_read BOOLEAN NOT NULL DEFAULT FALSE,
+  payload VARCHAR(65535) NOT NULL,
+  updated_at TIMESTAMPTZ NOT NULL,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_id, slot, term)
+);
+CREATE INDEX idx_notifications_user_read_ts ON notifications(user_id, is_read, updated_at);
+CREATE INDEX idx_notifications_created_at ON notifications(created_at);
+```
+
+ユーザはuser_idで識別する。slotはリソース種別を表し、ユーザ自身が対象であるフォローでは「follow」という決め打ちの値で、投稿が対象であれば「like:{postId}」や「reply:{postId}」の形式の値になる。termはローカル時間の日付だ。スキーマ上は日付じゃなくても適当な期間ラベルをつけられるようになっている。is_readは未読既読の管理フラグで、updated_atとcreated_atは更新時刻と作成時刻だ。user_idとis_readとupdated_atの複合インデックスがあることで、各ユーザの既読通知の一覧と未読通知の一覧を効率的に取得できる。
+
+通知のpayloadはJSONデータであり、その通知レコードに関わるユーザ数や投稿数とともに、最新10件の履歴を入れる。例を示す。
 
 ```:xsmall
-Limit (cost=1.17..106.53 rows=20 width=133)
- -> Nested Loop Left Join (cost=1.17..159137.24 rows=30210 width=133)
-    -> Nested Loop Left Join (cost=0.89..14010.38 rows=30210 width=100)
-       -> Nested Loop (cost=0.58..13250.15 rows=30210 width=92)
-          -> Index Scan Backward using idx_posts_root_id on posts p (cost=0.29..3512.64 rows=30210 width=83)
-          -> Memoize (cost=0.30..0.41 rows=1 width=17)
-             Cache Key: p.owned_by
-             Cache Mode: logical
-             -> Index Scan using users_pkey on users u (cost=0.29..0.40 rows=1 width=17)
-                Index Cond: (id = p.owned_by)
-       -> Memoize (cost=0.30..0.46 rows=1 width=16)
-          Cache Key: p.reply_to
-          Cache Mode: logical
-          -> Index Scan using posts_pkey on posts parent_post (cost=0.29..0.45 rows=1 width=16)
-             Index Cond: (id = p.reply_to)
-    -> Index Scan using users_pkey on users pu (cost=0.29..0.35 rows=1 width=17)
-       Index Cond: (id = parent_post.owned_by)
-    SubPlan 1
-     -> Index Only Scan using post_tags_pkey on post_tags pt2 (cost=0.42..4.45 rows=2 width=7)
-        Index Cond: (post_id = p.id)
+follow => {"records": [{"ts": 1756002248514, "userId": "0001000000000004"}, {"ts": 1756002138545, "userId": "0001000000000003"}], "countUsers": 2}
+like => {"records": [{"ts": 1756002187871, "userId": "0001000000000004"}, {"ts": 1756002077724, "userId": "0001000000000003"}], "countUsers": 2}
+reply => {"records": [{"ts": 1756002203216, "postId": "198D9E3364600000", "userId": "0001000000000004"}, {"ts": 1756002097802, "postId": "198D9E19A8700000", "userId": "0001000000000003"}, {"ts": 1756002094769, "postId": "198D9E18EAE00000", "userId": "0001000000000003"}], "countPosts": 3, "countUsers": 2}
 ```
 
-## listPostsByFollowees
-
-STGYのSNSとしての典型的なビューは、「自分がフォローしているユーザの投稿の一覧」を見ることである。これがログイン直後のデフォルトのビューでもある。このクエリが効率的に処理できるかどうかがSNSの性能を決めると言って良い。
-
-基本戦略としては、表示件数が20件という定数であることを利用して計算量の削減を図る。全フォロイーの中から直近の投稿が新しい20人を選び、その20人の各々の最新の投稿20件を取り出すことで、最大400件のソートしかしないことが保証できる。実際のクエリは以下のものだ。
-
-```sql:small
-WITH
-f AS (
-  SELECT followee_id
-  FROM user_follows
-  WHERE follower_id = 0x0001000000000013),
-active AS (
-  SELECT DISTINCT ON (p2.owned_by) p2.owned_by, p2.id AS last_id
-  FROM posts p2
-  WHERE p2.owned_by IN (SELECT followee_id FROM f)
-  ORDER BY p2.owned_by, p2.id DESC),
-top_followees AS (
-  SELECT owned_by
-  FROM active
-  ORDER BY last_id DESC LIMIT 20),
-cand AS (
-  SELECT pid.id
-  FROM top_followees tf
-  JOIN LATERAL (
-    SELECT p2.id
-    FROM posts p2
-    WHERE p2.owned_by = tf.owned_by
-    ORDER BY p2.id DESC LIMIT 20) AS pid ON TRUE),
-top AS (
-  SELECT id
-  FROM cand
-  ORDER BY id DESC OFFSET 0 LIMIT 20)
-SELECT
-  p.id, p.snippet, p.owned_by, p.reply_to,
-  p.allow_likes, p.allow_replies, p.updated_at,
-  u.nickname AS owner_nickname, pu.nickname AS reply_to_owner_nickname,
-  p.count_replies AS count_replies, p.count_likes AS count_likes,
-  ARRAY(SELECT pt2.name FROM post_tags pt2
-    WHERE pt2.post_id = p.id ORDER BY pt2.name) AS tags
-FROM top t
-JOIN posts p ON p.id = t.id
-JOIN users u ON p.owned_by = u.id
-LEFT JOIN posts parent_post ON p.reply_to = parent_post.id
-LEFT JOIN users pu ON parent_post.owned_by = pu.id
-ORDER BY t.id DESC;
-```
-
-クエリが込み入っているので、部分ごとに解説しよう。
-
-- フォローしているユーザのIDの一覧をfというビューとして作る。
-- fの各々について最新の投稿IDを紐づけたactiveというビューを作る。
-- activeの内容を投稿IDでソートして、最も最近に投稿をしたトップ20人のユーザIDの集合であるtop_followeesというビューを作る。
-- top_followeesの各ユーザIDにJOIN LATERALして、各ユーザの最新投稿IDを20件ずつ取り出したcandというビューを作る。
-- candの最大400件の投稿IDをソートして、最新20件に絞ったtopというビューを作る。
-- topの各々のIDに対して、listPostsと同様に、各種属性を肉付けする。
-
-これの計算量を考えよう。全ユーザ数をUと置き、全投稿数をPと置き、フォローしているユーザ数をFと置く。フォローしているユーザの一覧を引くのは、インデックスが利けば、O(log(U))だ。フォローしているユーザの各々の最新投稿を調べるのは、インデックスが利けば、O(F･log(P))だ。F人から最新アクティブユーザ20人を選ぶのはtop-kヒープなので、O(F･log(20)) で、20は定数なので、O(F)だ。最新アクティブユーザ20人の各々の最新投稿20件を取り出すと、400件が取れる。400件から20件を選ぶのもtop-kヒープなので、O(400･log(20))で、400も20も定数なので、O(1)だ。そして20件の各々に肉付けする処理は、全てインデックスが利くなら、O(20･log(P))で、20は定数なので、O(log(P))だ。つまり、UはPよりも少ないと仮定すると、全体の計算量の支配項はO(F･log(P))ということになる。Pは莫大に大きくても大丈夫だし、Fはそこそこ大きくても大丈夫ということになる。ユーザ毎の最新投稿時刻をテーブルに分割して持っておくとO(F･log(P))の項がO(F･log(U))になって若干高速化するだろうが、そこまでする必要はないだろう。
-
-あとは、各処理でちゃんとインデックスが効いているかどうかを確かめれば良い。上述のクエリをEXPLAINにかけてみると、以下の出力が得られる。全てがIndex Condの理想的な実行計画になっていることが確かめられた。
-
-```:xsmall
-Nested Loop Left Join (cost=77.17..186.79 rows=8 width=141)
- -> Nested Loop Left Join (cost=76.88..148.35 rows=8 width=108)
-    -> Nested Loop (cost=76.59..145.31 rows=8 width=100)
-       -> Nested Loop (cost=76.31..142.50 rows=8 width=91)
-          -> Limit (cost=76.02..76.04 rows=8 width=8)
-             -> Sort (cost=76.02..76.04 rows=8 width=8)
-                Sort Key: p2_1.id DESC
-                -> Nested Loop (cost=28.98..75.90 rows=8 width=8)
-                   -> Limit (cost=28.69..28.70 rows=4 width=16)
-                      -> Sort (cost=28.69..28.70 rows=4 width=16)
-                         Sort Key: p2.id DESC
-                         -> Unique (cost=7.56..28.65 rows=4 width=16)
-                            -> Incremental Sort (cost=7.56..28.64 rows=4 width=16)
-                               Sort Key: p2.owned_by, p2.id DESC
-                               Presorted Key: p2.owned_by
-                               -> Nested Loop (cost=0.58..28.46 rows=4 width=16)
-                                  -> Index Only Scan using user_follows_pkey on user_follows (cost=0.29..8.32 rows=2 width=8)
-                                     Index Cond: (follower_id = '281474976710675'::bigint)
-                                  -> Index Only Scan using idx_posts_owned_by_id on posts p2 (cost=0.29..10.05 rows=2 width=16)
-                                     Index Cond: (owned_by = user_follows.followee_id)
-                   -> Limit (cost=0.29..11.77 rows=2 width=8)
-                      -> Index Only Scan Backward using idx_posts_owned_by_id on posts p2_1 (cost=0.29..11.77 rows=2 width=8)
-                         Index Cond: (owned_by = p2.owned_by)
-          -> Index Scan using posts_pkey on posts p (cost=0.29..8.31 rows=1 width=83)
-             Index Cond: (id = p2_1.id)
-       -> Index Scan using users_pkey on users u (cost=0.29..0.35 rows=1 width=17)
-          Index Cond: (id = p.owned_by)
-    -> Index Scan using posts_pkey on posts parent_post (cost=0.29..0.38 rows=1 width=16)
-       Index Cond: (id = p.reply_to)
- -> Index Scan using users_pkey on users pu (cost=0.29..0.35 rows=1 width=17)
-    Index Cond: (id = parent_post.owned_by)
- SubPlan 1
-  -> Index Only Scan using post_tags_pkey on post_tags pt2 (cost=0.42..4.45 rows=2 width=7)
-     Index Cond: (post_id = p.id)
-```
-
-## listPostsLikedByUser
-
-自分がイイネした投稿の一覧を得るには、以下のクエリが使われる。
-
-```sql:small
-SELECT
-  p.id, p.snippet, p.owned_by, p.reply_to,
-  p.allow_likes, p.allow_replies, p.updated_at,
-  u.nickname AS owner_nickname, pu.nickname AS reply_to_owner_nickname,
-  p.count_replies AS count_replies, p.count_likes AS count_likes,
-  ARRAY(SELECT pt.name FROM post_tags pt
-    WHERE pt.post_id = p.id ORDER BY pt.name) AS tags
-FROM post_likes pl
-JOIN posts p ON pl.post_id = p.id
-JOIN users u ON p.owned_by = u.id
-LEFT JOIN posts pp ON p.reply_to = pp.id
-LEFT JOIN users pu ON pp.owned_by = pu.id
-WHERE pl.liked_by = 0x0001000000000013
-ORDER BY pl.created_at DESC OFFSET 0 LIMIT 20;
-```
-
-liked_byでの絞り込みにインデックスが利きさえすれば、計算量はlistPostsと同じくO(log(P))で済むはずだ。あとは実行計画見れば、それが確認できる。
-
-```:xsmall
-Limit (cost=1.44..106.72 rows=6 width=141)
- -> Nested Loop Left Join (cost=1.44..106.72 rows=6 width=141)
-    -> Nested Loop Left Join (cost=1.15..77.90 rows=6 width=108)
-       -> Nested Loop (cost=0.86..75.61 rows=6 width=100)
-          -> Nested Loop (cost=0.58..73.50 rows=6 width=91)
-             -> Index Scan Backward using idx_post_likes_liked_by_created_at on post_likes pl (cost=0.29..23.66 rows=6 width=16)
-                Index Cond: (liked_by = '281474976710675'::bigint)
-             -> Index Scan using posts_pkey on posts p (cost=0.29..8.31 rows=1 width=83)
-                Index Cond: (id = pl.post_id)
-          -> Index Scan using users_pkey on users u (cost=0.29..0.35 rows=1 width=17)
-             Index Cond: (id = p.owned_by)
-       -> Index Scan using posts_pkey on posts pp (cost=0.29..0.38 rows=1 width=16)
-          Index Cond: (id = p.reply_to)
-    -> Index Scan using users_pkey on users pu (cost=0.29..0.35 rows=1 width=17)
-       Index Cond: (id = pp.owned_by)
-    SubPlan 1
-     -> Index Only Scan using post_tags_pkey on post_tags pt (cost=0.42..4.45 rows=2 width=7)
-        Index Cond: (post_id = p.id)
-```
-
-## listUsers
-
-usersテーブルを操作するusersServiceという実装にも各種メソッドがあって、それぞれクエリを発行している。どれも軽い処理だが、ユーザの一覧を出すlistUsersだけは、注意を要する。例えば、ユーザのニックネームの前方一致条件で絞り込みを行いつつ、フォロイーもしくはフォロワーを優先して表示するという特殊機能がある。そのクエリは以下のものだ。
-
-```sql:small
-SELECT
-  u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar,
-  u.ai_model, u.updated_at
-FROM users u
-LEFT JOIN user_follows f1 ON
-  f1.follower_id = 0x0001000000000013 AND f1.followee_id = u.id
-LEFT JOIN user_follows f2 ON
-  f2.follower_id = u.id AND f2.followee_id = 0x0001000000000013
-WHERE LOWER(u.nickname) LIKE 'user0002%'
-ORDER BY
-  (u.id = 0x0001000000000013) DESC,
-  (f1.follower_id IS NOT NULL) DESC,
-  (f2.follower_id IS NOT NULL) DESC,
-  u.id ASC OFFSET 0 LIMIT 20;
-```
-
-LIKE演算子による前方一致は、インデックスが利くので、絞り込みを効率的に行うことができる。絞り込んだ上で最後にソートで順位付けするため、ヒット件数が少なければ高速に動く。EXPLAIN文の結果は以下である。
-
-```:xsmall
-Limit (cost=25.12..25.13 rows=3 width=309)
- -> Sort (cost=25.12..25.13 rows=3 width=309)
-    Sort Key: ((u.id = '281474976710675'::bigint)) DESC, ((f1.follower_id IS NOT NULL)) DESC, ((f2.follower_id IS NOT NULL)) DESC, u.id
-    -> Nested Loop Left Join (cost=0.87..25.10 rows=3 width=309)
-       Join Filter: (f2.follower_id = u.id)
-       -> Nested Loop Left Join (cost=0.58..16.73 rows=3 width=314)
-          Join Filter: (f1.followee_id = u.id)
-          -> Index Scan using idx_users_nickname_id on users u (cost=0.29..8.31 rows=3 width=306)
-             Index Cond: ((lower((nickname)::text) ~>=~ 'user0002'::text) AND (lower((nickname)::text) ~<~ 'user0003'::text))
-             Filter: (lower((nickname)::text) ~~ 'user0002%'::text)
-          -> Materialize (cost=0.29..8.33 rows=2 width=16)
-             -> Index Only Scan using user_follows_pkey on user_follows f1 (cost=0.29..8.32 rows=2 width=16)
-                Index Cond: (follower_id = '281474976710675'::bigint)
-       -> Materialize (cost=0.29..8.31 rows=1 width=8)
-          -> Index Scan using idx_user_follows_followee_created_at on user_follows f2 (cost=0.29..8.31 rows=1 width=8)
-             Index Cond: (followee_id = '281474976710675'::bigint)
-```
-
-さて、多くの処理がインデックスを使って行われているので、このクエリは一見速そうだ。実際、絞り込みの文字列が十分に長くてヒット件数が少ない場合には、最下層の文字列インデックスが効率的に働いて、少ない数のレコードを一瞬で返し、ハッシュマップを使って各々のレコードに効率的にスコアリングを施した上で、一瞬で処理を返してくれるだろう。問題は、絞り込みの文字列が短く、ヒット数が多い場合である。その場合、ヒットしたレコードの全てにスコアリングをしてからソートすることになるため、遅くなる。全ユーザ数をUとした場合、絞り込み文字列が1文字なら、Uの何割かがヒットしてしまうので、空間計算量はO(U)となる。それをtop-kヒープでソートする時間計算量は、kが20と小さいので、O(U)である。
-
-なお、LIKE演算子による前方一致検索を効率的に動かすには、ちょっとしたコツがある。DBを作る際に、`POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C --lc-collate=C --lc-ctype=C"` などと指定して、コレーションを無効化することだ。Postgresのデフォルトでは文字列の比較を厳密なバイト比較ではなく、複数の文字を同一視するコレーションをした上で比較する。コレーションがあると、デフォルトのインデックスがLIKE演算子で使えない。その他の場面でも、コレーションのせいで効率が悪化することがありうるので、特にコレーションの要望がない限りは、コレーションは切っておいた方が無難だ。
-
-コレーションを無効化したとしても、大文字と小文字の違いを無視するILIKE演算子には、デフォルトのインデックスは使えない。よって、nicknameのインデックスは `LOWER(nickname) text_pattern_ops` として小文字に正規化したものにしている。小文字に正規化したインデックスを十全に働かせるには、上述のクエリのように、クエリ内の条件も小文字に正規化する必要がある。そうでない場合、インデックスが使われない。
-
-```x:small
-# EXPLAIN SELECT id FROM users WHERE LOWER(nickname) LIKE 'user0002%' ORDER BY ID LIMIT 3;
-Limit (cost=8.34..8.34 rows=3 width=8)
- -> Sort (cost=8.34..8.34 rows=3 width=8)
-    Sort Key: id
-    -> Index Scan using idx_users_nickname_id on users (cost=0.29..8.31 rows=3 width=8)
-       Index Cond: ((lower((nickname)::text) ~>=~ 'user0002'::text) AND (lower((nickname)::text) ~<~ 'user0003'::text))
-       Filter: (lower((nickname)::text) ~~ 'user0002%'::text)
-
-# EXPLAIN SELECT id FROM users WHERE nickname LIKE 'user0002%' ORDER BY ID LIMIT 3;
-Limit (cost=984.21..984.22 rows=3 width=8)
- -> Sort (cost=984.21..984.22 rows=3 width=8)
-    Sort Key: id
-    -> Seq Scan on users (cost=0.00..984.19 rows=3 width=8)
-       Filter: ((nickname)::text ~~ 'user0002%'::text)
-```
-
-## listFriendsByNicknamePrefix
-
-さて、上述のlistUsersメソッドは、それに与えられた外部仕様を満たすためには最善の実装ではあるが、SNSの実運用に供するには効率が悪すぎる。そこで、仕様を単純化したlistFriendsByNicknamePrefixという専用メソッドを設けた。ユーザリストはIDの昇順か降順で返すという原則を崩して、自分、フォロイー、その他の分類順で、各分類の中ではニックネームの辞書順にするという特殊仕様だ。あまりこういう専用メソッドを作りたくはないのだが、こればっかりはやらないと仕方がない。基本戦略としては、自分、フォロイー、その他大勢、を別々に処理して絞り込んでから、最後にUNION ALL結合する。具体的なクエリは以下のものだ。
-
-```sql:small
-WITH
-  self AS (
-    SELECT
-      0 AS prio,
-      u.id, lower(u.nickname) AS nkey
-    FROM users u
-    WHERE u.id = 0x0001000000000013 AND lower(u.nickname) LIKE 'user0002%' ),
-  followees AS (
-    SELECT
-      1 AS prio, u.id, lower(u.nickname) AS nkey
-    FROM user_follows f
-    JOIN users u ON u.id = f.followee_id
-    WHERE f.follower_id = 0x0001000000000013 AND lower(u.nickname) LIKE 'user0002%'
-    ORDER BY lower(u.nickname), u.id LIMIT 20 ),
-  others AS (
-    SELECT
-      3 AS prio, u.id, lower(u.nickname) AS nkey
-    FROM users u
-    WHERE lower(u.nickname) LIKE 'user0002%'
-    ORDER BY lower(u.nickname), u.id LIMIT 20 ),
-  candidates AS (
-    SELECT * FROM self
-    UNION ALL
-    SELECT * FROM followees
-    UNION ALL
-    SELECT * FROM others ),
-  dedup AS (
-    SELECT DISTINCT ON (id)
-      id, prio, nkey
-    FROM candidates
-    ORDER BY id, prio ),
-  page AS (
-    SELECT
-      id, prio, nkey
-    FROM dedup
-    ORDER BY prio, nkey, id OFFSET 0 LIMIT 20 )
-SELECT
-  u.id, u.email, u.nickname, u.is_admin, u.snippet, u.avatar,
-  u.ai_model, u.updated_at
-FROM page p
-JOIN users u ON u.id = p.id
-ORDER BY p.prio, p.nkey, u.id;
-```
-
-selfとfolloweesとothersの3つの枝のそれぞれで最大20件のレコードだけを取り出していて、それぞれが20件だけのスキャンで早期終了することを企図している。取り出すレコードも優先度とIDとニックネームだけの最低限に絞っている。そして、dedup処理では、id, prio, nkeyでソートしてから重複IDを除いていて、prioの最小値が採択されている。最後に最終順序でソートした20件だけに他の属性を肉付けして返している。
-
-これの計算量を考えよう。全ユーザ数をUと置き、フォロイー数をFと置く。自分を調べるのは、O(log(U))だ。フォロイーの一覧を引くのは、O(log(U)+F)だ。検索文字列が短い場合、ほとんど絞り込みが働かないので、フォロイー全員のニックネームを調べることになる。よって、その計算量はO(F･log(U))だ。フォロイーのヒット全てを並び替える計算量はO(F･log(F))だ。全員を調べる枝では、検索文字列が短い場合でも、確実に早期終了するので、計算量はO(log(U))だ。つまり、FはUより十分に小さいと仮定すると、支配項はO(F･log(U))ということになる。EXPLAIN文の結果は以下である。全ての枝（Subquery）でIndex Condが働いていて、早期終了するので、効率は最善だ。フォロイーの枝でフォロイー毎にレコードを調べているのもわかる。
-
-```:xsmall
-Nested Loop (cost=33.92..75.22 rows=5 width=342)
- -> Limit (cost=33.63..33.64 rows=5 width=44)
-    -> Sort (cost=33.63..33.64 rows=5 width=44)
-       Sort Key: "*SELECT* 1".prio, "*SELECT* 1".nkey, "*SELECT* 1".id
-       -> Unique (cost=33.55..33.57 rows=5 width=44)
-          -> Sort (cost=33.55..33.56 rows=5 width=44)
-             Sort Key: "*SELECT* 1".id, "*SELECT* 1".prio
-             -> Append (cost=0.29..33.49 rows=5 width=44)
-                -> Subquery Scan on "*SELECT* 1" (cost=0.29..8.32 rows=1 width=44)
-                   -> Index Scan using users_pkey on users u_1 (cost=0.29..8.31 rows=1 width=44)
-                      Index Cond: (id = '281474976710675'::bigint)
-                      Filter: (lower((nickname)::text) ~~ 'user0002%'::text)
-                -> Subquery Scan on followees (cost=16.75..16.76 rows=1 width=44)
-                   -> Limit (cost=16.75..16.75 rows=1 width=44)
-                      -> Sort (cost=16.75..16.75 rows=1 width=44)
-                         Sort Key: (lower((u_2.nickname)::text)), u_2.id
-                         -> Nested Loop (cost=0.58..16.74 rows=1 width=44)
-                            Join Filter: (f.followee_id = u_2.id)
-                            -> Index Scan using idx_users_nickname_id on users u_2 (cost=0.29..8.31 rows=3 width=17)
-                               Index Cond: ((lower((nickname)::text) ~>=~ 'user0002'::text) AND (lower((nickname)::text) ~<~ 'user0003'::text))
-                               Filter: (lower((nickname)::text) ~~ 'user0002%'::text)
-                            -> Materialize (cost=0.29..8.33 rows=2 width=8)
-                               -> Index Only Scan using user_follows_pkey on user_follows f (cost=0.29..8.32 rows=2 width=8)
-                                  Index Cond: (follower_id = '281474976710675'::bigint)
-                -> Subquery Scan on others (cost=8.34..8.38 rows=3 width=44)
-                   -> Limit (cost=8.34..8.35 rows=3 width=44)
-                      -> Sort (cost=8.34..8.35 rows=3 width=44)
-                         Sort Key: (lower((u_3.nickname)::text)), u_3.id
-                         -> Index Scan using idx_users_nickname_id on users u_3 (cost=0.29..8.32 rows=3 width=44)
-                            Index Cond: ((lower((nickname)::text) ~>=~ 'user0002'::text) AND (lower((nickname)::text) ~<~ 'user0003'::text))
-                            Filter: (lower((nickname)::text) ~~ 'user0002%'::text)
- -> Index Scan using users_pkey on users u (cost=0.29..8.30 rows=1 width=306)
-    Index Cond: (id = "*SELECT* 1".id)
-```
-
-## fetchBatch
-
-通知を作成するワーカーがイベントログを読み出す際には、以下のようなクエリが実行される。
-
-```sql:small
-SELECT
-  event_id, payload
-FROM event_logs
-WHERE partition_id = 2 AND event_id > 1843013374800035840
-ORDER BY partition_id, event_id
-LIMIT 100;
-```
-
-主キーがpartition_idとevent_idの複合キーなので、そのインデックスを使えば効率的な実行計画になるはずだ。イベントログの件数をEとすると、計算量はO(log(E))で済む。非同期処理なので読み出すレコードの数は何件でもよいのだが、何らか理由でワーカーの起動が遅延した際に未処理のイベントを適度なペースで処理するには、100件くらいが丁度よいだろう。
-
-このクエリには落とし穴がある。event_id単体での検索性を確保するためにevent_idにユニーク制約をつけると、そのインデックスを使ってevent_idの対象範囲をスキャンしながら該当のpartition_idのものを拾ってしまうのだ。そこで、そのユニーク制約を除外したところ、以下のような効率的な実行計画になることが確認できた。更新イベントが発生する度にこのクエリは実行されるので、この処理が非効率だと洒落にならない負荷になってしまう。理論的に最善であろうインデックスを張って安心しては不十分で、きちんと実行計画を確認しないと後で地獄を見る。
-
-```:xsmall
- Limit  (cost=0.42..28.02 rows=100 width=95)
-   ->  Index Scan using event_logs_pkey on event_logs  (cost=0.42..8330.90 rows=30179 width=95)
-         Index Cond: ((partition_id = 2) AND (event_id > '1843013374800035840'::bigint))
-```
-
-## listFeed
-
-作成された通知を読み出す際には、以下のようなクエリが実行される。
-
-```sql:small
-SELECT
-  slot, term, is_read, payload, updated_at, created_at
-FROM notifications
-WHERE user_id = 0x0001000000000013 AND is_read = FALSE
-ORDER BY updated_at DESC
-LIMIT 20;
-```
-
-新規通知の有無は定期的に調べられるので、このクエリの効率も重要だ。user_id、is_read、updated_atの複合インデックスを設けているので、そのインデックスが使われるはずだ。通知件数をNとすると、計算量はO(log(N))になる。実行計画を見ても、そのことが確認できる。なお、未読リストと既読リストはis_readの条件値を変えて2回のクエリに分けて取得し、結合結果をIDでソートして最新20件を提示する。この方法だと、ページ送り機能がないUIでも、ひとつひとつ既読にしていくことで、全ての通知を閲覧できる。
-
-```:xsmall
- Limit  (cost=0.29..15.46 rows=5 width=136)
-   ->  Index Scan Backward using idx_notifications_user_read_ts on notifications  (cost=0.29..15.46 rows=5 width=136)
-         Index Cond: ((user_id = '281474976710675'::bigint) AND (is_read = false))
-```
-
-新着通知を調べる際に、毎回同じデータを返すのは無駄だ。よって、クライアントが最後に取得した通知の最新のupdated_atをパラメータとして渡すAPIになっていて、それより新しい未読レコードがなければ304を返すという仕様になっている。
-
-```sql:small
-SELECT 1
-FROM notifications
-WHERE user_id = 0x0001000000000013 AND is_read = FALSE
-AND updated_at > '2025-09-12 04:17:15.536+00'
-LIMIT 1;
-```
-
-この計算量も当然O(log(N))である。実行計画を見てもインデックスが適切に効いていることがわかる。ここで重要なのは、is_read = FALSEを指定して、未読だけを調べていることだ。インデックスの構造に合わせた条件を全て指定することでインデックスがIndex Only Scanにしている。最新の通知は常に未読なので、未読だけ調べれば十分だ。
-
-```
-Limit (cost=0.29..1.91 rows=1 width=4)
- -> Index Only Scan using idx_notifications_user_read_ts on notifications (cost=0.29..8.40 rows=5 width=4)
-    Index Cond: ((user_id = '281474976710675'::bigint) AND (is_read = false) AND (updated_at > '2025-09-12 04:17:15.536+00'::timestamp with time zone))
-```
-
-## 総評
-
-ここまで見てきたように、記事IDやユーザIDのリストを取得するための検索操作は全てインデックス上で行えるように、スキーマとクエリを設計している。各々のインデックスは小さいので、大部分がメモリ上にキャッシュされて、高速にランダムアクセスできる。よって、STGYの主要クエリは、全てスケールするものになっていると言える。
-
-全体の最新投稿を一覧で使うlistPostsの計算量はO(log(P))だ。自分がフォローしているユーザの最新投稿を一覧で使うlistPostsByFolloweesの計算量はO(F･log(P))で済んでいる。イイネした投稿の一覧で使うlistPostsLikedByUserの計算量はO(log(P))だ。その他、全ての投稿一覧はO(log(P))以下の計算量に留めている。ユーザ一覧に関しても同様で、全文検索以外で最も重いlistFriendsByNicknamePrefixの計算量もO(F･log(U))に留めている。
-
-最も重いlistPostsByFolloweesとlistFriendsByNicknamePrefixの計算量はフォロイー数Fに比例する。したがって、フォロイー数を定数項にするために、上限値を決める必要がある。現実的には100人以上フォローしても使い勝手が悪くなるだけなので、200人くらいを上限値にすれば問題ないだろう。Fが定数であれば、計算量はO(log(P))とO(log(U))と表せるわけで、誰がどう見ても健全なシステムになる。
-
-UXの要求仕様でフォロイー数の制限ができない場合、毎回のクエリでフォローしている全員を対象にするのではなく、何らかの簡便法を用いるのが現実的だ。例えば、「重要フォロイー」のサブセットを定期的に抽出してキャッシュに持たせておいて、それを使いつつも、あたかも全員を対象としているかのような振りをするのだ。TwitterもFacebookも当然そうしている。
-
-投稿記事の本文やユーザ自己紹介の本文などのでかいデータを取得する操作も、スケーラビリティの制限要因になる。主キーに紐づいたテーブル本体のレコードを読み出すという操作は、レコード数Nに対してO(log(N))の計算量に過ぎない。しかし、データの規模が大きいと遅くなる。メモリ上のキャッシュに乗り切らないので、毎回のアクセスでストレージにアクセスするからだ。HDDであればシークタイムも加算される。読み出しのデータが大きいと、ストレージとメモリの間のデータ転送量が増えることでも遅くなる。postsとusersテーブルに本文を入れずにスニペットだけを入れるのは、この問題に対する緩和策だ。計算量を対数オーダーにするのは大前提だが、計算量に現れない最適化も地味に性能に効いてくる。
-
-## 余談
-
-スニペットをDBに保存するということは、「どう表示するか」というフロントエンド側のプレゼンテーションの知識をバックエンド側で持つことを意味するため、責任分割の観点では気持ち悪い。本文に関数従属しているスニペットを持つのは第3正規形の違反でもある。スニペットの形式や文字数制限を変えた際にDBのレコードを入れ直さなきゃならないのも嫌だ。しかし、その気持ち悪さを飲んでもやらねばならない。
-
-投稿記事やユーザ自己紹介の本文を分離するという手法は、いわゆる垂直分割の一種である。属性データの特性に合わせて管理方法を分割する手法とも言える。本文だけDBサーバを分けてもいいし、列指向DBに入れてもいいし、S3に入れてクライアントに直接取得させたっていい。古い記事の本文は圧縮した上でアーカイブ用のストレージに入れてもいい。post_likesやuser_followsといったテーブルを別サーバで管理するのも良いだろう。
-
-以上のことを鑑みると、リソースのリストを取得する処理は、常に二段構えで考えるべきだ。条件に該当するIDのリストを生成する段と、そのIDに紐づけて属性を収集する段だ。RDB1台運用だとその2段が一発のクエリでできるが、それでもサブクエリを使って敢えて2段に分けて書くのも良い考えだ。以下の二つのクエリは等価で、後者の方が若干遅いかもしれないが、いずれ垂直分割する際は、後者の書き方をしておく方がバグりにくい。
-
-```sql:small
-SELECT id, nickname, snippet
-FROM USERS WHERE id > 0x0001000000000002
-ORDER BY id LIMIT 10;
-
-WITH cand_ids AS (
-  SELECT id FROM users
-  WHERE id > 0x0001000000000002
-  ORDER BY id LIMIT 10
-)
-SELECT u.id, u.nickname, u.snippet
-FROM users AS u
-JOIN cand_ids AS c ON u.id = c.id
-ORDER BY c.id;
-```
-
-なお、PostgreSQLでは、TOAST（The Oversized-Attribute Storage Technique）という機構があり、2KBを超える大きい列データを暗黙的に圧縮したり別領域に移動したりしてくれる。よって、明示的に分割しなくても、ある程度の最適化は勝手になされる。しかし、それでもなお、大きさや参照頻度が異なるデータは明示的に分割した方が良い。今回の例では、スニペットさえあればリスト取得時には本文を一切参照する必要がない。たとえSELECT文で属性を指定しなくても、同じテーブルにある限り、データは読み込まれてしまう。よって、本文は短くても長くても別テーブルに逃がした方が、主テーブルのページ読み出し量が少なくて済む。
-
-![TOAST図解](/data/help-postgres-toast.png){size=large}
-
-指定した列の短いデータも強制的にTOASTしてくれれば、わざわざテーブル分割しなくても済むのにと思ったが、そのような指定はできない。また、テーブル分割した先では、TOASTしなくてもよいとも思ったが、そのような指定もできない。TOASTの本来の目的は参照局所性の向上ではなく、主テーブルの各レコードのサイズをページサイズ（8KB）以下に抑えることだからだ。なお、TOASTは圧縮もしてくれるが、そのデフォルトの圧縮方式はpglz（LZ77）で、遅い割には圧縮率があまり良くない。なので、今回はDB全体の圧縮設定をLZ4に変更している。LZ4は無圧縮に近い速度で動く割には、自然言語の文字列を半分くらいに圧縮する能力があるので、LZ4に変更する利点は大きい。
-
-垂直分割をしても処理しきれなくなってきたら、いよいよ水平分割をすることになる。ユーザIDを使ってパーティショニングを行うのが率直な方法だろう。ハッシュ値などで機械的に割り振っても良いが、各ユーザがどのパーティションに居るのかを管理するuser_partitionsテーブルを作るか、それに相当するKVSを運用するのが率直だ。usersテーブルを引く時はユーザIDでパーティションを特定してからそのDBサーバにアクセスし、postsテーブルを引く時は著者のユーザIDでパーティションを特定してからそのDBサーバにアクセスする。フォロー関係は、フォロー元のユーザとフォロー先のユーザのDBに二重化して持たせれば良い。垂直分割を経ているならば、もはやJOINするクエリは少なくなっていて、IDのリストを取り出してから別のDBにアクセスする作法は確立しているはずだ。あとはそのアクセス先を個々のIDに紐づいたパーティションにするだけだ。ユーザに紐づいた一連のデータをパーティション間で移動するユーティリティさえ書いておけば、運用はそんなに難しくない。
-
-規模が大きくなると、投稿一覧の「All」のビューがほとんど意味をなさなくなってくる。見知らぬ人の投稿を全て見る奴は居ない。となると、「Pickup」とか「Topics」とかいう位置づけのビューを代わりに置くことになるだろう。最近の投稿だけを集めた小さいデータベースを作っておいて、質が高いものや個々のユーザの興味に近そうなものをバッチ処理で計算して、それを提示するのだ。
-
-規模が大きくなると、「セレブユーザ」の存在が運用上の問題になってくる。数万人からフォローされるユーザが出てくるかもしれない。単一の投稿がものすごい勢いでイイネされたり返信されたりするかもしれない。参照系を最適化するだけでは、更新系が逼迫する問題には対処できない。その場合、セレブユーザ専用のデータ管理機構を整備すべきだろう。投稿の内容はキャッシュサーバから配信し、フォローやイイネや返信はキューに入れて非同期に処理する。通知は意味をなさないので処理を省略する。セレブユーザではなくても、突発的なバズりや炎上はあり得る。それに備えて、負荷が一定を超えたら、全体または特定ユーザを対象とする更新操作を非同期処理に切り替える機構を入れてもよいだろう。時間分散という考え方だ。非同期処理にすると更新結果がすぐに画面に反映されないという問題が起こるが、そこはキャッシュで頑張る。つまり、ユーザ毎の更新内容をキャッシュしておいて、あたかもその更新が既にDBに反映されているかのように、表示に細工をするのだ。
-
-その他にも、キャッシュサーバでできることはたくさんある。例えば、listPostsByFolloweesの中で作っているアクティブユーザリストをキャッシュすると、それだけでDBへの負荷が激減する。各アクティブユーザの最新投稿20件の内容もキャッシュしておけば、多くの場合で、DBに全くアクセスしなくても、タイムライン表示が完結する。DB設計の話から逸脱するのでここでは詳述しないが、キャッシュ機構の設計も重要だ。ただし、キャッシュはいつだって消えるので、キャッシュがなくても満足に動くDB設計をするのが大前提だ。
-
-ここまでいろいろ述べたが、STGYの現状の目標は、スケーラビリティを追求することではない。SNSの基本機能を率直に実装した、シンプルで典型的で教科書的なシステムを作ることだ。少なくとも開発の初期段階では、見通しがよく開発と保守がしやすいスキーマを選択すべきで、現状のスキーマはそれに叶うものになっている。時期尚早の最適化をして、人気が出る前に開発が頓挫するというのでは意味がないので、シンプルな構成から始めるというのも重要だ。
-
-Next: [STGYのバックエンドサーバ](/posts/0002000000000014)
+event_logsテーブルとnotificationsテーブルは急速に肥大化するので、古いレコードを定期的に削除する必要がある。通知作成のワーカーがその処理を行う。event_logsに関しては、event_idから日付を逆算して発生から31日以上のものを削除する。notificationsに関しては、created_atが31日以前のものを削除する
+
+通知対象の各イベントを発生させる処理で、notificationsテーブルを直接更新すれば、わざわざ非同期処理にしなくても通知機能は実現できる。しかし、通知機能はキューとワーカーを使った非同期処理で実装すべきだ。理由は三つある。一つ目は、保守性のためだ。通知カードを作るための複雑な処理をバックエンドサーバから分離することで、コードの見通しが良くなり、更新作業も楽になる。二つ目は、性能のためだ。通知カードを作るためのクエリが応答の遅延を引き起こすことを避けねばならない。三つ目は、レースコンディションの回避のためだ。既存の通知カードを読み出してからまた書き戻すという処理をするので、もし同時更新されるとデータに不整合が起きる可能性がある。今回のキューはユーザIDでパーティショニングしているので、各ワーカーが自分のパーティションのデータを順番に処理する限り、同一ユーザの通知カードが同時に更新されることはない。それでいて、ワーカーは256個まで並列で動かせるので、並列処理性能も十分だ。
+
+## その他のテーブル
+
+ai_modelsテーブルとai_actionsテーブルは、存在してはいるが、現状では使っていない。ai_modelsは、AIエージェントを動かすAIモデル毎に、入出力コストなどのメタデータを記録するものだ。ai_actionsは、AIエージェントの各々が、自分が過去にどのような動作をしたかを記録し、記憶の導線とするものだ。これはJSONのスキーマレスDBとして運用し、雑多な情報を入れまくることになるだろう。詳細の仕様に付いては追って詰めていく。
+
+## VARCHAR vs TEXT
+
+PostgreSQLの主テーブルのシリアライズ方式において、可変長のバイト列は内部的にはVARLENA（variable-length array）と総称される形式になる。126バイト以下のデータは、データサイズを示す1バイトのメタデータをつけて記録され、それを超えるデータはデータサイズを示す4バイトのメタデータをつけて記録される。VARCHAR、TEXT、BYTEA、JSONBなどのデータは全てVARLENAとしてシリアライズされる。
+
+VARCHARとTEXTのどちらを使うべきかという議論があるが、空間効率も処理性能も同じなので、どちらでも良い。VARCHARは文字数の制限があり、TEXTにはそれがない。DBを対象とする全ての入力はデータサイズに制限を設けるべきだが、その制限方法によってVARCHARとTEXTのどちらを使うべきかが決まる。アプリケーション層で文字数の制限をしているなら、VARCHARでも制限するのは二重管理になるのでTEXTが良いという考え方がある。一方で、アプリケーション層では文字数の制限を一切せずに、DB層だけで制限するという考え方もある。
+
+今回は折衷案を取っていて、多くの場所でVARCHARを使っている一方で、アプリケーション層でもデータサイズの制限をしている。基本的にはアプリケーション層で制限をするのだが、万が一忘れてしまった場合でも、致命的なセキュリティホールにならないように、DB層でも緩めの制限をかけるという建付けだ。悪く言えば二重管理なのだが、その管理コストを払ってでも、TEXTよりはVARCHAR(65535)とすることで、事故によるサービス停止のリスクを低減している。
+
+なお、JSONをVARCHARやTEXTとして記録するか、JSONBとして記録するかでは、空間効率に差が出る。VARCHAR等の場合にはJSONの文字列そのものが記録される一方、JSONBの場合はJSONをオブジェクトとして解釈した後にバイナリシリアライザをかけたデータが記録される。JSONBの方がデシリアライズが速いので、そのオブジェクトの中身をクエリの検索条件にしたり、オブジェクトの中身をインデックスに加えたりするような場合は、JSONBに利点がある。しかし、空間効率は文字列としてのJSONの方が良い場合がほとんどなので、検索条件にしないなら、文字列として扱った方が良い。そして、そもそも検索条件にするフィールドを含むなら、そのフィールドの値を列として独立させたほうが良い。
+
+## パスワードハッシュ関数
+
+パスワードの平文を持つと、DBデータの漏洩時に即座に大事故になる。STGY上の投稿やプロファイルデータは全てが公開情報という建付けなのでそれらの漏洩の被害は少ないが、他のサービスと使い回しているかもしれないパスワードが漏れる事態だけは道義的にまずい。運営者である私が他人のパスワードが見られる立場にある事自体が気持ち悪い。よって、パスワードは必ずハッシュ化することになるが、ハッシュ関数の選択が重要になる。古き良きMD5やSHA系列のような高速ハッシュ関数は、現代ではほぼ無力だ。高速かつ省メモリで計算できる設計なので、GPUによる並列ブルートフォース攻撃に弱く、短かったり頻出パターンだったりする弱いパスワードは数分や数時間で解読されてしまう。他のサービスと使い回している場合には当然弱いことが多いので、高速ハッシュ関数の値が漏洩するのは平文が漏洩するのと同等の被害になる。
+
+よって、最近のサイトでは、Argon2やScryptやBcryptなどの、敢えて時間効率と空間効率を悪くしたハッシュ関数を使うことが定番となっている。実行に数100ミリ秒と数MBの作業領域を要するなら、GPUでの並列処理が難しくなる。ログインの度にサーバ側でそのリソースを食うことになるが、セッションが維持される限りは再ログインは必要ないので、頻度は低い。防御側としては許容範囲だが、攻撃側としては現実的でない負荷となるコストパラメータをハッシュ関数に設定することになる。
+
+今回はパスワードのハッシュ化にscryptを使っている。ハッシュ値20バイトとソルト12バイトを連結した32バイトのバイナリとしてDBに保存している。ハッシュ値20バイトの衝突率は1/(2^160)で、ほぼゼロだ。ソルトの衝突率は1/(2^96)なので、世界の全サービスのDBが漏洩しても同じソルト値を見つける確率はほぼゼロだ。ゆえに、現状においては十分な強度と言えるだろう。
+
+しかし、技術は進歩するので、現状において十分な強度であっても、将来的に大丈夫な保証はない。よって、ハッシュ関数のコストパラメータ等も値に連結したself-containedな値を保存することが推奨されていたりもするが、今回はそうしなかった。全てのレコードで同じ値を持たせるのは冗長なので、それらを設定ファイルに逃がすことで、空間効率を向上させるのを優先した。もしも、やんごとない事情でハッシュ関数を置き換える必要が生じたとしても、古いアルゴリズムの値と新しいアルゴリズムの値は区別できるからだ。古いアルゴリズムでの検証をパスするなら古い値で、新しいアルゴリズムでパスするなら新しい値なので、移行期間中は双方を試して、古い値でログインしたなら新しい値を生成して更新すれば良い。新旧でサイズを変えれば、ハッシュ関数を実行しなくても区別できる。現実的には、移行したユーザにフラグを立てていき、移行期間終了間際にフラグが立っていないユーザに通知を送る必要がある。結局フラグで管理するのだから、ハッシュ値がself-containedである意味はあまりない。
+
+## シーダ
+
+DBの初期データを登録するには、シーダと呼ばれる機能を実装する必要がある。本番環境で運用開始時に揃えておくべきデータを投入するモードと、開発環境でテスト用データを投入するモードがあるのが普通だろう。シーダの最も単純な実装は、DBに接続してSQL文を実行するものだ。少なくとも、スキーマ定義などのブートストラップ手順はその方法でやるのが率直だ。しかし、その後のデータ登録は、アプリサーバのエンドポイントにリクエストを送る方式にすべきだ。すなわち、管理者アカウントでログインしてから、通常の管理用APIを使って、ユーザ作成や投稿作成を行うのだ。
+
+管理者アカウントはSQLによるブートストラップ手順で作るのが率直だが、その際に問題になるのが、パスワードの指定である。パスワードのハッシュ関数のロジックはアプリサーバ側にしかないので、ハッシュ値をSQL内のリテラルとして書き込むには、アプリ側のユーティリティを使って任意の文字列のハッシュ値を印字するユーティリティが必要になる。パスワードが空文字列やNULLの場合にはダミーのパスワードでログインできるとかいう仕様を設けることも考えられるが、潜在的なセキュリティホールになってしまうので、ユーティリティをちゃんと書いた方が良い。
+
+テスト用のデータを登録する機能も重要だ。システムテストやユーザテストでフロントエンドでページネーションのテストをするには、複数ページで表示されるデータセットを作っておかねばならない。クエリの分析や負荷テストをするには、実運用を見越した大量のデータを登録する必要がある。ユーザや投稿を登録するだけではなく、フォローしたりイイネしたりブロックしたりといった更新操作の多くはシーダで再現可能にしておくべきだ。開発の初期段階でシーダを作っておくと、後工程が楽になる。
+
+## 整合性の検証と回復
+
+今回のスキーマでは、ドメインキー正規形に違反している属性は限定的だ。usersテーブルのcount_followeesなどのカウンタ属性と、postsテーブルのcount_likesなどのカウンタ属性と、usersテーブルとpostsテーブルのsnippetがそれにあたる。主属性と従属属性の更新はトランザクション内で行われるので不整合が起こることは正常系では無いはずだが、何らかのバグや管理操作のミスを含む異常系では不整合が想定できる。たとえそれらの不整合が起きたとしてもカウンタがずれたりスニペットの表示が崩れたりするだけなので、サービス運営にとって致命傷になるわけではないが、ユーザからクレームが来たら対処できる程度の準備はしておくべきだ。
+
+validate_userやらvalidate_postやらのユーティリティ関数を書いておくと安心だ。ユーザIDや投稿IDを与えると、その整合性検証や回復処理を行うのだ。開発初期にはコマンドラインでそれらを呼び出してテストして、実運用において必要であればエンドポイントを作って管理用ユーティリティから実行できるようにする。
+
+Next: [STGYの主要クエリ分析](/posts/0002000000000014)
 ____EOF____

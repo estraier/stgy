@@ -4,9 +4,8 @@ allowLikes: false
 allowReplies: false
 tags: stgy-help
 content:<<____EOF____
-# STGYの通知機能
+# STGYのその他の機能
 
 今後書きます。
 
-Next: [STGYの本番環境](/posts/0002000000000021)
 ____EOF____

@@ -4,351 +4,353 @@ allowLikes: false
 allowReplies: false
 tags: stgy-help
 content:<<____EOF____
-# STGYのデータベース
+# STGYのインストール
 
-本記事では、STGYのデータベースの設定とスキーマについて解説する。STGYのユーザや記事のデータはPostgreSQLで管理している。
+本記事では、STGYのシステム全体を、開発環境とデモ運用環境の双方にインストールする方法について説明する。Dockerを使った運用と実サービスを使った運用の双方についても説明する。
 
-## 概要と方針
+## Mac OS上での開発環境の構築
 
-データベースのスキーマのER図を以下に示す。主なテーブルは三つで、ユーザを管理するusersテーブルと、各ユーザが投稿した記事を管理するpostsテーブルと、通知を管理するnotificationsテーブルである。その他のテーブルは、正規化と性能最適化の過程でその三つのテーブルから分離されたものだ。
+STGYの開発作業はDockerが動く環境であればどこでもできるが、ここではMac OSでの環境構築方法について述べる。Linuxについてはデモ環境の構築方法と一緒に後述する。Mac上では、作業環境は自宅等のホームネットワーク環境を想定し、外部からの接続を受け付けることは想定しない。Dockerを使って各種の依存サービスを立てた上で、自ら開発するSTGYのバックエンドサービスとフロントエンドサービスをローカルホストで動かしながら開発を進める。検証時のために、バックエンドサービスとフロントエンドサービスも含めて全てDockerで動くようにもする。
 
-![ER図](/data/help-schema-er.png){size=large}
+まずは、Homebrewを入れる。カスタマイズ性の高いMacPortsとかよりも、通り一遍で再現性の高い手順となるHomebrewの方が管理しやすい。
 
-DBのスキーマを設計するにあたり、正規化と性能最適化について理解し区別する必要がある。正規化の目的は、データの多重管理を避けて、すなわち出所を一元化して、不整合が起きにくくすることだ。正規化を進めるとDBの保守性が良くなることが多いが、性能が良くなるとは限らず、むしろ悪化する可能性もある。一方で、性能最適化は、実際に実行するクエリの効率を上げるためにスキーマを変えることで、結果として正規形に違反するスキーマになることもある。多重管理が過ぎると不具合の温床になるし、一元化を追求すると実運用に耐えない性能になるので、両者のバランスを取ることが重要だ。
-
-SNSの文脈では、DBに投げるクエリは2種類に大別して考える。リスト系のクエリと、個別レコード操作のクエリだ。重いのはリスト系の操作で、それがスケーラビリティを決めるので、リスト系クエリをいかに効率化するかを考えてDB設計することになる。今回の例では、ユーザのリスト表示で参照するデータはusersテーブルに集め、ユーザの詳細画面でしか表示しないデータはuser_detailsテーブルに逃がしている。同様に、投稿のリスト表示で参照するデータはpostsテーブルに集め、投稿の詳細画面でしか表示しないデータはpost_detailsテーブルに逃がしている。リスト系クエリで読み込むテーブルを小さくすると、参照局所性が上がり、ストレージ層の入出力のデータ量が減少し、各層のキャッシュが利きやすくなり、結果として性能が上がる。
-
-適切なテーブル分割ができたら、あとはクエリに合わせてインデックスを貼るだけだ。リスト系クエリでの全ての絞り込み操作はインデックスのみを参照するように設計する必要がある。インデックスは参照局所性が高いが、主テーブルは、上述の最適化をもってしても、参照局所性は相対的に低くなる。なので、主テーブルを参照しても良いのは、絞り込みが終わってから、表示するレコードの分だけということにする。この方針に違反したクエリは潜在的にボトルネックになるので、そうならないようにクエリ毎の実行計画を確認しておくことが重要だ。
-
-## Snowflake ID
-
-個々のテーブルのスキーマを解説する前に、レコードのIDの採番方法について知ることが有益だ。STGYでは、Twitterが開発した[Snowflake ID](wiki-ja)の変種を用いる。具体的には、0固定の符号ビットで始まり、その後ろに43ビットで表現したミリ秒のタイムスタンプの後ろにをつけ、その後ろに8ビットで表現したワーカーIDをつけ、その後ろに12ビットのシーケンス番号をつけた、合計64ビットのデータである。これを16進数の文字列で表すと、`198C2E846EE00000` のような16文字になる。
-
-固定桁のタイムスタンプを接頭させることで、数値として比較すると発番の時系列と順序が一致する。10進数や16進数の文字列にした場合でも、固定桁にすれば、辞書順が時系列の順に一致する。この特徴はUUIDv7でも同じだが、Snowflake IDの方が空間効率が良い。Snowflake IDは、数値では8バイトで格納され、文字列（16進数）では16文字とVARLENAメタデータ1バイトの計17バイトで格納される。[UUID](wiki-en)は数値では16バイトで格納され、文字列では36文字とVARLENAメタデータ1バイトの計37バイトで格納される。
-
-今回のSnowflake ID改では、単一の発番器が同一ミリ秒に4096回の発番が可能で、256個まで発番器を同時稼働させられるので、実運用上の衝突のリスクはゼロにできる。そして、プライマリキーの順序が時系列と一致すると、created_atのような従属属性を参照しなくてもソートができるため、より効率的なクエリが書けるようになる。
-
-UUIDの利点は、協調型の採番方法でなくてもユニーク性が担保できることと、予測不能な乱数を含むので、秘密情報としても利用できることだ。逆に言えば、協調型の採番方法ができて、IDを公開情報にする場合は、UUIDでなくても良いということになる。UUIDの欠点は、文字列にすると長いことと、それがブラウザのアドレスバーに出てくるとダサいことだ。効率だけではなく、美観のためにSnowflake IDを採用した部分も大きい。
-
-DBの処理効率を上げるには、IDは数値型で扱った方が良い。IDはインデックスにも格納されることが多いが、インデックスが小さくなれば、それだけキャッシュに乗せられるレコード数が多くなる。例えば、平均10バイトのニックネームと数値型8バイトのIDの複合インデックスはレコードあたり最低18バイトの空間が必要だが、IDを文字列の16バイトにすると最低26バイトの空間が必要になる。実際にはメタデータやパディングが入るので18/26=70%ほどの比率にはならないが、IDを数値型にする方が明白に空間効率が良くなる。また、数値の方が比較関数のCPU効率も良くなる。
-
-とはいえ、インデックスのデータ量は主テーブルに比べればとても小さく、また比較関数のCPU負荷がボトルネックになることは稀だ。IDを文字列型で扱うのにも合理性がある。TypeScriptのnumber型の精度は53ビットなので、64ビットの値を数値として扱うにはbigint型にする必要がある。文字列ならば、数値の型の違いでバグるリスクが避けられるし、JSONに入れるのも楽だ。さらに、将来的に任意の採番方法に乗り換えるのも容易だ。
-
-今回は、IDをDB内部では数値型として扱うが、DB操作を隠蔽するサービス層のメソッドの入出力ではIDは常に16進数文字列として表現することにした。それなら、双方の良いとこ取りになる。型を気にしなければいけない部分はサービス層に隠蔽され、その上層のAPI層でJSONなどに入れる際には文字列を扱うので、不整合は起き得ない。採番方向を変えるとしても、サービス層の内部に変更が隠蔽されていれば、APIを変える必要はない。
-
-元来のSnowflake IDは41ビットでタイムスタンプを扱うので、エポックから2^41ミリ秒後（=69.681年後）にオーバーフローする。2010-11-04T01:42:54がエポックであるTwitterでは、2080年6月にオーバーフローする。2080年問題があるということだ。今回使うFakebook IDの変種は43ビットのタイムスタンプを使うので、寿命は4倍の278.729年となる。1970-00-00T00:00:00がエポックなので、2248年9月まで使える。なお、最上位1ビットを0に固定している仕様なので、そのビットをタイムスタンプで使うと宣言すれば、寿命が2倍になって、2527年6月まで延命できる。ただし、その際にはDB内部のbigintが負数になるので、予めnumeric型やvarchar型にスキーマ変更する必要がある。
-
-Snowflake IDを主キーとするテーブルのレコードは、そもそもcreated_atに相当する列を持たせないという選択ができる。IDから計算すれば良いからだ。created_atを削ると主テーブルの各レコードが8バイト小さくなり、多少ながら性能が向上することになる。インデックスの空間効率に比べれば主テーブルの空間効率の重要性は低いが、小さいは正義である。それに、Snowflake IDがタイムスタンプとワーカーIDとシーケンスIDの複合キーであると捉えると、その一部分であるタイムスタンプに従属するcreated_atを持っている事態は第2正規形違反とも言える。つまり、IDを変更せずにcreated_atが変更できるというのが不整合の潜在的なリスクになっているわけで、それを解消するのは性能だけじゃなくて保守性も良くする。アプリ側のコードが若干複雑になるという懸念はあるが、Snowflake IDをタイムスタンプに変換する以下のような関数を使うと解決する。あたかもcreated_atという列があるかのようにDBに振る舞わせることができるのだ。
-
-```sql:small
-CREATE OR REPLACE FUNCTION id_to_timestamp(id BIGINT)
-RETURNS timestamptz
-LANGUAGE sql
-IMMUTABLE
-STRICT
-PARALLEL SAFE
-AS $$
-  SELECT timestamptz 'epoch'
-       + (id >> 20) * interval '1 millisecond';
-$$;
-
-SELECT
-  id, id_to_timestamp(id) AS created_at
-FROM users;
+```
+/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
+echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
+eval "$(/opt/homebrew/bin/brew shellenv)"
 ```
 
-## usersテーブル
+Homebrewで、その他の必要パッケージを入れる。Docker VMであるColima、Dockerクライアント、composeプラグイン、Node.js、Git、GitHub CLIである。
 
-ユーザを管理するusersテーブルに着目しよう。その実際のスキーマは以下のものだ。
-
-```sql:small
-CREATE TABLE users (
-  id BIGINT PRIMARY KEY,
-  email VARCHAR(100) NOT NULL UNIQUE,
-  nickname VARCHAR(50) NOT NULL,
-  password BYTEA NOT NULL,
-  is_admin BOOLEAN NOT NULL,
-  block_strangers BOOLEAN NOT NULL,
-  snippet VARCHAR(4096) NOT NULL,
-  avatar VARCHAR(100),
-  ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
-  updated_at TIMESTAMPTZ,
-  count_followers INT NOT NULL DEFAULT 0,
-  count_followees INT NOT NULL DEFAULT 0,
-  count_posts INT NOT NULL DEFAULT 0
-);
-CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, id);
+```
+brew install colima docker docker-compose node git gh
 ```
 
-プライマリキーであるidはSnowflake IDだ。ユーザ登録時に指定したメアドを使ってログイン操作を行うが、以後のユーザの識別は全てidを用いる。emailにはUNIQUE制約がついているので、自動的にインデックスが張られ、emailによる検索が効率化する。
+Colimaを起動する。初回の起動ではリソースの使用量をオプションで指定する。
 
-ほとんどのメールサービスでは、メアドの大文字と小文字を区別しないので、emailは小文字に正規化して格納する。大文字と小文字を区別するサービスで大文字のメアドを使っている人は、確認メールが届かないので、このシステムを利用できないことになるが、仕方ない。もし大文字小文字の違いを許してしまうと、区別しないサーバでは、同じメアドで大量のアカウントが作れてしまう。
-
-nicknameにはUNIQUE制約がないので、同一のニックネームのユーザが複数いることが許される。この点はTwitterのハンドルネームとは明確に異なる。名前の取り合いを避けるためにそうした。ユーザをニックネームで検索する機能があるので、nicknameにはインデックスを貼っている。大文字小文字の違いを無視して検索を効率化したいので、インデックス内の値は小文字に正規化している。また、idとの複合インデックスになっている。検索には必ず順序指定が伴うので、その順序として使われるidとの複合インデックスにすることで検索が効率化する。そうでないと該当の全件をソートすることになってしまう。
-
-passwordにはハッシュ化したパスワードを記録している。ハッシュ値さえあれば、パスワードそのものを保管していなくても、入力されたパスワードに同じハッシュ関数を適用した結果が一致するかどうかでログイン処理は完遂できる。ハッシュ関数はDBの機能に任せずにアプリ側で任意の関数を呼ぶ方が保守性が良い。
-
-count_followers、count_followees、count_postsは、それぞれ、自分をフォローしたユーザ数、自分がフォローしたユーザ数、自分が投稿した記事数を表している。フォロワーと記事はそれぞれuser_followsとpostsという別テーブルになっていて、他テーブルから導出可能な値を二重管理していることになる。PostgreSQLのストアドファンクションでそれらの自動更新がなされるようになっているので、アプリ側で複雑な処理を書かなくてもトランザクション内で整合性が保たれる。なお、これらの属性は、他テーブルの集合演算結果への推移的従属をしている。これは、第5正規形までのルールには違反していないとしても、広い意味でのドメインキー正規形には違反している。それでも敢行しているのは、そうしないとまともな性能が出ないからだ。ユーザの一覧を表示する度に各ユーザのフォロワー数や投稿数を数え直していたら、すぐに破綻してしまうだろう。
-
-is_adminは、管理者かどうかのフラグである。ガチなサービスであれば、権限を細かく分けて運用するべきなのだろうけども、管理しきれなくなるリスクもある。AWSやGCPのロールの管理で辟易しているので、それへのアンチテーゼとして、管理者ユーザと一般ユーザの2種類で済ませた。何でもできる管理者と、自分のリソースしか扱えない一般ユーザの区分だけでも、SNSとしての運用はできる。
-
-block_strangersは、自分がフォローしているユーザ以外からのイイネや返信を禁止するフラグだ。見知らぬ人に絡まれすぎるとSNS疲れするので、それを避けるためにこの機能がある。投稿単位でこのフラグを管理することも考えたが、過去の投稿のフラグを変えて回るのは大変だし、機械的にやるにしても処理が重くなるので、アカウント単位にした。
-
-その他の属性は、表示用のものだ。snippetは、ユーザの自己紹介のスニペットで、Markdownを解析した後のJSON文字列が入っている。avatarは、アバター画像（アイコン）の保管場所を示す。通常はS3上のパスが入る。ユーザの作成日時を示すcreated_atは列としては存在しないが、`id_to_timestamp(id) AS created_at` などとして同等の値を抽出する。updated_atは、ユーザの更新日時だ。ai_modelは、AIエージェントが読んで自分の行動パターンを決めるのにも用いる。
-
-ユーザ一覧画面で表示する属性は全てusersテーブルにあり、ユーザ詳細画面でのみ表示する属性はuser_detailsテーブルに逃している。
-
-```sql:small
-CREATE TABLE user_details (
-  user_id BIGINT PRIMARY KEY,
-  introduction VARCHAR(65535) NOT NULL,
-  ai_personality VARCHAR(5000),
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
-);
+```
+colima start --cpu 4 --memory 8 --disk 100
 ```
 
-introductionは自己紹介の全文であり、Markdownの文字列が入っている。ai_personalityはAIの人格を説明するプレーンテキストが入っている。この二つの属性はデータが大きくなりがちなので、それを分離することで、usersの性能が安定する。
+DockerクライアントがColimaを使うように設定する。
 
-emailとpasswordもリスト表示で使われないので、それらをuser_secretsとかいうテーブルに逃がすという案も考えられる。そうすればリスト系クエリの処理効率は少し上がるはずだ。しかし、emailとpasswordは長くならないので、現状ではその分割は敢えてやっていない。最適化による運用コスト削減効果がテーブル数が増えることによるエンジニアリングコストを上回るかどうかが判断材料になる。
-
-## postsテーブル
-
-投稿された記事を管理するpostsテーブルに着目しよう。その実際のスキーマは以下のものだ。
-
-```sql:small
-CREATE TABLE posts (
-  id BIGINT PRIMARY KEY,
-  snippet VARCHAR(4096) NOT NULL,
-  owned_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  reply_to BIGINT REFERENCES posts(id) ON DELETE SET NULL,
-  allow_likes BOOLEAN NOT NULL,
-  allow_replies BOOLEAN NOT NULL,
-  updated_at TIMESTAMPTZ,
-  count_likes INT NOT NULL DEFAULT 0,
-  count_replies INT NOT NULL DEFAULT 0
-);
-CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
-CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
-CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
-CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
+```
+docker context use colima
 ```
 
-プライマリキーであるidはSnowflake IDだ。usersと同様にリストを返す全てのクエリは `ORDER BY id` をすることになり、その順序が時系列になるのは便利だ。
+~/.docker/config.jsonに以下のような記述をして、ColimaとComposeプラグインを利用可能にする。Colima等の既存の設定があればそのまま残す。
 
-owned_byは、その投稿を書いたユーザのIDだ。ユーザ毎の投稿の一覧を出すクエリのために、当然それにインデックスを貼る必要がある。その際にもID順でデータを返すので、owned_byとidの複合インデックスにすべきだ。
-
-reply_toは返信先の投稿IDだ。返信ではない投稿はreply_toにNULLを持つ。投稿毎の返信の一覧を出すクエリのために、当然それにIDとの複合インデックスを貼る必要がある。また、ログイン後のUIのデフォルト状態では、返信ではない投稿の一覧を出したい。そのクエリを効率化するため、NULL値に限定した、IDとの複合インデックスを作っている。
-
-allow_likesとallow_repliesは、それぞれイイネと返信を受け付けるか否かを示している。ヘルプ記事などは多くのユーザに見られるだろうが、そこにイイネや返信をつけるスパム行為が予期されるため、任意のページのイイネや返信をブロックする機能は必須だ。
-
-その他の属性は、表示用のものだ。snippetは、投稿本文のスニペットで、Markdownを解析した後のJSON文字列が入っている。投稿の作成日時を示すcreated_atは存在しないが、postsと同様にid_to_timestamp関数で動的に生成する。updated_atは更新時刻を意味する。作成時刻を表示したいのは自明だが、更新時刻も重要だ。イイネや返信を集めた後に内容を書き換えると悪戯や意図せぬ誤解の元になるため、少なくとも更新した事実を表示することで警戒を促すべきだ。
-
-count_likesとcount_repliesは、それぞれイイネと返信の数を格納している。usersのcount_followersなどと同様に、ストアドファンクションで値を自動更新している。こちらもドメインキー正規形に違反しているが、投稿のリスト表示で毎回数えるわけにはいかないので、仕方がない。
-
-投稿一覧画面で表示する属性は全てpostsテーブルにあり、投稿詳細画面でのみ表示する属性はpost_detailsテーブルに逃している。
-
-```sql:small
-CREATE TABLE post_details (
-  post_id BIGINT PRIMARY KEY,
-  content VARCHAR(65535) NOT NULL,
-  FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
-);
+```
+{
+	"auths": {},
+	"currentContext": "colima",
+  "cliPluginsExtraDirs": ["/opt/homebrew/lib/docker/cli-plugins"]
+}
 ```
 
-contentは投稿記事の全文であり、Markdownの文字列が入っている。現状ではそれだけだ。この属性はデータが大きくなりがちなので、それを分離することで、postsの性能が安定する。
+Dockerクライアントの動作確認をする。それぞれ、「Docker Compose version 2.39.3」的な文字列と「Hello from Docker!」が表示されれば成功。
 
-## MarkdownとJSONの使い分け
-
-ユーザの自己紹介や投稿の記事の本文はMarkdownである。そのスニペットを作るのは、実はかなり複雑な問題を孕んでいる。単に文字列の長さで前方を抽出すると、マーキングの記号の途中で切られる可能性があり、構造が崩れてしまう。また、記号を文字数に数えると、本来の表示する長さで切ることができない。よって、MarkdownをAST（抽象構文木）として表して、それを走査しながら文字数を数える。ノードの途中で打ち切る際には、中身の文字列のみを切って、ノード自体は生き残らせるという処理を行う。HTMLとして表示する際には、ASTをHTMLに変換すればよい。本文全体をHTMLに変換する際にも、全く同じ手順でASTを介して行う。これによって、本文がMarkdownなのに、表示が決して崩れないスニペットを実現できる。
-
-本文をDBに保存する際には、Markdown文字列をそのまま保存する。ASTをJSONとして保存することもできるが、編集する際に再度Markdownに戻すためにはJSONからMarkdownに変換する完全逆写像を実現する必要があり、それを保証するのが大変だ。また、Markdownをそのまま保存した方がデータ量も小さい。
-
-一方で、スニペットをDBに保存する際には、ASTをJSONとして保存する。スニペットをMarkdownに変換することも考えたが、ASTのままの方が無難だ。こちらも完全逆写像の保証が難しいのと、スニペットを編集することはないのが理由だ。ただし、`{"type":"element","tag":"p","text":"Hello World"}` のような文字列をそのまま保存すると効率が悪いので、JSONの体裁のまま圧縮を掛けている。具体的には、`{"T":"p","X":"Hello World"}` のように、構造の圧縮と属性名の辞書変換をかけている。これは可逆圧縮なので、これによって表示が崩れることはない。
-
-ところで、投稿のタイトルなどの構造をDBスキーマとして表現しないのも、設計の工夫のひとつだ。Markdownの中にはタイトル（H1ヘッダ）が本文に含まれる時もあるし、含まれない時もある。おそらく含まれないことの方が多い。構造に制約を持たせないことで、保守性を高めている。また、全文検索との相性も良い。本文を対象とする中間一致の全文検索（`content ILIKE '%xxx%'`）もサポートするが、タイトルと区別しないことで、クエリが単純になる。
-
-なお、現状では、全文検索のために、pg_trgmなどのq-gramインデックスを貼っているわけではないので、全文検索のクエリはボトルネックになっている。インデックスを貼ればマシになるのは明らかなのにそうしていないのは、それによって更新処理が重くなるからだ。全文検索機能に関しては、バッチ処理でデータを抜き出して作った外部検索エンジンを使うのが無難だ。検索エンジンが重くなってもSNSの主たる機能に影響がないというのは実運用上で非常に重要だ。リアルタイム性が必要であれば、最新のデータだけを扱うオンメモリ検索と組み合わせればよい。検索エンジンにデータを流し込む際には、MarkdownからASTを構築すれば、タイトル等を属性として扱うなどの任意の後処理ができる。
-
-## user_followsテーブルとuser_blocksテーブル
-
-ユーザ同士のフォロー関係を管理するuser_followsテーブルに着目しよう。その実際のスキーマは以下のものだ。
-
-```sql:small
-CREATE TABLE user_follows (
-  follower_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  followee_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (follower_id, followee_id)
-);
-CREATE INDEX idx_user_follows_follower_created_at ON user_follows (follower_id, created_at);
-CREATE INDEX idx_user_follows_followee_created_at ON user_follows (followee_id, created_at);
+```
+docker compose version
+docker run --rm hello-world
 ```
 
-フォロイー（自分がフォローしているユーザ）の一覧と、フォロワー（自分をフォローしているユーザ）の一覧を見るためには、このテーブルが必要だ。usersテーブルにfollowersやfolloweesという属性を持たせて中に配列を入れるという運用もできなくはないが、第1正規形に違反する構造で運用すると確実に破綻するので、テーブル分割が必要だ。フォロワーとフォロイーのペアが主キーになっているので、一意性はそこで保証される。また、フォロイーとフォロワーの一覧をそれぞれ時系列で取得するクエリを効率化するためのインデックスが、created_atとの複合インデックスとして設けられている。
+Node.jsの動作確認をする。それぞれ、「v24.4.0」と「11.4.2」的な文字列が表示されれば成功。
 
-特定のユーザからのイイネや返信をブロックする機能もある。これもブロッカー（ブロックするユーザ）とブロッキー（ブロックされるユーザ）のペアになっていて、それぞれをキーにして一覧が取得しやすいようにインデックスが張られている。
-
-```sql:small
-CREATE TABLE user_blocks (
-  blocker_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  blockee_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (blocker_id, blockee_id)
-);
-CREATE INDEX idx_user_blocks_blocker_created_at ON user_blocks (blocker_id, created_at);
-CREATE INDEX idx_user_blocks_blockee_created_at ON user_blocks (blockee_id, created_at);
+```
+node -v
+npm -v
 ```
 
-粘着質のユーザをブロックしても、ブロック機能だけでは、アカウントを複数作って攻撃されるのは防げない。これに対する根本的な対策はない。ほとぼりが冷めるまでは、フォロイー以外からのイイネや返信を拒絶するのが望ましいが、そのためにusersテーブルのblock_strangersがある。特定ユーザのブロック機能とユーザ属性としての他人ブロック機能は相補的な関係にある。
+GitHubにログインする。アクセスキーを聞かれるので、事前にGitHub上でアクセスキーを作っておくこと。
 
-ブロックしたユーザも依然として自分の投稿を読むことはできる。この挙動はTwitterと同じであり、ブロック機能に情報隠匿の機能がないことは明言しておかねばならない。Twitterでブロック相手も記事が読める仕様変更を時には物議を醸したが、私はこの仕様は妥当だと思う。アカウントを複数作るか第三者にコピペやスクショを頼むだけで簡単に回避できてしまうような隠匿機能に頼るべきではない。そもそも、特定の相手に見られて困るような内容は、不特定多数に見せるべきではない。
-
-## post_tagsテーブル
-
-投稿につけられるタグを管理するpost_tagsテーブルに着目しよう。その実際のスキーマは以下のものだ。
-
-```sql:small
-CREATE TABLE post_tags (
-  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-  name VARCHAR(50) NOT NULL,
-  PRIMARY KEY (post_id, name)
-);
-CREATE INDEX idx_post_tags_name_post_id ON post_tags(name, post_id);
+```
+gh auth login
 ```
 
-記事を分類するにあたって、カテゴリとタグのどちらを使うべきかという議論がある。どちらも曖昧な概念ではあるが、その区別は重要だ。一般論として、カテゴリは、記事をフォルダ的に分類するものである。つまり、カテゴリを設ける場合、各記事は1つのカテゴリを必ず持つ。カテゴリがない記事は「その他」とかいったカテゴリをつけ、カテゴリが複数ありそうな記事も、便宜上、代表的なカテゴリを1つ選んでそれに所属させることになる。必然的に、カテゴリの種類を予め決めておいて、記事を執筆する際にどれかのカテゴリを選ぶというUXになる。一方で、タグは、記事を投稿する際に思いつきで決めるものだ。タグが無い記事があっても良いし、タグが複数個ある記事があっても良い。管理者不在で不特定多数が記事を投稿するSNSでは、カテゴリは運用しづらい。よって、タグを採用することになる。Twitterがタグ運用なのも同じ理由だろう。
+開発作業用のディレクトリを作り、stgyのリポジトリのクローンを作成する。以後、stgyディレクトリで作業を行う。
 
-タグは予め定義するものではなく、投稿の属性の位置づけだが、第1正規形を満たすためと、検索性を持たせるために、テーブルを分離する必要がある。一方で、タグをエンティティとしては扱わないので、タグにIDや作成日時のようなメタデータが付くことはない。よって、post_idとnameのペアを主キーとする。
-
-タグ名で記事の一覧を取得するクエリを効率化するために、nameとpost_idの複合インデックスを張っている。複合インデックスにするのは、post_idでの順序付けを効率化するためだ。もしもpost_idがインデックスに含まれないと、nameに一致する投稿を全て取得してからソートすることになり、頻出のタグではすぐ破綻してしまうだろう。
-
-## post_likesテーブル
-
-投稿につけられるイイネを管理するpost_likesテーブルに着目しよう。その実際のスキーマは以下のものだ。
-
-```sql:small
-CREATE TABLE post_likes (
-  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
-  liked_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  created_at TIMESTAMPTZ NOT NULL,
-  PRIMARY KEY (post_id, liked_by)
-);
-CREATE INDEX idx_post_likes_post_id_created_at ON post_likes(post_id, created_at);
-CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_at);
+```
+mkdir ~/dev
+cd ~/dev
+git clone git@github.com:estraier/stgy.git
+cd stgy
 ```
 
-個々の記事にイイネをつけたユーザの一覧を出すクエリを効率化すべく、post_idとcreated_atの複合インデックスが貼られている。これもソートを省く必要性のために存在する。また、自分がイイネした記事の一覧ができると、ブックマーク的に使えて便利だ。そのクエリを効率化するために、liked_byとcreated_atの複合インデックスも貼られている。
+## リポジトリ構成
 
-## event_logsテーブルとnotificationsテーブル
+STGYの関連パッケージは全て単一のリポジトリに収められている。いわゆるmonorepo構成である。主要なディレクトリ構造とファイルを以下に示す。
 
-自分がフォローされたり、自分の投稿がイイネされたり、自分の投稿に返信をもらったりした場合、その通知を受け取る機能がある。それらの個々のイベントを全て通知されても鬱陶しいので、通知は日付とリソースの単位でまとめられる。「18 people including Alice, Bob, Nancy have given likes to your post "..." (2025-08-22)」みたいな通知カードになる。ユーザが個々の通知カードをクリックすると、未読状態から既読状態になる。
+- package.json : NPMでパッケージ管理をするための設定ファイル
+- package-lock.json : 依存パッケージのバージョンを固定するための設定ファイル
+- docker-compose.yml : 依存サービスをDockerで管理するための設定ファイル
+- docker-compose.vps.yml : VPSのデモ環境用に上記設定を上書きするためのファイル
+- env-dev.txt : docker composeや他のスクリプトが読み込む環境設定ファイル
+- env-vps.txt : VPSのデモ環境用の環境変数設定ファイル
+- Caddyfile : リバースプロクシCaddyの設定ファイル
+- Caddyfile.vps : VPSのデモ環境用で使うCaddyの設定ファイル
+- packages/ : 独自の依存パッケージ群のディレクトリ
+- backend/ : バックエンドサービスのソースコードや設定ファイル一式のディレクトリ
+- frontend/ : フロントエンドサービスのソースコードや設定ファイル一式のディレクトリ
+- scripts/ : 管理用の便利スクリプト一式のディレクトリ
+- tests/ : テスト用のコードやファイル一式のディレクトリ
+- postgres/ : PostgreSQLの設定一式のディレクトリ
+- minio/ : MinIOの設定一式のディレクトリ
+- seeder/ : 初期登録データ一式のディレクトリ
 
-以上の要件を満たすため、まずはフォローとイイネと返信のイベントを、event_logsテーブルに入れる。そのスキーマは以下のものだ。
+パッケージ管理はNPMで行っており、その設定はpackage.jsonに書いてある。Dockerの管理はそこにあるスクリプトコマンドを叩いて行う。ワークスペース構成を取っていて、packages/markdownとbackendとfrontendの下にあるpackage.jsonはその管理下にある。それぞれのサブパッケージには、以下の共通したファイルやディレクトリが格納されている。
 
-```sql:small
-CREATE TABLE event_logs (
-  partition_id SMALLINT NOT NULL,
-  event_id BIGINT NOT NULL,
-  payload VARCHAR(65535) NOT NULL,
-  PRIMARY KEY (partition_id, event_id)
-);
-CREATE INDEX event_logs_event_id_hash ON event_logs USING HASH (event_id);
+- package.json : NPMでパッケージ管理をするための設定ファイル
+- tsconfig.json : TypeScriptのビルド設定ファイル
+- tsconfig.lint.json : eslintが使うビルド設定ファイル
+- eslint.config.mjs : eslintによるコード解析の設定ファイル
+- jest.config.js : jestによるユニットテストの設定ファイル
+- src/ : ソースコード一式
+
+依存パッケージのインストールはプロジェクトルート直下に作られるnode_modulesディレクトリに格納され、それらのバージョンはpackage-lock.jsonで固定される。以下のコマンドで依存関係を処理する。
+
+- npm ci : 固定されたバージョンの依存パッケージをインストールする
+- npm install : package.jsonの記述に基づき、新しいバージョンの依存パッケージをインストールする
+- npm run clean : 依存パッケージを消す
+
+backendとfrontendにはDockerfileがあり、それぞれのサービスのDockerインスタンスの設定が書いてある。それ以外の依存サービスの設定はdocker-compose.ymlに直接書いてある。docker composeは.envファイルから環境変数を読み込むが、それはリポジトリには含まれない。env-dev.txtかenv-vps.txtを.envにコピーするかシンボリックリンクを張るかしてから、それを環境に合わせて編集して使う。.envにはパスワードなどの秘密情報が書かれるので、Gitの管理対象にすべきではない。
+
+scriptsの下には、システムの管理に必要なスクリプトが入っている。多くのものはnpmを介して起動される。.envの環境変数から設定を読み込むので、.envを事前に作っておく必要がある。
+
+- reset-data.sh : PostgreSQLのデータベースを初期化し、seederの初期データを投入する
+- reset-minio-data.sh : MinIOのデータベースを初期化する
+- reset-cache.sh : Redisのキャッシュデータを初期化する
+- edit_users.py : ユーザを作成または更新する
+- edit_posts.py : 投稿を作成または更新する
+- user_actions.py : 個々のユーザでログインしてイイネやフォローやブロックを行う
+- make_volume_test.py : 検証用に大量のユーザと投稿を作成する
+- run-local-backend.sh : バックエンドサービスをローカルホスト上で起動する
+- run-local-frontend.sh : フロントエンドサービスをローカルホスト上で起動する
+- run-databaseUtil.sh : データベース管理用のユーティリティ
+- run-storageUtil.sh : メディアストレージ管理用のユーティリティ
+
+postgresの下にはデータベースのスキーマ定義を行うSQLファイルが置いてある。minioの下にはバケットの初期設定を行うスクリプトが置いてある。
+
+## 開発環境でのサービスの起動と終了
+
+Macの開発環境においては、以下のコマンドでDockerホストVNの起動と終了を行う。
+
+- colima start
+  - Colimaを起動
+- colima stop
+  - Colimaを停止する
+- colima restart
+  - Colimaを再起動する
+
+以下のコマンドでDocker上のサービスの起動と終了を行う。
+
+- npm run docker:init
+  - ホスト全体を初期化。他プロジェクトも含めてすべてのコンテナとイメージとボリュームを強制削除する。データも消える。
+- npm run docker:reset
+  - Dockerイメージを削除して再作成する。
+- npm run docker:build
+  - Dockerイメージを作成する。
+- npm run docker:destroy
+  - Dockerイメージを削除する。
+- npm run docker:create
+  - Dockerコンテナを作成する。必要ならネットワークやボリュームも作成。イメージのpullも行う。
+- npm run docker:remove
+  - Dockerコンテナを削除する。
+- npm run docker:up
+  - Dockerイメージの作成、Dockerコンテナの作成、Dockerコンテナの起動を一気に行う。
+- npm run docker:down
+  - Dockerコンテナの停止と削除を一気に行う。
+- npm run docker:start
+  - Dockerコンテナを起動する。
+- npm run docker:stop
+  - Dockerコンテナを停止する。
+
+Docker関係のコマンドを利用目的別に整理する。
+
+- 最も簡単に全サービスの起動と終了を行う。
+  - npm run docker:up
+  - npm run docker:stop
+- まっさらな状態から逐次的にサービス起動状態までたどり着く
+  - npm run docker:build
+  - npm run docker:create
+  - npm run docker:start
+- サービス起動状態から逐次的にまっさらな状態に戻す。
+  - npm run docker:stop
+  - npm run docker:remove
+  - npm run docker:destroy
+- ビルド設定やTypeScriptコードの変更を強制反映してサービスを再起動する。
+  - npm run docker:reset
+  - npm run docker:start
+- ビルド設定やTypeScriptコードの変更を差分反映してサービスを再起動する。
+  - npm run docker:up
+- Docker環境全体とデータを完全初期化する。ストレージ逼迫の場合もこれを使う。
+  - npm run docker:init
+
+開発中には、backendとfrontendはローカルホストで起動し、その他の依存サービスのみをDockerで起動するのが楽である。以下の手順で行う。
+
+- npm ci
+  - ローカル環境に外部依存パッケージをインストールする。
+- npm run packages:build
+  - ローカル環境で内部依存パッケージをビルドして準備する。
+- npm run docker:start-dev
+  - backendとfrontend以外の依存サービスのDockerコンテナを起動する。
+  - 止める時はnpm run docker:stopを実行する。
+- ./scripts/run-local-backend.sh
+  - backendサービスと各種ワーカをローカルホストで起動する。
+  - 止める時はCtrl-Cで落とす。
+- ./scripts/run-local-backend.sh
+  - frontendサービスをローカルホストで起動する。
+  - 止める時はCtrl-Cで落とす。
+- npm run reset-data
+  - DBとオブジェクトストレージを初期化して、初期データを投入する。
+- npm run reset-data-test
+  - DBとオブジェクトストレージを初期化して、性能テスト用の大量のデータを投入する。
+- npm run reset-cache
+  - Redisのキャッシュを初期化する。
+
+バックエンドやフロントエンドのTypeScriptコードを変更すると、それぞれの起動中のサービスは勝手に再起動して変更を取り込む。ただし、tscやlintのチェックが甘いので、そのままだとDockerイメージにした時に動く保証がない。よって、以下のコマンド群で品質管理をする。frontendやbackendの中で実行しても良い。
+
+- npm run test
+  - *.test.tsに書かれたユニットテストを実行する。
+  - backendやfrontendの中でnpm run testとしてもよい。
+- npm run lint
+  - eslintで静的なコードの検証を行う。
+- npm run build
+  - tscの厳格なルールで本番用にビルドする。
+- npm run fmt
+  - prettierでコードを整形する。
+
+## Linux上での開発環境の構築
+
+Linux上で本システムの稼働と開発を行うための環境設定の手順を記す。まずは、Macの時と同様に、Dockerを使ってサービスを立ち上げる方法を示す。バックエンドとフロントエンドをローカルで動かすことも当然できる。データセンター等の環境を想定し、インターネットからの接続を受け付ける。ドメインを取得し、VPSのホストが利用できることを前提とする。ここでは、stgy.jpというドメインを取得し、VPS上のUbuntu Linux環境の上でシステムを構築する。IPアドレスは153.127.47.206が割り振られている。
+
+事前にドメイン取得サービスのDNS設定で、該当ホストのAレコードを設定する。主たるドメインと、画像配信やその他のサブドメインを同じIDアドレスで登録する
+
+- サブドメイン=(空文字列)、種別=A、値=153.127.47.206
+- サブドメイン=s3、種別=A、値=153.127.47.206
+- サブドメイン=s3-console、種別=A、値=153.127.47.206
+- サブドメイン=www、種別=A、値=153.127.47.206
+
+上記設定が伝搬していることを確認する。「Name: stgy.jp Address: 153.127.47.206」的な文字列が表示されれば成功。
+
+```
+nslookup stgy.jp
 ```
 
-partition_idは、通知先のユーザIDに対する256の剰余で、[0,255] の値を持つ。event_idはイベント発生時刻を元にしたSnowflake IDだ。partition_idとevent_idの複合キーが主キーであり、勝手にインデックスが張られる。よって、特定のpartition_idに属するレコードをevent_idの昇順で取得するクエリが効率化する。
+VPSサービスのコントロールパネルで、Ubuntuの最新のLTS版をインストールし、コンソールからログインして初期設定の作業を行う。初期ユーザ「ubuntu」でログインするが、それはスーパーユーザではないので、sudoして管理作業を行う。インストール後の初期設定が終わったら自分のユーザを作り、以後はそのユーザからsudoして作業を行う。
 
-event_idにハッシュインデックスを張っていることは特筆すべきだ。これは普段のクエリでは使わないが、何らかのログ解析の際にイベントIDで効率的に検索するために存在する。なお、event_idにユニーク制約をつけてもインデックスが作られるので検索性は確保できる。しかし、それでBツリーインデックスが作られると、そちらを使って非効率なクエリ実行計画が立てられる不都合が発覚したので、仕方なくハッシュインデックスにしている。PostgreSQLにはMySQLのようなUSE INDEX文がないのが悔やまれる。
+- ソフトウェアリストの更新: sudo apt update
+- ソフトウェアの更新: sudo apt upgrade
+- ロケールのインストールと有効化:
+  - sudo apt install locales
+  - vi /etc/locale.genを開いて必要なロケール（en_US.UTF-8 UTF-8とja_JP.UTF-8 UTF-8）を戻す
+  - sudo locale-gen
+- ホスト名の設定: sudo hostnamectl set-hostname setagaya
+- 通常ユーザ作成: adduser mikio
+- sudo権限付与: sudo gpasswd -a mikio sudo
+- 再起動: sudo shutdown -r now
 
-payloadにはイベントの内容のJSONが入っている。例を示す。
+ファイアウォールを設定する。SSHの22、HTTPSの443、HTTPの80だけを開ける。
 
-```:xsmall
-{"type": "follow", "followeeId": "9901000000000001", "followerId": "0001000000000003"}
-{"type": "like", "postId": "9902500000001000", "userId": "0001000000000003"}
-{"type": "reply", "postId": "198D9E3364600000", "userId": "0001000000000004", "replyToPostId": "9902500000001000"}
+- sudo ufw default deny incoming
+- sudo ufw default allow outgoing
+- sudo ufw allow ssh
+- sudo ufw allow https
+- sudo ufw allow http
+- sudo ufw enable
+- sudo ufw status
+
+自分のユーザでログインして、環境設定を行う。
+
+- SSHの鍵設定:
+  - .ssh/id_rsaと.ssh/id_rsa.pubと.ssh/authorized_keysを既存環境からコピー。
+  - パーミッション設定: chmod 600 .ssh ; chmod 755 .ssh/*
+- 最低限の環境設定
+  - .bash_profileと.bashrcを既存環境からコピー
+- エディタの設定
+  - sudo apt install emacs
+  - .emacsを既存環境からコピー
+  - なぜかemacsと一緒にに入るpostfixの削除: sudo apt purge postfix
+
+Certbotを入れる。
+
+```
+sudo apt update
+sudo apt install -y snapd
+sudo snap install core; sudo snap refresh core
+sudo snap install --classic certbot
+sudo ln -s /snap/bin/certbot /usr/bin/certbot
 ```
 
-イベントログを読み取るワーカーは複数居て、並列処理を行う。各ワーカーは自分が担当するpartition_idの範囲を知っていて、それに相当するRedisのレコードを監視している。各ワーカーは、イベントログの追加が通知される度に、該当の各パーティションで最大100個のイベントを読み込む。したがって、各パーティションで最後に読んだIDを記録するために、event_log_cursorsテーブルを用意する。
+Docker関連ツールを入れる。標準ではaptがDockerの公式リポジトリを見ないので、設定を加える必要がある。
 
-```sql:small
-CREATE TABLE event_log_cursors (
-  consumer VARCHAR(50) NOT NULL,
-  partition_id SMALLINT NOT NULL,
-  last_event_id BIGINT NOT NULL DEFAULT 0,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (consumer, partition_id)
-);
+- sudo install -m 0755 -d /etc/apt/keyrings
+- curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+- echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+- sudo apt update
+- sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+
+Dockerサービスを有効化する。また、dockerグループに自分を入れて利用可能にする。
+
+- sudo systemctl enable --now docker
+- sudo usermod -aG docker "$USER"
+- newgrp docker
+
+Dockerクライアントの動作確認をする。それぞれ、「Docker version 28.4.0」「Docker Compose version 2.39.3」的な文字列と「Hello from Docker!」が表示されれば成功。
+
+```
+docker --version
+docker compose version
+docker run --rm hello-world
 ```
 
-consumerはワーカーの種類を識別するためにあるが、現状では "notification" しかない。それとpartition_idの複合キーが主キーなので、両者を指定すると効率的にレコードが取得できる。値として重要なのはlast_event_idだけだ。これは最後に処理したevent_idが入っていて、それより大きいIDのイベントログから読み始めれば良いとわかる。updated_atは追跡用の飾りだ。
+Node.jsとnpmをインストールする。Ubuntuのデフォルトは古いので、Node 22系に手動更新する。
 
-読み出したイベントは、各ユーザの各リソースの各日を単位としてまとめて通知レコードになる。それを格納するのがnotificationsテーブルだ。
+- curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+- sudo apt install nodejs npm
 
-```sql:small
-CREATE TABLE notifications (
-  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  slot VARCHAR(50) NOT NULL,
-  term VARCHAR(50) NOT NULL,
-  is_read BOOLEAN NOT NULL DEFAULT FALSE,
-  payload VARCHAR(65535) NOT NULL,
-  updated_at TIMESTAMPTZ NOT NULL,
-  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
-  PRIMARY KEY (user_id, slot, term)
-);
-CREATE INDEX idx_notifications_user_read_ts ON notifications(user_id, is_read, updated_at);
-CREATE INDEX idx_notifications_created_at ON notifications(created_at);
+Node.jsの動作確認をする。それぞれ、「v22.19.0」と「10.9.3」的な文字列が表示されれば成功。
+
+```
+node -v
+npm -v
 ```
 
-ユーザはuser_idで識別する。slotはリソース種別を表し、ユーザ自身が対象であるフォローでは「follow」という決め打ちの値で、投稿が対象であれば「like:{postId}」や「reply:{postId}」の形式の値になる。termはローカル時間の日付だ。スキーマ上は日付じゃなくても適当な期間ラベルをつけられるようになっている。is_readは未読既読の管理フラグで、updated_atとcreated_atは更新時刻と作成時刻だ。user_idとis_readとupdated_atの複合インデックスがあることで、各ユーザの既読通知の一覧と未読通知の一覧を効率的に取得できる。
+GitとGitHub CLIをインストールする。
 
-通知のpayloadはJSONデータであり、その通知レコードに関わるユーザ数や投稿数とともに、最新10件の履歴を入れる。例を示す。
+- sudo apt install git gh
 
-```:xsmall
-follow => {"records": [{"ts": 1756002248514, "userId": "0001000000000004"}, {"ts": 1756002138545, "userId": "0001000000000003"}], "countUsers": 2}
-like => {"records": [{"ts": 1756002187871, "userId": "0001000000000004"}, {"ts": 1756002077724, "userId": "0001000000000003"}], "countUsers": 2}
-reply => {"records": [{"ts": 1756002203216, "postId": "198D9E3364600000", "userId": "0001000000000004"}, {"ts": 1756002097802, "postId": "198D9E19A8700000", "userId": "0001000000000003"}, {"ts": 1756002094769, "postId": "198D9E18EAE00000", "userId": "0001000000000003"}], "countPosts": 3, "countUsers": 2}
+GitHubにログインする。アクセスキーを聞かれるので、事前にGitHub上でアクセスキーを作っておくこと。
+
+```
+gh auth login
 ```
 
-event_logsテーブルとnotificationsテーブルは急速に肥大化するので、古いレコードを定期的に削除する必要がある。通知作成のワーカーがその処理を行う。event_logsに関しては、event_idから日付を逆算して発生から31日以上のものを削除する。notificationsに関しては、created_atが31日以前のものを削除する
+開発作業用のディレクトリを作り、stgyのリポジトリのクローンを作成する。以後、stgyディレクトリで作業を行う。
 
-通知対象の各イベントを発生させる処理で、notificationsテーブルを直接更新すれば、わざわざ非同期処理にしなくても通知機能は実現できる。しかし、通知機能はキューとワーカーを使った非同期処理で実装すべきだ。理由は三つある。一つ目は、保守性のためだ。通知カードを作るための複雑な処理をバックエンドサーバから分離することで、コードの見通しが良くなり、更新作業も楽になる。二つ目は、性能のためだ。通知カードを作るためのクエリが応答の遅延を引き起こすことを避けねばならない。三つ目は、レースコンディションの回避のためだ。既存の通知カードを読み出してからまた書き戻すという処理をするので、もし同時更新されるとデータに不整合が起きる可能性がある。今回のキューはユーザIDでパーティショニングしているので、各ワーカーが自分のパーティションのデータを順番に処理する限り、同一ユーザの通知カードが同時に更新されることはない。それでいて、ワーカーは256個まで並列で動かせるので、並列処理性能も十分だ。
+```
+mkdir ~/dev
+cd ~/dev
+git clone git@github.com:estraier/stgy.git
+cd stgy
+```
 
-## その他のテーブル
 
-ai_modelsテーブルとai_actionsテーブルは、存在してはいるが、現状では使っていない。ai_modelsは、AIエージェントを動かすAIモデル毎に、入出力コストなどのメタデータを記録するものだ。ai_actionsは、AIエージェントの各々が、自分が過去にどのような動作をしたかを記録し、記憶の導線とするものだ。これはJSONのスキーマレスDBとして運用し、雑多な情報を入れまくることになるだろう。詳細の仕様に付いては追って詰めていく。
 
-## VARCHAR vs TEXT
+* 運用環境の選択
 
-PostgreSQLの主テーブルのシリアライズ方式において、可変長のバイト列は内部的にはVARLENA（variable-length array）と総称される形式になる。126バイト以下のデータは、データサイズを示す1バイトのメタデータをつけて記録され、それを超えるデータはデータサイズを示す4バイトのメタデータをつけて記録される。VARCHAR、TEXT、BYTEA、JSONBなどのデータは全てVARLENAとしてシリアライズされる。
+AWS上でRDSとS3を使って構築できるシステムアーキテクチャになっているのだが、多数のマネージドサービスを使うと、デモで使うにはちょっとランニングコストが高くなりすぎる。デプロイも面倒くさい。なので、しばらくは1台構成のVPSで動かすことにした。さくらVPSの4GBプランなら月4000円以下で運用できるし、ストレージが400GBまで使えるので、ユーザ数がかなり増えても大丈夫だろう。何より、固定額なのが安心だ。1円の収益にもなっていない趣味のサービスが物量攻撃されて何十万円も払う羽目になったら心がくじけてしまうだろう。デモ運用しているうちは、従量課金で際限なく金がかかるよりは、サービスが落ちる方がマシだ。
 
-VARCHARとTEXTのどちらを使うべきかという議論があるが、空間効率も処理性能も同じなので、どちらでも良い。VARCHARは文字数の制限があり、TEXTにはそれがない。DBを対象とする全ての入力はデータサイズに制限を設けるべきだが、その制限方法によってVARCHARとTEXTのどちらを使うべきかが決まる。アプリケーション層で文字数の制限をしているなら、VARCHARでも制限するのは二重管理になるのでTEXTが良いという考え方がある。一方で、アプリケーション層では文字数の制限を一切せずに、DB層だけで制限するという考え方もある。
+VPSで依存サービスを自前で運用するとして、それらを実サービスとして動かすか、Dockerコンテナとして動かすかは、選択できる。実サービスとして動かす方法だと、性能上は最善で、ホストが単一なので手動での設定作業も楽だが、自動化しづらいので何度もやるのは厳しい。Dockerコンテナとして動かす方法だと、最初のコンテナの設定はややこしいが、一度やっておけば自動デプロイが簡単にできるようになる。Docker上で動かすとCPU効率とメモリ効率とI/O効率がほんの少し落ちる可能性はあるが、LinuxのDocker層のオーバーヘッドはほぼ無視できる程度に小さいので、性能に関しては気にする必要はない。よって、とりあえずはDockerで動くようにしよう。開発環境とほぼ同じ設定で、VPS上でDockerを動かして、そこにデータベースもオブジェクトストレージもバックエンドサーバもフロントエンドサーバも乗せてしまう。
 
-今回は折衷案を取っていて、多くの場所でVARCHARを使っている一方で、アプリケーション層でもデータサイズの制限をしている。基本的にはアプリケーション層で制限をするのだが、万が一忘れてしまった場合でも、致命的なセキュリティホールにならないように、DB層でも緩めの制限をかけるという建付けだ。悪く言えば二重管理なのだが、その管理コストを払ってでも、TEXTよりはVARCHAR(65535)とすることで、事故によるサービス停止のリスクを低減している。
 
-なお、JSONをVARCHARやTEXTとして記録するか、JSONBとして記録するかでは、空間効率に差が出る。VARCHAR等の場合にはJSONの文字列そのものが記録される一方、JSONBの場合はJSONをオブジェクトとして解釈した後にバイナリシリアライザをかけたデータが記録される。JSONBの方がデシリアライズが速いので、そのオブジェクトの中身をクエリの検索条件にしたり、オブジェクトの中身をインデックスに加えたりするような場合は、JSONBに利点がある。しかし、空間効率は文字列としてのJSONの方が良い場合がほとんどなので、検索条件にしないなら、文字列として扱った方が良い。そして、そもそも検索条件にするフィールドを含むなら、そのフィールドの値を列として独立させたほうが良い。
 
-## パスワードハッシュ関数
+## インストール
 
-パスワードの平文を持つと、DBデータの漏洩時に即座に大事故になる。STGY上の投稿やプロファイルデータは全てが公開情報という建付けなのでそれらの漏洩の被害は少ないが、他のサービスと使い回しているかもしれないパスワードが漏れる事態だけは道義的にまずい。運営者である私が他人のパスワードが見られる立場にある事自体が気持ち悪い。よって、パスワードは必ずハッシュ化することになるが、ハッシュ関数の選択が重要になる。古き良きMD5やSHA系列のような高速ハッシュ関数は、現代ではほぼ無力だ。高速かつ省メモリで計算できる設計なので、GPUによる並列ブルートフォース攻撃に弱く、短かったり頻出パターンだったりする弱いパスワードは数分や数時間で解読されてしまう。他のサービスと使い回している場合には当然弱いことが多いので、高速ハッシュ関数の値が漏洩するのは平文が漏洩するのと同等の被害になる。
 
-よって、最近のサイトでは、Argon2やScryptやBcryptなどの、敢えて時間効率と空間効率を悪くしたハッシュ関数を使うことが定番となっている。実行に数100ミリ秒と数MBの作業領域を要するなら、GPUでの並列処理が難しくなる。ログインの度にサーバ側でそのリソースを食うことになるが、セッションが維持される限りは再ログインは必要ないので、頻度は低い。防御側としては許容範囲だが、攻撃側としては現実的でない負荷となるコストパラメータをハッシュ関数に設定することになる。
 
-今回はパスワードのハッシュ化にscryptを使っている。ハッシュ値20バイトとソルト12バイトを連結した32バイトのバイナリとしてDBに保存している。ハッシュ値20バイトの衝突率は1/(2^160)で、ほぼゼロだ。ソルトの衝突率は1/(2^96)なので、世界の全サービスのDBが漏洩しても同じソルト値を見つける確率はほぼゼロだ。ゆえに、現状においては十分な強度と言えるだろう。
 
-しかし、技術は進歩するので、現状において十分な強度であっても、将来的に大丈夫な保証はない。よって、ハッシュ関数のコストパラメータ等も値に連結したself-containedな値を保存することが推奨されていたりもするが、今回はそうしなかった。全てのレコードで同じ値を持たせるのは冗長なので、それらを設定ファイルに逃がすことで、空間効率を向上させるのを優先した。もしも、やんごとない事情でハッシュ関数を置き換える必要が生じたとしても、古いアルゴリズムの値と新しいアルゴリズムの値は区別できるからだ。古いアルゴリズムでの検証をパスするなら古い値で、新しいアルゴリズムでパスするなら新しい値なので、移行期間中は双方を試して、古い値でログインしたなら新しい値を生成して更新すれば良い。新旧でサイズを変えれば、ハッシュ関数を実行しなくても区別できる。現実的には、移行したユーザにフラグを立てていき、移行期間終了間際にフラグが立っていないユーザに通知を送る必要がある。結局フラグで管理するのだから、ハッシュ値がself-containedである意味はあまりない。
 
-## シーダ
 
-DBの初期データを登録するには、シーダと呼ばれる機能を実装する必要がある。本番環境で運用開始時に揃えておくべきデータを投入するモードと、開発環境でテスト用データを投入するモードがあるのが普通だろう。シーダの最も単純な実装は、DBに接続してSQL文を実行するものだ。少なくとも、スキーマ定義などのブートストラップ手順はその方法でやるのが率直だ。しかし、その後のデータ登録は、アプリサーバのエンドポイントにリクエストを送る方式にすべきだ。すなわち、管理者アカウントでログインしてから、通常の管理用APIを使って、ユーザ作成や投稿作成を行うのだ。
-
-管理者アカウントはSQLによるブートストラップ手順で作るのが率直だが、その際に問題になるのが、パスワードの指定である。パスワードのハッシュ関数のロジックはアプリサーバ側にしかないので、ハッシュ値をSQL内のリテラルとして書き込むには、アプリ側のユーティリティを使って任意の文字列のハッシュ値を印字するユーティリティが必要になる。パスワードが空文字列やNULLの場合にはダミーのパスワードでログインできるとかいう仕様を設けることも考えられるが、潜在的なセキュリティホールになってしまうので、ユーティリティをちゃんと書いた方が良い。
-
-テスト用のデータを登録する機能も重要だ。システムテストやユーザテストでフロントエンドでページネーションのテストをするには、複数ページで表示されるデータセットを作っておかねばならない。クエリの分析や負荷テストをするには、実運用を見越した大量のデータを登録する必要がある。ユーザや投稿を登録するだけではなく、フォローしたりイイネしたりブロックしたりといった更新操作の多くはシーダで再現可能にしておくべきだ。開発の初期段階でシーダを作っておくと、後工程が楽になる。
-
-## 整合性の検証と回復
-
-今回のスキーマでは、ドメインキー正規形に違反している属性は限定的だ。usersテーブルのcount_followeesなどのカウンタ属性と、postsテーブルのcount_likesなどのカウンタ属性と、usersテーブルとpostsテーブルのsnippetがそれにあたる。主属性と従属属性の更新はトランザクション内で行われるので不整合が起こることは正常系では無いはずだが、何らかのバグや管理操作のミスを含む異常系では不整合が想定できる。たとえそれらの不整合が起きたとしてもカウンタがずれたりスニペットの表示が崩れたりするだけなので、サービス運営にとって致命傷になるわけではないが、ユーザからクレームが来たら対処できる程度の準備はしておくべきだ。
-
-validate_userやらvalidate_postやらのユーティリティ関数を書いておくと安心だ。ユーザIDや投稿IDを与えると、その整合性検証や回復処理を行うのだ。開発初期にはコマンドラインでそれらを呼び出してテストして、実運用において必要であればエンドポイントを作って管理用ユーティリティから実行できるようにする。
-
-Next: [STGYの主要クエリ分析](/posts/0002000000000013)
+Next: [STGYのデータベース](/posts/0002000000000013)
 ____EOF____

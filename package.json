@@ -11,7 +11,7 @@
     "docker:init": "docker compose down -v --rmi all --remove-orphans || true ; bash -lc 'ids=$(docker ps -aq); [ -n \"$ids\" ] && docker rm -f $ids; docker system prune -a --volumes -f; (docker buildx version >/dev/null 2>&1 && docker buildx prune -a -f || true)'",
     "docker:reset": "docker compose down --rmi all --remove-orphans && docker compose build --no-cache && docker compose create",
     "docker:build": "docker compose build",
-    "docker:destroy": "docker compose down -v --rmi all --remove-orphans",
+    "docker:destroy": "docker compose down --rmi all --remove-orphans",
     "docker:create": "docker compose create",
     "docker:remove": "docker compose rm -f",
     "docker:up": "docker compose up -d",
