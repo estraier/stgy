@@ -85,8 +85,8 @@ STGYの関連パッケージは全て単一のリポジトリに収められて�
 - package-lock.json : 依存パッケージのバージョンを固定するための設定ファイル
 - docker-compose.yml : 依存サービスをDockerで管理するための設定ファイル
 - docker-compose.vps.yml : VPSのデモ環境用に上記設定を上書きするためのファイル
-- env-dev.txt : docker composeや他のスクリプトが読み込む環境設定ファイル
-- env-vps.txt : VPSのデモ環境用の環境変数設定ファイル
+- env.dev.txt : docker composeや他のスクリプトが読み込む環境設定ファイル
+- env.vps.txt : VPSのデモ環境用の環境変数設定ファイル
 - Caddyfile : リバースプロクシCaddyの設定ファイル
 - Caddyfile.vps : VPSのデモ環境用で使うCaddyの設定ファイル
 - packages/ : 独自の依存パッケージ群のディレクトリ
@@ -113,7 +113,7 @@ STGYの関連パッケージは全て単一のリポジトリに収められて�
 - npm install : package.jsonの記述に基づき、新しいバージョンの依存パッケージをインストールする
 - npm run clean : 依存パッケージを消す
 
-backendとfrontendにはDockerfileがあり、それぞれのサービスのDockerインスタンスの設定が書いてある。それ以外の依存サービスの設定はdocker-compose.ymlに直接書いてある。docker composeは.envファイルから環境変数を読み込むが、それはリポジトリには含まれない。env-dev.txtかenv-vps.txtを.envにコピーするかシンボリックリンクを張るかしてから、それを環境に合わせて編集して使う。.envにはパスワードなどの秘密情報が書かれるので、Gitの管理対象にすべきではない。
+backendとfrontendにはDockerfileがあり、それぞれのサービスのDockerインスタンスの設定が書いてある。それ以外の依存サービスの設定はdocker-compose.ymlに直接書いてある。docker composeは.envファイルから環境変数を読み込むが、それはリポジトリには含まれない。env.dev.txtかenv.vps.txtを.envにコピーするかシンボリックリンクを張るかしてから、それを環境に合わせて編集して使う。.envにはパスワードなどの秘密情報が書かれるので、Gitの管理対象にすべきではない。
 
 scriptsの下には、システムの管理に必要なスクリプトが入っている。多くのものはnpmを介して起動される。.envの環境変数から設定を読み込むので、.envを事前に作っておく必要がある。
 
@@ -222,16 +222,26 @@ Docker関係のコマンドを利用目的別に整理する。
 - npm run fmt
   - prettierでコードを整形する。
 
+全てのサービスを立ち上げたら、ブラウザで以下のURLを開くと、STGYのサービスが使い始められる。
+
+- https://localhost:8080/ : ユーザが使うサイト
+  - デフォルトでは、「admin」ユーザのパスワードが「stgystgy」になっている。
+- https://s3-console.stgy.jp/ : MinIOのコンソール
+  - アップロードされた画像データはここで確認できる。
+- https://mail.localhost:8080/ : 確認メールの保存先
+  - サインアップやメアド変更の際の確認メールはここに送られる。
+
 ## Linux上での開発環境の構築
 
-Linux上で本システムの稼働と開発を行うための環境設定の手順を記す。まずは、Macの時と同様に、Dockerを使ってサービスを立ち上げる方法を示す。バックエンドとフロントエンドをローカルで動かすことも当然できる。データセンター等の環境を想定し、インターネットからの接続を受け付ける。ドメインを取得し、VPSのホストが利用できることを前提とする。ここでは、stgy.jpというドメインを取得し、VPS上のUbuntu Linux環境の上でシステムを構築する。IPアドレスは153.127.47.206が割り振られている。
+Linux上でSTGYの稼働と開発を行うための環境設定の手順を記す。まずは、Macの時と同様に、Dockerを使ってサービスを立ち上げる方法を示す。バックエンドとフロントエンドをローカルで動かすことも当然できる。データセンター等の環境を想定し、インターネットからの接続を受け付ける。ドメインを取得し、VPSのホストが利用できることを前提とする。ここでは、stgy.jpというドメインを取得し、VPS上のUbuntu Linux環境の上でシステムを構築する。IPアドレスは153.127.47.206が割り振られている。
 
-事前にドメイン取得サービスのDNS設定で、該当ホストのAレコードを設定する。主たるドメインと、画像配信やその他のサブドメインを同じIDアドレスで登録する
+事前にドメイン取得サービスのDNS設定で、該当ホストのAレコードを設定する。主たるドメインと、画像配信やその他のサブドメインを同じIDアドレスで登録する。
 
 - サブドメイン=(空文字列)、種別=A、値=153.127.47.206
 - サブドメイン=s3、種別=A、値=153.127.47.206
 - サブドメイン=s3-console、種別=A、値=153.127.47.206
 - サブドメイン=www、種別=A、値=153.127.47.206
+- サブドメイン=mail、種別=A、値=153.127.47.206
 
 上記設定が伝搬していることを確認する。「Name: stgy.jp Address: 153.127.47.206」的な文字列が表示されれば成功。
 
@@ -273,16 +283,6 @@ VPSサービスのコントロールパネルで、Ubuntuの最新のLTS版を�
   - sudo apt install emacs
   - .emacsを既存環境からコピー
   - なぜかemacsと一緒にに入るpostfixの削除: sudo apt purge postfix
-
-Certbotを入れる。
-
-```
-sudo apt update
-sudo apt install -y snapd
-sudo snap install core; sudo snap refresh core
-sudo snap install --classic certbot
-sudo ln -s /snap/bin/certbot /usr/bin/certbot
-```
 
 Docker関連ツールを入れる。標準ではaptがDockerの公式リポジトリを見ないので、設定を加える必要がある。
 
@@ -337,17 +337,180 @@ git clone git@github.com:estraier/stgy.git
 cd stgy
 ```
 
+## 運用環境の選択
+
+STGYはAWS上でRDSとS3を使って構築できるシステムアーキテクチャになっているのだが、多数のマネージドサービスを使うと、デモで使うにはちょっとランニングコストが高くなりすぎる。デプロイも面倒くさい。なので、デモ用途では1台構成のVPSで動かす方が手軽で良い。さくらVPSの4GBプランなら月4000円以下で運用できるし、ストレージが400GBまで使えるので、ユーザ数がかなり増えても大丈夫だろう。何より、固定額なのが安心だ。1円の収益にもなっていない趣味のサービスが物量攻撃されて何十万円も払う羽目になったら心がくじけてしまうだろう。デモ運用しているうちは、従量課金で際限なく金がかかるよりは、サービスが落ちる方がマシだ。
+
+VPS上で全ての依存サービスを自前で運用するとして、それらを実サービスとして動かすか、Dockerコンテナとして動かすかは、選択できる。実サービスとして動かす方法だと、性能上は最善で、ホストが単一なので手動での設定作業も楽だが、自動化しづらいので何度もやるのは厳しい。Dockerコンテナとして動かす方法だと、最初のコンテナの設定はややこしいが、一度やっておけば自動デプロイが簡単にできるようになる。Docker上で動かすとCPU効率とメモリ効率とI/O効率がほんの少し落ちる可能性はあるが、LinuxのDocker層のオーバーヘッドはほぼ無視できる程度に小さいので、性能に関しては気にする必要はない。よって、とりあえずはDockerで動くようにしよう。開発環境とほぼ同じ設定で、VPS上でDockerを動かして、そこにデータベースもオブジェクトストレージもバックエンドサーバもフロントエンドサーバも乗せてしまう。
+
+** Docker完結方式
+
+Docker完結の前提で、アーキテクチャと設定を整理してみる。コンテナ間の接続は主に環境変数で管理することになるが、各コンテナが互いを認識するためにどの環境変数を使っているかを洗い出し、その適切な値を決めるのだ。内側（インターネット側）と外側（Dockerサブネット）で名前が違うのと、リバースプロクシが読み替えを行うのがややこしい。後でほぼ確実に混乱するので、予め整理しておくべきだ。
+
+- リバースプロクシ（Caddy）
+  - Node.jsのサービスはHTTPしか喋れないので、SSL化するのに必要。
+    - 全ての設定はCaddyfileに書く。
+  - https://stgy.jp/mailpit をDocker世界の http://smtp:8025 であるバックエンドサーバに中継する。
+  - https://stgy.jp/backend をDocker世界の http://backend:3001 であるバックエンドサーバに中継する。
+  - https://stgy.jp のそれ以外をDocker世界の http://frontend:3000 であるフロントエンドサーバに中継する。
+  - https://s3.stgy.jp をDocker世界の http://minio:9000 であるS3サーバに中継する。
+  - 証明書はCaddy自身が自動的にLet's Encryptから取ってきてくれる。
+    - 7日間で5回以上取得するとレート制限がかかるので、down -vでボリュームを消さないように注意。
+  - 外向きのポートは22と80と443しか空いていないので、Dockerで立てるサーバで外からは見えるのはこいつだけ。
+
+- フロントエンド（Node.js + Next.js）
+  - Docker世界でfrontend:3000をlistenし、主にJavaScriptを配信。表にはhttps://stgy.jpとして露出。
+    - STGY_FRONTEND_PORT=3000
+  - バックエンドを /backend として認識し、https://stgy.jp/backend 配下にAPIリクエストを送る。
+    - NEXT_PUBLIC_BACKEND_API_BASE_URL=/backend
+  - S3サーバをhttps://s3.stgy.jpとして認識し、画像の配信とpresigned-POSTのベースURLにそれを用いる。
+    - NEXT_PUBLIC_STORAGE_S3_BUCKET_PREFIX=stgy
+    - NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX=https://s3.stgy.jp/{bucket}/
+
+- バックエンド（Node.js + Express）
+  - Docker世界でbackend:3001をlistenし、サービスAPIのエンドポイントを担う。
+    - STGY_BACKEND_PORT=3001
+  - フロントエンドをhttps://stgy.jpとして認識し、1ホップまでのプロクシ応答のX-Forwarded-Forを信じる。
+    - STGY_FRONTEND_ORIGIN=https://stgy.jp
+  - S3サーバのエンドポイントをhttp://minio:9000として認識し、Dockerサブネットで通信。
+    - STGY_STORAGE_S3_ENDPOINT=http://minio:9000
+  - ただし、オブジェクトの所在はhttps://s3.stgy.jp/{bucket_name} の配下としてクライアントに通達。
+    - STGY_STORAGE_S3_PUBLIC_URL_PREFIX=https://s3.stgy.jp/{bucket}/
+  - DBサーバをpostgres:5432として認識し、Dockerサブネットで通信。
+    - STGY_DATABASE_HOST=postgres
+    - STGY_DATABASE_PORT=5432
+  - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
+    - STGY_REDIS_HOST=redis
+    - STGY_REDIS_PORT=6379
+
+- メールワーカ（Node.jsのCLI）
+  - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
+    - STGY_REDIS_HOST=redis
+    - STGY_REDIS_PORT=6379
+  - SMTPサーバをsmtp:587として認識し、Dockerサブネットで通信。
+    - STGY_SMTP_HOST=smtp
+    - STGY_SMTP_PORT=587
+
+- メディアワーカ（Node.jsのCLI）
+  - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
+    - STGY_REDIS_HOST=redis
+    - STGY_REDIS_PORT=6379
+  - S3サーバのエンドポイントをhttp://minio:9000として認識し、Dockerサブネットで通信。
+    - STGY_STORAGE_S3_ENDPOINT=http://minio:9000
+
+- 通知ワーカ（Node.jsのCLI）
+  - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
+    - STGY_REDIS_HOST=redis
+    - STGY_REDIS_PORT=6379
+  - DBサーバをpostgres:5432として認識し、Dockerサブネットで通信。
+    - STGY_DATABASE_HOST=db
+    - STGY_DATABASE_PORT=5432
+
+- DBサーバ（PostgreSQL）
+  - Docker世界でpostgres:5432をlistenし、DBを管理。
+    - STGY_DATABASE_PORT=5432
+
+- S3サーバ（MinIO）
+  - Docker世界でminio:9000をlistenし、オブジェクトストレージを管理。
+    - STGY_MINIO_PORT=9000
+
+- キャッシュサーバ（Redis）
+  - Docker世界でredis:6379をlistenし、キャッシュを管理。
+    - STGY_REDIS_PORT=6379
+
+- メールサーバ（Mailpit）
+  - Docker世界でsmpt:538をlistenし、メールを管理。
+    - STGY_SMTP_PORT=587
+  - リレー設定があれば、本番のSMTPサーバにメールを転送。
+
+上述の設定は既にenv.vps.txtとdocker-compose.vps.ymlとCaddyfile.vpsに書いてあるので、Dockerによる本番運用は、DockerとGitが動くホストさえあれば、5分で始められるようになっている。他のドメイン名を使う場合、それらのファイルのstgy.jpの部分をそのドメイン名に変えれば良い。
+
+```
+# 作業ディレクトリに移動。適当な場所でOK
+cd /prod
+
+# リポジトリを取得
+git clone git@github.com:estraier/stgy.git
+cd stgy
+
+# 環境設定ファイルの編集。*_PASSWORDの値を変更
+$EDITOR env.vps.txt
+
+# 全サービスコンテナの立ち上げ
+npm run vps:docker:up
+
+# 初期データの投入
+npm run vps:reset-data
+```
+
+そして、以下のURLをブラウザで開けば、もう使えるようになっている。adminユーザのパスワードを変える作業を最初にやること。
+
+- https://stgy.jp/ : ユーザが使うサイト
+  - デフォルトでは、「admin」ユーザのパスワードが「stgystgy」になっているので、それでログインして変える。
+- https://s3-console.stgy.jp/ : MinIOのコンソール
+  - この管理者アカウント情報は、環境設定ファイルのものから変えては駄目。
+- https://mail.stgy.jp/ : 確認メールの保存先
+  - デフォルトでは、Basic認証で、「admin」ユーザのパスワードが「stgystgy」になっている。
+
+Basic認証のパスワードはCaddyfile.vpsにハッシュ化して書いてある。Caddyが起動している状態で `npm run caddy:hash NEWPASSWORD` を実行するとハッシュ値が表示されるので、それをファイルに貼り付けて再起動すると変えられる。
+
+Mailpitはデフォルトではクライアントから送られてきたメールを溜め込むだけで、実際のメール配信は行わない。別のSMTPサーバに自動リレーする必要がある。デモ運用では、docker-compose.ymlのsmtpサービスの記載でコメントアウトされている環境変数を有効化して、外部のSMTPサーバにリレーさせる。本番環境ではMailpitをPostfixに変えて同等のリレーを行うか、SES等のメールサーバに直接メールを送る設定にするのが望ましい。
+
+** 自動起動
+
+OSの起動時に自動的に全サービスが立ち上がるようにすべきだ。起動スクリプトを動かして、上記のnpm run vps:docker:upを実行ようにしたい。まずは、専用ユーザを作って、その準備をする。
+
+```
+# stgyユーザを作って、dockerグループに追加する
+sudo useradd --system --create-home --shell /usr/sbin/nologin stgy
+sudo usermod -aG docker stgy
+
+# リポジトリをstgyの所有物にする
+sudo chown -R stgy:stgy /prod/stgy
+```
+
+そして、systemdの起動スクリプトを書く。/etc/systemd/system/stgy.serviceに以下の内容を記述する。
+
+```
+[Unit]
+Description=STGY (Fakebook) stack via Docker Compose
+Wants=network-online.target
+After=network-online.target docker.service
+Requires=docker.service
+
+[Service]
+Type=oneshot
+User=stgy
+WorkingDirectory=/prod/stgy
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/usr/bin/npm run vps:docker:up
+ExecStop=/usr/bin/npm run vps:docker:down
+RemainAfterExit=yes
+TimeoutStartSec=0
+TimeoutStopSec=120
+
+[Install]
+WantedBy=multi-user.target
+```
+
+起動スクリプトを有効化し、状態を確認する。
+
+```
+sudo systemctl daemon-reload
+sudo systemctl enable --now stgy.service
+systemctl status stgy.service
+```
+
+手動での起動と再起動と終了は以下のコマンドでできる。ログの確認はjournalctlコマンドで行う。
+
+```
+sudo systemctl start stgy
+sudo systemctl restart stgy
+sudo systemctl stop stgy
+journalctl -u stgy
+```
 
 
-* 運用環境の選択
-
-AWS上でRDSとS3を使って構築できるシステムアーキテクチャになっているのだが、多数のマネージドサービスを使うと、デモで使うにはちょっとランニングコストが高くなりすぎる。デプロイも面倒くさい。なので、しばらくは1台構成のVPSで動かすことにした。さくらVPSの4GBプランなら月4000円以下で運用できるし、ストレージが400GBまで使えるので、ユーザ数がかなり増えても大丈夫だろう。何より、固定額なのが安心だ。1円の収益にもなっていない趣味のサービスが物量攻撃されて何十万円も払う羽目になったら心がくじけてしまうだろう。デモ運用しているうちは、従量課金で際限なく金がかかるよりは、サービスが落ちる方がマシだ。
-
-VPSで依存サービスを自前で運用するとして、それらを実サービスとして動かすか、Dockerコンテナとして動かすかは、選択できる。実サービスとして動かす方法だと、性能上は最善で、ホストが単一なので手動での設定作業も楽だが、自動化しづらいので何度もやるのは厳しい。Dockerコンテナとして動かす方法だと、最初のコンテナの設定はややこしいが、一度やっておけば自動デプロイが簡単にできるようになる。Docker上で動かすとCPU効率とメモリ効率とI/O効率がほんの少し落ちる可能性はあるが、LinuxのDocker層のオーバーヘッドはほぼ無視できる程度に小さいので、性能に関しては気にする必要はない。よって、とりあえずはDockerで動くようにしよう。開発環境とほぼ同じ設定で、VPS上でDockerを動かして、そこにデータベースもオブジェクトストレージもバックエンドサーバもフロントエンドサーバも乗せてしまう。
-
-
-
-## インストール
 
 
 

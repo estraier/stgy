@@ -5,14 +5,6 @@
 https://stgy.jp {
   encode zstd gzip
 
-  redir /mailpit /mailpit/
-  handle /mailpit/* {
-    basic_auth {
-      admin $2a$14$uuicMQhEHEbzlvNfISPcue77In..Te9ZMzAKzppaRilla5wBlXdoa
-    }
-    reverse_proxy http://smtp:8025
-  }
-
   redir /backend /backend/
   handle_path /backend/* {
     reverse_proxy http://backend:3001 {
@@ -43,4 +35,13 @@ https://s3-console.stgy.jp {
   encode zstd gzip
 
   reverse_proxy http://minio:9001
+}
+
+http://mail.localhost:8080 {
+  encode zstd gzip
+
+  basic_auth {
+    admin $2a$14$uuicMQhEHEbzlvNfISPcue77In..Te9ZMzAKzppaRilla5wBlXdoa
+  }
+  reverse_proxy http://smtp:8025
 }
