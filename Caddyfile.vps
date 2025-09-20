@@ -1,7 +1,3 @@
-{
-  auto_https disable_redirects
-}
-
 https://stgy.jp {
   encode zstd gzip
 
@@ -37,7 +33,7 @@ https://s3-console.stgy.jp {
   reverse_proxy http://minio:9001
 }
 
-http://mail.stgy.jp {
+https://mail.stgy.jp {
   encode zstd gzip
 
   basic_auth {
