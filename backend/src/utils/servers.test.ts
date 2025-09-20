@@ -13,14 +13,23 @@ jest.mock("../config", () => ({
   },
 }));
 
-let pgInstanceFactory: () => any;
+let pgPoolFactory: () => any;
 
 jest.mock("pg", () => {
-  const Client = jest.fn().mockImplementation(() => {
-    if (!pgInstanceFactory) throw new Error("pgInstanceFactory not set");
-    return pgInstanceFactory();
+  const Pool = jest.fn().mockImplementation(() => {
+    if (!pgPoolFactory) throw new Error("pgPoolFactory not set");
+    return pgPoolFactory();
   });
-  return { Client };
+  (Pool as any).__create = (overrides: Partial<any> = {}) => {
+    const inst: any = {
+      query: jest.fn(async () => ({ rows: [], rowCount: 0 })),
+      end: jest.fn(async () => {}),
+      ...overrides,
+    };
+    return inst;
+  };
+  (Pool as any).__setFactory = (f: () => any) => (Pool as any).mockImplementation(f);
+  return { Pool };
 });
 
 jest.mock("ioredis", () => {
@@ -41,17 +50,17 @@ jest.mock("ioredis", () => {
 });
 
 describe("network utils", () => {
-  test("getSampleHost", async () => {
+  test("getSampleAddr", async () => {
     const { getSampleAddr } = await import("./servers");
     expect(getSampleAddr()).toMatch(/\d+\.\d+\.\d+\.\d+/);
   });
 });
 
-describe("servers utils", () => {
+describe("servers utils (Pool/pgQuery, Redis)", () => {
   beforeEach(() => {
     jest.resetModules();
     jest.useFakeTimers();
-    pgInstanceFactory = undefined as unknown as () => any;
+    pgPoolFactory = undefined as unknown as () => any;
   });
 
   afterEach(() => {
@@ -60,32 +69,42 @@ describe("servers utils", () => {
 
   const flush = async () => Promise.resolve();
 
+  // --- PostgreSQL (Pool connect) ---
+
   test("connectPgWithRetry: success on first try", async () => {
-    const connect = jest.fn(async () => {});
-    const end = jest.fn(async () => {});
-    const client = { connect, end };
-    pgInstanceFactory = () => client;
+    const { Pool }: any = await import("pg");
+    const poolInst = Pool.__create({
+      query: jest.fn(async (text: string) => {
+        if (text === "SELECT 1") return { rows: [{ "?column?": 1 }], rowCount: 1 };
+        return { rows: [], rowCount: 0 };
+      }),
+    });
+    pgPoolFactory = () => poolInst;
 
     const { connectPgWithRetry } = await import("./servers");
     const res = await connectPgWithRetry(5);
 
-    expect(res).toBe(client);
-    expect(connect).toHaveBeenCalledTimes(1);
-    expect(end).not.toHaveBeenCalled();
+    expect(res).toBe(poolInst);
+    expect(poolInst.query).toHaveBeenCalledWith("SELECT 1");
+    expect(poolInst.end).not.toHaveBeenCalled();
   });
 
   test("connectPgWithRetry: retries then succeeds", async () => {
-    const bad = {
-      connect: jest.fn(async () => {
+    const { Pool }: any = await import("pg");
+
+    const bad = Pool.__create({
+      query: jest.fn(async () => {
         throw new Error("fail-1");
       }),
-      end: jest.fn(async () => {}),
-    };
-    const good = { connect: jest.fn(async () => {}), end: jest.fn(async () => {}) };
-    const instances = [bad, good];
-    pgInstanceFactory = () => {
-      const i = instances.shift();
-      if (!i) throw new Error("no more pg instances");
+    });
+    const good = Pool.__create({
+      query: jest.fn(async () => ({ rows: [{ "?column?": 1 }], rowCount: 1 })),
+    });
+
+    const seq = [bad, good];
+    pgPoolFactory = () => {
+      const i = seq.shift();
+      if (!i) throw new Error("no more pool instances");
       return i;
     };
 
@@ -96,28 +115,74 @@ describe("servers utils", () => {
     const res = await p;
 
     expect(res).toBe(good);
-    expect(bad.connect).toHaveBeenCalledTimes(1);
+    expect(bad.query).toHaveBeenCalledTimes(1);
     expect(bad.end).toHaveBeenCalledTimes(1);
-    expect(good.connect).toHaveBeenCalledTimes(1);
+    expect(good.query).toHaveBeenCalledTimes(1);
   });
 
   test("connectPgWithRetry: times out", async () => {
-    const alwaysBad = {
-      connect: jest.fn(async () => {
+    const { Pool }: any = await import("pg");
+
+    const alwaysBad = Pool.__create({
+      query: jest.fn(async () => {
         throw new Error("fail");
       }),
-      end: jest.fn(async () => {}),
-    };
-    pgInstanceFactory = () => alwaysBad;
+    });
+    pgPoolFactory = () => alwaysBad;
 
     const { connectPgWithRetry } = await import("./servers");
     const p = connectPgWithRetry(2);
     await flush();
     jest.advanceTimersByTime(3000);
     await expect(p).rejects.toThrow(/pg connect failed/);
-    expect(alwaysBad.connect).toHaveBeenCalled();
+    expect(alwaysBad.query).toHaveBeenCalled();
     expect(alwaysBad.end).toHaveBeenCalled();
   });
+
+  // --- PostgreSQL (pgQuery retry) ---
+
+  test("pgQuery: success on first try", async () => {
+    const poolInst: any = {
+      query: jest.fn(async () => ({ rows: [{ a: 1 }], rowCount: 1 })),
+    };
+    const { pgQuery } = await import("./servers");
+    const res = await pgQuery<{ a: number }>(poolInst, "SELECT 1", []);
+    expect(poolInst.query).toHaveBeenCalledWith("SELECT 1", []);
+    expect(res.rows[0].a).toBe(1);
+  });
+
+  test("pgQuery: retries then succeeds", async () => {
+    const failingThenOk = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("q1"))
+      .mockResolvedValueOnce({ rows: [{ a: 2 }], rowCount: 1 });
+    const poolInst: any = { query: failingThenOk };
+
+    const { pgQuery } = await import("./servers");
+    const p = pgQuery<{ a: number }>(poolInst, "SELECT 2", [], 3);
+    await flush();
+    jest.advanceTimersByTime(200);
+    const res = await p;
+
+    expect(failingThenOk).toHaveBeenCalledTimes(2);
+    expect(res.rows[0].a).toBe(2);
+  });
+
+  test("pgQuery: times out after attempts", async () => {
+    const alwaysFail = jest.fn().mockRejectedValue(new Error("fail"));
+    const poolInst: any = { query: alwaysFail };
+
+    const { pgQuery } = await import("./servers");
+    const p = pgQuery(poolInst, "SELECT 3", [], 2);
+    await flush();
+    jest.advanceTimersByTime(200);
+    await flush();
+    jest.advanceTimersByTime(400);
+    await expect(p).rejects.toThrow(/fail/);
+    expect(alwaysFail).toHaveBeenCalledTimes(2);
+  });
+
+  // --- Redis connect ---
 
   test("connectRedisWithRetry: success when already ready", async () => {
     const RedisMock: any = (await import("ioredis")).default;

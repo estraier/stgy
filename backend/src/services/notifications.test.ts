@@ -8,11 +8,15 @@ jest.mock("../config", () => ({
   },
 }));
 
+jest.mock("../utils/servers", () => ({
+  pgQuery: jest.fn((pool: any, sql: string, params?: any[]) => pool.query(sql, params)),
+}));
+
 describe("NotificationsService", () => {
   function mkSvc(withQueryMock?: jest.Mock) {
     const query = (withQueryMock ?? (jest.fn() as any)) as any;
     const pg = { query } as any;
-    const svc = new NotificationsService(pg);
+    const svc = new NotificationsService(pg as any);
     return { svc, query };
   }
 
@@ -198,13 +202,13 @@ describe("NotificationsService", () => {
       .mockResolvedValueOnce({ rowCount: 5, rows: [] })
       .mockResolvedValueOnce({ rows: [] });
     const pg = { query: q } as any;
-    const svc = new NotificationsService(pg);
+    const svc = new NotificationsService(pg as any);
     const deleted = await svc.purgeOldRecords();
     expect(deleted).toBe(5);
-    expect(q).toHaveBeenNthCalledWith(1, "BEGIN");
-    expect(q).toHaveBeenNthCalledWith(2, "SET LOCAL statement_timeout = 10000");
+    expect(q).toHaveBeenNthCalledWith(1, "BEGIN", undefined);
+    expect(q).toHaveBeenNthCalledWith(2, "SET LOCAL statement_timeout = 10000", undefined);
     expect(q.mock.calls[2]![0]).toMatch(/DELETE FROM notifications/i);
     expect(q.mock.calls[2]![1]).toEqual([90]);
-    expect(q).toHaveBeenNthCalledWith(4, "COMMIT");
+    expect(q).toHaveBeenNthCalledWith(4, "COMMIT", undefined);
   });
 });

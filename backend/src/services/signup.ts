@@ -1,19 +1,20 @@
 import { Config } from "../config";
 import Redis from "ioredis";
-import { Client } from "pg";
+import { Pool } from "pg";
 import { v4 as uuidv4 } from "uuid";
 import { UsersService } from "./users";
 import { generateVerificationCode, validateEmail } from "../utils/format";
+import { pgQuery } from "../utils/servers";
 
 export class SignupService {
-  pgClient: Client;
-  usersService: UsersService;
+  pg: Pool;
   redis: Redis;
+  usersService: UsersService;
 
-  constructor(pgClient: Client, usersService: UsersService, redis: Redis) {
-    this.pgClient = pgClient;
-    this.usersService = usersService;
+  constructor(pg: Pool, redis: Redis, usersService: UsersService) {
+    this.pg = pg;
     this.redis = redis;
+    this.usersService = usersService;
   }
 
   async startSignup(email: string, password: string): Promise<{ signupId: string }> {
@@ -45,7 +46,7 @@ export class SignupService {
     if (!data || !data.email || !data.password || !data.verificationCode)
       throw new Error("Signup info not found or expired.");
     if (data.verificationCode !== code) throw new Error("Verification code mismatch.");
-    const exists = await this.pgClient.query(`SELECT 1 FROM users WHERE email = $1`, [data.email]);
+    const exists = await pgQuery(this.pg, `SELECT 1 FROM users WHERE email = $1`, [data.email]);
     if (exists.rows.length > 0) throw new Error("Email already in use.");
     const input = {
       email: data.email,

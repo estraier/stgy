@@ -24,13 +24,15 @@ async function main() {
     }
     logger.info(`[config] ${key}: ${JSON.stringify(value)}`);
   });
-  const pgClient = await connectPgWithRetry();
+
+  const pgPool = await connectPgWithRetry();
   const redis = await connectRedisWithRetry();
+
   const app = express();
   app.use(express.json());
   app.use(cookieParser());
   const storageService = makeStorageService(Config.STORAGE_DRIVER);
-  const eventLogService = new EventLogService(pgClient, redis);
+  const eventLogService = new EventLogService(pgPool, redis);
 
   app.use(
     cors({
@@ -42,13 +44,13 @@ async function main() {
     app.set("trust proxy", Config.TRUST_PROXY_HOPS);
   }
   app.use("/", createRootRouter());
-  app.use("/auth", createAuthRouter(pgClient, redis));
-  app.use("/signup", createSignupRouter(pgClient, redis));
-  app.use("/ai-models", createAIModelsRouter(pgClient, redis));
-  app.use("/users", createUsersRouter(pgClient, redis, storageService, eventLogService));
-  app.use("/posts", createPostsRouter(pgClient, redis, storageService, eventLogService));
-  app.use("/media", createMediaRouter(pgClient, redis, storageService));
-  app.use("/notifications", createNotificationsRouter(pgClient, redis));
+  app.use("/auth", createAuthRouter(pgPool, redis));
+  app.use("/signup", createSignupRouter(pgPool, redis));
+  app.use("/ai-models", createAIModelsRouter(pgPool, redis));
+  app.use("/users", createUsersRouter(pgPool, redis, storageService, eventLogService));
+  app.use("/posts", createPostsRouter(pgPool, redis, storageService, eventLogService));
+  app.use("/media", createMediaRouter(pgPool, redis, storageService));
+  app.use("/notifications", createNotificationsRouter(pgPool, redis));
 
   const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
     logger.error(`[API ERROR] ${err}`);
@@ -78,10 +80,10 @@ async function main() {
       Promise.resolve()
         .then(async () => {
           try {
-            logger.info("[shutdown] Closing PostgreSQL...");
-            await pgClient.end();
+            logger.info("[shutdown] Closing PostgreSQL pool...");
+            await pgPool.end();
           } catch (e) {
-            logger.error(`[shutdown] pgClient.end error: ${e}`);
+            logger.error(`[shutdown] pgPool.end error: ${e}`);
           }
         })
         .then(async () => {

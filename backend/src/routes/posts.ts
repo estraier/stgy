@@ -1,6 +1,6 @@
 import { Config } from "../config";
 import { Router, Request, Response } from "express";
-import { Client } from "pg";
+import { Pool } from "pg";
 import Redis from "ioredis";
 import type { StorageService } from "../services/storage";
 import { PostsService } from "../services/posts";
@@ -14,15 +14,15 @@ import { User } from "../models/user";
 import { normalizeOneLiner, normalizeMultiLines, parseBoolean } from "../utils/format";
 
 export default function createPostsRouter(
-  pgClient: Client,
+  pgPool: Pool,
   redis: Redis,
   storageService: StorageService,
   eventLogService: EventLogService,
 ) {
   const router = Router();
-  const postsService = new PostsService(pgClient, redis, eventLogService);
-  const usersService = new UsersService(pgClient, redis, eventLogService);
-  const authService = new AuthService(pgClient, redis);
+  const postsService = new PostsService(pgPool, redis, eventLogService);
+  const usersService = new UsersService(pgPool, redis, eventLogService);
+  const authService = new AuthService(pgPool, redis);
   const postsThrottleService = new ThrottleService(redis, "posts", 3600, Config.HOURLY_POSTS_LIMIT);
   const likesThrottleService = new ThrottleService(redis, "likes", 3600, Config.HOURLY_LIKES_LIMIT);
   const authHelpers = new AuthHelpers(authService, usersService);

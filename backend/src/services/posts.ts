@@ -16,17 +16,18 @@ import { IdIssueService } from "./idIssue";
 import { EventLogService } from "./eventLog";
 import { snakeToCamel, escapeForLike, hexToDec, decToHex, hexArrayToDec } from "../utils/format";
 import { makeSnippetJsonFromMarkdown } from "../utils/snippet";
-import { Client } from "pg";
+import { Pool } from "pg";
 import Redis from "ioredis";
+import { pgQuery } from "../utils/servers";
 
 export class PostsService {
-  private pgClient: Client;
+  private pgPool: Pool;
   private redis: Redis;
   private idIssueService: IdIssueService;
   private eventLogService?: EventLogService;
 
-  constructor(pgClient: Client, redis: Redis, eventLogService?: EventLogService) {
-    this.pgClient = pgClient;
+  constructor(pgPool: Pool, redis: Redis, eventLogService?: EventLogService) {
+    this.pgPool = pgPool;
     this.redis = redis;
     this.idIssueService = new IdIssueService(Config.ID_ISSUE_WORKER_ID);
     this.eventLogService = eventLogService;
@@ -69,12 +70,13 @@ export class PostsService {
     if (where.length > 0) {
       sql += " WHERE " + where.join(" AND ");
     }
-    const res = await this.pgClient.query(sql, params);
+    const res = await pgQuery(this.pgPool, sql, params);
     return Number(res.rows[0].count);
   }
 
   async getPostLite(id: string): Promise<PostLite | null> {
-    const res = await this.pgClient.query(
+    const res = await pgQuery(
+      this.pgPool,
       `
       SELECT
         p.id,
@@ -153,7 +155,7 @@ export class PostsService {
     `;
     if (focusUserId) params.push(hexToDec(focusUserId));
 
-    const res = await this.pgClient.query(sql, params);
+    const res = await pgQuery(this.pgPool, sql, params);
     if (res.rows.length === 0) return null;
     const row = res.rows[0];
     row.id = decToHex(row.id);
@@ -161,12 +163,14 @@ export class PostsService {
     row.reply_to = row.reply_to == null ? null : decToHex(row.reply_to);
     const post = snakeToCamel<PostDetail>(row);
     if (focusUserId) {
-      const likeRes = await this.pgClient.query(
+      const likeRes = await pgQuery(
+        this.pgPool,
         "SELECT 1 FROM post_likes WHERE post_id = $1 AND liked_by = $2 LIMIT 1",
         [hexToDec(id), hexToDec(focusUserId)],
       );
       post.isLikedByFocusUser = likeRes.rows.length > 0;
-      const replyRes = await this.pgClient.query(
+      const replyRes = await pgQuery(
+        this.pgPool,
         "SELECT 1 FROM posts WHERE reply_to = $1 AND owned_by = $2 LIMIT 1",
         [hexToDec(id), hexToDec(focusUserId)],
       );
@@ -263,7 +267,7 @@ export class PostsService {
     sql += ` ORDER BY p.id ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
 
-    const res = await this.pgClient.query(sql, params);
+    const res = await pgQuery(this.pgPool, sql, params);
     const posts = res.rows.map((r) => {
       r.id = decToHex(r.id);
       r.owned_by = decToHex(r.owned_by);
@@ -275,12 +279,14 @@ export class PostsService {
     if (!focusUserId || out.length === 0) return out;
 
     const postIds = out.map((p) => p.id);
-    const likeRes = await this.pgClient.query(
+    const likeRes = await pgQuery(
+      this.pgPool,
       `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
       [hexArrayToDec(postIds), hexToDec(focusUserId)],
     );
     const likedPostIds = new Set(likeRes.rows.map((r) => decToHex(r.post_id)));
-    const replyRes = await this.pgClient.query(
+    const replyRes = await pgQuery(
+      this.pgPool,
       `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
       [hexArrayToDec(postIds), hexToDec(focusUserId)],
     );
@@ -312,10 +318,11 @@ export class PostsService {
     }
     const snippet = makeSnippetJsonFromMarkdown(input.content);
 
-    await this.pgClient.query("BEGIN");
+    await pgQuery(this.pgPool, "BEGIN");
     try {
       if (input.replyTo != null) {
-        const chk = await this.pgClient.query<{ allow_replies: boolean }>(
+        const chk = await pgQuery<{ allow_replies: boolean }>(
+          this.pgPool,
           `SELECT allow_replies FROM posts WHERE id = $1`,
           [hexToDec(input.replyTo)],
         );
@@ -326,7 +333,8 @@ export class PostsService {
           throw new Error("replies are not allowed for the target post");
         }
       }
-      const res = await this.pgClient.query(
+      const res = await pgQuery(
+        this.pgPool,
         `INSERT INTO posts (id, snippet, owned_by, reply_to, allow_likes, allow_replies, updated_at)
          VALUES ($1, $2, $3, $4, $5, $6, NULL)
          RETURNING id, snippet, owned_by, reply_to, allow_likes, allow_replies, id_to_timestamp(id) AS created_at, updated_at`,
@@ -339,20 +347,22 @@ export class PostsService {
           input.allowReplies,
         ],
       );
-      await this.pgClient.query(
+      await pgQuery(
+        this.pgPool,
         `INSERT INTO post_details (post_id, content) VALUES ($1, $2)
          ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
         [hexToDec(id), input.content],
       );
       if (input.tags && input.tags.length > 0) {
-        await this.pgClient.query(
+        await pgQuery(
+          this.pgPool,
           `INSERT INTO post_tags (post_id, name) VALUES ${input.tags
             .map((_, i) => `($1, $${i + 2})`)
             .join(", ")}`,
           [hexToDec(id), ...input.tags],
         );
       }
-      await this.pgClient.query("COMMIT");
+      await pgQuery(this.pgPool, "COMMIT");
       if (this.eventLogService && input.replyTo) {
         try {
           this.eventLogService.recordReply({
@@ -368,16 +378,17 @@ export class PostsService {
       row.reply_to = row.reply_to == null ? null : decToHex(row.reply_to);
       return snakeToCamel<Post>(row);
     } catch (e) {
-      await this.pgClient.query("ROLLBACK");
+      await pgQuery(this.pgPool, "ROLLBACK");
       throw e;
     }
   }
 
   async updatePost(input: UpdatePostInput): Promise<PostDetail | null> {
-    await this.pgClient.query("BEGIN");
+    await pgQuery(this.pgPool, "BEGIN");
     try {
       if (input.replyTo != null && input.replyTo !== undefined) {
-        const chk = await this.pgClient.query<{ allow_replies: boolean }>(
+        const chk = await pgQuery<{ allow_replies: boolean }>(
+          this.pgPool,
           `SELECT allow_replies FROM posts WHERE id = $1`,
           [hexToDec(input.replyTo)],
         );
@@ -399,7 +410,8 @@ export class PostsService {
         const snippet = makeSnippetJsonFromMarkdown(input.content);
         columns.push(`snippet = $${idx++}`);
         values.push(snippet);
-        await this.pgClient.query(
+        await pgQuery(
+          this.pgPool,
           `INSERT INTO post_details (post_id, content)
              VALUES ($1, $2)
              ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
@@ -430,12 +442,15 @@ export class PostsService {
       if (columns.length > 0) {
         const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx}
                      RETURNING id`;
-        await this.pgClient.query(sql, values);
+        await pgQuery(this.pgPool, sql, values);
       }
       if (input.tags !== undefined) {
-        await this.pgClient.query(`DELETE FROM post_tags WHERE post_id = $1`, [hexToDec(input.id)]);
+        await pgQuery(this.pgPool, `DELETE FROM post_tags WHERE post_id = $1`, [
+          hexToDec(input.id),
+        ]);
         if (input.tags.length > 0) {
-          await this.pgClient.query(
+          await pgQuery(
+            this.pgPool,
             `INSERT INTO post_tags (post_id, name) VALUES ${input.tags
               .map((_, i) => `($1, $${i + 2})`)
               .join(", ")}`,
@@ -443,26 +458,27 @@ export class PostsService {
           );
         }
       }
-      await this.pgClient.query("COMMIT");
+      await pgQuery(this.pgPool, "COMMIT");
       return this.getPost(input.id);
     } catch (e) {
-      await this.pgClient.query("ROLLBACK");
+      await pgQuery(this.pgPool, "ROLLBACK");
       throw e;
     }
   }
 
   async deletePost(id: string): Promise<void> {
-    const res = await this.pgClient.query(`DELETE FROM posts WHERE id = $1`, [hexToDec(id)]);
+    const res = await pgQuery(this.pgPool, `DELETE FROM posts WHERE id = $1`, [hexToDec(id)]);
     if ((res.rowCount ?? 0) === 0) throw new Error("Post not found");
   }
 
   async addLike(postId: string, userId: string): Promise<void> {
-    const chk = await this.pgClient.query(`SELECT allow_likes FROM posts WHERE id = $1`, [
+    const chk = await pgQuery(this.pgPool, `SELECT allow_likes FROM posts WHERE id = $1`, [
       hexToDec(postId),
     ]);
     if (chk.rows.length === 0) throw new Error("post not found");
     if (!chk.rows[0].allow_likes) throw new Error("likes are not allowed for the target post");
-    const res = await this.pgClient.query(
+    const res = await pgQuery(
+      this.pgPool,
       `INSERT INTO post_likes (post_id, liked_by, created_at)
        VALUES ($1, $2, $3)
        ON CONFLICT DO NOTHING`,
@@ -480,7 +496,8 @@ export class PostsService {
   }
 
   async removeLike(postId: string, userId: string): Promise<void> {
-    const res = await this.pgClient.query(
+    const res = await pgQuery(
+      this.pgPool,
       `DELETE FROM post_likes WHERE post_id = $1 AND liked_by = $2`,
       [hexToDec(postId), hexToDec(userId)],
     );
@@ -588,7 +605,7 @@ export class PostsService {
       limit,
     ];
     if (focusUserId) params.push(hexToDec(focusUserId));
-    const res = await this.pgClient.query(sql, params);
+    const res = await pgQuery(this.pgPool, sql, params);
     const rows = res.rows.map((r) => {
       r.id = decToHex(r.id);
       r.owned_by = decToHex(r.owned_by);
@@ -600,12 +617,14 @@ export class PostsService {
     if (!focusUserId || posts.length === 0) return posts;
 
     const postIds = posts.map((p) => p.id);
-    const likeRes = await this.pgClient.query(
+    const likeRes = await pgQuery(
+      this.pgPool,
       `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
       [hexArrayToDec(postIds), hexToDec(focusUserId)],
     );
     const likedPostIds = new Set(likeRes.rows.map((r) => decToHex(r.post_id)));
-    const replyRes = await this.pgClient.query(
+    const replyRes = await pgQuery(
+      this.pgPool,
       `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
       [hexArrayToDec(postIds), hexToDec(focusUserId)],
     );
@@ -679,7 +698,7 @@ export class PostsService {
     sql += ` ORDER BY pl.created_at ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
     params.push(offset, limit);
 
-    const res = await this.pgClient.query(sql, params);
+    const res = await pgQuery(this.pgPool, sql, params);
     const rows = res.rows.map((r) => {
       r.id = decToHex(r.id);
       r.owned_by = decToHex(r.owned_by);
@@ -691,12 +710,14 @@ export class PostsService {
     if (!focusUserId || posts.length === 0) return posts;
 
     const postIds = posts.map((p) => p.id);
-    const likeRes = await this.pgClient.query(
+    const likeRes = await pgQuery(
+      this.pgPool,
       `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
       [hexArrayToDec(postIds), hexToDec(focusUserId)],
     );
     const likedPostIds = new Set(likeRes.rows.map((r) => decToHex(r.post_id)));
-    const replyRes = await this.pgClient.query(
+    const replyRes = await pgQuery(
+      this.pgPool,
       `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
       [hexArrayToDec(postIds), hexToDec(focusUserId)],
     );
@@ -732,7 +753,7 @@ export class PostsService {
       ORDER BY pl.created_at ${orderDir}, u.id ${orderDir}
       OFFSET $2 LIMIT $3
     `;
-    const res = await this.pgClient.query(sql, [hexToDec(postId), offset, limit]);
+    const res = await pgQuery(this.pgPool, sql, [hexToDec(postId), offset, limit]);
     const rows = res.rows.map((r) => {
       r.id = decToHex(r.id);
       return r;

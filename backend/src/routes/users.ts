@@ -1,6 +1,6 @@
 import { Config } from "../config";
 import { Router, Request, Response } from "express";
-import { Client } from "pg";
+import { Pool } from "pg";
 import Redis from "ioredis";
 import type { StorageService } from "../services/storage";
 import { UsersService } from "../services/users";
@@ -21,15 +21,15 @@ import {
 } from "../utils/format";
 
 export default function createUsersRouter(
-  pgClient: Client,
+  pgPool: Pool,
   redis: Redis,
   storageService: StorageService,
   eventLogService: EventLogService,
 ) {
   const router = Router();
-  const usersService = new UsersService(pgClient, redis, eventLogService);
+  const usersService = new UsersService(pgPool, redis, eventLogService);
   const mediaService = new MediaService(storageService, redis);
-  const authService = new AuthService(pgClient, redis);
+  const authService = new AuthService(pgPool, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
   const sendMailService = new SendMailService(redis);
 

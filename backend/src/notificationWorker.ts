@@ -1,6 +1,6 @@
 import { Config } from "./config";
 import { createLogger } from "./utils/logger";
-import { Client } from "pg";
+import { Pool, PoolClient } from "pg";
 import { IdIssueService } from "./services/idIssue";
 import type {
   AnyEventPayload,
@@ -19,18 +19,20 @@ const logger = createLogger({ file: "notificationWorker" });
 let purgeScore = 0;
 const CONSUMER = "notification";
 
-async function acquireSingletonLock(): Promise<Client> {
-  const pg = await connectPgWithRetry();
-  const res = await pg.query<{ ok: boolean }>(
+async function acquireSingletonLock(): Promise<{ pool: Pool; client: PoolClient }> {
+  const pool = await connectPgWithRetry();
+  const client = await pool.connect();
+  const res = await client.query<{ ok: boolean }>(
     `SELECT pg_try_advisory_lock(hashtext($1), 0) AS ok`,
     ["stgy:notification"],
   );
   if (!res.rows[0]?.ok) {
     logger.warn("[notificationworker] another instance is running; exiting");
-    await pg.end();
+    client.release();
+    await pool.end();
     process.exit(0);
   }
-  return pg;
+  return { pool, client };
 }
 
 function eventMsFromId(eventId: string | bigint): number {
@@ -62,15 +64,15 @@ function isSelfInteraction(payload: AnyEventPayload, recipientUserId: string): b
   }
 }
 
-async function getUserNickname(pg: Client, userIdHex: string): Promise<string> {
-  const u = await pg.query<{ nickname: string }>(`SELECT nickname FROM users WHERE id = $1`, [
+async function getUserNickname(db: PoolClient, userIdHex: string): Promise<string> {
+  const u = await db.query<{ nickname: string }>(`SELECT nickname FROM users WHERE id = $1`, [
     hexToDec(userIdHex),
   ]);
   return u.rows[0]?.nickname ?? "";
 }
 
-async function getPostSnippet(pg: Client, postId: string): Promise<string> {
-  const pres = await pg.query<{ snippet: string }>(`SELECT snippet FROM posts WHERE id = $1`, [
+async function getPostSnippet(db: PoolClient, postId: string): Promise<string> {
+  const pres = await db.query<{ snippet: string }>(`SELECT snippet FROM posts WHERE id = $1`, [
     hexToDec(postId),
   ]);
   const snippetJson = pres.rows[0]?.snippet ?? "";
@@ -169,13 +171,13 @@ function parseReplyPayload(raw: unknown): ReplyPayload {
 }
 
 async function upsertFollow(
-  pg: Client,
+  db: PoolClient,
   recipientUserIdHex: string,
   term: string,
   eventMs: number,
   entry: { userId: string; ts: number },
 ): Promise<void> {
-  const sel = await pg.query<{ payload: unknown }>(
+  const sel = await db.query<{ payload: unknown }>(
     `SELECT payload::json AS payload FROM notifications
       WHERE user_id = $1 AND slot = 'follow' AND term = $2
       FOR UPDATE`,
@@ -185,10 +187,10 @@ async function upsertFollow(
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
 
   if (sel.rows.length === 0) {
-    const nick = await getUserNickname(pg, entry.userId);
+    const nick = await getUserNickname(db, entry.userId);
     const rec: NotificationUserRecord = { userId: entry.userId, userNickname: nick, ts: entry.ts };
     const payload: FollowPayload = { countUsers: 1, records: [rec] };
-    await pg.query(
+    await db.query(
       `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
        VALUES ($1, 'follow', $2, FALSE, $3, $4)`,
       [hexToDec(recipientUserIdHex), term, JSON.stringify(payload), updatedAtISO],
@@ -198,7 +200,7 @@ async function upsertFollow(
 
   const current = parseFollowPayload(sel.rows[0].payload);
   const existing = current.records.find((r) => r.userId === entry.userId);
-  const userNickname = existing ? existing.userNickname : await getUserNickname(pg, entry.userId);
+  const userNickname = existing ? existing.userNickname : await getUserNickname(db, entry.userId);
   const rec: NotificationUserRecord = { userId: entry.userId, userNickname, ts: entry.ts };
   const isNewUser = !existing;
   const nextRecords = dedupeFollow([...current.records, rec], cap);
@@ -208,7 +210,7 @@ async function upsertFollow(
       (isNewUser ? 1 : 0),
     records: nextRecords,
   };
-  await pg.query(
+  await db.query(
     `UPDATE notifications
        SET is_read = FALSE, payload = $3, updated_at = $4
      WHERE user_id = $1 AND slot = 'follow' AND term = $2`,
@@ -217,7 +219,7 @@ async function upsertFollow(
 }
 
 async function upsertLike(
-  pg: Client,
+  db: PoolClient,
   recipientUserIdHex: string,
   postId: string,
   term: string,
@@ -225,7 +227,7 @@ async function upsertLike(
   entry: { userId: string; ts: number },
 ): Promise<void> {
   const slot = `like:${postId}`;
-  const sel = await pg.query<{ payload: unknown }>(
+  const sel = await db.query<{ payload: unknown }>(
     `SELECT payload::json AS payload FROM notifications
       WHERE user_id = $1 AND slot = $2 AND term = $3
       FOR UPDATE`,
@@ -235,8 +237,8 @@ async function upsertLike(
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
 
   if (sel.rows.length === 0) {
-    const nick = await getUserNickname(pg, entry.userId);
-    const snippet = await getPostSnippet(pg, postId);
+    const nick = await getUserNickname(db, entry.userId);
+    const snippet = await getPostSnippet(db, postId);
     const rec: NotificationPostRecord = {
       userId: entry.userId,
       userNickname: nick,
@@ -245,7 +247,7 @@ async function upsertLike(
       ts: entry.ts,
     };
     const payload: LikePayload = { countUsers: 1, records: [rec] };
-    await pg.query(
+    await db.query(
       `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
        VALUES ($1, $2, $3, FALSE, $4, $5)`,
       [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(payload), updatedAtISO],
@@ -258,8 +260,8 @@ async function upsertLike(
   const existingUser = records.find((r) => r.userId === entry.userId);
   const userNickname = existingUser
     ? existingUser.userNickname
-    : await getUserNickname(pg, entry.userId);
-  const postSnippet = records[0]?.postSnippet ?? (await getPostSnippet(pg, postId));
+    : await getUserNickname(db, entry.userId);
+  const postSnippet = records[0]?.postSnippet ?? (await getPostSnippet(db, postId));
   const rec: NotificationPostRecord = {
     userId: entry.userId,
     userNickname,
@@ -274,7 +276,7 @@ async function upsertLike(
       (current.countUsers ?? new Set(records.map((r) => r.userId)).size) + (isNewUser ? 1 : 0),
     records: nextRecords,
   };
-  await pg.query(
+  await db.query(
     `UPDATE notifications
        SET is_read = FALSE, payload = $4, updated_at = $5
      WHERE user_id = $1 AND slot = $2 AND term = $3`,
@@ -283,7 +285,7 @@ async function upsertLike(
 }
 
 async function upsertReply(
-  pg: Client,
+  db: PoolClient,
   recipientUserIdHex: string,
   replyToPostId: string,
   term: string,
@@ -291,7 +293,7 @@ async function upsertReply(
   entry: { userId: string; postId: string; ts: number },
 ): Promise<void> {
   const slot = `reply:${replyToPostId}`;
-  const sel = await pg.query<{ payload: unknown }>(
+  const sel = await db.query<{ payload: unknown }>(
     `SELECT payload::json AS payload FROM notifications
       WHERE user_id = $1 AND slot = $2 AND term = $3
       FOR UPDATE`,
@@ -301,8 +303,8 @@ async function upsertReply(
   const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
 
   if (sel.rows.length === 0) {
-    const nick = await getUserNickname(pg, entry.userId);
-    const snippet = await getPostSnippet(pg, replyToPostId);
+    const nick = await getUserNickname(db, entry.userId);
+    const snippet = await getPostSnippet(db, replyToPostId);
     const rec: NotificationPostRecord = {
       userId: entry.userId,
       userNickname: nick,
@@ -311,7 +313,7 @@ async function upsertReply(
       ts: entry.ts,
     };
     const payload: ReplyPayload = { countUsers: 1, countPosts: 1, records: [rec] };
-    await pg.query(
+    await db.query(
       `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
        VALUES ($1, $2, $3, FALSE, $4, $5)`,
       [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(payload), updatedAtISO],
@@ -324,8 +326,8 @@ async function upsertReply(
   const existingUser = records.find((r) => r.userId === entry.userId);
   const userNickname = existingUser
     ? existingUser.userNickname
-    : await getUserNickname(pg, entry.userId);
-  const postSnippet = records[0]?.postSnippet ?? (await getPostSnippet(pg, replyToPostId));
+    : await getUserNickname(db, entry.userId);
+  const postSnippet = records[0]?.postSnippet ?? (await getPostSnippet(db, replyToPostId));
 
   const rec: NotificationPostRecord = {
     userId: entry.userId,
@@ -346,7 +348,7 @@ async function upsertReply(
     countPosts: (current.countPosts ?? postSet.size) + (isNewPost ? 1 : 0),
     records: nextRecords,
   };
-  await pg.query(
+  await db.query(
     `UPDATE notifications
        SET is_read = FALSE, payload = $4, updated_at = $5
      WHERE user_id = $1 AND slot = $2 AND term = $3`,
@@ -355,56 +357,56 @@ async function upsertReply(
 }
 
 async function resolveRecipientUserId(
-  pg: Client,
+  db: PoolClient,
   payload: AnyEventPayload,
 ): Promise<string | null> {
   if (payload.type === "follow") return payload.followeeId;
   if (payload.type === "like") {
-    const res = await pg.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
+    const res = await db.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
       hexToDec(payload.postId),
     ]);
     return res.rows[0]?.owned_by ? (decToHex(res.rows[0].owned_by) as string) : null;
   }
-  const res = await pg.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
+  const res = await db.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
     hexToDec(payload.replyToPostId),
   ]);
   return res.rows[0]?.owned_by ? (decToHex(res.rows[0].owned_by) as string) : null;
 }
 
 async function processFollowEvent(
-  pg: Client,
+  db: PoolClient,
   recipientUserId: string,
   payload: FollowEventPayload,
   eventMs: number,
   term: string,
 ): Promise<void> {
-  await upsertFollow(pg, recipientUserId, term, eventMs, {
+  await upsertFollow(db, recipientUserId, term, eventMs, {
     userId: payload.followerId,
     ts: Math.floor(eventMs / 1000),
   });
 }
 
 async function processLikeEvent(
-  pg: Client,
+  db: PoolClient,
   recipientUserId: string,
   payload: LikeEventPayload,
   eventMs: number,
   term: string,
 ): Promise<void> {
-  await upsertLike(pg, recipientUserId, payload.postId, term, eventMs, {
+  await upsertLike(db, recipientUserId, payload.postId, term, eventMs, {
     userId: payload.userId,
     ts: Math.floor(eventMs / 1000),
   });
 }
 
 async function processReplyEvent(
-  pg: Client,
+  db: PoolClient,
   recipientUserId: string,
   payload: ReplyEventPayload,
   eventMs: number,
   term: string,
 ): Promise<void> {
-  await upsertReply(pg, recipientUserId, payload.replyToPostId, term, eventMs, {
+  await upsertReply(db, recipientUserId, payload.replyToPostId, term, eventMs, {
     userId: payload.userId,
     postId: payload.postId,
     ts: Math.floor(eventMs / 1000),
@@ -413,7 +415,7 @@ async function processReplyEvent(
 
 async function processPartition(
   eventLogService: EventLogService,
-  pg: Client,
+  pgPool: Pool,
   partitionId: number,
 ): Promise<number> {
   const cursor = await eventLogService.loadCursor(CONSUMER, partitionId);
@@ -434,14 +436,16 @@ async function processPartition(
 
   for (const row of batch) {
     const eid = BigInt(row.event_id);
-    await pg.query("BEGIN");
+    const client = await pgPool.connect();
     try {
+      await client.query("BEGIN");
       const payload = row.payload;
-      const recipient = await resolveRecipientUserId(pg, payload);
+      const recipient = await resolveRecipientUserId(client, payload);
       if (!recipient || isSelfInteraction(payload, recipient)) {
-        await eventLogService.saveCursor(pg, CONSUMER, partitionId, eid);
-        await pg.query("COMMIT");
+        await eventLogService.saveCursor(client, CONSUMER, partitionId, eid);
+        await client.query("COMMIT");
         processed++;
+        client.release();
         continue;
       }
 
@@ -449,23 +453,25 @@ async function processPartition(
       const term = formatTermInTz(ms, Config.SYSTEM_TIMEZONE);
 
       if (payload.type === "reply") {
-        await processReplyEvent(pg, recipient, payload, ms, term);
+        await processReplyEvent(client, recipient, payload, ms, term);
       } else if (payload.type === "like") {
-        await processLikeEvent(pg, recipient, payload, ms, term);
+        await processLikeEvent(client, recipient, payload, ms, term);
       } else if (payload.type === "follow") {
-        await processFollowEvent(pg, recipient, payload, ms, term);
+        await processFollowEvent(client, recipient, payload, ms, term);
       } else {
         logger.warn(
           `[notificationworker] unknown payload type: ${(payload as { type?: string }).type}`,
         );
       }
 
-      await eventLogService.saveCursor(pg, CONSUMER, partitionId, eid);
-      await pg.query("COMMIT");
+      await eventLogService.saveCursor(client, CONSUMER, partitionId, eid);
+      await client.query("COMMIT");
       processed++;
     } catch (e) {
-      await pg.query("ROLLBACK");
+      await client.query("ROLLBACK");
       throw e;
+    } finally {
+      client.release();
     }
   }
 
@@ -482,12 +488,12 @@ function assignedPartitions(workerIndex: number): number[] {
 
 async function drain(
   eventLogService: EventLogService,
-  pg: Client,
+  pgPool: Pool,
   partitionId: number,
   notifications: NotificationsService,
 ): Promise<void> {
   for (;;) {
-    const n = await processPartition(eventLogService, pg, partitionId);
+    const n = await processPartition(eventLogService, pgPool, partitionId);
     if (n === 0) break;
     purgeScore += n;
     try {
@@ -508,15 +514,15 @@ async function drain(
 
 async function runWorker(workerIndex: number): Promise<void> {
   logger.info(`stgy notification worker ${workerIndex} started`);
-  const pg = await connectPgWithRetry(60_000);
+  const pgPool = await connectPgWithRetry(60_000);
   const sub = await connectRedisWithRetry();
-  const eventLogService = new EventLogService(pg, sub);
-  const notificationsService = new NotificationsService(pg);
+  const eventLogService = new EventLogService(pgPool, sub);
+  const notificationsService = new NotificationsService(pgPool);
 
   const parts = assignedPartitions(workerIndex);
   for (const p of parts) {
     try {
-      await drain(eventLogService, pg, p, notificationsService);
+      await drain(eventLogService, pgPool, p, notificationsService);
     } catch (e) {
       logger.error(`[notificationworker] drain error: ${e}`);
     }
@@ -540,7 +546,7 @@ async function runWorker(workerIndex: number): Promise<void> {
     (async () => {
       try {
         for (;;) {
-          await drain(eventLogService, pg, p, notificationsService);
+          await drain(eventLogService, pgPool, p, notificationsService);
           if (!pending.delete(p)) break;
         }
       } catch {
@@ -554,7 +560,7 @@ async function runWorker(workerIndex: number): Promise<void> {
     try {
       await sub.unsubscribe(channel);
       sub.disconnect();
-      await pg.end();
+      await pgPool.end();
     } finally {
       process.exit(0);
     }
@@ -562,13 +568,17 @@ async function runWorker(workerIndex: number): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  const lockConn = await acquireSingletonLock();
+  const { pool: lockPool, client: lockClient } = await acquireSingletonLock();
   const runners: Promise<void>[] = [];
   for (let i = 0; i < Config.NOTIFICATION_WORKERS; i++) {
     runners.push(runWorker(i));
   }
   await Promise.all(runners);
-  await lockConn.end();
+  try {
+    lockClient.release();
+  } finally {
+    await lockPool.end();
+  }
 }
 
 main().catch((e) => {

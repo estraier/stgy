@@ -1,6 +1,6 @@
 import { Config } from "../config";
 import { Router, Request, Response } from "express";
-import { Client } from "pg";
+import { Pool } from "pg";
 import Redis from "ioredis";
 import type { StorageService } from "../services/storage";
 import { AuthService } from "../services/auth";
@@ -9,11 +9,11 @@ import { AuthHelpers } from "./authHelpers";
 import { ThrottleService } from "../services/throttle";
 import { MediaService } from "../services/media";
 
-export default function createMediaRouter(pgClient: Client, redis: Redis, storage: StorageService) {
+export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: StorageService) {
   const router = Router();
   const mediaService = new MediaService(storage, redis);
-  const usersService = new UsersService(pgClient, redis);
-  const authService = new AuthService(pgClient, redis);
+  const usersService = new UsersService(pgPool, redis);
+  const authService = new AuthService(pgPool, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
   const throttleService = new ThrottleService(
     redis,

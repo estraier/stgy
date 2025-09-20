@@ -13,6 +13,11 @@ jest.mock("../utils/format", () => {
   });
 });
 
+jest.mock("../utils/servers", () => {
+  const pgQuery = jest.fn((pool: any, sql: string, params?: any[]) => pool.query(sql, params));
+  return { pgQuery };
+});
+
 function md5(s: string) {
   return crypto.createHash("md5").update(s).digest("hex");
 }

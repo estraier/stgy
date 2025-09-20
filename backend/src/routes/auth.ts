@@ -1,14 +1,14 @@
 import { Router, Request, Response } from "express";
-import { Client } from "pg";
+import { Pool } from "pg";
 import Redis from "ioredis";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
 import { AuthHelpers } from "./authHelpers";
 
-export default function createAuthRouter(pgClient: Client, redis: Redis) {
+export default function createAuthRouter(pgPool: Pool, redis: Redis) {
   const router = Router();
-  const usersService = new UsersService(pgClient, redis);
-  const authService = new AuthService(pgClient, redis);
+  const usersService = new UsersService(pgPool, redis);
+  const authService = new AuthService(pgPool, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
 
   router.post("/switch-user", async (req: Request, res: Response) => {

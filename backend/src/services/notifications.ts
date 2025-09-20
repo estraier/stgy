@@ -1,5 +1,5 @@
 import { Config } from "../config";
-import { Client } from "pg";
+import { Pool } from "pg";
 import {
   Notification,
   NotificationAnyRecord,
@@ -7,6 +7,7 @@ import {
   MarkNotificationInput,
 } from "../models/notifications";
 import { hexToDec } from "../utils/format";
+import { pgQuery } from "../utils/servers";
 
 type Row = {
   slot: string;
@@ -88,12 +89,13 @@ function mergeByUpdatedAtDesc(a: Notification[], b: Notification[]): Notificatio
 }
 
 export class NotificationsService {
-  constructor(private readonly pg: Client) {}
+  constructor(private readonly pg: Pool) {}
 
   async listFeed(userId: string, opts?: { newerThan?: Date }): Promise<Notification[] | null> {
     const dbUserId = hexToDec(userId);
     if (opts?.newerThan) {
-      const exists = await this.pg.query(
+      const exists = await pgQuery(
+        this.pg,
         `SELECT 1
            FROM notifications
           WHERE user_id = $1 AND is_read = FALSE AND updated_at > $2
@@ -102,7 +104,8 @@ export class NotificationsService {
       );
       if (exists.rowCount === 0) return null;
     }
-    const unreadRes = await this.pg.query<Row>(
+    const unreadRes = await pgQuery<Row>(
+      this.pg,
       `SELECT slot, term, is_read, payload::json AS payload, updated_at, created_at
          FROM notifications
         WHERE user_id = $1 AND is_read = FALSE
@@ -110,7 +113,8 @@ export class NotificationsService {
         LIMIT $2`,
       [dbUserId, Config.NOTIFICATION_SHOWN_RECORDS],
     );
-    const readRes = await this.pg.query<Row>(
+    const readRes = await pgQuery<Row>(
+      this.pg,
       `SELECT slot, term, is_read, payload::json AS payload, updated_at, created_at
          FROM notifications
         WHERE user_id = $1 AND is_read = TRUE
@@ -124,7 +128,8 @@ export class NotificationsService {
   }
 
   async markNotification(input: MarkNotificationInput): Promise<void> {
-    await this.pg.query(
+    await pgQuery(
+      this.pg,
       `UPDATE notifications
           SET is_read = $4
         WHERE user_id = $1 AND slot = $2 AND term = $3`,
@@ -133,7 +138,8 @@ export class NotificationsService {
   }
 
   async markAllNotifications(input: MarkAllNotificationsInput): Promise<void> {
-    await this.pg.query(
+    await pgQuery(
+      this.pg,
       `UPDATE notifications
           SET is_read = $2
         WHERE user_id = $1
@@ -143,18 +149,19 @@ export class NotificationsService {
   }
 
   async purgeOldRecords(): Promise<number> {
-    await this.pg.query("BEGIN");
+    await pgQuery(this.pg, "BEGIN");
     try {
-      await this.pg.query("SET LOCAL statement_timeout = 10000");
-      const res = await this.pg.query(
+      await pgQuery(this.pg, "SET LOCAL statement_timeout = 10000");
+      const res = await pgQuery(
+        this.pg,
         `DELETE FROM notifications
          WHERE created_at < (now() - make_interval(days => $1))`,
         [Config.NOTIFICATION_RETENTION_DAYS],
       );
-      await this.pg.query("COMMIT");
+      await pgQuery(this.pg, "COMMIT");
       return res.rowCount ?? 0;
     } catch (e) {
-      await this.pg.query("ROLLBACK");
+      await pgQuery(this.pg, "ROLLBACK");
       throw e;
     }
   }

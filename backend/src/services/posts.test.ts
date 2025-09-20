@@ -10,6 +10,11 @@ import { User } from "../models/user";
 import crypto from "crypto";
 import { hexToDec } from "../utils/format";
 
+jest.mock("../utils/servers", () => {
+  const pgQuery = jest.fn((pool: any, sql: string, params?: any[]) => pool.query(sql, params));
+  return { pgQuery };
+});
+
 function normalizeSql(sql: string) {
   return sql.replace(/\s+/g, " ").trim();
 }

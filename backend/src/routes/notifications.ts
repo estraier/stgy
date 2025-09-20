@@ -1,17 +1,17 @@
 import { Router, Request, Response } from "express";
-import { Client } from "pg";
+import { Pool } from "pg";
 import Redis from "ioredis";
 import { NotificationsService } from "../services/notifications";
 import { UsersService } from "../services/users";
 import { AuthService } from "../services/auth";
 import { AuthHelpers } from "./authHelpers";
 
-export default function createNotificationRouter(pgClient: Client, redis: Redis) {
+export default function createNotificationRouter(pgPool: Pool, redis: Redis) {
   const router = Router();
-  const usersService = new UsersService(pgClient, redis);
-  const authService = new AuthService(pgClient, redis);
+  const usersService = new UsersService(pgPool, redis);
+  const authService = new AuthService(pgPool, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
-  const notificationsService = new NotificationsService(pgClient);
+  const notificationsService = new NotificationsService(pgPool);
 
   router.get("/feed", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);

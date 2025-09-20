@@ -6,16 +6,17 @@ import type {
   LikeEventPayload,
   FollowEventPayload,
 } from "../models/eventLog";
-import { Client } from "pg";
+import { Pool, PoolClient } from "pg";
 import Redis from "ioredis";
+import { pgQuery } from "../utils/servers";
 
 export class EventLogService {
-  private pgClient: Client;
+  private pgPool: Pool;
   private idIssueService: IdIssueService;
   private redis: Redis;
 
-  constructor(pgClient: Client, redis: Redis) {
-    this.pgClient = pgClient;
+  constructor(pgPool: Pool, redis: Redis) {
+    this.pgPool = pgPool;
     this.redis = redis;
     this.idIssueService = new IdIssueService(Config.ID_ISSUE_WORKER_ID);
   }
@@ -80,18 +81,24 @@ export class EventLogService {
     const days = Config.EVENT_LOG_RETENTION_DAYS;
     const cutoffDate = new Date(Date.now() - days * 24 * 60 * 60 * 1000);
     const cutoffId = IdIssueService.lowerBoundIdForDate(cutoffDate).toString();
-    await this.pgClient.query("BEGIN");
+
+    const client = await this.pgPool.connect();
     try {
-      await this.pgClient.query("SET LOCAL statement_timeout = 10000");
-      const res = await this.pgClient.query(
+      await client.query("BEGIN");
+      await client.query("SET LOCAL statement_timeout = 10000");
+      const res = await client.query(
         "DELETE FROM event_logs WHERE partition_id = $1 AND event_id < $2",
         [partitionId, cutoffId],
       );
-      await this.pgClient.query("COMMIT");
+      await client.query("COMMIT");
       return res.rowCount ?? 0;
     } catch (e) {
-      await this.pgClient.query("ROLLBACK");
+      try {
+        await client.query("ROLLBACK");
+      } catch {}
       throw e;
+    } finally {
+      client.release();
     }
   }
 
@@ -112,7 +119,8 @@ export class EventLogService {
   private async insert(partitionId: number, payload: AnyEventPayload): Promise<bigint> {
     const idBig = await this.idIssueService.issueBigint();
     const eventId = idBig.toString();
-    await this.pgClient.query(
+    await pgQuery(
+      this.pgPool,
       "INSERT INTO event_logs (partition_id, event_id, payload) VALUES ($1, $2, $3)",
       [partitionId, eventId, JSON.stringify(payload)],
     );
@@ -121,14 +129,16 @@ export class EventLogService {
   }
 
   async loadCursor(consumer: string, partitionId: number): Promise<bigint> {
-    const res = await this.pgClient.query<{ last_event_id: string }>(
+    const res = await pgQuery<{ last_event_id: string }>(
+      this.pgPool,
       `SELECT last_event_id
          FROM event_log_cursors
         WHERE consumer = $1 AND partition_id = $2`,
       [consumer, partitionId],
     );
     if (res.rows.length === 0) {
-      await this.pgClient.query(
+      await pgQuery(
+        this.pgPool,
         `INSERT INTO event_log_cursors (consumer, partition_id, last_event_id)
          VALUES ($1, $2, $3)
          ON CONFLICT (consumer, partition_id) DO NOTHING`,
@@ -140,7 +150,7 @@ export class EventLogService {
   }
 
   async saveCursor(
-    tx: Client,
+    tx: PoolClient,
     consumer: string,
     partitionId: number,
     lastEventId: bigint,
@@ -158,7 +168,8 @@ export class EventLogService {
     afterId: bigint,
     limit: number = Config.NOTIFICATION_BATCH_SIZE,
   ): Promise<Array<{ event_id: string; payload: AnyEventPayload }>> {
-    const res = await this.pgClient.query<{ event_id: string; payload: AnyEventPayload }>(
+    const res = await pgQuery<{ event_id: string; payload: AnyEventPayload }>(
+      this.pgPool,
       `SELECT event_id, payload::json AS payload
          FROM event_logs
         WHERE partition_id = $1

@@ -1,6 +1,10 @@
 import { AIModelsService } from "./aiModels";
 
-class MockPgClient {
+jest.mock("../utils/servers", () => ({
+  pgQuery: jest.fn(async (pool: any, text: string, params?: any[]) => pool.query(text, params)),
+}));
+
+class MockPgPool {
   rows: any[];
 
   constructor(rows: any[] = []) {
@@ -10,9 +14,10 @@ class MockPgClient {
   async query(sql: string, params?: any[]) {
     if (sql.includes("WHERE name = $1")) {
       const row = this.rows.find((r) => r.name === params?.[0]);
-      return { rows: row ? [row] : [] };
+      const out = row ? [row] : [];
+      return { rows: out, rowCount: out.length };
     }
-    return { rows: this.rows };
+    return { rows: this.rows, rowCount: this.rows.length };
   }
 }
 
@@ -33,11 +38,11 @@ describe("AIModelsService", () => {
   ];
 
   let service: AIModelsService;
-  let pgClient: MockPgClient;
+  let pgPool: MockPgPool;
 
   beforeEach(() => {
-    pgClient = new MockPgClient([...aiModels]);
-    service = new AIModelsService(pgClient as any);
+    pgPool = new MockPgPool([...aiModels]);
+    service = new AIModelsService(pgPool as any);
   });
 
   it("should list all AI models", async () => {

@@ -1,17 +1,17 @@
 import { Router, Request, Response } from "express";
-import { Client } from "pg";
+import { Pool } from "pg";
 import Redis from "ioredis";
 import { AIModelsService } from "../services/aiModels";
 import { AuthHelpers } from "./authHelpers";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
 
-export default function createAIModelsRouter(pgClient: Client, redis: Redis) {
+export default function createAIModelsRouter(pgPool: Pool, redis: Redis) {
   const router = Router();
 
-  const aiModelsService = new AIModelsService(pgClient);
-  const usersService = new UsersService(pgClient, redis);
-  const authService = new AuthService(pgClient, redis);
+  const aiModelsService = new AIModelsService(pgPool);
+  const usersService = new UsersService(pgPool, redis);
+  const authService = new AuthService(pgPool, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
 
   router.get("/:name", async (req: Request, res: Response) => {

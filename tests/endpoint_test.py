@@ -9,7 +9,7 @@ import base64
 APP_HOST = os.environ.get("STGY_APP_HOST", "localhost")
 APP_PORT = int(os.environ.get("STGY_APP_PORT", 3001))
 ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
-ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "admin")
+ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "stgystgy")
 TEST_SIGNUP_CODE = os.environ.get("STGY_TEST_SIGNUP_CODE", "000000")
 BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
 
@@ -313,13 +313,13 @@ def test_signup():
   res = requests.get(f"{BASE_URL}/users?limit=2000", cookies={"session_id": session_id})
   assert res.status_code == 200
   users = res.json()
-  assert any(u["id"] == admin_id and "@example." in u["email"] for u in users)
+  assert any(u["id"] == admin_id and "@stgy." in u["email"] for u in users)
   assert any(u["email"] == email for u in users)
   print("[signup] list check ok")
   res = requests.get(f"{BASE_URL}/users?limit=2000", cookies={"session_id": session_id})
   assert res.status_code == 200
   users = res.json()
-  assert any(u["id"] == admin_id and "@example." in u["email"] for u in users)
+  assert any(u["id"] == admin_id and "@stgy." in u["email"] for u in users)
   assert any(u["email"] == email for u in users)
   print("[signup] list check ok")
   res = requests.get(f"{BASE_URL}/users/{admin_id}", cookies={"session_id": session_id})
@@ -327,7 +327,7 @@ def test_signup():
   user = res.json()
   print(f"[signup] get admin {user}")
   assert user["id"] == admin_id
-  assert "@example." in user["email"]
+  assert "@stgy." in user["email"]
   res = requests.get(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
   assert res.status_code == 200
   user = res.json()

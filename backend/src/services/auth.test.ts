@@ -1,6 +1,10 @@
 import { AuthService } from "./auth";
 import { decToHex, hexToDec } from "../utils/format";
 
+jest.mock("../utils/servers", () => ({
+  pgQuery: jest.fn(async (pool: any, text: string, params?: any[]) => pool.query(text, params)),
+}));
+
 jest.mock("../utils/format", () => {
   const actual = jest.requireActual("../utils/format") as Record<string, unknown>;
   return Object.assign({}, actual, {
@@ -56,7 +60,7 @@ describe("AuthService class", () => {
           nickname: "TestNick",
           is_admin: true,
           updated_at: null,
-          // password(BYTEA) は不要（checkPasswordHash をモックしているため）
+          password: new Uint8Array([1, 2, 3]),
         },
       ],
       rowCount: 1,

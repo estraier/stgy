@@ -1,4 +1,4 @@
-import { Client } from "pg";
+import { Pool, QueryResult, QueryResultRow } from "pg";
 import os from "os";
 import Redis from "ioredis";
 import { Config } from "../config";
@@ -18,8 +18,8 @@ export function getSampleAddr(): string {
   return "127.0.0.1";
 }
 
-export function makePg(): Client {
-  return new Client({
+export function makePgPool(): Pool {
+  return new Pool({
     host: Config.DATABASE_HOST,
     port: Config.DATABASE_PORT,
     user: Config.DATABASE_USER,
@@ -32,18 +32,18 @@ function sleep(ms: number) {
   return new Promise((r) => setTimeout(r, ms));
 }
 
-export async function connectPgWithRetry(timeout = 60): Promise<Client> {
-  logger.info(`pg connect: ${Config.DATABASE_HOST}:${Config.DATABASE_PORT}`);
+export async function connectPgWithRetry(timeout = 60): Promise<Pool> {
+  logger.info(`pg connect (pool): ${Config.DATABASE_HOST}:${Config.DATABASE_PORT}`);
   const deadline = Date.now() + timeout * 1000;
   let attempt = 0;
   for (;;) {
-    const pg = makePg();
+    const pool = makePgPool();
     try {
-      await pg.connect();
-      return pg;
+      await pool.query("SELECT 1");
+      return pool;
     } catch (e) {
       try {
-        await pg.end();
+        await pool.end();
       } catch {}
       attempt++;
       if (Date.now() >= deadline) {
@@ -55,6 +55,25 @@ export async function connectPgWithRetry(timeout = 60): Promise<Client> {
       await sleep(1000);
     }
   }
+}
+
+export async function pgQuery<T extends QueryResultRow = QueryResultRow>(
+  pool: Pool,
+  text: string,
+  params: ReadonlyArray<unknown> = [],
+  attempts = 3,
+): Promise<QueryResult<T>> {
+  let lastErr: unknown;
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await pool.query<T>(text, params as unknown[]);
+    } catch (e) {
+      lastErr = e;
+      if (i === attempts) break;
+      await sleep(200 * i);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
 }
 
 export function makeRedis(): Redis {

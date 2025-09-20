@@ -1,6 +1,6 @@
 import { Config } from "../config";
 import { Router, Request, Response } from "express";
-import { Client } from "pg";
+import { Pool } from "pg";
 import Redis from "ioredis";
 import { UsersService } from "../services/users";
 import { SignupService } from "../services/signup";
@@ -8,10 +8,10 @@ import { SendMailService } from "../services/sendMail";
 import { ThrottleService } from "../services/throttle";
 import { validateEmail, normalizeEmail, normalizeText } from "../utils/format";
 
-export default function createSignupRouter(pgClient: Client, redis: Redis) {
+export default function createSignupRouter(pgPool: Pool, redis: Redis) {
   const router = Router();
-  const usersService = new UsersService(pgClient, redis);
-  const signupService = new SignupService(pgClient, usersService, redis);
+  const usersService = new UsersService(pgPool, redis);
+  const signupService = new SignupService(pgPool, redis, usersService);
   const sendMailService = new SendMailService(redis);
   const throttleService = new ThrottleService(redis, "signup", 3600, Config.HOURLY_SIGNUP_LIMIT);
 

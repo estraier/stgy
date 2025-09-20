@@ -2,6 +2,9 @@ import { SignupService } from "./signup";
 import { UsersService } from "./users";
 
 jest.mock("./users");
+jest.mock("../utils/servers", () => ({
+  pgQuery: jest.fn(async (pool: any, text: string, params?: any[]) => pool.query(text, params)),
+}));
 
 class MockPgClient {
   public emails: Set<string> = new Set();
@@ -23,7 +26,7 @@ class MockRedis {
     return this.store.get(key) || {};
   }
   async expire(_key: string, _seconds: number) {}
-  async lpush(queue: string, val: string) {
+  async lpush(_queue: string, val: string) {
     this.queue.push(val);
   }
   async del(key: string) {
@@ -41,7 +44,7 @@ describe("signup service", () => {
     pgClient = new MockPgClient();
     redis = new MockRedis();
     usersService = new UsersService(pgClient as any, redis as any);
-    signupService = new SignupService(pgClient as any, usersService, redis as any);
+    signupService = new SignupService(pgClient as any, redis as any, usersService);
     (usersService.createUser as unknown as jest.Mock).mockReset();
   });
 

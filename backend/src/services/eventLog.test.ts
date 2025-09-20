@@ -1,3 +1,4 @@
+// src/services/eventLog.test.ts
 import { jest } from "@jest/globals";
 import { EventLogService } from "./eventLog";
 import { IdIssueService } from "./idIssue";
@@ -10,6 +11,10 @@ jest.mock("../config", () => ({
     NOTIFICATION_WORKERS: 3,
     NOTIFICATION_BATCH_SIZE: 50,
   },
+}));
+
+jest.mock("../utils/servers", () => ({
+  pgQuery: jest.fn(async (pool: any, sql: string, params?: any[]) => pool.query(sql, params)),
 }));
 
 describe("EventLogService (with Redis publish)", () => {
@@ -25,7 +30,8 @@ describe("EventLogService (with Redis publish)", () => {
 
   function mkSvc() {
     const query = (jest.fn() as any).mockResolvedValue({ rowCount: 1, rows: [] });
-    const pg = { query } as any;
+    const connect = (jest.fn() as any).mockResolvedValue({ query, release: jest.fn() });
+    const pg = { query, connect } as any;
 
     const publish = (jest.fn() as any).mockResolvedValue(1);
     const redis = { publish } as any;
@@ -110,27 +116,32 @@ describe("EventLogService (with Redis publish)", () => {
         return cutoffBig;
       });
 
-    const query = (jest.fn() as any)
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({})
-      .mockResolvedValueOnce({ rowCount: 7 })
-      .mockResolvedValueOnce({});
-    const pg = { query } as any;
+    const clientQuery = (jest.fn() as any)
+      .mockResolvedValueOnce({}) // BEGIN
+      .mockResolvedValueOnce({}) // SET LOCAL
+      .mockResolvedValueOnce({ rowCount: 7 }) // DELETE
+      .mockResolvedValueOnce({}); // COMMIT
+    const clientRelease = jest.fn();
+    const pg = {
+      connect: jest.fn(async () => ({ query: clientQuery, release: clientRelease })),
+      query: jest.fn(),
+    } as any;
     const redis = { publish: jest.fn() as any } as any;
 
     const svc = new EventLogService(pg, redis);
     const deleted = await svc.purgeOldRecords(5);
 
     expect(deleted).toBe(7);
-    expect(query).toHaveBeenNthCalledWith(1, "BEGIN");
-    expect(query).toHaveBeenNthCalledWith(2, "SET LOCAL statement_timeout = 10000");
+    expect(clientQuery).toHaveBeenNthCalledWith(1, "BEGIN");
+    expect(clientQuery).toHaveBeenNthCalledWith(2, "SET LOCAL statement_timeout = 10000");
 
-    const [delSql, delParams] = query.mock.calls[2] as [string, any[]];
+    const [delSql, delParams] = clientQuery.mock.calls[3 - 1] as [string, any[]];
     expect(delSql).toMatch(/DELETE FROM event_logs/i);
     expect(delParams[0]).toBe(5);
     expect(delParams[1]).toBe(cutoffBig.toString());
 
-    expect(query).toHaveBeenNthCalledWith(4, "COMMIT");
+    expect(clientQuery).toHaveBeenNthCalledWith(4, "COMMIT");
+    expect(clientRelease).toHaveBeenCalledTimes(1);
 
     expect(lbSpy).toHaveBeenCalledTimes(1);
     expect(seenDate).not.toBeNull();
@@ -142,7 +153,8 @@ describe("EventLogService (with Redis publish)", () => {
 describe("EventLogService (cursor & batch helpers)", () => {
   function mkSvc() {
     const query = (jest.fn() as any).mockResolvedValue({ rows: [] });
-    const pg = { query } as any;
+    const connect = (jest.fn() as any).mockResolvedValue({ query, release: jest.fn() });
+    const pg = { query, connect } as any;
     const redis = { publish: jest.fn() as any } as any;
     const svc = new EventLogService(pg, redis);
     return { svc, pg, query };
