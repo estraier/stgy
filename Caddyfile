@@ -36,5 +36,5 @@ http://s3-console.localhost:8080 {
 http://mail.localhost:8080 {
   encode zstd gzip
 
-  reverse_proxy http://smtp:8025
+  reverse_proxy http://mailpit:8025
 }
