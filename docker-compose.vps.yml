@@ -13,7 +13,7 @@ services:
     environment:
       MINIO_SERVER_URL: https://s3.stgy.jp
 
-  smtp:
+  mailpit:
     ports: []
     expose:
       - "8025"

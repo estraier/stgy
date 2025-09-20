@@ -42,8 +42,8 @@ docker context use colima
 
 ```
 {
-	"auths": {},
-	"currentContext": "colima",
+  "auths": {},
+  "currentContext": "colima",
   "cliPluginsExtraDirs": ["/opt/homebrew/lib/docker/cli-plugins"]
 }
 ```
@@ -264,13 +264,15 @@ VPSサービスのコントロールパネルで、Ubuntuの最新のLTS版を�
 
 ファイアウォールを設定する。SSHの22、HTTPSの443、HTTPの80だけを開ける。
 
-- sudo ufw default deny incoming
-- sudo ufw default allow outgoing
-- sudo ufw allow ssh
-- sudo ufw allow https
-- sudo ufw allow http
-- sudo ufw enable
-- sudo ufw status
+```
+sudo ufw default deny incoming
+sudo ufw default allow outgoing
+sudo ufw allow ssh
+sudo ufw allow https
+sudo ufw allow http
+sudo ufw enable
+sudo ufw status
+```
 
 自分のユーザでログインして、環境設定を行う。
 
@@ -286,17 +288,21 @@ VPSサービスのコントロールパネルで、Ubuntuの最新のLTS版を�
 
 Docker関連ツールを入れる。標準ではaptがDockerの公式リポジトリを見ないので、設定を加える必要がある。
 
-- sudo install -m 0755 -d /etc/apt/keyrings
-- curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
-- echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
-- sudo apt update
-- sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
+sudo install -m 0755 -d /etc/apt/keyrings
+curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
+echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
+sudo apt update
+sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+```
 
 Dockerサービスを有効化する。また、dockerグループに自分を入れて利用可能にする。
 
-- sudo systemctl enable --now docker
-- sudo usermod -aG docker "$USER"
-- newgrp docker
+```
+sudo systemctl enable --now docker
+sudo usermod -aG docker "$USER"
+newgrp docker
+```
 
 Dockerクライアントの動作確認をする。それぞれ、「Docker version 28.4.0」「Docker Compose version 2.39.3」的な文字列と「Hello from Docker!」が表示されれば成功。
 
@@ -308,8 +314,10 @@ docker run --rm hello-world
 
 Node.jsとnpmをインストールする。Ubuntuのデフォルトは古いので、Node 22系に手動更新する。
 
-- curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-- sudo apt install nodejs npm
+```
+curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
+sudo apt install nodejs npm
+```
 
 Node.jsの動作確認をする。それぞれ、「v22.19.0」と「10.9.3」的な文字列が表示されれば成功。
 
@@ -320,7 +328,9 @@ npm -v
 
 GitとGitHub CLIをインストールする。
 
-- sudo apt install git gh
+```
+sudo apt install git gh
+```
 
 GitHubにログインする。アクセスキーを聞かれるので、事前にGitHub上でアクセスキーを作っておくこと。
 
@@ -337,7 +347,7 @@ git clone git@github.com:estraier/stgy.git
 cd stgy
 ```
 
-## 運用環境の選択
+** 運用環境の選択
 
 STGYはAWS上でRDSとS3を使って構築できるシステムアーキテクチャになっているのだが、多数のマネージドサービスを使うと、デモで使うにはちょっとランニングコストが高くなりすぎる。デプロイも面倒くさい。なので、デモ用途では1台構成のVPSで動かす方が手軽で良い。さくらVPSの4GBプランなら月4000円以下で運用できるし、ストレージが400GBまで使えるので、ユーザ数がかなり増えても大丈夫だろう。何より、固定額なのが安心だ。1円の収益にもなっていない趣味のサービスが物量攻撃されて何十万円も払う羽目になったら心がくじけてしまうだろう。デモ運用しているうちは、従量課金で際限なく金がかかるよりは、サービスが落ちる方がマシだ。
 
@@ -424,6 +434,8 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
   - リレー設定があれば、本番のSMTPサーバにメールを転送。
 
 上述の設定は既にenv.vps.txtとdocker-compose.vps.ymlとCaddyfile.vpsに書いてあるので、Dockerによる本番運用は、DockerとGitが動くホストさえあれば、5分で始められるようになっている。他のドメイン名を使う場合、それらのファイルのstgy.jpの部分をそのドメイン名に変えれば良い。
+
+デフォルトの設定ではCaddyはHTTPSの443番にしか接続せず、HTTPSの80番は接続しない。もしHTTPからHTTPSへのリダイレクトを有効にしたい場合、Caddy.vpsのauto_https disable_redirectsを消すとともに、docker-compose.vps.ymlのcaddyのportsに"80:80"を足すこと。HTTPSでなくHTTPで運用する場合も、推奨されないが、同様に80番ポートに接続させた上で、docker-compose.vps.ymlとCaddyfile.vpsのhttpsの記述をhttpに置換する。
 
 ```
 # 作業ディレクトリに移動。適当な場所でOK

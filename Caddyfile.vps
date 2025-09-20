@@ -37,11 +37,11 @@ https://s3-console.stgy.jp {
   reverse_proxy http://minio:9001
 }
 
-http://mail.localhost:8080 {
+http://mail.stgy.jp {
   encode zstd gzip
 
   basic_auth {
     admin $2a$14$uuicMQhEHEbzlvNfISPcue77In..Te9ZMzAKzppaRilla5wBlXdoa
   }
-  reverse_proxy http://smtp:8025
+  reverse_proxy http://mailpit:8025
 }
