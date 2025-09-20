@@ -23,7 +23,7 @@ export class Config {
   );
   static readonly MEDIA_IMAGE_COUNT_LIMIT_ONCE = normNum(
     process.env.NEXT_PUBLIC_MEDIA_IMAGE_COUNT_LIMIT_ONCE,
-    10,
+    12,
   );
   static readonly MEDIA_AVATAR_BYTE_LIMIT = normNum(
     process.env.NEXT_PUBLIC_MEDIA_AVATAR_BYTE_LIMIT,

@@ -32,7 +32,7 @@ export default function UploadImageEmbedButton({
   const onFilesChosen = useCallback(
     (list: FileList | null) => {
       if (!list || list.length === 0 || !userId) return;
-      const files = Array.from(list).slice(0, 5);
+      const files = Array.from(list).slice(0, Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE);
       const mapped: DialogFileItem[] = files.map((f) => ({
         id: cryptoRandomId(),
         file: f,
@@ -106,7 +106,7 @@ export default function UploadImageEmbedButton({
         <ImageUploadDialog
           userId={userId}
           files={dialogFiles}
-          maxCount={5}
+          maxCount={Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE}
           onClose={handleClose}
           onComplete={handleComplete}
         />

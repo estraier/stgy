@@ -401,10 +401,13 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     setMounted(true);
   }, []);
 
+  const SINGLE_LIMIT = Number(Config.MEDIA_IMAGE_BYTE_LIMIT || 0) || null;
+
   const [items, setItems] = useState<SelectedItem[]>(
     files.slice(0, maxCount).map((f) => {
       const pass = isPassThroughType(f.name, f.type);
-      const force = !pass;
+      const overLimit = SINGLE_LIMIT ? f.size > SINGLE_LIMIT : false;
+      const force = !pass || overLimit;
       return {
         id: f.id,
         file: f.file,
@@ -456,7 +459,8 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         if (meta.previewUrl) revokeQueue.current.push(meta.previewUrl);
 
         const pass = isPassThroughType(f.name, f.type);
-        const force = !pass;
+        const overLimit = SINGLE_LIMIT ? f.size > SINGLE_LIMIT : false;
+        const force = !pass || overLimit;
 
         const needByThreshold = shouldAutoOptimize({
           width: meta.width,
@@ -546,7 +550,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     return () => {
       cancelled = true;
     };
-  }, [files, maxCount]);
+  }, [files, maxCount, SINGLE_LIMIT]);
 
   useEffect(() => {
     return () => {
@@ -554,8 +558,6 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
       revokeQueue.current = [];
     };
   }, []);
-
-  const SINGLE_LIMIT = Number(Config.MEDIA_IMAGE_BYTE_LIMIT || 0) || null;
 
   const effectiveUploadSize = useCallback((it: SelectedItem) => {
     return it.optimize && it.optimized ? it.optimized.size : it.size;
@@ -572,12 +574,12 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
 
   const oversizedItems = useMemo(() => {
     if (!SINGLE_LIMIT) return [];
-    if (!allOptimizingDone) return []; // ここで最適化完了まで非表示
+    if (!allOptimizingDone) return [];
     return items.filter((it) => effectiveUploadSize(it) > SINGLE_LIMIT);
   }, [items, SINGLE_LIMIT, effectiveUploadSize, allOptimizingDone]);
 
   const quotaExceeded = useMemo(() => {
-    if (!allOptimizingDone) return false; // ここで最適化完了まで非表示
+    if (!allOptimizingDone) return false;
     if (!bytesMonthlyLimit || bytesMonthlyUsed == null) return false;
     return bytesMonthlyUsed + projectedUploadBytes > bytesMonthlyLimit;
   }, [bytesMonthlyLimit, bytesMonthlyUsed, projectedUploadBytes, allOptimizingDone]);
