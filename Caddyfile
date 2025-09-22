@@ -3,7 +3,7 @@ http://:8080 {
 
   redir /backend /backend/
   handle_path /backend/* {
-    reverse_proxy http://backend:3001 http://host.docker.internal:3001 http://host.lima.internal:3001 {
+    reverse_proxy http://backend:3001 http://host.docker.internal:3001 {
       lb_policy first
       health_uri /health
       header_up Host {http.request.host}
@@ -11,7 +11,7 @@ http://:8080 {
   }
 
   handle {
-    reverse_proxy http://frontend:3000 http://host.docker.internal:3000 http://host.lima.internal:3000 {
+    reverse_proxy http://frontend:3000 http://host.docker.internal:3000 {
       lb_policy first
       health_uri /
       header_up Host {http.request.host}

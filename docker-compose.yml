@@ -1,5 +1,20 @@
+networks:
+  stgy_net:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.name: br-stgy
+    ipam:
+      config:
+        - subnet: 172.23.0.0/24
+
+x-host-gw: &host_gw
+  extra_hosts:
+    - "host.docker.internal:host-gateway"
+
 services:
   postgres:
+    <<: *host_gw
+    networks: [stgy_net]
     image: postgres:16
     restart: always
     environment:
@@ -8,7 +23,7 @@ services:
       POSTGRES_DB: ${STGY_DATABASE_NAME:?}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C --lc-collate=C --lc-ctype=C"
     ports:
-      - "${STGY_DATABASE_PORT:-5432}:5432"
+      - "127.0.0.1:${STGY_DATABASE_PORT:-5432}:5432"
     volumes:
       - ./postgres/init:/docker-entrypoint-initdb.d
       - postgres_data:/var/lib/postgresql/data
@@ -20,6 +35,8 @@ services:
       start_period: 5s
 
   minio:
+    <<: *host_gw
+    networks: [stgy_net]
     image: minio/minio:RELEASE.2025-07-23T15-54-02Z
     environment:
       MINIO_ROOT_USER: ${STGY_MINIO_ROOT_USER:?}
@@ -29,8 +46,8 @@ services:
     entrypoint: ["/bin/sh", "/entrypoint.sh"]
     command: ["minio", "server", "/data", "--console-address", ":9001"]
     ports:
-      - "${STGY_MINIO_PORT:-9000}:9000"
-      - "${STGY_MINIO_CONSOLE_PORT:-9001}:9001"
+      - "127.0.0.1:${STGY_MINIO_PORT:-9000}:9000"
+      - "127.0.0.1:${STGY_MINIO_CONSOLE_PORT:-9001}:9001"
     volumes:
       - ./minio/entrypoint.sh:/entrypoint.sh:ro
       - ./minio/init.sh:/init.sh:ro
@@ -38,10 +55,12 @@ services:
     restart: unless-stopped
 
   redis:
+    <<: *host_gw
+    networks: [stgy_net]
     image: redis:7
     restart: always
     ports:
-      - "${STGY_REDIS_PORT:-6379}:6379"
+      - "127.0.0.1:${STGY_REDIS_PORT:-6379}:6379"
     command: ["redis-server", "--requirepass", "${STGY_REDIS_PASSWORD:?}"]
     healthcheck:
       test: ["CMD-SHELL", "redis-cli -a ${STGY_REDIS_PASSWORD:?} PING || exit 1"]
@@ -50,25 +69,28 @@ services:
       retries: 20
 
   mailpit:
+    <<: *host_gw
+    networks: [stgy_net]
     image: axllent/mailpit:v1.27
     restart: always
     environment:
       MP_SMTP_BIND_ADDR: 0.0.0.0:${STGY_SMTP_PORT:-5587}
       MP_UI_BIND_ADDR: 0.0.0.0:${STGY_MAILPIT_CONSOLE_PORT:-8025}
-      # MP_SMTP_RELAY_HOST: dbmx.net
+      # MP_SMTP_RELAY_HOST: sgty.jp
       # MP_SMTP_RELAY_PORT: 587
       # MP_SMTP_RELAY_STARTTLS: true
       # MP_SMTP_RELAY_AUTH: plain
-      # MP_SMTP_RELAY_USERNAME: postfix@dbmx.net
+      # MP_SMTP_RELAY_USERNAME: postfix@stgy.jp
       # MP_SMTP_RELAY_PASSWORD: ********
       # MP_SMTP_RELAY_OVERRIDE_FROM: noreply@stgy.jp
       # MP_SMTP_RELAY_ALL: true
     ports:
-      - "${STGY_SMTP_PORT:-5587}:${STGY_SMTP_PORT:-5587}"
-      - "${STGY_MAILPIT_CONSOLE_PORT:-8025}:${STGY_MAILPIT_CONSOLE_PORT:-8025}"
+      - "127.0.0.1:${STGY_SMTP_PORT:-5587}:${STGY_SMTP_PORT:-5587}"
+      - "127.0.0.1:${STGY_MAILPIT_CONSOLE_PORT:-8025}:${STGY_MAILPIT_CONSOLE_PORT:-8025}"
 
   caddy:
     image: caddy:2
+    networks: [stgy_net]
     ports:
       - "${STGY_CADDY_PORT:-8080}:8080"
     volumes:
@@ -78,6 +100,8 @@ services:
     restart: unless-stopped
 
   mailworker:
+    <<: *host_gw
+    networks: [stgy_net]
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -97,6 +121,8 @@ services:
     restart: unless-stopped
 
   mediaworker:
+    <<: *host_gw
+    networks: [stgy_net]
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -121,6 +147,8 @@ services:
     restart: unless-stopped
 
   notificationworker:
+    <<: *host_gw
+    networks: [stgy_net]
     build:
       context: .
       dockerfile: backend/Dockerfile
@@ -133,10 +161,15 @@ services:
       STGY_DATABASE_USER: ${STGY_DATABASE_USER:?}
       STGY_DATABASE_PASSWORD: ${STGY_DATABASE_PASSWORD:?}
       STGY_DATABASE_NAME: ${STGY_DATABASE_NAME:?}
+      STGY_REDIS_HOST: ${STGY_REDIS_HOST:?}
+      STGY_REDIS_PORT: ${STGY_REDIS_PORT:-6379}
+      STGY_REDIS_PASSWORD: ${STGY_REDIS_PASSWORD:?}
     command: ["node", "dist/notificationWorker.js"]
     restart: unless-stopped
 
   backend:
+    <<: *host_gw
+    networks: [stgy_net]
     build:
       dockerfile: backend/Dockerfile
     depends_on:
@@ -147,7 +180,7 @@ services:
       redis:
         condition: service_healthy
     ports:
-      - "${STGY_BACKEND_PORT:-3001}:${STGY_BACKEND_PORT:-3001}"
+      - "127.0.0.1:${STGY_BACKEND_PORT:-3001}:${STGY_BACKEND_PORT:-3001}"
     environment:
       STGY_FRONTEND_ORIGIN: ${STGY_FRONTEND_ORIGIN:?}
       STGY_BACKEND_PORT: ${STGY_BACKEND_PORT:-3001}
@@ -174,6 +207,8 @@ services:
     restart: unless-stopped
 
   frontend:
+    <<: *host_gw
+    networks: [stgy_net]
     build:
       dockerfile: frontend/Dockerfile
       args:
@@ -189,7 +224,7 @@ services:
       NEXT_PUBLIC_STORAGE_S3_BUCKET_PREFIX: ${STGY_STORAGE_S3_BUCKET_PREFIX:?}
       NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX: ${STGY_STORAGE_S3_PUBLIC_URL_PREFIX:?}
     ports:
-      - "${STGY_FRONTEND_PORT:-3000}:${STGY_FRONTEND_PORT:-3000}"
+      - "127.0.0.1:${STGY_FRONTEND_PORT:-3000}:${STGY_FRONTEND_PORT:-3000}"
     command: ["node", "frontend/server.js"]
     restart: unless-stopped
 

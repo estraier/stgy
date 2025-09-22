@@ -6,7 +6,7 @@ tags: stgy-help
 content:<<____EOF____
 # STGYのインストール
 
-本記事では、STGYのシステム全体を、開発環境とデモ運用環境の双方にインストールする方法について説明する。Dockerを使った運用とネイティブサービスを使った運用の双方についても説明する。
+本記事では、STGYのシステム全体を、開発環境とデモ運用環境の双方にインストールする方法について説明する。Dockerを使った運用とネイティブサービスを使った運用の双方についても説明する。ドメイン名やIPアドレスは自分のものに読み替えられたい。
 
 ## Mac OS上での開発環境の構築
 
@@ -65,7 +65,7 @@ npm -v
 GitHubにログインする。アクセスキーを聞かれるので、事前にGitHub上でアクセスキーを作っておくこと。
 
 ```
-gh auth login
+NO_COLOR=1 gh auth login
 ```
 
 開発作業用のディレクトリを作り、stgyのリポジトリのクローンを作成する。以後、stgyディレクトリで作業を行う。
@@ -141,6 +141,12 @@ Macの開発環境においては、以下のコマンドでDockerホストVNの
   - Colimaを停止する
 - colima restart
   - Colimaを再起動する
+
+リポジトリルートにて、開発環境の設定が書いてあるenv-dev.txtを.envとしてコピーする。これは忘れがちなので注意。
+
+```
+cp env.dev.txt .env
+```
 
 以下のコマンドでDocker上のサービスの起動と終了を行う。
 
@@ -235,13 +241,14 @@ Docker関係のコマンドを利用目的別に整理する。
 
 Linux上でSTGYの稼働と開発を行うための環境設定の手順を記す。まずは、Macの時と同様に、Dockerを使ってサービスを立ち上げる方法を示す。バックエンドとフロントエンドをローカルで動かすことも当然できる。データセンター等の環境を想定し、インターネットからの接続を受け付ける。ドメインを取得し、VPSのホストが利用できることを前提とする。ここでは、stgy.jpというドメインを取得し、VPS上のUbuntu Linux環境の上でシステムを構築する。IPアドレスは153.127.47.206が割り振られている。
 
-事前にドメイン取得サービスのDNS設定で、該当ホストのAレコードを設定する。主たるドメインと、画像配信やその他のサブドメインを同じIDアドレスで登録する。
+事前にドメイン取得サービスのDNS設定で、該当ホストのレコードを設定する。主たるドメインと、画像配信やその他のサブドメインを同じIDアドレスで登録する。
 
 - サブドメイン=(空文字列)、種別=A、値=153.127.47.206
 - サブドメイン=s3、種別=A、値=153.127.47.206
 - サブドメイン=s3-console、種別=A、値=153.127.47.206
 - サブドメイン=www、種別=A、値=153.127.47.206
 - サブドメイン=mail、種別=A、値=153.127.47.206
+- サブドメイン=(空文字列)、種別=TXT、値=v=spf1 ip4:153.127.47.206 -all
 
 上記設定が伝搬していることを確認する。「Name: stgy.jp Address: 153.127.47.206」的な文字列が表示されれば成功。
 
@@ -249,7 +256,13 @@ Linux上でSTGYの稼働と開発を行うための環境設定の手順を記�
 nslookup stgy.jp
 ```
 
-VPSサービスのコントロールパネルで、Ubuntuの最新のLTS版をインストールし、コンソールからログインして初期設定の作業を行う。初期ユーザ「ubuntu」でログインするが、それはスーパーユーザではないので、sudoして管理作業を行う。インストール後の初期設定が終わったら自分のユーザを作り、以後はそのユーザからsudoして作業を行う。
+また、VPS事業者の設定画面で、逆引き設定をする。メールが弾かれないことを優先するので、mail.stgy.jpとして登録する。設定後、以下のコマンドで伝搬を確認する。
+
+```
+dig +trace -x 153.127.47.206
+```
+
+VPSサービスのコントロールパネルで、Ubuntuの最新のLTS版をインストールし、コンソールからログインして初期設定の作業を行う。初期ユーザ「ubuntu」でログインするが、それはスーパーユーザではないので、sudoして管理作業を行う。インストール後の初期設定が終わったら作業用のprodユーザを作り、以後はそのユーザからsudoして作業を行う。
 
 - ソフトウェアリストの更新: sudo apt update
 - ソフトウェアの更新: sudo apt upgrade
@@ -258,11 +271,11 @@ VPSサービスのコントロールパネルで、Ubuntuの最新のLTS版を�
   - vi /etc/locale.genを開いて必要なロケール（en_US.UTF-8 UTF-8とja_JP.UTF-8 UTF-8）を戻す
   - sudo locale-gen
 - ホスト名の設定: sudo hostnamectl set-hostname setagaya
-- 通常ユーザ作成: adduser mikio
-- sudo権限付与: sudo gpasswd -a mikio sudo
+- 通常ユーザ作成: adduser prod
+- sudo権限付与: sudo gpasswd -a prod sudo
 - 再起動: sudo shutdown -r now
 
-ファイアウォールを設定する。SSHの22、HTTPSの443、HTTPの80だけを開ける。
+ファイアウォールを設定する。SSHの22、HTTPSの443、HTTPの80、メールリレーの587だけを開ける。
 
 ```
 sudo ufw default deny incoming
@@ -270,18 +283,19 @@ sudo ufw default allow outgoing
 sudo ufw allow ssh
 sudo ufw allow https
 sudo ufw allow http
+sudo ufw allow 587/tcp
 sudo ufw enable
 sudo ufw status
 ```
 
-自分のユーザでログインして、環境設定を行う。
+prodユーザでログインして、環境設定を行う。
 
 - SSHの鍵設定:
   - .ssh/id_rsaと.ssh/id_rsa.pubと.ssh/authorized_keysを既存環境からコピー。
   - パーミッション設定: chmod 600 .ssh ; chmod 755 .ssh/*
 - 最低限の環境設定
   - .bash_profileと.bashrcを既存環境からコピー
-- エディタの設定
+- 任意のエディタの設定。Emacsの場合は以下
   - sudo apt install emacs
   - .emacsを既存環境からコピー
   - なぜかemacsと一緒にに入るpostfixの削除: sudo apt purge postfix
@@ -296,12 +310,12 @@ sudo apt update
 sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
 ```
 
-Dockerサービスを有効化する。また、dockerグループに自分を入れて利用可能にする。
+Dockerサービスを有効化する。また、dockerグループにprodユーザを入れて利用可能にする。
 
 ```
 sudo systemctl enable --now docker
-sudo usermod -aG docker "$USER"
-newgrp docker
+sudo usermod -aG docker prod
+newgrp docker  # 現在のセッションにdockerを加える。ログインし直しても良い。
 ```
 
 Dockerクライアントの動作確認をする。それぞれ、「Docker version 28.4.0」「Docker Compose version 2.39.3」的な文字列と「Hello from Docker!」が表示されれば成功。
@@ -332,17 +346,15 @@ GitとGitHub CLIをインストールする。
 sudo apt install git gh
 ```
 
-GitHubにログインする。アクセスキーを聞かれるので、事前にGitHub上でアクセスキーを作っておくこと。
+GitHubにログインする。アクセスキーを聞かれるので、事前にGitHub上でアクセスキーを作っておくこと。SSHのキーとアクセスキーの対応が取れている必要がある。
 
 ```
-gh auth login
+NO_COLOR=1 gh auth login
 ```
 
 開発作業用のディレクトリを作り、stgyのリポジトリのクローンを作成する。以後、stgyディレクトリで作業を行う。
 
 ```
-mkdir ~/dev
-cd ~/dev
 git clone git@github.com:estraier/stgy.git
 cd stgy
 ```
@@ -397,9 +409,9 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
-  - SMTPサーバをmailpit:587として認識し、Dockerサブネットで通信。
+  - SMTPサーバをmailpit:5587として認識し、Dockerサブネットで通信。
     - STGY_SMTP_HOST=mailpit
-    - STGY_SMTP_PORT=587
+    - STGY_SMTP_PORT=5587
 
 - メディアワーカ（Node.jsのCLI）
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
@@ -429,8 +441,8 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_REDIS_PORT=6379
 
 - メールサーバ（Mailpit）
-  - Docker世界でmailpit:538をlistenし、メールを管理。
-    - STGY_SMTP_PORT=587
+  - Docker世界でmailpit:5587をlistenし、メールを管理。
+    - STGY_SMTP_PORT=5587
   - リレー設定があれば、本番のSMTPサーバにメールを転送。
 
 どのサービスがどのサービスの接続を知っているかという参照関係を図にしておく。これは、実際に接続しているという意味ではなく、その設定を読み込んでいるという意味だ。バックエンドサーバがCaddyに接続することはないが、バックエンドにはCaddy越しに来るフロントエンドのURLを信用する設定が必要だ。また、バックエンドサーバはフロントエンドにS3サービスのURLを伝える必要があり、そこにはCaddyのアドレスが書いてある。同様にして、フロントエンドはCaddy越しにバックエンドやS3サーバに接続するアドレスを知っておく必要がある。
@@ -439,21 +451,23 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
 
 上述の設定は既にenv.vps.txtとdocker-compose.vps.ymlとCaddyfile.vpsに書いてあるので、Dockerによる本番運用は、DockerとGitが動くホストさえあれば、5分で始められるようになっている。他のドメイン名を使う場合、それらのファイルのstgy.jpの部分をそのドメイン名に変えれば良い。HTTPSでなくHTTPで運用する場合、docker-compose.vps.ymlとCaddyfile.vpsのhttpsの記述をhttpに置換する。ただし、HTTPだとパスワードやセッションIDが平文で転送されるため、検証用途以外で運用するのは止めておいた方がよい。
 
+## デモ環境Docker完結方式でのサービスの起動と終了
+
+リポジトリルートにて、デモ環境Docker完結方式の設定が書いてあるenv-vps.txtを.envとしてコピーする。これは忘れがちなので注意。.envの内容を編集し、必要ならドメイン名やパスワードなどの値を変更する。
+
 ```
-# 作業ディレクトリに移動。適当な場所でOK
-cd /prod
+cp env.vps.txt .env
+```
 
-# リポジトリを取得
-git clone git@github.com:estraier/stgy.git
-cd stgy
+手動でDockerコンテナを立ち上げる。npmのスクリプト名に"vps:"が接頭していることに注意。
 
-# 環境設定ファイルの編集。*_PASSWORDの値を変更
-$EDITOR env.vps.txt
-
-# 全サービスコンテナの立ち上げ
+```
 npm run vps:docker:up
+```
 
-# 初期データの投入
+初期データを投入する。STGY上のadminユーザを変えている場合、環境変数STGY_ADMIN_EMAILとSTGY_ADMIN_PASSWORDに変更後の値を設定してから実行する。
+
+```
 npm run vps:reset-data
 ```
 
@@ -468,22 +482,11 @@ npm run vps:reset-data
 
 Basic認証のパスワードはCaddyfile.vpsにハッシュ化して書いてある。Caddyが起動している状態で `npm run caddy:hash NEWPASSWORD` を実行するとハッシュ値が表示されるので、それをファイルに貼り付けて再起動すると変えられる。
 
-Mailpitはデフォルトではクライアントから送られてきたメールを溜め込むだけで、実際のメール配信は行わない。別のSMTPサーバに自動リレーする必要がある。デモ運用では、docker-compose.ymlのmailpitサービスの記載でコメントアウトされている環境変数を有効化して、外部のSMTPサーバにリレーさせる。本番環境ではMailpitをPostfixに変えて同等のリレーを行うか、SES等のメールサーバに直接メールを送る設定にするのが望ましい。
+Mailpitはデフォルトではクライアントから送られてきたメールを溜め込むだけで、実際のメール配信は行わない。一般ユーザへのメール通知を行うには、別のSMTPサーバに自動リレーする必要がある。デモ運用では、docker-compose.ymlのmailpitサービスの記載でコメントアウトされている環境変数を有効化して、外部のSMTPサーバにリレーさせる。本番環境ではMailpitをPostfixに変えて同等のリレーを行うか、SES等のメールサーバに直接メールを送る設定にするのが望ましい。
 
-** 自動起動
+## 自動起動
 
-OSの起動時に自動的に全サービスが立ち上がるようにすべきだ。起動スクリプトを動かして、上記のnpm run vps:docker:upを実行ようにしたい。まずは、専用ユーザを作って、その準備をする。
-
-```
-# stgyユーザを作って、dockerグループに追加する
-sudo useradd --system --create-home --shell /usr/sbin/nologin stgy
-sudo usermod -aG docker stgy
-
-# リポジトリをstgyの所有物にする
-sudo chown -R stgy:stgy /prod/stgy
-```
-
-そして、systemdの起動スクリプトを書く。/etc/systemd/system/stgy.serviceに以下の内容を記述する。
+OSの起動時に自動的に全サービスが立ち上がるようにすべきだ。起動スクリプトを動かして、上記の`npm run vps:docker:up`を実行するようにしたい。そのためには、systemdの起動スクリプトを書く。/etc/systemd/system/stgy.serviceに以下の内容を記述する。
 
 ```
 [Unit]
@@ -494,8 +497,8 @@ Requires=docker.service
 
 [Service]
 Type=oneshot
-User=stgy
-WorkingDirectory=/prod/stgy
+User=prod
+WorkingDirectory=/home/prod/stgy
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/usr/bin/npm run vps:docker:up
 ExecStop=/usr/bin/npm run vps:docker:down
@@ -507,30 +510,20 @@ TimeoutStopSec=120
 WantedBy=multi-user.target
 ```
 
-起動スクリプトを有効化し、状態を確認する。起動シーケンス（ExecStart）が実行されるので、Docerのサービスが起動する。
+自動起動スクリプトを有効化し、状態を確認する。起動シーケンス（ExecStart）が実行されるので、Dockerのサービスが起動する。
 
 ```
-sudo systemctl daemon-reload
-sudo systemctl enable --now stgy.service
-systemctl status stgy.service
-```
-
-手動での起動と再起動と終了は以下のコマンドでできる。ログの確認はjournalctlコマンドで行う。
-
-```
-sudo systemctl start stgy
-sudo systemctl restart stgy
-sudo systemctl stop stgy
-journalctl -u stgy
+sudo systemctl enable --now stgy
+systemctl status stgy
 ```
 
 自動起動スクリプトを無効化するには、以下のコマンドを実行する。停止シーケンス（ExecStop）が実行されるので、Dockerのサービスが停止する。
 
 ```
-sudo systemctl disable --now stgy.service
+sudo systemctl disable --now stgy
 ```
 
-* ネイティブサービス稼働方式
+## ネイティブサービス稼働方式
 
 大規模サイトとしての本番運用を考えると、リバースプロクシとDBサーバとストレージサーバとメールサーバはクラウドのマネージドサービスを使うのが典型的だ。オンプレミスだとしても個々のサービスは個別のホストで稼働させて性能と可用性を向上させる構成にするのが定石だ。DockerによってSNSのサービスをカプセル化できるのは素晴らしいが、デモサイトをそれで運用していると、本番サイトの構成とかけ離れすぎていて、運用の訓練としては理想的ではない。依存サービスを同一ホストで動かすにしても、個別のネイティブサービスとして稼働させた方が本番の構成に近づけられる。
 
@@ -540,18 +533,76 @@ sudo systemctl disable --now stgy.service
 
 結局のところ、どのサービスをネイティブにして、どのサービスをコンテナ運用にするかは、運用の都合で決まるということになる。いずれにせよ、全てのサービスをネイティブで稼働させる方法をここで洗い出しておくことは有益だ。必要に応じて、以下の手順をなぞればよいだろう。
 
-** Caddy
+## systemctl
+
+Ubuntu Linuxにおいてネイティブサービスすなわちデーモンプロセスの管理はsystemdによって行われる。その設定は/etc/systemd/systemの下に置かれる。サービスの管理はsystemctlコマンドを使って行われる。
+
+- sudo systemctl start SERVICENAME : 手動で起動
+- sudo systemctl stop SERVICENAME : 手動で停止
+- sudo systemctl restart SERVICENAME : 手動で再起動
+- sudo systemctl enable --now SERVICENAME : 自動起動を有効化
+- sudo systemctl disable --now SERVICENAME : 自動起動を無効化
+- systemctl status SERVICENAME : 起動設定の状態確認
+
+ログを確認する際には、journalctlコマンドを使う。
+
+- journalctl -u SERVICENAME : ログ全体をページャで見る
+- journalctl -u SERVICENAME -f : 最新ログを表示して端末に表示し続ける
+
+systemdの設定ファイル（*.service、*.socketなど）の変更を反映したい場合、以下のコマンドで反映させる。
+
+```
+sudo systemctl daemon-reload
+```
+
+DockerでSTGYを立てている場合にネイティブサービスに運用に変えるには、stgyサービスをdisableしてから作業を行う。ネイティブサービスを立てている場合にDocker運用に変えるには、後述のcaddy等のサービスをdisableしてから作業を行う。
+
+## Caddy
 
 CaddyはGoで書かれた軽量かつ高速のWebサーバである。設定も簡単で、何より証明書の取得を自動でやってくれるのが便利だ。Caddyは以下のようにインストールし、自動起動を有効化できる。
 
 ```
-sudo apt update
 sudo apt install caddy
 sudo systemctl enable --now caddy
-systemctl status caddy.service
+systemctl status caddy
 ```
 
-設定は/etc/caddy/Caddyfileで行う。典型的には以下のように書く。STGYサービスの配信に加えて、/home/www以下のファイルを通常のWebサーバとして配信し、その中のsecret/配下にはBasic認証をかけるものとする。
+aptでインストールされるcaddyはプラグインが使えないので、バイナリだけをビルドし直して置き換える必要がある。go言語の最新版もインストールする必要がある。
+
+```
+sudo apt remove golang-go
+wget https://go.dev/dl/go1.25.1.linux-amd64.tar.gz
+sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.25.1.linux-amd64.tar.gz
+export PATH=$PATH:/usr/local/go/bin:$HOME/go/bin
+go install github.com/caddyserver/xcaddy/cmd/xcaddy@latest
+xcaddy build
+sudo mv caddy /usr/bin/caddy
+sudo chown root:root /usr/bin/caddy
+sudo chmod 755 /usr/bin/caddy
+```
+
+Caddyの自動起動スクリプトの本体は/usr/lib/systemd/system/caddy.serviceである。このファイルを編集して、Caddyの実行ユーザをprodにしておく。また、UMaskの行は追加して、同一グループのプロセスが証明書などのデータを読めるようにする。
+
+```
+User=prod
+Group=prod
+UMask=0027
+```
+
+起動スクリプトの変更を反映する。
+
+```
+sudo systemctl daemon-reload
+```
+
+/var/caddyというディレクトリを作り、そこにCaddy関連のデータを置くことにする。その所有者をCaddyの実行ユーザに合わせておく。
+
+```
+sudo mkdir /var/caddy
+sudo chown -R prod:prod /var/caddy
+```
+
+Caddy自体の設定は/etc/caddy/Caddyfileで行う。典型的には以下のように書く。STGYサービスの配信に加えて、/home/www以下のファイルを通常のWebサーバとして配信し、その中のprivate/配下にはBasic認証をかけるものとする。
 
 ```
 {
@@ -606,9 +657,9 @@ https://mail.stgy.jp {
 
 https://www.stgy.jp {
   encode zstd gzip
-  root * /home/www
+  root * /home/prod/www
 
-  @secret path /secret*
+  @secret path /private*
   basic_auth @secret {
     admin $2a$14$uuicMQhEHEbzlvNfISPcue77In..Te9ZMzAKzppaRilla5wBlXdoa
   }
@@ -619,11 +670,11 @@ https://www.stgy.jp {
 }
 ```
 
-以下のコマンドで、設定ファイルの検証や設定変更の反映ができる。
+以下のコマンドで、設定ファイルの検証や設定変更の反映をする。
 
 ```
 sudo caddy validate --config /etc/caddy/Caddyfile
-sudo systemctl reload caddy
+sudo systemctl restart caddy
 ```
 
 Basic認証で使うパスワードのハッシュ値は、以下のコマンドで生成できる。
@@ -632,7 +683,7 @@ Basic認証で使うパスワードのハッシュ値は、以下のコマンド
 caddy hash-password --plaintext NEWPASSWORD
 ```
 
-CGIスクリプトを使いたい場合、
+STGYには必要ない余談だが、CGIスクリプトを使いたい場合、FastCGIのラッパーであるfcgiwrapを使うと良い。
 
 ```
 sudo apt install fcgiwrap
@@ -640,15 +691,25 @@ sudo systemctl enable --now fcgiwrap.socket
 sudo systemctl status fcgiwrap.socket
 ```
 
-CaddyでCGIスクリプトを動かしたいなら、FastCGIサービスを入れて有効化しておく。
+fcgiwrapの自動起動スクリプト本体は/usr/lib/systemd/system/fcgiwrap.serviceと/usr/lib/systemd/system/fcgiwrap.socketなので、それぞれを編集して実行ユーザと所有ユーザをprodにしておく。
 
 ```
-sudo apt install fcgiwrap
-sudo systemctl enable --now fcgiwrap.socket
-sudo systemctl status fcgiwrap.socket
+User=prod
+Group=prod
 ```
 
-そのうえで、www.stgy.jpのディレクティブの中に以下の設定を書くと、.cgi拡張子のファイルがCGIスクリプトとして実行されるようになる。
+```
+SocketUser=prod
+SocketGroup=prod
+```
+
+起動スクリプトの変更を反映する。
+
+```
+sudo systemctl daemon-reload
+```
+
+そのうえで、Caddyfileのwww.stgy.jpのディレクティブの中に以下の設定を書くと、.cgi拡張子のファイルがCGIスクリプトとして実行されるようになる。ディレクティブは上から評価されるので、file_serverディレクティブより上に置くことが重要である。
 
 ```
   @cgi path_regexp cgi ^(.+\.cgi)(/.*)?$
@@ -656,8 +717,8 @@ sudo systemctl status fcgiwrap.socket
     reverse_proxy unix//run/fcgiwrap.socket {
       transport fastcgi {
         split .cgi
-        env SCRIPT_FILENAME /home/www{http.regexp.cgi.1}
-        env DOCUMENT_ROOT   /home/www
+        env SCRIPT_FILENAME /home/prod/www{http.regexp.cgi.1}
+        env DOCUMENT_ROOT /home/prod/www
         env SCRIPT_NAME {http.regexp.cgi.1}
         env PATH_INFO   {http.regexp.cgi.2}
       }
@@ -665,21 +726,162 @@ sudo systemctl status fcgiwrap.socket
   }
 ```
 
-HTTPSで使うサーバ証明書はLet's Encryptから自動取得され、/var/caddy/certificates配下に保存される。更新も勝手にやってくれて、その際のACME認証も自身のWebサーバの機能で通せるので、certbotを運用するより楽だ。後述のSendmailの設定でもCaddyが取得した証明書を流用する。
-
-手動での起動と再起動と終了は以下のコマンドでできる。ログの確認はjournalctlコマンドで行う。
+Caddyfileを書き換えたならCaddyを再起動する。
 
 ```
-sudo systemctl start caddy
 sudo systemctl restart caddy
-sudo systemctl stop caddy
-journalctl -u caddy
 ```
 
+HTTPSで使うサーバ証明書はLet's Encryptから自動取得され、/var/caddy/certificates配下に保存される。更新も勝手にやってくれて、その際のACME認証も自身のWebサーバの機能で通せるので、certbotを運用するより楽だ。後述のSendmailの設定でもCaddyが取得した証明書を流用できる。
 
+```
+setagaya[~/www]$ find /var/caddy/certificates/acme-v02.api.letsencrypt.org-directory -type f
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/s3-console.stgy.jp/s3-console.stgy.jp.json
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/s3-console.stgy.jp/s3-console.stgy.jp.crt
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/s3-console.stgy.jp/s3-console.stgy.jp.key
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/mail.stgy.jp/mail.stgy.jp.crt
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/mail.stgy.jp/mail.stgy.jp.json
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/mail.stgy.jp/mail.stgy.jp.key
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/stgy.jp/stgy.jp.key
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/stgy.jp/stgy.jp.json
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/stgy.jp/stgy.jp.crt
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/www.stgy.jp/www.stgy.jp.key
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/www.stgy.jp/www.stgy.jp.crt
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/www.stgy.jp/www.stgy.jp.json
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/s3.stgy.jp/s3.stgy.jp.json
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/s3.stgy.jp/s3.stgy.jp.key
+/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/s3.stgy.jp/s3.stgy.jp.crt
+```
 
 ## Postfix
 
+Postfixは定番のメールサーバである。Mailpitの代わりに稼働させることで、ちゃんとしたメールの配送が実現できる。Postfixは以下のようにインストールし、自動起動を有効化できる。インストール時に出るダイアログでは「No configurations」を選ぶ。SASL認証用のモジュールとコマンドも入れる。
+
+```
+sudo apt install postfix
+sudo systemctl enable --now postfix
+systemctl status postfix
+sudo apt install libsasl2-modules sasl2-bin
+```
+
+postfixというユーザが自動的に作られるので、それがcaddyの証明書を読めるようにprodグループに追加する。また、SASL認証のデータベースにアクセスできるように、saslグループにも追加する。
+
+```
+sudo usermod -aG prod postfix
+sudo usermod -aG sasl postfix
+sudo chgrp sasl /etc/sasldb2
+```
+
+/etc/postfix/main.cfを編集（新規作成）する。ローカルホストで稼働するSTGYメールワーカから出されたメールは無認証で受け取る。Macで開発している場合にはMailpitのリレー設定でTLS認証で受け取る。
+
+```
+myhostname = mail.stgy.jp
+mydomain = stgy.jp
+myorigin = $mydomain
+
+mydestination = $myhostname, localhost.$mydomain, localhost
+inet_interfaces = all
+inet_protocols = ipv4
+
+mynetworks = 127.0.0.0/8, [::1]/128
+
+mailbox_size_limit = 0
+recipient_delimiter = +
+append_dot_mydomain = no
+biff = no
+
+smtpd_recipient_restrictions =
+  permit_mynetworks,
+  permit_sasl_authenticated,
+  reject_unauth_destination
+
+smtpd_sasl_auth_enable = yes
+smtpd_sasl_security_options = noanonymous
+smtpd_sasl_local_domain = $mydomain
+smtpd_sasl_path = smtpd
+broken_sasl_auth_clients = yes
+
+smtpd_tls_cert_file = /var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/mail.stgy.jp/mail.stgy.jp.crt
+smtpd_tls_key_file = /var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/mail.stgy.jp/mail.stgy.jp.key
+smtpd_use_tls = yes
+smtpd_tls_security_level = may
+smtp_tls_security_level = may
+smtp_tls_session_cache_database = btree:${data_directory}/smtp_scache
+
+maillog_file = /var/log/mail.log
+message_size_limit = 10485760
+alias_maps = hash:/etc/aliases
+alias_database = hash:/etc/aliases
+```
+
+/etc/postfix/master.cfを編集する。既存の行を全てコメントアウトした上で以下を加える。すなわち、smtpの行のchrootをnに変え、submissionの行でローカルホストのクライアントとSASL認証を経たクライアントを許可する。
+
+```
+smtp       inet  n       -       n       -       -       smtpd
+submission inet  n       -       n       -       -       smtpd
+  -o syslog_name=postfix/submission
+  -o smtpd_tls_security_level=encrypt
+  -o smtpd_sasl_auth_enable=yes
+  -o smtpd_recipient_restrictions=permit_mynetworks,permit_sasl_authenticated,reject_unauth_destination
+```
+
+SASL認証のためのアカウントを作る必要がある。ここでは postfix@stgy.jp というアカウントを作る。パスワードを聞かれるので、予め決めておいた文字列を入力する。その後の確認コマンドで「postfix@stgy.jp: userPassword」と表示されれば成功。
+
+```
+sudo saslpasswd2 postfix -u stgy.jp
+sudo sasldblistusers2
+```
+
+Postfixを再起動する。
+
+```
+sudo systemctl restart postfix
+```
+
+Macでswaksコマンドを使うと、疎通が確認できる。
+
+```
+swaks --to hirarin@gmail.com --server stgy.jp:587 --from noreply@stgy.jp --auth-user postfix@stgy.jp --auth-password SASLPASSWORD --auth PLAIN --header "Subject: test" --body "test1" --tls
+```
+
+## PostgreSQL
+
+PostgreSQLは堅牢性と多機能性に定評のあるデータベースサーバである。STGYのいくつかの機能は標準SQLの範囲を超えてPostgreSQLの独自機能をいくつか使っているので、基本的にはPostgreSQLありきの実装になっている。PostgreSQLは以下のようにインストールし、自動起動を有効化できる。
+
+```
+sudo apt install postgresql postgresql-contrib
+sudo systemctl enable --now postgresql
+systemctl status postgresql
+```
+
+以下の手順はPostgreSQLのメジャーバージョンが16であることを前提とする。もし違うバージョンであれば16を読み替えること。まずは、/etc/postgresql/16/main/conf.d/90-stgy.confファイルを新規作成する。内容な以下のようにする。ローカルからの接続のみを受け付ける。メモリ使用量はメモリ4GBのシステムに最適化してある。
+
+```
+listen_addresses = '*'
+port = 5432
+
+password_encryption = scram-sha-256
+
+logging_collector = on
+log_min_duration_statement = 1000
+log_line_prefix = '%m [%p] %u@%d '
+
+shared_buffers = '1GB'
+effective_cache_size = '3GB'
+work_mem = '16MB'
+maintenance_work_mem = '256MB'
+checkpoint_completion_target = 0.9
+wal_compression = on
+max_connections = 100
+```
+
+/etc/postgresql/16/main/pg_hba.confファイルを新規作成する。内容は以下のようにする。
+
+```
+local   all     all                                   peer
+host    stgy    admin           127.0.0.1/32          scram-sha-256
+host    stgy    admin           ::1/128               scram-sha-256
+```
 
 
 
