@@ -113,7 +113,7 @@ STGYの関連パッケージは全て単一のリポジトリに収められて�
 - npm install : package.jsonの記述に基づき、新しいバージョンの依存パッケージをインストールする
 - npm run clean : 依存パッケージを消す
 
-backendとfrontendにはDockerfileがあり、それぞれのサービスのDockerインスタンスの設定が書いてある。それ以外の依存サービスの設定はdocker-compose.ymlに直接書いてある。docker composeは.envファイルから環境変数を読み込むが、それはリポジトリには含まれない。env.dev.txtかenv.vps.txtを.envにコピーするかシンボリックリンクを張るかしてから、それを環境に合わせて編集して使う。.envにはパスワードなどの秘密情報が書かれるので、Gitの管理対象にすべきではない。
+backendとfrontendにはDockerfileがあり、それぞれのサービスのDockerインスタンスの設定が書いてある。それ以外の依存サービスの設定はdocker-compose.ymlに直接書いてある。docker composeは.envファイルから環境変数を読み込むが、.envはリポジトリには含まれない。env.dev.txtかenv.vps.txtを.envにコピーしてから、それを環境に合わせて編集して使う。.envにはパスワードなどの秘密情報が書かれるので、Gitの管理対象にすべきではない。
 
 scriptsの下には、システムの管理に必要なスクリプトが入っている。多くのものはnpmを介して起動される。.envの環境変数から設定を読み込むので、.envを事前に作っておく必要がある。
 
@@ -131,7 +131,7 @@ scriptsの下には、システムの管理に必要なスクリプトが入っ�
 - deploy-backend.sh : デモ環境にてバックエンドをデプロイする
 - deploy-frontend.sh : デモ環境にてフロントエンドをデプロイする
 
-postgresの下にはデータベースのスキーマ定義を行うSQLファイルが置いてある。minioの下にはバケットの初期設定を行うスクリプトが置いてある。
+postgresの下にはデータベースのスキーマ定義を行うSQLファイルが置いてある。minioの下にはオブジェクトストレージのバケットの初期設定を行うスクリプトが置いてある。
 
 ## 開発環境でのサービスの起動と終了
 
@@ -243,7 +243,7 @@ Docker関係のコマンドを利用目的別に整理する。
 
 Linux上でSTGYの稼働と開発を行うための環境設定の手順を記す。まずは、Macの時と同様に、Dockerを使ってサービスを立ち上げる方法を示す。バックエンドとフロントエンドをローカルで動かすことも当然できる。データセンター等の環境を想定し、インターネットからの接続を受け付ける。ドメインを取得し、VPSのホストが利用できることを前提とする。ここでは、stgy.jpというドメインを取得し、VPS上のUbuntu Linux環境の上でシステムを構築する。IPアドレスは153.127.47.206が割り振られている。
 
-事前にドメイン取得サービスのDNS設定で、該当ホストのレコードを設定する。主たるドメインと、画像配信やその他のサブドメインを同じIDアドレスで登録する。
+事前にドメイン取得サービスのDNS設定で、該当ホストのレコードを設定する。主たるドメインと、画像配信やその他のサブドメインを同じIPアドレスで登録する。
 
 - サブドメイン=(空文字列)、種別=A、値=153.127.47.206
 - サブドメイン=s3、種別=A、値=153.127.47.206
@@ -333,7 +333,7 @@ docker compose version
 docker run --rm hello-world
 ```
 
-Node.jsとnpmをインストールする。Ubuntuのデフォルトは古いので、Node 22系に手動更新する。
+Node.jsとnpmをインストールする。Ubuntuのデフォルト設定で入るNode.jsは古いので、Node 22系に手動更新する。
 
 ```
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
@@ -368,27 +368,27 @@ cd stgy
 
 ## 運用環境の選択
 
-STGYはAWS上でRDSとS3を使って構築できるシステムアーキテクチャになっているのだが、多数のマネージドサービスを使うと、デモで使うにはちょっとランニングコストが高くなりすぎる。デプロイも面倒くさい。なので、デモ用途では1台構成のVPSで動かす方が手軽で良い。さくらVPSの4GBプランなら月4000円以下で運用できるし、ストレージが400GBまで使えるので、ユーザ数がかなり増えても大丈夫だろう。何より、固定額なのが安心だ。1円の収益にもなっていない趣味のサービスが物量攻撃されて何十万円も払う羽目になったら心がくじけてしまうだろう。デモ運用しているうちは、従量課金で際限なく金がかかるよりは、サービスが落ちる方がマシだ。
+STGYはAWS上でRDSとS3を使って構築できるシステムアーキテクチャになっているのだが、多数のマネージドサービスを使うと、デモで使うにはランニングコストが高くなりすぎる。デプロイも面倒くさい。よって、デモ用途では1台構成のVPSで動かす方が手軽で良いと判断した。さくらVPSの4GBプランなら月4000円以下で運用できるし、ストレージが400GBまで使えるので、ユーザ数がかなり増えても大丈夫だろう。何より、固定額なのが安心だ。1円の収益にもなっていない趣味のサービスが物量攻撃されて何十万円も払う羽目になったら心がくじけてしまうだろう。デモ運用しているうちは、従量課金で際限なく金がかかるよりは、サービスが落ちる方がマシだ。
 
 VPS上で全ての依存サービスを自前で運用するとして、それらをネイティブサービスとして動かすか、Dockerコンテナとして動かすかは、選択できる。ネイティブサービスとして動かす方法だと、性能上は最善で、ホストが単一なので手動での設定作業も楽だが、自動化しづらいので何度もやるのは厳しい。Dockerコンテナとして動かす方法だと、最初のコンテナの設定はややこしいが、一度やっておけば自動デプロイが簡単にできるようになる。Docker上で動かすとCPU効率とメモリ効率とI/O効率がほんの少し落ちる可能性はあるが、LinuxのDocker層のオーバーヘッドはほぼ無視できる程度に小さいので、性能に関しては気にする必要はない。よって、とりあえずはDockerで動くようにしよう。開発環境とほぼ同じ設定で、VPS上でDockerを動かして、そこにデータベースもオブジェクトストレージもバックエンドサーバもフロントエンドサーバも乗せてしまう。
 
 ## Docker完結方式
 
-Docker完結の前提で、アーキテクチャと設定を整理してみる。コンテナ間の接続は主に環境変数で管理することになるが、各コンテナが互いを認識するためにどの環境変数を使っているかを洗い出し、その適切な値を決めるのだ。内側（インターネット側）と外側（Dockerサブネット）で名前が違うのと、リバースプロクシが読み替えを行うのがややこしい。後でほぼ確実に混乱するので、予め整理しておくべきだ。
+Docker完結の前提で、アーキテクチャと設定を整理してみる。コンテナ間の接続は主に環境変数で管理することになるが、各コンテナが互いを認識するためにどの環境変数を使っているかを洗い出し、その適切な値を決めるのだ。内側（インターネット側）と外側（Dockerサブネット）で名前が違うのと、リバースプロクシが読み替えを行うのがややこしい。理解が甘いと後で確実に混乱するので、予め整理しておくべきだ。
 
 - リバースプロクシ（Caddy）
   - Node.jsのサービスはHTTPしか喋れないので、SSL化するのに必要。
     - 全ての設定はCaddyfileに書く。
-  - https://stgy.jp/mailpit をDocker世界の http://mailpit:8025 であるバックエンドサーバに中継する。
-  - https://stgy.jp/backend をDocker世界の http://backend:3001 であるバックエンドサーバに中継する。
-  - https://stgy.jp のそれ以外をDocker世界の http://frontend:3000 であるフロントエンドサーバに中継する。
-  - https://s3.stgy.jp をDocker世界の http://minio:9000 であるS3サーバに中継する。
+  - https://stgy.jp/backend をDockerサブネットの http://backend:3001 であるバックエンドサーバに中継する。
+  - https://stgy.jp のそれ以外をDockerサブネットの http://frontend:3000 であるフロントエンドサーバに中継する。
+  - https://s3.stgy.jp をDockerサブネットの http://minio:9000 であるS3サーバに中継する。
+  - https://mail.stgy.jp をDockerサブネットの http://mailpit:8025 であるメールサーバに中継する。
   - 証明書はCaddy自身が自動的にLet's Encryptから取ってきてくれる。
     - 7日間で5回以上取得するとレート制限がかかるので、down -vでボリュームを消さないように注意。
   - 外向きのポートは22と80と443しか空いていないので、Dockerで立てるサーバで外からは見えるのはこいつだけ。
 
 - フロントエンド（Node.js + Next.js）
-  - Docker世界でfrontend:3000をlistenし、主にJavaScriptを配信。表にはhttps://stgy.jpとして露出。
+  - Dockerサブネットでfrontend:3000をlistenし、主にJavaScriptを配信。表にはhttps://stgy.jpとして露出。
     - STGY_FRONTEND_PORT=3000
   - バックエンドを /backend として認識し、https://stgy.jp/backend 配下にAPIリクエストを送る。
     - NEXT_PUBLIC_BACKEND_API_BASE_URL=/backend
@@ -397,7 +397,7 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX=https://s3.stgy.jp/{bucket}/
 
 - バックエンド（Node.js + Express）
-  - Docker世界でbackend:3001をlistenし、サービスAPIのエンドポイントを担う。
+  - Dockerサブネットでbackend:3001をlistenし、サービスAPIのエンドポイントを担う。
     - STGY_BACKEND_PORT=3001
   - フロントエンドをhttps://stgy.jpとして認識し、1ホップまでのプロクシ応答のX-Forwarded-Forを信じる。
     - STGY_FRONTEND_ORIGIN=https://stgy.jp
@@ -436,23 +436,23 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_DATABASE_PORT=5432
 
 - DBサーバ（PostgreSQL）
-  - Docker世界でpostgres:5432をlistenし、DBを管理。
+  - Dockerサブネットでpostgres:5432をlistenし、DBを管理。
     - STGY_DATABASE_PORT=5432
 
 - S3サーバ（MinIO）
-  - Docker世界でminio:9000をlistenし、オブジェクトストレージを管理。
+  - Dockerサブネットでminio:9000をlistenし、オブジェクトストレージを管理。
     - STGY_MINIO_PORT=9000
 
 - キャッシュサーバ（Redis）
-  - Docker世界でredis:6379をlistenし、キャッシュを管理。
+  - Dockerサブネットでredis:6379をlistenし、キャッシュを管理。
     - STGY_REDIS_PORT=6379
 
 - メールサーバ（Mailpit）
-  - Docker世界でmailpit:5587をlistenし、メールを管理。
+  - Dockerサブネットでmailpit:5587をlistenし、メールを管理。
     - STGY_SMTP_PORT=5587
   - リレー設定があれば、本番のSMTPサーバにメールを転送。
 
-どのサービスがどのサービスの接続を知っているかという参照関係を図にしておく。これは、実際に接続しているという意味ではなく、その設定を読み込んでいるという意味だ。バックエンドサーバがCaddyに接続することはないが、バックエンドにはCaddy越しに来るフロントエンドのURLを信用する設定が必要だ。また、バックエンドサーバはフロントエンドにS3サービスのURLを伝える必要があり、そこにはCaddyのアドレスが書いてある。同様にして、フロントエンドはCaddy越しにバックエンドやS3サーバに接続するアドレスを知っておく必要がある。
+どのサービスがどのサービスの接続を知っているかという参照関係を図にしておく。これは、実際に接続しているという意味ではなく、その設定を読み込んでいるという意味だ。例えば、バックエンドサーバがCaddyに接続することはないが、バックエンドにはCaddy越しに来るフロントエンドのURLを信用する設定が必要だ。また、バックエンドサーバはフロントエンドにS3サービスのURLを伝える必要があり、そこにはCaddyのアドレスが書いてある。同様にして、フロントエンドはCaddy越しにバックエンドやS3サーバに接続するアドレスを知っておく必要がある。
 
 ![サーバ間参照](/data/help-service-references.png){size=large}
 
@@ -460,7 +460,7 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
 
 ## デモ環境Docker完結方式でのサービスの起動と終了
 
-リポジトリルートにて、デモ環境Docker完結方式の設定が書いてあるenv-vps.txtを.envとしてコピーする。これは忘れがちなので注意。.envの内容を編集し、必要ならドメイン名やパスワードなどの値を変更する。
+リポジトリルートにて、デモ環境Docker完結方式の設定が書いてあるenv-vps.txtを.envとしてコピーする。これは忘れがちなので注意。.envの内容を編集し、必要ならドメイン名やパスワードなどの値を変更する。MinIOのパスワードだけは、初期値から変更すること。そうしないと外部から操作されてしまう。
 
 ```
 cp env.vps.txt .env
@@ -491,7 +491,7 @@ Basic認証のパスワードはCaddyfile.vpsにハッシュ化して書いて�
 
 Mailpitはデフォルトではクライアントから送られてきたメールを溜め込むだけで、実際のメール配信は行わない。一般ユーザへのメール通知を行うには、別のSMTPサーバに自動リレーする必要がある。デモ運用では、docker-compose.ymlのmailpitサービスの記載でコメントアウトされている環境変数を有効化して、外部のSMTPサーバにリレーさせる。本番環境ではMailpitをPostfixに変えて同等のリレーを行うか、SES等のメールサーバに直接メールを送る設定にするのが望ましい。
 
-## 自動起動
+## Dockerコンテナの自動起動
 
 OSの起動時に自動的に全サービスが立ち上がるようにすべきだ。起動スクリプトを動かして、上記の`npm run vps:docker:up`を実行するようにしたい。そのためには、systemdの起動スクリプトを書く。/etc/systemd/system/stgy-docker.serviceに以下の内容を記述する。
 
@@ -517,7 +517,7 @@ TimeoutStopSec=120
 WantedBy=multi-user.target
 ```
 
-自動起動スクリプトを有効化し、状態を確認する。起動シーケンス（ExecStart）が実行されるので、Dockerのサービスが起動する。
+自動起動スクリプトを有効化し、状態を確認する。起動シーケンス（ExecStart）が実行されて、Dockerのサービスが起動するはずだ。
 
 ```
 sudo systemctl daemon-reload
@@ -525,7 +525,7 @@ sudo systemctl enable --now stgy-docker
 systemctl status stgy-docker
 ```
 
-自動起動スクリプトを無効化するには、以下のコマンドを実行する。停止シーケンス（ExecStop）が実行されるので、Dockerのサービスが停止する。
+自動起動スクリプトを無効化するには、以下のコマンドを実行する。停止シーケンス（ExecStop）が実行されて、Dockerのサービスが停止するはずだ。
 
 ```
 sudo systemctl disable --now stgy-docker
@@ -535,7 +535,7 @@ sudo systemctl disable --now stgy-docker
 
 大規模サイトとしての本番運用を考えると、リバースプロクシとDBサーバとストレージサーバとメールサーバはクラウドのマネージドサービスを使うのが典型的だ。オンプレミスだとしても個々のサービスは個別のホストで稼働させて性能と可用性を向上させる構成にするのが定石だ。DockerによってSNSのサービスをカプセル化できるのは素晴らしいが、デモサイトをそれで運用していると、本番サイトの構成とかけ離れすぎていて、運用の訓練としては理想的ではない。依存サービスを同一ホストで動かすにしても、個別のネイティブサービスとして稼働させた方が本番の構成に近づけられる。
 
-ネイティブサービスを動かすなら、個々のサービスを他の用途にも使えるという利点もある。例えば、stgy.jpにSNS以外のサービスも乗っけるなら、単一のリバースプロクシにそれらの中継もさせた方が運用が楽だ。同様に、データベースやオブジェクトストレージを他のサービスと共有して何らかの連携を行う場合も、ネイティブサービスになっている方が管理しやすい。理想論としては、そのような同居や密結合は避けるべきで、SNSと他のサービスはホストも分けて運用すべきなのだが、リソースの制約でそうも言っていられないことがある。
+ネイティブサービスを動かすと、個々のサービスを他の用途にも使えるという利点もある。例えば、stgy.jpにSNS以外のサービスも乗っけるなら、単一のリバースプロクシにそれらの中継もさせた方が運用が楽だ。同様に、データベースやオブジェクトストレージを他のサービスと共有して何らかの連携を行う場合も、ネイティブサービスになっている方が管理しやすい。理想論としては、そのような同居や密結合は避けるべきで、SNSと他のサービスはホストも分けて運用すべきなのだが、リソースの制約でそうも言っていられないことがある。
 
 実際のところ、デモ環境の運用に手間と金をかけたくない私としては、自前の様々なオープンソース製品のデモは1台のホストに集めて、1つのリバースプロクシで一括運用したい。デモ用途ならセキュリティやアベイラビリティの優先度は要件は無いようなものなので、運用効率重視の構成を追求できる。ホスト1台に集約しつつコンテナ運用をするのも可能だが、同じ役割のサービスが複数コンテナで起動するとポートや証明書の管理が煩雑になるので、同じ役割のサービスは統合したい。
 
@@ -543,7 +543,7 @@ sudo systemctl disable --now stgy-docker
 
 ## systemctl
 
-Ubuntu Linuxにおいてネイティブサービスすなわちデーモンプロセスの管理はsystemdによって行われる。その設定は/etc/systemd/systemの下に置かれる。サービスの管理はsystemctlコマンドを使って行われる。
+Ubuntu Linuxにおいて、ネイティブサービスすなわちデーモンプロセスの管理はsystemdによって行われる。その設定は/etc/systemd/systemの下に置かれる。サービスの管理はsystemctlコマンドを使って行われる。
 
 - sudo systemctl start SERVICENAME : 手動で起動
 - sudo systemctl stop SERVICENAME : 手動で停止
@@ -557,7 +557,7 @@ Ubuntu Linuxにおいてネイティブサービスすなわちデーモンプ�
 - journalctl -u SERVICENAME : ログ全体をページャで見る
 - journalctl -u SERVICENAME -f : 最新ログを表示して端末に表示し続ける
 
-systemdの設定ファイル（*.service、*.socketなど）の変更を反映したい場合、以下のコマンドで反映させる。
+systemdの設定ファイル（*.service、*.socketなど）の変更を反映したい場合、以下のコマンドを実行する。
 
 ```
 sudo systemctl daemon-reload
@@ -589,7 +589,7 @@ sudo chown root:root /usr/bin/caddy
 sudo chmod 755 /usr/bin/caddy
 ```
 
-Caddyの自動起動スクリプトの本体は/usr/lib/systemd/system/caddy.serviceである。このファイルを編集して、Caddyの実行ユーザをprodにしておく。また、UMaskの行は追加して、同一グループのプロセスが証明書などのデータを読めるようにする。
+Caddyの自動起動スクリプトの本体は/usr/lib/systemd/system/caddy.serviceである。このファイルを編集して、Caddyの実行ユーザをprodにしておく。UMaskの行は追加の設定であり、同一グループのプロセスが証明書などのデータを読めるようにする。
 
 ```
 User=prod
@@ -847,11 +847,13 @@ Postfixを再起動する。
 sudo systemctl restart postfix
 ```
 
-Macでswaksコマンドを使うと、疎通が確認できる。
+Macでswaksコマンドを使うと、疎通が確認できる。パスワードは先ほど決めたものを指定すること。
 
 ```
 swaks --to hirarin@gmail.com --server stgy.jp:587 --from noreply@stgy.jp --auth-user postfix@stgy.jp --auth-password SASLPASSWORD --auth PLAIN --header "Subject: test" --body "test1" --tls
 ```
+
+SMTPサーバが配信先のSMTPサーバに信用されるためには、自身が名乗るホスト名（設定ファイル内のmyhostnameの値）とIPアドレスの逆引きの値が同じである必要がある。また、DNSのSPF設定で、自身のIPアドレスが登録されている必要がある。SASL認証はメールのリレーに必須の設定ではないが、インターネット越しで認証して安全にメールを受信するには、SSLとSASL認証の組み合わせを使うのが望ましい。
 
 ## PostgreSQL
 
@@ -1070,11 +1072,11 @@ STGYのバックエンドとフロントエンドも実サービスとして稼�
 ./scripts/deploy-backend.sh
 ```
 
-デプロイ用スクリプトを実行すると、/home/stgy-backend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。それを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-backend.serviceとして書く。
+デプロイ用スクリプトを実行すると、/home/prod/stgy-backend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。mailWorkerとmediaWorkerとnotificationWorkerも同時に起動される。それを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-backend.serviceとして書く。
 
 ```
 [Unit]
-Description=STGY Frontend
+Description=STGY Backend (API + workers)
 Wants=network-online.target
 After=network-online.target
 
@@ -1082,11 +1084,11 @@ After=network-online.target
 Type=simple
 User=prod
 Group=prod
-WorkingDirectory=/home/prod/stgy-frontend
+WorkingDirectory=/home/prod/stgy-backend
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
-ExecStart=/home/prod/stgy-frontend/start.sh start
-ExecStop=/home/prod/stgy-frontend/start.sh stop
-ExecReload=/home/prod/stgy-frontend/start.sh restart
+ExecStart=/home/prod/stgy-backend/start.sh start
+ExecStop=/home/prod/stgy-backend/start.sh stop
+ExecReload=/home/prod/stgy-backend/start.sh restart
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=30s
@@ -1110,7 +1112,7 @@ systemctl status stgy-backend
 ./scripts/deploy-frontend.sh
 ```
 
-デプロイ用スクリプトを実行すると、/home/stgy-frontend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。それを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-frontend.serviceとして書く。
+デプロイ用スクリプトを実行すると、/home/prod/stgy-frontend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。それを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-frontend.serviceとして書く。
 
 ```
 [Unit]
@@ -1154,29 +1156,18 @@ systemctl status stgy-frontend
 
 ## 実サービス運用での初期化
 
-リポジトリ直下で以下のコマンドを実行すると、データを初期化できる。データベースとオブジェクトストレージの全てを問答無用で初期化するので注意すること。
+リポジトリ直下で以下のコマンドを実行すると、データを初期化できる。データベースとオブジェクトストレージとキャッシュの全てを問答無用で初期化するので注意すること。
 
 ```
 PGPASSWORD=stgystgy psql -h 127.0.0.1 -p 5432 -U admin -d stgy <<__EOF__
 DROP SCHEMA public CASCADE; CREATE SCHEMA public;
-CREATE DATABASE stgy OWNER admin TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C';
-GRANT ALL PRIVILEGES ON DATABASE stgy TO admin;
 __EOF__
-ls postgres/init/*.sql | sort | while read file ; do
-  PGPASSWORD=stgystgy psql -h 127.0.0.1 -p 5432 -U admin -d stgy < $file
-done
 mc alias set stgylocal http://127.0.0.1:9000 admin stgystgy
 mc rb --force stgylocal/stgy-images
-mc mb stgylocal/stgy-images
-mc anonymous set download stgylocal/stgy-images
-mc rb --force stgylocal/stgy-profiles
-mc mb stgylocal/stgy-profiles
-mc anonymous set download stgylocal/stgy-profiles
 redis-cli -a stgystgy FLUSHALL
-./scripts/edit_users.py seeder/user-0*.txt
-./scripts/edit_posts.py seeder/post-0*.txt
-./scripts/user_actions.py seeder/action-*.txt
 ```
+
+その後、PostgreSQLの手順にあるスキーマ初期と、MinIOの手順にあるバケット初期設定と、STGYサービスの手順にある初期データの投入を行うこと。
 
 実サービスの全てを無効化するには、以下のコマンドを実行する。Docker運用に戻したい場合は、一旦全ての実サービスを停止する必要がある。
 
