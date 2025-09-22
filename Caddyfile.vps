@@ -22,9 +22,19 @@ https://stgy.jp {
 https://s3.stgy.jp {
   encode zstd gzip
 
-  reverse_proxy http://minio:9000 {
-    flush_interval -1
+  @okref header_regexp Referer ^https?://([^.]+\.)?stgy\.jp(/|$)
+  @noref not header Referer *
+  handle @okref {
+    reverse_proxy http://minio:9000 {
+      flush_interval -1
+    }
   }
+  handle @noref {
+    reverse_proxy http://minio:9000 {
+      flush_interval -1
+    }
+  }
+  respond 403
 }
 
 https://s3-console.stgy.jp {

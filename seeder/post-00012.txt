@@ -128,6 +128,8 @@ scriptsの下には、システムの管理に必要なスクリプトが入っ�
 - run-local-frontend.sh : フロントエンドサービスをローカルホスト上で起動する
 - run-databaseUtil.sh : データベース管理用のユーティリティ
 - run-storageUtil.sh : メディアストレージ管理用のユーティリティ
+- deploy-backend.sh : デモ環境にてバックエンドをデプロイする
+- deploy-frontend.sh : デモ環境にてフロントエンドをデプロイする
 
 postgresの下にはデータベースのスキーマ定義を行うSQLファイルが置いてある。minioの下にはバケットの初期設定を行うスクリプトが置いてある。
 
@@ -275,15 +277,20 @@ VPSサービスのコントロールパネルで、Ubuntuの最新のLTS版を�
 - sudo権限付与: sudo gpasswd -a prod sudo
 - 再起動: sudo shutdown -r now
 
-ファイアウォールを設定する。SSHの22、HTTPSの443、HTTPの80、メールリレーの587だけを開ける。
+ファイアウォールを設定する。SSHの22、HTTPSの443、HTTPの80、メールリレーの587は外部公開する。PostgreSQLの5432とRedisの6379はDockerのブリッジからのみ接続可能にする。なお、br-stgyというブリッジはdocker-compose.ymlで定義されている。
 
 ```
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
+
 sudo ufw allow ssh
 sudo ufw allow https
 sudo ufw allow http
 sudo ufw allow 587/tcp
+
+sudo ufw allow in on br-stgy to any port 5432 proto tcp
+sudo ufw allow in on br-stgy to any port 6379 proto tcp
+
 sudo ufw enable
 sudo ufw status
 ```
@@ -486,7 +493,7 @@ Mailpitはデフォルトではクライアントから送られてきたメー�
 
 ## 自動起動
 
-OSの起動時に自動的に全サービスが立ち上がるようにすべきだ。起動スクリプトを動かして、上記の`npm run vps:docker:up`を実行するようにしたい。そのためには、systemdの起動スクリプトを書く。/etc/systemd/system/stgy.serviceに以下の内容を記述する。
+OSの起動時に自動的に全サービスが立ち上がるようにすべきだ。起動スクリプトを動かして、上記の`npm run vps:docker:up`を実行するようにしたい。そのためには、systemdの起動スクリプトを書く。/etc/systemd/system/stgy-docker.serviceに以下の内容を記述する。
 
 ```
 [Unit]
@@ -513,14 +520,15 @@ WantedBy=multi-user.target
 自動起動スクリプトを有効化し、状態を確認する。起動シーケンス（ExecStart）が実行されるので、Dockerのサービスが起動する。
 
 ```
-sudo systemctl enable --now stgy
-systemctl status stgy
+sudo systemctl daemon-reload
+sudo systemctl enable --now stgy-docker
+systemctl status stgy-docker
 ```
 
 自動起動スクリプトを無効化するには、以下のコマンドを実行する。停止シーケンス（ExecStop）が実行されるので、Dockerのサービスが停止する。
 
 ```
-sudo systemctl disable --now stgy
+sudo systemctl disable --now stgy-docker
 ```
 
 ## ネイティブサービス稼働方式
@@ -602,7 +610,7 @@ sudo mkdir /var/caddy
 sudo chown -R prod:prod /var/caddy
 ```
 
-Caddy自体の設定は/etc/caddy/Caddyfileで行う。典型的には以下のように書く。STGYサービスの配信に加えて、/home/www以下のファイルを通常のWebサーバとして配信し、その中のprivate/配下にはBasic認証をかけるものとする。
+Caddy自体の設定は/etc/caddy/Caddyfileで行う。典型的には以下のように書く。S3にはホットリンク防止のRefererの制限をかけている。STGYサービスの配信に加えて、/home/www以下のファイルを通常のWebサーバとして配信し、その中のprivate/配下にはBasic認証をかけるものとする。
 
 ```
 {
@@ -616,7 +624,7 @@ https://stgy.jp {
 
   redir /backend /backend/
   handle_path /backend/* {
-    reverse_proxy http://backend:3001 {
+    reverse_proxy http://127.0.0.1:3001 {
       lb_policy first
       health_uri /health
       header_up Host {http.request.host}
@@ -624,7 +632,7 @@ https://stgy.jp {
   }
 
   handle {
-    reverse_proxy http://frontend:3000 {
+    reverse_proxy http://127.0.0.1:3000 {
       lb_policy first
       health_uri /
       header_up Host {http.request.host}
@@ -635,24 +643,25 @@ https://stgy.jp {
 https://s3.stgy.jp {
   encode zstd gzip
 
-  reverse_proxy http://minio:9000 {
-    flush_interval -1
+  @okref header_regexp Referer ^https?://([^.]+\.)?stgy\.jp(/|$)
+  @noref not header Referer *
+  handle @okref {
+    reverse_proxy 127.0.0.1:9000 {
+      flush_interval -1
+    }
   }
+  handle @noref {
+    reverse_proxy 127.0.0.1:9000 {
+      flush_interval -1
+    }
+  }
+  respond 403
 }
 
 https://s3-console.stgy.jp {
   encode zstd gzip
 
-  reverse_proxy http://minio:9001
-}
-
-https://mail.stgy.jp {
-  encode zstd gzip
-
-  basic_auth {
-    admin $2a$14$uuicMQhEHEbzlvNfISPcue77In..Te9ZMzAKzppaRilla5wBlXdoa
-  }
-  reverse_proxy http://mailpit:8025
+  reverse_proxy http://127.0.0.1:9001
 }
 
 https://www.stgy.jp {
@@ -854,7 +863,7 @@ sudo systemctl enable --now postgresql
 systemctl status postgresql
 ```
 
-以下の手順はPostgreSQLのメジャーバージョンが16であることを前提とする。もし違うバージョンであれば16を読み替えること。まずは、/etc/postgresql/16/main/conf.d/90-stgy.confファイルを新規作成する。内容な以下のようにする。ローカルからの接続のみを受け付ける。メモリ使用量はメモリ4GBのシステムに最適化してある。
+以下の手順はPostgreSQLのメジャーバージョンが16であることを前提とする。もし違うバージョンであれば16を読み替えること。まずは、/etc/postgresql/16/main/conf.d/90-stgy.confファイルを新規作成する。内容は以下のようにする。メモリ使用量はメモリ4GBのシステムに最適化してある。
 
 ```
 listen_addresses = '*'
@@ -875,18 +884,329 @@ wal_compression = on
 max_connections = 100
 ```
 
-/etc/postgresql/16/main/pg_hba.confファイルを新規作成する。内容は以下のようにする。
+/etc/postgresql/16/main/pg_hba.confを編集して、ホストベース認証の設定をする。ローカルとDockerブリッジ（172.23.0.*）からの接続のみを受け付け、全てにパスワード認証を要求する。元の内容は全て消してよい。
 
 ```
-local   all     all                                   peer
-host    stgy    admin           127.0.0.1/32          scram-sha-256
-host    stgy    admin           ::1/128               scram-sha-256
+local  all  postgres                    peer
+local  all  all                         scram-sha-256
+host   all  all       127.0.0.1/32      scram-sha-256
+host   all  all       ::1/128           scram-sha-256
+host   all  all       172.23.0.0/24     scram-sha-256
 ```
 
+confファイルを書き換えたならPostgreSQLを再起動する。
 
+```
+sudo systemctl restart postgresql
+```
 
+psqlコマンドで接続し、STGY用のデータベースを作成する。
 
+```
+sudo -u postgres psql <<__EOF__
+CREATE ROLE admin LOGIN PASSWORD 'stgystgy';
+CREATE DATABASE stgy OWNER admin TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C';
+GRANT ALL PRIVILEGES ON DATABASE stgy TO admin;
+__EOF__
+```
 
+データベースのスキーマ定義や初期データの登録を行う。
+
+```
+ls postgres/init/*.sql | sort | while read file ; do
+  PGPASSWORD=stgystgy psql -h 127.0.0.1 -p 5432 -U admin -d stgy < $file
+done
+```
+
+データベースの内容を確認する。
+
+```
+PGPASSWORD=stgystgy psql -h 127.0.0.1 -p 5432 -U admin -d stgy
+
+-- ロールの一覧
+stgy=> \du
+-- データベースの一覧
+stgy=> \l
+-- テーブルの一覧
+stgy=> \dt
+-- adminユーザの存在確認
+stgy=> SELECT id, nickname, is_admin FROM users;
+```
+
+## MinIO
+
+MinIOはS3互換のオブジェクトストレージサービス、STGYではメディアデータの管理に使う。MinIOはaptパッケージが無いので、以下のようにバイナリを直接インストールする。
+
+```
+wget -O /tmp/minio https://dl.min.io/server/minio/release/linux-amd64/minio
+sudo install -m 0755 /tmp/minio /usr/local/bin/minio
+wget -O /tmp/mc https://dl.min.io/client/mc/release/linux-amd64/mc
+sudo install -m 0755 /tmp/mc /usr/local/bin/mc
+```
+
+MinIOの実行ユーザを作り、設定とデータの置き場所を作る。
+
+```
+sudo useradd --system --home /var/minio --shell /usr/sbin/nologin minio
+sudo mkdir -p /var/minio/data
+sudo mkdir -p /etc/minio
+sudo chown -R minio:minio /var/minio
+sudo chown -R minio:minio /etc/minio
+```
+
+/etc/minio/minio.envを新規作成して設定を書く。MinIOは外部からアクセスされるので、ユーザとパスワードは必ず変更すること。
+
+```
+MINIO_ROOT_USER=admin
+MINIO_ROOT_PASSWORD=stgystgy
+MINIO_API_CORS_ALLOW_ORIGIN=https://stgy.jp,https://s3.stgy.jp,https://s3-console.stgy.jp
+MINIO_BROWSER_REDIRECT_URL=https://s3-console.stgy.jp
+MINIO_SERVER_URL=https://s3.stgy.jp
+```
+
+設定ファイルが他のユーザに読まれないように所有権とパーミッションを設定する。
+
+```
+sudo chown minio:minio /etc/minio/minio.env
+sudo chmod 600 /etc/minio/minio.env
+```
+
+自動起動のためのsystemdスクリプトを/etc/systemd/system/minio.serviceとして書く。
+
+```
+[Unit]
+Description=MinIO Object Storage
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=minio
+Group=minio
+EnvironmentFile=-/etc/minio/minio.env
+ExecStart=/usr/local/bin/minio server /var/minio/data \
+  --address 127.0.0.1:9000 \
+  --console-address 127.0.0.1:9001
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+# journal に出す（ログは journalctl で確認）
+StandardOutput=journal
+StandardError=journal
+
+[Install]
+WantedBy=multi-user.target
+```
+
+自動起動を有効化する。
+
+```
+sudo systemctl daemon-reload
+sudo systemctl enable --now minio
+sudo systemctl status minio
+```
+
+STGY用のバケットを作成する。
+
+```
+mc alias set stgylocal http://127.0.0.1:9000 admin stgystgy
+mc mb stgylocal/stgy-images
+mc anonymous set download stgylocal/stgy-images
+mc mb stgylocal/stgy-profiles
+mc anonymous set download stgylocal/stgy-profiles
+```
+
+## Redis
+
+Redisはメモリ常駐のキー・バリュー型ストアで、STGYでは主にキャッシュ用途に使う。Redisは以下のようにインストールし、自動起動を有効化できる。
+
+```
+sudo apt install redis-server
+sudo systemctl enable --now redis-server
+systemctl status redis-server
+```
+
+/etc/redis/redis.confを編集する。内容は以下のようにする。全てのアドレスにバインドするが、パスワード認証を要求する。メモリ使用量は512MBに制限する。元の内容は全て消してよい。
+
+```
+bind 0.0.0.0
+port 6379
+protected-mode yes
+
+supervised systemd
+pidfile /run/redis/redis-server.pid
+logfile ""
+dir /var/lib/redis
+
+requirepass stgystgy
+
+save ""
+appendonly no
+
+maxmemory 512mb
+maxmemory-policy allkeys-lru
+timeout 0
+tcp-keepalive 60
+```
+
+confファイルを書き換えたならRedisを再起動する。
+
+```
+sudo systemctl restart redis-server
+```
+
+CLIで接続確認する。
+
+```
+redis-cli -a stgystgy PING
+```
+
+## STGYのバックエンドとフロントエンド
+
+STGYのバックエンドとフロントエンドも実サービスとして稼働させられる。Gitのリポジトリ内でビルドして、/home/prod/stgy-backendおよび/home/prod/stgy-frontendの配下にデプロイして、そこにあるJavaScriptコードをNode.jsで実行する起動スクリプトをsystemd経由で実行する。
+
+バックエンドサーバをデプロイするには、prodユーザが、stgyリポジトリの中で、以下のコマンドを実行する。stgy.jpで全て実サービスを使った場合の環境設定がスクリプト内に書いてある。
+
+```
+./scripts/deploy-backend.sh
+```
+
+デプロイ用スクリプトを実行すると、/home/stgy-backend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。それを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-backend.serviceとして書く。
+
+```
+[Unit]
+Description=STGY Frontend
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prod
+Group=prod
+WorkingDirectory=/home/prod/stgy-frontend
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/prod/stgy-frontend/start.sh start
+ExecStop=/home/prod/stgy-frontend/start.sh stop
+ExecReload=/home/prod/stgy-frontend/start.sh restart
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=30s
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+```
+
+自動起動スクリプトを有効化し、状態を確認する。
+
+```
+sudo systemctl daemon-reload
+sudo systemctl enable --now stgy-backend
+systemctl status stgy-backend
+```
+
+フロントエンドサーバをデプロイするには、prodユーザが、stgyリポジトリの中で、以下のコマンドを実行する。stgy.jpで全て実サービスを使った場合の環境設定がスクリプト内に書いてある。
+
+```
+./scripts/deploy-frontend.sh
+```
+
+デプロイ用スクリプトを実行すると、/home/stgy-frontend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。それを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-frontend.serviceとして書く。
+
+```
+[Unit]
+Description=STGY Frontend
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prod
+Group=prod
+WorkingDirectory=/home/prod/stgy-frontend
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/prod/stgy-frontend/start.sh start
+ExecStop=/home/prod/stgy-frontend/start.sh stop
+ExecReload=/home/prod/stgy-frontend/start.sh restart
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=30s
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+```
+
+自動起動スクリプトを有効化し、状態を確認する。
+
+```
+sudo systemctl daemon-reload
+sudo systemctl enable --now stgy-frontend
+systemctl status stgy-frontend
+```
+
+以下のコマンドで初期データの投入を行う。
+
+```
+./scripts/edit_users.py seeder/user-0*.txt
+./scripts/edit_posts.py seeder/post-0*.txt
+./scripts/user_actions.py seeder/action-*.txt
+```
+
+## 実サービス運用での初期化
+
+リポジトリ直下で以下のコマンドを実行すると、データを初期化できる。データベースとオブジェクトストレージの全てを問答無用で初期化するので注意すること。
+
+```
+PGPASSWORD=stgystgy psql -h 127.0.0.1 -p 5432 -U admin -d stgy <<__EOF__
+DROP SCHEMA public CASCADE; CREATE SCHEMA public;
+CREATE DATABASE stgy OWNER admin TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C';
+GRANT ALL PRIVILEGES ON DATABASE stgy TO admin;
+__EOF__
+ls postgres/init/*.sql | sort | while read file ; do
+  PGPASSWORD=stgystgy psql -h 127.0.0.1 -p 5432 -U admin -d stgy < $file
+done
+mc alias set stgylocal http://127.0.0.1:9000 admin stgystgy
+mc rb --force stgylocal/stgy-images
+mc mb stgylocal/stgy-images
+mc anonymous set download stgylocal/stgy-images
+mc rb --force stgylocal/stgy-profiles
+mc mb stgylocal/stgy-profiles
+mc anonymous set download stgylocal/stgy-profiles
+redis-cli -a stgystgy FLUSHALL
+./scripts/edit_users.py seeder/user-0*.txt
+./scripts/edit_posts.py seeder/post-0*.txt
+./scripts/user_actions.py seeder/action-*.txt
+```
+
+実サービスの全てを無効化するには、以下のコマンドを実行する。Docker運用に戻したい場合は、一旦全ての実サービスを停止する必要がある。
+
+```
+sudo systemctl disable --now stgy-frontend
+sudo systemctl disable --now stgy-backend
+sudo systemctl disable --now postfix
+sudo systemctl disable --now redis-server
+sudo systemctl disable --now minio
+sudo systemctl disable --now postgresql
+sudo systemctl disable --now caddy
+```
+
+実サービスの全てを有効化するには、以下のコマンドを実行する。
+
+```
+sudo systemctl enable --now caddy
+sudo systemctl enable --now postgresql
+sudo systemctl enable --now minio
+sudo systemctl enable --now redis-server
+sudo systemctl enable --now postfix
+sudo systemctl enable --now stgy-backend
+sudo systemctl enable --now stgy-frontend
+```
+
+## まとめ
+
+STGYは、リバースプロクシにCaddy、データベースにPostgreSQL、オブジェクトストレージにMinIO、キャッシュにRedis、メール送信にMailpitとPostfixを用い、Node.jsのバックエンドとフロントエンドがそれらを操るアーキテクチャである。開発時にはMac上でDockerを用いて依存サービスを稼働させた上で、バックエンドとフロントエンドをローカルホストで動かす。
+
+デモ運用は、VPSのUbuntu Linuxサーバ1台で行う。Docker運用と実サービス運用の双方が可能である。短期間のデモであればDocker運用が楽だ。長期的に運用し、かつ他のサービスを同一ホストに同居させるなら、実サービス運用をした方が良い。実サービス運用の場合、systemdを使って多くのサービスを管理する。また、バックエンドとフロントエンドのデプロイ用のスクリプトも用意してあるので、Dockerほどではないが、それほど手間を書けずに導入できるようになっている。
 
 Next: [STGYのデータベース](/posts/0002000000000013)
 ____EOF____
