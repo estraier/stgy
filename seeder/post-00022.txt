@@ -1,0 +1,27 @@
+id: 0002000000000022
+ownedBy: 0001000000000021
+allowLikes: true
+allowReplies: true
+tags: dev-memo
+content:<<____EOF____
+# 開発メモ
+
+開発に関する雑多なメモを書く。
+
+## VPS設定
+
+STGYとは直接関係ないが、ついでにその他の開発用のツールを入れておく。
+
+- gcc g++
+- python3 python3-dev
+- ruby ruby-dev
+- perl libperl-dev
+- lua5.4 liblua5.4-dev
+- make automake, autoconf, pkgconf, libtool
+- libgtest-dev cmake
+- imagemagick ffmpeg dcraw enfuse exiftool libopencv-dev
+- postgresql-client
+
+
+
+____EOF____

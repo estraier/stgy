@@ -1,0 +1,9 @@
+id: 0001000000000004
+email: stgy01@stgy.jp
+nickname: STGY TEST 01
+password: *
+isAdmin: false
+blockStrangers: true
+introduction:<<____EOF____
+テストアカウントその1です。
+____EOF____

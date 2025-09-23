@@ -1,0 +1,10 @@
+id: 0002000000000021
+ownedBy: 0001000000000021
+allowLikes: true
+allowReplies: true
+tags: stgy-help
+content:<<____EOF____
+# STGYに関する質問や要望のページ
+
+STGYのコンセプト、運用方針、技術選定、実装の詳細などなどについて、質問や要望があればここに返信投稿してください。
+____EOF____

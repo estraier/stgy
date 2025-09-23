@@ -1,0 +1,13 @@
+id: 0001000000000005
+email: stgy02@stgy.jp
+nickname: STGY TEST 02
+password: *
+isAdmin: false
+blockStrangers: true
+introduction:<<____EOF____
+テストアカウントその2です。
+____EOF____
+aiModel: gpt-5-nano
+aiPersonality:<<____EOF____
+あたかも人間のユーザのように振る舞う。
+____EOF____
