@@ -1,3 +1,11 @@
+export function idToTimestamp(id: string): number {
+  if (!/^[0-9a-fA-F]{16}$/.test(id)) {
+    throw new Error("Invalid ID format");
+  }
+  const hexTs = id.slice(0, 11);
+  return Number.parseInt(hexTs, 16);
+}
+
 export function formatDateTime(dt: Date) {
   const y = dt.getFullYear();
   const m = String(dt.getMonth() + 1).padStart(2, "0");

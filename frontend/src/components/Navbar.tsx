@@ -1,4 +1,6 @@
 "use client";
+
+import { Config } from "@/config";
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { getSessionInfo, logout } from "@/api/auth";
@@ -170,7 +172,7 @@ export default function Navbar() {
               Settings
             </Link>
             <Link
-              href="/posts/0002000000000002"
+              href={Config.HELP_PAGE_PATH}
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
               onClick={() => setMenuOpen(false)}
             >

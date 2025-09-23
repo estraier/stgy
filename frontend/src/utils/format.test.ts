@@ -1,4 +1,19 @@
-import { formatDateTime, formatBytes, normalizeLinefeeds } from "./format";
+import { idToTimestamp, formatDateTime, formatBytes, normalizeLinefeeds } from "./format";
+
+describe("idToTimestamp", () => {
+  test("typical timestamp (2025-09-23T00:00:00.000Z)", () => {
+    const ts = 1758585600000;
+    const tsHex = ts.toString(16).padStart(11, "0");
+    const id = tsHex + "abcde";
+    expect(idToTimestamp(id)).toBe(ts);
+  });
+
+  test("epoch zero (1970-01-01T00:00:00.000Z)", () => {
+    const ts = 0;
+    const id = "00000000000" + "abcde";
+    expect(idToTimestamp(id)).toBe(ts);
+  });
+});
 
 describe("formatDateTime", () => {
   test("pads each field with zeros", () => {

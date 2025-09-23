@@ -23,7 +23,7 @@ export default function PageBody() {
     try {
       await login(email, password);
       localStorage.setItem("lastLoginEmail", email);
-      router.push("/posts");
+      router.push("/");
     } catch (e) {
       setError(e ? String(e) : "Invalid email or password.");
     }
