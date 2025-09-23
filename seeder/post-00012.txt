@@ -14,7 +14,7 @@ STGYの開発作業はDockerが動く環境であればどこでもできるが�
 
 まずは、Homebrewを入れる。カスタマイズ性の高いMacPortsとかよりも、通り一遍で再現性の高い手順となるHomebrewの方が管理しやすい。
 
-```
+```:small
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
 eval "$(/opt/homebrew/bin/brew shellenv)"
@@ -22,25 +22,25 @@ eval "$(/opt/homebrew/bin/brew shellenv)"
 
 Homebrewで、その他の必要パッケージを入れる。Docker VMであるColima、Dockerクライアント、composeプラグイン、Node.js、Git、GitHub CLIである。
 
-```
+```:small
 brew install colima docker docker-compose node git gh
 ```
 
 Colimaを起動する。初回の起動ではリソースの使用量をオプションで指定する。
 
-```
+```:small
 colima start --cpu 4 --memory 8 --disk 100
 ```
 
 DockerクライアントがColimaを使うように設定する。
 
-```
+```:small
 docker context use colima
 ```
 
 ~/.docker/config.jsonに以下のような記述をして、ColimaとComposeプラグインを利用可能にする。Colima等の既存の設定があればそのまま残す。
 
-```
+```:small
 {
   "auths": {},
   "currentContext": "colima",
@@ -50,27 +50,27 @@ docker context use colima
 
 Dockerクライアントの動作確認をする。それぞれ、「Docker Compose version 2.39.3」的な文字列と「Hello from Docker!」が表示されれば成功。
 
-```
+```:small
 docker compose version
 docker run --rm hello-world
 ```
 
 Node.jsの動作確認をする。それぞれ、「v24.4.0」と「11.4.2」的な文字列が表示されれば成功。
 
-```
+```:small
 node -v
 npm -v
 ```
 
 GitHubにログインする。アクセスキーを聞かれるので、事前にGitHub上でアクセスキーを作っておくこと。
 
-```
+```:small
 NO_COLOR=1 gh auth login
 ```
 
 開発作業用のディレクトリを作り、stgyのリポジトリのクローンを作成する。以後、stgyディレクトリで作業を行う。
 
-```
+```:small
 mkdir ~/dev
 cd ~/dev
 git clone git@github.com:estraier/stgy.git
@@ -146,7 +146,7 @@ Macの開発環境においては、以下のコマンドでDockerホストVNの
 
 リポジトリルートにて、開発環境の設定が書いてあるenv-dev.txtを.envとしてコピーする。これは忘れがちなので注意。
 
-```
+```:small
 cp env.dev.txt .env
 ```
 
@@ -254,13 +254,13 @@ Linux上でSTGYの稼働と開発を行うための環境設定の手順を記�
 
 上記設定が伝搬していることを確認する。「Name: stgy.jp Address: 153.127.47.206」的な文字列が表示されれば成功。
 
-```
+```:small
 nslookup stgy.jp
 ```
 
 また、VPS事業者の設定画面で、逆引き設定をする。メールが弾かれないことを優先するので、mail.stgy.jpとして登録する。設定後、以下のコマンドで伝搬を確認する。
 
-```
+```:small
 dig +trace -x 153.127.47.206
 ```
 
@@ -279,7 +279,7 @@ VPSサービスのコントロールパネルで、Ubuntuの最新のLTS版を�
 
 ファイアウォールを設定する。SSHの22、HTTPSの443、HTTPの80、メールリレーの587は外部公開する。PostgreSQLの5432とRedisの6379はDockerのブリッジからのみ接続可能にする。なお、br-stgyというブリッジはdocker-compose.ymlで定義されている。
 
-```
+```:small
 sudo ufw default deny incoming
 sudo ufw default allow outgoing
 
@@ -309,7 +309,7 @@ prodユーザでログインして、環境設定を行う。
 
 Docker関連ツールを入れる。標準ではaptがDockerの公式リポジトリを見ないので、設定を加える必要がある。
 
-```
+```:small
 sudo install -m 0755 -d /etc/apt/keyrings
 curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo gpg --dearmor -o /etc/apt/keyrings/docker.gpg
 echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | sudo tee /etc/apt/sources.list.d/docker.list >/dev/null
@@ -319,7 +319,7 @@ sudo apt install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin d
 
 Dockerサービスを有効化する。また、dockerグループにprodユーザを入れて利用可能にする。
 
-```
+```:small
 sudo systemctl enable --now docker
 sudo usermod -aG docker prod
 newgrp docker  # 現在のセッションにdockerを加える。ログインし直しても良い。
@@ -327,7 +327,7 @@ newgrp docker  # 現在のセッションにdockerを加える。ログインし
 
 Dockerクライアントの動作確認をする。それぞれ、「Docker version 28.4.0」「Docker Compose version 2.39.3」的な文字列と「Hello from Docker!」が表示されれば成功。
 
-```
+```:small
 docker --version
 docker compose version
 docker run --rm hello-world
@@ -335,33 +335,33 @@ docker run --rm hello-world
 
 Node.jsとnpmをインストールする。Ubuntuのデフォルト設定で入るNode.jsは古いので、Node 22系に手動更新する。
 
-```
+```:small
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
 sudo apt install nodejs npm
 ```
 
 Node.jsの動作確認をする。それぞれ、「v22.19.0」と「10.9.3」的な文字列が表示されれば成功。
 
-```
+```:small
 node -v
 npm -v
 ```
 
 GitとGitHub CLIをインストールする。
 
-```
+```:small
 sudo apt install git gh
 ```
 
 GitHubにログインする。アクセスキーを聞かれるので、事前にGitHub上でアクセスキーを作っておくこと。SSHのキーとアクセスキーの対応が取れている必要がある。
 
-```
+```:small
 NO_COLOR=1 gh auth login
 ```
 
 開発作業用のディレクトリを作り、stgyのリポジトリのクローンを作成する。以後、stgyディレクトリで作業を行う。
 
-```
+```:small
 git clone git@github.com:estraier/stgy.git
 cd stgy
 ```
@@ -462,19 +462,19 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
 
 リポジトリルートにて、デモ環境Docker完結方式の設定が書いてあるenv-vps.txtを.envとしてコピーする。これは忘れがちなので注意。.envの内容を編集し、必要ならドメイン名やパスワードなどの値を変更する。MinIOのパスワードだけは、初期値から変更すること。そうしないと外部から操作されてしまう。
 
-```
+```:small
 cp env.vps.txt .env
 ```
 
 手動でDockerコンテナを立ち上げる。npmのスクリプト名に"vps:"が接頭していることに注意。
 
-```
+```:small
 npm run vps:docker:up
 ```
 
 初期データを投入する。STGY上のadminユーザを変えている場合、環境変数STGY_ADMIN_EMAILとSTGY_ADMIN_PASSWORDに変更後の値を設定してから実行する。
 
-```
+```:small
 npm run vps:reset-data
 ```
 
@@ -495,7 +495,7 @@ Mailpitはデフォルトではクライアントから送られてきたメー�
 
 OSの起動時に自動的に全サービスが立ち上がるようにすべきだ。起動スクリプトを動かして、上記の`npm run vps:docker:up`を実行するようにしたい。そのためには、systemdの起動スクリプトを書く。/etc/systemd/system/stgy-docker.serviceに以下の内容を記述する。
 
-```
+```:small
 [Unit]
 Description=STGY stack via Docker Compose
 Wants=network-online.target
@@ -519,7 +519,7 @@ WantedBy=multi-user.target
 
 自動起動スクリプトを有効化し、状態を確認する。起動シーケンス（ExecStart）が実行されて、Dockerのサービスが起動するはずだ。
 
-```
+```:small
 sudo systemctl daemon-reload
 sudo systemctl enable --now stgy-docker
 systemctl status stgy-docker
@@ -527,7 +527,7 @@ systemctl status stgy-docker
 
 自動起動スクリプトを無効化するには、以下のコマンドを実行する。停止シーケンス（ExecStop）が実行されて、Dockerのサービスが停止するはずだ。
 
-```
+```:small
 sudo systemctl disable --now stgy-docker
 ```
 
@@ -559,7 +559,7 @@ Ubuntu Linuxにおいて、ネイティブサービスすなわちデーモン�
 
 systemdの設定ファイル（*.service、*.socketなど）の変更を反映したい場合、以下のコマンドを実行する。
 
-```
+```:small
 sudo systemctl daemon-reload
 ```
 
@@ -569,7 +569,7 @@ DockerでSTGYを立てている場合にネイティブサービスに運用に�
 
 CaddyはGoで書かれた軽量かつ高速のWebサーバである。設定も簡単で、何より証明書の取得を自動でやってくれるのが便利だ。Caddyは以下のようにインストールし、自動起動を有効化できる。
 
-```
+```:small
 sudo apt install caddy
 sudo systemctl enable --now caddy
 systemctl status caddy
@@ -577,7 +577,7 @@ systemctl status caddy
 
 aptでインストールされるcaddyはプラグインが使えないので、バイナリだけをビルドし直して置き換える必要がある。go言語の最新版もインストールする必要がある。
 
-```
+```:small
 sudo apt remove golang-go
 wget https://go.dev/dl/go1.25.1.linux-amd64.tar.gz
 sudo rm -rf /usr/local/go && sudo tar -C /usr/local -xzf go1.25.1.linux-amd64.tar.gz
@@ -591,7 +591,7 @@ sudo chmod 755 /usr/bin/caddy
 
 Caddyの自動起動スクリプトの本体は/usr/lib/systemd/system/caddy.serviceである。このファイルを編集して、Caddyの実行ユーザをprodにしておく。UMaskの行は追加の設定であり、同一グループのプロセスが証明書などのデータを読めるようにする。
 
-```
+```:small
 User=prod
 Group=prod
 UMask=0027
@@ -599,20 +599,20 @@ UMask=0027
 
 起動スクリプトの変更を反映する。
 
-```
+```:small
 sudo systemctl daemon-reload
 ```
 
 /var/caddyというディレクトリを作り、そこにCaddy関連のデータを置くことにする。その所有者をCaddyの実行ユーザに合わせておく。
 
-```
+```:small
 sudo mkdir /var/caddy
 sudo chown -R prod:prod /var/caddy
 ```
 
 Caddy自体の設定は/etc/caddy/Caddyfileで行う。典型的には以下のように書く。S3にはホットリンク防止のRefererの制限をかけている。STGYサービスの配信に加えて、/home/www以下のファイルを通常のWebサーバとして配信し、その中のprivate/配下にはBasic認証をかけるものとする。
 
-```
+```:small
 {
   storage file_system {
     root /var/caddy
@@ -681,20 +681,20 @@ https://www.stgy.jp {
 
 以下のコマンドで、設定ファイルの検証や設定変更の反映をする。
 
-```
+```:small
 sudo caddy validate --config /etc/caddy/Caddyfile
 sudo systemctl restart caddy
 ```
 
 Basic認証で使うパスワードのハッシュ値は、以下のコマンドで生成できる。
 
-```
+```:small
 caddy hash-password --plaintext NEWPASSWORD
 ```
 
 STGYには必要ない余談だが、CGIスクリプトを使いたい場合、FastCGIのラッパーであるfcgiwrapを使うと良い。
 
-```
+```:small
 sudo apt install fcgiwrap
 sudo systemctl enable --now fcgiwrap.socket
 sudo systemctl status fcgiwrap.socket
@@ -702,25 +702,25 @@ sudo systemctl status fcgiwrap.socket
 
 fcgiwrapの自動起動スクリプト本体は/usr/lib/systemd/system/fcgiwrap.serviceと/usr/lib/systemd/system/fcgiwrap.socketなので、それぞれを編集して実行ユーザと所有ユーザをprodにしておく。
 
-```
+```:small
 User=prod
 Group=prod
 ```
 
-```
+```:small
 SocketUser=prod
 SocketGroup=prod
 ```
 
 起動スクリプトの変更を反映する。
 
-```
+```:small
 sudo systemctl daemon-reload
 ```
 
 そのうえで、Caddyfileのwww.stgy.jpのディレクティブの中に以下の設定を書くと、.cgi拡張子のファイルがCGIスクリプトとして実行されるようになる。ディレクティブは上から評価されるので、file_serverディレクティブより上に置くことが重要である。
 
-```
+```:small
   @cgi path_regexp cgi ^(.+\.cgi)(/.*)?$
   handle @cgi {
     reverse_proxy unix//run/fcgiwrap.socket {
@@ -737,36 +737,32 @@ sudo systemctl daemon-reload
 
 Caddyfileを書き換えたならCaddyを再起動する。
 
-```
+```:small
 sudo systemctl restart caddy
 ```
 
 HTTPSで使うサーバ証明書はLet's Encryptから自動取得され、/var/caddy/certificates配下に保存される。更新も勝手にやってくれて、その際のACME認証も自身のWebサーバの機能で通せるので、certbotを運用するより楽だ。後述のSendmailの設定でもCaddyが取得した証明書を流用できる。
 
-```
-setagaya[~/www]$ find /var/caddy/certificates/acme-v02.api.letsencrypt.org-directory -type f
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/s3-console.stgy.jp/s3-console.stgy.jp.json
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/s3-console.stgy.jp/s3-console.stgy.jp.crt
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/s3-console.stgy.jp/s3-console.stgy.jp.key
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/mail.stgy.jp/mail.stgy.jp.crt
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/mail.stgy.jp/mail.stgy.jp.json
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/mail.stgy.jp/mail.stgy.jp.key
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/stgy.jp/stgy.jp.key
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/stgy.jp/stgy.jp.json
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/stgy.jp/stgy.jp.crt
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/www.stgy.jp/www.stgy.jp.key
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/www.stgy.jp/www.stgy.jp.crt
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/www.stgy.jp/www.stgy.jp.json
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/s3.stgy.jp/s3.stgy.jp.json
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/s3.stgy.jp/s3.stgy.jp.key
-/var/caddy/certificates/acme-v02.api.letsencrypt.org-directory/s3.stgy.jp/s3.stgy.jp.crt
+```:small
+$ cd /var/caddy/certificates/acme-v02.api.letsencrypt.org-directory
+$ find . -name "*.crt" -o -name "*.key"
+./s3-console.stgy.jp/s3-console.stgy.jp.crt
+./s3-console.stgy.jp/s3-console.stgy.jp.key
+./mail.stgy.jp/mail.stgy.jp.crt
+./mail.stgy.jp/mail.stgy.jp.key
+./stgy.jp/stgy.jp.key
+./stgy.jp/stgy.jp.crt
+./www.stgy.jp/www.stgy.jp.key
+./www.stgy.jp/www.stgy.jp.crt
+./s3.stgy.jp/s3.stgy.jp.key
+./s3.stgy.jp/s3.stgy.jp.crt
 ```
 
 ## Postfix
 
 Postfixは定番のメールサーバである。Mailpitの代わりに稼働させることで、ちゃんとしたメールの配送が実現できる。Postfixは以下のようにインストールし、自動起動を有効化できる。インストール時に出るダイアログでは「No configurations」を選ぶ。SASL認証用のモジュールとコマンドも入れる。
 
-```
+```:small
 sudo apt install postfix
 sudo systemctl enable --now postfix
 systemctl status postfix
@@ -775,7 +771,7 @@ sudo apt install libsasl2-modules sasl2-bin
 
 postfixというユーザが自動的に作られるので、それがcaddyの証明書を読めるようにprodグループに追加する。また、SASL認証のデータベースにアクセスできるように、saslグループにも追加する。
 
-```
+```:small
 sudo usermod -aG prod postfix
 sudo usermod -aG sasl postfix
 sudo chgrp sasl /etc/sasldb2
@@ -783,7 +779,7 @@ sudo chgrp sasl /etc/sasldb2
 
 /etc/postfix/main.cfを編集（新規作成）する。ローカルホストで稼働するSTGYメールワーカから出されたメールは無認証で受け取る。Macで開発している場合にはMailpitのリレー設定でTLS認証で受け取る。
 
-```
+```:small
 myhostname = mail.stgy.jp
 mydomain = stgy.jp
 myorigin = $mydomain
@@ -825,7 +821,7 @@ alias_database = hash:/etc/aliases
 
 /etc/postfix/master.cfを編集する。既存の行を全てコメントアウトした上で以下を加える。すなわち、smtpの行のchrootをnに変え、submissionの行でローカルホストのクライアントとSASL認証を経たクライアントを許可する。
 
-```
+```:small
 smtp       inet  n       -       n       -       -       smtpd
 submission inet  n       -       n       -       -       smtpd
   -o syslog_name=postfix/submission
@@ -836,20 +832,20 @@ submission inet  n       -       n       -       -       smtpd
 
 SASL認証のためのアカウントを作る必要がある。ここでは postfix@stgy.jp というアカウントを作る。パスワードを聞かれるので、予め決めておいた文字列を入力する。その後の確認コマンドで「postfix@stgy.jp: userPassword」と表示されれば成功。
 
-```
+```:small
 sudo saslpasswd2 postfix -u stgy.jp
 sudo sasldblistusers2
 ```
 
 Postfixを再起動する。
 
-```
+```:small
 sudo systemctl restart postfix
 ```
 
 Macでswaksコマンドを使うと、疎通が確認できる。パスワードは先ほど決めたものを指定すること。
 
-```
+```:small
 swaks --to hirarin@gmail.com --server stgy.jp:587 --from noreply@stgy.jp --auth-user postfix@stgy.jp --auth-password SASLPASSWORD --auth PLAIN --header "Subject: test" --body "test1" --tls
 ```
 
@@ -859,15 +855,15 @@ SMTPサーバが配信先のSMTPサーバに信用されるためには、自身
 
 PostgreSQLは堅牢性と多機能性に定評のあるデータベースサーバである。STGYのいくつかの機能は標準SQLの範囲を超えてPostgreSQLの独自機能をいくつか使っているので、基本的にはPostgreSQLありきの実装になっている。PostgreSQLは以下のようにインストールし、自動起動を有効化できる。
 
-```
-sudo apt install postgresql postgresql-contrib
+```:small
+sudo apt install postgresql postgresql-contrib postgresql-client
 sudo systemctl enable --now postgresql
 systemctl status postgresql
 ```
 
 以下の手順はPostgreSQLのメジャーバージョンが16であることを前提とする。もし違うバージョンであれば16を読み替えること。まずは、/etc/postgresql/16/main/conf.d/90-stgy.confファイルを新規作成する。内容は以下のようにする。メモリ使用量はメモリ4GBのシステムに最適化してある。
 
-```
+```:small
 listen_addresses = '*'
 port = 5432
 
@@ -888,7 +884,7 @@ max_connections = 100
 
 /etc/postgresql/16/main/pg_hba.confを編集して、ホストベース認証の設定をする。ローカルとDockerブリッジ（172.23.0.*）からの接続のみを受け付け、全てにパスワード認証を要求する。元の内容は全て消してよい。
 
-```
+```:small
 local  all  postgres                    peer
 local  all  all                         scram-sha-256
 host   all  all       127.0.0.1/32      scram-sha-256
@@ -898,13 +894,13 @@ host   all  all       172.23.0.0/24     scram-sha-256
 
 confファイルを書き換えたならPostgreSQLを再起動する。
 
-```
+```:small
 sudo systemctl restart postgresql
 ```
 
 psqlコマンドで接続し、STGY用のデータベースを作成する。
 
-```
+```:small
 sudo -u postgres psql <<__EOF__
 CREATE ROLE admin LOGIN PASSWORD 'stgystgy';
 CREATE DATABASE stgy OWNER admin TEMPLATE template0 ENCODING 'UTF8' LC_COLLATE 'C' LC_CTYPE 'C';
@@ -914,7 +910,7 @@ __EOF__
 
 データベースのスキーマ定義や初期データの登録を行う。
 
-```
+```:small
 ls postgres/init/*.sql | sort | while read file ; do
   PGPASSWORD=stgystgy psql -h 127.0.0.1 -p 5432 -U admin -d stgy < $file
 done
@@ -922,7 +918,7 @@ done
 
 データベースの内容を確認する。
 
-```
+```:small
 PGPASSWORD=stgystgy psql -h 127.0.0.1 -p 5432 -U admin -d stgy
 
 -- ロールの一覧
@@ -939,7 +935,7 @@ stgy=> SELECT id, nickname, is_admin FROM users;
 
 MinIOはS3互換のオブジェクトストレージサービス、STGYではメディアデータの管理に使う。MinIOはaptパッケージが無いので、以下のようにバイナリを直接インストールする。
 
-```
+```:small
 wget -O /tmp/minio https://dl.min.io/server/minio/release/linux-amd64/minio
 sudo install -m 0755 /tmp/minio /usr/local/bin/minio
 wget -O /tmp/mc https://dl.min.io/client/mc/release/linux-amd64/mc
@@ -948,7 +944,7 @@ sudo install -m 0755 /tmp/mc /usr/local/bin/mc
 
 MinIOの実行ユーザを作り、設定とデータの置き場所を作る。
 
-```
+```:small
 sudo useradd --system --home /var/minio --shell /usr/sbin/nologin minio
 sudo mkdir -p /var/minio/data
 sudo mkdir -p /etc/minio
@@ -958,7 +954,7 @@ sudo chown -R minio:minio /etc/minio
 
 /etc/minio/minio.envを新規作成して設定を書く。MinIOは外部からアクセスされるので、ユーザとパスワードは必ず変更すること。
 
-```
+```:small
 MINIO_ROOT_USER=admin
 MINIO_ROOT_PASSWORD=stgystgy
 MINIO_API_CORS_ALLOW_ORIGIN=https://stgy.jp,https://s3.stgy.jp,https://s3-console.stgy.jp
@@ -968,14 +964,14 @@ MINIO_SERVER_URL=https://s3.stgy.jp
 
 設定ファイルが他のユーザに読まれないように所有権とパーミッションを設定する。
 
-```
+```:small
 sudo chown minio:minio /etc/minio/minio.env
 sudo chmod 600 /etc/minio/minio.env
 ```
 
 自動起動のためのsystemdスクリプトを/etc/systemd/system/minio.serviceとして書く。
 
-```
+```:small
 [Unit]
 Description=MinIO Object Storage
 Wants=network-online.target
@@ -1000,7 +996,7 @@ WantedBy=multi-user.target
 
 自動起動を有効化する。
 
-```
+```:small
 sudo systemctl daemon-reload
 sudo systemctl enable --now minio
 sudo systemctl status minio
@@ -1008,7 +1004,7 @@ sudo systemctl status minio
 
 STGY用のバケットを作成する。
 
-```
+```:small
 mc alias set stgylocal http://127.0.0.1:9000 admin stgystgy
 mc mb stgylocal/stgy-images
 mc anonymous set download stgylocal/stgy-images
@@ -1020,7 +1016,7 @@ mc anonymous set download stgylocal/stgy-profiles
 
 Redisはメモリ常駐のキー・バリュー型ストアで、STGYでは主にキャッシュ用途に使う。Redisは以下のようにインストールし、自動起動を有効化できる。
 
-```
+```:small
 sudo apt install redis-server
 sudo systemctl enable --now redis-server
 systemctl status redis-server
@@ -1028,7 +1024,7 @@ systemctl status redis-server
 
 /etc/redis/redis.confを編集する。内容は以下のようにする。全てのアドレスにバインドするが、パスワード認証を要求する。メモリ使用量は512MBに制限する。元の内容は全て消してよい。
 
-```
+```:small
 bind 0.0.0.0
 port 6379
 protected-mode yes
@@ -1051,13 +1047,13 @@ tcp-keepalive 60
 
 confファイルを書き換えたならRedisを再起動する。
 
-```
+```:small
 sudo systemctl restart redis-server
 ```
 
 CLIで接続確認する。
 
-```
+```:small
 redis-cli -a stgystgy PING
 ```
 
@@ -1067,13 +1063,13 @@ STGYのバックエンドとフロントエンドも実サービスとして稼�
 
 バックエンドサーバをデプロイするには、prodユーザが、stgyリポジトリの中で、以下のコマンドを実行する。stgy.jpで全て実サービスを使った場合の環境設定がスクリプト内に書いてある。
 
-```
+```:small
 ./scripts/deploy-backend.sh
 ```
 
 デプロイ用スクリプトを実行すると、/home/prod/stgy-backend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。mailWorkerとmediaWorkerとnotificationWorkerも同時に起動される。それを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-backend.serviceとして書く。
 
-```
+```:small
 [Unit]
 Description=STGY Backend (API + workers)
 Wants=network-online.target
@@ -1099,7 +1095,7 @@ WantedBy=multi-user.target
 
 自動起動スクリプトを有効化し、状態を確認する。
 
-```
+```:small
 sudo systemctl daemon-reload
 sudo systemctl enable --now stgy-backend
 systemctl status stgy-backend
@@ -1107,13 +1103,13 @@ systemctl status stgy-backend
 
 フロントエンドサーバをデプロイするには、prodユーザが、stgyリポジトリの中で、以下のコマンドを実行する。stgy.jpで全て実サービスを使った場合の環境設定がスクリプト内に書いてある。
 
-```
+```:small
 ./scripts/deploy-frontend.sh
 ```
 
 デプロイ用スクリプトを実行すると、/home/prod/stgy-frontend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。それを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-frontend.serviceとして書く。
 
-```
+```:small
 [Unit]
 Description=STGY Frontend
 Wants=network-online.target
@@ -1139,7 +1135,7 @@ WantedBy=multi-user.target
 
 自動起動スクリプトを有効化し、状態を確認する。
 
-```
+```:small
 sudo systemctl daemon-reload
 sudo systemctl enable --now stgy-frontend
 systemctl status stgy-frontend
@@ -1147,17 +1143,19 @@ systemctl status stgy-frontend
 
 以下のコマンドで初期データの投入を行う。
 
-```
+```:small
 ./scripts/edit_users.py seeder/user-0*.txt
 ./scripts/edit_posts.py seeder/post-0*.txt
 ./scripts/user_actions.py seeder/action-*.txt
 ```
 
+deploy-backend.shとdeploy-frontend.shが環境設定を内包するself-containedな実装になっているのは重要である。デプロイした時の環境設定で常にサービスが安定稼働するべきだからだ。デプロイ後に外部から環境変数を変化させて挙動を変えてはならない。二つのスクリプトはCI/CDへの布石である。STGYはOSS製品として頒布するので特定のデプロイ方式を前提としないが、少なくともGitHub Actionsでデプロイしやすいようには設計している。実際、GitHub Actionsのワークフローでリポジトリ内のスクリプトを実行するだけで、CDは達成できる。パスワード等はリポジトリのシークレットからパラメータ注入する。CIに関しては、単にテスト環境でnpm testを呼ぶワークフローを仕掛ければ良い。そこで呼ばれるテストが統合テストと呼ぶに足るものであるかどうかが品質を左右することになる。
+
 ## 実サービス運用での初期化
 
 リポジトリ直下で以下のコマンドを実行すると、データを初期化できる。データベースとオブジェクトストレージとキャッシュの全てを問答無用で初期化するので注意すること。
 
-```
+```:small
 PGPASSWORD=stgystgy psql -h 127.0.0.1 -p 5432 -U admin -d stgy <<__EOF__
 DROP SCHEMA public CASCADE; CREATE SCHEMA public;
 __EOF__
@@ -1170,7 +1168,7 @@ redis-cli -a stgystgy FLUSHALL
 
 実サービスの全てを無効化するには、以下のコマンドを実行する。Docker運用に戻したい場合は、一旦全ての実サービスを停止する必要がある。
 
-```
+```:small
 sudo systemctl disable --now stgy-frontend
 sudo systemctl disable --now stgy-backend
 sudo systemctl disable --now postfix
@@ -1182,7 +1180,7 @@ sudo systemctl disable --now caddy
 
 実サービスの全てを有効化するには、以下のコマンドを実行する。
 
-```
+```:small
 sudo systemctl enable --now caddy
 sudo systemctl enable --now postgresql
 sudo systemctl enable --now minio
