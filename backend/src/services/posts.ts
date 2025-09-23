@@ -523,25 +523,25 @@ export class PostsService {
     const focusParamIndex = 6;
 
     const sql = `
-      WITH f AS (
+      WITH all_followers AS (
         SELECT followee_id FROM user_follows WHERE follower_id = $1
         ${includeSelf ? "UNION SELECT $1" : ""}
       ),
-      active AS (
+      active_followers AS (
         SELECT DISTINCT ON (p2.owned_by)
                p2.owned_by, p2.id AS last_id
         FROM posts p2
-        WHERE p2.owned_by IN (SELECT followee_id FROM f)
+        WHERE p2.owned_by IN (SELECT followee_id FROM all_followers)
           ${repliesFilter}
         ORDER BY p2.owned_by, p2.id ${orderDir}
       ),
       top_followees AS (
         SELECT owned_by
-        FROM active
+        FROM active_followers
         ORDER BY last_id ${orderDir}
         LIMIT $2
       ),
-      cand AS (
+      candidates AS (
         SELECT pid.id
         FROM top_followees tf
         JOIN LATERAL (
@@ -553,9 +553,9 @@ export class PostsService {
           LIMIT $3
         ) AS pid ON TRUE
       ),
-      top AS (
+      top_posts AS (
         SELECT id
-        FROM cand
+        FROM candidates
         ORDER BY id ${orderDir}
         OFFSET $4 LIMIT $5
       )
@@ -590,7 +590,7 @@ export class PostsService {
         END AS is_blocking_focus_user`
             : ""
         }
-      FROM top t
+      FROM top_posts t
       JOIN posts p ON p.id = t.id
       JOIN users u ON p.owned_by = u.id
       LEFT JOIN posts pp ON p.reply_to = pp.id

@@ -179,7 +179,7 @@ class MockPgClientMain {
     }
 
     if (
-      sql.includes("WITH f AS") &&
+      sql.includes("WITH all_followers AS") &&
       sql.includes("JOIN LATERAL") &&
       sql.includes("JOIN posts p ON p.id")
     ) {
