@@ -991,7 +991,6 @@ ExecStart=/usr/local/bin/minio server /var/minio/data \
 Restart=always
 RestartSec=5
 LimitNOFILE=65536
-# journal に出す（ログは journalctl で確認）
 StandardOutput=journal
 StandardError=journal
 
