@@ -345,9 +345,19 @@ paths:
                   userEmail: { type: string }
                   userNickname: { type: string }
                   userIsAdmin: { type: boolean }
+                  userCreatedAt: { type: string, format: date-time }
                   userUpdatedAt: { type: string, format: date-time, nullable: true }
                   loggedInAt: { type: string, format: date-time }
-                required: [userId, userEmail, userNickname, userIsAdmin, userUpdatedAt, loggedInAt]
+                required:
+                  [
+                    userId,
+                    userEmail,
+                    userNickname,
+                    userIsAdmin,
+                    userCreatedAt,
+                    userUpdatedAt,
+                    loggedInAt,
+                  ]
         "401":
           $ref: "#/components/responses/Error401"
 

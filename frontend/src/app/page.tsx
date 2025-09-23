@@ -3,15 +3,17 @@
 import { Config } from "@/config";
 import { useEffect } from "react";
 import { useRouter } from "next/navigation";
-import { getSessionInfo, type SessionInfo } from "@/api/auth";
-import { idToTimestamp } from "@/utils/format";
+import { getSessionInfo } from "@/api/auth";
+import type { SessionInfo } from "@/api/models";
 
 function checkFirstVisit(session: SessionInfo) {
   const NEWBIE_WINDOW = 48 * 60 * 60 * 1000;
   const HOLD_WINDOW = 300 * 1000;
   const now = Date.now();
-  const regTs = idToTimestamp(session.userId);
-  const isNewbie = now - regTs <= NEWBIE_WINDOW;
+
+  const regTsRaw = Date.parse(session.userCreatedAt);
+  const isNewbie = Number.isFinite(regTsRaw) && now - regTsRaw <= NEWBIE_WINDOW;
+
   const key = "visited:" + session.userId;
   try {
     const raw = localStorage.getItem(key);

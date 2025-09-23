@@ -30,9 +30,11 @@ def get_session(session_id):
   data = res.json()
   print(f"[session] {data}")
   assert data["userEmail"] == ADMIN_EMAIL
+  assert "userId" in data
   assert "userNickname" in data
   assert "userIsAdmin" in data
-  assert "userId" in data
+  assert "userCreatedAt" in data
+  assert "userUpdatedAt" in data
   assert "loggedInAt" in data
   return data
 

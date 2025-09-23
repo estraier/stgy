@@ -14,6 +14,7 @@ type LoginRow = {
   email: string;
   nickname: string;
   is_admin: boolean;
+  created_at: string;
   updated_at: string | null;
   password: Uint8Array;
 };
@@ -22,6 +23,7 @@ type SessionRefreshRow = {
   email: string;
   nickname: string;
   is_admin: boolean;
+  created_at: string;
   updated_at: string | null;
 };
 
@@ -30,6 +32,7 @@ type SwitchUserRow = {
   email: string;
   nickname: string;
   is_admin: boolean;
+  created_at: string;
   updated_at: string | null;
 };
 
@@ -45,7 +48,16 @@ export class AuthService {
   async login(email: string, password: string): Promise<LoginResult> {
     const result = await pgQuery<LoginRow>(
       this.pgPool,
-      "SELECT id, email, nickname, is_admin, updated_at, password FROM users WHERE email=$1",
+      `SELECT
+         id,
+         email,
+         nickname,
+         is_admin,
+         id_to_timestamp(id) AS created_at,
+         updated_at,
+         password
+       FROM users
+       WHERE email=$1`,
       [email],
     );
     if (result.rows.length === 0) throw new Error("authentication failed");
@@ -59,6 +71,7 @@ export class AuthService {
       email: userEmail,
       nickname: userNickname,
       is_admin: userIsAdmin,
+      created_at: userCreatedAt,
       updated_at: userUpdatedAt,
     } = row;
 
@@ -69,6 +82,7 @@ export class AuthService {
       userEmail,
       userNickname,
       userIsAdmin: !!userIsAdmin,
+      userCreatedAt: new Date(userCreatedAt).toISOString(),
       userUpdatedAt: userUpdatedAt ? new Date(userUpdatedAt).toISOString() : null,
       loggedInAt: new Date().toISOString(),
     };
@@ -79,7 +93,15 @@ export class AuthService {
   async switchUser(userId: string): Promise<LoginResult> {
     const result = await pgQuery<SwitchUserRow>(
       this.pgPool,
-      "SELECT id, email, nickname, is_admin, updated_at FROM users WHERE id=$1",
+      `SELECT
+         id,
+         email,
+         nickname,
+         is_admin,
+         id_to_timestamp(id) AS created_at,
+         updated_at
+       FROM users
+       WHERE id=$1`,
       [hexToDec(userId)],
     );
     if (result.rows.length === 0) throw new Error("user not found");
@@ -88,6 +110,7 @@ export class AuthService {
       email: userEmail,
       nickname: userNickname,
       is_admin: userIsAdmin,
+      created_at: userCreatedAt,
       updated_at: userUpdatedAt,
     } = result.rows[0];
 
@@ -97,6 +120,7 @@ export class AuthService {
       userEmail,
       userNickname,
       userIsAdmin: !!userIsAdmin,
+      userCreatedAt: new Date(userCreatedAt).toISOString(),
       userUpdatedAt: userUpdatedAt ? new Date(userUpdatedAt).toISOString() : null,
       loggedInAt: new Date().toISOString(),
     };
@@ -122,7 +146,14 @@ export class AuthService {
 
     const result = await pgQuery<SessionRefreshRow>(
       this.pgPool,
-      "SELECT email, nickname, is_admin, updated_at FROM users WHERE id=$1",
+      `SELECT
+         email,
+         nickname,
+         is_admin,
+         id_to_timestamp(id) AS created_at,
+         updated_at
+       FROM users
+       WHERE id=$1`,
       [hexToDec(current.userId)],
     );
     if (result.rows.length === 0) return null;
@@ -131,6 +162,7 @@ export class AuthService {
       email: userEmail,
       nickname: userNickname,
       is_admin: userIsAdmin,
+      created_at: userCreatedAt,
       updated_at: userUpdatedAt,
     } = result.rows[0];
 
@@ -139,6 +171,7 @@ export class AuthService {
       userEmail,
       userNickname,
       userIsAdmin: !!userIsAdmin,
+      userCreatedAt: new Date(userCreatedAt).toISOString(),
       userUpdatedAt: userUpdatedAt ? new Date(userUpdatedAt).toISOString() : null,
       loggedInAt: current.loggedInAt,
     };
