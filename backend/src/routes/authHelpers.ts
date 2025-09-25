@@ -46,4 +46,18 @@ export class AuthHelpers {
     }
     return false;
   }
+
+  static getPageParams<T extends readonly [string, ...string[]]>(
+    req: Request,
+    maxLimit: number,
+    orderOptions: T,
+  ): { offset: number; limit: number; order: T[number] } {
+    const offset = parseInt((req.query.offset as string) ?? "0", 10);
+    let limit = Math.min(parseInt((req.query.limit as string) ?? "100", 10), maxLimit);
+    let order = req.query.order as T[number];
+    if (!orderOptions.includes(order as string)) {
+      order = orderOptions[0];
+    }
+    return { offset, limit, order };
+  }
 }

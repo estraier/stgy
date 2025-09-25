@@ -59,8 +59,11 @@ export default function createUsersRouter(
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : loginUser.id;
-    const offset = parseInt((req.query.offset as string) ?? "0", 10);
-    const limit = parseInt((req.query.limit as string) ?? "100", 10);
+    const { offset, limit } = AuthHelpers.getPageParams(
+      req,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
     const nicknamePrefix =
       typeof req.query.nicknamePrefix === "string" ? req.query.nicknamePrefix.trim() : "";
     const omitSelf = parseBoolean(req.query.omitSelf as string, false);
@@ -106,12 +109,11 @@ export default function createUsersRouter(
   router.get("/", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
-    const offset = parseInt((req.query.offset as string) ?? "0", 10);
-    const limit = parseInt((req.query.limit as string) ?? "100", 10);
-    const order =
-      req.query.order === "asc" || req.query.order === "desc" || req.query.order === "social"
-        ? req.query.order
-        : "desc";
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc", "social"] as const,
+    );
     const query =
       typeof req.query.query === "string" && req.query.query.trim() !== ""
         ? req.query.query.trim()
@@ -379,9 +381,11 @@ export default function createUsersRouter(
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const followerId = req.params.id;
-    const offset = parseInt((req.query.offset as string) ?? "0", 10);
-    const limit = parseInt((req.query.limit as string) ?? "100", 10);
-    const order = (req.query.order as string) === "asc" ? "asc" : "desc";
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
     const focusUserId =
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
@@ -395,9 +399,11 @@ export default function createUsersRouter(
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser) return res.status(401).json({ error: "login required" });
     const followeeId = req.params.id;
-    const offset = parseInt((req.query.offset as string) ?? "0", 10);
-    const limit = parseInt((req.query.limit as string) ?? "100", 10);
-    const order = (req.query.order as string) === "asc" ? "asc" : "desc";
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
     const focusUserId =
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()

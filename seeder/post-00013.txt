@@ -203,6 +203,8 @@ CREATE INDEX idx_user_blocks_blockee_created_at ON user_blocks (blockee_id, crea
 
 ブロックしたユーザも依然として自分の投稿を読むことはできる。この挙動はTwitterと同じであり、ブロック機能に情報隠匿の機能がないことは明言しておかねばならない。Twitterでブロック相手も記事が読める仕様変更を時には物議を醸したが、私はこの仕様は妥当だと思う。アカウントを複数作るか第三者にコピペやスクショを頼むだけで簡単に回避できてしまうような隠匿機能に頼るべきではない。そもそも、特定の相手に見られて困るような内容は、不特定多数に見せるべきではない。
 
+user_followsとuser_blocksでは、ユーザIDがタイムスタンプを内包するSnowflake IDなのに、created_atが分けられている。フォロー関係が成立した日時はユーザの作成日時と独立しているからだ。一覧表示の際には新しく成立した関係から順に表示する。
+
 ## post_tagsテーブル
 
 投稿につけられるタグを管理するpost_tagsテーブルに着目しよう。その実際のスキーマは以下のものだ。
@@ -237,7 +239,7 @@ CREATE INDEX idx_post_likes_post_id_created_at ON post_likes(post_id, created_at
 CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_at);
 ```
 
-個々の記事にイイネをつけたユーザの一覧を出すクエリを効率化すべく、post_idとcreated_atの複合インデックスが貼られている。これもソートを省く必要性のために存在する。また、自分がイイネした記事の一覧ができると、ブックマーク的に使えて便利だ。そのクエリを効率化するために、liked_byとcreated_atの複合インデックスも貼られている。
+個々の記事にイイネをつけたユーザの一覧を出すクエリを効率化すべく、post_idとcreated_atの複合インデックスが貼られている。これもソートを省く必要性のために存在する。また、自分がイイネした記事の一覧ができると、ブックマーク的に使えて便利だ。そのクエリを効率化するために、liked_byとcreated_atの複合インデックスも貼られている。created_atがpost_idとは別に保持されているのは、投稿の作成日時とイイネの作成日時は異なるからだ。
 
 ## event_logsテーブルとnotificationsテーブル
 

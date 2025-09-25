@@ -258,7 +258,7 @@ Linux上でSTGYの稼働と開発を行うための環境設定の手順を記�
 nslookup stgy.jp
 ```
 
-また、VPS事業者の設定画面で、逆引き設定をする。メールが弾かれないことを優先するので、mail.stgy.jpとして登録する。設定後、以下のコマンドで伝搬を確認する。
+VPSサービスのコントロールパネルで、逆引き設定をする。メールが弾かれないことを優先するので、mail.stgy.jpとして登録する。設定後、以下のコマンドで伝搬を確認する。
 
 ```:small
 dig +trace -x 153.127.47.206
@@ -270,7 +270,7 @@ VPSサービスのコントロールパネルで、Ubuntuの最新のLTS版を�
 - ソフトウェアの更新: sudo apt upgrade
 - ロケールのインストールと有効化:
   - sudo apt install locales
-  - vi /etc/locale.genを開いて必要なロケール（en_US.UTF-8 UTF-8とja_JP.UTF-8 UTF-8）を戻す
+  - /etc/locale.genを開いて必要なロケール（en_US.UTF-8 UTF-8とja_JP.UTF-8 UTF-8）を戻す
   - sudo locale-gen
 - ホスト名の設定: sudo hostnamectl set-hostname setagaya
 - 通常ユーザ作成: adduser prod
@@ -305,7 +305,7 @@ prodユーザでログインして、環境設定を行う。
 - 任意のエディタの設定。Emacsの場合は以下
   - sudo apt install emacs
   - .emacsを既存環境からコピー
-  - なぜかemacsと一緒にに入るpostfixの削除: sudo apt purge postfix
+  - なぜかemacsと一緒に入るpostfixの削除: sudo apt purge postfix
 
 Docker関連ツールを入れる。標準ではaptがDockerの公式リポジトリを見ないので、設定を加える必要がある。
 
@@ -385,11 +385,11 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
   - https://mail.stgy.jp をDockerサブネットの http://mailpit:8025 であるメールサーバに中継する。
   - 証明書はCaddy自身が自動的にLet's Encryptから取ってきてくれる。
     - 7日間で5回以上取得するとレート制限がかかるので、down -vでボリュームを消さないように注意。
-  - 外向きのポートは22と80と443しか空いていないので、Dockerで立てるサーバで外からは見えるのはこいつだけ。
+  - 外向きのポートは22と80と443と587しか空いていないので、Dockerで立てるサーバで外からは見えるのはこいつだけ。
 
 - フロントエンド（Node.js + Next.js）
   - Dockerサブネットでfrontend:3000をlistenし、主にJavaScriptを配信。表にはhttps://stgy.jpとして露出。
-    - STGY_FRONTEND_PORT=3000
+    - PORT=3000
   - バックエンドを /backend として認識し、https://stgy.jp/backend 配下にAPIリクエストを送る。
     - NEXT_PUBLIC_BACKEND_API_BASE_URL=/backend
   - S3サーバをhttps://s3.stgy.jpとして認識し、画像の配信とpresigned-POSTのベースURLにそれを用いる。
@@ -397,7 +397,7 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX=https://s3.stgy.jp/{bucket}/
 
 - バックエンド（Node.js + Express）
-  - Dockerサブネットでbackend:3001をlistenし、サービスAPIのエンドポイントを担う。
+  - Dockerサブネットでbackend:3001をlistenし、サービスAPIのエンドポイントを担う。表にはhttps://stgy.jp/backendとして露出。
     - STGY_BACKEND_PORT=3001
   - フロントエンドをhttps://stgy.jpとして認識し、1ホップまでのプロクシ応答のX-Forwarded-Forを信じる。
     - STGY_FRONTEND_ORIGIN=https://stgy.jp
@@ -440,8 +440,10 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_DATABASE_PORT=5432
 
 - S3サーバ（MinIO）
-  - Dockerサブネットでminio:9000をlistenし、オブジェクトストレージを管理。
+  - Dockerサブネットでminio:9000をlistenし、オブジェクトストレージを管理。表にはhttps://s3-stgy.jpとして露出。
     - STGY_MINIO_PORT=9000
+  - Dockerサブネットでminio:9001をlistenし、コンソール画面を表示。表にはhttps://s3-console.stgy.jpとして露出。
+    - STGY_MINIO_CONSOLE_PORT=9001
 
 - キャッシュサーバ（Redis）
   - Dockerサブネットでredis:6379をlistenし、キャッシュを管理。
@@ -450,6 +452,8 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
 - メールサーバ（Mailpit）
   - Dockerサブネットでmailpit:5587をlistenし、メールを管理。
     - STGY_SMTP_PORT=5587
+  - Dockerサブネットでmailpit:8025をlistenし、コンソール画面を表示。表にはhttps://mail.stgy.jpとして露出。
+    - STGY_MAILPIT_CONSOLE_PORT=8025
   - リレー設定があれば、本番のSMTPサーバにメールを転送。
 
 どのサービスがどのサービスの接続を知っているかという参照関係を図にしておく。これは、実際に接続しているという意味ではなく、その設定を読み込んでいるという意味だ。例えば、バックエンドサーバがCaddyに接続することはないが、バックエンドにはCaddy越しに来るフロントエンドのURLを信用する設定が必要だ。また、バックエンドサーバはフロントエンドにS3サービスのURLを伝える必要があり、そこにはCaddyのアドレスが書いてある。同様にして、フロントエンドはCaddy越しにバックエンドやS3サーバに接続するアドレスを知っておく必要がある。
@@ -460,7 +464,7 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
 
 ## デモ環境Docker完結方式でのサービスの起動と終了
 
-リポジトリルートにて、デモ環境Docker完結方式の設定が書いてあるenv-vps.txtを.envとしてコピーする。これは忘れがちなので注意。.envの内容を編集し、必要ならドメイン名やパスワードなどの値を変更する。MinIOのパスワード（STGY_MINIO_ROOT_PASSWORDとSTGY_STORAGE_S3_SECRET_ACCESS_KEYの両方）だけは、初期値から変更すること。そうしないと外部から操作されてしまう。
+リポジトリルートにて、デモ環境Docker完結方式の設定が書いてあるenv-vps.txtを.envとしてコピーする。これは忘れがちなので注意。.envの内容を編集し、必要ならドメイン名やパスワードなどの値を変更する。MinIOのパスワード（STGY_MINIO_ROOT_PASSWORDとSTGY_STORAGE_S3_SECRET_ACCESS_KEYの両方）だけは、必ず初期値から変更すること。そうしないと外部から操作されてしまう。
 
 ```:small
 cp env.vps.txt .env
@@ -565,7 +569,9 @@ systemdの設定ファイル（*.service、*.socketなど）の変更を反映�
 sudo systemctl daemon-reload
 ```
 
-DockerでSTGYを立てている場合にネイティブサービスに運用に変えるには、stgyサービスをdisableしてから作業を行う。ネイティブサービスを立てている場合にDocker運用に変えるには、後述のcaddy等のサービスをdisableしてから作業を行う。
+DockerでSTGYを立てている場合にネイティブサービスに運用に変えるには、stgy-dockerサービスをdisableしてから作業を行う。ネイティブサービスを立てている場合にDocker運用に変えるには、後述のcaddy等のサービス全てをdisableしてから作業を行う。
+
+なお、運用方式を変える場合、単に起動方法を切り替えるだけではPostgreSQLやMinIOのデータは移行されないことには注意すべきだ。PostgreSQLのデータを移行したい場合、pg_dumpallやpg_backupを使うことになる。MinIOのデータを移行したい場合、mc mirrorやrsyncを使うことになる。
 
 ## Caddy
 

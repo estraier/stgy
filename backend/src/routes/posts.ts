@@ -63,7 +63,6 @@ export default function createPostsRouter(
         ? req.query.tag.trim()
         : undefined;
     const replyTo = getReplyToParam(req);
-
     const count = await postsService.countPosts({
       query,
       ownedBy,
@@ -76,9 +75,11 @@ export default function createPostsRouter(
   router.get("/", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    const offset = parseInt((req.query.offset as string) ?? "0", 10);
-    const limit = parseInt((req.query.limit as string) ?? "100", 10);
-    const order = (req.query.order as string) === "asc" ? "asc" : "desc";
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      user.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
     const query =
       typeof req.query.query === "string" && req.query.query.trim() !== ""
         ? req.query.query.trim()
@@ -112,8 +113,8 @@ export default function createPostsRouter(
   });
 
   router.get("/by-followees", async (req, res) => {
-    const loginUser = await requireLogin(req, res);
-    if (!loginUser) return;
+    const user = await requireLogin(req, res);
+    if (!user) return;
     const userId =
       typeof req.query.userId === "string" && req.query.userId.trim() !== ""
         ? req.query.userId.trim()
@@ -121,9 +122,11 @@ export default function createPostsRouter(
     if (!userId) {
       return res.status(400).json({ error: "userId is required" });
     }
-    const offset = parseInt((req.query.offset as string) ?? "0", 10);
-    const limit = parseInt((req.query.limit as string) ?? "100", 10);
-    const order = (req.query.order as string) === "asc" ? "asc" : "desc";
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      user.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
     const includeSelf = parseBoolean(req.query.includeSelf as string, false);
     const includeReplies = parseBoolean(req.query.includeReplies as string, true);
     const focusUserId =
@@ -145,8 +148,8 @@ export default function createPostsRouter(
   });
 
   router.get("/liked", async (req, res) => {
-    const loginUser = await requireLogin(req, res);
-    if (!loginUser) return;
+    const user = await requireLogin(req, res);
+    if (!user) return;
     const userId =
       typeof req.query.userId === "string" && req.query.userId.trim() !== ""
         ? req.query.userId.trim()
@@ -154,9 +157,11 @@ export default function createPostsRouter(
     if (!userId) {
       return res.status(400).json({ error: "userId is required" });
     }
-    const offset = parseInt((req.query.offset as string) ?? "0", 10);
-    const limit = parseInt((req.query.limit as string) ?? "100", 10);
-    const order = (req.query.order as string) === "asc" ? "asc" : "desc";
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      user.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
     const includeReplies = parseBoolean(req.query.includeReplies as string, true);
     const focusUserId =
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
@@ -356,9 +361,11 @@ export default function createPostsRouter(
     const user = await requireLogin(req, res);
     if (!user) return;
     const postId = req.params.id;
-    const offset = parseInt((req.query.offset as string) ?? "0", 10);
-    const limit = parseInt((req.query.limit as string) ?? "100", 10);
-    const order = (req.query.order as string) === "asc" ? "asc" : "desc";
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      user.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
     try {
       const users = await postsService.listLikers({ postId, offset, limit, order });
       res.json(users);
