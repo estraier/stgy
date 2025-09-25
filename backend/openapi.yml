@@ -375,6 +375,36 @@ paths:
                 properties:
                   result: { type: string }
 
+  /auth/switch-user:
+    post:
+      summary: (Admin only) Switch current session to another user
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                id: { type: string }
+              required: [id]
+      responses:
+        "200":
+          description: Switched. Sets session_id cookie.
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  sessionId: { type: string }
+        "400":
+          $ref: "#/components/responses/Error400"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
   /signup/start:
     post:
       summary: Start signup (send verification code)
