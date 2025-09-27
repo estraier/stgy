@@ -28,7 +28,7 @@ CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, id
 CREATE TABLE user_details (
   user_id BIGINT PRIMARY KEY,
   introduction VARCHAR(65535) NOT NULL,
-  ai_personality VARCHAR(5000),
+  ai_personality VARCHAR(65535),
   FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
 );
 
