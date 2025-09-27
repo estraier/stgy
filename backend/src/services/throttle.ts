@@ -5,12 +5,20 @@ export class ThrottleService {
   private actionId: string;
   private periodMs: number;
   private limitAmount: number;
+  private limitCount: number;
 
-  constructor(redis: Redis, actionId: string, periodInSec: number, limitAmount: number) {
+  constructor(
+    redis: Redis,
+    actionId: string,
+    periodInSec: number,
+    limitAmount: number,
+    limitCount: number = 0,
+  ) {
     this.redis = redis;
     this.actionId = actionId;
     this.periodMs = Math.max(1, Math.floor(periodInSec * 1000));
     this.limitAmount = limitAmount;
+    this.limitCount = limitCount;
   }
 
   private key(userId: string): string {
@@ -32,9 +40,6 @@ export class ThrottleService {
   }
 
   async canDo(userId: string, amount: number): Promise<boolean> {
-    if (!Number.isFinite(amount) || amount < 0) {
-      throw new Error("amount must be a non-negative number");
-    }
     const key = this.key(userId);
     const now = Date.now();
     const cutoff = now - this.periodMs;
@@ -45,9 +50,19 @@ export class ThrottleService {
       .zrangebyscore(key, cutoff, "+inf")
       .exec();
     const members: string[] = (results?.[2]?.[1] as string[]) ?? [];
-    let used = 0;
-    for (const m of members) used += this.parseAmount(m);
-    return used + amount <= this.limitAmount;
+    let usedAmount = 0;
+    let usedCount = 0;
+    for (const m of members) {
+      usedAmount += this.parseAmount(m);
+      usedCount += 1;
+    }
+    if (this.limitAmount > 0 && amount > 0 && usedAmount + amount > this.limitAmount) {
+      return false;
+    }
+    if (this.limitCount > 0 && usedCount >= this.limitCount) {
+      return false;
+    }
+    return true;
   }
 
   async recordDone(userId: string, amount: number): Promise<void> {
