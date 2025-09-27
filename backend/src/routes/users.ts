@@ -6,6 +6,7 @@ import type { StorageService } from "../services/storage";
 import { UsersService } from "../services/users";
 import { MediaService } from "../services/media";
 import { AuthService } from "../services/auth";
+import { ThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
 import { EventLogService } from "../services/eventLog";
 import { SendMailService } from "../services/sendMail";
@@ -30,6 +31,12 @@ export default function createUsersRouter(
   const usersService = new UsersService(pgPool, redis, eventLogService);
   const mediaService = new MediaService(storageService, redis);
   const authService = new AuthService(pgPool, redis);
+  const throttleService = new ThrottleService(
+    redis,
+    "user-updates",
+    3600,
+    Config.HOURLY_USER_UPDATES_LIMIT,
+  );
   const authHelpers = new AuthHelpers(authService, usersService);
   const sendMailService = new SendMailService(redis);
 
@@ -354,8 +361,14 @@ export default function createUsersRouter(
     if (!loginUser.isAdmin && (await authHelpers.checkBlock(followeeId, followerId))) {
       return res.status(400).json({ error: "blocked by the user" });
     }
+    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id, 1))) {
+      return res.status(403).json({ error: "too often updates" });
+    }
     try {
       await usersService.addFollow({ followerId, followeeId });
+      if (!loginUser.isAdmin) {
+        throttleService.recordDone(loginUser.id, 1);
+      }
       res.json({ result: "ok" });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "follow failed" });
@@ -421,8 +434,14 @@ export default function createUsersRouter(
     if (blockerId === blockeeId) {
       return res.status(400).json({ error: "cannot block yourself" });
     }
+    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id, 1))) {
+      return res.status(403).json({ error: "too often updates" });
+    }
     try {
       await usersService.addBlock({ blockerId, blockeeId });
+      if (!loginUser.isAdmin) {
+        throttleService.recordDone(loginUser.id, 1);
+      }
       res.json({ result: "ok" });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "block failed" });
