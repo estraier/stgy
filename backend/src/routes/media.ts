@@ -28,7 +28,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
     const pathUserId = req.params.userId;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id))) {
+    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id, 1))) {
       return res.status(403).json({ error: "too often image posts" });
     }
     try {
@@ -49,7 +49,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
     const pathUserId = req.params.userId;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id))) {
+    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id, 1))) {
       return res.status(403).json({ error: "too often image posts" });
     }
     try {
@@ -58,7 +58,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
         typeof req.body.key === "string" ? req.body.key : "",
       );
       if (!loginUser.isAdmin) {
-        throttleService.recordDone(loginUser.id);
+        throttleService.recordDone(loginUser.id, 1);
       }
       res.json({
         ...meta,
@@ -152,6 +152,9 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
     const slot = req.params.slot;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
+    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id, 1))) {
+      return res.status(403).json({ error: "too often image posts" });
+    }
     if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
       const presigned = await mediaService.presignProfileUpload(
@@ -174,6 +177,9 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
     const slot = req.params.slot;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
+    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id, 1))) {
+      return res.status(403).json({ error: "too often image posts" });
+    }
     if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
       const meta = await mediaService.finalizeProfile(
@@ -188,6 +194,9 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
         if (sessionId) {
           await authService.refreshSessionInfo(sessionId);
         }
+      }
+      if (!loginUser.isAdmin) {
+        throttleService.recordDone(loginUser.id, 1);
       }
       res.json({
         ...meta,

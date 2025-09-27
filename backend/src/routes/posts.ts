@@ -203,7 +203,7 @@ export default function createPostsRouter(
   router.post("/", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    if (!user.isAdmin && !(await postsThrottleService.canDo(user.id))) {
+    if (!user.isAdmin && !(await postsThrottleService.canDo(user.id, 1))) {
       return res.status(403).json({ error: "too often posts" });
     }
     if (!user.isAdmin && req.body.id) {
@@ -244,7 +244,7 @@ export default function createPostsRouter(
       };
       const created = await postsService.createPost(input);
       if (!user.isAdmin) {
-        postsThrottleService.recordDone(user.id);
+        postsThrottleService.recordDone(user.id, 1);
       }
       res.status(201).json(created);
     } catch (e) {
@@ -322,7 +322,7 @@ export default function createPostsRouter(
   router.post("/:id/like", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    if (!user.isAdmin && !(await likesThrottleService.canDo(user.id))) {
+    if (!user.isAdmin && !(await likesThrottleService.canDo(user.id, 1))) {
       return res.status(403).json({ error: "too often likes" });
     }
     if (!user.isAdmin) {
@@ -334,7 +334,7 @@ export default function createPostsRouter(
     try {
       await postsService.addLike(req.params.id, user.id);
       if (!user.isAdmin) {
-        likesThrottleService.recordDone(user.id);
+        likesThrottleService.recordDone(user.id, 1);
       }
       res.json({ result: "ok" });
     } catch (e) {

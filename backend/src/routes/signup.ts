@@ -23,7 +23,7 @@ export default function createSignupRouter(pgPool: Pool, redis: Redis) {
     if (!validateEmail(email)) {
       return res.status(400).json({ error: "invalid e-mail address" });
     }
-    if (!(await throttleService.canDo("0"))) {
+    if (!(await throttleService.canDo("0", 1))) {
       return res.status(403).json({ error: "too often signups" });
     }
     const normEmail = normalizeEmail(email);
@@ -45,12 +45,12 @@ export default function createSignupRouter(pgPool: Pool, redis: Redis) {
     if (!signupId || !verificationCode) {
       return res.status(400).json({ error: "signupId and verificationCode are needed" });
     }
-    if (!(await throttleService.canDo("0"))) {
+    if (!(await throttleService.canDo("0", 1))) {
       return res.status(403).json({ error: "too often signups" });
     }
     try {
       const { userId } = await signupService.verifySignup(signupId, verificationCode);
-      throttleService.recordDone("0");
+      throttleService.recordDone("0", 1);
       res.status(201).json({ userId });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "verification failed" });

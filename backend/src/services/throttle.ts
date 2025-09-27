@@ -4,13 +4,13 @@ export class ThrottleService {
   private redis: Redis;
   private actionId: string;
   private periodMs: number;
-  private limitCount: number;
+  private limitAmount: number;
 
-  constructor(redis: Redis, actionId: string, periodInSec: number, limitCount: number) {
+  constructor(redis: Redis, actionId: string, periodInSec: number, limitAmount: number) {
     this.redis = redis;
     this.actionId = actionId;
     this.periodMs = Math.max(1, Math.floor(periodInSec * 1000));
-    this.limitCount = limitCount;
+    this.limitAmount = limitAmount;
   }
 
   private key(userId: string): string {
@@ -20,7 +20,21 @@ export class ThrottleService {
     return `throttle:${this.actionId}:${userId}:history`;
   }
 
-  async canDo(userId: string): Promise<boolean> {
+  private makeMember(nowMs: number, amount: number): string {
+    const amt = Number.isInteger(amount) ? String(amount) : String(+amount);
+    return `${nowMs}:${Math.random().toString(36).slice(2, 10)}:${amt}`;
+  }
+
+  private parseAmount(member: string): number {
+    const parts = member.split(":");
+    const v = parseFloat(parts[2] ?? "0");
+    return Number.isFinite(v) ? v : 0;
+  }
+
+  async canDo(userId: string, amount: number): Promise<boolean> {
+    if (!Number.isFinite(amount) || amount < 0) {
+      throw new Error("amount must be a non-negative number");
+    }
     const key = this.key(userId);
     const now = Date.now();
     const cutoff = now - this.periodMs;
@@ -28,16 +42,19 @@ export class ThrottleService {
       .multi()
       .zremrangebyscore(key, 0, cutoff)
       .pexpire(key, this.periodMs + 1000)
-      .zcard(key)
+      .zrangebyscore(key, cutoff, "+inf")
       .exec();
-    const count = Number(results?.[2]?.[1] ?? 0);
-    return count < this.limitCount;
+    const members: string[] = (results?.[2]?.[1] as string[]) ?? [];
+    let used = 0;
+    for (const m of members) used += this.parseAmount(m);
+    return used + amount <= this.limitAmount;
   }
 
-  async recordDone(userId: string): Promise<void> {
+  async recordDone(userId: string, amount: number): Promise<void> {
+    if (!Number.isFinite(amount) || amount <= 0) return;
     const key = this.key(userId);
     const now = Date.now();
-    const member = `${now}:${Math.random().toString(36).slice(2, 10)}`;
+    const member = this.makeMember(now, amount);
     await this.redis
       .multi()
       .zadd(key, now, member)
