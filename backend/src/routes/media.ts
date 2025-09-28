@@ -19,7 +19,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
     redis,
     "image-posts",
     3600,
-    Config.HOURLY_IMAGE_POSTS_LIMIT,
+    Config.HOURLY_IMAGE_POSTS_COUNT_LIMIT,
   );
 
   router.post("/:userId/images/presigned", async (req: Request, res: Response) => {
@@ -58,7 +58,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
         typeof req.body.key === "string" ? req.body.key : "",
       );
       if (!loginUser.isAdmin) {
-        throttleService.recordDone(loginUser.id, 1);
+        throttleService.recordDone(loginUser.id);
       }
       res.json({
         ...meta,
@@ -196,7 +196,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
         }
       }
       if (!loginUser.isAdmin) {
-        throttleService.recordDone(loginUser.id, 1);
+        throttleService.recordDone(loginUser.id);
       }
       res.json({
         ...meta,

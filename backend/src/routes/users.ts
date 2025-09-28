@@ -35,7 +35,8 @@ export default function createUsersRouter(
     redis,
     "user-updates",
     3600,
-    Config.HOURLY_USER_UPDATES_LIMIT,
+    Config.HOURLY_USER_UPDATES_COUNT_LIMIT,
+    Config.HOURLY_USER_UPDATES_SIZE_LIMIT,
   );
   const authHelpers = new AuthHelpers(authService, usersService);
   const sendMailService = new SendMailService(redis);
@@ -185,12 +186,24 @@ export default function createUsersRouter(
     if (!loginUser.isAdmin && !loginUser.aiModel && req.body.aiPersonality !== undefined) {
       return res.status(403).json({ error: "forbidden to change aiPersonality" });
     }
+    let dataSize = 0;
+    let email;
+    if (req.body.email) {
+      email = normalizeEmail(normalizeOneLiner(req.body.email) ?? "") ?? "";
+      dataSize += email.length;
+    }
+    let nickname;
+    if (req.body.nickname) {
+      nickname = normalizeOneLiner(req.body.nickname) ?? "";
+      dataSize += nickname.length;
+    }
     let introduction;
     if (req.body.introduction) {
       introduction = normalizeMultiLines(req.body.introduction) ?? "";
       if (!loginUser.isAdmin && introduction.length > Config.INTRODUCTION_LENGTH_LIMIT) {
         return res.status(400).json({ error: "introduction is too long" });
       }
+      dataSize += introduction.length;
     }
     let aiPersonality;
     if (req.body.aiPersonality) {
@@ -198,12 +211,16 @@ export default function createUsersRouter(
       if (!loginUser.isAdmin && aiPersonality.length > Config.AI_PERSONALITY_LENGTH_LIMIT) {
         return res.status(400).json({ error: "aiPersonality is too long" });
       }
+      dataSize += aiPersonality.length;
+    }
+    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id, dataSize))) {
+      return res.status(403).json({ error: "too often updates" });
     }
     try {
       const input: UpdateUserInput = {
         id: req.params.id,
-        email: req.body.email ? normalizeEmail(normalizeOneLiner(req.body.email) ?? "") : undefined,
-        nickname: normalizeOneLiner(req.body.nickname) ?? undefined,
+        email: email,
+        nickname: nickname,
         isAdmin: req.body.isAdmin === undefined ? undefined : req.body.isAdmin,
         blockStrangers: req.body.blockStrangers === undefined ? undefined : req.body.blockStrangers,
         introduction: introduction,
@@ -218,6 +235,9 @@ export default function createUsersRouter(
         if (sessionId) {
           await authService.refreshSessionInfo(sessionId);
         }
+      }
+      if (!loginUser.isAdmin) {
+        throttleService.recordDone(loginUser.id, dataSize);
       }
       res.json(updated);
     } catch (e: unknown) {
@@ -361,13 +381,13 @@ export default function createUsersRouter(
     if (!loginUser.isAdmin && (await authHelpers.checkBlock(followeeId, followerId))) {
       return res.status(400).json({ error: "blocked by the user" });
     }
-    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id, 1))) {
+    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often updates" });
     }
     try {
       await usersService.addFollow({ followerId, followeeId });
       if (!loginUser.isAdmin) {
-        throttleService.recordDone(loginUser.id, 1);
+        throttleService.recordDone(loginUser.id);
       }
       res.json({ result: "ok" });
     } catch (e: unknown) {
@@ -434,13 +454,13 @@ export default function createUsersRouter(
     if (blockerId === blockeeId) {
       return res.status(400).json({ error: "cannot block yourself" });
     }
-    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id, 1))) {
+    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often updates" });
     }
     try {
       await usersService.addBlock({ blockerId, blockeeId });
       if (!loginUser.isAdmin) {
-        throttleService.recordDone(loginUser.id, 1);
+        throttleService.recordDone(loginUser.id);
       }
       res.json({ result: "ok" });
     } catch (e: unknown) {

@@ -11,8 +11,8 @@ export class ThrottleService {
     redis: Redis,
     actionId: string,
     periodInSec: number,
-    limitAmount: number,
     limitCount: number = 0,
+    limitAmount: number = 0,
   ) {
     this.redis = redis;
     this.actionId = actionId;
@@ -39,7 +39,7 @@ export class ThrottleService {
     return Number.isFinite(v) ? v : 0;
   }
 
-  async canDo(userId: string, amount: number): Promise<boolean> {
+  async canDo(userId: string, amount: number = 1): Promise<boolean> {
     const key = this.key(userId);
     const now = Date.now();
     const cutoff = now - this.periodMs;
@@ -65,8 +65,7 @@ export class ThrottleService {
     return true;
   }
 
-  async recordDone(userId: string, amount: number): Promise<void> {
-    if (!Number.isFinite(amount) || amount <= 0) return;
+  async recordDone(userId: string, amount: number = 1): Promise<void> {
     const key = this.key(userId);
     const now = Date.now();
     const member = this.makeMember(now, amount);

@@ -1,12 +1,12 @@
 import { ThrottleService } from "./throttle";
 import type Redis from "ioredis";
 
-describe("ThrottleService (amount + count throttling)", () => {
+describe("ThrottleService (count + amount throttling)", () => {
   const NOW = 1_726_000_000_000;
   const PERIOD_SEC = 60;
   const PERIOD_MS = PERIOD_SEC * 1000;
-  const LIMIT_AMOUNT = 3;
   const LIMIT_COUNT = 3;
+  const LIMIT_AMOUNT = 3;
   const ACTION_ID = "sendMail";
 
   let dateNowSpy: jest.SpyInstance<number, []>;
@@ -56,11 +56,11 @@ describe("ThrottleService (amount + count throttling)", () => {
   }
 
   test("canDo returns true when usedAmount + amount <= limitAmount and usedCount < limitCount", async () => {
-    const members = membersOfAmounts([1, 1]); // usedAmount=2, usedCount=2
+    const members = membersOfAmounts([1, 1]);
     const multi = makeMultiMockForCanDo(members);
     const redis = makeRedisWithMulti(multi);
-    const svc = new ThrottleService(redis, ACTION_ID, PERIOD_SEC, LIMIT_AMOUNT, LIMIT_COUNT);
-    const ok = await svc.canDo("user-123", 1); // 2+1<=3 and 2<3
+    const svc = new ThrottleService(redis, ACTION_ID, PERIOD_SEC, LIMIT_COUNT, LIMIT_AMOUNT);
+    const ok = await svc.canDo("user-123", 1);
     expect(ok).toBe(true);
     const key = `throttle:${ACTION_ID}:user-123:history`;
     const cutoff = NOW - PERIOD_MS;
@@ -71,38 +71,38 @@ describe("ThrottleService (amount + count throttling)", () => {
   });
 
   test("canDo blocks by amount when usedAmount + amount > limitAmount", async () => {
-    const members = membersOfAmounts([2.5, 0.4]); // usedAmount=2.9, usedCount=2
+    const members = membersOfAmounts([2.5, 0.4]);
     const multi = makeMultiMockForCanDo(members);
     const redis = makeRedisWithMulti(multi);
-    const svc = new ThrottleService(redis, ACTION_ID, PERIOD_SEC, LIMIT_AMOUNT, 0); // no count limit
-    const ok1 = await svc.canDo("user-1", 0.05); // 2.9+0.05=2.95<=3
-    const ok2 = await svc.canDo("user-1", 0.2); // 2.9+0.2=3.1>3
+    const svc = new ThrottleService(redis, ACTION_ID, PERIOD_SEC, 0, LIMIT_AMOUNT);
+    const ok1 = await svc.canDo("user-1", 0.05);
+    const ok2 = await svc.canDo("user-1", 0.2);
     expect(ok1).toBe(true);
     expect(ok2).toBe(false);
   });
 
   test("canDo blocks by count when usedCount >= limitCount (even if amount is fine)", async () => {
-    const members = membersOfAmounts([0.2, 0.2, 0.2]); // usedCount=3
+    const members = membersOfAmounts([0.2, 0.2, 0.2]);
     const multi = makeMultiMockForCanDo(members);
     const redis = makeRedisWithMulti(multi);
-    const svc = new ThrottleService(redis, ACTION_ID, PERIOD_SEC, 999, LIMIT_COUNT);
+    const svc = new ThrottleService(redis, ACTION_ID, PERIOD_SEC, LIMIT_COUNT, 999);
     const ok = await svc.canDo("user-2", 0.1);
     expect(ok).toBe(false);
   });
 
   test("canDo amount=1 keeps backward compatibility", async () => {
-    const members = membersOfAmounts([2]); // usedAmount=2
+    const members = membersOfAmounts([2]);
     const multi = makeMultiMockForCanDo(members);
     const redis = makeRedisWithMulti(multi);
-    const svc = new ThrottleService(redis, ACTION_ID, PERIOD_SEC, LIMIT_AMOUNT, 10);
-    const ok = await svc.canDo("user-3", 1); // amount defaults to 1 -> 2+1<=3
+    const svc = new ThrottleService(redis, ACTION_ID, PERIOD_SEC, 10, LIMIT_AMOUNT);
+    const ok = await svc.canDo("user-3", 1);
     expect(ok).toBe(true);
   });
 
   test("recordDone stores amount, trims old entries, sets TTL", async () => {
     const multi = makeMultiMockForRecordDone();
     const redis = makeRedisWithMulti(multi);
-    const svc = new ThrottleService(redis, ACTION_ID, PERIOD_SEC, LIMIT_AMOUNT, LIMIT_COUNT);
+    const svc = new ThrottleService(redis, ACTION_ID, PERIOD_SEC, LIMIT_COUNT, LIMIT_AMOUNT);
     const userId = "user-456";
     const key = `throttle:${ACTION_ID}:${userId}:history`;
     await svc.recordDone(userId, 1);
@@ -123,9 +123,9 @@ describe("ThrottleService (amount + count throttling)", () => {
     const multi2 = makeMultiMockForCanDo(membersOfAmounts([1, 1]));
     let call = 0;
     const redis = { multi: jest.fn(() => (call++ === 0 ? multi1 : multi2)) } as unknown as Redis;
-    const svc = new ThrottleService(redis, ACTION_ID, PERIOD_SEC, LIMIT_AMOUNT, LIMIT_COUNT);
-    await svc.canDo("alice", 1);
-    await svc.canDo("bob", 1);
+    const svc = new ThrottleService(redis, ACTION_ID, PERIOD_SEC, LIMIT_COUNT, LIMIT_AMOUNT);
+    await svc.canDo("alice");
+    await svc.canDo("bob");
     const cutoff = NOW - PERIOD_MS;
     expect(multi1.zremrangebyscore).toHaveBeenCalledWith(
       `throttle:${ACTION_ID}:alice:history`,

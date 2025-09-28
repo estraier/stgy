@@ -13,7 +13,12 @@ export default function createSignupRouter(pgPool: Pool, redis: Redis) {
   const usersService = new UsersService(pgPool, redis);
   const signupService = new SignupService(pgPool, redis, usersService);
   const sendMailService = new SendMailService(redis);
-  const throttleService = new ThrottleService(redis, "signup", 3600, Config.HOURLY_SIGNUP_LIMIT);
+  const throttleService = new ThrottleService(
+    redis,
+    "signup",
+    3600,
+    Config.HOURLY_GLOBAL_SIGNUP_COUNT_LIMIT,
+  );
 
   router.post("/start", async (req: Request, res: Response) => {
     const { email, password } = req.body;
@@ -23,7 +28,7 @@ export default function createSignupRouter(pgPool: Pool, redis: Redis) {
     if (!validateEmail(email)) {
       return res.status(400).json({ error: "invalid e-mail address" });
     }
-    if (!(await throttleService.canDo("0", 1))) {
+    if (!(await throttleService.canDo("0"))) {
       return res.status(403).json({ error: "too often signups" });
     }
     const normEmail = normalizeEmail(email);
@@ -45,12 +50,12 @@ export default function createSignupRouter(pgPool: Pool, redis: Redis) {
     if (!signupId || !verificationCode) {
       return res.status(400).json({ error: "signupId and verificationCode are needed" });
     }
-    if (!(await throttleService.canDo("0", 1))) {
+    if (!(await throttleService.canDo("0"))) {
       return res.status(403).json({ error: "too often signups" });
     }
     try {
       const { userId } = await signupService.verifySignup(signupId, verificationCode);
-      throttleService.recordDone("0", 1);
+      throttleService.recordDone("0");
       res.status(201).json({ userId });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "verification failed" });

@@ -23,8 +23,19 @@ export default function createPostsRouter(
   const postsService = new PostsService(pgPool, redis, eventLogService);
   const usersService = new UsersService(pgPool, redis, eventLogService);
   const authService = new AuthService(pgPool, redis);
-  const postsThrottleService = new ThrottleService(redis, "posts", 3600, Config.HOURLY_POSTS_LIMIT);
-  const likesThrottleService = new ThrottleService(redis, "likes", 3600, Config.HOURLY_LIKES_LIMIT);
+  const postsThrottleService = new ThrottleService(
+    redis,
+    "posts",
+    3600,
+    Config.HOURLY_POSTS_COUNT_LIMIT,
+    Config.HOURLY_POSTS_SIZE_LIMIT,
+  );
+  const likesThrottleService = new ThrottleService(
+    redis,
+    "likes",
+    3600,
+    Config.HOURLY_LIKES_COUNT_LIMIT,
+  );
   const authHelpers = new AuthHelpers(authService, usersService);
 
   async function requireLogin(req: Request, res: Response): Promise<User | null> {
@@ -203,9 +214,6 @@ export default function createPostsRouter(
   router.post("/", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    if (!user.isAdmin && !(await postsThrottleService.canDo(user.id, 1))) {
-      return res.status(403).json({ error: "too often posts" });
-    }
     if (!user.isAdmin && req.body.id) {
       return res.status(400).json({ error: "id setting is for admin only" });
     }
@@ -215,24 +223,31 @@ export default function createPostsRouter(
         return res.status(400).json({ error: "blocked by the owner" });
       }
     }
+    let dataSize = 0;
+    let ownedBy = user.id;
+    if (user.isAdmin && req.body.ownedBy && typeof req.body.ownedBy === "string") {
+      ownedBy = req.body.ownedBy;
+      dataSize += ownedBy.length;
+    }
+    if (!Array.isArray(req.body.tags)) {
+      return res.status(400).json({ error: "tags is required and must be array" });
+    }
+    const tags = req.body.tags
+      .filter((tag: unknown) => typeof tag === "string")
+      .map((tag: string) => normalizeOneLiner(tag));
+    if (tags.length > Config.TAGS_NUMBER_LIMIT) {
+      return res.status(400).json({ error: "tags are too many" });
+    }
+    dataSize += tags.length * 50;
+    const content = normalizeMultiLines(req.body.content) ?? "";
+    if (!user.isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
+      return res.status(400).json({ error: "content is too long" });
+    }
+    dataSize += content.length;
+    if (!user.isAdmin && !(await postsThrottleService.canDo(user.id, dataSize))) {
+      return res.status(403).json({ error: "too often posts" });
+    }
     try {
-      let ownedBy = user.id;
-      if (user.isAdmin && req.body.ownedBy && typeof req.body.ownedBy === "string") {
-        ownedBy = req.body.ownedBy;
-      }
-      if (!Array.isArray(req.body.tags)) {
-        return res.status(400).json({ error: "tags is required and must be array" });
-      }
-      const tags = req.body.tags
-        .filter((tag: unknown) => typeof tag === "string")
-        .map((tag: string) => normalizeOneLiner(tag));
-      if (tags.length > Config.TAGS_NUMBER_LIMIT) {
-        return res.status(400).json({ error: "tags are too many" });
-      }
-      const content = normalizeMultiLines(req.body.content) ?? "";
-      if (!user.isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
-        return res.status(400).json({ error: "content is too long" });
-      }
       const input: CreatePostInput = {
         id: typeof req.body.id === "string" ? (normalizeOneLiner(req.body.id) ?? "") : undefined,
         content: content,
@@ -244,7 +259,7 @@ export default function createPostsRouter(
       };
       const created = await postsService.createPost(input);
       if (!user.isAdmin) {
-        postsThrottleService.recordDone(user.id, 1);
+        postsThrottleService.recordDone(user.id, dataSize);
       }
       res.status(201).json(created);
     } catch (e) {
@@ -263,27 +278,32 @@ export default function createPostsRouter(
     if (!user.isAdmin && req.body.ownedBy !== undefined) {
       return res.status(403).json({ error: "forbidden" });
     }
+    let dataSize = 0;
+    let content;
+    if (req.body.content) {
+      content = normalizeMultiLines(req.body.content) ?? "";
+      if (!user.isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
+        return res.status(400).json({ error: "content is too long" });
+      }
+      dataSize += content.length;
+    }
+    let tags;
+    if ("tags" in req.body) {
+      if (!Array.isArray(req.body.tags)) {
+        return res.status(400).json({ error: "tags must be array if specified" });
+      }
+      tags = req.body.tags
+        .filter((tag: unknown) => typeof tag === "string")
+        .map((tag: string) => normalizeOneLiner(tag));
+      if (tags.length > Config.TAGS_NUMBER_LIMIT) {
+        return res.status(400).json({ error: "tags are too many" });
+      }
+      dataSize += tags.length * 50;
+    }
+    if (!user.isAdmin && !(await postsThrottleService.canDo(user.id, dataSize))) {
+      return res.status(403).json({ error: "too often posts" });
+    }
     try {
-      let content;
-      if (req.body.content) {
-        content = normalizeMultiLines(req.body.content) ?? "";
-        if (!user.isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
-          return res.status(400).json({ error: "content is too long" });
-        }
-      }
-      let tags;
-      if ("tags" in req.body) {
-        if (!Array.isArray(req.body.tags)) {
-          return res.status(400).json({ error: "tags must be array if specified" });
-        }
-        tags = req.body.tags
-          .filter((tag: unknown) => typeof tag === "string")
-          .map((tag: string) => normalizeOneLiner(tag));
-
-        if (tags.length > Config.TAGS_NUMBER_LIMIT) {
-          return res.status(400).json({ error: "tags are too many" });
-        }
-      }
       const input: UpdatePostInput = {
         id: req.params.id,
         content: content,
@@ -322,7 +342,7 @@ export default function createPostsRouter(
   router.post("/:id/like", async (req, res) => {
     const user = await requireLogin(req, res);
     if (!user) return;
-    if (!user.isAdmin && !(await likesThrottleService.canDo(user.id, 1))) {
+    if (!user.isAdmin && !(await likesThrottleService.canDo(user.id))) {
       return res.status(403).json({ error: "too often likes" });
     }
     if (!user.isAdmin) {
@@ -334,7 +354,7 @@ export default function createPostsRouter(
     try {
       await postsService.addLike(req.params.id, user.id);
       if (!user.isAdmin) {
-        likesThrottleService.recordDone(user.id, 1);
+        likesThrottleService.recordDone(user.id);
       }
       res.json({ result: "ok" });
     } catch (e) {
