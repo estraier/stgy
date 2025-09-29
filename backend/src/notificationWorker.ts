@@ -13,7 +13,7 @@ import { NotificationPostRecord, NotificationUserRecord } from "./models/notific
 import { makeTextFromJsonSnippet } from "./utils/snippet";
 import { EventLogService } from "./services/eventLog";
 import { NotificationsService } from "./services/notifications";
-import { hexToDec, decToHex } from "./utils/format";
+import { hexToDec, decToHex, formatDateInTz } from "./utils/format";
 
 const logger = createLogger({ file: "notificationWorker" });
 let purgeScore = 0;
@@ -38,15 +38,6 @@ async function acquireSingletonLock(): Promise<{ pool: Pool; client: PoolClient 
 function eventMsFromId(eventId: string | bigint): number {
   const big = typeof eventId === "bigint" ? eventId : BigInt(eventId);
   return IdIssueService.bigIntToDate(big).getTime();
-}
-
-function formatTermInTz(ms: number, tz: string): string {
-  return new Intl.DateTimeFormat("en-CA", {
-    timeZone: tz,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-  }).format(new Date(ms));
 }
 
 function isObject(v: unknown): v is Record<string, unknown> {
@@ -450,7 +441,7 @@ async function processPartition(
       }
 
       const ms = eventMsFromId(eid);
-      const term = formatTermInTz(ms, Config.SYSTEM_TIMEZONE);
+      const term = formatDateInTz(ms, Config.SYSTEM_TIMEZONE);
 
       if (payload.type === "reply") {
         await processReplyEvent(client, recipient, payload, ms, term);

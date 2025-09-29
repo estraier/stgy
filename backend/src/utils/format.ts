@@ -208,3 +208,12 @@ export function snakeToCamel<T = Record<string, unknown>>(obj: unknown): T {
 export function escapeForLike(input: string) {
   return input.replace(/[\\%_]/g, "\\$&");
 }
+
+export function formatDateInTz(ms: number, tz: string): string {
+  return new Intl.DateTimeFormat("en-CA", {
+    timeZone: tz,
+    year: "numeric",
+    month: "2-digit",
+    day: "2-digit",
+  }).format(new Date(ms));
+}

@@ -15,6 +15,7 @@ import {
   maskEmailByHash,
   snakeToCamel,
   escapeForLike,
+  formatDateInTz,
 } from "./format";
 
 describe("generatePasswordHash, checkPasswordHash", () => {
@@ -368,5 +369,17 @@ describe("escapeForLike", () => {
     expect(escapeForLike("%abc%")).toBe("\\%abc\\%");
     expect(escapeForLike("_abc_")).toBe("\\_abc\\_");
     expect(escapeForLike("\\abc\\")).toBe("\\\\abc\\\\");
+  });
+});
+
+describe("formatDateInTz", () => {
+  it("formats as YYYY-MM-DD in UTC", () => {
+    const ms = Date.UTC(2025, 8, 29, 0, 0, 0);
+    expect(formatDateInTz(ms, "UTC")).toBe("2025-09-29");
+  });
+
+  it("uses the given timezone (Asia/Tokyo) and crosses into the next local day", () => {
+    const ms = Date.UTC(2025, 8, 28, 16, 0, 0);
+    expect(formatDateInTz(ms, "Asia/Tokyo")).toBe("2025-09-29");
   });
 });

@@ -1,5 +1,7 @@
-import { ThrottleService } from "./throttle";
+import { ThrottleService, DailyTimerThrottleService } from "./throttle";
 import type Redis from "ioredis";
+import { formatDateInTz } from "../utils/format";
+import { Config } from "../config";
 
 describe("ThrottleService (count + amount throttling)", () => {
   const NOW = 1_726_000_000_000;
@@ -147,5 +149,103 @@ describe("ThrottleService (count + amount throttling)", () => {
       cutoff,
       "+inf",
     );
+  });
+});
+
+describe("DailyTimerThrottleService (daily time budget per user)", () => {
+  const TZ = Config.SYSTEM_TIMEZONE;
+  const ACTION_ID = "all";
+  const LIMIT = "180s";
+  let dateNowSpy: jest.SpyInstance<number, []>;
+
+  beforeAll(() => {
+    dateNowSpy = jest.spyOn(Date, "now").mockReturnValue(Date.UTC(2025, 8, 29, 0, 0, 0));
+  });
+
+  afterAll(() => {
+    dateNowSpy.mockRestore();
+  });
+
+  afterEach(() => {
+    jest.clearAllMocks();
+  });
+
+  function makeRedisGetMock(value: string | null) {
+    return { get: jest.fn().mockResolvedValue(value) } as unknown as Redis;
+  }
+
+  function makeRedisMultiMock() {
+    const multi = {
+      incrby: jest.fn().mockReturnThis(),
+      expire: jest.fn().mockReturnThis(),
+      exec: jest.fn().mockResolvedValue([[null, "OK"]]),
+    };
+    const redis = { multi: jest.fn(() => multi) } as unknown as Redis;
+    return { redis, multi };
+  }
+
+  test("canDo returns true when no usage yet (key missing)", async () => {
+    const redis = makeRedisGetMock(null);
+    const svc = new DailyTimerThrottleService(redis, ACTION_ID, LIMIT);
+    const ok = await svc.canDo("user-1");
+    expect(ok).toBe(true);
+    const day = formatDateInTz(Date.now(), TZ);
+    expect((redis as any).get).toHaveBeenCalledWith(`dtt:${ACTION_ID}:${day}:user-1`);
+  });
+
+  test("canDo returns true when used < limit", async () => {
+    const redis = makeRedisGetMock("179999");
+    const svc = new DailyTimerThrottleService(redis, ACTION_ID, LIMIT);
+    const ok = await svc.canDo("user-2");
+    expect(ok).toBe(true);
+  });
+
+  test("canDo returns false when used >= limit", async () => {
+    const redis = makeRedisGetMock("180000");
+    const svc = new DailyTimerThrottleService(redis, ACTION_ID, LIMIT);
+    const ok = await svc.canDo("user-3");
+    expect(ok).toBe(false);
+  });
+
+  test("recordDone increments usage and sets TTL (~2 days)", async () => {
+    const { redis, multi } = makeRedisMultiMock();
+    const svc = new DailyTimerThrottleService(redis, ACTION_ID, LIMIT);
+    await svc.recordDone("user-4", 250);
+    const day = formatDateInTz(Date.now(), TZ);
+    const key = `dtt:${ACTION_ID}:${day}:user-4`;
+    expect((redis as any).multi).toHaveBeenCalledTimes(1);
+    expect(multi.incrby).toHaveBeenCalledWith(key, 250);
+    expect(multi.expire).toHaveBeenCalledWith(key, 2 * 24 * 60 * 60);
+    expect(multi.exec).toHaveBeenCalledTimes(1);
+  });
+
+  test("recordDone ignores non-positive elapsed values", async () => {
+    const { redis, multi } = makeRedisMultiMock();
+    const svc = new DailyTimerThrottleService(redis, ACTION_ID, LIMIT);
+    await svc.recordDone("user-5", 0);
+    await svc.recordDone("user-5", -10);
+    expect((redis as any).multi).not.toHaveBeenCalled();
+    expect(multi.incrby).not.toHaveBeenCalled();
+    expect(multi.exec).not.toHaveBeenCalled();
+  });
+
+  test("keys are isolated per user and include local day from timezone", async () => {
+    const day = formatDateInTz(Date.now(), TZ);
+    const redis = makeRedisGetMock("0");
+    const svc = new DailyTimerThrottleService(redis, ACTION_ID, LIMIT);
+    await svc.canDo("alice");
+    await svc.canDo("bob");
+    expect((redis as any).get).toHaveBeenNthCalledWith(1, `dtt:${ACTION_ID}:${day}:alice`);
+    expect((redis as any).get).toHaveBeenNthCalledWith(2, `dtt:${ACTION_ID}:${day}:bob`);
+  });
+
+  test("timezone boundary affects the day portion of the key (Asia/Tokyo)", async () => {
+    dateNowSpy.mockReturnValueOnce(Date.UTC(2025, 8, 28, 16, 0, 0));
+    const redis = makeRedisGetMock(null);
+    const svc = new DailyTimerThrottleService(redis, ACTION_ID, LIMIT);
+    await svc.canDo("user-6");
+    const day = formatDateInTz(Date.UTC(2025, 8, 28, 16, 0, 0), TZ);
+    expect((redis as any).get).toHaveBeenCalledWith(`dtt:${ACTION_ID}:${day}:user-6`);
+    expect(day).toBe("2025-09-29");
   });
 });
