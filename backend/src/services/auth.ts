@@ -7,7 +7,7 @@ import { pgQuery } from "../utils/servers";
 
 export type LoginResult = { sessionId: string; userId: string };
 
-const SESSION_TTL = 60 * 60 * 24;
+const SESSION_TTL = 60 * 60 * 24 * 2;
 
 type LoginRow = {
   id: string;

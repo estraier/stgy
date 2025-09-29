@@ -66,7 +66,7 @@ function makeCookieOptions(req: Request) {
   return {
     httpOnly: true,
     secure: req.secure || req.get("x-forwarded-proto") === "https",
-    sameSite: "lax" as const,
+    sameSite: "strict" as const,
     path: "/",
     maxAge: 60 * 60 * 24 * 365 * 10,
   };
