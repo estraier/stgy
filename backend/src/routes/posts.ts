@@ -1,16 +1,15 @@
 import { Config } from "../config";
-import { Router, Request, Response } from "express";
+import { Router, Request } from "express";
 import { Pool } from "pg";
 import Redis from "ioredis";
 import type { StorageService } from "../services/storage";
 import { PostsService } from "../services/posts";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
-import { ThrottleService } from "../services/throttle";
+import { ThrottleService, DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
 import { EventLogService } from "../services/eventLog";
 import { CreatePostInput, UpdatePostInput } from "../models/post";
-import { User } from "../models/user";
 import { normalizeOneLiner, normalizeMultiLines, parseBoolean } from "../utils/format";
 
 export default function createPostsRouter(
@@ -23,6 +22,11 @@ export default function createPostsRouter(
   const postsService = new PostsService(pgPool, redis, eventLogService);
   const usersService = new UsersService(pgPool, redis, eventLogService);
   const authService = new AuthService(pgPool, redis);
+  const timerThrottleService = new DailyTimerThrottleService(
+    redis,
+    "db",
+    Config.DAILY_DB_TIMER_LIMIT_MS,
+  );
   const postsThrottleService = new ThrottleService(
     redis,
     "posts",
@@ -38,15 +42,6 @@ export default function createPostsRouter(
   );
   const authHelpers = new AuthHelpers(authService, usersService);
 
-  async function requireLogin(req: Request, res: Response): Promise<User | null> {
-    const user = await authHelpers.getCurrentUser(req);
-    if (!user) {
-      res.status(401).json({ error: "login required" });
-      return null;
-    }
-    return user as User;
-  }
-
   function getReplyToParam(req: Request): string | null | undefined {
     if ("replyTo" in req.query) {
       if (typeof req.query.replyTo === "string") {
@@ -59,8 +54,11 @@ export default function createPostsRouter(
   }
 
   router.get("/count", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
     const query =
       typeof req.query.query === "string" && req.query.query.trim() !== ""
         ? req.query.query.trim()
@@ -74,21 +72,26 @@ export default function createPostsRouter(
         ? req.query.tag.trim()
         : undefined;
     const replyTo = getReplyToParam(req);
+    const watch = timerThrottleService.startWatch(loginUser);
     const count = await postsService.countPosts({
       query,
       ownedBy,
       tag,
       replyTo,
     });
+    watch.done();
     res.json({ count });
   });
 
   router.get("/", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
     const { offset, limit, order } = AuthHelpers.getPageParams(
       req,
-      user.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
       ["desc", "asc"] as const,
     );
     const query =
@@ -108,6 +111,7 @@ export default function createPostsRouter(
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
+    const watch = timerThrottleService.startWatch(loginUser);
     const posts = await postsService.listPosts(
       {
         offset,
@@ -120,12 +124,16 @@ export default function createPostsRouter(
       },
       focusUserId,
     );
+    watch.done();
     res.json(posts);
   });
 
   router.get("/by-followees", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
     const userId =
       typeof req.query.userId === "string" && req.query.userId.trim() !== ""
         ? req.query.userId.trim()
@@ -135,7 +143,7 @@ export default function createPostsRouter(
     }
     const { offset, limit, order } = AuthHelpers.getPageParams(
       req,
-      user.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
       ["desc", "asc"] as const,
     );
     const includeSelf = parseBoolean(req.query.includeSelf as string, false);
@@ -144,6 +152,7 @@ export default function createPostsRouter(
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
+    const watch = timerThrottleService.startWatch(loginUser);
     const result = await postsService.listPostsByFollowees(
       {
         userId,
@@ -155,12 +164,16 @@ export default function createPostsRouter(
       },
       focusUserId,
     );
+    watch.done();
     res.json(result);
   });
 
   router.get("/liked", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
     const userId =
       typeof req.query.userId === "string" && req.query.userId.trim() !== ""
         ? req.query.userId.trim()
@@ -170,7 +183,7 @@ export default function createPostsRouter(
     }
     const { offset, limit, order } = AuthHelpers.getPageParams(
       req,
-      user.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
       ["desc", "asc"] as const,
     );
     const includeReplies = parseBoolean(req.query.includeReplies as string, true);
@@ -178,6 +191,7 @@ export default function createPostsRouter(
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
+    const watch = timerThrottleService.startWatch(loginUser);
     const result = await postsService.listPostsLikedByUser(
       {
         userId,
@@ -188,44 +202,58 @@ export default function createPostsRouter(
       },
       focusUserId,
     );
+    watch.done();
     res.json(result);
   });
 
   router.get("/:id/lite", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const watch = timerThrottleService.startWatch(loginUser);
     const post = await postsService.getPostLite(req.params.id);
+    watch.done();
     if (!post) return res.status(404).json({ error: "not found" });
     res.json(post);
   });
 
   router.get("/:id", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
     const focusUserId =
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
+    const watch = timerThrottleService.startWatch(loginUser);
     const post = await postsService.getPost(req.params.id, focusUserId);
+    watch.done();
     if (!post) return res.status(404).json({ error: "not found" });
     res.json(post);
   });
 
   router.post("/", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
-    if (!user.isAdmin && req.body.id) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    if (!loginUser.isAdmin && req.body.id) {
       return res.status(400).json({ error: "id setting is for admin only" });
     }
-    if (!user.isAdmin && req.body.replyTo) {
+    if (!loginUser.isAdmin && req.body.replyTo) {
       const post = await postsService.getPostLite(req.body.replyTo);
-      if (post && (await authHelpers.checkBlock(post.ownedBy, user.id))) {
+      if (post && (await authHelpers.checkBlock(post.ownedBy, loginUser.id))) {
         return res.status(400).json({ error: "blocked by the owner" });
       }
     }
     let dataSize = 0;
-    let ownedBy = user.id;
-    if (user.isAdmin && req.body.ownedBy && typeof req.body.ownedBy === "string") {
+    let ownedBy = loginUser.id;
+    if (loginUser.isAdmin && req.body.ownedBy && typeof req.body.ownedBy === "string") {
       ownedBy = req.body.ownedBy;
       dataSize += ownedBy.length;
     }
@@ -240,11 +268,11 @@ export default function createPostsRouter(
     }
     dataSize += tags.length * 50;
     const content = normalizeMultiLines(req.body.content) ?? "";
-    if (!user.isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
+    if (!loginUser.isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
       return res.status(400).json({ error: "content is too long" });
     }
     dataSize += content.length;
-    if (!user.isAdmin && !(await postsThrottleService.canDo(user.id, dataSize))) {
+    if (!loginUser.isAdmin && !(await postsThrottleService.canDo(loginUser.id, dataSize))) {
       return res.status(403).json({ error: "too often posts" });
     }
     try {
@@ -257,9 +285,11 @@ export default function createPostsRouter(
         allowReplies: req.body.allowReplies === undefined ? true : req.body.allowReplies,
         tags,
       };
+      const watch = timerThrottleService.startWatch(loginUser);
       const created = await postsService.createPost(input);
-      if (!user.isAdmin) {
-        await postsThrottleService.recordDone(user.id, dataSize);
+      watch.done();
+      if (!loginUser.isAdmin) {
+        await postsThrottleService.recordDone(loginUser.id, dataSize);
       }
       res.status(201).json(created);
     } catch (e) {
@@ -268,21 +298,26 @@ export default function createPostsRouter(
   });
 
   router.put("/:id", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
-    const post = await postsService.getPost(req.params.id);
-    if (!post) return res.status(404).json({ error: "not found" });
-    if (!(user.isAdmin || post.ownedBy === user.id)) {
-      return res.status(403).json({ error: "forbidden" });
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
     }
-    if (!user.isAdmin && req.body.ownedBy !== undefined) {
-      return res.status(403).json({ error: "forbidden" });
+    if (!loginUser.isAdmin) {
+      const post = await postsService.getPost(req.params.id);
+      if (!post) return res.status(404).json({ error: "not found" });
+      if (post.ownedBy !== loginUser.id) {
+        return res.status(403).json({ error: "forbidden" });
+      }
+      if (req.body.ownedBy !== undefined) {
+        return res.status(403).json({ error: "forbidden" });
+      }
     }
     let dataSize = 0;
     let content;
     if (req.body.content) {
       content = normalizeMultiLines(req.body.content) ?? "";
-      if (!user.isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
+      if (!loginUser.isAdmin && content.length > Config.CONTENT_LENGTH_LIMIT) {
         return res.status(400).json({ error: "content is too long" });
       }
       dataSize += content.length;
@@ -300,7 +335,7 @@ export default function createPostsRouter(
       }
       dataSize += tags.length * 50;
     }
-    if (!user.isAdmin && !(await postsThrottleService.canDo(user.id, dataSize))) {
+    if (!loginUser.isAdmin && !(await postsThrottleService.canDo(loginUser.id, dataSize))) {
       return res.status(403).json({ error: "too often posts" });
     }
     try {
@@ -313,7 +348,9 @@ export default function createPostsRouter(
         allowReplies: req.body.allowReplies,
         tags,
       };
+      const watch = timerThrottleService.startWatch(loginUser);
       const updated = await postsService.updatePost(input);
+      watch.done();
       if (!updated) return res.status(404).json({ error: "not found" });
       res.json(updated);
     } catch (e) {
@@ -322,15 +359,22 @@ export default function createPostsRouter(
   });
 
   router.delete("/:id", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
-    const post = await postsService.getPost(req.params.id);
-    if (!post) return res.status(404).json({ error: "not found" });
-    if (!(user.isAdmin || post.ownedBy === user.id)) {
-      return res.status(403).json({ error: "forbidden" });
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    if (!loginUser.isAdmin) {
+      const post = await postsService.getPost(req.params.id);
+      if (!post) return res.status(404).json({ error: "not found" });
+      if (post.ownedBy === loginUser.id) {
+        return res.status(403).json({ error: "forbidden" });
+      }
     }
     try {
+      const watch = timerThrottleService.startWatch(loginUser);
       await postsService.deletePost(req.params.id);
+      watch.done();
       res.json({ result: "ok" });
     } catch (e) {
       const msg = (e as Error).message || "";
@@ -340,21 +384,26 @@ export default function createPostsRouter(
   });
 
   router.post("/:id/like", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
-    if (!user.isAdmin && !(await likesThrottleService.canDo(user.id))) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    if (!loginUser.isAdmin && !(await likesThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often likes" });
     }
-    if (!user.isAdmin) {
+    if (!loginUser.isAdmin) {
       const post = await postsService.getPostLite(req.params.id);
-      if (post && (await authHelpers.checkBlock(post.ownedBy, user.id))) {
+      if (post && (await authHelpers.checkBlock(post.ownedBy, loginUser.id))) {
         return res.status(400).json({ error: "blocked by the owner" });
       }
     }
     try {
-      await postsService.addLike(req.params.id, user.id);
-      if (!user.isAdmin) {
-        await likesThrottleService.recordDone(user.id);
+      const watch = timerThrottleService.startWatch(loginUser);
+      await postsService.addLike(req.params.id, loginUser.id);
+      watch.done();
+      if (!loginUser.isAdmin) {
+        await likesThrottleService.recordDone(loginUser.id);
       }
       res.json({ result: "ok" });
     } catch (e) {
@@ -365,10 +414,15 @@ export default function createPostsRouter(
   });
 
   router.delete("/:id/like", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
     try {
-      await postsService.removeLike(req.params.id, user.id);
+      const watch = timerThrottleService.startWatch(loginUser);
+      await postsService.removeLike(req.params.id, loginUser.id);
+      watch.done();
       res.json({ result: "ok" });
     } catch (e) {
       const msg = (e as Error).message || "";
@@ -378,17 +432,22 @@ export default function createPostsRouter(
   });
 
   router.get("/:id/likers", async (req, res) => {
-    const user = await requireLogin(req, res);
-    if (!user) return;
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
     const postId = req.params.id;
     const { offset, limit, order } = AuthHelpers.getPageParams(
       req,
-      user.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
       ["desc", "asc"] as const,
     );
     try {
-      const users = await postsService.listLikers({ postId, offset, limit, order });
-      res.json(users);
+      const watch = timerThrottleService.startWatch(loginUser);
+      const loginUsers = await postsService.listLikers({ postId, offset, limit, order });
+      watch.done();
+      res.json(loginUsers);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "invalid request" });
     }

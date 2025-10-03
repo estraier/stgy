@@ -103,7 +103,6 @@ export class DailyTimerThrottleService {
   async canDo(userId: string): Promise<boolean> {
     const v = await this.redis.get(this.key(userId));
     const used = v ? Number(v) : 0;
-    console.log("CANDO", used);
     return used < this.limitMs;
   }
 
@@ -112,7 +111,6 @@ export class DailyTimerThrottleService {
     if (!Number.isFinite(inc) || inc <= 0) return;
     const key = this.key(userId);
     const RETENTION_SEC = 2 * 24 * 60 * 60;
-    console.log("DONE", elapsedTime);
     await this.redis.multi().incrby(key, inc).expire(key, RETENTION_SEC).exec();
   }
 

@@ -6,7 +6,7 @@ import type { StorageService } from "../services/storage";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
 import { AuthHelpers } from "./authHelpers";
-import { ThrottleService } from "../services/throttle";
+import { ThrottleService, DailyTimerThrottleService } from "../services/throttle";
 import { MediaService } from "../services/media";
 
 export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: StorageService) {
@@ -15,7 +15,12 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   const usersService = new UsersService(pgPool, redis);
   const authService = new AuthService(pgPool, redis);
   const authHelpers = new AuthHelpers(authService, usersService);
-  const throttleService = new ThrottleService(
+  const timerThrottleService = new DailyTimerThrottleService(
+    redis,
+    "media",
+    Config.DAILY_DB_TIMER_LIMIT_MS,
+  );
+  const updatesThrottleService = new ThrottleService(
     redis,
     "image-posts",
     3600,
@@ -23,20 +28,22 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   );
 
   router.post("/:userId/images/presigned", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
     const pathUserId = req.params.userId;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id, 1))) {
+    if (!loginUser.isAdmin && !(await updatesThrottleService.canDo(loginUser.id, 1))) {
       return res.status(403).json({ error: "too often image posts" });
     }
     try {
+      const watch = timerThrottleService.startWatch(loginUser);
       const presigned = await mediaService.presignImageUpload(
         pathUserId,
         typeof req.body.filename === "string" ? req.body.filename : "",
         Number(req.body.sizeBytes ?? 0),
       );
+      watch.done();
       res.json(presigned);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "error" });
@@ -44,21 +51,23 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.post("/:userId/images/finalize", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
     const pathUserId = req.params.userId;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id, 1))) {
+    if (!loginUser.isAdmin && !(await updatesThrottleService.canDo(loginUser.id, 1))) {
       return res.status(403).json({ error: "too often image posts" });
     }
     try {
+      const watch = timerThrottleService.startWatch(loginUser);
       const meta = await mediaService.finalizeImage(
         pathUserId,
         typeof req.body.key === "string" ? req.body.key : "",
       );
+      watch.done();
       if (!loginUser.isAdmin) {
-        await throttleService.recordDone(loginUser.id);
+        await updatesThrottleService.recordDone(loginUser.id);
       }
       res.json({
         ...meta,
@@ -70,15 +79,17 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.get("/:userId/images", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
     const pathUserId = req.params.userId;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
     try {
       const offset = parseInt((req.query.offset as string) ?? "0", 10);
       const limit = parseInt((req.query.limit as string) ?? "100", 10);
+      const watch = timerThrottleService.startWatch(loginUser);
       const list = await mediaService.listImages(pathUserId, offset, limit);
+      watch.done();
       res.json(
         list.map((m) => ({
           ...m,
@@ -91,8 +102,8 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.get("/:userId/images/quota", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
     const pathUserId = req.params.userId;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
@@ -102,7 +113,9 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
           ? req.query.yyyymm.trim()
           : undefined;
       if (yyyymm && !/^\d{6}$/.test(yyyymm)) throw new Error("invalid yyyymm");
+      const watch = timerThrottleService.startWatch(loginUser);
       const quota = await mediaService.calculateMonthlyQuota(pathUserId, yyyymm);
+      watch.done();
       res.json(quota);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "error" });
@@ -110,15 +123,17 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.get(/^\/([^/]+)\/images\/(.*)$/, async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
     const params = req.params as unknown as string[];
     const pathUserId = params[0] || "";
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
     const rest = params[1] || "";
     try {
+      const watch = timerThrottleService.startWatch(loginUser);
       const { meta, bytes } = await mediaService.getImageBytes(pathUserId, rest);
+      watch.done();
       if (meta.contentType) res.setHeader("Content-Type", meta.contentType);
       res.setHeader("Content-Length", String(meta.size));
       if (meta.etag) res.setHeader("ETag", meta.etag);
@@ -130,15 +145,17 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.delete(/^\/([^/]+)\/images\/(.*)$/, async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
     const params = req.params as unknown as string[];
     const pathUserId = params[0] || "";
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
     const rest = params[1] || "";
     try {
+      const watch = timerThrottleService.startWatch(loginUser);
       await mediaService.deleteImage(pathUserId, rest);
+      watch.done();
       res.json({ result: "ok" });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "error" });
@@ -146,17 +163,18 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.post("/:userId/profiles/:slot/presigned", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
     const pathUserId = req.params.userId;
     const slot = req.params.slot;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id, 1))) {
+    if (!loginUser.isAdmin && !(await updatesThrottleService.canDo(loginUser.id, 1))) {
       return res.status(403).json({ error: "too often image posts" });
     }
     if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
+      const watch = timerThrottleService.startWatch(loginUser);
       const presigned = await mediaService.presignProfileUpload(
         pathUserId,
         slot,
@@ -164,6 +182,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
         Number(req.body.sizeBytes ?? 0),
         Config.MEDIA_AVATAR_BYTE_LIMIT,
       );
+      watch.done();
       res.json(presigned);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "error" });
@@ -171,23 +190,25 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.post("/:userId/profiles/:slot/finalize", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
     const pathUserId = req.params.userId;
     const slot = req.params.slot;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    if (!loginUser.isAdmin && !(await throttleService.canDo(loginUser.id, 1))) {
+    if (!loginUser.isAdmin && !(await updatesThrottleService.canDo(loginUser.id, 1))) {
       return res.status(403).json({ error: "too often image posts" });
     }
     if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
+      const watch = timerThrottleService.startWatch(loginUser);
       const meta = await mediaService.finalizeProfile(
         pathUserId,
         slot,
         typeof req.body.key === "string" ? req.body.key : "",
         Config.MEDIA_AVATAR_BYTE_LIMIT,
       );
+      watch.done();
       await usersService.updateUser({ id: pathUserId, avatar: `${meta.bucket}/${meta.key}` });
       if (loginUser.id === pathUserId) {
         const sessionId = authHelpers.getSessionId(req);
@@ -196,7 +217,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
         }
       }
       if (!loginUser.isAdmin) {
-        await throttleService.recordDone(loginUser.id);
+        await updatesThrottleService.recordDone(loginUser.id);
       }
       res.json({
         ...meta,
@@ -208,15 +229,17 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.get("/:userId/profiles/:slot", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
     const pathUserId = req.params.userId;
     const slot = req.params.slot;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
     if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
+      const watch = timerThrottleService.startWatch(loginUser);
       const { meta, bytes } = await mediaService.getProfileBytes(pathUserId, slot);
+      watch.done();
       if (meta.contentType) res.setHeader("Content-Type", meta.contentType);
       res.setHeader("Content-Length", String(meta.size));
       if (meta.etag) res.setHeader("ETag", meta.etag);
@@ -228,15 +251,17 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   });
 
   router.delete("/:userId/profiles/:slot", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
     const pathUserId = req.params.userId;
     const slot = req.params.slot;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
     if (slot !== "avatar") return res.status(400).json({ error: "invalid slot" });
     try {
+      const watch = timerThrottleService.startWatch(loginUser);
       await mediaService.deleteProfile(pathUserId, slot);
+      watch.done();
       await usersService.updateUser({ id: pathUserId, avatar: null });
       if (loginUser.id === pathUserId) {
         const sessionId = authHelpers.getSessionId(req);

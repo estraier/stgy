@@ -1,4 +1,4 @@
-import { Request } from "express";
+import { Request, Response } from "express";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
 import { SessionInfo } from "../models/session";
@@ -27,6 +27,15 @@ export class AuthHelpers {
     const sessionInfo = await this.getSessionInfo(req);
     if (!sessionInfo || !sessionInfo.userId) return null;
     return await this.usersService.getUserLite(sessionInfo.userId);
+  }
+
+  async requireLogin(req: Request, res: Response): Promise<UserLite | null> {
+    const loginUser = await this.getCurrentUser(req);
+    if (!loginUser) {
+      res.status(401).json({ error: "login required" });
+      return null;
+    }
+    return loginUser as UserLite;
   }
 
   async checkBlock(blockerId: string, blockeeId: string): Promise<boolean> {

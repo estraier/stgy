@@ -31,7 +31,11 @@ export default function createUsersRouter(
   const usersService = new UsersService(pgPool, redis, eventLogService);
   const mediaService = new MediaService(storageService, redis);
   const authService = new AuthService(pgPool, redis);
-  const timerThrottleService = new DailyTimerThrottleService(redis, "db", Config.DAILY_DB_TIMER_LIMIT_MS);
+  const timerThrottleService = new DailyTimerThrottleService(
+    redis,
+    "db",
+    Config.DAILY_DB_TIMER_LIMIT_MS,
+  );
   const updatesThrottleService = new ThrottleService(
     redis,
     "user-updates",
@@ -43,9 +47,9 @@ export default function createUsersRouter(
   const sendMailService = new SendMailService(redis);
 
   router.get("/count", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     const query =
@@ -67,9 +71,9 @@ export default function createUsersRouter(
   });
 
   router.get("/friends/by-nickname-prefix", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     const focusUserId =
@@ -104,9 +108,9 @@ export default function createUsersRouter(
   });
 
   router.get("/:id/lite", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     const watch = timerThrottleService.startWatch(loginUser);
@@ -118,9 +122,9 @@ export default function createUsersRouter(
   });
 
   router.get("/:id", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     const focusUserId =
@@ -136,9 +140,9 @@ export default function createUsersRouter(
   });
 
   router.get("/", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     const { offset, limit, order } = AuthHelpers.getPageParams(
@@ -173,8 +177,9 @@ export default function createUsersRouter(
   });
 
   router.post("/", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser || !loginUser.isAdmin) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin) {
       return res.status(403).json({ error: "admin only" });
     }
     try {
@@ -200,9 +205,9 @@ export default function createUsersRouter(
   });
 
   router.put("/:id", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
@@ -279,9 +284,9 @@ export default function createUsersRouter(
   });
 
   router.post("/:id/email/start", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
@@ -310,9 +315,9 @@ export default function createUsersRouter(
   });
 
   router.post("/:id/email/verify", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
@@ -376,9 +381,9 @@ export default function createUsersRouter(
   });
 
   router.put("/:id/password", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
@@ -402,8 +407,8 @@ export default function createUsersRouter(
   });
 
   router.delete("/:id", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
     if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
       return res.status(403).json({ error: "forbidden" });
     }
@@ -419,9 +424,9 @@ export default function createUsersRouter(
   });
 
   router.post("/:id/follow", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     const followeeId = req.params.id;
@@ -449,9 +454,9 @@ export default function createUsersRouter(
   });
 
   router.delete("/:id/follow", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     const followeeId = req.params.id;
@@ -469,9 +474,9 @@ export default function createUsersRouter(
   });
 
   router.get("/:id/followees", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     const followerId = req.params.id;
@@ -492,9 +497,9 @@ export default function createUsersRouter(
   });
 
   router.get("/:id/followers", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     const followeeId = req.params.id;
@@ -515,9 +520,9 @@ export default function createUsersRouter(
   });
 
   router.post("/:id/block", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     const blockeeId = req.params.id;
@@ -542,9 +547,9 @@ export default function createUsersRouter(
   });
 
   router.delete("/:id/block", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.getCurrentUser(req);
-    if (!loginUser) return res.status(401).json({ error: "login required" });
-    if (!loginUser.isAdmin && !await timerThrottleService.canDo(loginUser.id)) {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     const blockeeId = req.params.id;
