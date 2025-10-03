@@ -259,7 +259,7 @@ export default function createPostsRouter(
       };
       const created = await postsService.createPost(input);
       if (!user.isAdmin) {
-        postsThrottleService.recordDone(user.id, dataSize);
+        await postsThrottleService.recordDone(user.id, dataSize);
       }
       res.status(201).json(created);
     } catch (e) {
@@ -354,7 +354,7 @@ export default function createPostsRouter(
     try {
       await postsService.addLike(req.params.id, user.id);
       if (!user.isAdmin) {
-        likesThrottleService.recordDone(user.id);
+        await likesThrottleService.recordDone(user.id);
       }
       res.json({ result: "ok" });
     } catch (e) {

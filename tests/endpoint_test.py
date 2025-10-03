@@ -116,6 +116,12 @@ def test_users():
   assert user1_session
   user1_cookies = {"session_id": user1_session}
   print("[users] user1 login OK")
+  res = requests.get(f"{BASE_URL}/users/count", cookies=cookies)
+  print(res.text)
+  assert res.status_code == 200
+  count = res.json()["count"]
+  assert count >= 2
+  print("[users] count:", count)
   res = requests.get(f"{BASE_URL}/users?limit=2000", headers=headers, cookies=cookies)
   assert res.status_code == 200
   users = res.json()
@@ -203,6 +209,11 @@ def test_posts():
   post_id = post["id"]
   user_id = post["ownedBy"]
   print("[posts] created:", post)
+  res = requests.get(f"{BASE_URL}/posts/count", cookies=cookies)
+  assert res.status_code == 200
+  count = res.json()["count"]
+  assert count >= 1
+  print("[posts] count:", count)
   res = requests.post(f"{BASE_URL}/posts/{post_id}/like", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[posts] like: ok")

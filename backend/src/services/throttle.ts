@@ -1,6 +1,7 @@
 import { Config } from "../config";
 import type Redis from "ioredis";
 import { formatDateInTz } from "../utils/format";
+import { UserLite } from "../models/user";
 
 export class ThrottleService {
   private redis: Redis;
@@ -80,35 +81,6 @@ export class ThrottleService {
   }
 }
 
-function parseDurationMs(s: string): number {
-  const v = s.trim();
-  if (!v) throw new Error("limitTime is required");
-  const iso = /^P(?:T(?:(\d+)H)?(?:(\d+)M)?(?:(\d+(?:\.\d+)?)S)?)$/i.exec(v);
-  if (iso) {
-    const h = Number(iso[1] ?? 0);
-    const m = Number(iso[2] ?? 0);
-    const sec = Number(iso[3] ?? 0);
-    const ms = Math.round(((h * 60 + m) * 60 + sec) * 1000);
-    if (ms > 0) return ms;
-  }
-  const hms = /^(\d{1,2}):([0-5]\d)(?::([0-5]\d))?$/.exec(v);
-  if (hms) {
-    const h = Number(hms[1]);
-    const m = Number(hms[2]);
-    const sec = Number(hms[3] ?? 0);
-    const ms = ((h * 60 + m) * 60 + sec) * 1000;
-    if (ms > 0) return ms;
-  }
-  const unit = /^(\d+(?:\.\d+)?)(ms|s|m|h)$/i.exec(v);
-  if (unit) {
-    const n = Number(unit[1]);
-    const u = unit[2].toLowerCase();
-    const ms = u === "ms" ? n : u === "s" ? n * 1000 : u === "m" ? n * 60_000 : n * 3_600_000;
-    if (Number.isFinite(ms) && ms > 0) return Math.round(ms);
-  }
-  throw new Error(`Unsupported limitTime format: ${s}`);
-}
-
 export class DailyTimerThrottleService {
   private limitMs: number;
   private timeZone: string;
@@ -116,31 +88,47 @@ export class DailyTimerThrottleService {
   constructor(
     private redis: Redis,
     private actionId: string,
-    limitTime: string,
+    limitMs: number,
   ) {
-    this.limitMs = parseDurationMs(limitTime);
+    this.limitMs = limitMs;
     this.timeZone = Config.SYSTEM_TIMEZONE || "Asia/Tokyo";
   }
 
   private key(userId: string, nowMs = Date.now()): string {
     if (!userId || userId.trim() === "") throw new Error("userId is required");
-    const day = formatDateInTz(nowMs, this.timeZone); // YYYY-MM-DD (local day)
+    const day = formatDateInTz(nowMs, this.timeZone);
     return `dtt:${this.actionId}:${day}:${userId}`;
   }
 
   async canDo(userId: string): Promise<boolean> {
     const v = await this.redis.get(this.key(userId));
     const used = v ? Number(v) : 0;
+    console.log("CANDO", used);
     return used < this.limitMs;
   }
 
   async recordDone(userId: string, elapsedTime: number): Promise<void> {
     const inc = Math.floor(elapsedTime);
     if (!Number.isFinite(inc) || inc <= 0) return;
-
     const key = this.key(userId);
-    const RETENTION_SEC = 2 * 24 * 60 * 60; // keep ~2 days to auto-clean old daily keys
-
+    const RETENTION_SEC = 2 * 24 * 60 * 60;
+    console.log("DONE", elapsedTime);
     await this.redis.multi().incrby(key, inc).expire(key, RETENTION_SEC).exec();
+  }
+
+  startWatch(user: UserLite) {
+    const isAdmin = !!user.isAdmin;
+    const userId = user.id;
+    const t0 = globalThis.performance.now();
+    let committed = false;
+    return {
+      done: (): void => {
+        if (committed || isAdmin) return;
+        committed = true;
+        const elapsed = globalThis.performance.now() - t0;
+        if (!(elapsed > 0)) return;
+        void this.recordDone(userId, elapsed).catch(() => {});
+      },
+    };
   }
 }

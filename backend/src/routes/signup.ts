@@ -55,7 +55,7 @@ export default function createSignupRouter(pgPool: Pool, redis: Redis) {
     }
     try {
       const { userId } = await signupService.verifySignup(signupId, verificationCode);
-      throttleService.recordDone("0");
+      await throttleService.recordDone("0");
       res.status(201).json({ userId });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "verification failed" });

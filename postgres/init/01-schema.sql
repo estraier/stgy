@@ -1,3 +1,4 @@
+CREATE EXTENSION IF NOT EXISTS pageinspect;
 SELECT current_database() AS db \gset
 ALTER DATABASE :"db" SET default_toast_compression = 'lz4';
 

@@ -58,7 +58,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
         typeof req.body.key === "string" ? req.body.key : "",
       );
       if (!loginUser.isAdmin) {
-        throttleService.recordDone(loginUser.id);
+        await throttleService.recordDone(loginUser.id);
       }
       res.json({
         ...meta,
@@ -196,7 +196,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
         }
       }
       if (!loginUser.isAdmin) {
-        throttleService.recordDone(loginUser.id);
+        await throttleService.recordDone(loginUser.id);
       }
       res.json({
         ...meta,

@@ -2,6 +2,7 @@ import { ThrottleService, DailyTimerThrottleService } from "./throttle";
 import type Redis from "ioredis";
 import { formatDateInTz } from "../utils/format";
 import { Config } from "../config";
+import { UserLite } from "../models/user";
 
 describe("ThrottleService (count + amount throttling)", () => {
   const NOW = 1_726_000_000_000;
@@ -155,7 +156,7 @@ describe("ThrottleService (count + amount throttling)", () => {
 describe("DailyTimerThrottleService (daily time budget per user)", () => {
   const TZ = Config.SYSTEM_TIMEZONE;
   const ACTION_ID = "all";
-  const LIMIT = "180s";
+  const LIMIT = 180 * 1000;
   let dateNowSpy: jest.SpyInstance<number, []>;
 
   beforeAll(() => {
@@ -247,5 +248,76 @@ describe("DailyTimerThrottleService (daily time budget per user)", () => {
     const day = formatDateInTz(Date.UTC(2025, 8, 28, 16, 0, 0), TZ);
     expect((redis as any).get).toHaveBeenCalledWith(`dtt:${ACTION_ID}:${day}:user-6`);
     expect(day).toBe("2025-09-29");
+  });
+});
+
+describe("DailyTimerThrottleService.startWatch", () => {
+  let perfSpy: jest.SpyInstance<number, []>;
+
+  beforeEach(() => {
+    perfSpy = jest.spyOn(globalThis.performance, "now");
+  });
+
+  afterEach(() => {
+    perfSpy.mockRestore();
+    jest.clearAllMocks();
+  });
+
+  function makeSvc() {
+    const redis = {} as unknown as Redis;
+    return new DailyTimerThrottleService(redis, "all", 180_000);
+  }
+
+  test("records on done()", () => {
+    perfSpy.mockReturnValueOnce(1000).mockReturnValueOnce(1300);
+    const svc = makeSvc();
+    const spy = jest.spyOn(svc, "recordDone").mockResolvedValue(undefined);
+    const w = svc.startWatch({ id: "u1", isAdmin: false } as unknown as UserLite);
+    w.done();
+    expect(spy).toHaveBeenCalledWith("u1", expect.closeTo(300, 0.5));
+  });
+
+  test("no done() -> no record", () => {
+    perfSpy.mockReturnValueOnce(1000).mockReturnValueOnce(1300);
+    const svc = makeSvc();
+    const spy = jest.spyOn(svc, "recordDone").mockResolvedValue(undefined);
+    svc.startWatch({ id: "u2" } as unknown as UserLite);
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  test("admin skips", () => {
+    perfSpy.mockReturnValueOnce(10).mockReturnValueOnce(25);
+    const svc = makeSvc();
+    const spy = jest.spyOn(svc, "recordDone").mockResolvedValue(undefined);
+    const w = svc.startWatch({ id: "admin", isAdmin: true } as unknown as UserLite);
+    w.done();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  test("idempotent done()", () => {
+    perfSpy.mockReturnValueOnce(1000).mockReturnValueOnce(1300);
+    const svc = makeSvc();
+    const spy = jest.spyOn(svc, "recordDone").mockResolvedValue(undefined);
+    const w = svc.startWatch({ id: "u3" } as unknown as UserLite);
+    w.done();
+    w.done();
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  test("does not record for non-positive elapsed", () => {
+    perfSpy.mockReturnValueOnce(500).mockReturnValueOnce(500);
+    const svc = makeSvc();
+    const spy = jest.spyOn(svc, "recordDone").mockResolvedValue(undefined);
+    const w = svc.startWatch({ id: "u4" } as unknown as UserLite);
+    w.done();
+    expect(spy).not.toHaveBeenCalled();
+  });
+
+  test("recordDone errors are swallowed", () => {
+    perfSpy.mockReturnValueOnce(100).mockReturnValueOnce(180);
+    const svc = makeSvc();
+    jest.spyOn(svc, "recordDone").mockRejectedValue(new Error("x"));
+    const w = svc.startWatch({ id: "u5" } as unknown as UserLite);
+    expect(() => w.done()).not.toThrow();
   });
 });
