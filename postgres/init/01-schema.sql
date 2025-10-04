@@ -139,8 +139,27 @@ CREATE TABLE user_post_counts (
 
 CREATE TABLE post_like_counts (
   post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
-  count INT NOT NULL DEFAULT 0
-);
+  count   INT NOT NULL DEFAULT 0
+) PARTITION BY HASH (post_id);
+ALTER TABLE post_like_counts
+  SET (fillfactor=80,
+       autovacuum_vacuum_scale_factor=0.1,
+       autovacuum_vacuum_threshold=1000,
+       autovacuum_analyze_scale_factor=0.3,
+       autovacuum_analyze_threshold=1000);
+DO $$
+DECLARE
+  parts int := 8;
+  i int;
+BEGIN
+  FOR i IN 0..parts-1 LOOP
+    EXECUTE format(
+      'CREATE TABLE IF NOT EXISTS %I PARTITION OF %I
+         FOR VALUES WITH (MODULUS %s, REMAINDER %s);',
+      'post_like_counts_p' || i, 'post_like_counts', parts, i
+    );
+  END LOOP;
+END$$;
 
 CREATE TABLE post_reply_counts (
   post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,

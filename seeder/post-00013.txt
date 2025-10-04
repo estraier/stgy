@@ -326,6 +326,38 @@ PostgreSQLがカウンタの管理に向いていないことは明らかだが�
 
 実際問題としては、カウンタのためだけにKVSを導入するよりは、post_likesごとKVSにしてしまうというシナリオの方がありそうだ。イイネの有無とか数は、ちょっとずれていても、万が一消えたとしても、サービスの存続を脅かすほどの問題にはならない。よって、堅牢性や一貫性が多少劣るかもしれないが、早くて安くてスケールするKVSに全体を逃がすというのは現実的な判断になる。
 
+## 宣言的パーティショニング
+
+テーブルを透過的にパーティショニングするための宣言的パーティショニングという機構がある。透過的とは、外部仕様に変更がないということであり、使う側（クエリ）を変更しなくても動作して同じ結果が取得でき、それでいて所望の恩恵が受けられるということを意味する。あるテーブルにパーティショニングを宣言すると、そのテーブルは親テーブルとして機能するようになり、実際の処理をパーティション条件で決めた子テーブルに移譲するようになる。インデックスも分割していない時と同じように働くので、SQL文は全く変えなくて良い。それでいて、テーブルを分割した効果で、VACUUMは子テーブルの単位で実行されるようになる。
+
+カウンタ系のテーブルはVACUUMを頻繁にすべきだが、こまめにやって負荷を時間分散したい。とは言え、今回はイイネの数を数えるpost_like_countsにだけ宣言的パーティショニングを施す。フォローや新規投稿や返信の回数よりも、イイネは桁違いに多くなる可能性があるからだ。パーティション数は8個にする。HOT最適化の成功率を上げるためにフィルファクタを80%にして、VACUUMの発動条件を0.1に下げて発動しやすくして、ANALYZEの発動条件を0.3に上げて発動しにくくする。
+
+```sql:small
+CREATE TABLE post_like_counts (
+  post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+  count   INT NOT NULL DEFAULT 0
+) PARTITION BY HASH (post_id);
+ALTER TABLE post_like_counts
+  SET (fillfactor=80,
+       autovacuum_vacuum_scale_factor=0.1,
+       autovacuum_vacuum_threshold=100,
+       autovacuum_analyze_scale_factor=0.3,
+       autovacuum_analyze_threshold=1000);
+DO $$
+DECLARE
+  parts int := 8;
+  i int;
+BEGIN
+  FOR i IN 0..parts-1 LOOP
+    EXECUTE format(
+      'CREATE TABLE IF NOT EXISTS %I PARTITION OF %I
+         FOR VALUES WITH (MODULUS %s, REMAINDER %s);',
+      'post_like_counts_p' || i, 'post_like_counts', parts, i
+    );
+  END LOOP;
+END$$;
+```
+
 ## event_logsテーブルとnotificationsテーブル
 
 自分がフォローされたり、自分の投稿がイイネされたり、自分の投稿に返信をもらったりした場合、その通知を受け取る機能がある。それらの個々のイベントを全て通知されても鬱陶しいので、通知は日付とリソースの単位でまとめられる。「18 people including Alice, Bob, Nancy have given likes to your post "..." (2025-08-22)」みたいな通知カードになる。ユーザが個々の通知カードをクリックすると、未読状態から既読状態になる。
