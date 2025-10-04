@@ -10,9 +10,7 @@ VALUES
 
 INSERT INTO users (
   id,
-  email,
   nickname,
-  password,
   is_admin,
   block_strangers,
   snippet,
@@ -23,9 +21,7 @@ INSERT INTO users (
 VALUES
 (
   0x1000000000001,
-  'admin@stgy.jp',
   'admin',
-  decode('65d80ec850339f4f9f3a1d0b7ca185b352d3c42dffad2882d4cd768f243acd0a','hex'),
   TRUE,
   FALSE,
   $$[{"T":"p","X":"I am the administrator of STGY. I notify reports and issues on operation."}]
@@ -33,6 +29,18 @@ $$,
   NULL,
   NULL,
   '2025-04-01 08:45:00+00'
+);
+
+INSERT INTO user_secrets (
+  user_id,
+  email,
+  password
+)
+VALUES
+(
+  0x1000000000001,
+  'admin@stgy.jp',
+  decode('65d80ec850339f4f9f3a1d0b7ca185b352d3c42dffad2882d4cd768f243acd0a','hex')
 );
 
 INSERT INTO user_details (
@@ -54,9 +62,7 @@ INSERT INTO posts (
   reply_to,
   allow_likes,
   allow_replies,
-  updated_at,
-  count_likes,
-  count_replies
+  updated_at
 )
 VALUES
 (
@@ -67,9 +73,7 @@ $$,
   NULL,
   FALSE,
   FALSE,
-  NULL,
-  0,
-  0
+  NULL
 ),
 (
   0x2000000000002,
@@ -79,9 +83,7 @@ $$,
   NULL,
   FALSE,
   FALSE,
-  NULL,
-  0,
-  0
+  NULL
 );
 
 INSERT INTO post_details (

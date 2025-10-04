@@ -9,9 +9,12 @@ jest.mock("../utils/servers", () => ({
 class MockPgClient {
   public emails: Set<string> = new Set();
   async query(sql: string, params: any[]) {
-    if (sql.includes("SELECT 1 FROM users WHERE email = $1") && this.emails.has(params[0])) {
+    const normalized = sql.replace(/\s+/g, " ").trim();
+    if (
+      normalized.includes("SELECT 1 FROM user_secrets WHERE email = $1") &&
+      this.emails.has(params[0])
+    )
       return { rows: [{}] };
-    }
     return { rows: [] };
   }
 }
@@ -60,13 +63,13 @@ describe("signup service", () => {
 
   test("startSignup: invalid email", async () => {
     await expect(signupService.startSignup("invalid-email", "pass123")).rejects.toThrow(
-      "Invalid email format",
+      /Invalid email format/i,
     );
   });
 
   test("startSignup: short password", async () => {
     await expect(signupService.startSignup("foo@example.com", "")).rejects.toThrow(
-      "Password must be at least 6 characters",
+      /Password must be at least 6 characters/i,
     );
   });
 
@@ -82,13 +85,13 @@ describe("signup service", () => {
   test("verifySignup: code mismatch", async () => {
     const { signupId } = await signupService.startSignup("test@ex.com", "pass123");
     await expect(signupService.verifySignup(signupId, "999999")).rejects.toThrow(
-      "Verification code mismatch",
+      /Verification code mismatch/i,
     );
   });
 
   test("verifySignup: expired or not found", async () => {
     await expect(signupService.verifySignup("no-such-id", "123456")).rejects.toThrow(
-      "Signup info not found or expired",
+      /Signup info not found or expired/i,
     );
   });
 

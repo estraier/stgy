@@ -18,20 +18,16 @@ class MockPgClient {
 
 class MockRedis {
   store: { [key: string]: string } = {};
-
   set: jest.Mock<Promise<string>, any[]> = jest.fn((key: string, value: string) => {
     this.store[key] = value;
     return Promise.resolve("OK");
   });
-
   get: jest.Mock<Promise<string | undefined>, any[]> = jest.fn((key: string) =>
     Promise.resolve(this.store[key]),
   );
-
   getex: jest.Mock<Promise<string | undefined>, any[]> = jest.fn((key: string, ..._args: any[]) =>
     Promise.resolve(this.store[key]),
   );
-
   del: jest.Mock<Promise<number>, any[]> = jest.fn((key: string) => {
     delete this.store[key];
     return Promise.resolve(1);
@@ -171,7 +167,6 @@ describe("AuthService class", () => {
       loggedInAt: "2025-07-13T00:00:00Z",
     };
     redis.store[`session:${sessionId}`] = JSON.stringify(original);
-
     (pgClient.query as jest.Mock).mockResolvedValueOnce({
       rows: [
         {
@@ -184,17 +179,14 @@ describe("AuthService class", () => {
       ],
       rowCount: 1,
     });
-
     const refreshed = await authService.refreshSessionInfo(sessionId);
     expect(refreshed).not.toBeNull();
-
     const [sqlText, sqlParams] = (pgClient.query as jest.Mock).mock.calls[0];
     const normalized = String(sqlText).replace(/\s+/g, " ").trim();
     expect(normalized).toBe(
-      "SELECT email, nickname, is_admin, id_to_timestamp(id) AS created_at, updated_at FROM users WHERE id=$1",
+      "SELECT s.email, u.nickname, u.is_admin, id_to_timestamp(u.id) AS created_at, u.updated_at FROM users u JOIN user_secrets s ON s.user_id = u.id WHERE u.id = $1",
     );
     expect(sqlParams).toEqual([hexToDec(userHex)]);
-
     const stored = JSON.parse(redis.store[`session:${sessionId}`]);
     expect(stored.userId).toBe(userHex);
     expect(stored.userEmail).toBe("new@example.com");
@@ -225,12 +217,9 @@ describe("AuthService class", () => {
       loggedInAt: "2025-07-13T00:00:00Z",
     };
     redis.store[`session:${sessionId}`] = JSON.stringify(original);
-
     (pgClient.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
-
     const out = await authService.refreshSessionInfo(sessionId);
     expect(out).toBeNull();
-
     const stored = JSON.parse(redis.store[`session:${sessionId}`]);
     expect(stored.userEmail).toBe("x@example.com");
     expect(stored.userNickname).toBe("X");

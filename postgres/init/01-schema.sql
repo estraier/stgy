@@ -11,20 +11,21 @@ CREATE TABLE ai_models (
 
 CREATE TABLE users (
   id BIGINT PRIMARY KEY,
-  email VARCHAR(100) NOT NULL UNIQUE,
   nickname VARCHAR(50) NOT NULL,
-  password BYTEA NOT NULL,
   is_admin BOOLEAN NOT NULL,
   block_strangers BOOLEAN NOT NULL,
   snippet VARCHAR(4096) NOT NULL,
   avatar VARCHAR(100),
   ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
-  updated_at TIMESTAMPTZ,
-  count_followers INT NOT NULL DEFAULT 0,
-  count_followees INT NOT NULL DEFAULT 0,
-  count_posts INT NOT NULL DEFAULT 0
+  updated_at TIMESTAMPTZ
 );
 CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, id);
+
+CREATE TABLE user_secrets (
+  user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  email VARCHAR(100) NOT NULL UNIQUE,
+  password BYTEA NOT NULL
+);
 
 CREATE TABLE user_details (
   user_id BIGINT PRIMARY KEY,
@@ -58,9 +59,7 @@ CREATE TABLE posts (
   reply_to BIGINT REFERENCES posts(id) ON DELETE SET NULL,
   allow_likes BOOLEAN NOT NULL,
   allow_replies BOOLEAN NOT NULL,
-  updated_at TIMESTAMPTZ,
-  count_likes INT NOT NULL DEFAULT 0,
-  count_replies INT NOT NULL DEFAULT 0
+  updated_at TIMESTAMPTZ
 );
 CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
 CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
@@ -125,43 +124,72 @@ CREATE TABLE ai_actions (
 );
 CREATE INDEX idx_ai_actions_user_id_done_at ON ai_actions(user_id, done_at);
 
-CREATE OR REPLACE FUNCTION trg_user_follows_counter()
+CREATE TABLE user_follower_counts (
+  user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  count INT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE user_followee_counts (
+  user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  count INT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE user_post_counts (
+  user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  count INT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE post_like_counts (
+  post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+  count INT NOT NULL DEFAULT 0
+);
+
+CREATE TABLE post_reply_counts (
+  post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+  count INT NOT NULL DEFAULT 0
+);
+
+CREATE OR REPLACE FUNCTION trg_user_follows_counts()
 RETURNS TRIGGER AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    UPDATE users SET count_followees = count_followees + 1 WHERE id = NEW.follower_id;
-    UPDATE users SET count_followers = count_followers + 1 WHERE id = NEW.followee_id;
+    INSERT INTO user_followee_counts (user_id, count) VALUES (NEW.follower_id, 1) ON CONFLICT (user_id) DO UPDATE SET count = user_followee_counts.count + 1;
+    INSERT INTO user_follower_counts (user_id, count) VALUES (NEW.followee_id, 1) ON CONFLICT (user_id) DO UPDATE SET count = user_follower_counts.count + 1;
     RETURN NEW;
   ELSIF TG_OP = 'DELETE' THEN
-    UPDATE users SET count_followees = count_followees - 1 WHERE id = OLD.follower_id;
-    UPDATE users SET count_followers = count_followers - 1 WHERE id = OLD.followee_id;
+    UPDATE user_followee_counts SET count = count - 1 WHERE user_id = OLD.follower_id;
+    UPDATE user_follower_counts SET count = count - 1 WHERE user_id = OLD.followee_id;
+    DELETE FROM user_followee_counts WHERE user_id = OLD.follower_id AND count <= 0;
+    DELETE FROM user_follower_counts WHERE user_id = OLD.followee_id AND count <= 0;
     RETURN OLD;
   END IF;
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_user_follows_counter_ins
+CREATE TRIGGER trg_user_follows_counts_ins
 AFTER INSERT ON user_follows
-FOR EACH ROW EXECUTE FUNCTION trg_user_follows_counter();
+FOR EACH ROW EXECUTE FUNCTION trg_user_follows_counts();
 
-CREATE TRIGGER trg_user_follows_counter_del
+CREATE TRIGGER trg_user_follows_counts_del
 AFTER DELETE ON user_follows
-FOR EACH ROW EXECUTE FUNCTION trg_user_follows_counter();
+FOR EACH ROW EXECUTE FUNCTION trg_user_follows_counts();
 
-CREATE OR REPLACE FUNCTION trg_posts_counter()
+CREATE OR REPLACE FUNCTION trg_user_post_counts()
 RETURNS TRIGGER AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    UPDATE users SET count_posts = count_posts + 1 WHERE id = NEW.owned_by;
+    INSERT INTO user_post_counts (user_id, count) VALUES (NEW.owned_by, 1) ON CONFLICT (user_id) DO UPDATE SET count = user_post_counts.count + 1;
     RETURN NEW;
   ELSIF TG_OP = 'DELETE' THEN
-    UPDATE users SET count_posts = count_posts - 1 WHERE id = OLD.owned_by;
+    UPDATE user_post_counts SET count = count - 1 WHERE user_id = OLD.owned_by;
+    DELETE FROM user_post_counts WHERE user_id = OLD.owned_by AND count <= 0;
     RETURN OLD;
   ELSIF TG_OP = 'UPDATE' THEN
     IF NEW.owned_by <> OLD.owned_by THEN
-      UPDATE users SET count_posts = count_posts - 1 WHERE id = OLD.owned_by;
-      UPDATE users SET count_posts = count_posts + 1 WHERE id = NEW.owned_by;
+      UPDATE user_post_counts SET count = count - 1 WHERE user_id = OLD.owned_by;
+      DELETE FROM user_post_counts WHERE user_id = OLD.owned_by AND count <= 0;
+      INSERT INTO user_post_counts (user_id, count) VALUES (NEW.owned_by, 1) ON CONFLICT (user_id) DO UPDATE SET count = user_post_counts.count + 1;
     END IF;
     RETURN NEW;
   END IF;
@@ -169,60 +197,63 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_posts_counter_ins
+CREATE TRIGGER trg_user_post_counts_ins
 AFTER INSERT ON posts
-FOR EACH ROW EXECUTE FUNCTION trg_posts_counter();
+FOR EACH ROW EXECUTE FUNCTION trg_user_post_counts();
 
-CREATE TRIGGER trg_posts_counter_del
+CREATE TRIGGER trg_user_post_counts_del
 AFTER DELETE ON posts
-FOR EACH ROW EXECUTE FUNCTION trg_posts_counter();
+FOR EACH ROW EXECUTE FUNCTION trg_user_post_counts();
 
-CREATE TRIGGER trg_posts_counter_upd
+CREATE TRIGGER trg_user_post_counts_upd
 AFTER UPDATE OF owned_by ON posts
-FOR EACH ROW EXECUTE FUNCTION trg_posts_counter();
+FOR EACH ROW EXECUTE FUNCTION trg_user_post_counts();
 
-CREATE OR REPLACE FUNCTION trg_post_likes_counter()
+CREATE OR REPLACE FUNCTION trg_post_like_counts()
 RETURNS TRIGGER AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    UPDATE posts SET count_likes = count_likes + 1 WHERE id = NEW.post_id;
+    INSERT INTO post_like_counts (post_id, count) VALUES (NEW.post_id, 1) ON CONFLICT (post_id) DO UPDATE SET count = post_like_counts.count + 1;
     RETURN NEW;
   ELSIF TG_OP = 'DELETE' THEN
-    UPDATE posts SET count_likes = count_likes - 1 WHERE id = OLD.post_id;
+    UPDATE post_like_counts SET count = count - 1 WHERE post_id = OLD.post_id;
+    DELETE FROM post_like_counts WHERE post_id = OLD.post_id AND count <= 0;
     RETURN OLD;
   END IF;
   RETURN NULL;
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_post_likes_counter_ins
+CREATE TRIGGER trg_post_like_counts_ins
 AFTER INSERT ON post_likes
-FOR EACH ROW EXECUTE FUNCTION trg_post_likes_counter();
+FOR EACH ROW EXECUTE FUNCTION trg_post_like_counts();
 
-CREATE TRIGGER trg_post_likes_counter_del
+CREATE TRIGGER trg_post_like_counts_del
 AFTER DELETE ON post_likes
-FOR EACH ROW EXECUTE FUNCTION trg_post_likes_counter();
+FOR EACH ROW EXECUTE FUNCTION trg_post_like_counts();
 
-CREATE OR REPLACE FUNCTION trg_post_replies_counter()
+CREATE OR REPLACE FUNCTION trg_post_reply_counts()
 RETURNS TRIGGER AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW.reply_to IS NOT NULL THEN
-      UPDATE posts SET count_replies = count_replies + 1 WHERE id = NEW.reply_to;
+      INSERT INTO post_reply_counts (post_id, count) VALUES (NEW.reply_to, 1) ON CONFLICT (post_id) DO UPDATE SET count = post_reply_counts.count + 1;
     END IF;
     RETURN NEW;
   ELSIF TG_OP = 'DELETE' THEN
     IF OLD.reply_to IS NOT NULL THEN
-      UPDATE posts SET count_replies = count_replies - 1 WHERE id = OLD.reply_to;
+      UPDATE post_reply_counts SET count = count - 1 WHERE post_id = OLD.reply_to;
+      DELETE FROM post_reply_counts WHERE post_id = OLD.reply_to AND count <= 0;
     END IF;
     RETURN OLD;
   ELSIF TG_OP = 'UPDATE' THEN
     IF NEW.reply_to IS DISTINCT FROM OLD.reply_to THEN
       IF OLD.reply_to IS NOT NULL THEN
-        UPDATE posts SET count_replies = count_replies - 1 WHERE id = OLD.reply_to;
+        UPDATE post_reply_counts SET count = count - 1 WHERE post_id = OLD.reply_to;
+        DELETE FROM post_reply_counts WHERE post_id = OLD.reply_to AND count <= 0;
       END IF;
       IF NEW.reply_to IS NOT NULL THEN
-        UPDATE posts SET count_replies = count_replies + 1 WHERE id = NEW.reply_to;
+        INSERT INTO post_reply_counts (post_id, count) VALUES (NEW.reply_to, 1) ON CONFLICT (post_id) DO UPDATE SET count = post_reply_counts.count + 1;
       END IF;
     END IF;
     RETURN NEW;
@@ -231,17 +262,17 @@ BEGIN
 END;
 $$ LANGUAGE plpgsql;
 
-CREATE TRIGGER trg_post_replies_counter_ins
+CREATE TRIGGER trg_post_reply_counts_ins
 AFTER INSERT ON posts
-FOR EACH ROW EXECUTE FUNCTION trg_post_replies_counter();
+FOR EACH ROW EXECUTE FUNCTION trg_post_reply_counts();
 
-CREATE TRIGGER trg_post_replies_counter_del
+CREATE TRIGGER trg_post_reply_counts_del
 AFTER DELETE ON posts
-FOR EACH ROW EXECUTE FUNCTION trg_post_replies_counter();
+FOR EACH ROW EXECUTE FUNCTION trg_post_reply_counts();
 
-CREATE TRIGGER trg_post_replies_counter_upd
+CREATE TRIGGER trg_post_reply_counts_upd
 AFTER UPDATE OF reply_to ON posts
-FOR EACH ROW EXECUTE FUNCTION trg_post_replies_counter();
+FOR EACH ROW EXECUTE FUNCTION trg_post_reply_counts();
 
 CREATE OR REPLACE FUNCTION id_to_timestamp(id BIGINT)
 RETURNS timestamptz
@@ -250,6 +281,5 @@ IMMUTABLE
 STRICT
 PARALLEL SAFE
 AS $$
-  SELECT timestamptz 'epoch'
-       + (id >> 20) * interval '1 millisecond';
+  SELECT timestamptz 'epoch' + (id >> 20) * interval '1 millisecond';
 $$;

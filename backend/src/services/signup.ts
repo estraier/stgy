@@ -21,9 +21,11 @@ export class SignupService {
     if (!email || !validateEmail(email)) throw new Error("Invalid email format.");
     if (!password || password.length < 6)
       throw new Error("Password must be at least 6 characters.");
+
     const signupId = uuidv4();
     const verificationCode = generateVerificationCode();
     const signupKey = `signup:${signupId}`;
+
     await this.redis.hmset(signupKey, {
       email,
       password,
@@ -31,35 +33,53 @@ export class SignupService {
       createdAt: new Date().toISOString(),
     });
     await this.redis.expire(signupKey, 900);
-    if (Config.TEST_SIGNUP_CODE.length == 0) {
+
+    if (Config.TEST_SIGNUP_CODE.length === 0) {
       await this.redis.lpush(
         "mail-queue",
         JSON.stringify({ type: "signup", email, verificationCode }),
       );
     }
+
     return { signupId };
   }
 
   async verifySignup(signupId: string, code: string): Promise<{ userId: string }> {
     const signupKey = `signup:${signupId}`;
     const data = await this.redis.hgetall(signupKey);
-    if (!data || !data.email || !data.password || !data.verificationCode)
+
+    if (!data || !data.email || !data.password || !data.verificationCode) {
       throw new Error("Signup info not found or expired.");
-    if (data.verificationCode !== code) throw new Error("Verification code mismatch.");
-    const exists = await pgQuery(this.pg, `SELECT 1 FROM users WHERE email = $1`, [data.email]);
-    if (exists.rows.length > 0) throw new Error("Email already in use.");
-    const input = {
+    }
+    if (data.verificationCode !== code) {
+      throw new Error("Verification code mismatch.");
+    }
+
+    const exists = await pgQuery(
+      this.pg,
+      `
+        SELECT 1
+        FROM user_secrets
+        WHERE email = $1
+      `,
+      [data.email],
+    );
+    if (exists.rows.length > 0) {
+      throw new Error("Email already in use.");
+    }
+
+    const user = await this.usersService.createUser({
       email: data.email,
       password: data.password,
-      nickname: data.email.split("@")[0],
+      nickname: String(data.email).split("@")[0],
       isAdmin: false,
       blockStrangers: false,
       introduction: "brand new user",
       avatar: null,
       aiModel: null,
       aiPersonality: null,
-    };
-    const user = await this.usersService.createUser(input);
+    });
+
     await this.redis.del(signupKey);
     return { userId: user.id };
   }

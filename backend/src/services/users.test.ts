@@ -37,6 +37,7 @@ class MockPgClient {
   follows: { followerId: string; followeeId: string }[];
   blocks: { blockerId: string; blockeeId: string }[];
   passwords: Record<string, string>;
+  userSecrets: Record<string, { email: string; password: string }>;
 
   constructor() {
     this.users = [
@@ -103,6 +104,11 @@ class MockPgClient {
       [BOB]: md5("bobpass"),
       [CAROL]: md5("carolpass"),
     };
+    this.userSecrets = {
+      [ALICE]: { email: "alice@example.com", password: this.passwords[ALICE] },
+      [BOB]: { email: "bob@example.com", password: this.passwords[BOB] },
+      [CAROL]: { email: "carol@example.com", password: this.passwords[CAROL] },
+    };
   }
 
   private cntFollowers(idHex: string) {
@@ -111,13 +117,27 @@ class MockPgClient {
   private cntFollowees(idHex: string) {
     return this.follows.filter((f) => f.followerId === idHex).length;
   }
+  private rowForUser(u: User) {
+    return {
+      id: hexToDec(u.id),
+      email: this.userSecrets[u.id]?.email ?? u.email,
+      nickname: u.nickname,
+      is_admin: u.isAdmin,
+      block_strangers: u.blockStrangers,
+      snippet: u.snippet,
+      avatar: u.avatar,
+      ai_model: u.aiModel,
+      created_at: u.createdAt,
+      updated_at: u.updatedAt,
+      count_followers: this.cntFollowers(u.id),
+      count_followees: this.cntFollowees(u.id),
+      count_posts: 0,
+    };
+  }
 
   async query(sql: string, params: any[] = []) {
     sql = sql.replace(/\s+/g, " ").trim();
-
-    if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
-      return { rows: [] };
-    }
+    if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
 
     if (
       sql.startsWith("WITH") &&
@@ -137,9 +157,8 @@ class MockPgClient {
       const candidates: Array<{ prio: number; id: string; nkey: string }> = [];
       if (hasSelf) {
         const selfUser = this.users.find((u) => u.id === focusUserIdHex && match(u));
-        if (selfUser) {
+        if (selfUser)
           candidates.push({ prio: 0, id: selfUser.id, nkey: selfUser.nickname.toLowerCase() });
-        }
       }
       const followeeIds = this.follows
         .filter((f) => f.followerId === focusUserIdHex)
@@ -153,9 +172,8 @@ class MockPgClient {
             (BigInt("0x" + a.id) > BigInt("0x" + b.id) ? 1 : -1),
         )
         .slice(0, k);
-      for (const u of followees) {
+      for (const u of followees)
         candidates.push({ prio: 1, id: u.id, nkey: u.nickname.toLowerCase() });
-      }
       if (hasOthers) {
         const others = this.users
           .filter((u) => match(u))
@@ -166,9 +184,8 @@ class MockPgClient {
               (BigInt("0x" + a.id) > BigInt("0x" + b.id) ? 1 : -1),
           )
           .slice(0, k);
-        for (const u of others) {
+        for (const u of others)
           candidates.push({ prio: 3, id: u.id, nkey: u.nickname.toLowerCase() });
-        }
       }
       const bestById = new Map<string, { prio: number; id: string; nkey: string }>();
       for (const c of candidates) {
@@ -185,21 +202,7 @@ class MockPgClient {
       const rows = page
         .map((p) => this.users.find((u) => u.id === p.id))
         .filter((u): u is User => !!u)
-        .map((u) => ({
-          id: hexToDec(u.id),
-          email: u.email,
-          nickname: u.nickname,
-          is_admin: u.isAdmin,
-          block_strangers: u.blockStrangers,
-          snippet: u.snippet,
-          avatar: u.avatar,
-          ai_model: u.aiModel,
-          created_at: u.createdAt,
-          updated_at: u.updatedAt,
-          count_followers: this.cntFollowers(u.id),
-          count_followees: this.cntFollowees(u.id),
-          count_posts: 0,
-        }));
+        .map((u) => this.rowForUser(u));
       return { rows };
     }
 
@@ -243,123 +246,71 @@ class MockPgClient {
       return { rows: [{ count: this.users.length }] };
     }
 
-    if (sql.startsWith("SELECT id FROM users WHERE email = $1")) {
-      const user = this.users.find((u) => u.email === params[0]);
-      if (!user) return { rows: [] };
-      return { rows: [{ id: hexToDec(user.id) }] };
+    if (sql.startsWith("SELECT user_id AS id FROM user_secrets WHERE email = $1")) {
+      const email = params[0];
+      const entry = Object.entries(this.userSecrets).find(([, v]) => v.email === email);
+      if (!entry) return { rows: [] };
+      return { rows: [{ id: hexToDec(entry[0]) }] };
     }
 
     if (
-      sql.startsWith(
-        "SELECT id, email, nickname, is_admin, block_strangers, ai_model, id_to_timestamp(id) AS created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1",
-      )
+      sql.includes("FROM users u") &&
+      sql.includes("LEFT JOIN user_secrets s") &&
+      sql.includes("WHERE u.id = $1")
     ) {
       const idHex = decToHex(params[0]);
       const user = this.users.find((u) => u.id === idHex);
       if (!user) return { rows: [] };
-      const row = {
-        id: hexToDec(user.id),
-        email: user.email,
-        nickname: user.nickname,
-        is_admin: user.isAdmin,
-        block_strangers: user.blockStrangers,
-        ai_model: user.aiModel,
-        created_at: user.createdAt,
-        updated_at: user.updatedAt,
-        count_followers: this.cntFollowers(user.id),
-        count_followees: this.cntFollowees(user.id),
-        count_posts: 0,
-      };
-      return { rows: [row] };
+      const base = this.rowForUser(user);
+      if (sql.includes("LEFT JOIN user_details d")) {
+        const d = this.details[user.id] ?? { introduction: "", aiPersonality: null };
+        return {
+          rows: [
+            Object.assign({}, base, {
+              introduction: d.introduction,
+              ai_personality: d.aiPersonality,
+            }),
+          ],
+        };
+      }
+      return { rows: [base] };
     }
 
     if (
-      sql.startsWith(
-        "SELECT id, email, nickname, is_admin, block_strangers, ai_model, id_to_timestamp(id) AS created_at, updated_at, count_followers, count_followees, count_posts FROM users WHERE id = $1",
-      )
+      sql.includes("FROM users u") &&
+      sql.includes("LEFT JOIN user_secrets s") &&
+      !sql.includes("WHERE u.id = $1")
     ) {
-      const idHex = decToHex(params[0]);
-      const user = this.users.find((u) => u.id === idHex);
-      if (!user) return { rows: [] };
-      const row = {
-        id: hexToDec(user.id),
-        email: user.email,
-        nickname: user.nickname,
-        is_admin: user.isAdmin,
-        block_strangers: user.blockStrangers,
-        ai_model: user.aiModel,
-        created_at: user.createdAt,
-        updated_at: user.updatedAt,
-        count_followers: this.cntFollowers(user.id),
-        count_followees: this.cntFollowees(user.id),
-        count_posts: 0,
-      };
-      return { rows: [row] };
+      let list = [...this.users];
+      if (
+        sql.includes(
+          "WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)",
+        ) ||
+        sql.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)")
+      ) {
+        const pat = params[0].toLowerCase().replace(/%/g, "");
+        list = list.filter(
+          (u) =>
+            u.nickname.toLowerCase().includes(pat) ||
+            (u.snippet ?? "").toLowerCase().includes(pat) ||
+            (this.details[u.id]?.introduction ?? "").toLowerCase().includes(pat),
+        );
+      } else if (sql.includes("WHERE u.nickname ILIKE")) {
+        const pat = params[0].toLowerCase().replace(/%/g, "");
+        list = list.filter((u) => u.nickname.toLowerCase().includes(pat));
+      } else if (sql.includes("WHERE LOWER(u.nickname) LIKE")) {
+        const pat = params[0].toLowerCase().replace(/%/g, "");
+        list = list.filter((u) => u.nickname.toLowerCase().startsWith(pat));
+      }
+      const offset = params[params.length - 2] || 0;
+      const limit = params[params.length - 1] || 100;
+      const dir = sql.includes("ORDER BY u.id ASC") ? 1 : -1;
+      list.sort((a, b) => (BigInt("0x" + a.id) > BigInt("0x" + b.id) ? dir : -dir));
+      const rows = list.slice(offset, offset + limit).map((u) => this.rowForUser(u));
+      return { rows };
     }
 
-    if (
-      sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts, d.introduction, d.ai_personality FROM users u LEFT JOIN user_details d ON d.user_id = u.id WHERE u.id = $1",
-      )
-    ) {
-      const idHex = decToHex(params[0]);
-      const user = this.users.find((u) => u.id === idHex);
-      if (!user) return { rows: [] };
-      const d = this.details[user.id] ?? { introduction: "", aiPersonality: null };
-      const row = {
-        id: hexToDec(user.id),
-        email: user.email,
-        nickname: user.nickname,
-        is_admin: user.isAdmin,
-        block_strangers: user.blockStrangers,
-        snippet: user.snippet,
-        avatar: user.avatar,
-        ai_model: user.aiModel,
-        created_at: user.createdAt,
-        updated_at: user.updatedAt,
-        count_followers: this.cntFollowers(user.id),
-        count_followees: this.cntFollowees(user.id),
-        count_posts: 0,
-        introduction: d.introduction,
-        ai_personality: d.aiPersonality,
-      };
-      return { rows: [row] };
-    }
-
-    if (
-      sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts, d.introduction, d.ai_personality FROM users u LEFT JOIN user_details d ON d.user_id = u.id WHERE u.id = $1",
-      )
-    ) {
-      const idHex = decToHex(params[0]);
-      const user = this.users.find((u) => u.id === idHex);
-      if (!user) return { rows: [] };
-      const d = this.details[user.id] ?? { introduction: "", aiPersonality: null };
-      const row = {
-        id: hexToDec(user.id),
-        email: user.email,
-        nickname: user.nickname,
-        is_admin: user.isAdmin,
-        block_strangers: user.blockStrangers,
-        snippet: user.snippet,
-        avatar: user.avatar,
-        ai_model: user.aiModel,
-        created_at: user.createdAt,
-        updated_at: user.updatedAt,
-        count_followers: this.cntFollowers(user.id),
-        count_followees: this.cntFollowees(user.id),
-        count_posts: 0,
-        introduction: d.introduction,
-        ai_personality: d.aiPersonality,
-      };
-      return { rows: [row] };
-    }
-
-    if (
-      sql.startsWith(
-        "SELECT EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $1 AND followee_id = $2) AS is_followed_by_focus_user",
-      )
-    ) {
+    if (sql.startsWith("SELECT EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $1")) {
       const [focusUserIdDec, idDec] = params;
       const focusUserId = decToHex(focusUserIdDec);
       const idHex = decToHex(idDec);
@@ -369,116 +320,51 @@ class MockPgClient {
       const isFollowing = this.follows.some(
         (f) => f.followerId === idHex && f.followeeId === focusUserId,
       );
-      const includeBlocks =
-        sql.includes("is_blocked_by_focus_user") || sql.includes("is_blocking_focus_user");
       const isBlockedByFocus = this.blocks.some(
         (b) => b.blockerId === focusUserId && b.blockeeId === idHex,
       );
       const isBlockingFocus = this.blocks.some(
         (b) => b.blockerId === idHex && b.blockeeId === focusUserId,
       );
-      const row: any = {
-        is_followed_by_focus_user: isFollowed,
-        is_following_focus_user: isFollowing,
+      return {
+        rows: [
+          {
+            is_followed_by_focus_user: isFollowed,
+            is_following_focus_user: isFollowing,
+            is_blocked_by_focus_user: isBlockedByFocus,
+            is_blocking_focus_user: isBlockingFocus,
+          },
+        ],
       };
-      if (includeBlocks) {
-        row.is_blocked_by_focus_user = isBlockedByFocus;
-        row.is_blocking_focus_user = isBlockingFocus;
-      }
-      return { rows: [row] };
     }
 
     if (
-      sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM users u",
-      )
+      sql.includes("FROM user_follows f JOIN users u ON f.followee_id = u.id") &&
+      sql.includes("LEFT JOIN user_secrets s ON s.user_id = u.id")
     ) {
-      let list = [...this.users];
-      if (
-        sql.includes(
-          "WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)",
-        ) ||
-        sql.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)")
-      ) {
-        const pat = params[0].toLowerCase().replace(/%/g, "");
-        list = list.filter(
-          (u) =>
-            u.nickname.toLowerCase().includes(pat) ||
-            (u.snippet ?? "").toLowerCase().includes(pat) ||
-            (this.details[u.id]?.introduction ?? "").toLowerCase().includes(pat),
-        );
-      } else if (sql.includes("WHERE u.nickname ILIKE")) {
-        const pat = params[0].toLowerCase().replace(/%/g, "");
-        list = list.filter((u) => u.nickname.toLowerCase().includes(pat));
-      } else if (sql.includes("WHERE LOWER(u.nickname) LIKE")) {
-        const pat = params[0].toLowerCase().replace(/%/g, "");
-        list = list.filter((u) => u.nickname.toLowerCase().startsWith(pat));
-      }
-      list.sort((a, b) => (BigInt("0x" + b.id) > BigInt("0x" + a.id) ? 1 : -1));
-      const offset = params[params.length - 2] || 0;
-      const limit = params[params.length - 1] || 100;
-      const rows = list.slice(offset, offset + limit).map((u) => ({
-        id: hexToDec(u.id),
-        email: u.email,
-        nickname: u.nickname,
-        is_admin: u.isAdmin,
-        block_strangers: u.blockStrangers,
-        snippet: u.snippet,
-        avatar: u.avatar,
-        ai_model: u.aiModel,
-        created_at: u.createdAt,
-        updated_at: u.updatedAt,
-        count_followers: this.cntFollowers(u.id),
-        count_followees: this.cntFollowees(u.id),
-        count_posts: 0,
-      }));
+      const followerId = decToHex(params[0]);
+      const list = this.follows
+        .filter((f) => f.followerId === followerId)
+        .map((f) => this.users.find((u) => u.id === f.followeeId))
+        .filter((u): u is User => !!u);
+      const offset = params[1] || 0;
+      const limit = params[2] || 100;
+      const rows = list.slice(offset, offset + limit).map((u) => this.rowForUser(u));
       return { rows };
     }
 
     if (
-      sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM users u",
-      )
+      sql.includes("FROM user_follows f JOIN users u ON f.follower_id = u.id") &&
+      sql.includes("LEFT JOIN user_secrets s ON s.user_id = u.id")
     ) {
-      let list = [...this.users];
-      if (
-        sql.includes(
-          "WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)",
-        ) ||
-        sql.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)")
-      ) {
-        const pat = params[0].toLowerCase().replace(/%/g, "");
-        list = list.filter(
-          (u) =>
-            u.nickname.toLowerCase().includes(pat) ||
-            (u.snippet ?? "").toLowerCase().includes(pat) ||
-            (this.details[u.id]?.introduction ?? "").toLowerCase().includes(pat),
-        );
-      } else if (sql.includes("WHERE u.nickname ILIKE")) {
-        const pat = params[0].toLowerCase().replace(/%/g, "");
-        list = list.filter((u) => u.nickname.toLowerCase().includes(pat));
-      } else if (sql.includes("WHERE LOWER(u.nickname) LIKE")) {
-        const pat = params[0].toLowerCase().replace(/%/g, "");
-        list = list.filter((u) => u.nickname.toLowerCase().startsWith(pat));
-      }
-      list.sort((a, b) => (BigInt("0x" + b.id) > BigInt("0x" + a.id) ? 1 : -1));
-      const offset = params[params.length - 2] || 0;
-      const limit = params[params.length - 1] || 100;
-      const rows = list.slice(offset, offset + limit).map((u) => ({
-        id: hexToDec(u.id),
-        email: u.email,
-        nickname: u.nickname,
-        is_admin: u.isAdmin,
-        block_strangers: u.blockStrangers,
-        snippet: u.snippet,
-        avatar: u.avatar,
-        ai_model: u.aiModel,
-        created_at: u.createdAt,
-        updated_at: u.updatedAt,
-        count_followers: this.cntFollowers(u.id),
-        count_followees: this.cntFollowees(u.id),
-        count_posts: 0,
-      }));
+      const followeeId = decToHex(params[0]);
+      const list = this.follows
+        .filter((f) => f.followeeId === followeeId)
+        .map((f) => this.users.find((u) => u.id === f.followerId))
+        .filter((u): u is User => !!u);
+      const offset = params[1] || 0;
+      const limit = params[2] || 100;
+      const rows = list.slice(offset, offset + limit).map((u) => this.rowForUser(u));
       return { rows };
     }
 
@@ -508,7 +394,6 @@ class MockPgClient {
           .map((f) => ({ follower_id: hexToDec(f.followerId) })),
       };
     }
-
     if (
       sql.startsWith(
         "SELECT blockee_id FROM user_blocks WHERE blocker_id = $1 AND blockee_id = ANY($2)",
@@ -536,85 +421,23 @@ class MockPgClient {
       };
     }
 
-    if (sql.startsWith("SELECT 1 FROM users WHERE email = $1")) {
+    if (sql.startsWith("SELECT 1 FROM user_secrets WHERE email = $1")) {
       const email = params[0];
-      const exists = this.users.some((u) => u.email === email);
+      const exists = Object.values(this.userSecrets).some((s) => s.email === email);
       return { rows: exists ? [1] : [] };
     }
 
     if (
       sql.startsWith(
-        "INSERT INTO users (id, email, nickname, password, is_admin, block_strangers, snippet, avatar, ai_model, updated_at) VALUES",
+        "INSERT INTO users (id, nickname, is_admin, block_strangers, snippet, avatar, ai_model, updated_at) VALUES",
       )
     ) {
-      const [
-        idDec,
-        email,
-        nickname,
-        password,
-        isAdmin,
-        blockStrangers,
-        snippet,
-        avatar,
-        aiModel,
-        idDate,
-      ] = params;
-      const idHex = decToHex(idDec);
-      const user: User = {
-        id: idHex,
-        email,
-        nickname,
-        isAdmin,
-        blockStrangers,
-        snippet,
-        avatar,
-        aiModel,
-        createdAt: idDate,
-        updatedAt: null,
-        countFollowers: 0,
-        countFollowees: 0,
-        countPosts: 0,
-      };
-      this.users.push(user);
-      const pwHex = Buffer.isBuffer(password)
-        ? password.toString("hex")
-        : typeof password === "string"
-          ? password
-          : String(password);
-      this.passwords[user.id] = pwHex;
-      return {
-        rows: [
-          {
-            id: idDec,
-            email: user.email,
-            nickname: user.nickname,
-            is_admin: user.isAdmin,
-            block_strangers: user.blockStrangers,
-            snippet: user.snippet,
-            avatar: user.avatar,
-            ai_model: user.aiModel,
-            created_at: user.createdAt,
-            updated_at: user.updatedAt,
-            count_followers: user.countFollowers,
-            count_followees: user.countFollowees,
-            count_posts: user.countPosts,
-          },
-        ],
-      };
-    }
-
-    if (
-      sql.startsWith(
-        "INSERT INTO users (id, email, nickname, password, is_admin, block_strangers, snippet, avatar, ai_model, updated_at) VALUES",
-      )
-    ) {
-      const [idDec, email, nickname, password, isAdmin, blockStrangers, snippet, avatar, aiModel] =
-        params;
+      const [idDec, nickname, isAdmin, blockStrangers, snippet, avatar, aiModel] = params;
       const idHex = decToHex(idDec);
       const createdAt = new Date().toISOString();
       const user: User = {
         id: idHex,
-        email,
+        email: "",
         nickname,
         isAdmin,
         blockStrangers,
@@ -628,33 +451,22 @@ class MockPgClient {
         countPosts: 0,
       };
       this.users.push(user);
+      return { rowCount: 1, rows: [] };
+    }
+    if (sql.startsWith("INSERT INTO user_secrets (user_id, email, password) VALUES")) {
+      const [idDec, email, password] = params;
+      const idHex = decToHex(idDec);
       const pwHex = Buffer.isBuffer(password)
         ? password.toString("hex")
         : typeof password === "string"
           ? password
           : String(password);
-      this.passwords[user.id] = pwHex;
-      return {
-        rows: [
-          {
-            id: idDec,
-            email: user.email,
-            nickname: user.nickname,
-            is_admin: user.isAdmin,
-            block_strangers: user.blockStrangers,
-            snippet: user.snippet,
-            avatar: user.avatar,
-            ai_model: user.aiModel,
-            created_at: user.createdAt,
-            updated_at: user.updatedAt,
-            count_followers: user.countFollowers,
-            count_followees: user.countFollowees,
-            count_posts: user.countPosts,
-          },
-        ],
-      };
+      this.userSecrets[idHex] = { email, password: pwHex };
+      const u = this.users.find((x) => x.id === idHex);
+      if (u) u.email = email;
+      this.passwords[idHex] = pwHex;
+      return { rowCount: 1, rows: [] };
     }
-
     if (sql.startsWith("INSERT INTO user_details (user_id, introduction, ai_personality)")) {
       const [userIdDec, introduction, aiPersonality] = params;
       const userId = decToHex(userIdDec);
@@ -673,25 +485,32 @@ class MockPgClient {
       return { rowCount: 1, rows: [] };
     }
 
-    if (sql.startsWith("UPDATE users SET password = $1 WHERE id = $2")) {
+    if (sql.startsWith("UPDATE user_secrets SET email = $1 WHERE user_id = $2")) {
+      const [email, idDec] = params;
+      const idHex = decToHex(idDec);
+      if (!this.userSecrets[idHex]) return { rowCount: 0 };
+      this.userSecrets[idHex].email = email;
+      const u = this.users.find((x) => x.id === idHex);
+      if (u) u.email = email;
+      return { rowCount: 1 };
+    }
+    if (sql.startsWith("UPDATE user_secrets SET password = $1 WHERE user_id = $2")) {
       const [password, idDec] = params;
-      const id = decToHex(idDec);
-      const exists = this.users.some((u) => u.id === id);
-      if (!exists) return { rowCount: 0 };
+      const idHex = decToHex(idDec);
+      if (!this.userSecrets[idHex]) return { rowCount: 0 };
       const pwHex = Buffer.isBuffer(password)
         ? password.toString("hex")
         : typeof password === "string"
           ? password
           : String(password);
-      this.passwords[id] = pwHex;
+      this.userSecrets[idHex].password = pwHex;
+      this.passwords[idHex] = pwHex;
       return { rowCount: 1 };
     }
-
     if (sql.startsWith("UPDATE users SET")) {
       const id = decToHex(params[params.length - 1]);
       const user = this.users.find((u) => u.id === id);
       if (!user) return { rows: [] };
-      if (sql.includes("email = $1")) user.email = params[0];
       if (sql.includes("nickname =")) {
         const nick = params.find((p: any) => typeof p === "string" && !p.includes("@"));
         if (nick) user.nickname = nick;
@@ -708,26 +527,7 @@ class MockPgClient {
         const i = sql.split(",").findIndex((seg) => seg.includes("snippet ="));
         user.snippet = params[i >= 0 ? i : 0] ?? user.snippet;
       }
-      return {
-        rows: [
-          {
-            id: hexToDec(user.id),
-            email: user.email,
-            nickname: user.nickname,
-            is_admin: user.isAdmin,
-            block_strangers: user.blockStrangers,
-            snippet: user.snippet,
-            avatar: user.avatar,
-            ai_model: user.aiModel,
-            created_at: user.createdAt,
-            updated_at: new Date().toISOString(),
-            count_followers: this.cntFollowers(user.id),
-            count_followees: this.cntFollowees(user.id),
-            count_posts: 0,
-          },
-        ],
-        rowCount: 1,
-      };
+      return { rowCount: 1, rows: [] };
     }
 
     if (sql.startsWith("DELETE FROM users WHERE id = $1")) {
@@ -738,149 +538,10 @@ class MockPgClient {
       this.users.splice(idx, 1);
       delete this.passwords[hex];
       delete this.details[hex];
+      delete this.userSecrets[hex];
       this.follows = this.follows.filter((f) => f.followerId !== hex && f.followeeId !== hex);
       this.blocks = this.blocks.filter((b) => b.blockerId !== hex && b.blockeeId !== hex);
       return { rowCount: 1 };
-    }
-
-    if (
-      sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
-      )
-    ) {
-      const followerId = decToHex(params[0]);
-      const list = this.follows
-        .filter((f) => f.followerId === followerId)
-        .map((f) => this.users.find((u) => u.id === f.followeeId))
-        .filter((u): u is User => !!u);
-      list.sort(
-        (a, b) =>
-          b.createdAt.localeCompare(a.createdAt) ||
-          (BigInt("0x" + b.id) > BigInt("0x" + a.id) ? 1 : -1),
-      );
-      const offset = params[1] || 0;
-      const limit = params[2] || 100;
-      const rows = list.slice(offset, offset + limit).map((u) => ({
-        id: hexToDec(u.id),
-        email: u.email,
-        nickname: u.nickname,
-        is_admin: u.isAdmin,
-        block_strangers: u.blockStrangers,
-        snippet: u.snippet,
-        avatar: u.avatar,
-        ai_model: u.aiModel,
-        created_at: u.createdAt,
-        updated_at: u.updatedAt,
-        count_followers: this.cntFollowers(u.id),
-        count_followees: this.cntFollowees(u.id),
-        count_posts: 0,
-      }));
-      return { rows };
-    }
-
-    if (
-      sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id WHERE f.follower_id = $1",
-      )
-    ) {
-      const followerId = decToHex(params[0]);
-      const list = this.follows
-        .filter((f) => f.followerId === followerId)
-        .map((f) => this.users.find((u) => u.id === f.followeeId))
-        .filter((u): u is User => !!u);
-      list.sort(
-        (a, b) =>
-          b.createdAt.localeCompare(a.createdAt) ||
-          (BigInt("0x" + b.id) > BigInt("0x" + a.id) ? 1 : -1),
-      );
-      const offset = params[1] || 0;
-      const limit = params[2] || 100;
-      const rows = list.slice(offset, offset + limit).map((u) => ({
-        id: hexToDec(u.id),
-        email: u.email,
-        nickname: u.nickname,
-        is_admin: u.isAdmin,
-        block_strangers: u.blockStrangers,
-        snippet: u.snippet,
-        avatar: u.avatar,
-        ai_model: u.aiModel,
-        created_at: u.createdAt,
-        updated_at: u.updatedAt,
-        count_followers: this.cntFollowers(u.id),
-        count_followees: this.cntFollowees(u.id),
-        count_posts: 0,
-      }));
-      return { rows };
-    }
-
-    if (
-      sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
-      )
-    ) {
-      const followeeId = decToHex(params[0]);
-      const list = this.follows
-        .filter((f) => f.followeeId === followeeId)
-        .map((f) => this.users.find((u) => u.id === f.followerId))
-        .filter((u): u is User => !!u);
-      list.sort(
-        (a, b) =>
-          b.createdAt.localeCompare(a.createdAt) ||
-          (BigInt("0x" + b.id) > BigInt("0x" + a.id) ? 1 : -1),
-      );
-      const offset = params[1] || 0;
-      const limit = params[2] || 100;
-      const rows = list.slice(offset, offset + limit).map((u) => ({
-        id: hexToDec(u.id),
-        email: u.email,
-        nickname: u.nickname,
-        is_admin: u.isAdmin,
-        block_strangers: u.blockStrangers,
-        snippet: u.snippet,
-        avatar: u.avatar,
-        ai_model: u.aiModel,
-        created_at: u.createdAt,
-        updated_at: u.updatedAt,
-        count_followers: this.cntFollowers(u.id),
-        count_followees: this.cntFollowees(u.id),
-        count_posts: 0,
-      }));
-      return { rows };
-    }
-
-    if (
-      sql.startsWith(
-        "SELECT u.id, u.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model, id_to_timestamp(u.id) AS created_at, u.updated_at, u.count_followers, u.count_followees, u.count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id WHERE f.followee_id = $1",
-      )
-    ) {
-      const followeeId = decToHex(params[0]);
-      const list = this.follows
-        .filter((f) => f.followeeId === followeeId)
-        .map((f) => this.users.find((u) => u.id === f.followerId))
-        .filter((u): u is User => !!u);
-      list.sort(
-        (a, b) =>
-          b.createdAt.localeCompare(a.createdAt) ||
-          (BigInt("0x" + b.id) > BigInt("0x" + a.id) ? 1 : -1),
-      );
-      const offset = params[1] || 0;
-      const limit = params[2] || 100;
-      const rows = list.slice(offset, offset + limit).map((u) => ({
-        id: hexToDec(u.id),
-        email: u.email,
-        nickname: u.nickname,
-        is_admin: u.isAdmin,
-        block_strangers: u.blockStrangers,
-        snippet: u.snippet,
-        avatar: u.avatar,
-        ai_model: u.aiModel,
-        created_at: u.createdAt,
-        updated_at: u.updatedAt,
-        count_followers: this.cntFollowers(u.id),
-        count_followees: this.cntFollowees(u.id),
-        count_posts: 0,
-      }));
-      return { rows };
     }
 
     if (sql.startsWith("INSERT INTO user_follows")) {
@@ -1031,7 +692,7 @@ describe("UsersService", () => {
       aiPersonality: "D",
     });
     expect(user.email).toBe("dan@example.com");
-    expect(pg.users.find((u) => u.email === "dan@example.com")).toBeDefined();
+    expect(pg.userSecrets[user.id]?.email).toBe("dan@example.com");
     expect(pg.passwords[user.id]).toBe(md5("danpass"));
     expect(pg.details[user.id]?.introduction).toBe("introD");
     expect(pg.details[user.id]?.aiPersonality).toBe("D");
@@ -1050,6 +711,7 @@ describe("UsersService", () => {
       aiPersonality: "X",
     });
     expect(user?.email).toBe("alice2@example.com");
+    expect(pg.userSecrets[ALICE].email).toBe("alice2@example.com");
     expect(user?.isAdmin).toBe(true);
     expect(user?.blockStrangers).toBe(true);
     const detail = await service.getUser(ALICE);
@@ -1079,7 +741,7 @@ describe("UsersService", () => {
       createdAt: new Date().toISOString(),
     });
     await new UsersService(pg as any, redis as any).verifyUpdateEmail(ALICE, "xyz", "123456");
-    expect(pg.users.find((u) => u.id === ALICE)?.email).toBe("alice2@example.com");
+    expect(pg.userSecrets[ALICE].email).toBe("alice2@example.com");
     expect(await redis.hgetall("updateEmail:xyz")).toEqual({});
   });
 
@@ -1105,11 +767,10 @@ describe("UsersService", () => {
   });
 
   test("startResetPassword stores verification info in Redis and queues mail", async () => {
-    const userId = ALICE;
     const email = "alice@example.com";
     const { resetPasswordId, webCode } = await service.startResetPassword(email);
     const stored = redis.store[`resetPassword:${resetPasswordId}`];
-    expect(stored.userId).toBe(userId);
+    expect(stored.userId).toBe(ALICE);
     expect(stored.email).toBe(email);
     expect(typeof stored.mailCode).toBe("string");
     expect(stored.webCode).toBe(webCode);
@@ -1201,16 +862,13 @@ describe("UsersService", () => {
   test("addBlock/removeBlock and block flags in getUser/listUsers", async () => {
     await service.addBlock({ blockerId: BOB, blockeeId: CAROL });
     expect(pg.blocks.some((b) => b.blockerId === BOB && b.blockeeId === CAROL)).toBe(true);
-
     const u = await service.getUser(CAROL, BOB);
     expect(u?.isBlockedByFocusUser).toBe(true);
     expect(u?.isBlockingFocusUser).toBe(false);
-
     const list = await service.listUsers({}, BOB);
     const carol = list.find((x) => x.id === CAROL)!;
     expect(carol.isBlockedByFocusUser).toBe(true);
     expect(carol.isBlockingFocusUser).toBe(false);
-
     await service.removeBlock({ blockerId: BOB, blockeeId: CAROL });
     expect(pg.blocks.some((b) => b.blockerId === BOB && b.blockeeId === CAROL)).toBe(false);
   });
@@ -1218,7 +876,6 @@ describe("UsersService", () => {
   test("checkBlock/checkFollow", async () => {
     expect(await service.checkFollow({ followerId: ALICE, followeeId: BOB })).toBe(true);
     expect(await service.checkFollow({ followerId: BOB, followeeId: CAROL })).toBe(false);
-
     await service.addBlock({ blockerId: ALICE, blockeeId: BOB });
     expect(await service.checkBlock({ blockerId: ALICE, blockeeId: BOB })).toBe(true);
     expect(await service.checkBlock({ blockerId: BOB, blockeeId: ALICE })).toBe(false);
