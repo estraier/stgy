@@ -117,7 +117,6 @@ def test_users():
   user1_cookies = {"session_id": user1_session}
   print("[users] user1 login OK")
   res = requests.get(f"{BASE_URL}/users/count", cookies=cookies)
-  print(res.text)
   assert res.status_code == 200
   count = res.json()["count"]
   assert count >= 2
@@ -125,13 +124,13 @@ def test_users():
   res = requests.get(f"{BASE_URL}/users?limit=2000", headers=headers, cookies=cookies)
   assert res.status_code == 200
   users = res.json()
-  admin_user = next(u for u in users if u["email"] == ADMIN_EMAIL)
+  admin_user = min((u for u in users), key=lambda u: u["id"])
   admin_id = admin_user["id"]
   res = requests.get(f"{BASE_URL}/users/{admin_id}", headers=headers, cookies=cookies)
   got_admin_user = res.json()
   assert got_admin_user["id"] == admin_id
   for key, value in got_admin_user.items():
-    if key in ["introduction", "aiPersonality"]: continue
+    if key in ["email", "introduction", "aiPersonality"]: continue
     assert admin_user[key] == value
   res = requests.get(f"{BASE_URL}/users/{admin_id}/lite", headers=headers, cookies=cookies)
   lite_admin_user = res.json()
@@ -167,7 +166,7 @@ def test_users():
   assert res.status_code == 200, res.text
   users = res.json()
   assert len(users) >= 2
-  user1 = next(u for u in users if u["email"] == user1["email"])
+  user1 = next(u for u in users if u["nickname"] == user1["nickname"])
   assert user1["countFollowers"] == 0
   assert user1["countFollowees"] == 1
   assert user1["isFollowedByFocusUser"] == False
@@ -326,14 +325,12 @@ def test_signup():
   res = requests.get(f"{BASE_URL}/users?limit=2000", cookies={"session_id": session_id})
   assert res.status_code == 200
   users = res.json()
-  assert any(u["id"] == admin_id and "@stgy." in u["email"] for u in users)
-  assert any(u["email"] == email for u in users)
+  assert any(u["id"] == admin_id for u in users)
   print("[signup] list check ok")
   res = requests.get(f"{BASE_URL}/users?limit=2000", cookies={"session_id": session_id})
   assert res.status_code == 200
   users = res.json()
-  assert any(u["id"] == admin_id and "@stgy." in u["email"] for u in users)
-  assert any(u["email"] == email for u in users)
+  assert any(u["id"] == admin_id for u in users)
   print("[signup] list check ok")
   res = requests.get(f"{BASE_URL}/users/{admin_id}", cookies={"session_id": session_id})
   assert res.status_code == 200

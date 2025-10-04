@@ -100,7 +100,6 @@ export default function createUsersRouter(
         omitOthers,
       });
       watch.done();
-      users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
       res.json(users);
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "list friends failed" });
@@ -117,7 +116,6 @@ export default function createUsersRouter(
     let user = await usersService.getUserLite(req.params.id);
     watch.done();
     if (!user) return res.status(404).json({ error: "not found" });
-    user = maskUserSensitiveInfo(user, loginUser.isAdmin, loginUser.id);
     res.json(user);
   });
 
@@ -172,7 +170,6 @@ export default function createUsersRouter(
       focusUserId,
     );
     watch.done();
-    users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
     res.json(users);
   });
 
@@ -492,7 +489,6 @@ export default function createUsersRouter(
     const watch = timerThrottleService.startWatch(loginUser);
     let users = await usersService.listFollowees({ followerId, offset, limit, order }, focusUserId);
     watch.done();
-    users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
     res.json(users);
   });
 
@@ -515,7 +511,6 @@ export default function createUsersRouter(
     const watch = timerThrottleService.startWatch(loginUser);
     let users = await usersService.listFollowers({ followeeId, offset, limit, order }, focusUserId);
     watch.done();
-    users = maskUserListSensitiveInfo(users, loginUser.isAdmin, loginUser.id);
     res.json(users);
   });
 
@@ -580,12 +575,4 @@ function maskUserSensitiveInfo<T extends { id: string; email: string }>(
     ...user,
     email: maskEmailByHash(user.email),
   };
-}
-
-function maskUserListSensitiveInfo<T extends { id: string; email: string }>(
-  users: T[],
-  isAdmin: boolean,
-  loginUserId: string,
-): T[] {
-  return users.map((u) => maskUserSensitiveInfo(u, isAdmin, loginUserId));
 }

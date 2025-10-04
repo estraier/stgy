@@ -1,4 +1,3 @@
-// src/services/eventLog.test.ts
 import { jest } from "@jest/globals";
 import { EventLogService } from "./eventLog";
 import { IdIssueService } from "./idIssue";
@@ -117,10 +116,10 @@ describe("EventLogService (with Redis publish)", () => {
       });
 
     const clientQuery = (jest.fn() as any)
-      .mockResolvedValueOnce({}) // BEGIN
-      .mockResolvedValueOnce({}) // SET LOCAL
-      .mockResolvedValueOnce({ rowCount: 7 }) // DELETE
-      .mockResolvedValueOnce({}); // COMMIT
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({})
+      .mockResolvedValueOnce({ rowCount: 7 })
+      .mockResolvedValueOnce({});
     const clientRelease = jest.fn();
     const pg = {
       connect: jest.fn(async () => ({ query: clientQuery, release: clientRelease })),

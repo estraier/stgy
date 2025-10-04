@@ -69,8 +69,6 @@ describe("servers utils (Pool/pgQuery, Redis)", () => {
 
   const flush = async () => Promise.resolve();
 
-  // --- PostgreSQL (Pool connect) ---
-
   test("connectPgWithRetry: success on first try", async () => {
     const { Pool }: any = await import("pg");
     const poolInst = Pool.__create({
@@ -139,8 +137,6 @@ describe("servers utils (Pool/pgQuery, Redis)", () => {
     expect(alwaysBad.end).toHaveBeenCalled();
   });
 
-  // --- PostgreSQL (pgQuery retry) ---
-
   test("pgQuery: success on first try", async () => {
     const poolInst: any = {
       query: jest.fn(async () => ({ rows: [{ a: 1 }], rowCount: 1 })),
@@ -181,8 +177,6 @@ describe("servers utils (Pool/pgQuery, Redis)", () => {
     await expect(p).rejects.toThrow(/fail/);
     expect(alwaysFail).toHaveBeenCalledTimes(2);
   });
-
-  // --- Redis connect ---
 
   test("connectRedisWithRetry: success when already ready", async () => {
     const RedisMock: any = (await import("ioredis")).default;

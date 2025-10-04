@@ -32,6 +32,13 @@ import Redis from "ioredis";
 import { v4 as uuidv4 } from "uuid";
 import { pgQuery } from "../utils/servers";
 
+type FocusRelFlagsRow = {
+  is_followed_by_focus_user: boolean;
+  is_following_focus_user: boolean;
+  is_blocked_by_focus_user: boolean;
+  is_blocking_focus_user: boolean;
+};
+
 export class UsersService {
   private pgPool: Pool;
   private redis: Redis;
@@ -49,12 +56,21 @@ export class UsersService {
     const query = input?.query?.trim();
     const nickname = input?.nickname?.trim();
     const nicknamePrefix = input?.nicknamePrefix?.trim();
-    let sql = `SELECT COUNT(*) FROM users u`;
+
+    let sql = `
+      SELECT COUNT(*)
+      FROM users u
+    `.trim();
+
     const params: unknown[] = [];
     const wheres: string[] = [];
+
     if (query) {
       const q = `%${escapeForLike(query)}%`;
-      sql += ` LEFT JOIN user_details d ON d.user_id = u.id`;
+      sql += `
+        LEFT JOIN user_details d
+          ON d.user_id = u.id
+      `;
       wheres.push(`(u.nickname ILIKE $1 OR d.introduction ILIKE $1)`);
       params.push(q);
     } else if (nickname) {
@@ -66,7 +82,9 @@ export class UsersService {
       wheres.push(`LOWER(u.nickname) LIKE $1`);
       params.push(q);
     }
-    if (wheres.length > 0) sql += " WHERE " + wheres.join(" AND ");
+
+    if (wheres.length > 0) sql += ` WHERE ${wheres.join(" AND ")}`;
+
     const res = await pgQuery(this.pgPool, sql, params);
     return Number(res.rows[0].count);
   }
@@ -74,59 +92,92 @@ export class UsersService {
   async getUserLite(id: string): Promise<UserLite | null> {
     const res = await pgQuery(
       this.pgPool,
-      `SELECT
-         u.id, s.email, u.nickname, u.is_admin, u.block_strangers, u.ai_model,
-         id_to_timestamp(u.id) AS created_at, u.updated_at,
-         COALESCE(ufr.count,0) AS count_followers,
-         COALESCE(ufe.count,0) AS count_followees,
-         COALESCE(upc.count,0) AS count_posts
-       FROM users u
-       LEFT JOIN user_secrets s ON s.user_id = u.id
-       LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
-       LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-       LEFT JOIN user_post_counts upc ON upc.user_id = u.id
-       WHERE u.id = $1`,
+      `
+        SELECT
+          u.id,
+          u.nickname,
+          u.is_admin,
+          u.block_strangers,
+          u.ai_model,
+          id_to_timestamp(u.id) AS created_at,
+          u.updated_at,
+          COALESCE(ufr.count, 0) AS count_followers,
+          COALESCE(ufe.count, 0) AS count_followees,
+          COALESCE(upc.count, 0) AS count_posts
+        FROM users u
+        LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
+        LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
+        LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+        WHERE u.id = $1
+      `,
       [hexToDec(id)],
     );
     if (res.rows.length === 0) return null;
-    const row = res.rows[0];
-    row.id = decToHex(row.id);
-    const user: Record<string, unknown> = snakeToCamel(row);
-    return user as UserLite;
+
+    const row = res.rows[0] as Record<string, unknown>;
+    row.id = decToHex(row.id as string);
+    return snakeToCamel<UserLite>(row);
   }
 
   async getUser(id: string, focusUserId?: string): Promise<UserDetail | null> {
     const userRes = await pgQuery(
       this.pgPool,
-      `SELECT
-         u.id, s.email, u.nickname, u.is_admin, u.block_strangers,
-         u.snippet, u.avatar, u.ai_model,
-         id_to_timestamp(u.id) AS created_at, u.updated_at,
-         COALESCE(ufr.count,0) AS count_followers,
-         COALESCE(ufe.count,0) AS count_followees,
-         COALESCE(upc.count,0) AS count_posts,
-         d.introduction, d.ai_personality
-       FROM users u
-       LEFT JOIN user_secrets s ON s.user_id = u.id
-       LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
-       LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-       LEFT JOIN user_post_counts upc ON upc.user_id = u.id
-       LEFT JOIN user_details d ON d.user_id = u.id
-       WHERE u.id = $1`,
+      `
+        SELECT
+          u.id,
+          s.email,
+          u.nickname,
+          u.is_admin,
+          u.block_strangers,
+          u.snippet,
+          u.avatar,
+          u.ai_model,
+          id_to_timestamp(u.id) AS created_at,
+          u.updated_at,
+          COALESCE(ufr.count, 0) AS count_followers,
+          COALESCE(ufe.count, 0) AS count_followees,
+          COALESCE(upc.count, 0) AS count_posts,
+          d.introduction,
+          d.ai_personality
+        FROM users u
+        LEFT JOIN user_secrets         s   ON s.user_id  = u.id
+        LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
+        LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
+        LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+        LEFT JOIN user_details         d   ON d.user_id  = u.id
+        WHERE u.id = $1
+      `,
       [hexToDec(id)],
     );
+
     if (userRes.rows.length === 0) return null;
-    const row = userRes.rows[0];
-    row.id = decToHex(row.id);
-    const user: Record<string, unknown> = snakeToCamel(row);
+
+    const row = userRes.rows[0] as Record<string, unknown>;
+    row.id = decToHex(row.id as string);
+    let user = snakeToCamel<UserDetail>(row);
+
     if (focusUserId && focusUserId !== id) {
-      const res = await pgQuery(
+      const res = await pgQuery<FocusRelFlagsRow>(
         this.pgPool,
-        `SELECT
-           EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $1 AND followee_id = $2) AS is_followed_by_focus_user,
-           EXISTS (SELECT 1 FROM user_follows WHERE follower_id = $2 AND followee_id = $1) AS is_following_focus_user,
-           EXISTS (SELECT 1 FROM user_blocks  WHERE blocker_id  = $1 AND blockee_id  = $2) AS is_blocked_by_focus_user,
-           EXISTS (SELECT 1 FROM user_blocks  WHERE blocker_id  = $2 AND blockee_id  = $1) AS is_blocking_focus_user`,
+        `
+          SELECT
+            EXISTS (
+              SELECT 1 FROM user_follows
+              WHERE follower_id = $1 AND followee_id = $2
+            ) AS is_followed_by_focus_user,
+            EXISTS (
+              SELECT 1 FROM user_follows
+              WHERE follower_id = $2 AND followee_id = $1
+            ) AS is_following_focus_user,
+            EXISTS (
+              SELECT 1 FROM user_blocks
+              WHERE blocker_id = $1 AND blockee_id = $2
+            ) AS is_blocked_by_focus_user,
+            EXISTS (
+              SELECT 1 FROM user_blocks
+              WHERE blocker_id = $2 AND blockee_id = $1
+            ) AS is_blocking_focus_user
+        `,
         [hexToDec(focusUserId), hexToDec(id)],
       );
       const r = res.rows[0];
@@ -135,7 +186,8 @@ export class UsersService {
       user.isBlockedByFocusUser = r.is_blocked_by_focus_user;
       user.isBlockingFocusUser = r.is_blocking_focus_user;
     }
-    return user as UserDetail;
+
+    return user;
   }
 
   async listUsers(input?: ListUsersInput, focusUserId?: string): Promise<User[]> {
@@ -145,24 +197,35 @@ export class UsersService {
     const query = input?.query?.trim();
     const nickname = input?.nickname?.trim();
     const nicknamePrefix = input?.nicknamePrefix?.trim();
+
     let baseSelect = `
       SELECT
-        u.id, s.email, u.nickname, u.is_admin, u.block_strangers,
-        u.snippet, u.avatar, u.ai_model,
-        id_to_timestamp(u.id) AS created_at, u.updated_at,
-        COALESCE(ufr.count,0) AS count_followers,
-        COALESCE(ufe.count,0) AS count_followees,
-        COALESCE(upc.count,0) AS count_posts
+        u.id,
+        u.nickname,
+        u.is_admin,
+        u.block_strangers,
+        u.snippet,
+        u.avatar,
+        u.ai_model,
+        id_to_timestamp(u.id) AS created_at,
+        u.updated_at,
+        COALESCE(ufr.count, 0) AS count_followers,
+        COALESCE(ufe.count, 0) AS count_followees,
+        COALESCE(upc.count, 0) AS count_posts
       FROM users u
-      LEFT JOIN user_secrets s ON s.user_id = u.id
       LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
       LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-      LEFT JOIN user_post_counts upc ON upc.user_id = u.id
-    `;
+      LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+    `.trim();
+
     const params: unknown[] = [];
     const wheres: string[] = [];
+
     if (query) {
-      baseSelect += ` LEFT JOIN user_details d ON d.user_id = u.id`;
+      baseSelect += `
+        LEFT JOIN user_details d
+          ON d.user_id = u.id
+      `;
       const q = `%${escapeForLike(query)}%`;
       wheres.push(`(u.nickname ILIKE $1 OR d.introduction ILIKE $1)`);
       params.push(q);
@@ -175,11 +238,16 @@ export class UsersService {
       wheres.push(`LOWER(u.nickname) LIKE $${params.length + 1}`);
       params.push(q);
     }
+
     let orderClause = "";
     if (order === "social" && focusUserId) {
       baseSelect += `
-        LEFT JOIN user_follows f1 ON f1.follower_id = $${params.length + 1} AND f1.followee_id = u.id
-        LEFT JOIN user_follows f2 ON f2.follower_id = u.id AND f2.followee_id = $${params.length + 1}
+        LEFT JOIN user_follows f1
+          ON f1.follower_id = $${params.length + 1}
+         AND f1.followee_id = u.id
+        LEFT JOIN user_follows f2
+          ON f2.follower_id = u.id
+         AND f2.followee_id = $${params.length + 1}
       `;
       const dec = hexToDec(focusUserId);
       params.push(dec);
@@ -193,42 +261,70 @@ export class UsersService {
       const dir = order.toLowerCase() === "asc" ? "ASC" : "DESC";
       orderClause = `ORDER BY u.id ${dir}`;
     }
+
     let sql = baseSelect;
-    if (wheres.length > 0) sql += " WHERE " + wheres.join(" AND ");
+    if (wheres.length > 0) sql += ` WHERE ${wheres.join(" AND ")}`;
     sql += ` ${orderClause} OFFSET $${params.length + 1} LIMIT $${params.length + 2}`;
     params.push(offset, limit);
+
     const res = await pgQuery(this.pgPool, sql, params);
     const users = res.rows.map((row: Record<string, unknown>) => {
-      row.id = decToHex(row.id);
+      row.id = decToHex(row.id as string);
       return snakeToCamel<User>(row);
     });
+
     if (users.length === 0) return [];
+
     if (focusUserId) {
       const ids = users.map((u) => u.id);
       const fwRes = await pgQuery<{ followee_id: string }>(
         this.pgPool,
-        `SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)`,
+        `
+          SELECT followee_id
+          FROM user_follows
+          WHERE follower_id = $1
+            AND followee_id = ANY($2)
+        `,
         [hexToDec(focusUserId), hexArrayToDec(ids)],
       );
       const followedSet = new Set(fwRes.rows.map((r) => decToHex(r.followee_id) as string));
+
       const fgRes = await pgQuery<{ follower_id: string }>(
         this.pgPool,
-        `SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2`,
+        `
+          SELECT follower_id
+          FROM user_follows
+          WHERE follower_id = ANY($1)
+            AND followee_id = $2
+        `,
         [hexArrayToDec(ids), hexToDec(focusUserId)],
       );
       const followingSet = new Set(fgRes.rows.map((r) => decToHex(r.follower_id) as string));
+
       const blByRes = await pgQuery<{ blockee_id: string }>(
         this.pgPool,
-        `SELECT blockee_id FROM user_blocks WHERE blocker_id = $1 AND blockee_id = ANY($2)`,
+        `
+          SELECT blockee_id
+          FROM user_blocks
+          WHERE blocker_id = $1
+            AND blockee_id = ANY($2)
+        `,
         [hexToDec(focusUserId), hexArrayToDec(ids)],
       );
       const blockedByFocusSet = new Set(blByRes.rows.map((r) => decToHex(r.blockee_id) as string));
+
       const blToRes = await pgQuery<{ blocker_id: string }>(
         this.pgPool,
-        `SELECT blocker_id FROM user_blocks WHERE blocker_id = ANY($1) AND blockee_id = $2`,
+        `
+          SELECT blocker_id
+          FROM user_blocks
+          WHERE blocker_id = ANY($1)
+            AND blockee_id = $2
+        `,
         [hexArrayToDec(ids), hexToDec(focusUserId)],
       );
       const blockingFocusSet = new Set(blToRes.rows.map((r) => decToHex(r.blocker_id) as string));
+
       for (const u of users) {
         if (u.id === focusUserId) continue;
         u.isFollowedByFocusUser = followedSet.has(u.id);
@@ -237,6 +333,7 @@ export class UsersService {
         u.isBlockingFocusUser = blockingFocusSet.has(u.id);
       }
     }
+
     return users;
   }
 
@@ -249,6 +346,7 @@ export class UsersService {
     if (typeof input.password !== "string" || input.password.trim() === "")
       throw new Error("password is required");
     if (typeof input.introduction !== "string") throw new Error("introduction is required");
+
     let id: string;
     if (input.id && input.id.trim() !== "") {
       const hexId = input.id.trim();
@@ -257,14 +355,20 @@ export class UsersService {
     } else {
       id = await this.idIssueService.issueId();
     }
+
     const passwordHash = await generatePasswordHash(input.password);
     const snippet = makeSnippetJsonFromMarkdown(input.introduction ?? "");
+
     await pgQuery(this.pgPool, "BEGIN");
     try {
       await pgQuery(
         this.pgPool,
-        `INSERT INTO users (id, nickname, is_admin, block_strangers, snippet, avatar, ai_model, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)`,
+        `
+          INSERT INTO users (
+            id, nickname, is_admin, block_strangers, snippet, avatar, ai_model, updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
+        `,
         [
           hexToDec(id),
           input.nickname,
@@ -275,39 +379,57 @@ export class UsersService {
           input.aiModel,
         ],
       );
+
       await pgQuery(
         this.pgPool,
-        `INSERT INTO user_secrets (user_id, email, password) VALUES ($1, $2, $3)`,
+        `
+          INSERT INTO user_secrets (user_id, email, password)
+          VALUES ($1, $2, $3)
+        `,
         [hexToDec(id), input.email, passwordHash],
       );
+
       await pgQuery(
         this.pgPool,
-        `INSERT INTO user_details (user_id, introduction, ai_personality)
-         VALUES ($1, $2, $3)
-         ON CONFLICT (user_id) DO UPDATE
-           SET introduction = EXCLUDED.introduction,
-               ai_personality = EXCLUDED.ai_personality`,
+        `
+          INSERT INTO user_details (user_id, introduction, ai_personality)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (user_id) DO UPDATE
+            SET introduction = EXCLUDED.introduction,
+                ai_personality = EXCLUDED.ai_personality
+        `,
         [hexToDec(id), input.introduction, input.aiPersonality ?? null],
       );
+
       const res = await pgQuery(
         this.pgPool,
-        `SELECT
-           u.id, s.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model,
-           id_to_timestamp(u.id) AS created_at, u.updated_at,
-           COALESCE(ufr.count,0) AS count_followers,
-           COALESCE(ufe.count,0) AS count_followees,
-           COALESCE(upc.count,0) AS count_posts
-         FROM users u
-         LEFT JOIN user_secrets s ON s.user_id = u.id
-         LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
-         LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-         LEFT JOIN user_post_counts upc ON upc.user_id = u.id
-         WHERE u.id = $1`,
+        `
+          SELECT
+            u.id,
+            u.nickname,
+            u.is_admin,
+            u.block_strangers,
+            u.snippet,
+            u.avatar,
+            u.ai_model,
+            id_to_timestamp(u.id) AS created_at,
+            u.updated_at,
+            COALESCE(ufr.count, 0) AS count_followers,
+            COALESCE(ufe.count, 0) AS count_followees,
+            COALESCE(upc.count, 0) AS count_posts
+          FROM users u
+          LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
+          LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
+          LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+          WHERE u.id = $1
+        `,
         [hexToDec(id)],
       );
+
       await pgQuery(this.pgPool, "COMMIT");
-      const row = res.rows[0];
-      row.id = decToHex(row.id);
+
+      const row = res.rows[0] as Record<string, unknown>;
+      row.id = decToHex(row.id as string);
       return snakeToCamel<User>(row);
     } catch (e) {
       await pgQuery(this.pgPool, "ROLLBACK");
@@ -319,6 +441,7 @@ export class UsersService {
     const userCols: string[] = [];
     const userVals: unknown[] = [];
     let uidx = 1;
+
     if (input.nickname !== undefined) {
       if (!input.nickname || input.nickname.trim() === "") throw new Error("nickname is required");
       userCols.push(`nickname = $${uidx++}`);
@@ -340,59 +463,87 @@ export class UsersService {
       userCols.push(`ai_model = $${uidx++}`);
       userVals.push(input.aiModel);
     }
+
     const touchSnippet = input.introduction !== undefined;
+
     await pgQuery(this.pgPool, "BEGIN");
     try {
       if (input.email !== undefined) {
         if (!input.email || input.email.trim() === "") throw new Error("email is required");
         if (!validateEmail(input.email)) throw new Error("given email is invalid");
-        await pgQuery(this.pgPool, `UPDATE user_secrets SET email = $1 WHERE user_id = $2`, [
-          input.email,
-          hexToDec(input.id),
-        ]);
+        await pgQuery(
+          this.pgPool,
+          `
+            UPDATE user_secrets
+            SET email = $1
+            WHERE user_id = $2
+          `,
+          [input.email, hexToDec(input.id)],
+        );
       }
+
       if (input.introduction !== undefined || input.aiPersonality !== undefined) {
         await pgQuery(
           this.pgPool,
-          `INSERT INTO user_details (user_id, introduction, ai_personality)
-           VALUES ($1, $2, $3)
-           ON CONFLICT (user_id) DO UPDATE
-             SET introduction = COALESCE(EXCLUDED.introduction, user_details.introduction),
-                 ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)`,
+          `
+            INSERT INTO user_details (user_id, introduction, ai_personality)
+            VALUES ($1, $2, $3)
+            ON CONFLICT (user_id) DO UPDATE
+              SET introduction  = COALESCE(EXCLUDED.introduction,  user_details.introduction),
+                  ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)
+          `,
           [hexToDec(input.id), input.introduction ?? null, input.aiPersonality ?? null],
         );
       }
+
       if (touchSnippet && typeof input.introduction === "string") {
         userCols.push(`snippet = $${uidx++}`);
         const snippet = makeSnippetJsonFromMarkdown(input.introduction);
         userVals.push(snippet);
       }
+
       userCols.push(`updated_at = now()`);
       userVals.push(hexToDec(input.id));
+
       if (userCols.length > 0) {
-        const sql = `UPDATE users SET ${userCols.join(", ")} WHERE id = $${uidx}`;
+        const sql = `
+          UPDATE users
+          SET ${userCols.join(", ")}
+          WHERE id = $${uidx}
+        `.trim();
         await pgQuery(this.pgPool, sql, userVals);
       }
+
       const res = await pgQuery(
         this.pgPool,
-        `SELECT
-           u.id, s.email, u.nickname, u.is_admin, u.block_strangers, u.snippet, u.avatar, u.ai_model,
-           id_to_timestamp(u.id) AS created_at, u.updated_at,
-           COALESCE(ufr.count,0) AS count_followers,
-           COALESCE(ufe.count,0) AS count_followees,
-           COALESCE(upc.count,0) AS count_posts
-         FROM users u
-         LEFT JOIN user_secrets s ON s.user_id = u.id
-         LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
-         LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-         LEFT JOIN user_post_counts upc ON upc.user_id = u.id
-         WHERE u.id = $1`,
+        `
+          SELECT
+            u.id,
+            u.nickname,
+            u.is_admin,
+            u.block_strangers,
+            u.snippet,
+            u.avatar,
+            u.ai_model,
+            id_to_timestamp(u.id) AS created_at,
+            u.updated_at,
+            COALESCE(ufr.count, 0) AS count_followers,
+            COALESCE(ufe.count, 0) AS count_followees,
+            COALESCE(upc.count, 0) AS count_posts
+          FROM users u
+          LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
+          LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
+          LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+          WHERE u.id = $1
+        `,
         [hexToDec(input.id)],
       );
+
       await pgQuery(this.pgPool, "COMMIT");
+
       if (!res.rows[0]) return null;
-      const row = res.rows[0];
-      row.id = decToHex(row.id);
+      const row = res.rows[0] as Record<string, unknown>;
+      row.id = decToHex(row.id as string);
       return snakeToCamel<User>(row);
     } catch (e) {
       await pgQuery(this.pgPool, "ROLLBACK");
@@ -402,9 +553,11 @@ export class UsersService {
 
   async startUpdateEmail(userId: string, newEmail: string): Promise<{ updateEmailId: string }> {
     if (!validateEmail(newEmail)) throw new Error("Invalid email format.");
+
     const updateEmailId = uuidv4();
     const verificationCode = generateVerificationCode();
     const key = `updateEmail:${updateEmailId}`;
+
     await this.redis.hmset(key, {
       userId,
       newEmail,
@@ -412,6 +565,7 @@ export class UsersService {
       createdAt: new Date().toISOString(),
     });
     await this.redis.expire(key, 900);
+
     if (Config.TEST_SIGNUP_CODE.length == 0) {
       await this.redis.lpush(
         "mail-queue",
@@ -424,45 +578,72 @@ export class UsersService {
   async verifyUpdateEmail(userId: string, updateEmailId: string, code: string): Promise<void> {
     const key = `updateEmail:${updateEmailId}`;
     const data = await this.redis.hgetall(key);
+
     if (!data || !data.userId || !data.newEmail || !data.verificationCode)
       throw new Error("Update email info not found or expired.");
     if (data.userId !== userId) throw new Error("Session/user mismatch");
     if (data.verificationCode !== code) throw new Error("Verification code mismatch.");
-    const exists = await pgQuery(this.pgPool, `SELECT 1 FROM user_secrets WHERE email = $1`, [
-      data.newEmail,
-    ]);
+
+    const exists = await pgQuery(
+      this.pgPool,
+      `
+        SELECT 1
+        FROM user_secrets
+        WHERE email = $1
+      `,
+      [data.newEmail],
+    );
     if (exists.rows.length > 0) throw new Error("Email already in use.");
+
     const res = await pgQuery(
       this.pgPool,
-      `UPDATE user_secrets SET email = $1 WHERE user_id = $2`,
+      `
+        UPDATE user_secrets
+        SET email = $1
+        WHERE user_id = $2
+      `,
       [data.newEmail, hexToDec(data.userId)],
     );
+
     await this.redis.del(key);
     if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
   }
 
   async updateUserPassword(input: UpdatePasswordInput): Promise<void> {
     if (input.password.trim() === "") throw new Error("password is mustn't be empty");
+
     const passwordHash = await generatePasswordHash(input.password);
     const res = await pgQuery(
       this.pgPool,
-      `UPDATE user_secrets SET password = $1 WHERE user_id = $2`,
+      `
+        UPDATE user_secrets
+        SET password = $1
+        WHERE user_id = $2
+      `,
       [passwordHash, hexToDec(input.id)],
     );
+
     if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
   }
 
   async startResetPassword(email: string): Promise<{ resetPasswordId: string; webCode: string }> {
     const res = await pgQuery(
       this.pgPool,
-      `SELECT user_id AS id FROM user_secrets WHERE email = $1`,
+      `
+        SELECT user_id AS id
+        FROM user_secrets
+        WHERE email = $1
+      `,
       [email],
     );
     if (!res.rows[0] || !res.rows[0].id) throw new Error("User not found");
+
     const userId: string = decToHex(res.rows[0].id) as string;
+
     const resetPasswordId = uuidv4();
     const webCode = generateVerificationCode();
     const mailCode = generateVerificationCode();
+
     const key = `resetPassword:${resetPasswordId}`;
     await this.redis.hmset(key, {
       userId,
@@ -472,6 +653,7 @@ export class UsersService {
       createdAt: new Date().toISOString(),
     });
     await this.redis.expire(key, 900);
+
     if (Config.TEST_SIGNUP_CODE.length == 0) {
       await this.redis.lpush(
         "mail-queue",
@@ -496,6 +678,7 @@ export class UsersService {
   ): Promise<void> {
     const key = `resetPassword:${resetPasswordId}`;
     const data = await this.redis.hgetall(key);
+
     if (!data || !data.userId || !data.email || !data.webCode || !mailCode)
       throw new Error("Reset session not found or expired");
     if (data.email !== email) throw new Error("Session/user mismatch");
@@ -503,18 +686,31 @@ export class UsersService {
     if (data.mailCode !== mailCode) throw new Error("Mail verification code mismatch");
     if (!newPassword || newPassword.trim().length < 6)
       throw new Error("Password must be at least 6 characters");
+
     const passwordHash = await generatePasswordHash(newPassword);
     const res = await pgQuery(
       this.pgPool,
-      `UPDATE user_secrets SET password = $1 WHERE user_id = $2`,
+      `
+        UPDATE user_secrets
+        SET password = $1
+        WHERE user_id = $2
+      `,
       [passwordHash, hexToDec(data.userId)],
     );
+
     await this.redis.del(key);
     if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
   }
 
   async deleteUser(id: string): Promise<void> {
-    const res = await pgQuery(this.pgPool, `DELETE FROM users WHERE id = $1`, [hexToDec(id)]);
+    const res = await pgQuery(
+      this.pgPool,
+      `
+        DELETE FROM users
+        WHERE id = $1
+      `,
+      [hexToDec(id)],
+    );
     if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
   }
 
@@ -522,56 +718,90 @@ export class UsersService {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+
     const sql = `
       SELECT
-        u.id, s.email, u.nickname, u.is_admin, u.block_strangers,
-        u.snippet, u.avatar, u.ai_model,
-        id_to_timestamp(u.id) AS created_at, u.updated_at,
-        COALESCE(ufr.count,0) AS count_followers,
-        COALESCE(ufe.count,0) AS count_followees,
-        COALESCE(upc.count,0) AS count_posts
+        u.id,
+        u.nickname,
+        u.is_admin,
+        u.block_strangers,
+        u.snippet,
+        u.avatar,
+        u.ai_model,
+        id_to_timestamp(u.id) AS created_at,
+        u.updated_at,
+        COALESCE(ufr.count, 0) AS count_followers,
+        COALESCE(ufe.count, 0) AS count_followees,
+        COALESCE(upc.count, 0) AS count_posts
       FROM user_follows f
       JOIN users u ON f.followee_id = u.id
-      LEFT JOIN user_secrets s ON s.user_id = u.id
       LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
       LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-      LEFT JOIN user_post_counts upc ON upc.user_id = u.id
+      LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
       WHERE f.follower_id = $1
       ORDER BY f.created_at ${order}, f.followee_id ${order}
       OFFSET $2 LIMIT $3
-    `;
+    `.trim();
+
     const res = await pgQuery(this.pgPool, sql, [hexToDec(input.followerId), offset, limit]);
     const users = res.rows.map((row: Record<string, unknown>) => {
-      row.id = decToHex(row.id);
+      row.id = decToHex(row.id as string);
       return snakeToCamel<User>(row);
     });
+
     if (users.length === 0) return [];
+
     if (focusUserId) {
       const ids = users.map((u) => u.id);
+
       const fwRes = await pgQuery<{ followee_id: string }>(
         this.pgPool,
-        `SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)`,
+        `
+          SELECT followee_id
+          FROM user_follows
+          WHERE follower_id = $1
+            AND followee_id = ANY($2)
+        `,
         [hexToDec(focusUserId), hexArrayToDec(ids)],
       );
       const followedSet = new Set(fwRes.rows.map((r) => decToHex(r.followee_id) as string));
+
       const fgRes = await pgQuery<{ follower_id: string }>(
         this.pgPool,
-        `SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2`,
+        `
+          SELECT follower_id
+          FROM user_follows
+          WHERE follower_id = ANY($1)
+            AND followee_id = $2
+        `,
         [hexArrayToDec(ids), hexToDec(focusUserId)],
       );
       const followingSet = new Set(fgRes.rows.map((r) => decToHex(r.follower_id) as string));
+
       const blByRes = await pgQuery<{ blockee_id: string }>(
         this.pgPool,
-        `SELECT blockee_id FROM user_blocks WHERE blocker_id = $1 AND blockee_id = ANY($2)`,
+        `
+          SELECT blockee_id
+          FROM user_blocks
+          WHERE blocker_id = $1
+            AND blockee_id = ANY($2)
+        `,
         [hexToDec(focusUserId), hexArrayToDec(ids)],
       );
       const blockedByFocusSet = new Set(blByRes.rows.map((r) => decToHex(r.blockee_id) as string));
+
       const blToRes = await pgQuery<{ blocker_id: string }>(
         this.pgPool,
-        `SELECT blocker_id FROM user_blocks WHERE blocker_id = ANY($1) AND blockee_id = $2`,
+        `
+          SELECT blocker_id
+          FROM user_blocks
+          WHERE blocker_id = ANY($1)
+            AND blockee_id = $2
+        `,
         [hexArrayToDec(ids), hexToDec(focusUserId)],
       );
       const blockingFocusSet = new Set(blToRes.rows.map((r) => decToHex(r.blocker_id) as string));
+
       for (const u of users) {
         if (u.id === focusUserId) continue;
         u.isFollowedByFocusUser = followedSet.has(u.id);
@@ -580,6 +810,7 @@ export class UsersService {
         u.isBlockingFocusUser = blockingFocusSet.has(u.id);
       }
     }
+
     return users;
   }
 
@@ -587,56 +818,90 @@ export class UsersService {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+
     const sql = `
       SELECT
-        u.id, s.email, u.nickname, u.is_admin, u.block_strangers,
-        u.snippet, u.avatar, u.ai_model,
-        id_to_timestamp(u.id) AS created_at, u.updated_at,
-        COALESCE(ufr.count,0) AS count_followers,
-        COALESCE(ufe.count,0) AS count_followees,
-        COALESCE(upc.count,0) AS count_posts
+        u.id,
+        u.nickname,
+        u.is_admin,
+        u.block_strangers,
+        u.snippet,
+        u.avatar,
+        u.ai_model,
+        id_to_timestamp(u.id) AS created_at,
+        u.updated_at,
+        COALESCE(ufr.count, 0) AS count_followers,
+        COALESCE(ufe.count, 0) AS count_followees,
+        COALESCE(upc.count, 0) AS count_posts
       FROM user_follows f
       JOIN users u ON f.follower_id = u.id
-      LEFT JOIN user_secrets s ON s.user_id = u.id
       LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
       LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-      LEFT JOIN user_post_counts upc ON upc.user_id = u.id
+      LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
       WHERE f.followee_id = $1
       ORDER BY f.created_at ${order}, f.follower_id ${order}
       OFFSET $2 LIMIT $3
-    `;
+    `.trim();
+
     const res = await pgQuery(this.pgPool, sql, [hexToDec(input.followeeId), offset, limit]);
     const users = res.rows.map((row: Record<string, unknown>) => {
-      row.id = decToHex(row.id);
+      row.id = decToHex(row.id as string);
       return snakeToCamel<User>(row);
     });
+
     if (users.length === 0) return [];
+
     if (focusUserId) {
       const ids = users.map((u) => u.id);
+
       const fwRes = await pgQuery<{ followee_id: string }>(
         this.pgPool,
-        `SELECT followee_id FROM user_follows WHERE follower_id = $1 AND followee_id = ANY($2)`,
+        `
+          SELECT followee_id
+          FROM user_follows
+          WHERE follower_id = $1
+            AND followee_id = ANY($2)
+        `,
         [hexToDec(focusUserId), hexArrayToDec(ids)],
       );
       const followedSet = new Set(fwRes.rows.map((r) => decToHex(r.followee_id) as string));
+
       const fgRes = await pgQuery<{ follower_id: string }>(
         this.pgPool,
-        `SELECT follower_id FROM user_follows WHERE follower_id = ANY($1) AND followee_id = $2`,
+        `
+          SELECT follower_id
+          FROM user_follows
+          WHERE follower_id = ANY($1)
+            AND followee_id = $2
+        `,
         [hexArrayToDec(ids), hexToDec(focusUserId)],
       );
       const followingSet = new Set(fgRes.rows.map((r) => decToHex(r.follower_id) as string));
+
       const blByRes = await pgQuery<{ blockee_id: string }>(
         this.pgPool,
-        `SELECT blockee_id FROM user_blocks WHERE blocker_id = $1 AND blockee_id = ANY($2)`,
+        `
+          SELECT blockee_id
+          FROM user_blocks
+          WHERE blocker_id = $1
+            AND blockee_id = ANY($2)
+        `,
         [hexToDec(focusUserId), hexArrayToDec(ids)],
       );
       const blockedByFocusSet = new Set(blByRes.rows.map((r) => decToHex(r.blockee_id) as string));
+
       const blToRes = await pgQuery<{ blocker_id: string }>(
         this.pgPool,
-        `SELECT blocker_id FROM user_blocks WHERE blocker_id = ANY($1) AND blockee_id = $2`,
+        `
+          SELECT blocker_id
+          FROM user_blocks
+          WHERE blocker_id = ANY($1)
+            AND blockee_id = $2
+        `,
         [hexArrayToDec(ids), hexToDec(focusUserId)],
       );
       const blockingFocusSet = new Set(blToRes.rows.map((r) => decToHex(r.blocker_id) as string));
+
       for (const u of users) {
         if (u.id === focusUserId) continue;
         u.isFollowedByFocusUser = followedSet.has(u.id);
@@ -645,19 +910,24 @@ export class UsersService {
         u.isBlockingFocusUser = blockingFocusSet.has(u.id);
       }
     }
+
     return users;
   }
 
   async addFollow(input: FollowUserPair): Promise<void> {
     if (input.followerId === input.followeeId) throw new Error("cannot follow yourself");
+
     const res = await pgQuery(
       this.pgPool,
-      `INSERT INTO user_follows (follower_id, followee_id, created_at)
-       VALUES ($1, $2, now())
-       ON CONFLICT DO NOTHING`,
+      `
+        INSERT INTO user_follows (follower_id, followee_id, created_at)
+        VALUES ($1, $2, now())
+        ON CONFLICT DO NOTHING
+      `,
       [hexToDec(input.followerId), hexToDec(input.followeeId)],
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("already following");
+
     if (this.eventLogService) {
       try {
         this.eventLogService.recordFollow({
@@ -671,7 +941,11 @@ export class UsersService {
   async removeFollow(input: FollowUserPair): Promise<void> {
     const res = await pgQuery(
       this.pgPool,
-      `DELETE FROM user_follows WHERE follower_id = $1 AND followee_id = $2`,
+      `
+        DELETE FROM user_follows
+        WHERE follower_id = $1
+          AND followee_id = $2
+      `,
       [hexToDec(input.followerId), hexToDec(input.followeeId)],
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("not following");
@@ -680,7 +954,13 @@ export class UsersService {
   async checkFollow(input: FollowUserPair): Promise<boolean> {
     const r = await pgQuery(
       this.pgPool,
-      `SELECT 1 FROM user_follows WHERE follower_id = $1 AND followee_id = $2 LIMIT 1`,
+      `
+        SELECT 1
+        FROM user_follows
+        WHERE follower_id = $1
+          AND followee_id = $2
+        LIMIT 1
+      `,
       [hexToDec(input.followerId), hexToDec(input.followeeId)],
     );
     return (r.rowCount ?? 0) > 0;
@@ -688,11 +968,14 @@ export class UsersService {
 
   async addBlock(input: BlockUserPair): Promise<void> {
     if (input.blockerId === input.blockeeId) throw new Error("cannot block yourself");
+
     const res = await pgQuery(
       this.pgPool,
-      `INSERT INTO user_blocks (blocker_id, blockee_id, created_at)
-       VALUES ($1, $2, now())
-       ON CONFLICT DO NOTHING`,
+      `
+        INSERT INTO user_blocks (blocker_id, blockee_id, created_at)
+        VALUES ($1, $2, now())
+        ON CONFLICT DO NOTHING
+      `,
       [hexToDec(input.blockerId), hexToDec(input.blockeeId)],
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("already blocked");
@@ -701,7 +984,11 @@ export class UsersService {
   async removeBlock(input: BlockUserPair): Promise<void> {
     const res = await pgQuery(
       this.pgPool,
-      `DELETE FROM user_blocks WHERE blocker_id = $1 AND blockee_id = $2`,
+      `
+        DELETE FROM user_blocks
+        WHERE blocker_id = $1
+          AND blockee_id = $2
+      `,
       [hexToDec(input.blockerId), hexToDec(input.blockeeId)],
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("not blocking");
@@ -710,7 +997,13 @@ export class UsersService {
   async checkBlock(input: BlockUserPair): Promise<boolean> {
     const r = await pgQuery(
       this.pgPool,
-      `SELECT 1 FROM user_blocks WHERE blocker_id = $1 AND blockee_id = $2 LIMIT 1`,
+      `
+        SELECT 1
+        FROM user_blocks
+        WHERE blocker_id = $1
+          AND blockee_id = $2
+        LIMIT 1
+      `,
       [hexToDec(input.blockerId), hexToDec(input.blockeeId)],
     );
     return (r.rowCount ?? 0) > 0;
@@ -725,8 +1018,10 @@ export class UsersService {
     const k = offset + limit;
     const omitSelf = !!input.omitSelf;
     const omitOthers = !!input.omitOthers;
+
     const ctes: string[] = [];
     const unions: string[] = [];
+
     if (!omitSelf) {
       ctes.push(`
         self AS (
@@ -734,9 +1029,11 @@ export class UsersService {
           FROM users u
           WHERE u.id = $2
             AND lower(u.nickname) LIKE $1
-        )`);
+        )
+      `);
       unions.push(`SELECT * FROM self`);
     }
+
     ctes.push(`
       followees AS (
         SELECT 1 AS prio, u.id, lower(u.nickname) AS nkey
@@ -746,8 +1043,10 @@ export class UsersService {
           AND lower(u.nickname) LIKE $1
         ORDER BY lower(u.nickname), u.id
         LIMIT $5
-      )`);
+      )
+    `);
     unions.push(`SELECT * FROM followees`);
+
     if (!omitOthers) {
       ctes.push(`
         others AS (
@@ -756,9 +1055,11 @@ export class UsersService {
           WHERE lower(u.nickname) LIKE $1
           ORDER BY lower(u.nickname), u.id
           LIMIT $5
-        )`);
+        )
+      `);
       unions.push(`SELECT * FROM others`);
     }
+
     const sql = `
       WITH
       ${ctes.join(",\n")},
@@ -778,23 +1079,31 @@ export class UsersService {
         LIMIT $4
       )
       SELECT
-        u.id, s.email, u.nickname, u.is_admin, u.block_strangers,
-        u.snippet, u.avatar, u.ai_model,
-        id_to_timestamp(u.id) AS created_at, u.updated_at,
-        COALESCE(ufr.count,0) AS count_followers,
-        COALESCE(ufe.count,0) AS count_followees,
-        COALESCE(upc.count,0) AS count_posts
+        u.id,
+        u.nickname,
+        u.is_admin,
+        u.block_strangers,
+        u.snippet,
+        u.avatar,
+        u.ai_model,
+        id_to_timestamp(u.id) AS created_at,
+        u.updated_at,
+        COALESCE(ufr.count, 0) AS count_followers,
+        COALESCE(ufe.count, 0) AS count_followees,
+        COALESCE(upc.count, 0) AS count_posts
       FROM page p
       JOIN users u ON u.id = p.id
-      LEFT JOIN user_secrets s ON s.user_id = u.id
       LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
       LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-      LEFT JOIN user_post_counts upc ON upc.user_id = u.id
-      ORDER BY p.prio, p.nkey, u.id;`;
+      LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+      ORDER BY p.prio, p.nkey, u.id
+    `.trim();
+
     const params = [likePattern, hexToDec(focusUserId), offset, limit, k];
     const res = await pgQuery(this.pgPool, sql, params);
+
     return res.rows.map((row: Record<string, unknown>) => {
-      row.id = decToHex(row.id);
+      row.id = decToHex(row.id as string);
       return snakeToCamel<User>(row);
     });
   }

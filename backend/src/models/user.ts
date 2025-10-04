@@ -1,6 +1,5 @@
 export type User = {
   id: string;
-  email: string;
   nickname: string;
   isAdmin: boolean;
   blockStrangers: boolean;
@@ -24,6 +23,7 @@ export type UserLite = Omit<
 >;
 
 export type UserDetail = User & {
+  email: string;
   introduction: string;
   aiPersonality: string | null;
 };
