@@ -27,7 +27,6 @@ components:
       type: object
       properties:
         id: { type: string }
-        email: { type: string }
         nickname: { type: string }
         isAdmin: { type: boolean }
         blockStrangers: { type: boolean }
@@ -54,7 +53,6 @@ components:
       required:
         [
           id,
-          email,
           nickname,
           isAdmin,
           blockStrangers,
@@ -72,15 +70,15 @@ components:
         - $ref: "#/components/schemas/User"
         - type: object
           properties:
+            email: { type: string }
             introduction: { type: string }
             aiPersonality: { type: string, nullable: true }
-          required: [introduction]
+          required: [email, introduction]
 
     UserLite:
       type: object
       properties:
         id: { type: string }
-        email: { type: string }
         nickname: { type: string }
         isAdmin: { type: boolean }
         blockStrangers: { type: boolean }
@@ -92,7 +90,6 @@ components:
       required:
         [
           id,
-          email,
           nickname,
           isAdmin,
           blockStrangers,

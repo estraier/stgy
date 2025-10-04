@@ -17,7 +17,6 @@ export type AIModel = {
 
 export type User = {
   id: string;
-  email: string;
   nickname: string;
   isAdmin: boolean;
   blockStrangers: boolean;
@@ -36,6 +35,7 @@ export type User = {
 };
 
 export type UserDetail = User & {
+  email: string;
   introduction: string;
   aiPersonality: string | null;
 };
