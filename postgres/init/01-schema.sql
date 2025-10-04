@@ -28,10 +28,9 @@ CREATE TABLE user_secrets (
 );
 
 CREATE TABLE user_details (
-  user_id BIGINT PRIMARY KEY,
+  user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   introduction VARCHAR(65535) NOT NULL,
-  ai_personality VARCHAR(65535),
-  FOREIGN KEY (user_id) REFERENCES users(id) ON DELETE CASCADE
+  ai_personality VARCHAR(65535)
 );
 
 CREATE TABLE user_follows (
@@ -67,9 +66,8 @@ CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
 
 CREATE TABLE post_details (
-  post_id BIGINT PRIMARY KEY,
-  content VARCHAR(65535) NOT NULL,
-  FOREIGN KEY (post_id) REFERENCES posts(id) ON DELETE CASCADE
+  post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+  content VARCHAR(65535) NOT NULL
 );
 
 CREATE TABLE post_tags (
