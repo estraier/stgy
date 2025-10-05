@@ -39,7 +39,6 @@ SELECT
   p.id, p.snippet, p.owned_by, p.reply_to,
   p.allow_likes, p.allow_replies, p.updated_at,
   u.nickname AS owner_nickname, pu.nickname AS reply_to_owner_nickname,
-  p.count_replies AS count_replies, p.count_likes AS count_likes,
   ARRAY(SELECT pt2.name FROM post_tags pt2
     WHERE pt2.post_id = p.id ORDER BY pt2.name) AS tags
 FROM posts p
@@ -116,7 +115,6 @@ SELECT
   p.id, p.snippet, p.owned_by, p.reply_to,
   p.allow_likes, p.allow_replies, p.updated_at,
   u.nickname AS owner_nickname, pu.nickname AS reply_to_owner_nickname,
-  p.count_replies AS count_replies, p.count_likes AS count_likes,
   ARRAY(SELECT pt2.name FROM post_tags pt2
     WHERE pt2.post_id = p.id ORDER BY pt2.name) AS tags
 FROM top_posts t
@@ -190,7 +188,6 @@ SELECT
   p.id, p.snippet, p.owned_by, p.reply_to,
   p.allow_likes, p.allow_replies, p.updated_at,
   u.nickname AS owner_nickname, pu.nickname AS reply_to_owner_nickname,
-  p.count_replies AS count_replies, p.count_likes AS count_likes,
   ARRAY(SELECT pt.name FROM post_tags pt
     WHERE pt.post_id = p.id ORDER BY pt.name) AS tags
 FROM post_likes pl

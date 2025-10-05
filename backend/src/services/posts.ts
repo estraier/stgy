@@ -19,17 +19,20 @@ import { makeSnippetJsonFromMarkdown } from "../utils/snippet";
 import { Pool } from "pg";
 import Redis from "ioredis";
 import { pgQuery } from "../utils/servers";
+
 export class PostsService {
   private pgPool: Pool;
   private redis: Redis;
   private idIssueService: IdIssueService;
   private eventLogService?: EventLogService;
+
   constructor(pgPool: Pool, redis: Redis, eventLogService?: EventLogService) {
     this.pgPool = pgPool;
     this.redis = redis;
     this.idIssueService = new IdIssueService(Config.ID_ISSUE_WORKER_ID);
     this.eventLogService = eventLogService;
   }
+
   async countPosts(input?: CountPostsInput): Promise<number> {
     const { query, ownedBy, tag, replyTo } = input || {};
     let sql = `SELECT COUNT(*) FROM posts p`;
@@ -40,6 +43,7 @@ export class PostsService {
       sql += ` JOIN post_tags pt ON pt.post_id = p.id`;
       where.push(`pt.name = $${idx++}`);
       params.push(tag);
+      if (replyTo === null) where.push(`pt.is_root = TRUE`);
     }
     if (query) sql += ` JOIN post_details pc ON pc.post_id = p.id`;
     if (ownedBy) {
@@ -63,6 +67,7 @@ export class PostsService {
     const res = await pgQuery(this.pgPool, sql, params);
     return Number(res.rows[0].count);
   }
+
   async getPostLite(id: string): Promise<PostLite | null> {
     const res = await pgQuery(
       this.pgPool,
@@ -97,6 +102,7 @@ export class PostsService {
     row.reply_to = row.reply_to == null ? null : decToHex(row.reply_to);
     return snakeToCamel<PostLite>(row);
   }
+
   async getPost(id: string, focusUserId?: string): Promise<PostDetail | null> {
     let sql = `
       SELECT
@@ -161,6 +167,7 @@ export class PostsService {
     }
     return post;
   }
+
   async listPosts(options?: ListPostsInput, focusUserId?: string): Promise<Post[]> {
     const offset = options?.offset ?? 0;
     const limit = options?.limit ?? 100;
@@ -213,6 +220,7 @@ export class PostsService {
       sql += ` JOIN post_tags pt ON pt.post_id = p.id`;
       where.push(`pt.name = $${paramIdx++}`);
       params.push(tag);
+      if (replyTo === null) where.push(`pt.is_root = TRUE`);
     }
     if (query) sql += ` JOIN post_details pc ON pc.post_id = p.id`;
     if (ownedBy) {
@@ -263,6 +271,7 @@ export class PostsService {
     }
     return out;
   }
+
   async createPost(input: CreatePostInput): Promise<Post> {
     if (typeof input.content !== "string" || input.content.trim() === "")
       throw new Error("content is required");
@@ -304,12 +313,18 @@ export class PostsService {
         `INSERT INTO post_details (post_id, content) VALUES ($1, $2) ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
         [hexToDec(id), input.content],
       );
-      if (input.tags && input.tags.length > 0)
+      if (input.tags && input.tags.length > 0) {
+        const isRoot = input.replyTo == null;
         await pgQuery(
           this.pgPool,
-          `INSERT INTO post_tags (post_id, name) VALUES ${input.tags.map((_, i) => `($1, $${i + 2})`).join(", ")}`,
-          [hexToDec(id), ...input.tags],
+          `
+          INSERT INTO post_tags (post_id, name, is_root)
+          SELECT $1, t, $2
+          FROM unnest($3::text[]) AS t
+          `,
+          [hexToDec(id), isRoot, input.tags],
         );
+      }
       await pgQuery(this.pgPool, "COMMIT");
       if (this.eventLogService && input.replyTo) {
         try {
@@ -330,6 +345,7 @@ export class PostsService {
       throw e;
     }
   }
+
   async updatePost(input: UpdatePostInput): Promise<PostDetail | null> {
     await pgQuery(this.pgPool, "BEGIN");
     try {
@@ -382,16 +398,33 @@ export class PostsService {
         const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id`;
         await pgQuery(this.pgPool, sql, values);
       }
+      if (input.replyTo !== undefined && input.tags === undefined) {
+        const isRoot = input.replyTo == null;
+        await pgQuery(
+          this.pgPool,
+          `UPDATE post_tags SET is_root = $2 WHERE post_id = $1 AND is_root IS DISTINCT FROM $2`,
+          [hexToDec(input.id), isRoot],
+        );
+      }
       if (input.tags !== undefined) {
         await pgQuery(this.pgPool, `DELETE FROM post_tags WHERE post_id = $1`, [
           hexToDec(input.id),
         ]);
-        if (input.tags.length > 0)
+        if (input.tags.length > 0) {
+          const r = await pgQuery(this.pgPool, `SELECT reply_to FROM posts WHERE id = $1`, [
+            hexToDec(input.id),
+          ]);
+          const isRoot = r.rows[0].reply_to == null;
           await pgQuery(
             this.pgPool,
-            `INSERT INTO post_tags (post_id, name) VALUES ${input.tags.map((_, i) => `($1, $${i + 2})`).join(", ")}`,
-            [hexToDec(input.id), ...input.tags],
+            `
+            INSERT INTO post_tags (post_id, name, is_root)
+            SELECT $1, t, $2
+            FROM unnest($3::text[]) AS t
+            `,
+            [hexToDec(input.id), isRoot, input.tags],
           );
+        }
       }
       await pgQuery(this.pgPool, "COMMIT");
       return this.getPost(input.id);
@@ -400,10 +433,12 @@ export class PostsService {
       throw e;
     }
   }
+
   async deletePost(id: string): Promise<void> {
     const res = await pgQuery(this.pgPool, `DELETE FROM posts WHERE id = $1`, [hexToDec(id)]);
     if ((res.rowCount ?? 0) === 0) throw new Error("Post not found");
   }
+
   async addLike(postId: string, userId: string): Promise<void> {
     const chk = await pgQuery(this.pgPool, `SELECT allow_likes FROM posts WHERE id = $1`, [
       hexToDec(postId),
@@ -422,6 +457,7 @@ export class PostsService {
       } catch {}
     }
   }
+
   async removeLike(postId: string, userId: string): Promise<void> {
     const res = await pgQuery(
       this.pgPool,
@@ -430,6 +466,7 @@ export class PostsService {
     );
     if ((res.rowCount ?? 0) === 0) throw new Error("not liked");
   }
+
   async listPostsByFollowees(
     input: ListPostsByFolloweesInput,
     focusUserId?: string,
@@ -548,6 +585,7 @@ export class PostsService {
     }
     return posts;
   }
+
   async listPostsLikedByUser(
     input: ListPostsLikedByUserInput,
     focusUserId?: string,
@@ -628,6 +666,7 @@ export class PostsService {
     }
     return posts;
   }
+
   async listLikers(input: ListLikersInput): Promise<User[]> {
     const { postId, offset = 0, limit = 100, order = "desc" } = input;
     const orderDir = order && order.toLowerCase() === "asc" ? "ASC" : "DESC";

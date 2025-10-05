@@ -73,9 +73,11 @@ CREATE TABLE post_details (
 CREATE TABLE post_tags (
   post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
   name VARCHAR(50) NOT NULL,
+  is_root BOOLEAN NOT NULL,
   PRIMARY KEY (post_id, name)
 );
 CREATE INDEX idx_post_tags_name_post_id ON post_tags(name, post_id);
+CREATE INDEX idx_post_tags_root_name_post_id ON post_tags(name, post_id) WHERE is_root;
 
 CREATE TABLE post_likes (
   post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
@@ -126,27 +128,37 @@ CREATE TABLE user_follower_counts (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   count INT NOT NULL DEFAULT 0
 );
+ALTER TABLE user_follower_counts
+  SET (fillfactor=75,
+       autovacuum_vacuum_scale_factor=0.1, autovacuum_vacuum_threshold=1000,
+       autovacuum_analyze_scale_factor=0.3, autovacuum_analyze_threshold=1000);
 
 CREATE TABLE user_followee_counts (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   count INT NOT NULL DEFAULT 0
 );
+ALTER TABLE user_followee_counts
+  SET (fillfactor=75,
+       autovacuum_vacuum_scale_factor=0.1, autovacuum_vacuum_threshold=1000,
+       autovacuum_analyze_scale_factor=0.3, autovacuum_analyze_threshold=1000);
 
 CREATE TABLE user_post_counts (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   count INT NOT NULL DEFAULT 0
 );
+ALTER TABLE user_post_counts
+  SET (fillfactor=75,
+       autovacuum_vacuum_scale_factor=0.1, autovacuum_vacuum_threshold=1000,
+       autovacuum_analyze_scale_factor=0.3, autovacuum_analyze_threshold=1000);
 
 CREATE TABLE post_like_counts (
   post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
   count   INT NOT NULL DEFAULT 0
 ) PARTITION BY HASH (post_id);
 ALTER TABLE post_like_counts
-  SET (fillfactor=80,
-       autovacuum_vacuum_scale_factor=0.1,
-       autovacuum_vacuum_threshold=1000,
-       autovacuum_analyze_scale_factor=0.3,
-       autovacuum_analyze_threshold=1000);
+  SET (fillfactor=75,
+       autovacuum_vacuum_scale_factor=0.1, autovacuum_vacuum_threshold=1000,
+       autovacuum_analyze_scale_factor=0.3, autovacuum_analyze_threshold=1000);
 DO $$
 DECLARE
   parts int := 8;
