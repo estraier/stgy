@@ -779,18 +779,34 @@ function isMediaElement(n: MdNode): n is MdMediaElement {
 }
 
 function parseInline(text: string): MdNode[] {
-  const esc = /\\([\\~`*_\[\](){}#+\-.!])/;
+  const esc = /\\([\\~`*_\[\](){}#+:%\|\-\.!])/;
   const bold = /\*\*([^\*]+)\*\*/;
-  const italic = /\*([^\*]+)\*/;
+  const italic = /::([^:]+?)::/;
+  const ruby = /\{\{([^|{}]+?)\|([^{}]+?)\}\}/;
+  const mark = /%%([^%]+?)%%/;
   const underline = /__([^_]+)__/;
   const strike = /~~([^~]+)~~/;
-  const code = /`([^`]+)`/;
+  const code = /``([^`]+)``/;
   let m: RegExpExecArray | null;
   if ((m = esc.exec(text))) {
     return [
       ...parseInline(text.slice(0, m.index)),
       { type: "text", text: m[1]! },
       ...parseInline(text.slice(m.index + 2)),
+    ];
+  }
+  if ((m = ruby.exec(text))) {
+    return [
+      ...parseInline(text.slice(0, m.index)),
+      {
+        type: "element",
+        tag: "ruby",
+        children: [
+          { type: "element", tag: "rb", children: parseInline(m[1]!) },
+          { type: "element", tag: "rt", children: parseInline(m[2]!) },
+        ],
+      },
+      ...parseInline(text.slice(m.index + m[0]!.length)),
     ];
   }
   if ((m = bold.exec(text))) {
@@ -804,6 +820,13 @@ function parseInline(text: string): MdNode[] {
     return [
       ...parseInline(text.slice(0, m.index)),
       { type: "element", tag: "em", children: parseInline(m[1]!) },
+      ...parseInline(text.slice(m.index + m[0]!.length)),
+    ];
+  }
+  if ((m = mark.exec(text))) {
+    return [
+      ...parseInline(text.slice(0, m.index)),
+      { type: "element", tag: "mark", children: parseInline(m[1]!) },
       ...parseInline(text.slice(m.index + m[0]!.length)),
     ];
   }

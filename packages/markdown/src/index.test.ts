@@ -581,9 +581,16 @@ describe("mdRenderHtml basics", () => {
   });
 
   it("decorations", () => {
-    const mdText = "**strong** *em* __underline__ ~~strike~~ `code`";
+    const mdText = "**strong** ::em:: __underline__ ~~strike~~ ``code`` %%mark%%";
     expect(makeHtml(mdText)).toBe(
-      "<p><strong>strong</strong> <em>em</em> <u>underline</u> <s>strike</s> <code>code</code></p>",
+      "<p><strong>strong</strong> <em>em</em> <u>underline</u> <s>strike</s> <code>code</code> <mark>mark</mark></p>",
+    );
+  });
+
+  it("ruby", () => {
+    const mdText = "{{tako|ika}} {{uni **ebi**|<ikura>}}";
+    expect(makeHtml(mdText)).toBe(
+      "<p><ruby><rb>tako</rb><rt>ika</rt></ruby> <ruby><rb>uni <strong>ebi</strong></rb><rt>&lt;ikura&gt;</rt></ruby></p>",
     );
   });
 
@@ -595,8 +602,8 @@ describe("mdRenderHtml basics", () => {
   });
 
   it("escape", () => {
-    const mdText = "\\*a\\* \\*\\*b\\*\\* \\__c_\\_ \\~~d~\\~ \\`e\\` \\\\123 \\A\\0";
-    expect(makeHtml(mdText)).toBe("<p>*a* **b** __c__ ~~d~~ `e` \\123 \\A\\0</p>");
+    const mdText = "\\::a:\\: \\*\\*b\\*\\* \\__c_\\_ \\~~d~\\~ \\``e`\\` \\\\123 \\A\\0";
+    expect(makeHtml(mdText)).toBe("<p>::a:: **b** __c__ ~~d~~ ``e`` \\123 \\A\\0</p>");
   });
 });
 
@@ -623,7 +630,7 @@ b
   - j
     - k
 abc
-|*a*|b|
+|::a::|b|
 |c|**d**|
 ![abc](/data/def/ghi){thumbnail}
 ### H3
@@ -677,7 +684,7 @@ describe("serialization", () => {
 
   it("complex", () => {
     const mdText = `hello world
-fetch *me* **my** __hat__.
+fetch ::me:: **my** __hat__.
 line2
 
 paragraph2
@@ -685,7 +692,7 @@ paragraph2
 ## second
 ### third
 - hop step
-- \`jump\`
+- \`\`jump\`\`
 |one|two|
 ![img1](/data/tako.jpg){featured}
 ![img2](/xyz/tako.jpg){grid}{no-featured}
@@ -693,6 +700,7 @@ paragraph2
 ----
 > foo bar
 > __baz__
+> {{abc|def}}
 EOF
 `;
     let nodes = parseMarkdown(mdText);
@@ -705,7 +713,7 @@ EOF
     nodes = mdGroupImageGrid(nodes);
     const serialized = serializeMdNodes(nodes);
     expect(serialized).toBe(
-      '[{"T":"p","C":[{"X":"hello world"},{"T":"br"},{"X":"fetch "},{"T":"em","X":"me"},{"X":" "},{"T":"strong","X":"my"},{"X":" "},{"T":"u","X":"hat"},{"X":"."},{"T":"br"},{"X":"line2"}]},{"T":"p","X":"paragraph2"},{"T":"h1","X":"first"},{"T":"h2","X":"second"},{"T":"h3","X":"third"},{"T":"ul","C":[{"T":"li","X":"hop step"},{"T":"li","C":[{"T":"code","X":"jump"}]}]},{"T":"table","C":[{"T":"tr","C":[{"T":"td","X":"one"},{"T":"td","X":"two"}]}]},{"T":"figure","C":[{"T":"img","SR":"/data/tako.png","FE":true},{"T":"figcaption","X":"img1"}],"CL":"image-block"},{"T":"p","C":[{"X":"!"},{"T":"a","X":"img2","HF":"/xyz/tako.jpg"},{"X":"{grid}{no-featured}"}]},{"T":"div","C":[{"T":"figure","C":[{"T":"video","SR":"/data/tako.mp4","GD":true},{"T":"figcaption","X":"video"}],"CL":"image-block"}],"CL":"image-grid","DC":1},{"T":"hr","HL":2},{"T":"blockquote","C":[{"X":"foo bar"},{"T":"br"},{"T":"u","X":"baz"}]},{"T":"p","X":"EOF"}]',
+      "[{\"T\":\"p\",\"C\":[{\"X\":\"hello world\"},{\"T\":\"br\"},{\"X\":\"fetch \"},{\"T\":\"em\",\"X\":\"me\"},{\"X\":\" \"},{\"T\":\"strong\",\"X\":\"my\"},{\"X\":\" \"},{\"T\":\"u\",\"X\":\"hat\"},{\"X\":\".\"},{\"T\":\"br\"},{\"X\":\"line2\"}]},{\"T\":\"p\",\"X\":\"paragraph2\"},{\"T\":\"h1\",\"X\":\"first\"},{\"T\":\"h2\",\"X\":\"second\"},{\"T\":\"h3\",\"X\":\"third\"},{\"T\":\"ul\",\"C\":[{\"T\":\"li\",\"X\":\"hop step\"},{\"T\":\"li\",\"C\":[{\"T\":\"code\",\"X\":\"jump\"}]}]},{\"T\":\"table\",\"C\":[{\"T\":\"tr\",\"C\":[{\"T\":\"td\",\"X\":\"one\"},{\"T\":\"td\",\"X\":\"two\"}]}]},{\"T\":\"figure\",\"C\":[{\"T\":\"img\",\"SR\":\"/data/tako.png\",\"FE\":true},{\"T\":\"figcaption\",\"X\":\"img1\"}],\"CL\":\"image-block\"},{\"T\":\"p\",\"C\":[{\"X\":\"!\"},{\"T\":\"a\",\"X\":\"img2\",\"HF\":\"/xyz/tako.jpg\"},{\"X\":\"{grid}{no-featured}\"}]},{\"T\":\"div\",\"C\":[{\"T\":\"figure\",\"C\":[{\"T\":\"video\",\"SR\":\"/data/tako.mp4\",\"GD\":true},{\"T\":\"figcaption\",\"X\":\"video\"}],\"CL\":\"image-block\"}],\"CL\":\"image-grid\",\"DC\":1},{\"T\":\"hr\",\"HL\":2},{\"T\":\"blockquote\",\"C\":[{\"X\":\"foo bar\"},{\"T\":\"br\"},{\"T\":\"u\",\"X\":\"baz\"},{\"T\":\"br\"},{\"T\":\"ruby\",\"C\":[{\"T\":\"rb\",\"X\":\"abc\"},{\"T\":\"rt\",\"X\":\"def\"}]}]},{\"T\":\"p\",\"X\":\"EOF\"}]",
     );
     const deserialized = deserializeMdNodes(serialized);
     expect(deserialized).toStrictEqual(nodes);

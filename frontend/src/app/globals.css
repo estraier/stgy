@@ -257,12 +257,13 @@ body {
 .markdown-body a:hover {
   text-decoration: underline;
 }
-
 .markdown-body code {
   font-size: 90%;
   background: #eee;
 }
-
+.markdown-body mark {
+  background: #fde;
+}
 .markdown-body hr {
   clear: both;
   border: 0;

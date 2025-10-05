@@ -491,13 +491,13 @@ npm run vps:reset-data
 - https://mail.stgy.jp/ : 確認メールの保存先
   - デフォルトでは、Basic認証で、「admin」ユーザのパスワードが「stgystgy」になっている。
 
-Basic認証のパスワードはCaddyfile.vpsにハッシュ化して書いてある。Caddyが起動している状態で `npm run caddy:hash NEWPASSWORD` を実行するとハッシュ値が表示されるので、それをファイルに貼り付けて再起動すると変えられる。
+Basic認証のパスワードはCaddyfile.vpsにハッシュ化して書いてある。Caddyが起動している状態で ``npm run caddy:hash NEWPASSWORD`` を実行するとハッシュ値が表示されるので、それをファイルに貼り付けて再起動すると変えられる。
 
 Mailpitはデフォルトではクライアントから送られてきたメールを溜め込むだけで、実際のメール配信は行わない。一般ユーザへのメール通知を行うには、別のSMTPサーバに自動リレーする必要がある。デモ運用では、docker-compose.ymlのmailpitサービスの記載でコメントアウトされている環境変数を有効化して、外部のSMTPサーバにリレーさせる。本番環境ではMailpitをPostfixに変えて同等のリレーを行うか、SES等のメールサーバに直接メールを送る設定にするのが望ましい。
 
 ## Dockerコンテナの自動起動
 
-OSの起動時に自動的に全サービスが立ち上がるようにすべきだ。起動スクリプトを動かして、上記の`npm run vps:docker:up`を実行するようにしたい。そのためには、systemdの起動スクリプトを書く。/etc/systemd/system/stgy-docker.serviceに以下の内容を記述する。
+OSの起動時に自動的に全サービスが立ち上がるようにすべきだ。起動スクリプトを動かして、上記の``npm run vps:docker:up``を実行するようにしたい。そのためには、systemdの起動スクリプトを書く。/etc/systemd/system/stgy-docker.serviceに以下の内容を記述する。
 
 ```:small
 [Unit]
