@@ -82,15 +82,14 @@ export class PostsService {
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
-        COALESCE(prc.count,0) AS count_replies,
-        COALESCE(plc.count,0) AS count_likes,
+        COALESCE(pc.reply_count,0) AS count_replies,
+        COALESCE(pc.like_count,0) AS count_likes,
         ARRAY(SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name) AS tags
       FROM posts p
       JOIN users u ON p.owned_by = u.id
       LEFT JOIN posts pp ON p.reply_to = pp.id
       LEFT JOIN users pu ON pp.owned_by = pu.id
-      LEFT JOIN post_reply_counts prc ON prc.post_id = p.id
-      LEFT JOIN post_like_counts plc ON plc.post_id = p.id
+      LEFT JOIN post_counts pc ON pc.post_id = p.id
       WHERE p.id = $1
     `,
       [hexToDec(id)],
@@ -116,10 +115,10 @@ export class PostsService {
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
-        COALESCE(prc.count,0) AS count_replies,
-        COALESCE(plc.count,0) AS count_likes,
+        COALESCE(pc.reply_count,0) AS count_replies,
+        COALESCE(pc.like_count,0) AS count_likes,
         ARRAY(SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name) AS tags,
-        pc.content AS content
+        pc2.content AS content
     `;
     const params: unknown[] = [hexToDec(id)];
     if (focusUserId) {
@@ -138,9 +137,8 @@ export class PostsService {
       JOIN users u ON p.owned_by = u.id
       LEFT JOIN posts pp ON p.reply_to = pp.id
       LEFT JOIN users pu ON pp.owned_by = pu.id
-      LEFT JOIN post_details pc ON pc.post_id = p.id
-      LEFT JOIN post_reply_counts prc ON prc.post_id = p.id
-      LEFT JOIN post_like_counts plc ON plc.post_id = p.id
+      LEFT JOIN post_details pc2 ON pc2.post_id = p.id
+      LEFT JOIN post_counts pc ON pc.post_id = p.id
       WHERE p.id = $1
     `;
     if (focusUserId) params.push(hexToDec(focusUserId));
@@ -188,8 +186,8 @@ export class PostsService {
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
-        COALESCE(prc.count,0) AS count_replies,
-        COALESCE(plc.count,0) AS count_likes,
+        COALESCE(pc.reply_count,0) AS count_replies,
+        COALESCE(pc.like_count,0) AS count_likes,
         ARRAY(SELECT pt2.name FROM post_tags pt2 WHERE pt2.post_id = p.id ORDER BY pt2.name) AS tags
     `;
     const where: string[] = [];
@@ -213,8 +211,7 @@ export class PostsService {
       JOIN users u ON p.owned_by = u.id
       LEFT JOIN posts pp ON p.reply_to = pp.id
       LEFT JOIN users pu ON pp.owned_by = pu.id
-      LEFT JOIN post_reply_counts prc ON prc.post_id = p.id
-      LEFT JOIN post_like_counts plc ON plc.post_id = p.id
+      LEFT JOIN post_counts pc ON pc.post_id = p.id
     `;
     if (tag) {
       sql += ` JOIN post_tags pt ON pt.post_id = p.id`;
@@ -222,7 +219,7 @@ export class PostsService {
       params.push(tag);
       if (replyTo === null) where.push(`pt.is_root = TRUE`);
     }
-    if (query) sql += ` JOIN post_details pc ON pc.post_id = p.id`;
+    if (query) sql += ` JOIN post_details pc2 ON pc2.post_id = p.id`;
     if (ownedBy) {
       where.push(`p.owned_by = $${paramIdx++}`);
       params.push(hexToDec(ownedBy));
@@ -237,7 +234,7 @@ export class PostsService {
     }
     if (query) {
       const escapedQuery = escapeForLike(query);
-      where.push(`pc.content ILIKE $${paramIdx++}`);
+      where.push(`pc2.content ILIKE $${paramIdx++}`);
       params.push(`%${escapedQuery}%`);
     }
     if (where.length > 0) sql += " WHERE " + where.join(" AND ");
@@ -525,8 +522,8 @@ export class PostsService {
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
-        COALESCE(prc.count,0) AS count_replies,
-        COALESCE(plc.count,0) AS count_likes,
+        COALESCE(pc.reply_count,0) AS count_replies,
+        COALESCE(pc.like_count,0) AS count_likes,
         ARRAY(SELECT pt2.name FROM post_tags pt2 WHERE pt2.post_id = p.id ORDER BY pt2.name) AS tags
         ${
           focusUserId
@@ -545,8 +542,7 @@ export class PostsService {
       JOIN users u ON p.owned_by = u.id
       LEFT JOIN posts pp ON p.reply_to = pp.id
       LEFT JOIN users pu ON pp.owned_by = pu.id
-      LEFT JOIN post_reply_counts prc ON prc.post_id = p.id
-      LEFT JOIN post_like_counts plc ON plc.post_id = p.id
+      LEFT JOIN post_counts pc ON pc.post_id = p.id
       ORDER BY t.id ${orderDir}
     `;
     const params: unknown[] = [
@@ -606,8 +602,8 @@ export class PostsService {
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
-        COALESCE(prc.count,0) AS count_replies,
-        COALESCE(plc.count,0) AS count_likes,
+        COALESCE(pc.reply_count,0) AS count_replies,
+        COALESCE(pc.like_count,0) AS count_likes,
         ARRAY(SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name) AS tags
     `;
     const params: unknown[] = [hexToDec(input.userId)];
@@ -631,8 +627,7 @@ export class PostsService {
       JOIN users u ON p.owned_by = u.id
       LEFT JOIN posts pp ON p.reply_to = pp.id
       LEFT JOIN users pu ON pp.owned_by = pu.id
-      LEFT JOIN post_reply_counts prc ON prc.post_id = p.id
-      LEFT JOIN post_like_counts plc ON plc.post_id = p.id
+      LEFT JOIN post_counts pc ON pc.post_id = p.id
       WHERE pl.liked_by = $1
     `;
     if (!includeReplies) sql += ` AND p.reply_to IS NULL`;
@@ -682,15 +677,13 @@ export class PostsService {
         u.ai_model,
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
-        COALESCE(ufr.count,0) AS count_followers,
-        COALESCE(ufe.count,0) AS count_followees,
-        COALESCE(upc.count,0) AS count_posts
+        COALESCE(uc.follower_count,0) AS count_followers,
+        COALESCE(uc.followee_count,0) AS count_followees,
+        COALESCE(uc.post_count,0) AS count_posts
       FROM post_likes pl
       JOIN users u ON pl.liked_by = u.id
       LEFT JOIN user_secrets s ON s.user_id = u.id
-      LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
-      LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-      LEFT JOIN user_post_counts upc ON upc.user_id = u.id
+      LEFT JOIN user_counts uc ON uc.user_id = u.id
       WHERE pl.post_id = $1
       ORDER BY pl.created_at ${orderDir}, u.id ${orderDir}
       OFFSET $2 LIMIT $3

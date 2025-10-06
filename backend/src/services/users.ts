@@ -101,13 +101,11 @@ export class UsersService {
           u.ai_model,
           id_to_timestamp(u.id) AS created_at,
           u.updated_at,
-          COALESCE(ufr.count, 0) AS count_followers,
-          COALESCE(ufe.count, 0) AS count_followees,
-          COALESCE(upc.count, 0) AS count_posts
+          COALESCE(uc.follower_count, 0) AS count_followers,
+          COALESCE(uc.followee_count, 0) AS count_followees,
+          COALESCE(uc.post_count, 0) AS count_posts
         FROM users u
-        LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
-        LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-        LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+        LEFT JOIN user_counts uc ON uc.user_id = u.id
         WHERE u.id = $1
       `,
       [hexToDec(id)],
@@ -134,16 +132,14 @@ export class UsersService {
           u.ai_model,
           id_to_timestamp(u.id) AS created_at,
           u.updated_at,
-          COALESCE(ufr.count, 0) AS count_followers,
-          COALESCE(ufe.count, 0) AS count_followees,
-          COALESCE(upc.count, 0) AS count_posts,
+          COALESCE(uc.follower_count, 0) AS count_followers,
+          COALESCE(uc.followee_count, 0) AS count_followees,
+          COALESCE(uc.post_count, 0) AS count_posts,
           d.introduction,
           d.ai_personality
         FROM users u
         LEFT JOIN user_secrets         s   ON s.user_id  = u.id
-        LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
-        LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-        LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+        LEFT JOIN user_counts          uc  ON uc.user_id = u.id
         LEFT JOIN user_details         d   ON d.user_id  = u.id
         WHERE u.id = $1
       `,
@@ -209,13 +205,11 @@ export class UsersService {
         u.ai_model,
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
-        COALESCE(ufr.count, 0) AS count_followers,
-        COALESCE(ufe.count, 0) AS count_followees,
-        COALESCE(upc.count, 0) AS count_posts
+        COALESCE(uc.follower_count, 0) AS count_followers,
+        COALESCE(uc.followee_count, 0) AS count_followees,
+        COALESCE(uc.post_count, 0) AS count_posts
       FROM users u
-      LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
-      LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-      LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+      LEFT JOIN user_counts uc ON uc.user_id = u.id
     `.trim();
 
     const params: unknown[] = [];
@@ -414,13 +408,11 @@ export class UsersService {
             u.ai_model,
             id_to_timestamp(u.id) AS created_at,
             u.updated_at,
-            COALESCE(ufr.count, 0) AS count_followers,
-            COALESCE(ufe.count, 0) AS count_followees,
-            COALESCE(upc.count, 0) AS count_posts
+            COALESCE(uc.follower_count, 0) AS count_followers,
+            COALESCE(uc.followee_count, 0) AS count_followees,
+            COALESCE(uc.post_count, 0) AS count_posts
           FROM users u
-          LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
-          LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-          LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+          LEFT JOIN user_counts uc ON uc.user_id = u.id
           WHERE u.id = $1
         `,
         [hexToDec(id)],
@@ -527,13 +519,11 @@ export class UsersService {
             u.ai_model,
             id_to_timestamp(u.id) AS created_at,
             u.updated_at,
-            COALESCE(ufr.count, 0) AS count_followers,
-            COALESCE(ufe.count, 0) AS count_followees,
-            COALESCE(upc.count, 0) AS count_posts
+            COALESCE(uc.follower_count, 0) AS count_followers,
+            COALESCE(uc.followee_count, 0) AS count_followees,
+            COALESCE(uc.post_count, 0) AS count_posts
           FROM users u
-          LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
-          LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-          LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+          LEFT JOIN user_counts uc ON uc.user_id = u.id
           WHERE u.id = $1
         `,
         [hexToDec(input.id)],
@@ -730,14 +720,12 @@ export class UsersService {
         u.ai_model,
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
-        COALESCE(ufr.count, 0) AS count_followers,
-        COALESCE(ufe.count, 0) AS count_followees,
-        COALESCE(upc.count, 0) AS count_posts
+        COALESCE(uc.follower_count, 0) AS count_followers,
+        COALESCE(uc.followee_count, 0) AS count_followees,
+        COALESCE(uc.post_count, 0) AS count_posts
       FROM user_follows f
       JOIN users u ON f.followee_id = u.id
-      LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
-      LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-      LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+      LEFT JOIN user_counts uc ON uc.user_id = u.id
       WHERE f.follower_id = $1
       ORDER BY f.created_at ${order}, f.followee_id ${order}
       OFFSET $2 LIMIT $3
@@ -830,14 +818,12 @@ export class UsersService {
         u.ai_model,
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
-        COALESCE(ufr.count, 0) AS count_followers,
-        COALESCE(ufe.count, 0) AS count_followees,
-        COALESCE(upc.count, 0) AS count_posts
+        COALESCE(uc.follower_count, 0) AS count_followers,
+        COALESCE(uc.followee_count, 0) AS count_followees,
+        COALESCE(uc.post_count, 0) AS count_posts
       FROM user_follows f
       JOIN users u ON f.follower_id = u.id
-      LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
-      LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-      LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+      LEFT JOIN user_counts uc ON uc.user_id = u.id
       WHERE f.followee_id = $1
       ORDER BY f.created_at ${order}, f.follower_id ${order}
       OFFSET $2 LIMIT $3
@@ -1088,14 +1074,12 @@ export class UsersService {
         u.ai_model,
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
-        COALESCE(ufr.count, 0) AS count_followers,
-        COALESCE(ufe.count, 0) AS count_followees,
-        COALESCE(upc.count, 0) AS count_posts
+        COALESCE(uc.follower_count, 0) AS count_followers,
+        COALESCE(uc.followee_count, 0) AS count_followees,
+        COALESCE(uc.post_count, 0) AS count_posts
       FROM page p
       JOIN users u ON u.id = p.id
-      LEFT JOIN user_follower_counts ufr ON ufr.user_id = u.id
-      LEFT JOIN user_followee_counts ufe ON ufe.user_id = u.id
-      LEFT JOIN user_post_counts     upc ON upc.user_id = u.id
+      LEFT JOIN user_counts uc ON uc.user_id = u.id
       ORDER BY p.prio, p.nkey, u.id
     `.trim();
 

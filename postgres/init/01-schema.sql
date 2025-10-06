@@ -124,38 +124,23 @@ CREATE TABLE ai_actions (
 );
 CREATE INDEX idx_ai_actions_user_id_done_at ON ai_actions(user_id, done_at);
 
-CREATE TABLE user_follower_counts (
+CREATE TABLE user_counts (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  count INT NOT NULL DEFAULT 0
+  follower_count INT NOT NULL DEFAULT 0,
+  followee_count INT NOT NULL DEFAULT 0,
+  post_count INT NOT NULL DEFAULT 0
 );
-ALTER TABLE user_follower_counts
+ALTER TABLE user_counts
   SET (fillfactor=75,
        autovacuum_vacuum_scale_factor=0.1, autovacuum_vacuum_threshold=1000,
        autovacuum_analyze_scale_factor=0.3, autovacuum_analyze_threshold=1000);
 
-CREATE TABLE user_followee_counts (
-  user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  count INT NOT NULL DEFAULT 0
-);
-ALTER TABLE user_followee_counts
-  SET (fillfactor=75,
-       autovacuum_vacuum_scale_factor=0.1, autovacuum_vacuum_threshold=1000,
-       autovacuum_analyze_scale_factor=0.3, autovacuum_analyze_threshold=1000);
-
-CREATE TABLE user_post_counts (
-  user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  count INT NOT NULL DEFAULT 0
-);
-ALTER TABLE user_post_counts
-  SET (fillfactor=75,
-       autovacuum_vacuum_scale_factor=0.1, autovacuum_vacuum_threshold=1000,
-       autovacuum_analyze_scale_factor=0.3, autovacuum_analyze_threshold=1000);
-
-CREATE TABLE post_like_counts (
+CREATE TABLE post_counts (
   post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
-  count   INT NOT NULL DEFAULT 0
+  like_count INT NOT NULL DEFAULT 0,
+  reply_count INT NOT NULL DEFAULT 0
 ) PARTITION BY HASH (post_id);
-ALTER TABLE post_like_counts
+ALTER TABLE post_counts
   SET (fillfactor=75,
        autovacuum_vacuum_scale_factor=0.1, autovacuum_vacuum_threshold=1000,
        autovacuum_analyze_scale_factor=0.3, autovacuum_analyze_threshold=1000);
@@ -168,28 +153,25 @@ BEGIN
     EXECUTE format(
       'CREATE TABLE IF NOT EXISTS %I PARTITION OF %I
          FOR VALUES WITH (MODULUS %s, REMAINDER %s);',
-      'post_like_counts_p' || i, 'post_like_counts', parts, i
+      'post_counts_p' || i, 'post_counts', parts, i
     );
   END LOOP;
 END$$;
-
-CREATE TABLE post_reply_counts (
-  post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
-  count INT NOT NULL DEFAULT 0
-);
 
 CREATE OR REPLACE FUNCTION trg_user_follows_counts()
 RETURNS TRIGGER AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    INSERT INTO user_followee_counts (user_id, count) VALUES (NEW.follower_id, 1) ON CONFLICT (user_id) DO UPDATE SET count = user_followee_counts.count + 1;
-    INSERT INTO user_follower_counts (user_id, count) VALUES (NEW.followee_id, 1) ON CONFLICT (user_id) DO UPDATE SET count = user_follower_counts.count + 1;
+    INSERT INTO user_counts (user_id, followee_count) VALUES (NEW.follower_id, 1)
+      ON CONFLICT (user_id) DO UPDATE SET followee_count = user_counts.followee_count + 1;
+    INSERT INTO user_counts (user_id, follower_count) VALUES (NEW.followee_id, 1)
+      ON CONFLICT (user_id) DO UPDATE SET follower_count = user_counts.follower_count + 1;
     RETURN NEW;
   ELSIF TG_OP = 'DELETE' THEN
-    UPDATE user_followee_counts SET count = count - 1 WHERE user_id = OLD.follower_id;
-    UPDATE user_follower_counts SET count = count - 1 WHERE user_id = OLD.followee_id;
-    DELETE FROM user_followee_counts WHERE user_id = OLD.follower_id AND count <= 0;
-    DELETE FROM user_follower_counts WHERE user_id = OLD.followee_id AND count <= 0;
+    UPDATE user_counts SET followee_count = GREATEST(followee_count - 1, 0) WHERE user_id = OLD.follower_id;
+    UPDATE user_counts SET follower_count = GREATEST(follower_count - 1, 0) WHERE user_id = OLD.followee_id;
+    DELETE FROM user_counts WHERE user_id = OLD.follower_id AND follower_count = 0 AND followee_count = 0 AND post_count = 0;
+    DELETE FROM user_counts WHERE user_id = OLD.followee_id AND follower_count = 0 AND followee_count = 0 AND post_count = 0;
     RETURN OLD;
   END IF;
   RETURN NULL;
@@ -208,17 +190,19 @@ CREATE OR REPLACE FUNCTION trg_user_post_counts()
 RETURNS TRIGGER AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    INSERT INTO user_post_counts (user_id, count) VALUES (NEW.owned_by, 1) ON CONFLICT (user_id) DO UPDATE SET count = user_post_counts.count + 1;
+    INSERT INTO user_counts (user_id, post_count) VALUES (NEW.owned_by, 1)
+      ON CONFLICT (user_id) DO UPDATE SET post_count = user_counts.post_count + 1;
     RETURN NEW;
   ELSIF TG_OP = 'DELETE' THEN
-    UPDATE user_post_counts SET count = count - 1 WHERE user_id = OLD.owned_by;
-    DELETE FROM user_post_counts WHERE user_id = OLD.owned_by AND count <= 0;
+    UPDATE user_counts SET post_count = GREATEST(post_count - 1, 0) WHERE user_id = OLD.owned_by;
+    DELETE FROM user_counts WHERE user_id = OLD.owned_by AND follower_count = 0 AND followee_count = 0 AND post_count = 0;
     RETURN OLD;
   ELSIF TG_OP = 'UPDATE' THEN
     IF NEW.owned_by <> OLD.owned_by THEN
-      UPDATE user_post_counts SET count = count - 1 WHERE user_id = OLD.owned_by;
-      DELETE FROM user_post_counts WHERE user_id = OLD.owned_by AND count <= 0;
-      INSERT INTO user_post_counts (user_id, count) VALUES (NEW.owned_by, 1) ON CONFLICT (user_id) DO UPDATE SET count = user_post_counts.count + 1;
+      UPDATE user_counts SET post_count = GREATEST(post_count - 1, 0) WHERE user_id = OLD.owned_by;
+      DELETE FROM user_counts WHERE user_id = OLD.owned_by AND follower_count = 0 AND followee_count = 0 AND post_count = 0;
+      INSERT INTO user_counts (user_id, post_count) VALUES (NEW.owned_by, 1)
+        ON CONFLICT (user_id) DO UPDATE SET post_count = user_counts.post_count + 1;
     END IF;
     RETURN NEW;
   END IF;
@@ -242,11 +226,12 @@ CREATE OR REPLACE FUNCTION trg_post_like_counts()
 RETURNS TRIGGER AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
-    INSERT INTO post_like_counts (post_id, count) VALUES (NEW.post_id, 1) ON CONFLICT (post_id) DO UPDATE SET count = post_like_counts.count + 1;
+    INSERT INTO post_counts (post_id, like_count) VALUES (NEW.post_id, 1)
+      ON CONFLICT (post_id) DO UPDATE SET like_count = post_counts.like_count + 1;
     RETURN NEW;
   ELSIF TG_OP = 'DELETE' THEN
-    UPDATE post_like_counts SET count = count - 1 WHERE post_id = OLD.post_id;
-    DELETE FROM post_like_counts WHERE post_id = OLD.post_id AND count <= 0;
+    UPDATE post_counts SET like_count = GREATEST(like_count - 1, 0) WHERE post_id = OLD.post_id;
+    DELETE FROM post_counts WHERE post_id = OLD.post_id AND like_count = 0 AND reply_count = 0;
     RETURN OLD;
   END IF;
   RETURN NULL;
@@ -266,23 +251,25 @@ RETURNS TRIGGER AS $$
 BEGIN
   IF TG_OP = 'INSERT' THEN
     IF NEW.reply_to IS NOT NULL THEN
-      INSERT INTO post_reply_counts (post_id, count) VALUES (NEW.reply_to, 1) ON CONFLICT (post_id) DO UPDATE SET count = post_reply_counts.count + 1;
+      INSERT INTO post_counts (post_id, reply_count) VALUES (NEW.reply_to, 1)
+        ON CONFLICT (post_id) DO UPDATE SET reply_count = post_counts.reply_count + 1;
     END IF;
     RETURN NEW;
   ELSIF TG_OP = 'DELETE' THEN
     IF OLD.reply_to IS NOT NULL THEN
-      UPDATE post_reply_counts SET count = count - 1 WHERE post_id = OLD.reply_to;
-      DELETE FROM post_reply_counts WHERE post_id = OLD.reply_to AND count <= 0;
+      UPDATE post_counts SET reply_count = GREATEST(reply_count - 1, 0) WHERE post_id = OLD.reply_to;
+      DELETE FROM post_counts WHERE post_id = OLD.reply_to AND like_count = 0 AND reply_count = 0;
     END IF;
     RETURN OLD;
   ELSIF TG_OP = 'UPDATE' THEN
     IF NEW.reply_to IS DISTINCT FROM OLD.reply_to THEN
       IF OLD.reply_to IS NOT NULL THEN
-        UPDATE post_reply_counts SET count = count - 1 WHERE post_id = OLD.reply_to;
-        DELETE FROM post_reply_counts WHERE post_id = OLD.reply_to AND count <= 0;
+        UPDATE post_counts SET reply_count = GREATEST(reply_count - 1, 0) WHERE post_id = OLD.reply_to;
+        DELETE FROM post_counts WHERE post_id = OLD.reply_to AND like_count = 0 AND reply_count = 0;
       END IF;
       IF NEW.reply_to IS NOT NULL THEN
-        INSERT INTO post_reply_counts (post_id, count) VALUES (NEW.reply_to, 1) ON CONFLICT (post_id) DO UPDATE SET count = post_reply_counts.count + 1;
+        INSERT INTO post_counts (post_id, reply_count) VALUES (NEW.reply_to, 1)
+          ON CONFLICT (post_id) DO UPDATE SET reply_count = post_counts.reply_count + 1;
       END IF;
     END IF;
     RETURN NEW;
@@ -305,10 +292,7 @@ FOR EACH ROW EXECUTE FUNCTION trg_post_reply_counts();
 
 CREATE OR REPLACE FUNCTION id_to_timestamp(id BIGINT)
 RETURNS timestamptz
-LANGUAGE sql
-IMMUTABLE
-STRICT
-PARALLEL SAFE
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
   SELECT timestamptz 'epoch' + (id >> 20) * interval '1 millisecond';
 $$;

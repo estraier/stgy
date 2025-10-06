@@ -128,7 +128,6 @@ class MockPgClientMain {
       return { rowCount: 1, rows: [] };
     }
 
-    // New form with is_root + unnest
     if (
       sql.startsWith("INSERT INTO post_tags (post_id, name, is_root)") &&
       sql.includes("FROM unnest($3::text[])")
@@ -138,7 +137,6 @@ class MockPgClientMain {
       return { rowCount: tagArray.length };
     }
 
-    // Legacy branch (kept for safety in tests)
     if (sql.startsWith("INSERT INTO post_tags")) {
       for (let i = 1; i < params!.length; i++)
         this.tags.push({ postId: params![0], name: params![i] });
@@ -152,7 +150,6 @@ class MockPgClientMain {
     }
 
     if (sql.startsWith("UPDATE post_tags SET is_root = $2 WHERE post_id = $1")) {
-      // no-op for mock; just acknowledge
       return { rowCount: 1 };
     }
 

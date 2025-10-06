@@ -172,15 +172,11 @@ class MockPgClient {
     }
 
     if (n.startsWith("SELECT COUNT(*) FROM users u")) {
-      if (
-        n.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)") ||
-        n.includes("WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)")
-      ) {
+      if (n.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)")) {
         const pat = params[0].toLowerCase().replace(/%/g, "");
         const count = this.users.filter(
           (u) =>
             u.nickname.toLowerCase().includes(pat) ||
-            (u.snippet ?? "").toLowerCase().includes(pat) ||
             (this.details[u.id]?.introduction ?? "").toLowerCase().includes(pat),
         ).length;
         return { rows: [{ count }] };
@@ -239,15 +235,11 @@ class MockPgClient {
 
     if (n.includes("FROM users u") && !n.includes("WHERE u.id = $1") && !n.startsWith("WITH")) {
       let list = [...this.users];
-      if (
-        n.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)") ||
-        n.includes("WHERE (u.nickname ILIKE $1 OR u.snippet ILIKE $1 OR d.introduction ILIKE $1)")
-      ) {
+      if (n.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)")) {
         const pat = params[0].toLowerCase().replace(/%/g, "");
         list = list.filter(
           (u) =>
             u.nickname.toLowerCase().includes(pat) ||
-            (u.snippet ?? "").toLowerCase().includes(pat) ||
             (this.details[u.id]?.introduction ?? "").toLowerCase().includes(pat),
         );
       } else if (n.includes("WHERE u.nickname ILIKE")) {
