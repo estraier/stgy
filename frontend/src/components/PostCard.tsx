@@ -91,13 +91,19 @@ export default function PostCard({
         {post.replyTo && (
           <span className="-mt-1 ml-2 text-xs text-gray-500">
             In response to{" "}
-            <a
-              href={`/posts/${post.replyTo}`}
-              className="text-blue-500 hover:underline max-w-[32ex] truncate inline-block align-bottom"
-              onClick={(e) => e.stopPropagation()}
-            >
-              {post.replyToOwnerNickname || post.replyTo}
-            </a>
+            {!post.replyToOwnerNickname ? (
+              <span className="text-gray-400">
+                [{post.replyTo}:deleted]
+              </span>
+            ) : (
+              <a
+                href={`/posts/${post.replyTo}`}
+                className="text-blue-500 hover:underline max-w-[32ex] truncate inline-block align-bottom"
+                onClick={(e) => e.stopPropagation()}
+              >
+                {post.replyToOwnerNickname}
+              </a>
+            )}
           </span>
         )}
         <span className="relative -mt-1 pr-1 ml-auto text-gray-400 whitespace-nowrap">

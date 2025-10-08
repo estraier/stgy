@@ -55,7 +55,7 @@ CREATE TABLE posts (
   id BIGINT PRIMARY KEY,
   snippet VARCHAR(4096) NOT NULL,
   owned_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  reply_to BIGINT REFERENCES posts(id) ON DELETE SET NULL,
+  reply_to BIGINT,
   allow_likes BOOLEAN NOT NULL,
   allow_replies BOOLEAN NOT NULL,
   updated_at TIMESTAMPTZ
@@ -64,6 +64,11 @@ CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
 CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
 CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
+
+CREATE CONSTRAINT TRIGGER posts_reply_to_exists
+AFTER INSERT OR UPDATE OF reply_to ON posts
+DEFERRABLE INITIALLY IMMEDIATE
+FOR EACH ROW EXECUTE FUNCTION posts_reply_to_exists_fn();
 
 CREATE TABLE post_details (
   post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
