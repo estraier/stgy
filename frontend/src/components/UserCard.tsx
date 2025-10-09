@@ -98,7 +98,7 @@ export default function UserCard({
     if (isFollowing) {
       followButton = (
         <button
-          className="ml-2 px-2 py-1 bg-blue-100 text-blue-600 rounded text-xs border border-blue-200 hover:bg-red-100 hover:text-red-700 transition"
+          className="ml-2 px-2 py-1 bg-blue-100 text-blue-600 rounded text-xs border border-blue-200 hover:bg-red-100 hover:text-red-700 transition max-md:scale-x-80 max-md:ml-0 max-md:-mr-2"
           onMouseEnter={() => setHovering(true)}
           onMouseLeave={() => setHovering(false)}
           onClick={async (e) => {
@@ -120,7 +120,7 @@ export default function UserCard({
     } else if (!(isBlocked || blockedByTarget || (blockStrangers && !isFollowed))) {
       followButton = (
         <button
-          className="ml-2 px-2 py-1 bg-blue-600 text-white rounded text-xs border border-blue-700 hover:bg-blue-700 transition"
+          className="ml-2 px-2 py-1 bg-blue-600 text-white rounded text-xs border border-blue-700 hover:bg-blue-700 transition max-md:scale-x-80 max-md:ml-0 max-md:-mr-2"
           onClick={async (e) => {
             e.stopPropagation();
             if (submitting) return;
@@ -281,59 +281,59 @@ export default function UserCard({
           {user.nickname}
         </span>
         {isAdmin && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs opacity-90 max-md:text-[9px]">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs opacity-90 max-md:text-[9px] max-md:px-1">
             admin
           </span>
         )}
         {blockStrangers && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px]">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px] max-md:ml-1 max-md:px-1">
             BS
           </span>
         )}
         {isAI && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px]">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px] max-md:ml-1 max-md:px-1">
             AI
           </span>
         )}
         {isSelf && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-green-100 text-green-800 rounded text-xs opacity-90 max-md:text-[9px]">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-green-100 text-green-800 rounded text-xs opacity-90 max-md:text-[9px] max-md:ml-1 max-md:px-1">
             self
           </span>
         )}
         {isFriend && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs opacity-90 max-md:text-[9px]">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs opacity-90 max-md:text-[9px] max-md:ml-1 max-md:px-1">
             friend
           </span>
         )}
         {isFollower && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-pink-100 text-pink-800 rounded text-xs opacity-90 max-md:text-[9px]">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-pink-100 text-pink-800 rounded text-xs opacity-90 max-md:text-[9px] max-md:ml-1 max-md:px-1">
             follower
           </span>
         )}
         {isFollowee && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs opacity-90 max-md:text-[9px]">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs opacity-90 max-md:text-[9px] max-md:ml-1 max-md:px-1">
             followee
           </span>
         )}
         {isBlocking && isBlocked && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px]">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px] max-md:ml-1 max-md:px-1">
             break
           </span>
         )}
         {isBlocked && !isBlocking && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px]">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px] max-md:ml-1 max-md:px-1">
             blocker
           </span>
         )}
         {isBlocking && !isBlocked && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px]">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px] max-md:ml-1 max-md:px-1">
             blockee
           </span>
         )}
         <div className="ml-auto relative flex items-center gap-1">
           <button
             type="button"
-            className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-200 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100"
+            className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-200 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100 max-md:scale-x-80 max-md:ml-0 max-md:-mr-2"
             aria-haspopup="menu"
             aria-expanded={menuOpen}
             onClick={(e) => {

@@ -350,14 +350,14 @@ export default function PageBody() {
         {TAB_VALUES.map((t) => (
           <button
             key={t}
-            className={`px-3 py-1 rounded-t min-w-0 sm:min-w-[110px] text-sm font-normal cursor-pointer
+            className={`px-3 max-md:px-1 py-1 rounded-t min-w-0 sm:min-w-[110px] text-sm font-normal cursor-pointer
               ${tab === t ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
             onClick={() => handleTabChange(t)}
           >
             {tabLabel(t)}
           </button>
         ))}
-        <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer ml-4">
+        <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer ml-4 max-md:ml-1">
           <input
             type="checkbox"
             checked={oldestFirst}
@@ -365,7 +365,7 @@ export default function PageBody() {
             className="cursor-pointer"
           />
           <span className="hidden md:inline">Oldest first</span>
-          <span className="md:hidden" aria-hidden>Oldest</span>
+          <span className="md:hidden scale-x-80 -ml-1" aria-hidden>Oldest</span>
         </label>
       </div>
 

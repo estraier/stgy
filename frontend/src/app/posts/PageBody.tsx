@@ -393,7 +393,7 @@ export default function PageBody() {
         {TAB_VALUES.map((t) => (
           <button
             key={t}
-            className={`px-3 py-1 min-w-0 sm:min-w-[110px] rounded-t text-sm font-normal cursor-pointer
+            className={`px-3 max-md:px-2 py-1 min-w-0 sm:min-w-[110px] rounded-t text-sm font-normal cursor-pointer
               ${tab === t && !isSearchMode ? "bg-blue-100 text-gray-800" : "bg-blue-50 text-gray-400 hover:bg-blue-100"}`}
             onClick={() =>
               setQuery({
@@ -408,7 +408,7 @@ export default function PageBody() {
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
-        <label className="flex pl-2 items-center gap-1 text-sm ml-4 text-gray-700 cursor-pointer">
+        <label className="flex pl-2 items-center gap-1 text-sm ml-4 text-gray-700 cursor-pointer max-md:pl-0">
           <input
             type="checkbox"
             checked={includingReplies}
@@ -418,9 +418,9 @@ export default function PageBody() {
             className="cursor-pointer"
           />
           <span className="hidden md:inline">Including replies</span>
-          <span className="md:hidden" aria-hidden>Replies</span>
+          <span className="md:hidden scale-x-80 -ml-1" aria-hidden>Replies</span>
         </label>
-        <label className="flex pl-2 items-center gap-1 text-sm text-gray-700 cursor-pointer">
+        <label className="flex pl-2 items-center gap-1 text-sm text-gray-700 cursor-pointer max-md:pl-0">
           <input
             type="checkbox"
             checked={oldestFirst}
@@ -428,7 +428,7 @@ export default function PageBody() {
             className="cursor-pointer"
           />
           <span className="hidden md:inline">Oldest first</span>
-          <span className="md:hidden" aria-hidden>Oldest</span>
+          <span className="md:hidden scale-x-80 -ml-1" aria-hidden>Oldest</span>
         </label>
       </div>
       {isSearchMode && (
