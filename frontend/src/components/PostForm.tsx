@@ -458,7 +458,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actPrefix("# ")}
-                title="見出し1"
+                title="Heading 1"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <Heading1 className="w-4 h-4 opacity-80" aria-hidden />
@@ -467,7 +467,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actPrefix("## ")}
-                title="見出し2"
+                title="Heading 2"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <Heading2 className="w-4 h-4 opacity-80" aria-hidden />
@@ -476,7 +476,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actPrefix("### ")}
-                title="見出し3"
+                title="Heading 3"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <Heading3 className="w-4 h-4 opacity-80" aria-hidden />
@@ -485,7 +485,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actPrefix("- ")}
-                title="箇条書き"
+                title="List"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <ListIcon className="w-4 h-4 opacity-80" aria-hidden />
@@ -494,7 +494,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actPrefix("> ")}
-                title="引用"
+                title="Quote"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <QuoteIcon className="w-4 h-4 opacity-80" aria-hidden />
@@ -503,7 +503,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actFence}
-                title="コードブロック（```）"
+                title="Code block"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <CodeBlockIcon className="w-4 h-4 opacity-80" aria-hidden />
@@ -512,7 +512,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actInline("**")}
-                title="太字（B）"
+                title="Bold"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <BoldIcon className="w-4 h-4 opacity-80" aria-hidden />
@@ -521,7 +521,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actInline("::")}
-                title="斜体（::text::）"
+                title="Italic"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <ItalicIcon className="w-4 h-4 opacity-80" aria-hidden />
@@ -530,7 +530,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actInline("__")}
-                title="下線（__text__）"
+                title="Underline"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <UnderlineIcon className="w-4 h-4 opacity-80" aria-hidden />
@@ -539,7 +539,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actInline("~~")}
-                title="打消（~~text~~）"
+                title="Strikethrough"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <StrikethroughIcon className="w-4 h-4 opacity-80" aria-hidden />
@@ -548,7 +548,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actInline("``")}
-                title="インラインコード（``code``）"
+                title="Inline code"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <InlineCodeIcon className="w-4 h-4 opacity-80" aria-hidden />
@@ -557,7 +557,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actInline("%%")}
-                title="マーク（%%text%%）"
+                title="Mark"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <MarkIcon className="w-4 h-4 opacity-80" aria-hidden />
@@ -566,7 +566,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actRuby}
-                title="ルビ（{{text|ruby}}）"
+                title="Ruby"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <RubyIcon className="w-4 h-4 opacity-80" aria-hidden />
@@ -575,7 +575,7 @@ export default function PostForm({
               <button
                 type="button"
                 onMouseDown={actLink}
-                title="リンク（[text](url)）"
+                title="Link"
                 className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
               >
                 <LinkIcon className="w-4 h-4 opacity-80" aria-hidden />
