@@ -316,6 +316,12 @@ export default function PostForm({
   autoFocus = false,
 }: PostFormProps) {
   const textareaRef = useRef<HTMLTextAreaElement>(null);
+  const previewWrapRef = useRef<HTMLDivElement>(null);
+  const previewBodyRef = useRef<HTMLDivElement>(null);
+  const anchorsRef = useRef<{ char: number; el: HTMLElement }[]>([]);
+  const rafRef = useRef<number | null>(null);
+  const caretRef = useRef<number>(0);
+
   const [showPreview, setShowPreview] = useState(false);
   const [hasFocusedOnce, setHasFocusedOnce] = useState(false);
 
@@ -329,6 +335,7 @@ export default function PostForm({
       ta.focus();
       const pos = ta.value.length;
       ta.setSelectionRange(pos, pos);
+      caretRef.current = pos;
     }
   }, [autoFocus]);
 
@@ -354,6 +361,8 @@ export default function PostForm({
       textarea.style.height = `${minHeight}px`;
     }
     if (onErrorClear) onErrorClear();
+    caretRef.current = textarea.selectionEnd ?? textarea.selectionStart ?? 0;
+    scheduleSync();
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -374,7 +383,10 @@ export default function PostForm({
     const ta = textareaRef.current;
     if (!ta) {
       const needsNL = body.length > 0 && !body.endsWith("\n");
-      setBody(body + (needsNL ? "\n" : "") + snippet);
+      const next = body + (needsNL ? "\n" : "") + snippet;
+      setBody(next);
+      caretRef.current = next.length;
+      scheduleSync();
       return;
     }
     const text = ta.value;
@@ -391,12 +403,17 @@ export default function PostForm({
       ta.focus();
       const pos = before.length + insert.length;
       ta.setSelectionRange(pos, pos);
+      caretRef.current = pos;
+      scheduleSync();
     });
   }
   function insertInlineAtCursor(snippet: string) {
     const ta = textareaRef.current;
     if (!ta) {
-      setBody(body + snippet);
+      const next = body + snippet;
+      setBody(next);
+      caretRef.current = next.length;
+      scheduleSync();
       return;
     }
     const text = ta.value;
@@ -411,6 +428,8 @@ export default function PostForm({
       ta.focus();
       const pos = before.length + snippet.length;
       ta.setSelectionRange(pos, pos);
+      caretRef.current = pos;
+      scheduleSync();
     });
   }
 
@@ -419,31 +438,124 @@ export default function PostForm({
     const ta = textareaRef.current;
     if (!ta) return;
     applyPrefixToggleFromTextarea(ta, setBody, prefix);
+    requestAnimationFrame(() => {
+      caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      scheduleSync();
+    });
   };
   const actFence = (e: React.MouseEvent) => {
     e.preventDefault();
     const ta = textareaRef.current;
     if (!ta) return;
     applyCodeFenceToggleFromTextarea(ta, setBody);
+    requestAnimationFrame(() => {
+      caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      scheduleSync();
+    });
   };
   const actInline = (open: string, close?: string) => (e: React.MouseEvent) => {
     e.preventDefault();
     const ta = textareaRef.current;
     if (!ta) return;
     applyInlineToggleFromTextarea(ta, setBody, open, close ?? open);
+    requestAnimationFrame(() => {
+      caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      scheduleSync();
+    });
   };
   const actRuby = (e: React.MouseEvent) => {
     e.preventDefault();
     const ta = textareaRef.current;
     if (!ta) return;
     applyRubyToggleFromTextarea(ta, setBody);
+    requestAnimationFrame(() => {
+      caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      scheduleSync();
+    });
   };
   const actLink = (e: React.MouseEvent) => {
     e.preventDefault();
     const ta = textareaRef.current;
     if (!ta) return;
     applyLinkToggleFromTextarea(ta, setBody);
+    requestAnimationFrame(() => {
+      caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      scheduleSync();
+    });
   };
+
+  function rebuildAnchors() {
+    const root = previewBodyRef.current;
+    if (!root) {
+      anchorsRef.current = [];
+      return;
+    }
+    const list = Array.from(root.querySelectorAll<HTMLElement>("[data-char-position]"));
+    const withIndex = list
+      .map((el, idx) => {
+        const v = Number(el.getAttribute("data-char-position") || "");
+        return Number.isFinite(v) ? { char: v, el, idx } : null;
+      })
+      .filter((x): x is { char: number; el: HTMLElement; idx: number } => !!x);
+    withIndex.sort((a, b) => (a.char - b.char) || (a.idx - b.idx));
+    anchorsRef.current = withIndex.map(({ char, el }) => ({ char, el }));
+  }
+
+  function findAnchor(caret: number): HTMLElement | null {
+    const anchors = anchorsRef.current;
+    if (!anchors.length) return null;
+    let lo = 0;
+    let hi = anchors.length - 1;
+    let ans = 0;
+    while (lo <= hi) {
+      const mid = (lo + hi) >> 1;
+      if (anchors[mid]!.char <= caret) {
+        ans = mid;
+        lo = mid + 1;
+      } else {
+        hi = mid - 1;
+      }
+    }
+    return anchors[ans]!.el;
+  }
+
+  function syncToCaret() {
+    if (!showPreview) return;
+    const wrap = previewWrapRef.current;
+    if (!wrap) return;
+    const caret = Math.min(Math.max(0, caretRef.current), content.length);
+    const target = findAnchor(caret);
+    if (!target) return;
+
+    const wrapRect = wrap.getBoundingClientRect();
+    const elRect = target.getBoundingClientRect();
+    const yWithin = wrap.scrollTop + (elRect.top - wrapRect.top);
+    const desired = Math.max(0, yWithin - (wrap.clientHeight - target.offsetHeight) / 2);
+
+    if (Math.abs(wrap.scrollTop - desired) > 1) {
+      wrap.scrollTo({ top: desired, behavior: "auto" });
+    }
+  }
+
+  function scheduleSync() {
+    if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    rafRef.current = requestAnimationFrame(() => {
+      rafRef.current = null;
+      syncToCaret();
+    });
+  }
+
+  useEffect(() => {
+    if (!showPreview) return;
+    rebuildAnchors();
+    scheduleSync();
+  }, [content, showPreview]);
+
+  useEffect(() => {
+    return () => {
+      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+    };
+  }, []);
 
   return (
     <div className="relative group">
@@ -596,7 +708,27 @@ export default function PostForm({
           className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50 break-all"
           placeholder={placeholder}
           value={body}
-          onChange={(e) => setBody(e.target.value)}
+          onChange={(e) => {
+            setBody(e.target.value);
+            const pos = e.currentTarget.selectionEnd ?? e.currentTarget.selectionStart ?? 0;
+            caretRef.current = pos;
+            scheduleSync();
+          }}
+          onKeyUp={() => {
+            const ta = textareaRef.current;
+            if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+            scheduleSync();
+          }}
+          onClick={() => {
+            const ta = textareaRef.current;
+            if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+            scheduleSync();
+          }}
+          onSelect={() => {
+            const ta = textareaRef.current;
+            if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+            scheduleSync();
+          }}
           maxLength={65535}
           onFocus={handleFocus}
           rows={1}
@@ -634,7 +766,10 @@ export default function PostForm({
             <button
               type="button"
               className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1 rounded border border-gray-300 cursor-pointer transition"
-              onClick={() => setShowPreview((v) => !v)}
+              onClick={() => {
+                setShowPreview((v) => !v);
+                requestAnimationFrame(scheduleSync);
+              }}
             >
               {showPreview ? "Hide Preview" : "Preview"}
             </button>
@@ -659,9 +794,13 @@ export default function PostForm({
         )}
 
         {showPreview && content.trim() !== "" && (
-          <div className="border rounded bg-white mt-1 p-3 markdown-body max-h-[50ex] overflow-y-auto">
+          <div
+            ref={previewWrapRef}
+            className="border rounded bg-white mt-1 p-3 markdown-body max-h-[50ex] overflow-y-auto"
+          >
             <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
             <div
+              ref={previewBodyRef}
               dangerouslySetInnerHTML={{ __html: makeArticleHtmlFromMarkdown(content) }}
               style={{ minHeight: 32 }}
             />

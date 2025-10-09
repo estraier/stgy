@@ -5,73 +5,159 @@ export type MdElementNode = {
   tag: string;
   attrs?: MdAttrs;
   children: MdNode[];
+  charPosition?: number;
+  linePosition?: number;
 };
 export type MdMediaElement = MdElementNode & { tag: "img" | "video" };
 export type MdNode = MdTextNode | MdElementNode;
 
+function isMediaElement(n: MdNode): n is MdMediaElement {
+  return n.type === "element" && (n.tag === "img" || n.tag === "video");
+}
+
+function makeElement(
+  tag: string,
+  children: MdNode[],
+  attrs?: MdAttrs,
+  linePosition?: number,
+  charPosition?: number,
+): MdElementNode {
+  const el: MdElementNode = { type: "element", tag, children };
+  if (attrs && Object.keys(attrs).length > 0) el.attrs = attrs;
+  if (typeof linePosition === "number") el.linePosition = linePosition;
+  if (typeof charPosition === "number") el.charPosition = charPosition;
+  return el;
+}
+
 export function parseMarkdown(mdText: string): MdNode[] {
-  const lines = mdText.replace(/\r\n/g, "\n").split("\n");
+  const src = mdText.replace(/\r\n/g, "\n");
+  const lines = src.split("\n");
+  const lineOffsets: number[] = [];
+  {
+    let offset = 0;
+    for (let i = 0; i < lines.length; i++) {
+      lineOffsets.push(offset);
+      offset += lines[i]!.length;
+      if (i < lines.length - 1) offset += 1;
+    }
+  }
+
   const nodes: MdNode[] = [];
   let inCode = false,
     codeLines: string[] = [],
     codeLang: string | undefined;
+  let codeStartLine = -1,
+    codeStartChar = -1;
+
   const currList: { level: number; items: MdNode[] }[] = [];
   let currPara: string[] = [];
+  let paraStartLine = -1,
+    paraStartChar = -1;
+
   let currTable: string[][] = [];
+  let tableStartLine = -1,
+    tableStartChar = -1;
+
   let currQuote: string[] = [];
+  let quoteStartLine = -1,
+    quoteStartChar = -1;
+
+  function inheritPosFromFirstChild(
+    tag: string,
+    children: MdNode[],
+    attrs?: MdAttrs,
+  ): MdElementNode {
+    let lp: number | undefined;
+    let cp: number | undefined;
+    for (const c of children) {
+      if (c.type === "element") {
+        if (typeof c.linePosition === "number") lp = c.linePosition;
+        if (typeof c.charPosition === "number") cp = c.charPosition;
+        break;
+      }
+    }
+    return makeElement(tag, children, attrs, lp, cp);
+  }
+
   function flushPara() {
     if (currPara.length) {
-      nodes.push({ type: "element", tag: "p", children: parseInline(currPara.join("\n")) });
+      nodes.push(
+        makeElement("p", parseInline(currPara.join("\n")), undefined, paraStartLine, paraStartChar),
+      );
       currPara = [];
+      paraStartLine = -1;
+      paraStartChar = -1;
     }
   }
   function flushList() {
     while (currList.length > 0) {
       const list = currList.pop()!;
       if (currList.length === 0) {
-        nodes.push({ type: "element", tag: "ul", children: list.items });
+        nodes.push(inheritPosFromFirstChild("ul", list.items));
       } else {
         const parentItems = currList[currList.length - 1].items;
         const lastLi = parentItems.length > 0 ? parentItems[parentItems.length - 1] : undefined;
         if (lastLi && lastLi.type === "element" && lastLi.tag === "li") {
           if (!lastLi.children) lastLi.children = [];
-          lastLi.children.push({ type: "element", tag: "ul", children: list.items });
+          lastLi.children.push(inheritPosFromFirstChild("ul", list.items));
         }
       }
     }
   }
   function flushTable() {
     if (currTable.length) {
-      nodes.push({
-        type: "element",
-        tag: "table",
-        children: currTable.map((row) => ({
-          type: "element",
-          tag: "tr",
-          children: row.map((cell) => ({
-            type: "element",
-            tag: "td",
-            children: parseInline(cell.trim()),
-          })),
-        })),
-      });
+      nodes.push(
+        makeElement(
+          "table",
+          currTable.map((row) =>
+            makeElement(
+              "tr",
+              row.map((cell) =>
+                makeElement(
+                  "td",
+                  parseInline(cell.trim()),
+                  undefined,
+                  tableStartLine,
+                  tableStartChar,
+                ),
+              ),
+              undefined,
+              tableStartLine,
+              tableStartChar,
+            ),
+          ),
+          undefined,
+          tableStartLine,
+          tableStartChar,
+        ),
+      );
       currTable = [];
+      tableStartLine = -1;
+      tableStartChar = -1;
     }
   }
   function flushQuote() {
     if (currQuote.length) {
-      nodes.push({
-        type: "element",
-        tag: "blockquote",
-        children: parseInline(currQuote.join("\n")),
-      });
+      nodes.push(
+        makeElement(
+          "blockquote",
+          parseInline(currQuote.join("\n")),
+          undefined,
+          quoteStartLine,
+          quoteStartChar,
+        ),
+      );
       currQuote = [];
+      quoteStartLine = -1;
+      quoteStartChar = -1;
     }
   }
   const imageMacroRe = /^!\[([^\]]*)\]\s*\(([^)]+)\)\s*(?:\{([^\}]*)\})?$/;
   const videoExts = /\.(mpg|mp4|m4a|mov|avi|wmv|webm)(\?.*)?$/i;
   for (let i = 0; i < lines.length; ++i) {
-    const line = lines[i];
+    const line = lines[i]!;
+    const lineCharStart = lineOffsets[i]!;
+
     const codeFence = line.match(/^```([\w:]*)/);
     if (codeFence) {
       flushPara();
@@ -82,16 +168,23 @@ export function parseMarkdown(mdText: string): MdNode[] {
         inCode = true;
         codeLines = [];
         codeLang = codeFence[1] || undefined;
+        codeStartLine = i;
+        codeStartChar = lineCharStart;
       } else {
-        nodes.push({
-          type: "element",
-          tag: "pre",
-          attrs: codeLang ? { "pre-mode": codeLang } : undefined,
-          children: [{ type: "text", text: codeLines.join("\n") }],
-        });
+        nodes.push(
+          makeElement(
+            "pre",
+            [{ type: "text", text: codeLines.join("\n") }],
+            codeLang ? { "pre-mode": codeLang } : undefined,
+            codeStartLine,
+            codeStartChar,
+          ),
+        );
         inCode = false;
         codeLang = undefined;
         codeLines = [];
+        codeStartLine = -1;
+        codeStartChar = -1;
       }
       continue;
     }
@@ -107,7 +200,7 @@ export function parseMarkdown(mdText: string): MdNode[] {
       flushQuote();
       const dashCount = hr[0].length;
       const level = dashCount === 3 ? 1 : dashCount === 4 ? 2 : 3;
-      nodes.push({ type: "element", tag: "hr", attrs: { "hr-level": level }, children: [] });
+      nodes.push(makeElement("hr", [], { "hr-level": level }, i, lineCharStart));
       continue;
     }
     const img = line.match(imageMacroRe);
@@ -133,22 +226,14 @@ export function parseMarkdown(mdText: string): MdNode[] {
       for (const [k, v] of Object.entries(macro)) {
         mediaAttrs[k] = v;
       }
-      const figureChildren: MdNode[] = [
-        { type: "element", tag: isVideo ? "video" : "img", attrs: mediaAttrs, children: [] },
-      ];
+      const mediaEl = makeElement(isVideo ? "video" : "img", [], mediaAttrs, i, lineCharStart);
+      const figureChildren: MdNode[] = [mediaEl];
       if (desc) {
-        figureChildren.push({
-          type: "element",
-          tag: "figcaption",
-          children: [{ type: "text", text: desc }],
-        });
+        figureChildren.push(
+          makeElement("figcaption", [{ type: "text", text: desc }], undefined, i, lineCharStart),
+        );
       }
-      nodes.push({
-        type: "element",
-        tag: "figure",
-        attrs: { class: "image-block" },
-        children: figureChildren,
-      });
+      nodes.push(makeElement("figure", figureChildren, { class: "image-block" }, i, lineCharStart));
       continue;
     }
     const tableRow = line.match(/^\|(.+)\|$/);
@@ -156,6 +241,10 @@ export function parseMarkdown(mdText: string): MdNode[] {
       flushPara();
       flushList();
       flushQuote();
+      if (currTable.length === 0) {
+        tableStartLine = i;
+        tableStartChar = lineCharStart;
+      }
       currTable.push(tableRow[1].split("|"));
       continue;
     } else if (currTable.length) {
@@ -166,6 +255,10 @@ export function parseMarkdown(mdText: string): MdNode[] {
       flushPara();
       flushList();
       flushTable();
+      if (currQuote.length === 0) {
+        quoteStartLine = i;
+        quoteStartChar = lineCharStart;
+      }
       currQuote.push(quote[1]);
       continue;
     } else if (currQuote.length) {
@@ -185,7 +278,7 @@ export function parseMarkdown(mdText: string): MdNode[] {
       flushTable();
       flushQuote();
       const level = h[1].length;
-      nodes.push({ type: "element", tag: `h${level}`, children: parseInline(h[2]) });
+      nodes.push(makeElement(`h${level}`, parseInline(h[2]), undefined, i, lineCharStart));
       continue;
     }
     const li = line.match(/^(\s*)- (.+)$/);
@@ -197,28 +290,30 @@ export function parseMarkdown(mdText: string): MdNode[] {
       while (currList.length > 0 && currList[currList.length - 1].level > level) {
         const done = currList.pop();
         if (currList.length === 0) {
-          nodes.push({ type: "element", tag: "ul", children: done!.items });
+          nodes.push(inheritPosFromFirstChild("ul", done!.items));
         } else {
           const parentItems = currList[currList.length - 1].items;
           const lastLi = parentItems.length > 0 ? parentItems[parentItems.length - 1] : undefined;
           if (lastLi && lastLi.type === "element" && lastLi.tag === "li") {
             if (!lastLi.children) lastLi.children = [];
-            lastLi.children.push({ type: "element", tag: "ul", children: done!.items });
+            lastLi.children.push(inheritPosFromFirstChild("ul", done!.items));
           }
         }
       }
       if (currList.length === 0 || currList[currList.length - 1].level < level) {
         currList.push({ level, items: [] });
       }
-      currList[currList.length - 1].items.push({
-        type: "element",
-        tag: "li",
-        children: parseInline(li[2]),
-      });
+      currList[currList.length - 1].items.push(
+        makeElement("li", parseInline(li[2]), undefined, i, lineCharStart),
+      );
       continue;
     }
     if (currList.length > 0) {
       flushList();
+    }
+    if (currPara.length === 0) {
+      paraStartLine = i;
+      paraStartChar = lineCharStart;
     }
     currPara.push(line);
   }
@@ -227,12 +322,15 @@ export function parseMarkdown(mdText: string): MdNode[] {
   flushTable();
   flushQuote();
   if (inCode && codeLines.length > 0) {
-    nodes.push({
-      type: "element",
-      tag: "pre",
-      attrs: codeLang ? { "pre-mode": codeLang } : undefined,
-      children: [{ type: "text", text: codeLines.join("\n") }],
-    });
+    nodes.push(
+      makeElement(
+        "pre",
+        [{ type: "text", text: codeLines.join("\n") }],
+        codeLang ? { "pre-mode": codeLang } : undefined,
+        codeStartLine >= 0 ? codeStartLine : undefined,
+        codeStartChar >= 0 ? codeStartChar : undefined,
+      ),
+    );
   }
   return nodes;
 }
@@ -265,7 +363,13 @@ export function mdRewriteMediaUrls(nodes: MdNode[], opts: MdMediaRewriteOptions)
       const a = n.attrs || {};
       const src = typeof a.src === "string" ? a.src : "";
       if (!isAllowedNow(src)) {
-        return { type: "element", tag: "img", attrs: { src: opts.alternativeImage }, children: [] };
+        return makeElement(
+          "img",
+          [],
+          { src: opts.alternativeImage },
+          n.linePosition,
+          n.charPosition,
+        );
       }
       return { ...n, attrs: { ...a, src: applyRules(src) } };
     }
@@ -305,12 +409,15 @@ export function mdGroupImageGrid(nodes: MdNode[], opts?: { maxElements?: number 
         }
         for (let k = 0; k < group.length; k += maxElements) {
           const chunk = group.slice(k, k + maxElements);
-          out.push({
-            type: "element",
-            tag: "div",
-            attrs: { class: "image-grid", "data-cols": chunk.length },
-            children: chunk,
-          });
+          out.push(
+            makeElement(
+              "div",
+              chunk,
+              { class: "image-grid", "data-cols": chunk.length },
+              undefined,
+              undefined,
+            ),
+          );
         }
         i = j;
         continue;
@@ -379,12 +486,13 @@ export function mdFilterForFeatured(nodes: MdNode[]): MdNode[] {
   }
   const body = removeImageBlocks(nodes);
   if (featuredFig && featuredFig.type === "element") {
-    const thumb: MdElementNode = {
-      type: "element",
-      tag: "figure",
-      attrs: { ...(featuredFig.attrs || {}), class: "featured-block" },
-      children: featuredFig.children,
-    };
+    const thumb: MdElementNode = makeElement(
+      "figure",
+      featuredFig.children,
+      { ...(featuredFig.attrs || {}), class: "featured-block" },
+      featuredFig.linePosition,
+      featuredFig.charPosition,
+    );
     return [thumb, ...body];
   }
   return body;
@@ -679,6 +787,13 @@ export function mdRenderText(nodes: MdNode[]): string {
 }
 
 export function mdRenderHtml(nodes: MdNode[]): string {
+  function withPos(attrs: MdAttrs | undefined, node: MdElementNode): MdAttrs {
+    const out: MdAttrs = { ...(attrs || {}) };
+    if (typeof node.charPosition === "number") out["data-char-position"] = node.charPosition;
+    if (typeof node.linePosition === "number") out["data-line-position"] = node.linePosition;
+    return out;
+  }
+
   function serializeAll(arr: MdNode[]): string {
     let html = "";
     for (const n of arr) html += serializeOne(n);
@@ -690,29 +805,32 @@ export function mdRenderHtml(nodes: MdNode[]): string {
     if (n.type === "element" && n.tag === "br") return `<br>`;
     if (n.type === "element" && n.tag === "hr") {
       const a = n.attrs || {};
-      const attrs: MdAttrs = { ...a };
+      let attrs: MdAttrs = { ...a };
       if (attrs["hr-level"] !== undefined) {
         const v = attrs["hr-level"];
         delete attrs["hr-level"];
         (attrs as MdAttrs)["data-hr-level"] = v;
       }
+      attrs = withPos(attrs, n as MdElementNode);
       return `<hr${attrsToString(attrs)}>`;
     }
     if (n.type === "element" && n.tag === "pre") {
       const a = n.attrs || {};
-      const attrs: MdAttrs = { ...a };
+      let attrs: MdAttrs = { ...a };
       if (attrs["pre-mode"] !== undefined) {
         const v = attrs["pre-mode"];
         delete attrs["pre-mode"];
         (attrs as MdAttrs)["data-pre-mode"] = v;
       }
+      attrs = withPos(attrs, n as MdElementNode);
       return `<pre${attrsToString(attrs)}>${serializeAll(n.children || [])}</pre>`;
     }
     if (n.type === "element" && n.tag === "figure") {
       const media = (n.children || []).find(isMediaElement);
       const figBase = n.attrs || {};
       const figExtra = media ? mediaDataAttrs(media.attrs || {}) : {};
-      const figAttrs: MdAttrs = { ...figBase, ...figExtra };
+      let figAttrs: MdAttrs = { ...figBase, ...figExtra };
+      figAttrs = withPos(figAttrs, n as MdElementNode);
       let inner = "";
       for (const c of n.children || []) {
         if (c.type === "element" && isMediaElement(c)) inner += serializeMedia(c);
@@ -722,19 +840,31 @@ export function mdRenderHtml(nodes: MdNode[]): string {
       }
       return `<figure${attrsToString(figAttrs)}>${inner}</figure>`;
     }
-    if (n.type === "element" && isMediaElement(n)) return serializeMedia(n);
-    return `<${n.tag}${attrsToString(n.attrs)}>${serializeAll(n.children || [])}</${n.tag}>`;
+    if (n.type === "element" && isMediaElement(n)) return serializeMedia(n as MdMediaElement);
+    const attrs = withPos((n as MdElementNode).attrs, n as MdElementNode);
+    return `<${(n as MdElementNode).tag}${attrsToString(attrs)}>${serializeAll(
+      (n as MdElementNode).children || [],
+    )}</${(n as MdElementNode).tag}>`;
   }
   function serializeMedia(n: MdMediaElement): string {
     const a = n.attrs || {};
-    const src = a.src ? String(a.src) : "";
+    const src = a.src ? String(srcSanitize(a.src)) : "";
     if (n.tag === "img") {
-      const base: MdAttrs = { src, alt: "", loading: "lazy", decoding: "async" };
+      const base: MdAttrs = withPos(
+        { src, alt: "", loading: "lazy", decoding: "async" },
+        n as MdElementNode,
+      );
       return `<img${attrsToString(base)}>`;
     } else {
-      const base: MdAttrs = { src, "aria-label": "" as const, controls: true };
+      const base: MdAttrs = withPos(
+        { src, "aria-label": "" as const, controls: true },
+        n as MdElementNode,
+      );
       return `<video${attrsToString(base)}></video>`;
     }
+  }
+  function srcSanitize(v: string | number | boolean): string {
+    return typeof v === "string" ? v : String(v);
   }
   function attrsToString(attrs?: MdAttrs): string {
     if (!attrs) return "";
@@ -772,10 +902,6 @@ export function serializeMdNodes(nodes: MdNode[]): string {
 export function deserializeMdNodes(data: string): MdNode[] {
   const arr = JSON.parse(data) as EncodedNode[];
   return arr.map(decodeNode);
-}
-
-function isMediaElement(n: MdNode): n is MdMediaElement {
-  return n.type === "element" && (n.tag === "img" || n.tag === "video");
 }
 
 function parseInline(text: string): MdNode[] {
