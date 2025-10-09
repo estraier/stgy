@@ -459,7 +459,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actPrefix("# ")}
                 title="Heading 1"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <Heading1 className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">H1</span>
@@ -468,7 +468,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actPrefix("## ")}
                 title="Heading 2"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <Heading2 className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">H2</span>
@@ -477,7 +477,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actPrefix("### ")}
                 title="Heading 3"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <Heading3 className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">H3</span>
@@ -486,7 +486,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actPrefix("- ")}
                 title="List"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="hidden md:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <ListIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">List</span>
@@ -495,7 +495,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actPrefix("> ")}
                 title="Quote"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="hidden md:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <QuoteIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Quote</span>
@@ -504,7 +504,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actFence}
                 title="Code block"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="hidden md:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <CodeBlockIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Code Block</span>
@@ -513,7 +513,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actInline("**")}
                 title="Bold"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <BoldIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Bold</span>
@@ -522,7 +522,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actInline("::")}
                 title="Italic"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="hidden md:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <ItalicIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Italic</span>
@@ -531,7 +531,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actInline("__")}
                 title="Underline"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="hidden md:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <UnderlineIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Underline</span>
@@ -540,7 +540,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actInline("~~")}
                 title="Strikethrough"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="hidden md:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <StrikethroughIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Strikethrough</span>
@@ -549,7 +549,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actInline("``")}
                 title="Inline code"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="hidden md:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <InlineCodeIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Inline Code</span>
@@ -558,7 +558,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actInline("%%")}
                 title="Mark"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="hidden md:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <MarkIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Mark</span>
@@ -567,7 +567,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actRuby}
                 title="Ruby"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="hidden md:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <RubyIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Ruby</span>
@@ -576,7 +576,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actLink}
                 title="Link"
-                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <LinkIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Link</span>
