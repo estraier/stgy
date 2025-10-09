@@ -216,7 +216,7 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
       </button>
 
       {open && (
-        <div className="absolute -right-5 top-full mt-2 w-[380px] max-h-[70vh] overflow-auto bg-white border rounded shadow-lg z-50">
+        <div className="absolute -right-5 top-full mt-2 w-[380px] max-h-[70vh] overflow-auto bg-white border rounded shadow-lg z-50 max-md:w-[320px] max-md:-right-10">
           <div className="flex items-center justify-between px-3 py-2 border-b bg-gray-50 sticky top-0">
             <div className="flex gap-1">
               <button

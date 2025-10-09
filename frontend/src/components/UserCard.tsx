@@ -281,52 +281,52 @@ export default function UserCard({
           {user.nickname}
         </span>
         {isAdmin && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs opacity-90">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-300 text-gray-800 rounded text-xs opacity-90 max-md:text-[9px]">
             admin
           </span>
         )}
         {blockStrangers && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs opacity-90">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px]">
             BS
           </span>
         )}
         {isAI && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs opacity-90">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-200 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px]">
             AI
           </span>
         )}
         {isSelf && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-green-100 text-green-800 rounded text-xs opacity-90">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-green-100 text-green-800 rounded text-xs opacity-90 max-md:text-[9px]">
             self
           </span>
         )}
         {isFriend && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs opacity-90">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-purple-100 text-purple-700 rounded text-xs opacity-90 max-md:text-[9px]">
             friend
           </span>
         )}
         {isFollower && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-pink-100 text-pink-800 rounded text-xs opacity-90">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-pink-100 text-pink-800 rounded text-xs opacity-90 max-md:text-[9px]">
             follower
           </span>
         )}
         {isFollowee && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs opacity-90">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-blue-100 text-blue-800 rounded text-xs opacity-90 max-md:text-[9px]">
             followee
           </span>
         )}
         {isBlocking && isBlocked && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px]">
             break
           </span>
         )}
         {isBlocked && !isBlocking && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px]">
             blocker
           </span>
         )}
         {isBlocking && !isBlocked && (
-          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90">
+          <span className="-mt-1 ml-2 px-2 py-1 bg-gray-100 text-gray-700 rounded text-xs opacity-90 max-md:text-[9px]">
             blockee
           </span>
         )}

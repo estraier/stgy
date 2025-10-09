@@ -364,7 +364,8 @@ export default function PageBody() {
             onChange={(e) => handleOldestFirstToggle(e.target.checked)}
             className="cursor-pointer"
           />
-          Oldest first
+          <span className="hidden md:inline">Oldest first</span>
+          <span className="md:hidden" aria-hidden>Oldest</span>
         </label>
       </div>
 

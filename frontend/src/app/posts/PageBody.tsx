@@ -417,7 +417,8 @@ export default function PageBody() {
             }
             className="cursor-pointer"
           />
-          Including replies
+          <span className="hidden md:inline">Including replies</span>
+          <span className="md:hidden" aria-hidden>Replies</span>
         </label>
         <label className="flex pl-2 items-center gap-1 text-sm text-gray-700 cursor-pointer">
           <input
@@ -426,7 +427,8 @@ export default function PageBody() {
             onChange={(e) => setQuery({ oldestFirst: e.target.checked ? "1" : undefined, page: 1 })}
             className="cursor-pointer"
           />
-          Oldest first
+          <span className="hidden md:inline">Oldest first</span>
+          <span className="md:hidden" aria-hidden>Oldest</span>
         </label>
       </div>
       {isSearchMode && (

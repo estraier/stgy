@@ -82,7 +82,7 @@ export default function PostCard({
           />
         </a>
         <a
-          className="-mt-1 text-lg text-slate-900 hover:text-blue-700 hover:underline min-w-[20ex] max-w-[48ex] truncate inline-block align-bottom"
+          className="-mt-1 text-lg text-slate-900 hover:text-blue-700 hover:underline min-w-[20ex] max-w-[48ex] truncate inline-block align-bottom max-md:min-w-[10ex]"
           href={`/users/${post.ownedBy}`}
           onClick={(e) => e.stopPropagation()}
         >
@@ -106,10 +106,10 @@ export default function PostCard({
             )}
           </span>
         )}
-        <span className="relative -mt-1 pr-1 ml-auto text-gray-400 whitespace-nowrap">
+        <span className="relative -mt-1 pr-1 ml-auto text-gray-400 whitespace-nowrap max-md:text-[10px]">
           {formatDateTime(new Date(post.createdAt))}
           {post.updatedAt && (
-            <div className="absolute right-1 -translate-y-1 ml-1 text-[11px] text-gray-400">
+            <div className="absolute right-1 -translate-y-1 ml-1 text-[11px] text-gray-400 max-md:text-[9px]">
               ({formatDateTime(new Date(post.updatedAt))})
             </div>
           )}
