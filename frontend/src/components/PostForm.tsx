@@ -21,6 +21,7 @@ import {
   Highlighter as MarkIcon,
   Braces as RubyIcon,
   Link as LinkIcon,
+  X as CloseIcon,
 } from "lucide-react";
 
 type PostFormProps = {
@@ -315,29 +316,65 @@ export default function PostForm({
   contentLengthLimit,
   autoFocus = false,
 }: PostFormProps) {
+  // base editor refs
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewWrapRef = useRef<HTMLDivElement>(null);
   const previewBodyRef = useRef<HTMLDivElement>(null);
+
+  // overlay editor refs (SxS)
+  const overlayTextareaRef = useRef<HTMLTextAreaElement>(null);
+  const overlayEditorColRef = useRef<HTMLDivElement>(null);
+  const overlayToolbarRef = useRef<HTMLDivElement>(null);
+  const overlayFooterRef = useRef<HTMLDivElement>(null);
+  const overlayScrollRef = useRef<HTMLDivElement>(null);
+  const overlayEditorInnerRef = useRef<HTMLDivElement>(null);
+  const overlayWrapRef = useRef<HTMLDivElement>(null);
+  const overlayBodyRef = useRef<HTMLDivElement>(null);
+
+  // anchors & caret
   const anchorsRef = useRef<{ char: number; el: HTMLElement }[]>([]);
   const rafRef = useRef<number | null>(null);
   const caretRef = useRef<number>(0);
 
   const [showPreview, setShowPreview] = useState(false);
   const [hasFocusedOnce, setHasFocusedOnce] = useState(false);
+  const [isXl, setIsXl] = useState(false);
+
+  const overlayActive = showPreview && isXl;
+
+  useEffect(() => {
+    const mq = window.matchMedia("(min-width: 1280px)");
+    const apply = () => setIsXl(mq.matches);
+    apply();
+    mq.addEventListener("change", apply);
+    return () => mq.removeEventListener("change", apply);
+  }, []);
+
+  useEffect(() => {
+    if (!overlayActive) return;
+    const prev = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = prev;
+    };
+  }, [overlayActive]);
 
   useEffect(() => {
     if (body.trim() === "") setShowPreview(false);
   }, [body]);
 
   useEffect(() => {
-    if (autoFocus && textareaRef.current) {
-      const ta = textareaRef.current;
-      ta.focus();
-      const pos = ta.value.length;
-      ta.setSelectionRange(pos, pos);
-      caretRef.current = pos;
+    if (autoFocus) {
+      const ta = overlayActive ? overlayTextareaRef.current : textareaRef.current;
+      if (ta) {
+        ta.focus();
+        const pos = ta.value.length;
+        ta.setSelectionRange(pos, pos);
+        caretRef.current = pos;
+        scheduleSync();
+      }
     }
-  }, [autoFocus]);
+  }, [autoFocus, overlayActive]);
 
   const { content, tags, attrs } = useMemo(() => parseBodyAndTags(body), [body]);
   const contentLength = content.length;
@@ -351,18 +388,29 @@ export default function PostForm({
       .filter(Boolean) as string[];
   }, [attrs]);
 
+  function activeTextarea(): HTMLTextAreaElement | null {
+    return overlayActive ? overlayTextareaRef.current : textareaRef.current;
+  }
+  function activePreviewWrap(): HTMLDivElement | null {
+    return overlayActive ? overlayWrapRef.current : previewWrapRef.current;
+  }
+  function activePreviewBody(): HTMLDivElement | null {
+    return overlayActive ? overlayBodyRef.current : previewBodyRef.current;
+  }
+
   function handleFocus() {
     if (!hasFocusedOnce) setHasFocusedOnce(true);
-    const textarea = textareaRef.current;
+    const textarea = activeTextarea();
     if (!textarea) return;
     const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight || "20");
     const minHeight = lineHeight * 8;
-    if (textarea.offsetHeight < minHeight) {
+    if (!overlayActive && textarea.offsetHeight < minHeight) {
       textarea.style.height = `${minHeight}px`;
     }
     if (onErrorClear) onErrorClear();
     caretRef.current = textarea.selectionEnd ?? textarea.selectionStart ?? 0;
     scheduleSync();
+    if (overlayActive) resizeOverlayTextarea();
   }
 
   function handleSubmit(e: React.FormEvent) {
@@ -380,7 +428,7 @@ export default function PostForm({
   }
 
   function insertAtCursor(snippet: string) {
-    const ta = textareaRef.current;
+    const ta = activeTextarea();
     if (!ta) {
       const needsNL = body.length > 0 && !body.endsWith("\n");
       const next = body + (needsNL ? "\n" : "") + snippet;
@@ -405,10 +453,11 @@ export default function PostForm({
       ta.setSelectionRange(pos, pos);
       caretRef.current = pos;
       scheduleSync();
+      if (overlayActive) resizeOverlayTextarea();
     });
   }
   function insertInlineAtCursor(snippet: string) {
-    const ta = textareaRef.current;
+    const ta = activeTextarea();
     if (!ta) {
       const next = body + snippet;
       setBody(next);
@@ -430,62 +479,68 @@ export default function PostForm({
       ta.setSelectionRange(pos, pos);
       caretRef.current = pos;
       scheduleSync();
+      if (overlayActive) resizeOverlayTextarea();
     });
   }
 
   const actPrefix = (prefix: string) => (e: React.MouseEvent) => {
     e.preventDefault();
-    const ta = textareaRef.current;
+    const ta = activeTextarea();
     if (!ta) return;
     applyPrefixToggleFromTextarea(ta, setBody, prefix);
     requestAnimationFrame(() => {
       caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
       scheduleSync();
+      if (overlayActive) resizeOverlayTextarea();
     });
   };
   const actFence = (e: React.MouseEvent) => {
     e.preventDefault();
-    const ta = textareaRef.current;
+    const ta = activeTextarea();
     if (!ta) return;
     applyCodeFenceToggleFromTextarea(ta, setBody);
     requestAnimationFrame(() => {
       caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
       scheduleSync();
+      if (overlayActive) resizeOverlayTextarea();
     });
   };
   const actInline = (open: string, close?: string) => (e: React.MouseEvent) => {
     e.preventDefault();
-    const ta = textareaRef.current;
+    const ta = activeTextarea();
     if (!ta) return;
     applyInlineToggleFromTextarea(ta, setBody, open, close ?? open);
     requestAnimationFrame(() => {
       caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
       scheduleSync();
+      if (overlayActive) resizeOverlayTextarea();
     });
   };
   const actRuby = (e: React.MouseEvent) => {
     e.preventDefault();
-    const ta = textareaRef.current;
+    const ta = activeTextarea();
     if (!ta) return;
     applyRubyToggleFromTextarea(ta, setBody);
     requestAnimationFrame(() => {
       caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
       scheduleSync();
+      if (overlayActive) resizeOverlayTextarea();
     });
   };
   const actLink = (e: React.MouseEvent) => {
     e.preventDefault();
-    const ta = textareaRef.current;
+    const ta = activeTextarea();
     if (!ta) return;
     applyLinkToggleFromTextarea(ta, setBody);
     requestAnimationFrame(() => {
       caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
       scheduleSync();
+      if (overlayActive) resizeOverlayTextarea();
     });
   };
 
   function rebuildAnchors() {
-    const root = previewBodyRef.current;
+    const root = activePreviewBody();
     if (!root) {
       anchorsRef.current = [];
       return;
@@ -521,7 +576,7 @@ export default function PostForm({
 
   function syncToCaret() {
     if (!showPreview) return;
-    const wrap = previewWrapRef.current;
+    const wrap = activePreviewWrap();
     if (!wrap) return;
     const caret = Math.min(Math.max(0, caretRef.current), content.length);
     const target = findAnchor(caret);
@@ -541,15 +596,49 @@ export default function PostForm({
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null;
+      rebuildAnchors();
       syncToCaret();
     });
   }
+
+  // ===== SxS: overlay textarea auto height =====
+  function resizeOverlayTextarea() {
+    if (!overlayActive) return;
+    const ta = overlayTextareaRef.current;
+    const scroll = overlayScrollRef.current;
+    const inner = overlayEditorInnerRef.current;
+    if (!ta || !scroll || !inner) return;
+
+    const innerStyle = getComputedStyle(inner);
+    const pt = parseFloat(innerStyle.paddingTop || "0");
+    const pb = parseFloat(innerStyle.paddingBottom || "0");
+
+    // 表示領域（スクロール可能領域）に対して、上下パディングを引いた高さをテキストエリアに割り当てる
+    const available = Math.max(160, scroll.clientHeight - pt - pb);
+    ta.style.height = `${available}px`;
+  }
+
+  useEffect(() => {
+    if (!overlayActive) return;
+    resizeOverlayTextarea();
+    const onResize = () => resizeOverlayTextarea();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [overlayActive]);
+
+  useEffect(() => {
+    if (!overlayActive) return;
+    // ツールバー/フッターの高さ変化やエラー表示の変動にも追随
+    resizeOverlayTextarea();
+  }, [overlayActive, error, submitting, contentLengthLimit]);
 
   useEffect(() => {
     if (!showPreview) return;
     rebuildAnchors();
     scheduleSync();
-  }, [content, showPreview]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [content, showPreview, overlayActive]);
 
   useEffect(() => {
     return () => {
@@ -560,9 +649,11 @@ export default function PostForm({
   return (
     <div className="relative group">
       <form
+        id="post-form"
         onSubmit={handleSubmit}
         className={className + " flex flex-col gap-2"}
         onClick={(e) => e.stopPropagation()}
+        aria-hidden={overlayActive ? true : undefined}
       >
         <div className="hidden group-focus-within:flex absolute left-0 right-0 top-0 -translate-y-full">
           <div className="w-full px-1.5 text-gray-600 backdrop-blur-sm flex items-center justify-between">
@@ -703,37 +794,39 @@ export default function PostForm({
           </div>
         </div>
 
-        <textarea
-          ref={textareaRef}
-          className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50 break-all"
-          placeholder={placeholder}
-          value={body}
-          onChange={(e) => {
-            setBody(e.target.value);
-            const pos = e.currentTarget.selectionEnd ?? e.currentTarget.selectionStart ?? 0;
-            caretRef.current = pos;
-            scheduleSync();
-          }}
-          onKeyUp={() => {
-            const ta = textareaRef.current;
-            if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-            scheduleSync();
-          }}
-          onClick={() => {
-            const ta = textareaRef.current;
-            if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-            scheduleSync();
-          }}
-          onSelect={() => {
-            const ta = textareaRef.current;
-            if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-            scheduleSync();
-          }}
-          maxLength={65535}
-          onFocus={handleFocus}
-          rows={1}
-          style={{ resize: "vertical" }}
-        />
+        {!overlayActive && (
+          <textarea
+            ref={textareaRef}
+            className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50 break-all"
+            placeholder={placeholder}
+            value={body}
+            onChange={(e) => {
+              setBody(e.target.value);
+              const pos = e.currentTarget.selectionEnd ?? e.currentTarget.selectionStart ?? 0;
+              caretRef.current = pos;
+              scheduleSync();
+            }}
+            onKeyUp={() => {
+              const ta = textareaRef.current;
+              if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+              scheduleSync();
+            }}
+            onClick={() => {
+              const ta = textareaRef.current;
+              if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+              scheduleSync();
+            }}
+            onSelect={() => {
+              const ta = textareaRef.current;
+              if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+              scheduleSync();
+            }}
+            maxLength={65535}
+            onFocus={handleFocus}
+            rows={1}
+            style={{ resize: "vertical" }}
+          />
+        )}
 
         {hasFocusedOnce && (
           <div className="flex items-center gap-2">
@@ -793,7 +886,7 @@ export default function PostForm({
           </div>
         )}
 
-        {showPreview && content.trim() !== "" && (
+        {showPreview && !overlayActive && content.trim() !== "" && (
           <div
             ref={previewWrapRef}
             className="border rounded bg-white mt-1 p-3 markdown-body max-h-[50ex] overflow-y-auto"
@@ -824,6 +917,220 @@ export default function PostForm({
           </div>
         )}
       </form>
+
+      {overlayActive && (
+        <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm">
+          <div className="absolute inset-0 flex flex-col">
+            <div className="flex-1 grid grid-cols-2 gap-0 h-full w-full overflow-hidden">
+              {/* editor column */}
+              <div ref={overlayEditorColRef} className="relative bg-gray-50/70 border-r min-h-0 flex flex-col">
+                {/* toolbar (centered & max-w 90ex) */}
+                <div ref={overlayToolbarRef} className="sticky top-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 w-full">
+                  <div className="mx-auto max-w-[90ex] w-full px-1.5 py-1 flex items-center justify-between">
+                    <div className="flex items-center gap-1">
+                      <button type="button" onMouseDown={actPrefix("# ")} title="Heading 1" className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <Heading1 className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">H1</span>
+                      </button>
+                      <button type="button" onMouseDown={actPrefix("## ")} title="Heading 2" className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <Heading2 className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">H2</span>
+                      </button>
+                      <button type="button" onMouseDown={actPrefix("### ")} title="Heading 3" className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <Heading3 className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">H3</span>
+                      </button>
+                      <button type="button" onMouseDown={actPrefix("- ")} title="List" className="hidden xl:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <ListIcon className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">List</span>
+                      </button>
+                      <button type="button" onMouseDown={actPrefix("> ")} title="Quote" className="hidden xl:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <QuoteIcon className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">Quote</span>
+                      </button>
+                      <button type="button" onMouseDown={actFence} title="Code block" className="hidden xl:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <CodeBlockIcon className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">Code Block</span>
+                      </button>
+                      <button type="button" onMouseDown={actInline("**")} title="Bold" className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <BoldIcon className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">Bold</span>
+                      </button>
+                      <button type="button" onMouseDown={actInline("::")} title="Italic" className="hidden xl:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <ItalicIcon className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">Italic</span>
+                      </button>
+                      <button type="button" onMouseDown={actInline("__")} title="Underline" className="hidden xl:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <UnderlineIcon className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">Underline</span>
+                      </button>
+                      <button type="button" onMouseDown={actInline("~~")} title="Strikethrough" className="hidden xl:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <StrikethroughIcon className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">Strikethrough</span>
+                      </button>
+                      <button type="button" onMouseDown={actInline("``")} title="Inline code" className="hidden xl:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <InlineCodeIcon className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">Inline Code</span>
+                      </button>
+                      <button type="button" onMouseDown={actInline("%%")} title="Mark" className="hidden xl:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <MarkIcon className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">Mark</span>
+                      </button>
+                      <button type="button" onMouseDown={actRuby} title="Ruby" className="hidden xl:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <RubyIcon className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">Ruby</span>
+                      </button>
+                      <button type="button" onMouseDown={actLink} title="Link" className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                        <LinkIcon className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">Link</span>
+                      </button>
+                    </div>
+
+                    <div className="flex items-center gap-1">
+                      <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)} />
+                      <ExistingImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
+                      <UploadImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
+                    </div>
+                  </div>
+                </div>
+
+                {/* scroll area (no padding) */}
+                <div ref={overlayScrollRef} className="flex-1 overflow-y-auto h-full">
+                  {/* inner: centered & 90ex */}
+                  <div ref={overlayEditorInnerRef} className="mx-auto max-w-[90ex] w-full p-6">
+                    <textarea
+                      ref={overlayTextareaRef}
+                      className="w-full border border-gray-400 rounded px-2 py-1 bg-gray-50 break-all"
+                      placeholder={placeholder}
+                      value={body}
+                      onChange={(e) => {
+                        setBody(e.target.value);
+                        const pos = e.currentTarget.selectionEnd ?? e.currentTarget.selectionStart ?? 0;
+                        caretRef.current = pos;
+                        scheduleSync();
+                      }}
+                      onKeyUp={() => {
+                        const ta = overlayTextareaRef.current;
+                        if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                        scheduleSync();
+                      }}
+                      onClick={() => {
+                        const ta = overlayTextareaRef.current;
+                        if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                        scheduleSync();
+                      }}
+                      onSelect={() => {
+                        const ta = overlayTextareaRef.current;
+                        if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                        scheduleSync();
+                      }}
+                      maxLength={65535}
+                      onFocus={handleFocus}
+                      rows={1}
+                      style={{ resize: "none" }}
+                    />
+                  </div>
+                </div>
+
+                {/* overlay footer (actions, centered & 90ex) */}
+                <div ref={overlayFooterRef} className="sticky bottom-0 w-full bg-white/95 backdrop-blur border-t border-gray-200">
+                  <div className="mx-auto max-w-[90ex] w-full px-6 py-2 flex items-center gap-2">
+                    <div className="flex-1">
+                      {error && <div className="text-red-600 text-sm">{error}</div>}
+                      <div className="text-xs text-gray-400" role="status" aria-live="polite">
+                        {contentLengthLimit != null ? `${contentLength} / ${contentLengthLimit}` : `${contentLength} chars`}
+                        {overLimit && <span className="text-yellow-700 ml-2">(too long)</span>}
+                      </div>
+                    </div>
+
+                    {onCancel && (
+                      <button
+                        type="button"
+                        className="bg-gray-200 text-gray-700 px-4 py-1 rounded border border-gray-300 cursor-pointer hover:bg-gray-300 transition"
+                        onClick={onCancel}
+                      >
+                        Cancel
+                      </button>
+                    )}
+
+                    <button
+                      type="button"
+                      className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1 rounded border border-gray-300 cursor-pointer transition"
+                      onClick={() => setShowPreview(false)}
+                    >
+                      Hide Preview
+                    </button>
+
+                    <button
+                      type="submit"
+                      form="post-form"
+                      className={
+                        isEdit && deletable && body.trim() === ""
+                          ? "bg-red-500 text-white hover:bg-red-600 px-4 py-1 rounded cursor-pointer ml-auto"
+                          : "bg-blue-500 text-white hover:bg-blue-600 px-4 py-1 rounded cursor-pointer ml-auto disabled:opacity-50 disabled:cursor-not-allowed"
+                      }
+                      disabled={submitting || overLimit}
+                    >
+                      {submitting
+                        ? isEdit && deletable && body.trim() === ""
+                          ? "Deleting..."
+                          : "Saving..."
+                        : isEdit && deletable && body.trim() === ""
+                          ? "Delete"
+                          : buttonLabel}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* preview column */}
+              <div className="relative bg-white min-h-0 flex flex-col">
+                <button
+                  type="button"
+                  className="absolute right-3 top-3 rounded p-1 bg-white/90 border shadow"
+                  onClick={() => setShowPreview(false)}
+                >
+                  <CloseIcon className="w-4 h-4" aria-hidden />
+                  <span className="sr-only">Close preview</span>
+                </button>
+
+                {/* scroll area */}
+                <div ref={overlayWrapRef} className="flex-1 overflow-y-auto">
+                  {/* inner: centered & 90ex */}
+                  <div className="mx-auto max-w-[90ex] w-full p-6">
+                    <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
+                    <div
+                      ref={overlayBodyRef}
+                      className="markdown-body"
+                      dangerouslySetInnerHTML={{ __html: makeArticleHtmlFromMarkdown(content) }}
+                      style={{ minHeight: 32 }}
+                    />
+                    {(attrLabels.length > 0 || tags.length > 0) && (
+                      <div className="mt-3 flex flex-wrap gap-2">
+                        {attrLabels.map((label) => (
+                          <span
+                            key={`attr:${label}`}
+                            className="inline-block rounded px-2 py-0.5 text-sm border bg-purple-50 text-purple-800 border-purple-200"
+                          >
+                            {label}
+                          </span>
+                        ))}
+                        {tags.map((tag) => (
+                          <span key={tag} className="inline-block bg-gray-100 rounded px-2 py-0.5 text-blue-700 text-sm">
+                            #{tag}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="h-0" />
+          </div>
+        </div>
+      )}
     </div>
   );
 }
