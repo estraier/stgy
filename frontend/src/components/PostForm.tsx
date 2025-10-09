@@ -6,6 +6,22 @@ import { parseBodyAndTags } from "@/utils/parse";
 import UserMentionButton from "@/components/UserMentionButton";
 import ExistingImageEmbedButton from "@/components/ExistingImageEmbedButton";
 import UploadImageEmbedButton from "@/components/UploadImageEmbedButton";
+import {
+  Heading1,
+  Heading2,
+  Heading3,
+  List as ListIcon,
+  Quote as QuoteIcon,
+  Code as CodeBlockIcon,
+  Bold as BoldIcon,
+  Italic as ItalicIcon,
+  Underline as UnderlineIcon,
+  Strikethrough as StrikethroughIcon,
+  Code2 as InlineCodeIcon,
+  Highlighter as MarkIcon,
+  Braces as RubyIcon,
+  Link as LinkIcon,
+} from "lucide-react";
 
 type PostFormProps = {
   body: string;
@@ -24,6 +40,263 @@ type PostFormProps = {
   contentLengthLimit?: number;
   autoFocus?: boolean;
 };
+
+function normalizeLineForHeading(line: string): string {
+  const stripped = line.replace(/^(\s*(?:-\s+|>\s+|#{1,3}\s+))+/u, "");
+  return stripped.trim();
+}
+function escapeReg(s: string) {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+function makePrefixRegex(prefix: string): RegExp {
+  const hasSpace = /\s$/.test(prefix);
+  const base = hasSpace ? prefix.trimEnd() : prefix;
+  const pattern = `^\\s*${escapeReg(base)}${hasSpace ? "\\s+" : ""}`;
+  return new RegExp(pattern, "u");
+}
+function clamp(n: number, min: number, max: number) {
+  return Math.max(min, Math.min(max, n));
+}
+function lineStartAt(text: string, i: number) {
+  return text.lastIndexOf("\n", Math.max(0, i - 1)) + 1;
+}
+function lineEndFromStart(text: string, start: number) {
+  const nl = text.indexOf("\n", start);
+  return nl === -1 ? text.length : nl;
+}
+function getCurrentLineRange(text: string, caret: number) {
+  const start = lineStartAt(text, caret);
+  const end = lineEndFromStart(text, start);
+  return { start, end };
+}
+function getSelectedLinesRange(text: string, selStart: number, selEnd: number) {
+  const s0 = clamp(Math.min(selStart, selEnd), 0, text.length);
+  const e0 = clamp(Math.max(selStart, selEnd), 0, text.length);
+  const firstStart = lineStartAt(text, s0);
+  let lastTouched = Math.max(0, e0 - 1);
+  if (e0 > s0 && text[lastTouched] === "\n") lastTouched = Math.max(firstStart, lastTouched - 1);
+  const lastStart = lineStartAt(text, lastTouched);
+  const lastEnd = lineEndFromStart(text, lastStart);
+  return { start: firstStart, end: lastEnd };
+}
+function getTargetRange(text: string, selStart: number, selEnd: number) {
+  const s0 = clamp(Math.min(selStart, selEnd), 0, text.length);
+  const e0 = clamp(Math.max(selStart, selEnd), 0, text.length);
+  return s0 === e0 ? getCurrentLineRange(text, e0) : getSelectedLinesRange(text, s0, e0);
+}
+
+function applyPrefixToggleFromTextarea(
+  ta: HTMLTextAreaElement,
+  setBody: (next: string) => void,
+  prefix: string,
+) {
+  const text = ta.value;
+  ta.focus();
+  const selStart = ta.selectionStart ?? 0;
+  const selEnd = ta.selectionEnd ?? selStart;
+  const { start, end } = getTargetRange(text, selStart, selEnd);
+  const head = text.slice(0, start);
+  const block = text.slice(start, end);
+  const tail = text.slice(end);
+  const re = makePrefixRegex(prefix);
+  const lines = block.split("\n");
+  const nonEmpty = lines.filter((ln) => ln.trim() !== "");
+  const allPrefixed = nonEmpty.length > 0 && nonEmpty.every((ln) => re.test(ln));
+  const replaced = lines
+    .map((ln) => {
+      if (ln.trim() === "") return ln;
+      const norm = normalizeLineForHeading(ln);
+      return allPrefixed ? norm : `${prefix}${norm}`;
+    })
+    .join("\n");
+  const next = head + replaced + tail;
+  setBody(next);
+  const selFrom = head.length;
+  const selTo = head.length + replaced.length;
+  requestAnimationFrame(() => {
+    ta.focus();
+    ta.setSelectionRange(selFrom, selTo);
+  });
+}
+
+function applyCodeFenceToggleFromTextarea(
+  ta: HTMLTextAreaElement,
+  setBody: (next: string) => void,
+) {
+  const text = ta.value;
+  ta.focus();
+  const selStart = ta.selectionStart ?? 0;
+  const selEnd = ta.selectionEnd ?? selStart;
+  const { start, end } = getTargetRange(text, selStart, selEnd);
+  const head = text.slice(0, start);
+  const block = text.slice(start, end);
+  const tail = text.slice(end);
+  const fenceRe = /^\s*```/;
+  const firstLineEndRel = block.indexOf("\n");
+  const lastLineStartRel = block.lastIndexOf("\n") + 1;
+  const firstLine = firstLineEndRel === -1 ? block : block.slice(0, firstLineEndRel);
+  const lastLine = block.slice(lastLineStartRel);
+  const firstIsFence = fenceRe.test(firstLine);
+  const lastIsFence = fenceRe.test(lastLine);
+  if (firstIsFence && lastIsFence) {
+    const innerStart = firstLineEndRel === -1 ? block.length : firstLineEndRel + 1;
+    const innerEnd = Math.max(innerStart, lastLineStartRel);
+    const replaced = block.slice(innerStart, innerEnd);
+    const nextText = head + replaced + tail;
+    setBody(nextText);
+    const selFrom = head.length;
+    const selTo = head.length + replaced.length;
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.setSelectionRange(selFrom, selTo);
+    });
+    return;
+  }
+  let content = block;
+  if (!content.endsWith("\n")) content += "\n";
+  const replaced = "```\n" + content + "```";
+  const nextText = head + replaced + tail;
+  setBody(nextText);
+  const selFrom = head.length;
+  const selTo = head.length + replaced.length;
+  requestAnimationFrame(() => {
+    ta.focus();
+    ta.setSelectionRange(selFrom, selTo);
+  });
+}
+
+function applyInlineToggleFromTextarea(
+  ta: HTMLTextAreaElement,
+  setBody: (next: string) => void,
+  open: string,
+  close: string = open,
+) {
+  const text = ta.value;
+  ta.focus();
+  const s0 = ta.selectionStart ?? 0;
+  const e0 = ta.selectionEnd ?? s0;
+  if (s0 === e0) {
+    const before = text.slice(0, s0);
+    const after = text.slice(e0);
+    const insert = open + close;
+    const next = before + insert + after;
+    setBody(next);
+    const pos = before.length + open.length;
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.setSelectionRange(pos, pos);
+    });
+    return;
+  }
+  const head = text.slice(0, s0);
+  const block = text.slice(s0, e0);
+  const tail = text.slice(e0);
+  const parts = block.split("\n");
+  const replacedBlock = parts
+    .map((seg) => {
+      if (seg.length === 0) return seg;
+      const isWrapped =
+        seg.startsWith(open) && seg.endsWith(close) && seg.length >= open.length + close.length;
+      return isWrapped ? seg.slice(open.length, seg.length - close.length) : open + seg + close;
+    })
+    .join("\n");
+  const nextText = head + replacedBlock + tail;
+  setBody(nextText);
+  const selFrom = head.length;
+  const selTo = head.length + replacedBlock.length;
+  requestAnimationFrame(() => {
+    ta.focus();
+    ta.setSelectionRange(selFrom, selTo);
+  });
+}
+
+function applyRubyToggleFromTextarea(
+  ta: HTMLTextAreaElement,
+  setBody: (next: string) => void,
+) {
+  const text = ta.value;
+  ta.focus();
+  const s0 = ta.selectionStart ?? 0;
+  const e0 = ta.selectionEnd ?? s0;
+  if (s0 === e0) {
+    const before = text.slice(0, s0);
+    const after = text.slice(e0);
+    const insert = "{{|ruby}}";
+    const next = before + insert + after;
+    setBody(next);
+    const pos = before.length + 2;
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.setSelectionRange(pos, pos);
+    });
+    return;
+  }
+  const head = text.slice(0, s0);
+  const block = text.slice(s0, e0);
+  const tail = text.slice(e0);
+  const rubyFullRe = /^\{\{([\s\S]*?)\|([\s\S]*?)\}\}$/u;
+  const parts = block.split("\n");
+  const replacedBlock = parts
+    .map((seg) => {
+      if (seg.length === 0) return seg;
+      const m = seg.match(rubyFullRe);
+      if (m) return m[1];
+      return `{{${seg}|ruby}}`;
+    })
+    .join("\n");
+  const nextText = head + replacedBlock + tail;
+  setBody(nextText);
+  const selFrom = head.length;
+  const selTo = head.length + replacedBlock.length;
+  requestAnimationFrame(() => {
+    ta.focus();
+    ta.setSelectionRange(selFrom, selTo);
+  });
+}
+
+function applyLinkToggleFromTextarea(
+  ta: HTMLTextAreaElement,
+  setBody: (next: string) => void,
+) {
+  const text = ta.value;
+  ta.focus();
+  const s0 = ta.selectionStart ?? 0;
+  const e0 = ta.selectionEnd ?? s0;
+  if (s0 === e0) {
+    const before = text.slice(0, s0);
+    const after = text.slice(e0);
+    const insert = "[](url)";
+    const next = before + insert + after;
+    setBody(next);
+    const pos = before.length + 1;
+    requestAnimationFrame(() => {
+      ta.focus();
+      ta.setSelectionRange(pos, pos);
+    });
+    return;
+  }
+  const head = text.slice(0, s0);
+  const block = text.slice(s0, e0);
+  const tail = text.slice(e0);
+  const linkFullRe = /^\[([\s\S]*?)\]\(([\s\S]*?)\)$/u;
+  const parts = block.split("\n");
+  const replacedBlock = parts
+    .map((seg) => {
+      if (seg.length === 0) return seg;
+      const m = seg.match(linkFullRe);
+      if (m) return m[1];
+      return `[${seg}](url)`;
+    })
+    .join("\n");
+  const nextText = head + replacedBlock + tail;
+  setBody(nextText);
+  const selFrom = head.length;
+  const selTo = head.length + replacedBlock.length;
+  requestAnimationFrame(() => {
+    ta.focus();
+    ta.setSelectionRange(selFrom, selTo);
+  });
+}
 
 export default function PostForm({
   body,
@@ -66,11 +339,7 @@ export default function PostForm({
   const attrLabels = useMemo(() => {
     return Object.entries(attrs || {})
       .map(([k, v]) =>
-        typeof v === "boolean"
-          ? v
-            ? `${k.toLowerCase()}`
-            : undefined
-          : `${k.toLowerCase()}=${String(v)}`,
+        typeof v === "boolean" ? (v ? `${k.toLowerCase()}` : undefined) : `${k.toLowerCase()}=${String(v)}`
       )
       .filter(Boolean) as string[];
   }, [attrs]);
@@ -108,39 +377,73 @@ export default function PostForm({
       setBody(body + (needsNL ? "\n" : "") + snippet);
       return;
     }
-    const start = ta.selectionStart ?? body.length;
+    const text = ta.value;
+    ta.focus();
+    const start = ta.selectionStart ?? text.length;
     const end = ta.selectionEnd ?? start;
-    const before = body.slice(0, start);
-    const after = body.slice(end);
+    const before = text.slice(0, start);
+    const after = text.slice(end);
     const needsPrefixNL = start > 0 && before[before.length - 1] !== "\n";
-    const text = (needsPrefixNL ? "\n" : "") + snippet;
-    const next = before + text + after;
+    const insert = (needsPrefixNL ? "\n" : "") + snippet;
+    const next = before + insert + after;
     setBody(next);
     requestAnimationFrame(() => {
       ta.focus();
-      const pos = start + text.length;
+      const pos = before.length + insert.length;
       ta.setSelectionRange(pos, pos);
     });
   }
-
   function insertInlineAtCursor(snippet: string) {
     const ta = textareaRef.current;
     if (!ta) {
       setBody(body + snippet);
       return;
     }
-    const start = ta.selectionStart ?? body.length;
+    const text = ta.value;
+    ta.focus();
+    const start = ta.selectionStart ?? text.length;
     const end = ta.selectionEnd ?? start;
-    const before = body.slice(0, start);
-    const after = body.slice(end);
+    const before = text.slice(0, start);
+    const after = text.slice(end);
     const next = before + snippet + after;
     setBody(next);
     requestAnimationFrame(() => {
       ta.focus();
-      const pos = start + snippet.length;
+      const pos = before.length + snippet.length;
       ta.setSelectionRange(pos, pos);
     });
   }
+
+  const actPrefix = (prefix: string) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    const ta = textareaRef.current;
+    if (!ta) return;
+    applyPrefixToggleFromTextarea(ta, setBody, prefix);
+  };
+  const actFence = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const ta = textareaRef.current;
+    if (!ta) return;
+    applyCodeFenceToggleFromTextarea(ta, setBody);
+  };
+  const actInline = (open: string, close?: string) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    const ta = textareaRef.current;
+    if (!ta) return;
+    applyInlineToggleFromTextarea(ta, setBody, open, close ?? open);
+  };
+  const actRuby = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const ta = textareaRef.current;
+    if (!ta) return;
+    applyRubyToggleFromTextarea(ta, setBody);
+  };
+  const actLink = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const ta = textareaRef.current;
+    if (!ta) return;
+    applyLinkToggleFromTextarea(ta, setBody);
+  };
 
   return (
     <div className="relative group">
@@ -149,13 +452,145 @@ export default function PostForm({
         className={className + " flex flex-col gap-2"}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="hidden group-focus-within:flex absolute right-0 top-0 -translate-y-full items-center gap-1">
-          <div className="px-1.5 text-gray-600 backdrop-blur-sm flex items-center gap-1">
-            <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)} />
-            <ExistingImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
-            <UploadImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
+        <div className="hidden group-focus-within:flex absolute left-0 right-0 top-0 -translate-y-full">
+          <div className="w-full px-1.5 text-gray-600 backdrop-blur-sm flex items-center justify-between">
+            <div className="flex items-center gap-1">
+              <button
+                type="button"
+                onMouseDown={actPrefix("# ")}
+                title="見出し1"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <Heading1 className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">H1</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actPrefix("## ")}
+                title="見出し2"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <Heading2 className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">H2</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actPrefix("### ")}
+                title="見出し3"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <Heading3 className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">H3</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actPrefix("- ")}
+                title="箇条書き"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <ListIcon className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">List</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actPrefix("> ")}
+                title="引用"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <QuoteIcon className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">Quote</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actFence}
+                title="コードブロック（```）"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <CodeBlockIcon className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">Code Block</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actInline("**")}
+                title="太字（B）"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <BoldIcon className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">Bold</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actInline("::")}
+                title="斜体（::text::）"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <ItalicIcon className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">Italic</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actInline("__")}
+                title="下線（__text__）"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <UnderlineIcon className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">Underline</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actInline("~~")}
+                title="打消（~~text~~）"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <StrikethroughIcon className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">Strikethrough</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actInline("``")}
+                title="インラインコード（``code``）"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <InlineCodeIcon className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">Inline Code</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actInline("%%")}
+                title="マーク（%%text%%）"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <MarkIcon className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">Mark</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actRuby}
+                title="ルビ（{{text|ruby}}）"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <RubyIcon className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">Ruby</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actLink}
+                title="リンク（[text](url)）"
+                className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+              >
+                <LinkIcon className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">Link</span>
+              </button>
+            </div>
+
+            <div className="flex items-center gap-1">
+              <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)} />
+              <ExistingImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
+              <UploadImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
+            </div>
           </div>
         </div>
+
         <textarea
           ref={textareaRef}
           className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50 break-all"
@@ -167,6 +602,7 @@ export default function PostForm({
           rows={1}
           style={{ resize: "vertical" }}
         />
+
         {hasFocusedOnce && (
           <div className="flex items-center gap-2">
             <div className="flex-1">
@@ -177,9 +613,7 @@ export default function PostForm({
                   role="status"
                   aria-live="polite"
                 >
-                  {contentLengthLimit != null
-                    ? `${contentLength} / ${contentLengthLimit}`
-                    : `${contentLength} chars`}
+                  {contentLengthLimit != null ? `${contentLength} / ${contentLengthLimit}` : `${contentLength} chars`}
                 </div>
                 {contentLengthLimit != null && overLimit && (
                   <div className="text-yellow-700 text-sm">
@@ -242,10 +676,7 @@ export default function PostForm({
                   </span>
                 ))}
                 {tags.map((tag) => (
-                  <span
-                    key={tag}
-                    className="inline-block bg-gray-100 rounded px-2 py-0.5 text-blue-700 text-sm"
-                  >
+                  <span key={tag} className="inline-block bg-gray-100 rounded px-2 py-0.5 text-blue-700 text-sm">
                     #{tag}
                   </span>
                 ))}
