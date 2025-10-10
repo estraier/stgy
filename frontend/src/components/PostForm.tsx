@@ -316,12 +316,10 @@ export default function PostForm({
   contentLengthLimit,
   autoFocus = false,
 }: PostFormProps) {
-  // base editor refs
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewWrapRef = useRef<HTMLDivElement>(null);
   const previewBodyRef = useRef<HTMLDivElement>(null);
 
-  // overlay editor refs (SxS)
   const overlayTextareaRef = useRef<HTMLTextAreaElement>(null);
   const overlayEditorColRef = useRef<HTMLDivElement>(null);
   const overlayToolbarRef = useRef<HTMLDivElement>(null);
@@ -331,7 +329,6 @@ export default function PostForm({
   const overlayWrapRef = useRef<HTMLDivElement>(null);
   const overlayBodyRef = useRef<HTMLDivElement>(null);
 
-  // anchors & caret
   const anchorsRef = useRef<{ char: number; el: HTMLElement }[]>([]);
   const rafRef = useRef<number | null>(null);
   const caretRef = useRef<number>(0);
@@ -343,7 +340,7 @@ export default function PostForm({
   const overlayActive = showPreview && isXl;
 
   useEffect(() => {
-    const mq = window.matchMedia("(min-width: 1280px)");
+    const mq = window.matchMedia("(min-width: 1000px)");
     const apply = () => setIsXl(mq.matches);
     apply();
     mq.addEventListener("change", apply);
@@ -560,7 +557,7 @@ export default function PostForm({
     const anchors = anchorsRef.current;
     if (!anchors.length) return null;
     let lo = 0;
-    let hi = anchors.length - 1;
+       let hi = anchors.length - 1;
     let ans = 0;
     while (lo <= hi) {
       const mid = (lo + hi) >> 1;
@@ -581,12 +578,10 @@ export default function PostForm({
     const caret = Math.min(Math.max(0, caretRef.current), content.length);
     const target = findAnchor(caret);
     if (!target) return;
-
     const wrapRect = wrap.getBoundingClientRect();
     const elRect = target.getBoundingClientRect();
     const yWithin = wrap.scrollTop + (elRect.top - wrapRect.top);
     const desired = Math.max(0, yWithin - (wrap.clientHeight - target.offsetHeight) / 2);
-
     if (Math.abs(wrap.scrollTop - desired) > 1) {
       wrap.scrollTo({ top: desired, behavior: "auto" });
     }
@@ -601,19 +596,15 @@ export default function PostForm({
     });
   }
 
-  // ===== SxS: overlay textarea auto height =====
   function resizeOverlayTextarea() {
     if (!overlayActive) return;
     const ta = overlayTextareaRef.current;
     const scroll = overlayScrollRef.current;
     const inner = overlayEditorInnerRef.current;
     if (!ta || !scroll || !inner) return;
-
     const innerStyle = getComputedStyle(inner);
     const pt = parseFloat(innerStyle.paddingTop || "0");
     const pb = parseFloat(innerStyle.paddingBottom || "0");
-
-    // 表示領域（スクロール可能領域）に対して、上下パディングを引いた高さをテキストエリアに割り当てる
     const available = Math.max(160, scroll.clientHeight - pt - pb);
     ta.style.height = `${available}px`;
   }
@@ -624,12 +615,10 @@ export default function PostForm({
     const onResize = () => resizeOverlayTextarea();
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [overlayActive]);
 
   useEffect(() => {
     if (!overlayActive) return;
-    // ツールバー/フッターの高さ変化やエラー表示の変動にも追随
     resizeOverlayTextarea();
   }, [overlayActive, error, submitting, contentLengthLimit]);
 
@@ -637,7 +626,6 @@ export default function PostForm({
     if (!showPreview) return;
     rebuildAnchors();
     scheduleSync();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [content, showPreview, overlayActive]);
 
   useEffect(() => {
@@ -922,11 +910,9 @@ export default function PostForm({
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm">
           <div className="absolute inset-0 flex flex-col">
             <div className="flex-1 grid grid-cols-2 gap-0 h-full w-full overflow-hidden">
-              {/* editor column */}
               <div ref={overlayEditorColRef} className="relative bg-gray-50/70 border-r min-h-0 flex flex-col">
-                {/* toolbar (centered & max-w 90ex) */}
                 <div ref={overlayToolbarRef} className="sticky top-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 w-full">
-                  <div className="mx-auto max-w-[90ex] w-full px-1.5 py-1 flex items-center justify-between">
+                  <div className="mx-auto max-w-[85ex] w-full px-1.5 py-1 flex items-center justify-between">
                     <div className="flex items-center gap-1">
                       <button type="button" onMouseDown={actPrefix("# ")} title="Heading 1" className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
                         <Heading1 className="w-4 h-4 opacity-80" aria-hidden />
@@ -956,7 +942,7 @@ export default function PostForm({
                         <BoldIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Bold</span>
                       </button>
-                      <button type="button" onMouseDown={actInline("::")} title="Italic" className="hidden xl:inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button type="button" onMouseDown={actInline("::")} title="Italic" className="hidden xl:inline-flex h-6 px-2 items中心 justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
                         <ItalicIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Italic</span>
                       </button>
@@ -994,10 +980,8 @@ export default function PostForm({
                   </div>
                 </div>
 
-                {/* scroll area (no padding) */}
                 <div ref={overlayScrollRef} className="flex-1 overflow-y-auto h-full">
-                  {/* inner: centered & 90ex */}
-                  <div ref={overlayEditorInnerRef} className="mx-auto max-w-[90ex] w-full p-6">
+                  <div ref={overlayEditorInnerRef} className="mx-auto max-w-[85ex] w-full p-6">
                     <textarea
                       ref={overlayTextareaRef}
                       className="w-full border border-gray-400 rounded px-2 py-1 bg-gray-50 break-all"
@@ -1032,9 +1016,8 @@ export default function PostForm({
                   </div>
                 </div>
 
-                {/* overlay footer (actions, centered & 90ex) */}
                 <div ref={overlayFooterRef} className="sticky bottom-0 w-full bg-white/95 backdrop-blur border-t border-gray-200">
-                  <div className="mx-auto max-w-[90ex] w-full px-6 py-2 flex items-center gap-2">
+                  <div className="mx-auto max-w-[85ex] w-full px-6 py-2 flex items-center gap-2">
                     <div className="flex-1">
                       {error && <div className="text-red-600 text-sm">{error}</div>}
                       <div className="text-xs text-gray-400" role="status" aria-live="polite">
@@ -1083,7 +1066,6 @@ export default function PostForm({
                 </div>
               </div>
 
-              {/* preview column */}
               <div className="relative bg-white min-h-0 flex flex-col">
                 <button
                   type="button"
@@ -1094,10 +1076,8 @@ export default function PostForm({
                   <span className="sr-only">Close preview</span>
                 </button>
 
-                {/* scroll area */}
                 <div ref={overlayWrapRef} className="flex-1 overflow-y-auto">
-                  {/* inner: centered & 90ex */}
-                  <div className="mx-auto max-w-[90ex] w-full p-6">
+                  <div className="mx-auto max-w-[85ex] w-full p-6">
                     <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
                     <div
                       ref={overlayBodyRef}
