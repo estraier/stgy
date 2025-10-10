@@ -402,7 +402,7 @@ export default function PostForm({
     const textarea = activeTextarea();
     if (!textarea) return;
     const lineHeight = parseFloat(getComputedStyle(textarea).lineHeight || "20");
-    const minHeight = lineHeight * 8;
+    const minHeight = lineHeight * 10;
     if (!overlayActive && textarea.offsetHeight < minHeight) {
       textarea.style.height = `${minHeight}px`;
     }
