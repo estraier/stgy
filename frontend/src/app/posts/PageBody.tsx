@@ -418,7 +418,9 @@ export default function PageBody() {
             className="cursor-pointer"
           />
           <span className="hidden md:inline">Including replies</span>
-          <span className="md:hidden scale-x-80 -ml-1" aria-hidden>Replies</span>
+          <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
+            Replies
+          </span>
         </label>
         <label className="flex pl-2 items-center gap-1 text-sm text-gray-700 cursor-pointer max-md:pl-0">
           <input
@@ -428,7 +430,9 @@ export default function PageBody() {
             className="cursor-pointer"
           />
           <span className="hidden md:inline">Oldest first</span>
-          <span className="md:hidden scale-x-80 -ml-1" aria-hidden>Oldest</span>
+          <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
+            Oldest
+          </span>
         </label>
       </div>
       {isSearchMode && (

@@ -92,9 +92,7 @@ export default function PostCard({
           <span className="-mt-1 ml-2 text-xs text-gray-500">
             In response to{" "}
             {!post.replyToOwnerNickname ? (
-              <span className="text-gray-400">
-                [{post.replyTo}:deleted]
-              </span>
+              <span className="text-gray-400">[{post.replyTo}:deleted]</span>
             ) : (
               <a
                 href={`/posts/${post.replyTo}`}

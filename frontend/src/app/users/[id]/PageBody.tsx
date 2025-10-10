@@ -365,7 +365,9 @@ export default function PageBody() {
             className="cursor-pointer"
           />
           <span className="hidden md:inline">Oldest first</span>
-          <span className="md:hidden scale-x-80 -ml-1" aria-hidden>Oldest</span>
+          <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
+            Oldest
+          </span>
         </label>
       </div>
 
