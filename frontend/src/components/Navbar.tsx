@@ -138,7 +138,7 @@ export default function Navbar() {
         {userId && <NotificationBell userId={userId} intervalMs={30_000} />}
 
         <button
-          className="p-2 rounded hover:bg-gray-200 cursor-pointer shrink-0"
+          className="p-2 max-md:px-0 rounded hover:bg-gray-200 cursor-pointer shrink-0"
           aria-label="Settings"
           onClick={() => setMenuOpen((v) => !v)}
         >
