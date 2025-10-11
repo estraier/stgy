@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useEffect, useLayoutEffect, useMemo } from "react";
+import React, { useRef, useState, useEffect, useMemo, useLayoutEffect } from "react";
 import { makeArticleHtmlFromMarkdown } from "@/utils/article";
 import { parseBodyAndTags } from "@/utils/parse";
 import UserMentionButton from "@/components/UserMentionButton";
@@ -293,6 +293,80 @@ function applyLinkToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
   });
 }
 
+function afterNextPaint(cb: () => void) {
+  requestAnimationFrame(() => requestAnimationFrame(cb));
+}
+
+function resolveLineHeight(ta: HTMLTextAreaElement) {
+  const s = window.getComputedStyle(ta);
+  const lh = s.lineHeight;
+  if (!lh || lh === "normal") {
+    const fs = parseFloat(s.fontSize || "16");
+    return fs * 1.2;
+  }
+  const v = parseFloat(lh);
+  return Number.isFinite(v) ? v : 20;
+}
+
+function centerTextareaCaret(ta: HTMLTextAreaElement) {
+  const s = window.getComputedStyle(ta);
+  const div = document.createElement("div");
+  const props = [
+    "boxSizing",
+    "width",
+    "paddingTop",
+    "paddingRight",
+    "paddingBottom",
+    "paddingLeft",
+    "borderTopWidth",
+    "borderRightWidth",
+    "borderBottomWidth",
+    "borderLeftWidth",
+    "fontStyle",
+    "fontVariant",
+    "fontWeight",
+    "fontStretch",
+    "fontSize",
+    "fontFamily",
+    "lineHeight",
+    "letterSpacing",
+    "textTransform",
+    "textIndent",
+    "textAlign",
+    "whiteSpace",
+    "wordBreak",
+    "wordWrap",
+    "overflowWrap",
+    "tabSize",
+    "direction",
+  ] as const;
+  div.style.position = "absolute";
+  div.style.visibility = "hidden";
+  div.style.top = "0";
+  div.style.left = "0";
+  div.style.whiteSpace = "pre-wrap";
+  div.style.wordWrap = "break-word";
+  for (const p of props) {
+    // @ts-ignore
+    div.style[p] = s[p];
+  }
+  div.style.width = s.width;
+  const pre = ta.value.substring(0, ta.selectionStart ?? 0);
+  const post = ta.value.substring(ta.selectionStart ?? 0);
+  div.textContent = pre;
+  const span = document.createElement("span");
+  span.textContent = post.length ? post[0] : ".";
+  div.appendChild(span);
+  document.body.appendChild(div);
+  const rectDiv = div.getBoundingClientRect();
+  const rectSpan = span.getBoundingClientRect();
+  const caretTop = rectSpan.top - rectDiv.top;
+  document.body.removeChild(div);
+  const lineHeight = resolveLineHeight(ta);
+  const desired = Math.max(0, caretTop - (ta.clientHeight - lineHeight) / 2);
+  ta.scrollTop = desired;
+}
+
 export default function PostForm({
   body,
   setBody,
@@ -310,6 +384,7 @@ export default function PostForm({
   contentLengthLimit,
   autoFocus = false,
 }: PostFormProps) {
+  const formRef = useRef<HTMLFormElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewWrapRef = useRef<HTMLDivElement>(null);
   const previewBodyRef = useRef<HTMLDivElement>(null);
@@ -327,11 +402,14 @@ export default function PostForm({
   const rafRef = useRef<number | null>(null);
   const caretRef = useRef<number>(0);
 
-  const scheduleSyncRef = useRef<() => void>(() => {});
-  const rebuildAnchorsRef = useRef<() => void>(() => {});
-  const resizeOverlayTextareaRef = useRef<() => void>(() => {});
-  const lastModeSwitchRef = useRef<"resize" | "toggle" | null>(null);
-  const prevAutoFocusRef = useRef<boolean>(false);
+  const didApplyAutoFocusRef = useRef(false);
+  const prevIsEditRef = useRef<boolean>(isEdit);
+  const prevOverlayActiveRef = useRef<boolean>(false);
+  const genRef = useRef(0);
+  const previewMutObsRef = useRef<MutationObserver | null>(null);
+  const previewResizeWrapRef = useRef<ResizeObserver | null>(null);
+  const previewResizeBodyRef = useRef<ResizeObserver | null>(null);
+  const ensureTimersRef = useRef<number[]>([]);
 
   const [showPreview, setShowPreview] = useState(false);
   const [hasFocusedOnce, setHasFocusedOnce] = useState(false);
@@ -339,29 +417,19 @@ export default function PostForm({
 
   const overlayActive = showPreview && isXl;
 
-  function currentTextarea(): HTMLTextAreaElement | null {
-    return overlayTextareaRef.current ?? textareaRef.current;
-  }
-  function snapshotCaret() {
-    const ta = currentTextarea();
-    if (!ta) return;
-    const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-    caretRef.current = pos;
-  }
-
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1000px)");
+    const apply = () => setIsXl(mq.matches);
+    apply();
     const onChange = () => {
-      if (showPreview) {
-        snapshotCaret();
-        lastModeSwitchRef.current = "resize";
-      }
+      const taPrev = overlayActive ? overlayTextareaRef.current : textareaRef.current;
+      const pos = taPrev ? (taPrev.selectionEnd ?? taPrev.selectionStart ?? caretRef.current) : caretRef.current;
+      caretRef.current = pos;
       setIsXl(mq.matches);
     };
-    onChange();
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
-  }, [showPreview]);
+  }, [overlayActive]);
 
   useEffect(() => {
     if (!overlayActive) return;
@@ -373,17 +441,31 @@ export default function PostForm({
   }, [overlayActive]);
 
   useEffect(() => {
-    if (autoFocus && !prevAutoFocusRef.current) {
-      const ta = currentTextarea();
+    const becameEdit = isEdit && !prevIsEditRef.current;
+    if (becameEdit) {
+      const ta = overlayActive ? overlayTextareaRef.current : textareaRef.current;
       if (ta) {
-        ta.focus({ preventScroll: true });
+        ta.focus();
         ta.setSelectionRange(0, 0);
+        ta.scrollTop = 0;
         caretRef.current = 0;
-        scheduleSyncRef.current();
       }
     }
-    prevAutoFocusRef.current = !!autoFocus;
-  }, [autoFocus]);
+    prevIsEditRef.current = isEdit;
+  }, [isEdit, overlayActive]);
+
+  useEffect(() => {
+    if (autoFocus && !didApplyAutoFocusRef.current) {
+      const ta = overlayActive ? overlayTextareaRef.current : textareaRef.current;
+      if (ta) {
+        ta.focus();
+        ta.setSelectionRange(0, 0);
+        ta.scrollTop = 0;
+        caretRef.current = 0;
+        didApplyAutoFocusRef.current = true;
+      }
+    }
+  }, [autoFocus, overlayActive]);
 
   const { content, tags, attrs } = useMemo(() => parseBodyAndTags(body), [body]);
   const contentLength = content.length;
@@ -392,7 +474,7 @@ export default function PostForm({
   const attrLabels = useMemo(() => {
     return Object.entries(attrs || {})
       .map(([k, v]) =>
-        typeof v === "boolean" ? (v ? `${k.toLowerCase()}` : undefined) : `${k.toLowerCase()}=${String(v)}`
+        typeof v === "boolean" ? (v ? `${k.toLowerCase()}` : undefined) : `${k.toLowerCase()}=${String(v)}`,
       )
       .filter(Boolean) as string[];
   }, [attrs]);
@@ -417,7 +499,10 @@ export default function PostForm({
       textarea.style.height = `${minHeight}px`;
     }
     if (onErrorClear) onErrorClear();
-    caretRef.current = textarea.selectionEnd ?? textarea.selectionStart ?? 0;
+    const pos = textarea.selectionEnd ?? textarea.selectionStart ?? 0;
+    if (!(pos === 0 && caretRef.current > 0)) {
+      caretRef.current = pos;
+    }
     scheduleSyncRef.current();
     if (overlayActive) resizeOverlayTextareaRef.current();
   }
@@ -465,6 +550,7 @@ export default function PostForm({
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
   }
+
   function insertInlineAtCursor(snippet: string) {
     const ta = activeTextarea();
     if (!ta) {
@@ -498,7 +584,8 @@ export default function PostForm({
     if (!ta) return;
     applyPrefixToggleFromTextarea(ta, setBody, prefix);
     requestAnimationFrame(() => {
-      caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      caretRef.current = pos;
       scheduleSyncRef.current();
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
@@ -509,7 +596,8 @@ export default function PostForm({
     if (!ta) return;
     applyCodeFenceToggleFromTextarea(ta, setBody);
     requestAnimationFrame(() => {
-      caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      caretRef.current = pos;
       scheduleSyncRef.current();
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
@@ -520,7 +608,8 @@ export default function PostForm({
     if (!ta) return;
     applyInlineToggleFromTextarea(ta, setBody, open, close ?? open);
     requestAnimationFrame(() => {
-      caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      caretRef.current = pos;
       scheduleSyncRef.current();
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
@@ -531,7 +620,8 @@ export default function PostForm({
     if (!ta) return;
     applyRubyToggleFromTextarea(ta, setBody);
     requestAnimationFrame(() => {
-      caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      caretRef.current = pos;
       scheduleSyncRef.current();
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
@@ -542,7 +632,8 @@ export default function PostForm({
     if (!ta) return;
     applyLinkToggleFromTextarea(ta, setBody);
     requestAnimationFrame(() => {
-      caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+      caretRef.current = pos;
       scheduleSyncRef.current();
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
@@ -586,17 +677,20 @@ export default function PostForm({
   function syncToCaret() {
     if (!showPreview) return;
     const wrap = activePreviewWrap();
-    if (!wrap) return;
     const caret = Math.min(Math.max(0, caretRef.current), content.length);
+    if (!wrap) return;
     const target = findAnchor(caret);
-    if (!target) return;
-    const wrapRect = wrap.getBoundingClientRect();
-    const elRect = target.getBoundingClientRect();
-    const yWithin = wrap.scrollTop + (elRect.top - wrapRect.top);
-    const desired = Math.max(0, yWithin - (wrap.clientHeight - target.offsetHeight) / 2);
-    if (Math.abs(wrap.scrollTop - desired) > 1) {
-      wrap.scrollTo({ top: desired, behavior: "auto" });
+    if (target) {
+      const wrapRect = wrap.getBoundingClientRect();
+      const elRect = target.getBoundingClientRect();
+      const yWithin = wrap.scrollTop + (elRect.top - wrapRect.top);
+      const desired = Math.max(0, yWithin - (wrap.clientHeight - target.offsetHeight) / 2);
+      wrap.scrollTop = desired;
+      return;
     }
+    const desired =
+      ((wrap.scrollHeight - wrap.clientHeight) * caret) / Math.max(1, content.length);
+    wrap.scrollTop = Math.max(0, Math.min(wrap.scrollHeight - wrap.clientHeight, desired));
   }
 
   function scheduleSync() {
@@ -606,6 +700,89 @@ export default function PostForm({
       rebuildAnchors();
       syncToCaret();
     });
+  }
+
+  function ensurePreviewReadyAndSync(maxTries = 160) {
+    const myGen = ++genRef.current;
+    let tries = maxTries;
+    const tick = () => {
+      if (myGen !== genRef.current) return;
+      if (!showPreview) return;
+      const wrap = activePreviewWrap();
+      const body = activePreviewBody();
+      if (!wrap || !body) {
+        if (--tries > 0) requestAnimationFrame(tick);
+        return;
+      }
+      if (wrap.clientHeight === 0) {
+        if (--tries > 0) requestAnimationFrame(tick);
+        return;
+      }
+      rebuildAnchors();
+      if (anchorsRef.current.length === 0 && body.clientHeight === 0) {
+        if (--tries > 0) requestAnimationFrame(tick);
+        return;
+      }
+      scheduleSync();
+    };
+    requestAnimationFrame(tick);
+    const t1 = window.setTimeout(() => {
+      if (myGen === genRef.current) scheduleSync();
+    }, 80);
+    const t2 = window.setTimeout(() => {
+      if (myGen === genRef.current) scheduleSync();
+    }, 160);
+    const t3 = window.setTimeout(() => {
+      if (myGen === genRef.current) scheduleSync();
+    }, 320);
+    ensureTimersRef.current.push(t1, t2, t3);
+  }
+
+  function attachPreviewObservers() {
+    const wrap = activePreviewWrap();
+    const body = activePreviewBody();
+    previewMutObsRef.current?.disconnect();
+    previewResizeWrapRef.current?.disconnect();
+    previewResizeBodyRef.current?.disconnect();
+    if (body) {
+      const mo = new MutationObserver((muts) => {
+        if (!showPreview) return;
+        muts.forEach((m) => {
+          m.addedNodes.forEach((n) => {
+            if (n instanceof HTMLElement) {
+              const imgs = n.querySelectorAll("img");
+              imgs.forEach((img) => {
+                img.addEventListener("load", scheduleSync, { once: true });
+                img.addEventListener("error", scheduleSync, { once: true });
+              });
+            }
+          });
+        });
+        scheduleSync();
+      });
+      mo.observe(body, { childList: true, subtree: true });
+      body.querySelectorAll("img").forEach((img) => {
+        img.addEventListener("load", scheduleSync, { once: true });
+        img.addEventListener("error", scheduleSync, { once: true });
+      });
+      previewMutObsRef.current = mo;
+    }
+    if (wrap) {
+      const ro = new ResizeObserver(() => {
+        if (!showPreview) return;
+        scheduleSync();
+      });
+      ro.observe(wrap);
+      previewResizeWrapRef.current = ro;
+    }
+    if (body) {
+      const ro2 = new ResizeObserver(() => {
+        if (!showPreview) return;
+        scheduleSync();
+      });
+      ro2.observe(body);
+      previewResizeBodyRef.current = ro2;
+    }
   }
 
   function resizeOverlayTextarea() {
@@ -621,16 +798,58 @@ export default function PostForm({
     ta.style.height = `${available}px`;
   }
 
+  function restoreCaretToActiveTextarea() {
+    const ta = activeTextarea();
+    if (!ta) return;
+    const pos = clamp(caretRef.current, 0, ta.value.length);
+    ta.focus();
+    ta.setSelectionRange(pos, pos);
+    caretRef.current = pos;
+    scheduleSyncRef.current();
+  }
+
+  function ensureFormBottomInView(behavior: ScrollBehavior = "smooth") {
+    if (overlayActive) return;
+    const form = formRef.current;
+    if (!form) return;
+    const rect = form.getBoundingClientRect();
+    const delta = rect.bottom - window.innerHeight;
+    if (delta > 0) {
+      window.scrollBy({ top: delta + 8, behavior });
+    }
+  }
+
+  const scheduleSyncRef = useRef<() => void>(() => {});
+  const rebuildAnchorsRef = useRef<() => void>(() => {});
+  const resizeOverlayTextareaRef = useRef<() => void>(() => {});
   scheduleSyncRef.current = scheduleSync;
   rebuildAnchorsRef.current = rebuildAnchors;
   resizeOverlayTextareaRef.current = resizeOverlayTextarea;
+
+  useEffect(() => {
+    afterNextPaint(() => ensureFormBottomInView("smooth"));
+  }, []);
+
+  useEffect(() => {
+    if (!overlayActive && hasFocusedOnce) {
+      afterNextPaint(() => ensureFormBottomInView("smooth"));
+    }
+  }, [hasFocusedOnce, overlayActive]);
+
+  useEffect(() => {
+    if (!overlayActive && showPreview) {
+      afterNextPaint(() => ensureFormBottomInView("smooth"));
+    }
+  }, [showPreview, overlayActive]);
 
   useEffect(() => {
     if (!overlayActive) return;
     resizeOverlayTextareaRef.current();
     const onResize = () => resizeOverlayTextareaRef.current();
     window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
+    return () => {
+      window.removeEventListener("resize", onResize);
+    };
   }, [overlayActive]);
 
   useEffect(() => {
@@ -640,33 +859,68 @@ export default function PostForm({
 
   useEffect(() => {
     if (!showPreview) return;
-    rebuildAnchorsRef.current();
     scheduleSyncRef.current();
-  }, [content, showPreview, overlayActive]);
+  }, [content, showPreview]);
 
   useLayoutEffect(() => {
-    if (lastModeSwitchRef.current === null) return;
-    const ta = currentTextarea();
-    if (ta) {
-      const pos = Math.max(0, Math.min(caretRef.current, ta.value.length));
-      try {
-        ta.setSelectionRange(pos, pos);
-        ta.focus({ preventScroll: true });
-      } catch {}
+    const prevWasOverlay = prevOverlayActiveRef.current;
+    const srcTa = prevWasOverlay ? overlayTextareaRef.current : textareaRef.current;
+    const pos = srcTa ? (srcTa.selectionEnd ?? srcTa.selectionStart ?? caretRef.current) : caretRef.current;
+    caretRef.current = pos;
+    restoreCaretToActiveTextarea();
+    if (overlayActive) resizeOverlayTextareaRef.current();
+    afterNextPaint(() => {
+      const t = activeTextarea();
+      if (t) {
+        t.focus();
+        t.setSelectionRange(caretRef.current, caretRef.current);
+        centerTextareaCaret(t);
+      }
+      attachPreviewObservers();
+      ensurePreviewReadyAndSync(160);
+    });
+    prevOverlayActiveRef.current = overlayActive;
+  }, [overlayActive]);
+
+  useLayoutEffect(() => {
+    if (!showPreview) {
+      previewMutObsRef.current?.disconnect();
+      previewResizeWrapRef.current?.disconnect();
+      previewResizeBodyRef.current?.disconnect();
+      return;
     }
-    lastModeSwitchRef.current = null;
-    scheduleSyncRef.current();
-  }, [overlayActive, showPreview]);
+    attachPreviewObservers();
+    ensurePreviewReadyAndSync(160);
+    afterNextPaint(() => {
+      const t = activeTextarea();
+      if (t) {
+        t.focus();
+        t.setSelectionRange(caretRef.current, caretRef.current);
+        centerTextareaCaret(t);
+      }
+      ensurePreviewReadyAndSync(160);
+    });
+  }, [showPreview]);
+
+  useEffect(() => {
+    if (!showPreview) return;
+    ensurePreviewReadyAndSync(160);
+  }, [isXl, showPreview]);
 
   useEffect(() => {
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
+      previewMutObsRef.current?.disconnect();
+      previewResizeWrapRef.current?.disconnect();
+      previewResizeBodyRef.current?.disconnect();
+      ensureTimersRef.current.forEach((id) => clearTimeout(id));
     };
   }, []);
 
   return (
     <div className="relative group">
       <form
+        ref={formRef}
         id="post-form"
         onSubmit={handleSubmit}
         className={className + " flex flex-col gap-2"}
@@ -826,17 +1080,26 @@ export default function PostForm({
             }}
             onKeyUp={() => {
               const ta = textareaRef.current;
-              if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+              if (ta) {
+                const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                caretRef.current = pos;
+              }
               scheduleSyncRef.current();
             }}
             onClick={() => {
               const ta = textareaRef.current;
-              if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+              if (ta) {
+                const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                caretRef.current = pos;
+              }
               scheduleSyncRef.current();
             }}
             onSelect={() => {
               const ta = textareaRef.current;
-              if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+              if (ta) {
+                const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                caretRef.current = pos;
+              }
               scheduleSyncRef.current();
             }}
             maxLength={65535}
@@ -878,10 +1141,24 @@ export default function PostForm({
               type="button"
               className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1 rounded border border-gray-300 cursor-pointer transition"
               onClick={() => {
-                snapshotCaret();
-                lastModeSwitchRef.current = "toggle";
-                setShowPreview((v) => !v);
-                requestAnimationFrame(() => scheduleSyncRef.current());
+                const ta = activeTextarea();
+                const pos = ta ? (ta.selectionEnd ?? ta.selectionStart ?? caretRef.current) : caretRef.current;
+                caretRef.current = pos;
+                const willShow = !showPreview;
+                setShowPreview(willShow);
+                if (willShow) {
+                  afterNextPaint(() => {
+                    const t = activeTextarea();
+                    if (t) {
+                      t.focus();
+                      t.setSelectionRange(caretRef.current, caretRef.current);
+                      centerTextareaCaret(t);
+                    }
+                    ensureFormBottomInView("smooth");
+                    attachPreviewObservers();
+                    ensurePreviewReadyAndSync(160);
+                  });
+                }
               }}
             >
               {showPreview ? "Hide Preview" : "Preview"}
@@ -943,62 +1220,135 @@ export default function PostForm({
           <div className="absolute inset-0 flex flex-col">
             <div className="flex-1 grid grid-cols-2 gap-0 h-full w-full overflow-hidden">
               <div ref={overlayEditorColRef} className="relative bg-gray-50/70 border-r min-h-0 flex flex-col">
-                <div ref={overlayToolbarRef} className="sticky top-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 w-full">
+                <div
+                  ref={overlayToolbarRef}
+                  className="sticky top-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 w-full"
+                >
                   <div className="mx-auto max-w-[85ex] w-full px-1.5 py-1 flex items-center justify-between">
                     <div className="flex items-center gap-1">
-                      <button type="button" onMouseDown={actPrefix("# ")} title="Heading 1" className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actPrefix("# ")}
+                        title="Heading 1"
+                        className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <Heading1 className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">H1</span>
                       </button>
-                      <button type="button" onMouseDown={actPrefix("## ")} title="Heading 2" className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actPrefix("## ")}
+                        title="Heading 2"
+                        className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <Heading2 className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">H2</span>
                       </button>
-                      <button type="button" onMouseDown={actPrefix("### ")} title="Heading 3" className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actPrefix("### ")}
+                        title="Heading 3"
+                        className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <Heading3 className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">H3</span>
                       </button>
-                      <button type="button" onMouseDown={actPrefix("- ")} title="List" className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actPrefix("- ")}
+                        title="List"
+                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <ListIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">List</span>
                       </button>
-                      <button type="button" onMouseDown={actPrefix("> ")} title="Quote" className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actPrefix("> ")}
+                        title="Quote"
+                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <QuoteIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Quote</span>
                       </button>
-                      <button type="button" onMouseDown={actFence} title="Code block" className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actFence}
+                        title="Code block"
+                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <CodeBlockIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Code Block</span>
                       </button>
-                      <button type="button" onMouseDown={actInline("**")} title="Bold" className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actInline("**")}
+                        title="Bold"
+                        className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <BoldIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Bold</span>
                       </button>
-                      <button type="button" onMouseDown={actInline("::")} title="Italic" className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actInline("::")}
+                        title="Italic"
+                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <ItalicIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Italic</span>
                       </button>
-                      <button type="button" onMouseDown={actInline("__")} title="Underline" className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actInline("__")}
+                        title="Underline"
+                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <UnderlineIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Underline</span>
                       </button>
-                      <button type="button" onMouseDown={actInline("~~")} title="Strikethrough" className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actInline("~~")}
+                        title="Strikethrough"
+                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <StrikethroughIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Strikethrough</span>
                       </button>
-                      <button type="button" onMouseDown={actInline("``")} title="Inline code" className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actInline("``")}
+                        title="Inline code"
+                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <InlineCodeIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Inline Code</span>
                       </button>
-                      <button type="button" onMouseDown={actInline("%%")} title="Mark" className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actInline("%%")}
+                        title="Mark"
+                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <MarkIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Mark</span>
                       </button>
-                      <button type="button" onMouseDown={actRuby} title="Ruby" className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actRuby}
+                        title="Ruby"
+                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <RubyIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Ruby</span>
                       </button>
-                      <button type="button" onMouseDown={actLink} title="Link" className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none">
+                      <button
+                        type="button"
+                        onMouseDown={actLink}
+                        title="Link"
+                        className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                      >
                         <LinkIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Link</span>
                       </button>
@@ -1027,17 +1377,26 @@ export default function PostForm({
                       }}
                       onKeyUp={() => {
                         const ta = overlayTextareaRef.current;
-                        if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                        if (ta) {
+                          const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                          caretRef.current = pos;
+                        }
                         scheduleSyncRef.current();
                       }}
                       onClick={() => {
                         const ta = overlayTextareaRef.current;
-                        if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                        if (ta) {
+                          const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                          caretRef.current = pos;
+                        }
                         scheduleSyncRef.current();
                       }}
                       onSelect={() => {
                         const ta = overlayTextareaRef.current;
-                        if (ta) caretRef.current = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                        if (ta) {
+                          const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                          caretRef.current = pos;
+                        }
                         scheduleSyncRef.current();
                       }}
                       maxLength={65535}
@@ -1048,7 +1407,10 @@ export default function PostForm({
                   </div>
                 </div>
 
-                <div ref={overlayFooterRef} className="sticky bottom-0 w-full bg-white/95 backdrop-blur border-t border-gray-200">
+                <div
+                  ref={overlayFooterRef}
+                  className="sticky bottom-0 w-full bg-white/95 backdrop-blur border-t border-gray-200"
+                >
                   <div className="mx-auto max-w-[85ex] w-full px-6 py-2 flex items-center gap-2">
                     <div className="flex-1">
                       {error && <div className="text-red-600 text-sm">{error}</div>}
@@ -1072,10 +1434,20 @@ export default function PostForm({
                       type="button"
                       className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1 rounded border border-gray-300 cursor-pointer transition"
                       onClick={() => {
-                        snapshotCaret();
-                        lastModeSwitchRef.current = "toggle";
+                        const ta = overlayTextareaRef.current;
+                        const pos = ta ? (ta.selectionEnd ?? ta.selectionStart ?? caretRef.current) : caretRef.current;
+                        caretRef.current = pos;
                         setShowPreview(false);
-                        requestAnimationFrame(() => scheduleSyncRef.current());
+                        afterNextPaint(() => {
+                          const t = activeTextarea();
+                          if (t) {
+                            t.focus();
+                            t.setSelectionRange(caretRef.current, caretRef.current);
+                            centerTextareaCaret(t);
+                          }
+                          attachPreviewObservers();
+                          ensurePreviewReadyAndSync(160);
+                        });
                       }}
                     >
                       Hide Preview
@@ -1108,10 +1480,20 @@ export default function PostForm({
                   type="button"
                   className="absolute right-3 top-3 rounded p-1 bg-white/90 border shadow"
                   onClick={() => {
-                    snapshotCaret();
-                    lastModeSwitchRef.current = "toggle";
+                    const ta = overlayTextareaRef.current;
+                    const pos = ta ? (ta.selectionEnd ?? ta.selectionStart ?? caretRef.current) : caretRef.current;
+                    caretRef.current = pos;
                     setShowPreview(false);
-                    requestAnimationFrame(() => scheduleSyncRef.current());
+                    afterNextPaint(() => {
+                      const t = activeTextarea();
+                      if (t) {
+                        t.focus();
+                        t.setSelectionRange(caretRef.current, caretRef.current);
+                        centerTextareaCaret(t);
+                      }
+                      attachPreviewObservers();
+                      ensurePreviewReadyAndSync(160);
+                    });
                   }}
                 >
                   <CloseIcon className="w-4 h-4" aria-hidden />
@@ -1138,7 +1520,10 @@ export default function PostForm({
                           </span>
                         ))}
                         {tags.map((tag) => (
-                          <span key={tag} className="inline-block bg-gray-100 rounded px-2 py-0.5 text-blue-700 text-sm">
+                          <span
+                            key={tag}
+                            className="inline-block bg-gray-100 rounded px-2 py-0.5 text-blue-700 text-sm"
+                          >
                             #{tag}
                           </span>
                         ))}
