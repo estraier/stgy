@@ -92,7 +92,6 @@ function applyPrefixToggleFromTextarea(
   prefix: string,
 ) {
   const text = ta.value;
-  ta.focus();
   const selStart = ta.selectionStart ?? 0;
   const selEnd = ta.selectionEnd ?? selStart;
   const { start, end } = getTargetRange(text, selStart, selEnd);
@@ -115,7 +114,6 @@ function applyPrefixToggleFromTextarea(
   const selFrom = head.length;
   const selTo = head.length + replaced.length;
   requestAnimationFrame(() => {
-    ta.focus();
     ta.setSelectionRange(selFrom, selTo);
   });
 }
@@ -125,7 +123,6 @@ function applyCodeFenceToggleFromTextarea(
   setBody: (next: string) => void,
 ) {
   const text = ta.value;
-  ta.focus();
   const selStart = ta.selectionStart ?? 0;
   const selEnd = ta.selectionEnd ?? selStart;
   const { start, end } = getTargetRange(text, selStart, selEnd);
@@ -148,7 +145,6 @@ function applyCodeFenceToggleFromTextarea(
     const selFrom = head.length;
     const selTo = head.length + replaced.length;
     requestAnimationFrame(() => {
-      ta.focus();
       ta.setSelectionRange(selFrom, selTo);
     });
     return;
@@ -161,7 +157,6 @@ function applyCodeFenceToggleFromTextarea(
   const selFrom = head.length;
   const selTo = head.length + replaced.length;
   requestAnimationFrame(() => {
-    ta.focus();
     ta.setSelectionRange(selFrom, selTo);
   });
 }
@@ -173,7 +168,6 @@ function applyInlineToggleFromTextarea(
   close: string = open,
 ) {
   const text = ta.value;
-  ta.focus();
   const s0 = ta.selectionStart ?? 0;
   const e0 = ta.selectionEnd ?? s0;
   if (s0 === e0) {
@@ -184,7 +178,6 @@ function applyInlineToggleFromTextarea(
     setBody(next);
     const pos = before.length + open.length;
     requestAnimationFrame(() => {
-      ta.focus();
       ta.setSelectionRange(pos, pos);
     });
     return;
@@ -206,14 +199,12 @@ function applyInlineToggleFromTextarea(
   const selFrom = head.length;
   const selTo = head.length + replacedBlock.length;
   requestAnimationFrame(() => {
-    ta.focus();
     ta.setSelectionRange(selFrom, selTo);
   });
 }
 
 function applyRubyToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: string) => void) {
   const text = ta.value;
-  ta.focus();
   const s0 = ta.selectionStart ?? 0;
   const e0 = ta.selectionEnd ?? s0;
   if (s0 === e0) {
@@ -224,7 +215,6 @@ function applyRubyToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
     setBody(next);
     const pos = before.length + 2;
     requestAnimationFrame(() => {
-      ta.focus();
       ta.setSelectionRange(pos, pos);
     });
     return;
@@ -247,14 +237,12 @@ function applyRubyToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
   const selFrom = head.length;
   const selTo = head.length + replacedBlock.length;
   requestAnimationFrame(() => {
-    ta.focus();
     ta.setSelectionRange(selFrom, selTo);
   });
 }
 
 function applyLinkToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: string) => void) {
   const text = ta.value;
-  ta.focus();
   const s0 = ta.selectionStart ?? 0;
   const e0 = ta.selectionEnd ?? s0;
   if (s0 === e0) {
@@ -265,7 +253,6 @@ function applyLinkToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
     setBody(next);
     const pos = before.length + 1;
     requestAnimationFrame(() => {
-      ta.focus();
       ta.setSelectionRange(pos, pos);
     });
     return;
@@ -288,7 +275,6 @@ function applyLinkToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
   const selFrom = head.length;
   const selTo = head.length + replacedBlock.length;
   requestAnimationFrame(() => {
-    ta.focus();
     ta.setSelectionRange(selFrom, selTo);
   });
 }
@@ -309,63 +295,13 @@ function resolveLineHeight(ta: HTMLTextAreaElement) {
 }
 
 function centerTextareaCaret(ta: HTMLTextAreaElement) {
-  const s = window.getComputedStyle(ta);
-  const div = document.createElement("div");
-  const props = [
-    "boxSizing",
-    "width",
-    "paddingTop",
-    "paddingRight",
-    "paddingBottom",
-    "paddingLeft",
-    "borderTopWidth",
-    "borderRightWidth",
-    "borderBottomWidth",
-    "borderLeftWidth",
-    "fontStyle",
-    "fontVariant",
-    "fontWeight",
-    "fontStretch",
-    "fontSize",
-    "fontFamily",
-    "lineHeight",
-    "letterSpacing",
-    "textTransform",
-    "textIndent",
-    "textAlign",
-    "whiteSpace",
-    "wordBreak",
-    "wordWrap",
-    "overflowWrap",
-    "tabSize",
-    "direction",
-  ] as readonly string[];
-  div.style.position = "absolute";
-  div.style.visibility = "hidden";
-  div.style.top = "0";
-  div.style.left = "0";
-  div.style.whiteSpace = "pre-wrap";
-  div.style.wordWrap = "break-word";
-  const sRec = s as unknown as Record<string, string>;
-  const dRec = div.style as unknown as Record<string, string>;
-  for (const p of props) {
-    dRec[p] = sRec[p];
-  }
-  div.style.width = s.width;
-  const pre = ta.value.substring(0, ta.selectionStart ?? 0);
-  const post = ta.value.substring(ta.selectionStart ?? 0);
-  div.textContent = pre;
-  const span = document.createElement("span");
-  span.textContent = post.length ? post[0] : ".";
-  div.appendChild(span);
-  document.body.appendChild(div);
-  const rectDiv = div.getBoundingClientRect();
-  const rectSpan = span.getBoundingClientRect();
-  const caretTop = rectSpan.top - rectDiv.top;
-  document.body.removeChild(div);
   const lineHeight = resolveLineHeight(ta);
-  const desired = Math.max(0, caretTop - (ta.clientHeight - lineHeight) / 2);
-  ta.scrollTop = desired;
+  const scrollRange = Math.max(1, ta.scrollHeight - ta.clientHeight);
+  const caret = ta.selectionStart ?? 0;
+  const len = Math.max(1, ta.value.length);
+  const approxY = (caret / len) * (ta.scrollHeight - lineHeight);
+  const desired = Math.max(0, approxY - (ta.clientHeight - lineHeight) / 2);
+  ta.scrollTop = Math.min(scrollRange, desired);
 }
 
 export default function PostForm({
@@ -540,7 +476,6 @@ export default function PostForm({
       return;
     }
     const text = ta.value;
-    ta.focus();
     const start = ta.selectionStart ?? text.length;
     const end = ta.selectionEnd ?? start;
     const before = text.slice(0, start);
@@ -550,7 +485,6 @@ export default function PostForm({
     const next = before + insert + after;
     setBody(next);
     requestAnimationFrame(() => {
-      ta.focus();
       const pos = before.length + insert.length;
       ta.setSelectionRange(pos, pos);
       caretRef.current = pos;
@@ -568,7 +502,6 @@ export default function PostForm({
       return;
     }
     const text = ta.value;
-    ta.focus();
     const start = ta.selectionStart ?? text.length;
     const end = ta.selectionEnd ?? start;
     const before = text.slice(0, start);
@@ -576,7 +509,6 @@ export default function PostForm({
     const next = before + snippet + after;
     setBody(next);
     requestAnimationFrame(() => {
-      ta.focus();
       const pos = before.length + snippet.length;
       ta.setSelectionRange(pos, pos);
       caretRef.current = pos;
@@ -761,15 +693,15 @@ export default function PostForm({
     previewResizeWrapRef.current?.disconnect();
     previewResizeBodyRef.current?.disconnect();
     if (body) {
-      const mo = new MutationObserver((muts) => {
+      const mo = new MutationObserver((muts: MutationRecord[]) => {
         if (!showPreview) return;
         muts.forEach((m) => {
           m.addedNodes.forEach((n) => {
             if (n instanceof HTMLElement) {
               const imgs = n.querySelectorAll("img");
               imgs.forEach((img) => {
-                img.addEventListener("load", scheduleSync, { once: true });
-                img.addEventListener("error", scheduleSync, { once: true });
+                img.addEventListener("load", scheduleSync as EventListener, { once: true });
+                img.addEventListener("error", scheduleSync as EventListener, { once: true });
               });
             }
           });
@@ -778,8 +710,8 @@ export default function PostForm({
       });
       mo.observe(body, { childList: true, subtree: true });
       body.querySelectorAll("img").forEach((img) => {
-        img.addEventListener("load", scheduleSync, { once: true });
-        img.addEventListener("error", scheduleSync, { once: true });
+        img.addEventListener("load", scheduleSync as EventListener, { once: true });
+        img.addEventListener("error", scheduleSync as EventListener, { once: true });
       });
       previewMutObsRef.current = mo;
     }
@@ -814,15 +746,20 @@ export default function PostForm({
     ta.style.height = `${available}px`;
   }, [overlayActive]);
 
-  const restoreCaretToActiveTextarea = useCallback(() => {
-    const ta = activeTextarea();
-    if (!ta) return;
-    const pos = clamp(caretRef.current, 0, ta.value.length);
-    ta.focus();
-    ta.setSelectionRange(pos, pos);
-    caretRef.current = pos;
-    scheduleSync();
-  }, [activeTextarea, scheduleSync]);
+  const restoreCaretToActiveTextarea = useCallback(
+    (opts?: { focus?: boolean }) => {
+      const ta = activeTextarea();
+      if (!ta) return;
+      const pos = clamp(caretRef.current, 0, ta.value.length);
+      if (opts?.focus) {
+        ta.focus();
+      }
+      ta.setSelectionRange(pos, pos);
+      caretRef.current = pos;
+      scheduleSync();
+    },
+    [activeTextarea, scheduleSync],
+  );
 
   const ensureFormBottomInView = useCallback(
     (behavior: ScrollBehavior = "smooth") => {
@@ -869,7 +806,7 @@ export default function PostForm({
     return () => {
       window.removeEventListener("resize", onResize);
     };
-  }, [overlayActive]);
+  }, [overlayActive, resizeOverlayTextarea]);
 
   useEffect(() => {
     if (!overlayActive) return;
@@ -879,7 +816,7 @@ export default function PostForm({
   useEffect(() => {
     if (!showPreview) return;
     scheduleSyncRef.current();
-  }, [content, showPreview]);
+  }, [content, showPreview, scheduleSync]);
 
   useLayoutEffect(() => {
     const prevWasOverlay = prevOverlayActiveRef.current;
@@ -888,18 +825,20 @@ export default function PostForm({
       ? (srcTa.selectionEnd ?? srcTa.selectionStart ?? caretRef.current)
       : caretRef.current;
     caretRef.current = pos;
-    restoreCaretToActiveTextarea();
+
+    restoreCaretToActiveTextarea({ focus: false });
     if (overlayActive) resizeOverlayTextareaRef.current();
+
     afterNextPaint(() => {
       const t = activeTextarea();
       if (t) {
-        t.focus();
         t.setSelectionRange(caretRef.current, caretRef.current);
         centerTextareaCaret(t);
       }
       attachPreviewObservers();
       ensurePreviewReadyAndSync(160);
     });
+
     prevOverlayActiveRef.current = overlayActive;
   }, [
     overlayActive,
@@ -907,6 +846,7 @@ export default function PostForm({
     activeTextarea,
     attachPreviewObservers,
     ensurePreviewReadyAndSync,
+    resizeOverlayTextarea,
   ]);
 
   useLayoutEffect(() => {
@@ -921,7 +861,6 @@ export default function PostForm({
     afterNextPaint(() => {
       const t = activeTextarea();
       if (t) {
-        t.focus();
         t.setSelectionRange(caretRef.current, caretRef.current);
         centerTextareaCaret(t);
       }
@@ -1182,7 +1121,6 @@ export default function PostForm({
                   afterNextPaint(() => {
                     const t = activeTextarea();
                     if (t) {
-                      t.focus();
                       t.setSelectionRange(caretRef.current, caretRef.current);
                       centerTextareaCaret(t);
                     }
@@ -1313,7 +1251,7 @@ export default function PostForm({
                         type="button"
                         onMouseDown={actFence}
                         title="Code block"
-                        className="hidden xl:inline-flex h-6 w-7 items中心 justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
                       >
                         <CodeBlockIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Code Block</span>
@@ -1484,7 +1422,6 @@ export default function PostForm({
                         afterNextPaint(() => {
                           const t = activeTextarea();
                           if (t) {
-                            t.focus();
                             t.setSelectionRange(caretRef.current, caretRef.current);
                             centerTextareaCaret(t);
                           }
@@ -1532,7 +1469,6 @@ export default function PostForm({
                     afterNextPaint(() => {
                       const t = activeTextarea();
                       if (t) {
-                        t.focus();
                         t.setSelectionRange(caretRef.current, caretRef.current);
                         centerTextareaCaret(t);
                       }
@@ -1559,7 +1495,7 @@ export default function PostForm({
                         {attrLabels.map((label) => (
                           <span
                             key={`attr:${label}`}
-                            className="inline-block rounded px-2 py-0.5 text-sm border bg紫-50 text-purple-800 border-purple-200"
+                            className="inline-block rounded px-2 py-0.5 text-sm border bg-purple-50 text-purple-800 border-purple-200"
                           >
                             {label}
                           </span>
