@@ -355,10 +355,6 @@ export default function PostForm({
   }, [overlayActive]);
 
   useEffect(() => {
-    if (body.trim() === "") setShowPreview(false);
-  }, [body]);
-
-  useEffect(() => {
     if (autoFocus) {
       const ta = overlayActive ? overlayTextareaRef.current : textareaRef.current;
       if (ta) {
@@ -882,7 +878,7 @@ export default function PostForm({
           </div>
         )}
 
-        {showPreview && !overlayActive && content.trim() !== "" && (
+        {showPreview && !overlayActive && (
           <div
             ref={previewWrapRef}
             className="border rounded bg-white mt-1 p-3 markdown-body max-h-[50ex] overflow-y-auto"
