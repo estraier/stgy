@@ -1,7 +1,7 @@
 "use client";
 
 import { Config } from "@/config";
-import React, { useRef, useState, useCallback } from "react";
+import React, { useRef, useState, useCallback, useMemo } from "react";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import ImageUploadDialog, { DialogFileItem, UploadResult } from "@/components/ImageUploadDialog";
 import { Upload as UploadIcon } from "lucide-react";
@@ -24,36 +24,35 @@ export default function UploadImageEmbedButton({
   const [dialogFiles, setDialogFiles] = useState<DialogFileItem[] | null>(null);
   const [showDialog, setShowDialog] = useState(false);
 
-  const textExts = new Set(["txt", "text", "md", "markdown"]);
-  const imageExts = new Set([
-    "jpg",
-    "jpeg",
-    "png",
-    "webp",
-    "heic",
-    "heif",
-    "tif",
-    "tiff",
-    "gif",
-    "bmp",
-    "svg",
-  ]);
+  const textExts = useMemo(() => new Set(["txt", "text", "md", "markdown"]), []);
+  const imageExts = useMemo(
+    () =>
+      new Set(["jpg", "jpeg", "png", "webp", "heic", "heif", "tif", "tiff", "gif", "bmp", "svg"]),
+    [],
+  );
 
-  const isTextFile = (f: File) => {
-    const ext = f.name.toLowerCase().split(".").pop() || "";
-    return f.type.startsWith("text/") || f.type === "text/markdown" || textExts.has(ext);
-  };
-  const isImageFile = (f: File) => {
-    const ext = f.name.toLowerCase().split(".").pop() || "";
-    return f.type.startsWith("image/") || imageExts.has(ext);
-  };
+  const isTextFile = useCallback(
+    (f: File) => {
+      const ext = f.name.toLowerCase().split(".").pop() || "";
+      return f.type.startsWith("text/") || f.type === "text/markdown" || textExts.has(ext);
+    },
+    [textExts],
+  );
 
-  const normalizeText = (s: string) => {
+  const isImageFile = useCallback(
+    (f: File) => {
+      const ext = f.name.toLowerCase().split(".").pop() || "";
+      return f.type.startsWith("image/") || imageExts.has(ext);
+    },
+    [imageExts],
+  );
+
+  const normalizeText = useCallback((s: string) => {
     const noBom = s.replace(/^\uFEFF/, "");
     const lf = noBom.replace(/\r\n?/g, "\n");
     const nfc = typeof lf.normalize === "function" ? lf.normalize("NFC") : lf;
     return nfc.endsWith("\n") ? nfc : nfc + "\n";
-  };
+  }, []);
 
   const pickFiles = useCallback(() => {
     if (!userId) return;
@@ -103,7 +102,7 @@ export default function UploadImageEmbedButton({
 
       if (inputRef.current) inputRef.current.value = "";
     },
-    [onInsert, userId],
+    [onInsert, userId, isTextFile, isImageFile, normalizeText],
   );
 
   const handleComplete = useCallback(

@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useEffect, useMemo, useLayoutEffect } from "react";
+import React, { useRef, useState, useEffect, useMemo, useLayoutEffect, useCallback } from "react";
 import { makeArticleHtmlFromMarkdown } from "@/utils/article";
 import { parseBodyAndTags } from "@/utils/parse";
 import UserMentionButton from "@/components/UserMentionButton";
@@ -339,16 +339,17 @@ function centerTextareaCaret(ta: HTMLTextAreaElement) {
     "overflowWrap",
     "tabSize",
     "direction",
-  ] as const;
+  ] as readonly string[];
   div.style.position = "absolute";
   div.style.visibility = "hidden";
   div.style.top = "0";
   div.style.left = "0";
   div.style.whiteSpace = "pre-wrap";
   div.style.wordWrap = "break-word";
+  const sRec = s as unknown as Record<string, string>;
+  const dRec = div.style as unknown as Record<string, string>;
   for (const p of props) {
-    // @ts-ignore
-    div.style[p] = s[p];
+    dRec[p] = sRec[p];
   }
   div.style.width = s.width;
   const pre = ta.value.substring(0, ta.selectionStart ?? 0);
@@ -419,14 +420,15 @@ export default function PostForm({
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1000px)");
-    const apply = () => setIsXl(mq.matches);
-    apply();
     const onChange = () => {
       const taPrev = overlayActive ? overlayTextareaRef.current : textareaRef.current;
-      const pos = taPrev ? (taPrev.selectionEnd ?? taPrev.selectionStart ?? caretRef.current) : caretRef.current;
+      const pos = taPrev
+        ? (taPrev.selectionEnd ?? taPrev.selectionStart ?? caretRef.current)
+        : caretRef.current;
       caretRef.current = pos;
       setIsXl(mq.matches);
     };
+    onChange();
     mq.addEventListener("change", onChange);
     return () => mq.removeEventListener("change", onChange);
   }, [overlayActive]);
@@ -474,22 +476,28 @@ export default function PostForm({
   const attrLabels = useMemo(() => {
     return Object.entries(attrs || {})
       .map(([k, v]) =>
-        typeof v === "boolean" ? (v ? `${k.toLowerCase()}` : undefined) : `${k.toLowerCase()}=${String(v)}`,
+        typeof v === "boolean"
+          ? v
+            ? `${k.toLowerCase()}`
+            : undefined
+          : `${k.toLowerCase()}=${String(v)}`,
       )
       .filter(Boolean) as string[];
   }, [attrs]);
 
-  function activeTextarea(): HTMLTextAreaElement | null {
+  const activeTextarea = useCallback((): HTMLTextAreaElement | null => {
     return overlayActive ? overlayTextareaRef.current : textareaRef.current;
-  }
-  function activePreviewWrap(): HTMLDivElement | null {
-    return overlayActive ? overlayWrapRef.current : previewWrapRef.current;
-  }
-  function activePreviewBody(): HTMLDivElement | null {
-    return overlayActive ? overlayBodyRef.current : previewBodyRef.current;
-  }
+  }, [overlayActive]);
 
-  function handleFocus() {
+  const activePreviewWrap = useCallback((): HTMLDivElement | null => {
+    return overlayActive ? overlayWrapRef.current : previewWrapRef.current;
+  }, [overlayActive]);
+
+  const activePreviewBody = useCallback((): HTMLDivElement | null => {
+    return overlayActive ? overlayBodyRef.current : previewBodyRef.current;
+  }, [overlayActive]);
+
+  const handleFocus = useCallback(() => {
     if (!hasFocusedOnce) setHasFocusedOnce(true);
     const textarea = activeTextarea();
     if (!textarea) return;
@@ -505,7 +513,7 @@ export default function PostForm({
     }
     scheduleSyncRef.current();
     if (overlayActive) resizeOverlayTextareaRef.current();
-  }
+  }, [activeTextarea, hasFocusedOnce, onErrorClear, overlayActive]);
 
   function handleSubmit(e: React.FormEvent) {
     if (overLimit) {
@@ -550,7 +558,6 @@ export default function PostForm({
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
   }
-
   function insertInlineAtCursor(snippet: string) {
     const ta = activeTextarea();
     if (!ta) {
@@ -639,7 +646,7 @@ export default function PostForm({
     });
   };
 
-  function rebuildAnchors() {
+  const rebuildAnchors = useCallback(() => {
     const root = activePreviewBody();
     if (!root) {
       anchorsRef.current = [];
@@ -654,9 +661,9 @@ export default function PostForm({
       .filter((x): x is { char: number; el: HTMLElement; idx: number } => !!x);
     withIndex.sort((a, b) => a.char - b.char || a.idx - b.idx);
     anchorsRef.current = withIndex.map(({ char, el }) => ({ char, el }));
-  }
+  }, [activePreviewBody]);
 
-  function findAnchor(caret: number): HTMLElement | null {
+  const findAnchor = useCallback((caret: number): HTMLElement | null => {
     const anchors = anchorsRef.current;
     if (!anchors.length) return null;
     let lo = 0;
@@ -672,9 +679,9 @@ export default function PostForm({
       }
     }
     return anchors[ans]!.el;
-  }
+  }, []);
 
-  function syncToCaret() {
+  const syncToCaret = useCallback(() => {
     if (!showPreview) return;
     const wrap = activePreviewWrap();
     const caret = Math.min(Math.max(0, caretRef.current), content.length);
@@ -688,57 +695,66 @@ export default function PostForm({
       wrap.scrollTop = desired;
       return;
     }
-    const desired =
-      ((wrap.scrollHeight - wrap.clientHeight) * caret) / Math.max(1, content.length);
+    const desired = ((wrap.scrollHeight - wrap.clientHeight) * caret) / Math.max(1, content.length);
     wrap.scrollTop = Math.max(0, Math.min(wrap.scrollHeight - wrap.clientHeight, desired));
-  }
+  }, [showPreview, activePreviewWrap, content.length, findAnchor]);
 
-  function scheduleSync() {
+  const scheduleSync = useCallback(() => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null;
       rebuildAnchors();
       syncToCaret();
     });
-  }
+  }, [rebuildAnchors, syncToCaret]);
 
-  function ensurePreviewReadyAndSync(maxTries = 160) {
-    const myGen = ++genRef.current;
-    let tries = maxTries;
-    const tick = () => {
-      if (myGen !== genRef.current) return;
-      if (!showPreview) return;
-      const wrap = activePreviewWrap();
-      const body = activePreviewBody();
-      if (!wrap || !body) {
-        if (--tries > 0) requestAnimationFrame(tick);
-        return;
+  const ensurePreviewReadyAndSync = useCallback(
+    (maxTries = 160) => {
+      const myGen = ++genRef.current;
+      let tries = maxTries;
+      const tick = () => {
+        if (myGen !== genRef.current) return;
+        if (!showPreview) return;
+        const wrap = activePreviewWrap();
+        const body = activePreviewBody();
+        if (!wrap || !body) {
+          if (--tries > 0) requestAnimationFrame(tick);
+          return;
+        }
+        if (wrap.clientHeight === 0) {
+          if (--tries > 0) requestAnimationFrame(tick);
+          return;
+        }
+        rebuildAnchors();
+        if (anchorsRef.current.length === 0 && body.clientHeight === 0) {
+          if (--tries > 0) requestAnimationFrame(tick);
+          return;
+        }
+        scheduleSync();
+      };
+      requestAnimationFrame(tick);
+      const t1 = window.setTimeout(() => {
+        if (myGen === genRef.current) scheduleSync();
+      }, 80);
+      const t2 = window.setTimeout(() => {
+        if (myGen === genRef.current) scheduleSync();
+      }, 160);
+      const t3 = window.setTimeout(() => {
+        if (myGen === genRef.current) scheduleSync();
+      }, 320);
+      ensureTimersRef.current.push(t1, t2, t3);
+      const d = document as Document & { fonts?: { ready?: Promise<unknown> } };
+      const f = d.fonts;
+      if (f && typeof f.ready?.then === "function") {
+        f.ready.then(() => {
+          if (myGen === genRef.current) scheduleSync();
+        });
       }
-      if (wrap.clientHeight === 0) {
-        if (--tries > 0) requestAnimationFrame(tick);
-        return;
-      }
-      rebuildAnchors();
-      if (anchorsRef.current.length === 0 && body.clientHeight === 0) {
-        if (--tries > 0) requestAnimationFrame(tick);
-        return;
-      }
-      scheduleSync();
-    };
-    requestAnimationFrame(tick);
-    const t1 = window.setTimeout(() => {
-      if (myGen === genRef.current) scheduleSync();
-    }, 80);
-    const t2 = window.setTimeout(() => {
-      if (myGen === genRef.current) scheduleSync();
-    }, 160);
-    const t3 = window.setTimeout(() => {
-      if (myGen === genRef.current) scheduleSync();
-    }, 320);
-    ensureTimersRef.current.push(t1, t2, t3);
-  }
+    },
+    [showPreview, activePreviewWrap, activePreviewBody, rebuildAnchors, scheduleSync],
+  );
 
-  function attachPreviewObservers() {
+  const attachPreviewObservers = useCallback(() => {
     const wrap = activePreviewWrap();
     const body = activePreviewBody();
     previewMutObsRef.current?.disconnect();
@@ -783,9 +799,9 @@ export default function PostForm({
       ro2.observe(body);
       previewResizeBodyRef.current = ro2;
     }
-  }
+  }, [activePreviewWrap, activePreviewBody, showPreview, scheduleSync]);
 
-  function resizeOverlayTextarea() {
+  const resizeOverlayTextarea = useCallback(() => {
     if (!overlayActive) return;
     const ta = overlayTextareaRef.current;
     const scroll = overlayScrollRef.current;
@@ -796,28 +812,31 @@ export default function PostForm({
     const pb = parseFloat(innerStyle.paddingBottom || "0");
     const available = Math.max(160, scroll.clientHeight - pt - pb);
     ta.style.height = `${available}px`;
-  }
+  }, [overlayActive]);
 
-  function restoreCaretToActiveTextarea() {
+  const restoreCaretToActiveTextarea = useCallback(() => {
     const ta = activeTextarea();
     if (!ta) return;
     const pos = clamp(caretRef.current, 0, ta.value.length);
     ta.focus();
     ta.setSelectionRange(pos, pos);
     caretRef.current = pos;
-    scheduleSyncRef.current();
-  }
+    scheduleSync();
+  }, [activeTextarea, scheduleSync]);
 
-  function ensureFormBottomInView(behavior: ScrollBehavior = "smooth") {
-    if (overlayActive) return;
-    const form = formRef.current;
-    if (!form) return;
-    const rect = form.getBoundingClientRect();
-    const delta = rect.bottom - window.innerHeight;
-    if (delta > 0) {
-      window.scrollBy({ top: delta + 8, behavior });
-    }
-  }
+  const ensureFormBottomInView = useCallback(
+    (behavior: ScrollBehavior = "smooth") => {
+      if (overlayActive) return;
+      const form = formRef.current;
+      if (!form) return;
+      const rect = form.getBoundingClientRect();
+      const delta = rect.bottom - window.innerHeight;
+      if (delta > 0) {
+        window.scrollBy({ top: delta + 8, behavior });
+      }
+    },
+    [overlayActive],
+  );
 
   const scheduleSyncRef = useRef<() => void>(() => {});
   const rebuildAnchorsRef = useRef<() => void>(() => {});
@@ -828,19 +847,19 @@ export default function PostForm({
 
   useEffect(() => {
     afterNextPaint(() => ensureFormBottomInView("smooth"));
-  }, []);
+  }, [ensureFormBottomInView]);
 
   useEffect(() => {
     if (!overlayActive && hasFocusedOnce) {
       afterNextPaint(() => ensureFormBottomInView("smooth"));
     }
-  }, [hasFocusedOnce, overlayActive]);
+  }, [hasFocusedOnce, overlayActive, ensureFormBottomInView]);
 
   useEffect(() => {
     if (!overlayActive && showPreview) {
       afterNextPaint(() => ensureFormBottomInView("smooth"));
     }
-  }, [showPreview, overlayActive]);
+  }, [showPreview, overlayActive, ensureFormBottomInView]);
 
   useEffect(() => {
     if (!overlayActive) return;
@@ -865,7 +884,9 @@ export default function PostForm({
   useLayoutEffect(() => {
     const prevWasOverlay = prevOverlayActiveRef.current;
     const srcTa = prevWasOverlay ? overlayTextareaRef.current : textareaRef.current;
-    const pos = srcTa ? (srcTa.selectionEnd ?? srcTa.selectionStart ?? caretRef.current) : caretRef.current;
+    const pos = srcTa
+      ? (srcTa.selectionEnd ?? srcTa.selectionStart ?? caretRef.current)
+      : caretRef.current;
     caretRef.current = pos;
     restoreCaretToActiveTextarea();
     if (overlayActive) resizeOverlayTextareaRef.current();
@@ -880,7 +901,13 @@ export default function PostForm({
       ensurePreviewReadyAndSync(160);
     });
     prevOverlayActiveRef.current = overlayActive;
-  }, [overlayActive]);
+  }, [
+    overlayActive,
+    restoreCaretToActiveTextarea,
+    activeTextarea,
+    attachPreviewObservers,
+    ensurePreviewReadyAndSync,
+  ]);
 
   useLayoutEffect(() => {
     if (!showPreview) {
@@ -900,20 +927,21 @@ export default function PostForm({
       }
       ensurePreviewReadyAndSync(160);
     });
-  }, [showPreview]);
+  }, [showPreview, attachPreviewObservers, ensurePreviewReadyAndSync, activeTextarea]);
 
   useEffect(() => {
     if (!showPreview) return;
     ensurePreviewReadyAndSync(160);
-  }, [isXl, showPreview]);
+  }, [isXl, showPreview, ensurePreviewReadyAndSync]);
 
   useEffect(() => {
+    const timersSnapshot = ensureTimersRef.current;
     return () => {
       if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
       previewMutObsRef.current?.disconnect();
       previewResizeWrapRef.current?.disconnect();
       previewResizeBodyRef.current?.disconnect();
-      ensureTimersRef.current.forEach((id) => clearTimeout(id));
+      timersSnapshot.forEach((id) => clearTimeout(id));
     };
   }, []);
 
@@ -1119,7 +1147,9 @@ export default function PostForm({
                   role="status"
                   aria-live="polite"
                 >
-                  {contentLengthLimit != null ? `${contentLength} / ${contentLengthLimit}` : `${contentLength} chars`}
+                  {contentLengthLimit != null
+                    ? `${contentLength} / ${contentLengthLimit}`
+                    : `${contentLength} chars`}
                 </div>
                 {contentLengthLimit != null && overLimit && (
                   <div className="text-yellow-700 text-sm">
@@ -1142,7 +1172,9 @@ export default function PostForm({
               className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1 rounded border border-gray-300 cursor-pointer transition"
               onClick={() => {
                 const ta = activeTextarea();
-                const pos = ta ? (ta.selectionEnd ?? ta.selectionStart ?? caretRef.current) : caretRef.current;
+                const pos = ta
+                  ? (ta.selectionEnd ?? ta.selectionStart ?? caretRef.current)
+                  : caretRef.current;
                 caretRef.current = pos;
                 const willShow = !showPreview;
                 setShowPreview(willShow);
@@ -1205,7 +1237,10 @@ export default function PostForm({
                   </span>
                 ))}
                 {tags.map((tag) => (
-                  <span key={tag} className="inline-block bg-gray-100 rounded px-2 py-0.5 text-blue-700 text-sm">
+                  <span
+                    key={tag}
+                    className="inline-block bg-gray-100 rounded px-2 py-0.5 text-blue-700 text-sm"
+                  >
                     #{tag}
                   </span>
                 ))}
@@ -1219,7 +1254,10 @@ export default function PostForm({
         <div className="fixed inset-0 z-50 bg-black/40 backdrop-blur-sm">
           <div className="absolute inset-0 flex flex-col">
             <div className="flex-1 grid grid-cols-2 gap-0 h-full w-full overflow-hidden">
-              <div ref={overlayEditorColRef} className="relative bg-gray-50/70 border-r min-h-0 flex flex-col">
+              <div
+                ref={overlayEditorColRef}
+                className="relative bg-gray-50/70 border-r min-h-0 flex flex-col"
+              >
                 <div
                   ref={overlayToolbarRef}
                   className="sticky top-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 w-full"
@@ -1275,7 +1313,7 @@ export default function PostForm({
                         type="button"
                         onMouseDown={actFence}
                         title="Code block"
-                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                        className="hidden xl:inline-flex h-6 w-7 items中心 justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
                       >
                         <CodeBlockIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Code Block</span>
@@ -1371,7 +1409,8 @@ export default function PostForm({
                       value={body}
                       onChange={(e) => {
                         setBody(e.target.value);
-                        const pos = e.currentTarget.selectionEnd ?? e.currentTarget.selectionStart ?? 0;
+                        const pos =
+                          e.currentTarget.selectionEnd ?? e.currentTarget.selectionStart ?? 0;
                         caretRef.current = pos;
                         scheduleSyncRef.current();
                       }}
@@ -1415,7 +1454,9 @@ export default function PostForm({
                     <div className="flex-1">
                       {error && <div className="text-red-600 text-sm">{error}</div>}
                       <div className="text-xs text-gray-400" role="status" aria-live="polite">
-                        {contentLengthLimit != null ? `${contentLength} / ${contentLengthLimit}` : `${contentLength} chars`}
+                        {contentLengthLimit != null
+                          ? `${contentLength} / ${contentLengthLimit}`
+                          : `${contentLength} chars`}
                         {overLimit && <span className="text-yellow-700 ml-2">(too long)</span>}
                       </div>
                     </div>
@@ -1435,7 +1476,9 @@ export default function PostForm({
                       className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1 rounded border border-gray-300 cursor-pointer transition"
                       onClick={() => {
                         const ta = overlayTextareaRef.current;
-                        const pos = ta ? (ta.selectionEnd ?? ta.selectionStart ?? caretRef.current) : caretRef.current;
+                        const pos = ta
+                          ? (ta.selectionEnd ?? ta.selectionStart ?? caretRef.current)
+                          : caretRef.current;
                         caretRef.current = pos;
                         setShowPreview(false);
                         afterNextPaint(() => {
@@ -1481,7 +1524,9 @@ export default function PostForm({
                   className="absolute right-3 top-3 rounded p-1 bg-white/90 border shadow"
                   onClick={() => {
                     const ta = overlayTextareaRef.current;
-                    const pos = ta ? (ta.selectionEnd ?? ta.selectionStart ?? caretRef.current) : caretRef.current;
+                    const pos = ta
+                      ? (ta.selectionEnd ?? ta.selectionStart ?? caretRef.current)
+                      : caretRef.current;
                     caretRef.current = pos;
                     setShowPreview(false);
                     afterNextPaint(() => {
@@ -1514,7 +1559,7 @@ export default function PostForm({
                         {attrLabels.map((label) => (
                           <span
                             key={`attr:${label}`}
-                            className="inline-block rounded px-2 py-0.5 text-sm border bg-purple-50 text-purple-800 border-purple-200"
+                            className="inline-block rounded px-2 py-0.5 text-sm border bg紫-50 text-purple-800 border-purple-200"
                           >
                             {label}
                           </span>
