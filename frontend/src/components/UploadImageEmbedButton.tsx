@@ -24,27 +24,86 @@ export default function UploadImageEmbedButton({
   const [dialogFiles, setDialogFiles] = useState<DialogFileItem[] | null>(null);
   const [showDialog, setShowDialog] = useState(false);
 
+  const textExts = new Set(["txt", "text", "md", "markdown"]);
+  const imageExts = new Set([
+    "jpg",
+    "jpeg",
+    "png",
+    "webp",
+    "heic",
+    "heif",
+    "tif",
+    "tiff",
+    "gif",
+    "bmp",
+    "svg",
+  ]);
+
+  const isTextFile = (f: File) => {
+    const ext = f.name.toLowerCase().split(".").pop() || "";
+    return f.type.startsWith("text/") || f.type === "text/markdown" || textExts.has(ext);
+  };
+  const isImageFile = (f: File) => {
+    const ext = f.name.toLowerCase().split(".").pop() || "";
+    return f.type.startsWith("image/") || imageExts.has(ext);
+  };
+
+  const normalizeText = (s: string) => {
+    const noBom = s.replace(/^\uFEFF/, "");
+    const lf = noBom.replace(/\r\n?/g, "\n");
+    const nfc = typeof lf.normalize === "function" ? lf.normalize("NFC") : lf;
+    return nfc.endsWith("\n") ? nfc : nfc + "\n";
+  };
+
   const pickFiles = useCallback(() => {
     if (!userId) return;
     inputRef.current?.click();
   }, [userId]);
 
   const onFilesChosen = useCallback(
-    (list: FileList | null) => {
-      if (!list || list.length === 0 || !userId) return;
-      const files = Array.from(list).slice(0, Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE);
-      const mapped: DialogFileItem[] = files.map((f) => ({
-        id: cryptoRandomId(),
-        file: f,
-        name: f.name,
-        type: f.type,
-        size: f.size,
-      }));
-      setDialogFiles(mapped);
-      setShowDialog(true);
+    async (list: FileList | null) => {
+      if (!list || list.length === 0) return;
+
+      const files = Array.from(list);
+      const textFiles = files.filter(isTextFile);
+      const imageFiles = files.filter(isImageFile);
+
+      if (textFiles.length > 0) {
+        const results = await Promise.all(
+          textFiles.map(async (f) => {
+            try {
+              const raw = await f.text();
+              return { ok: true as const, content: normalizeText(raw) };
+            } catch (e) {
+              return { ok: false as const, name: f.name, error: String(e) };
+            }
+          }),
+        );
+        const oks = results.filter((r) => r.ok) as { ok: true; content: string }[];
+        const errs = results.filter((r) => !r.ok) as { ok: false; name: string; error: string }[];
+        const parts: string[] = [];
+        if (oks.length > 0) parts.push(...oks.map((r) => r.content));
+        if (errs.length > 0)
+          parts.push(...errs.map((e) => `> Upload error: **${e.name}** — ${e.error}\n`));
+        if (parts.length > 0) onInsert(parts.join(""));
+      }
+
+      if (imageFiles.length > 0 && userId) {
+        const limited = imageFiles.slice(0, Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE);
+        const mapped: DialogFileItem[] = limited.map((f) => ({
+          id: cryptoRandomId(),
+          file: f,
+          name: f.name,
+          type: f.type,
+          size: f.size,
+        }));
+        setDialogFiles(mapped);
+        setShowDialog(true);
+      }
+
       if (inputRef.current) inputRef.current.value = "";
     },
-    [userId],
+    [onInsert, userId],
   );
 
   const handleComplete = useCallback(
@@ -84,7 +143,7 @@ export default function UploadImageEmbedButton({
       <input
         ref={inputRef}
         type="file"
-        accept={Config.IMAGE_ALLOWED_TYPES}
+        accept={`${Config.IMAGE_ALLOWED_TYPES},${Config.TEXT_ALLOWED_TYPES}`}
         multiple
         className="hidden"
         onChange={(e) => onFilesChosen(e.target.files)}

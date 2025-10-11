@@ -76,6 +76,7 @@ export class Config {
     process.env.NEXT_PUBLIC_IMAGE_OPTIMIZE_TARGET_PIXELS,
     4.5 * 1000 * 1000,
   );
+  static readonly TEXT_ALLOWED_TYPES = "text/plain,text/markdown,.txt,.text,.md,.markdown";
   static readonly IMAGE_ALLOWED_TYPES =
     "image/jpeg,image/png,image/webp,image/heic,image/heif,image/tiff,image/gif,image/bmp,image/svg+xml,.jpg,.jpeg,.png,.webp,.heic,.heif,.tif,.tiff,.gif,.bmp,.svg";
   static readonly WELCOME_PAGE_PATH = "/posts/0002000000000001";
