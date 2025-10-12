@@ -1,13 +1,6 @@
 "use client";
 
-import React, {
-  useRef,
-  useState,
-  useMemo,
-  useEffect,
-  useLayoutEffect,
-  useCallback,
-} from "react";
+import React, { useRef, useState, useMemo, useEffect, useLayoutEffect, useCallback } from "react";
 import {
   Heading1,
   Heading2,
@@ -318,8 +311,8 @@ export default function MarkdownSnippetSandbox({
 
 - リスト1
   - サブリストA
-    - サブ**サブ**
-- リスト2
+    - サブ**サブ**。{{竜破斬|ドラグ・スレイブ}}と{{三日月型砂丘|バルハン}}
+- リスト2。
 - リスト3
 
 Go to [Google](https://google.com/).
@@ -458,8 +451,7 @@ We live in Tokyo.
       wrap.scrollTop = desired;
       return;
     }
-    const desired =
-      ((wrap.scrollHeight - wrap.clientHeight) * caret) / Math.max(1, content.length);
+    const desired = ((wrap.scrollHeight - wrap.clientHeight) * caret) / Math.max(1, content.length);
     wrap.scrollTop = Math.max(0, Math.min(wrap.scrollHeight - wrap.clientHeight, desired));
   }, [activePreviewWrap, content.length, findAnchor]);
 
@@ -586,13 +578,21 @@ We live in Tokyo.
     scheduleSync();
   }, [mode, maxLen, maxHeight, useFeatured, scheduleSync]);
 
+  // cleanup: capture current ref values so cleanup doesn't read .current directly
   useEffect(() => {
+    const timers = ensureTimersRef.current;
+    const raf = rafRef.current;
+    const mo = moRef.current;
+    const roWrap = roWrapRef.current;
+    const roBody = roBodyRef.current;
+
     return () => {
-      if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
-      moRef.current?.disconnect();
-      roWrapRef.current?.disconnect();
-      roBodyRef.current?.disconnect();
-      ensureTimersRef.current.forEach((id) => clearTimeout(id));
+      if (raf != null) cancelAnimationFrame(raf);
+      mo?.disconnect();
+      roWrap?.disconnect();
+      roBody?.disconnect();
+      timers.forEach((id) => clearTimeout(id));
+      timers.length = 0;
     };
   }, []);
 
@@ -678,7 +678,7 @@ We live in Tokyo.
 
   return (
     <div className={"relative " + className}>
-      <div className="flex flex-col h-screen w-full border rounded overflow-hidden">
+      <div className="flex flex-col h-screen w-full overflow-hidden">
         <div className="shrink-0 border-b bg-white/90 backdrop-blur px-3 py-2 flex flex-wrap gap-3 items-end">
           <div className="flex items-center gap-2">
             <label className="text-sm">Preview</label>
@@ -733,7 +733,9 @@ We live in Tokyo.
           </label>
 
           <div className="ml-auto text-xs text-gray-500">
-            {contentLengthLimit != null ? `${contentLength} / ${contentLengthLimit}` : `${contentLength} chars`}
+            {contentLengthLimit != null
+              ? `${contentLength} / ${contentLengthLimit}`
+              : `${contentLength} chars`}
             {overLimit && <span className="text-yellow-700 ml-2">(too long)</span>}
           </div>
         </div>
@@ -741,7 +743,7 @@ We live in Tokyo.
         <div className="grid grid-cols-2 gap-0 flex-1 min-h-0">
           <div className="relative bg-gray-50/70 border-r min-h-0 flex flex-col">
             <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 w-full">
-              <div className="px-1.5 py-1 flex items-center gap-1">
+              <div className="px-1.5 py-1 flex items-center gap-1 bg-[#ddd]">
                 <button
                   type="button"
                   onMouseDown={onToolbarPrefix("# ")}
@@ -857,7 +859,7 @@ We live in Tokyo.
               </div>
             </div>
 
-            <div ref={leftScrollRef} className="flex-1 overflow-y-auto h-full">
+            <div ref={leftScrollRef} className="flex-1 overflow-y-auto h-full bg-[#eee]">
               <div ref={leftInnerRef} className="mx-auto max-w-[85ex] w-full p-6">
                 <textarea
                   ref={textareaRef}

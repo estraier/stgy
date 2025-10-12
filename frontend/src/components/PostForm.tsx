@@ -338,6 +338,8 @@ export default function PostForm({
   const anchorsRef = useRef<{ char: number; el: HTMLElement }[]>([]);
   const rafRef = useRef<number | null>(null);
   const caretRef = useRef<number>(0);
+  const selStartRef = useRef<number>(0);
+  const selEndRef = useRef<number>(0);
 
   const didApplyAutoFocusRef = useRef(false);
   const prevIsEditRef = useRef<boolean>(isEdit);
@@ -358,10 +360,11 @@ export default function PostForm({
     const mq = window.matchMedia("(min-width: 1000px)");
     const onChange = () => {
       const taPrev = overlayActive ? overlayTextareaRef.current : textareaRef.current;
-      const pos = taPrev
-        ? (taPrev.selectionEnd ?? taPrev.selectionStart ?? caretRef.current)
-        : caretRef.current;
-      caretRef.current = pos;
+      const s = taPrev ? (taPrev.selectionStart ?? caretRef.current) : caretRef.current;
+      const e = taPrev ? (taPrev.selectionEnd ?? s) : s;
+      selStartRef.current = s;
+      selEndRef.current = e;
+      caretRef.current = e;
       setIsXl(mq.matches);
     };
     onChange();
@@ -387,6 +390,8 @@ export default function PostForm({
         ta.setSelectionRange(0, 0);
         ta.scrollTop = 0;
         caretRef.current = 0;
+        selStartRef.current = 0;
+        selEndRef.current = 0;
       }
     }
     prevIsEditRef.current = isEdit;
@@ -400,6 +405,8 @@ export default function PostForm({
         ta.setSelectionRange(0, 0);
         ta.scrollTop = 0;
         caretRef.current = 0;
+        selStartRef.current = 0;
+        selEndRef.current = 0;
         didApplyAutoFocusRef.current = true;
       }
     }
@@ -443,10 +450,11 @@ export default function PostForm({
       textarea.style.height = `${minHeight}px`;
     }
     if (onErrorClear) onErrorClear();
-    const pos = textarea.selectionEnd ?? textarea.selectionStart ?? 0;
-    if (!(pos === 0 && caretRef.current > 0)) {
-      caretRef.current = pos;
-    }
+    const s = textarea.selectionStart ?? 0;
+    const e = textarea.selectionEnd ?? s;
+    selStartRef.current = s;
+    selEndRef.current = e;
+    caretRef.current = e;
     scheduleSyncRef.current();
     if (overlayActive) resizeOverlayTextareaRef.current();
   }, [activeTextarea, hasFocusedOnce, onErrorClear, overlayActive]);
@@ -472,6 +480,8 @@ export default function PostForm({
       const next = body + (needsNL ? "\n" : "") + snippet;
       setBody(next);
       caretRef.current = next.length;
+      selStartRef.current = next.length;
+      selEndRef.current = next.length;
       scheduleSyncRef.current();
       return;
     }
@@ -488,6 +498,8 @@ export default function PostForm({
       const pos = before.length + insert.length;
       ta.setSelectionRange(pos, pos);
       caretRef.current = pos;
+      selStartRef.current = pos;
+      selEndRef.current = pos;
       scheduleSyncRef.current();
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
@@ -498,6 +510,8 @@ export default function PostForm({
       const next = body + snippet;
       setBody(next);
       caretRef.current = next.length;
+      selStartRef.current = next.length;
+      selEndRef.current = next.length;
       scheduleSyncRef.current();
       return;
     }
@@ -512,6 +526,8 @@ export default function PostForm({
       const pos = before.length + snippet.length;
       ta.setSelectionRange(pos, pos);
       caretRef.current = pos;
+      selStartRef.current = pos;
+      selEndRef.current = pos;
       scheduleSyncRef.current();
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
@@ -522,9 +538,12 @@ export default function PostForm({
     const ta = activeTextarea();
     if (!ta) return;
     applyPrefixToggleFromTextarea(ta, setBody, prefix);
-    requestAnimationFrame(() => {
-      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-      caretRef.current = pos;
+    afterNextPaint(() => {
+      const s = ta.selectionStart ?? caretRef.current;
+      const ed = ta.selectionEnd ?? s;
+      selStartRef.current = s;
+      selEndRef.current = ed;
+      caretRef.current = ed;
       scheduleSyncRef.current();
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
@@ -534,9 +553,12 @@ export default function PostForm({
     const ta = activeTextarea();
     if (!ta) return;
     applyCodeFenceToggleFromTextarea(ta, setBody);
-    requestAnimationFrame(() => {
-      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-      caretRef.current = pos;
+    afterNextPaint(() => {
+      const s = ta.selectionStart ?? caretRef.current;
+      const ed = ta.selectionEnd ?? s;
+      selStartRef.current = s;
+      selEndRef.current = ed;
+      caretRef.current = ed;
       scheduleSyncRef.current();
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
@@ -546,9 +568,12 @@ export default function PostForm({
     const ta = activeTextarea();
     if (!ta) return;
     applyInlineToggleFromTextarea(ta, setBody, open, close ?? open);
-    requestAnimationFrame(() => {
-      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-      caretRef.current = pos;
+    afterNextPaint(() => {
+      const s = ta.selectionStart ?? caretRef.current;
+      const ed = ta.selectionEnd ?? s;
+      selStartRef.current = s;
+      selEndRef.current = ed;
+      caretRef.current = ed;
       scheduleSyncRef.current();
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
@@ -558,9 +583,12 @@ export default function PostForm({
     const ta = activeTextarea();
     if (!ta) return;
     applyRubyToggleFromTextarea(ta, setBody);
-    requestAnimationFrame(() => {
-      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-      caretRef.current = pos;
+    afterNextPaint(() => {
+      const s = ta.selectionStart ?? caretRef.current;
+      const ed = ta.selectionEnd ?? s;
+      selStartRef.current = s;
+      selEndRef.current = ed;
+      caretRef.current = ed;
       scheduleSyncRef.current();
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
@@ -570,9 +598,12 @@ export default function PostForm({
     const ta = activeTextarea();
     if (!ta) return;
     applyLinkToggleFromTextarea(ta, setBody);
-    requestAnimationFrame(() => {
-      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-      caretRef.current = pos;
+    afterNextPaint(() => {
+      const s = ta.selectionStart ?? caretRef.current;
+      const ed = ta.selectionEnd ?? s;
+      selStartRef.current = s;
+      selEndRef.current = ed;
+      caretRef.current = ed;
       scheduleSyncRef.current();
       if (overlayActive) resizeOverlayTextareaRef.current();
     });
@@ -750,12 +781,14 @@ export default function PostForm({
     (opts?: { focus?: boolean }) => {
       const ta = activeTextarea();
       if (!ta) return;
-      const pos = clamp(caretRef.current, 0, ta.value.length);
+      const len = ta.value.length;
+      const s = clamp(selStartRef.current, 0, len);
+      const e = clamp(selEndRef.current, s, len);
       if (opts?.focus) {
         ta.focus();
       }
-      ta.setSelectionRange(pos, pos);
-      caretRef.current = pos;
+      ta.setSelectionRange(s, e);
+      caretRef.current = e;
       scheduleSync();
     },
     [activeTextarea, scheduleSync],
@@ -821,10 +854,11 @@ export default function PostForm({
   useLayoutEffect(() => {
     const prevWasOverlay = prevOverlayActiveRef.current;
     const srcTa = prevWasOverlay ? overlayTextareaRef.current : textareaRef.current;
-    const pos = srcTa
-      ? (srcTa.selectionEnd ?? srcTa.selectionStart ?? caretRef.current)
-      : caretRef.current;
-    caretRef.current = pos;
+    const s = srcTa ? (srcTa.selectionStart ?? selStartRef.current) : selStartRef.current;
+    const e = srcTa ? (srcTa.selectionEnd ?? selEndRef.current) : selEndRef.current;
+    selStartRef.current = s;
+    selEndRef.current = e;
+    caretRef.current = e;
 
     restoreCaretToActiveTextarea({ focus: false });
     if (overlayActive) resizeOverlayTextareaRef.current();
@@ -832,7 +866,11 @@ export default function PostForm({
     afterNextPaint(() => {
       const t = activeTextarea();
       if (t) {
-        t.setSelectionRange(caretRef.current, caretRef.current);
+        const len = t.value.length;
+        const s2 = clamp(selStartRef.current, 0, len);
+        const e2 = clamp(selEndRef.current, s2, len);
+        t.setSelectionRange(s2, e2);
+        caretRef.current = e2;
         centerTextareaCaret(t);
       }
       attachPreviewObservers();
@@ -861,7 +899,11 @@ export default function PostForm({
     afterNextPaint(() => {
       const t = activeTextarea();
       if (t) {
-        t.setSelectionRange(caretRef.current, caretRef.current);
+        const len = t.value.length;
+        const s = clamp(selStartRef.current, 0, len);
+        const e = clamp(selEndRef.current, s, len);
+        t.setSelectionRange(s, e);
+        caretRef.current = e;
         centerTextareaCaret(t);
       }
       ensurePreviewReadyAndSync(160);
@@ -1041,31 +1083,43 @@ export default function PostForm({
             value={body}
             onChange={(e) => {
               setBody(e.target.value);
-              const pos = e.currentTarget.selectionEnd ?? e.currentTarget.selectionStart ?? 0;
-              caretRef.current = pos;
+              const s = e.currentTarget.selectionStart ?? 0;
+              const ed = e.currentTarget.selectionEnd ?? s;
+              selStartRef.current = s;
+              selEndRef.current = ed;
+              caretRef.current = ed;
               scheduleSyncRef.current();
             }}
             onKeyUp={() => {
               const ta = textareaRef.current;
               if (ta) {
-                const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-                caretRef.current = pos;
+                const s = ta.selectionStart ?? caretRef.current;
+                const ed = ta.selectionEnd ?? s;
+                selStartRef.current = s;
+                selEndRef.current = ed;
+                caretRef.current = ed;
               }
               scheduleSyncRef.current();
             }}
             onClick={() => {
               const ta = textareaRef.current;
               if (ta) {
-                const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-                caretRef.current = pos;
+                const s = ta.selectionStart ?? caretRef.current;
+                const ed = ta.selectionEnd ?? s;
+                selStartRef.current = s;
+                selEndRef.current = ed;
+                caretRef.current = ed;
               }
               scheduleSyncRef.current();
             }}
             onSelect={() => {
               const ta = textareaRef.current;
               if (ta) {
-                const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-                caretRef.current = pos;
+                const s = ta.selectionStart ?? caretRef.current;
+                const ed = ta.selectionEnd ?? s;
+                selStartRef.current = s;
+                selEndRef.current = ed;
+                caretRef.current = ed;
               }
               scheduleSyncRef.current();
             }}
@@ -1111,17 +1165,22 @@ export default function PostForm({
               className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1 rounded border border-gray-300 cursor-pointer transition"
               onClick={() => {
                 const ta = activeTextarea();
-                const pos = ta
-                  ? (ta.selectionEnd ?? ta.selectionStart ?? caretRef.current)
-                  : caretRef.current;
-                caretRef.current = pos;
+                const s = ta ? (ta.selectionStart ?? selStartRef.current) : selStartRef.current;
+                const ed = ta ? (ta.selectionEnd ?? selEndRef.current) : selEndRef.current;
+                selStartRef.current = s;
+                selEndRef.current = ed;
+                caretRef.current = ed;
                 const willShow = !showPreview;
                 setShowPreview(willShow);
                 if (willShow) {
                   afterNextPaint(() => {
                     const t = activeTextarea();
                     if (t) {
-                      t.setSelectionRange(caretRef.current, caretRef.current);
+                      const len = t.value.length;
+                      const s2 = clamp(selStartRef.current, 0, len);
+                      const e2 = clamp(selEndRef.current, s2, len);
+                      t.setSelectionRange(s2, e2);
+                      caretRef.current = e2;
                       centerTextareaCaret(t);
                     }
                     ensureFormBottomInView("smooth");
@@ -1347,32 +1406,43 @@ export default function PostForm({
                       value={body}
                       onChange={(e) => {
                         setBody(e.target.value);
-                        const pos =
-                          e.currentTarget.selectionEnd ?? e.currentTarget.selectionStart ?? 0;
-                        caretRef.current = pos;
+                        const s = e.currentTarget.selectionStart ?? 0;
+                        const ed = e.currentTarget.selectionEnd ?? s;
+                        selStartRef.current = s;
+                        selEndRef.current = ed;
+                        caretRef.current = ed;
                         scheduleSyncRef.current();
                       }}
                       onKeyUp={() => {
                         const ta = overlayTextareaRef.current;
                         if (ta) {
-                          const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-                          caretRef.current = pos;
+                          const s = ta.selectionStart ?? caretRef.current;
+                          const ed = ta.selectionEnd ?? s;
+                          selStartRef.current = s;
+                          selEndRef.current = ed;
+                          caretRef.current = ed;
                         }
                         scheduleSyncRef.current();
                       }}
                       onClick={() => {
                         const ta = overlayTextareaRef.current;
                         if (ta) {
-                          const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-                          caretRef.current = pos;
+                          const s = ta.selectionStart ?? caretRef.current;
+                          const ed = ta.selectionEnd ?? s;
+                          selStartRef.current = s;
+                          selEndRef.current = ed;
+                          caretRef.current = ed;
                         }
                         scheduleSyncRef.current();
                       }}
                       onSelect={() => {
                         const ta = overlayTextareaRef.current;
                         if (ta) {
-                          const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-                          caretRef.current = pos;
+                          const s = ta.selectionStart ?? caretRef.current;
+                          const ed = ta.selectionEnd ?? s;
+                          selStartRef.current = s;
+                          selEndRef.current = ed;
+                          caretRef.current = ed;
                         }
                         scheduleSyncRef.current();
                       }}
@@ -1414,15 +1484,22 @@ export default function PostForm({
                       className="bg-gray-100 text-gray-700 hover:bg-gray-200 px-3 py-1 rounded border border-gray-300 cursor-pointer transition"
                       onClick={() => {
                         const ta = overlayTextareaRef.current;
-                        const pos = ta
-                          ? (ta.selectionEnd ?? ta.selectionStart ?? caretRef.current)
-                          : caretRef.current;
-                        caretRef.current = pos;
+                        const s = ta
+                          ? (ta.selectionStart ?? selStartRef.current)
+                          : selStartRef.current;
+                        const ed = ta ? (ta.selectionEnd ?? selEndRef.current) : selEndRef.current;
+                        selStartRef.current = s;
+                        selEndRef.current = ed;
+                        caretRef.current = ed;
                         setShowPreview(false);
                         afterNextPaint(() => {
                           const t = activeTextarea();
                           if (t) {
-                            t.setSelectionRange(caretRef.current, caretRef.current);
+                            const len = t.value.length;
+                            const s2 = clamp(selStartRef.current, 0, len);
+                            const e2 = clamp(selEndRef.current, s2, len);
+                            t.setSelectionRange(s2, e2);
+                            caretRef.current = e2;
                             centerTextareaCaret(t);
                           }
                           attachPreviewObservers();
@@ -1461,15 +1538,20 @@ export default function PostForm({
                   className="absolute right-3 top-3 rounded p-1 bg-white/90 border shadow"
                   onClick={() => {
                     const ta = overlayTextareaRef.current;
-                    const pos = ta
-                      ? (ta.selectionEnd ?? ta.selectionStart ?? caretRef.current)
-                      : caretRef.current;
-                    caretRef.current = pos;
+                    const s = ta ? (ta.selectionStart ?? selStartRef.current) : selStartRef.current;
+                    const ed = ta ? (ta.selectionEnd ?? selEndRef.current) : selEndRef.current;
+                    selStartRef.current = s;
+                    selEndRef.current = ed;
+                    caretRef.current = ed;
                     setShowPreview(false);
                     afterNextPaint(() => {
                       const t = activeTextarea();
                       if (t) {
-                        t.setSelectionRange(caretRef.current, caretRef.current);
+                        const len = t.value.length;
+                        const s2 = clamp(selStartRef.current, 0, len);
+                        const e2 = clamp(selEndRef.current, s2, len);
+                        t.setSelectionRange(s2, e2);
+                        caretRef.current = e2;
                         centerTextareaCaret(t);
                       }
                       attachPreviewObservers();

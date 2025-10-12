@@ -21,7 +21,7 @@ body {
 
 .markdown-body {
   position: relative;
-  line-height: 1.5;
+  line-height: 1.6;
   word-break: break-all;
 }
 .markdown-body::after {
@@ -31,7 +31,7 @@ body {
 }
 
 .markdown-body h1 {
-  margin: 0.8ex 0;
+  margin: 0.92ex 0;
   font-size: 130%;
   font-weight: bold;
 }
@@ -41,36 +41,36 @@ body {
 }
 
 .markdown-body h2 {
-  margin: 0.9ex 0;
+  margin: 0.95ex 0;
   font-size: 115%;
   font-weight: bold;
 }
 .markdown-body.user-introduction h2 {
-  margin: 0.92ex 0;
+  margin: 1ex 0;
   font-size: 110%;
 }
 
 .markdown-body h3 {
-  margin: 1ex 0;
+  margin: 1.1ex 0;
   font-size: 105%;
   font-weight: bold;
 }
 
 .markdown-body p {
-  margin: 1ex 0;
+  margin: 1.1ex 0;
 }
 
 .markdown-body blockquote {
-  margin: 1ex 0 1ex 0.8ex;
+  margin: 1.1ex 0 1ex 0.8ex;
   padding-left: 0.8ex;
-  line-height: 1.4;
+  line-height: 1.5;
   font-size: 95%;
   border-left: 3px solid #ddd;
 }
 
 .markdown-body ul {
-  margin: 1ex 0;
-  line-height: 1.4;
+  margin: 1.1ex 0;
+  line-height: 1.5;
   list-style-type: disc;
   padding-left: 1.2em;
 }
@@ -85,7 +85,7 @@ body {
 }
 
 .markdown-body pre {
-  margin: 1ex 0.5ex;
+  margin: 1.1ex 0.5ex;
   padding: 0.2ex 0.5ex;
   line-height: 1.4;
   background: #f7f7fa;
@@ -113,7 +113,7 @@ body {
 }
 
 .markdown-body table {
-  margin: 1ex 0.5ex;
+  margin: 1.1ex 0.5ex;
   border-collapse: collapse;
 }
 .markdown-body td {
@@ -125,7 +125,7 @@ body {
 
 .markdown-body .image-block {
   position: relative;
-  margin: 1ex 0.5ex;
+  margin: 1.1ex 0.5ex;
   width: 40ex;
   max-height: 40ex;
   cursor: zoom-in;
@@ -263,6 +263,11 @@ body {
 }
 .markdown-body mark {
   background: #fde;
+}
+.markdown-body rt {
+  margin-top: -0.8em;
+  margin-bottom: -0.8em;
+  opacity: 0.9;
 }
 .markdown-body hr {
   clear: both;
