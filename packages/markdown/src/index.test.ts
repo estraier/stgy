@@ -16,7 +16,7 @@ function stripPos<T>(val: T): T {
   if (val && typeof val === "object") {
     const out: Record<string, unknown> = {};
     for (const [k, v] of Object.entries(val as Record<string, unknown>)) {
-      if (k === "charPosition" || k === "linePosition") continue; // 位置情報は落とす
+      if (k === "charPosition" || k === "linePosition") continue;
       out[k] = stripPos(v);
     }
     return out as T;
@@ -541,6 +541,21 @@ describe("mdRenderText basics", () => {
     const mdText = "![tako](/data/tako.jpg)";
     expect(makeText(mdText)).toBe("tako");
   });
+
+  it("inline basics", () => {
+    const mdText = "**bold** ::italic:: __underline__ ~~strike~~ ``code`` %%mark%%";
+    expect(makeText(mdText)).toBe("bold italic underline strike code mark");
+  });
+
+  it("rubies", () => {
+    const mdText = "{{base|ruby}} {{123 456|hop step}}";
+    expect(makeText(mdText)).toBe("base(ruby) 123 456(hop step)");
+  });
+
+  it("links", () => {
+    const mdText = "[gold](http://gold.com/) [silver](/silver.html)";
+    expect(makeText(mdText)).toBe("gold silver");
+  });
 });
 
 describe("mdRenderHtml basics", () => {
@@ -643,9 +658,7 @@ describe("mdRenderHtml positions", () => {
   it("adds data-* to list/li", () => {
     const html = makeHtml("- a\n- b");
     expect(html).toMatch(/<ul[^>]*data-char-position="0"[^>]*data-line-position="0"/);
-    // 1行目の li
     expect(html).toMatch(/<li[^>]*data-line-position="0"/);
-    // 2行目の li（行番号1で確認）
     expect(html).toMatch(/<li[^>]*data-line-position="1"/);
   });
 

@@ -741,6 +741,18 @@ export function mdRenderText(nodes: MdNode[]): string {
       return;
     }
     switch (n.tag) {
+      case "ruby": {
+        for (const child of n.children || []) {
+          if (child.type === "element" && child.tag === "rt") {
+            out.push("(");
+            walk(child, depth);
+            out.push(")");
+          } else {
+            walk(child, depth);
+          }
+        }
+        return;
+      }
       case "br": {
         out.push("\n");
         return;
