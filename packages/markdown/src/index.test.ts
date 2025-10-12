@@ -537,6 +537,11 @@ describe("mdRenderText basics", () => {
     expect(makeText(mdText)).toBe("- hello world");
   });
 
+  it("table", () => {
+    const mdText = "|=a=|b|\n|=c=|d|";
+    expect(makeText(mdText)).toBe("|a|b|\n|c|d|");
+  });
+
   it("image", () => {
     const mdText = "![tako](/data/tako.jpg)";
     expect(makeText(mdText)).toBe("tako");
@@ -597,8 +602,10 @@ describe("mdRenderHtml basics", () => {
   });
 
   it("table", () => {
-    const mdText = "|hello world|";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe("<table><tr><td>hello world</td></tr></table>");
+    const mdText = "|=text=|hello world|";
+    expect(stripPosAttrs(makeHtml(mdText))).toBe(
+      "<table><tr><th>text</th><td>hello world</td></tr></table>",
+    );
   });
 
   it("image", () => {

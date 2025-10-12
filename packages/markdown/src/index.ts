@@ -78,7 +78,6 @@ export function parseMarkdown(mdText: string): MdNode[] {
     }
     return makeElement(tag, children, attrs, lp, cp);
   }
-
   function flushPara() {
     if (currPara.length) {
       nodes.push(
@@ -106,21 +105,20 @@ export function parseMarkdown(mdText: string): MdNode[] {
   }
   function flushTable() {
     if (currTable.length) {
+      const makeCell = (cell: string): MdElementNode => {
+        const raw = cell.trim();
+        const m = raw.match(/^=\s*(.*?)\s*=$/);
+        const tag: "th" | "td" = m ? "th" : "td";
+        const inner = parseInline(m ? m[1]! : raw);
+        return makeElement(tag, inner, undefined, tableStartLine, tableStartChar);
+      };
       nodes.push(
         makeElement(
           "table",
           currTable.map((row) =>
             makeElement(
               "tr",
-              row.map((cell) =>
-                makeElement(
-                  "td",
-                  parseInline(cell.trim()),
-                  undefined,
-                  tableStartLine,
-                  tableStartChar,
-                ),
-              ),
+              row.map((cell) => makeCell(cell)),
               undefined,
               tableStartLine,
               tableStartChar,
@@ -728,13 +726,48 @@ export function mdRenderText(nodes: MdNode[]): string {
     "h5",
     "h6",
     "figure",
-    "table",
   ]);
-  const SINGLE_AFTER = new Set(["tr", "ul", "hr"]);
+  const SINGLE_AFTER = new Set(["hr"]);
   const endsWithNewline = () => out.length > 0 && out[out.length - 1]!.endsWith("\n");
   const ensureNewline = () => {
     if (!endsWithNewline()) out.push("\n");
   };
+  const pushBlankLine = () => {
+    if (!endsWithNewline()) out.push("\n");
+    out.push("\n");
+  };
+  function collectCellTextNodes(ns: MdNode[] | undefined): string {
+    if (!ns) return "";
+    let s = "";
+    for (const n of ns) s += collectCellText(n);
+    return s;
+  }
+  function collectCellText(n: MdNode): string {
+    if (n.type === "text") return n.text;
+    switch (n.tag) {
+      case "br":
+        return "\n";
+      case "omitted":
+        return "…";
+      case "rp":
+        return "";
+      case "rt":
+        return "(" + collectCellTextNodes(n.children) + ")";
+      case "ruby": {
+        let s = "";
+        for (const c of n.children || []) {
+          if (c.type === "element" && c.tag === "rt") {
+            s += "(" + collectCellTextNodes(c.children) + ")";
+          } else {
+            s += collectCellText(c);
+          }
+        }
+        return s;
+      }
+      default:
+        return collectCellTextNodes(n.children || []);
+    }
+  }
   function walk(n: MdNode, depth = 0): void {
     if (n.type === "text") {
       out.push(n.text);
@@ -753,6 +786,22 @@ export function mdRenderText(nodes: MdNode[]): string {
         }
         return;
       }
+      case "table": {
+        for (const row of n.children || []) {
+          if (row.type !== "element" || row.tag !== "tr") continue;
+          const cells: string[] = [];
+          for (const cell of row.children || []) {
+            if (cell.type === "element" && (cell.tag === "td" || cell.tag === "th")) {
+              const txt = collectCellTextNodes(cell.children).replace(/\n+/g, " ").trim();
+              cells.push(txt);
+            }
+          }
+          out.push("|" + cells.join("|") + "|");
+          out.push("\n");
+        }
+        pushBlankLine();
+        return;
+      }
       case "br": {
         out.push("\n");
         return;
@@ -763,7 +812,12 @@ export function mdRenderText(nodes: MdNode[]): string {
       }
       case "ul": {
         for (const child of n.children || []) walk(child, depth + 1);
-        ensureNewline();
+        if (depth === 0) {
+          if (!endsWithNewline()) out.push("\n");
+          out.push("\n");
+        } else {
+          ensureNewline();
+        }
         return;
       }
       case "li": {

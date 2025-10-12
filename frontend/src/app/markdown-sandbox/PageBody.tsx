@@ -306,8 +306,8 @@ export default function MarkdownSnippetSandbox({
 
 段落は空白で区切る。一つの段落は<p>で囲む。
 
-> ブロッククォートも*ある*。
-> こんな__感じ__で**ね**。
+> ブロッククォートも**ある**とか::ない::とか。
+> こんな__感じ__で\`\`markdown\`\`は%%便利%%~~じゃない~~だ。
 
 - リスト1
   - サブリストA
@@ -324,7 +324,7 @@ Set: http://example.com/
 - Go to [Google](https://google.com/) and **Yahoo**
   - Set: http://example.com/ and __Yapoo__
 
-- We __live__ *in* **Tokyo** [Shinjuku](https://ja.wikipedia.org/wiki/%E6%96%B0%E5%AE%BF)
+- We __live__ ::in:: **Tokyo** [Shinjuku](https://ja.wikipedia.org/wiki/%E6%96%B0%E5%AE%BF)
 
 |We|__live__|in|**Tokyo**|[Shinjuku](https://ja.wikipedia.org/wiki/%E6%96%B0%E5%AE%BF)|
 |one|**two**|three|four|five|
