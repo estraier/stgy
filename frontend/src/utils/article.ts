@@ -13,11 +13,11 @@ import {
   deserializeMdNodes,
 } from "stgy-markdown";
 
-export function makeArticleHtmlFromMarkdown(mdText: string) {
+export function makeArticleHtmlFromMarkdown(mdText: string, usePosAttrs = false) {
   let nodes = parseMarkdown(mdText);
   nodes = rewriteMediaUrls(nodes, false);
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
-  return mdRenderHtml(nodes);
+  return mdRenderHtml(nodes, usePosAttrs);
 }
 
 export function makeSnippetHtmlFromMarkdown(mdText: string) {

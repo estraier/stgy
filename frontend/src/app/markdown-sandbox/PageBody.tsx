@@ -273,27 +273,6 @@ function applyLinkToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
   });
 }
 
-function resolveLineHeight(ta: HTMLTextAreaElement) {
-  const s = window.getComputedStyle(ta);
-  const lh = s.lineHeight;
-  if (!lh || lh === "normal") {
-    const fs = parseFloat(s.fontSize || "16");
-    return fs * 1.2;
-  }
-  const v = parseFloat(lh);
-  return Number.isFinite(v) ? v : 20;
-}
-
-function centerTextareaCaret(ta: HTMLTextAreaElement) {
-  const lineHeight = resolveLineHeight(ta);
-  const len = Math.max(1, ta.value.length);
-  const caret = ta.selectionStart ?? 0;
-  const approxY = (caret / len) * (ta.scrollHeight - lineHeight);
-  const desired = Math.max(0, approxY - (ta.clientHeight - lineHeight) / 2);
-  const maxScroll = Math.max(0, ta.scrollHeight - ta.clientHeight);
-  ta.scrollTop = Math.min(maxScroll, desired);
-}
-
 export default function MarkdownSnippetSandbox({
   initialBody = `# ヘッダ
 
@@ -312,7 +291,7 @@ export default function MarkdownSnippetSandbox({
 - リスト1
   - サブリストA
     - サブ**サブ**。{{竜破斬|ドラグ・スレイブ}}と{{三日月型砂丘|バルハン}}
-- リスト2。
+- リスト2
 - リスト3
 
 Go to [Google](https://google.com/).
@@ -326,8 +305,8 @@ Set: http://example.com/
 
 - We __live__ ::in:: **Tokyo** [Shinjuku](https://ja.wikipedia.org/wiki/%E6%96%B0%E5%AE%BF)
 
-|We|__live__|in|**Tokyo**|[Shinjuku](https://ja.wikipedia.org/wiki/%E6%96%B0%E5%AE%BF)|
-|one|**two**|three|four|five|
+|=I and Nancy=|__live__|><in|{rowspan=2}**Tokyo**|{colspan=2}[Shinjuku](https://ja.wikipedia.org/wiki/%E6%96%B0%E5%AE%BF)|
+|=>>one=|>>**two**|three|four|><five|
 
 ![これはロゴです](/data/logo-square.svg){size=small}
 
@@ -381,7 +360,7 @@ We live in Tokyo.
       nodes = mdGroupImageGrid(nodes);
       if (useFeatured) nodes = mdFilterForFeatured(nodes);
       nodes = mdCutOff(nodes, { maxLen, maxHeight });
-      return mdRenderHtml(nodes);
+      return mdRenderHtml(nodes, true);
     },
     [maxLen, maxHeight, useFeatured],
   );
@@ -605,7 +584,6 @@ We live in Tokyo.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
-        centerTextareaCaret(ta);
         scheduleSync();
       });
     },
@@ -621,7 +599,6 @@ We live in Tokyo.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
-        centerTextareaCaret(ta);
         scheduleSync();
       });
     },
@@ -637,7 +614,6 @@ We live in Tokyo.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
-        centerTextareaCaret(ta);
         scheduleSync();
       });
     },
@@ -653,7 +629,6 @@ We live in Tokyo.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
-        centerTextareaCaret(ta);
         scheduleSync();
       });
     },
@@ -669,7 +644,6 @@ We live in Tokyo.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
-        centerTextareaCaret(ta);
         scheduleSync();
       });
     },
@@ -877,7 +851,6 @@ We live in Tokyo.
                     if (ta) {
                       const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
                       caretRef.current = pos;
-                      centerTextareaCaret(ta);
                     }
                     scheduleSync();
                   }}
@@ -886,7 +859,6 @@ We live in Tokyo.
                     if (ta) {
                       const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
                       caretRef.current = pos;
-                      centerTextareaCaret(ta);
                     }
                     scheduleSync();
                   }}
@@ -895,7 +867,6 @@ We live in Tokyo.
                     if (ta) {
                       const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
                       caretRef.current = pos;
-                      centerTextareaCaret(ta);
                     }
                     scheduleSync();
                   }}

@@ -24,6 +24,18 @@ describe("article utils (normal cases)", () => {
     expect(html).toContain("<figure");
     expect(html).toContain('class="image-block"');
     expect(html).toContain('src="https://cdn.test/images-bkt/u1/masters/abc/cat.jpg"');
+    expect(html).not.toContain("data-char-position");
+    expect(html).not.toContain("data-line-position");
+  });
+
+  test("makeArticleHtmlFromMarkdown with PosAttrs", () => {
+    const md = ["Hello world", "![cap](/images/u1/masters/abc/cat.jpg){width=400}"].join("\n\n");
+    const html = makeArticleHtmlFromMarkdown(md, true);
+    expect(html).toContain("<figure");
+    expect(html).toContain('class="image-block"');
+    expect(html).toContain('src="https://cdn.test/images-bkt/u1/masters/abc/cat.jpg"');
+    expect(html).toContain("data-char-position");
+    expect(html).toContain("data-line-position");
   });
 
   test("makeSnippetHtmlFromMarkdown", () => {

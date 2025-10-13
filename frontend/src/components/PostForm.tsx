@@ -283,27 +283,6 @@ function afterNextPaint(cb: () => void) {
   requestAnimationFrame(() => requestAnimationFrame(cb));
 }
 
-function resolveLineHeight(ta: HTMLTextAreaElement) {
-  const s = window.getComputedStyle(ta);
-  const lh = s.lineHeight;
-  if (!lh || lh === "normal") {
-    const fs = parseFloat(s.fontSize || "16");
-    return fs * 1.2;
-  }
-  const v = parseFloat(lh);
-  return Number.isFinite(v) ? v : 20;
-}
-
-function centerTextareaCaret(ta: HTMLTextAreaElement) {
-  const lineHeight = resolveLineHeight(ta);
-  const scrollRange = Math.max(1, ta.scrollHeight - ta.clientHeight);
-  const caret = ta.selectionStart ?? 0;
-  const len = Math.max(1, ta.value.length);
-  const approxY = (caret / len) * (ta.scrollHeight - lineHeight);
-  const desired = Math.max(0, approxY - (ta.clientHeight - lineHeight) / 2);
-  ta.scrollTop = Math.min(scrollRange, desired);
-}
-
 export default function PostForm({
   body,
   setBody,
@@ -381,6 +360,7 @@ export default function PostForm({
     };
   }, [overlayActive]);
 
+  // 「Edit を押した時だけ先頭へスクロール」: isEdit が false→true になった瞬間だけ 0 に移動
   useEffect(() => {
     const becameEdit = isEdit && !prevIsEditRef.current;
     if (becameEdit) {
@@ -388,7 +368,7 @@ export default function PostForm({
       if (ta) {
         ta.focus();
         ta.setSelectionRange(0, 0);
-        ta.scrollTop = 0;
+        ta.scrollTop = 0; // 先頭へ
         caretRef.current = 0;
         selStartRef.current = 0;
         selEndRef.current = 0;
@@ -397,6 +377,7 @@ export default function PostForm({
     prevIsEditRef.current = isEdit;
   }, [isEdit, overlayActive]);
 
+  // 初回オートフォーカスは維持（必要ならここも外せます）
   useEffect(() => {
     if (autoFocus && !didApplyAutoFocusRef.current) {
       const ta = overlayActive ? overlayTextareaRef.current : textareaRef.current;
@@ -772,7 +753,7 @@ export default function PostForm({
     if (!ta || !scroll || !inner) return;
     const innerStyle = getComputedStyle(inner);
     const pt = parseFloat(innerStyle.paddingTop || "0");
-    const pb = parseFloat(innerStyle.paddingBottom || "0");
+    const pb = parseFloat(innerStyle.paddingBottom || "0"); // ← 修正済み
     const available = Math.max(160, scroll.clientHeight - pt - pb);
     ta.style.height = `${available}px`;
   }, [overlayActive]);
@@ -871,7 +852,7 @@ export default function PostForm({
         const e2 = clamp(selEndRef.current, s2, len);
         t.setSelectionRange(s2, e2);
         caretRef.current = e2;
-        centerTextareaCaret(t);
+        // ここでは自動スクロールしない（centerTextareaCaret を呼ばない）
       }
       attachPreviewObservers();
       ensurePreviewReadyAndSync(160);
@@ -904,7 +885,7 @@ export default function PostForm({
         const e = clamp(selEndRef.current, s, len);
         t.setSelectionRange(s, e);
         caretRef.current = e;
-        centerTextareaCaret(t);
+        // ここでも自動スクロールしない
       }
       ensurePreviewReadyAndSync(160);
     });
@@ -1181,7 +1162,7 @@ export default function PostForm({
                       const e2 = clamp(selEndRef.current, s2, len);
                       t.setSelectionRange(s2, e2);
                       caretRef.current = e2;
-                      centerTextareaCaret(t);
+                      // 自動スクロールなし
                     }
                     ensureFormBottomInView("smooth");
                     attachPreviewObservers();
@@ -1220,7 +1201,7 @@ export default function PostForm({
             <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
             <div
               ref={previewBodyRef}
-              dangerouslySetInnerHTML={{ __html: makeArticleHtmlFromMarkdown(content) }}
+              dangerouslySetInnerHTML={{ __html: makeArticleHtmlFromMarkdown(content, true) }}
               style={{ minHeight: 32 }}
             />
             {(attrLabels.length > 0 || tags.length > 0) && (
@@ -1500,7 +1481,7 @@ export default function PostForm({
                             const e2 = clamp(selEndRef.current, s2, len);
                             t.setSelectionRange(s2, e2);
                             caretRef.current = e2;
-                            centerTextareaCaret(t);
+                            // 自動スクロールなし
                           }
                           attachPreviewObservers();
                           ensurePreviewReadyAndSync(160);
@@ -1552,7 +1533,7 @@ export default function PostForm({
                         const e2 = clamp(selEndRef.current, s2, len);
                         t.setSelectionRange(s2, e2);
                         caretRef.current = e2;
-                        centerTextareaCaret(t);
+                        // 自動スクロールなし
                       }
                       attachPreviewObservers();
                       ensurePreviewReadyAndSync(160);
@@ -1569,7 +1550,9 @@ export default function PostForm({
                     <div
                       ref={overlayBodyRef}
                       className="markdown-body"
-                      dangerouslySetInnerHTML={{ __html: makeArticleHtmlFromMarkdown(content) }}
+                      dangerouslySetInnerHTML={{
+                        __html: makeArticleHtmlFromMarkdown(content, true),
+                      }}
                       style={{ minHeight: 32 }}
                     />
                     {(attrLabels.length > 0 || tags.length > 0) && (

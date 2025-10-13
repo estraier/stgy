@@ -41,27 +41,22 @@ export function parseMarkdown(mdText: string): MdNode[] {
       if (i < lines.length - 1) offset += 1;
     }
   }
-
   const nodes: MdNode[] = [];
   let inCode = false,
     codeLines: string[] = [],
     codeLang: string | undefined;
   let codeStartLine = -1,
     codeStartChar = -1;
-
   const currList: { level: number; items: MdNode[] }[] = [];
   let currPara: string[] = [];
   let paraStartLine = -1,
     paraStartChar = -1;
-
   let currTable: string[][] = [];
   let tableStartLine = -1,
     tableStartChar = -1;
-
   let currQuote: string[] = [];
   let quoteStartLine = -1,
     quoteStartChar = -1;
-
   function inheritPosFromFirstChild(
     tag: string,
     children: MdNode[],
@@ -107,10 +102,43 @@ export function parseMarkdown(mdText: string): MdNode[] {
     if (currTable.length) {
       const makeCell = (cell: string): MdElementNode => {
         const raw = cell.trim();
-        const m = raw.match(/^=\s*(.*?)\s*=$/);
-        const tag: "th" | "td" = m ? "th" : "td";
-        const inner = parseInline(m ? m[1]! : raw);
-        return makeElement(tag, inner, undefined, tableStartLine, tableStartChar);
+        const mHeader = raw.match(/^=\s*(.*?)\s*=$/);
+        const isHeader = !!mHeader;
+        let content = isHeader ? mHeader[1]! : raw;
+        let align: "right" | "center" | undefined;
+        let colspan: number | undefined;
+        let rowspan: number | undefined;
+        let rest = content.replace(/^\s+/, "");
+        const optRe = /^(?:\{\s*(colspan|rowspan)\s*=\s*(\d+)\s*\}|(>>|><))\s*/;
+        while (true) {
+          const m = optRe.exec(rest);
+          if (!m) break;
+          if (m[1]) {
+            const k = m[1] as "colspan" | "rowspan";
+            const v = parseInt(m[2]!, 10);
+            if (Number.isFinite(v)) {
+              if (k === "colspan") colspan = v;
+              else rowspan = v;
+            }
+          } else if (m[3]) {
+            align = m[3] === ">>" ? "right" : "center";
+          }
+          rest = rest.slice(m[0].length);
+        }
+        content = rest;
+        const tag: "th" | "td" = isHeader ? "th" : "td";
+        const inner = parseInline(content);
+        const attrs: MdAttrs = {};
+        if (align) attrs.align = align;
+        if (typeof colspan === "number" && colspan > 1) attrs.colspan = colspan.toString();
+        if (typeof rowspan === "number" && rowspan > 1) attrs.rowspan = rowspan.toString();
+        return makeElement(
+          tag,
+          inner,
+          Object.keys(attrs).length ? attrs : undefined,
+          tableStartLine,
+          tableStartChar,
+        );
       };
       nodes.push(
         makeElement(
@@ -155,7 +183,6 @@ export function parseMarkdown(mdText: string): MdNode[] {
   for (let i = 0; i < lines.length; ++i) {
     const line = lines[i]!;
     const lineCharStart = lineOffsets[i]!;
-
     const codeFence = line.match(/^```([\w:]*)/);
     if (codeFence) {
       flushPara();
@@ -852,14 +879,15 @@ export function mdRenderText(nodes: MdNode[]): string {
     .trim();
 }
 
-export function mdRenderHtml(nodes: MdNode[]): string {
+export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false): string {
   function withPos(attrs: MdAttrs | undefined, node: MdElementNode): MdAttrs {
     const out: MdAttrs = { ...(attrs || {}) };
-    if (typeof node.charPosition === "number") out["data-char-position"] = node.charPosition;
-    if (typeof node.linePosition === "number") out["data-line-position"] = node.linePosition;
+    if (usePosAttrs) {
+      if (typeof node.charPosition === "number") out["data-char-position"] = node.charPosition;
+      if (typeof node.linePosition === "number") out["data-line-position"] = node.linePosition;
+    }
     return out;
   }
-
   function serializeAll(arr: MdNode[]): string {
     let html = "";
     for (const n of arr) html += serializeOne(n);
@@ -872,10 +900,13 @@ export function mdRenderHtml(nodes: MdNode[]): string {
     if (n.type === "element" && n.tag === "hr") {
       const a = n.attrs || {};
       let attrs: MdAttrs = { ...a };
-      if (attrs["hr-level"] !== undefined) {
-        const v = attrs["hr-level"];
-        delete attrs["hr-level"];
-        (attrs as MdAttrs)["data-hr-level"] = v;
+      {
+        const rec = attrs as Record<string, string | number | boolean | undefined>;
+        const v = rec["hr-level"];
+        if (v !== undefined) {
+          delete rec["hr-level"];
+          rec["data-hr-level"] = v;
+        }
       }
       attrs = withPos(attrs, n as MdElementNode);
       return `<hr${attrsToString(attrs)}>`;
@@ -883,10 +914,13 @@ export function mdRenderHtml(nodes: MdNode[]): string {
     if (n.type === "element" && n.tag === "pre") {
       const a = n.attrs || {};
       let attrs: MdAttrs = { ...a };
-      if (attrs["pre-mode"] !== undefined) {
-        const v = attrs["pre-mode"];
-        delete attrs["pre-mode"];
-        (attrs as MdAttrs)["data-pre-mode"] = v;
+      {
+        const rec = attrs as Record<string, string | number | boolean | undefined>;
+        const v = rec["pre-mode"];
+        if (v !== undefined) {
+          delete rec["pre-mode"];
+          rec["data-pre-mode"] = v;
+        }
       }
       attrs = withPos(attrs, n as MdElementNode);
       return `<pre${attrsToString(attrs)}>${serializeAll(n.children || [])}</pre>`;
@@ -907,6 +941,20 @@ export function mdRenderHtml(nodes: MdNode[]): string {
       return `<figure${attrsToString(figAttrs)}>${inner}</figure>`;
     }
     if (n.type === "element" && isMediaElement(n)) return serializeMedia(n as MdMediaElement);
+    if (n.type === "element" && (n.tag === "td" || n.tag === "th")) {
+      let attrs: MdAttrs = { ...(n as MdElementNode).attrs };
+      const rec = attrs as Record<string, string | number | boolean | undefined>;
+      const alignRaw = rec["align"];
+      if (alignRaw === "right" || alignRaw === "center") {
+        delete rec["align"];
+        const cur = typeof rec["class"] === "string" ? (rec["class"] as string) : "";
+        rec["class"] = cur ? `${cur} align-${alignRaw}` : `align-${alignRaw}`;
+      }
+      attrs = withPos(attrs, n as MdElementNode);
+      return `<${(n as MdElementNode).tag}${attrsToString(attrs)}>${serializeAll(
+        (n as MdElementNode).children || [],
+      )}</${(n as MdElementNode).tag}>`;
+    }
     const attrs = withPos((n as MdElementNode).attrs, n as MdElementNode);
     return `<${(n as MdElementNode).tag}${attrsToString(attrs)}>${serializeAll(
       (n as MdElementNode).children || [],

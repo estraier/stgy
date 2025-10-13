@@ -116,11 +116,25 @@ body {
   margin: 1.1ex 0.5ex;
   border-collapse: collapse;
 }
+.markdown-body th,
 .markdown-body td {
   padding: 0.2ex 0.5ex;
   line-height: 1.2;
   font-size: 95%;
+  font-weight: normal;
   border: solid 1px #888;
+  text-align: left;
+  vertical-align: top;
+}
+.markdown-body th {
+  font-size: 95%;
+  background: #eee;
+}
+.markdown-body table .align-center {
+  text-align: center;
+}
+.markdown-body table .align-right {
+  text-align: right;
 }
 
 .markdown-body .image-block {

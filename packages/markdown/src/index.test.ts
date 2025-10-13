@@ -24,20 +24,14 @@ function stripPos<T>(val: T): T {
   return val;
 }
 
-function stripPosAttrs(html: string): string {
-  return html
-    .replace(/\sdata-char-position="[^"]*"/g, "")
-    .replace(/\sdata-line-position="[^"]*"/g, "");
-}
-
 function makeText(mdText: string) {
   const nodes = parseMarkdown(mdText);
   return mdRenderText(nodes);
 }
 
-function makeHtml(mdText: string) {
+function makeHtml(mdText: string, usePosAttrs = false) {
   const nodes = parseMarkdown(mdText);
-  return mdRenderHtml(nodes);
+  return mdRenderHtml(nodes, usePosAttrs);
 }
 
 describe("parseMarkdown", () => {
@@ -538,8 +532,8 @@ describe("mdRenderText basics", () => {
   });
 
   it("table", () => {
-    const mdText = "|=a=|b|\n|=c=|d|";
-    expect(makeText(mdText)).toBe("|a|b|\n|c|d|");
+    const mdText = "|=a=|>>b|\n|=c=|><d|={colspan=2}{rowspan=3}e=|";
+    expect(makeText(mdText)).toBe("|a|b|\n|c|d|e|");
   });
 
   it("image", () => {
@@ -571,129 +565,125 @@ describe("mdRenderHtml basics", () => {
 
   it("paragraph", () => {
     const mdText = "hello world";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe("<p>hello world</p>");
+    expect(makeHtml(mdText)).toBe("<p>hello world</p>");
   });
 
   it("header 1", () => {
     const mdText = "# hello world";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe("<h1>hello world</h1>");
+    expect(makeHtml(mdText)).toBe("<h1>hello world</h1>");
   });
 
   it("header 2", () => {
     const mdText = "## hello world";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe("<h2>hello world</h2>");
+    expect(makeHtml(mdText)).toBe("<h2>hello world</h2>");
   });
 
   it("header 3", () => {
     const mdText = "### hello world";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe("<h3>hello world</h3>");
+    expect(makeHtml(mdText)).toBe("<h3>hello world</h3>");
   });
 
   it("escape characters", () => {
     const mdText = "<h1>John's & House</h1>";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe(
-      "<p>&lt;h1&gt;John&#39;s &amp; House&lt;/h1&gt;</p>",
-    );
+    expect(makeHtml(mdText)).toBe("<p>&lt;h1&gt;John&#39;s &amp; House&lt;/h1&gt;</p>");
   });
 
   it("list", () => {
     const mdText = "- hello world";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe("<ul><li>hello world</li></ul>");
+    expect(makeHtml(mdText)).toBe("<ul><li>hello world</li></ul>");
   });
 
   it("table", () => {
-    const mdText = "|=text=|hello world|";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe(
-      "<table><tr><th>text</th><td>hello world</td></tr></table>",
+    const mdText = "|=text=|hello world|>>a|=><b=|{colspan=2}{rowspan=3}c|";
+    expect(makeHtml(mdText)).toBe(
+      '<table><tr><th>text</th><td>hello world</td><td class="align-right">a</td><th class="align-center">b</th><td colspan="2" rowspan="3">c</td></tr></table>',
     );
   });
 
   it("image", () => {
     const mdText = "![tako](/data/tako.jpg)";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe(
+    expect(makeHtml(mdText)).toBe(
       '<figure class="image-block"><img src="/data/tako.jpg" alt="" decoding="async" loading="lazy"><figcaption>tako</figcaption></figure>',
     );
   });
 
   it("video", () => {
     const mdText = "![tako](/data/tako.mp4){autoplay}";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe(
+    expect(makeHtml(mdText)).toBe(
       '<figure class="image-block" data-autoplay><video src="/data/tako.mp4" aria-label="" controls></video><figcaption>tako</figcaption></figure>',
     );
   });
 
   it("quote", () => {
     const mdText = "> hello world";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe("<blockquote>hello world</blockquote>");
+    expect(makeHtml(mdText)).toBe("<blockquote>hello world</blockquote>");
   });
 
   it("decorations", () => {
     const mdText = "**strong** ::em:: __underline__ ~~strike~~ ``code`` %%mark%%";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe(
+    expect(makeHtml(mdText)).toBe(
       "<p><strong>strong</strong> <em>em</em> <u>underline</u> <s>strike</s> <code>code</code> <mark>mark</mark></p>",
     );
   });
 
   it("ruby", () => {
     const mdText = "{{tako|ika}} {{uni **ebi**|<ikura>}}";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe(
+    expect(makeHtml(mdText)).toBe(
       "<p><ruby><rb>tako</rb><rt>ika</rt></ruby> <ruby><rb>uni <strong>ebi</strong></rb><rt>&lt;ikura&gt;</rt></ruby></p>",
     );
   });
 
   it("links", () => {
     const mdText = "[tako](tako.html) http://example.com/ika?uni=ebi#time";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe(
+    expect(makeHtml(mdText)).toBe(
       '<p>[tako](tako.html) <a href="http://example.com/ika?uni=ebi#time">http://example.com/ika?uni=ebi#time</a></p>',
     );
   });
 
   it("escape", () => {
     const mdText = "\\::a:\\: \\*\\*b\\*\\* \\__c_\\_ \\~~d~\\~ \\``e`\\` \\\\123 \\A\\0";
-    expect(stripPosAttrs(makeHtml(mdText))).toBe(
-      "<p>::a:: **b** __c__ ~~d~~ ``e`` \\123 \\A\\0</p>",
-    );
+    expect(makeHtml(mdText)).toBe("<p>::a:: **b** __c__ ~~d~~ ``e`` \\123 \\A\\0</p>");
   });
 });
 
 describe("mdRenderHtml positions", () => {
   it("adds data-* to paragraph", () => {
-    const html = makeHtml("hello world");
+    const html = makeHtml("hello world", true);
     expect(html).toContain('<p data-char-position="0" data-line-position="0">');
   });
 
   it("adds data-* to list/li", () => {
-    const html = makeHtml("- a\n- b");
+    const html = makeHtml("- a\n- b", true);
     expect(html).toMatch(/<ul[^>]*data-char-position="0"[^>]*data-line-position="0"/);
     expect(html).toMatch(/<li[^>]*data-line-position="0"/);
     expect(html).toMatch(/<li[^>]*data-line-position="1"/);
   });
 
   it("adds data-* to table and cells", () => {
-    const html = makeHtml("|hello world|");
+    const html = makeHtml("|hello world|", true);
     expect(html).toMatch(/<table[^>]*data-char-position="0"[^>]*data-line-position="0"/);
     expect(html).toMatch(/<tr[^>]*data-line-position="0"/);
     expect(html).toMatch(/<td[^>]*data-line-position="0"/);
   });
 
   it("adds data-* to figure & media", () => {
-    const imgHtml = makeHtml("![tako](/data/tako.jpg)");
+    const imgHtml = makeHtml("![tako](/data/tako.jpg)", true);
     expect(imgHtml).toMatch(/<figure[^>]*data-char-position="0"[^>]*data-line-position="0"/);
     expect(imgHtml).toMatch(/<img[^>]*data-char-position="0"[^>]*data-line-position="0"/);
 
-    const vidHtml = makeHtml("![tako](/data/tako.mp4){autoplay}");
+    const vidHtml = makeHtml("![tako](/data/tako.mp4){autoplay}", true);
     expect(vidHtml).toMatch(/<figure[^>]*data-char-position="0"[^>]*data-line-position="0"/);
     expect(vidHtml).toMatch(/<video[^>]*data-char-position="0"[^>]*data-line-position="0"/);
   });
 
   it("adds data-* to blockquote", () => {
-    const html = makeHtml("> hello");
+    const html = makeHtml("> hello", true);
     expect(html).toMatch(/<blockquote[^>]*data-char-position="0"[^>]*data-line-position="0"/);
   });
 
   it("adds data-* to pre", () => {
     const md = "```\ncode\n```";
-    const html = makeHtml(md);
+    const html = makeHtml(md, true);
     expect(html).toMatch(/<pre[^>]*data-char-position="0"[^>]*data-line-position="0"/);
   });
 });
@@ -728,7 +718,7 @@ abc
 `;
     const expected = `<h1>H1</h1><p>abc<br>def</p><p>xyz</p><pre data-pre-mode="xml">&lt;a&gt;tako&lt;/a&gt;
 ika</pre><h2>H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul><li>e</li></ul></li><li>f</li></ul></li><li>g</li><li>h<ul><li>j<ul><li>k</li></ul></li></ul></li></ul><p>abc</p><table><tr><td><em>a</em></td><td>b</td></tr><tr><td>c</td><td><strong>d</strong></td></tr></table><figure class="image-block" data-thumbnail><img src="/data/def/ghi" alt="" decoding="async" loading="lazy"><figcaption>abc</figcaption></figure><h3>H3</h3>`;
-    expect(stripPosAttrs(makeHtml(mdText))).toBe(expected);
+    expect(makeHtml(mdText)).toBe(expected);
   });
 });
 
