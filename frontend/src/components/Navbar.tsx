@@ -69,7 +69,7 @@ export default function Navbar() {
     >
       <Link
         href="/"
-        className="font-bold text-base sm:text-lg text-blue-600 mr-3 sm:mr-6 select-none shrink-0"
+        className="max-md:scale-x-80 font-bold text-base sm:text-lg text-blue-600 mr-3 sm:mr-6 select-none shrink-0"
         tabIndex={0}
       >
         STGY

@@ -942,7 +942,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actPrefix("### ")}
                 title="Heading 3"
-                className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
+                className="hidden md:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <Heading3 className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">H3</span>
@@ -951,7 +951,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actPrefix("- ")}
                 title="List"
-                className="hidden md:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
+                className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <ListIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">List</span>
@@ -987,7 +987,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actInline("::")}
                 title="Italic"
-                className="hidden md:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
+                className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <ItalicIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Italic</span>
