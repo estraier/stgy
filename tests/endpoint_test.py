@@ -65,31 +65,62 @@ def test_auth():
   logout(session_id)
   print("[test_auth] OK")
 
-def test_ai_models():
-  print("[ai_models] admin login")
+def test_ai_users():
+  print("[ai_users] admin login")
   session_id = login()
   cookies = {"session_id": session_id}
   headers = {"Content-Type": "application/json"}
   res = requests.get(f"{BASE_URL}/ai-models", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   models = res.json()
-  print(f"[ai_models] list: {models}")
-  assert isinstance(models, list)
-  assert len(models) > 0, "No AI models found"
-  m = models[0]
-  for k in ("name", "description", "inputCost", "outputCost"):
-    assert k in m, f"{k} missing in ai_model"
-  name = models[0]["name"]
-  res = requests.get(f"{BASE_URL}/ai-models/{name}", headers=headers, cookies=cookies)
+  assert isinstance(models, list) and len(models) > 0, "No AI models available"
+  ai_model_name = models[0]["name"]
+  ts = int(time.time())
+  email = f"aiuser-{ts}@stgy.xyz"
+  nickname = f"ai-user-{ts}"
+  create_body = {
+    "email": email,
+    "nickname": nickname,
+    "isAdmin": False,
+    "introduction": "hello, I'm an AI agent",
+    "aiModel": ai_model_name,
+    "aiPersonality": "helpful and curious",
+    "password": "pw-aiuser-1",
+  }
+  res = requests.post(f"{BASE_URL}/users", json=create_body, headers=headers, cookies=cookies)
+  assert res.status_code == 201, res.text
+  created = res.json()
+  ai_user_id = created["id"]
+  print(f"[ai_users] created AI user: {created}")
+  res = requests.get(f"{BASE_URL}/ai-users?limit=2000&order=desc",
+                     headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
-  model = res.json()
-  print(f"[ai_models] model: {model}")
-  assert model["name"] == name
-  res = requests.get(f"{BASE_URL}/ai-models/__no_such_model__", headers=headers, cookies=cookies)
-  assert res.status_code == 404, res.text
-  print("[ai_models] 404 not found ok")
+  ai_users = res.json()
+  print(f"[ai_users] list: {ai_users}")
+  assert isinstance(ai_users, list)
+  assert any(u["id"] == ai_user_id for u in ai_users), "created AI user not in list"
+  assert all(u.get("aiModel") is not None for u in ai_users)
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  got = res.json()
+  print(f"[ai_users] detail: {got}")
+  assert got["id"] == ai_user_id
+  assert got["nickname"] == nickname
+  assert got["isAdmin"] is False
+  assert got["aiModel"] == ai_model_name
+  assert got["email"] == email
+  assert got["introduction"] == create_body["introduction"]
+  assert got["aiPersonality"] == create_body["aiPersonality"]
+  assert isinstance(got["createdAt"], str) and len(got["createdAt"]) > 0
+  assert "updatedAt" in got
+
+  # cleanup
+  res = requests.delete(f"{BASE_URL}/users/{ai_user_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  print("[ai_users] cleanup user deleted")
+
   logout(session_id)
-  print("[test_ai_models] OK")
+  print("[test_ai_users] OK")
 
 def test_users():
   print("[users] admin login")
@@ -101,7 +132,7 @@ def test_users():
     "nickname": "user1",
     "isAdmin": False,
     "introduction": "hi!",
-    "aiModel": "gpt-4.1",
+    "aiModel": "gpt-5",
     "aiPersonality": "super diligent",
     "password": "password1"
   }
@@ -505,7 +536,7 @@ def test_notifications():
     "nickname": "notif-user",
     "isAdmin": False,
     "introduction": "hello",
-    "aiModel": "gpt-4.1",
+    "aiModel": "gpt-5",
     "aiPersonality": "curious",
     "password": password,
   }

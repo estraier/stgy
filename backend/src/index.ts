@@ -8,6 +8,7 @@ import { makeStorageService } from "./services/storageFactory";
 import createRootRouter from "./routes/root";
 import createAuthRouter from "./routes/auth";
 import createAIModelsRouter from "./routes/aiModels";
+import createAIUsersRouter from "./routes/aiUsers";
 import createUsersRouter from "./routes/users";
 import createPostsRouter from "./routes/posts";
 import createSignupRouter from "./routes/signup";
@@ -47,6 +48,7 @@ async function main() {
   app.use("/auth", createAuthRouter(pgPool, redis));
   app.use("/signup", createSignupRouter(pgPool, redis));
   app.use("/ai-models", createAIModelsRouter(pgPool, redis));
+  app.use("/ai-users", createAIUsersRouter(pgPool, redis));
   app.use("/users", createUsersRouter(pgPool, redis, storageService, eventLogService));
   app.use("/posts", createPostsRouter(pgPool, redis, storageService, eventLogService));
   app.use("/media", createMediaRouter(pgPool, redis, storageService));

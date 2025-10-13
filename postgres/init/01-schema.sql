@@ -20,6 +20,7 @@ CREATE TABLE users (
   updated_at TIMESTAMPTZ
 );
 CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, id);
+CREATE INDEX idx_users_ai_id ON users (id) WHERE ai_model IS NOT NULL;
 
 CREATE TABLE user_secrets (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
