@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useEffect, useMemo, useLayoutEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useMemo, useLayoutEffect, useCallback, useId } from "react";
 import { makeArticleHtmlFromMarkdown } from "@/utils/article";
 import { parseBodyAndTags } from "@/utils/parse";
 import UserMentionButton from "@/components/UserMentionButton";
@@ -398,6 +398,8 @@ export default function PostForm({
   const [hasFocusedOnce, setHasFocusedOnce] = useState(false);
   const [isXl, setIsXl] = useState(false);
   const overlayActive = showPreview && isXl;
+
+  const formId = useId();
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1000px)");
@@ -1308,6 +1310,7 @@ export default function PostForm({
       e.preventDefault();
       onDelete();
     } else {
+      setShowPreview(false);
       onSubmit(e);
     }
   }
@@ -1394,7 +1397,7 @@ export default function PostForm({
     <div className="relative group">
       <form
         ref={formRef}
-        id="post-form"
+        id={formId}
         onSubmit={handleSubmit}
         className={className + " flex flex-col gap-2"}
         onClick={(e) => e.stopPropagation()}
@@ -2024,7 +2027,7 @@ export default function PostForm({
 
                     <button
                       type="submit"
-                      form="post-form"
+                      form={formId}
                       className={
                         isEdit && deletable && body.trim() === ""
                           ? "bg-red-500 text-white hover:bg-red-600 px-4 py-1 rounded cursor-pointer ml-auto"
