@@ -367,7 +367,7 @@ export default function createPostsRouter(
     if (!loginUser.isAdmin) {
       const post = await postsService.getPost(req.params.id);
       if (!post) return res.status(404).json({ error: "not found" });
-      if (post.ownedBy === loginUser.id) {
+      if (post.ownedBy !== loginUser.id) {
         return res.status(403).json({ error: "forbidden" });
       }
     }
