@@ -293,6 +293,52 @@ function centerTextareaCaret(ta: HTMLTextAreaElement) {
   ta.scrollTop = Math.min(maxScroll, desired);
 }
 
+function escapeHtml(s: string) {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+}
+function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement) {
+  const cs = getComputedStyle(ta);
+  type StyleKey = Extract<keyof CSSStyleDeclaration, string>;
+  const assign = (prop: StyleKey, v: string) => {
+    (mirror.style as unknown as Record<StyleKey, string>)[prop] = v;
+  };
+  assign("position", "absolute");
+  assign("visibility", "hidden");
+  assign("whiteSpace", "pre-wrap");
+  assign("wordBreak", cs.wordBreak || "normal");
+  assign("overflowWrap", cs.overflowWrap || "break-word");
+  assign("top", "0");
+  assign("left", "-99999px");
+  assign("boxSizing", "border-box");
+  assign("width", `${ta.clientWidth}px`);
+  assign("borderLeftWidth", cs.borderLeftWidth || "0");
+  assign("borderRightWidth", cs.borderRightWidth || "0");
+  assign("paddingTop", cs.paddingTop || "0");
+  assign("paddingRight", cs.paddingRight || "0");
+  assign("paddingBottom", cs.paddingBottom || "0");
+  assign("paddingLeft", cs.paddingLeft || "0");
+  assign("fontFamily", cs.fontFamily || "inherit");
+  assign("fontSize", cs.fontSize || "inherit");
+  assign("fontWeight", cs.fontWeight || "normal");
+  assign("fontStyle", cs.fontStyle || "normal");
+  assign("lineHeight", cs.lineHeight || "normal");
+  assign("letterSpacing", cs.letterSpacing || "normal");
+  assign("tabSize", (cs as unknown as { tabSize?: string }).tabSize || "4");
+}
+function computeCaretTopInTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement): number {
+  buildMirrorFromTextarea(ta, mirror);
+  const pos = Math.max(0, Math.min(ta.value.length, ta.selectionStart ?? 0));
+  const before = ta.value.slice(0, pos);
+  const html =
+    escapeHtml(before).replace(/ /g, "&#160;").replace(/\n/g, "<br/>") +
+    '<span data-caret style="display:inline-block;width:1px;height:1em;"></span>';
+  mirror.innerHTML = html;
+  document.body.appendChild(mirror);
+  const marker = mirror.querySelector<HTMLSpanElement>("span[data-caret]");
+  const top = marker ? marker.offsetTop : 0;
+  return top;
+}
+
 export default function MarkdownSnippetSandbox({
   initialBody = `# ヘッダ
 
@@ -360,9 +406,18 @@ We live in Tokyo.
   const previewBodyRef = useRef<HTMLDivElement | HTMLPreElement | null>(null);
   const gutterRef = useRef<HTMLDivElement | null>(null);
 
+  const caretMirrorRef = useRef<HTMLDivElement | null>(null);
+  const highlightOverlayRef = useRef<HTMLDivElement | null>(null);
+  const highlightBandRef = useRef<HTMLDivElement | null>(null);
+
+  const previewHighlightOverlayRef = useRef<HTMLDivElement | null>(null);
+  const previewHighlightBandRef = useRef<HTMLDivElement | null>(null);
+
   const anchorsRef = useRef<{ char: number; el: HTMLElement }[]>([]);
   const rafRef = useRef<number | null>(null);
   const caretRef = useRef<number>(0);
+  const highlightRafRef = useRef<number | null>(null);
+  const previewHighlightRafRef = useRef<number | null>(null);
 
   const moRef = useRef<MutationObserver | null>(null);
   const roWrapRef = useRef<ResizeObserver | null>(null);
@@ -441,7 +496,6 @@ We live in Tokyo.
     const wrap = activePreviewWrap();
     const caret = Math.min(Math.max(0, caretRef.current), content.length);
     if (!wrap) return;
-
     const target = findAnchor(caret);
     if (target) {
       const wrapRect = wrap.getBoundingClientRect();
@@ -454,6 +508,100 @@ We live in Tokyo.
     const desired = ((wrap.scrollHeight - wrap.clientHeight) * caret) / Math.max(1, content.length);
     wrap.scrollTop = Math.max(0, Math.min(wrap.scrollHeight - wrap.clientHeight, desired));
   }, [activePreviewWrap, content.length, findAnchor]);
+
+  const updateCaretHighlight = useCallback(() => {
+    const ta = textareaRef.current;
+    const overlay = highlightOverlayRef.current;
+    const band = highlightBandRef.current;
+    if (!ta || !overlay || !band) return;
+    overlay.style.position = "absolute";
+    overlay.style.pointerEvents = "none";
+    overlay.style.left = `${ta.offsetLeft}px`;
+    overlay.style.top = `${ta.offsetTop}px`;
+    overlay.style.width = `${ta.offsetWidth}px`;
+    overlay.style.height = `${ta.offsetHeight}px`;
+    overlay.style.zIndex = "0";
+    overlay.style.background = "#fff";
+    overlay.style.borderRadius = getComputedStyle(ta).borderRadius || "0px";
+    let mirror = caretMirrorRef.current;
+    if (!mirror) {
+      mirror = document.createElement("div");
+      caretMirrorRef.current = mirror;
+      document.body.appendChild(mirror);
+    }
+    const caretTop = computeCaretTopInTextarea(ta, mirror);
+    const visibleTop = Math.round(caretTop - ta.scrollTop);
+    const lh = Math.round(resolveLineHeight(ta));
+    const topWithin = Math.max(0, Math.min(ta.clientHeight - lh, visibleTop));
+    const cs = getComputedStyle(ta);
+    const pl = parseFloat(cs.paddingLeft || "0");
+    const pr = parseFloat(cs.paddingRight || "0");
+    const bt = parseFloat(cs.borderTopWidth || "0");
+    const bl = parseFloat(cs.borderLeftWidth || "0");
+    band.style.position = "absolute";
+    band.style.background = "#eef8ff";
+    band.style.top = `${bt + topWithin}px`;
+    band.style.left = `${bl + pl}px`;
+    band.style.height = `${lh}px`;
+    band.style.width = `${ta.clientWidth - pl - pr}px`;
+    band.style.borderRadius = "4px";
+  }, []);
+
+  const scheduleHighlight = useCallback(() => {
+    if (highlightRafRef.current != null) cancelAnimationFrame(highlightRafRef.current);
+    highlightRafRef.current = requestAnimationFrame(() => {
+      highlightRafRef.current = null;
+      updateCaretHighlight();
+    });
+  }, [updateCaretHighlight]);
+
+  const updatePreviewHighlight = useCallback(() => {
+    if (mode !== "html") {
+      const band = previewHighlightBandRef.current;
+      if (band) band.style.display = "none";
+      return;
+    }
+    const wrap = previewWrapRef.current;
+    const overlay = previewHighlightOverlayRef.current;
+    const band = previewHighlightBandRef.current;
+    if (!wrap || !overlay || !band) return;
+    overlay.style.position = "absolute";
+    overlay.style.pointerEvents = "none";
+    overlay.style.left = "0px";
+    overlay.style.top = "0px";
+    overlay.style.width = "100%";
+    overlay.style.height = "100%";
+    overlay.style.zIndex = "0";
+    const target = findAnchor(Math.min(Math.max(0, caretRef.current), content.length));
+    if (!target) {
+      band.style.display = "none";
+      return;
+    }
+    const wrapRect = wrap.getBoundingClientRect();
+    const rects = target.getClientRects();
+    const r = rects.length ? rects[0]! : target.getBoundingClientRect();
+    const topWithin = Math.round(wrap.scrollTop + (r.top - wrapRect.top));
+    const leftWithin = Math.round(r.left - wrapRect.left);
+    const width = Math.round(r.width);
+    const height = Math.max(1, Math.round(r.height));
+    band.style.display = "block";
+    band.style.position = "absolute";
+    band.style.background = "#eef8ff";
+    band.style.top = `${topWithin}px`;
+    band.style.left = `${leftWithin}px`;
+    band.style.height = `${height}px`;
+    band.style.width = `${width}px`;
+    band.style.borderRadius = "4px";
+  }, [mode, content.length, findAnchor]);
+
+  const schedulePreviewHighlight = useCallback(() => {
+    if (previewHighlightRafRef.current != null)
+      cancelAnimationFrame(previewHighlightRafRef.current);
+    previewHighlightRafRef.current = requestAnimationFrame(() => {
+      previewHighlightRafRef.current = null;
+      updatePreviewHighlight();
+    });
+  }, [updatePreviewHighlight]);
 
   const ensureGutter = useCallback(() => {
     const wrap = previewWrapRef.current;
@@ -470,8 +618,7 @@ We live in Tokyo.
         width: "22px",
         height: "100%",
         pointerEvents: "none",
-        background:
-          "linear-gradient(to right, rgba(0,0,0,0.04), rgba(0,0,0,0.02) 60%, transparent 100%)",
+        background: "rgba(0,0,0,0.03)",
         zIndex: "2",
       } as Partial<CSSStyleDeclaration>);
       wrap.appendChild(gutter);
@@ -488,37 +635,30 @@ We live in Tokyo.
     const bodyEl = previewBodyRef.current as HTMLDivElement | null;
     const ta = textareaRef.current;
     if (!wrap || !bodyEl || !ta) return;
-
     const gutter = ensureGutter();
     if (!gutter) return;
-
     gutter.replaceChildren();
-
     const wrapRect = wrap.getBoundingClientRect();
     const candidates = Array.from(bodyEl.querySelectorAll<HTMLElement>("[data-char-position]"));
-
     for (const el of candidates) {
       const charAttr = el.getAttribute("data-char-position");
       if (!charAttr) continue;
-
       const rects = el.getClientRects();
       const r = rects.length ? rects[0]! : el.getBoundingClientRect();
-      const yAbsolute = Math.round(wrap.scrollTop + (r.top - wrapRect.top) + r.height / 2);
-
+      const yAbsolute = Math.round(wrap.scrollTop + (r.top - wrapRect.top) + 12);
       const btn = document.createElement("button");
       btn.type = "button";
       btn.setAttribute("data-jump-pin", "1");
-      btn.title = "この位置にジャンプ";
-      btn.setAttribute("aria-label", "この位置にジャンプ");
+      btn.title = "Jump here";
+      btn.setAttribute("aria-label", "Jump here");
       btn.textContent = "";
-
       Object.assign(btn.style, {
         position: "absolute",
         left: "3px",
         top: `${yAbsolute}px`,
         transform: "translateY(-50%)",
         width: "16px",
-        height: "8px",
+        height: "6px",
         borderRadius: "6px",
         border: "1px solid #cbd5e1",
         background: "#e2e8f0",
@@ -528,7 +668,6 @@ We live in Tokyo.
         pointerEvents: "auto",
         outline: "none",
       } as Partial<CSSStyleDeclaration>);
-
       btn.addEventListener("mouseenter", () => {
         btn.style.background = "#cbd5e1";
       });
@@ -541,7 +680,6 @@ We live in Tokyo.
       btn.addEventListener("mouseup", () => {
         btn.style.background = "#cbd5e1";
       });
-
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -553,11 +691,19 @@ We live in Tokyo.
         rebuildAnchors();
         syncToCaret();
         refreshGutterPins();
+        scheduleHighlight();
+        schedulePreviewHighlight();
       });
-
       gutter.appendChild(btn);
     }
-  }, [mode, ensureGutter, rebuildAnchors, syncToCaret]);
+  }, [
+    mode,
+    ensureGutter,
+    rebuildAnchors,
+    syncToCaret,
+    scheduleHighlight,
+    schedulePreviewHighlight,
+  ]);
 
   const scheduleSync = useCallback(() => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
@@ -566,8 +712,9 @@ We live in Tokyo.
       rebuildAnchors();
       syncToCaret();
       refreshGutterPins();
+      schedulePreviewHighlight();
     });
-  }, [rebuildAnchors, syncToCaret, refreshGutterPins]);
+  }, [rebuildAnchors, syncToCaret, refreshGutterPins, schedulePreviewHighlight]);
 
   const resizeTextarea = useCallback(() => {
     const ta = textareaRef.current;
@@ -584,15 +731,17 @@ We live in Tokyo.
   const attachObservers = useCallback(() => {
     const wrap = activePreviewWrap();
     const bodyEl = activePreviewBody();
-
     moRef.current?.disconnect();
     roWrapRef.current?.disconnect();
     roBodyRef.current?.disconnect();
-
     if (bodyEl) {
-      const onImg = () => scheduleSync();
+      const onImg = () => {
+        scheduleSync();
+        schedulePreviewHighlight();
+      };
       const mo = new MutationObserver(() => {
         scheduleSync();
+        schedulePreviewHighlight();
       });
       mo.observe(bodyEl, { childList: true, subtree: true });
       bodyEl.querySelectorAll("img").forEach((img) => {
@@ -604,10 +753,14 @@ We live in Tokyo.
     if (wrap) {
       const ro = new ResizeObserver(() => {
         scheduleSync();
+        schedulePreviewHighlight();
       });
       ro.observe(wrap);
       roWrapRef.current = ro;
-      const onScroll = () => refreshGutterPins();
+      const onScroll = () => {
+        refreshGutterPins();
+        schedulePreviewHighlight();
+      };
       wrap.addEventListener("scroll", onScroll);
       const prevWrap = wrap;
       return () => prevWrap.removeEventListener("scroll", onScroll);
@@ -615,12 +768,19 @@ We live in Tokyo.
     if (bodyEl) {
       const ro2 = new ResizeObserver(() => {
         scheduleSync();
+        schedulePreviewHighlight();
       });
       ro2.observe(bodyEl);
       roBodyRef.current = ro2;
     }
     return;
-  }, [activePreviewWrap, activePreviewBody, scheduleSync, refreshGutterPins]);
+  }, [
+    activePreviewWrap,
+    activePreviewBody,
+    scheduleSync,
+    refreshGutterPins,
+    schedulePreviewHighlight,
+  ]);
 
   const ensurePreviewReadyAndSync = useCallback(
     (maxTries = 120) => {
@@ -638,21 +798,32 @@ We live in Tokyo.
         }
         rebuildAnchors();
         scheduleSync();
+        schedulePreviewHighlight();
       };
       requestAnimationFrame(tick);
-      const t1 = window.setTimeout(() => scheduleSync(), 80);
-      const t2 = window.setTimeout(() => scheduleSync(), 160);
-      const t3 = window.setTimeout(() => scheduleSync(), 320);
+      const t1 = window.setTimeout(() => {
+        scheduleSync();
+        schedulePreviewHighlight();
+      }, 80);
+      const t2 = window.setTimeout(() => {
+        scheduleSync();
+        schedulePreviewHighlight();
+      }, 160);
+      const t3 = window.setTimeout(() => {
+        scheduleSync();
+        schedulePreviewHighlight();
+      }, 320);
       ensureTimersRef.current.push(t1, t2, t3);
       const d = document as Document & { fonts?: { ready?: Promise<unknown> } };
       const f = d.fonts;
       if (f && typeof f.ready?.then === "function") {
         f.ready.then(() => {
           scheduleSync();
+          schedulePreviewHighlight();
         });
       }
     },
-    [activePreviewWrap, activePreviewBody, rebuildAnchors, scheduleSync],
+    [activePreviewWrap, activePreviewBody, rebuildAnchors, scheduleSync, schedulePreviewHighlight],
   );
 
   useLayoutEffect(() => {
@@ -660,10 +831,17 @@ We live in Tokyo.
     const onResize = () => {
       resizeTextarea();
       refreshGutterPins();
+      scheduleHighlight();
+      schedulePreviewHighlight();
     };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [resizeTextarea, refreshGutterPins]);
+  }, [resizeTextarea, refreshGutterPins, scheduleHighlight, schedulePreviewHighlight]);
+
+  useEffect(() => {
+    scheduleHighlight();
+    schedulePreviewHighlight();
+  }, [scheduleHighlight, schedulePreviewHighlight]);
 
   useEffect(() => {
     if (autoFocus && !didAutoFocusRef.current) {
@@ -674,9 +852,11 @@ We live in Tokyo.
         ta.scrollTop = 0;
         caretRef.current = 0;
         didAutoFocusRef.current = true;
+        scheduleHighlight();
+        schedulePreviewHighlight();
       }
     }
-  }, [autoFocus]);
+  }, [autoFocus, scheduleHighlight, schedulePreviewHighlight]);
 
   useEffect(() => {
     const cleanup = attachObservers();
@@ -688,11 +868,13 @@ We live in Tokyo.
 
   useEffect(() => {
     scheduleSync();
-  }, [content, scheduleSync]);
+    schedulePreviewHighlight();
+  }, [content, scheduleSync, schedulePreviewHighlight]);
 
   useEffect(() => {
     scheduleSync();
-  }, [mode, maxLen, maxHeight, useFeatured, scheduleSync]);
+    schedulePreviewHighlight();
+  }, [mode, maxLen, maxHeight, useFeatured, scheduleSync, schedulePreviewHighlight]);
 
   useEffect(() => {
     const timers = ensureTimersRef.current;
@@ -700,7 +882,6 @@ We live in Tokyo.
     const mo = moRef.current;
     const roWrap = roWrapRef.current;
     const roBody = roBodyRef.current;
-
     return () => {
       if (raf != null) cancelAnimationFrame(raf);
       mo?.disconnect();
@@ -708,8 +889,32 @@ We live in Tokyo.
       roBody?.disconnect();
       timers.forEach((id) => clearTimeout(id));
       timers.length = 0;
+      if (highlightRafRef.current != null) cancelAnimationFrame(highlightRafRef.current);
+      if (previewHighlightRafRef.current != null)
+        cancelAnimationFrame(previewHighlightRafRef.current);
+      caretMirrorRef.current?.remove();
+      caretMirrorRef.current = null;
     };
   }, []);
+
+  useEffect(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const onScroll = () => {
+      scheduleHighlight();
+      schedulePreviewHighlight();
+    };
+    const onFocus = () => {
+      scheduleHighlight();
+      schedulePreviewHighlight();
+    };
+    ta.addEventListener("scroll", onScroll);
+    ta.addEventListener("focus", onFocus);
+    return () => {
+      ta.removeEventListener("scroll", onScroll);
+      ta.removeEventListener("focus", onFocus);
+    };
+  }, [scheduleHighlight, schedulePreviewHighlight]);
 
   const onToolbarPrefix = useCallback(
     (prefix: string) => (e: React.MouseEvent) => {
@@ -721,9 +926,11 @@ We live in Tokyo.
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
         scheduleSync();
+        scheduleHighlight();
+        schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync],
+    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight],
   );
 
   const onToolbarFence = useCallback(
@@ -736,9 +943,11 @@ We live in Tokyo.
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
         scheduleSync();
+        scheduleHighlight();
+        schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync],
+    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight],
   );
 
   const onToolbarInline = useCallback(
@@ -751,9 +960,11 @@ We live in Tokyo.
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
         scheduleSync();
+        scheduleHighlight();
+        schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync],
+    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight],
   );
 
   const onToolbarRuby = useCallback(
@@ -766,9 +977,11 @@ We live in Tokyo.
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
         scheduleSync();
+        scheduleHighlight();
+        schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync],
+    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight],
   );
 
   const onToolbarLink = useCallback(
@@ -781,9 +994,11 @@ We live in Tokyo.
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
         scheduleSync();
+        scheduleHighlight();
+        schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync],
+    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight],
   );
 
   return (
@@ -801,7 +1016,6 @@ We live in Tokyo.
               <option value="text">Text</option>
             </select>
           </div>
-
           <div className="flex items-center gap-2">
             <label className="text-sm">maxLen</label>
             <input
@@ -816,7 +1030,6 @@ We live in Tokyo.
               }}
             />
           </div>
-
           <div className="flex items-center gap-2">
             <label className="text-sm">maxHeight</label>
             <input
@@ -831,7 +1044,6 @@ We live in Tokyo.
               }}
             />
           </div>
-
           <label className="inline-flex items-center gap-2 select-none cursor-pointer">
             <input
               type="checkbox"
@@ -841,7 +1053,6 @@ We live in Tokyo.
             />
             <span className="text-sm">useFeatured</span>
           </label>
-
           <div className="ml-auto text-xs text-gray-500">
             {contentLengthLimit != null
               ? `${contentLength} / ${contentLengthLimit}`
@@ -971,53 +1182,77 @@ We live in Tokyo.
 
             <div ref={leftScrollRef} className="flex-1 overflow-y-auto h-full bg-[#eee]">
               <div ref={leftInnerRef} className="mx-auto max-w-[85ex] w-full p-6">
-                <textarea
-                  ref={textareaRef}
-                  className="w-full border border-gray-400 rounded px-2 py-1 bg-gray-50 break-all"
-                  placeholder={placeholder}
-                  value={body}
-                  onChange={(e) => {
-                    setBody(e.target.value);
-                    const pos = e.currentTarget.selectionEnd ?? e.currentTarget.selectionStart ?? 0;
-                    caretRef.current = pos;
-                    scheduleSync();
-                  }}
-                  onKeyUp={() => {
-                    const ta = textareaRef.current;
-                    if (ta) {
-                      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                <div className="relative">
+                  <textarea
+                    ref={textareaRef}
+                    className="relative z-10 w-full border border-gray-400 rounded px-2 py-1 bg-transparent break-all"
+                    placeholder={placeholder}
+                    value={body}
+                    onChange={(e) => {
+                      setBody(e.currentTarget.value);
+                      const pos =
+                        e.currentTarget.selectionEnd ?? e.currentTarget.selectionStart ?? 0;
                       caretRef.current = pos;
-                    }
-                    scheduleSync();
-                  }}
-                  onClick={() => {
-                    const ta = textareaRef.current;
-                    if (ta) {
-                      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-                      caretRef.current = pos;
-                    }
-                    scheduleSync();
-                  }}
-                  onSelect={() => {
-                    const ta = textareaRef.current;
-                    if (ta) {
-                      const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
-                      caretRef.current = pos;
-                    }
-                    scheduleSync();
-                  }}
-                  maxLength={65535}
-                  rows={1}
-                  style={{ resize: "none" }}
-                  autoFocus={autoFocus}
-                />
+                      scheduleSync();
+                      scheduleHighlight();
+                      schedulePreviewHighlight();
+                    }}
+                    onKeyUp={() => {
+                      const ta = textareaRef.current;
+                      if (ta) {
+                        const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                        caretRef.current = pos;
+                      }
+                      scheduleSync();
+                      scheduleHighlight();
+                      schedulePreviewHighlight();
+                    }}
+                    onClick={() => {
+                      const ta = textareaRef.current;
+                      if (ta) {
+                        const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                        caretRef.current = pos;
+                      }
+                      scheduleSync();
+                      scheduleHighlight();
+                      schedulePreviewHighlight();
+                    }}
+                    onSelect={() => {
+                      const ta = textareaRef.current;
+                      if (ta) {
+                        const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+                        caretRef.current = pos;
+                      }
+                      scheduleSync();
+                      scheduleHighlight();
+                      schedulePreviewHighlight();
+                    }}
+                    onFocus={() => {
+                      scheduleHighlight();
+                      schedulePreviewHighlight();
+                    }}
+                    maxLength={65535}
+                    rows={1}
+                    style={{ resize: "none" }}
+                    autoFocus={autoFocus}
+                  />
+                  <div ref={highlightOverlayRef} aria-hidden>
+                    <div ref={highlightBandRef} />
+                  </div>
+                </div>
               </div>
             </div>
           </div>
 
           <div className="relative bg-white min-h-0 flex flex-col">
             <div className="relative flex-1 overflow-y-auto" ref={previewWrapRef}>
-              <div className="mx-auto max-w-[85ex] w-full p-6">
+              <div ref={previewHighlightOverlayRef} aria-hidden>
+                <div ref={previewHighlightBandRef} />
+              </div>
+              <div
+                className="mx-auto max-w-[85ex] w-full p-6"
+                style={{ position: "relative", zIndex: 1 }}
+              >
                 <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
                 {mode === "html" ? (
                   <div

@@ -58,7 +58,6 @@ export default function AvatarCropDialog({
 
   useEffect(() => setMounted(true), []);
 
-  // 元画像のURLとサイズ取得
   useEffect(() => {
     const url = URL.createObjectURL(file);
     setBaseUrl(url);
@@ -66,9 +65,7 @@ export default function AvatarCropDialog({
     img.decoding = "async";
     img.src = url;
     const onLoad = () => {
-      // ロード完了後、余白付きキャンバスへ貼り付けて imgUrl / natural を設定
       preparePaddedImage({ w: img.naturalWidth, h: img.naturalHeight }, url).catch(() => {
-        // フォールバック（そのまま）
         setImgUrl(url);
         setNatural({ w: img.naturalWidth, h: img.naturalHeight });
       });
@@ -84,10 +81,8 @@ export default function AvatarCropDialog({
       img.removeEventListener("error", onError);
       URL.revokeObjectURL(url);
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [file]);
 
-  // 余白付きキャンバスを作る（常時有効）
   const preparePaddedImage = useCallback(async (base: { w: number; h: number }, url: string) => {
     const ratio = 1.2;
     const extra = 100;
@@ -131,14 +126,12 @@ export default function AvatarCropDialog({
     return () => URL.revokeObjectURL(paddedUrl);
   }, []);
 
-  // paddedUrl の revoke
   useEffect(() => {
     return () => {
       if (imgUrl && imgUrl !== baseUrl) URL.revokeObjectURL(imgUrl);
     };
   }, [imgUrl, baseUrl]);
 
-  // リサイズ監視
   useEffect(() => {
     if (!containerRef.current) return;
     const ro = new ResizeObserver((entries) => {
@@ -166,7 +159,6 @@ export default function AvatarCropDialog({
     }
   }, []);
 
-  // 表示領域と初期クロップ
   useEffect(() => {
     if (!natural) return;
     const d = fitImage(natural, containerSize.w, containerSize.h);
