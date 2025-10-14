@@ -1004,7 +1004,7 @@ We live in Tokyo.
   return (
     <div className={"relative " + className}>
       <div className="flex flex-col h-screen w-full overflow-hidden">
-        <div className="shrink-0 border-b bg-white/90 backdrop-blur px-3 py-2 flex flex-wrap gap-3 items-end">
+        <div className="shrink-0 border-b bg-gray-100 backdrop-blur px-3 py-2 flex flex-wrap gap-3 items-end">
           <div className="flex items-center gap-2">
             <label className="text-sm">Preview</label>
             <select
@@ -1062,9 +1062,9 @@ We live in Tokyo.
         </div>
 
         <div className="grid grid-cols-2 gap-0 flex-1 min-h-0">
-          <div className="relative bg-gray-50/70 border-r min-h-0 flex flex-col">
+          <div className="relative border-r min-h-0 flex flex-col">
             <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 w-full">
-              <div className="px-1.5 py-1 flex items-center gap-1 bg-[#ddd]">
+              <div className="px-1.5 py-1 flex items-center gap-1 bg-[#eee]">
                 <button
                   type="button"
                   onMouseDown={onToolbarPrefix("# ")}
@@ -1180,7 +1180,7 @@ We live in Tokyo.
               </div>
             </div>
 
-            <div ref={leftScrollRef} className="flex-1 overflow-y-auto h-full bg-[#eee]">
+            <div ref={leftScrollRef} className="flex-1 overflow-y-auto h-full bg-[#f8f8ff]">
               <div ref={leftInnerRef} className="mx-auto max-w-[85ex] w-full p-6">
                 <div className="relative">
                   <textarea
