@@ -58,31 +58,6 @@ export default function AvatarCropDialog({
 
   useEffect(() => setMounted(true), []);
 
-  useEffect(() => {
-    const url = URL.createObjectURL(file);
-    setBaseUrl(url);
-    const img = new window.Image();
-    img.decoding = "async";
-    img.src = url;
-    const onLoad = () => {
-      preparePaddedImage({ w: img.naturalWidth, h: img.naturalHeight }, url).catch(() => {
-        setImgUrl(url);
-        setNatural({ w: img.naturalWidth, h: img.naturalHeight });
-      });
-    };
-    const onError = () => {
-      setImgUrl(url);
-      setNatural(null);
-    };
-    img.addEventListener("load", onLoad);
-    img.addEventListener("error", onError);
-    return () => {
-      img.removeEventListener("load", onLoad);
-      img.removeEventListener("error", onError);
-      URL.revokeObjectURL(url);
-    };
-  }, [file]);
-
   const preparePaddedImage = useCallback(async (base: { w: number; h: number }, url: string) => {
     const ratio = 1.2;
     const extra = 100;
@@ -125,6 +100,35 @@ export default function AvatarCropDialog({
 
     return () => URL.revokeObjectURL(paddedUrl);
   }, []);
+
+  useEffect(() => {
+    const url = URL.createObjectURL(file);
+    setBaseUrl(url);
+
+    const img = new window.Image();
+    img.decoding = "async";
+    img.src = url;
+
+    const onLoad = () => {
+      preparePaddedImage({ w: img.naturalWidth, h: img.naturalHeight }, url).catch(() => {
+        setImgUrl(url);
+        setNatural({ w: img.naturalWidth, h: img.naturalHeight });
+      });
+    };
+    const onError = () => {
+      setImgUrl(url);
+      setNatural(null);
+    };
+
+    img.addEventListener("load", onLoad);
+    img.addEventListener("error", onError);
+
+    return () => {
+      img.removeEventListener("load", onLoad);
+      img.removeEventListener("error", onError);
+      URL.revokeObjectURL(url);
+    };
+  }, [file, preparePaddedImage]);
 
   useEffect(() => {
     return () => {
