@@ -283,6 +283,26 @@ function afterNextPaint(cb: () => void) {
   requestAnimationFrame(() => requestAnimationFrame(cb));
 }
 
+function resolveLineHeight(ta: HTMLTextAreaElement) {
+  const s = window.getComputedStyle(ta);
+  const lh = s.lineHeight;
+  if (!lh || lh === "normal") {
+    const fs = parseFloat(s.fontSize || "16");
+    return fs * 1.2;
+  }
+  const v = parseFloat(lh);
+  return Number.isFinite(v) ? v : 20;
+}
+function centerTextareaCaret(ta: HTMLTextAreaElement) {
+  const lineHeight = resolveLineHeight(ta);
+  const len = Math.max(1, ta.value.length);
+  const caret = ta.selectionStart ?? 0;
+  const approxY = (caret / len) * (ta.scrollHeight - lineHeight);
+  const desired = Math.max(0, approxY - (ta.clientHeight - lineHeight) / 2);
+  const maxScroll = Math.max(0, ta.scrollHeight - ta.clientHeight);
+  ta.scrollTop = Math.min(maxScroll, desired);
+}
+
 export default function PostForm({
   body,
   setBody,
@@ -313,6 +333,8 @@ export default function PostForm({
   const overlayEditorInnerRef = useRef<HTMLDivElement>(null);
   const overlayWrapRef = useRef<HTMLDivElement>(null);
   const overlayBodyRef = useRef<HTMLDivElement>(null);
+
+  const gutterRef = useRef<HTMLDivElement | null>(null);
 
   const anchorsRef = useRef<{ char: number; el: HTMLElement }[]>([]);
   const rafRef = useRef<number | null>(null);
@@ -360,7 +382,7 @@ export default function PostForm({
     };
   }, [overlayActive]);
 
-  // 「Edit を押した時だけ先頭へスクロール」: isEdit が false→true になった瞬間だけ 0 に移動
+  // Edit を押した時だけ、先頭にスクロール
   useEffect(() => {
     const becameEdit = isEdit && !prevIsEditRef.current;
     if (becameEdit) {
@@ -368,7 +390,7 @@ export default function PostForm({
       if (ta) {
         ta.focus();
         ta.setSelectionRange(0, 0);
-        ta.scrollTop = 0; // 先頭へ
+        ta.scrollTop = 0;
         caretRef.current = 0;
         selStartRef.current = 0;
         selEndRef.current = 0;
@@ -377,7 +399,6 @@ export default function PostForm({
     prevIsEditRef.current = isEdit;
   }, [isEdit, overlayActive]);
 
-  // 初回オートフォーカスは維持（必要ならここも外せます）
   useEffect(() => {
     if (autoFocus && !didApplyAutoFocusRef.current) {
       const ta = overlayActive ? overlayTextareaRef.current : textareaRef.current;
@@ -643,14 +664,120 @@ export default function PostForm({
     wrap.scrollTop = Math.max(0, Math.min(wrap.scrollHeight - wrap.clientHeight, desired));
   }, [showPreview, activePreviewWrap, content.length, findAnchor]);
 
+  const ensureGutter = useCallback(() => {
+    if (!overlayActive) return null;
+    const wrap = overlayWrapRef.current;
+    if (!wrap) return null;
+    let gutter = gutterRef.current;
+    if (!gutter) {
+      gutter = document.createElement("div");
+      gutterRef.current = gutter;
+      gutter.setAttribute("data-gutter", "1");
+      Object.assign(gutter.style, {
+        position: "absolute",
+        left: "0px",
+        top: "0px",
+        width: "22px",
+        height: "100%",
+        pointerEvents: "none",
+        background:
+          "linear-gradient(to right, rgba(0,0,0,0.04), rgba(0,0,0,0.02) 60%, transparent 100%)",
+        zIndex: "2",
+      } as Partial<CSSStyleDeclaration>);
+      wrap.appendChild(gutter);
+    }
+    return gutter;
+  }, [overlayActive]);
+
+  const refreshGutterPins = useCallback(() => {
+    if (!overlayActive || !showPreview) {
+      gutterRef.current?.replaceChildren();
+      return;
+    }
+    const wrap = overlayWrapRef.current;
+    const bodyEl = overlayBodyRef.current;
+    const ta = overlayTextareaRef.current;
+    if (!wrap || !bodyEl || !ta) return;
+
+    const gutter = ensureGutter();
+    if (!gutter) return;
+
+    gutter.replaceChildren();
+
+    const wrapRect = wrap.getBoundingClientRect();
+    const candidates = Array.from(bodyEl.querySelectorAll<HTMLElement>("[data-char-position]"));
+
+    for (const el of candidates) {
+      const charAttr = el.getAttribute("data-char-position");
+      if (!charAttr) continue;
+
+      const rects = el.getClientRects();
+      const r = rects.length ? rects[0]! : el.getBoundingClientRect();
+      const yAbsolute = Math.round(wrap.scrollTop + (r.top - wrapRect.top) + r.height / 2);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.setAttribute("data-jump-pin", "1");
+      btn.title = "この位置にジャンプ";
+      btn.setAttribute("aria-label", "この位置にジャンプ");
+      btn.textContent = "";
+
+      Object.assign(btn.style, {
+        position: "absolute",
+        left: "3px",
+        top: `${yAbsolute}px`,
+        transform: "translateY(-50%)",
+        width: "16px",
+        height: "8px",
+        borderRadius: "6px",
+        border: "1px solid #cbd5e1",
+        background: "#e2e8f0",
+        boxShadow: "0 1px 1px rgba(0,0,0,.08)",
+        padding: "0",
+        cursor: "pointer",
+        pointerEvents: "auto",
+        outline: "none",
+      } as Partial<CSSStyleDeclaration>);
+
+      btn.addEventListener("mouseenter", () => {
+        btn.style.background = "#cbd5e1";
+      });
+      btn.addEventListener("mouseleave", () => {
+        btn.style.background = "#e2e8f0";
+      });
+      btn.addEventListener("mousedown", () => {
+        btn.style.background = "#94a3b8";
+      });
+      btn.addEventListener("mouseup", () => {
+        btn.style.background = "#cbd5e1";
+      });
+
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const pos = Number(charAttr) || 0;
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+        centerTextareaCaret(ta);
+        caretRef.current = pos;
+        rebuildAnchors();
+        syncToCaret();
+        refreshGutterPins();
+      });
+
+      gutter.appendChild(btn);
+    }
+  }, [overlayActive, showPreview, ensureGutter, rebuildAnchors, syncToCaret]);
+
   const scheduleSync = useCallback(() => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null;
       rebuildAnchors();
       syncToCaret();
+      refreshGutterPins();
     });
-  }, [rebuildAnchors, syncToCaret]);
+  }, [rebuildAnchors, syncToCaret, refreshGutterPins]);
 
   const ensurePreviewReadyAndSync = useCallback(
     (maxTries = 160) => {
@@ -753,7 +880,7 @@ export default function PostForm({
     if (!ta || !scroll || !inner) return;
     const innerStyle = getComputedStyle(inner);
     const pt = parseFloat(innerStyle.paddingTop || "0");
-    const pb = parseFloat(innerStyle.paddingBottom || "0"); // ← 修正済み
+    const pb = parseFloat(innerStyle.paddingBottom || "0");
     const available = Math.max(160, scroll.clientHeight - pt - pb);
     ta.style.height = `${available}px`;
   }, [overlayActive]);
@@ -790,10 +917,8 @@ export default function PostForm({
   );
 
   const scheduleSyncRef = useRef<() => void>(() => {});
-  const rebuildAnchorsRef = useRef<() => void>(() => {});
   const resizeOverlayTextareaRef = useRef<() => void>(() => {});
   scheduleSyncRef.current = scheduleSync;
-  rebuildAnchorsRef.current = rebuildAnchors;
   resizeOverlayTextareaRef.current = resizeOverlayTextarea;
 
   useEffect(() => {
@@ -815,12 +940,15 @@ export default function PostForm({
   useEffect(() => {
     if (!overlayActive) return;
     resizeOverlayTextareaRef.current();
-    const onResize = () => resizeOverlayTextareaRef.current();
+    const onResize = () => {
+      resizeOverlayTextareaRef.current();
+      refreshGutterPins();
+    };
     window.addEventListener("resize", onResize);
     return () => {
       window.removeEventListener("resize", onResize);
     };
-  }, [overlayActive, resizeOverlayTextarea]);
+  }, [overlayActive, resizeOverlayTextarea, refreshGutterPins]);
 
   useEffect(() => {
     if (!overlayActive) return;
@@ -852,7 +980,6 @@ export default function PostForm({
         const e2 = clamp(selEndRef.current, s2, len);
         t.setSelectionRange(s2, e2);
         caretRef.current = e2;
-        // ここでは自動スクロールしない（centerTextareaCaret を呼ばない）
       }
       attachPreviewObservers();
       ensurePreviewReadyAndSync(160);
@@ -885,7 +1012,6 @@ export default function PostForm({
         const e = clamp(selEndRef.current, s, len);
         t.setSelectionRange(s, e);
         caretRef.current = e;
-        // ここでも自動スクロールしない
       }
       ensurePreviewReadyAndSync(160);
     });
@@ -895,6 +1021,18 @@ export default function PostForm({
     if (!showPreview) return;
     ensurePreviewReadyAndSync(160);
   }, [isXl, showPreview, ensurePreviewReadyAndSync]);
+
+  // プレビュー側のスクロールに追随してピンを再配置（サイドバイサイド時のみ）
+  useEffect(() => {
+    if (!overlayActive) return;
+    const wrap = overlayWrapRef.current;
+    if (!wrap) return;
+    const onScroll = () => refreshGutterPins();
+    wrap.addEventListener("scroll", onScroll);
+    return () => {
+      wrap.removeEventListener("scroll", onScroll);
+    };
+  }, [overlayActive, refreshGutterPins]);
 
   useEffect(() => {
     const timersSnapshot = ensureTimersRef.current;
@@ -1162,7 +1300,6 @@ export default function PostForm({
                       const e2 = clamp(selEndRef.current, s2, len);
                       t.setSelectionRange(s2, e2);
                       caretRef.current = e2;
-                      // 自動スクロールなし
                     }
                     ensureFormBottomInView("smooth");
                     attachPreviewObservers();
@@ -1481,7 +1618,6 @@ export default function PostForm({
                             const e2 = clamp(selEndRef.current, s2, len);
                             t.setSelectionRange(s2, e2);
                             caretRef.current = e2;
-                            // 自動スクロールなし
                           }
                           attachPreviewObservers();
                           ensurePreviewReadyAndSync(160);
@@ -1533,7 +1669,6 @@ export default function PostForm({
                         const e2 = clamp(selEndRef.current, s2, len);
                         t.setSelectionRange(s2, e2);
                         caretRef.current = e2;
-                        // 自動スクロールなし
                       }
                       attachPreviewObservers();
                       ensurePreviewReadyAndSync(160);
@@ -1544,7 +1679,7 @@ export default function PostForm({
                   <span className="sr-only">Close preview</span>
                 </button>
 
-                <div ref={overlayWrapRef} className="flex-1 overflow-y-auto">
+                <div ref={overlayWrapRef} className="relative flex-1 overflow-y-auto">
                   <div className="mx-auto max-w-[85ex] w-full p-6">
                     <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
                     <div

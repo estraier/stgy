@@ -273,6 +273,26 @@ function applyLinkToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
   });
 }
 
+function resolveLineHeight(ta: HTMLTextAreaElement) {
+  const s = window.getComputedStyle(ta);
+  const lh = s.lineHeight;
+  if (!lh || lh === "normal") {
+    const fs = parseFloat(s.fontSize || "16");
+    return fs * 1.2;
+  }
+  const v = parseFloat(lh);
+  return Number.isFinite(v) ? v : 20;
+}
+function centerTextareaCaret(ta: HTMLTextAreaElement) {
+  const lineHeight = resolveLineHeight(ta);
+  const len = Math.max(1, ta.value.length);
+  const caret = ta.selectionStart ?? 0;
+  const approxY = (caret / len) * (ta.scrollHeight - lineHeight);
+  const desired = Math.max(0, approxY - (ta.clientHeight - lineHeight) / 2);
+  const maxScroll = Math.max(0, ta.scrollHeight - ta.clientHeight);
+  ta.scrollTop = Math.min(maxScroll, desired);
+}
+
 export default function MarkdownSnippetSandbox({
   initialBody = `# ヘッダ
 
@@ -338,6 +358,7 @@ We live in Tokyo.
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewWrapRef = useRef<HTMLDivElement>(null);
   const previewBodyRef = useRef<HTMLDivElement | HTMLPreElement | null>(null);
+  const gutterRef = useRef<HTMLDivElement | null>(null);
 
   const anchorsRef = useRef<{ char: number; el: HTMLElement }[]>([]);
   const rafRef = useRef<number | null>(null);
@@ -434,14 +455,119 @@ We live in Tokyo.
     wrap.scrollTop = Math.max(0, Math.min(wrap.scrollHeight - wrap.clientHeight, desired));
   }, [activePreviewWrap, content.length, findAnchor]);
 
+  const ensureGutter = useCallback(() => {
+    const wrap = previewWrapRef.current;
+    if (!wrap) return null;
+    let gutter = gutterRef.current;
+    if (!gutter) {
+      gutter = document.createElement("div");
+      gutterRef.current = gutter;
+      gutter.setAttribute("data-gutter", "1");
+      Object.assign(gutter.style, {
+        position: "absolute",
+        left: "0px",
+        top: "0px",
+        width: "22px",
+        height: "100%",
+        pointerEvents: "none",
+        background:
+          "linear-gradient(to right, rgba(0,0,0,0.04), rgba(0,0,0,0.02) 60%, transparent 100%)",
+        zIndex: "2",
+      } as Partial<CSSStyleDeclaration>);
+      wrap.appendChild(gutter);
+    }
+    return gutter;
+  }, []);
+
+  const refreshGutterPins = useCallback(() => {
+    if (mode !== "html") {
+      gutterRef.current?.replaceChildren();
+      return;
+    }
+    const wrap = previewWrapRef.current;
+    const bodyEl = previewBodyRef.current as HTMLDivElement | null;
+    const ta = textareaRef.current;
+    if (!wrap || !bodyEl || !ta) return;
+
+    const gutter = ensureGutter();
+    if (!gutter) return;
+
+    gutter.replaceChildren();
+
+    const wrapRect = wrap.getBoundingClientRect();
+    const candidates = Array.from(bodyEl.querySelectorAll<HTMLElement>("[data-char-position]"));
+
+    for (const el of candidates) {
+      const charAttr = el.getAttribute("data-char-position");
+      if (!charAttr) continue;
+
+      const rects = el.getClientRects();
+      const r = rects.length ? rects[0]! : el.getBoundingClientRect();
+      const yAbsolute = Math.round(wrap.scrollTop + (r.top - wrapRect.top) + r.height / 2);
+
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.setAttribute("data-jump-pin", "1");
+      btn.title = "この位置にジャンプ";
+      btn.setAttribute("aria-label", "この位置にジャンプ");
+      btn.textContent = "";
+
+      Object.assign(btn.style, {
+        position: "absolute",
+        left: "3px",
+        top: `${yAbsolute}px`,
+        transform: "translateY(-50%)",
+        width: "16px",
+        height: "8px",
+        borderRadius: "6px",
+        border: "1px solid #cbd5e1",
+        background: "#e2e8f0",
+        boxShadow: "0 1px 1px rgba(0,0,0,.08)",
+        padding: "0",
+        cursor: "pointer",
+        pointerEvents: "auto",
+        outline: "none",
+      } as Partial<CSSStyleDeclaration>);
+
+      btn.addEventListener("mouseenter", () => {
+        btn.style.background = "#cbd5e1";
+      });
+      btn.addEventListener("mouseleave", () => {
+        btn.style.background = "#e2e8f0";
+      });
+      btn.addEventListener("mousedown", () => {
+        btn.style.background = "#94a3b8";
+      });
+      btn.addEventListener("mouseup", () => {
+        btn.style.background = "#cbd5e1";
+      });
+
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const pos = Number(charAttr) || 0;
+        ta.focus();
+        ta.setSelectionRange(pos, pos);
+        centerTextareaCaret(ta);
+        caretRef.current = pos;
+        rebuildAnchors();
+        syncToCaret();
+        refreshGutterPins();
+      });
+
+      gutter.appendChild(btn);
+    }
+  }, [mode, ensureGutter, rebuildAnchors, syncToCaret]);
+
   const scheduleSync = useCallback(() => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
     rafRef.current = requestAnimationFrame(() => {
       rafRef.current = null;
       rebuildAnchors();
       syncToCaret();
+      refreshGutterPins();
     });
-  }, [rebuildAnchors, syncToCaret]);
+  }, [rebuildAnchors, syncToCaret, refreshGutterPins]);
 
   const resizeTextarea = useCallback(() => {
     const ta = textareaRef.current;
@@ -481,6 +607,10 @@ We live in Tokyo.
       });
       ro.observe(wrap);
       roWrapRef.current = ro;
+      const onScroll = () => refreshGutterPins();
+      wrap.addEventListener("scroll", onScroll);
+      const prevWrap = wrap;
+      return () => prevWrap.removeEventListener("scroll", onScroll);
     }
     if (bodyEl) {
       const ro2 = new ResizeObserver(() => {
@@ -489,7 +619,8 @@ We live in Tokyo.
       ro2.observe(bodyEl);
       roBodyRef.current = ro2;
     }
-  }, [activePreviewWrap, activePreviewBody, scheduleSync]);
+    return;
+  }, [activePreviewWrap, activePreviewBody, scheduleSync, refreshGutterPins]);
 
   const ensurePreviewReadyAndSync = useCallback(
     (maxTries = 120) => {
@@ -526,10 +657,13 @@ We live in Tokyo.
 
   useLayoutEffect(() => {
     resizeTextarea();
-    const onResize = () => resizeTextarea();
+    const onResize = () => {
+      resizeTextarea();
+      refreshGutterPins();
+    };
     window.addEventListener("resize", onResize);
     return () => window.removeEventListener("resize", onResize);
-  }, [resizeTextarea]);
+  }, [resizeTextarea, refreshGutterPins]);
 
   useEffect(() => {
     if (autoFocus && !didAutoFocusRef.current) {
@@ -545,8 +679,11 @@ We live in Tokyo.
   }, [autoFocus]);
 
   useEffect(() => {
-    attachObservers();
+    const cleanup = attachObservers();
     ensurePreviewReadyAndSync(120);
+    return () => {
+      cleanup?.();
+    };
   }, [attachObservers, ensurePreviewReadyAndSync]);
 
   useEffect(() => {
@@ -557,7 +694,6 @@ We live in Tokyo.
     scheduleSync();
   }, [mode, maxLen, maxHeight, useFeatured, scheduleSync]);
 
-  // cleanup: capture current ref values so cleanup doesn't read .current directly
   useEffect(() => {
     const timers = ensureTimersRef.current;
     const raf = rafRef.current;
@@ -880,7 +1016,7 @@ We live in Tokyo.
           </div>
 
           <div className="relative bg-white min-h-0 flex flex-col">
-            <div className="flex-1 overflow-y-auto" ref={previewWrapRef}>
+            <div className="relative flex-1 overflow-y-auto" ref={previewWrapRef}>
               <div className="mx-auto max-w-[85ex] w-full p-6">
                 <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
                 {mode === "html" ? (
