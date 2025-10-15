@@ -1,6 +1,14 @@
 "use client";
 
-import React, { useRef, useState, useEffect, useMemo, useLayoutEffect, useCallback, useId } from "react";
+import React, {
+  useRef,
+  useState,
+  useEffect,
+  useMemo,
+  useLayoutEffect,
+  useCallback,
+  useId,
+} from "react";
 import { makeArticleHtmlFromMarkdown } from "@/utils/article";
 import { parseBodyAndTags } from "@/utils/parse";
 import UserMentionButton from "@/components/UserMentionButton";
@@ -686,7 +694,6 @@ export default function PostForm({
     const overlay = previewHighlightOverlayRef.current;
     const band = previewHighlightBandRef.current;
     if (!wrap || !overlay || !band) return;
-
     overlay.style.position = "absolute";
     overlay.style.pointerEvents = "none";
     overlay.style.left = "0px";
@@ -694,7 +701,6 @@ export default function PostForm({
     overlay.style.width = "100%";
     overlay.style.height = "100%";
     overlay.style.zIndex = "0";
-
     const caret = Math.min(Math.max(0, caretRef.current), content.length);
     const idx = findAnchorIndex(caret);
     if (idx == null) {
@@ -702,13 +708,11 @@ export default function PostForm({
       return;
     }
     const target = anchorsRef.current[idx]!.el;
-
     const wrapRect = wrap.getBoundingClientRect();
     const getRect = (el: HTMLElement) => {
       const rects = el.getClientRects();
       return rects.length ? rects[0]! : el.getBoundingClientRect();
     };
-
     let r = getRect(target);
     if (r.height < 4 || r.width === 0) {
       const prevIdx = Math.max(0, idx - 1);
@@ -718,12 +722,11 @@ export default function PostForm({
         if (pr.height >= 4 && pr.width > 0) r = pr;
       }
     }
-
-    const topWithin = Math.round(wrap.scrollTop + (r.top - wrapRect.top));
-    const leftWithin = Math.round(r.left - wrapRect.left);
-    const width = Math.max(1, Math.round(r.width));
-    const height = Math.max(4, Math.round(r.height));
-
+    const EXPAND = 4;
+    const topWithin = Math.round(wrap.scrollTop + (r.top - wrapRect.top)) - EXPAND;
+    const leftWithin = Math.round(r.left - wrapRect.left) - EXPAND;
+    const width = Math.max(1, Math.round(r.width) + EXPAND * 2);
+    const height = Math.max(4, Math.round(r.height) + EXPAND * 2);
     band.style.display = "block";
     band.style.position = "absolute";
     band.style.background = "#eef8ff";

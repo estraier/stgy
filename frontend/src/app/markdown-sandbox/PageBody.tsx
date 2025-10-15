@@ -340,7 +340,21 @@ function computeCaretTopInTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivEleme
 }
 
 export default function MarkdownSnippetSandbox({
-  initialBody = `# ヘッダ
+  initialBody = `# サイドバイサイドエディタのデモ
+
+ここは、**Markdown**のサイドバイサイドエディタの**デモサイト**です。
+
+画面の左半分が入力フォームです。入力フォームの内容を編集すれば、その内容がMarkdownとして解釈され、AST（抽象構文木）を経てHTMLに変換され、右側の欄に描写されます。
+
+長文をエディタで書いてから、コピペして校正とレイアウト調整をするというユースケースを想定しています。よって、%%とにかく校正しやすい%%ように工夫してあります。
+
+- メニューボタンの押下で簡単にマークアップとその解除ができる。
+- 入力フォームでカーソルのある行は水色にハイライトされる。
+- その行に対応するプレビューのHTMLブロック要素がハイライトされる。
+- 入力フォームでカーソルを移すとプレビュー欄が対応要素に自動スクロールする。
+- プレビュー欄の左のツマミをクリックすると入力フォームが対応行に自動スクロールする。
+
+つまり、__入力フォームを編集すれば、自分でスクロールしなくても常にプレビュー欄でその変化を確認__できるようになっています。プレビュー欄を見ながら不具合を見つければ、__入力フォームの対応する修正箇所に簡単にジャンプ__できます。
 
 ## サブヘッダ
 
@@ -376,7 +390,7 @@ Set: http://example.com/
 
 ![これはロゴです](/data/logo-square.svg){size=small}
 
-\`\`\`sql
+\`\`\`
 コードブロック
 # これはヘッダじゃない
 - これはリストじゃない
@@ -580,10 +594,12 @@ We live in Tokyo.
     const wrapRect = wrap.getBoundingClientRect();
     const rects = target.getClientRects();
     const r = rects.length ? rects[0]! : target.getBoundingClientRect();
-    const topWithin = Math.round(wrap.scrollTop + (r.top - wrapRect.top));
-    const leftWithin = Math.round(r.left - wrapRect.left);
-    const width = Math.round(r.width);
-    const height = Math.max(1, Math.round(r.height));
+    const PREVIEW_HIGHLIGHT_EXPAND = 4;
+    const topWithin =
+      Math.round(wrap.scrollTop + (r.top - wrapRect.top)) - PREVIEW_HIGHLIGHT_EXPAND;
+    const leftWithin = Math.round(r.left - wrapRect.left) - PREVIEW_HIGHLIGHT_EXPAND;
+    const width = Math.round(r.width) + PREVIEW_HIGHLIGHT_EXPAND * 2;
+    const height = Math.max(1, Math.round(r.height)) + PREVIEW_HIGHLIGHT_EXPAND * 2;
     band.style.display = "block";
     band.style.position = "absolute";
     band.style.background = "#eef8ff";
