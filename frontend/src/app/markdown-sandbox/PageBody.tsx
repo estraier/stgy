@@ -658,15 +658,17 @@ We live in Tokyo.
     const candidates = Array.from(bodyEl.querySelectorAll<HTMLElement>("[data-char-position]"));
     for (const el of candidates) {
       const charAttr = el.getAttribute("data-char-position");
-      if (!charAttr) continue;
+      const lineAttr = el.getAttribute("data-line-position");
+      if (!charAttr || !lineAttr) continue;
       const rects = el.getClientRects();
       const r = rects.length ? rects[0]! : el.getBoundingClientRect();
       const yAbsolute = Math.round(wrap.scrollTop + (r.top - wrapRect.top) + 12);
       const btn = document.createElement("button");
       btn.type = "button";
       btn.setAttribute("data-jump-pin", "1");
-      btn.title = "Jump here";
-      btn.setAttribute("aria-label", "Jump here");
+      const jumpLabel = "Jump to line " + (parseInt(lineAttr) + 1);
+      btn.title = jumpLabel;
+      btn.setAttribute("aria-label", jumpLabel);
       btn.textContent = "";
       Object.assign(btn.style, {
         position: "absolute",

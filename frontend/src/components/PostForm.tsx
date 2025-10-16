@@ -865,7 +865,8 @@ export default function PostForm({
 
     for (const el of candidates) {
       const charAttr = el.getAttribute("data-char-position");
-      if (!charAttr) continue;
+      const lineAttr = el.getAttribute("data-line-position");
+      if (!charAttr || !lineAttr) continue;
 
       const rects = el.getClientRects();
       const r = rects.length ? rects[0] : el.getBoundingClientRect();
@@ -873,8 +874,9 @@ export default function PostForm({
       const btn = document.createElement("button");
       btn.type = "button";
       btn.setAttribute("data-jump-pin", "1");
-      btn.title = "Jump here";
-      btn.setAttribute("aria-label", "Jump here");
+      const jumpLabel = "Jump to line " + (parseInt(lineAttr) + 1);
+      btn.title = jumpLabel;
+      btn.setAttribute("aria-label", jumpLabel);
       btn.textContent = "";
 
       Object.assign(btn.style, {
