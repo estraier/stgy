@@ -632,13 +632,13 @@ We live in Tokyo.
         left: "0px",
         top: "0px",
         width: "22px",
-        height: "100%",
         pointerEvents: "none",
         background: "rgba(0,0,0,0.03)",
         zIndex: "2",
       } as Partial<CSSStyleDeclaration>);
       wrap.appendChild(gutter);
     }
+    gutter.style.height = `${wrap.scrollHeight}px`;
     return gutter;
   }, []);
 
@@ -1271,7 +1271,7 @@ We live in Tokyo.
                 className="mx-auto max-w-[85ex] w-full p-6"
                 style={{ position: "relative", zIndex: 1 }}
               >
-                <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
+                <div className="font-bold text-gray-400 text-xs mb-2">Preview</div>
                 {mode === "html" ? (
                   <div
                     ref={previewBodyRef as React.MutableRefObject<HTMLDivElement | null>}

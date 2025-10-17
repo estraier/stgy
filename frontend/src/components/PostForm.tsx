@@ -832,14 +832,13 @@ export default function PostForm({
         left: "0px",
         top: "0px",
         width: "22px",
-        height: "100%",
         pointerEvents: "none",
-        background:
-          "linear-gradient(to right, rgba(0,0,0,0.04), rgba(0,0,0,0.02) 60%, transparent 100%)",
+        background: "rgba(0,0,0,0.03)",
         zIndex: "2",
       } as Partial<CSSStyleDeclaration>);
       wrap.appendChild(gutter);
     }
+    gutter.style.height = `${wrap.scrollHeight}px`;
     return gutter;
   }, [overlayActive]);
 
