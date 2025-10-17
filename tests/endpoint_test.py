@@ -113,12 +113,25 @@ def test_ai_users():
   assert got["aiPersonality"] == create_body["aiPersonality"]
   assert isinstance(got["createdAt"], str) and len(got["createdAt"]) > 0
   assert "updatedAt" in got
-
-  # cleanup
+  chat_body = {
+    "model": "gpt-5-nano",
+    "messages": [
+      {"role": "user", "content": "Just echo back 'Hello World'."},
+    ],
+  }
+  res = requests.post(f"{BASE_URL}/ai-users/chat", json=chat_body, headers=headers, cookies=cookies)
+  if res.status_code == 501:
+    print(f"[ai_users] chat is disabled")
+  else:
+    assert res.status_code == 200, res.text
+    chat_res = res.json()
+    assert "message" in chat_res
+    message = chat_res["message"]
+    assert "content" in message
+    print(f"[ai_users] chat response: {message['content']}")
   res = requests.delete(f"{BASE_URL}/users/{ai_user_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[ai_users] cleanup user deleted")
-
   logout(session_id)
   print("[test_ai_users] OK")
 

@@ -29,6 +29,7 @@ export class Config {
   static readonly SESSION_TTL = envNum("STGY_SESSION_TTL", 60 * 60 * 24 * 7);
   static readonly TRUST_PROXY_HOPS = envNum("STGY_TRUST_PROXY_HOPS", 1);
   static readonly ID_ISSUE_WORKER_ID = envNum("STGY_ID_ISSUE_WORKER_ID", 0);
+  static readonly OPENAI_API_KEY = envStr("STGY_OPENAI_API_KEY", "");
   static readonly TEST_SIGNUP_CODE = envStr("STGY_TEST_SIGNUP_CODE", "");
   static readonly MEDIA_BUCKET_IMAGES = Config.STORAGE_S3_BUCKET_PREFIX + "-images";
   static readonly MEDIA_BUCKET_PROFILES = Config.STORAGE_S3_BUCKET_PREFIX + "-profiles";

@@ -2,7 +2,9 @@ import { Pool } from "pg";
 import { pgQuery } from "../utils/servers";
 import Redis from "ioredis";
 import { decToHex, hexToDec } from "../utils/format";
-import type { AiUser, AiUserDetail, AiUserPagination } from "../models/aiUser";
+import OpenAI from "openai";
+import { Config } from "../config";
+import type { AiUser, AiUserDetail, AiUserPagination, ChatRequest, ChatResponse } from "../models/aiUser";
 
 type RowList = {
   id: string;
@@ -26,10 +28,12 @@ type RowDetail = {
 export class AiUsersService {
   private pgPool: Pool;
   private redis: Redis;
+  private openai: OpenAI;
 
   constructor(pgPool: Pool, redis: Redis) {
     this.pgPool = pgPool;
     this.redis = redis;
+    this.openai = new OpenAI({ apiKey: Config.OPENAI_API_KEY });
   }
 
   async listAiUsers(input: AiUserPagination = {}): Promise<AiUser[]> {
@@ -54,7 +58,6 @@ export class AiUsersService {
 
   async getAiUser(id: string): Promise<AiUserDetail | null> {
     const userIdDec = hexToDec(id);
-
     const sql = `
       SELECT
         u.id,
@@ -73,30 +76,24 @@ export class AiUsersService {
         AND u.ai_model IS NOT NULL
       LIMIT 1
     `;
-
     const res = await pgQuery<RowDetail>(this.pgPool, sql, [userIdDec]);
     if (res.rowCount === 0) return null;
-
     const r = res.rows[0];
-
     const createdAtISO =
       r.created_at instanceof Date
         ? r.created_at.toISOString()
         : new Date(r.created_at as unknown as string).toISOString();
-
     const updatedAtISO = r.updated_at
       ? r.updated_at instanceof Date
         ? r.updated_at.toISOString()
         : new Date(r.updated_at as unknown as string).toISOString()
       : null;
-
     const base: AiUser = {
       id: decToHex(String(r.id)),
       nickname: r.nickname,
       isAdmin: r.is_admin,
       aiModel: r.ai_model,
     };
-
     const detail: AiUserDetail = {
       ...base,
       email: r.email,
@@ -105,7 +102,18 @@ export class AiUsersService {
       introduction: r.introduction,
       aiPersonality: r.ai_personality ?? "",
     };
-
     return detail;
+  }
+
+  async chat(req: ChatRequest): Promise<ChatResponse> {
+    const r = await this.openai.chat.completions.create({
+      model: req.model!,
+      messages: req.messages,
+    });
+    return {
+      message: {
+        content: r.choices[0]?.message?.content ?? "",
+      },
+    };
   }
 }

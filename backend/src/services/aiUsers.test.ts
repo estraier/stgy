@@ -5,6 +5,16 @@ jest.mock("../utils/servers", () => {
   return { pgQuery };
 });
 
+const mockCreate = jest.fn();
+jest.mock("openai", () => {
+  return {
+    __esModule: true,
+    default: jest.fn().mockImplementation(() => ({
+      chat: { completions: { create: mockCreate } },
+    })),
+  };
+});
+
 function normalizeSql(sql: string) {
   return sql.replace(/\s+/g, " ").trim();
 }
@@ -90,6 +100,8 @@ describe("AiUsersService", () => {
     redis = new MockRedis();
     service = new AiUsersService(pgPool as any, redis as any);
 
+    mockCreate.mockReset();
+
     pgPool.users.push(
       { id: 1000, nickname: "Human", is_admin: false, ai_model: null, updated_at: null },
       { id: 1001, nickname: "BotOne", is_admin: false, ai_model: "gpt-5-mini", updated_at: null },
@@ -173,5 +185,34 @@ describe("AiUsersService", () => {
     const hexIdUnknown = BigInt(9999).toString(16).toUpperCase();
     const detail = await service.getAiUser(hexIdUnknown);
     expect(detail).toBeNull();
+  });
+
+  test("chat: proxies to OpenAI and returns content", async () => {
+    mockCreate.mockResolvedValue({
+      choices: [{ message: { content: "Hello from model!" } }],
+    });
+
+    const res = await service.chat({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: "hi" }],
+    });
+
+    expect(res).toEqual({ message: { content: "Hello from model!" } });
+    expect(mockCreate).toHaveBeenCalledTimes(1);
+    expect(mockCreate).toHaveBeenCalledWith({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: "hi" }],
+    });
+  });
+
+  test("chat: returns empty string if provider returns no choices", async () => {
+    mockCreate.mockResolvedValue({ choices: [] });
+
+    const res = await service.chat({
+      model: "gpt-5-mini",
+      messages: [{ role: "user", content: "anything" }],
+    });
+
+    expect(res.message.content).toBe("");
   });
 });

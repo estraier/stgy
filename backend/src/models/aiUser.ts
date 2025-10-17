@@ -18,3 +18,19 @@ export type AiUserPagination = {
   limit?: number;
   order?: "asc" | "desc";
 };
+
+export type ChatMessage = {
+  role: "system" | "user" | "assistant";
+  content: string;
+};
+
+export type ChatRequest = {
+  model?: string;
+  messages: ChatMessage[];
+};
+
+export type ChatResponse = {
+  message: {
+    content: string;
+  };
+};
