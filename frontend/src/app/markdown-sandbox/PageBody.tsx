@@ -523,43 +523,48 @@ We live in Tokyo.
     wrap.scrollTop = Math.max(0, Math.min(wrap.scrollHeight - wrap.clientHeight, desired));
   }, [activePreviewWrap, content.length, findAnchor]);
 
-  const updateCaretHighlight = useCallback(() => {
-    const ta = textareaRef.current;
-    const overlay = highlightOverlayRef.current;
-    const band = highlightBandRef.current;
-    if (!ta || !overlay || !band) return;
-    overlay.style.position = "absolute";
-    overlay.style.pointerEvents = "none";
-    overlay.style.left = `${ta.offsetLeft}px`;
-    overlay.style.top = `${ta.offsetTop}px`;
-    overlay.style.width = `${ta.offsetWidth}px`;
-    overlay.style.height = `${ta.offsetHeight}px`;
-    overlay.style.zIndex = "0";
-    overlay.style.background = "#fff";
-    overlay.style.borderRadius = getComputedStyle(ta).borderRadius || "0px";
-    let mirror = caretMirrorRef.current;
-    if (!mirror) {
-      mirror = document.createElement("div");
-      caretMirrorRef.current = mirror;
-      document.body.appendChild(mirror);
-    }
-    const caretTop = computeCaretTopInTextarea(ta, mirror);
-    const visibleTop = Math.round(caretTop - ta.scrollTop);
-    const lh = Math.round(resolveLineHeight(ta));
-    const topWithin = Math.max(0, Math.min(ta.clientHeight - lh, visibleTop));
-    const cs = getComputedStyle(ta);
-    const pl = parseFloat(cs.paddingLeft || "0");
-    const pr = parseFloat(cs.paddingRight || "0");
-    const bt = parseFloat(cs.borderTopWidth || "0");
-    const bl = parseFloat(cs.borderLeftWidth || "0");
-    band.style.position = "absolute";
-    band.style.background = "#eef8ff";
-    band.style.top = `${bt + topWithin}px`;
-    band.style.left = `${bl + pl}px`;
-    band.style.height = `${lh}px`;
-    band.style.width = `${ta.clientWidth - pl - pr}px`;
-    band.style.borderRadius = "4px";
-  }, []);
+const updateCaretHighlight = useCallback(() => {
+  const ta = textareaRef.current;
+  const overlay = highlightOverlayRef.current;
+  const band = highlightBandRef.current;
+  if (!ta || !overlay || !band) return;
+  overlay.style.position = "absolute";
+  overlay.style.pointerEvents = "none";
+  overlay.style.left = `${ta.offsetLeft}px`;
+  overlay.style.top = `${ta.offsetTop}px`;
+  overlay.style.width = `${ta.offsetWidth}px`;
+  overlay.style.height = `${ta.offsetHeight}px`;
+  overlay.style.zIndex = "0";
+  overlay.style.background = "#fff";
+  overlay.style.borderRadius = getComputedStyle(ta).borderRadius || "0px";
+  let mirror = caretMirrorRef.current;
+  if (!mirror) {
+    mirror = document.createElement("div");
+    caretMirrorRef.current = mirror;
+    document.body.appendChild(mirror);
+  }
+  const caretTopAbs = computeCaretTopInTextarea(ta, mirror);
+  const visibleTop = Math.round(caretTopAbs - ta.scrollTop);
+  const lh = Math.round(resolveLineHeight(ta));
+  const inView = visibleTop >= 0 && visibleTop <= ta.clientHeight - lh;
+  if (!inView) {
+    band.style.display = "none";
+    return;
+  }
+  const cs = getComputedStyle(ta);
+  const pl = parseFloat(cs.paddingLeft || "0");
+  const pr = parseFloat(cs.paddingRight || "0");
+  const bt = parseFloat(cs.borderTopWidth || "0");
+  const bl = parseFloat(cs.borderLeftWidth || "0");
+  band.style.display = "block";
+  band.style.position = "absolute";
+  band.style.background = "#eef8ff";
+  band.style.top = `${bt + visibleTop}px`;
+  band.style.left = `${bl + pl}px`;
+  band.style.height = `${lh}px`;
+  band.style.width = `${ta.clientWidth - pl - pr}px`;
+  band.style.borderRadius = "4px";
+}, []);
 
   const scheduleHighlight = useCallback(() => {
     if (highlightRafRef.current != null) cancelAnimationFrame(highlightRafRef.current);
