@@ -908,10 +908,7 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false): string {
       const el = n as MdElementNode;
       const tex = String(el.attrs?.tex ?? "");
       const display = String(el.attrs?.["math-mode"] ?? "inline") === "display";
-      const attrs = withPos(
-        { class: display ? "math-display" : "math-inline", "data-tex": tex },
-        el,
-      );
+      const attrs = withPos({ class: display ? "math-display" : "math-inline" }, el);
       return `<code${attrsToString(attrs)}>${escapeHTML(tex)}</code>`;
     }
     if (n.type === "element" && n.tag === "omitted") return `<span class="omitted">…</span>`;
@@ -1002,9 +999,12 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false): string {
   function attrsToString(attrs?: MdAttrs): string {
     if (!attrs) return "";
     const priority: Record<string, number> = { src: 0, alt: 1 };
-    const keys = Object.keys(attrs).sort(
-      (a, b) => (priority[a] ?? 10) - (priority[b] ?? 10) || a.localeCompare(b),
-    );
+    const asciiCmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
+    const keys = Object.keys(attrs).sort((a, b) => {
+      const pa = priority[a] ?? 10;
+      const pb = priority[b] ?? 10;
+      return pa !== pb ? pa - pb : asciiCmp(a, b);
+    });
     const a: Record<string, string | number | boolean | null | undefined> = attrs;
     let out = "";
     for (const k of keys) {

@@ -641,7 +641,7 @@ describe("mdRenderHtml basics", () => {
   it("math", () => {
     const mdText = "$$E = mc^2$$ $$\\sum_{i=1}^{\\sqrt{n}}$$";
     expect(makeHtml(mdText)).toBe(
-      '<p><code class="math-inline" data-tex="E = mc^2">E = mc^2</code> <code class="math-inline" data-tex="\\sum_{i=1}^{\\sqrt{n}}">\\sum_{i=1}^{\\sqrt{n}}</code></p>',
+      '<p><code class="math-inline">E = mc^2</code> <code class="math-inline">\\sum_{i=1}^{\\sqrt{n}}</code></p>',
     );
   });
 
