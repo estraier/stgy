@@ -6,6 +6,7 @@ import AvatarImg from "@/components/AvatarImg";
 import { Heart, MessageCircle } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
 import { makeArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
+import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 
 type PostCardProps = {
   post: Post | PostDetail;
@@ -33,14 +34,13 @@ export default function PostCard({
   avatarVersion,
 }: PostCardProps) {
   const router = useRouter();
-
   const hasContent =
     "content" in post && typeof post.content === "string" && post.content.length > 0;
-  const bodyHtml =
+  const bodyHtml = convertHtmlMathInline(
     !truncated && hasContent
       ? makeArticleHtmlFromMarkdown(post.content)
-      : makeHtmlFromJsonSnippet(post.snippet);
-
+      : makeHtmlFromJsonSnippet(post.snippet),
+  );
   const isBlockedForFocusUser = !!post.isBlockingFocusUser;
 
   function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {

@@ -11,6 +11,7 @@ import React, {
 } from "react";
 import { makeArticleHtmlFromMarkdown } from "@/utils/article";
 import { parseBodyAndTags } from "@/utils/parse";
+import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import UserMentionButton from "@/components/UserMentionButton";
 import ExistingImageEmbedButton from "@/components/ExistingImageEmbedButton";
 import UploadImageEmbedButton from "@/components/UploadImageEmbedButton";
@@ -470,7 +471,7 @@ export default function PostForm({
   const overLimit = contentLengthLimit != null ? contentLength > contentLengthLimit : false;
 
   const previewHtml = useMemo(() => {
-    const html = makeArticleHtmlFromMarkdown(content, true);
+    const html = convertHtmlMathInline(makeArticleHtmlFromMarkdown(content, true));
     return (
       html +
       `<span data-char-position="${content.length}" data-no-pin="1" aria-hidden="true" style="display:block;height:1px;"></span>`
