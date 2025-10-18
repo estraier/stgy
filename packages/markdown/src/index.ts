@@ -999,12 +999,9 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false): string {
   function attrsToString(attrs?: MdAttrs): string {
     if (!attrs) return "";
     const priority: Record<string, number> = { src: 0, alt: 1 };
-    const asciiCmp = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-    const keys = Object.keys(attrs).sort((a, b) => {
-      const pa = priority[a] ?? 10;
-      const pb = priority[b] ?? 10;
-      return pa !== pb ? pa - pb : asciiCmp(a, b);
-    });
+    const keys = Object.keys(attrs).sort(
+      (a, b) => (priority[a] ?? 10) - (priority[b] ?? 10) || a.localeCompare(b),
+    );
     const a: Record<string, string | number | boolean | null | undefined> = attrs;
     let out = "";
     for (const k of keys) {
