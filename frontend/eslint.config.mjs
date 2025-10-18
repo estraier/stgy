@@ -11,6 +11,7 @@ const compat = new FlatCompat({ baseDirectory: __dirname });
 const nextConfigs = compat.extends("next/core-web-vitals", "next/typescript");
 
 export default [
+  { ignores: ["**/vendor/**"] },
   ...nextConfigs,
   {
     files: ["**/*.{ts,tsx}"],

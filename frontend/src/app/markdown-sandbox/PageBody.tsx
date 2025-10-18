@@ -25,6 +25,7 @@ import {
   mdRenderHtml,
   mdRenderText,
 } from "stgy-markdown";
+import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 
 type Mode = "html" | "text";
 
@@ -450,7 +451,7 @@ We live in Tokyo.
       nodes = mdGroupImageGrid(nodes);
       if (useFeatured) nodes = mdFilterForFeatured(nodes);
       nodes = mdCutOff(nodes, { maxLen, maxHeight });
-      return mdRenderHtml(nodes, true);
+      return convertHtmlMathInline(mdRenderHtml(nodes, true));
     },
     [maxLen, maxHeight, useFeatured],
   );

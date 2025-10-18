@@ -283,6 +283,9 @@ body {
   margin-bottom: -0.8em;
   opacity: 0.9;
 }
+.markdown-body .math-inline svg {
+  display: inline-block;
+}
 .markdown-body hr {
   clear: both;
   border: 0;
