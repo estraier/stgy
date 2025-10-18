@@ -546,9 +546,14 @@ describe("mdRenderText basics", () => {
     expect(makeText(mdText)).toBe("bold italic underline strike code mark");
   });
 
-  it("rubies", () => {
+  it("ruby", () => {
     const mdText = "{{base|ruby}} {{123 456|hop step}}";
     expect(makeText(mdText)).toBe("base(ruby) 123 456(hop step)");
+  });
+
+  it("math", () => {
+    const mdText = "$$E = mc^2$$ $$\\sum_{i=1}^{\\sqrt{n}}$$";
+    expect(makeText(mdText)).toBe("E = mc^2 \\sum_{i=1}^{\\sqrt{n}}");
   });
 
   it("links", () => {
@@ -630,6 +635,13 @@ describe("mdRenderHtml basics", () => {
     const mdText = "{{tako|ika}} {{uni **ebi**|<ikura>}}";
     expect(makeHtml(mdText)).toBe(
       "<p><ruby><rb>tako</rb><rt>ika</rt></ruby> <ruby><rb>uni <strong>ebi</strong></rb><rt>&lt;ikura&gt;</rt></ruby></p>",
+    );
+  });
+
+  it("math", () => {
+    const mdText = "$$E = mc^2$$ $$\\sum_{i=1}^{\\sqrt{n}}$$";
+    expect(makeHtml(mdText)).toBe(
+      '<p><code class="math-inline" data-tex="E = mc^2">E = mc^2</code> <code class="math-inline" data-tex="\\sum_{i=1}^{\\sqrt{n}}">\\sum_{i=1}^{\\sqrt{n}}</code></p>',
     );
   });
 
@@ -782,6 +794,7 @@ paragraph2
 > foo bar
 > __baz__
 > {{abc|def}}
+> $$E = mc^2$$
 EOF
 `;
     let nodes = parseMarkdown(mdText);
@@ -794,7 +807,7 @@ EOF
     nodes = mdGroupImageGrid(nodes);
     const serialized = serializeMdNodes(nodes);
     expect(serialized).toBe(
-      '[{"T":"p","C":[{"X":"hello world"},{"T":"br"},{"X":"fetch "},{"T":"em","X":"me"},{"X":" "},{"T":"strong","X":"my"},{"X":" "},{"T":"u","X":"hat"},{"X":"."},{"T":"br"},{"X":"line2"}]},{"T":"p","X":"paragraph2"},{"T":"h1","X":"first"},{"T":"h2","X":"second"},{"T":"h3","X":"third"},{"T":"ul","C":[{"T":"li","X":"hop step"},{"T":"li","C":[{"T":"code","X":"jump"}]}]},{"T":"table","C":[{"T":"tr","C":[{"T":"td","X":"one"},{"T":"td","X":"two"}]}]},{"T":"figure","C":[{"T":"img","SR":"/data/tako.png","FE":true},{"T":"figcaption","X":"img1"}],"CL":"image-block"},{"T":"p","C":[{"X":"!"},{"T":"a","X":"img2","HF":"/xyz/tako.jpg"},{"X":"{grid}{no-featured}"}]},{"T":"div","C":[{"T":"figure","C":[{"T":"video","SR":"/data/tako.mp4","GD":true},{"T":"figcaption","X":"video"}],"CL":"image-block"}],"CL":"image-grid","DC":1},{"T":"hr","HL":2},{"T":"blockquote","C":[{"X":"foo bar"},{"T":"br"},{"T":"u","X":"baz"},{"T":"br"},{"T":"ruby","C":[{"T":"rb","X":"abc"},{"T":"rt","X":"def"}]}]},{"T":"p","X":"EOF"}]',
+      '[{"T":"p","C":[{"X":"hello world"},{"T":"br"},{"X":"fetch "},{"T":"em","X":"me"},{"X":" "},{"T":"strong","X":"my"},{"X":" "},{"T":"u","X":"hat"},{"X":"."},{"T":"br"},{"X":"line2"}]},{"T":"p","X":"paragraph2"},{"T":"h1","X":"first"},{"T":"h2","X":"second"},{"T":"h3","X":"third"},{"T":"ul","C":[{"T":"li","X":"hop step"},{"T":"li","C":[{"T":"code","X":"jump"}]}]},{"T":"table","C":[{"T":"tr","C":[{"T":"td","X":"one"},{"T":"td","X":"two"}]}]},{"T":"figure","C":[{"T":"img","SR":"/data/tako.png","FE":true},{"T":"figcaption","X":"img1"}],"CL":"image-block"},{"T":"p","C":[{"X":"!"},{"T":"a","X":"img2","HF":"/xyz/tako.jpg"},{"X":"{grid}{no-featured}"}]},{"T":"div","C":[{"T":"figure","C":[{"T":"video","SR":"/data/tako.mp4","GD":true},{"T":"figcaption","X":"video"}],"CL":"image-block"}],"CL":"image-grid","DC":1},{"T":"hr","HL":2},{"T":"blockquote","C":[{"X":"foo bar"},{"T":"br"},{"T":"u","X":"baz"},{"T":"br"},{"T":"ruby","C":[{"T":"rb","X":"abc"},{"T":"rt","X":"def"}]},{"T":"br"},{"T":"math","A":{"tex":"E = mc^2","math-mode":"inline"}}]},{"T":"p","X":"EOF"}]',
     );
     const deserialized = deserializeMdNodes(serialized);
     expect(stripPos(deserialized)).toStrictEqual(stripPos(nodes));

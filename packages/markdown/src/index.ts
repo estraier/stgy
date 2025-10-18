@@ -791,6 +791,10 @@ export function mdRenderText(nodes: MdNode[]): string {
         }
         return s;
       }
+      case "math": {
+        const el = n as MdElementNode;
+        return String(el.attrs?.tex ?? "");
+      }
       default:
         return collectCellTextNodes(n.children || []);
     }
@@ -863,6 +867,11 @@ export function mdRenderText(nodes: MdNode[]): string {
         if (!lastChildWasUL) out.push("\n");
         return;
       }
+      case "math": {
+        const el = n as MdElementNode;
+        out.push(String(el.attrs?.tex ?? ""));
+        return;
+      }
       default: {
         for (const child of n.children || []) walk(child, depth);
         if (DOUBLE_AFTER.has(n.tag)) out.push("\n\n");
@@ -895,6 +904,16 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false): string {
   }
   function serializeOne(n: MdNode): string {
     if (n.type === "text") return escapeHTML(n.text);
+    if (n.type === "element" && n.tag === "math") {
+      const el = n as MdElementNode;
+      const tex = String(el.attrs?.tex ?? "");
+      const display = String(el.attrs?.["math-mode"] ?? "inline") === "display";
+      const attrs = withPos(
+        { class: display ? "math-display" : "math-inline", "data-tex": tex },
+        el,
+      );
+      return `<code${attrsToString(attrs)}>${escapeHTML(tex)}</code>`;
+    }
     if (n.type === "element" && n.tag === "omitted") return `<span class="omitted">…</span>`;
     if (n.type === "element" && n.tag === "br") return `<br>`;
     if (n.type === "element" && n.tag === "hr") {
@@ -1027,6 +1046,7 @@ function parseInline(text: string): MdNode[] {
   const underline = /__([^_]+)__/;
   const strike = /~~([^~]+)~~/;
   const code = /``([^`]+)``/;
+  const math = /\$\$([^\n]*?)\$\$/;
   let m: RegExpExecArray | null;
   if ((m = esc.exec(text))) {
     return [
@@ -1088,6 +1108,13 @@ function parseInline(text: string): MdNode[] {
     return [
       ...parseInline(text.slice(0, m.index)),
       { type: "element", tag: "code", children: parseInline(m[1]!) },
+      ...parseInline(text.slice(m.index + m[0]!.length)),
+    ];
+  }
+  if ((m = math.exec(text))) {
+    return [
+      ...parseInline(text.slice(0, m.index)),
+      { type: "element", tag: "math", attrs: { tex: m[1]!, "math-mode": "inline" }, children: [] },
       ...parseInline(text.slice(m.index + m[0]!.length)),
     ];
   }
