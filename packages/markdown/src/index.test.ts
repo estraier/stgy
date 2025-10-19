@@ -91,7 +91,7 @@ describe("parseMarkdown", () => {
   });
 
   it("comments", () => {
-    const mdText = "<[[\nuno\ndos\n]]>one\n<[uno]>\ntwo<[dos]>three\n";
+    const mdText = "one\n<[uno]>\ntwo<[dos]>three\n- four\n<[tres]>\n- five\n";
     const expected = [
       {
         type: "element",
@@ -108,7 +108,37 @@ describe("parseMarkdown", () => {
           },
           {
             type: "text",
-            text: "twothree",
+            text: "two",
+          },
+          {
+            type: "text",
+            text: "three",
+          },
+        ],
+      },
+      {
+        type: "element",
+        tag: "ul",
+        children: [
+          {
+            type: "element",
+            tag: "li",
+            children: [
+              {
+                type: "text",
+                text: "four",
+              },
+            ],
+          },
+          {
+            type: "element",
+            tag: "li",
+            children: [
+              {
+                type: "text",
+                text: "five",
+              },
+            ],
           },
         ],
       },

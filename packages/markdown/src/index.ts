@@ -31,9 +31,6 @@ function makeElement(
 
 export function parseMarkdown(mdText: string): MdNode[] {
   let src = mdText.replace(/\r\n/g, "\n");
-  src = src.replace(/^[ \t]*<\[[^\n]*?\]>[ \t]*(?:\n|$)/gm, "");
-  src = src.replace(/<\[\[[\s\S]*?\]\]>/g, "");
-  src = src.replace(/<\[[^\n]*?\]>/g, "");
   const lines = src.split("\n");
   const lineOffsets: number[] = [];
   {
@@ -218,6 +215,9 @@ export function parseMarkdown(mdText: string): MdNode[] {
     }
     if (inCode) {
       codeLines.push(line);
+      continue;
+    }
+    if (/^\s*<\[[^\n]*?\]>\s*$/.test(line)) {
       continue;
     }
     const toc = line.match(/^\s*<!TOC!>\s*$/);
@@ -908,11 +908,9 @@ export function mdRenderText(nodes: MdNode[]): string {
 export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: string): string {
   const sanitizeIdPrefix = (s: string) => (s || "h").replace(/[^a-zA-Z0-9_-]+/g, "-") || "h";
   const pfx = sanitizeIdPrefix(idPrefix ?? "h");
-
   const headingLevel = (tag: string): 1 | 2 | 3 | undefined =>
     tag === "h1" ? 1 : tag === "h2" ? 2 : tag === "h3" ? 3 : undefined;
 
-  // 見出しのリンクテキスト抽出（素朴）
   function headingLabelText(ns: MdNode[] | undefined): string {
     if (!ns) return "";
     let out = "";
@@ -927,7 +925,8 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
           return;
         }
         if (n.tag === "math") {
-          out += String((n.attrs as any)?.tex ?? "");
+          const el = n as MdElementNode;
+          out += String(el.attrs?.tex ?? "");
           return;
         }
         for (const c of n.children || []) walk(c);
@@ -991,7 +990,6 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
     }
   }
 
-  // ===== prepass: 見出しID付与 & TOC対象収集 =====
   const headerIdMap = new WeakMap<MdElementNode, string>();
   let countH1 = 0,
     countH2 = 0,
@@ -1043,7 +1041,6 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
     ? (Math.min(...headingsAfterToc.map((h) => h.level)) as 1 | 2 | 3)
     : null;
 
-  // ===== TOC ツリー構築（重要：h3→h2で上がる） =====
   type TocNode = { level: number; id: string; label: string; children: TocNode[] };
 
   function buildTocTree(items: HeadingInfo[]): TocNode[] {
@@ -1052,14 +1049,10 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
     const stack: TocNode[] = [root];
 
     for (const h of items) {
-      // ベースより浅くはしない
       const lvl = Math.max(baseLevel, h.level);
-
-      // ★ ここがポイント：同レベルを含めて遡る（>=）
       while (stack.length && stack[stack.length - 1].level >= lvl) {
         stack.pop();
       }
-
       const parent = stack[stack.length - 1] ?? root;
       const node: TocNode = { level: lvl, id: h.id, label: h.label, children: [] };
       parent.children.push(node);
@@ -1082,7 +1075,6 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
 
   const tocHtml = renderTocList(buildTocTree(headingsAfterToc));
 
-  // ===== serializer =====
   function serializeAll(arr: MdNode[]): string {
     let html = "";
     for (const n of arr) html += serializeOne(n);
@@ -1161,25 +1153,22 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
       )}</${(n as MdElementNode).tag}>`;
     }
 
-    // 見出し: 必ず id を付与
     if (n.type === "element") {
       const lvl = headingLevel(n.tag);
       if (lvl) {
         const el = n as MdElementNode;
-        const id = headerIdMap.get(el)!; // prepassで必ず割当済み
+        const id = headerIdMap.get(el)!;
         const attrs = withPos({ ...(el.attrs || {}), id }, el);
         return `<${el.tag}${attrsToString(attrs)}>${serializeAll(el.children || [])}</${el.tag}>`;
       }
     }
 
-    // toc: nav を生成（タイトルはここで付けたければ付ける）
     if (n.type === "element" && n.tag === "toc") {
       const el = n as MdElementNode;
       const navAttrs = withPos({ class: "toc", "aria-label": "table of contents" }, el);
       return `<nav${attrsToString(navAttrs)}>${tocHtml}</nav>`;
     }
 
-    // 既定
     const attrs = withPos((n as MdElementNode).attrs, n as MdElementNode);
     return `<${(n as MdElementNode).tag}${attrsToString(attrs)}>${serializeAll(
       (n as MdElementNode).children || [],
@@ -1209,6 +1198,7 @@ function parseInline(text: string): MdNode[] {
   const strike = /~~([^~]+)~~/;
   const code = /``([^`]+)``/;
   const math = /\$\$([^\n]*?)\$\$/;
+  const comment = /<\[[^\]]*?\]>/;
   let m: RegExpExecArray | null;
   if ((m = esc.exec(text))) {
     return [
@@ -1269,7 +1259,7 @@ function parseInline(text: string): MdNode[] {
   if ((m = code.exec(text))) {
     return [
       ...parseInline(text.slice(0, m.index)),
-      { type: "element", tag: "code", children: parseInline(m[1]!) },
+      { type: "element", tag: "code", children: [{ type: "text", text: m[1]! }] },
       ...parseInline(text.slice(m.index + m[0]!.length)),
     ];
   }
@@ -1277,6 +1267,12 @@ function parseInline(text: string): MdNode[] {
     return [
       ...parseInline(text.slice(0, m.index)),
       { type: "element", tag: "math", attrs: { tex: m[1]!, "math-mode": "inline" }, children: [] },
+      ...parseInline(text.slice(m.index + m[0]!.length)),
+    ];
+  }
+  if ((m = comment.exec(text))) {
+    return [
+      ...parseInline(text.slice(0, m.index)),
       ...parseInline(text.slice(m.index + m[0]!.length)),
     ];
   }
