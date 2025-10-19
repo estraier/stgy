@@ -1340,7 +1340,7 @@ export function deserializeMdNodes(data: string): MdNode[] {
 }
 
 function parseInline(text: string): MdNode[] {
-  const esc = /\\([\\~`*_\[\](){}#+:%\|\-\.!])/;
+  const esc = /\\([\\~`*_\[\](){}#+:%$\|\-\.!])/;
   const bold = /\*\*([^\*]+)\*\*/;
   const italic = /::([^:]+?)::/;
   const ruby = /\{\{([^|{}]+?)\|([^{}]+?)\}\}/;

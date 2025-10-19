@@ -376,14 +376,11 @@ export default function MarkdownSnippetSandbox({
 
 段落は空白で区切る。一つの段落は<p>で囲む。
 
-> ブロッククォートも**ある**とか::ない::とか。
-> こんな__感じ__で\`\`markdown\`\`は%%便利%%~~じゃない~~だ。
-
 - リスト1
   - サブリストA
     - サブサブリスト
 - リスト2。{{竜破斬|ドラグ・スレイブ}}と{{三日月型砂丘|バルハン}}
-- リスト3。$$\\int_0^{\\sqrt{N}} x^2 \\, dx = \\lim_{n \\to \\infty} \\sum_{i=1}^{n} f\\left( \\frac{i \\cdot x}{n} \\right) \\cdot \\left( \\frac{x}{n} \\right)$$
+- リスト3。$$\\int_0^{\\sqrt{N}} x^2 \\, dx = \\lim_{n \\to \\infty} \\sum_{i=1}^{n} f\\left( \\frac{i \\cdot x}{n} \\right) \\cdot \\left( \\frac{x}{n} \\right)$$ by $$\\LaTeX$$
 
 ## Go to [Google](https://google.com/) and **Yahoo**
 ## Set: http://example.com/ and __Yapoo__
@@ -397,6 +394,9 @@ export default function MarkdownSnippetSandbox({
 |=>>one=|>>**two**|three|four|><five|
 
 <[これはコメント。表示されない]>
+
+> ブロッククォートも**ある**とか::ない::とか。
+> こんな__感じ__で\`\`markdown\`\`は%%便利%%~~じゃない~~だ。
 
 ![これはロゴです](/data/logo-square.svg){size=small}
 
