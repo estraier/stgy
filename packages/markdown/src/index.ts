@@ -30,7 +30,10 @@ function makeElement(
 }
 
 export function parseMarkdown(mdText: string): MdNode[] {
-  const src = mdText.replace(/\r\n/g, "\n");
+  let src = mdText.replace(/\r\n/g, "\n");
+  src = src.replace(/^[ \t]*<\[[^\n]*?\]>[ \t]*(?:\n|$)/gm, "");
+  src = src.replace(/<\[\[[\s\S]*?\]\]>/g, "");
+  src = src.replace(/<\[[^\n]*?\]>/g, "");
   const lines = src.split("\n");
   const lineOffsets: number[] = [];
   {

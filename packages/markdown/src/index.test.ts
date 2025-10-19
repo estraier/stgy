@@ -89,6 +89,32 @@ describe("parseMarkdown", () => {
     ];
     expect(stripPos(parseMarkdown(mdText))).toStrictEqual(expected);
   });
+
+  it("comments", () => {
+    const mdText = "<[[\nuno\ndos\n]]>one\n<[uno]>\ntwo<[dos]>three\n";
+    const expected = [
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "one"
+          },
+          {
+            type: "element",
+            tag: "br",
+            children: []
+          },
+          {
+            type: "text",
+            text: "twothree"
+          }
+        ],
+      }
+    ]
+    expect(stripPos(parseMarkdown(mdText))).toStrictEqual(expected);
+  });
 });
 
 describe("mdGroupImageGrid", () => {
