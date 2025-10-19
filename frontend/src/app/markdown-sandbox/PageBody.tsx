@@ -377,11 +377,8 @@ export default function MarkdownSnippetSandbox({
 - リスト2。{{竜破斬|ドラグ・スレイブ}}と{{三日月型砂丘|バルハン}}
 - リスト3。$$\\int_0^{\\sqrt{N}} x^2 \\, dx = \\lim_{n \\to \\infty} \\sum_{i=1}^{n} f\\left( \\frac{i \\cdot x}{n} \\right) \\cdot \\left( \\frac{x}{n} \\right)$$
 
-Go to [Google](https://google.com/).
-Set: http://example.com/
-
-### Go to [Google](https://google.com/) and **Yahoo**
-### Set: http://example.com/ and __Yapoo__
+## Go to [Google](https://google.com/) and **Yahoo**
+## Set: http://example.com/ and __Yapoo__
 
 - Go to [Google](https://google.com/) and **Yahoo**
   - Set: http://example.com/ and __Yapoo__
