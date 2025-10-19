@@ -284,15 +284,6 @@ function resolveLineHeight(ta: HTMLTextAreaElement) {
   const v = parseFloat(lh);
   return Number.isFinite(v) ? v : 20;
 }
-function centerTextareaCaret(ta: HTMLTextAreaElement) {
-  const lineHeight = resolveLineHeight(ta);
-  const len = Math.max(1, ta.value.length);
-  const caret = ta.selectionStart ?? 0;
-  const approxY = (caret / len) * (ta.scrollHeight - lineHeight);
-  const desired = Math.max(0, approxY - (ta.clientHeight - lineHeight) / 2);
-  const maxScroll = Math.max(0, ta.scrollHeight - ta.clientHeight);
-  ta.scrollTop = Math.min(maxScroll, desired);
-}
 
 function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement) {
   const cs = getComputedStyle(ta);
