@@ -70,7 +70,8 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       if (!modelToUse) return res.status(400).json({ error: "model is required" });
     } else {
       if (body.model) return res.status(403).json({ error: "model override not allowed" });
-      if (loginUser.aiModel) return res.status(403).json({ error: "no model configured for this user" });
+      if (loginUser.aiModel)
+        return res.status(403).json({ error: "no model configured for this user" });
       modelToUse = loginUser.aiModel ?? "";
     }
     if (!Array.isArray(body.messages) || body.messages.length === 0) {

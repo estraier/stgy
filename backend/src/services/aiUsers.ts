@@ -4,7 +4,13 @@ import Redis from "ioredis";
 import { decToHex, hexToDec } from "../utils/format";
 import OpenAI from "openai";
 import { Config } from "../config";
-import type { AiUser, AiUserDetail, AiUserPagination, ChatRequest, ChatResponse } from "../models/aiUser";
+import type {
+  AiUser,
+  AiUserDetail,
+  AiUserPagination,
+  ChatRequest,
+  ChatResponse,
+} from "../models/aiUser";
 
 type RowList = {
   id: string;

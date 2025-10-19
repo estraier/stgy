@@ -99,20 +99,20 @@ describe("parseMarkdown", () => {
         children: [
           {
             type: "text",
-            text: "one"
+            text: "one",
           },
           {
             type: "element",
             tag: "br",
-            children: []
+            children: [],
           },
           {
             type: "text",
-            text: "twothree"
-          }
+            text: "twothree",
+          },
         ],
-      }
-    ]
+      },
+    ];
     expect(stripPos(parseMarkdown(mdText))).toStrictEqual(expected);
   });
 });
@@ -534,8 +534,8 @@ describe("mdCutOff", () => {
         children: [
           {
             type: "text",
-            text: "abc"
-          }
+            text: "abc",
+          },
         ],
       },
       {
@@ -544,10 +544,10 @@ describe("mdCutOff", () => {
         children: [
           {
             type: "text",
-            text: "def"
-          }
+            text: "def",
+          },
         ],
-      }
+      },
     ];
     expect(stripPos(mdCutOff(parseMarkdown(mdText), { maxLen: 100 }))).toStrictEqual(expected);
   });
@@ -633,17 +633,17 @@ describe("mdRenderHtml basics", () => {
 
   it("header 1", () => {
     const mdText = "# hello world";
-    expect(makeHtml(mdText)).toBe("<h1 id=\"h-1\">hello world</h1>");
+    expect(makeHtml(mdText)).toBe('<h1 id="h-1">hello world</h1>');
   });
 
   it("header 2", () => {
     const mdText = "## hello world";
-    expect(makeHtml(mdText)).toBe("<h2 id=\"h-0-1\">hello world</h2>");
+    expect(makeHtml(mdText)).toBe('<h2 id="h-0-1">hello world</h2>');
   });
 
   it("header 3", () => {
     const mdText = "### hello world";
-    expect(makeHtml(mdText)).toBe("<h3 id=\"h-0-0-1\">hello world</h3>");
+    expect(makeHtml(mdText)).toBe('<h3 id="h-0-0-1">hello world</h3>');
   });
 
   it("escape characters", () => {
@@ -716,8 +716,10 @@ describe("mdRenderHtml basics", () => {
   });
 
   it("toc", () => {
-    const mdText = "# h1\n<!TOC!>\n## h2\n### h3\n### h2\n";
-    expect(makeHtml(mdText)).toBe("<h1 id=\"h-1\">h1</h1><nav aria-label=\"table of contents\" class=\"toc\"><ul><li><a href=\"#h-1-1\">h2</a><ul><li><a href=\"#h-1-1-1\">h3</a></li><li><a href=\"#h-1-1-2\">h2</a></li></ul></li></ul></nav><h2 id=\"h-1-1\">h2</h2><h3 id=\"h-1-1-1\">h3</h3><h3 id=\"h-1-1-2\">h2</h3>");
+    const mdText = "# h1\n<!TOC!>\n## h2\n### h3\n### h3\n## h2\n";
+    expect(makeHtml(mdText)).toBe(
+      '<h1 id="h-1">h1</h1><nav aria-label="table of contents" class="toc"><ul><li><a href="#h-1-1">h2</a><ul><li><a href="#h-1-1-1">h3</a></li><li><a href="#h-1-1-2">h3</a></li></ul></li><li><a href="#h-1-2">h2</a></li></ul></nav><h2 id="h-1-1">h2</h2><h3 id="h-1-1-1">h3</h3><h3 id="h-1-1-2">h3</h3><h2 id="h-1-2">h2</h2>',
+    );
   });
 });
 

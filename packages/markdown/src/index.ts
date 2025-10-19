@@ -905,15 +905,14 @@ export function mdRenderText(nodes: MdNode[]): string {
     .trim();
 }
 
-export function mdRenderHtml(
-  nodes: MdNode[],
-  usePosAttrs = false,
-  idPrefix?: string,
-): string {
+export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: string): string {
   const sanitizeIdPrefix = (s: string) => (s || "h").replace(/[^a-zA-Z0-9_-]+/g, "-") || "h";
   const pfx = sanitizeIdPrefix(idPrefix ?? "h");
+
   const headingLevel = (tag: string): 1 | 2 | 3 | undefined =>
     tag === "h1" ? 1 : tag === "h2" ? 2 : tag === "h3" ? 3 : undefined;
+
+  // 見出しのリンクテキスト抽出（素朴）
   function headingLabelText(ns: MdNode[] | undefined): string {
     if (!ns) return "";
     let out = "";
@@ -928,8 +927,7 @@ export function mdRenderHtml(
           return;
         }
         if (n.tag === "math") {
-          const el = n as MdElementNode;
-          out += String(el.attrs?.tex ?? "");
+          out += String((n.attrs as any)?.tex ?? "");
           return;
         }
         for (const c of n.children || []) walk(c);
@@ -938,6 +936,7 @@ export function mdRenderHtml(
     for (const n of ns) walk(n);
     return out.replace(/\s+/g, " ").trim();
   }
+
   function withPos(attrs: MdAttrs | undefined, node: MdElementNode): MdAttrs {
     const out: MdAttrs = { ...(attrs || {}) };
     if (usePosAttrs) {
@@ -991,17 +990,25 @@ export function mdRenderHtml(
       return `<video${attrsToString(base)}></video>`;
     }
   }
+
+  // ===== prepass: 見出しID付与 & TOC対象収集 =====
   const headerIdMap = new WeakMap<MdElementNode, string>();
-  let countH1 = 0, countH2 = 0, countH3 = 0;
+  let countH1 = 0,
+    countH2 = 0,
+    countH3 = 0;
   let seenFirstToc = false;
+
   type HeadingInfo = { level: 1 | 2 | 3; node: MdElementNode; id: string; label: string };
   const headingsAfterToc: HeadingInfo[] = [];
+
   function prewalk(arr: MdNode[]) {
     for (const n of arr) {
       if (n.type !== "element") continue;
+
       if (n.tag === "toc") {
         if (!seenFirstToc) seenFirstToc = true;
       }
+
       const lvl = headingLevel(n.tag);
       if (lvl) {
         let id: string;
@@ -1031,43 +1038,60 @@ export function mdRenderHtml(
     }
   }
   prewalk(nodes);
-  const baseLevel: 1 | 2 | 3 | null =
-    headingsAfterToc.length > 0
-      ? (Math.min(...headingsAfterToc.map((h) => h.level)) as 1 | 2 | 3)
-      : null;
-  type TocNode = { level: 1 | 2 | 3; id: string; label: string; children: TocNode[] };
+
+  const baseLevel: 1 | 2 | 3 | null = headingsAfterToc.length
+    ? (Math.min(...headingsAfterToc.map((h) => h.level)) as 1 | 2 | 3)
+    : null;
+
+  // ===== TOC ツリー構築（重要：h3→h2で上がる） =====
+  type TocNode = { level: number; id: string; label: string; children: TocNode[] };
+
   function buildTocTree(items: HeadingInfo[]): TocNode[] {
-    if (items.length === 0 || baseLevel === null) return [];
-    const root: TocNode = { level: (baseLevel - 1) as 1 | 2 | 3, id: "", label: "", children: [] };
+    if (!items.length || baseLevel === null) return [];
+    const root: TocNode = { level: baseLevel - 1, id: "", label: "", children: [] };
     const stack: TocNode[] = [root];
+
     for (const h of items) {
-      const lvl = (h.level < baseLevel ? baseLevel : h.level) as 1 | 2 | 3;
-      while (stack.length && stack[stack.length - 1]!.level >= lvl) stack.pop();
+      // ベースより浅くはしない
+      const lvl = Math.max(baseLevel, h.level);
+
+      // ★ ここがポイント：同レベルを含めて遡る（>=）
+      while (stack.length && stack[stack.length - 1].level >= lvl) {
+        stack.pop();
+      }
+
+      const parent = stack[stack.length - 1] ?? root;
       const node: TocNode = { level: lvl, id: h.id, label: h.label, children: [] };
-      stack[stack.length - 1]!.children.push(node);
+      parent.children.push(node);
       stack.push(node);
     }
     return root.children;
   }
+
   function renderTocList(items: TocNode[]): string {
-    if (items.length === 0) return "<ul></ul>";
+    if (!items.length) return "<ul></ul>";
     let html = "<ul>";
     for (const it of items) {
       html += `<li><a href="#${escapeHTML(it.id)}">${escapeHTML(it.label)}</a>`;
       if (it.children.length) html += renderTocList(it.children);
-      html += `</li>`;
+      html += "</li>";
     }
     html += "</ul>";
     return html;
   }
-  const tocHtml = (() => renderTocList(buildTocTree(headingsAfterToc)))();
+
+  const tocHtml = renderTocList(buildTocTree(headingsAfterToc));
+
+  // ===== serializer =====
   function serializeAll(arr: MdNode[]): string {
     let html = "";
     for (const n of arr) html += serializeOne(n);
     return html;
   }
+
   function serializeOne(n: MdNode): string {
     if (n.type === "text") return escapeHTML(n.text);
+
     if (n.type === "element" && n.tag === "math") {
       const el = n as MdElementNode;
       const tex = String(el.attrs?.tex ?? "");
@@ -1077,6 +1101,7 @@ export function mdRenderHtml(
     }
     if (n.type === "element" && n.tag === "omitted") return `<span class="omitted">…</span>`;
     if (n.type === "element" && n.tag === "br") return `<br>`;
+
     if (n.type === "element" && n.tag === "hr") {
       const a = n.attrs || {};
       let attrs: MdAttrs = { ...a };
@@ -1089,6 +1114,7 @@ export function mdRenderHtml(
       attrs = withPos(attrs, n as MdElementNode);
       return `<hr${attrsToString(attrs)}>`;
     }
+
     if (n.type === "element" && n.tag === "pre") {
       const a = n.attrs || {};
       let attrs: MdAttrs = { ...a };
@@ -1101,6 +1127,7 @@ export function mdRenderHtml(
       attrs = withPos(attrs, n as MdElementNode);
       return `<pre${attrsToString(attrs)}>${serializeAll(n.children || [])}</pre>`;
     }
+
     if (n.type === "element" && n.tag === "figure") {
       const media = (n.children || []).find(isMediaElement);
       const figBase = n.attrs || {};
@@ -1116,7 +1143,9 @@ export function mdRenderHtml(
       }
       return `<figure${attrsToString(figAttrs)}>${inner}</figure>`;
     }
+
     if (n.type === "element" && isMediaElement(n)) return serializeMedia(n as MdMediaElement);
+
     if (n.type === "element" && (n.tag === "td" || n.tag === "th")) {
       let attrs: MdAttrs = { ...(n as MdElementNode).attrs };
       const rec = attrs as Record<string, string | number | boolean | undefined>;
@@ -1131,25 +1160,32 @@ export function mdRenderHtml(
         (n as MdElementNode).children || [],
       )}</${(n as MdElementNode).tag}>`;
     }
+
+    // 見出し: 必ず id を付与
     if (n.type === "element") {
       const lvl = headingLevel(n.tag);
       if (lvl) {
         const el = n as MdElementNode;
-        const id = headerIdMap.get(el)!;
+        const id = headerIdMap.get(el)!; // prepassで必ず割当済み
         const attrs = withPos({ ...(el.attrs || {}), id }, el);
         return `<${el.tag}${attrsToString(attrs)}>${serializeAll(el.children || [])}</${el.tag}>`;
       }
     }
+
+    // toc: nav を生成（タイトルはここで付けたければ付ける）
     if (n.type === "element" && n.tag === "toc") {
       const el = n as MdElementNode;
       const navAttrs = withPos({ class: "toc", "aria-label": "table of contents" }, el);
       return `<nav${attrsToString(navAttrs)}>${tocHtml}</nav>`;
     }
+
+    // 既定
     const attrs = withPos((n as MdElementNode).attrs, n as MdElementNode);
     return `<${(n as MdElementNode).tag}${attrsToString(attrs)}>${serializeAll(
       (n as MdElementNode).children || [],
     )}</${(n as MdElementNode).tag}>`;
   }
+
   return serializeAll(nodes);
 }
 
