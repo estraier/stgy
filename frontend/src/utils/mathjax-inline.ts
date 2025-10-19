@@ -1,5 +1,3 @@
-// utils/mathjax-inline.ts
-
 let mjLoadPromise: Promise<void> | null = null;
 
 type MathJaxAPI = {
@@ -61,7 +59,6 @@ function patchDomInline(container: Element, MJ: MathJaxAPI): void {
       sr.style.padding = "0";
       sr.style.margin = "-1px";
       sr.style.overflow = "hidden";
-      // @ts-expect-error legacy clip syntax for maximum compatibility
       sr.style.clip = "rect(0, 0, 0, 0)";
       sr.style.whiteSpace = "nowrap";
       sr.style.border = "0";
@@ -76,9 +73,7 @@ function patchDomInline(container: Element, MJ: MathJaxAPI): void {
 
       codeEl.replaceWith(span);
       span.insertAdjacentElement("afterend", sr);
-    } catch {
-      /* noop */
-    }
+    } catch {}
   });
 }
 
