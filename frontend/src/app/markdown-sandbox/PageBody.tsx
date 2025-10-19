@@ -667,6 +667,22 @@ We live in Tokyo.
     return gutter;
   }, []);
 
+  const centerCaretAtRatio = useCallback((ta: HTMLTextAreaElement, ratio = 0.4) => {
+    let mirror = caretMirrorRef.current;
+    if (!mirror) {
+      mirror = document.createElement("div");
+      caretMirrorRef.current = mirror;
+      document.body.appendChild(mirror);
+    }
+    const caretTopAbs = computeCaretTopInTextarea(ta, mirror);
+    const visibleTop = caretTopAbs - ta.scrollTop;
+    const lh = resolveLineHeight(ta);
+    const target = Math.max(0, ta.clientHeight * ratio - lh * 0.5);
+    const delta = visibleTop - target;
+    const maxScroll = Math.max(0, ta.scrollHeight - ta.clientHeight);
+    ta.scrollTop = Math.min(maxScroll, Math.max(0, ta.scrollTop + delta));
+  }, []);
+
   const refreshGutterPins = useCallback(() => {
     if (mode !== "html") {
       gutterRef.current?.replaceChildren();
@@ -729,7 +745,7 @@ We live in Tokyo.
         const pos = Number(charAttr) || 0;
         ta.focus();
         ta.setSelectionRange(pos, pos);
-        centerTextareaCaret(ta);
+        centerCaretAtRatio(ta, 0.4);
         caretRef.current = pos;
         rebuildAnchors();
         syncToCaret();
@@ -746,6 +762,7 @@ We live in Tokyo.
     syncToCaret,
     scheduleHighlight,
     schedulePreviewHighlight,
+    centerCaretAtRatio,
   ]);
 
   const scheduleSync = useCallback(() => {
@@ -1106,7 +1123,7 @@ We live in Tokyo.
 
         <div className="grid grid-cols-2 gap-0 flex-1 min-h-0">
           <div className="relative border-r min-h-0 flex flex-col">
-            <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 w-full">
+            <div className="sticky top-0 z-10 bg白/80 backdrop-blur-sm border-b border-gray-200 w-full">
               <div className="px-1.5 py-1 flex items-center gap-1 bg-[#eee]">
                 <button
                   type="button"

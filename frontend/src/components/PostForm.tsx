@@ -754,8 +754,8 @@ export default function PostForm({
     let mirror = caretMirrorRef.current;
     if (!mirror) {
       mirror = document.createElement("div");
-      caretMirrorRef.current = mirror;
     }
+    caretMirrorRef.current = mirror;
     buildMirrorFromTextarea(ta, mirror);
     const pos = Math.max(0, Math.min(ta.value.length, ta.selectionStart ?? 0));
     const before = ta.value.slice(0, pos);
@@ -829,7 +829,9 @@ export default function PostForm({
     const wrap = overlayWrapRef.current;
     if (!wrap) return null;
     let gutter = gutterRef.current;
-    if (!gutter) {
+    const needNew = !gutter;
+    const needReparent = !!gutter && (gutter.parentElement !== wrap || !gutter.isConnected);
+    if (needNew) {
       gutter = document.createElement("div");
       gutterRef.current = gutter;
       gutter.setAttribute("data-gutter", "1");
@@ -842,11 +844,24 @@ export default function PostForm({
         background: "rgba(0,0,0,0.03)",
         zIndex: "2",
       } as Partial<CSSStyleDeclaration>);
-      wrap.appendChild(gutter);
     }
-    gutter.style.height = `${wrap.scrollHeight}px`;
-    return gutter;
+    if (needNew || needReparent) {
+      wrap.appendChild(gutter!);
+    }
+    gutter!.style.height = `${wrap.scrollHeight}px`;
+    return gutter!;
   }, [overlayActive]);
+
+  const centerCaretAtRatio = useCallback(
+    (ta: HTMLTextAreaElement, ratio = 0.4) => {
+      const { topWithin, lineHeight } = computeCaretTopWithinTextarea(ta);
+      const target = Math.max(0, ta.clientHeight * ratio - lineHeight * 0.5);
+      const delta = topWithin - target;
+      const maxScroll = Math.max(0, ta.scrollHeight - ta.clientHeight);
+      ta.scrollTop = Math.min(maxScroll, Math.max(0, ta.scrollTop + delta));
+    },
+    [computeCaretTopWithinTextarea],
+  );
 
   const refreshGutterPins = useCallback(() => {
     if (!overlayActive || !showPreview) {
@@ -920,7 +935,7 @@ export default function PostForm({
         const pos = Number(charAttr) || 0;
         ta.focus();
         ta.setSelectionRange(pos, pos);
-        centerTextareaCaret(ta);
+        centerCaretAtRatio(ta, 0.4);
         caretRef.current = pos;
         rebuildAnchors();
         const did = syncToCaret();
@@ -940,6 +955,7 @@ export default function PostForm({
     syncToCaret,
     schedulePreviewHighlight,
     scheduleEditorHighlight,
+    centerCaretAtRatio,
   ]);
 
   const scheduleSync = useCallback(() => {
@@ -1528,7 +1544,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actRuby}
                 title="Ruby"
-                className="hidden md:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
+                className="hidden md:inline-flex h-6 w-7 items-center justify中心 rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <RubyIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Ruby</span>
@@ -1807,7 +1823,7 @@ export default function PostForm({
                         type="button"
                         onMouseDown={actPrefix("> ")}
                         title="Quote"
-                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                        className="hidden xl:inline-flex h-6 w-7 items-center justify中心 rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
                       >
                         <QuoteIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Quote</span>
@@ -1843,7 +1859,7 @@ export default function PostForm({
                         type="button"
                         onMouseDown={actInline("__")}
                         title="Underline"
-                        className="hidden xl:inline-flex h-6 w-7 items中心 justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
                       >
                         <UnderlineIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Underline</span>
@@ -2040,7 +2056,7 @@ export default function PostForm({
                       form={formId}
                       className={
                         isEdit && deletable && body.trim() === ""
-                          ? "bg-red-500 text白 hover:bg-red-600 px-4 py-1 rounded cursor-pointer ml-auto"
+                          ? "bg-red-500 text-white hover:bg-red-600 px-4 py-1 rounded cursor-pointer ml-auto"
                           : "bg-blue-500 text-white hover:bg-blue-600 px-4 py-1 rounded cursor-pointer ml-auto disabled:opacity-50 disabled:cursor-not-allowed"
                       }
                       disabled={submitting || overLimit}
@@ -2060,7 +2076,7 @@ export default function PostForm({
               <div className="relative bg-[#eee] min-h-0 flex flex-col">
                 <button
                   type="button"
-                  className="absolute right-3 top-3 rounded p-1 bg白 border shadow"
+                  className="absolute right-3 top-3 rounded p-1 bg-white border shadow"
                   onClick={() => {
                     const ta = overlayTextareaRef.current;
                     const s = ta ? (ta.selectionStart ?? selStartRef.current) : selStartRef.current;
