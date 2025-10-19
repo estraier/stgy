@@ -389,6 +389,8 @@ Set: http://example.com/
 |=I and Nancy=|__live__|><in|{rowspan=2}**Tokyo**|{colspan=2}[Shinjuku](https://ja.wikipedia.org/wiki/%E6%96%B0%E5%AE%BF)|
 |=>>one=|>>**two**|three|four|><five|
 
+<[これはコメント。表示されない]>
+
 ![これはロゴです](/data/logo-square.svg){size=small}
 
 \`\`\`
@@ -450,7 +452,9 @@ We live in Tokyo.
       let nodes = parseMarkdown(md);
       nodes = mdGroupImageGrid(nodes);
       if (useFeatured) nodes = mdFilterForFeatured(nodes);
-      nodes = mdCutOff(nodes, { maxLen, maxHeight });
+      if (maxLen || maxHeight) {
+        nodes = mdCutOff(nodes, { maxLen, maxHeight });
+      }
       return convertHtmlMathInline(mdRenderHtml(nodes, true));
     },
     [maxLen, maxHeight, useFeatured],

@@ -220,6 +220,15 @@ export function parseMarkdown(mdText: string): MdNode[] {
       codeLines.push(line);
       continue;
     }
+    const toc = line.match(/^\s*<!TOC!>\s*$/);
+    if (toc) {
+      flushPara();
+      flushList();
+      flushTable();
+      flushQuote();
+      nodes.push(makeElement("toc", [], undefined, i, lineCharStart));
+      continue;
+    }
     const hr = line.match(/^-{3,}$/);
     if (hr) {
       flushPara();
@@ -660,6 +669,9 @@ export function mdCutOff(
       return { ...n, text };
     }
     const el = n as MdElementNode;
+    if (el.tag === "toc") {
+      return null;
+    }
     if (el.tag === "br") {
       if (!freeText) {
         if (!bumpHeight(1)) {
@@ -775,6 +787,8 @@ export function mdRenderText(nodes: MdNode[]): string {
   function collectCellText(n: MdNode): string {
     if (n.type === "text") return n.text;
     switch (n.tag) {
+      case "toc":
+        return "";
       case "br":
         return "\n";
       case "omitted":
@@ -891,7 +905,39 @@ export function mdRenderText(nodes: MdNode[]): string {
     .trim();
 }
 
-export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false): string {
+export function mdRenderHtml(
+  nodes: MdNode[],
+  usePosAttrs = false,
+  idPrefix?: string,
+): string {
+  const sanitizeIdPrefix = (s: string) => (s || "h").replace(/[^a-zA-Z0-9_-]+/g, "-") || "h";
+  const pfx = sanitizeIdPrefix(idPrefix ?? "h");
+  const headingLevel = (tag: string): 1 | 2 | 3 | undefined =>
+    tag === "h1" ? 1 : tag === "h2" ? 2 : tag === "h3" ? 3 : undefined;
+  function headingLabelText(ns: MdNode[] | undefined): string {
+    if (!ns) return "";
+    let out = "";
+    const walk = (n: MdNode) => {
+      if (n.type === "text") {
+        out += n.text;
+        return;
+      }
+      if (n.type === "element") {
+        if (n.tag === "br") {
+          out += " ";
+          return;
+        }
+        if (n.tag === "math") {
+          const el = n as MdElementNode;
+          out += String(el.attrs?.tex ?? "");
+          return;
+        }
+        for (const c of n.children || []) walk(c);
+      }
+    };
+    for (const n of ns) walk(n);
+    return out.replace(/\s+/g, " ").trim();
+  }
   function withPos(attrs: MdAttrs | undefined, node: MdElementNode): MdAttrs {
     const out: MdAttrs = { ...(attrs || {}) };
     if (usePosAttrs) {
@@ -899,105 +945,6 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false): string {
       if (typeof node.linePosition === "number") out["data-line-position"] = node.linePosition;
     }
     return out;
-  }
-  function serializeAll(arr: MdNode[]): string {
-    let html = "";
-    for (const n of arr) html += serializeOne(n);
-    return html;
-  }
-  function serializeOne(n: MdNode): string {
-    if (n.type === "text") return escapeHTML(n.text);
-    if (n.type === "element" && n.tag === "math") {
-      const el = n as MdElementNode;
-      const tex = String(el.attrs?.tex ?? "");
-      const display = String(el.attrs?.["math-mode"] ?? "inline") === "display";
-      const attrs = withPos({ class: display ? "math-display" : "math-inline" }, el);
-      return `<code${attrsToString(attrs)}>${escapeHTML(tex)}</code>`;
-    }
-    if (n.type === "element" && n.tag === "omitted") return `<span class="omitted">…</span>`;
-    if (n.type === "element" && n.tag === "br") return `<br>`;
-    if (n.type === "element" && n.tag === "hr") {
-      const a = n.attrs || {};
-      let attrs: MdAttrs = { ...a };
-      {
-        const rec = attrs as Record<string, string | number | boolean | undefined>;
-        const v = rec["hr-level"];
-        if (v !== undefined) {
-          delete rec["hr-level"];
-          rec["data-hr-level"] = v;
-        }
-      }
-      attrs = withPos(attrs, n as MdElementNode);
-      return `<hr${attrsToString(attrs)}>`;
-    }
-    if (n.type === "element" && n.tag === "pre") {
-      const a = n.attrs || {};
-      let attrs: MdAttrs = { ...a };
-      {
-        const rec = attrs as Record<string, string | number | boolean | undefined>;
-        const v = rec["pre-mode"];
-        if (v !== undefined) {
-          delete rec["pre-mode"];
-          rec["data-pre-mode"] = v;
-        }
-      }
-      attrs = withPos(attrs, n as MdElementNode);
-      return `<pre${attrsToString(attrs)}>${serializeAll(n.children || [])}</pre>`;
-    }
-    if (n.type === "element" && n.tag === "figure") {
-      const media = (n.children || []).find(isMediaElement);
-      const figBase = n.attrs || {};
-      const figExtra = media ? mediaDataAttrs(media.attrs || {}) : {};
-      let figAttrs: MdAttrs = { ...figBase, ...figExtra };
-      figAttrs = withPos(figAttrs, n as MdElementNode);
-      let inner = "";
-      for (const c of n.children || []) {
-        if (c.type === "element" && isMediaElement(c)) inner += serializeMedia(c);
-        else if (c.type === "element" && c.tag === "figcaption")
-          inner += `<figcaption>${serializeAll(c.children || [])}</figcaption>`;
-        else inner += serializeOne(c);
-      }
-      return `<figure${attrsToString(figAttrs)}>${inner}</figure>`;
-    }
-    if (n.type === "element" && isMediaElement(n)) return serializeMedia(n as MdMediaElement);
-    if (n.type === "element" && (n.tag === "td" || n.tag === "th")) {
-      let attrs: MdAttrs = { ...(n as MdElementNode).attrs };
-      const rec = attrs as Record<string, string | number | boolean | undefined>;
-      const alignRaw = rec["align"];
-      if (alignRaw === "right" || alignRaw === "center") {
-        delete rec["align"];
-        const cur = typeof rec["class"] === "string" ? (rec["class"] as string) : "";
-        rec["class"] = cur ? `${cur} align-${alignRaw}` : `align-${alignRaw}`;
-      }
-      attrs = withPos(attrs, n as MdElementNode);
-      return `<${(n as MdElementNode).tag}${attrsToString(attrs)}>${serializeAll(
-        (n as MdElementNode).children || [],
-      )}</${(n as MdElementNode).tag}>`;
-    }
-    const attrs = withPos((n as MdElementNode).attrs, n as MdElementNode);
-    return `<${(n as MdElementNode).tag}${attrsToString(attrs)}>${serializeAll(
-      (n as MdElementNode).children || [],
-    )}</${(n as MdElementNode).tag}>`;
-  }
-  function serializeMedia(n: MdMediaElement): string {
-    const a = n.attrs || {};
-    const src = a.src ? String(srcSanitize(a.src)) : "";
-    if (n.tag === "img") {
-      const base: MdAttrs = withPos(
-        { src, alt: "", loading: "lazy", decoding: "async" },
-        n as MdElementNode,
-      );
-      return `<img${attrsToString(base)}>`;
-    } else {
-      const base: MdAttrs = withPos(
-        { src, "aria-label": "" as const, controls: true },
-        n as MdElementNode,
-      );
-      return `<video${attrsToString(base)}></video>`;
-    }
-  }
-  function srcSanitize(v: string | number | boolean): string {
-    return typeof v === "string" ? v : String(v);
   }
   function attrsToString(attrs?: MdAttrs): string {
     if (!attrs) return "";
@@ -1023,6 +970,185 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false): string {
       out[dataName] = v === true ? true : String(v);
     }
     return out;
+  }
+  function srcSanitize(v: string | number | boolean): string {
+    return typeof v === "string" ? v : String(v);
+  }
+  function serializeMedia(n: MdMediaElement): string {
+    const a = n.attrs || {};
+    const src = a.src ? String(srcSanitize(a.src)) : "";
+    if (n.tag === "img") {
+      const base: MdAttrs = withPos(
+        { src, alt: "", loading: "lazy", decoding: "async" },
+        n as MdElementNode,
+      );
+      return `<img${attrsToString(base)}>`;
+    } else {
+      const base: MdAttrs = withPos(
+        { src, "aria-label": "" as const, controls: true },
+        n as MdElementNode,
+      );
+      return `<video${attrsToString(base)}></video>`;
+    }
+  }
+  const headerIdMap = new WeakMap<MdElementNode, string>();
+  let countH1 = 0, countH2 = 0, countH3 = 0;
+  let seenFirstToc = false;
+  type HeadingInfo = { level: 1 | 2 | 3; node: MdElementNode; id: string; label: string };
+  const headingsAfterToc: HeadingInfo[] = [];
+  function prewalk(arr: MdNode[]) {
+    for (const n of arr) {
+      if (n.type !== "element") continue;
+      if (n.tag === "toc") {
+        if (!seenFirstToc) seenFirstToc = true;
+      }
+      const lvl = headingLevel(n.tag);
+      if (lvl) {
+        let id: string;
+        if (lvl === 1) {
+          id = `${pfx}-${++countH1}`;
+          countH2 = 0;
+          countH3 = 0;
+        } else if (lvl === 2) {
+          id = `${pfx}-${countH1}-${++countH2}`;
+          countH3 = 0;
+        } else {
+          id = `${pfx}-${countH1}-${countH2}-${++countH3}`;
+        }
+        headerIdMap.set(n, id);
+
+        if (seenFirstToc) {
+          headingsAfterToc.push({
+            level: lvl,
+            node: n,
+            id,
+            label: headingLabelText(n.children),
+          });
+        }
+      }
+
+      if (n.children?.length) prewalk(n.children);
+    }
+  }
+  prewalk(nodes);
+  const baseLevel: 1 | 2 | 3 | null =
+    headingsAfterToc.length > 0
+      ? (Math.min(...headingsAfterToc.map((h) => h.level)) as 1 | 2 | 3)
+      : null;
+  type TocNode = { level: 1 | 2 | 3; id: string; label: string; children: TocNode[] };
+  function buildTocTree(items: HeadingInfo[]): TocNode[] {
+    if (items.length === 0 || baseLevel === null) return [];
+    const root: TocNode = { level: (baseLevel - 1) as 1 | 2 | 3, id: "", label: "", children: [] };
+    const stack: TocNode[] = [root];
+    for (const h of items) {
+      const lvl = (h.level < baseLevel ? baseLevel : h.level) as 1 | 2 | 3;
+      while (stack.length && stack[stack.length - 1]!.level >= lvl) stack.pop();
+      const node: TocNode = { level: lvl, id: h.id, label: h.label, children: [] };
+      stack[stack.length - 1]!.children.push(node);
+      stack.push(node);
+    }
+    return root.children;
+  }
+  function renderTocList(items: TocNode[]): string {
+    if (items.length === 0) return "<ul></ul>";
+    let html = "<ul>";
+    for (const it of items) {
+      html += `<li><a href="#${escapeHTML(it.id)}">${escapeHTML(it.label)}</a>`;
+      if (it.children.length) html += renderTocList(it.children);
+      html += `</li>`;
+    }
+    html += "</ul>";
+    return html;
+  }
+  const tocHtml = (() => renderTocList(buildTocTree(headingsAfterToc)))();
+  function serializeAll(arr: MdNode[]): string {
+    let html = "";
+    for (const n of arr) html += serializeOne(n);
+    return html;
+  }
+  function serializeOne(n: MdNode): string {
+    if (n.type === "text") return escapeHTML(n.text);
+    if (n.type === "element" && n.tag === "math") {
+      const el = n as MdElementNode;
+      const tex = String(el.attrs?.tex ?? "");
+      const display = String(el.attrs?.["math-mode"] ?? "inline") === "display";
+      const attrs = withPos({ class: display ? "math-display" : "math-inline" }, el);
+      return `<code${attrsToString(attrs)}>${escapeHTML(tex)}</code>`;
+    }
+    if (n.type === "element" && n.tag === "omitted") return `<span class="omitted">…</span>`;
+    if (n.type === "element" && n.tag === "br") return `<br>`;
+    if (n.type === "element" && n.tag === "hr") {
+      const a = n.attrs || {};
+      let attrs: MdAttrs = { ...a };
+      const rec = attrs as Record<string, string | number | boolean | undefined>;
+      const v = rec["hr-level"];
+      if (v !== undefined) {
+        delete rec["hr-level"];
+        rec["data-hr-level"] = v;
+      }
+      attrs = withPos(attrs, n as MdElementNode);
+      return `<hr${attrsToString(attrs)}>`;
+    }
+    if (n.type === "element" && n.tag === "pre") {
+      const a = n.attrs || {};
+      let attrs: MdAttrs = { ...a };
+      const rec = attrs as Record<string, string | number | boolean | undefined>;
+      const v = rec["pre-mode"];
+      if (v !== undefined) {
+        delete rec["pre-mode"];
+        rec["data-pre-mode"] = v;
+      }
+      attrs = withPos(attrs, n as MdElementNode);
+      return `<pre${attrsToString(attrs)}>${serializeAll(n.children || [])}</pre>`;
+    }
+    if (n.type === "element" && n.tag === "figure") {
+      const media = (n.children || []).find(isMediaElement);
+      const figBase = n.attrs || {};
+      const figExtra = media ? mediaDataAttrs(media.attrs || {}) : {};
+      let figAttrs: MdAttrs = { ...figBase, ...figExtra };
+      figAttrs = withPos(figAttrs, n as MdElementNode);
+      let inner = "";
+      for (const c of n.children || []) {
+        if (c.type === "element" && isMediaElement(c)) inner += serializeMedia(c as MdMediaElement);
+        else if (c.type === "element" && c.tag === "figcaption")
+          inner += `<figcaption>${serializeAll(c.children || [])}</figcaption>`;
+        else inner += serializeOne(c);
+      }
+      return `<figure${attrsToString(figAttrs)}>${inner}</figure>`;
+    }
+    if (n.type === "element" && isMediaElement(n)) return serializeMedia(n as MdMediaElement);
+    if (n.type === "element" && (n.tag === "td" || n.tag === "th")) {
+      let attrs: MdAttrs = { ...(n as MdElementNode).attrs };
+      const rec = attrs as Record<string, string | number | boolean | undefined>;
+      const alignRaw = rec["align"];
+      if (alignRaw === "right" || alignRaw === "center") {
+        delete rec["align"];
+        const cur = typeof rec["class"] === "string" ? (rec["class"] as string) : "";
+        rec["class"] = cur ? `${cur} align-${alignRaw}` : `align-${alignRaw}`;
+      }
+      attrs = withPos(attrs, n as MdElementNode);
+      return `<${(n as MdElementNode).tag}${attrsToString(attrs)}>${serializeAll(
+        (n as MdElementNode).children || [],
+      )}</${(n as MdElementNode).tag}>`;
+    }
+    if (n.type === "element") {
+      const lvl = headingLevel(n.tag);
+      if (lvl) {
+        const el = n as MdElementNode;
+        const id = headerIdMap.get(el)!;
+        const attrs = withPos({ ...(el.attrs || {}), id }, el);
+        return `<${el.tag}${attrsToString(attrs)}>${serializeAll(el.children || [])}</${el.tag}>`;
+      }
+    }
+    if (n.type === "element" && n.tag === "toc") {
+      const el = n as MdElementNode;
+      const navAttrs = withPos({ class: "toc", "aria-label": "table of contents" }, el);
+      return `<nav${attrsToString(navAttrs)}>${tocHtml}</nav>`;
+    }
+    const attrs = withPos((n as MdElementNode).attrs, n as MdElementNode);
+    return `<${(n as MdElementNode).tag}${attrsToString(attrs)}>${serializeAll(
+      (n as MdElementNode).children || [],
+    )}</${(n as MdElementNode).tag}>`;
   }
   return serializeAll(nodes);
 }

@@ -524,6 +524,33 @@ describe("mdCutOff", () => {
     ];
     expect(stripPos(mdCutOff(parseMarkdown(mdText), { maxHeight: 1 }))).toStrictEqual(expected);
   });
+
+  it("toc", () => {
+    const mdText = "abc\n<!TOC!>\ndef";
+    const expected = [
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "abc"
+          }
+        ],
+      },
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "def"
+          }
+        ],
+      }
+    ];
+    expect(stripPos(mdCutOff(parseMarkdown(mdText), { maxLen: 100 }))).toStrictEqual(expected);
+  });
 });
 
 describe("mdRenderText basics", () => {
@@ -586,6 +613,11 @@ describe("mdRenderText basics", () => {
     const mdText = "[gold](http://gold.com/) [silver](/silver.html)";
     expect(makeText(mdText)).toBe("gold silver");
   });
+
+  it("toc", () => {
+    const mdText = "abc\n<!TOC!>\ndef";
+    expect(makeText(mdText)).toBe("abc\n\ndef");
+  });
 });
 
 describe("mdRenderHtml basics", () => {
@@ -601,17 +633,17 @@ describe("mdRenderHtml basics", () => {
 
   it("header 1", () => {
     const mdText = "# hello world";
-    expect(makeHtml(mdText)).toBe("<h1>hello world</h1>");
+    expect(makeHtml(mdText)).toBe("<h1 id=\"h-1\">hello world</h1>");
   });
 
   it("header 2", () => {
     const mdText = "## hello world";
-    expect(makeHtml(mdText)).toBe("<h2>hello world</h2>");
+    expect(makeHtml(mdText)).toBe("<h2 id=\"h-0-1\">hello world</h2>");
   });
 
   it("header 3", () => {
     const mdText = "### hello world";
-    expect(makeHtml(mdText)).toBe("<h3>hello world</h3>");
+    expect(makeHtml(mdText)).toBe("<h3 id=\"h-0-0-1\">hello world</h3>");
   });
 
   it("escape characters", () => {
@@ -681,6 +713,11 @@ describe("mdRenderHtml basics", () => {
   it("escape", () => {
     const mdText = "\\::a:\\: \\*\\*b\\*\\* \\__c_\\_ \\~~d~\\~ \\``e`\\` \\\\123 \\A\\0";
     expect(makeHtml(mdText)).toBe("<p>::a:: **b** __c__ ~~d~~ ``e`` \\123 \\A\\0</p>");
+  });
+
+  it("toc", () => {
+    const mdText = "# h1\n<!TOC!>\n## h2\n### h3\n### h2\n";
+    expect(makeHtml(mdText)).toBe("<h1 id=\"h-1\">h1</h1><nav aria-label=\"table of contents\" class=\"toc\"><ul><li><a href=\"#h-1-1\">h2</a><ul><li><a href=\"#h-1-1-1\">h3</a></li><li><a href=\"#h-1-1-2\">h2</a></li></ul></li></ul></nav><h2 id=\"h-1-1\">h2</h2><h3 id=\"h-1-1-1\">h3</h3><h3 id=\"h-1-1-2\">h2</h3>");
   });
 });
 
@@ -754,8 +791,8 @@ abc
 ![abc](/data/def/ghi){thumbnail}
 ### H3
 `;
-    const expected = `<h1>H1</h1><p>abc<br>def</p><p>xyz</p><pre data-pre-mode="xml">&lt;a&gt;tako&lt;/a&gt;
-ika</pre><h2>H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul><li>e</li></ul></li><li>f</li></ul></li><li>g</li><li>h<ul><li>j<ul><li>k</li></ul></li></ul></li></ul><p>abc</p><table><tr><td><em>a</em></td><td>b</td></tr><tr><td>c</td><td><strong>d</strong></td></tr></table><figure class="image-block" data-thumbnail><img src="/data/def/ghi" alt="" decoding="async" loading="lazy"><figcaption>abc</figcaption></figure><h3>H3</h3>`;
+    const expected = `<h1 id="h-1">H1</h1><p>abc<br>def</p><p>xyz</p><pre data-pre-mode="xml">&lt;a&gt;tako&lt;/a&gt;
+ika</pre><h2 id="h-1-1">H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul><li>e</li></ul></li><li>f</li></ul></li><li>g</li><li>h<ul><li>j<ul><li>k</li></ul></li></ul></li></ul><p>abc</p><table><tr><td><em>a</em></td><td>b</td></tr><tr><td>c</td><td><strong>d</strong></td></tr></table><figure class="image-block" data-thumbnail><img src="/data/def/ghi" alt="" decoding="async" loading="lazy"><figcaption>abc</figcaption></figure><h3 id="h-1-1-1">H3</h3>`;
     expect(makeHtml(mdText)).toBe(expected);
   });
 });
