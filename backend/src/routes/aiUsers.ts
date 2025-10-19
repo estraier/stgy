@@ -9,6 +9,13 @@ import { DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
 import type { ChatRequest } from "../models/aiUser";
 
+function isRecord(x: unknown): x is Record<string, unknown> {
+  return typeof x === "object" && x !== null;
+}
+function isChatMessageLike(x: unknown): x is { role: string; content: string } {
+  return isRecord(x) && typeof x["role"] === "string" && typeof x["content"] === "string";
+}
+
 export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
   const router = Router();
 
@@ -79,18 +86,18 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     }
     const allowedRoles = new Set(["system", "user", "assistant"]);
     for (let i = 0; i < body.messages.length; i++) {
-      const m = body.messages[i] as any;
-      if (!m || typeof m.content !== "string") {
-        return res.status(400).json({ error: `invalid messages[${i}].content` });
+      const m = body.messages[i] as unknown;
+      if (!isChatMessageLike(m)) {
+        return res.status(400).json({ error: `invalid messages[${i}]` });
       }
-      if (typeof m.role !== "string" || !allowedRoles.has(m.role)) {
+      if (!allowedRoles.has(m.role)) {
         return res.status(400).json({ error: `invalid messages[${i}].role` });
       }
     }
     try {
       const resp = await aiUsersService.chat({ model: modelToUse, messages: body.messages });
       res.json(resp);
-    } catch (e) {
+    } catch {
       res.status(500).json({ error: "internal_error" });
     }
   });

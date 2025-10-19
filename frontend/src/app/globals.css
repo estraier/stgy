@@ -74,11 +74,9 @@ body {
   list-style-type: disc;
   padding-left: 1.2em;
 }
-
 .markdown-body ul ul {
   margin: 0;
 }
-
 .markdown-body li {
   margin: 0;
   padding: 0;
@@ -302,6 +300,25 @@ body {
 
 .markdown-body .omitted {
   margin: 0 0.2ex;
+}
+
+.markdown-body .toc {
+  position: relative;
+  margin: 1.1ex 0.4ex 1.1ex 0.4ex;
+  padding-left: 0.8ex;
+  line-height: 1.5;
+  font-size: 95%;
+  border: 1px solid #ddd;
+  border-radius: 0.5ex;
+}
+.markdown-body .toc::before {
+  position: absolute;
+  top: 0.2ex;
+  right: 0.8ex;
+  font-size: 90%;
+  color: #012;
+  content: "table of contents";
+  opacity: 0.3;
 }
 
 span[aria-label="Identicon"] > svg {

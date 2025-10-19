@@ -294,15 +294,18 @@ function centerTextareaCaret(ta: HTMLTextAreaElement) {
   ta.scrollTop = Math.min(maxScroll, desired);
 }
 
-function escapeHtml(s: string) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement) {
   const cs = getComputedStyle(ta);
+
+  const pl = parseFloat(cs.paddingLeft || "0");
+  const pr = parseFloat(cs.paddingRight || "0");
+  const contentWidth = Math.max(0, ta.clientWidth - pl - pr);
+
   type StyleKey = Extract<keyof CSSStyleDeclaration, string>;
   const assign = (prop: StyleKey, v: string) => {
     (mirror.style as unknown as Record<StyleKey, string>)[prop] = v;
   };
+
   assign("position", "absolute");
   assign("visibility", "hidden");
   assign("whiteSpace", "pre-wrap");
@@ -310,33 +313,47 @@ function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement
   assign("overflowWrap", cs.overflowWrap || "break-word");
   assign("top", "0");
   assign("left", "-99999px");
-  assign("boxSizing", "border-box");
-  assign("width", `${ta.clientWidth}px`);
-  assign("borderLeftWidth", cs.borderLeftWidth || "0");
-  assign("borderRightWidth", cs.borderRightWidth || "0");
-  assign("paddingTop", cs.paddingTop || "0");
-  assign("paddingRight", cs.paddingRight || "0");
-  assign("paddingBottom", cs.paddingBottom || "0");
-  assign("paddingLeft", cs.paddingLeft || "0");
+
+  assign("boxSizing", "content-box");
+  assign("width", `${contentWidth}px`);
+  assign("paddingTop", "0");
+  assign("paddingRight", "0");
+  assign("paddingBottom", "0");
+  assign("paddingLeft", "0");
+  assign("borderLeftWidth", "0");
+  assign("borderRightWidth", "0");
+  assign("borderTopWidth", "0");
+  assign("borderBottomWidth", "0");
+
   assign("fontFamily", cs.fontFamily || "inherit");
   assign("fontSize", cs.fontSize || "inherit");
   assign("fontWeight", cs.fontWeight || "normal");
   assign("fontStyle", cs.fontStyle || "normal");
   assign("lineHeight", cs.lineHeight || "normal");
   assign("letterSpacing", cs.letterSpacing || "normal");
-  assign("tabSize", (cs as unknown as { tabSize?: string }).tabSize || "4");
+
+  const tabSize = cs.getPropertyValue("tab-size") || "4";
+  mirror.style.setProperty("tab-size", tabSize);
 }
+
 function computeCaretTopInTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement): number {
   buildMirrorFromTextarea(ta, mirror);
   const pos = Math.max(0, Math.min(ta.value.length, ta.selectionStart ?? 0));
   const before = ta.value.slice(0, pos);
-  const html =
-    escapeHtml(before).replace(/ /g, "&#160;").replace(/\n/g, "<br/>") +
-    '<span data-caret style="display:inline-block;width:1px;height:1em;"></span>';
-  mirror.innerHTML = html;
-  document.body.appendChild(mirror);
-  const marker = mirror.querySelector<HTMLSpanElement>("span[data-caret]");
-  const top = marker ? marker.offsetTop : 0;
+
+  mirror.textContent = "";
+  const textNode = document.createTextNode(before);
+  const marker = document.createElement("span");
+  marker.setAttribute("data-caret", "1");
+  marker.style.display = "inline-block";
+  marker.style.width = "1px";
+  marker.style.height = "1em";
+
+  mirror.appendChild(textNode);
+  mirror.appendChild(marker);
+  if (!mirror.isConnected) document.body.appendChild(mirror);
+
+  const top = marker.getBoundingClientRect().top - mirror.getBoundingClientRect().top;
   return top;
 }
 
@@ -548,8 +565,8 @@ We live in Tokyo.
       document.body.appendChild(mirror);
     }
     const caretTopAbs = computeCaretTopInTextarea(ta, mirror);
-    const visibleTop = Math.round(caretTopAbs - ta.scrollTop);
-    const lh = Math.round(resolveLineHeight(ta));
+    const visibleTop = caretTopAbs - ta.scrollTop;
+    const lh = resolveLineHeight(ta);
     const inView = visibleTop >= 0 && visibleTop <= ta.clientHeight - lh;
     if (!inView) {
       band.style.display = "none";
@@ -563,7 +580,7 @@ We live in Tokyo.
     band.style.display = "block";
     band.style.position = "absolute";
     band.style.background = "#eef8ff";
-    band.style.top = `${bt + visibleTop}px`;
+    band.style.top = `${bt + visibleTop + 2}px`;
     band.style.left = `${bl + pl}px`;
     band.style.height = `${lh}px`;
     band.style.width = `${ta.clientWidth - pl - pr}px`;
@@ -604,9 +621,8 @@ We live in Tokyo.
     const rects = target.getClientRects();
     const r = rects.length ? rects[0]! : target.getBoundingClientRect();
     const PREVIEW_HIGHLIGHT_EXPAND = 4;
-    const topWithin =
-      Math.round(wrap.scrollTop + (r.top - wrapRect.top)) - PREVIEW_HIGHLIGHT_EXPAND;
-    const leftWithin = Math.round(r.left - wrapRect.left) - PREVIEW_HIGHLIGHT_EXPAND;
+    const topWithin = wrap.scrollTop + (r.top - wrapRect.top) - PREVIEW_HIGHLIGHT_EXPAND;
+    const leftWithin = r.left - wrapRect.left - PREVIEW_HIGHLIGHT_EXPAND;
     const width = Math.round(r.width) + PREVIEW_HIGHLIGHT_EXPAND * 2;
     const height = Math.max(1, Math.round(r.height)) + PREVIEW_HIGHLIGHT_EXPAND * 2;
     band.style.display = "block";
@@ -671,7 +687,7 @@ We live in Tokyo.
       if (!charAttr || !lineAttr) continue;
       const rects = el.getClientRects();
       const r = rects.length ? rects[0]! : el.getBoundingClientRect();
-      const yAbsolute = Math.round(wrap.scrollTop + (r.top - wrapRect.top) + 12);
+      const yAbsolute = wrap.scrollTop + (r.top - wrapRect.top) + 12;
       const btn = document.createElement("button");
       btn.type = "button";
       btn.setAttribute("data-jump-pin", "1");
@@ -1167,7 +1183,7 @@ We live in Tokyo.
                 <button
                   type="button"
                   onMouseDown={onToolbarInline("~~")}
-                  className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                  className="hidden md:inline-flex h-7 w-8 items中心 justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
                   title="Strikethrough"
                 >
                   <StrikethroughIcon className="w-4 h-4" />

@@ -311,11 +311,11 @@ function centerTextareaCaret(ta: HTMLTextAreaElement) {
   ta.scrollTop = Math.min(maxScroll, desired);
 }
 
-function escapeHtml(s: string) {
-  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-}
 function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement) {
   const cs = getComputedStyle(ta);
+  const pl = parseFloat(cs.paddingLeft || "0");
+  const pr = parseFloat(cs.paddingRight || "0");
+  const contentWidth = Math.max(0, ta.clientWidth - pl - pr);
   type StyleKey = Extract<keyof CSSStyleDeclaration, string>;
   const assign = (prop: StyleKey, v: string) => {
     (mirror.style as unknown as Record<StyleKey, string>)[prop] = v;
@@ -327,14 +327,16 @@ function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement
   assign("overflowWrap", cs.overflowWrap || "break-word");
   assign("top", "0");
   assign("left", "-99999px");
-  assign("boxSizing", "border-box");
-  assign("width", `${ta.clientWidth}px`);
-  assign("borderLeftWidth", cs.borderLeftWidth || "0");
-  assign("borderRightWidth", cs.borderRightWidth || "0");
-  assign("paddingTop", cs.paddingTop || "0");
-  assign("paddingRight", cs.paddingRight || "0");
-  assign("paddingBottom", cs.paddingBottom || "0");
-  assign("paddingLeft", cs.paddingLeft || "0");
+  assign("boxSizing", "content-box");
+  assign("width", `${contentWidth}px`);
+  assign("paddingTop", "0");
+  assign("paddingRight", "0");
+  assign("paddingBottom", "0");
+  assign("paddingLeft", "0");
+  assign("borderLeftWidth", "0");
+  assign("borderRightWidth", "0");
+  assign("borderTopWidth", "0");
+  assign("borderBottomWidth", "0");
   assign("fontFamily", cs.fontFamily || "inherit");
   assign("fontSize", cs.fontSize || "inherit");
   assign("fontWeight", cs.fontWeight || "normal");
@@ -753,20 +755,23 @@ export default function PostForm({
     if (!mirror) {
       mirror = document.createElement("div");
       caretMirrorRef.current = mirror;
-      document.body.appendChild(mirror);
     }
     buildMirrorFromTextarea(ta, mirror);
     const pos = Math.max(0, Math.min(ta.value.length, ta.selectionStart ?? 0));
     const before = ta.value.slice(0, pos);
-    const html =
-      escapeHtml(before).replace(/ /g, "&#160;").replace(/\n/g, "<br/>") +
-      '<span data-caret style="display:inline-block;width:1px;height:1em;"></span>';
-    mirror.innerHTML = html;
-    const marker = mirror.querySelector<HTMLSpanElement>("span[data-caret]");
-    const caretTopAbs = marker ? marker.offsetTop : 0;
-
-    const visibleTop = Math.round(caretTopAbs - ta.scrollTop);
-    const lh = Math.round(resolveLineHeight(ta));
+    mirror.textContent = "";
+    const textNode = document.createTextNode(before);
+    const marker = document.createElement("span");
+    marker.setAttribute("data-caret", "1");
+    marker.style.display = "inline-block";
+    marker.style.width = "1px";
+    marker.style.height = "1em";
+    mirror.appendChild(textNode);
+    mirror.appendChild(marker);
+    if (!mirror.isConnected) document.body.appendChild(mirror);
+    const caretTopAbs = marker.getBoundingClientRect().top - mirror.getBoundingClientRect().top;
+    const visibleTop = caretTopAbs - ta.scrollTop;
+    const lh = resolveLineHeight(ta);
     const inView = visibleTop >= 0 && visibleTop <= ta.clientHeight - lh;
     return { topWithin: visibleTop, lineHeight: lh, inView };
   }, []);
@@ -803,7 +808,7 @@ export default function PostForm({
     band.style.display = "block";
     band.style.position = "absolute";
     band.style.background = "#eef8ff";
-    band.style.top = `${bt + topWithin}px`;
+    band.style.top = `${bt + topWithin + 2}px`;
     band.style.left = `${bl + pl}px`;
     band.style.height = `${Math.round(lineHeight)}px`;
     band.style.width = `${ta.clientWidth - pl - pr}px`;
@@ -1838,7 +1843,7 @@ export default function PostForm({
                         type="button"
                         onMouseDown={actInline("__")}
                         title="Underline"
-                        className="hidden xl:inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                        className="hidden xl:inline-flex h-6 w-7 items中心 justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
                       >
                         <UnderlineIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Underline</span>
@@ -2035,7 +2040,7 @@ export default function PostForm({
                       form={formId}
                       className={
                         isEdit && deletable && body.trim() === ""
-                          ? "bg-red-500 text-white hover:bg-red-600 px-4 py-1 rounded cursor-pointer ml-auto"
+                          ? "bg-red-500 text白 hover:bg-red-600 px-4 py-1 rounded cursor-pointer ml-auto"
                           : "bg-blue-500 text-white hover:bg-blue-600 px-4 py-1 rounded cursor-pointer ml-auto disabled:opacity-50 disabled:cursor-not-allowed"
                       }
                       disabled={submitting || overLimit}
@@ -2055,7 +2060,7 @@ export default function PostForm({
               <div className="relative bg-[#eee] min-h-0 flex flex-col">
                 <button
                   type="button"
-                  className="absolute right-3 top-3 rounded p-1 bg-white border shadow"
+                  className="absolute right-3 top-3 rounded p-1 bg白 border shadow"
                   onClick={() => {
                     const ta = overlayTextareaRef.current;
                     const s = ta ? (ta.selectionStart ?? selStartRef.current) : selStartRef.current;

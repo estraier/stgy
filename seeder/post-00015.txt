@@ -8,6 +8,8 @@ content:<<____EOF____
 
 本記事では、STGYにおいて画像などのメディアデータをどのように管理するかについて説明する。Amazon S3または互換システムであるMinIOのAPIを使って単純かつ堅牢なデータ管理をするにはどうするかについて述べる。
 
+<!TOC!>
+
 ![画像一覧画面](/data/help-images-list.png){float=right}
 
 ## 前提条件

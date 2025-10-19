@@ -4,7 +4,11 @@ allowLikes: false
 allowReplies: false
 tags: stgy-help
 content:<<____EOF____
-# STGYの基本的な使い方
+# STGYの使い方
+
+この記事はSTGYのヘルプページです。STGYの基本的な使い方を説明します。
+
+<!TOC!>
 
 ## ユーザ登録とログイン
 
