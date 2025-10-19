@@ -190,7 +190,9 @@ describe("mdGroupImageGrid", () => {
         ],
       },
     ];
-    expect(stripPos(mdGroupImageGrid(parseMarkdown(mdText)))).toStrictEqual(expected);
+    expect(stripPos(mdGroupImageGrid(parseMarkdown(mdText)))).toStrictEqual(
+      expected,
+    );
   });
 
   it("double", () => {
@@ -264,7 +266,9 @@ describe("mdGroupImageGrid", () => {
         ],
       },
     ];
-    expect(stripPos(mdGroupImageGrid(parseMarkdown(mdText)))).toStrictEqual(expected);
+    expect(stripPos(mdGroupImageGrid(parseMarkdown(mdText)))).toStrictEqual(
+      expected,
+    );
   });
 });
 
@@ -306,9 +310,9 @@ describe("mdRewriteMediaUrls", () => {
         ],
       },
     ];
-    expect(stripPos(mdRewriteMediaUrls(parseMarkdown(mdText), rewriteOptions))).toStrictEqual(
-      expected,
-    );
+    expect(
+      stripPos(mdRewriteMediaUrls(parseMarkdown(mdText), rewriteOptions)),
+    ).toStrictEqual(expected);
   });
 
   it("replace", () => {
@@ -342,9 +346,9 @@ describe("mdRewriteMediaUrls", () => {
         ],
       },
     ];
-    expect(stripPos(mdRewriteMediaUrls(parseMarkdown(mdText), rewriteOptions))).toStrictEqual(
-      expected,
-    );
+    expect(
+      stripPos(mdRewriteMediaUrls(parseMarkdown(mdText), rewriteOptions)),
+    ).toStrictEqual(expected);
   });
 });
 
@@ -404,7 +408,9 @@ def
         ],
       },
     ];
-    expect(stripPos(mdFilterForFeatured(parseMarkdown(mdText)))).toStrictEqual(expected);
+    expect(stripPos(mdFilterForFeatured(parseMarkdown(mdText)))).toStrictEqual(
+      expected,
+    );
   });
 
   it("pickup a tagged image", () => {
@@ -463,7 +469,9 @@ def
         ],
       },
     ];
-    expect(stripPos(mdFilterForFeatured(parseMarkdown(mdText)))).toStrictEqual(expected);
+    expect(stripPos(mdFilterForFeatured(parseMarkdown(mdText)))).toStrictEqual(
+      expected,
+    );
   });
 
   it("pickup no image", () => {
@@ -494,7 +502,9 @@ def
         ],
       },
     ];
-    expect(stripPos(mdFilterForFeatured(parseMarkdown(mdText)))).toStrictEqual(expected);
+    expect(stripPos(mdFilterForFeatured(parseMarkdown(mdText)))).toStrictEqual(
+      expected,
+    );
   });
 });
 
@@ -524,7 +534,9 @@ describe("mdCutOff", () => {
         ],
       },
     ];
-    expect(stripPos(mdCutOff(parseMarkdown(mdText), { maxLen: 5 }))).toStrictEqual(expected);
+    expect(
+      stripPos(mdCutOff(parseMarkdown(mdText), { maxLen: 5 })),
+    ).toStrictEqual(expected);
   });
 
   it("mdCutOff by height", () => {
@@ -552,7 +564,9 @@ describe("mdCutOff", () => {
         ],
       },
     ];
-    expect(stripPos(mdCutOff(parseMarkdown(mdText), { maxHeight: 1 }))).toStrictEqual(expected);
+    expect(
+      stripPos(mdCutOff(parseMarkdown(mdText), { maxHeight: 1 })),
+    ).toStrictEqual(expected);
   });
 
   it("toc", () => {
@@ -579,7 +593,9 @@ describe("mdCutOff", () => {
         ],
       },
     ];
-    expect(stripPos(mdCutOff(parseMarkdown(mdText), { maxLen: 100 }))).toStrictEqual(expected);
+    expect(
+      stripPos(mdCutOff(parseMarkdown(mdText), { maxLen: 100 })),
+    ).toStrictEqual(expected);
   });
 });
 
@@ -625,7 +641,8 @@ describe("mdRenderText basics", () => {
   });
 
   it("inline basics", () => {
-    const mdText = "**bold** ::italic:: __underline__ ~~strike~~ ``code`` %%mark%%";
+    const mdText =
+      "**bold** ::italic:: __underline__ ~~strike~~ ``code`` %%mark%%";
     expect(makeText(mdText)).toBe("bold italic underline strike code mark");
   });
 
@@ -678,7 +695,9 @@ describe("mdRenderHtml basics", () => {
 
   it("escape characters", () => {
     const mdText = "<h1>John's & House</h1>";
-    expect(makeHtml(mdText)).toBe("<p>&lt;h1&gt;John&#39;s &amp; House&lt;/h1&gt;</p>");
+    expect(makeHtml(mdText)).toBe(
+      "<p>&lt;h1&gt;John&#39;s &amp; House&lt;/h1&gt;</p>",
+    );
   });
 
   it("list", () => {
@@ -713,7 +732,8 @@ describe("mdRenderHtml basics", () => {
   });
 
   it("decorations", () => {
-    const mdText = "**strong** ::em:: __underline__ ~~strike~~ ``code`` %%mark%%";
+    const mdText =
+      "**strong** ::em:: __underline__ ~~strike~~ ``code`` %%mark%%";
     expect(makeHtml(mdText)).toBe(
       "<p><strong>strong</strong> <em>em</em> <u>underline</u> <s>strike</s> <code>code</code> <mark>mark</mark></p>",
     );
@@ -741,8 +761,11 @@ describe("mdRenderHtml basics", () => {
   });
 
   it("escape", () => {
-    const mdText = "\\::a:\\: \\*\\*b\\*\\* \\__c_\\_ \\~~d~\\~ \\``e`\\` \\\\123 \\A\\0";
-    expect(makeHtml(mdText)).toBe("<p>::a:: **b** __c__ ~~d~~ ``e`` \\123 \\A\\0</p>");
+    const mdText =
+      "\\::a:\\: \\*\\*b\\*\\* \\__c_\\_ \\~~d~\\~ \\``e`\\` \\\\123 \\A\\0";
+    expect(makeHtml(mdText)).toBe(
+      "<p>::a:: **b** __c__ ~~d~~ ``e`` \\123 \\A\\0</p>",
+    );
   });
 
   it("toc", () => {
@@ -761,37 +784,53 @@ describe("mdRenderHtml positions", () => {
 
   it("adds data-* to list/li", () => {
     const html = makeHtml("- a\n- b", true);
-    expect(html).toMatch(/<ul[^>]*data-char-position="0"[^>]*data-line-position="0"/);
+    expect(html).toMatch(
+      /<ul[^>]*data-char-position="0"[^>]*data-line-position="0"/,
+    );
     expect(html).toMatch(/<li[^>]*data-line-position="0"/);
     expect(html).toMatch(/<li[^>]*data-line-position="1"/);
   });
 
   it("adds data-* to table and cells", () => {
     const html = makeHtml("|hello world|", true);
-    expect(html).toMatch(/<table[^>]*data-char-position="0"[^>]*data-line-position="0"/);
+    expect(html).toMatch(
+      /<table[^>]*data-char-position="0"[^>]*data-line-position="0"/,
+    );
     expect(html).toMatch(/<tr[^>]*data-line-position="0"/);
     expect(html).toMatch(/<td[^>]*data-line-position="0"/);
   });
 
   it("adds data-* to figure & media", () => {
     const imgHtml = makeHtml("![tako](/data/tako.jpg)", true);
-    expect(imgHtml).toMatch(/<figure[^>]*data-char-position="0"[^>]*data-line-position="0"/);
-    expect(imgHtml).toMatch(/<img[^>]*data-char-position="0"[^>]*data-line-position="0"/);
+    expect(imgHtml).toMatch(
+      /<figure[^>]*data-char-position="0"[^>]*data-line-position="0"/,
+    );
+    expect(imgHtml).toMatch(
+      /<img[^>]*data-char-position="0"[^>]*data-line-position="0"/,
+    );
 
     const vidHtml = makeHtml("![tako](/data/tako.mp4){autoplay}", true);
-    expect(vidHtml).toMatch(/<figure[^>]*data-char-position="0"[^>]*data-line-position="0"/);
-    expect(vidHtml).toMatch(/<video[^>]*data-char-position="0"[^>]*data-line-position="0"/);
+    expect(vidHtml).toMatch(
+      /<figure[^>]*data-char-position="0"[^>]*data-line-position="0"/,
+    );
+    expect(vidHtml).toMatch(
+      /<video[^>]*data-char-position="0"[^>]*data-line-position="0"/,
+    );
   });
 
   it("adds data-* to blockquote", () => {
     const html = makeHtml("> hello", true);
-    expect(html).toMatch(/<blockquote[^>]*data-char-position="0"[^>]*data-line-position="0"/);
+    expect(html).toMatch(
+      /<blockquote[^>]*data-char-position="0"[^>]*data-line-position="0"/,
+    );
   });
 
   it("adds data-* to pre", () => {
     const md = "```\ncode\n```";
     const html = makeHtml(md, true);
-    expect(html).toMatch(/<pre[^>]*data-char-position="0"[^>]*data-line-position="0"/);
+    expect(html).toMatch(
+      /<pre[^>]*data-char-position="0"[^>]*data-line-position="0"/,
+    );
   });
 });
 

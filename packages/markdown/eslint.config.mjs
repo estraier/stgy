@@ -16,14 +16,20 @@ export default [
     plugins: { "@typescript-eslint": tseslint },
     rules: {
       ...tseslint.configs.recommended.rules,
-      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+      "@typescript-eslint/no-unused-vars": [
+        "error",
+        { argsIgnorePattern: "^_" },
+      ],
     },
   },
   {
     files: ["**/*.test.ts", "**/*.spec.ts", "**/__tests__/**/*.ts"],
     languageOptions: {
       parser: tsParser,
-      parserOptions: { project: "./tsconfig.eslint.json", tsconfigRootDir: __dirname },
+      parserOptions: {
+        project: "./tsconfig.eslint.json",
+        tsconfigRootDir: __dirname,
+      },
     },
     plugins: { "@typescript-eslint": tseslint },
     rules: {

@@ -76,7 +76,13 @@ export function parseMarkdown(mdText: string): MdNode[] {
   function flushPara() {
     if (currPara.length) {
       nodes.push(
-        makeElement("p", parseInline(currPara.join("\n")), undefined, paraStartLine, paraStartChar),
+        makeElement(
+          "p",
+          parseInline(currPara.join("\n")),
+          undefined,
+          paraStartLine,
+          paraStartChar,
+        ),
       );
       currPara = [];
       paraStartLine = -1;
@@ -90,7 +96,10 @@ export function parseMarkdown(mdText: string): MdNode[] {
         nodes.push(inheritPosFromFirstChild("ul", list.items));
       } else {
         const parentItems = currList[currList.length - 1].items;
-        const lastLi = parentItems.length > 0 ? parentItems[parentItems.length - 1] : undefined;
+        const lastLi =
+          parentItems.length > 0
+            ? parentItems[parentItems.length - 1]
+            : undefined;
         if (lastLi && lastLi.type === "element" && lastLi.tag === "li") {
           if (!lastLi.children) lastLi.children = [];
           lastLi.children.push(inheritPosFromFirstChild("ul", list.items));
@@ -130,8 +139,10 @@ export function parseMarkdown(mdText: string): MdNode[] {
         const inner = parseInline(content);
         const attrs: MdAttrs = {};
         if (align) attrs.align = align;
-        if (typeof colspan === "number" && colspan > 1) attrs.colspan = colspan.toString();
-        if (typeof rowspan === "number" && rowspan > 1) attrs.rowspan = rowspan.toString();
+        if (typeof colspan === "number" && colspan > 1)
+          attrs.colspan = colspan.toString();
+        if (typeof rowspan === "number" && rowspan > 1)
+          attrs.rowspan = rowspan.toString();
         return makeElement(
           tag,
           inner,
@@ -237,7 +248,9 @@ export function parseMarkdown(mdText: string): MdNode[] {
       flushQuote();
       const dashCount = hr[0].length;
       const level = dashCount === 3 ? 1 : dashCount === 4 ? 2 : 3;
-      nodes.push(makeElement("hr", [], { "hr-level": level }, i, lineCharStart));
+      nodes.push(
+        makeElement("hr", [], { "hr-level": level }, i, lineCharStart),
+      );
       continue;
     }
     const img = line.match(imageMacroRe);
@@ -263,14 +276,34 @@ export function parseMarkdown(mdText: string): MdNode[] {
       for (const [k, v] of Object.entries(macro)) {
         mediaAttrs[k] = v;
       }
-      const mediaEl = makeElement(isVideo ? "video" : "img", [], mediaAttrs, i, lineCharStart);
+      const mediaEl = makeElement(
+        isVideo ? "video" : "img",
+        [],
+        mediaAttrs,
+        i,
+        lineCharStart,
+      );
       const figureChildren: MdNode[] = [mediaEl];
       if (desc) {
         figureChildren.push(
-          makeElement("figcaption", [{ type: "text", text: desc }], undefined, i, lineCharStart),
+          makeElement(
+            "figcaption",
+            [{ type: "text", text: desc }],
+            undefined,
+            i,
+            lineCharStart,
+          ),
         );
       }
-      nodes.push(makeElement("figure", figureChildren, { class: "image-block" }, i, lineCharStart));
+      nodes.push(
+        makeElement(
+          "figure",
+          figureChildren,
+          { class: "image-block" },
+          i,
+          lineCharStart,
+        ),
+      );
       continue;
     }
     const tableRow = line.match(/^\|(.+)\|$/);
@@ -315,7 +348,15 @@ export function parseMarkdown(mdText: string): MdNode[] {
       flushTable();
       flushQuote();
       const level = h[1].length;
-      nodes.push(makeElement(`h${level}`, parseInline(h[2]), undefined, i, lineCharStart));
+      nodes.push(
+        makeElement(
+          `h${level}`,
+          parseInline(h[2]),
+          undefined,
+          i,
+          lineCharStart,
+        ),
+      );
       continue;
     }
     const li = line.match(/^(\s*)- (.+)$/);
@@ -324,20 +365,29 @@ export function parseMarkdown(mdText: string): MdNode[] {
       flushTable();
       flushQuote();
       const level = Math.floor(li[1].length / 2);
-      while (currList.length > 0 && currList[currList.length - 1].level > level) {
+      while (
+        currList.length > 0 &&
+        currList[currList.length - 1].level > level
+      ) {
         const done = currList.pop();
         if (currList.length === 0) {
           nodes.push(inheritPosFromFirstChild("ul", done!.items));
         } else {
           const parentItems = currList[currList.length - 1].items;
-          const lastLi = parentItems.length > 0 ? parentItems[parentItems.length - 1] : undefined;
+          const lastLi =
+            parentItems.length > 0
+              ? parentItems[parentItems.length - 1]
+              : undefined;
           if (lastLi && lastLi.type === "element" && lastLi.tag === "li") {
             if (!lastLi.children) lastLi.children = [];
             lastLi.children.push(inheritPosFromFirstChild("ul", done!.items));
           }
         }
       }
-      if (currList.length === 0 || currList[currList.length - 1].level < level) {
+      if (
+        currList.length === 0 ||
+        currList[currList.length - 1].level < level
+      ) {
         currList.push({ level, items: [] });
       }
       currList[currList.length - 1].items.push(
@@ -384,16 +434,24 @@ export type MdMediaRewriteOptions = {
   maxObjects?: number;
 };
 
-export function mdRewriteMediaUrls(nodes: MdNode[], opts: MdMediaRewriteOptions): MdNode[] {
+export function mdRewriteMediaUrls(
+  nodes: MdNode[],
+  opts: MdMediaRewriteOptions,
+): MdNode[] {
   let mediaCount = 0;
-  const allowedByPattern = (src: string) => opts.allowedPatterns.some((re) => re.test(src));
+  const allowedByPattern = (src: string) =>
+    opts.allowedPatterns.some((re) => re.test(src));
   const isAllowedNow = (src: string) => {
     mediaCount += 1;
-    if (opts.maxObjects !== undefined && mediaCount > opts.maxObjects) return false;
+    if (opts.maxObjects !== undefined && mediaCount > opts.maxObjects)
+      return false;
     return allowedByPattern(src);
   };
   const applyRules = (src: string) =>
-    opts.rewriteRules.reduce((u, r) => u.replace(r.pattern, r.replacement), src);
+    opts.rewriteRules.reduce(
+      (u, r) => u.replace(r.pattern, r.replacement),
+      src,
+    );
   const rewriteOne = (n: MdNode): MdNode => {
     if (n.type !== "element") return n;
     if (n.tag === "img" || n.tag === "video") {
@@ -416,10 +474,19 @@ export function mdRewriteMediaUrls(nodes: MdNode[], opts: MdMediaRewriteOptions)
   return nodes.map(rewriteOne);
 }
 
-export function mdGroupImageGrid(nodes: MdNode[], opts?: { maxElements?: number }): MdNode[] {
+export function mdGroupImageGrid(
+  nodes: MdNode[],
+  opts?: { maxElements?: number },
+): MdNode[] {
   const maxElements = Math.max(1, opts?.maxElements ?? 100);
-  function isFigureImageBlock(n: MdNode): n is MdElementNode & { tag: "figure" } {
-    return n.type === "element" && n.tag === "figure" && n.attrs?.class === "image-block";
+  function isFigureImageBlock(
+    n: MdNode,
+  ): n is MdElementNode & { tag: "figure" } {
+    return (
+      n.type === "element" &&
+      n.tag === "figure" &&
+      n.attrs?.class === "image-block"
+    );
   }
   function findMedia(n: MdNode | undefined): MdMediaElement | undefined {
     if (!n || n.type !== "element") return undefined;
@@ -473,8 +540,14 @@ export function mdGroupImageGrid(nodes: MdNode[], opts?: { maxElements?: number 
 
 export function mdFilterForFeatured(nodes: MdNode[]): MdNode[] {
   let featuredFig: MdNode | null = null;
-  function isFigureImageBlock(n: MdNode): n is MdElementNode & { tag: "figure" } {
-    return n.type === "element" && n.tag === "figure" && n.attrs?.class === "image-block";
+  function isFigureImageBlock(
+    n: MdNode,
+  ): n is MdElementNode & { tag: "figure" } {
+    return (
+      n.type === "element" &&
+      n.tag === "figure" &&
+      n.attrs?.class === "image-block"
+    );
   }
   function findMedia(n: MdNode | undefined): MdMediaElement | undefined {
     if (!n || n.type !== "element") return undefined;
@@ -551,9 +624,15 @@ export function mdCutOff(
   const imgHeight = params?.imgHeight ?? 6;
   const captMaxLen = params?.captMaxLen ?? 25;
   const state = {
-    remain: typeof params?.maxLen === "number" ? params.maxLen! : Number.POSITIVE_INFINITY,
+    remain:
+      typeof params?.maxLen === "number"
+        ? params.maxLen!
+        : Number.POSITIVE_INFINITY,
     height: 0,
-    maxHeight: typeof params?.maxHeight === "number" ? params!.maxHeight : Number.POSITIVE_INFINITY,
+    maxHeight:
+      typeof params?.maxHeight === "number"
+        ? params!.maxHeight
+        : Number.POSITIVE_INFINITY,
     cut: false,
     omittedInserted: false,
   };
@@ -586,7 +665,10 @@ export function mdCutOff(
   function isFeaturedFigure(el: MdElementNode): boolean {
     return el.tag === "figure" && getKind(el.attrs) === "featured-block";
   }
-  function computeTextMetrics(ns: MdNode[]): { length: number; newlines: number } {
+  function computeTextMetrics(ns: MdNode[]): {
+    length: number;
+    newlines: number;
+  } {
     let length = 0;
     let newlines = 0;
     for (const n of ns) {
@@ -609,7 +691,9 @@ export function mdCutOff(
     return computeTextMetrics(cap.children || []).length;
   };
   const figureHasMedia = (el: MdElementNode): boolean =>
-    (el.children || []).some((c) => c.type === "element" && (c.tag === "img" || c.tag === "video"));
+    (el.children || []).some(
+      (c) => c.type === "element" && (c.tag === "img" || c.tag === "video"),
+    );
   function bumpHeight(inc: number): boolean {
     const next = state.height + inc;
     if (next > state.maxHeight) return false;
@@ -635,7 +719,10 @@ export function mdCutOff(
   function makeOmittedNode(): MdElementNode {
     return { type: "element", tag: "omitted", children: [] };
   }
-  function cutTextContent(s: string, charge: boolean): { text: string; cut: boolean } {
+  function cutTextContent(
+    s: string,
+    charge: boolean,
+  ): { text: string; cut: boolean } {
     if (!charge) return { text: s, cut: false };
     if (state.remain <= 0) {
       state.cut = true;
@@ -658,10 +745,17 @@ export function mdCutOff(
     const total = computeTextMetrics(children).length;
     if (total <= captMaxLen) return children;
     const text =
-      mdRenderText([{ type: "element", tag: "span", children }]).slice(0, captMaxLen) + "…";
+      mdRenderText([{ type: "element", tag: "span", children }]).slice(
+        0,
+        captMaxLen,
+      ) + "…";
     return [{ type: "text", text }];
   }
-  function walk(n: MdNode, freeMedia: boolean, freeText: boolean): MdNode | null {
+  function walk(
+    n: MdNode,
+    freeMedia: boolean,
+    freeText: boolean,
+  ): MdNode | null {
     if (state.cut) return null;
     if (n.type === "text") {
       const { text, cut } = cutTextContent(n.text, !freeText);
@@ -697,7 +791,9 @@ export function mdCutOff(
       chargedAtFigure = true;
     }
     if (!freeText && blockTags.has(el.tag)) {
-      const { length: contentLength, newlines } = computeTextMetrics(el.children || []);
+      const { length: contentLength, newlines } = computeTextMetrics(
+        el.children || [],
+      );
       let inc = 1 + Math.floor(contentLength / 100);
       if (el.tag === "pre" && newlines > 1) inc = Math.max(inc, newlines);
       if (!bumpHeight(inc)) {
@@ -736,7 +832,8 @@ export function mdCutOff(
         break;
       }
     }
-    const finalChildren = el.tag === "figcaption" ? trimCaptionChildren(outChildren) : outChildren;
+    const finalChildren =
+      el.tag === "figcaption" ? trimCaptionChildren(outChildren) : outChildren;
     return { ...el, children: finalChildren };
   }
   const out: MdNode[] = [];
@@ -770,7 +867,8 @@ export function mdRenderText(nodes: MdNode[]): string {
     "figure",
   ]);
   const SINGLE_AFTER = new Set(["hr"]);
-  const endsWithNewline = () => out.length > 0 && out[out.length - 1]!.endsWith("\n");
+  const endsWithNewline = () =>
+    out.length > 0 && out[out.length - 1]!.endsWith("\n");
   const ensureNewline = () => {
     if (!endsWithNewline()) out.push("\n");
   };
@@ -839,8 +937,13 @@ export function mdRenderText(nodes: MdNode[]): string {
           if (row.type !== "element" || row.tag !== "tr") continue;
           const cells: string[] = [];
           for (const cell of row.children || []) {
-            if (cell.type === "element" && (cell.tag === "td" || cell.tag === "th")) {
-              const txt = collectCellTextNodes(cell.children).replace(/\n+/g, " ").trim();
+            if (
+              cell.type === "element" &&
+              (cell.tag === "td" || cell.tag === "th")
+            ) {
+              const txt = collectCellTextNodes(cell.children)
+                .replace(/\n+/g, " ")
+                .trim();
               cells.push(txt);
             }
           }
@@ -905,8 +1008,13 @@ export function mdRenderText(nodes: MdNode[]): string {
     .trim();
 }
 
-export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: string): string {
-  const sanitizeIdPrefix = (s: string) => (s || "h").replace(/[^a-zA-Z0-9_-]+/g, "-") || "h";
+export function mdRenderHtml(
+  nodes: MdNode[],
+  usePosAttrs = false,
+  idPrefix?: string,
+): string {
+  const sanitizeIdPrefix = (s: string) =>
+    (s || "h").replace(/[^a-zA-Z0-9_-]+/g, "-") || "h";
   const pfx = sanitizeIdPrefix(idPrefix ?? "h");
   const headingLevel = (tag: string): 1 | 2 | 3 | undefined =>
     tag === "h1" ? 1 : tag === "h2" ? 2 : tag === "h3" ? 3 : undefined;
@@ -939,8 +1047,10 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
   function withPos(attrs: MdAttrs | undefined, node: MdElementNode): MdAttrs {
     const out: MdAttrs = { ...(attrs || {}) };
     if (usePosAttrs) {
-      if (typeof node.charPosition === "number") out["data-char-position"] = node.charPosition;
-      if (typeof node.linePosition === "number") out["data-line-position"] = node.linePosition;
+      if (typeof node.charPosition === "number")
+        out["data-char-position"] = node.charPosition;
+      if (typeof node.linePosition === "number")
+        out["data-line-position"] = node.linePosition;
     }
     return out;
   }
@@ -950,7 +1060,8 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
     const keys = Object.keys(attrs).sort(
       (a, b) => (priority[a] ?? 10) - (priority[b] ?? 10) || a.localeCompare(b),
     );
-    const a: Record<string, string | number | boolean | null | undefined> = attrs;
+    const a: Record<string, string | number | boolean | null | undefined> =
+      attrs;
     let out = "";
     for (const k of keys) {
       const v = a[k];
@@ -963,7 +1074,8 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
   function mediaDataAttrs(mediaAttrs: MdAttrs): MdAttrs {
     const out: MdAttrs = {};
     for (const [k, v] of Object.entries(mediaAttrs)) {
-      if (k === "src" || k === "alt" || k === "aria-label" || k === "controls") continue;
+      if (k === "src" || k === "alt" || k === "aria-label" || k === "controls")
+        continue;
       const dataName = `data-${k}`;
       out[dataName] = v === true ? true : String(v);
     }
@@ -996,7 +1108,12 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
     countH3 = 0;
   let seenFirstToc = false;
 
-  type HeadingInfo = { level: 1 | 2 | 3; node: MdElementNode; id: string; label: string };
+  type HeadingInfo = {
+    level: 1 | 2 | 3;
+    node: MdElementNode;
+    id: string;
+    label: string;
+  };
   const headingsAfterToc: HeadingInfo[] = [];
 
   function prewalk(arr: MdNode[]) {
@@ -1041,11 +1158,21 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
     ? (Math.min(...headingsAfterToc.map((h) => h.level)) as 1 | 2 | 3)
     : null;
 
-  type TocNode = { level: number; id: string; label: string; children: TocNode[] };
+  type TocNode = {
+    level: number;
+    id: string;
+    label: string;
+    children: TocNode[];
+  };
 
   function buildTocTree(items: HeadingInfo[]): TocNode[] {
     if (!items.length || baseLevel === null) return [];
-    const root: TocNode = { level: baseLevel - 1, id: "", label: "", children: [] };
+    const root: TocNode = {
+      level: baseLevel - 1,
+      id: "",
+      label: "",
+      children: [],
+    };
     const stack: TocNode[] = [root];
 
     for (const h of items) {
@@ -1054,7 +1181,12 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
         stack.pop();
       }
       const parent = stack[stack.length - 1] ?? root;
-      const node: TocNode = { level: lvl, id: h.id, label: h.label, children: [] };
+      const node: TocNode = {
+        level: lvl,
+        id: h.id,
+        label: h.label,
+        children: [],
+      };
       parent.children.push(node);
       stack.push(node);
     }
@@ -1088,16 +1220,23 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
       const el = n as MdElementNode;
       const tex = String(el.attrs?.tex ?? "");
       const display = String(el.attrs?.["math-mode"] ?? "inline") === "display";
-      const attrs = withPos({ class: display ? "math-display" : "math-inline" }, el);
+      const attrs = withPos(
+        { class: display ? "math-display" : "math-inline" },
+        el,
+      );
       return `<code${attrsToString(attrs)}>${escapeHTML(tex)}</code>`;
     }
-    if (n.type === "element" && n.tag === "omitted") return `<span class="omitted">…</span>`;
+    if (n.type === "element" && n.tag === "omitted")
+      return `<span class="omitted">…</span>`;
     if (n.type === "element" && n.tag === "br") return `<br>`;
 
     if (n.type === "element" && n.tag === "hr") {
       const a = n.attrs || {};
       let attrs: MdAttrs = { ...a };
-      const rec = attrs as Record<string, string | number | boolean | undefined>;
+      const rec = attrs as Record<
+        string,
+        string | number | boolean | undefined
+      >;
       const v = rec["hr-level"];
       if (v !== undefined) {
         delete rec["hr-level"];
@@ -1110,7 +1249,10 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
     if (n.type === "element" && n.tag === "pre") {
       const a = n.attrs || {};
       let attrs: MdAttrs = { ...a };
-      const rec = attrs as Record<string, string | number | boolean | undefined>;
+      const rec = attrs as Record<
+        string,
+        string | number | boolean | undefined
+      >;
       const v = rec["pre-mode"];
       if (v !== undefined) {
         delete rec["pre-mode"];
@@ -1128,7 +1270,8 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
       figAttrs = withPos(figAttrs, n as MdElementNode);
       let inner = "";
       for (const c of n.children || []) {
-        if (c.type === "element" && isMediaElement(c)) inner += serializeMedia(c as MdMediaElement);
+        if (c.type === "element" && isMediaElement(c))
+          inner += serializeMedia(c as MdMediaElement);
         else if (c.type === "element" && c.tag === "figcaption")
           inner += `<figcaption>${serializeAll(c.children || [])}</figcaption>`;
         else inner += serializeOne(c);
@@ -1136,15 +1279,20 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
       return `<figure${attrsToString(figAttrs)}>${inner}</figure>`;
     }
 
-    if (n.type === "element" && isMediaElement(n)) return serializeMedia(n as MdMediaElement);
+    if (n.type === "element" && isMediaElement(n))
+      return serializeMedia(n as MdMediaElement);
 
     if (n.type === "element" && (n.tag === "td" || n.tag === "th")) {
       let attrs: MdAttrs = { ...(n as MdElementNode).attrs };
-      const rec = attrs as Record<string, string | number | boolean | undefined>;
+      const rec = attrs as Record<
+        string,
+        string | number | boolean | undefined
+      >;
       const alignRaw = rec["align"];
       if (alignRaw === "right" || alignRaw === "center") {
         delete rec["align"];
-        const cur = typeof rec["class"] === "string" ? (rec["class"] as string) : "";
+        const cur =
+          typeof rec["class"] === "string" ? (rec["class"] as string) : "";
         rec["class"] = cur ? `${cur} align-${alignRaw}` : `align-${alignRaw}`;
       }
       attrs = withPos(attrs, n as MdElementNode);
@@ -1165,7 +1313,10 @@ export function mdRenderHtml(nodes: MdNode[], usePosAttrs = false, idPrefix?: st
 
     if (n.type === "element" && n.tag === "toc") {
       const el = n as MdElementNode;
-      const navAttrs = withPos({ class: "toc", "aria-label": "table of contents" }, el);
+      const navAttrs = withPos(
+        { class: "toc", "aria-label": "table of contents" },
+        el,
+      );
       return `<nav${attrsToString(navAttrs)}>${tocHtml}</nav>`;
     }
 
@@ -1259,14 +1410,23 @@ function parseInline(text: string): MdNode[] {
   if ((m = code.exec(text))) {
     return [
       ...parseInline(text.slice(0, m.index)),
-      { type: "element", tag: "code", children: [{ type: "text", text: m[1]! }] },
+      {
+        type: "element",
+        tag: "code",
+        children: [{ type: "text", text: m[1]! }],
+      },
       ...parseInline(text.slice(m.index + m[0]!.length)),
     ];
   }
   if ((m = math.exec(text))) {
     return [
       ...parseInline(text.slice(0, m.index)),
-      { type: "element", tag: "math", attrs: { tex: m[1]!, "math-mode": "inline" }, children: [] },
+      {
+        type: "element",
+        tag: "math",
+        attrs: { tex: m[1]!, "math-mode": "inline" },
+        children: [],
+      },
       ...parseInline(text.slice(m.index + m[0]!.length)),
     ];
   }
@@ -1276,7 +1436,8 @@ function parseInline(text: string): MdNode[] {
       ...parseInline(text.slice(m.index + m[0]!.length)),
     ];
   }
-  const linkRe = /\[([^\]]+)\]\(((?:https?:\/\/[^\s)]+|\/[^\s)]+|[-_a-z0-9]+))\)/gi;
+  const linkRe =
+    /\[([^\]]+)\]\(((?:https?:\/\/[^\s)]+|\/[^\s)]+|[-_a-z0-9]+))\)/gi;
   const nodes: MdNode[] = [];
   let last = 0;
   const resolveSpecialHref = (raw: string, anchor: string): string | null => {
@@ -1284,12 +1445,14 @@ function parseInline(text: string): MdNode[] {
       `https://${lang}.wikipedia.org/wiki/${encodeURIComponent(title.replace(/ /g, "_"))}`;
     if (raw === "wiki-en") return toWiki("en", anchor);
     if (raw === "wiki-ja") return toWiki("ja", anchor);
-    if (raw === "google") return `https://www.google.com/search?q=${encodeURIComponent(anchor)}`;
+    if (raw === "google")
+      return `https://www.google.com/search?q=${encodeURIComponent(anchor)}`;
     return null;
   };
   let match: RegExpExecArray | null;
   while ((match = linkRe.exec(text))) {
-    if (match.index > last) nodes.push(...parseInlineText(text.slice(last, match.index)));
+    if (match.index > last)
+      nodes.push(...parseInlineText(text.slice(last, match.index)));
     const anchor = match[1]!;
     const rawHref = match[2]!;
     const resolved = resolveSpecialHref(rawHref, anchor) ?? rawHref;
@@ -1305,7 +1468,8 @@ function parseInline(text: string): MdNode[] {
   const urlRe = /(https?:\/\/[A-Za-z0-9\-._~:/?#[\]@!$&'()*+,;=%]+)/g;
   last = 0;
   while ((match = urlRe.exec(text))) {
-    if (match.index > last) nodes.push({ type: "text", text: text.slice(last, match.index) });
+    if (match.index > last)
+      nodes.push({ type: "text", text: text.slice(last, match.index) });
     const url = match[0]!;
     nodes.push({
       type: "element",
@@ -1416,7 +1580,9 @@ function decodeNode(e: EncodedNode): MdNode {
     const elm = e as EncodedElement;
     const rawChildren = elm[NODE_KEY_CHILDREN];
     const inlineText =
-      typeof elm[NODE_KEY_TEXT] === "string" ? (elm[NODE_KEY_TEXT] as string) : undefined;
+      typeof elm[NODE_KEY_TEXT] === "string"
+        ? (elm[NODE_KEY_TEXT] as string)
+        : undefined;
     const children: MdNode[] = rawChildren
       ? rawChildren.map(decodeNode)
       : inlineText !== undefined
@@ -1424,11 +1590,16 @@ function decodeNode(e: EncodedNode): MdNode {
         : [];
     let attrs: MdAttrs | undefined;
     for (const [k, v] of Object.entries(elm)) {
-      if (k === NODE_KEY_TAG || k === NODE_KEY_CHILDREN || k === NODE_KEY_TEXT) continue;
+      if (k === NODE_KEY_TAG || k === NODE_KEY_CHILDREN || k === NODE_KEY_TEXT)
+        continue;
       if (k === UNKNOWN_ATTR_BUCKET) continue;
       const orig = ATTR_DEC[k];
       if (!orig) continue;
-      if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+      if (
+        typeof v === "string" ||
+        typeof v === "number" ||
+        typeof v === "boolean"
+      ) {
         if (v === "" || v === false) continue;
         (attrs ??= {})[orig] = v;
       }
@@ -1436,14 +1607,20 @@ function decodeNode(e: EncodedNode): MdNode {
     const unknown = elm[UNKNOWN_ATTR_BUCKET];
     if (unknown && typeof unknown === "object" && !Array.isArray(unknown)) {
       for (const [k, v] of Object.entries(unknown as UnknownAttrs)) {
-        if (typeof v === "string" || typeof v === "number" || typeof v === "boolean") {
+        if (
+          typeof v === "string" ||
+          typeof v === "number" ||
+          typeof v === "boolean"
+        ) {
           if (v === "" || v === false) continue;
           (attrs ??= {})[k] = v;
         }
       }
     }
     const tag = elm[NODE_KEY_TAG] as string;
-    return attrs ? { type: "element", tag, attrs, children } : { type: "element", tag, children };
+    return attrs
+      ? { type: "element", tag, attrs, children }
+      : { type: "element", tag, children };
   }
   const txt = (e as EncodedText)[NODE_KEY_TEXT];
   return { type: "text", text: String(txt) };
