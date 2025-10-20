@@ -165,7 +165,99 @@ $$\int_0^{\sqrt{N}} x^2 \, dx = \lim_{n \to \infty} \sum_{i=1}^{n} f\left( \frac
 
 ## 整形済みテキスト
 
-HTMLの``<pre>``のように改行をそのまま表現したい場合には、その部分を「\`\`\`」 だけの行と「\`\`\`」だけの行で囲みます。
+HTMLの``<pre>``のように空白や改行をそのまま表現したい場合には、その部分を「\`\`\`」だけの行と「\`\`\`」だけの行で囲みます。整形済みテキストの中で「\`\`\`」を書きたい場合には、「\`\`\`\`」で囲みます。
+
+````
+```
+   これは  ペンです。
+        これも    ペン    です。
+```
+````
+
+```
+   これは  ペンです。
+        これも    ペン    です。
+```
+
+整形済みテキストには、シンタックスハイライト機能があります。各種のプログラミング言語やデータ書式の文法に応じて自動的に文字色を変える機能です。シンタックスハイライト機能を有効にするには、開始の区切り文字を「\`\`\`json」などのようにして、言語名を指定します。「c」「cpp」「javascript」「typescript」「python」「ruby」「sql」「json」「yaml」「html」などがサポートされています。
+
+````
+```cpp
+#include <iostream>
+
+int main(int argc, char** argv) {
+  std::cout << "Hello, World" << std::endl;
+  return 0;
+}
+```
+````
+
+```cpp
+#include <iostream>
+
+int main(int argc, char** argv) {
+  std::cout << "Hello, World" << std::endl;
+  return 0;
+}
+```
+
+通常、整形済みテキストは固定幅フォントで枠内に表示されます。プログラミング言語ではなく、日本語や英語などの自然言語で詩などを書きたい場合には、言語として「natural」を指定します。すると、通常の段落と同様に可変幅フォントかつ枠なしで表示されます。
+
+````
+```natural
+  Fury said to a mouse,
+    That he met in the house,
+      "Let us both go to law: I will prosecute you."
+```
+````
+
+```natural
+  Fury said to a mouse,
+    That he met in the house,
+      "Let us both go to law: I will prosecute you."
+```
+
+整形済みテキストの言語名の部分に「:xsmall」「:small」「:large」「:xlarge」「:bold」「:italic」の修飾子を書くことができます。「json:small」とか「natural:large:italic」のように言語名と組み合わせて使うこともできます。
+
+````
+```:xsmall
+o sweet spontaneous earth
+```
+```:small
+o sweet spontaneous earth
+```
+```:large
+o sweet spontaneous earth
+```
+```:xlarge
+o sweet spontaneous earth
+```
+```:bold
+o sweet spontaneous earth
+```
+```:italic
+o sweet spontaneous earth
+```
+````
+
+```:xsmall
+o sweet spontaneous earth
+```
+```:small
+o sweet spontaneous earth
+```
+```:large
+o sweet spontaneous earth
+```
+```:xlarge
+o sweet spontaneous earth
+```
+```:bold
+o sweet spontaneous earth
+```
+```:italic
+o sweet spontaneous earth
+```
 
 ## 罫線
 

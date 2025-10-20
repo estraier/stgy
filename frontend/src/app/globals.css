@@ -109,6 +109,24 @@ body {
 .markdown-body pre[data-pre-mode*=":xlarge:"] {
   font-size: 110%;
 }
+.markdown-body pre[data-pre-mode$=":bold"],
+.markdown-body pre[data-pre-mode*=":bold:"] {
+  font-weight: bold;
+}
+.markdown-body pre[data-pre-mode$=":italic"],
+.markdown-body pre[data-pre-mode*=":italic:"] {
+  font-style: italic;
+}
+.markdown-body pre[data-pre-mode="natural"],
+.markdown-body pre[data-pre-mode^="natural:"] {
+  line-height: 1.5;
+  background: none;
+  font-family: Arial, Helvetica, sans-serif;
+  font-size: 100%;
+  border: none;
+  border-left: 3px solid #eee;
+  border-radius: 0;
+}
 
 .markdown-body table {
   margin: 1.1ex 0.5ex;

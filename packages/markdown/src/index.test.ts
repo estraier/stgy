@@ -841,10 +841,10 @@ abc
 def
 
 xyz
-\`\`\`xml
+\`\`\`\`xml
 <a>tako</a>
 ika
-\`\`\`
+\`\`\`\`
 ## H2
 - a
 b

@@ -46,7 +46,8 @@ export function parseMarkdown(mdText: string): MdNode[] {
     codeLines: string[] = [],
     codeLang: string | undefined;
   let codeStartLine = -1,
-    codeStartChar = -1;
+    codeStartChar = -1,
+    codeFenceLen = 0;
   const currList: { level: number; items: MdNode[] }[] = [];
   let currPara: string[] = [];
   let paraStartLine = -1,
@@ -194,19 +195,9 @@ export function parseMarkdown(mdText: string): MdNode[] {
   for (let i = 0; i < lines.length; ++i) {
     const line = lines[i]!;
     const lineCharStart = lineOffsets[i]!;
-    const codeFence = line.match(/^```([\w:]*)/);
-    if (codeFence) {
-      flushPara();
-      flushList();
-      flushTable();
-      flushQuote();
-      if (!inCode) {
-        inCode = true;
-        codeLines = [];
-        codeLang = codeFence[1] || undefined;
-        codeStartLine = i;
-        codeStartChar = lineCharStart;
-      } else {
+    if (inCode) {
+      const closeRe = new RegExp("^`{" + codeFenceLen + "}\\s*$");
+      if (closeRe.test(line)) {
         nodes.push(
           makeElement(
             "pre",
@@ -219,13 +210,26 @@ export function parseMarkdown(mdText: string): MdNode[] {
         inCode = false;
         codeLang = undefined;
         codeLines = [];
+        codeFenceLen = 0;
         codeStartLine = -1;
         codeStartChar = -1;
+        continue;
       }
+      codeLines.push(line);
       continue;
     }
-    if (inCode) {
-      codeLines.push(line);
+    const codeOpen = line.match(/^(`{3,})([\w:]*)\s*$/);
+    if (codeOpen) {
+      flushPara();
+      flushList();
+      flushTable();
+      flushQuote();
+      inCode = true;
+      codeLines = [];
+      codeLang = codeOpen[2] || undefined;
+      codeFenceLen = codeOpen[1]!.length;
+      codeStartLine = i;
+      codeStartChar = lineCharStart;
       continue;
     }
     if (/^\s*<\[[^\n]*?\]>\s*$/.test(line)) {
