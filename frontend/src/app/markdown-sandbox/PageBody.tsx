@@ -400,7 +400,7 @@ export default function MarkdownSnippetSandbox({
 
 ![これはロゴです](/data/logo-square.svg){size=small}
 
-\`\`\`
+\`\`\`text
 コードブロック
 # これはヘッダじゃない
 - これはリストじゃない
@@ -1232,7 +1232,7 @@ We live in Tokyo.
             </div>
 
             <div ref={leftScrollRef} className="flex-1 overflow-y-auto h-full bg-[#f8f8ff]">
-              <div ref={leftInnerRef} className="mx-auto max-w-[85ex] w-full p-6">
+              <div ref={leftInnerRef} className="mx-auto max-w-[90ex] w-full p-6">
                 <div className="relative">
                   <textarea
                     ref={textareaRef}
@@ -1301,7 +1301,7 @@ We live in Tokyo.
                 <div ref={previewHighlightBandRef} />
               </div>
               <div
-                className="mx-auto max-w-[85ex] w-full p-6"
+                className="mx-auto max-w-[90ex] w-full p-6"
                 style={{ position: "relative", zIndex: 1 }}
               >
                 <div className="font-bold text-gray-400 text-xs mb-2">Preview</div>

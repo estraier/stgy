@@ -841,7 +841,7 @@ abc
 def
 
 xyz
-\`\`\`\`xml
+\`\`\`\`xml:small
 <a>tako</a>
 ika
 \`\`\`\`
@@ -862,7 +862,7 @@ abc
 ![abc](/data/def/ghi){thumbnail}
 ### H3
 `;
-    const expected = `<h1 id="h-1">H1</h1><p>abc<br>def</p><p>xyz</p><pre data-pre-mode="xml">&lt;a&gt;tako&lt;/a&gt;
+    const expected = `<h1 id="h-1">H1</h1><p>abc<br>def</p><p>xyz</p><pre data-pre-mode="xml" data-pre-style="small">&lt;a&gt;tako&lt;/a&gt;
 ika</pre><h2 id="h-1-1">H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul><li>e</li></ul></li><li>f</li></ul></li><li>g</li><li>h<ul><li>j<ul><li>k</li></ul></li></ul></li></ul><p>abc</p><table><tr><td><em>a</em></td><td>b</td></tr><tr><td>c</td><td><strong>d</strong></td></tr></table><figure class="image-block" data-thumbnail><img src="/data/def/ghi" alt="" decoding="async" loading="lazy"><figcaption>abc</figcaption></figure><h3 id="h-1-1-1">H3</h3>`;
     expect(makeHtml(mdText)).toBe(expected);
   });

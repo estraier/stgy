@@ -44,7 +44,8 @@ export function parseMarkdown(mdText: string): MdNode[] {
   const nodes: MdNode[] = [];
   let inCode = false,
     codeLines: string[] = [],
-    codeLang: string | undefined;
+    codeLang: string | undefined,
+    codeStyle: string | undefined;
   let codeStartLine = -1,
     codeStartChar = -1,
     codeFenceLen = 0;
@@ -202,13 +203,19 @@ export function parseMarkdown(mdText: string): MdNode[] {
           makeElement(
             "pre",
             [{ type: "text", text: codeLines.join("\n") }],
-            codeLang ? { "pre-mode": codeLang } : undefined,
+            (() => {
+              const a: MdAttrs = {};
+              if (codeLang) a["pre-mode"] = codeLang;
+              if (codeStyle) a["pre-style"] = codeStyle;
+              return Object.keys(a).length ? a : undefined;
+            })(),
             codeStartLine,
             codeStartChar,
           ),
         );
         inCode = false;
         codeLang = undefined;
+        codeStyle = undefined;
         codeLines = [];
         codeFenceLen = 0;
         codeStartLine = -1;
@@ -218,7 +225,7 @@ export function parseMarkdown(mdText: string): MdNode[] {
       codeLines.push(line);
       continue;
     }
-    const codeOpen = line.match(/^(`{3,})([\w:]*)\s*$/);
+    const codeOpen = line.match(/^(`{3,})([^`]*)\s*$/);
     if (codeOpen) {
       flushPara();
       flushList();
@@ -226,7 +233,19 @@ export function parseMarkdown(mdText: string): MdNode[] {
       flushQuote();
       inCode = true;
       codeLines = [];
-      codeLang = codeOpen[2] || undefined;
+      const rawInfo = (codeOpen[2] || "").trim();
+      codeLang = undefined;
+      codeStyle = undefined;
+      if (rawInfo) {
+        if (rawInfo.startsWith(":")) {
+          codeStyle = rawInfo.slice(1) || undefined;
+        } else {
+          const idx = rawInfo.indexOf(":");
+          codeLang = idx === -1 ? rawInfo : rawInfo.slice(0, idx) || undefined;
+          codeStyle =
+            idx === -1 ? undefined : rawInfo.slice(idx + 1) || undefined;
+        }
+      }
       codeFenceLen = codeOpen[1]!.length;
       codeStartLine = i;
       codeStartChar = lineCharStart;
@@ -417,7 +436,12 @@ export function parseMarkdown(mdText: string): MdNode[] {
       makeElement(
         "pre",
         [{ type: "text", text: codeLines.join("\n") }],
-        codeLang ? { "pre-mode": codeLang } : undefined,
+        (() => {
+          const a: MdAttrs = {};
+          if (codeLang) a["pre-mode"] = codeLang;
+          if (codeStyle) a["pre-style"] = codeStyle;
+          return Object.keys(a).length ? a : undefined;
+        })(),
         codeStartLine >= 0 ? codeStartLine : undefined,
         codeStartChar >= 0 ? codeStartChar : undefined,
       ),
@@ -1257,10 +1281,15 @@ export function mdRenderHtml(
         string,
         string | number | boolean | undefined
       >;
-      const v = rec["pre-mode"];
-      if (v !== undefined) {
+      const vMode = rec["pre-mode"];
+      if (vMode !== undefined) {
         delete rec["pre-mode"];
-        rec["data-pre-mode"] = v;
+        rec["data-pre-mode"] = vMode;
+      }
+      const vStyle = rec["pre-style"];
+      if (vStyle !== undefined) {
+        delete rec["pre-style"];
+        rec["data-pre-style"] = vStyle;
       }
       attrs = withPos(attrs, n as MdElementNode);
       return `<pre${attrsToString(attrs)}>${serializeAll(n.children || [])}</pre>`;
@@ -1526,6 +1555,7 @@ const ATTR_ENC: Record<string, string> = {
   featured: "FE",
   "no-featured": "NF",
   "pre-mode": "PM",
+  "pre-style": "PS",
   "hr-level": "HL",
 };
 
