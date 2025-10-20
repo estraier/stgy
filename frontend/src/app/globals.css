@@ -99,7 +99,7 @@ body {
   content: attr(data-pre-mode);
   top: 0.7ex;
   right: 0.8ex;
-  font-size: 75%;
+  font-size: 80%;
   opacity: 0.3;
   pointer-events: none;
   user-select: none;
@@ -359,10 +359,16 @@ body {
   position: absolute;
   top: 0.2ex;
   right: 0.8ex;
-  font-size: 90%;
+  font-size: 85%;
   color: #012;
   content: "table of contents";
   opacity: 0.3;
+}
+.markdown-body .toc a {
+  color: #026;
+}
+.markdown-body .toc a:hover {
+  color: #03c;
 }
 
 span[aria-label="Identicon"] > svg {
