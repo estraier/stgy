@@ -423,6 +423,44 @@ We live in Tokyo.
   const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
   const [useFeatured, setUseFeatured] = useState<boolean>(false);
 
+  const [previewSrc, setPreviewSrc] = useState<string>(initialBody);
+  const bodyRef = useRef(body);
+  useEffect(() => {
+    bodyRef.current = body;
+  }, [body]);
+  useEffect(() => {
+    const snapshot = body;
+    const t = window.setTimeout(() => {
+      if (bodyRef.current === snapshot) setPreviewSrc(snapshot);
+    }, 100);
+    return () => clearTimeout(t);
+  }, [body]);
+
+  const [renderedHtml, setRenderedHtml] = useState<string>(() => {
+    let nodes = parseMarkdown(initialBody);
+    nodes = mdGroupImageGrid(nodes);
+    return convertHtmlMathInline(mdRenderHtml(nodes, true));
+  });
+  const [renderedText, setRenderedText] = useState<string>(() => {
+    let nodes = parseMarkdown(initialBody);
+    nodes = mdCutOff(nodes, { imgLen: -1, imgHeight: 1 });
+    return mdRenderText(nodes);
+  });
+  const renderAbortRef = useRef<AbortController | null>(null);
+  const idleHandleRef = useRef<number | null>(null);
+  const requestIdle = useCallback(
+    (cb: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void, timeout = 500) =>
+      ("requestIdleCallback" in window
+        ? (window as any).requestIdleCallback(cb, { timeout })
+        : window.setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 } as any), 1)) as unknown as number,
+    [],
+  );
+  const cancelIdle = useCallback(
+    (handle: number) =>
+      ("cancelIdleCallback" in window ? (window as any).cancelIdleCallback(handle) : clearTimeout(handle)),
+    [],
+  );
+
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const leftInnerRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -450,31 +488,8 @@ We live in Tokyo.
   const ensureTimersRef = useRef<number[]>([]);
   const didAutoFocusRef = useRef(false);
 
-  const content = useMemo(() => body, [body]);
-  const contentLength = content.length;
+  const contentLength = body.length;
   const overLimit = contentLengthLimit != null ? contentLength > contentLengthLimit : false;
-
-  const renderHtml = useCallback(
-    (md: string) => {
-      let nodes = parseMarkdown(md);
-      nodes = mdGroupImageGrid(nodes);
-      if (useFeatured) nodes = mdFilterForFeatured(nodes);
-      if (maxLen || maxHeight) {
-        nodes = mdCutOff(nodes, { maxLen, maxHeight });
-      }
-      return convertHtmlMathInline(mdRenderHtml(nodes, true));
-    },
-    [maxLen, maxHeight, useFeatured],
-  );
-
-  const renderText = useCallback(
-    (md: string) => {
-      let nodes = parseMarkdown(md);
-      nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen: -1, imgHeight: 1 });
-      return mdRenderText(nodes);
-    },
-    [maxLen, maxHeight],
-  );
 
   const activeTextarea = useCallback((): HTMLTextAreaElement | null => textareaRef.current, []);
   const activePreviewWrap = useCallback((): HTMLDivElement | null => previewWrapRef.current, []);
@@ -520,7 +535,7 @@ We live in Tokyo.
 
   const syncToCaret = useCallback(() => {
     const wrap = activePreviewWrap();
-    const caret = Math.min(Math.max(0, caretRef.current), content.length);
+    const caret = Math.min(Math.max(0, caretRef.current), previewSrc.length);
     if (!wrap) return;
     const target = findAnchor(caret);
     if (target) {
@@ -531,9 +546,9 @@ We live in Tokyo.
       wrap.scrollTop = desired;
       return;
     }
-    const desired = ((wrap.scrollHeight - wrap.clientHeight) * caret) / Math.max(1, content.length);
+    const desired = ((wrap.scrollHeight - wrap.clientHeight) * caret) / Math.max(1, previewSrc.length);
     wrap.scrollTop = Math.max(0, Math.min(wrap.scrollHeight - wrap.clientHeight, desired));
-  }, [activePreviewWrap, content.length, findAnchor]);
+  }, [activePreviewWrap, previewSrc.length, findAnchor]);
 
   const updateCaretHighlight = useCallback(() => {
     const ta = textareaRef.current;
@@ -603,7 +618,7 @@ We live in Tokyo.
     overlay.style.width = "100%";
     overlay.style.height = "100%";
     overlay.style.zIndex = "0";
-    const target = findAnchor(Math.min(Math.max(0, caretRef.current), content.length));
+    const target = findAnchor(Math.min(Math.max(0, caretRef.current), previewSrc.length));
     if (!target) {
       band.style.display = "none";
       return;
@@ -624,7 +639,7 @@ We live in Tokyo.
     band.style.height = `${height}px`;
     band.style.width = `${width}px`;
     band.style.borderRadius = "4px";
-  }, [mode, content.length, findAnchor]);
+  }, [mode, previewSrc.length, findAnchor]);
 
   const schedulePreviewHighlight = useCallback(() => {
     if (previewHighlightRafRef.current != null)
@@ -766,6 +781,44 @@ We live in Tokyo.
       schedulePreviewHighlight();
     });
   }, [rebuildAnchors, syncToCaret, refreshGutterPins, schedulePreviewHighlight]);
+
+  useEffect(() => {
+    if (renderAbortRef.current) renderAbortRef.current.abort();
+    if (idleHandleRef.current != null) cancelIdle(idleHandleRef.current);
+    const controller = new AbortController();
+    renderAbortRef.current = controller;
+    const run = async () => {
+      const { signal } = controller;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (signal.aborted) return;
+      let nodes = parseMarkdown(previewSrc);
+      if (signal.aborted) return;
+      if (mode === "html") {
+        nodes = mdGroupImageGrid(nodes);
+        if (useFeatured) nodes = mdFilterForFeatured(nodes);
+        if (maxLen || maxHeight) nodes = mdCutOff(nodes, { maxLen, maxHeight });
+        if (signal.aborted) return;
+        const html = convertHtmlMathInline(mdRenderHtml(nodes, true));
+        if (signal.aborted) return;
+        setRenderedHtml(html);
+      } else {
+        nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen: -1, imgHeight: 1 });
+        if (signal.aborted) return;
+        const txt = mdRenderText(nodes);
+        if (signal.aborted) return;
+        setRenderedText(txt);
+      }
+      scheduleSync();
+      schedulePreviewHighlight();
+    };
+    idleHandleRef.current = requestIdle(() => {
+      run().catch(() => {});
+    }, 500);
+    return () => {
+      controller.abort();
+      if (idleHandleRef.current != null) cancelIdle(idleHandleRef.current);
+    };
+  }, [previewSrc, mode, maxLen, maxHeight, useFeatured, requestIdle, cancelIdle, scheduleSync, schedulePreviewHighlight]);
 
   const resizeTextarea = useCallback(() => {
     const ta = textareaRef.current;
@@ -920,7 +973,7 @@ We live in Tokyo.
   useEffect(() => {
     scheduleSync();
     schedulePreviewHighlight();
-  }, [content, scheduleSync, schedulePreviewHighlight]);
+  }, [previewSrc, scheduleSync, schedulePreviewHighlight]);
 
   useEffect(() => {
     scheduleSync();
@@ -1309,7 +1362,7 @@ We live in Tokyo.
                   <div
                     ref={previewBodyRef as React.MutableRefObject<HTMLDivElement | null>}
                     className="markdown-body"
-                    dangerouslySetInnerHTML={{ __html: renderHtml(content) }}
+                    dangerouslySetInnerHTML={{ __html: renderedHtml }}
                     style={{ minHeight: 32 }}
                   />
                 ) : (
@@ -1318,7 +1371,7 @@ We live in Tokyo.
                     className="w-full whitespace-pre-wrap break-words text-sm border rounded px-2 py-2"
                     style={{ background: "#fff", minHeight: 32 }}
                   >
-                    {renderText(content)}
+                    {renderedText}
                   </pre>
                 )}
               </div>

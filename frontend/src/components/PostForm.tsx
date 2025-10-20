@@ -472,13 +472,74 @@ export default function PostForm({
   const contentLength = content.length;
   const overLimit = contentLengthLimit != null ? contentLength > contentLengthLimit : false;
 
-  const previewHtml = useMemo(() => {
-    const html = convertHtmlMathInline(makeArticleHtmlFromMarkdown(content, true));
+  const [previewContent, setPreviewContent] = useState<string>(content);
+  const contentRef = useRef(content);
+  useEffect(() => {
+    contentRef.current = content;
+  }, [content]);
+  useEffect(() => {
+    const snapshot = content;
+    const t = window.setTimeout(() => {
+      if (contentRef.current === snapshot) setPreviewContent(snapshot);
+    }, 100);
+    return () => clearTimeout(t);
+  }, [content]);
+
+  const [previewHtml, setPreviewHtml] = useState<string>(() => {
+    const html = convertHtmlMathInline(makeArticleHtmlFromMarkdown(previewContent, true));
     return (
       html +
-      `<span data-char-position="${content.length}" data-no-pin="1" aria-hidden="true" style="display:block;height:1px;"></span>`
+      `<span data-char-position="${previewContent.length}" data-no-pin="1" aria-hidden="true" style="display:block;height:1px;"></span>`
     );
-  }, [content]);
+  });
+
+  const renderAbortRef = useRef<AbortController | null>(null);
+  const idleHandleRef = useRef<number | null>(null);
+  const requestIdle = useCallback(
+    (
+      cb: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void,
+      timeout = 500,
+    ) =>
+      ("requestIdleCallback" in window
+        ? (window as any).requestIdleCallback(cb, { timeout })
+        : window.setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 } as any), 1)) as unknown as number,
+    [],
+  );
+  const cancelIdle = useCallback(
+    (handle: number) =>
+      ("cancelIdleCallback" in window
+        ? (window as any).cancelIdleCallback(handle)
+        : clearTimeout(handle)),
+    [],
+  );
+
+  useEffect(() => {
+    if (renderAbortRef.current) renderAbortRef.current.abort();
+    if (idleHandleRef.current != null) cancelIdle(idleHandleRef.current);
+    const controller = new AbortController();
+    renderAbortRef.current = controller;
+    const run = async () => {
+      const { signal } = controller;
+      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+      if (signal.aborted) return;
+      const raw = convertHtmlMathInline(makeArticleHtmlFromMarkdown(previewContent, true));
+      if (signal.aborted) return;
+      const html =
+        raw +
+        `<span data-char-position="${previewContent.length}" data-no-pin="1" aria-hidden="true" style="display:block;height:1px;"></span>`;
+      if (signal.aborted) return;
+      setPreviewHtml(html);
+      scheduleSyncRef.current();
+      schedulePreviewHighlightRef.current();
+    };
+    idleHandleRef.current = requestIdle(() => {
+      run().catch(() => {});
+    }, 500);
+    return () => {
+      controller.abort();
+      if (idleHandleRef.current != null) cancelIdle(idleHandleRef.current);
+    };
+  }, [previewContent, requestIdle, cancelIdle]);
 
   const attrLabels = useMemo(() => {
     return Object.entries(attrs || {})
