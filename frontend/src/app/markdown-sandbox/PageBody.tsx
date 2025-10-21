@@ -41,30 +41,37 @@ function normalizeLineForHeading(line: string): string {
   const stripped = line.replace(/^(\s*(?:-\s+|>\s+|#{1,3}\s+))+/u, "");
   return stripped.trim();
 }
+
 function escapeReg(s: string) {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
+
 function makePrefixRegex(prefix: string): RegExp {
   const hasSpace = /\s$/.test(prefix);
   const base = hasSpace ? prefix.trimEnd() : prefix;
   const pattern = `^\\s*${escapeReg(base)}${hasSpace ? "\\s+" : ""}`;
   return new RegExp(pattern, "u");
 }
+
 function clamp(n: number, min: number, max: number) {
   return Math.max(min, Math.min(max, n));
 }
+
 function lineStartAt(text: string, i: number) {
   return text.lastIndexOf("\n", Math.max(0, i - 1)) + 1;
 }
+
 function lineEndFromStart(text: string, start: number) {
   const nl = text.indexOf("\n", start);
   return nl === -1 ? text.length : nl;
 }
+
 function getCurrentLineRange(text: string, caret: number) {
   const start = lineStartAt(text, caret);
   const end = lineEndFromStart(text, start);
   return { start, end };
 }
+
 function getSelectedLinesRange(text: string, selStart: number, selEnd: number) {
   const s0 = clamp(Math.min(selStart, selEnd), 0, text.length);
   const e0 = clamp(Math.max(selStart, selEnd), 0, text.length);
@@ -75,6 +82,7 @@ function getSelectedLinesRange(text: string, selStart: number, selEnd: number) {
   const lastEnd = lineEndFromStart(text, lastStart);
   return { start: firstStart, end: lastEnd };
 }
+
 function getTargetRange(text: string, selStart: number, selEnd: number) {
   const s0 = clamp(Math.min(selStart, selEnd), 0, text.length);
   const e0 = clamp(Math.max(selStart, selEnd), 0, text.length);
@@ -369,13 +377,20 @@ export default function MarkdownSnippetSandbox({
 地の文。地の文。
 地の文の中の改行は<br>扱いで、マージンなしで改行。
 
-段落は空白で区切る。一つの段落は<p>で囲む。
+段落は空白で区切る。一つの段落は<p>で囲む。CSSで字下げをするかどうかは迷ったが、しないことにした。なぜなら上述の段落内改行の後が字下げされないと、気持ち悪いからだ。
 
 - リスト1
   - サブリストA
     - サブサブリスト
-- リスト2。{{竜破斬|ドラグ・スレイブ}}と{{三日月型砂丘|バルハン}}
-- リスト3。$$\\int_0^{\\sqrt{N}} x^2 \\, dx = \\lim_{n \\to \\infty} \\sum_{i=1}^{n} f\\left( \\frac{i \\cdot x}{n} \\right) \\cdot \\left( \\frac{x}{n} \\right)$$ by $$\\LaTeX$$
+      - サブサブサブリスト
+- リスト2。**あいうえお**
+- リスト3。::かきくけこ::
+
+$$E = mc^2$$ by $$\\LaTeX$$
+$$\\int_0^{\\sqrt{N}} x^2 \\, dx = \\lim_{n \\to \\infty} \\sum_{i=1}^{n} f\\left( \\frac{i \\cdot x}{n} \\right) \\cdot \\left( \\frac{x}{n} \\right)$$
+
+{{竜破斬|ドラグ・スレイブ}}と{{爆霊地獄|ベノン}}と{{三日月型砂丘|バルハン}}。
+{{未完の新人|リトル・ルーキー}} → {{白兎の脚|ラビット・フット}} → {{獅兎の光|レグルス・アルネ}}。
 
 ## Go to [Google](https://google.com/) and **Yahoo**
 ## Set: http://example.com/ and __Yapoo__
@@ -401,8 +416,25 @@ export default function MarkdownSnippetSandbox({
 - これはリストじゃない
 \`\`\`
 
-We live in Tokyo.
+\`\`\`natural:italic
+We real cool. We
+    Left school. We
+        Lurk late. We
+            Strike straight. We
+                Sing sin. We
+                    Thin gin. We
+                        Jazz June. We
+                            Die soon.
+\`\`\`
 
+We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
+
+{{寿限無|じゅげむ}}{{寿限無|じゅげむ}}{{五劫|ごこう}}のすりきれ {{海砂利水魚|かいじゃりすいぎょ}}の{{水行末|すいぎょうまつ}}{{雲来末|うんらいまつ}}{{風来末|ふうらいまつ}} 食う寝るところに住むところ やぶらこうじのぶらこうじ パイポパイポパイポのシューリンガン シューリンガンのグーリンダイ グーリンダイのポンポコピーのポンポコナーの{{長久命|ちょうきゅうめい}}の{{長助|ちょうすけ}}
+
+
+![ロゴ1](/data/logo-square.svg){grid}
+![ロゴ1](/data/logo-square.svg){grid}
+---
 ![ロゴ1](/data/logo-square.svg){grid}
 ![ロゴ2](/data/logo-square.svg){grid,featured}
 ![ロゴ3](/data/logo-square.svg){grid}
