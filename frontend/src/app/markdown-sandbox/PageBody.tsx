@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useRef, useState, useMemo, useEffect, useLayoutEffect, useCallback } from "react";
+import React, { useRef, useState, useEffect, useLayoutEffect, useCallback } from "react";
 import {
   Heading1,
   Heading2,
@@ -339,6 +339,10 @@ function computeCaretTopInTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivEleme
   return top;
 }
 
+type IdleDeadline = { readonly didTimeout: boolean; timeRemaining: () => number };
+type IdleRequestCallback = (deadline: IdleDeadline) => void;
+type IdleRequestOptions = { timeout: number };
+
 export default function MarkdownSnippetSandbox({
   initialBody = `# サイドバイサイドエディタのデモ
 
@@ -439,18 +443,25 @@ We live in Tokyo.
   });
   const renderAbortRef = useRef<AbortController | null>(null);
   const idleHandleRef = useRef<number | null>(null);
-  const requestIdle = useCallback(
-    (cb: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void, timeout = 500) =>
-      ("requestIdleCallback" in window
-        ? (window as any).requestIdleCallback(cb, { timeout })
-        : window.setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 } as any), 1)) as unknown as number,
-    [],
-  );
-  const cancelIdle = useCallback(
-    (handle: number) =>
-      ("cancelIdleCallback" in window ? (window as any).cancelIdleCallback(handle) : clearTimeout(handle)),
-    [],
-  );
+  const requestIdle = useCallback((cb: IdleRequestCallback, timeout = 500): number => {
+    const win = window as typeof window & {
+      requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
+    };
+    if (typeof win.requestIdleCallback === "function") {
+      return win.requestIdleCallback(cb, { timeout });
+    }
+    return window.setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 }), 1);
+  }, []);
+  const cancelIdle = useCallback((handle: number): void => {
+    const win = window as typeof window & {
+      cancelIdleCallback?: (handle: number) => void;
+    };
+    if (typeof win.cancelIdleCallback === "function") {
+      win.cancelIdleCallback(handle);
+    } else {
+      clearTimeout(handle);
+    }
+  }, []);
 
   const leftScrollRef = useRef<HTMLDivElement>(null);
   const leftInnerRef = useRef<HTMLDivElement>(null);
@@ -542,7 +553,8 @@ We live in Tokyo.
       wrap.scrollTop = desired;
       return;
     }
-    const desired = ((wrap.scrollHeight - wrap.clientHeight) * caret) / Math.max(1, previewSrc.length);
+    const desired =
+      ((wrap.scrollHeight - wrap.clientHeight) * caret) / Math.max(1, previewSrc.length);
     wrap.scrollTop = Math.max(0, Math.min(wrap.scrollHeight - wrap.clientHeight, desired));
   }, [activePreviewWrap, previewSrc.length, findAnchor]);
 
@@ -685,48 +697,51 @@ We live in Tokyo.
     ta.scrollTop = Math.min(maxScroll, Math.max(0, ta.scrollTop + delta));
   }, []);
 
-  const createPin = useCallback((gutter: HTMLDivElement) => {
-    const btn = document.createElement("button");
-    btn.type = "button";
-    btn.setAttribute("data-jump-pin", "1");
-    Object.assign(btn.style, {
-      position: "absolute",
-      left: "3px",
-      transform: "translateY(-50%)",
-      width: "16px",
-      height: "6px",
-      borderRadius: "6px",
-      border: "1px solid #cbd5e1",
-      background: "#e2e8f0",
-      boxShadow: "0 1px 1px rgba(0,0,0,.08)",
-      padding: "0",
-      cursor: "pointer",
-      pointerEvents: "auto",
-      outline: "none",
-      display: "none",
-    } as Partial<CSSStyleDeclaration>);
-    btn.addEventListener("mouseenter", () => (btn.style.background = "#cbd5e1"));
-    btn.addEventListener("mouseleave", () => (btn.style.background = "#e2e8f0"));
-    btn.addEventListener("mousedown", () => (btn.style.background = "#94a3b8"));
-    btn.addEventListener("mouseup", () => (btn.style.background = "#cbd5e1"));
-    btn.addEventListener("click", (e) => {
-      e.preventDefault();
-      e.stopPropagation();
-      const pos = Number(btn.dataset.char) || 0;
-      const taNow = textareaRef.current;
-      if (!taNow) return;
-      taNow.focus();
-      taNow.setSelectionRange(pos, pos);
-      centerCaretAtRatio(taNow, 0.4);
-      caretRef.current = pos;
-      rebuildAnchors();
-      syncToCaret();
-      scheduleHighlight();
-      schedulePreviewHighlight();
-    });
-    gutter.appendChild(btn);
-    return btn;
-  }, [centerCaretAtRatio, rebuildAnchors, syncToCaret, scheduleHighlight, schedulePreviewHighlight]);
+  const createPin = useCallback(
+    (gutter: HTMLDivElement) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.setAttribute("data-jump-pin", "1");
+      Object.assign(btn.style, {
+        position: "absolute",
+        left: "3px",
+        transform: "translateY(-50%)",
+        width: "16px",
+        height: "6px",
+        borderRadius: "6px",
+        border: "1px solid #cbd5e1",
+        background: "#e2e8f0",
+        boxShadow: "0 1px 1px rgba(0,0,0,.08)",
+        padding: "0",
+        cursor: "pointer",
+        pointerEvents: "auto",
+        outline: "none",
+        display: "none",
+      } as Partial<CSSStyleDeclaration>);
+      btn.addEventListener("mouseenter", () => (btn.style.background = "#cbd5e1"));
+      btn.addEventListener("mouseleave", () => (btn.style.background = "#e2e8f0"));
+      btn.addEventListener("mousedown", () => (btn.style.background = "#94a3b8"));
+      btn.addEventListener("mouseup", () => (btn.style.background = "#cbd5e1"));
+      btn.addEventListener("click", (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        const pos = Number(btn.dataset.char) || 0;
+        const taNow = textareaRef.current;
+        if (!taNow) return;
+        taNow.focus();
+        taNow.setSelectionRange(pos, pos);
+        centerCaretAtRatio(taNow, 0.4);
+        caretRef.current = pos;
+        rebuildAnchors();
+        syncToCaret();
+        scheduleHighlight();
+        schedulePreviewHighlight();
+      });
+      gutter.appendChild(btn);
+      return btn;
+    },
+    [centerCaretAtRatio, rebuildAnchors, syncToCaret, scheduleHighlight, schedulePreviewHighlight],
+  );
 
   const refreshGutterPins = useCallback(() => {
     if (mode !== "html") {
@@ -821,7 +836,17 @@ We live in Tokyo.
       controller.abort();
       if (idleHandleRef.current != null) cancelIdle(idleHandleRef.current);
     };
-  }, [previewSrc, mode, maxLen, maxHeight, useFeatured, requestIdle, cancelIdle, scheduleSync, schedulePreviewHighlight]);
+  }, [
+    previewSrc,
+    mode,
+    maxLen,
+    maxHeight,
+    useFeatured,
+    requestIdle,
+    cancelIdle,
+    scheduleSync,
+    schedulePreviewHighlight,
+  ]);
 
   const resizeTextarea = useCallback(() => {
     const ta = textareaRef.current;
@@ -1208,7 +1233,7 @@ We live in Tokyo.
 
         <div className="grid grid-cols-2 gap-0 flex-1 min-h-0">
           <div className="relative border-r min-h-0 flex flex-col">
-            <div className="sticky top-0 z-10 bg白/80 backdrop-blur-sm border-b border-gray-200 w-full">
+            <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 w-full">
               <div className="px-1.5 py-1 flex items-center gap-1 bg-[#eee]">
                 <button
                   type="button"
@@ -1277,7 +1302,7 @@ We live in Tokyo.
                 <button
                   type="button"
                   onMouseDown={onToolbarInline("__")}
-                  className="hidden md:inline-flex h-7 w-8 items中心 justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                  className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
                   title="Underline"
                 >
                   <UnderlineIcon className="w-4 h-4" />
@@ -1285,7 +1310,7 @@ We live in Tokyo.
                 <button
                   type="button"
                   onMouseDown={onToolbarInline("~~")}
-                  className="hidden md:inline-flex h-7 w-8 items中心 justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                  className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
                   title="Strikethrough"
                 >
                   <StrikethroughIcon className="w-4 h-4" />
@@ -1401,8 +1426,16 @@ We live in Tokyo.
                 <div className="font-bold text-gray-400 text-xs mb-2">Preview</div>
                 {mode === "html" ? (
                   <div style={{ minHeight: 32 }}>
-                    <div ref={previewHtmlARef} className="markdown-body" style={{ display: "block" }} />
-                    <div ref={previewHtmlBRef} className="markdown-body" style={{ display: "none" }} />
+                    <div
+                      ref={previewHtmlARef}
+                      className="markdown-body"
+                      style={{ display: "block" }}
+                    />
+                    <div
+                      ref={previewHtmlBRef}
+                      className="markdown-body"
+                      style={{ display: "none" }}
+                    />
                   </div>
                 ) : (
                   <pre

@@ -405,9 +405,7 @@ export default function PostForm({
   const previewResizeBodyRef = useRef<ResizeObserver | null>(null);
   const ensureTimersRef = useRef<number[]>([]);
 
-  // ★ ピンプール（再利用）を追加
   const pinsRef = useRef<HTMLButtonElement[]>([]);
-
   const [showPreview, setShowPreview] = useState(false);
   const [hasFocusedOnce, setHasFocusedOnce] = useState(false);
   const [isXl, setIsXl] = useState(false);
@@ -873,7 +871,6 @@ export default function PostForm({
     [computeCaretTopWithinTextarea],
   );
 
-  // ★ ピン生成（1回だけイベント付与）
   const createPin = useCallback(
     (gutter: HTMLDivElement) => {
       const btn = document.createElement("button");
@@ -921,13 +918,17 @@ export default function PostForm({
       gutter.appendChild(btn);
       return btn;
     },
-    [centerCaretAtRatio, rebuildAnchors, syncToCaret, scheduleEditorHighlight, schedulePreviewHighlight],
+    [
+      centerCaretAtRatio,
+      rebuildAnchors,
+      syncToCaret,
+      scheduleEditorHighlight,
+      schedulePreviewHighlight,
+    ],
   );
 
-  // ★ ピン更新（プール利用）
   const refreshGutterPins = useCallback(() => {
     if (!overlayActive || !showPreview) {
-      // 非表示にするだけ
       const pool = pinsRef.current;
       for (let i = 0; i < pool.length; i++) pool[i]!.style.display = "none";
       return;
@@ -1369,7 +1370,14 @@ export default function PostForm({
         attachPreviewObservers();
       });
     },
-    [previewHtml, rebuildAnchors, overlayActive, attachPreviewObservers, refreshGutterPins, showPreview],
+    [
+      previewHtml,
+      rebuildAnchors,
+      overlayActive,
+      attachPreviewObservers,
+      refreshGutterPins,
+      showPreview,
+    ],
   );
 
   useLayoutEffect(() => {
@@ -1399,18 +1407,8 @@ export default function PostForm({
   }, [showPreview, overlayActive, previewHtml]);
 
   useEffect(() => {
-    swapInto(
-      previewBodyARef.current,
-      previewBodyBRef.current,
-      previewFrontIsARef,
-      previewBodyRef,
-    );
-    swapInto(
-      overlayBodyARef.current,
-      overlayBodyBRef.current,
-      overlayFrontIsARef,
-      overlayBodyRef,
-    );
+    swapInto(previewBodyARef.current, previewBodyBRef.current, previewFrontIsARef, previewBodyRef);
+    swapInto(overlayBodyARef.current, overlayBodyBRef.current, overlayFrontIsARef, overlayBodyRef);
   }, [previewHtml, swapInto]);
 
   function handleSubmit(e: React.FormEvent) {
@@ -2202,8 +2200,16 @@ export default function PostForm({
                   >
                     <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
                     <div style={{ minHeight: 32 }}>
-                      <div ref={overlayBodyARef} className="markdown-body" style={{ display: "block" }} />
-                      <div ref={overlayBodyBRef} className="markdown-body" style={{ display: "none" }} />
+                      <div
+                        ref={overlayBodyARef}
+                        className="markdown-body"
+                        style={{ display: "block" }}
+                      />
+                      <div
+                        ref={overlayBodyBRef}
+                        className="markdown-body"
+                        style={{ display: "none" }}
+                      />
                     </div>
                     {(attrLabels.length > 0 || tags.length > 0) && (
                       <div className="mt-3 flex flex-wrap gap-2">

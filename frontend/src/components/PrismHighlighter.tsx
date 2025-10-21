@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { ensureLanguage, getPrism, resolveHighlightLang } from "@/utils/prism";
+import { ensureLanguage, resolveHighlightLang } from "@/utils/prism";
 
 type Props = {
   root?: HTMLElement | null;
@@ -21,12 +21,8 @@ export default function PrismHighlighter({ root, deps = [] }: Props) {
     let cancelled = false;
 
     (async () => {
-      const pres = Array.from(
-        container.querySelectorAll<HTMLPreElement>("pre[data-pre-mode]")
-      );
+      const pres = Array.from(container.querySelectorAll<HTMLPreElement>("pre[data-pre-mode]"));
       if (pres.length === 0) return;
-
-      const Prism = await getPrism();
 
       for (const pre of pres) {
         if (cancelled) return;
@@ -36,7 +32,7 @@ export default function PrismHighlighter({ root, deps = [] }: Props) {
         const lang = resolveHighlightLang(raw);
         if (!lang) continue;
 
-        let code = pre.querySelector("code");
+        let code = pre.querySelector("code") as HTMLElement | null;
         if (!code) {
           const text = pre.textContent ?? "";
           pre.textContent = "";
@@ -44,14 +40,15 @@ export default function PrismHighlighter({ root, deps = [] }: Props) {
           code.textContent = text;
           pre.appendChild(code);
         }
+        const codeEl = code as HTMLElement;
 
         pre.classList.add(`language-${lang}`);
-        code.classList.add(`language-${lang}`);
+        codeEl.classList.add(`language-${lang}`);
 
-        await ensureLanguage(lang);
+        const { Prism } = await ensureLanguage(lang);
         if (cancelled) return;
 
-        Prism.highlightElement(code);
+        Prism.highlightElement(codeEl);
         pre.dataset.prismified = "1";
       }
     })();
