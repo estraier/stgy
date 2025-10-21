@@ -311,6 +311,7 @@ function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement
   assign("paddingRight", "0");
   assign("paddingBottom", "0");
   assign("paddingLeft", "0");
+
   assign("borderLeftWidth", "0");
   assign("borderRightWidth", "0");
   assign("borderTopWidth", "0");
@@ -466,6 +467,9 @@ We live in Tokyo.
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewWrapRef = useRef<HTMLDivElement>(null);
   const previewBodyRef = useRef<HTMLDivElement | HTMLPreElement | null>(null);
+  const previewHtmlARef = useRef<HTMLDivElement>(null);
+  const previewHtmlBRef = useRef<HTMLDivElement>(null);
+  const previewHtmlFrontIsARef = useRef(true);
   const gutterRef = useRef<HTMLDivElement | null>(null);
 
   const caretMirrorRef = useRef<HTMLDivElement | null>(null);
@@ -1020,6 +1024,44 @@ We live in Tokyo.
     };
   }, [scheduleHighlight, schedulePreviewHighlight]);
 
+  useLayoutEffect(() => {
+    if (mode !== "html") return;
+    const a = previewHtmlARef.current;
+    const b = previewHtmlBRef.current;
+    if (!a || !b) return;
+    const front = previewHtmlFrontIsARef.current ? a : b;
+    const back = previewHtmlFrontIsARef.current ? b : a;
+    front.style.display = "block";
+    back.style.display = "none";
+    front.innerHTML = renderedHtml;
+    previewBodyRef.current = front;
+    rebuildAnchors();
+    scheduleSync();
+    schedulePreviewHighlight();
+    attachObservers();
+  }, [mode, renderedHtml, rebuildAnchors, scheduleSync, schedulePreviewHighlight, attachObservers]);
+
+  useEffect(() => {
+    if (mode !== "html") return;
+    const a = previewHtmlARef.current;
+    const b = previewHtmlBRef.current;
+    if (!a || !b) return;
+    const frontIsA = previewHtmlFrontIsARef.current;
+    const front = frontIsA ? a : b;
+    const back = frontIsA ? b : a;
+    back.innerHTML = renderedHtml;
+    requestAnimationFrame(() => {
+      front.style.display = "none";
+      back.style.display = "block";
+      previewHtmlFrontIsARef.current = !frontIsA;
+      previewBodyRef.current = back;
+      rebuildAnchors();
+      scheduleSync();
+      schedulePreviewHighlight();
+      attachObservers();
+    });
+  }, [renderedHtml, mode, rebuildAnchors, scheduleSync, schedulePreviewHighlight, attachObservers]);
+
   const onToolbarPrefix = useCallback(
     (prefix: string) => (e: React.MouseEvent) => {
       e.preventDefault();
@@ -1236,7 +1278,7 @@ We live in Tokyo.
                 <button
                   type="button"
                   onMouseDown={onToolbarInline("__")}
-                  className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                  className="hidden md:inline-flex h-7 w-8 items-center justify中心 rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
                   title="Underline"
                 >
                   <UnderlineIcon className="w-4 h-4" />
@@ -1359,12 +1401,10 @@ We live in Tokyo.
               >
                 <div className="font-bold text-gray-400 text-xs mb-2">Preview</div>
                 {mode === "html" ? (
-                  <div
-                    ref={previewBodyRef as React.MutableRefObject<HTMLDivElement | null>}
-                    className="markdown-body"
-                    dangerouslySetInnerHTML={{ __html: renderedHtml }}
-                    style={{ minHeight: 32 }}
-                  />
+                  <div style={{ minHeight: 32 }}>
+                    <div ref={previewHtmlARef} className="markdown-body" style={{ display: "block" }} />
+                    <div ref={previewHtmlBRef} className="markdown-body" style={{ display: "none" }} />
+                  </div>
                 ) : (
                   <pre
                     ref={previewBodyRef as React.MutableRefObject<HTMLPreElement | null>}

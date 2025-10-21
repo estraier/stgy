@@ -412,6 +412,13 @@ export default function PostForm({
 
   const formId = useId();
 
+  const previewBodyARef = useRef<HTMLDivElement>(null);
+  const previewBodyBRef = useRef<HTMLDivElement>(null);
+  const overlayBodyARef = useRef<HTMLDivElement>(null);
+  const overlayBodyBRef = useRef<HTMLDivElement>(null);
+  const previewFrontIsARef = useRef(true);
+  const overlayFrontIsARef = useRef(true);
+
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1000px)");
     const onChange = () => {
@@ -472,74 +479,13 @@ export default function PostForm({
   const contentLength = content.length;
   const overLimit = contentLengthLimit != null ? contentLength > contentLengthLimit : false;
 
-  const [previewContent, setPreviewContent] = useState<string>(content);
-  const contentRef = useRef(content);
-  useEffect(() => {
-    contentRef.current = content;
-  }, [content]);
-  useEffect(() => {
-    const snapshot = content;
-    const t = window.setTimeout(() => {
-      if (contentRef.current === snapshot) setPreviewContent(snapshot);
-    }, 100);
-    return () => clearTimeout(t);
-  }, [content]);
-
-  const [previewHtml, setPreviewHtml] = useState<string>(() => {
-    const html = convertHtmlMathInline(makeArticleHtmlFromMarkdown(previewContent, true));
+  const previewHtml = useMemo(() => {
+    const html = convertHtmlMathInline(makeArticleHtmlFromMarkdown(content, true));
     return (
       html +
-      `<span data-char-position="${previewContent.length}" data-no-pin="1" aria-hidden="true" style="display:block;height:1px;"></span>`
+      `<span data-char-position="${content.length}" data-no-pin="1" aria-hidden="true" style="display:block;height:1px;"></span>`
     );
-  });
-
-  const renderAbortRef = useRef<AbortController | null>(null);
-  const idleHandleRef = useRef<number | null>(null);
-  const requestIdle = useCallback(
-    (
-      cb: (deadline: { didTimeout: boolean; timeRemaining: () => number }) => void,
-      timeout = 500,
-    ) =>
-      ("requestIdleCallback" in window
-        ? (window as any).requestIdleCallback(cb, { timeout })
-        : window.setTimeout(() => cb({ didTimeout: false, timeRemaining: () => 0 } as any), 1)) as unknown as number,
-    [],
-  );
-  const cancelIdle = useCallback(
-    (handle: number) =>
-      ("cancelIdleCallback" in window
-        ? (window as any).cancelIdleCallback(handle)
-        : clearTimeout(handle)),
-    [],
-  );
-
-  useEffect(() => {
-    if (renderAbortRef.current) renderAbortRef.current.abort();
-    if (idleHandleRef.current != null) cancelIdle(idleHandleRef.current);
-    const controller = new AbortController();
-    renderAbortRef.current = controller;
-    const run = async () => {
-      const { signal } = controller;
-      await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
-      if (signal.aborted) return;
-      const raw = convertHtmlMathInline(makeArticleHtmlFromMarkdown(previewContent, true));
-      if (signal.aborted) return;
-      const html =
-        raw +
-        `<span data-char-position="${previewContent.length}" data-no-pin="1" aria-hidden="true" style="display:block;height:1px;"></span>`;
-      if (signal.aborted) return;
-      setPreviewHtml(html);
-      scheduleSyncRef.current();
-      schedulePreviewHighlightRef.current();
-    };
-    idleHandleRef.current = requestIdle(() => {
-      run().catch(() => {});
-    }, 500);
-    return () => {
-      controller.abort();
-      if (idleHandleRef.current != null) cancelIdle(idleHandleRef.current);
-    };
-  }, [previewContent, requestIdle, cancelIdle]);
+  }, [content]);
 
   const attrLabels = useMemo(() => {
     return Object.entries(attrs || {})
@@ -1075,19 +1021,19 @@ export default function PostForm({
           scheduleSync();
           schedulePreviewHighlight();
         }
-      }, 80);
+      }, 40);
       const t2 = window.setTimeout(() => {
         if (myGen === genRef.current) {
           scheduleSync();
           schedulePreviewHighlight();
         }
-      }, 160);
+      }, 100);
       const t3 = window.setTimeout(() => {
         if (myGen === genRef.current) {
           scheduleSync();
           schedulePreviewHighlight();
         }
-      }, 320);
+      }, 200);
       ensureTimersRef.current.push(t1, t2, t3);
       const d = document as Document & { fonts?: { ready?: Promise<unknown> } };
       const f = d.fonts;
@@ -1387,6 +1333,74 @@ export default function PostForm({
     schedulePreviewHighlight();
   }, [scheduleEditorHighlight, schedulePreviewHighlight]);
 
+  const swapInto = useCallback(
+    (
+      a: HTMLDivElement | null,
+      b: HTMLDivElement | null,
+      frontIsARef: React.MutableRefObject<boolean>,
+      bodyRef: React.MutableRefObject<HTMLDivElement | null>,
+    ) => {
+      if (!a || !b || !showPreview) return;
+      const frontIsA = frontIsARef.current;
+      const front = frontIsA ? a : b;
+      const back = frontIsA ? b : a;
+      back.innerHTML = previewHtml;
+      requestAnimationFrame(() => {
+        front.style.display = "none";
+        back.style.display = "block";
+        frontIsARef.current = !frontIsA;
+        bodyRef.current = back;
+        rebuildAnchors();
+        scheduleSyncRef.current();
+        schedulePreviewHighlightRef.current();
+        if (overlayActive) refreshGutterPins();
+        attachPreviewObservers();
+      });
+    },
+    [previewHtml, rebuildAnchors, overlayActive, attachPreviewObservers, refreshGutterPins, showPreview],
+  );
+
+  useLayoutEffect(() => {
+    if (!showPreview) return;
+    const initNormal = () => {
+      const a = previewBodyARef.current,
+        b = previewBodyBRef.current;
+      if (!a || !b) return;
+      const front = previewFrontIsARef.current ? a : b;
+      front.innerHTML = previewHtml;
+      front.style.display = "block";
+      (previewFrontIsARef.current ? b : a).style.display = "none";
+      previewBodyRef.current = front;
+    };
+    const initOverlay = () => {
+      const a = overlayBodyARef.current,
+        b = overlayBodyBRef.current;
+      if (!a || !b) return;
+      const front = overlayFrontIsARef.current ? a : b;
+      front.innerHTML = previewHtml;
+      front.style.display = "block";
+      (overlayFrontIsARef.current ? b : a).style.display = "none";
+      overlayBodyRef.current = front;
+    };
+    if (overlayActive) initOverlay();
+    else initNormal();
+  }, [showPreview, overlayActive, previewHtml]);
+
+  useEffect(() => {
+    swapInto(
+      previewBodyARef.current,
+      previewBodyBRef.current,
+      previewFrontIsARef,
+      previewBodyRef,
+    );
+    swapInto(
+      overlayBodyARef.current,
+      overlayBodyBRef.current,
+      overlayFrontIsARef,
+      overlayBodyRef,
+    );
+  }, [previewHtml, swapInto]);
+
   function handleSubmit(e: React.FormEvent) {
     if (overLimit) {
       e.preventDefault();
@@ -1605,7 +1619,7 @@ export default function PostForm({
                 type="button"
                 onMouseDown={actRuby}
                 title="Ruby"
-                className="hidden md:inline-flex h-6 w-7 items-center justify中心 rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
+                className="hidden md:inline-flex h-6 w-7 items中心 rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-px"
               >
                 <RubyIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Ruby</span>
@@ -1799,12 +1813,10 @@ export default function PostForm({
           >
             <div className="relative z-10">
               <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
-              <div
-                ref={previewBodyRef}
-                className="markdown-body"
-                dangerouslySetInnerHTML={{ __html: previewHtml }}
-                style={{ minHeight: 32 }}
-              />
+              <div style={{ minHeight: 32 }}>
+                <div ref={previewBodyARef} className="markdown-body" style={{ display: "block" }} />
+                <div ref={previewBodyBRef} className="markdown-body" style={{ display: "none" }} />
+              </div>
               {(attrLabels.length > 0 || tags.length > 0) && (
                 <div className="mt-3 flex flex-wrap gap-2">
                   {attrLabels.map((label) => (
@@ -1866,7 +1878,7 @@ export default function PostForm({
                         type="button"
                         onMouseDown={actPrefix("### ")}
                         title="Heading 3"
-                        className="inline-flex h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
+                        className="inline-flex h-6 w-7 items中心 justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 leading-none"
                       >
                         <Heading3 className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">H3</span>
@@ -2177,14 +2189,10 @@ export default function PostForm({
                     style={{ position: "relative", zIndex: 1 }}
                   >
                     <div className="font-bold text-gray-500 text-xs mb-2">Preview</div>
-                    <div
-                      ref={overlayBodyRef}
-                      className="markdown-body"
-                      dangerouslySetInnerHTML={{
-                        __html: previewHtml,
-                      }}
-                      style={{ minHeight: 32 }}
-                    />
+                    <div style={{ minHeight: 32 }}>
+                      <div ref={overlayBodyARef} className="markdown-body" style={{ display: "block" }} />
+                      <div ref={overlayBodyBRef} className="markdown-body" style={{ display: "none" }} />
+                    </div>
                     {(attrLabels.length > 0 || tags.length > 0) && (
                       <div className="mt-3 flex flex-wrap gap-2">
                         {attrLabels.map((label) => (
