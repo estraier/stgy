@@ -1,6 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
+import { useRef } from "react";
+import PrismHighlighter from "@/components/PrismHighlighter";
 import type { Post, PostDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
 import { Heart, MessageCircle } from "lucide-react";
@@ -34,6 +36,7 @@ export default function PostCard({
   avatarVersion,
 }: PostCardProps) {
   const router = useRouter();
+  const contentRef = useRef<HTMLDivElement | null>(null);
   const hasContent =
     "content" in post && typeof post.content === "string" && post.content.length > 0;
   const bodyHtml = convertHtmlMathInline(
@@ -114,10 +117,12 @@ export default function PostCard({
         </span>
       </div>
       <div
+        ref={contentRef}
         className={`markdown-body post-content${truncated ? " excerpt" : ""}`}
         style={{ minHeight: 36, userSelect: "text" }}
         dangerouslySetInnerHTML={{ __html: bodyHtml }}
       />
+      <PrismHighlighter root={contentRef.current} deps={[bodyHtml]} />
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
         {post.tags && post.tags.length > 0 && (
           <div>
