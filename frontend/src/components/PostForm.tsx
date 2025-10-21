@@ -405,6 +405,9 @@ export default function PostForm({
   const previewResizeBodyRef = useRef<ResizeObserver | null>(null);
   const ensureTimersRef = useRef<number[]>([]);
 
+  // ★ ピンプール（再利用）を追加
+  const pinsRef = useRef<HTMLButtonElement[]>([]);
+
   const [showPreview, setShowPreview] = useState(false);
   const [hasFocusedOnce, setHasFocusedOnce] = useState(false);
   const [isXl, setIsXl] = useState(false);
@@ -870,46 +873,15 @@ export default function PostForm({
     [computeCaretTopWithinTextarea],
   );
 
-  const refreshGutterPins = useCallback(() => {
-    if (!overlayActive || !showPreview) {
-      gutterRef.current?.replaceChildren();
-      return;
-    }
-    const wrap = overlayWrapRef.current;
-    const bodyEl = overlayBodyRef.current;
-    const ta = overlayTextareaRef.current;
-    if (!wrap || !bodyEl || !ta) return;
-
-    const gutter = ensureGutter();
-    if (!gutter) return;
-
-    gutter.replaceChildren();
-
-    const wrapRect = wrap.getBoundingClientRect();
-    const candidates = Array.from(
-      bodyEl.querySelectorAll<HTMLElement>("[data-char-position]:not([data-no-pin])"),
-    );
-
-    for (const el of candidates) {
-      const charAttr = el.getAttribute("data-char-position");
-      const lineAttr = el.getAttribute("data-line-position");
-      if (!charAttr || !lineAttr) continue;
-
-      const rects = el.getClientRects();
-      const r = rects.length ? rects[0] : el.getBoundingClientRect();
-      const yAbsolute = Math.round(wrap.scrollTop + (r.top - wrapRect.top) + 16);
+  // ★ ピン生成（1回だけイベント付与）
+  const createPin = useCallback(
+    (gutter: HTMLDivElement) => {
       const btn = document.createElement("button");
       btn.type = "button";
       btn.setAttribute("data-jump-pin", "1");
-      const jumpLabel = "Jump to line " + (parseInt(lineAttr) + 1);
-      btn.title = jumpLabel;
-      btn.setAttribute("aria-label", jumpLabel);
-      btn.textContent = "";
-
       Object.assign(btn.style, {
         position: "absolute",
         left: "3px",
-        top: `${yAbsolute}px`,
         transform: "translateY(-100%)",
         width: "16px",
         height: "6px",
@@ -921,25 +893,20 @@ export default function PostForm({
         cursor: "pointer",
         pointerEvents: "auto",
         outline: "none",
+        display: "none",
       } as Partial<CSSStyleDeclaration>);
 
-      btn.addEventListener("mouseenter", () => {
-        btn.style.background = "#cbd5e1";
-      });
-      btn.addEventListener("mouseleave", () => {
-        btn.style.background = "#e2e8f0";
-      });
-      btn.addEventListener("mousedown", () => {
-        btn.style.background = "#94a3b8";
-      });
-      btn.addEventListener("mouseup", () => {
-        btn.style.background = "#cbd5e1";
-      });
+      btn.addEventListener("mouseenter", () => (btn.style.background = "#cbd5e1"));
+      btn.addEventListener("mouseleave", () => (btn.style.background = "#e2e8f0"));
+      btn.addEventListener("mousedown", () => (btn.style.background = "#94a3b8"));
+      btn.addEventListener("mouseup", () => (btn.style.background = "#cbd5e1"));
 
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
-        const pos = Number(charAttr) || 0;
+        const pos = Number(btn.dataset.char) || 0;
+        const ta = overlayTextareaRef.current;
+        if (!ta) return;
         ta.focus();
         ta.setSelectionRange(pos, pos);
         centerCaretAtRatio(ta, 0.4);
@@ -949,21 +916,66 @@ export default function PostForm({
         if (did) requestAnimationFrame(() => schedulePreviewHighlight());
         else schedulePreviewHighlight();
         scheduleEditorHighlight();
-        refreshGutterPins();
       });
 
       gutter.appendChild(btn);
+      return btn;
+    },
+    [centerCaretAtRatio, rebuildAnchors, syncToCaret, scheduleEditorHighlight, schedulePreviewHighlight],
+  );
+
+  // ★ ピン更新（プール利用）
+  const refreshGutterPins = useCallback(() => {
+    if (!overlayActive || !showPreview) {
+      // 非表示にするだけ
+      const pool = pinsRef.current;
+      for (let i = 0; i < pool.length; i++) pool[i]!.style.display = "none";
+      return;
     }
-  }, [
-    overlayActive,
-    showPreview,
-    ensureGutter,
-    rebuildAnchors,
-    syncToCaret,
-    schedulePreviewHighlight,
-    scheduleEditorHighlight,
-    centerCaretAtRatio,
-  ]);
+    const wrap = overlayWrapRef.current;
+    const bodyEl = overlayBodyRef.current;
+    if (!wrap || !bodyEl) return;
+
+    const gutter = ensureGutter();
+    if (!gutter) return;
+
+    const candidates = Array.from(
+      bodyEl.querySelectorAll<HTMLElement>("[data-char-position]:not([data-no-pin])"),
+    );
+    const needed = candidates.length;
+    const pool = pinsRef.current;
+
+    if (pool.length < needed) {
+      for (let i = pool.length; i < needed; i++) {
+        const pin = createPin(gutter);
+        pool.push(pin);
+      }
+    }
+
+    const wrapRect = wrap.getBoundingClientRect();
+    for (let i = 0; i < needed; i++) {
+      const el = candidates[i]!;
+      const pin = pool[i]!;
+      const charAttr = el.getAttribute("data-char-position");
+      const lineAttr = el.getAttribute("data-line-position");
+      if (!charAttr || !lineAttr) {
+        pin.style.display = "none";
+        continue;
+      }
+      const rects = el.getClientRects();
+      const r = rects.length ? rects[0]! : el.getBoundingClientRect();
+      const yAbsolute = Math.round(wrap.scrollTop + (r.top - wrapRect.top) + 16);
+      pin.dataset.char = charAttr;
+      pin.dataset.line = lineAttr;
+      pin.title = "Jump to line " + (parseInt(lineAttr) + 1);
+      pin.style.top = `${yAbsolute}px`;
+      pin.style.display = "block";
+    }
+    for (let i = needed; i < pool.length; i++) {
+      pool[i]!.style.display = "none";
+    }
+    gutter.style.height = `${wrap.scrollHeight}px`;
+  }, [overlayActive, showPreview, ensureGutter, createPin]);
 
   const scheduleSync = useCallback(() => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);

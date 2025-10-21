@@ -287,16 +287,13 @@ function resolveLineHeight(ta: HTMLTextAreaElement) {
 
 function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement) {
   const cs = getComputedStyle(ta);
-
   const pl = parseFloat(cs.paddingLeft || "0");
   const pr = parseFloat(cs.paddingRight || "0");
   const contentWidth = Math.max(0, ta.clientWidth - pl - pr);
-
   type StyleKey = Extract<keyof CSSStyleDeclaration, string>;
   const assign = (prop: StyleKey, v: string) => {
     (mirror.style as unknown as Record<StyleKey, string>)[prop] = v;
   };
-
   assign("position", "absolute");
   assign("visibility", "hidden");
   assign("whiteSpace", "pre-wrap");
@@ -304,26 +301,22 @@ function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement
   assign("overflowWrap", cs.overflowWrap || "break-word");
   assign("top", "0");
   assign("left", "-99999px");
-
   assign("boxSizing", "content-box");
   assign("width", `${contentWidth}px`);
   assign("paddingTop", "0");
   assign("paddingRight", "0");
   assign("paddingBottom", "0");
   assign("paddingLeft", "0");
-
   assign("borderLeftWidth", "0");
   assign("borderRightWidth", "0");
   assign("borderTopWidth", "0");
   assign("borderBottomWidth", "0");
-
   assign("fontFamily", cs.fontFamily || "inherit");
   assign("fontSize", cs.fontSize || "inherit");
   assign("fontWeight", cs.fontWeight || "normal");
   assign("fontStyle", cs.fontStyle || "normal");
   assign("lineHeight", cs.lineHeight || "normal");
   assign("letterSpacing", cs.letterSpacing || "normal");
-
   const tabSize = cs.getPropertyValue("tab-size") || "4";
   mirror.style.setProperty("tab-size", tabSize);
 }
@@ -332,7 +325,6 @@ function computeCaretTopInTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivEleme
   buildMirrorFromTextarea(ta, mirror);
   const pos = Math.max(0, Math.min(ta.value.length, ta.selectionStart ?? 0));
   const before = ta.value.slice(0, pos);
-
   mirror.textContent = "";
   const textNode = document.createTextNode(before);
   const marker = document.createElement("span");
@@ -340,11 +332,9 @@ function computeCaretTopInTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivEleme
   marker.style.display = "inline-block";
   marker.style.width = "1px";
   marker.style.height = "1em";
-
   mirror.appendChild(textNode);
   mirror.appendChild(marker);
   if (!mirror.isConnected) document.body.appendChild(mirror);
-
   const top = marker.getBoundingClientRect().top - mirror.getBoundingClientRect().top;
   return top;
 }
@@ -491,6 +481,8 @@ We live in Tokyo.
 
   const ensureTimersRef = useRef<number[]>([]);
   const didAutoFocusRef = useRef(false);
+
+  const pinsRef = useRef<HTMLButtonElement[]>([]);
 
   const contentLength = body.length;
   const overLimit = contentLengthLimit != null ? contentLength > contentLengthLimit : false;
@@ -693,9 +685,53 @@ We live in Tokyo.
     ta.scrollTop = Math.min(maxScroll, Math.max(0, ta.scrollTop + delta));
   }, []);
 
+  const createPin = useCallback((gutter: HTMLDivElement) => {
+    const btn = document.createElement("button");
+    btn.type = "button";
+    btn.setAttribute("data-jump-pin", "1");
+    Object.assign(btn.style, {
+      position: "absolute",
+      left: "3px",
+      transform: "translateY(-50%)",
+      width: "16px",
+      height: "6px",
+      borderRadius: "6px",
+      border: "1px solid #cbd5e1",
+      background: "#e2e8f0",
+      boxShadow: "0 1px 1px rgba(0,0,0,.08)",
+      padding: "0",
+      cursor: "pointer",
+      pointerEvents: "auto",
+      outline: "none",
+      display: "none",
+    } as Partial<CSSStyleDeclaration>);
+    btn.addEventListener("mouseenter", () => (btn.style.background = "#cbd5e1"));
+    btn.addEventListener("mouseleave", () => (btn.style.background = "#e2e8f0"));
+    btn.addEventListener("mousedown", () => (btn.style.background = "#94a3b8"));
+    btn.addEventListener("mouseup", () => (btn.style.background = "#cbd5e1"));
+    btn.addEventListener("click", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const pos = Number(btn.dataset.char) || 0;
+      const taNow = textareaRef.current;
+      if (!taNow) return;
+      taNow.focus();
+      taNow.setSelectionRange(pos, pos);
+      centerCaretAtRatio(taNow, 0.4);
+      caretRef.current = pos;
+      rebuildAnchors();
+      syncToCaret();
+      scheduleHighlight();
+      schedulePreviewHighlight();
+    });
+    gutter.appendChild(btn);
+    return btn;
+  }, [centerCaretAtRatio, rebuildAnchors, syncToCaret, scheduleHighlight, schedulePreviewHighlight]);
+
   const refreshGutterPins = useCallback(() => {
     if (mode !== "html") {
-      gutterRef.current?.replaceChildren();
+      const pool = pinsRef.current;
+      for (let i = 0; i < pool.length; i++) pool[i]!.style.display = "none";
       return;
     }
     const wrap = previewWrapRef.current;
@@ -704,76 +740,39 @@ We live in Tokyo.
     if (!wrap || !bodyEl || !ta) return;
     const gutter = ensureGutter();
     if (!gutter) return;
-    gutter.replaceChildren();
-    const wrapRect = wrap.getBoundingClientRect();
     const candidates = Array.from(bodyEl.querySelectorAll<HTMLElement>("[data-char-position]"));
-    for (const el of candidates) {
+    const needed = candidates.length;
+    const pool = pinsRef.current;
+    if (pool.length < needed) {
+      for (let i = pool.length; i < needed; i++) {
+        const pin = createPin(gutter);
+        pool.push(pin);
+      }
+    }
+    const wrapRect = wrap.getBoundingClientRect();
+    for (let i = 0; i < needed; i++) {
+      const el = candidates[i]!;
+      const pin = pool[i]!;
       const charAttr = el.getAttribute("data-char-position");
       const lineAttr = el.getAttribute("data-line-position");
-      if (!charAttr || !lineAttr) continue;
+      if (!charAttr || !lineAttr) {
+        pin.style.display = "none";
+        continue;
+      }
       const rects = el.getClientRects();
       const r = rects.length ? rects[0]! : el.getBoundingClientRect();
       const yAbsolute = wrap.scrollTop + (r.top - wrapRect.top) + 12;
-      const btn = document.createElement("button");
-      btn.type = "button";
-      btn.setAttribute("data-jump-pin", "1");
-      const jumpLabel = "Jump to line " + (parseInt(lineAttr) + 1);
-      btn.title = jumpLabel;
-      btn.setAttribute("aria-label", jumpLabel);
-      btn.textContent = "";
-      Object.assign(btn.style, {
-        position: "absolute",
-        left: "3px",
-        top: `${yAbsolute}px`,
-        transform: "translateY(-50%)",
-        width: "16px",
-        height: "6px",
-        borderRadius: "6px",
-        border: "1px solid #cbd5e1",
-        background: "#e2e8f0",
-        boxShadow: "0 1px 1px rgba(0,0,0,.08)",
-        padding: "0",
-        cursor: "pointer",
-        pointerEvents: "auto",
-        outline: "none",
-      } as Partial<CSSStyleDeclaration>);
-      btn.addEventListener("mouseenter", () => {
-        btn.style.background = "#cbd5e1";
-      });
-      btn.addEventListener("mouseleave", () => {
-        btn.style.background = "#e2e8f0";
-      });
-      btn.addEventListener("mousedown", () => {
-        btn.style.background = "#94a3b8";
-      });
-      btn.addEventListener("mouseup", () => {
-        btn.style.background = "#cbd5e1";
-      });
-      btn.addEventListener("click", (e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const pos = Number(charAttr) || 0;
-        ta.focus();
-        ta.setSelectionRange(pos, pos);
-        centerCaretAtRatio(ta, 0.4);
-        caretRef.current = pos;
-        rebuildAnchors();
-        syncToCaret();
-        refreshGutterPins();
-        scheduleHighlight();
-        schedulePreviewHighlight();
-      });
-      gutter.appendChild(btn);
+      pin.dataset.char = charAttr;
+      pin.dataset.line = lineAttr;
+      pin.title = "Jump to line " + (parseInt(lineAttr) + 1);
+      pin.style.top = `${yAbsolute}px`;
+      pin.style.display = "block";
     }
-  }, [
-    mode,
-    ensureGutter,
-    rebuildAnchors,
-    syncToCaret,
-    scheduleHighlight,
-    schedulePreviewHighlight,
-    centerCaretAtRatio,
-  ]);
+    for (let i = needed; i < pool.length; i++) {
+      pool[i]!.style.display = "none";
+    }
+    gutter.style.height = `${wrap.scrollHeight}px`;
+  }, [mode, ensureGutter, createPin]);
 
   const scheduleSync = useCallback(() => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current);
@@ -1278,7 +1277,7 @@ We live in Tokyo.
                 <button
                   type="button"
                   onMouseDown={onToolbarInline("__")}
-                  className="hidden md:inline-flex h-7 w-8 items-center justify中心 rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                  className="hidden md:inline-flex h-7 w-8 items中心 justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
                   title="Underline"
                 >
                   <UnderlineIcon className="w-4 h-4" />
