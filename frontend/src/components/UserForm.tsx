@@ -355,8 +355,9 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
         </div>
 
         <div className="flex flex-col gap-1">
-          <div className="flex items-center justify-between">
+          <div className="flex flex-row items-center justify-between">
             <label className="font-bold text-sm">Email</label>
+            <span className="text-xs text-gray-400 ml-2 mr-1">(a reachable address is required)</span>
           </div>
           {isAdmin ? (
             <input
@@ -384,41 +385,11 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
           )}
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
-          <div className="flex flex-col gap-1">
-            <label className="font-bold text-sm">Locale</label>
-            <select
-              className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
-              value={locale}
-              onChange={(e) => setLocale(e.target.value)}
-              onFocus={handleClearFormError}
-            >
-              {localeOptions.map((opt) => (
-                <option key={opt.value} value={opt.value}>
-                  {opt.label} [{opt.value}]
-                </option>
-              ))}
-            </select>
-          </div>
-          <div className="flex flex-col gap-1">
-            <label className="font-bold text-sm">Time Zone</label>
-            <select
-              className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
-              value={timezone}
-              onChange={(e) => setTimezone(e.target.value)}
-              onFocus={handleClearFormError}
-            >
-              {timezoneOptions.map((tz) => (
-                <option key={tz} value={tz}>
-                  {tz}
-                </option>
-              ))}
-            </select>
-          </div>
-        </div>
-
         <div className="flex flex-col gap-1">
-          <label className="font-bold text-sm">Nickname</label>
+          <div className="flex flex-row items-center justify-between">
+            <label className="font-bold text-sm">Nickname</label>
+            <span className="text-xs text-gray-400 ml-2 mr-1">(non-ASCII characters can also be used)</span>
+          </div>
           <input
             className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
             value={nickname}
@@ -429,7 +400,10 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
         </div>
 
         <div className="flex flex-col gap-1">
-          <label className="font-bold text-sm">Introduction</label>
+          <div className="flex flex-row items-center justify-between">
+            <label className="font-bold text-sm">Introduction</label>
+            <span className="text-xs text-gray-400 ml-2 mr-1">(Markdown notations can be used)</span>
+          </div>
           <textarea
             className="border border-gray-400 rounded px-2 py-1 min-h-[20ex] bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed break-all"
             value={introduction}
@@ -440,10 +414,50 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
           />
         </div>
 
+
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-row items-center justify-between">
+            <label className="font-bold text-sm">Locale</label>
+            <span className="text-xs text-gray-400 ml-2 mr-1">(used for your public posts)</span>
+          </div>
+          <select
+            className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+            value={locale}
+            onChange={(e) => setLocale(e.target.value)}
+            onFocus={handleClearFormError}
+          >
+            {localeOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label} [{opt.value}]
+              </option>
+            ))}
+          </select>
+        </div>
+        <div className="flex flex-col gap-1">
+          <div className="flex flex-row items-center justify-between">
+            <label className="font-bold text-sm">Timezone</label>
+            <span className="text-xs text-gray-400 ml-2 mr-1">(used for your public posts)</span>
+          </div>
+          <select
+            className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+            value={timezone}
+            onChange={(e) => setTimezone(e.target.value)}
+            onFocus={handleClearFormError}
+          >
+            {timezoneOptions.map((tz) => (
+              <option key={tz} value={tz}>
+                {tz}
+              </option>
+            ))}
+          </select>
+        </div>
+
         <div className="flex flex-col gap-1">
           <div className="flex flex-row items-center justify-between">
             <label className="font-bold text-sm">AI Model</label>
-            {!isAdmin && <span className="text-xs text-gray-400 ml-2">(Only admin can change)</span>}
+            <span className="text-xs text-gray-400 ml-2 mr-1">
+              {isAdmin ? "(used for autonomous behaviors)" : "(only admin can change)"}
+            </span>
           </div>
           {aiModelsLoading ? (
             <div className="text-gray-400 text-xs">Loading models…</div>
