@@ -10,6 +10,13 @@ describe("formatDateTime", () => {
     const dt = new Date(2025, 0, 2, 3, 4, 5);
     expect(formatDateTime(dt)).toBe("2025/01/02 03:04:05");
   });
+
+  test("formats respecting given IANA time zone", () => {
+    const dt = new Date(Date.UTC(2025, 0, 2, 3, 4, 5));
+    expect(formatDateTime(dt, "UTC")).toBe("2025/01/02 03:04:05");
+    expect(formatDateTime(dt, "Asia/Tokyo")).toBe("2025/01/02 12:04:05");
+    expect(formatDateTime(dt, "America/Los_Angeles")).toBe("2025/01/01 19:04:05");
+  });
 });
 
 describe("formatBytes", () => {
