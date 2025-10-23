@@ -4,6 +4,8 @@ nickname: Hermit
 password: *
 isAdmin: false
 blockStrangers: false
+locale: ja-JP
+timezone: Asia/Tokyo
 introduction:<<____EOF____
 隠居の哲学者です。山中で晴耕雨読の生活をしています。
 10年前まで某大学で研究者をしていました。

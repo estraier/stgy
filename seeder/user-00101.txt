@@ -4,6 +4,8 @@ nickname: Geek
 password: *
 isAdmin: false
 blockStrangers: false
+locale: ja-JP
+timezone: Asia/Tokyo
 introduction:<<____EOF____
 コンピュータやIT技術に興味があります。
 特に自然言語処理や画像処理に興味があります。

@@ -494,42 +494,57 @@ export class UsersService {
         );
       }
 
+      if (input.locale !== undefined || input.timezone !== undefined) {
+        const detailExists = await pgQuery(
+          this.pgPool,
+          `
+            SELECT 1
+            FROM user_details
+            WHERE user_id = $1
+            LIMIT 1
+          `,
+          [hexToDec(input.id)],
+        );
+        if ((detailExists.rowCount ?? 0) === 0) {
+          if (input.locale === undefined || input.timezone === undefined) {
+            throw new Error("both locale and timezone are required");
+          }
+          await pgQuery(
+            this.pgPool,
+            `
+              INSERT INTO user_details (user_id, locale, timezone)
+              VALUES ($1, $2, $3)
+              ON CONFLICT (user_id) DO UPDATE
+                SET locale = EXCLUDED.locale,
+                    timezone = EXCLUDED.timezone
+            `,
+            [hexToDec(input.id), input.locale, input.timezone],
+          );
+        } else {
+          await pgQuery(
+            this.pgPool,
+            `
+              UPDATE user_details
+              SET locale   = COALESCE($2, locale),
+                  timezone = COALESCE($3, timezone)
+              WHERE user_id = $1
+            `,
+            [hexToDec(input.id), input.locale ?? null, input.timezone ?? null],
+          );
+        }
+      }
+
       if (input.introduction !== undefined || input.aiPersonality !== undefined) {
         await pgQuery(
           this.pgPool,
           `
-          INSERT INTO user_details (user_id, introduction, ai_personality)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (user_id) DO UPDATE
-            SET introduction  = COALESCE(EXCLUDED.introduction,  user_details.introduction),
-                ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)
-        `,
+            UPDATE user_details
+            SET introduction  = COALESCE($2, introduction),
+                ai_personality = COALESCE($3, ai_personality)
+            WHERE user_id = $1
+          `,
           [hexToDec(input.id), input.introduction ?? null, input.aiPersonality ?? null],
         );
-      }
-
-      if (input.locale !== undefined || input.timezone !== undefined) {
-        const bothProvided = input.locale !== undefined && input.timezone !== undefined;
-        const sql = bothProvided
-          ? `
-          INSERT INTO user_details (user_id, locale, timezone)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (user_id) DO UPDATE
-            SET locale   = EXCLUDED.locale,
-                timezone = EXCLUDED.timezone
-        `
-          : `
-          INSERT INTO user_details (user_id, locale, timezone)
-          VALUES ($1, $2, $3)
-          ON CONFLICT (user_id) DO UPDATE
-            SET locale   = COALESCE(EXCLUDED.locale,   user_details.locale),
-                timezone = COALESCE(EXCLUDED.timezone, user_details.timezone)
-        `;
-        await pgQuery(this.pgPool, sql, [
-          hexToDec(input.id),
-          input.locale ?? null,
-          input.timezone ?? null,
-        ]);
       }
 
       if (touchSnippet && typeof input.introduction === "string") {

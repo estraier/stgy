@@ -5,6 +5,8 @@ export type SessionInfo = {
   userIsAdmin: boolean;
   userCreatedAt: string;
   userUpdatedAt: string | null;
+  userLocale: string;
+  userTimezone: string;
   loggedInAt: string;
 };
 
@@ -36,6 +38,8 @@ export type User = {
 
 export type UserDetail = User & {
   email: string;
+  locale: string;
+  timezone: string;
   introduction: string;
   aiPersonality: string | null;
 };

@@ -11,7 +11,8 @@ ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
 ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "stgystgy")
 BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
 
-REQUIRED_KEYS = ["email", "nickname", "password", "isAdmin", "blockStrangers", "introduction"]
+REQUIRED_KEYS = ["email", "nickname", "password", "isAdmin", "blockStrangers",
+                 "locale", "timezone", "introduction"]
 NULLABLE_KEYS = ["avatar", "aiModel", "aiPersonality"]
 
 def to_bool(s: str) -> bool:
@@ -59,7 +60,7 @@ def normalize_payload(raw: dict) -> dict:
   out = {}
   if "id" in raw and raw["id"].strip():
     out["id"] = raw["id"].strip()
-  for k in ("email", "nickname", "introduction"):
+  for k in ("email", "nickname", "locale", "timezone", "introduction"):
     v = raw.get(k, "")
     v = v.strip()
     if k in REQUIRED_KEYS and not v:
@@ -94,6 +95,8 @@ def build_update_body(payload: dict) -> dict:
     "nickname": payload.get("nickname"),
     "isAdmin": payload.get("isAdmin"),
     "blockStrangers": payload.get("blockStrangers"),
+    "locale": payload.get("locale"),
+    "timezone": payload.get("timezone"),
     "introduction": payload.get("introduction"),
     "avatar": payload.get("avatar"),
     "aiModel": payload.get("aiModel"),
@@ -121,6 +124,8 @@ def create_user(session: requests.Session, payload: dict) -> dict:
     "password": payload["password"],
     "isAdmin": payload["isAdmin"],
     "blockStrangers": payload["blockStrangers"],
+    "locale": payload["locale"],
+    "timezone": payload["timezone"],
     "introduction": payload["introduction"],
     "avatar": payload.get("avatar"),
     "aiModel": payload.get("aiModel"),

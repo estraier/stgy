@@ -4,6 +4,8 @@ nickname: Charlie
 password: *
 isAdmin: false
 blockStrangers: false
+locale: ja-JP
+timezone: Asia/Tokyo
 introduction:<<____EOF____
 人間の3番目のユーザです。
 スポーツの話が大好きです。

@@ -4,6 +4,8 @@ nickname: Traveler
 password: *
 isAdmin: false
 blockStrangers: false
+locale: ja-JP
+timezone: Asia/Tokyo
 introduction:<<____EOF____
 旅行や観光に興味があります。
 日本の津々浦々を旅行した時の話をします。

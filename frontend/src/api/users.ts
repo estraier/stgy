@@ -60,9 +60,20 @@ export async function getUser(id: string, focusUserId?: string): Promise<UserDet
   return res.json();
 }
 
-export async function createUser(
-  user: Omit<User, "id" | "createdAt" | "updatedAt"> & { password: string },
-): Promise<User> {
+export async function createUser(user: {
+  id?: string;
+  email: string;
+  nickname: string;
+  password: string;
+  isAdmin: boolean;
+  blockStrangers: boolean;
+  locale: string;
+  timezone: string;
+  introduction: string;
+  avatar: string | null;
+  aiModel: string | null;
+  aiPersonality: string | null;
+}): Promise<User> {
   const res = await apiFetch("/users", {
     method: "POST",
     body: JSON.stringify(user),
@@ -71,9 +82,15 @@ export async function createUser(
   return res.json();
 }
 
+type UpdatableFields =
+  Pick<User, "nickname" | "isAdmin" | "blockStrangers" | "avatar" | "aiModel"> &
+  Pick<UserDetail, "introduction" | "aiPersonality" | "locale" | "timezone"> & {
+    email?: string;
+  };
+
 export async function updateUser(
   id: string,
-  user: Partial<Omit<User, "id" | "createdAt" | "updatedAt">>,
+  user: Partial<UpdatableFields>,
 ): Promise<User> {
   const res = await apiFetch(`/users/${id}`, {
     method: "PUT",

@@ -194,6 +194,12 @@ class MockPgClient {
       return found ? { rows: [{ id: hexToDec(found[0]) }] } : { rows: [] };
     }
 
+    if (n === "SELECT 1 FROM user_details WHERE user_id = $1 LIMIT 1") {
+      const userId = decToHex(params[0]);
+      const exists = !!this.details[userId];
+      return { rowCount: exists ? 1 : 0, rows: exists ? [{ ok: 1 }] : [] };
+    }
+
     if (n.startsWith("SELECT COUNT(*) FROM users u")) {
       if (n.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)")) {
         const pat = params[0].toLowerCase().replace(/%/g, "");
@@ -415,6 +421,46 @@ class MockPgClient {
       this.details[userId] = {
         locale: prev.locale,
         timezone: prev.timezone,
+        introduction: introduction ?? prev.introduction,
+        aiPersonality: aiPersonality ?? prev.aiPersonality,
+      };
+      return { rowCount: 1, rows: [] };
+    }
+
+    if (
+      n ===
+      "UPDATE user_details SET locale = COALESCE($2, locale), timezone = COALESCE($3, timezone) WHERE user_id = $1"
+    ) {
+      const [userIdDec, locale, timezone] = params;
+      const userId = decToHex(userIdDec);
+      const prev = this.details[userId] ?? {
+        locale: "en-US",
+        timezone: "UTC",
+        introduction: "",
+        aiPersonality: null,
+      };
+      this.details[userId] = {
+        ...prev,
+        locale: locale ?? prev.locale,
+        timezone: timezone ?? prev.timezone,
+      };
+      return { rowCount: 1, rows: [] };
+    }
+
+    if (
+      n ===
+      "UPDATE user_details SET introduction = COALESCE($2, introduction), ai_personality = COALESCE($3, ai_personality) WHERE user_id = $1"
+    ) {
+      const [userIdDec, introduction, aiPersonality] = params;
+      const userId = decToHex(userIdDec);
+      const prev = this.details[userId] ?? {
+        locale: "en-US",
+        timezone: "UTC",
+        introduction: "",
+        aiPersonality: null,
+      };
+      this.details[userId] = {
+        ...prev,
         introduction: introduction ?? prev.introduction,
         aiPersonality: aiPersonality ?? prev.aiPersonality,
       };

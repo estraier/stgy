@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useEffect, useRef, useState } from "react";
+import React, { useEffect, useMemo, useRef, useState } from "react";
 import Image from "next/image";
 import type { UserDetail } from "@/api/models";
 import { updateUser, getUser, deleteUser } from "@/api/users";
@@ -15,6 +15,7 @@ import {
 import Link from "next/link";
 import { Config } from "@/config";
 import AvatarCropDialog from "@/components/AvatarCropDialog";
+import { timeZonesNames } from "@vvo/tzdb";
 
 type UserFormProps = {
   user: UserDetail;
@@ -24,6 +25,59 @@ type UserFormProps = {
   onCancel: () => void;
 };
 
+const LOCALE_OPTIONS: Array<{ value: string; label: string }> = [
+  { value: "en-US", label: "English (United States)" },
+  { value: "en-GB", label: "English (United Kingdom)" },
+  { value: "zh-CN", label: "Chinese (Simplified, China)" },
+  { value: "zh-TW", label: "Chinese (Traditional, Taiwan)" },
+  { value: "zh-HK", label: "Chinese (Traditional, Hong Kong)" },
+  { value: "es-ES", label: "Spanish (Spain)" },
+  { value: "es-MX", label: "Spanish (Mexico)" },
+  { value: "hi-IN", label: "Hindi (India)" },
+  { value: "ar-SA", label: "Arabic (Saudi Arabia)" },
+  { value: "fr-FR", label: "French (France)" },
+  { value: "bn-BD", label: "Bengali (Bangladesh)" },
+  { value: "pt-BR", label: "Portuguese (Brazil)" },
+  { value: "pt-PT", label: "Portuguese (Portugal)" },
+  { value: "ru-RU", label: "Russian (Russia)" },
+  { value: "ur-PK", label: "Urdu (Pakistan)" },
+  { value: "id-ID", label: "Indonesian (Indonesia)" },
+  { value: "de-DE", label: "German (Germany)" },
+  { value: "ja-JP", label: "Japanese (Japan)" },
+  { value: "sw-KE", label: "Swahili (Kenya)" },
+  { value: "tr-TR", label: "Turkish (Türkiye)" },
+  { value: "it-IT", label: "Italian (Italy)" },
+  { value: "ko-KR", label: "Korean (Korea)" },
+  { value: "vi-VN", label: "Vietnamese (Vietnam)" },
+  { value: "fa-IR", label: "Persian (Iran)" },
+  { value: "ta-IN", label: "Tamil (India)" },
+  { value: "pl-PL", label: "Polish (Poland)" },
+  { value: "uk-UA", label: "Ukrainian (Ukraine)" },
+  { value: "nl-NL", label: "Dutch (Netherlands)" },
+  { value: "th-TH", label: "Thai (Thailand)" },
+  { value: "fil-PH", label: "Filipino (Philippines)" },
+  { value: "ms-MY", label: "Malay (Malaysia)" },
+  { value: "he-IL", label: "Hebrew (Israel)" },
+  { value: "el-GR", label: "Greek (Greece)" },
+  { value: "ro-RO", label: "Romanian (Romania)" },
+  { value: "sv-SE", label: "Swedish (Sweden)" },
+  { value: "hu-HU", label: "Hungarian (Hungary)" },
+  { value: "cs-CZ", label: "Czech (Czechia)" },
+  { value: "sk-SK", label: "Slovak (Slovakia)" },
+  { value: "bg-BG", label: "Bulgarian (Bulgaria)" },
+  { value: "sr-RS", label: "Serbian (Serbia)" },
+  { value: "hr-HR", label: "Croatian (Croatia)" },
+  { value: "da-DK", label: "Danish (Denmark)" },
+  { value: "fi-FI", label: "Finnish (Finland)" },
+  { value: "nb-NO", label: "Norwegian Bokmål (Norway)" },
+  { value: "et-EE", label: "Estonian (Estonia)" },
+  { value: "lv-LV", label: "Latvian (Latvia)" },
+  { value: "lt-LT", label: "Lithuanian (Lithuania)" },
+  { value: "mr-IN", label: "Marathi (India)" },
+  { value: "te-IN", label: "Telugu (India)" },
+  { value: "pa-IN", label: "Punjabi (India)" },
+];
+
 export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }: UserFormProps) {
   const [email, setEmail] = useState(user.email ?? "");
   const [nickname, setNickname] = useState(user.nickname ?? "");
@@ -32,6 +86,8 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
   const [aiModel, setAIModel] = useState(user.aiModel ?? "");
   const [admin, setIsAdmin] = useState(user.isAdmin ?? false);
   const [blockStrangers, setBlockStrangers] = useState(user.blockStrangers ?? false);
+  const [locale, setLocale] = useState(user.locale || "en-US");
+  const [timezone, setTimezone] = useState(user.timezone || "UTC");
 
   const [aiModels, setAIModels] = useState<{ name: string; description: string }[]>([]);
   const [aiModelsLoading, setAIModelsLoading] = useState(true);
@@ -57,8 +113,25 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
       .finally(() => setAIModelsLoading(false));
   }, []);
 
-  function isValidEmail(email: string): boolean {
-    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email);
+  const localeOptions = useMemo(() => {
+    const has = new Set(LOCALE_OPTIONS.map(o => o.value));
+    const arr = [...LOCALE_OPTIONS];
+    if (user.locale && !has.has(user.locale)) {
+      arr.unshift({ value: user.locale, label: `${user.locale}` });
+    }
+    return arr;
+  }, [user.locale]);
+
+  const timezoneOptions = useMemo(() => {
+    const names = timeZonesNames.slice();
+    if (user.timezone && !names.includes(user.timezone)) {
+      names.unshift(user.timezone);
+    }
+    return names;
+  }, [user.timezone]);
+
+  function isValidEmail(s: string): boolean {
+    return /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
   }
 
   function handleClearFormError() {
@@ -108,6 +181,14 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
       setFormError(`AI Personality is too long (max ${Config.AI_PERSONALITY_LENGTH_LIMIT} chars).`);
       return;
     }
+    if (!timezone) {
+      setFormError("Timezone is required.");
+      return;
+    }
+    if (!locale) {
+      setFormError("Locale is required.");
+      return;
+    }
 
     setSubmitting(true);
     try {
@@ -124,8 +205,10 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
       if (aiModel) {
         input.aiPersonality = aiPersonality;
       }
-      await updateUser(user.id, input);
+      if (locale !== user.locale) input.locale = locale;
+      if (timezone !== user.timezone) input.timezone = timezone;
 
+      await updateUser(user.id, input);
       const updatedUser = await getUser(user.id, user.id);
       if (onUpdated) {
         await onUpdated(updatedUser);
@@ -220,7 +303,6 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
       >
         <div className="flex flex-col gap-1">
           <label className="font-bold text-sm">Avatar Image</label>
-
           {avatarUrl && (
             <Image
               src={avatarUrl}
@@ -232,7 +314,6 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
               priority
             />
           )}
-
           <div className="flex items-center gap-2">
             <button
               type="button"
@@ -246,7 +327,6 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
             >
               {uploadingAvatar ? "Uploading…" : "Choose image file"}
             </button>
-
             {avatarUrl && (
               <button
                 type="button"
@@ -258,7 +338,6 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
               </button>
             )}
           </div>
-
           <input
             ref={fileInputRef}
             type="file"
@@ -267,9 +346,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
             disabled={uploadingAvatar}
             className="sr-only"
           />
-
           {uploadingAvatar && <span className="text-xs text-gray-500">Uploading…</span>}
-
           {avatarError && (
             <div className="mt-1 text-sm text-red-600" role="alert" aria-live="polite">
               {avatarError}
@@ -283,9 +360,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
           </div>
           {isAdmin ? (
             <input
-              className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700
-                     focus:outline-none focus:ring-2 focus:ring-blue-200
-                     disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+              className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
               type="email"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
@@ -309,12 +384,43 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
           )}
         </div>
 
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+          <div className="flex flex-col gap-1">
+            <label className="font-bold text-sm">Locale</label>
+            <select
+              className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+              value={locale}
+              onChange={(e) => setLocale(e.target.value)}
+              onFocus={handleClearFormError}
+            >
+              {localeOptions.map((opt) => (
+                <option key={opt.value} value={opt.value}>
+                  {opt.label} [{opt.value}]
+                </option>
+              ))}
+            </select>
+          </div>
+          <div className="flex flex-col gap-1">
+            <label className="font-bold text-sm">Time Zone</label>
+            <select
+              className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
+              value={timezone}
+              onChange={(e) => setTimezone(e.target.value)}
+              onFocus={handleClearFormError}
+            >
+              {timezoneOptions.map((tz) => (
+                <option key={tz} value={tz}>
+                  {tz}
+                </option>
+              ))}
+            </select>
+          </div>
+        </div>
+
         <div className="flex flex-col gap-1">
           <label className="font-bold text-sm">Nickname</label>
           <input
-            className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700
-                     focus:outline-none focus:ring-2 focus:ring-blue-200
-                     disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+            className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
             value={nickname}
             onChange={(e) => setNickname(e.target.value)}
             required
@@ -325,9 +431,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
         <div className="flex flex-col gap-1">
           <label className="font-bold text-sm">Introduction</label>
           <textarea
-            className="border border-gray-400 rounded px-2 py-1 min-h-[20ex] bg-gray-50 text-gray-700
-                     focus:outline-none focus:ring-2 focus:ring-blue-200
-                     disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed break-all"
+            className="border border-gray-400 rounded px-2 py-1 min-h-[20ex] bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed break-all"
             value={introduction}
             onChange={(e) => setIntroduction(e.target.value)}
             maxLength={isAdmin ? undefined : Config.INTRODUCTION_LENGTH_LIMIT}
@@ -339,17 +443,13 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
         <div className="flex flex-col gap-1">
           <div className="flex flex-row items-center justify-between">
             <label className="font-bold text-sm">AI Model</label>
-            {!isAdmin && (
-              <span className="text-xs text-gray-400 ml-2">(Only admin can change)</span>
-            )}
+            {!isAdmin && <span className="text-xs text-gray-400 ml-2">(Only admin can change)</span>}
           </div>
           {aiModelsLoading ? (
             <div className="text-gray-400 text-xs">Loading models…</div>
           ) : (
             <select
-              className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700
-                       focus:outline-none focus:ring-2 focus:ring-blue-200
-                       disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+              className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
               value={aiModel}
               onChange={(e) => setAIModel(e.target.value)}
               disabled={!isAdmin}
@@ -370,9 +470,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
           <div className="flex flex-col gap-1">
             <label className="font-bold text-sm">AI Personality</label>
             <textarea
-              className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50 text-gray-700
-                       focus:outline-none focus:ring-2 focus:ring-blue-200
-                       disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed break-all"
+              className="border border-gray-400 rounded px-2 py-1 min-h-[64px] bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed break-all"
               value={aiPersonality}
               onChange={(e) => setAIPersonality(e.target.value)}
               required
@@ -406,8 +504,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
               id="isAdmin"
               checked={admin}
               onChange={(e) => setIsAdmin(e.target.checked)}
-              className="mr-2
-              disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
+              className="mr-2 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
               disabled={isSelf}
             />
             <label htmlFor="isAdmin" className="font-semibold text-sm">
@@ -415,7 +512,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
             </label>
             {isSelf && (
               <span className="text-xs text-gray-400 ml-1">
-                (You can&#39;t change your own admin status)
+                (You can&apos;t change your own admin status)
               </span>
             )}
           </div>

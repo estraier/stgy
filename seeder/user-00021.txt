@@ -4,6 +4,8 @@ nickname: Mikio
 password: *
 isAdmin: false
 blockStrangers: false
+locale: ja-JP
+timezone: Asia/Tokyo
 introduction:<<____EOF____
 STGYの開発者です。
 

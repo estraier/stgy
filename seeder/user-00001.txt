@@ -4,6 +4,8 @@ nickname: admin
 password: stgystgy
 isAdmin: true
 blockStrangers: false
+locale: ja-JP
+timezone: Asia/Tokyo
 introduction:<<____EOF____
 このサイトの管理者です。
 運用上の報告や注意点についてお知らせします。

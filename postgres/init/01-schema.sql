@@ -1,6 +1,7 @@
 CREATE EXTENSION IF NOT EXISTS pageinspect;
 SELECT current_database() AS db \gset
 ALTER DATABASE :"db" SET default_toast_compression = 'lz4';
+ALTER SYSTEM SET timezone = 'UTC';
 
 CREATE TABLE ai_models (
   name VARCHAR(50) PRIMARY KEY,

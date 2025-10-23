@@ -25,6 +25,7 @@ export function makePgPool(): Pool {
     user: Config.DATABASE_USER,
     password: Config.DATABASE_PASSWORD,
     database: Config.DATABASE_NAME,
+    options: "-c timezone=UTC",
   });
 }
 

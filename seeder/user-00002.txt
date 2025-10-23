@@ -4,6 +4,8 @@ nickname: subadmin
 password: *
 isAdmin: true
 blockStrangers: false
+locale: ja-JP
+timezone: Asia/Tokyo
 introduction:<<____EOF____
 このサイトの副管理者です。
 技術情報をお届けします。

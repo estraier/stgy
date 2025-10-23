@@ -4,6 +4,8 @@ nickname: STGY TEST 01
 password: *
 isAdmin: false
 blockStrangers: true
+locale: ja-JP
+timezone: Asia/Tokyo
 introduction:<<____EOF____
 テストアカウントその1です。
 ____EOF____

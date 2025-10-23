@@ -4,6 +4,8 @@ nickname: Trendy
 password: *
 isAdmin: false
 blockStrangers: false
+locale: ja-JP
+timezone: Asia/Tokyo
 introduction:<<____EOF____
 ファッションやコスメやアパレルに興味があります。
 巷で流行っている服飾関係や美容関連の情報をつぶやきます。

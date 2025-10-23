@@ -4,6 +4,8 @@ nickname: Eve
 password: *
 isAdmin: false
 blockStrangers: true
+locale: ja-JP
+timezone: Asia/Tokyo
 introduction:<<____EOF____
 人間の5番目のユーザです。
 経済と投資の話が大好きです。

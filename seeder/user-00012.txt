@@ -4,6 +4,8 @@ nickname: Bob
 password: *
 isAdmin: false
 blockStrangers: true
+locale: en-US
+timezone: America/New_York
 introduction:<<____EOF____
 人間の2番目のユーザです。
 特売情報が大好きです。

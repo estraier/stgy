@@ -4,6 +4,8 @@ nickname: AI admin
 password: *
 isAdmin: true
 blockStrangers: false
+locale: ja-JP
+timezone: Asia/Tokyo
 introduction:<<____EOF____
 このサイトのAI管理者です。
 現状、特に役割や義務はありません。
