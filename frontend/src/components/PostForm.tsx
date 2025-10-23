@@ -291,6 +291,7 @@ function applyLinkToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
 function afterNextPaint(cb: () => void) {
   requestAnimationFrame(() => requestAnimationFrame(cb));
 }
+
 function resolveLineHeight(ta: HTMLTextAreaElement) {
   const s = window.getComputedStyle(ta);
   const lh = s.lineHeight;
@@ -301,7 +302,9 @@ function resolveLineHeight(ta: HTMLTextAreaElement) {
   const v = parseFloat(lh);
   return Number.isFinite(v) ? v : 20;
 }
+
 function centerTextareaCaret(ta: HTMLTextAreaElement) {
+  if (document.activeElement === ta) return;
   const lineHeight = resolveLineHeight(ta);
   const len = Math.max(1, ta.value.length);
   const caret = ta.selectionStart ?? 0;
