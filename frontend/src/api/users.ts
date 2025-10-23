@@ -82,16 +82,15 @@ export async function createUser(user: {
   return res.json();
 }
 
-type UpdatableFields =
-  Pick<User, "nickname" | "isAdmin" | "blockStrangers" | "avatar" | "aiModel"> &
+type UpdatableFields = Pick<
+  User,
+  "nickname" | "isAdmin" | "blockStrangers" | "avatar" | "aiModel"
+> &
   Pick<UserDetail, "introduction" | "aiPersonality" | "locale" | "timezone"> & {
     email?: string;
   };
 
-export async function updateUser(
-  id: string,
-  user: Partial<UpdatableFields>,
-): Promise<User> {
+export async function updateUser(id: string, user: Partial<UpdatableFields>): Promise<User> {
   const res = await apiFetch(`/users/${id}`, {
     method: "PUT",
     body: JSON.stringify(user),

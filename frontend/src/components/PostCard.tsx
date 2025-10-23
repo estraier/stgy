@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef } from "react";
+import { useRef, useMemo } from "react";
 import PrismHighlighter from "@/components/PrismHighlighter";
 import type { Post, PostDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
@@ -37,14 +37,22 @@ export default function PostCard({
 }: PostCardProps) {
   const router = useRouter();
   const contentRef = useRef<HTMLDivElement | null>(null);
+
   const hasContent =
     "content" in post && typeof post.content === "string" && post.content.length > 0;
+
   const bodyHtml = convertHtmlMathInline(
     !truncated && hasContent
-      ? makeArticleHtmlFromMarkdown(post.content)
+      ? makeArticleHtmlFromMarkdown((post as PostDetail).content)
       : makeHtmlFromJsonSnippet(post.snippet),
   );
-  const isBlockedForFocusUser = !!post.isBlockingFocusUser;
+
+  const prismDeps = useMemo(() => [bodyHtml], [bodyHtml]);
+
+  // any を使わずにオプショナルな boolean として明示
+  const isBlockedForFocusUser = Boolean(
+    (post as { isBlockingFocusUser?: boolean }).isBlockingFocusUser,
+  );
 
   function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
@@ -116,13 +124,16 @@ export default function PostCard({
           )}
         </span>
       </div>
+
       <div
         ref={contentRef}
         className={`markdown-body post-content${truncated ? " excerpt" : ""}`}
         style={{ minHeight: 36, userSelect: "text" }}
         dangerouslySetInnerHTML={{ __html: bodyHtml }}
       />
-      <PrismHighlighter root={contentRef.current} deps={[bodyHtml]} />
+
+      <PrismHighlighter root={contentRef.current} deps={prismDeps} />
+
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
         {post.tags && post.tags.length > 0 && (
           <div>
@@ -146,7 +157,7 @@ export default function PostCard({
                 disabled:opacity-40 disabled:cursor-not-allowed`}
               onClick={(e) => {
                 e.stopPropagation();
-                onLike?.(post);
+                onLike?.(post as Post);
               }}
               type="button"
               aria-label={post.isLikedByFocusUser ? "Unlike" : "Like"}
@@ -169,7 +180,7 @@ export default function PostCard({
             <button
               onClick={(e) => {
                 e.stopPropagation();
-                onReply?.(post);
+                onReply?.(post as Post);
               }}
               type="button"
               aria-label="Reply"
@@ -191,6 +202,7 @@ export default function PostCard({
           </>
         )}
       </div>
+
       {isReplying && children}
     </article>
   );

@@ -114,7 +114,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
   }, []);
 
   const localeOptions = useMemo(() => {
-    const has = new Set(LOCALE_OPTIONS.map(o => o.value));
+    const has = new Set(LOCALE_OPTIONS.map((o) => o.value));
     const arr = [...LOCALE_OPTIONS];
     if (user.locale && !has.has(user.locale)) {
       arr.unshift({ value: user.locale, label: `${user.locale}` });
@@ -357,7 +357,9 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
         <div className="flex flex-col gap-1">
           <div className="flex flex-row items-center justify-between">
             <label className="font-bold text-sm">Email</label>
-            <span className="text-xs text-gray-400 ml-2 mr-1">(a reachable address is required)</span>
+            <span className="text-xs text-gray-400 ml-2 mr-1">
+              (a reachable address is required)
+            </span>
           </div>
           {isAdmin ? (
             <input
@@ -388,7 +390,9 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
         <div className="flex flex-col gap-1">
           <div className="flex flex-row items-center justify-between">
             <label className="font-bold text-sm">Nickname</label>
-            <span className="text-xs text-gray-400 ml-2 mr-1">(non-ASCII characters can also be used)</span>
+            <span className="text-xs text-gray-400 ml-2 mr-1">
+              (non-ASCII characters can also be used)
+            </span>
           </div>
           <input
             className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed"
@@ -402,7 +406,9 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
         <div className="flex flex-col gap-1">
           <div className="flex flex-row items-center justify-between">
             <label className="font-bold text-sm">Introduction</label>
-            <span className="text-xs text-gray-400 ml-2 mr-1">(Markdown notations can be used)</span>
+            <span className="text-xs text-gray-400 ml-2 mr-1">
+              (Markdown notations can be used)
+            </span>
           </div>
           <textarea
             className="border border-gray-400 rounded px-2 py-1 min-h-[20ex] bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200 disabled:bg-gray-100 disabled:text-gray-400 disabled:cursor-not-allowed break-all"
@@ -413,7 +419,6 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
             onFocus={handleClearFormError}
           />
         </div>
-
 
         <div className="flex flex-col gap-1">
           <div className="flex flex-row items-center justify-between">
