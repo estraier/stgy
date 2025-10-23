@@ -58,6 +58,8 @@ describe("AuthService class", () => {
           created_at: "2025-07-20T00:00:00Z",
           updated_at: null,
           password: new Uint8Array([1, 2, 3]),
+          locale: "ja-JP",
+          timezone: "Asia/Tokyo",
         },
       ],
       rowCount: 1,
@@ -73,6 +75,8 @@ describe("AuthService class", () => {
     expect(session.userIsAdmin).toBe(true);
     expect(session.userCreatedAt).toBe("2025-07-20T00:00:00.000Z");
     expect(session.userUpdatedAt).toBe(null);
+    expect(session.userLocale).toBe("ja-JP");
+    expect(session.userTimezone).toBe("Asia/Tokyo");
     expect(session.loggedInAt).toBeDefined();
   });
 
@@ -95,6 +99,8 @@ describe("AuthService class", () => {
           is_admin: false,
           created_at: "2025-07-01T02:03:04Z",
           updated_at: "2025-07-21T01:02:03Z",
+          locale: "en-US",
+          timezone: "America/Los_Angeles",
         },
       ],
       rowCount: 1,
@@ -110,6 +116,8 @@ describe("AuthService class", () => {
     expect(stored.userIsAdmin).toBe(false);
     expect(stored.userCreatedAt).toBe("2025-07-01T02:03:04.000Z");
     expect(stored.userUpdatedAt).toBe("2025-07-21T01:02:03.000Z");
+    expect(stored.userLocale).toBe("en-US");
+    expect(stored.userTimezone).toBe("America/Los_Angeles");
     expect(stored.loggedInAt).toBeDefined();
   });
 
@@ -175,6 +183,8 @@ describe("AuthService class", () => {
           is_admin: true,
           created_at: "2025-07-05T08:09:10Z",
           updated_at: "2025-07-20T10:20:30Z",
+          locale: "en-GB",
+          timezone: "Europe/London",
         },
       ],
       rowCount: 1,
@@ -184,7 +194,7 @@ describe("AuthService class", () => {
     const [sqlText, sqlParams] = (pgClient.query as jest.Mock).mock.calls[0];
     const normalized = String(sqlText).replace(/\s+/g, " ").trim();
     expect(normalized).toBe(
-      "SELECT s.email, u.nickname, u.is_admin, id_to_timestamp(u.id) AS created_at, u.updated_at FROM users u JOIN user_secrets s ON s.user_id = u.id WHERE u.id = $1",
+      "SELECT s.email, u.nickname, u.is_admin, id_to_timestamp(u.id) AS created_at, u.updated_at, d.locale, d.timezone FROM users u JOIN user_secrets s ON s.user_id = u.id JOIN user_details d ON d.user_id = u.id WHERE u.id = $1",
     );
     expect(sqlParams).toEqual([hexToDec(userHex)]);
     const stored = JSON.parse(redis.store[`session:${sessionId}`]);
@@ -194,6 +204,8 @@ describe("AuthService class", () => {
     expect(stored.userIsAdmin).toBe(true);
     expect(stored.userCreatedAt).toBe("2025-07-05T08:09:10.000Z");
     expect(stored.userUpdatedAt).toBe("2025-07-20T10:20:30.000Z");
+    expect(stored.userLocale).toBe("en-GB");
+    expect(stored.userTimezone).toBe("Europe/London");
     expect(stored.loggedInAt).toBe(original.loggedInAt);
   });
 

@@ -17,6 +17,8 @@ type LoginRow = {
   created_at: string;
   updated_at: string | null;
   password: Uint8Array;
+  locale: string;
+  timezone: string;
 };
 
 type SessionRefreshRow = {
@@ -25,6 +27,8 @@ type SessionRefreshRow = {
   is_admin: boolean;
   created_at: string;
   updated_at: string | null;
+  locale: string;
+  timezone: string;
 };
 
 type SwitchUserRow = {
@@ -34,6 +38,8 @@ type SwitchUserRow = {
   is_admin: boolean;
   created_at: string;
   updated_at: string | null;
+  locale: string;
+  timezone: string;
 };
 
 export class AuthService {
@@ -54,9 +60,12 @@ export class AuthService {
         u.is_admin,
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
-        s.password
+        s.password,
+        d.locale,
+        d.timezone
       FROM users u
       JOIN user_secrets s ON s.user_id = u.id
+      JOIN user_details d ON d.user_id = u.id
       WHERE s.email = $1
       `,
       [email],
@@ -72,6 +81,8 @@ export class AuthService {
       is_admin: userIsAdmin,
       created_at: userCreatedAt,
       updated_at: userUpdatedAt,
+      locale: userLocale,
+      timezone: userTimezone,
     } = row;
     const userId = decToHex(id);
     const sessionId = crypto.randomBytes(32).toString("hex");
@@ -82,6 +93,8 @@ export class AuthService {
       userIsAdmin: !!userIsAdmin,
       userCreatedAt: new Date(userCreatedAt).toISOString(),
       userUpdatedAt: userUpdatedAt ? new Date(userUpdatedAt).toISOString() : null,
+      userLocale,
+      userTimezone,
       loggedInAt: new Date().toISOString(),
     };
     await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", SESSION_TTL);
@@ -97,9 +110,12 @@ export class AuthService {
         u.nickname,
         u.is_admin,
         id_to_timestamp(u.id) AS created_at,
-        u.updated_at
+        u.updated_at,
+        d.locale,
+        d.timezone
       FROM users u
       JOIN user_secrets s ON s.user_id = u.id
+      JOIN user_details d ON d.user_id = u.id
       WHERE u.id = $1
       `,
       [hexToDec(userId)],
@@ -112,6 +128,8 @@ export class AuthService {
       is_admin: userIsAdmin,
       created_at: userCreatedAt,
       updated_at: userUpdatedAt,
+      locale: userLocale,
+      timezone: userTimezone,
     } = result.rows[0];
     const sessionId = crypto.randomBytes(32).toString("hex");
     const sessionInfo: SessionInfo = {
@@ -121,6 +139,8 @@ export class AuthService {
       userIsAdmin: !!userIsAdmin,
       userCreatedAt: new Date(userCreatedAt).toISOString(),
       userUpdatedAt: userUpdatedAt ? new Date(userUpdatedAt).toISOString() : null,
+      userLocale,
+      userTimezone,
       loggedInAt: new Date().toISOString(),
     };
     await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", SESSION_TTL);
@@ -148,9 +168,12 @@ export class AuthService {
         u.nickname,
         u.is_admin,
         id_to_timestamp(u.id) AS created_at,
-        u.updated_at
+        u.updated_at,
+        d.locale,
+        d.timezone
       FROM users u
       JOIN user_secrets s ON s.user_id = u.id
+      JOIN user_details d ON d.user_id = u.id
       WHERE u.id = $1
       `,
       [hexToDec(current.userId)],
@@ -162,6 +185,8 @@ export class AuthService {
       is_admin: userIsAdmin,
       created_at: userCreatedAt,
       updated_at: userUpdatedAt,
+      locale: userLocale,
+      timezone: userTimezone,
     } = result.rows[0];
     const next: SessionInfo = {
       userId: current.userId,
@@ -170,6 +195,8 @@ export class AuthService {
       userIsAdmin: !!userIsAdmin,
       userCreatedAt: new Date(userCreatedAt).toISOString(),
       userUpdatedAt: userUpdatedAt ? new Date(userUpdatedAt).toISOString() : null,
+      userLocale,
+      userTimezone,
       loggedInAt: current.loggedInAt,
     };
     await this.redis.set(`session:${sessionId}`, JSON.stringify(next), "EX", SESSION_TTL);

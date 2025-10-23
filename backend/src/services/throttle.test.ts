@@ -154,7 +154,7 @@ describe("ThrottleService (count + amount throttling)", () => {
 });
 
 describe("DailyTimerThrottleService (daily time budget per user)", () => {
-  const TZ = Config.SYSTEM_TIMEZONE;
+  const TZ = Config.DEFAULT_TIMEZONE;
   const ACTION_ID = "all";
   const LIMIT = 180 * 1000;
   let dateNowSpy: jest.SpyInstance<number, []>;

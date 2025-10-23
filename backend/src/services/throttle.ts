@@ -91,7 +91,7 @@ export class DailyTimerThrottleService {
     limitMs: number,
   ) {
     this.limitMs = limitMs;
-    this.timeZone = Config.SYSTEM_TIMEZONE || "Asia/Tokyo";
+    this.timeZone = Config.DEFAULT_TIMEZONE;
   }
 
   private key(userId: string, nowMs = Date.now()): string {

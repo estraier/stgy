@@ -23,6 +23,8 @@ import {
   hexArrayToDec,
   generateVerificationCode,
   validateEmail,
+  validateLocale,
+  validateTimezone,
   snakeToCamel,
   escapeForLike,
 } from "../utils/format";
@@ -135,6 +137,8 @@ export class UsersService {
           COALESCE(uc.follower_count, 0) AS count_followers,
           COALESCE(uc.followee_count, 0) AS count_followees,
           COALESCE(uc.post_count, 0) AS count_posts,
+          d.locale,
+          d.timezone,
           d.introduction,
           d.ai_personality
         FROM users u
@@ -340,7 +344,8 @@ export class UsersService {
     if (typeof input.password !== "string" || input.password.trim() === "")
       throw new Error("password is required");
     if (typeof input.introduction !== "string") throw new Error("introduction is required");
-
+    if (!validateLocale(input.locale)) throw new Error("locale is required");
+    if (!validateTimezone(input.timezone)) throw new Error("timezone is required");
     let id: string;
     if (input.id && input.id.trim() !== "") {
       const hexId = input.id.trim();
@@ -386,13 +391,21 @@ export class UsersService {
       await pgQuery(
         this.pgPool,
         `
-          INSERT INTO user_details (user_id, introduction, ai_personality)
-          VALUES ($1, $2, $3)
+          INSERT INTO user_details (user_id, locale, timezone, introduction, ai_personality)
+          VALUES ($1, $2, $3, $4, $5)
           ON CONFLICT (user_id) DO UPDATE
-            SET introduction = EXCLUDED.introduction,
+            SET locale = EXCLUDED.locale,
+                timezone = EXCLUDED.timezone,
+                introduction = EXCLUDED.introduction,
                 ai_personality = EXCLUDED.ai_personality
         `,
-        [hexToDec(id), input.introduction, input.aiPersonality ?? null],
+        [
+          hexToDec(id),
+          input.locale,
+          input.timezone,
+          input.introduction,
+          input.aiPersonality ?? null,
+        ],
       );
 
       const res = await pgQuery(
@@ -456,6 +469,13 @@ export class UsersService {
       userVals.push(input.aiModel);
     }
 
+    if (input.locale !== undefined && !validateLocale(input.locale)) {
+      throw new Error("given locale is invalid");
+    }
+    if (input.timezone !== undefined && !validateTimezone(input.timezone)) {
+      throw new Error("given timezone is invalid");
+    }
+
     const touchSnippet = input.introduction !== undefined;
 
     await pgQuery(this.pgPool, "BEGIN");
@@ -466,10 +486,10 @@ export class UsersService {
         await pgQuery(
           this.pgPool,
           `
-            UPDATE user_secrets
-            SET email = $1
-            WHERE user_id = $2
-          `,
+          UPDATE user_secrets
+          SET email = $1
+          WHERE user_id = $2
+        `,
           [input.email, hexToDec(input.id)],
         );
       }
@@ -478,14 +498,38 @@ export class UsersService {
         await pgQuery(
           this.pgPool,
           `
-            INSERT INTO user_details (user_id, introduction, ai_personality)
-            VALUES ($1, $2, $3)
-            ON CONFLICT (user_id) DO UPDATE
-              SET introduction  = COALESCE(EXCLUDED.introduction,  user_details.introduction),
-                  ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)
-          `,
+          INSERT INTO user_details (user_id, introduction, ai_personality)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (user_id) DO UPDATE
+            SET introduction  = COALESCE(EXCLUDED.introduction,  user_details.introduction),
+                ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)
+        `,
           [hexToDec(input.id), input.introduction ?? null, input.aiPersonality ?? null],
         );
+      }
+
+      if (input.locale !== undefined || input.timezone !== undefined) {
+        const bothProvided = input.locale !== undefined && input.timezone !== undefined;
+        const sql = bothProvided
+          ? `
+          INSERT INTO user_details (user_id, locale, timezone)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (user_id) DO UPDATE
+            SET locale   = EXCLUDED.locale,
+                timezone = EXCLUDED.timezone
+        `
+          : `
+          INSERT INTO user_details (user_id, locale, timezone)
+          VALUES ($1, $2, $3)
+          ON CONFLICT (user_id) DO UPDATE
+            SET locale   = COALESCE(EXCLUDED.locale,   user_details.locale),
+                timezone = COALESCE(EXCLUDED.timezone, user_details.timezone)
+        `;
+        await pgQuery(this.pgPool, sql, [
+          hexToDec(input.id),
+          input.locale ?? null,
+          input.timezone ?? null,
+        ]);
       }
 
       if (touchSnippet && typeof input.introduction === "string") {
@@ -499,33 +543,33 @@ export class UsersService {
 
       if (userCols.length > 0) {
         const sql = `
-          UPDATE users
-          SET ${userCols.join(", ")}
-          WHERE id = $${uidx}
-        `.trim();
+        UPDATE users
+        SET ${userCols.join(", ")}
+        WHERE id = $${uidx}
+      `.trim();
         await pgQuery(this.pgPool, sql, userVals);
       }
 
       const res = await pgQuery(
         this.pgPool,
         `
-          SELECT
-            u.id,
-            u.nickname,
-            u.is_admin,
-            u.block_strangers,
-            u.snippet,
-            u.avatar,
-            u.ai_model,
-            id_to_timestamp(u.id) AS created_at,
-            u.updated_at,
-            COALESCE(uc.follower_count, 0) AS count_followers,
-            COALESCE(uc.followee_count, 0) AS count_followees,
-            COALESCE(uc.post_count, 0) AS count_posts
-          FROM users u
-          LEFT JOIN user_counts uc ON uc.user_id = u.id
-          WHERE u.id = $1
-        `,
+        SELECT
+          u.id,
+          u.nickname,
+          u.is_admin,
+          u.block_strangers,
+          u.snippet,
+          u.avatar,
+          u.ai_model,
+          id_to_timestamp(u.id) AS created_at,
+          u.updated_at,
+          COALESCE(uc.follower_count, 0) AS count_followers,
+          COALESCE(uc.followee_count, 0) AS count_followees,
+          COALESCE(uc.post_count, 0) AS count_posts
+        FROM users u
+        LEFT JOIN user_counts uc ON uc.user_id = u.id
+        WHERE u.id = $1
+      `,
         [hexToDec(input.id)],
       );
 

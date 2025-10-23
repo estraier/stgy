@@ -441,7 +441,7 @@ async function processPartition(
       }
 
       const ms = eventMsFromId(eid);
-      const term = formatDateInTz(ms, Config.SYSTEM_TIMEZONE);
+      const term = formatDateInTz(ms, Config.DEFAULT_TIMEZONE);
 
       if (payload.type === "reply") {
         await processReplyEvent(client, recipient, payload, ms, term);

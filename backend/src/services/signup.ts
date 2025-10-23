@@ -74,6 +74,8 @@ export class SignupService {
       nickname: String(data.email).split("@")[0],
       isAdmin: false,
       blockStrangers: false,
+      locale: Config.DEFAULT_LOCALE,
+      timezone: Config.DEFAULT_TIMEZONE,
       introduction: "brand new user",
       avatar: null,
       aiModel: null,

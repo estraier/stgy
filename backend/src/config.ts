@@ -89,7 +89,8 @@ export class Config {
   static readonly NOTIFICATION_RETENTION_DAYS = envNum("STGY_NOTIFICATION_RETENTION_DAYS", 31);
   static readonly NOTIFICATION_SHOWN_RECORDS = envNum("STGY_NOTIFICATION_SHOWN_RECORDS", 50);
   static readonly PASSWORD_CONFIG = envStr("STGY_PASSWORD_CONFIG", "scrypt:12:20:4096:8:1");
-  static readonly SYSTEM_TIMEZONE = envStr("STGY_SYSTEM_TIMEZONE", "Asia/Tokyo");
+  static readonly DEFAULT_LOCALE = envStr("STGY_DEFAULT_LOCALE", "ja-JP");
+  static readonly DEFAULT_TIMEZONE = envStr("STGY_DEFAULT_TIMEZONE", "Asia/Tokyo");
   static readonly MAX_PAGE_LIMIT = envNum("STGY_MAX_PAGE_LIMIT", 100);
 }
 

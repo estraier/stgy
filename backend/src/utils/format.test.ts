@@ -7,6 +7,8 @@ import {
   hexArrayToDec,
   generateVerificationCode,
   validateEmail,
+  validateLocale,
+  validateTimezone,
   normalizeEmail,
   normalizeText,
   normalizeOneLiner,
@@ -194,6 +196,34 @@ describe("validateEmail", () => {
     invalids.forEach((email) => {
       expect(validateEmail(email)).toBe(false);
     });
+  });
+});
+
+describe("validateLocale", () => {
+  it("valid locales", () => {
+    expect(validateLocale("ja-JP")).toBe(true);
+    expect(validateLocale("en-US")).toBe(true);
+    expect(validateLocale("zh-Hant-TW")).toBe(true);
+  });
+
+  it("invalid locales", () => {
+    expect(validateLocale("")).toBe(false);
+    expect(validateLocale("en--US")).toBe(false);
+    expect(validateLocale("en-US-")).toBe(false);
+  });
+});
+
+describe("validateTimezone", () => {
+  it("valid timezones", () => {
+    expect(validateTimezone("UTC")).toBe(true);
+    expect(validateTimezone("Asia/Tokyo")).toBe(true);
+    expect(validateTimezone("Europe/London")).toBe(true);
+  });
+
+  it("invalid timezones", () => {
+    expect(validateTimezone("")).toBe(false);
+    expect(validateTimezone("Asia/Tokyoo")).toBe(false);
+    expect(validateTimezone("GMT+9")).toBe(false);
   });
 });
 

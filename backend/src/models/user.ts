@@ -24,6 +24,8 @@ export type UserLite = Omit<
 
 export type UserDetail = User & {
   email: string;
+  locale: string;
+  timezone: string;
   introduction: string;
   aiPersonality: string | null;
 };
@@ -51,6 +53,8 @@ export type CreateUserInput = {
   password: string;
   isAdmin: boolean;
   blockStrangers: boolean;
+  locale: string;
+  timezone: string;
   introduction: string;
   avatar: string | null;
   aiModel: string | null;
@@ -63,6 +67,8 @@ export type UpdateUserInput = {
   nickname?: string;
   isAdmin?: boolean;
   blockStrangers?: boolean;
+  locale?: string;
+  timezone?: string;
   introduction?: string;
   avatar?: string | null;
   aiModel?: string | null;

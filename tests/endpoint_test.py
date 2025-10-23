@@ -86,6 +86,8 @@ def test_ai_users():
     "aiModel": ai_model_name,
     "aiPersonality": "helpful and curious",
     "password": "pw-aiuser-1",
+    "locale": "ja-JP",
+    "timezone": "Asia/Tokyo",
   }
   res = requests.post(f"{BASE_URL}/users", json=create_body, headers=headers, cookies=cookies)
   assert res.status_code == 201, res.text
@@ -147,7 +149,9 @@ def test_users():
     "introduction": "hi!",
     "aiModel": "gpt-5",
     "aiPersonality": "super diligent",
-    "password": "password1"
+    "password": "password1",
+    "locale": "ja-JP",
+    "timezone": "Asia/Tokyo",
   }
   res = requests.post(f"{BASE_URL}/users", json=user_input, headers=headers, cookies=cookies)
   assert res.status_code == 201, res.text
@@ -174,7 +178,7 @@ def test_users():
   got_admin_user = res.json()
   assert got_admin_user["id"] == admin_id
   for key, value in got_admin_user.items():
-    if key in ["email", "introduction", "aiPersonality"]: continue
+    if key in ["email", "locale", "timezone", "introduction", "aiPersonality"]: continue
     assert admin_user[key] == value
   res = requests.get(f"{BASE_URL}/users/{admin_id}/lite", headers=headers, cookies=cookies)
   lite_admin_user = res.json()
@@ -552,6 +556,8 @@ def test_notifications():
     "aiModel": "gpt-5",
     "aiPersonality": "curious",
     "password": password,
+    "locale": "ja-JP",
+    "timezone": "Asia/Tokyo",
   }
   res = requests.post(f"{BASE_URL}/users", json=user_input, headers=headers, cookies=admin_cookies)
   assert res.status_code == 201, res.text

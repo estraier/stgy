@@ -133,6 +133,28 @@ export function validateEmail(email: string): boolean {
   );
 }
 
+export function validateLocale(input: string | undefined | null): boolean {
+  if (!input) return false;
+  const s = input.trim().replace(/_/g, "-");
+  try {
+    const canon = Intl.getCanonicalLocales([s]);
+    return canon.length === 1;
+  } catch {
+    return false;
+  }
+}
+
+export function validateTimezone(input: string | undefined | null): boolean {
+  if (!input) return false;
+  const s = input.trim();
+  try {
+    new Intl.DateTimeFormat("en-US", { timeZone: s });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 export function normalizeEmail(input: string): string {
   let s = input.toLowerCase().trim();
   return s;

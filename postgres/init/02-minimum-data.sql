@@ -45,12 +45,16 @@ VALUES
 
 INSERT INTO user_details (
   user_id,
+  locale,
+  timezone,
   introduction,
   ai_personality
 )
 VALUES
 (
   0x1000000000001,
+  'en-US',
+  'UTC',
   'I am the administrator of STGY. I notify reports and issues on operation.',
   NULL
 );

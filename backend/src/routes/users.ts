@@ -187,6 +187,8 @@ export default function createUsersRouter(
         password: normalizeText(req.body.password) ?? "",
         isAdmin: !!req.body.isAdmin,
         blockStrangers: !!req.body.blockStrangers,
+        locale: normalizeOneLiner(req.body.locale) ?? "",
+        timezone: normalizeOneLiner(req.body.timezone) ?? "",
         introduction: normalizeMultiLines(req.body.introduction) ?? "",
         avatar: normalizeOneLiner(req.body.avatar) ?? null,
         aiModel: normalizeOneLiner(req.body.aiModel) ?? null,
@@ -230,6 +232,16 @@ export default function createUsersRouter(
       nickname = normalizeOneLiner(req.body.nickname) ?? "";
       dataSize += nickname.length;
     }
+    let locale;
+    if (req.body.locale) {
+      locale = normalizeOneLiner(req.body.locale) ?? "";
+      dataSize += locale.length;
+    }
+    let timezone;
+    if (req.body.timezone) {
+      timezone = normalizeOneLiner(req.body.timezone) ?? "";
+      dataSize += timezone.length;
+    }
     let introduction;
     if (req.body.introduction) {
       introduction = normalizeMultiLines(req.body.introduction) ?? "";
@@ -256,6 +268,8 @@ export default function createUsersRouter(
         nickname: nickname,
         isAdmin: req.body.isAdmin === undefined ? undefined : req.body.isAdmin,
         blockStrangers: req.body.blockStrangers === undefined ? undefined : req.body.blockStrangers,
+        locale: locale,
+        timezone: timezone,
         introduction: introduction,
         avatar: normalizeOneLiner(req.body.avatar),
         aiModel: normalizeOneLiner(req.body.aiModel),

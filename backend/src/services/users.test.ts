@@ -29,7 +29,12 @@ const ALICE = "00000000000000A1";
 const BOB = "00000000000000B0";
 const CAROL = "00000000000000C0";
 
-type DetailRow = { introduction: string; aiPersonality: string | null };
+type DetailRow = {
+  locale: string;
+  timezone: string;
+  introduction: string;
+  aiPersonality: string | null;
+};
 
 type MockUser = {
   id: string;
@@ -53,7 +58,10 @@ const SQL_INSERT_USERS_PREFIX =
   "INSERT INTO users ( id, nickname, is_admin, block_strangers, snippet, avatar, ai_model, updated_at ) VALUES";
 
 const SQL_UPSERT_DETAILS_OVERWRITE =
-  "INSERT INTO user_details (user_id, introduction, ai_personality) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET introduction = EXCLUDED.introduction, ai_personality = EXCLUDED.ai_personality";
+  "INSERT INTO user_details (user_id, locale, timezone, introduction, ai_personality) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (user_id) DO UPDATE SET locale = EXCLUDED.locale, timezone = EXCLUDED.timezone, introduction = EXCLUDED.introduction, ai_personality = EXCLUDED.ai_personality";
+
+const SQL_UPSERT_DETAILS_LOCALE_TZ =
+  "INSERT INTO user_details (user_id, locale, timezone) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET locale = EXCLUDED.locale, timezone = EXCLUDED.timezone";
 
 const SQL_UPSERT_DETAILS =
   "INSERT INTO user_details (user_id, introduction, ai_personality) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET introduction = COALESCE(EXCLUDED.introduction, user_details.introduction), ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)";
@@ -112,9 +120,24 @@ class MockPgClient {
       },
     ];
     this.details = {
-      [ALICE]: { introduction: "introA", aiPersonality: "A" },
-      [BOB]: { introduction: "introB", aiPersonality: "B" },
-      [CAROL]: { introduction: "introC", aiPersonality: "C" },
+      [ALICE]: {
+        locale: "ja-JP",
+        timezone: "Asia/Tokyo",
+        introduction: "introA",
+        aiPersonality: "A",
+      },
+      [BOB]: {
+        locale: "en-US",
+        timezone: "America/Los_Angeles",
+        introduction: "introB",
+        aiPersonality: "B",
+      },
+      [CAROL]: {
+        locale: "en-GB",
+        timezone: "Europe/London",
+        introduction: "introC",
+        aiPersonality: "C",
+      },
     };
     this.follows = [
       { followerId: ALICE, followeeId: BOB },
@@ -206,7 +229,14 @@ class MockPgClient {
       const includeEmail = n.includes("LEFT JOIN user_secrets s ON s.user_id = u.id");
       const base = this.rowFromUser(u, includeEmail);
       if (includeDetails) {
-        const d = this.details[u.id] ?? { introduction: "", aiPersonality: null };
+        const d = this.details[u.id] ?? {
+          locale: "en-US",
+          timezone: "UTC",
+          introduction: "",
+          aiPersonality: null,
+        };
+        (base as any).locale = d.locale;
+        (base as any).timezone = d.timezone;
         (base as any).introduction = d.introduction;
         (base as any).ai_personality = d.aiPersonality;
       }
@@ -345,11 +375,30 @@ class MockPgClient {
     }
 
     if (n === SQL_UPSERT_DETAILS_OVERWRITE) {
-      const [userIdDec, introduction, aiPersonality] = params;
+      const [userIdDec, locale, timezone, introduction, aiPersonality] = params;
       const userId = decToHex(userIdDec);
       this.details[userId] = {
+        locale: locale ?? "en-US",
+        timezone: timezone ?? "UTC",
         introduction: introduction ?? "",
         aiPersonality: aiPersonality ?? null,
+      };
+      return { rowCount: 1, rows: [] };
+    }
+
+    if (n === SQL_UPSERT_DETAILS_LOCALE_TZ) {
+      const [userIdDec, locale, timezone] = params;
+      const userId = decToHex(userIdDec);
+      const prev = this.details[userId] ?? {
+        locale: "en-US",
+        timezone: "UTC",
+        introduction: "",
+        aiPersonality: null,
+      };
+      this.details[userId] = {
+        ...prev,
+        locale: locale ?? prev.locale,
+        timezone: timezone ?? prev.timezone,
       };
       return { rowCount: 1, rows: [] };
     }
@@ -357,8 +406,15 @@ class MockPgClient {
     if (n === SQL_UPSERT_DETAILS) {
       const [userIdDec, introduction, aiPersonality] = params;
       const userId = decToHex(userIdDec);
-      const prev = this.details[userId] ?? { introduction: "", aiPersonality: null };
+      const prev = this.details[userId] ?? {
+        locale: "en-US",
+        timezone: "UTC",
+        introduction: "",
+        aiPersonality: null,
+      };
       this.details[userId] = {
+        locale: prev.locale,
+        timezone: prev.timezone,
         introduction: introduction ?? prev.introduction,
         aiPersonality: aiPersonality ?? prev.aiPersonality,
       };
@@ -656,13 +712,15 @@ describe("UsersService", () => {
     expect(carol.isFollowingFocusUser).toBe(false);
   });
 
-  test("createUser and getUser (detail includes email)", async () => {
+  test("createUser and getUser (detail includes email/locale/timezone)", async () => {
     const user = await service.createUser({
       email: "dan@example.com",
       nickname: "Dan",
       password: "danpass",
       isAdmin: false,
       blockStrangers: false,
+      locale: "en-US",
+      timezone: "America/Los_Angeles",
       introduction: "introD",
       avatar: null,
       aiModel: "gpt-4.1",
@@ -671,6 +729,8 @@ describe("UsersService", () => {
     expect(pg.userSecrets[user.id]?.email).toBe("dan@example.com");
     const detail = await service.getUser(user.id);
     expect((detail as any).email).toBe("dan@example.com");
+    expect(detail?.locale).toBe("en-US");
+    expect(detail?.timezone).toBe("America/Los_Angeles");
     expect(pg.passwords[user.id]).toBe(md5("danpass"));
     expect(pg.details[user.id]?.introduction).toBe("introD");
     expect(pg.details[user.id]?.aiPersonality).toBe("D");
@@ -683,6 +743,8 @@ describe("UsersService", () => {
       nickname: "Alice2",
       isAdmin: true,
       blockStrangers: true,
+      locale: "ja-JP",
+      timezone: "Asia/Tokyo",
       introduction: "introX",
       avatar: null,
       aiModel: "gpt-4.1-mini",
@@ -692,6 +754,8 @@ describe("UsersService", () => {
     expect(updated?.blockStrangers).toBe(true);
     const detail = await service.getUser(ALICE);
     expect((detail as any).email).toBe("alice2@example.com");
+    expect(detail?.locale).toBe("ja-JP");
+    expect(detail?.timezone).toBe("Asia/Tokyo");
     expect(detail?.introduction).toBe("introX");
     expect(detail?.aiPersonality).toBe("X");
   });

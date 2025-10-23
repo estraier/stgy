@@ -30,6 +30,8 @@ CREATE TABLE user_secrets (
 
 CREATE TABLE user_details (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  locale VARCHAR(50) NOT NULL,
+  timezone VARCHAR(50) NOT NULL,
   introduction VARCHAR(65535) NOT NULL,
   ai_personality VARCHAR(65535)
 );

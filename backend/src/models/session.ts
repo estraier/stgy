@@ -5,5 +5,7 @@ export type SessionInfo = {
   userIsAdmin: boolean;
   userCreatedAt: string;
   userUpdatedAt: string | null;
+  userLocale: string;
+  userTimezone: string;
   loggedInAt: string;
 };
