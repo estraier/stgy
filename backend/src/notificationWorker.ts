@@ -62,6 +62,14 @@ async function getUserNickname(db: PoolClient, userIdHex: string): Promise<strin
   return u.rows[0]?.nickname ?? "";
 }
 
+async function getUserTimezone(db: PoolClient, userIdHex: string): Promise<string> {
+  const r = await db.query<{ timezone: string }>(
+    `SELECT timezone FROM user_details WHERE user_id = $1`,
+    [hexToDec(userIdHex)],
+  );
+  return r.rows[0]?.timezone ?? Config.DEFAULT_TIMEZONE;
+}
+
 async function getPostSnippet(db: PoolClient, postId: string): Promise<string> {
   const pres = await db.query<{ snippet: string }>(`SELECT snippet FROM posts WHERE id = $1`, [
     hexToDec(postId),
@@ -441,7 +449,8 @@ async function processPartition(
       }
 
       const ms = eventMsFromId(eid);
-      const term = formatDateInTz(ms, Config.DEFAULT_TIMEZONE);
+      const tz = await getUserTimezone(client, recipient);
+      const term = formatDateInTz(ms, tz);
 
       if (payload.type === "reply") {
         await processReplyEvent(client, recipient, payload, ms, term);
