@@ -17,7 +17,12 @@ export class SignupService {
     this.usersService = usersService;
   }
 
-  async startSignup(email: string, password: string): Promise<{ signupId: string }> {
+  async startSignup(
+    email: string,
+    password: string,
+    locale: string,
+    timezone: string,
+  ): Promise<{ signupId: string }> {
     if (!email || !validateEmail(email)) throw new Error("Invalid email format.");
     if (!password || password.length < 6)
       throw new Error("Password must be at least 6 characters.");
@@ -29,6 +34,8 @@ export class SignupService {
     await this.redis.hmset(signupKey, {
       email,
       password,
+      locale,
+      timezone,
       verificationCode,
       createdAt: new Date().toISOString(),
     });
@@ -47,7 +54,6 @@ export class SignupService {
   async verifySignup(signupId: string, code: string): Promise<{ userId: string }> {
     const signupKey = `signup:${signupId}`;
     const data = await this.redis.hgetall(signupKey);
-
     if (!data || !data.email || !data.password || !data.verificationCode) {
       throw new Error("Signup info not found or expired.");
     }
@@ -74,8 +80,8 @@ export class SignupService {
       nickname: String(data.email).split("@")[0],
       isAdmin: false,
       blockStrangers: false,
-      locale: Config.DEFAULT_LOCALE,
-      timezone: Config.DEFAULT_TIMEZONE,
+      locale: data.locale,
+      timezone: data.timezone,
       introduction: "brand new user",
       avatar: null,
       aiModel: null,

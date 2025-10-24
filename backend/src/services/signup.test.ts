@@ -52,29 +52,31 @@ describe("signup service", () => {
   });
 
   test("startSignup: valid input", async () => {
-    const res = await signupService.startSignup("foo@example.com", "pass123");
+    const res = await signupService.startSignup("foo@example.com", "pass123", "en", "UTC");
     expect(res.signupId).toBeDefined();
     const signupKey = `signup:${res.signupId}`;
     const stored = await redis.hgetall(signupKey);
     expect(stored.email).toBe("foo@example.com");
     expect(stored.password).toBe("pass123");
+    expect(stored.locale).toBe("en");
+    expect(stored.timezone).toBe("UTC");
     expect(stored.verificationCode).toHaveLength(6);
   });
 
   test("startSignup: invalid email", async () => {
-    await expect(signupService.startSignup("invalid-email", "pass123")).rejects.toThrow(
-      /Invalid email format/i,
-    );
+    await expect(
+      signupService.startSignup("invalid-email", "pass123", "en", "UTC"),
+    ).rejects.toThrow(/Invalid email format/i);
   });
 
   test("startSignup: short password", async () => {
-    await expect(signupService.startSignup("foo@example.com", "")).rejects.toThrow(
+    await expect(signupService.startSignup("foo@example.com", "", "en", "UTC")).rejects.toThrow(
       /Password must be at least 6 characters/i,
     );
   });
 
   test("verifySignup: normal", async () => {
-    const { signupId } = await signupService.startSignup("test@ex.com", "pass123");
+    const { signupId } = await signupService.startSignup("test@ex.com", "pass123", "en", "UTC");
     const data = await redis.hgetall(`signup:${signupId}`);
     (usersService.createUser as unknown as jest.Mock).mockResolvedValue({ id: "user-1" });
     const res = await signupService.verifySignup(signupId, data.verificationCode);
@@ -83,7 +85,7 @@ describe("signup service", () => {
   });
 
   test("verifySignup: code mismatch", async () => {
-    const { signupId } = await signupService.startSignup("test@ex.com", "pass123");
+    const { signupId } = await signupService.startSignup("test@ex.com", "pass123", "en", "UTC");
     await expect(signupService.verifySignup(signupId, "999999")).rejects.toThrow(
       /Verification code mismatch/i,
     );
@@ -97,7 +99,7 @@ describe("signup service", () => {
 
   test("verifySignup: already registered email", async () => {
     pgClient.emails.add("exists@ex.com");
-    const { signupId } = await signupService.startSignup("exists@ex.com", "pass123");
+    const { signupId } = await signupService.startSignup("exists@ex.com", "pass123", "en", "UTC");
     const data = await redis.hgetall(`signup:${signupId}`);
     await expect(signupService.verifySignup(signupId, data.verificationCode)).rejects.toThrow(
       "Email already in use.",

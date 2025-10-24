@@ -71,9 +71,11 @@ components:
         - type: object
           properties:
             email: { type: string }
+            locale: { type: string }
+            timezone: { type: string }
             introduction: { type: string }
             aiPersonality: { type: string, nullable: true }
-          required: [email, introduction]
+          required: [email, locale, timezone, introduction]
 
     UserLite:
       type: object
@@ -414,6 +416,8 @@ paths:
               properties:
                 email: { type: string }
                 password: { type: string }
+                locale: { type: string }
+                timezone: { type: string }
               required: [email, password]
       responses:
         "201":
@@ -539,11 +543,14 @@ paths:
                 password: { type: string }
                 isAdmin: { type: boolean }
                 blockStrangers: { type: boolean }
+                locale: { type: string }
+                timezone: { type: string }
                 introduction: { type: string }
                 avatar: { type: string, nullable: true }
                 aiModel: { type: string, nullable: true }
                 aiPersonality: { type: string, nullable: true }
-              required: [email, nickname, password, isAdmin, blockStrangers, introduction]
+              required:
+                [email, nickname, password, isAdmin, blockStrangers, locale, timezone, introduction]
       responses:
         "201":
           description: User created
@@ -624,6 +631,8 @@ paths:
                 nickname: { type: string }
                 isAdmin: { type: boolean }
                 blockStrangers: { type: boolean }
+                locale: { type: string }
+                timezone: { type: string }
                 introduction: { type: string }
                 avatar: { type: string, nullable: true }
                 aiModel: { type: string, nullable: true }

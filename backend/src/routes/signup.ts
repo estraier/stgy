@@ -6,7 +6,13 @@ import { UsersService } from "../services/users";
 import { SignupService } from "../services/signup";
 import { SendMailService } from "../services/sendMail";
 import { ThrottleService } from "../services/throttle";
-import { validateEmail, normalizeEmail, normalizeText } from "../utils/format";
+import {
+  validateEmail,
+  validateLocale,
+  validateTimezone,
+  normalizeEmail,
+  normalizeText,
+} from "../utils/format";
 
 export default function createSignupRouter(pgPool: Pool, redis: Redis) {
   const router = Router();
@@ -21,24 +27,37 @@ export default function createSignupRouter(pgPool: Pool, redis: Redis) {
   );
 
   router.post("/start", async (req: Request, res: Response) => {
-    const { email, password } = req.body;
+    const { email, password, locale, timezone } = req.body;
     if (!email || !password) {
       return res.status(400).json({ error: "email and password are needed" });
     }
     if (!validateEmail(email)) {
       return res.status(400).json({ error: "invalid e-mail address" });
     }
+    if (typeof locale === "string" && !validateLocale(locale)) {
+      return res.status(400).json({ error: "invalid locale" });
+    }
+    if (typeof timezone === "string" && !validateTimezone(timezone)) {
+      return res.status(400).json({ error: "invalid timezone" });
+    }
     if (!(await throttleService.canDo("0"))) {
       return res.status(403).json({ error: "too often signups" });
     }
     const normEmail = normalizeEmail(email);
     const normPassword = normalizeText(password) ?? "";
+    const normLocale = locale ?? Config.DEFAULT_LOCALE;
+    const normTimezone = timezone ?? Config.DEFAULT_TIMEZONE;
     const check = await sendMailService.canSendMail(normEmail);
     if (!check.ok) {
       return res.status(400).json({ error: check.reason || "too many requests" });
     }
     try {
-      const { signupId } = await signupService.startSignup(normEmail, normPassword);
+      const { signupId } = await signupService.startSignup(
+        normEmail,
+        normPassword,
+        normLocale,
+        normTimezone,
+      );
       res.status(201).json({ signupId });
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "signup failed" });
