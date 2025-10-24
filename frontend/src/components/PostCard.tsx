@@ -49,10 +49,11 @@ export default function PostCard({
 
   const prismDeps = useMemo(() => [bodyHtml], [bodyHtml]);
 
-  // any を使わずにオプショナルな boolean として明示
   const isBlockedForFocusUser = Boolean(
     (post as { isBlockingFocusUser?: boolean }).isBlockingFocusUser,
   );
+
+  const postLang = typeof post.locale === "string" && post.locale.trim() !== "" ? post.locale : undefined;
 
   function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
@@ -93,6 +94,7 @@ export default function PostCard({
           />
         </a>
         <a
+          lang={postLang}
           className="-mt-1 text-lg text-slate-900 hover:text-blue-700 hover:underline min-w-[20ex] max-w-[48ex] truncate inline-block align-bottom max-md:min-w-[10ex]"
           href={`/users/${post.ownedBy}`}
           onClick={(e) => e.stopPropagation()}
@@ -106,6 +108,7 @@ export default function PostCard({
               <span className="text-gray-400">[{post.replyTo}:deleted]</span>
             ) : (
               <a
+                lang={postLang}
                 href={`/posts/${post.replyTo}`}
                 className="text-blue-500 hover:underline max-w-[32ex] truncate inline-block align-bottom"
                 onClick={(e) => e.stopPropagation()}
@@ -127,6 +130,7 @@ export default function PostCard({
 
       <div
         ref={contentRef}
+        lang={postLang}
         className={`markdown-body post-content${truncated ? " excerpt" : ""}`}
         style={{ minHeight: 36, userSelect: "text" }}
         dangerouslySetInnerHTML={{ __html: bodyHtml }}
@@ -140,6 +144,7 @@ export default function PostCard({
             {post.tags.map((tag) => (
               <a
                 key={tag}
+                lang={postLang}
                 href={`/posts?q=${encodeURIComponent("#" + tag)}&includingReplies=1`}
                 className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-blue-700 hover:bg-blue-200"
                 onClick={(e) => e.stopPropagation()}

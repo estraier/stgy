@@ -34,6 +34,7 @@ export async function createPost(post: {
   allowReplies: boolean;
   replyTo?: string | null;
   ownedBy?: string;
+  locale?: string;
 }): Promise<Post> {
   const res = await apiFetch("/posts", {
     method: "POST",
@@ -52,6 +53,7 @@ export async function updatePost(
     allowReplies?: boolean;
     ownedBy?: string;
     replyTo?: string | null;
+    locale?: string | null;
   },
 ): Promise<Post> {
   const res = await apiFetch(`/posts/${id}`, {

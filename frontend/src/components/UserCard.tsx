@@ -64,6 +64,11 @@ export default function UserCard({
   const isBlocking = !!user.isBlockedByFocusUser;
   const isBlocked = !!user.isBlockingFocusUser;
 
+  const userLang =
+    "locale" in user && typeof user.locale === "string" && user.locale.trim() !== ""
+      ? user.locale
+      : undefined;
+
   async function copyToClipboard(text: string) {
     try {
       if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
@@ -173,9 +178,7 @@ export default function UserCard({
   const menu = (
     <div
       ref={menuRef}
-      className={`absolute right-0 top-full mt-1 w-56 rounded-md border bg-white shadow-lg z-20 ${
-        menuOpen ? "block" : "hidden"
-      }`}
+      className={`absolute right-0 top-full mt-1 w-56 rounded-md border bg-white shadow-lg z-20 ${menuOpen ? "block" : "hidden"}`}
       onClick={(e) => e.stopPropagation()}
     >
       <button
@@ -274,9 +277,8 @@ export default function UserCard({
         )}
 
         <span
-          className={`-mt-1 truncate max-w-[24ex] text-slate-900 ${
-            truncated ? "text-base" : "text-xl px-2"
-          }`}
+          lang={userLang}
+          className={`-mt-1 truncate max-w-[24ex] text-slate-900 ${truncated ? "text-base" : "text-xl px-2"}`}
         >
           {user.nickname}
         </span>
@@ -378,6 +380,7 @@ export default function UserCard({
       )}
 
       <div
+        lang={userLang}
         className={`markdown-body user-introduction${truncated ? " excerpt" : ""}`}
         dangerouslySetInnerHTML={{
           __html: truncated ? snippetHtml : introHtml || snippetHtml,
@@ -397,7 +400,9 @@ export default function UserCard({
         user.aiPersonality.trim() !== "" && (
           <div className="text-xs text-gray-600 mt-2">
             <div className="font-semibold">AI Personality:</div>
-            <div className="pl-2 whitespace-pre-line">{normalizeLinefeeds(user.aiPersonality)}</div>
+            <div lang={userLang} className="pl-2 whitespace-pre-line">
+              {normalizeLinefeeds(user.aiPersonality)}
+            </div>
           </div>
         )}
 
