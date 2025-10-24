@@ -85,10 +85,11 @@ class MockPgClientMain {
 
     if (
       sql.startsWith(
-        "INSERT INTO posts (id, snippet, owned_by, reply_to, allow_likes, allow_replies, updated_at) VALUES",
+        "INSERT INTO posts (id, owned_by, reply_to, locale, snippet, allow_likes, allow_replies, published_at, updated_at) VALUES",
       )
     ) {
-      const [id, _snippet, ownedBy, replyTo, allowLikes, allowReplies] = params!;
+      const [id, ownedBy, replyTo, _locale, _snippet, allowLikes, allowReplies, publishedAt] =
+        params!;
       const createdAt = new Date().toISOString();
       const newPost: MockPostRow = {
         id,
@@ -105,12 +106,14 @@ class MockPgClientMain {
         rows: [
           {
             id,
-            snippet: _snippet,
             owned_by: ownedBy,
             reply_to: replyTo ?? null,
+            snippet: _snippet,
+            locale: _locale,
             allow_likes: !!allowLikes,
             allow_replies: !!allowReplies,
             created_at: createdAt,
+            published_at: publishedAt ?? null,
             updated_at: null,
           },
         ],
@@ -298,6 +301,7 @@ class MockPgClientMain {
         allow_likes: post.allowLikes,
         allow_replies: post.allowReplies,
         created_at: post.createdAt,
+        published_at: null,
         updated_at: post.updatedAt,
         owner_nickname: this.users.find((u) => u.id === post.ownedBy)?.nickname ?? "",
         reply_to_owner_nickname,
@@ -567,8 +571,10 @@ describe("posts service", () => {
       content: "new post content",
       ownedBy: user2Hex,
       replyTo: parentId,
+      locale: "und",
       allowLikes: true,
       allowReplies: true,
+      publishedAt: null,
       tags: ["hello", "world"],
     };
     const created = await postsService.createPost(input);

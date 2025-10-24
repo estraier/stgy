@@ -105,12 +105,14 @@ components:
       type: object
       properties:
         id: { type: string }
-        snippet: { type: string }
         ownedBy: { type: string }
         replyTo: { type: string, nullable: true }
+        snippet: { type: string }
+        locale: { type: string }
         allowLikes: { type: boolean }
         allowReplies: { type: boolean }
         createdAt: { type: string, format: date-time }
+        publishedAt: { type: string, format: date-time, nullable: true }
         updatedAt: { type: string, format: date-time, nullable: true }
         ownerNickname: { type: string }
         replyToOwnerNickname: { type: string, nullable: true }
@@ -131,12 +133,14 @@ components:
       required:
         [
           id,
-          snippet,
           ownedBy,
           replyTo,
+          snippet,
+          locale,
           allowLikes,
           allowReplies,
           createdAt,
+          publishedAt,
           updatedAt,
           ownerNickname,
           countLikes,
@@ -161,6 +165,7 @@ components:
         allowLikes: { type: boolean }
         allowReplies: { type: boolean }
         createdAt: { type: string, format: date-time }
+        publishedAt: { type: string, format: date-time, nullable: true }
         updatedAt: { type: string, format: date-time, nullable: true }
         ownerNickname: { type: string }
         replyToOwnerNickname: { type: string, nullable: true }
@@ -177,6 +182,7 @@ components:
           allowLikes,
           allowReplies,
           createdAt,
+          publishedAt,
           updatedAt,
           ownerNickname,
           countLikes,

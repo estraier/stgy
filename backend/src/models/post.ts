@@ -1,11 +1,13 @@
 export type Post = {
   id: string;
-  snippet: string;
   ownedBy: string;
   replyTo: string | null;
+  snippet: string;
+  locale: string;
   allowLikes: boolean;
   allowReplies: boolean;
   createdAt: string;
+  publishedAt: string | null;
   updatedAt: string | null;
   ownerNickname: string;
   replyToOwnerNickname: string | null;
@@ -19,7 +21,7 @@ export type Post = {
 
 export type PostLite = Omit<
   Post,
-  "snippet" | "isLikedByFocusUser" | "isRepliedByFocusUser" | "isBlockingFocusUser"
+  "snippet" | "locale" | "isLikedByFocusUser" | "isRepliedByFocusUser" | "isBlockingFocusUser"
 >;
 
 export type PostDetail = Post & {
@@ -46,10 +48,12 @@ export type ListPostsInput = PostFilter & PostPagination;
 export type CreatePostInput = {
   id?: string;
   content: string;
+  locale: string;
   ownedBy: string;
   replyTo: string | null;
   allowLikes: boolean;
   allowReplies: boolean;
+  publishedAt: string | null;
   tags: string[];
 };
 
@@ -57,9 +61,11 @@ export type UpdatePostInput = {
   id: string;
   ownedBy?: string;
   content?: string;
+  locale?: string;
   replyTo?: string | null;
   allowLikes?: boolean;
   allowReplies?: boolean;
+  publishedAt?: string | null;
   tags?: string[];
 };
 

@@ -79,6 +79,7 @@ export class PostsService {
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
+        p.published_at,
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
@@ -106,12 +107,14 @@ export class PostsService {
     let sql = `
       SELECT
         p.id,
-        p.snippet,
         p.owned_by,
         p.reply_to,
+        p.snippet,
+        p.locale,
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
+        p.published_at,
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
@@ -177,12 +180,14 @@ export class PostsService {
     let sql = `
       SELECT
         p.id,
-        p.snippet,
         p.owned_by,
         p.reply_to,
+        p.snippet,
+        p.locale,
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
+        p.published_at,
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
@@ -295,14 +300,18 @@ export class PostsService {
       }
       const res = await pgQuery(
         this.pgPool,
-        `INSERT INTO posts (id, snippet, owned_by, reply_to, allow_likes, allow_replies, updated_at) VALUES ($1, $2, $3, $4, $5, $6, NULL) RETURNING id, snippet, owned_by, reply_to, allow_likes, allow_replies, id_to_timestamp(id) AS created_at, updated_at`,
+        `INSERT INTO posts (id, owned_by, reply_to, locale, snippet, allow_likes, allow_replies, published_at, updated_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)
+         RETURNING id, owned_by, reply_to, snippet, locale, allow_likes, allow_replies, id_to_timestamp(id) AS created_at, published_at, updated_at`,
         [
           hexToDec(id),
-          snippet,
           hexToDec(input.ownedBy),
           input.replyTo == null ? null : hexToDec(input.replyTo),
+          input.locale,
+          snippet,
           input.allowLikes,
           input.allowReplies,
+          input.publishedAt,
         ],
       );
       await pgQuery(
@@ -371,6 +380,10 @@ export class PostsService {
           [hexToDec(input.id), input.content],
         );
       }
+      if (input.locale !== undefined) {
+        columns.push(`locale = $${idx++}`);
+        values.push(input.locale);
+      }
       if (input.ownedBy !== undefined) {
         if (typeof input.ownedBy !== "string" || input.ownedBy.trim() === "")
           throw new Error("ownedBy is required");
@@ -388,6 +401,10 @@ export class PostsService {
       if (input.allowReplies !== undefined) {
         columns.push(`allow_replies = $${idx++}`);
         values.push(input.allowReplies);
+      }
+      if (input.publishedAt !== undefined) {
+        columns.push(`published_at = $${idx++}`);
+        values.push(input.publishedAt);
       }
       columns.push(`updated_at = now()`);
       values.push(hexToDec(input.id));
@@ -513,18 +530,19 @@ export class PostsService {
       )
       SELECT
         p.id,
-        p.snippet,
         p.owned_by,
         p.reply_to,
+        p.snippet,
+        p.locale,
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
+        p.published_at,
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
-        COALESCE(pc.like_count,0) AS count_likes,
-        ARRAY(SELECT pt2.name FROM post_tags pt2 WHERE pt2.post_id = p.id ORDER BY pt2.name) AS tags
+        COALESCE(pc.like_count,0) AS count_likes
         ${
           focusUserId
             ? `,
@@ -536,7 +554,8 @@ export class PostsService {
           )
         END AS is_blocking_focus_user`
             : ""
-        }
+        },
+        ARRAY(SELECT pt2.name FROM post_tags pt2 WHERE pt2.post_id = p.id ORDER BY pt2.name) AS tags
       FROM top_posts t
       JOIN posts p ON p.id = t.id
       JOIN users u ON p.owned_by = u.id
@@ -593,12 +612,14 @@ export class PostsService {
     let sql = `
       SELECT
         p.id,
-        p.snippet,
         p.owned_by,
         p.reply_to,
+        p.snippet,
+        p.locale,
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
+        p.published_at,
         p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,

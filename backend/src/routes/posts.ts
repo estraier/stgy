@@ -279,10 +279,12 @@ export default function createPostsRouter(
       const input: CreatePostInput = {
         id: typeof req.body.id === "string" ? (normalizeOneLiner(req.body.id) ?? "") : undefined,
         content: content,
+        locale: "und",
         ownedBy,
         replyTo: req.body.replyTo ?? null,
         allowLikes: req.body.allowLikes === undefined ? true : req.body.allowLikes,
         allowReplies: req.body.allowReplies === undefined ? true : req.body.allowReplies,
+        publishedAt: typeof req.body.publishedAt === "string" ? req.body.publishedAt : null,
         tags,
       };
       const watch = timerThrottleService.startWatch(loginUser);
@@ -341,11 +343,13 @@ export default function createPostsRouter(
     try {
       const input: UpdatePostInput = {
         id: req.params.id,
-        content: content,
         ownedBy: req.body.ownedBy,
+        content: content,
+        locale: undefined,
         replyTo: req.body.replyTo,
         allowLikes: req.body.allowLikes,
         allowReplies: req.body.allowReplies,
+        publishedAt: req.body.publishedAt,
         tags,
       };
       const watch = timerThrottleService.startWatch(loginUser);

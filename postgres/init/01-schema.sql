@@ -57,11 +57,13 @@ CREATE INDEX idx_user_blocks_blockee_created_at ON user_blocks (blockee_id, crea
 
 CREATE TABLE posts (
   id BIGINT PRIMARY KEY,
-  snippet VARCHAR(4096) NOT NULL,
   owned_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reply_to BIGINT,
+  locale VARCHAR(50) NOT NULL,
+  snippet VARCHAR(4096) NOT NULL,
   allow_likes BOOLEAN NOT NULL,
   allow_replies BOOLEAN NOT NULL,
+  published_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ
 );
 CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
