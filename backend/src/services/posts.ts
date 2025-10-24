@@ -14,7 +14,14 @@ import {
 import { User } from "../models/user";
 import { IdIssueService } from "./idIssue";
 import { EventLogService } from "./eventLog";
-import { validateLocale, snakeToCamel, escapeForLike, hexToDec, decToHex, hexArrayToDec } from "../utils/format";
+import {
+  validateLocale,
+  snakeToCamel,
+  escapeForLike,
+  hexToDec,
+  decToHex,
+  hexArrayToDec,
+} from "../utils/format";
 import { makeSnippetJsonFromMarkdown } from "../utils/snippet";
 import { Pool } from "pg";
 import Redis from "ioredis";

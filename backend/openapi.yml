@@ -1149,6 +1149,7 @@ paths:
               type: object
               properties:
                 content: { type: string }
+                locale: { type: string, nullable: true }
                 ownedBy: { type: string }
                 replyTo: { type: string, nullable: true }
                 allowLikes: { type: boolean }
@@ -1317,6 +1318,7 @@ paths:
               type: object
               properties:
                 content: { type: string }
+                locale: { type: string, nullable: true }
                 ownedBy: { type: string }
                 replyTo: { type: string, nullable: true }
                 allowLikes: { type: boolean }

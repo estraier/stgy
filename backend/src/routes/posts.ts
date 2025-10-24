@@ -275,8 +275,10 @@ export default function createPostsRouter(
     if (!loginUser.isAdmin && !(await postsThrottleService.canDo(loginUser.id, dataSize))) {
       return res.status(403).json({ error: "too often posts" });
     }
-    let locale = req.body.locale && typeof req.body.locale === "string" ?
-      req.body.locale : (await usersService.getUserLocale(ownedBy) ?? "und");
+    let locale =
+      req.body.locale && typeof req.body.locale === "string"
+        ? req.body.locale
+        : ((await usersService.getUserLocale(ownedBy)) ?? "und");
     try {
       const input: CreatePostInput = {
         id: typeof req.body.id === "string" ? (normalizeOneLiner(req.body.id) ?? "") : undefined,
@@ -326,6 +328,14 @@ export default function createPostsRouter(
       }
       dataSize += content.length;
     }
+    let locale;
+    if (typeof req.body.locale === "string") {
+      locale = req.body.locale;
+    } else if (req.body.locale === null) {
+      const post = await postsService.getPost(req.params.id);
+      if (!post) return res.status(404).json({ error: "not found" });
+      locale = (await usersService.getUserLocale(post.ownedBy)) ?? "und";
+    }
     let tags;
     if ("tags" in req.body) {
       if (!Array.isArray(req.body.tags)) {
@@ -347,7 +357,7 @@ export default function createPostsRouter(
         id: req.params.id,
         ownedBy: req.body.ownedBy,
         content: content,
-        locale: req.body.locale,
+        locale: locale,
         replyTo: req.body.replyTo,
         allowLikes: req.body.allowLikes,
         allowReplies: req.body.allowReplies,
