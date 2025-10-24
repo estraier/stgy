@@ -275,14 +275,13 @@ export default function createPostsRouter(
     if (!loginUser.isAdmin && !(await postsThrottleService.canDo(loginUser.id, dataSize))) {
       return res.status(403).json({ error: "too often posts" });
     }
-
-    console.log(loginUser);
-
+    let locale = req.body.locale && typeof req.body.locale === "string" ?
+      req.body.locale : (await usersService.getUserLocale(ownedBy) ?? "und");
     try {
       const input: CreatePostInput = {
         id: typeof req.body.id === "string" ? (normalizeOneLiner(req.body.id) ?? "") : undefined,
         content: content,
-        locale: "und",
+        locale: locale,
         ownedBy,
         replyTo: req.body.replyTo ?? null,
         allowLikes: req.body.allowLikes === undefined ? true : req.body.allowLikes,
@@ -348,7 +347,7 @@ export default function createPostsRouter(
         id: req.params.id,
         ownedBy: req.body.ownedBy,
         content: content,
-        locale: undefined,
+        locale: req.body.locale,
         replyTo: req.body.replyTo,
         allowLikes: req.body.allowLikes,
         allowReplies: req.body.allowReplies,

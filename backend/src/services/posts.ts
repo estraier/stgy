@@ -14,7 +14,7 @@ import {
 import { User } from "../models/user";
 import { IdIssueService } from "./idIssue";
 import { EventLogService } from "./eventLog";
-import { snakeToCamel, escapeForLike, hexToDec, decToHex, hexArrayToDec } from "../utils/format";
+import { validateLocale, snakeToCamel, escapeForLike, hexToDec, decToHex, hexArrayToDec } from "../utils/format";
 import { makeSnippetJsonFromMarkdown } from "../utils/snippet";
 import { Pool } from "pg";
 import Redis from "ioredis";
@@ -277,6 +277,7 @@ export class PostsService {
   async createPost(input: CreatePostInput): Promise<Post> {
     if (typeof input.content !== "string" || input.content.trim() === "")
       throw new Error("content is required");
+    if (!validateLocale(input.locale)) throw new Error("locale is required");
     if (typeof input.ownedBy !== "string" || input.ownedBy.trim() === "")
       throw new Error("ownedBy is required");
     let id: string;
@@ -381,6 +382,7 @@ export class PostsService {
         );
       }
       if (input.locale !== undefined) {
+        if (!validateLocale(input.locale)) throw new Error("locale is required");
         columns.push(`locale = $${idx++}`);
         values.push(input.locale);
       }
