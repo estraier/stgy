@@ -70,6 +70,7 @@ CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
 CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
 CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
+CREATE INDEX idx_posts_public_owned_by_published_at ON posts (owned_by, published_at) WHERE published_at IS NOT NULL;
 
 CREATE OR REPLACE FUNCTION posts_reply_to_exists_fn()
 RETURNS TRIGGER AS $$
