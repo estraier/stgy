@@ -275,6 +275,9 @@ export default function createPostsRouter(
     if (!loginUser.isAdmin && !(await postsThrottleService.canDo(loginUser.id, dataSize))) {
       return res.status(403).json({ error: "too often posts" });
     }
+
+    console.log(loginUser);
+
     try {
       const input: CreatePostInput = {
         id: typeof req.body.id === "string" ? (normalizeOneLiner(req.body.id) ?? "") : undefined,

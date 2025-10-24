@@ -200,6 +200,18 @@ class MockPgClient {
       return { rowCount: exists ? 1 : 0, rows: exists ? [{ ok: 1 }] : [] };
     }
 
+    if (n === "SELECT locale FROM user_details WHERE user_id = $1 LIMIT 1") {
+      const userId = decToHex(params[0]);
+      const d = this.details[userId];
+      return d ? { rows: [{ locale: d.locale }] } : { rows: [] };
+    }
+
+    if (n === "SELECT timezone FROM user_details WHERE user_id = $1 LIMIT 1") {
+      const userId = decToHex(params[0]);
+      const d = this.details[userId];
+      return d ? { rows: [{ timezone: d.timezone }] } : { rows: [] };
+    }
+
     if (n.startsWith("SELECT COUNT(*) FROM users u")) {
       if (n.includes("WHERE (u.nickname ILIKE $1 OR d.introduction ILIKE $1)")) {
         const pat = params[0].toLowerCase().replace(/%/g, "");
@@ -722,6 +734,16 @@ describe("UsersService", () => {
     expect(u?.id).toBe(ALICE);
     expect(u?.aiModel).toBe("gpt-4.1");
     expect((u as any).email).toBeUndefined();
+  });
+
+  test("getUserLocale", async () => {
+    const locale = await service.getUserLocale(ALICE);
+    expect(locale).toBe("ja-JP");
+  });
+
+  test("getUserTimezone", async () => {
+    const tz = await service.getUserTimezone(ALICE);
+    expect(tz).toBe("Asia/Tokyo");
   });
 
   test("getUser (with focusUserId) returns email in detail", async () => {

@@ -119,6 +119,34 @@ export class UsersService {
     return snakeToCamel<UserLite>(row);
   }
 
+  async getUserLocale(id: string): Promise<string | null> {
+    const res = await pgQuery(
+      this.pgPool,
+      `
+        SELECT locale
+        FROM user_details
+        WHERE user_id = $1
+        LIMIT 1
+      `,
+      [hexToDec(id)],
+    );
+    return res.rows[0]?.locale ?? null;
+  }
+
+  async getUserTimezone(id: string): Promise<string | null> {
+    const res = await pgQuery(
+      this.pgPool,
+      `
+        SELECT timezone
+        FROM user_details
+        WHERE user_id = $1
+        LIMIT 1
+      `,
+      [hexToDec(id)],
+    );
+    return res.rows[0]?.timezone ?? null;
+  }
+
   async getUser(id: string, focusUserId?: string): Promise<UserDetail | null> {
     const userRes = await pgQuery(
       this.pgPool,

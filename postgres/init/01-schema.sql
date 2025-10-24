@@ -71,6 +71,19 @@ CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
 CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
 
+CREATE OR REPLACE FUNCTION posts_reply_to_exists_fn()
+RETURNS TRIGGER AS $$
+BEGIN
+  IF NEW.reply_to IS NULL THEN
+    RETURN NEW;
+  END IF;
+  IF NOT EXISTS (SELECT 1 FROM posts WHERE id = NEW.reply_to) THEN
+    RAISE EXCEPTION 'reply_to % does not exist', NEW.reply_to;
+  END IF;
+  RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
 CREATE CONSTRAINT TRIGGER posts_reply_to_exists
 AFTER INSERT OR UPDATE OF reply_to ON posts
 DEFERRABLE INITIALLY IMMEDIATE
@@ -151,10 +164,7 @@ CREATE TABLE post_counts (
   like_count INT NOT NULL DEFAULT 0,
   reply_count INT NOT NULL DEFAULT 0
 ) PARTITION BY HASH (post_id);
-ALTER TABLE post_counts
-  SET (fillfactor=75,
-       autovacuum_vacuum_scale_factor=0.1, autovacuum_vacuum_threshold=1000,
-       autovacuum_analyze_scale_factor=0.3, autovacuum_analyze_threshold=1000);
+
 DO $$
 DECLARE
   parts int := 8;
@@ -165,6 +175,14 @@ BEGIN
       'CREATE TABLE IF NOT EXISTS %I PARTITION OF %I
          FOR VALUES WITH (MODULUS %s, REMAINDER %s);',
       'post_counts_p' || i, 'post_counts', parts, i
+    );
+    EXECUTE format(
+      'ALTER TABLE %I SET (
+         fillfactor=75,
+         autovacuum_vacuum_scale_factor=0.1, autovacuum_vacuum_threshold=1000,
+         autovacuum_analyze_scale_factor=0.3, autovacuum_analyze_threshold=1000
+       );',
+      'post_counts_p' || i
     );
   END LOOP;
 END$$;

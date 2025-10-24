@@ -13,6 +13,7 @@ import { NotificationPostRecord, NotificationUserRecord } from "./models/notific
 import { makeTextFromJsonSnippet } from "./utils/snippet";
 import { EventLogService } from "./services/eventLog";
 import { NotificationsService } from "./services/notifications";
+import { UsersService } from "./services/users";
 import { hexToDec, decToHex, formatDateInTz } from "./utils/format";
 
 const logger = createLogger({ file: "notificationWorker" });
@@ -60,14 +61,6 @@ async function getUserNickname(db: PoolClient, userIdHex: string): Promise<strin
     hexToDec(userIdHex),
   ]);
   return u.rows[0]?.nickname ?? "";
-}
-
-async function getUserTimezone(db: PoolClient, userIdHex: string): Promise<string> {
-  const r = await db.query<{ timezone: string }>(
-    `SELECT timezone FROM user_details WHERE user_id = $1`,
-    [hexToDec(userIdHex)],
-  );
-  return r.rows[0]?.timezone ?? Config.DEFAULT_TIMEZONE;
 }
 
 async function getPostSnippet(db: PoolClient, postId: string): Promise<string> {
@@ -414,6 +407,7 @@ async function processReplyEvent(
 
 async function processPartition(
   eventLogService: EventLogService,
+  usersService: UsersService,
   pgPool: Pool,
   partitionId: number,
 ): Promise<number> {
@@ -449,7 +443,7 @@ async function processPartition(
       }
 
       const ms = eventMsFromId(eid);
-      const tz = await getUserTimezone(client, recipient);
+      const tz = (await usersService.getUserTimezone(recipient)) ?? Config.DEFAULT_TIMEZONE;
       const term = formatDateInTz(ms, tz);
 
       if (payload.type === "reply") {
@@ -490,10 +484,11 @@ async function drain(
   eventLogService: EventLogService,
   pgPool: Pool,
   partitionId: number,
-  notifications: NotificationsService,
+  notificationsService: NotificationsService,
+  usersService: UsersService,
 ): Promise<void> {
   for (;;) {
-    const n = await processPartition(eventLogService, pgPool, partitionId);
+    const n = await processPartition(eventLogService, usersService, pgPool, partitionId);
     if (n === 0) break;
     purgeScore += n;
     try {
@@ -505,7 +500,7 @@ async function drain(
   if (purgeScore >= 100) {
     purgeScore = 0;
     try {
-      await notifications.purgeOldRecords();
+      await notificationsService.purgeOldRecords();
     } catch (e) {
       logger.error(`[notificationworker] purge notifications error: ${e}`);
     }
@@ -518,11 +513,12 @@ async function runWorker(workerIndex: number): Promise<void> {
   const sub = await connectRedisWithRetry();
   const eventLogService = new EventLogService(pgPool, sub);
   const notificationsService = new NotificationsService(pgPool);
+  const usersServce = new UsersService(pgPool, sub);
 
   const parts = assignedPartitions(workerIndex);
   for (const p of parts) {
     try {
-      await drain(eventLogService, pgPool, p, notificationsService);
+      await drain(eventLogService, pgPool, p, notificationsService, usersServce);
     } catch (e) {
       logger.error(`[notificationworker] drain error: ${e}`);
     }
@@ -546,7 +542,7 @@ async function runWorker(workerIndex: number): Promise<void> {
     (async () => {
       try {
         for (;;) {
-          await drain(eventLogService, pgPool, p, notificationsService);
+          await drain(eventLogService, pgPool, p, notificationsService, usersServce);
           if (!pending.delete(p)) break;
         }
       } catch {
