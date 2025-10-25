@@ -245,12 +245,12 @@ export default function PostCard({
   return (
     <article
       className={`p-2 sm:pt-4 sm:pb-2 sm:pl-4 sm:pr-3 border rounded bg-white shadow-sm ${clickable ? "cursor-pointer" : ""} ${className}`}
-      onClick={clickable ? handleCardClick : undefined}
+      onClick={clickable && !pubDialogOpen ? handleCardClick : undefined}
       tabIndex={clickable ? 0 : -1}
       role={clickable ? "button" : undefined}
       aria-label={clickable ? "Show post detail" : undefined}
       onKeyDown={
-        clickable
+        clickable && !pubDialogOpen
           ? (e) => {
               if (e.key === "Enter" || e.key === " ") {
                 handleCardClick(e);
@@ -422,13 +422,21 @@ export default function PostCard({
           className="fixed inset-0 z-30 flex items-center justify-center"
           onMouseDown={(e) => {
             if (e.target === e.currentTarget) setPubDialogOpen(false);
+            e.stopPropagation();
           }}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => e.stopPropagation()}
           role="dialog"
           aria-modal="true"
           aria-label="Configure external publication"
         >
           <div className="absolute inset-0 bg-black/30" />
-          <div className="relative z-40 w-full max-w-md rounded-lg border bg-white p-4 shadow-lg">
+          <div
+            className="relative z-40 w-full max-w-md rounded-lg border bg-white p-4 shadow-lg"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => e.stopPropagation()}
+          >
             <h2 className="text-lg font-semibold mb-3">External publication</h2>
             <label className="flex items-center gap-2 mb-3">
               <input
