@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useMemo, useState, useEffect } from "react";
+import { useRef, useMemo, useEffect, useState } from "react";
 import PrismHighlighter from "@/components/PrismHighlighter";
 import type { Post, PostDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
@@ -9,6 +9,7 @@ import { Heart, MessageCircle } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
 import { makeArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
+import { updatePost } from "@/api/posts";
 
 type PostCardProps = {
   post: Post | PostDetail;
@@ -21,6 +22,8 @@ type PostCardProps = {
   className?: string;
   clickable?: boolean;
   avatarVersion?: string | null;
+  focusUserId?: string;
+  focusUserIsAdmin?: boolean;
 };
 
 export default function PostCard({
@@ -34,11 +37,11 @@ export default function PostCard({
   className = "",
   clickable = true,
   avatarVersion,
+  focusUserId,
+  focusUserIsAdmin = false,
 }: PostCardProps) {
   const router = useRouter();
   const contentRef = useRef<HTMLDivElement | null>(null);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const [menuOpen, setMenuOpen] = useState(false);
 
   const hasContent =
     "content" in post && typeof post.content === "string" && post.content.length > 0;
@@ -57,6 +60,23 @@ export default function PostCard({
 
   const postLang =
     typeof post.locale === "string" && post.locale.trim() !== "" ? post.locale : undefined;
+
+  const [publishedAtLocal, setPublishedAtLocal] = useState<string | null>(
+    ((post as any).publishedAt ?? null) as string | null,
+  );
+
+  useEffect(() => {
+    setPublishedAtLocal(((post as any).publishedAt ?? null) as string | null);
+  }, [post]);
+
+  const effectivePublishedAt = publishedAtLocal;
+  const showPublishedLabel =
+    typeof effectivePublishedAt === "string" &&
+    effectivePublishedAt.trim() !== "" &&
+    new Date(effectivePublishedAt).getTime() <= Date.now();
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
@@ -96,6 +116,92 @@ export default function PostCard({
     router.push(`/posts/${post.id}`);
   }
 
+  function pad2(n: number) {
+    return n < 10 ? `0${n}` : String(n);
+  }
+
+  function toLocalInputValue(d: Date) {
+    const y = d.getFullYear();
+    const m = pad2(d.getMonth() + 1);
+    const day = pad2(d.getDate());
+    const hh = pad2(d.getHours());
+    const mm = pad2(d.getMinutes());
+    return `${y}-${m}-${day}T${hh}:${mm}`;
+  }
+
+  function toOffsetString(d: Date) {
+    const y = d.getFullYear();
+    const m = pad2(d.getMonth() + 1);
+    const day = pad2(d.getDate());
+    const hh = pad2(d.getHours());
+    const mm = pad2(d.getMinutes());
+    const offMin = -d.getTimezoneOffset();
+    const sign = offMin >= 0 ? "+" : "-";
+    const oh = pad2(Math.floor(Math.abs(offMin) / 60));
+    const om = pad2(Math.abs(offMin) % 60);
+    return `${y}-${m}-${day}T${hh}:${mm}${sign}${oh}:${om}`;
+  }
+
+  const [pubDialogOpen, setPubDialogOpen] = useState(false);
+  const [pubChecked, setPubChecked] = useState(false);
+  const [pubInput, setPubInput] = useState("");
+  const [pubError, setPubError] = useState("");
+  const [applying, setApplying] = useState(false);
+
+  useEffect(() => {
+    if (!pubDialogOpen) return;
+    const has = typeof effectivePublishedAt === "string" && effectivePublishedAt.trim() !== "";
+    setPubChecked(has);
+    const base = has ? new Date(effectivePublishedAt as string) : new Date();
+    setPubInput(toLocalInputValue(base));
+    setPubError("");
+  }, [effectivePublishedAt, pubDialogOpen]);
+
+  async function applyPublication() {
+    setPubError("");
+    if (!pubChecked) {
+      setApplying(true);
+      try {
+        await updatePost(post.id, { publishedAt: null });
+        setPublishedAtLocal(null);
+        setPubDialogOpen(false);
+        router.refresh();
+      } finally {
+        setApplying(false);
+      }
+      return;
+    }
+    if (!pubInput || !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/.test(pubInput)) {
+      setPubError("Invalid datetime format");
+      return;
+    }
+    const d = new Date(pubInput);
+    if (Number.isNaN(d.getTime())) {
+      setPubError("Invalid datetime");
+      return;
+    }
+    const min = new Date("1970-01-01T00:00:00");
+    const max = new Date();
+    max.setFullYear(max.getFullYear() + 1);
+    if (d < min || d > max) {
+      setPubError("Datetime out of range");
+      return;
+    }
+    setApplying(true);
+    try {
+      const out = toOffsetString(d);
+      await updatePost(post.id, { publishedAt: out });
+      setPublishedAtLocal(out);
+      setPubDialogOpen(false);
+      router.refresh();
+    } finally {
+      setApplying(false);
+    }
+  }
+
+  const isOwner = focusUserId && focusUserId === post.ownedBy;
+  const canConfigurePublication = Boolean(isOwner || focusUserIsAdmin);
+
   const menu = (
     <div
       ref={menuRef}
@@ -107,8 +213,7 @@ export default function PostCard({
       <button
         className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
         onClick={async () => {
-          const url = `/posts/${post.id}`;
-          await copyToClipboard(url);
+          await copyToClipboard(`/posts/${post.id}`);
           setMenuOpen(false);
         }}
       >
@@ -117,13 +222,23 @@ export default function PostCard({
       <button
         className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
         onClick={async () => {
-          const md = `[post](/posts/${post.id})`;
-          await copyToClipboard(md);
+          await copyToClipboard(`[post](/posts/${post.id})`);
           setMenuOpen(false);
         }}
       >
         Copy mention Markdown
       </button>
+      {canConfigurePublication && (
+        <button
+          className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+          onClick={() => {
+            setMenuOpen(false);
+            setPubDialogOpen(true);
+          }}
+        >
+          Configure external publication
+        </button>
+      )}
     </div>
   );
 
@@ -205,41 +320,51 @@ export default function PostCard({
       <PrismHighlighter root={contentRef.current} deps={prismDeps} />
 
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
-        {post.tags && post.tags.length > 0 && (
+        {(showPublishedLabel || (post.tags && post.tags.length > 0)) && (
           <div>
-            {post.tags.map((tag) => (
+            {showPublishedLabel && (
               <a
-                key={tag}
-                lang={postLang}
-                href={`/posts?q=${encodeURIComponent("#" + tag)}&includingReplies=1`}
-                className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-blue-700 hover:bg-blue-200"
+                href={`/pub/${post.id}`}
+                className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-green-700 hover:bg-green-200"
                 onClick={(e) => e.stopPropagation()}
               >
-                #{tag}
+                published
               </a>
-            ))}
+            )}
+            {post.tags &&
+              post.tags.map((tag) => (
+                <a
+                  key={tag}
+                  lang={postLang}
+                  href={`/posts?q=${encodeURIComponent("#" + tag)}&includingReplies=1`}
+                  className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-blue-700 hover:bg-blue-200"
+                  onClick={(e) => e.stopPropagation()}
+                >
+                  #{tag}
+                </a>
+              ))}
           </div>
         )}
+
         {showActions && (
-          <div className="ml-auto flex items-center gap-2">
-            <div className="relative">
-              <button
-                type="button"
-                className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-200 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100"
-                aria-haspopup="menu"
-                aria-expanded={menuOpen}
-                onClick={(e) => {
-                  e.stopPropagation();
-                  setMenuOpen((v) => !v);
-                }}
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") setMenuOpen(false);
-                }}
-              >
-                ⋯
-              </button>
-              {menu}
-            </div>
+          <div className="ml-auto relative flex items-center gap-1">
+            <button
+              type="button"
+              className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-200 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100"
+              aria-haspopup="menu"
+              aria-expanded={menuOpen}
+              onClick={(e) => {
+                e.stopPropagation();
+                setMenuOpen((v) => !v);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") setMenuOpen(false);
+              }}
+              title="More actions"
+            >
+              ⋯
+            </button>
+            {menu}
 
             <button
               className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer
@@ -260,11 +385,7 @@ export default function PostCard({
                     : undefined
               }
             >
-              {post.isLikedByFocusUser ? (
-                <Heart fill="currentColor" size={18} />
-              ) : (
-                <Heart size={18} />
-              )}
+              {post.isLikedByFocusUser ? <Heart fill="currentColor" size={18} /> : <Heart size={18} />}
               <span>{post.countLikes}</span>
             </button>
 
@@ -295,6 +416,57 @@ export default function PostCard({
       </div>
 
       {isReplying && children}
+
+      {pubDialogOpen && (
+        <div
+          className="fixed inset-0 z-30 flex items-center justify-center"
+          onMouseDown={(e) => {
+            if (e.target === e.currentTarget) setPubDialogOpen(false);
+          }}
+          role="dialog"
+          aria-modal="true"
+          aria-label="Configure external publication"
+        >
+          <div className="absolute inset-0 bg-black/30" />
+          <div className="relative z-40 w-full max-w-md rounded-lg border bg-white p-4 shadow-lg">
+            <h2 className="text-lg font-semibold mb-3">External publication</h2>
+            <label className="flex items-center gap-2 mb-3">
+              <input
+                type="checkbox"
+                checked={pubChecked}
+                onChange={(e) => setPubChecked(e.target.checked)}
+              />
+              <span>Publish this post</span>
+            </label>
+            <label className="block text-sm text-gray-700 mb-1">Published at</label>
+            <input
+              type="datetime-local"
+              className="w-full border rounded px-2 py-1 mb-2"
+              value={pubInput}
+              onChange={(e) => setPubInput(e.target.value)}
+              disabled={!pubChecked}
+            />
+            {pubError && <div className="text-red-600 text-sm mb-2">{pubError}</div>}
+            <div className="mt-3 flex justify-end gap-2">
+              <button
+                className="px-3 py-1 rounded border bg-gray-50 hover:bg-gray-100"
+                onClick={() => setPubDialogOpen(false)}
+                type="button"
+              >
+                Cancel
+              </button>
+              <button
+                className="px-3 py-1 rounded border border-blue-600 bg-blue-600 text-white hover:bg-blue-700 disabled:opacity-50"
+                onClick={applyPublication}
+                disabled={applying}
+                type="button"
+              >
+                Apply
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </article>
   );
 }

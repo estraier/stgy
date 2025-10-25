@@ -390,6 +390,8 @@ export default function PageBody() {
         isReplying={replyingTo === post.id}
         clickable={false}
         className="mb-8"
+        focusUserId={userId}
+        focusUserIsAdmin={!!isAdmin}
       />
 
       {replyingTo === post.id && (
@@ -479,6 +481,9 @@ export default function PageBody() {
                     onLike={() => handleReplyLike(rep)}
                     onReply={() => setReplyingTo(rep.id)}
                     isReplying={replyingTo === rep.id}
+                    focusUserId={userId}
+                    focusUserIsAdmin={!!isAdmin}
+                    avatarVersion={rep.ownedBy === userId ? (updatedAt ?? undefined) : undefined}
                   />
                   {replyingTo === rep.id && (
                     <div className="mt-2">

@@ -457,6 +457,8 @@ export default function PageBody() {
                   setReplyBody("");
                   setReplyError(null);
                 }}
+                focusUserId={userId}
+                focusUserIsAdmin={!!isAdmin}
               />
               {replyTo === post.id && (
                 <PostForm
