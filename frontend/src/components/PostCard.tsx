@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useMemo, useEffect, useState } from "react";
+import { useRef, useMemo, useEffect, useState, useCallback } from "react";
 import PrismHighlighter from "@/components/PrismHighlighter";
 import type { Post, PostDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
@@ -61,12 +61,12 @@ export default function PostCard({
   const postLang =
     typeof post.locale === "string" && post.locale.trim() !== "" ? post.locale : undefined;
 
-  const [publishedAtLocal, setPublishedAtLocal] = useState<string | null>(
-    ((post as any).publishedAt ?? null) as string | null,
+  const [publishedAtLocal, setPublishedAtLocal] = useState<Post["publishedAt"]>(
+    (post.publishedAt ?? null) as Post["publishedAt"],
   );
 
   useEffect(() => {
-    setPublishedAtLocal(((post as any).publishedAt ?? null) as string | null);
+    setPublishedAtLocal((post.publishedAt ?? null) as Post["publishedAt"]);
   }, [post]);
 
   const effectivePublishedAt = publishedAtLocal;
@@ -116,31 +116,35 @@ export default function PostCard({
     router.push(`/posts/${post.id}`);
   }
 
-  function pad2(n: number) {
-    return n < 10 ? `0${n}` : String(n);
-  }
+  const pad2 = useCallback((n: number) => (n < 10 ? `0${n}` : String(n)), []);
 
-  function toLocalInputValue(d: Date) {
-    const y = d.getFullYear();
-    const m = pad2(d.getMonth() + 1);
-    const day = pad2(d.getDate());
-    const hh = pad2(d.getHours());
-    const mm = pad2(d.getMinutes());
-    return `${y}-${m}-${day}T${hh}:${mm}`;
-  }
+  const toLocalInputValue = useCallback(
+    (d: Date) => {
+      const y = d.getFullYear();
+      const m = pad2(d.getMonth() + 1);
+      const day = pad2(d.getDate());
+      const hh = pad2(d.getHours());
+      const mm = pad2(d.getMinutes());
+      return `${y}-${m}-${day}T${hh}:${mm}`;
+    },
+    [pad2],
+  );
 
-  function toOffsetString(d: Date) {
-    const y = d.getFullYear();
-    const m = pad2(d.getMonth() + 1);
-    const day = pad2(d.getDate());
-    const hh = pad2(d.getHours());
-    const mm = pad2(d.getMinutes());
-    const offMin = -d.getTimezoneOffset();
-    const sign = offMin >= 0 ? "+" : "-";
-    const oh = pad2(Math.floor(Math.abs(offMin) / 60));
-    const om = pad2(Math.abs(offMin) % 60);
-    return `${y}-${m}-${day}T${hh}:${mm}${sign}${oh}:${om}`;
-  }
+  const toOffsetString = useCallback(
+    (d: Date) => {
+      const y = d.getFullYear();
+      const m = pad2(d.getMonth() + 1);
+      const day = pad2(d.getDate());
+      const hh = pad2(d.getHours());
+      const mm = pad2(d.getMinutes());
+      const offMin = -d.getTimezoneOffset();
+      const sign = offMin >= 0 ? "+" : "-";
+      const oh = pad2(Math.floor(Math.abs(offMin) / 60));
+      const om = pad2(Math.abs(offMin) % 60);
+      return `${y}-${m}-${day}T${hh}:${mm}${sign}${oh}:${om}`;
+    },
+    [pad2],
+  );
 
   const [pubDialogOpen, setPubDialogOpen] = useState(false);
   const [pubChecked, setPubChecked] = useState(false);
@@ -155,7 +159,7 @@ export default function PostCard({
     const base = has ? new Date(effectivePublishedAt as string) : new Date();
     setPubInput(toLocalInputValue(base));
     setPubError("");
-  }, [effectivePublishedAt, pubDialogOpen]);
+  }, [effectivePublishedAt, pubDialogOpen, toLocalInputValue]);
 
   async function applyPublication() {
     setPubError("");

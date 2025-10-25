@@ -53,6 +53,7 @@ export type Post = {
   allowLikes: boolean;
   allowReplies: boolean;
   createdAt: string;
+  publishedAt: string | null;
   updatedAt: string | null;
   ownerNickname: string;
   replyToOwnerNickname: string | null;
