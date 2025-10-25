@@ -617,6 +617,9 @@ export default function createUsersRouter(
     let designTheme: string | undefined;
     if (typeof req.body.designTheme === "string") {
       designTheme = normalizeOneLiner(req.body.designTheme) ?? "";
+      if (!/^[A-Za-z0-9_-]*$/.test(designTheme)) {
+        return res.status(400).json({ error: "invalid designTheme" });
+      }
       dataSize += designTheme.length;
     }
     let showServiceHeader: boolean | undefined;
