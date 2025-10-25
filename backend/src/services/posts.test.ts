@@ -85,10 +85,10 @@ class MockPgClientMain {
 
     if (
       sql.startsWith(
-        "INSERT INTO posts (id, owned_by, reply_to, published_at, updated_at, locale, snippet, allow_likes, allow_replies) VALUES",
+        "INSERT INTO posts (id, owned_by, reply_to, published_at, updated_at, snippet, locale, allow_likes, allow_replies) VALUES",
       )
     ) {
-      const [id, ownedBy, replyTo, publishedAt, _locale, _snippet, allowLikes, allowReplies] =
+      const [id, ownedBy, replyTo, publishedAt, snippet, locale, allowLikes, allowReplies] =
         params!;
       const createdAt = new Date().toISOString();
       const newPost: MockPostRow = {
@@ -110,8 +110,8 @@ class MockPgClientMain {
             reply_to: replyTo ?? null,
             published_at: publishedAt ?? null,
             updated_at: null,
-            locale: _locale,
-            snippet: _snippet,
+            snippet,
+            locale,
             allow_likes: !!allowLikes,
             allow_replies: !!allowReplies,
             created_at: createdAt,

@@ -164,8 +164,8 @@ CREATE TABLE posts (
   reply_to BIGINT,
   published_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ,
-  locale VARCHAR(50) NOT NULL,
   snippet VARCHAR(4096) NOT NULL,
+  locale VARCHAR(50) NOT NULL,
   allow_likes BOOLEAN NOT NULL,
   allow_replies BOOLEAN NOT NULL
 );
@@ -517,14 +517,14 @@ VARCHARとTEXTのどちらを使うべきかという議論があるが、空間
 
 ## アラインメント
 
-PostgreSQLは、主テーブルの行レイアウトを設定する際に、アラインメントを行う。通常、全ての行データは、8バイト境界を持つ。すなわち、ページ上のオフセットが8で割り切れる位置に記録される。また、レコード内の数値型は、その型に応じてアラインメントされる。例えば8バイトであるBIGINT型やTIMESTAMPTZ型は8バイト境界を持ち、4バイトであるINT型やREAL型は4バイト境界を持ち、2バイトであるSMALLINT型は2バイトのアラインメントを持つ。VARCHARやTEXTなどのVARLENA型は、先頭に長さの数値を持つので、4バイトアラインメントを持つ。そうすることで、メモリに読み込んだ時に数値型のデータのアドレスがアラインメントされるため、そのメモリ領域をCPUがそのまま数値として評価できるようになる。
+PostgreSQLは、主テーブルの行レイアウトを設定する際に、アラインメントを行う。通常、全ての行データは、8バイト境界を持つ。すなわち、ページ上のオフセットが8で割り切れる位置に記録される。また、レコード内の数値型は、その型に応じてアラインメントされる。例えば8バイトであるBIGINT型やTIMESTAMPTZ型は8バイト境界を持ち、4バイトであるINT型やREAL型は4バイト境界を持ち、2バイトであるSMALLINT型は2バイトのアラインメントを持つ。VARCHARやTEXTなどのVARLENA型は、先頭に長さの数値を持つので、4バイトアラインメントを持つ。そうすることで、メモリに読み込んだ時に数値型のデータのアドレスがアラインメントされるため、そのメモリ領域をCPUがそのまま数値として評価できるようになる。なお、VARLENA型は長さが126文字以下だと長さ情報を1バイトで保持するので、アラインメントがなくなる。
 
 アラインメントを成立させるためには、パディングが用いられる。例えば、レコードの先頭がSMALLINTであり、その直後にINTが宣言されている場合、先頭のSMALLINTの後ろに2バイトのパディングが置かれて、INTの4バイト境界が達成される。よって、``SMALLINT, SMALLINT, INT`` という並びだと全体が8バイトを消費するが、``SMALLINT, INT, SMALLINT`` という並びだと10バイトを消費してしまう。
 
 アラインメント最適化をする以前は、postsテーブルの属性は以下のように並べていた。そのアラインメントを考察してみよう。
 
 - id BIGINT : 8バイト境界（パディング不要）
-- locale VARCHAR : 4バイト境界（パディング不要）
+- locale VARCHAR : 短いのでアラインメントなし（パディング不要）
 - snippet VARCHAR : 4バイト境界（最大3バイトのパディング）
 - owned_by BIGINT : 8バイト境界（最大7バイトのパディング）
 - reply_to BIGINT : 8バイト境界（パディング不要）
@@ -535,15 +535,15 @@ PostgreSQLは、主テーブルの行レイアウトを設定する際に、ア�
 
 localeが可変長なので、直後のsnippetの前にパディングが置かれる可能性がある。snippetも可変長なので、直後のowned_byの前にパディングが置かれる可能性がある。また、reply_toで8バイト境界になった後にallow_likesとallow_repliesが2バイト消費するので、published_atの前に確実に6バイトのパディングが発生する。可変のパディングでは最大長の半分が平均長になる。よって、合計は、3/2+7/2+6で、平均11バイトのパディングが発生することになる。
 
-パディングを減らすために、以下のように並び替えた。snippetの直前に平均1.5バイトのパディングが発生するだけになるので、9.5バイトの節約ができた。
+パディングを減らすために、以下のように並び替えた。パディングが完全に不要になったので、11バイトの節約ができた。
 
 - id BIGINT : 8バイト境界（パディング不要）
 - owned_by BIGINT : 8バイト境界（パディング不要）
 - reply_to BIGINT : 8バイト境界（パディング不要）
 - published_at TIMESTAMPTZ : 8バイト境界（パディング不要）
 - updated_at TIMESTAMPTZ : 8バイト境界（パディング不要）
-- locale VARCHAR : 4バイト境界（パディング不要）
-- snippet VARCHAR : 4バイト境界（最大3バイトのパディング）
+- snippet VARCHAR : 4バイト境界（パディング不要）
+- locale VARCHAR : 短いのでアラインメントなし（パディング不要）
 - allow_likes BOOLEAN : アラインメントなし（パディング不要）
 - allow_replies BOOLEAN : アラインメントなし（パディング不要）
 

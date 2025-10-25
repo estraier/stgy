@@ -61,8 +61,8 @@ CREATE TABLE posts (
   reply_to BIGINT,
   published_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ,
-  locale VARCHAR(50) NOT NULL,
   snippet VARCHAR(4096) NOT NULL,
+  locale VARCHAR(50) NOT NULL,
   allow_likes BOOLEAN NOT NULL,
   allow_replies BOOLEAN NOT NULL
 );

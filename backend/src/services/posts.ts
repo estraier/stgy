@@ -118,8 +118,8 @@ export class PostsService {
         p.reply_to,
         p.published_at,
         p.updated_at,
-        p.locale,
         p.snippet,
+        p.locale,
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
@@ -191,8 +191,8 @@ export class PostsService {
         p.reply_to,
         p.published_at,
         p.updated_at,
-        p.locale,
         p.snippet,
+        p.locale,
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
@@ -308,16 +308,16 @@ export class PostsService {
       }
       const res = await pgQuery(
         this.pgPool,
-        `INSERT INTO posts (id, owned_by, reply_to, published_at, updated_at, locale, snippet, allow_likes, allow_replies)
+        `INSERT INTO posts (id, owned_by, reply_to, published_at, updated_at, snippet, locale, allow_likes, allow_replies)
          VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8)
-         RETURNING id, owned_by, reply_to, published_at, updated_at, locale, snippet, allow_likes, allow_replies, id_to_timestamp(id) AS created_at`,
+         RETURNING id, owned_by, reply_to, published_at, updated_at, snippet, locale, allow_likes, allow_replies, id_to_timestamp(id) AS created_at`,
         [
           hexToDec(id),
           hexToDec(input.ownedBy),
           input.replyTo == null ? null : hexToDec(input.replyTo),
           input.publishedAt,
-          input.locale,
           snippet,
+          input.locale,
           input.allowLikes,
           input.allowReplies,
         ],
@@ -391,11 +391,6 @@ export class PostsService {
         columns.push(`published_at = $${idx++}`);
         values.push(input.publishedAt);
       }
-      if (input.locale !== undefined) {
-        if (!validateLocale(input.locale)) throw new Error("locale is required");
-        columns.push(`locale = $${idx++}`);
-        values.push(input.locale);
-      }
       if (input.content !== undefined) {
         if (typeof input.content !== "string" || input.content.trim() === "")
           throw new Error("content is required");
@@ -407,6 +402,11 @@ export class PostsService {
           `INSERT INTO post_details (post_id, content) VALUES ($1, $2) ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
           [hexToDec(input.id), input.content],
         );
+      }
+      if (input.locale !== undefined) {
+        if (!validateLocale(input.locale)) throw new Error("locale is required");
+        columns.push(`locale = $${idx++}`);
+        values.push(input.locale);
       }
       if (input.allowLikes !== undefined) {
         columns.push(`allow_likes = $${idx++}`);
@@ -545,8 +545,8 @@ export class PostsService {
         p.reply_to,
         p.published_at,
         p.updated_at,
-        p.locale,
         p.snippet,
+        p.locale,
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
@@ -627,8 +627,8 @@ export class PostsService {
         p.reply_to,
         p.published_at,
         p.updated_at,
-        p.locale,
         p.snippet,
+        p.locale,
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
