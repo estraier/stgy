@@ -182,7 +182,7 @@ export default function UserCard({
       onClick={(e) => e.stopPropagation()}
     >
       <button
-        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        className="w-full text-left px-3 py-2 text-sm font-normal text-gray-700 hover:bg-gray-100 rounded"
         onClick={async () => {
           const url = absoluteUrl(`/users/${user.id}`);
           await copyToClipboard(url);
@@ -192,7 +192,7 @@ export default function UserCard({
         Copy link to profile
       </button>
       <button
-        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        className="w-full text-left px-3 py-2 text-sm font-normal text-gray-700 hover:bg-gray-100 rounded"
         onClick={async () => {
           const md = `[@${user.nickname}](/users/${user.id})`;
           await copyToClipboard(md);
@@ -203,7 +203,7 @@ export default function UserCard({
       </button>
       {!isSelf && (
         <button
-          className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded disabled:opacity-50"
+          className="w-full text-left px-3 py-2 text-sm font-normal text-gray-700 hover:bg-gray-100 rounded disabled:opacity-50"
           disabled={blockingSubmitting}
           onClick={async () => {
             if (blockingSubmitting) return;

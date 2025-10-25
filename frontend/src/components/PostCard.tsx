@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useRef, useMemo } from "react";
+import { useRef, useMemo, useState, useEffect } from "react";
 import PrismHighlighter from "@/components/PrismHighlighter";
 import type { Post, PostDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
@@ -37,6 +37,8 @@ export default function PostCard({
 }: PostCardProps) {
   const router = useRouter();
   const contentRef = useRef<HTMLDivElement | null>(null);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const [menuOpen, setMenuOpen] = useState(false);
 
   const hasContent =
     "content" in post && typeof post.content === "string" && post.content.length > 0;
@@ -53,13 +55,77 @@ export default function PostCard({
     (post as { isBlockingFocusUser?: boolean }).isBlockingFocusUser,
   );
 
-  const postLang = typeof post.locale === "string" && post.locale.trim() !== "" ? post.locale : undefined;
+  const postLang =
+    typeof post.locale === "string" && post.locale.trim() !== "" ? post.locale : undefined;
+
+  useEffect(() => {
+    function onDocMouseDown(e: MouseEvent) {
+      if (!menuOpen) return;
+      if (!menuRef.current) return;
+      if (menuRef.current.contains(e.target as Node)) return;
+      setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [menuOpen]);
+
+  async function copyToClipboard(text: string) {
+    try {
+      if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+    } catch {}
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.style.position = "fixed";
+    ta.style.left = "-9999px";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    try {
+      document.execCommand("copy");
+    } finally {
+      document.body.removeChild(ta);
+    }
+  }
 
   function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
     router.push(`/posts/${post.id}`);
   }
+
+  const menu = (
+    <div
+      ref={menuRef}
+      className={`absolute right-0 top-full mt-1 w-56 rounded-md border bg-white shadow-lg z-20 ${
+        menuOpen ? "block" : "hidden"
+      }`}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={async () => {
+          const url = `/posts/${post.id}`;
+          await copyToClipboard(url);
+          setMenuOpen(false);
+        }}
+      >
+        Copy link to this post
+      </button>
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={async () => {
+          const md = `[post](/posts/${post.id})`;
+          await copyToClipboard(md);
+          setMenuOpen(false);
+        }}
+      >
+        Copy mention Markdown
+      </button>
+    </div>
+  );
 
   return (
     <article
@@ -155,9 +221,28 @@ export default function PostCard({
           </div>
         )}
         {showActions && (
-          <>
+          <div className="ml-auto flex items-center gap-2">
+            <div className="relative">
+              <button
+                type="button"
+                className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-200 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen((v) => !v);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setMenuOpen(false);
+                }}
+              >
+                ⋯
+              </button>
+              {menu}
+            </div>
+
             <button
-              className={`ml-auto flex items-center gap-1 px-2 py-1 rounded cursor-pointer
+              className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer
                 ${post.isLikedByFocusUser ? "bg-pink-100 text-pink-600" : "hover:bg-gray-100"}
                 disabled:opacity-40 disabled:cursor-not-allowed`}
               onClick={(e) => {
@@ -182,6 +267,7 @@ export default function PostCard({
               )}
               <span>{post.countLikes}</span>
             </button>
+
             <button
               onClick={(e) => {
                 e.stopPropagation();
@@ -204,7 +290,7 @@ export default function PostCard({
               <MessageCircle size={18} />
               <span>{post.countReplies}</span>
             </button>
-          </>
+          </div>
         )}
       </div>
 
