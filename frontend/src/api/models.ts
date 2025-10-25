@@ -137,3 +137,13 @@ export type MarkNotificationInput = {
 export type MarkAllNotificationsInput = {
   isRead: boolean;
 };
+
+export type PubConfig = {
+  siteName: string;
+  author: string;
+  introduction: string;
+  designTheme: string;
+  showServiceHeader: boolean;
+  showSideProfile: boolean;
+  showSideRecent: boolean;
+};

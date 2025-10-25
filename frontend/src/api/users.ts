@@ -1,4 +1,4 @@
-import type { User, UserDetail } from "./models";
+import type { User, UserDetail, PubConfig } from "./models";
 import { apiFetch, extractError } from "./client";
 
 export async function listUsers(
@@ -243,4 +243,19 @@ export async function countUsers(
   const res = await apiFetch(`/users/count${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return (await res.json()).count;
+}
+
+export async function getPubConfig(id: string): Promise<PubConfig> {
+  const res = await apiFetch(`/users/${id}/pub-config`, { method: "GET" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function setPubConfig(id: string, cfg: Partial<PubConfig>): Promise<PubConfig> {
+  const res = await apiFetch(`/users/${id}/pub-config`, {
+    method: "PUT",
+    body: JSON.stringify(cfg),
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
 }

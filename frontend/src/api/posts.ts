@@ -183,3 +183,23 @@ export async function countPosts(
   if (!res.ok) throw new Error(await extractError(res));
   return (await res.json()).count;
 }
+
+export async function getPubPost(postId: string): Promise<PostDetail> {
+  const res = await apiFetch(`/posts/pub/${postId}`, { method: "GET" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function listPubPostsByUser(
+  userId: string,
+  params: { offset?: number; limit?: number; order?: "asc" | "desc" } = {},
+): Promise<Post[]> {
+  const search = new URLSearchParams();
+  if (params.offset !== undefined) search.append("offset", String(params.offset));
+  if (params.limit !== undefined) search.append("limit", String(params.limit));
+  if (params.order) search.append("order", params.order);
+  const q = search.toString();
+  const res = await apiFetch(`/posts/pub-by-user/${userId}${q ? `?${q}` : ""}`, { method: "GET" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}

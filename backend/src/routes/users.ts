@@ -574,15 +574,8 @@ export default function createUsersRouter(
   });
 
   router.get("/:id/pub-config", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
-    if (!loginUser) return;
-    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
-      return res.status(403).json({ error: "too often operations" });
-    }
     try {
-      const watch = timerThrottleService.startWatch(loginUser);
       const cfg = await usersService.getPubConfig(req.params.id);
-      watch.done();
       res.json(cfg);
     } catch (e: unknown) {
       res.status(400).json({ error: (e as Error).message || "get pub-config failed" });

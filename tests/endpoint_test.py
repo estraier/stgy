@@ -229,7 +229,7 @@ def test_users():
   assert all(u["id"] != admin_id for u in res.json())
   res = requests.get(f"{BASE_URL}/users/{admin_id}/followers?limit=2000", headers=headers, cookies=cookies)
   assert all(u["id"] != user1_id for u in res.json())
-  res = requests.get(f"{BASE_URL}/users/{user1_id}/pub-config", headers=headers, cookies=user1_cookies)
+  res = requests.get(f"{BASE_URL}/users/{user1_id}/pub-config", headers=headers)
   assert res.status_code == 200, res.text
   cfg = res.json()
   print("[users] pub-config default:", cfg)
