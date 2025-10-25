@@ -10,6 +10,7 @@ import {
   ListPostsByFolloweesInput,
   ListPostsLikedByUserInput,
   ListLikersInput,
+  PostPagination,
 } from "../models/post";
 import { User } from "../models/user";
 import { IdIssueService } from "./idIssue";
@@ -726,5 +727,89 @@ export class PostsService {
       return r;
     });
     return snakeToCamel<User[]>(rows);
+  }
+
+  async getPubPost(id: string, publishedUntil: string): Promise<PostDetail | null> {
+    const sql = `
+      SELECT
+        p.id,
+        p.owned_by,
+        p.reply_to,
+        p.published_at,
+        p.updated_at,
+        p.snippet,
+        p.locale,
+        p.allow_likes,
+        p.allow_replies,
+        id_to_timestamp(p.id) AS created_at,
+        u.nickname AS owner_nickname,
+        pu.nickname AS reply_to_owner_nickname,
+        COALESCE(pc.reply_count,0) AS count_replies,
+        COALESCE(pc.like_count,0) AS count_likes,
+        ARRAY(SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name) AS tags,
+        pd.content AS content
+      FROM posts p
+      JOIN users u ON p.owned_by = u.id
+      LEFT JOIN posts pp ON p.reply_to = pp.id
+      LEFT JOIN users pu ON pp.owned_by = pu.id
+      LEFT JOIN post_counts pc ON pc.post_id = p.id
+      LEFT JOIN post_details pd ON pd.post_id = p.id
+      WHERE p.id = $1
+        AND p.published_at <= $2
+    `;
+    const res = await pgQuery(this.pgPool, sql, [hexToDec(id), publishedUntil]);
+    if (res.rows.length === 0) return null;
+    const row = res.rows[0];
+    row.id = decToHex(row.id);
+    row.owned_by = decToHex(row.owned_by);
+    row.reply_to = row.reply_to == null ? null : decToHex(row.reply_to);
+    return snakeToCamel<PostDetail>(row);
+  }
+
+  async listPubPostsByUser(
+    userId: string,
+    publishedUntil: string,
+    options?: PostPagination,
+  ): Promise<Post[]> {
+    const offset = options?.offset ?? 0;
+    const limit = options?.limit ?? 100;
+    const orderDir = (options?.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+    const sql = `
+      SELECT
+        p.id,
+        p.owned_by,
+        p.reply_to,
+        p.published_at,
+        p.updated_at,
+        p.snippet,
+        p.locale,
+        p.allow_likes,
+        p.allow_replies,
+        id_to_timestamp(p.id) AS created_at,
+        u.nickname AS owner_nickname,
+        pu.nickname AS reply_to_owner_nickname,
+        COALESCE(pc.reply_count,0) AS count_replies,
+        COALESCE(pc.like_count,0) AS count_likes,
+        ARRAY(SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name) AS tags
+      FROM posts p
+      JOIN users u ON p.owned_by = u.id
+      LEFT JOIN posts pp ON p.reply_to = pp.id
+      LEFT JOIN users pu ON pp.owned_by = pu.id
+      LEFT JOIN post_counts pc ON pc.post_id = p.id
+      WHERE p.owned_by = $1
+        AND p.published_at <= $2
+      ORDER BY p.published_at ${orderDir}, p.id ${orderDir}
+      OFFSET $3
+      LIMIT $4
+    `;
+    const params: unknown[] = [hexToDec(userId), publishedUntil, offset, limit];
+    const res = await pgQuery(this.pgPool, sql, params);
+    const rows = res.rows.map((r) => {
+      r.id = decToHex(r.id);
+      r.owned_by = decToHex(r.owned_by);
+      r.reply_to = r.reply_to == null ? null : decToHex(r.reply_to);
+      return r;
+    });
+    return snakeToCamel<Post[]>(rows);
   }
 }

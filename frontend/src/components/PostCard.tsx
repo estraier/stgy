@@ -385,7 +385,11 @@ export default function PostCard({
                     : undefined
               }
             >
-              {post.isLikedByFocusUser ? <Heart fill="currentColor" size={18} /> : <Heart size={18} />}
+              {post.isLikedByFocusUser ? (
+                <Heart fill="currentColor" size={18} />
+              ) : (
+                <Heart size={18} />
+              )}
               <span>{post.countLikes}</span>
             </button>
 

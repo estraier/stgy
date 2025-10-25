@@ -206,6 +206,42 @@ export default function createPostsRouter(
     res.json(result);
   });
 
+  router.get("/pub/:id", async (req, res) => {
+    try {
+      const publishedUntil = new Date().toISOString();
+      const post = await postsService.getPubPost(req.params.id, publishedUntil);
+      if (!post) return res.status(404).json({ error: "not found" });
+      res.json(post);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "invalid request" });
+    }
+  });
+
+  router.get("/pub-by-user/:userId", async (req, res) => {
+    const userId =
+      typeof req.params.userId === "string" && req.params.userId.trim() !== ""
+        ? req.params.userId.trim()
+        : null;
+    if (!userId) {
+      return res.status(400).json({ error: "userId is required" });
+    }
+    const { offset, limit, order } = AuthHelpers.getPageParams(req, Config.MAX_PAGE_LIMIT, [
+      "desc",
+      "asc",
+    ] as const);
+    try {
+      const publishedUntil = new Date().toISOString();
+      const posts = await postsService.listPubPostsByUser(userId, publishedUntil, {
+        offset,
+        limit,
+        order,
+      });
+      res.json(posts);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "invalid request" });
+    }
+  });
+
   router.get("/:id/lite", async (req, res) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;

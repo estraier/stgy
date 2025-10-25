@@ -380,6 +380,24 @@ def test_posts():
   assert post["id"] == post_id
   assert post["content"] == update_input["content"]
   assert set(post["tags"]) == set(update_input["tags"])
+  published_at = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() - 1))
+  res = requests.put(
+    f"{BASE_URL}/posts/{post_id}",
+    json={"publishedAt": published_at},
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  res = requests.get(f"{BASE_URL}/posts/pub/{post_id}")
+  assert res.status_code == 200, res.text
+  pub_post = res.json()
+  assert pub_post["id"] == post_id
+  assert isinstance(pub_post.get("publishedAt"), str) and len(pub_post["publishedAt"]) > 0
+  res = requests.get(f"{BASE_URL}/posts/pub-by-user/{user_id}?limit=2000&order=desc")
+  assert res.status_code == 200, res.text
+  pub_list = res.json()
+  assert any(p.get("id") == post_id for p in pub_list)
+
   res = requests.delete(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[posts] deleted")

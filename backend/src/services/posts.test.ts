@@ -5,6 +5,7 @@ import {
   ListPostsByFolloweesInput,
   ListPostsLikedByUserInput,
   ListLikersInput,
+  PostPagination,
 } from "../models/post";
 import { User } from "../models/user";
 import crypto from "crypto";
@@ -29,6 +30,7 @@ type MockPostRow = {
   allowLikes: boolean;
   allowReplies: boolean;
   createdAt: string;
+  publishedAt: string | null;
   updatedAt: string | null;
   content: string;
 };
@@ -98,6 +100,7 @@ class MockPgClientMain {
         allowLikes: !!allowLikes,
         allowReplies: !!allowReplies,
         createdAt,
+        publishedAt: publishedAt ?? null,
         updatedAt: null,
         content: "",
       };
@@ -168,6 +171,7 @@ class MockPgClientMain {
       const colMap: Record<string, keyof MockPostRow> = {
         owned_by: "ownedBy",
         reply_to: "replyTo",
+        published_at: "publishedAt",
         allow_likes: "allowLikes",
         allow_replies: "allowReplies",
         created_at: "createdAt",
@@ -278,6 +282,60 @@ class MockPgClientMain {
     }
 
     if (
+      sql.includes("FROM posts p") &&
+      sql.includes("JOIN users u ON p.owned_by = u.id") &&
+      sql.includes("WHERE p.owned_by = $1") &&
+      sql.includes("p.published_at <=") &&
+      sql.includes("ORDER BY p.published_at")
+    ) {
+      const ownedBy = params![0];
+      const publishedUntil = params![1];
+      const offset = params![params!.length - 2] ?? 0;
+      const limit = params![params!.length - 1] ?? 100;
+      const asc = /ORDER BY p\.published_at ASC/.test(sql);
+      const buildRow = (p: MockPostRow) => {
+        const replyToPost = this.data.find((pp) => pp.id === p.replyTo);
+        const reply_to_owner_nickname = replyToPost
+          ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
+          : null;
+        return {
+          id: p.id,
+          owned_by: p.ownedBy,
+          reply_to: p.replyTo,
+          published_at: p.publishedAt,
+          updated_at: p.updatedAt,
+          allow_likes: p.allowLikes,
+          allow_replies: p.allowReplies,
+          created_at: p.createdAt,
+          owner_nickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
+          reply_to_owner_nickname,
+          count_replies: this.countRepliesFor(p.id),
+          count_likes: this.countLikesFor(p.id),
+          tags: this.tags
+            .filter((t) => t.postId === p.id)
+            .map((t) => t.name)
+            .sort(),
+        };
+      };
+      let pool = this.data.filter(
+        (p) => p.ownedBy === ownedBy && p.publishedAt && p.publishedAt <= publishedUntil,
+      );
+      pool.sort((a, b) => {
+        if (a.publishedAt === b.publishedAt)
+          return asc ? a.id.localeCompare(b.id) : b.id.localeCompare(a.id);
+        return asc
+          ? a.publishedAt! < b.publishedAt!
+            ? -1
+            : 1
+          : a.publishedAt! < b.publishedAt!
+            ? 1
+            : -1;
+      });
+      const rows = pool.slice(offset, offset + limit).map(buildRow);
+      return { rows };
+    }
+
+    if (
       sql.startsWith(
         "SELECT p.id, p.owned_by, p.reply_to, p.published_at, p.updated_at, p.allow_likes, p.allow_replies",
       ) &&
@@ -286,10 +344,15 @@ class MockPgClientMain {
       sql.includes("WHERE p.id = $1")
     ) {
       const id = params![0];
+      const hasUntil = sql.includes("p.published_at <=") || sql.includes("p.published_at<=");
+      const until = hasUntil ? params?.[1] : undefined;
       const includeBlocking = this.selectsBlockingFlag(sql);
       const focusUserId = includeBlocking ? params?.[1] : undefined;
       const post = this.data.find((p) => p.id === id);
       if (!post) return { rows: [] };
+      if (hasUntil && (!post.publishedAt || (until && post.publishedAt > until))) {
+        return { rows: [] };
+      }
 
       const replyToPost = this.data.find((pp) => pp.id === post.replyTo);
       const reply_to_owner_nickname = replyToPost
@@ -300,7 +363,7 @@ class MockPgClientMain {
         id: post.id,
         owned_by: post.ownedBy,
         reply_to: post.replyTo,
-        published_at: null,
+        published_at: post.publishedAt ?? null,
         updated_at: post.updatedAt,
         allow_likes: post.allowLikes,
         allow_replies: post.allowReplies,
@@ -334,6 +397,7 @@ class MockPgClientMain {
           content: p.content,
           owned_by: p.ownedBy,
           reply_to: p.replyTo,
+          published_at: p.publishedAt ?? null,
           allow_likes: p.allowLikes,
           allow_replies: p.allowReplies,
           created_at: p.createdAt,
@@ -375,24 +439,6 @@ class MockPgClientMain {
       const [replyTo, ownedBy] = params!;
       const found = this.data.some((p) => p.replyTo === replyTo && p.ownedBy === ownedBy);
       return { rows: found ? [{}] : [] };
-    }
-
-    if (
-      sql.startsWith("SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2")
-    ) {
-      const [postIds, likedBy] = params as [string[], string];
-      const rows = this.likes
-        .filter((l) => postIds.includes(l.postId) && l.likedBy === likedBy)
-        .map((l) => ({ post_id: l.postId }));
-      return { rows };
-    }
-
-    if (sql.startsWith("SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2")) {
-      const [postIds, ownedBy] = params as [string[], string];
-      const rows = this.data
-        .filter((p) => postIds.includes(p.replyTo ?? "") && p.ownedBy === ownedBy)
-        .map((p) => ({ reply_to: p.replyTo }));
-      return { rows };
     }
 
     if (/^SELECT\s+COUNT\(\*\)\s+FROM\s+posts/i.test(sql))
@@ -440,6 +486,7 @@ class MockPgClientMain {
           content: p.content,
           owned_by: p.ownedBy,
           reply_to: p.replyTo,
+          published_at: p.publishedAt ?? null,
           allow_likes: p.allowLikes,
           allow_replies: p.allowReplies,
           created_at: p.createdAt,
@@ -521,6 +568,7 @@ describe("posts service", () => {
       allowLikes: true,
       allowReplies: true,
       createdAt: new Date().toISOString(),
+      publishedAt: null,
       updatedAt: null,
     };
 
@@ -724,6 +772,7 @@ describe("listPostsByFollowees", () => {
       allowLikes: true,
       allowReplies: true,
       createdAt: new Date().toISOString(),
+      publishedAt: null,
       updatedAt: null,
     };
     postBob = {
@@ -734,6 +783,7 @@ describe("listPostsByFollowees", () => {
       allowLikes: true,
       allowReplies: true,
       createdAt: new Date().toISOString(),
+      publishedAt: null,
       updatedAt: null,
     };
     postCarol = {
@@ -744,6 +794,7 @@ describe("listPostsByFollowees", () => {
       allowLikes: true,
       allowReplies: true,
       createdAt: new Date().toISOString(),
+      publishedAt: null,
       updatedAt: null,
     };
 
@@ -823,6 +874,7 @@ describe("listPostsLikedByUser", () => {
       allowLikes: true,
       allowReplies: true,
       createdAt: new Date().toISOString(),
+      publishedAt: null,
       updatedAt: null,
     };
     post2 = {
@@ -833,6 +885,7 @@ describe("listPostsLikedByUser", () => {
       allowLikes: true,
       allowReplies: true,
       createdAt: new Date().toISOString(),
+      publishedAt: null,
       updatedAt: null,
     };
 
@@ -972,6 +1025,7 @@ describe("getPost", () => {
       allowLikes: true,
       allowReplies: true,
       createdAt: new Date().toISOString(),
+      publishedAt: null,
       updatedAt: null,
     };
 
@@ -993,6 +1047,7 @@ describe("getPost", () => {
         allowLikes: true,
         allowReplies: true,
         createdAt: new Date().toISOString(),
+        publishedAt: null,
         updatedAt: null,
       },
       {
@@ -1003,6 +1058,7 @@ describe("getPost", () => {
         allowLikes: true,
         allowReplies: true,
         createdAt: new Date().toISOString(),
+        publishedAt: null,
         updatedAt: null,
       },
     );
@@ -1035,6 +1091,7 @@ describe("getPost", () => {
       allowLikes: true,
       allowReplies: true,
       createdAt: new Date().toISOString(),
+      publishedAt: null,
       updatedAt: null,
     };
     pgClient.posts.push({ ...p2, id: toDecStr(p2.id), ownedBy: toDecStr(p2.ownedBy) });
@@ -1222,5 +1279,162 @@ describe("listLikers", () => {
       order: "desc",
     } as ListLikersInput);
     expect(users.length).toBe(0);
+  });
+});
+
+describe("public posts (getPubPost / listPubPostsByUser)", () => {
+  let pgClient: MockPgClientMain;
+  let redis: MockRedis;
+  let postsService: PostsService;
+  let alice: string, bob: string;
+
+  beforeEach(() => {
+    pgClient = new MockPgClientMain();
+    redis = new MockRedis();
+    postsService = new PostsService(pgClient as any, redis as any);
+
+    alice = hex16();
+    bob = hex16();
+
+    pgClient.users.push({ id: toDecStr(alice), nickname: "Alice" });
+    pgClient.users.push({ id: toDecStr(bob), nickname: "Bob" });
+  });
+
+  test("getPubPost returns only when publishedAt <= publishedUntil", async () => {
+    const idHex = hex16();
+    const p1: MockPostRow = {
+      id: toDecStr(idHex),
+      ownedBy: toDecStr(alice),
+      replyTo: null,
+      allowLikes: true,
+      allowReplies: true,
+      createdAt: "2024-01-01T00:00:00Z",
+      publishedAt: "2024-01-10T00:00:00Z",
+      updatedAt: null,
+      content: "A",
+    };
+    pgClient.data.push(p1);
+
+    const until1 = "2024-01-05T00:00:00Z";
+    const until2 = "2024-01-10T00:00:00Z";
+    const until3 = "2024-01-11T00:00:00Z";
+
+    const miss = await postsService.getPubPost(hex16(), until1);
+    expect(miss).toBeNull();
+
+    const hitEq = await postsService.getPubPost(idHex, until2);
+    expect(hitEq).not.toBeNull();
+    expect(hitEq!.publishedAt).toBe("2024-01-10T00:00:00Z");
+
+    const hitGt = await postsService.getPubPost(idHex, until3);
+    expect(hitGt).not.toBeNull();
+    expect(hitGt!.publishedAt).toBe("2024-01-10T00:00:00Z");
+  });
+
+  test("listPubPostsByUser includes equality (<=) and honors order asc", async () => {
+    const pA1: MockPostRow = {
+      id: toDecStr(hex16()),
+      ownedBy: toDecStr(alice),
+      replyTo: null,
+      allowLikes: true,
+      allowReplies: true,
+      createdAt: "2024-01-01T00:00:00Z",
+      publishedAt: "2024-01-01T00:00:00Z",
+      updatedAt: null,
+      content: "A1",
+    };
+    const pA2: MockPostRow = {
+      id: toDecStr(hex16()),
+      ownedBy: toDecStr(alice),
+      replyTo: null,
+      allowLikes: true,
+      allowReplies: true,
+      createdAt: "2024-01-03T00:00:00Z",
+      publishedAt: "2024-01-03T00:00:00Z",
+      updatedAt: null,
+      content: "A2",
+    };
+    const pB1: MockPostRow = {
+      id: toDecStr(hex16()),
+      ownedBy: toDecStr(bob),
+      replyTo: null,
+      allowLikes: true,
+      allowReplies: true,
+      createdAt: "2024-01-02T00:00:00Z",
+      publishedAt: "2024-01-02T00:00:00Z",
+      updatedAt: null,
+      content: "B1",
+    };
+    pgClient.data.push(pA1, pA2, pB1);
+
+    const until = "2024-01-03T00:00:00Z";
+
+    const listAsc = await postsService.listPubPostsByUser(alice, until, {
+      offset: 0,
+      limit: 10,
+      order: "asc",
+    } as PostPagination);
+    expect(listAsc.map((p) => p.publishedAt)).toEqual([pA1.publishedAt, pA2.publishedAt]);
+  });
+
+  test("listPubPostsByUser offset/limit", async () => {
+    const mk = (d: string) =>
+      ({
+        id: toDecStr(hex16()),
+        ownedBy: toDecStr(alice),
+        replyTo: null,
+        allowLikes: true,
+        allowReplies: true,
+        createdAt: d,
+        publishedAt: d,
+        updatedAt: null,
+        content: d,
+      }) as MockPostRow;
+    const rows = [
+      mk("2024-01-01T00:00:00Z"),
+      mk("2024-01-02T00:00:00Z"),
+      mk("2024-01-03T00:00:00Z"),
+    ];
+    pgClient.data.push(...rows);
+
+    const until = "2024-01-03T00:00:00Z";
+
+    const page1 = await postsService.listPubPostsByUser(alice, until, {
+      offset: 0,
+      limit: 2,
+      order: "asc",
+    });
+    const page2 = await postsService.listPubPostsByUser(alice, until, {
+      offset: 2,
+      limit: 2,
+      order: "asc",
+    });
+    expect(page1.length).toBe(2);
+    expect(page2.length).toBe(1);
+    expect(page1[0].publishedAt! <= page1[1].publishedAt!).toBe(true);
+    expect(page2[0].publishedAt).toBe("2024-01-03T00:00:00Z");
+  });
+
+  test("listPubPostsByUser filters by user and by publishedUntil", async () => {
+    const mk = (owner: string, d: string) =>
+      ({
+        id: toDecStr(hex16()),
+        ownedBy: toDecStr(owner),
+        replyTo: null,
+        allowLikes: true,
+        allowReplies: true,
+        createdAt: d,
+        publishedAt: d,
+        updatedAt: null,
+        content: d,
+      }) as MockPostRow;
+    const a1 = mk(alice, "2024-02-01T00:00:00Z");
+    const a2 = mk(alice, "2024-02-10T00:00:00Z");
+    const b1 = mk(bob, "2024-02-05T00:00:00Z");
+    pgClient.data.push(a1, a2, b1);
+
+    const until = "2024-02-05T00:00:00Z";
+    const list = await postsService.listPubPostsByUser(alice, until, { order: "desc" });
+    expect(list.map((p) => p.publishedAt)).toEqual(["2024-02-01T00:00:00Z"]);
   });
 });

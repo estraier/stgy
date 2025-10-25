@@ -280,6 +280,27 @@ components:
               - $ref: "#/components/schemas/NotificationRecordPost"
       required: [slot, term, isRead, updatedAt, createdAt, records]
 
+    UserPubConfig:
+      type: object
+      properties:
+        siteName: { type: string }
+        author: { type: string }
+        introduction: { type: string }
+        designTheme: { type: string }
+        showServiceHeader: { type: boolean }
+        showSideProfile: { type: boolean }
+        showSideRecent: { type: boolean }
+      required:
+        [
+          siteName,
+          author,
+          introduction,
+          designTheme,
+          showServiceHeader,
+          showSideProfile,
+          showSideRecent,
+        ]
+
   responses:
     Error400:
       description: Bad request
@@ -1887,3 +1908,113 @@ paths:
           $ref: "#/components/responses/Error400"
         "401":
           $ref: "#/components/responses/Error401"
+
+  /posts/pub/{postId}:
+    get:
+      summary: Get a public post by id (published)
+      description: Returns the post only if its publishedAt is not later than now.
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Public post detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PostDetail"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /posts/pub-by-user/{userId}:
+    get:
+      summary: List public posts by user
+      description: Returns posts whose publishedAt is not later than now.
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        "200":
+          description: Public posts list (snippets)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Post"
+        "400":
+          $ref: "#/components/responses/Error400"
+
+  /users/{userId}/pub-config:
+    get:
+      summary: Get user's public site config
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Public config for the user (defaults if not set)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPubConfig"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+    put:
+      summary: Upsert user's public site config
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                siteName: { type: string }
+                author: { type: string }
+                introduction: { type: string }
+                designTheme: { type: string }
+                showServiceHeader: { type: boolean }
+                showSideProfile: { type: boolean }
+                showSideRecent: { type: boolean }
+      responses:
+        "200":
+          description: Saved public config
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UserPubConfig"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
