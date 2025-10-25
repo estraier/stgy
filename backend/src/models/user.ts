@@ -106,3 +106,13 @@ export type ListFriendsByNicknamePrefixInput = {
   omitSelf?: boolean;
   omitOthers?: boolean;
 };
+
+export type PubConfig = {
+  siteName: string;
+  author: string;
+  introduction: string;
+  designTheme: string;
+  showServiceHeader: boolean;
+  showSideProfile: boolean;
+  showSideRecent: boolean;
+};

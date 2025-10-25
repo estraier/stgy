@@ -66,6 +66,12 @@ const SQL_UPSERT_DETAILS_LOCALE_TZ =
 const SQL_UPSERT_DETAILS =
   "INSERT INTO user_details (user_id, introduction, ai_personality) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET introduction = COALESCE(EXCLUDED.introduction, user_details.introduction), ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)";
 
+const SQL_SELECT_PUBCONFIG =
+  "SELECT site_name, author, introduction, design_theme, show_service_header, show_side_profile, show_side_recent FROM user_pub_configs WHERE user_id = $1 LIMIT 1";
+
+const SQL_UPSERT_PUBCONFIG =
+  "INSERT INTO user_pub_configs ( user_id, site_name, author, introduction, design_theme, show_service_header, show_side_profile, show_side_recent ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (user_id) DO UPDATE SET site_name = EXCLUDED.site_name, author = EXCLUDED.author, introduction = EXCLUDED.introduction, design_theme = EXCLUDED.design_theme, show_service_header = EXCLUDED.show_service_header, show_side_profile = EXCLUDED.show_side_profile, show_side_recent = EXCLUDED.show_side_recent RETURNING site_name, author, introduction, design_theme, show_service_header, show_side_profile, show_side_recent";
+
 class MockPgClient {
   users: MockUser[];
   details: Record<string, DetailRow>;
@@ -73,6 +79,18 @@ class MockPgClient {
   blocks: { blockerId: string; blockeeId: string }[];
   passwords: Record<string, string>;
   userSecrets: Record<string, { email: string; password: string }>;
+  pubConfigs: Record<
+    string,
+    {
+      site_name: string;
+      author: string;
+      introduction: string;
+      design_theme: string;
+      show_service_header: boolean;
+      show_side_profile: boolean;
+      show_side_recent: boolean;
+    }
+  >;
 
   constructor() {
     this.users = [
@@ -156,6 +174,7 @@ class MockPgClient {
       [BOB]: { email: "bob@example.com", password: this.passwords[BOB] },
       [CAROL]: { email: "carol@example.com", password: this.passwords[CAROL] },
     };
+    this.pubConfigs = {};
   }
 
   private cntFollowers(idHex: string) {
@@ -624,6 +643,37 @@ class MockPgClient {
       return { rowCount: exists ? 1 : 0, rows: exists ? [{ ok: 1 }] : [] };
     }
 
+    if (n === SQL_SELECT_PUBCONFIG) {
+      const userId = decToHex(params[0]);
+      const cfg = this.pubConfigs[userId];
+      return cfg ? { rows: [cfg] } : { rows: [] };
+    }
+
+    if (n === SQL_UPSERT_PUBCONFIG) {
+      const [
+        userIdDec,
+        siteName,
+        author,
+        introduction,
+        designTheme,
+        showServiceHeader,
+        showSideProfile,
+        showSideRecent,
+      ] = params;
+      const userId = decToHex(userIdDec);
+      const row = {
+        site_name: siteName ?? "",
+        author: author ?? "",
+        introduction: introduction ?? "",
+        design_theme: designTheme ?? "",
+        show_service_header: !!showServiceHeader,
+        show_side_profile: !!showSideProfile,
+        show_side_recent: !!showSideRecent,
+      };
+      this.pubConfigs[userId] = row;
+      return { rows: [row] };
+    }
+
     if (
       n.startsWith("WITH self AS (") &&
       n.includes("candidates AS (") &&
@@ -988,5 +1038,66 @@ describe("UsersService", () => {
     await service.addBlock({ blockerId: ALICE, blockeeId: BOB });
     expect(await service.checkBlock({ blockerId: ALICE, blockeeId: BOB })).toBe(true);
     expect(await service.checkBlock({ blockerId: BOB, blockeeId: ALICE })).toBe(false);
+  });
+
+  test("getPubConfig returns defaults when not set", async () => {
+    const cfg = await service.getPubConfig(ALICE);
+    expect(cfg).toEqual({
+      siteName: "",
+      author: "",
+      introduction: "",
+      designTheme: "",
+      showServiceHeader: true,
+      showSideProfile: true,
+      showSideRecent: true,
+    });
+  });
+
+  test("setPubConfig upserts and subsequent get returns saved values", async () => {
+    const cfg1 = {
+      siteName: "My Site",
+      author: "Alice",
+      introduction: "Hello",
+      designTheme: "default",
+      showServiceHeader: true,
+      showSideProfile: true,
+      showSideRecent: false,
+    };
+    const saved1 = await service.setPubConfig(ALICE, cfg1);
+    expect(saved1).toEqual(cfg1);
+    const got1 = await service.getPubConfig(ALICE);
+    expect(got1).toEqual(cfg1);
+    expect(pg.pubConfigs[ALICE]).toEqual({
+      site_name: "My Site",
+      author: "Alice",
+      introduction: "Hello",
+      design_theme: "default",
+      show_service_header: true,
+      show_side_profile: true,
+      show_side_recent: false,
+    });
+
+    const cfg2 = {
+      siteName: "My Awesome Site",
+      author: "Alice T.",
+      introduction: "Updated intro",
+      designTheme: "dark",
+      showServiceHeader: false,
+      showSideProfile: false,
+      showSideRecent: true,
+    };
+    const saved2 = await service.setPubConfig(ALICE, cfg2);
+    expect(saved2).toEqual(cfg2);
+    const got2 = await service.getPubConfig(ALICE);
+    expect(got2).toEqual(cfg2);
+    expect(pg.pubConfigs[ALICE]).toEqual({
+      site_name: "My Awesome Site",
+      author: "Alice T.",
+      introduction: "Updated intro",
+      design_theme: "dark",
+      show_service_header: false,
+      show_side_profile: false,
+      show_side_recent: true,
+    });
   });
 });

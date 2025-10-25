@@ -13,6 +13,7 @@ import {
   FollowUserPair,
   BlockUserPair,
   ListFriendsByNicknamePrefixInput,
+  PubConfig,
 } from "../models/user";
 import { IdIssueService } from "./idIssue";
 import { EventLogService } from "./eventLog";
@@ -1177,5 +1178,88 @@ export class UsersService {
       row.id = decToHex(row.id as string);
       return snakeToCamel<User>(row);
     });
+  }
+
+  async getPubConfig(userId: string): Promise<PubConfig> {
+    const res = await pgQuery(
+      this.pgPool,
+      `
+      SELECT
+        site_name,
+        author,
+        introduction,
+        design_theme,
+        show_service_header,
+        show_side_profile,
+        show_side_recent
+      FROM user_pub_configs
+      WHERE user_id = $1
+      LIMIT 1
+    `,
+      [hexToDec(userId)],
+    );
+
+    if (res.rows.length === 0) {
+      return {
+        siteName: "",
+        author: "",
+        introduction: "",
+        designTheme: "",
+        showServiceHeader: true,
+        showSideProfile: true,
+        showSideRecent: true,
+      };
+    }
+
+    const row = res.rows[0] as Record<string, unknown>;
+    return snakeToCamel<PubConfig>(row);
+  }
+
+  async setPubConfig(userId: string, cfg: PubConfig): Promise<PubConfig> {
+    const res = await pgQuery(
+      this.pgPool,
+      `
+      INSERT INTO user_pub_configs (
+        user_id,
+        site_name,
+        author,
+        introduction,
+        design_theme,
+        show_service_header,
+        show_side_profile,
+        show_side_recent
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      ON CONFLICT (user_id) DO UPDATE SET
+        site_name           = EXCLUDED.site_name,
+        author              = EXCLUDED.author,
+        introduction        = EXCLUDED.introduction,
+        design_theme        = EXCLUDED.design_theme,
+        show_service_header = EXCLUDED.show_service_header,
+        show_side_profile   = EXCLUDED.show_side_profile,
+        show_side_recent    = EXCLUDED.show_side_recent
+      RETURNING
+        site_name,
+        author,
+        introduction,
+        design_theme,
+        show_service_header,
+        show_side_profile,
+        show_side_recent
+    `,
+      [
+        hexToDec(userId),
+        cfg.siteName,
+        cfg.author,
+        cfg.introduction,
+        cfg.designTheme,
+        cfg.showServiceHeader,
+        cfg.showSideProfile,
+        cfg.showSideRecent,
+      ],
+    );
+
+    const row = res.rows[0] as Record<string, unknown>;
+    return snakeToCamel<PubConfig>(row);
   }
 }

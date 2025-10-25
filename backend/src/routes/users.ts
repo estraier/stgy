@@ -471,10 +471,9 @@ export default function createUsersRouter(
       return res.status(403).json({ error: "too often operations" });
     }
     const followeeId = req.params.id;
-    const followerId = loginUser.id;
     try {
       const watch = timerThrottleService.startWatch(loginUser);
-      await usersService.removeFollow({ followerId, followeeId });
+      await usersService.removeFollow({ followerId: loginUser.id, followeeId });
       watch.done();
       res.json({ result: "ok" });
     } catch (e: unknown) {
@@ -562,16 +561,99 @@ export default function createUsersRouter(
       return res.status(403).json({ error: "too often operations" });
     }
     const blockeeId = req.params.id;
-    const blockerId = loginUser.id;
     try {
       const watch = timerThrottleService.startWatch(loginUser);
-      await usersService.removeBlock({ blockerId, blockeeId });
+      await usersService.removeBlock({ blockerId: loginUser.id, blockeeId });
       watch.done();
       res.json({ result: "ok" });
     } catch (e: unknown) {
       const msg = (e as Error).message || "";
       if (/not blocking/i.test(msg)) return res.status(404).json({ error: "not blocked" });
       res.status(400).json({ error: msg || "unblock failed" });
+    }
+  });
+
+  router.get("/:id/pub-config", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    try {
+      const watch = timerThrottleService.startWatch(loginUser);
+      const cfg = await usersService.getPubConfig(req.params.id);
+      watch.done();
+      res.json(cfg);
+    } catch (e: unknown) {
+      res.status(400).json({ error: (e as Error).message || "get pub-config failed" });
+    }
+  });
+
+  router.put("/:id/pub-config", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    if (!(loginUser.isAdmin || loginUser.id === req.params.id)) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    let dataSize = 0;
+    let siteName: string | undefined;
+    if (typeof req.body.siteName === "string") {
+      siteName = normalizeOneLiner(req.body.siteName) ?? "";
+      dataSize += siteName.length;
+    }
+    let author: string | undefined;
+    if (typeof req.body.author === "string") {
+      author = normalizeOneLiner(req.body.author) ?? "";
+      dataSize += author.length;
+    }
+    let introduction: string | undefined;
+    if (typeof req.body.introduction === "string") {
+      introduction = normalizeMultiLines(req.body.introduction) ?? "";
+      dataSize += introduction.length;
+    }
+    let designTheme: string | undefined;
+    if (typeof req.body.designTheme === "string") {
+      designTheme = normalizeOneLiner(req.body.designTheme) ?? "";
+      dataSize += designTheme.length;
+    }
+    let showServiceHeader: boolean | undefined;
+    if (req.body.showServiceHeader !== undefined) {
+      showServiceHeader = parseBoolean(String(req.body.showServiceHeader), true);
+    }
+    let showSideProfile: boolean | undefined;
+    if (req.body.showSideProfile !== undefined) {
+      showSideProfile = parseBoolean(String(req.body.showSideProfile), true);
+    }
+    let showSideRecent: boolean | undefined;
+    if (req.body.showSideRecent !== undefined) {
+      showSideRecent = parseBoolean(String(req.body.showSideRecent), true);
+    }
+    if (!loginUser.isAdmin && !(await updatesThrottleService.canDo(loginUser.id, dataSize))) {
+      return res.status(403).json({ error: "too often updates" });
+    }
+    try {
+      const current = await usersService.getPubConfig(req.params.id);
+      const next = {
+        siteName: siteName ?? current.siteName,
+        author: author ?? current.author,
+        introduction: introduction ?? current.introduction,
+        designTheme: designTheme ?? current.designTheme,
+        showServiceHeader: showServiceHeader ?? current.showServiceHeader,
+        showSideProfile: showSideProfile ?? current.showSideProfile,
+        showSideRecent: showSideRecent ?? current.showSideRecent,
+      };
+      const watch = timerThrottleService.startWatch(loginUser);
+      const saved = await usersService.setPubConfig(req.params.id, next);
+      watch.done();
+      if (!loginUser.isAdmin) {
+        await updatesThrottleService.recordDone(loginUser.id, dataSize);
+      }
+      res.json(saved);
+    } catch (e: unknown) {
+      res.status(400).json({ error: (e as Error).message || "update pub-config failed" });
     }
   });
 

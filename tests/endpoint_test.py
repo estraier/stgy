@@ -229,6 +229,60 @@ def test_users():
   assert all(u["id"] != admin_id for u in res.json())
   res = requests.get(f"{BASE_URL}/users/{admin_id}/followers?limit=2000", headers=headers, cookies=cookies)
   assert all(u["id"] != user1_id for u in res.json())
+  res = requests.get(f"{BASE_URL}/users/{user1_id}/pub-config", headers=headers, cookies=user1_cookies)
+  assert res.status_code == 200, res.text
+  cfg = res.json()
+  print("[users] pub-config default:", cfg)
+  assert cfg["siteName"] == ""
+  assert cfg["author"] == ""
+  assert cfg["introduction"] == ""
+  assert cfg["designTheme"] == ""
+  assert cfg["showServiceHeader"] is True
+  assert cfg["showSideProfile"] is True
+  assert cfg["showSideRecent"] is True
+  update1 = {
+    "siteName": "site1",
+    "author": "user1",
+    "introduction": "hello site",
+    "designTheme": "paper",
+    "showServiceHeader": False,
+    "showSideProfile": False,
+    "showSideRecent": True,
+  }
+  res = requests.put(f"{BASE_URL}/users/{user1_id}/pub-config", json=update1, headers=headers, cookies=user1_cookies)
+  assert res.status_code == 200, res.text
+  saved1 = res.json()
+  print("[users] pub-config updated1:", saved1)
+  assert saved1["siteName"] == "site1"
+  assert saved1["author"] == "user1"
+  assert saved1["introduction"] == "hello site"
+  assert saved1["designTheme"] == "paper"
+  assert saved1["showServiceHeader"] is False
+  assert saved1["showSideProfile"] is False
+  assert saved1["showSideRecent"] is True
+  res = requests.get(f"{BASE_URL}/users/{user1_id}/pub-config", headers=headers, cookies=user1_cookies)
+  assert res.status_code == 200, res.text
+  got1 = res.json()
+  assert got1 == saved1
+  update2 = {
+    "designTheme": "dark",
+    "showServiceHeader": True,
+  }
+  res = requests.put(f"{BASE_URL}/users/{user1_id}/pub-config", json=update2, headers=headers, cookies=user1_cookies)
+  assert res.status_code == 200, res.text
+  saved2 = res.json()
+  print("[users] pub-config updated2:", saved2)
+  assert saved2["siteName"] == "site1"
+  assert saved2["author"] == "user1"
+  assert saved2["introduction"] == "hello site"
+  assert saved2["designTheme"] == "dark"
+  assert saved2["showServiceHeader"] is True
+  assert saved2["showSideProfile"] is False
+  assert saved2["showSideRecent"] is True
+  res = requests.get(f"{BASE_URL}/users/{user1_id}/pub-config", headers=headers, cookies=user1_cookies)
+  assert res.status_code == 200, res.text
+  got2 = res.json()
+  assert got2 == saved2
   res = requests.delete(f"{BASE_URL}/users/{user1_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[users] user1 deleted")
