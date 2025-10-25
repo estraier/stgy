@@ -449,7 +449,7 @@ export default function PostCard({
             <label className="block text-sm text-gray-700 mb-1">Published at</label>
             <input
               type="datetime-local"
-              className="w-full border rounded px-2 py-1 mb-2"
+              className="w-full border border-gray-600 rounded px-2 py-1 mb-2 disabled:text-gray-400"
               value={pubInput}
               onChange={(e) => setPubInput(e.target.value)}
               disabled={!pubChecked}
