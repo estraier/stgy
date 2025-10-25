@@ -85,10 +85,10 @@ class MockPgClientMain {
 
     if (
       sql.startsWith(
-        "INSERT INTO posts (id, owned_by, reply_to, locale, snippet, allow_likes, allow_replies, published_at, updated_at) VALUES",
+        "INSERT INTO posts (id, owned_by, reply_to, published_at, updated_at, locale, snippet, allow_likes, allow_replies) VALUES",
       )
     ) {
-      const [id, ownedBy, replyTo, _locale, _snippet, allowLikes, allowReplies, publishedAt] =
+      const [id, ownedBy, replyTo, publishedAt, _locale, _snippet, allowLikes, allowReplies] =
         params!;
       const createdAt = new Date().toISOString();
       const newPost: MockPostRow = {
@@ -108,13 +108,13 @@ class MockPgClientMain {
             id,
             owned_by: ownedBy,
             reply_to: replyTo ?? null,
-            snippet: _snippet,
+            published_at: publishedAt ?? null,
+            updated_at: null,
             locale: _locale,
+            snippet: _snippet,
             allow_likes: !!allowLikes,
             allow_replies: !!allowReplies,
             created_at: createdAt,
-            published_at: publishedAt ?? null,
-            updated_at: null,
           },
         ],
       };
@@ -278,7 +278,9 @@ class MockPgClientMain {
     }
 
     if (
-      sql.startsWith("SELECT p.id, p.owned_by, p.reply_to, p.allow_likes, p.allow_replies") &&
+      sql.startsWith(
+        "SELECT p.id, p.owned_by, p.reply_to, p.published_at, p.updated_at, p.allow_likes, p.allow_replies",
+      ) &&
       sql.includes("FROM posts p") &&
       sql.includes("JOIN users u ON p.owned_by = u.id") &&
       sql.includes("WHERE p.id = $1")
@@ -298,11 +300,11 @@ class MockPgClientMain {
         id: post.id,
         owned_by: post.ownedBy,
         reply_to: post.replyTo,
+        published_at: null,
+        updated_at: post.updatedAt,
         allow_likes: post.allowLikes,
         allow_replies: post.allowReplies,
         created_at: post.createdAt,
-        published_at: null,
-        updated_at: post.updatedAt,
         owner_nickname: this.users.find((u) => u.id === post.ownedBy)?.nickname ?? "",
         reply_to_owner_nickname,
         count_replies: this.countRepliesFor(post.id),

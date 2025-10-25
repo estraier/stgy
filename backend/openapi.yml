@@ -107,13 +107,13 @@ components:
         id: { type: string }
         ownedBy: { type: string }
         replyTo: { type: string, nullable: true }
+        createdAt: { type: string, format: date-time }
+        publishedAt: { type: string, format: date-time, nullable: true }
+        updatedAt: { type: string, format: date-time, nullable: true }
         snippet: { type: string }
         locale: { type: string }
         allowLikes: { type: boolean }
         allowReplies: { type: boolean }
-        createdAt: { type: string, format: date-time }
-        publishedAt: { type: string, format: date-time, nullable: true }
-        updatedAt: { type: string, format: date-time, nullable: true }
         ownerNickname: { type: string }
         replyToOwnerNickname: { type: string, nullable: true }
         countLikes: { type: integer }
@@ -135,13 +135,13 @@ components:
           id,
           ownedBy,
           replyTo,
+          createdAt,
+          publishedAt,
+          updatedAt,
           snippet,
           locale,
           allowLikes,
           allowReplies,
-          createdAt,
-          publishedAt,
-          updatedAt,
           ownerNickname,
           countLikes,
           countReplies,
@@ -162,11 +162,11 @@ components:
         id: { type: string }
         ownedBy: { type: string }
         replyTo: { type: string, nullable: true }
-        allowLikes: { type: boolean }
-        allowReplies: { type: boolean }
         createdAt: { type: string, format: date-time }
         publishedAt: { type: string, format: date-time, nullable: true }
         updatedAt: { type: string, format: date-time, nullable: true }
+        allowLikes: { type: boolean }
+        allowReplies: { type: boolean }
         ownerNickname: { type: string }
         replyToOwnerNickname: { type: string, nullable: true }
         countLikes: { type: integer }
@@ -1152,6 +1152,7 @@ paths:
                 locale: { type: string, nullable: true }
                 ownedBy: { type: string }
                 replyTo: { type: string, nullable: true }
+                publishedAt: { type: string, nullable: true }
                 allowLikes: { type: boolean }
                 allowReplies: { type: boolean }
                 tags:
@@ -1321,6 +1322,7 @@ paths:
                 locale: { type: string, nullable: true }
                 ownedBy: { type: string }
                 replyTo: { type: string, nullable: true }
+                publishedAt: { type: string, nullable: true }
                 allowLikes: { type: boolean }
                 allowReplies: { type: boolean }
                 tags:

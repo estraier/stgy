@@ -59,12 +59,12 @@ CREATE TABLE posts (
   id BIGINT PRIMARY KEY,
   owned_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reply_to BIGINT,
+  published_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ,
   locale VARCHAR(50) NOT NULL,
   snippet VARCHAR(4096) NOT NULL,
   allow_likes BOOLEAN NOT NULL,
-  allow_replies BOOLEAN NOT NULL,
-  published_at TIMESTAMPTZ,
-  updated_at TIMESTAMPTZ
+  allow_replies BOOLEAN NOT NULL
 );
 CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
 CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);

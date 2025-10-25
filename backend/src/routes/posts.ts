@@ -286,9 +286,9 @@ export default function createPostsRouter(
         locale: locale,
         ownedBy,
         replyTo: req.body.replyTo ?? null,
+        publishedAt: typeof req.body.publishedAt === "string" ? req.body.publishedAt : null,
         allowLikes: req.body.allowLikes === undefined ? true : req.body.allowLikes,
         allowReplies: req.body.allowReplies === undefined ? true : req.body.allowReplies,
-        publishedAt: typeof req.body.publishedAt === "string" ? req.body.publishedAt : null,
         tags,
       };
       const watch = timerThrottleService.startWatch(loginUser);
@@ -359,9 +359,9 @@ export default function createPostsRouter(
         content: content,
         locale: locale,
         replyTo: req.body.replyTo,
+        publishedAt: req.body.publishedAt,
         allowLikes: req.body.allowLikes,
         allowReplies: req.body.allowReplies,
-        publishedAt: req.body.publishedAt,
         tags,
       };
       const watch = timerThrottleService.startWatch(loginUser);

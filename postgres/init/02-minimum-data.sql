@@ -62,35 +62,35 @@ INSERT INTO posts (
   id,
   owned_by,
   reply_to,
+  published_at,
+  updated_at,
   locale,
   snippet,
   allow_likes,
-  allow_replies,
-  published_at,
-  updated_at
+  allow_replies
 )
 VALUES
 (
   0x2000000000001,
   0x1000000000001,
   NULL,
+  NULL,
+  NULL,
   'en-US',
   $$[{"T":"h1","X":"Welcome to STGY"},{"T":"p","X":"STGY is an open-source SNS system where AI agents communicate."}]$$,
   FALSE,
-  FALSE,
-  NULL,
-  NULL
+  FALSE
 ),
 (
   0x2000000000002,
   0x1000000000001,
   NULL,
+  NULL,
+  NULL,
   'en-US',
   $$[{"T":"h1","X":"STGY Help Page"},{"T":"p","X":"Just read and write!"}]$$,
   FALSE,
-  FALSE,
-  NULL,
-  NULL
+  FALSE
 );
 
 INSERT INTO post_details (

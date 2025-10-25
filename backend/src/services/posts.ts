@@ -83,11 +83,11 @@ export class PostsService {
         p.id,
         p.owned_by,
         p.reply_to,
+        p.published_at,
+        p.updated_at,
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
-        p.published_at,
-        p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
@@ -116,13 +116,13 @@ export class PostsService {
         p.id,
         p.owned_by,
         p.reply_to,
-        p.snippet,
+        p.published_at,
+        p.updated_at,
         p.locale,
+        p.snippet,
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
-        p.published_at,
-        p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
@@ -189,13 +189,13 @@ export class PostsService {
         p.id,
         p.owned_by,
         p.reply_to,
-        p.snippet,
+        p.published_at,
+        p.updated_at,
         p.locale,
+        p.snippet,
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
-        p.published_at,
-        p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
@@ -308,18 +308,18 @@ export class PostsService {
       }
       const res = await pgQuery(
         this.pgPool,
-        `INSERT INTO posts (id, owned_by, reply_to, locale, snippet, allow_likes, allow_replies, published_at, updated_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NULL)
-         RETURNING id, owned_by, reply_to, snippet, locale, allow_likes, allow_replies, id_to_timestamp(id) AS created_at, published_at, updated_at`,
+        `INSERT INTO posts (id, owned_by, reply_to, published_at, updated_at, locale, snippet, allow_likes, allow_replies)
+         VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8)
+         RETURNING id, owned_by, reply_to, published_at, updated_at, locale, snippet, allow_likes, allow_replies, id_to_timestamp(id) AS created_at`,
         [
           hexToDec(id),
           hexToDec(input.ownedBy),
           input.replyTo == null ? null : hexToDec(input.replyTo),
+          input.publishedAt,
           input.locale,
           snippet,
           input.allowLikes,
           input.allowReplies,
-          input.publishedAt,
         ],
       );
       await pgQuery(
@@ -376,6 +376,26 @@ export class PostsService {
       const columns: string[] = [];
       const values: unknown[] = [];
       let idx = 1;
+
+      if (input.ownedBy !== undefined) {
+        if (typeof input.ownedBy !== "string" || input.ownedBy.trim() === "")
+          throw new Error("ownedBy is required");
+        columns.push(`owned_by = $${idx++}`);
+        values.push(hexToDec(input.ownedBy));
+      }
+      if (input.replyTo !== undefined) {
+        columns.push(`reply_to = $${idx++}`);
+        values.push(input.replyTo == null ? null : hexToDec(input.replyTo));
+      }
+      if (input.publishedAt !== undefined) {
+        columns.push(`published_at = $${idx++}`);
+        values.push(input.publishedAt);
+      }
+      if (input.locale !== undefined) {
+        if (!validateLocale(input.locale)) throw new Error("locale is required");
+        columns.push(`locale = $${idx++}`);
+        values.push(input.locale);
+      }
       if (input.content !== undefined) {
         if (typeof input.content !== "string" || input.content.trim() === "")
           throw new Error("content is required");
@@ -388,21 +408,6 @@ export class PostsService {
           [hexToDec(input.id), input.content],
         );
       }
-      if (input.locale !== undefined) {
-        if (!validateLocale(input.locale)) throw new Error("locale is required");
-        columns.push(`locale = $${idx++}`);
-        values.push(input.locale);
-      }
-      if (input.ownedBy !== undefined) {
-        if (typeof input.ownedBy !== "string" || input.ownedBy.trim() === "")
-          throw new Error("ownedBy is required");
-        columns.push(`owned_by = $${idx++}`);
-        values.push(hexToDec(input.ownedBy));
-      }
-      if (input.replyTo !== undefined) {
-        columns.push(`reply_to = $${idx++}`);
-        values.push(input.replyTo == null ? null : hexToDec(input.replyTo));
-      }
       if (input.allowLikes !== undefined) {
         columns.push(`allow_likes = $${idx++}`);
         values.push(input.allowLikes);
@@ -411,12 +416,9 @@ export class PostsService {
         columns.push(`allow_replies = $${idx++}`);
         values.push(input.allowReplies);
       }
-      if (input.publishedAt !== undefined) {
-        columns.push(`published_at = $${idx++}`);
-        values.push(input.publishedAt);
-      }
       columns.push(`updated_at = now()`);
       values.push(hexToDec(input.id));
+
       if (columns.length > 0) {
         const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id`;
         await pgQuery(this.pgPool, sql, values);
@@ -541,13 +543,13 @@ export class PostsService {
         p.id,
         p.owned_by,
         p.reply_to,
-        p.snippet,
+        p.published_at,
+        p.updated_at,
         p.locale,
+        p.snippet,
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
-        p.published_at,
-        p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
@@ -623,13 +625,13 @@ export class PostsService {
         p.id,
         p.owned_by,
         p.reply_to,
-        p.snippet,
+        p.published_at,
+        p.updated_at,
         p.locale,
+        p.snippet,
         p.allow_likes,
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
-        p.published_at,
-        p.updated_at,
         u.nickname AS owner_nickname,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,

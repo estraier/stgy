@@ -161,17 +161,18 @@ CREATE TABLE posts (
   id BIGINT PRIMARY KEY,
   owned_by BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   reply_to BIGINT,
+  published_at TIMESTAMPTZ,
+  updated_at TIMESTAMPTZ,
   locale VARCHAR(50) NOT NULL,
   snippet VARCHAR(4096) NOT NULL,
   allow_likes BOOLEAN NOT NULL,
-  allow_replies BOOLEAN NOT NULL,
-  published_at TIMESTAMPTZ,
-  updated_at TIMESTAMPTZ
+  allow_replies BOOLEAN NOT NULL
 );
 CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
 CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
 CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
+CREATE INDEX idx_posts_public_owned_by_published_at ON posts (owned_by, published_at) WHERE published_at IS NOT NULL;
 ```
 
 プライマリキーであるidはSnowflake IDだ。usersと同様にリストを返す全てのクエリは ``ORDER BY id`` をすることになり、その順序が時系列になるのは便利だ。
@@ -519,29 +520,37 @@ PostgreSQLは、主テーブルの行レイアウトを設定する際に、ア�
 
 アラインメントを成立させるためには、パディングが用いられる。例えば、レコードの先頭がSMALLINTであり、その直後にINTが宣言されている場合、先頭のSMALLINTの後ろに2バイトのパディングが置かれて、INTの4バイト境界が達成される。よって、``SMALLINT, SMALLINT, INT`` という並びだと全体が8バイトを消費するが、``SMALLINT, INT, SMALLINT`` という並びだと10バイトを消費してしまう。
 
-以上の観点で、postsテーブルのアラインメントを考察してみよう。
+アラインメント最適化をする以前は、postsテーブルの属性は以下のように並べていた。そのアラインメントを考察してみよう。
 
 - id BIGINT : 8バイト境界（パディング不要）
-- snippet VARCHAR(4096) : 4バイト境界（パディング不要）
+- locale VARCHAR : 4バイト境界（パディング不要）
+- snippet VARCHAR : 4バイト境界（最大3バイトのパディング）
 - owned_by BIGINT : 8バイト境界（最大7バイトのパディング）
 - reply_to BIGINT : 8バイト境界（パディング不要）
 - allow_likes BOOLEAN : アラインメントなし（パディング不要）
 - allow_replies BOOLEAN : アラインメントなし（パディング不要）
-- updated_at TIMESTAMPTZ : 8バイト境界（確実に6バイトのパディング）
+- published_at TIMESTAMPTZ : 8バイト境界（確実に6バイトのパディング）
+- updated_at TIMESTAMPTZ : 8バイト境界（パディング不要）
 
-snippetが可変長なので、直後のowned_byの前にパディングが置かれる可能性がある。また、reply_toで8バイト境界になった後にallow_likesとallow_repliesが2バイト消費するので、updated_atの前に確実に6バイトのパディングが発生する。パディングを防ぐためには、以下のように並び替えると良い。パディングが一切発生しなくなれば、レコードあたり平均9.5バイトの節約ができることになる。
+localeが可変長なので、直後のsnippetの前にパディングが置かれる可能性がある。snippetも可変長なので、直後のowned_byの前にパディングが置かれる可能性がある。また、reply_toで8バイト境界になった後にallow_likesとallow_repliesが2バイト消費するので、published_atの前に確実に6バイトのパディングが発生する。可変のパディングでは最大長の半分が平均長になる。よって、合計は、3/2+7/2+6で、平均11バイトのパディングが発生することになる。
+
+パディングを減らすために、以下のように並び替えた。snippetの直前に平均1.5バイトのパディングが発生するだけになるので、9.5バイトの節約ができた。
 
 - id BIGINT : 8バイト境界（パディング不要）
 - owned_by BIGINT : 8バイト境界（パディング不要）
 - reply_to BIGINT : 8バイト境界（パディング不要）
+- published_at TIMESTAMPTZ : 8バイト境界（パディング不要）
 - updated_at TIMESTAMPTZ : 8バイト境界（パディング不要）
-- snippet VARCHAR(4096) : 4バイト境界（パディング不要）
+- locale VARCHAR : 4バイト境界（パディング不要）
+- snippet VARCHAR : 4バイト境界（最大3バイトのパディング）
 - allow_likes BOOLEAN : アラインメントなし（パディング不要）
 - allow_replies BOOLEAN : アラインメントなし（パディング不要）
 
 インプレース更新があるデータベースでは、レコードサイズの増分がパディングに吸収されてインプレース更新ができる確率が上がるという、パディングのわずかなメリットがある。しかし、PostgreSQLはインプレース更新をしないので、パディングのメリットは皆無である。
 
-とはいえ、現状では、アラインメント最適化のための属性の並び替えは実施していない。まだ開発途中で、DBスキーマが変わる可能性が高いからだ。近い将来に、規約違反の投稿にis_violativeというフラグを立てるかもしれない。そういった改修作業をする際に、属性の並びが論理的である方がやりやすい。バックエンドサーバ内の実装でSQL文を書く際にもそうだ。現状では、IDが先頭で、重要そうな属性から順に並べている。それを崩すのは、いわば最後の最適化だ。順番としては、水平分割よりも後にすべきだ。水平分割の改修の際に属性の並びが意味不明だと厄介だ。レコードあたり9.5バイト削れるのは魅力的だが、それで水平分割が必要になる時期を先延ばしできるわけではない。
+属性を並び替えるだけで空間効率が上がるが、論理的でない順番で属性を並べると可読性が落ちるという問題が出るかもしれないので、並び替えによるアラインメント最適化を実施するかどうかは慎重に判断すべきだ。今回のpostsテーブルに関しては、レコード数が多く、参照頻度が高く、空間効率の向上が性能上の利点に確実につながる。そして、最適化後の順番も一定の読みやすさを保っている。近い将来に、規約違反の投稿を意味するis_violativeなどのフラグを追加するかもしれないが、それらは末尾に追加することで可読性と空間効率を維持できる。よって、総合的に得だと判断したために、実施した。usersテーブルにもアラインメント最適化の余地があることは分かっているが、そちらはレコード数がpostsに比べて少なく、可読性を重視したいので、実施を見送った。
+
+なお、published_atとupdated_atのそれぞれを8バイトのTIMESTAMPTZから4バイトのINTに変えると、さらに8バイト節約できる。公開日時や更新日時にミリ秒単位の精度は不要なので、TIMESTAMPTZはオーバースペックとも言える。しかし、INTでUNIX時間を表すと2038年にオーバーフローするので、エポックを未来にずらすとか、値を60で割って分単位の精度に落とすとかの工夫が求められる。8バイトの節約は魅力的だが、保守性への悪影響が大きいので、その最適化も見送った。
 
 ## シーダ
 
