@@ -376,7 +376,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
               <span className="text-gray-700">{user.email}</span>
               {isSelf && (
                 <Link
-                  href="/settings"
+                  href="/auth-settings"
                   className="text-blue-600 hover:underline text-xs opacity-70 hover:opacity-100"
                   style={{ marginLeft: "8px" }}
                 >

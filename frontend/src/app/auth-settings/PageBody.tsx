@@ -145,8 +145,8 @@ export default function PageBody() {
   }
 
   return (
-    <main className="max-w-lg mx-auto mt-12 p-4 bg-white shadow">
-      <h1 className="text-2xl font-bold mb-6">Settings</h1>
+    <main className="max-w-lg mx-auto mt-12 p-4 bg-white shadow border rounded">
+      <h1 className="text-2xl font-bold mb-6">Authentication Settings</h1>
 
       <section className="mb-10">
         <h2 className="text-lg font-semibold mb-2">Change email address</h2>
@@ -226,7 +226,7 @@ export default function PageBody() {
       </section>
 
       <section>
-        <h2 className="text-lg font-semibold mb-2">Withdrawal</h2>
+        <h2 className="text-lg font-semibold mb-2">Withdrawal account</h2>
         {!withdrawalMode ? (
           <div>
             <button

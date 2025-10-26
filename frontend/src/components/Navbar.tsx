@@ -165,11 +165,11 @@ export default function Navbar() {
               Images
             </Link>
             <Link
-              href="/settings"
+              href="/auth-settings"
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
               onClick={() => setMenuOpen(false)}
             >
-              Settings
+              Auth Settings
             </Link>
             <Link
               href={Config.HELP_PAGE_PATH}
