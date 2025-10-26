@@ -33,6 +33,11 @@ export default async function PubPostPage({ params }: Props) {
           viewAsHref={`/posts/${post.id}`}
         />
         <main className="pub-container">
+          {pubcfg.showSiteName && (
+            <h1 className="pub-site-name">
+              {pubcfg.siteName.trim() || "Untitled"}
+            </h1>
+          )}
           <article
             lang={post.locale || undefined}
             className="markdown-body post-content"
@@ -44,7 +49,9 @@ export default async function PubPostPage({ params }: Props) {
                 <section className="pub-side-profile">
                   <h2>Profile</h2>
                   <div className="profile-column">
-                    <div className="site-name">{pubcfg.siteName.trim() || "Untitled"}</div>
+                    {!pubcfg.showSiteName && (
+                      <div className="site-name">{pubcfg.siteName.trim() || "Untitled"}</div>
+                    )}
                     <div className="author">{pubcfg.author.trim() || "anonymous"}</div>
                     <p className="introduction">{pubcfg.introduction.trim() || "my publications"}</p>
                   </div>
