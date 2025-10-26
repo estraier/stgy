@@ -60,13 +60,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                     return (
                       <li key={r.id}>
                         <a href={`/pub/${r.id}`}>
-                          <time
-                            className="date"
-                            dateTime={createdAtDate.toISOString()}
-                            suppressHydrationWarning
-                          >
-                            {formatDateTime(createdAtDate)}
-                          </time>
+                          <div className="date">{formatDateTime(createdAtDate)}</div>
                           <article
                             lang={r.locale || undefined}
                             className="markdown-body post-content-excerpt"
