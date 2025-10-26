@@ -172,6 +172,13 @@ export default function Navbar() {
               Auth Settings
             </Link>
             <Link
+              href="/pub-settings"
+              className="block w-full px-4 py-2 text-left hover:bg-gray-100"
+              onClick={() => setMenuOpen(false)}
+            >
+              Pub Settings
+            </Link>
+            <Link
               href={Config.HELP_PAGE_PATH}
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
               onClick={() => setMenuOpen(false)}

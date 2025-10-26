@@ -81,6 +81,7 @@ export class Config {
     "image/jpeg,image/png,image/webp,image/heic,image/heif,image/tiff,image/gif,image/bmp,image/svg+xml,.jpg,.jpeg,.png,.webp,.heic,.heif,.tif,.tiff,.gif,.bmp,.svg";
   static readonly WELCOME_PAGE_PATH = "/posts/0002000000000001";
   static readonly HELP_PAGE_PATH = "/posts/0002000000000002";
+  static readonly PUB_DESIGN_THEMES = ["default", "dark"];
 }
 
 export function normStr(
