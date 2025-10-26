@@ -1,3 +1,6 @@
+.pub-page {
+  min-height: 100dvh;
+}
 .sh-logo {
   color: #04f;
   font-weight: bold;
