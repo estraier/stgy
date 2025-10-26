@@ -200,6 +200,70 @@ class MockPgClientMain {
     }
 
     if (
+      sql.includes("WITH cur AS (") &&
+      sql.includes("(SELECT id FROM older) AS older_post_id") &&
+      sql.includes("(SELECT id FROM newer) AS newer_post_id") &&
+      sql.includes("FROM cur c")
+    ) {
+      const id = params![0];
+      const until = params![1];
+      const cur = this.data.find((p) => p.id === id);
+      if (!cur || !cur.publishedAt || cur.publishedAt > until) return { rows: [] };
+
+      const owner = this.users.find((u) => u.id === cur.ownedBy);
+      const replyToPost = this.data.find((pp) => pp.id === cur.replyTo);
+      const replyNickname = replyToPost
+        ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
+        : null;
+
+      const sameOwnerPub = this.data.filter(
+        (p) => p.ownedBy === cur.ownedBy && p.publishedAt && p.publishedAt <= until,
+      ) as MockPostRow[];
+
+      const olderPool = sameOwnerPub.filter(
+        (p) =>
+          p.publishedAt! < cur.publishedAt! || (p.publishedAt === cur.publishedAt && p.id < cur.id),
+      );
+      olderPool.sort((a, b) =>
+        a.publishedAt === b.publishedAt
+          ? b.id.localeCompare(a.id)
+          : b.publishedAt!.localeCompare(a.publishedAt!),
+      );
+      const newerPool = sameOwnerPub.filter(
+        (p) =>
+          p.publishedAt! > cur.publishedAt! || (p.publishedAt === cur.publishedAt && p.id > cur.id),
+      );
+      newerPool.sort((a, b) =>
+        a.publishedAt === b.publishedAt
+          ? a.id.localeCompare(b.id)
+          : a.publishedAt!.localeCompare(b.publishedAt!),
+      );
+
+      const row: any = {
+        id: cur.id,
+        owned_by: cur.ownedBy,
+        reply_to: cur.replyTo,
+        published_at: cur.publishedAt,
+        updated_at: cur.updatedAt,
+        allow_likes: cur.allowLikes,
+        allow_replies: cur.allowReplies,
+        created_at: cur.createdAt,
+        owner_nickname: owner?.nickname ?? "",
+        reply_to_owner_nickname: replyNickname,
+        count_replies: this.countRepliesFor(cur.id),
+        count_likes: this.countLikesFor(cur.id),
+        tags: this.tags
+          .filter((t) => t.postId === cur.id)
+          .map((t) => t.name)
+          .sort(),
+        content: cur.content,
+        older_post_id: olderPool.length > 0 ? olderPool[0].id : null,
+        newer_post_id: newerPool.length > 0 ? newerPool[0].id : null,
+      };
+      return { rows: [row] };
+    }
+
+    if (
       sql.includes("WITH all_followers AS") &&
       sql.includes("JOIN LATERAL") &&
       sql.includes("JOIN posts p ON p.id")

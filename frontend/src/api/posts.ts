@@ -1,4 +1,4 @@
-import type { Post, PostDetail, User } from "./models";
+import type { Post, PostDetail, PubPostDetail, User } from "./models";
 import { apiFetch, extractError } from "./client";
 
 function buildPostQuery(
@@ -184,7 +184,7 @@ export async function countPosts(
   return (await res.json()).count;
 }
 
-export async function getPubPost(postId: string): Promise<PostDetail> {
+export async function getPubPost(postId: string): Promise<PubPostDetail> {
   const res = await apiFetch(`/posts/pub/${postId}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();

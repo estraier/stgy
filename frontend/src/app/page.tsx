@@ -35,7 +35,7 @@ export default async function HomePage() {
             Log in
           </Link>
           <Link
-            href={Config.SIGNUP_PAGE_PATH ?? "/signup"}
+            href="/signup"
             className="px-4 py-2 rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 cursor-pointer"
           >
             Sign up

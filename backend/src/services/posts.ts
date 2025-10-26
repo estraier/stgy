@@ -3,6 +3,7 @@ import {
   Post,
   PostLite,
   PostDetail,
+  PubPostDetail,
   CountPostsInput,
   CreatePostInput,
   UpdatePostInput,
@@ -729,33 +730,64 @@ export class PostsService {
     return snakeToCamel<User[]>(rows);
   }
 
-  async getPubPost(id: string, publishedUntil: string): Promise<PostDetail | null> {
+  async getPubPost(id: string, publishedUntil: string): Promise<PubPostDetail | null> {
     const sql = `
+      WITH cur AS (
+        SELECT
+          p.id,
+          p.owned_by,
+          p.reply_to,
+          p.published_at,
+          p.updated_at,
+          p.snippet,
+          p.locale,
+          p.allow_likes,
+          p.allow_replies,
+          id_to_timestamp(p.id) AS created_at,
+          u.nickname AS owner_nickname,
+          pu.nickname AS reply_to_owner_nickname,
+          COALESCE(pc.reply_count,0) AS count_replies,
+          COALESCE(pc.like_count,0) AS count_likes,
+          pd.content AS content,
+          ARRAY(SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name) AS tags
+        FROM posts p
+        JOIN users u ON p.owned_by = u.id
+        LEFT JOIN posts pp ON p.reply_to = pp.id
+        LEFT JOIN users pu ON pp.owned_by = pu.id
+        LEFT JOIN post_counts pc ON pc.post_id = p.id
+        LEFT JOIN post_details pd ON pd.post_id = p.id
+        WHERE p.id = $1
+          AND p.published_at <= $2
+      ),
+      older AS (
+        SELECT p2.id
+        FROM posts p2
+        JOIN cur c ON p2.owned_by = c.owned_by
+        WHERE p2.published_at <= $2
+          AND (
+            p2.published_at < c.published_at OR
+            (p2.published_at = c.published_at AND p2.id < c.id)
+          )
+        ORDER BY p2.published_at DESC, p2.id DESC
+        LIMIT 1
+      ),
+      newer AS (
+        SELECT p3.id
+        FROM posts p3
+        JOIN cur c ON p3.owned_by = c.owned_by
+        WHERE p3.published_at <= $2
+          AND (
+            p3.published_at > c.published_at OR
+            (p3.published_at = c.published_at AND p3.id > c.id)
+          )
+        ORDER BY p3.published_at ASC, p3.id ASC
+        LIMIT 1
+      )
       SELECT
-        p.id,
-        p.owned_by,
-        p.reply_to,
-        p.published_at,
-        p.updated_at,
-        p.snippet,
-        p.locale,
-        p.allow_likes,
-        p.allow_replies,
-        id_to_timestamp(p.id) AS created_at,
-        u.nickname AS owner_nickname,
-        pu.nickname AS reply_to_owner_nickname,
-        COALESCE(pc.reply_count,0) AS count_replies,
-        COALESCE(pc.like_count,0) AS count_likes,
-        ARRAY(SELECT pt.name FROM post_tags pt WHERE pt.post_id = p.id ORDER BY pt.name) AS tags,
-        pd.content AS content
-      FROM posts p
-      JOIN users u ON p.owned_by = u.id
-      LEFT JOIN posts pp ON p.reply_to = pp.id
-      LEFT JOIN users pu ON pp.owned_by = pu.id
-      LEFT JOIN post_counts pc ON pc.post_id = p.id
-      LEFT JOIN post_details pd ON pd.post_id = p.id
-      WHERE p.id = $1
-        AND p.published_at <= $2
+        c.*,
+        (SELECT id FROM older) AS older_post_id,
+        (SELECT id FROM newer) AS newer_post_id
+      FROM cur c
     `;
     const res = await pgQuery(this.pgPool, sql, [hexToDec(id), publishedUntil]);
     if (res.rows.length === 0) return null;
@@ -763,7 +795,9 @@ export class PostsService {
     row.id = decToHex(row.id);
     row.owned_by = decToHex(row.owned_by);
     row.reply_to = row.reply_to == null ? null : decToHex(row.reply_to);
-    return snakeToCamel<PostDetail>(row);
+    row.older_post_id = row.older_post_id == null ? null : decToHex(row.older_post_id);
+    row.newer_post_id = row.newer_post_id == null ? null : decToHex(row.newer_post_id);
+    return snakeToCamel<PubPostDetail>(row);
   }
 
   async listPubPostsByUser(

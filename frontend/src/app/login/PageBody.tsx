@@ -6,12 +6,7 @@ import { login } from "@/api/auth";
 
 function isAllowedPath(p: string): boolean {
   const s = p.startsWith("/") ? p : `/${p}`;
-  return (
-    s === "/posts" ||
-    s === "/users" ||
-    s.startsWith("/posts/") ||
-    s.startsWith("/users/")
-  );
+  return s === "/posts" || s === "/users" || s.startsWith("/posts/") || s.startsWith("/users/");
 }
 
 export default function PageBody() {

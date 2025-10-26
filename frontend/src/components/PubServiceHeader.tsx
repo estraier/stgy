@@ -1,3 +1,4 @@
+import Link from "next/link";
 import type { SessionInfo } from "@/api/models";
 
 type Props = {
@@ -24,7 +25,12 @@ function addNext(base: string, next: string | null): string {
   return `${base}${sep}next=${encodeURIComponent(next)}`;
 }
 
-export default function PubServiceHeader({ showServiceHeader, session, redirectTo, viewAsHref }: Props) {
+export default function PubServiceHeader({
+  showServiceHeader,
+  session,
+  redirectTo,
+  viewAsHref,
+}: Props) {
   if (!showServiceHeader) {
     return <div className="sh-pad h-12" aria-hidden="true" />;
   }
@@ -34,16 +40,26 @@ export default function PubServiceHeader({ showServiceHeader, session, redirectT
   const viewHref = viewAsHref ?? "/posts";
   return (
     <nav className="sh-nav w-full h-12 flex items-center px-3">
-      <a href="/" className="sh-logo">STGY</a>
+      <Link href="/" className="sh-logo">
+        STGY
+      </Link>
       <div className="sh-notes ml-auto flex items-center gap-2">
         {session ? (
-          <a href={viewHref} className="sh-viewas text-sm text-blue-600 hover:underline truncate max-w-[28ch]" title={session.userNickname}>
+          <Link
+            href={viewHref}
+            className="sh-viewas text-sm text-blue-600 hover:underline truncate max-w-[28ch]"
+            title={session.userNickname}
+          >
             view as <span className="sh-nickname">{session.userNickname}</span>
-          </a>
+          </Link>
         ) : (
           <>
-            <a href={loginHref} className="sh-button px-2 py-0.5 rounded border text-sm">Login</a>
-            <a href={signupHref} className="sh-button px-2 py-0.5 rounded border text-sm">Sign up</a>
+            <Link href={loginHref} className="sh-button px-2 py-0.5 rounded border text-sm">
+              Login
+            </Link>
+            <Link href={signupHref} className="sh-button px-2 py-0.5 rounded border text-sm">
+              Sign up
+            </Link>
           </>
         )}
       </div>
