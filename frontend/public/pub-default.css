@@ -11,30 +11,99 @@ body {
   font-weight: bold;
   opacity: 0.5;
 }
-.sh-logo:hover {
-  opacity: 1.0;
+.sh-logo:hover { opacity: 1.0; }
+.sh-viewas { color: #333; text-decoration: none; opacity: 0.5; }
+.sh-viewas:hover { opacity: 1.0; }
+.sh-nickname { display: inline-block; vertical-align: top; max-width: 12ex; overflow: hidden; word-break: none; }
+.sh-button { background: #ddd; border: solid 1px #aaa; opacity: 0.5; }
+.sh-button:hover { background: #def; opacity: 1.0; }
+
+.pub-container {
+  max-width: 48rem;
+  margin-left: auto;
+  margin-right: auto;
+  margin-top: 1rem;
+  padding: 0.25rem;
 }
-.sh-viewas {
-  color: #333;
-  text-decoration: none;
-   opacity: 0.5;
+
+@media (min-width: 640px) {
+  .pub-container { padding: 1rem; }
 }
-.sh-viewas:hover {
-  opacity: 1.0;
+
+.pub-side-profile .profile-column .site-name {
+  font-weight: bold;
 }
-.sh-nickname {
-  display: inline-block;
-  vertical-align: top;
-  max-width: 12ex;
-  overflow: hidden;
-  word-break: none;
- }
-.sh-button {
-  background: #ddd;
-  border: solid 1px #aaa;
-  opacity: 0.5;
+.pub-side-profile .profile-column .author {
+  color: #111;
 }
-.sh-button:hover {
-  background: #def;
-  opacity: 1.0;
+.pub-side-profile .profile-column .introduction {
+  color: #111;
+}
+
+.pub-side-profile,.pub-side-recent {
+  margin-top: 1rem;
+  padding: 1ex 0;
+  border-top: 1px solid #888;
+}
+.pub-sidebar h2 {
+  font-weight: bold;
+  color: #666;
+}
+.pub-side-profile .profile-column {
+  zoom: 85%;
+  padding: 0.8ex 1.2ex;
+  border: 1px solid #ddd;
+  border-radius: 0.8ex;
+}
+.pub-side-profile .profile-column * {
+  font-size: 120%;
+}
+.pub-side-recent article {
+  zoom: 85%;
+  margin: 1ex 0.3ex;
+  padding: 0.8ex 1.2ex;
+  border: 1px solid #ddd;
+  border-radius: 0.8ex;
+}
+
+@media (min-width: 1100px) {
+  .pub-container {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 20rem;
+    column-gap: 1.5rem;
+    align-items: start;
+    max-width: calc(48rem + 20rem + 1.5rem + 2rem);
+  }
+  .pub-container > article { grid-column: 1; }
+  .pub-sidebar { grid-column: 2; margin-top: 0; }
+  .pub-sidebar .pub-side-profile + .pub-side-recent { margin-top: 1rem; }
+  .pub-side-profile,.pub-side-recent {
+    margin-top: 2ex;
+    padding: 0;
+    border-top: none;
+  }
+  .pub-sidebar h2 {
+    font-weight: normal;
+    font-size: 90%;
+  }
+  .pub-side-profile .profile-column {
+    zoom: 50%;
+    max-width: 70ex;
+    margin: 1ex 0.3ex;
+    padding: 0.8ex 1.2ex;
+    border: 1px solid #ddd;
+    border-radius: 0.8ex;
+  }
+  .pub-side-profile .profile-column * {
+    font-size: 200%;
+  }
+  .pub-side-recent article {
+    display: inline-block;
+    zoom: 50%;
+    max-width: 70ex;
+    margin: 1ex 0.3ex;
+    padding: 0.8ex 1.2ex;
+    border: 1px solid #ddd;
+    border-radius: 0.8ex;
+  }
 }

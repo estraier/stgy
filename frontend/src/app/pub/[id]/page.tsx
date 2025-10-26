@@ -33,27 +33,44 @@ export default async function PubPostPage({ params }: Props) {
           viewAsHref={`/posts/${post.id}`}
         />
         <main className="pub-container">
-          {pubcfg.showSideProfile && (
-            <aside className="pub-side-profile">
-              <h2>{pubcfg.siteName}</h2>
-              {pubcfg.author && <div>{pubcfg.author}</div>}
-              {pubcfg.introduction && <pre>{pubcfg.introduction}</pre>}
-            </aside>
-          )}
-          <article lang={post.locale || undefined} dangerouslySetInnerHTML={{ __html: articleHtml }} />
-          {pubcfg.showSideRecent && (
-            <aside className="pub-side-recent">
-              <h2>Recent</h2>
-              <ul>
-                {recent.map((r) => {
-                  const snippetHtml = convertHtmlMathInline(makeHtmlFromJsonSnippet(r.snippet));
-                  return (
-                    <li key={r.id}>
-                      <a href={`/pub/${r.id}`} dangerouslySetInnerHTML={{ __html: snippetHtml }} />
-                    </li>
-                  );
-                })}
-              </ul>
+          <article
+            lang={post.locale || undefined}
+            className="markdown-body post-content"
+            dangerouslySetInnerHTML={{ __html: articleHtml }}
+          />
+          {(pubcfg.showSideProfile || pubcfg.showSideRecent) && (
+            <aside className="pub-sidebar">
+              {pubcfg.showSideProfile && (
+                <section className="pub-side-profile">
+                  <h2>Profile</h2>
+                  <div className="profile-column">
+                    <div className="site-name">{pubcfg.siteName.trim() || "Untitled"}</div>
+                    <div className="author">{pubcfg.author.trim() || "anonymous"}</div>
+                    <p className="introduction">{pubcfg.introduction.trim() || "my publications"}</p>
+                  </div>
+                </section>
+              )}
+              {pubcfg.showSideRecent && (
+                <section className="pub-side-recent">
+                  <h2>Recent posts</h2>
+                  <ul>
+                    {recent.map((r) => {
+                      const snippetHtml = convertHtmlMathInline(makeHtmlFromJsonSnippet(r.snippet));
+                      return (
+                        <li key={r.id}>
+                          <a href={`/pub/${r.id}`}>
+                            <article
+                              lang={r.locale || undefined}
+                              className="markdown-body post-content-excerpt"
+                              dangerouslySetInnerHTML={{ __html: snippetHtml }}
+                            />
+                          </a>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                </section>
+              )}
             </aside>
           )}
         </main>
