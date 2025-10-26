@@ -393,8 +393,9 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
 - フロントエンド（Node.js + Next.js）
   - Dockerサブネットでfrontend:3000をlistenし、主にJavaScriptを配信。表にはhttps://stgy.jpとして露出。
     - PORT=3000
-  - バックエンドを /backend として認識し、https://stgy.jp/backend 配下にAPIリクエストを送る。
-    - NEXT_PUBLIC_BACKEND_API_BASE_URL=/backend
+  - バックエンドをhttps://stgy.jp/backendとして認識し、その配下にAPIリクエストを送る。
+    - NEXT_PUBLIC_BACKEND_API_BASE_URL=https://stgy.jp/backend
+    - CSRのfetchは相対URLで動くが、SSRのfetchは絶対URLでないと動かないので注意。
   - S3サーバをhttps://s3.stgy.jpとして認識し、画像の配信とpresigned-POSTのベースURLにそれを用いる。
     - NEXT_PUBLIC_STORAGE_S3_BUCKET_PREFIX=stgy
     - NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX=https://s3.stgy.jp/{bucket}/
