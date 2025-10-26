@@ -56,7 +56,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                   {items.map((r) => {
                     let snippetHtml = convertHtmlMathInline(makeHtmlFromJsonSnippet(r.snippet));
                     snippetHtml = snippetHtml.replace(/<a\b[^>]*>/gi, "").replace(/<\/a>/gi, "");
-                    const publishedAtDate = new Date(r.publishedAt);
+                    const publishedAtDate = new Date(r.publishedAt ?? "");
                     return (
                       <li key={r.id}>
                         <a href={`/pub/${r.id}`}>

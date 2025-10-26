@@ -41,7 +41,7 @@ export default async function PubPostPage({ params }: Props) {
                   <a href={siteHref}>{pubcfg.siteName.trim() || "Untitled"}</a>
                 </h1>
               )}
-              <div className="date">{formatDateTime(new Date(post.publishedAt))}</div>
+              <div className="date">{formatDateTime(new Date(post.publishedAt ?? ""))}</div>
               <article
                 lang={post.locale || undefined}
                 className="markdown-body post-content"
