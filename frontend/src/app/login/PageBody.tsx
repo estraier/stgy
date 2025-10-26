@@ -1,14 +1,42 @@
 "use client";
 
-import { useState, useEffect } from "react";
-import { useRouter } from "next/navigation";
+import { useState, useEffect, useMemo } from "react";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { login } from "@/api/auth";
+
+function isAllowedPath(p: string): boolean {
+  const s = p.startsWith("/") ? p : `/${p}`;
+  return (
+    s === "/posts" ||
+    s === "/users" ||
+    s.startsWith("/posts/") ||
+    s.startsWith("/users/")
+  );
+}
 
 export default function PageBody() {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
+
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
+
+  const redirectTo = useMemo(() => {
+    const qp =
+      searchParams.get("next") ||
+      searchParams.get("to") ||
+      searchParams.get("redirect") ||
+      searchParams.get("r");
+    if (qp && isAllowedPath(qp)) {
+      return qp.startsWith("/") ? qp : `/${qp}`;
+    }
+    let suffix = pathname.startsWith("/login") ? pathname.slice(6) : "";
+    if (suffix === "" || suffix === "/") return null;
+    if (!suffix.startsWith("/")) suffix = `/${suffix}`;
+    return isAllowedPath(suffix) ? suffix : null;
+  }, [pathname, searchParams]);
 
   useEffect(() => {
     if (typeof window !== "undefined") {
@@ -17,21 +45,23 @@ export default function PageBody() {
     }
   }, []);
 
-  const handleSubmit = async (e: React.FormEvent) => {
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
     try {
       await login(email, password);
-      localStorage.setItem("lastLoginEmail", email);
-      router.push("/");
-    } catch (e) {
-      setError(e ? String(e) : "Invalid email or password.");
+      if (typeof window !== "undefined") {
+        localStorage.setItem("lastLoginEmail", email);
+      }
+      router.push(redirectTo ?? "/");
+    } catch (err: unknown) {
+      setError(err ? String(err) : "Invalid email or password.");
     }
-  };
+  }
 
   return (
     <main className="flex flex-col items-center justify-center min-h-screen">
-      <form className="w-full max-w-sm bg-white p-8 rounded shadow" onSubmit={handleSubmit}>
+      <form className="w-full max-w-sm bg-white p-8 rounded border shadow" onSubmit={handleSubmit}>
         <h1 className="text-2xl font-bold mb-6 text-center">Log in to STGY</h1>
         <label className="block mb-2 font-medium">Email</label>
         <input
