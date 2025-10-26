@@ -238,6 +238,8 @@ def test_users():
   assert cfg["introduction"] == ""
   assert cfg["designTheme"] == ""
   assert cfg["showServiceHeader"] is True
+  assert cfg["showSiteName"] is True
+  assert cfg["showPagenation"] is True
   assert cfg["showSideProfile"] is True
   assert cfg["showSideRecent"] is True
   update1 = {
@@ -246,6 +248,8 @@ def test_users():
     "introduction": "hello site",
     "designTheme": "paper",
     "showServiceHeader": False,
+    "showSiteName": False,
+    "showPagenation": False,
     "showSideProfile": False,
     "showSideRecent": True,
   }
@@ -258,6 +262,8 @@ def test_users():
   assert saved1["introduction"] == "hello site"
   assert saved1["designTheme"] == "paper"
   assert saved1["showServiceHeader"] is False
+  assert saved1["showSiteName"] is False
+  assert saved1["showPagenation"] is False
   assert saved1["showSideProfile"] is False
   assert saved1["showSideRecent"] is True
   res = requests.get(f"{BASE_URL}/users/{user1_id}/pub-config", headers=headers, cookies=user1_cookies)
@@ -277,6 +283,8 @@ def test_users():
   assert saved2["introduction"] == "hello site"
   assert saved2["designTheme"] == "dark"
   assert saved2["showServiceHeader"] is True
+  assert saved2["showSiteName"] is False
+  assert saved2["showPagenation"] is False
   assert saved2["showSideProfile"] is False
   assert saved2["showSideRecent"] is True
   res = requests.get(f"{BASE_URL}/users/{user1_id}/pub-config", headers=headers, cookies=user1_cookies)

@@ -113,6 +113,8 @@ export type PubConfig = {
   introduction: string;
   designTheme: string;
   showServiceHeader: boolean;
+  showSiteName: boolean;
+  showPagenation: boolean;
   showSideProfile: boolean;
   showSideRecent: boolean;
 };

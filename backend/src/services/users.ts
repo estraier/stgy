@@ -1190,6 +1190,8 @@ export class UsersService {
         introduction,
         design_theme,
         show_service_header,
+        show_site_name,
+        show_pagenation,
         show_side_profile,
         show_side_recent
       FROM user_pub_configs
@@ -1206,6 +1208,8 @@ export class UsersService {
         introduction: "",
         designTheme: "",
         showServiceHeader: true,
+        showSiteName: true,
+        showPagenation: true,
         showSideProfile: true,
         showSideRecent: true,
       };
@@ -1226,16 +1230,20 @@ export class UsersService {
         introduction,
         design_theme,
         show_service_header,
+        show_site_name,
+        show_pagenation,
         show_side_profile,
         show_side_recent
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
       ON CONFLICT (user_id) DO UPDATE SET
         site_name           = EXCLUDED.site_name,
         author              = EXCLUDED.author,
         introduction        = EXCLUDED.introduction,
         design_theme        = EXCLUDED.design_theme,
         show_service_header = EXCLUDED.show_service_header,
+        show_site_name      = EXCLUDED.show_site_name,
+        show_pagenation     = EXCLUDED.show_pagenation,
         show_side_profile   = EXCLUDED.show_side_profile,
         show_side_recent    = EXCLUDED.show_side_recent
       RETURNING
@@ -1244,6 +1252,8 @@ export class UsersService {
         introduction,
         design_theme,
         show_service_header,
+        show_site_name,
+        show_pagenation,
         show_side_profile,
         show_side_recent
     `,
@@ -1254,6 +1264,8 @@ export class UsersService {
         cfg.introduction,
         cfg.designTheme,
         cfg.showServiceHeader,
+        cfg.showSiteName,
+        cfg.showPagenation,
         cfg.showSideProfile,
         cfg.showSideRecent,
       ],

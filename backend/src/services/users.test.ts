@@ -67,10 +67,10 @@ const SQL_UPSERT_DETAILS =
   "INSERT INTO user_details (user_id, introduction, ai_personality) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET introduction = COALESCE(EXCLUDED.introduction, user_details.introduction), ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)";
 
 const SQL_SELECT_PUBCONFIG =
-  "SELECT site_name, author, introduction, design_theme, show_service_header, show_side_profile, show_side_recent FROM user_pub_configs WHERE user_id = $1 LIMIT 1";
+  "SELECT site_name, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent FROM user_pub_configs WHERE user_id = $1 LIMIT 1";
 
 const SQL_UPSERT_PUBCONFIG =
-  "INSERT INTO user_pub_configs ( user_id, site_name, author, introduction, design_theme, show_service_header, show_side_profile, show_side_recent ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8) ON CONFLICT (user_id) DO UPDATE SET site_name = EXCLUDED.site_name, author = EXCLUDED.author, introduction = EXCLUDED.introduction, design_theme = EXCLUDED.design_theme, show_service_header = EXCLUDED.show_service_header, show_side_profile = EXCLUDED.show_side_profile, show_side_recent = EXCLUDED.show_side_recent RETURNING site_name, author, introduction, design_theme, show_service_header, show_side_profile, show_side_recent";
+  "INSERT INTO user_pub_configs ( user_id, site_name, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (user_id) DO UPDATE SET site_name = EXCLUDED.site_name, author = EXCLUDED.author, introduction = EXCLUDED.introduction, design_theme = EXCLUDED.design_theme, show_service_header = EXCLUDED.show_service_header, show_site_name = EXCLUDED.show_site_name, show_pagenation = EXCLUDED.show_pagenation, show_side_profile = EXCLUDED.show_side_profile, show_side_recent = EXCLUDED.show_side_recent RETURNING site_name, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent";
 
 class MockPgClient {
   users: MockUser[];
@@ -87,6 +87,8 @@ class MockPgClient {
       introduction: string;
       design_theme: string;
       show_service_header: boolean;
+      show_site_name: boolean;
+      show_pagenation: boolean;
       show_side_profile: boolean;
       show_side_recent: boolean;
     }
@@ -657,6 +659,8 @@ class MockPgClient {
         introduction,
         designTheme,
         showServiceHeader,
+        showSiteName,
+        showPagenation,
         showSideProfile,
         showSideRecent,
       ] = params;
@@ -667,6 +671,8 @@ class MockPgClient {
         introduction: introduction ?? "",
         design_theme: designTheme ?? "",
         show_service_header: !!showServiceHeader,
+        show_site_name: !!showSiteName,
+        show_pagenation: !!showPagenation,
         show_side_profile: !!showSideProfile,
         show_side_recent: !!showSideRecent,
       };
@@ -1048,6 +1054,8 @@ describe("UsersService", () => {
       introduction: "",
       designTheme: "",
       showServiceHeader: true,
+      showSiteName: true,
+      showPagenation: true,
       showSideProfile: true,
       showSideRecent: true,
     });
@@ -1060,6 +1068,8 @@ describe("UsersService", () => {
       introduction: "Hello",
       designTheme: "default",
       showServiceHeader: true,
+      showSiteName: true,
+      showPagenation: true,
       showSideProfile: true,
       showSideRecent: false,
     };
@@ -1073,16 +1083,19 @@ describe("UsersService", () => {
       introduction: "Hello",
       design_theme: "default",
       show_service_header: true,
+      show_site_name: true,
+      show_pagenation: true,
       show_side_profile: true,
       show_side_recent: false,
     });
-
     const cfg2 = {
       siteName: "My Awesome Site",
       author: "Alice T.",
       introduction: "Updated intro",
       designTheme: "dark",
       showServiceHeader: false,
+      showSiteName: false,
+      showPagenation: false,
       showSideProfile: false,
       showSideRecent: true,
     };
@@ -1096,6 +1109,8 @@ describe("UsersService", () => {
       introduction: "Updated intro",
       design_theme: "dark",
       show_service_header: false,
+      show_site_name: false,
+      show_pagenation: false,
       show_side_profile: false,
       show_side_recent: true,
     });

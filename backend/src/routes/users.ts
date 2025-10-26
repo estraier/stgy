@@ -619,6 +619,14 @@ export default function createUsersRouter(
     if (req.body.showServiceHeader !== undefined) {
       showServiceHeader = parseBoolean(String(req.body.showServiceHeader), true);
     }
+    let showSiteName: boolean | undefined;
+    if (req.body.showSiteName !== undefined) {
+      showSiteName = parseBoolean(String(req.body.showSiteName), true);
+    }
+    let showPagenation: boolean | undefined;
+    if (req.body.showPagenation !== undefined) {
+      showPagenation = parseBoolean(String(req.body.showPagenation), true);
+    }
     let showSideProfile: boolean | undefined;
     if (req.body.showSideProfile !== undefined) {
       showSideProfile = parseBoolean(String(req.body.showSideProfile), true);
@@ -638,6 +646,8 @@ export default function createUsersRouter(
         introduction: introduction ?? current.introduction,
         designTheme: designTheme ?? current.designTheme,
         showServiceHeader: showServiceHeader ?? current.showServiceHeader,
+        showSiteName: showSiteName ?? current.showSiteName,
+        showPagenation: showPagenation ?? current.showPagenation,
         showSideProfile: showSideProfile ?? current.showSideProfile,
         showSideRecent: showSideRecent ?? current.showSideRecent,
       };

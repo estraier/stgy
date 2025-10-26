@@ -62,6 +62,8 @@ CREATE TABLE user_pub_configs (
   introduction VARCHAR(500) NOT NULL DEFAULT '',
   design_theme VARCHAR(50) NOT NULL DEFAULT '',
   show_service_header BOOLEAN NOT NULL DEFAULT TRUE,
+  show_site_name BOOLEAN NOT NULL DEFAULT TRUE,
+  show_pagenation BOOLEAN NOT NULL DEFAULT TRUE,
   show_side_profile BOOLEAN NOT NULL DEFAULT TRUE,
   show_side_recent BOOLEAN NOT NULL DEFAULT TRUE
 );
