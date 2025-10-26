@@ -1,11 +1,3 @@
-body {
-  background: #f8f8ff;
-  color: #000;
-  font-size: 16px;
-  font-family: Arial, Helvetica, sans-serif;
-  word-break: break-all;
-}
-
 .sh-logo {
   color: #04f;
   font-weight: bold;
@@ -107,6 +99,7 @@ body {
   color: #111;
 }
 .pub-side-profile .profile-column .introduction {
+  font-size: 95%;
   color: #111;
 }
 
@@ -195,40 +188,42 @@ body {
 }
 
 @media (min-width: 1100px) {
-  .pub-container {
+  .pub-container .markdown-body {
+    padding: 1ex 2ex;
+  }
+
+  .pub-container:has(.pub-sidebar) {
     max-width: calc(48rem + 20rem + 1.5rem + 2rem);
   }
 
-  .pub-layout {
+  .pub-container:has(.pub-sidebar) .pub-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 20rem;
     column-gap: 1.5ex;
     align-items: start;
   }
 
-  .pub-container .markdown-body {
-    padding: 1ex 2ex;
-  }
-
-  .pub-main {
+  .pub-container:has(.pub-sidebar) .pub-main {
     grid-column: 1;
   }
-  .pub-sidebar {
+
+  .pub-container:has(.pub-sidebar) .pub-sidebar {
     grid-column: 2;
     margin-top: -0.4ex;
   }
 
-  .pub-side-profile,
-  .pub-side-recent {
+  .pub-container:has(.pub-sidebar) .pub-side-profile,
+  .pub-container:has(.pub-sidebar) .pub-side-recent {
     padding: 0;
     border-top: none;
   }
-  .pub-sidebar h2 {
+
+  .pub-container:has(.pub-sidebar) .pub-sidebar h2 {
     font-weight: normal;
     font-size: 90%;
   }
 
-  .pub-side-profile .profile-column {
+  .pub-container:has(.pub-sidebar) .pub-side-profile .profile-column {
     zoom: 50%;
     width: 70ex;
     margin: 1ex 0.3ex;
@@ -236,11 +231,15 @@ body {
     border: 1px solid #ddd;
     border-radius: 0.8ex;
   }
-  .pub-side-profile .profile-column * {
+
+  .pub-container:has(.pub-sidebar) .pub-side-profile .profile-column * {
     font-size: 200%;
   }
+  .pub-container:has(.pub-sidebar) .pub-side-profile .profile-column .introduction {
+    font-size: 180%;
+  }
 
-  .pub-side-recent article {
+  .pub-container:has(.pub-sidebar) .pub-side-recent article {
     display: inline-block;
     zoom: 50%;
     width: 70ex;
@@ -249,4 +248,163 @@ body {
     border: 1px solid #ddd;
     border-radius: 0.8ex;
   }
+}
+
+.pub-theme-dark {
+  background-color: #000811 !important;
+  color: #fff !important;
+}
+.pub-theme-dark .sh-logo {
+  color: #0033aa !important;
+}
+.pub-theme-dark .sh-viewas {
+  color: #ccc !important;
+}
+.pub-theme-dark .sh-button {
+  background-color: #222 !important;
+  border-color: #555 !important;
+  color: #eee !important;
+}
+.pub-theme-dark .pub-container .pub-main .date {
+  color: #aaa !important;
+}
+.pub-theme-dark .pub-container .markdown-body {
+  background-color: #000 !important;
+  border-color: #222 !important;
+  color: #fff !important;
+}
+.pub-theme-dark .pub-container .pub-site-name {
+  color: #cfe0ff !important;
+}
+.pub-theme-dark .pub-pager .pager-btn {
+  background-color: #000 !important;
+  border-color: #222 !important;
+  color: #ddd !important;
+}
+.pub-theme-dark .pub-pager .pager-btn:hover {
+  background-color: #0a0a12 !important;
+  border-color: #224477 !important;
+  color: #eee !important;
+}
+.pub-theme-dark .pub-pager .pager-btn.disabled {
+  background-color: #0a0a0a !important;
+  border-color: #222 !important;
+  color: #777 !important;
+}
+.pub-theme-dark .pub-sidebar h2 {
+  color: #aaa !important;
+}
+.pub-theme-dark .pub-side-profile .profile-column {
+  background-color: #000 !important;
+  border-color: #222 !important;
+  color: #fff !important;
+}
+.pub-theme-dark .pub-side-profile .profile-column .site-name {
+  color: #cfe0ff !important;
+}
+.pub-theme-dark .pub-side-profile .profile-column .author {
+  color: #eee !important;
+}
+.pub-theme-dark .pub-side-profile .profile-column .introduction {
+  color: #eee !important;
+}
+.pub-theme-dark .pub-side-recent article {
+  background-color: #000 !important;
+  border-color: #222 !important;
+  color: #fff !important;
+}
+.pub-theme-dark .site-container .markdown-body {
+  background-color: #000 !important;
+  border-color: #222 !important;
+  color: #fff !important;
+}
+.pub-theme-dark .site-container .pub-site-name {
+  color: #cfe0ff !important;
+}
+.pub-theme-dark .site-profile .profile-column {
+  background-color: #000 !important;
+  border-color: #222 !important;
+  color: #fff !important;
+}
+.pub-theme-dark .site-profile .profile-column .author {
+  color: #eee !important;
+}
+.pub-theme-dark .site-container .site-recent .date {
+  color: #aaa !important;
+}
+.pub-theme-dark .markdown-body a {
+  color: #224cb6 !important;
+}
+.pub-theme-dark .markdown-body a:hover {
+  color: #3b67d9 !important;
+}
+.pub-theme-dark .markdown-body blockquote {
+  border-left-color: #222 !important;
+  color: #ddd !important;
+  background-color: transparent !important;
+}
+.pub-theme-dark .markdown-body code {
+  background-color: #111 !important;
+  color: #fff !important;
+}
+.pub-theme-dark .markdown-body pre {
+  background-color: #0a0a0d !important;
+  border-color: #111 !important;
+  color: #fff !important;
+}
+.pub-theme-dark .markdown-body pre[data-pre-mode="natural"] {
+  background-color: transparent !important;
+  border-left-color: #111 !important;
+  color: #fff !important;
+}
+.pub-theme-dark .markdown-body table {
+  border-color: #777 !important;
+}
+.pub-theme-dark .markdown-body th,
+.pub-theme-dark .markdown-body td {
+  border-color: #777 !important;
+  color: #fff !important;
+  background-color: transparent !important;
+}
+.pub-theme-dark .markdown-body th {
+  background-color: #111 !important;
+}
+.pub-theme-dark .markdown-body .image-block figcaption {
+  background-color: #000 !important;
+  color: #fff !important;
+  border-color: #222 !important;
+}
+.pub-theme-dark .markdown-body .image-block img,
+.pub-theme-dark .markdown-body .image-block video {
+  border-color: #222 !important;
+  background-color: transparent !important;
+}
+.pub-theme-dark .markdown-body .featured-block img,
+.pub-theme-dark .markdown-body .featured-block video {
+  border-color: #222 !important;
+  background-color: transparent !important;
+}
+.pub-theme-dark .markdown-body .toc {
+  border-color: #222 !important;
+  background-color: transparent !important;
+  color: #ddd !important;
+}
+.pub-theme-dark .markdown-body .toc::before {
+  color: #a9c2ff !important;
+}
+.pub-theme-dark .markdown-body .toc a {
+  color: #224cb6 !important;
+}
+.pub-theme-dark .markdown-body .toc a:hover {
+  color: #3b67d9 !important;
+}
+.pub-theme-dark .markdown-body mark {
+  background-color: #301020 !important;
+  color: #fff !important;
+}
+.pub-theme-dark .markdown-body hr[data-hr-level="2"] {
+  border-top-color: #555 !important;
+}
+.pub-theme-dark .markdown-body hr[data-hr-level="3"] {
+  border-top-color: #999 !important;
 }

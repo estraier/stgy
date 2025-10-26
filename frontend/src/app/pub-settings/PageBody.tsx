@@ -81,9 +81,12 @@ export default function PageBody() {
     setCfg((prev) => ({ ...prev, [key]: value }));
   }
 
-  const themes: string[] = Array.isArray(Config.PUB_DESIGN_THEMES)
-    ? [...Config.PUB_DESIGN_THEMES]
-    : [];
+  const themeOptions =
+    Array.isArray(Config.PUB_DESIGN_THEMES) && Config.PUB_DESIGN_THEMES.length > 0
+      ? [...Config.PUB_DESIGN_THEMES]
+      : ["default"];
+  const themeHasMatch = cfg.designTheme.length > 0 && themeOptions.includes(cfg.designTheme);
+  const themeSelectValue = themeHasMatch ? cfg.designTheme : themeOptions[0];
 
   return (
     <main className="max-w-lg mx-auto mt-12 p-4 bg-white shadow border rounded">
@@ -125,13 +128,14 @@ export default function PageBody() {
             <label className="block">
               <span className="block text-sm text-gray-700 mb-1">Design theme</span>
               <select
-                value={cfg.designTheme}
-                onChange={(e) => setField("designTheme", e.target.value)}
+                value={themeSelectValue}
+                onChange={(e) =>
+                  setField("designTheme", e.target.value === "default" ? "" : e.target.value)
+                }
                 className="border px-2 py-1 rounded w-full"
                 disabled={loading || saving}
               >
-                <option value="">{themes.includes("default") ? "(default)" : "(auto)"}</option>
-                {themes.map((t) => (
+                {themeOptions.map((t) => (
                   <option key={t} value={t}>
                     {t}
                   </option>
