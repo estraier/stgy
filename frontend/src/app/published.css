@@ -55,7 +55,7 @@
 }
 
 .pub-container .pub-site-name {
-  font-size: 130%;
+  font-size: 140%;
   font-weight: bold;
   font-family: YuMincho, serif;
   color: #135;
@@ -98,6 +98,7 @@
   color: #135;
 }
 .pub-side-profile .profile-column .author {
+  font-weight: bold;
   font-family: YuMincho, serif;
   color: #111;
 }
@@ -196,12 +197,12 @@
   }
 
   .pub-container:has(.pub-sidebar) {
-    max-width: calc(48rem + 20rem + 1.5rem + 2rem);
+    max-width: calc(48rem + 26rem);
   }
 
   .pub-container:has(.pub-sidebar) .pub-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 20rem;
+    grid-template-columns: minmax(0, 1fr) 16rem;
     column-gap: 1.5ex;
     align-items: start;
   }
@@ -227,8 +228,8 @@
   }
 
   .pub-container:has(.pub-sidebar) .pub-side-profile .profile-column {
-    zoom: 50%;
-    width: 70ex;
+    zoom: 60%;
+    width: 50ex;
     margin: 1ex 0.3ex;
     padding: 0.8ex 1.2ex;
     border: 1px solid #ddd;
@@ -236,16 +237,16 @@
   }
 
   .pub-container:has(.pub-sidebar) .pub-side-profile .profile-column * {
-    font-size: 200%;
+    font-size: 165%;
   }
   .pub-container:has(.pub-sidebar) .pub-side-profile .profile-column .introduction {
-    font-size: 180%;
+    font-size: 150%;
   }
 
   .pub-container:has(.pub-sidebar) .pub-side-recent article {
     display: inline-block;
-    zoom: 50%;
-    width: 70ex;
+    zoom: 60%;
+    width: 50ex;
     margin: 1ex 0.3ex;
     padding: 0.8ex 1.2ex;
     border: 1px solid #ddd;
