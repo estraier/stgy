@@ -32,77 +32,72 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const olderHref = `${baseHref}?page=${page + 1}`;
 
     return (
-      <>
-        <SessionProbe />
-        <div className={`pub-page pub-theme-${theme}`}>
-          <PubServiceHeader
-            showServiceHeader={pubcfg.showServiceHeader}
-            session={session ?? undefined}
-            redirectTo={baseHref}
-            viewAsHref={baseHref}
-          />
-          <main className="site-container">
-            <div className="site-layout">
-              <section className="site-main">
-                <h1 className="pub-site-name">
-                  <a href={baseHref}>{pubcfg.siteName.trim() || "Untitled"}</a>
-                </h1>
-                <section className="site-profile">
-                  <div className="profile-column">
-                    <div className="author">{pubcfg.author.trim() || "anonymous"}</div>
-                    <p className="introduction">{pubcfg.introduction.trim() || "my publications"}</p>
-                  </div>
-                </section>
-
-                <section className="site-recent">
-                  <ul>
-                    {items.map((r) => {
-                      let snippetHtml = convertHtmlMathInline(makeHtmlFromJsonSnippet(r.snippet));
-                      snippetHtml = snippetHtml.replace(/<a\b[^>]*>/gi, "").replace(/<\/a>/gi, "");
-                      const publishedAtDate = new Date(r.publishedAt ?? "");
-                      return (
-                        <li key={r.id}>
-                          <a href={`/pub/${r.id}`}>
-                            <div className="date">{formatDateTime(publishedAtDate)}</div>
-                            <article
-                              lang={r.locale || undefined}
-                              className="markdown-body post-content-excerpt"
-                              dangerouslySetInnerHTML={{ __html: snippetHtml }}
-                            />
-                          </a>
-                        </li>
-                      );
-                    })}
-                  </ul>
-                </section>
-
-                <nav className="pub-pager" aria-label="Pagination">
-                  <div className="pager-row">
-                    {hasPrev ? (
-                      <a className="pager-btn" href={newerHref}>
-                        ← Newer
-                      </a>
-                    ) : (
-                      <span className="pager-btn disabled" aria-disabled="true">
-                        ← Newer
-                      </span>
-                    )}
-                    {hasNext ? (
-                      <a className="pager-btn" href={olderHref}>
-                        Older →
-                      </a>
-                    ) : (
-                      <span className="pager-btn disabled" aria-disabled="true">
-                        Older →
-                      </span>
-                    )}
-                  </div>
-                </nav>
+      <div className={`pub-page pub-theme-${theme}`}>
+        <PubServiceHeader
+          showServiceHeader={pubcfg.showServiceHeader}
+          session={session ?? undefined}
+          redirectTo={baseHref}
+          viewAsHref={baseHref}
+        />
+        <main className="site-container">
+          <div className="site-layout">
+            <section className="site-main">
+              <h1 className="pub-site-name">
+                <a href={baseHref}>{pubcfg.siteName.trim() || "Untitled"}</a>
+              </h1>
+              <section className="site-profile">
+                <div className="profile-column">
+                  <div className="author">{pubcfg.author.trim() || "anonymous"}</div>
+                  <p className="introduction">{pubcfg.introduction.trim() || "my publications"}</p>
+                </div>
               </section>
-            </div>
-          </main>
-        </div>
-      </>
+               <section className="site-recent">
+                <ul>
+                  {items.map((r) => {
+                    let snippetHtml = convertHtmlMathInline(makeHtmlFromJsonSnippet(r.snippet));
+                    snippetHtml = snippetHtml.replace(/<a\b[^>]*>/gi, "").replace(/<\/a>/gi, "");
+                    const publishedAtDate = new Date(r.publishedAt ?? "");
+                    return (
+                      <li key={r.id}>
+                        <a href={`/pub/${r.id}`}>
+                          <div className="date">{formatDateTime(publishedAtDate)}</div>
+                          <article
+                            lang={r.locale || undefined}
+                            className="markdown-body post-content-excerpt"
+                            dangerouslySetInnerHTML={{ __html: snippetHtml }}
+                          />
+                        </a>
+                      </li>
+                    );
+                  })}
+                </ul>
+              </section>
+               <nav className="pub-pager" aria-label="Pagination">
+                <div className="pager-row">
+                  {hasPrev ? (
+                    <a className="pager-btn" href={newerHref}>
+                      ← Newer
+                    </a>
+                  ) : (
+                    <span className="pager-btn disabled" aria-disabled="true">
+                      ← Newer
+                    </span>
+                  )}
+                  {hasNext ? (
+                    <a className="pager-btn" href={olderHref}>
+                      Older →
+                    </a>
+                  ) : (
+                    <span className="pager-btn disabled" aria-disabled="true">
+                      Older →
+                    </span>
+                  )}
+                </div>
+              </nav>
+            </section>
+          </div>
+        </main>
+      </div>
     );
   } catch (e) {
     const msg = e instanceof Error ? e.message : "Failed to load";

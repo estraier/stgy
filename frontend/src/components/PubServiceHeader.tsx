@@ -1,5 +1,7 @@
+// frontend/src/components/PubServiceHeader.tsx
 import Link from "next/link";
 import type { SessionInfo } from "@/api/models";
+import { getSessionInfo } from "@/api/authSsr";
 
 type Props = {
   showServiceHeader: boolean;
@@ -25,12 +27,14 @@ function addNext(base: string, next: string | null): string {
   return `${base}${sep}next=${encodeURIComponent(next)}`;
 }
 
-export default function PubServiceHeader({
+export default async function PubServiceHeader({
   showServiceHeader,
   session,
   redirectTo,
   viewAsHref,
 }: Props) {
+  const ensuredSession = session ?? (await getSessionInfo());
+
   if (!showServiceHeader) {
     return <div className="sh-pad h-12" aria-hidden="true" />;
   }
@@ -44,13 +48,13 @@ export default function PubServiceHeader({
         STGY
       </Link>
       <div className="sh-notes ml-auto flex items-center gap-2">
-        {session ? (
+        {ensuredSession ? (
           <Link
             href={viewHref}
             className="sh-viewas text-sm text-blue-600 hover:underline truncate max-w-[28ch]"
-            title={session.userNickname}
+            title={ensuredSession.userNickname}
           >
-            view as <span className="sh-nickname">{session.userNickname}</span>
+            view as <span className="sh-nickname">{ensuredSession.userNickname}</span>
           </Link>
         ) : (
           <>
