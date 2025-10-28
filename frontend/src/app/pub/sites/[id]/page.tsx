@@ -50,7 +50,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                   <p className="introduction">{pubcfg.introduction.trim() || "my publications"}</p>
                 </div>
               </section>
-               <section className="site-recent">
+              <section className="site-recent">
                 <ul>
                   {items.map((r) => {
                     let snippetHtml = convertHtmlMathInline(makeHtmlFromJsonSnippet(r.snippet));
@@ -71,7 +71,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                   })}
                 </ul>
               </section>
-               <nav className="pub-pager" aria-label="Pagination">
+              <nav className="pub-pager" aria-label="Pagination">
                 <div className="pager-row">
                   {hasPrev ? (
                     <a className="pager-btn" href={newerHref}>

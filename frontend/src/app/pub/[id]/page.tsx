@@ -2,8 +2,13 @@ import PubServiceHeader from "@/components/PubServiceHeader";
 import { getPubPost, listPubPostsByUser } from "@/api/posts";
 import { getSessionInfo } from "@/api/authSsr";
 import { getPubConfig } from "@/api/users";
-import { makeArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
-import { convertHtmlMathInline } from "@/utils/mathjax-inline";
+import {
+  makeArticleHtmlFromMarkdown,
+  makeHtmlFromJsonSnippet,
+  makeSnippetHtmlFromMarkdown,
+} from "@/utils/article";
+import LinkDiv from "@/components/LinkDiv";
+import ArticleWithDecoration from "@/components/ArticleWithDecoration";
 import { formatDateTime } from "@/utils/format";
 
 type Props = { params: Promise<{ id: string }> };
@@ -15,11 +20,11 @@ export default async function PubPostPage({ params }: Props) {
     const post = await getPubPost(id);
     const pubcfg = await getPubConfig(post.ownedBy);
     const theme = pubcfg.designTheme?.trim() ? pubcfg.designTheme : "default";
-    const articleHtml = convertHtmlMathInline(
+    const articleHtml =
       post.content && post.content.length > 0
         ? makeArticleHtmlFromMarkdown(post.content)
-        : makeHtmlFromJsonSnippet(post.snippet),
-    );
+        : makeHtmlFromJsonSnippet(post.snippet);
+    const siteIntroHtml = makeSnippetHtmlFromMarkdown(pubcfg.introduction);
     let recent: Awaited<ReturnType<typeof listPubPostsByUser>> = [];
     if (pubcfg.showSideRecent) {
       recent = await listPubPostsByUser(post.ownedBy, { offset: 0, limit: 5, order: "desc" });
@@ -42,10 +47,10 @@ export default async function PubPostPage({ params }: Props) {
                 </h1>
               )}
               <div className="date">{formatDateTime(new Date(post.publishedAt ?? ""))}</div>
-              <article
+              <ArticleWithDecoration
                 lang={post.locale || undefined}
                 className="markdown-body post-content"
-                dangerouslySetInnerHTML={{ __html: articleHtml }}
+                html={articleHtml}
               />
               {pubcfg.showPagenation && (
                 <nav className="pub-pager" aria-label="Pagination">
@@ -75,43 +80,32 @@ export default async function PubPostPage({ params }: Props) {
             {(pubcfg.showSideProfile || pubcfg.showSideRecent) && (
               <aside className="pub-sidebar">
                 {pubcfg.showSideProfile && (
-                  <a href={siteHref} className="pub-site-link">
-                    <section className="pub-side-profile">
-                      <h2>Profile</h2>
-                      <div className="profile-column">
-                        {!pubcfg.showSiteName && (
-                          <div className="site-name">{pubcfg.siteName.trim() || "Untitled"}</div>
-                        )}
-                        <div className="author">{pubcfg.author.trim() || "anonymous"}</div>
-                        <p className="introduction">
-                          {pubcfg.introduction.trim() || "my publications"}
-                        </p>
-                      </div>
-                    </section>
-                  </a>
+                  <section className="pub-side-profile">
+                    <h2>Profile</h2>
+                    <LinkDiv href={siteHref} className="link-div">
+                      <ArticleWithDecoration
+                        className="markdown-body site-intro"
+                        html={siteIntroHtml}
+                      />
+                    </LinkDiv>
+                  </section>
                 )}
                 {pubcfg.showSideRecent && (
                   <section className="pub-side-recent">
                     <h2>Recent posts</h2>
-                    <ul>
-                      {recent.map((r) => {
-                        let snippetHtml = convertHtmlMathInline(makeHtmlFromJsonSnippet(r.snippet));
-                        snippetHtml = snippetHtml
-                          .replace(/<a\b[^>]*>/gi, "")
-                          .replace(/<\/a>/gi, "");
-                        return (
-                          <li key={r.id}>
-                            <a href={`/pub/${r.id}`}>
-                              <article
-                                lang={r.locale || undefined}
-                                className="markdown-body post-content-excerpt"
-                                dangerouslySetInnerHTML={{ __html: snippetHtml }}
-                              />
-                            </a>
-                          </li>
-                        );
-                      })}
-                    </ul>
+                    {recent.map((r) => {
+                      const postHref = `/pub/${r.id}`;
+                      const snippetHtml = makeHtmlFromJsonSnippet(r.snippet);
+                      return (
+                        <LinkDiv key={String(r.id)} href={postHref} className="link-div">
+                          <ArticleWithDecoration
+                            lang={r.locale || undefined}
+                            className="markdown-body post-content-excerpt"
+                            html={snippetHtml}
+                          />
+                        </LinkDiv>
+                      );
+                    })}
                   </section>
                 )}
               </aside>

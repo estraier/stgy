@@ -9,10 +9,7 @@ type Props = {
   onSession?: (s: SessionInfo) => void;
 };
 
-export default function SessionProbe({
-  redirectIfLoggedIn = false,
-  onSession,
-}: Props) {
+export default function SessionProbe({ redirectIfLoggedIn = false, onSession }: Props) {
   useEffect(() => {
     let aborted = false;
     fetch("/backend/auth", { credentials: "include", cache: "no-store" })
@@ -23,8 +20,7 @@ export default function SessionProbe({
         if (redirectIfLoggedIn) {
           const now = Date.now();
           const regTs = Date.parse(s.userCreatedAt || "");
-          const isNewbie =
-            Number.isFinite(regTs) && now - regTs <= 48 * 60 * 60 * 1000;
+          const isNewbie = Number.isFinite(regTs) && now - regTs <= 48 * 60 * 60 * 1000;
           const target = isNewbie ? Config.WELCOME_PAGE_PATH : "/posts";
           if (location.pathname === "/" || location.pathname === "") {
             location.replace(target);

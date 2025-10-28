@@ -55,6 +55,11 @@
   margin-top: 1em;
   padding: 0.25em;
 }
+.pub-container .link-div {
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+}
 .pub-container .pub-main .date {
   text-align: right;
   padding-right: 1ex;
@@ -106,21 +111,6 @@
   background: #f6f6f6;
 }
 
-.pub-side-profile .profile-column .site-name {
-  font-weight: bold;
-  font-family: YuMincho, serif;
-  color: #135;
-}
-.pub-side-profile .profile-column .author {
-  font-weight: bold;
-  font-family: YuMincho, serif;
-  color: #111;
-}
-.pub-side-profile .profile-column .introduction {
-  font-size: 95%;
-  color: #111;
-}
-
 .pub-side-profile,
 .pub-side-recent {
   margin-top: 1ex;
@@ -132,16 +122,8 @@
   font-weight: bold;
   color: #777;
 }
-.pub-side-profile .profile-column {
-  zoom: 85%;
-  padding: 0.8ex 1.2ex;
-  background: #fff;
-  border: 1px solid #ddd;
-  border-radius: 0.8ex;
-}
-.pub-side-profile .profile-column * {
-  font-size: 120%;
-}
+
+.pub-side-profile article,
 .pub-side-recent article {
   zoom: 85%;
   margin: 1ex 0.3ex;
@@ -241,22 +223,15 @@
     font-size: 90%;
   }
 
-  .pub-container:has(.pub-sidebar) .pub-side-profile .profile-column {
-    zoom: 60%;
-    width: 50ex;
-    margin: 1ex 0.3ex;
-    padding: 0.8ex 1.2ex;
+  .pub-container:has(.pub-sidebar) .pub-side-profile article {
+    display: inline-block;
+    zoom: 80%;
+    width: 37.5ex;
+    margin: 0.75ex 0.225ex;
+    padding: 0.6ex 0.9ex;
     border: 1px solid #ddd;
     border-radius: 0.8ex;
   }
-
-  .pub-container:has(.pub-sidebar) .pub-side-profile .profile-column * {
-    font-size: 165%;
-  }
-  .pub-container:has(.pub-sidebar) .pub-side-profile .profile-column .introduction {
-    font-size: 150%;
-  }
-
   .pub-container:has(.pub-sidebar) .pub-side-recent article {
     display: inline-block;
     zoom: 60%;
