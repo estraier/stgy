@@ -1,4 +1,3 @@
-import SessionProbe from "@/components/SessionProbe";
 import PubServiceHeader from "@/components/PubServiceHeader";
 import { listPubPostsByUser } from "@/api/posts";
 import { getSessionInfo } from "@/api/authSsr";
@@ -37,7 +36,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
           showServiceHeader={pubcfg.showServiceHeader}
           session={session ?? undefined}
           redirectTo={baseHref}
-          viewAsHref={baseHref}
+          viewAsHref={`/users/${id}`}
         />
         <main className="site-container">
           <div className="site-layout">

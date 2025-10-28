@@ -1,4 +1,3 @@
-import SessionProbe from "@/components/SessionProbe";
 import PubServiceHeader from "@/components/PubServiceHeader";
 import { getPubPost, listPubPostsByUser } from "@/api/posts";
 import { getSessionInfo } from "@/api/authSsr";
