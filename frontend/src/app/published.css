@@ -274,8 +274,8 @@
 .pub-theme-dark .pub-sidebar h2 {
   color: #aaa !important;
 }
-.pub-container .pub-sidebar article.post-content-excerpt:hover,
-.site-container article.post-content-excerpt:hover {
+.pub-theme-dark .pub-container .pub-sidebar article.post-content-excerpt:hover,
+.pub-theme-dark .site-container article.post-content-excerpt:hover {
   border-color: #048 !important;
 }
 .pub-theme-dark .pub-container .markdown-body,
