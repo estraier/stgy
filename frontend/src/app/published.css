@@ -35,11 +35,11 @@
 }
 
 .pub-container {
-  max-width: 48rem;
+  max-width: 96ex;
   margin-left: auto;
   margin-right: auto;
-  margin-top: 1rem;
-  padding: 0.25rem;
+  margin-top: 1em;
+  padding: 0.25em;
 }
 .pub-container .pub-main .date {
   text-align: right;
@@ -66,12 +66,12 @@
 }
 
 .pub-pager {
-  margin-top: 1rem;
+  margin-top: 1em;
 }
 .pub-pager .pager-row {
   display: flex;
   justify-content: space-between;
-  gap: 0.5rem;
+  gap: 0.5em;
 }
 .pager-btn {
   display: inline-block;
@@ -137,11 +137,11 @@
 }
 
 .site-container {
-  max-width: 48rem;
+  max-width: 96ex;
   margin-left: auto;
   margin-right: auto;
-  margin-top: 1rem;
-  padding: 0.25rem;
+  margin-top: 1em;
+  padding: 0.25em;
 }
 
 .site-container .pub-site-name {
@@ -184,25 +184,25 @@
 
 @media (min-width: 640px) {
   .pub-container {
-    padding: 1rem;
+    padding: 1em;
   }
   .site-container {
-    padding: 1rem;
+    padding: 1em;
   }
 }
 
-@media (min-width: 1100px) {
+@media (min-width: 1060px) {
   .pub-container .markdown-body {
     padding: 1ex 2ex;
   }
 
   .pub-container:has(.pub-sidebar) {
-    max-width: calc(48rem + 26rem);
+    max-width: calc(96ex + 32ex);
   }
 
   .pub-container:has(.pub-sidebar) .pub-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 16rem;
+    grid-template-columns: minmax(0, 1fr) 32ex;
     column-gap: 1.5ex;
     align-items: start;
   }
