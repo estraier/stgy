@@ -24,7 +24,8 @@ export default async function PubPostPage({ params }: Props) {
       post.content && post.content.length > 0
         ? makeArticleHtmlFromMarkdown(post.content)
         : makeHtmlFromJsonSnippet(post.snippet);
-    const siteIntroHtml = makeSnippetHtmlFromMarkdown(pubcfg.introduction ?? "my publications");
+    const siteIntroHtml = makeSnippetHtmlFromMarkdown(
+      pubcfg.introduction.trim() || "my publications");
     let recent: Awaited<ReturnType<typeof listPubPostsByUser>> = [];
     if (pubcfg.showSideRecent) {
       recent = await listPubPostsByUser(post.ownedBy, { offset: 0, limit: 5, order: "desc" });
