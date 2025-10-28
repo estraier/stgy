@@ -2,8 +2,9 @@ import PubServiceHeader from "@/components/PubServiceHeader";
 import { listPubPostsByUser } from "@/api/posts";
 import { getSessionInfo } from "@/api/authSsr";
 import { getPubConfig } from "@/api/users";
-import { makeHtmlFromJsonSnippet } from "@/utils/article";
-import { convertHtmlMathInline } from "@/utils/mathjax-inline";
+import { makeArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
+import LinkDiv from "@/components/LinkDiv";
+import ArticleWithDecoration from "@/components/ArticleWithDecoration";
 import { formatDateTime } from "@/utils/format";
 
 type Props = {
@@ -29,7 +30,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const baseHref = `/pub/sites/${id}`;
     const newerHref = `${baseHref}?page=${page - 1}`;
     const olderHref = `${baseHref}?page=${page + 1}`;
-
+    const siteIntroHtml = makeArticleHtmlFromMarkdown(pubcfg.introduction ?? "my publications");
     return (
       <div className={`pub-page pub-theme-${theme}`}>
         <PubServiceHeader
@@ -45,31 +46,24 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                 <a href={baseHref}>{pubcfg.siteName.trim() || "Untitled"}</a>
               </h1>
               <section className="site-profile">
-                <div className="profile-column">
-                  <div className="author">{pubcfg.author.trim() || "anonymous"}</div>
-                  <p className="introduction">{pubcfg.introduction.trim() || "my publications"}</p>
-                </div>
+                <ArticleWithDecoration className="markdown-body site-intro" html={siteIntroHtml} />
               </section>
               <section className="site-recent">
-                <ul>
-                  {items.map((r) => {
-                    let snippetHtml = convertHtmlMathInline(makeHtmlFromJsonSnippet(r.snippet));
-                    snippetHtml = snippetHtml.replace(/<a\b[^>]*>/gi, "").replace(/<\/a>/gi, "");
-                    const publishedAtDate = new Date(r.publishedAt ?? "");
-                    return (
-                      <li key={r.id}>
-                        <a href={`/pub/${r.id}`}>
-                          <div className="date">{formatDateTime(publishedAtDate)}</div>
-                          <article
-                            lang={r.locale || undefined}
-                            className="markdown-body post-content-excerpt"
-                            dangerouslySetInnerHTML={{ __html: snippetHtml }}
-                          />
-                        </a>
-                      </li>
-                    );
-                  })}
-                </ul>
+                {items.map((r) => {
+                  const postHref = `/pub/${r.id}`;
+                  const snippetHtml = makeHtmlFromJsonSnippet(r.snippet);
+                  const publishedAtDate = new Date(r.publishedAt ?? "");
+                  return (
+                    <LinkDiv key={String(r.id)} href={postHref} className="link-div post-div">
+                      <div className="date">{formatDateTime(publishedAtDate)}</div>
+                      <ArticleWithDecoration
+                        lang={r.locale || undefined}
+                        className="markdown-body post-content-excerpt"
+                        html={snippetHtml}
+                      />
+                    </LinkDiv>
+                  );
+                })}
               </section>
               <nav className="pub-pager" aria-label="Pagination">
                 <div className="pager-row">

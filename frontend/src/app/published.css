@@ -72,6 +72,9 @@
   border: 1px solid #ddd;
   border-radius: 0.8ex;
 }
+.pub-container .pub-sidebar article.post-content-excerpt:hover {
+  border-color: #6af;
+}
 
 .pub-container .pub-site-name {
   font-size: 140%;
@@ -102,8 +105,8 @@
   color: #333;
 }
 .pager-btn:hover {
-  background: #f2f6ff;
-  border-color: #cce;
+  background: #def;
+  border-color: #bdf;
 }
 .pager-btn.disabled {
   opacity: 0.5;
@@ -139,6 +142,14 @@
   margin-top: 1em;
   padding: 0.25em;
 }
+.site-container .link-div {
+  margin: 0;
+  padding: 0;
+  cursor: pointer;
+}
+.site-container article.post-content-excerpt:hover {
+  border-color: #6af;
+}
 
 .site-container .pub-site-name {
   font-size: 140%;
@@ -151,19 +162,12 @@
   padding: 0;
 }
 
-.site-profile .profile-column {
-  padding: 0.8ex 1.2ex;
-  background: #fff;
-  border: 1px solid #ddd;
-  border-radius: 0.8ex;
+.site-profile article.site-intro {
+  border: 1px solid #555;
 }
-.site-profile .profile-column .author {
-  font-family: YuMincho, serif;
-  font-weight: bold;
-  color: #111;
-}
-.site-container .site-recent li {
-  margin-top: 1ex;
+
+.site-container .site-recent .post-div {
+  margin-top: 1.5ex;
 }
 .site-container .site-recent .date {
   text-align: right;
