@@ -2,10 +2,15 @@ import Link from "next/link";
 import { redirect } from "next/navigation";
 import { getSessionInfo } from "@/api/authSsr";
 import { Config } from "@/config";
+import { unstable_noStore as noStore } from "next/cache";
 
 export const dynamic = "force-dynamic";
+export const revalidate = 0;
+export const fetchCache = "force-no-store";
 
 export default async function HomePage() {
+  noStore();
+
   const session = await getSessionInfo();
 
   if (session) {
