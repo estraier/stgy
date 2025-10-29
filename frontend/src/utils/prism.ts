@@ -1,4 +1,3 @@
-// src/utils/prism.ts
 type PrismNS = typeof import("prismjs");
 
 let prismPromise: Promise<PrismNS> | null = null;

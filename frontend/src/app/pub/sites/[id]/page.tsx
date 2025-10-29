@@ -20,7 +20,9 @@ export default async function PubSitePage({ params, searchParams }: Props) {
   const session = await getSessionInfo();
   try {
     const pubcfg = await getPubConfig(id);
-    const theme = pubcfg.designTheme?.trim() ? pubcfg.designTheme : "default";
+    const theme = Config.PUB_DESIGN_DARK_THEMES.includes(pubcfg.designTheme ?? "")
+      ? pubcfg.designTheme
+      : "default";
     const themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
 
     const offset = (page - 1) * 10;
