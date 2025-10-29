@@ -24,12 +24,11 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       ? pubcfg.designTheme
       : "default";
     const themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
-
-    const offset = (page - 1) * 10;
-    const posts = await listPubPostsByUser(id, { offset, limit: 11, order: "desc" });
+    const offset = (page - 1) * Config.PUB_POSTS_PAGE_SIZE;
+    const posts = await listPubPostsByUser(id, { offset, limit: Config.PUB_POSTS_PAGE_SIZE + 1, order: "desc" });
     const hasPrev = page > 1;
-    const hasNext = posts.length > 10;
-    const items = posts.slice(0, 10);
+    const hasNext = posts.length > Config.PUB_POSTS_PAGE_SIZE;
+    const items = posts.slice(0, Config.PUB_POSTS_PAGE_SIZE);
 
     const baseHref = `/pub/sites/${id}`;
     const newerHref = `${baseHref}?page=${page - 1}`;

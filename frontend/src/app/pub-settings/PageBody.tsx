@@ -91,7 +91,6 @@ export default function PageBody() {
 
       <form onSubmit={handleSave} className="flex flex-col gap-6">
         <section>
-          <h2 className="text-lg font-semibold mb-2">Site information</h2>
           <div className="flex flex-col gap-3">
             <label className="block">
               <span className="block text-sm text-gray-700 mb-1">Site name</span>
@@ -143,7 +142,6 @@ export default function PageBody() {
         </section>
 
         <section>
-          <h2 className="text-lg font-semibold mb-2">Display options</h2>
           <div className="flex flex-col gap-2">
             <label className="inline-flex items-center gap-2">
               <input
