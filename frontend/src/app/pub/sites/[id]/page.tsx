@@ -31,7 +31,8 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const newerHref = `${baseHref}?page=${page - 1}`;
     const olderHref = `${baseHref}?page=${page + 1}`;
     const siteIntroHtml = makeArticleHtmlFromMarkdown(
-      pubcfg.introduction.trim() || "my publications");
+      pubcfg.introduction.trim() || "my publications",
+    );
     return (
       <div className={`pub-page pub-theme-${theme}`}>
         <PubServiceHeader

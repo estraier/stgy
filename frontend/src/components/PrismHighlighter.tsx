@@ -19,28 +19,39 @@ export default function PrismHighlighter({ root, deps = [] }: Props) {
     if (!container) return;
 
     let cancelled = false;
+    let raf = 0;
 
-    (async () => {
+    const needsHighlight = (
+      pre: HTMLPreElement,
+    ): { lang: string | null; code: HTMLElement | null } => {
+      const raw = pre.getAttribute("data-pre-mode") || "";
+      const lang = resolveHighlightLang(raw);
+      if (!lang) return { lang: null, code: null };
+      const code = pre.querySelector("code") as HTMLElement | null;
+      if (code && code.querySelector(".token")) return { lang: null, code: null };
+      return { lang, code };
+    };
+
+    const run = async () => {
+      if (cancelled) return;
+
       const pres = Array.from(container.querySelectorAll<HTMLPreElement>("pre[data-pre-mode]"));
       if (pres.length === 0) return;
 
       for (const pre of pres) {
         if (cancelled) return;
-        if (pre.dataset.prismified === "1") continue;
 
-        const raw = pre.getAttribute("data-pre-mode");
-        const lang = resolveHighlightLang(raw);
+        const { lang, code } = needsHighlight(pre);
         if (!lang) continue;
 
-        let code = pre.querySelector("code") as HTMLElement | null;
-        if (!code) {
+        let codeEl = code;
+        if (!codeEl) {
           const text = pre.textContent ?? "";
           pre.textContent = "";
-          code = document.createElement("code");
-          code.textContent = text;
-          pre.appendChild(code);
+          codeEl = document.createElement("code");
+          codeEl.textContent = text;
+          pre.appendChild(codeEl);
         }
-        const codeEl = code as HTMLElement;
 
         pre.classList.add(`language-${lang}`);
         codeEl.classList.add(`language-${lang}`);
@@ -49,12 +60,30 @@ export default function PrismHighlighter({ root, deps = [] }: Props) {
         if (cancelled) return;
 
         Prism.highlightElement(codeEl);
-        pre.dataset.prismified = "1";
       }
-    })();
+    };
+
+    const scheduleRun = () => {
+      if (raf) cancelAnimationFrame(raf);
+      raf = requestAnimationFrame(run);
+    };
+
+    scheduleRun();
+
+    const mo = new MutationObserver((mutations) => {
+      for (const m of mutations) {
+        if (m.type === "childList") {
+          scheduleRun();
+          break;
+        }
+      }
+    });
+    mo.observe(container, { childList: true, subtree: true });
 
     return () => {
       cancelled = true;
+      if (raf) cancelAnimationFrame(raf);
+      mo.disconnect();
     };
   }, [root, signal]);
 
