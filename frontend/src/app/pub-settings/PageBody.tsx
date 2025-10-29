@@ -1,7 +1,6 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter } from "next/navigation";
 import type { PubConfig } from "@/api/models";
 import { getSessionInfo } from "@/api/auth";
 import { getPubConfig, setPubConfig } from "@/api/users";
@@ -20,8 +19,6 @@ const emptyCfg: PubConfig = {
 };
 
 export default function PageBody() {
-  const router = useRouter();
-
   const [userId, setUserId] = useState<string | null>(null);
   const [cfg, setCfg] = useState<PubConfig>(emptyCfg);
   const [loading, setLoading] = useState(true);
@@ -210,18 +207,10 @@ export default function PageBody() {
         <div className="flex items-center gap-3">
           <button
             type="submit"
-            className="bg-blue-600 text-white px-4 py-1 rounded disabled:opacity-60"
+            className="bg-blue-600 text-white px-8 py-1 rounded disabled:opacity-60"
             disabled={loading || saving}
           >
             Save
-          </button>
-          <button
-            type="button"
-            className="border px-4 py-1 rounded disabled:opacity-60"
-            onClick={() => router.refresh()}
-            disabled={loading || saving}
-          >
-            Reset
           </button>
         </div>
       </form>

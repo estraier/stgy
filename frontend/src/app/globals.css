@@ -366,6 +366,15 @@ body {
   color: #03c;
 }
 
+.markdown-body code[class*="language-"] *,
+.markdown-body pre[class*="language-"] * {
+  background: none;
+}
+.markdown-body code[class*="language-"],
+.markdown-body pre[class*="language-"] {
+  text-shadow: none !important;
+}
+
 span[aria-label="Identicon"] > svg {
   transform: translate(-0.5px, -0.5px);
 }

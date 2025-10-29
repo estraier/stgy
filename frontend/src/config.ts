@@ -82,6 +82,7 @@ export class Config {
   static readonly WELCOME_PAGE_PATH = "/posts/0002000000000001";
   static readonly HELP_PAGE_PATH = "/posts/0002000000000002";
   static readonly PUB_DESIGN_THEMES = ["default", "dark"];
+  static readonly PUB_DESIGN_DARK_THEMES = ["dark"];
 }
 
 export function normStr(

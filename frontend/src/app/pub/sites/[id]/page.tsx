@@ -1,3 +1,4 @@
+import { Config } from "@/config";
 import PubServiceHeader from "@/components/PubServiceHeader";
 import { listPubPostsByUser } from "@/api/posts";
 import { getSessionInfo } from "@/api/authSsr";
@@ -20,6 +21,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
   try {
     const pubcfg = await getPubConfig(id);
     const theme = pubcfg.designTheme?.trim() ? pubcfg.designTheme : "default";
+    const themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
 
     const offset = (page - 1) * 10;
     const posts = await listPubPostsByUser(id, { offset, limit: 11, order: "desc" });
@@ -34,7 +36,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       pubcfg.introduction.trim() || "my publications",
     );
     return (
-      <div className={`pub-page pub-theme-${theme}`}>
+      <div className={`pub-page pub-theme-${theme} pub-theme-kind-${themeKind}`}>
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}
           session={session ?? undefined}

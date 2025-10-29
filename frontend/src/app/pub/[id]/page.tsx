@@ -1,3 +1,4 @@
+import { Config } from "@/config";
 import PubServiceHeader from "@/components/PubServiceHeader";
 import { getPubPost, listPubPostsByUser } from "@/api/posts";
 import { getSessionInfo } from "@/api/authSsr";
@@ -20,6 +21,7 @@ export default async function PubPostPage({ params }: Props) {
     const post = await getPubPost(id);
     const pubcfg = await getPubConfig(post.ownedBy);
     const theme = pubcfg.designTheme?.trim() ? pubcfg.designTheme : "default";
+    const themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
     const articleHtml =
       post.content && post.content.length > 0
         ? makeArticleHtmlFromMarkdown(post.content)
@@ -33,7 +35,7 @@ export default async function PubPostPage({ params }: Props) {
     }
     const siteHref = `/pub/sites/${post.ownedBy}`;
     return (
-      <div className={`pub-page pub-theme-${theme}`}>
+      <div className={`pub-page pub-theme-${theme} pub-theme-kind-${themeKind}`}>
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}
           session={session ?? undefined}
@@ -83,7 +85,7 @@ export default async function PubPostPage({ params }: Props) {
               <aside className="pub-sidebar">
                 {pubcfg.showSideProfile && (
                   <section className="pub-side-profile">
-                    <h2>Profile</h2>
+                    <h2 className="side-header">Profile</h2>
                     <LinkDiv href={siteHref} className="link-div">
                       <ArticleWithDecoration
                         className="markdown-body post-content-excerpt site-intro"
@@ -94,7 +96,7 @@ export default async function PubPostPage({ params }: Props) {
                 )}
                 {pubcfg.showSideRecent && (
                   <section className="pub-side-recent">
-                    <h2>Recent posts</h2>
+                    <h2 className="side-header">Recent posts</h2>
                     {recent.map((r) => {
                       const postHref = `/pub/${r.id}`;
                       const snippetHtml = makeHtmlFromJsonSnippet(r.snippet);
