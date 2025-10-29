@@ -307,6 +307,10 @@
   border-color: #333 !important;
   color: #777 !important;
 }
+.pub-theme-dark .markdown-body h1 {
+  color: #def;
+  border-bottom: 1px solid #344;
+}
 .pub-theme-dark .markdown-body a {
   color: #6aa8ff !important;
 }
