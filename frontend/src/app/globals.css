@@ -21,22 +21,22 @@ body {
 }
 
 .markdown-body h1 {
-  margin: 0.92ex 0;
+  margin: 1ex 0 0.92ex 0;
   font-size: 130%;
   font-weight: bold;
+  color: #025;
+  border-bottom: 1px solid #abc;
 }
 .markdown-body.user-introduction h1 {
-  margin: 0.85ex 0;
   font-size: 120%;
 }
 
 .markdown-body h2 {
-  margin: 0.95ex 0;
+  margin: 1.05ex 0 0.95ex 0;
   font-size: 115%;
   font-weight: bold;
 }
 .markdown-body.user-introduction h2 {
-  margin: 1ex 0;
   font-size: 110%;
 }
 
