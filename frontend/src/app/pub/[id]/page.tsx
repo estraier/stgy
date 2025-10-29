@@ -1,7 +1,6 @@
 import { Config } from "@/config";
 import PubServiceHeader from "@/components/PubServiceHeader";
 import { getPubPost, listPubPostsByUser } from "@/api/posts";
-import { getSessionInfo } from "@/api/authSsr";
 import { getPubConfig } from "@/api/users";
 import {
   makeArticleHtmlFromMarkdown,
@@ -16,7 +15,6 @@ type Props = { params: Promise<{ id: string }> };
 
 export default async function PubPostPage({ params }: Props) {
   const { id } = await params;
-  const session = await getSessionInfo();
   try {
     const post = await getPubPost(id);
     const pubcfg = await getPubConfig(post.ownedBy);
@@ -40,7 +38,6 @@ export default async function PubPostPage({ params }: Props) {
       <div className={`pub-page pub-theme-${theme} pub-theme-kind-${themeKind}`}>
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}
-          session={session ?? undefined}
           redirectTo={`/posts/${post.id}`}
           viewAsHref={`/posts/${post.id}`}
         />
@@ -124,7 +121,7 @@ export default async function PubPostPage({ params }: Props) {
     const msg = e instanceof Error ? e.message : "Failed to load";
     return (
       <div className="pub-page pub-theme-default">
-        <PubServiceHeader showServiceHeader={true} session={session ?? undefined} />
+        <PubServiceHeader showServiceHeader={true} />
         <main className="pub-container">
           <h1>Error</h1>
           <pre>{msg}</pre>

@@ -1,6 +1,10 @@
 @import "tailwindcss";
 @import "prismjs/themes/prism.css";
 
+html {
+  background: #f8f8ff;
+}
+
 body {
   background: #f8f8ff;
   color: #000;

@@ -1,9 +1,12 @@
+"use client";
+
+import { useEffect, useState } from "react";
 import Link from "next/link";
 import type { SessionInfo } from "@/api/models";
+import { getSessionInfo } from "@/api/auth";
 
 type Props = {
   showServiceHeader: boolean;
-  session?: SessionInfo | null;
   redirectTo?: string;
   viewAsHref?: string;
 };
@@ -12,28 +15,38 @@ function isAllowedPath(p: string): boolean {
   const s = p.startsWith("/") ? p : `/${p}`;
   return s === "/posts" || s === "/users" || s.startsWith("/posts/") || s.startsWith("/users/");
 }
-
 function normalizeNext(p?: string): string | null {
   if (!p) return null;
   const s = p.startsWith("/") ? p : `/${p}`;
   return isAllowedPath(s) ? s : null;
 }
-
 function addNext(base: string, next: string | null): string {
   if (!next) return base;
   const sep = base.includes("?") ? "&" : "?";
   return `${base}${sep}next=${encodeURIComponent(next)}`;
 }
 
-export default function PubServiceHeader({
-  showServiceHeader,
-  session,
-  redirectTo,
-  viewAsHref,
-}: Props) {
-  if (!showServiceHeader) {
-    return <div className="sh-pad h-12" aria-hidden="true" />;
-  }
+export default function PubServiceHeader({ showServiceHeader, redirectTo, viewAsHref }: Props) {
+  const [session, setSession] = useState<SessionInfo | null>(null);
+  const [loaded, setLoaded] = useState(false);
+
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      try {
+        const s = await getSessionInfo();
+        if (!cancelled) setSession(s ?? null);
+      } finally {
+        if (!cancelled) setLoaded(true);
+      }
+    })();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  if (!showServiceHeader) return <div className="sh-pad h-12" aria-hidden="true" />;
+
   const next = normalizeNext(redirectTo);
   const loginHref = addNext("/login", next);
   const signupHref = addNext("/signup", next);
@@ -45,7 +58,7 @@ export default function PubServiceHeader({
         STGY
       </Link>
       <div className="sh-notes ml-auto flex items-center gap-2">
-        {session ? (
+        {loaded && session ? (
           <Link
             href={viewHref}
             className="sh-viewas text-sm text-blue-600 hover:underline truncate max-w-[28ch]"

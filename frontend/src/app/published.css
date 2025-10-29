@@ -254,6 +254,9 @@
   }
 }
 
+html:has(.pub-theme-dark) {
+  background-color: #000c19 !important;
+}
 .pub-theme-dark {
   background-color: #000c19 !important;
   color: #eee !important;

@@ -1,7 +1,6 @@
 import { Config } from "@/config";
 import PubServiceHeader from "@/components/PubServiceHeader";
 import { listPubPostsByUser } from "@/api/posts";
-import { getSessionInfo } from "@/api/authSsr";
 import { getPubConfig } from "@/api/users";
 import { makeArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
 import LinkDiv from "@/components/LinkDiv";
@@ -17,7 +16,6 @@ export default async function PubSitePage({ params, searchParams }: Props) {
   const { id } = await params;
   const { page: pageStr } = await searchParams;
   const page = Math.max(1, Number.parseInt(pageStr ?? "1", 10) || 1);
-  const session = await getSessionInfo();
   try {
     const pubcfg = await getPubConfig(id);
     const theme = Config.PUB_DESIGN_DARK_THEMES.includes(pubcfg.designTheme ?? "")
@@ -25,7 +23,11 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       : "default";
     const themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
     const offset = (page - 1) * Config.PUB_POSTS_PAGE_SIZE;
-    const posts = await listPubPostsByUser(id, { offset, limit: Config.PUB_POSTS_PAGE_SIZE + 1, order: "desc" });
+    const posts = await listPubPostsByUser(id, {
+      offset,
+      limit: Config.PUB_POSTS_PAGE_SIZE + 1,
+      order: "desc",
+    });
     const hasPrev = page > 1;
     const hasNext = posts.length > Config.PUB_POSTS_PAGE_SIZE;
     const items = posts.slice(0, Config.PUB_POSTS_PAGE_SIZE);
@@ -40,7 +42,6 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       <div className={`pub-page pub-theme-${theme} pub-theme-kind-${themeKind}`}>
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}
-          session={session ?? undefined}
           redirectTo={baseHref}
           viewAsHref={`/users/${id}`}
         />
@@ -101,7 +102,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const msg = e instanceof Error ? e.message : "Failed to load";
     return (
       <div className="pub-page pub-theme-default">
-        <PubServiceHeader showServiceHeader={true} session={session ?? undefined} />
+        <PubServiceHeader showServiceHeader={true} />
         <main className="pub-container">
           <h1>Error</h1>
           <pre>{msg}</pre>
