@@ -1,0 +1,70 @@
+id: 0002000000000023
+ownedBy: 0001000000000021
+publishedAt: 2025-02-01 00:00:01+00
+allowLikes: true
+allowReplies: true
+tags: sample
+content:<<____EOF____
+# オイラーの公式の微分による証明
+
+**オイラーの公式**は、数学で最も美しい関係の一つとされている。
+
+　$$e^{i \theta} = \cos \theta + i \sin \theta$$
+
+この公式を微分を用いて証明する手順を簡潔に示す。
+
+## 関数 $$f(\theta)$$ の定義
+
+まず、オイラーの公式の左辺と右辺の比をとって、次のような関数 $$f(\theta)$$ を定義する。
+
+　$$f(\theta) = \frac{\cos \theta + i \sin \theta}{e^{i \theta}}$$
+
+もし $$f(\theta)$$ が恒等的に $$1$$ に等しいと証明できれば、オイラーの公式が成立することになる。
+
+## 関数 $$f(\theta)$$ の微分
+
+次に、この関数 $$f(\theta)$$ を $$\theta$$ で微分する。積の微分公式を使うために $$f(\theta)$$ を書き換える。
+
+　$$f(\theta) = (\cos \theta + i \sin \theta) \cdot e^{-i \theta}$$
+
+これを $$\theta$$ で微分する。
+
+　$$\frac{d}{d\theta} f(\theta) = \frac{d}{d\theta} (\cos \theta + i \sin \theta) \cdot e^{-i \theta} + (\cos \theta + i \sin \theta) \cdot \frac{d}{d\theta} (e^{-i \theta})$$
+
+ここで、それぞれの微分を実行する。
+
+　$$\frac{d}{d\theta} (\cos \theta + i \sin \theta) = -\sin \theta + i \cos \theta$$
+　$$\frac{d}{d\theta} (e^{-i \theta}) = e^{-i \theta} \cdot (-i) = -i e^{-i \theta}$$
+
+これらを代入し、共通因子 $$e^{-i \theta}$$ でくくる。
+
+　$$\frac{d}{d\theta} f(\theta) = e^{-i \theta} \left[ (-\sin \theta + i \cos \theta) - i (\cos \theta + i \sin \theta) \right]$$
+
+角括弧の中を展開し、$$i^2 = -1$$ を用いて整理する。
+
+　$$\frac{d}{d\theta} f(\theta) = e^{-i \theta} \left[ -\sin \theta + i \cos \theta - i \cos \theta - i^2 \sin \theta \right]$$
+
+　$$\frac{d}{d\theta} f(\theta) = e^{-i \theta} \left[ -\sin \theta + i \cos \theta - i \cos \theta + \sin \theta \right]$$
+
+項がすべて打ち消し合い、結果は $$0$$ になる。
+
+　$$\frac{d}{d\theta} f(\theta) = e^{-i \theta} \cdot 0 = 0$$
+
+## 証明の完了
+
+微分 $$\frac{d}{d\theta} f(\theta)$$ が恒等的に $$0$$ であるため、関数 $$f(\theta)$$ は定数 $$C$$ となる。
+
+　$$f(\theta) = C$$
+
+$$\theta=0$$ を代入して定数を求める。
+
+　$$f(0) = \frac{\cos 0 + i \sin 0}{e^{i \cdot 0}} = \frac{1 + i \cdot 0}{e^0} = 1$$
+
+よって、$$C=1$$ が導かれ、$$f(\theta)=1$$ が成立する。
+
+　$$\frac{\cos \theta + i \sin \theta}{e^{i \theta}} = 1$$
+
+これにより、オイラーの公式が証明された。
+
+　$$e^{i \theta} = \cos \theta + i \sin \theta$$
+____EOF____

@@ -1,0 +1,267 @@
+id: 0002000000000024
+ownedBy: 0001000000000021
+publishedAt: 2025-02-02 00:00:01+00
+allowLikes: true
+allowReplies: true
+tags: sample
+content:<<____EOF____
+# Tkrzwの各種言語バインディング
+
+DBMライブラリであるTkrzwは様々な言語のバンディングをサポートしている。C++、C、Java、Python、Ruby、Goにおける最も簡単なサンプルコードを個々に示す。
+
+## C++
+
+```cpp
+#include "tkrzw_dbm_hash.h"
+
+// Main routine.
+int main(int argc, char** argv) {
+  // All symbols of Tkrzw are under the namespace "tkrzw".
+  using namespace tkrzw;
+
+  // Creates the database manager.
+  HashDBM dbm;
+
+  // Opens a new database.
+  dbm.Open("casket.tkh", true);
+
+  // Stores records.
+  dbm.Set("foo", "hop");
+  dbm.Set("bar", "step");
+  dbm.Set("baz", "jump");
+
+  // Retrieves records.
+  std::cout << dbm.GetSimple("foo", "*") << std::endl;
+  std::cout << dbm.GetSimple("bar", "*") << std::endl;
+  std::cout << dbm.GetSimple("baz", "*") << std::endl;
+  std::cout << dbm.GetSimple("outlier", "*") << std::endl;
+
+  // Traverses records.
+  std::unique_ptr<DBM::Iterator> iter = dbm.MakeIterator();
+  iter->First();
+  std::string key, value;
+  while (iter->Get(&key, &value) == Status::SUCCESS) {
+    std::cout << key << ":" << value << std::endl;
+    iter->Next();
+  }
+
+  // Closes the database.
+  dbm.Close();
+
+  return 0;
+}
+```
+
+# C
+
+```c
+#include <stdio.h>
+#include "tkrzw_langc.h"
+
+// Main routine.
+int main(int argc, char** argv) {
+  // Opens the database file.
+  TkrzwDBM* dbm = tkrzw_dbm_open(
+      "casket.tkh", true, "truncate=true,num_buckets=100");
+
+  // Stores records.
+  tkrzw_dbm_set(dbm, "foo", -1, "hop", -1, true);
+  tkrzw_dbm_set(dbm, "bar", -1, "step", -1, true);
+  tkrzw_dbm_set(dbm, "baz", -1, "jump", -1, true);
+
+  // Retrieves a record.
+  char* value_ptr = tkrzw_dbm_get(dbm, "foo", -1, NULL);
+  if (value_ptr) {
+    puts(value_ptr);
+    free(value_ptr);
+  }
+
+  // Traverses records.
+  TkrzwDBMIter* iter = tkrzw_dbm_make_iterator(dbm);
+  tkrzw_dbm_iter_first(iter);
+  while (true) {
+    char* key_ptr = NULL;
+    if (!tkrzw_dbm_iter_get(iter, &key_ptr, NULL, &value_ptr, NULL)) {
+      break;
+    }
+    printf("%s:%s\n", key_ptr, value_ptr);
+    free(key_ptr);
+    free(value_ptr);
+    tkrzw_dbm_iter_next(iter);
+  }
+  tkrzw_dbm_iter_free(iter);
+
+  // Closes the database file.
+  tkrzw_dbm_close(dbm);
+
+  return 0;
+}
+```
+
+## Java
+
+```java
+import tkrzw.*;
+
+public class Example1 {
+  public static void main(String[] args) {
+    // Prepares the database.
+    DBM dbm = new DBM();
+    dbm.open("casket.tkh", true);
+
+    // Sets records.
+    // Keys and values are implicitly converted into byte arrays.
+    dbm.set("first", "hop");
+    dbm.set("second", "step");
+    dbm.set("third", "jump");
+
+    // Retrieves record values.
+    // If the operation fails, null is returned.
+    // If the class of the key is String, the value is converted into String.
+    System.out.println(dbm.get("first"));
+    System.out.println(dbm.get("second"));
+    System.out.println(dbm.get("third"));
+    System.out.println(dbm.get("fourth"));
+
+    // Checks and deletes a record.
+    if (dbm.contains("first")) {
+      dbm.remove("first");
+    }
+
+    // Traverses records.
+    // After using the iterator, it should be destructed explicitly.
+    Iterator iter = dbm.makeIterator();
+    iter.first();
+    while (true) {
+      String[] record = iter.getString();
+      if (record == null) {
+        break;
+      }
+      System.out.println(record[0] + ": " + record[1]);
+      iter.next();
+    }
+    iter.destruct();
+
+    // Closes the database.
+    dbm.close();
+  }
+}
+```
+
+## Python
+
+```python
+import tkrzw
+
+# Prepares the database.
+dbm = tkrzw.DBM()
+dbm.Open("casket.tkh", True, truncate=True, num_buckets=100)
+
+# Sets records.
+# If the operation fails, a runtime exception is raised.
+# Keys and values are implicitly converted into bytes.
+dbm["first"] = "hop"
+dbm["second"] = "step"
+dbm["third"] = "jump"
+
+# Retrieves record values.
+# If the operation fails, a runtime exception is raised.
+# Retrieved values are strings if keys are strings.
+print(dbm["first"])
+print(dbm["second"])
+print(dbm["third"])
+try:
+    print(dbm["fourth"])
+except tkrzw.StatusException as e:
+    print(repr(e))
+
+# Checks and deletes a record.
+if "first" in dbm:
+    del dbm["first"]
+
+# Traverses records.
+# Retrieved keys and values are always bytes so we decode them.
+for key, value in dbm:
+    print(key.decode(), value.decode())
+
+# Closes the database.
+dbm.Close()
+```
+
+## Ruby
+
+```ruby
+require 'tkrzw'
+
+# Prepares the database.
+dbm = Tkrzw::DBM.new
+dbm.open("casket.tkh", true, truncate: true,num_buckets: 100)
+
+# Sets records.
+dbm["first"] = "hop"
+dbm["second"] = "step"
+dbm["third"] = "jump"
+
+# Retrieves record values.
+# If the operation fails, nil is returned.
+p dbm["first"]
+p dbm["second"]
+p dbm["third"]
+p dbm["fourth"]
+
+# Checks and deletes a record.
+if dbm.include?("first")
+  dbm.remove("first")
+end
+
+# Traverses records.
+dbm.each do |key, value|
+  p key + ": " + value
+end
+
+# Closes and the database.
+dbm.close
+```
+
+## Go
+
+```go
+package main
+
+import (
+  "fmt"
+  "github.com/estraier/tkrzw-go"
+)
+
+func main() {
+  // Prepares the database.
+  dbm := tkrzw.NewDBM()
+  dbm.Open("casket.tkh", true,
+    tkrzw.ParseParams("truncate=true,num_buckets=100"))
+
+  // Sets records.
+  // Keys and values are implicitly converted into bytes.
+  dbm.Set("first", "hop", true)
+  dbm.Set("second", "step", true)
+  dbm.Set("third", "jump", true)
+
+  // Retrieves record values as strings.
+  fmt.Println(dbm.GetStrSimple("first", "*"))
+  fmt.Println(dbm.GetStrSimple("second", "*"))
+  fmt.Println(dbm.GetStrSimple("third", "*"))
+
+  // Checks and deletes a record.
+  if dbm.Check("first") {
+    dbm.Remove("first")
+  }
+
+  // Traverses records with a range over a channel.
+  for record := range dbm.EachStr() {
+    fmt.Println(record.Key, record.Value)
+  }
+
+  // Closes the database.
+  dbm.Close()
+}
+```
+____EOF____
