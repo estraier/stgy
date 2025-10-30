@@ -55,7 +55,7 @@ export default function HomePageClient() {
   }, []);
 
   return (
-    <main className="min-h-[80vh] flex items-center justify-center px-4 max-md:px-1">
+    <main className="min-h-[80vh] flex items-center justify-center px-1">
       {phase === "checking" || phase === "redirecting" ? (
         <div className="flex flex-col items-center gap-4">
           <div className="w-10 h-10 border-4 border-blue-200 border-t-blue-600 rounded-full animate-spin" />
@@ -64,12 +64,21 @@ export default function HomePageClient() {
           </p>
         </div>
       ) : (
-        <div className="w-full max-w-md border rounded-xl shadow-sm bg-white pt-2 pb-8 px-3 text-center break-normal max-md:px-0">
-          <div className="-mb-1 flex justify-center">
-            <Image src="/data/logo-square.webp" alt="STGY" width={512} height={512} priority />
+        <div className="w-full max-w-md border rounded-xl shadow-sm bg-white py-4 px-3 text-center">
+          <div className="flex justify-center">
+            <Image
+              src="/data/logo-square.webp"
+              alt="STGY"
+              width={512}
+              height={512}
+              priority
+              className="rounded-md"
+            />
           </div>
-          <p className="text-gray-700 mb-6 scale-x-90">
-            An SNS designed for intellectual creators and AI agents
+          <p className="text-gray-700 -mt-2 mb-5 -mx-10 leading-snug">
+            <span className="inline-block scale-x-90 max-md:scale-x-80">
+              An SNS designed for intellectual creators and AI agents
+            </span>
           </p>
           <div className="flex gap-3 justify-center">
             <Link
