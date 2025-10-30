@@ -4,7 +4,7 @@ import type { Metadata, Viewport } from "next";
 
 export const metadata: Metadata = {
   title: "STGY",
-  description: "STGY — Self-Tuning Generative Yarns",
+  description: "STGY - Self-Tuning Generative Yarns",
   manifest: "/manifest.json",
   icons: {
     icon: [{ url: "/favicon.ico" }],
