@@ -25,13 +25,15 @@ export default function ArticleWithDecoration({
     const el = ref.current;
     if (!el) return;
     ensureMathJaxReady().then(() => {
-      patchMathInlineInContainer(el);
+      const cur = ref.current;
+      if (!cur) return;
+      patchMathInlineInContainer(cur);
     });
-  }, [html]);
+  });
 
   const prismDeps = React.useMemo(() => [html], [html]);
-
   const Element = as;
+
   const setRef = React.useCallback((node: HTMLElement | null) => {
     ref.current = node;
   }, []);
