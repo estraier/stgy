@@ -450,15 +450,46 @@ export function parseMarkdown(mdText: string): MdNode[] {
   return nodes;
 }
 
-export type MdMediaRewriteRule = {
+export type MdRewriteRule = {
   pattern: RegExp;
   replacement: string;
 };
 
+export function mdRewriteLinkUrls(
+  nodes: MdNode[],
+  rules: MdRewriteRule[],
+): MdNode[] {
+  if (!rules.length) return nodes;
+  const applyRules = (href: string) =>
+    rules.reduce((u, r) => u.replace(r.pattern, r.replacement), href);
+  const rewriteOne = (n: MdNode): MdNode => {
+    if (n.type !== "element") return n;
+    const children = (n.children || []).map(rewriteOne);
+    if (n.tag !== "a") {
+      return { ...n, children };
+    }
+    const a = n.attrs || {};
+    const href = typeof a.href === "string" ? a.href : null;
+    if (!href) {
+      return { ...n, children };
+    }
+    const newHref = applyRules(href);
+    if (newHref === href) {
+      return { ...n, children };
+    }
+    return {
+      ...n,
+      attrs: { ...a, href: newHref },
+      children,
+    };
+  };
+  return nodes.map(rewriteOne);
+}
+
 export type MdMediaRewriteOptions = {
   allowedPatterns: RegExp[];
   alternativeImage: string;
-  rewriteRules: MdMediaRewriteRule[];
+  rewriteRules: MdRewriteRule[];
   maxObjects?: number;
 };
 

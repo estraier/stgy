@@ -10,6 +10,7 @@ import {
   mdCutOff,
   mdRenderHtml,
   mdRenderText,
+  mdGetTitle,
   deserializeMdNodes,
 } from "stgy-markdown";
 
@@ -18,6 +19,17 @@ export function makeArticleHtmlFromMarkdown(mdText: string, usePosAttrs = false)
   nodes = rewriteMediaUrls(nodes, false);
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
   return mdRenderHtml(nodes, usePosAttrs);
+}
+
+export function makePubArticleHtmlAndTitleFromMarkdown(
+  mdText: string,
+): { html: string; titleText: string | null } {
+  let nodes = parseMarkdown(mdText);
+  nodes = rewriteMediaUrls(nodes, true);
+  nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
+  const html = mdRenderHtml(nodes, false);
+  const titleText = mdGetTitle(nodes);
+  return { html, titleText };
 }
 
 export function makeSnippetHtmlFromMarkdown(mdText: string) {
@@ -69,6 +81,24 @@ function rewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {
   });
   const opts: MdMediaRewriteOptions = {
     allowedPatterns: [/^\/(data|images|videos)\//],
+    alternativeImage: "/data/no-image.svg",
+    rewriteRules,
+    maxObjects: Config.MAX_MEDIA_OBJECTS_PER_POST,
+  };
+  return mdRewriteMediaUrls(nodes, opts);
+}
+
+function rewritePubUrls(nodes: MdNode[]): MdNode[] {
+  const rewriteRules: MdMediaRewriteRule[] = [];
+
+  rewriteRules.push({
+    pattern: /^\/posts\//, replacement: "/pub/",
+  });
+  rewriteRules.push({
+    pattern: /^\/users\//, replacement: "/pub/sites/",
+  });
+  const opts: MdMediaRewriteOptions = {
+    allowedPatterns: [/.*/],
     alternativeImage: "/data/no-image.svg",
     rewriteRules,
     maxObjects: Config.MAX_MEDIA_OBJECTS_PER_POST,

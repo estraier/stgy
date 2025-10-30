@@ -2,6 +2,7 @@ import {
   parseMarkdown,
   mdGroupImageGrid,
   MdMediaRewriteOptions,
+  mdRewriteLinkUrls,
   mdRewriteMediaUrls,
   mdFilterForFeatured,
   mdCutOff,
@@ -270,6 +271,98 @@ describe("mdGroupImageGrid", () => {
     expect(stripPos(mdGroupImageGrid(parseMarkdown(mdText)))).toStrictEqual(
       expected,
     );
+  });
+});
+
+describe("mdRewriteLinkUrls", () => {
+  it("rewrites http to https", () => {
+    const mdText = "[link](http://example.com/path)";
+    const rules = [{ pattern: /^http:\/\//, replacement: "https://" }];
+    const nodes = parseMarkdown(mdText);
+    const rewritten = mdRewriteLinkUrls(nodes, rules);
+    const expected = [
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "element",
+            tag: "a",
+            attrs: { href: "https://example.com/path" },
+            children: [{ type: "text", text: "link" }],
+          },
+        ],
+      },
+    ];
+    expect(stripPos(rewritten)).toStrictEqual(expected);
+  });
+
+  it("rewrites relative to absolute", () => {
+    const mdText = "[home](/posts) and [user](/users/123)";
+    const rules = [
+      { pattern: /^\/(posts|users)/, replacement: "https://stgy.jp/$1" },
+    ];
+    const nodes = parseMarkdown(mdText);
+    const rewritten = mdRewriteLinkUrls(nodes, rules);
+    const expected = [
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "element",
+            tag: "a",
+            attrs: { href: "https://stgy.jp/posts" },
+            children: [{ type: "text", text: "home" }],
+          },
+          {
+            type: "text",
+            text: " and ",
+          },
+          {
+            type: "element",
+            tag: "a",
+            attrs: { href: "https://stgy.jp/users/123" },
+            children: [{ type: "text", text: "user" }],
+          },
+        ],
+      },
+    ];
+    expect(stripPos(rewritten)).toStrictEqual(expected);
+  });
+
+  it("keeps others as is", () => {
+    const mdText = "[nochange](mailto:info@example.com)";
+    const rules = [{ pattern: /^\/foo/, replacement: "/bar" }];
+    const nodes = parseMarkdown(mdText);
+    const rewritten = mdRewriteLinkUrls(nodes, rules);
+    expect(stripPos(rewritten)).toStrictEqual(stripPos(nodes));
+  });
+
+  it("rewrites nested links", () => {
+    const mdText = "> see [doc](/docs)";
+    const rules = [{ pattern: /^\/docs/, replacement: "https://docs.stgy.jp" }];
+    const nodes = parseMarkdown(mdText);
+    const rewritten = mdRewriteLinkUrls(nodes, rules);
+    const expected = [
+      {
+        type: "element",
+        tag: "blockquote",
+        children: [
+          {
+            type: "text",
+            text: "see ",
+          },
+          {
+            type: "element",
+            tag: "a",
+            attrs: { href: "https://docs.stgy.jp" },
+            children: [{ type: "text", text: "doc" }],
+          },
+        ],
+      },
+    ];
+    expect(stripPos(rewritten)).toStrictEqual(expected);
   });
 });
 
