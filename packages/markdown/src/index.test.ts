@@ -9,6 +9,7 @@ import {
   mdRenderHtml,
   serializeMdNodes,
   deserializeMdNodes,
+  getTitle,
 } from "./index";
 
 function stripPos<T>(val: T): T {
@@ -865,6 +866,23 @@ abc
     const expected = `<h1 id="h-1">H1</h1><p>abc<br>def</p><p>xyz</p><pre data-pre-mode="xml" data-pre-style="small">&lt;a&gt;tako&lt;/a&gt;
 ika</pre><h2 id="h-1-1">H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul><li>e</li></ul></li><li>f</li></ul></li><li>g</li><li>h<ul><li>j<ul><li>k</li></ul></li></ul></li></ul><p>abc</p><table><tr><td><em>a</em></td><td>b</td></tr><tr><td>c</td><td><strong>d</strong></td></tr></table><figure class="image-block" data-thumbnail><img src="/data/def/ghi" alt="" decoding="async" loading="lazy"><figcaption>abc</figcaption></figure><h3 id="h-1-1-1">H3</h3>`;
     expect(makeHtml(mdText)).toBe(expected);
+  });
+});
+
+describe("getTitle", () => {
+  it("returns first h1", () => {
+    const md = "intro\n## H2\n# Title **H1-1**\n# Title H1-2\nbody";
+    expect(getTitle(parseMarkdown(md))).toBe("Title H1-1");
+  });
+
+  it("returns first h2 when no h1", () => {
+    const md = "intro\n### H3\n## Title ::H2-1::\n## Title H2-2\nbody";
+    expect(getTitle(parseMarkdown(md))).toBe("Title H2-1");
+  });
+
+  it("returns null when no h1/h2", () => {
+    const md = "intro\n### Only H3\nbody";
+    expect(getTitle(parseMarkdown(md))).toBeNull();
   });
 });
 

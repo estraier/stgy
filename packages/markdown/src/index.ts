@@ -1362,6 +1362,70 @@ export function mdRenderHtml(
   return serializeAll(nodes);
 }
 
+export function getTitle(nodes: MdNode[]): string | null {
+  let foundH1: string | null = null;
+  let foundH2: string | null = null;
+  function collectText(ns: MdNode[] | undefined): string {
+    if (!ns) return "";
+    let out = "";
+    for (const n of ns) {
+      if (n.type === "text") {
+        out += n.text;
+      } else if (n.type === "element") {
+        if (n.tag === "br") {
+          out += " ";
+        } else if (n.tag === "math") {
+          const tex =
+            (n.attrs && typeof n.attrs.tex === "string" ? n.attrs.tex : "") ||
+            "";
+          out += tex;
+        } else if (n.tag === "ruby") {
+          for (const c of n.children || []) {
+            if (c.type === "text") {
+              out += c.text;
+            } else if (c.type === "element" && c.tag === "rt") {
+              const rtText = collectText(c.children);
+              if (rtText) out += `(${rtText})`;
+            } else {
+              out += collectText([c]);
+            }
+          }
+        } else {
+          out += collectText(n.children);
+        }
+      }
+    }
+    return out.replace(/\s+/g, " ").trim();
+  }
+  function walk(arr: MdNode[]): void {
+    for (const n of arr) {
+      if (n.type === "element") {
+        if (n.tag === "h1" && !foundH1) {
+          const txt = collectText(n.children);
+          if (txt) {
+            foundH1 = txt;
+            return;
+          }
+        }
+        if (n.tag === "h2" && !foundH2) {
+          const txt = collectText(n.children);
+          if (txt) {
+            foundH2 = txt;
+          }
+        }
+        if (n.children && n.children.length) {
+          walk(n.children);
+          if (foundH1) return;
+        }
+      }
+    }
+  }
+  walk(nodes);
+  if (foundH1) return foundH1;
+  if (foundH2) return foundH2;
+  return null;
+}
+
 export function serializeMdNodes(nodes: MdNode[]): string {
   const enc = nodes.map(encodeNode);
   return JSON.stringify(enc);
