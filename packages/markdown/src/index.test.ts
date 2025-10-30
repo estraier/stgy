@@ -9,7 +9,7 @@ import {
   mdRenderHtml,
   serializeMdNodes,
   deserializeMdNodes,
-  getTitle,
+  mdGetTitle,
 } from "./index";
 
 function stripPos<T>(val: T): T {
@@ -869,20 +869,20 @@ ika</pre><h2 id="h-1-1">H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul>
   });
 });
 
-describe("getTitle", () => {
+describe("mdGetTitle", () => {
   it("returns first h1", () => {
     const md = "intro\n## H2\n# Title **H1-1**\n# Title H1-2\nbody";
-    expect(getTitle(parseMarkdown(md))).toBe("Title H1-1");
+    expect(mdGetTitle(parseMarkdown(md))).toBe("Title H1-1");
   });
 
   it("returns first h2 when no h1", () => {
     const md = "intro\n### H3\n## Title ::H2-1::\n## Title H2-2\nbody";
-    expect(getTitle(parseMarkdown(md))).toBe("Title H2-1");
+    expect(mdGetTitle(parseMarkdown(md))).toBe("Title H2-1");
   });
 
   it("returns null when no h1/h2", () => {
     const md = "intro\n### Only H3\nbody";
-    expect(getTitle(parseMarkdown(md))).toBeNull();
+    expect(mdGetTitle(parseMarkdown(md))).toBeNull();
   });
 });
 

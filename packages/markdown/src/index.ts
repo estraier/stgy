@@ -1362,7 +1362,7 @@ export function mdRenderHtml(
   return serializeAll(nodes);
 }
 
-export function getTitle(nodes: MdNode[]): string | null {
+export function mdGetTitle(nodes: MdNode[]): string | null {
   let foundH1: string | null = null;
   let foundH2: string | null = null;
   function collectText(ns: MdNode[] | undefined): string {
