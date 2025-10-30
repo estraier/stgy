@@ -290,6 +290,7 @@ components:
         showServiceHeader: { type: boolean }
         showSideProfile: { type: boolean }
         showSideRecent: { type: boolean }
+        locale: { type: boolean }
       required:
         [
           siteName,

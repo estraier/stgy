@@ -67,7 +67,7 @@ const SQL_UPSERT_DETAILS =
   "INSERT INTO user_details (user_id, introduction, ai_personality) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET introduction = COALESCE(EXCLUDED.introduction, user_details.introduction), ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)";
 
 const SQL_SELECT_PUBCONFIG =
-  "SELECT site_name, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent FROM user_pub_configs WHERE user_id = $1 LIMIT 1";
+  "SELECT upc.site_name, upc.author, upc.introduction, upc.design_theme, upc.show_service_header, upc.show_site_name, upc.show_pagenation, upc.show_side_profile, upc.show_side_recent, ud.locale FROM user_pub_configs upc LEFT JOIN user_details ud ON ud.user_id = upc.user_id WHERE upc.user_id = $1 LIMIT 1";
 
 const SQL_UPSERT_PUBCONFIG =
   "INSERT INTO user_pub_configs ( user_id, site_name, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (user_id) DO UPDATE SET site_name = EXCLUDED.site_name, author = EXCLUDED.author, introduction = EXCLUDED.introduction, design_theme = EXCLUDED.design_theme, show_service_header = EXCLUDED.show_service_header, show_site_name = EXCLUDED.show_site_name, show_pagenation = EXCLUDED.show_pagenation, show_side_profile = EXCLUDED.show_side_profile, show_side_recent = EXCLUDED.show_side_recent RETURNING site_name, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent";
@@ -648,7 +648,18 @@ class MockPgClient {
     if (n === SQL_SELECT_PUBCONFIG) {
       const userId = decToHex(params[0]);
       const cfg = this.pubConfigs[userId];
-      return cfg ? { rows: [cfg] } : { rows: [] };
+      if (cfg) {
+        const d = this.details[userId];
+        return {
+          rows: [
+            {
+              ...cfg,
+              locale: d?.locale ?? null,
+            },
+          ],
+        };
+      }
+      return { rows: [] };
     }
 
     if (n === SQL_UPSERT_PUBCONFIG) {
@@ -1058,6 +1069,7 @@ describe("UsersService", () => {
       showPagenation: true,
       showSideProfile: true,
       showSideRecent: true,
+      locale: "ja-JP",
     });
   });
 
@@ -1076,7 +1088,7 @@ describe("UsersService", () => {
     const saved1 = await service.setPubConfig(ALICE, cfg1);
     expect(saved1).toEqual(cfg1);
     const got1 = await service.getPubConfig(ALICE);
-    expect(got1).toEqual(cfg1);
+    expect(got1).toEqual({ ...cfg1, locale: "ja-JP" });
     expect(pg.pubConfigs[ALICE]).toEqual({
       site_name: "My Site",
       author: "Alice",
@@ -1102,7 +1114,7 @@ describe("UsersService", () => {
     const saved2 = await service.setPubConfig(ALICE, cfg2);
     expect(saved2).toEqual(cfg2);
     const got2 = await service.getPubConfig(ALICE);
-    expect(got2).toEqual(cfg2);
+    expect(got2).toEqual({ ...cfg2, locale: "ja-JP" });
     expect(pg.pubConfigs[ALICE]).toEqual({
       site_name: "My Awesome Site",
       author: "Alice T.",

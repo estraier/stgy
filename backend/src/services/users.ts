@@ -1181,27 +1181,40 @@ export class UsersService {
   }
 
   async getPubConfig(userId: string): Promise<PubConfig> {
+    const decId = hexToDec(userId);
     const res = await pgQuery(
       this.pgPool,
       `
       SELECT
-        site_name,
-        author,
-        introduction,
-        design_theme,
-        show_service_header,
-        show_site_name,
-        show_pagenation,
-        show_side_profile,
-        show_side_recent
-      FROM user_pub_configs
-      WHERE user_id = $1
+        upc.site_name,
+        upc.author,
+        upc.introduction,
+        upc.design_theme,
+        upc.show_service_header,
+        upc.show_site_name,
+        upc.show_pagenation,
+        upc.show_side_profile,
+        upc.show_side_recent,
+        ud.locale
+      FROM user_pub_configs upc
+      LEFT JOIN user_details ud ON ud.user_id = upc.user_id
+      WHERE upc.user_id = $1
       LIMIT 1
     `,
-      [hexToDec(userId)],
+      [decId],
     );
-
     if (res.rows.length === 0) {
+      const det = await pgQuery(
+        this.pgPool,
+        `
+          SELECT locale
+          FROM user_details
+          WHERE user_id = $1
+          LIMIT 1
+        `,
+        [decId],
+      );
+      const locale = det.rows[0]?.locale ?? undefined;
       return {
         siteName: "",
         author: "",
@@ -1212,9 +1225,9 @@ export class UsersService {
         showPagenation: true,
         showSideProfile: true,
         showSideRecent: true,
+        locale,
       };
     }
-
     const row = res.rows[0] as Record<string, unknown>;
     return snakeToCamel<PubConfig>(row);
   }
