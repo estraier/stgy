@@ -153,4 +153,5 @@ export type PubConfig = {
   showPagenation: boolean;
   showSideProfile: boolean;
   showSideRecent: boolean;
+  locale?: string;
 };

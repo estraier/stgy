@@ -53,8 +53,7 @@ export function makeSnippetHtmlFromMarkdown(mdText: string) {
   return mdRenderHtml(nodes);
 }
 
-export function makeSnippetTextFromMarkdown(mdText: string) {
-  const maxLen = 50;
+export function makeSnippetTextFromMarkdown(mdText: string, maxLen = 50) {
   const nodes = parseMarkdown(mdText);
   const text = mdRenderText(nodes);
   const flat = text.replace(/\s+/g, " ").trim();

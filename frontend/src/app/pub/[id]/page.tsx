@@ -1,3 +1,4 @@
+// src/app/pub/[id]/page.tsx
 import { cache } from "react";
 import { Config } from "@/config";
 import PubServiceHeader from "@/components/PubServiceHeader";
@@ -22,8 +23,12 @@ const getPubPageData = cache(async (id: string) => {
   return { post, pubcfg, article };
 });
 
-export async function generateMetadata({ params }: { params: PageParams }): Promise<Metadata> {
-  const { id } = params;
+export async function generateMetadata({
+  params,
+}: {
+  params: Promise<PageParams>;
+}): Promise<Metadata> {
+  const { id } = await params;
   const { post, pubcfg, article } = await getPubPageData(id);
 
   const locale = post.locale;
@@ -137,6 +142,7 @@ export default async function PubPostPage({ params }: Props) {
                     <h2 className="side-header">Profile</h2>
                     <LinkDiv href={siteHref} className="link-div">
                       <ArticleWithDecoration
+                        lang={pubcfg.locale || locale}
                         className="markdown-body post-content-excerpt site-intro"
                         html={siteIntroHtml}
                       />
@@ -152,7 +158,7 @@ export default async function PubPostPage({ params }: Props) {
                       return (
                         <LinkDiv key={String(r.id)} href={postHref} className="link-div">
                           <ArticleWithDecoration
-                            lang={r.locale || undefined}
+                            lang={r.locale || pubcfg.locale || locale}
                             className="markdown-body post-content-excerpt"
                             html={snippetHtml}
                           />
