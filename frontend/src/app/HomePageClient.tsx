@@ -64,7 +64,7 @@ export default function HomePageClient() {
           </p>
         </div>
       ) : (
-        <div className="w-full max-w-md border rounded-xl shadow-sm bg-white py-4 px-3 text-center">
+        <div className="w-full max-w-md border rounded-xl shadow-sm bg-white pt-2 pb-8 px-3 text-center">
           <div className="flex justify-center">
             <Image
               src="/data/logo-square.webp"
