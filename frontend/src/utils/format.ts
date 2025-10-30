@@ -1,4 +1,4 @@
-export function formatDateTime(dt: Date, timeZone?: string) {
+export function formatDateTime(dt: Date, timeZone?: string, showSeconds = false) {
   try {
     const fmt = new Intl.DateTimeFormat("en-US", {
       timeZone: timeZone || undefined,
@@ -18,7 +18,11 @@ export function formatDateTime(dt: Date, timeZone?: string) {
     const h = get("hour");
     const min = get("minute");
     const s = get("second");
-    return `${y}/${m}/${d} ${h}:${min}:${s}`;
+    if (showSeconds) {
+      return `${y}/${m}/${d} ${h}:${min}:${s}`;
+    } else {
+      return `${y}/${m}/${d} ${h}:${min}`;
+    }
   } catch {
     const y = dt.getFullYear();
     const m = String(dt.getMonth() + 1).padStart(2, "0");
@@ -26,7 +30,11 @@ export function formatDateTime(dt: Date, timeZone?: string) {
     const h = String(dt.getHours()).padStart(2, "0");
     const min = String(dt.getMinutes()).padStart(2, "0");
     const s = String(dt.getSeconds()).padStart(2, "0");
-    return `${y}/${m}/${d} ${h}:${min}:${s}`;
+    if (showSeconds) {
+      return `${y}/${m}/${d} ${h}:${min}:${s}`;
+    } else {
+      return `${y}/${m}/${d} ${h}:${min}`;
+    }
   }
 }
 
