@@ -329,7 +329,7 @@ export default function PostCard({
             {showPublishedLabel && (
               <a
                 href={`/pub/${post.id}`}
-                className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-green-700 hover:bg-green-200"
+                className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-green-700 hover:bg-[#e8f4e8]"
                 onClick={(e) => e.stopPropagation()}
               >
                 published
@@ -341,7 +341,7 @@ export default function PostCard({
                   key={tag}
                   lang={postLang}
                   href={`/posts?q=${encodeURIComponent("#" + tag)}&includingReplies=1`}
-                  className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-blue-700 hover:bg-blue-200"
+                  className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-blue-700 hover:bg-[#e0eafa]"
                   onClick={(e) => e.stopPropagation()}
                 >
                   #{tag}
