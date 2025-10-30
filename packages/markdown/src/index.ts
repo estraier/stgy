@@ -1393,9 +1393,10 @@ export function mdRenderHtml(
   return serializeAll(nodes);
 }
 
-export function mdGetTitle(nodes: MdNode[]): string | null {
-  let foundH1: string | null = null;
-  let foundH2: string | null = null;
+export function mdSeparateTitle(nodes: MdNode[]): {
+  title: string | null;
+  otherNodes: MdNode[];
+} {
   function collectText(ns: MdNode[] | undefined): string {
     if (!ns) return "";
     let out = "";
@@ -1428,33 +1429,54 @@ export function mdGetTitle(nodes: MdNode[]): string | null {
     }
     return out.replace(/\s+/g, " ").trim();
   }
-  function walk(arr: MdNode[]): void {
-    for (const n of arr) {
-      if (n.type === "element") {
-        if (n.tag === "h1" && !foundH1) {
-          const txt = collectText(n.children);
-          if (txt) {
-            foundH1 = txt;
-            return;
-          }
+  function stripFirstHeading(
+    src: MdNode[],
+    targetTag: "h1" | "h2",
+  ): { found: string | null; nodes: MdNode[] } {
+    let found: string | null = null;
+    function walk(arr: MdNode[]): MdNode[] {
+      const out: MdNode[] = [];
+      for (const n of arr) {
+        if (found) {
+          out.push(n);
+          continue;
         }
-        if (n.tag === "h2" && !foundH2) {
-          const txt = collectText(n.children);
-          if (txt) {
-            foundH2 = txt;
+        if (n.type === "element") {
+          if (n.tag === targetTag) {
+            const txt = collectText(n.children);
+            if (txt) {
+              found = txt;
+              continue;
+            }
           }
-        }
-        if (n.children && n.children.length) {
-          walk(n.children);
-          if (foundH1) return;
+          if (n.children && n.children.length) {
+            const newChildren = walk(n.children);
+            if (newChildren !== n.children) {
+              out.push({ ...n, children: newChildren });
+            } else {
+              out.push(n);
+            }
+          } else {
+            out.push(n);
+          }
+        } else {
+          out.push(n);
         }
       }
+      return out;
     }
+    const newNodes = walk(src);
+    return { found, nodes: newNodes };
   }
-  walk(nodes);
-  if (foundH1) return foundH1;
-  if (foundH2) return foundH2;
-  return null;
+  const h1Res = stripFirstHeading(nodes, "h1");
+  if (h1Res.found) {
+    return { title: h1Res.found, otherNodes: h1Res.nodes };
+  }
+  const h2Res = stripFirstHeading(nodes, "h2");
+  if (h2Res.found) {
+    return { title: h2Res.found, otherNodes: h2Res.nodes };
+  }
+  return { title: null, otherNodes: nodes };
 }
 
 export function serializeMdNodes(nodes: MdNode[]): string {
