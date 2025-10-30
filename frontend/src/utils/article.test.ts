@@ -10,6 +10,7 @@ jest.mock("@/config", () => ({
 
 import {
   makeArticleHtmlFromMarkdown,
+  makePubArticleHtmlFromMarkdown,
   makeSnippetHtmlFromMarkdown,
   makeSnippetTextFromMarkdown,
   makeTextFromJsonSnippet,
@@ -36,6 +37,19 @@ describe("article utils (normal cases)", () => {
     expect(html).toContain('src="https://cdn.test/images-bkt/u1/masters/abc/cat.jpg"');
     expect(html).toContain("data-char-position");
     expect(html).toContain("data-line-position");
+  });
+
+  test("makePubArticleHtmlFromMarkdown", () => {
+    const md =
+      "abc\n# **title**\n![cap](/images/u1/masters/folder/pic.png)\n[U](/users/123), [P](/posts/456)";
+    const { html, title, desc } = makePubArticleHtmlFromMarkdown(md);
+    expect(html).toContain("<figure");
+    expect(html).toContain('class="image-block"');
+    expect(html).toContain('src="https://cdn.test/images-bkt/u1/thumbs/folder/pic_image.webp"');
+    expect(html).toContain('<a href="/pub/sites/123">U</a>');
+    expect(html).toContain('<a href="/pub/456">P</a>');
+    expect(title).toBe("title");
+    expect(desc).toBe("abc cap U, P");
   });
 
   test("makeSnippetHtmlFromMarkdown", () => {

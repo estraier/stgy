@@ -2,15 +2,16 @@ import { Config } from "@/config";
 import {
   MdNode,
   parseMarkdown,
-  MdMediaRewriteRule,
+  MdRewriteRule,
   MdMediaRewriteOptions,
+  mdRewriteLinkUrls,
   mdRewriteMediaUrls,
   mdGroupImageGrid,
   mdFilterForFeatured,
   mdCutOff,
   mdRenderHtml,
   mdRenderText,
-  mdGetTitle,
+  mdSeparateTitle,
   deserializeMdNodes,
 } from "stgy-markdown";
 
@@ -21,15 +22,23 @@ export function makeArticleHtmlFromMarkdown(mdText: string, usePosAttrs = false)
   return mdRenderHtml(nodes, usePosAttrs);
 }
 
-export function makePubArticleHtmlAndTitleFromMarkdown(
-  mdText: string,
-): { html: string; titleText: string | null } {
+export function makePubArticleHtmlFromMarkdown(mdText: string): {
+  html: string;
+  title: string | null;
+  desc: string;
+} {
   let nodes = parseMarkdown(mdText);
+  const { title, otherNodes } = mdSeparateTitle(nodes);
+  let desc = mdRenderText(otherNodes);
+  desc = desc.replace(/\s+/g, " ").trim();
+  if (desc.length > 150) {
+    desc = desc.substring(0, 150) + "...";
+  }
   nodes = rewriteMediaUrls(nodes, true);
+  nodes = rewritePublishedUrls(nodes);
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
   const html = mdRenderHtml(nodes, false);
-  const titleText = mdGetTitle(nodes);
-  return { html, titleText };
+  return { html, title, desc };
 }
 
 export function makeSnippetHtmlFromMarkdown(mdText: string) {
@@ -68,7 +77,7 @@ function rewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {
     /\{bucket\}/g,
     Config.MEDIA_BUCKET_IMAGES,
   );
-  const rewriteRules: MdMediaRewriteRule[] = [];
+  const rewriteRules: MdRewriteRule[] = [];
   if (useThumbnail) {
     rewriteRules.push({
       pattern: /^\/images\/(.*?)\/masters\/((?:[^\/?#]+\/)*)([^\/?#]+?)(?:\.[^\/?#]+)?(?:[?#].*)?$/,
@@ -88,20 +97,15 @@ function rewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {
   return mdRewriteMediaUrls(nodes, opts);
 }
 
-function rewritePubUrls(nodes: MdNode[]): MdNode[] {
-  const rewriteRules: MdMediaRewriteRule[] = [];
-
+function rewritePublishedUrls(nodes: MdNode[]): MdNode[] {
+  const rewriteRules: MdRewriteRule[] = [];
   rewriteRules.push({
-    pattern: /^\/posts\//, replacement: "/pub/",
+    pattern: /^\/posts\//,
+    replacement: "/pub/",
   });
   rewriteRules.push({
-    pattern: /^\/users\//, replacement: "/pub/sites/",
+    pattern: /^\/users\//,
+    replacement: "/pub/sites/",
   });
-  const opts: MdMediaRewriteOptions = {
-    allowedPatterns: [/.*/],
-    alternativeImage: "/data/no-image.svg",
-    rewriteRules,
-    maxObjects: Config.MAX_MEDIA_OBJECTS_PER_POST,
-  };
-  return mdRewriteMediaUrls(nodes, opts);
+  return mdRewriteLinkUrls(nodes, rewriteRules);
 }
