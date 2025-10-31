@@ -597,7 +597,7 @@ export function mdGroupImageGrid(
   return groupInArray(nodes);
 }
 
-export function mdFindFeatured(nodes: MdNode[]): MdNode | null {
+export function mdFindFeatured(nodes: MdNode[]): MdElementNode | null {
   function isFigureImageBlock(
     n: MdNode,
   ): n is MdElementNode & { tag: "figure" } {
@@ -614,7 +614,7 @@ export function mdFindFeatured(nodes: MdNode[]): MdNode | null {
         c.type === "element" && (c.tag === "img" || c.tag === "video"),
     );
   }
-  function findFeaturedFig(arr: MdNode[]): MdNode | null {
+  function findFeaturedFig(arr: MdNode[]): MdElementNode | null {
     for (const node of arr) {
       if (isFigureImageBlock(node)) {
         const media = findMedia(node);
@@ -627,7 +627,7 @@ export function mdFindFeatured(nodes: MdNode[]): MdNode | null {
     }
     return null;
   }
-  function findFirstFig(arr: MdNode[]): MdNode | null {
+  function findFirstFig(arr: MdNode[]): MdElementNode | null {
     for (const node of arr) {
       if (isFigureImageBlock(node)) {
         const media = findMedia(node);
