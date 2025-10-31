@@ -24,6 +24,7 @@ type PostCardProps = {
   avatarVersion?: string | null;
   focusUserId?: string;
   focusUserIsAdmin?: boolean;
+  idPrefix?: string;
 };
 
 export default function PostCard({
@@ -39,6 +40,7 @@ export default function PostCard({
   avatarVersion,
   focusUserId,
   focusUserIsAdmin = false,
+  idPrefix,
 }: PostCardProps) {
   const router = useRouter();
   const contentRef = useRef<HTMLDivElement | null>(null);
@@ -49,7 +51,7 @@ export default function PostCard({
   const bodyHtml = convertHtmlMathInline(
     !truncated && hasContent
       ? makeArticleHtmlFromMarkdown((post as PostDetail).content)
-      : makeHtmlFromJsonSnippet(post.snippet),
+      : makeHtmlFromJsonSnippet(post.snippet, idPrefix),
   );
 
   const prismDeps = useMemo(() => [bodyHtml], [bodyHtml]);

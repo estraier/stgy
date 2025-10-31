@@ -28,7 +28,12 @@ function addNext(base: string, next: string | null): string {
   return `${base}${sep}next=${encodeURIComponent(next)}`;
 }
 
-export default function PubServiceHeader({ showServiceHeader, redirectTo, viewAsHref, post }: Props) {
+export default function PubServiceHeader({
+  showServiceHeader,
+  redirectTo,
+  viewAsHref,
+  post,
+}: Props) {
   const [session, setSession] = useState<SessionInfo | null>(null);
   const [loaded, setLoaded] = useState(false);
 
@@ -66,20 +71,20 @@ export default function PubServiceHeader({ showServiceHeader, redirectTo, viewAs
       <Link href="/" className="sh-logo">
         STGY
       </Link>
-        <div className="counts flex gap-2 ml-6">
-          {countLikes > 0 && (
-            <div className="count-likes flex gap-1 items-center">
-              <Heart size={12} />
-              <span>{countLikes}</span>
-            </div>
-          )}
-          {countReplies > 0 && (
-            <div className="count-replies flex gap-1 items-center">
-              <MessageCircle size={12} />
-              <span>{countReplies}</span>
-            </div>
-          )}
-        </div>
+      <div className="counts flex gap-2 ml-6">
+        {countLikes > 0 && (
+          <div className="count-likes flex gap-1 items-center">
+            <Heart size={12} />
+            <span>{countLikes}</span>
+          </div>
+        )}
+        {countReplies > 0 && (
+          <div className="count-replies flex gap-1 items-center">
+            <MessageCircle size={12} />
+            <span>{countReplies}</span>
+          </div>
+        )}
+      </div>
       <div className="sh-notes ml-auto flex items-center gap-2">
         {loaded && session ? (
           <Link

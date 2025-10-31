@@ -113,9 +113,7 @@ export default async function PubPostPage({ params }: Props) {
                 <a href={siteHref}>{pubcfg.siteName.trim() || "Untitled"}</a>
               </h1>
               {pubcfg.subtitle.trim() && (
-                <div className="pub-subtitle">
-                  {pubcfg.subtitle.trim()}
-                </div>
+                <div className="pub-subtitle">{pubcfg.subtitle.trim()}</div>
               )}
             </>
           )}
@@ -169,9 +167,9 @@ export default async function PubPostPage({ params }: Props) {
                 {pubcfg.showSideRecent && (
                   <section className="pub-side-recent">
                     <h2 className="side-header">Recent posts</h2>
-                    {recent.map((r) => {
+                    {recent.map((r, idx) => {
                       const postHref = `/pub/${r.id}`;
-                      const snippetHtml = makeHtmlFromJsonSnippet(r.snippet);
+                      const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`);
                       return (
                         <LinkDiv key={String(r.id)} href={postHref} className="link-div">
                           <ArticleWithDecoration

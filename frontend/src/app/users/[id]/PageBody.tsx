@@ -383,7 +383,7 @@ export default function PageBody() {
                     No {tab === "posts" ? "posts" : "replies"} found.
                   </li>
                 )}
-                {posts.map((post) => (
+                {posts.map((post, idx) => (
                   <li key={post.id}>
                     <PostCard
                       post={post}
@@ -396,6 +396,7 @@ export default function PageBody() {
                       }}
                       focusUserId={userId}
                       focusUserIsAdmin={!!isAdmin}
+                      idPrefix={`p${idx + 1}-h`}
                     />
                     {replyTo === post.id && (
                       <PostForm
@@ -425,12 +426,13 @@ export default function PageBody() {
                 {followers.length === 0 && (
                   <li className="text-gray-400 text-center">No followers found.</li>
                 )}
-                {followers.map((user) => (
+                {followers.map((user, idx) => (
                   <li key={user.id}>
                     <UserCard
                       user={user}
                       focusUserId={userId}
                       onClick={() => router.push(`/users/${user.id}`)}
+                      idPrefix={`f${idx + 1}-h`}
                     />
                   </li>
                 ))}
@@ -441,12 +443,13 @@ export default function PageBody() {
                 {followees.length === 0 && (
                   <li className="text-gray-400 text-center">No followees found.</li>
                 )}
-                {followees.map((user) => (
+                {followees.map((user, idx) => (
                   <li key={user.id}>
                     <UserCard
                       user={user}
                       focusUserId={userId}
                       onClick={() => router.push(`/users/${user.id}`)}
+                      idPrefix={`f${idx + 1}-h`}
                     />
                   </li>
                 ))}

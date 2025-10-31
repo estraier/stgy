@@ -109,9 +109,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                 <a href={baseHref}>{siteTitle}</a>
               </h1>
               {pubcfg.subtitle.trim() && (
-                <div className="pub-subtitle">
-                  {pubcfg.subtitle.trim()}
-                </div>
+                <div className="pub-subtitle">{pubcfg.subtitle.trim()}</div>
               )}
               <section className="site-profile">
                 <ArticleWithDecoration
@@ -121,9 +119,9 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                 />
               </section>
               <section className="site-recent">
-                {items.map((r) => {
+                {items.map((r, idx) => {
                   const postHref = `/pub/${r.id}`;
-                  const snippetHtml = makeHtmlFromJsonSnippet(r.snippet);
+                  const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`);
                   const publishedAtDate = new Date(r.publishedAt ?? "");
                   return (
                     <LinkDiv key={String(r.id)} href={postHref} className="link-div post-div">

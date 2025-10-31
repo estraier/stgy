@@ -228,12 +228,13 @@ export default function PageBody() {
       <div>
         {loading && <div className="text-gray-500">Loading…</div>}
         <ul className="space-y-4">
-          {users.map((user) => (
+          {users.map((user, idx) => (
             <li key={user.id}>
               <UserCard
                 user={user}
                 focusUserId={userId}
                 onClick={() => location.assign(`/users/${user.id}`)}
+                idPrefix={`u${idx + 1}-h`}
               />
             </li>
           ))}

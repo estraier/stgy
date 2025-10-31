@@ -446,7 +446,7 @@ export default function PageBody() {
       <div>
         {loading && <div className="text-gray-500">Loading…</div>}
         <ul className="space-y-4">
-          {posts.map((post) => (
+          {posts.map((post, idx) => (
             <li key={post.id}>
               <PostCard
                 post={post}
@@ -459,6 +459,7 @@ export default function PageBody() {
                 }}
                 focusUserId={userId}
                 focusUserIsAdmin={!!isAdmin}
+                idPrefix={`p${idx + 1}-h`}
               />
               {replyTo === post.id && (
                 <PostForm

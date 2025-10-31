@@ -16,14 +16,21 @@ import {
   deserializeMdNodes,
 } from "stgy-markdown";
 
-export function makeArticleHtmlFromMarkdown(mdText: string, usePosAttrs = false) {
+export function makeArticleHtmlFromMarkdown(
+  mdText: string,
+  usePosAttrs = false,
+  idPrefix?: string,
+) {
   let nodes = parseMarkdown(mdText);
   nodes = rewriteMediaUrls(nodes, false);
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
-  return mdRenderHtml(nodes, usePosAttrs);
+  return mdRenderHtml(nodes, usePosAttrs, idPrefix);
 }
 
-export function makePubArticleHtmlFromMarkdown(mdText: string): {
+export function makePubArticleHtmlFromMarkdown(
+  mdText: string,
+  idPrefix?: string,
+): {
   html: string;
   title: string | null;
   desc: string;
@@ -39,7 +46,7 @@ export function makePubArticleHtmlFromMarkdown(mdText: string): {
   nodes = rewriteMediaUrls(nodes, true);
   nodes = rewritePublishedUrls(nodes);
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
-  const html = mdRenderHtml(nodes, false);
+  const html = mdRenderHtml(nodes, false, idPrefix);
   let featured: string | null = null;
   const featuredNode = mdFindFeatured(nodes);
   if (featuredNode) {
@@ -80,10 +87,10 @@ export function makeTextFromJsonSnippet(snippet: string) {
   return mdRenderText(nodes).slice(0, 50);
 }
 
-export function makeHtmlFromJsonSnippet(snippet: string) {
+export function makeHtmlFromJsonSnippet(snippet: string, idPrefix?: string) {
   let nodes = deserializeMdNodes(snippet);
   nodes = rewriteMediaUrls(nodes, true);
-  return mdRenderHtml(nodes);
+  return mdRenderHtml(nodes, false, idPrefix);
 }
 
 function rewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {

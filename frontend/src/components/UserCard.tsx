@@ -16,6 +16,7 @@ type UserCardProps = {
   onClick?: (user: User | UserDetail) => void;
   focusUserId?: string;
   clickable?: boolean;
+  idPrefix?: string;
 };
 
 export default function UserCard({
@@ -25,6 +26,7 @@ export default function UserCard({
   onClick,
   focusUserId,
   clickable = true,
+  idPrefix,
 }: UserCardProps) {
   const [hovering, setHovering] = useState(false);
   const [submitting, setSubmitting] = useState(false);
@@ -158,7 +160,7 @@ export default function UserCard({
 
   const hasIntro = "introduction" in user && typeof user.introduction === "string";
   const introHtml = hasIntro ? makeArticleHtmlFromMarkdown(user.introduction as string) : "";
-  const snippetHtml = makeHtmlFromJsonSnippet(user.snippet || "[]");
+  const snippetHtml = makeHtmlFromJsonSnippet(user.snippet || "[]", idPrefix);
 
   const masterSrc = (() => {
     if (!user.avatar) return "";

@@ -473,7 +473,7 @@ export default function PageBody() {
             ) : replies.length === 0 ? (
               <li className="text-gray-400">No replies yet</li>
             ) : (
-              replies.map((rep) => (
+              replies.map((rep, idx) => (
                 <li key={rep.id}>
                   <PostCard
                     post={rep}
@@ -484,6 +484,7 @@ export default function PageBody() {
                     focusUserId={userId}
                     focusUserIsAdmin={!!isAdmin}
                     avatarVersion={rep.ownedBy === userId ? (updatedAt ?? undefined) : undefined}
+                    idPrefix={`r${idx + 1}-h`}
                   />
                   {replyingTo === rep.id && (
                     <div className="mt-2">
