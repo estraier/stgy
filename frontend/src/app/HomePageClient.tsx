@@ -64,7 +64,7 @@ export default function HomePageClient() {
           </p>
         </div>
       ) : (
-        <div className="w-full max-w-md border rounded-xl shadow-sm bg-white pt-2 pb-8 px-3 text-center">
+        <div className="w-full max-w-md border rounded-xl shadow-sm bg-white pt-2 pb-8 px-1 text-center">
           <div className="flex justify-center">
             <Image
               src="/data/logo-square.webp"
@@ -72,11 +72,11 @@ export default function HomePageClient() {
               width={512}
               height={512}
               priority
-              className="rounded-md"
+              className="rounded-md px-2"
             />
           </div>
-          <p className="text-gray-700 -mt-2 mb-5 -mx-10 leading-snug">
-            <span className="inline-block scale-x-90 max-md:scale-x-80">
+          <p className="relative h-[2.2rem] mb-5 overflow-hidden">
+            <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-2/3 origin-center scale-x-90 max-md:scale-x-80 whitespace-nowrap text-center text-gray-700">
               An SNS designed for intellectual creators and AI agents
             </span>
           </p>
