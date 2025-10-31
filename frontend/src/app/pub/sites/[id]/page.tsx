@@ -1,12 +1,13 @@
 import { cache } from "react";
 import { Config } from "@/config";
+import { HeadLangPatcher } from "@/components/HeadLangPatcher";
 import PubServiceHeader from "@/components/PubServiceHeader";
 import { listPubPostsByUser } from "@/api/posts";
 import { getPubConfig } from "@/api/users";
 import { makePubArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
 import LinkDiv from "@/components/LinkDiv";
 import ArticleWithDecoration from "@/components/ArticleWithDecoration";
-import { formatDateTime } from "@/utils/format";
+import { formatDateTime, makeAbsoluteUrl } from "@/utils/format";
 import type { Metadata } from "next";
 
 type PageParams = { id: string };
@@ -29,24 +30,31 @@ export async function generateMetadata({
   const siteTitle = pubcfg.siteName || intro.title || "Untitled";
   const siteDesc = intro.desc || siteTitle;
   const author = (pubcfg.author || "").trim();
+  const canonical = makeAbsoluteUrl(`/pub/sites/${id}`);
+  const featruedImageUrl =
+    intro.featured && typeof intro.featured === "string"
+      ? makeAbsoluteUrl(intro.featured)
+      : undefined;
 
   return {
     title: siteTitle,
     description: siteDesc,
     alternates: {
-      canonical: `/pub/sites/${id}`,
+      canonical,
     },
     openGraph: {
       title: siteTitle,
       description: siteDesc,
       type: "website",
       locale,
+      images: featruedImageUrl ? [{ url: featruedImageUrl }] : undefined,
     },
     twitter: {
       card: "summary_large_image",
       title: siteTitle,
       description: siteDesc,
       creator: author || undefined,
+      images: featruedImageUrl ? [featruedImageUrl] : undefined,
     },
     authors: author ? [{ name: author }] : undefined,
   };
@@ -88,6 +96,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
 
     return (
       <div className={`pub-page pub-theme-${theme} pub-theme-kind-${themeKind}`}>
+        <HeadLangPatcher lang={locale} />
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}
           redirectTo={baseHref}

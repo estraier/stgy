@@ -1,4 +1,8 @@
 export class Config {
+  static readonly FRONTEND_CANONICAL_URL = normStr(
+    process.env.NEXT_PUBLIC_FRONTEND_CANONICAL_URL,
+    "http://localhost:3000",
+  );
   static readonly BACKEND_API_BASE_URL = normStr(
     process.env.NEXT_PUBLIC_BACKEND_API_BASE_URL,
     "http://localhost:3001",

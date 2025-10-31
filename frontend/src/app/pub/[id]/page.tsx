@@ -1,6 +1,6 @@
-// src/app/pub/[id]/page.tsx
 import { cache } from "react";
 import { Config } from "@/config";
+import { HeadLangPatcher } from "@/components/HeadLangPatcher";
 import PubServiceHeader from "@/components/PubServiceHeader";
 import { getPubPost, listPubPostsByUser } from "@/api/posts";
 import { getPubConfig } from "@/api/users";
@@ -11,7 +11,7 @@ import {
 } from "@/utils/article";
 import LinkDiv from "@/components/LinkDiv";
 import ArticleWithDecoration from "@/components/ArticleWithDecoration";
-import { formatDateTime } from "@/utils/format";
+import { formatDateTime, makeAbsoluteUrl } from "@/utils/format";
 import type { Metadata } from "next";
 
 type PageParams = { id: string };
@@ -30,34 +30,46 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { id } = await params;
   const { post, pubcfg, article } = await getPubPageData(id);
-
   const locale = post.locale;
   const artTitle =
     article.title ||
-    "POST@" + new Date(post.publishedAt ?? "").toISOString().slice(0, 10).replace(/\//g, "-");
+    "POST@" +
+      new Date(post.publishedAt ?? "")
+        .toISOString()
+        .slice(0, 10)
+        .replace(/\//g, "-");
   const artDesc = article.desc || artTitle;
-  const pageTitle = pubcfg.siteName ? `${pubcfg.siteName}: ${artTitle}` : artTitle;
+  const siteName = pubcfg.siteName?.trim() || "";
+  const pageTitle = siteName ? `${siteName}: ${artTitle}` : artTitle;
   const author = (pubcfg.author || "").trim();
+  const canonical = makeAbsoluteUrl(`/pub/${post.id}`);
+  const featuredImageUrl =
+    article.featured && typeof article.featured === "string"
+      ? makeAbsoluteUrl(article.featured)
+      : undefined;
 
   return {
     title: pageTitle,
     description: artDesc,
     alternates: {
-      canonical: `/pub/${post.id}`,
+      canonical,
     },
     openGraph: {
-      title: pageTitle,
+      title: artTitle,
+      siteName: siteName || undefined,
       description: artDesc,
       type: "article",
       locale,
       authors: author ? [author] : undefined,
       publishedTime: post.publishedAt ?? undefined,
+      images: featuredImageUrl ? [{ url: featuredImageUrl }] : undefined,
     },
     twitter: {
       card: "summary_large_image",
-      title: pageTitle,
+      title: artTitle,
       description: artDesc,
       creator: author || undefined,
+      images: featuredImageUrl ? [featuredImageUrl] : undefined,
     },
     authors: author ? [{ name: author }] : undefined,
   };
@@ -91,6 +103,7 @@ export default async function PubPostPage({ params }: Props) {
 
     return (
       <div className={`pub-page pub-theme-${theme} pub-theme-kind-${themeKind}`}>
+        <HeadLangPatcher lang={locale} />
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}
           redirectTo={`/posts/${post.id}`}

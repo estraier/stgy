@@ -1,4 +1,4 @@
-import { formatDateTime, formatBytes, normalizeLinefeeds } from "./format";
+import { formatDateTime, formatBytes, normalizeLinefeeds, makeAbsoluteUrl } from "./format";
 
 describe("formatDateTime", () => {
   test("pads each field with zeros", () => {
@@ -70,5 +70,16 @@ describe("normalizeLinefeeds", () => {
 
   test("combined normalization", () => {
     expect(normalizeLinefeeds("a\r\n\r\n\r\nb\r\n\r\n")).toBe("a\n\nb");
+  });
+});
+
+describe("makeAbsoluteUrl", () => {
+  test("basic cases", () => {
+    expect(makeAbsoluteUrl("/")).toBe("http://localhost:3000/");
+    expect(makeAbsoluteUrl("a")).toBe("http://localhost:3000/a");
+    expect(makeAbsoluteUrl("/a")).toBe("http://localhost:3000/a");
+    expect(makeAbsoluteUrl("a/")).toBe("http://localhost:3000/a/");
+    expect(makeAbsoluteUrl("/a/b")).toBe("http://localhost:3000/a/b");
+    expect(makeAbsoluteUrl(" http://a/b/c ")).toBe("http://a/b/c");
   });
 });

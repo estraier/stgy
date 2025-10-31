@@ -7,6 +7,7 @@ import {
   mdRewriteLinkUrls,
   mdRewriteMediaUrls,
   mdGroupImageGrid,
+  mdFindFeatured,
   mdFilterForFeatured,
   mdCutOff,
   mdRenderHtml,
@@ -26,6 +27,7 @@ export function makePubArticleHtmlFromMarkdown(mdText: string): {
   html: string;
   title: string | null;
   desc: string;
+  featured: string | null;
 } {
   let nodes = parseMarkdown(mdText);
   const { title, otherNodes } = mdSeparateTitle(nodes);
@@ -38,7 +40,20 @@ export function makePubArticleHtmlFromMarkdown(mdText: string): {
   nodes = rewritePublishedUrls(nodes);
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
   const html = mdRenderHtml(nodes, false);
-  return { html, title, desc };
+  let featured: string | null = null;
+  const featuredNode = mdFindFeatured(nodes);
+  if (featuredNode) {
+    for (const child of featuredNode.children) {
+      if (child.type === "element" && child.tag === "img") {
+        const src = child.attrs?.["src"];
+        if (typeof src === "string") {
+          featured = src;
+          break;
+        }
+      }
+    }
+  }
+  return { html, title, desc, featured };
 }
 
 export function makeSnippetHtmlFromMarkdown(mdText: string) {

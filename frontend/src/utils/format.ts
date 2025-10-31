@@ -1,3 +1,5 @@
+import { Config } from "@/config";
+
 export function formatDateTime(dt: Date, timeZone?: string, showSeconds = false) {
   try {
     const fmt = new Intl.DateTimeFormat("en-US", {
@@ -56,4 +58,20 @@ export function normalizeLinefeeds(str: string): string {
     .replace(/\r\n?/g, "\n")
     .replace(/\n{3,}/g, "\n\n")
     .replace(/\n+$/, "");
+}
+
+export function makeAbsoluteUrl(url: string): string {
+  let normUrl = url.trim();
+  if (!/^https?:\/\//i.test(normUrl)) {
+    if (!normUrl.startsWith("/")) {
+      normUrl = "/" + normUrl;
+    }
+    normUrl = Config.FRONTEND_CANONICAL_URL + normUrl;
+  }
+  normUrl = normUrl.replace(/\/+$/, "/");
+  try {
+    return new URL(normUrl).href;
+  } catch {
+    return normUrl;
+  }
 }
