@@ -597,6 +597,11 @@ export default function createUsersRouter(
       siteName = normalizeOneLiner(req.body.siteName) ?? "";
       dataSize += siteName.length;
     }
+    let subtitle: string | undefined;
+    if (typeof req.body.subtitle === "string") {
+      subtitle = normalizeOneLiner(req.body.subtitle) ?? "";
+      dataSize += subtitle.length;
+    }
     let author: string | undefined;
     if (typeof req.body.author === "string") {
       author = normalizeOneLiner(req.body.author) ?? "";
@@ -642,6 +647,7 @@ export default function createUsersRouter(
       const current = await usersService.getPubConfig(req.params.id);
       const next = {
         siteName: siteName ?? current.siteName,
+        subtitle: subtitle ?? current.subtitle,
         author: author ?? current.author,
         introduction: introduction ?? current.introduction,
         designTheme: designTheme ?? current.designTheme,

@@ -109,6 +109,7 @@ export type ListFriendsByNicknamePrefixInput = {
 
 export type PubConfig = {
   siteName: string;
+  subtitle: string;
   author: string;
   introduction: string;
   designTheme: string;

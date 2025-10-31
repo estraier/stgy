@@ -108,6 +108,11 @@ export default async function PubSitePage({ params, searchParams }: Props) {
               <h1 className="pub-site-name">
                 <a href={baseHref}>{siteTitle}</a>
               </h1>
+              {pubcfg.subtitle.trim() && (
+                <div className="pub-subtitle">
+                  {pubcfg.subtitle.trim()}
+                </div>
+              )}
               <section className="site-profile">
                 <ArticleWithDecoration
                   lang={locale}

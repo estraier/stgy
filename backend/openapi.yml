@@ -284,6 +284,7 @@ components:
       type: object
       properties:
         siteName: { type: string }
+        subtitle: { type: string }
         author: { type: string }
         introduction: { type: string }
         designTheme: { type: string }
@@ -294,6 +295,7 @@ components:
       required:
         [
           siteName,
+          subtitle,
           author,
           introduction,
           designTheme,

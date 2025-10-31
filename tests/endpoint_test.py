@@ -234,6 +234,7 @@ def test_users():
   cfg = res.json()
   print("[users] pub-config default:", cfg)
   assert cfg["siteName"] == ""
+  assert cfg["subtitle"] == ""
   assert cfg["author"] == ""
   assert cfg["introduction"] == ""
   assert cfg["designTheme"] == ""
@@ -244,6 +245,7 @@ def test_users():
   assert cfg["showSideRecent"] is True
   update1 = {
     "siteName": "site1",
+    "subtitle": "subtitle1",
     "author": "user1",
     "introduction": "hello site",
     "designTheme": "paper",
@@ -258,6 +260,7 @@ def test_users():
   saved1 = res.json()
   print("[users] pub-config updated1:", saved1)
   assert saved1["siteName"] == "site1"
+  assert saved1["subtitle"] == "subtitle1"
   assert saved1["author"] == "user1"
   assert saved1["introduction"] == "hello site"
   assert saved1["designTheme"] == "paper"
@@ -269,6 +272,7 @@ def test_users():
   res = requests.get(f"{BASE_URL}/users/{user1_id}/pub-config", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   got1 = res.json()
+  saved1["locale"] = got1["locale"]
   assert got1 == saved1
   update2 = {
     "designTheme": "dark",
@@ -279,6 +283,7 @@ def test_users():
   saved2 = res.json()
   print("[users] pub-config updated2:", saved2)
   assert saved2["siteName"] == "site1"
+  assert saved2["subtitle"] == "subtitle1"
   assert saved2["author"] == "user1"
   assert saved2["introduction"] == "hello site"
   assert saved2["designTheme"] == "dark"
@@ -290,6 +295,7 @@ def test_users():
   res = requests.get(f"{BASE_URL}/users/{user1_id}/pub-config", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   got2 = res.json()
+  saved2["locale"] = got2["locale"]
   assert got2 == saved2
   res = requests.delete(f"{BASE_URL}/users/{user1_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text

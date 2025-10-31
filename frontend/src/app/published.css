@@ -81,7 +81,14 @@ html:has(.site-container) {
   margin-bottom: 1ex;
   padding: 0;
 }
-
+.pub-container .pub-subtitle,
+.site-container .pub-subtitle {
+  text-align: center;
+  margin-top: -2.5ex;
+  margin-bottom: 3ex;
+  color: #566;
+  font-size: 85%;
+}
 .pub-container .link-div {
   margin: 0;
   padding: 0;
@@ -330,6 +337,10 @@ html:has(.pub-theme-dark) {
 .pub-theme-dark .site-container .pub-site-name,
 .pub-theme-dark .pub-side-profile .profile-column .site-name {
   color: #cfe0ff !important;
+}
+.pub-theme-dark .pub-container .pub-subtitle,
+.pub-theme-dark .site-container .pub-subtitle {
+  color: #abc !important;
 }
 .pub-theme-dark .pub-pager .pager-btn {
   background-color: #000 !important;

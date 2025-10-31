@@ -1187,6 +1187,7 @@ export class UsersService {
       `
       SELECT
         upc.site_name,
+        upc.subtitle,
         upc.author,
         upc.introduction,
         upc.design_theme,
@@ -1217,6 +1218,7 @@ export class UsersService {
       const locale = det.rows[0]?.locale ?? undefined;
       return {
         siteName: "",
+        subtitle: "",
         author: "",
         introduction: "",
         designTheme: "",
@@ -1239,6 +1241,7 @@ export class UsersService {
       INSERT INTO user_pub_configs (
         user_id,
         site_name,
+        subtitle,
         author,
         introduction,
         design_theme,
@@ -1248,9 +1251,10 @@ export class UsersService {
         show_side_profile,
         show_side_recent
       )
-      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
+      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
       ON CONFLICT (user_id) DO UPDATE SET
         site_name           = EXCLUDED.site_name,
+        subtitle            = EXCLUDED.subtitle,
         author              = EXCLUDED.author,
         introduction        = EXCLUDED.introduction,
         design_theme        = EXCLUDED.design_theme,
@@ -1261,6 +1265,7 @@ export class UsersService {
         show_side_recent    = EXCLUDED.show_side_recent
       RETURNING
         site_name,
+        subtitle,
         author,
         introduction,
         design_theme,
@@ -1273,6 +1278,7 @@ export class UsersService {
       [
         hexToDec(userId),
         cfg.siteName,
+        cfg.subtitle,
         cfg.author,
         cfg.introduction,
         cfg.designTheme,

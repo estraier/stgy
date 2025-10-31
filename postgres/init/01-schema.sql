@@ -58,8 +58,9 @@ CREATE INDEX idx_user_blocks_blockee_created_at ON user_blocks (blockee_id, crea
 CREATE TABLE user_pub_configs (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
   site_name VARCHAR(50) NOT NULL DEFAULT '',
+  subtitle VARCHAR(50) NOT NULL DEFAULT '',
   author VARCHAR(50) NOT NULL DEFAULT '',
-  introduction VARCHAR(500) NOT NULL DEFAULT '',
+  introduction VARCHAR(1000) NOT NULL DEFAULT '',
   design_theme VARCHAR(50) NOT NULL DEFAULT '',
   show_service_header BOOLEAN NOT NULL DEFAULT TRUE,
   show_site_name BOOLEAN NOT NULL DEFAULT TRUE,

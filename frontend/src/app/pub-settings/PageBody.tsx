@@ -8,6 +8,7 @@ import { Config } from "@/config";
 
 const emptyCfg: PubConfig = {
   siteName: "",
+  subtitle: "",
   author: "",
   introduction: "",
   designTheme: "",
@@ -103,6 +104,16 @@ export default function PageBody() {
               />
             </label>
             <label className="block">
+              <span className="block text-sm text-gray-700 mb-1">Subtitle</span>
+              <input
+                type="text"
+                value={cfg.subtitle}
+                onChange={(e) => setField("subtitle", e.target.value)}
+                className="border px-2 py-1 rounded w-full"
+                disabled={loading || saving}
+              />
+            </label>
+            <label className="block">
               <span className="block text-sm text-gray-700 mb-1">Author</span>
               <input
                 type="text"
@@ -117,7 +128,7 @@ export default function PageBody() {
               <textarea
                 value={cfg.introduction}
                 onChange={(e) => setField("introduction", e.target.value)}
-                className="border px-2 py-1 rounded w-full min-h-[6rem]"
+                className="border px-2 py-1 rounded w-full min-h-[8rem]"
                 disabled={loading || saving}
               />
             </label>

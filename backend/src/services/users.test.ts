@@ -67,10 +67,10 @@ const SQL_UPSERT_DETAILS =
   "INSERT INTO user_details (user_id, introduction, ai_personality) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET introduction = COALESCE(EXCLUDED.introduction, user_details.introduction), ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)";
 
 const SQL_SELECT_PUBCONFIG =
-  "SELECT upc.site_name, upc.author, upc.introduction, upc.design_theme, upc.show_service_header, upc.show_site_name, upc.show_pagenation, upc.show_side_profile, upc.show_side_recent, ud.locale FROM user_pub_configs upc LEFT JOIN user_details ud ON ud.user_id = upc.user_id WHERE upc.user_id = $1 LIMIT 1";
+  "SELECT upc.site_name, upc.subtitle, upc.author, upc.introduction, upc.design_theme, upc.show_service_header, upc.show_site_name, upc.show_pagenation, upc.show_side_profile, upc.show_side_recent, ud.locale FROM user_pub_configs upc LEFT JOIN user_details ud ON ud.user_id = upc.user_id WHERE upc.user_id = $1 LIMIT 1";
 
 const SQL_UPSERT_PUBCONFIG =
-  "INSERT INTO user_pub_configs ( user_id, site_name, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (user_id) DO UPDATE SET site_name = EXCLUDED.site_name, author = EXCLUDED.author, introduction = EXCLUDED.introduction, design_theme = EXCLUDED.design_theme, show_service_header = EXCLUDED.show_service_header, show_site_name = EXCLUDED.show_site_name, show_pagenation = EXCLUDED.show_pagenation, show_side_profile = EXCLUDED.show_side_profile, show_side_recent = EXCLUDED.show_side_recent RETURNING site_name, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent";
+  "INSERT INTO user_pub_configs ( user_id, site_name, subtitle, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10) ON CONFLICT (user_id) DO UPDATE SET site_name = EXCLUDED.site_name, subtitle = EXCLUDED.subtitle, author = EXCLUDED.author, introduction = EXCLUDED.introduction, design_theme = EXCLUDED.design_theme, show_service_header = EXCLUDED.show_service_header, show_site_name = EXCLUDED.show_site_name, show_pagenation = EXCLUDED.show_pagenation, show_side_profile = EXCLUDED.show_side_profile, show_side_recent = EXCLUDED.show_side_recent RETURNING site_name, subtitle, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent";
 
 class MockPgClient {
   users: MockUser[];
@@ -83,6 +83,7 @@ class MockPgClient {
     string,
     {
       site_name: string;
+      subtitle: string;
       author: string;
       introduction: string;
       design_theme: string;
@@ -666,6 +667,7 @@ class MockPgClient {
       const [
         userIdDec,
         siteName,
+        subtitle,
         author,
         introduction,
         designTheme,
@@ -678,6 +680,7 @@ class MockPgClient {
       const userId = decToHex(userIdDec);
       const row = {
         site_name: siteName ?? "",
+        subtitle: subtitle ?? "",
         author: author ?? "",
         introduction: introduction ?? "",
         design_theme: designTheme ?? "",
@@ -1061,6 +1064,7 @@ describe("UsersService", () => {
     const cfg = await service.getPubConfig(ALICE);
     expect(cfg).toEqual({
       siteName: "",
+      subtitle: "",
       author: "",
       introduction: "",
       designTheme: "",
@@ -1076,6 +1080,7 @@ describe("UsersService", () => {
   test("setPubConfig upserts and subsequent get returns saved values", async () => {
     const cfg1 = {
       siteName: "My Site",
+      subtitle: "Go Wild",
       author: "Alice",
       introduction: "Hello",
       designTheme: "default",
@@ -1091,6 +1096,7 @@ describe("UsersService", () => {
     expect(got1).toEqual({ ...cfg1, locale: "ja-JP" });
     expect(pg.pubConfigs[ALICE]).toEqual({
       site_name: "My Site",
+      subtitle: "Go Wild",
       author: "Alice",
       introduction: "Hello",
       design_theme: "default",
@@ -1102,6 +1108,7 @@ describe("UsersService", () => {
     });
     const cfg2 = {
       siteName: "My Awesome Site",
+      subtitle: "Go East",
       author: "Alice T.",
       introduction: "Updated intro",
       designTheme: "dark",
@@ -1117,6 +1124,7 @@ describe("UsersService", () => {
     expect(got2).toEqual({ ...cfg2, locale: "ja-JP" });
     expect(pg.pubConfigs[ALICE]).toEqual({
       site_name: "My Awesome Site",
+      subtitle: "Go East",
       author: "Alice T.",
       introduction: "Updated intro",
       design_theme: "dark",

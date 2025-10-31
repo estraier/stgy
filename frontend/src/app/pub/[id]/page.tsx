@@ -107,9 +107,16 @@ export default async function PubPostPage({ params }: Props) {
         />
         <main className="pub-container" lang={locale}>
           {pubcfg.showSiteName && (
-            <h1 className="pub-site-name">
-              <a href={siteHref}>{pubcfg.siteName.trim() || "Untitled"}</a>
-            </h1>
+            <>
+              <h1 className="pub-site-name">
+                <a href={siteHref}>{pubcfg.siteName.trim() || "Untitled"}</a>
+              </h1>
+              {pubcfg.subtitle.trim() && (
+                <div className="pub-subtitle">
+                  {pubcfg.subtitle.trim()}
+                </div>
+              )}
+            </>
           )}
           <div className="pub-layout">
             <section className="pub-main">
