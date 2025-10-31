@@ -33,11 +33,7 @@ export async function generateMetadata({
   const locale = post.locale;
   const artTitle =
     article.title ||
-    "POST@" +
-      new Date(post.publishedAt ?? "")
-        .toISOString()
-        .slice(0, 10)
-        .replace(/\//g, "-");
+    "POST@" + new Date(post.publishedAt ?? "").toISOString().slice(0, 10).replace(/\//g, "-");
   const artDesc = article.desc || artTitle;
   const siteName = pubcfg.siteName?.trim() || "";
   const pageTitle = siteName ? `${siteName}: ${artTitle}` : artTitle;
@@ -110,13 +106,13 @@ export default async function PubPostPage({ params }: Props) {
           viewAsHref={`/posts/${post.id}`}
         />
         <main className="pub-container" lang={locale}>
+          {pubcfg.showSiteName && (
+            <h1 className="pub-site-name">
+              <a href={siteHref}>{pubcfg.siteName.trim() || "Untitled"}</a>
+            </h1>
+          )}
           <div className="pub-layout">
             <section className="pub-main">
-              {pubcfg.showSiteName && (
-                <h1 className="pub-site-name">
-                  <a href={siteHref}>{pubcfg.siteName.trim() || "Untitled"}</a>
-                </h1>
-              )}
               <div className="date">{formatDateTime(new Date(post.publishedAt ?? ""))}</div>
               <ArticleWithDecoration
                 lang={locale}

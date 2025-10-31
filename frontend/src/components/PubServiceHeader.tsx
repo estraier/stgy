@@ -45,7 +45,7 @@ export default function PubServiceHeader({ showServiceHeader, redirectTo, viewAs
     };
   }, []);
 
-  if (!showServiceHeader) return <div className="sh-pad h-12" aria-hidden="true" />;
+  if (!showServiceHeader) return <div className="sh-pad h-3" aria-hidden="true" />;
 
   const next = normalizeNext(redirectTo);
   const loginHref = addNext("/login", next);
@@ -53,7 +53,7 @@ export default function PubServiceHeader({ showServiceHeader, redirectTo, viewAs
   const viewHref = viewAsHref ?? "/posts";
 
   return (
-    <nav className="sh-nav w-full h-12 flex items-center px-3">
+    <nav className="sh-nav w-full h-10 flex items-center px-3">
       <Link href="/" className="sh-logo">
         STGY
       </Link>
