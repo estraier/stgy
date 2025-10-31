@@ -65,7 +65,7 @@ export async function generateMetadata({
       images: featuredImageUrl ? [{ url: featuredImageUrl }] : undefined,
     },
     twitter: {
-      card: "summary_large_image",
+      card: "summary",
       title: artTitle,
       description: artDesc,
       creator: author || undefined,
