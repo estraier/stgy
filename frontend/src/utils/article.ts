@@ -56,7 +56,7 @@ export function makePubArticleHtmlFromMarkdown(mdText: string): {
   return { html, title, desc, featured };
 }
 
-export function makeSnippetHtmlFromMarkdown(mdText: string) {
+export function makeSnippetHtmlFromMarkdown(mdText: string, idPrefix?: string) {
   const maxLen = Config.SNIPPET_MAX_LENGTH;
   const maxHeight = Config.SNIPPET_MAX_HEIGHT;
   const imgLen = Config.SNIPPET_MAX_LENGTH / 4;
@@ -65,7 +65,7 @@ export function makeSnippetHtmlFromMarkdown(mdText: string) {
   nodes = rewriteMediaUrls(nodes, true);
   nodes = mdFilterForFeatured(nodes);
   nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen, imgHeight });
-  return mdRenderHtml(nodes);
+  return mdRenderHtml(nodes, false, idPrefix);
 }
 
 export function makeSnippetTextFromMarkdown(mdText: string, maxLen = 50) {

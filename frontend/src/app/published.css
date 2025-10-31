@@ -24,6 +24,17 @@ html:has(.site-container) {
 .sh-logo:hover {
   opacity: 1;
 }
+.sh-nav .counts {
+  margin-right: 1ex;
+  font-size: 85%;
+  opacity: 0.8;
+}
+.sh-nav .count-likes {
+  color: #d57;
+}
+.sh-nav .count-replies {
+  color: #36e;
+}
 .sh-nickname {
   max-width: 12ex;
 }
@@ -192,41 +203,37 @@ html:has(.site-container) {
 }
 
 @media (min-width: 1060px) {
+  .sh-nickname {
+    max-width: 24ex;
+  }
   .pub-container .markdown-body {
     padding: 1ex 2ex;
   }
-
   .pub-container:has(.pub-sidebar) {
     max-width: calc(128ex);
   }
-
   .pub-container:has(.pub-sidebar) .pub-layout {
     display: grid;
     grid-template-columns: minmax(0, 1fr) 30ex;
     column-gap: 1.5ex;
     align-items: start;
   }
-
   .pub-container:has(.pub-sidebar) .pub-main {
     grid-column: 1;
   }
-
   .pub-container:has(.pub-sidebar) .pub-sidebar {
     grid-column: 2;
     margin-top: -3ex;
   }
-
   .pub-container:has(.pub-sidebar) .pub-side-profile,
   .pub-container:has(.pub-sidebar) .pub-side-recent {
     padding: 0;
     border-top: none;
   }
-
   .pub-container:has(.pub-sidebar) .pub-sidebar .side-header {
     font-weight: normal;
     font-size: 90%;
   }
-
   .pub-container:has(.pub-sidebar) .pub-side-profile article {
     display: inline-block;
     zoom: 80%;
@@ -245,7 +252,6 @@ html:has(.site-container) {
     border: 1px solid #ddd;
     border-radius: 0.8ex;
   }
-
   .pub-container:has(.pub-sidebar) .pub-side-recent .markdown-body h1 {
     margin-top: 0.6ex;
   }
@@ -270,12 +276,18 @@ html:has(.pub-theme-dark) {
 .pub-theme-dark .sh-logo {
   color: #8fb2ff !important;
 }
-.pub-theme-dark .sh-viewas {
+.pub-theme-dark .sh-nav .count-likes {
+  color: #c46;
+}
+.pub-theme-dark .sh-nav .count-replies {
+  color: #25e;
+}
+.pub-theme-dark .sh-nickname {
   color: #bbb !important;
   background-color: #111 !important;
   border-color: #333 !important;
 }
-.pub-theme-dark .sh-viewas:hover {
+.pub-theme-dark .sh-nickname:hover {
   color: #cfe0ff !important;
   background-color: #122133 !important;
   border-color: #2a4a77 !important;
