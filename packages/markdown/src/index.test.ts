@@ -4,6 +4,7 @@ import {
   MdMediaRewriteOptions,
   mdRewriteLinkUrls,
   mdRewriteMediaUrls,
+  mdFindFeatured,
   mdFilterForFeatured,
   mdCutOff,
   mdRenderText,
@@ -443,6 +444,90 @@ describe("mdRewriteMediaUrls", () => {
     expect(
       stripPos(mdRewriteMediaUrls(parseMarkdown(mdText), rewriteOptions)),
     ).toStrictEqual(expected);
+  });
+});
+
+describe("mdFindFeatured", () => {
+  it("pickup none", () => {
+    const mdText = "hello\nworld\n";
+    expect(mdFindFeatured(parseMarkdown(mdText))).toBeNull();
+  });
+
+  it("pickup the first image", () => {
+    const mdText = `abc
+![alt](/data/first.jpg)
+def
+![alt](/data/second.jpg)
+`;
+    const expected = {
+      type: "element",
+      tag: "figure",
+      attrs: {
+        class: "image-block",
+      },
+      children: [
+        {
+          type: "element",
+          tag: "img",
+          attrs: {
+            src: "/data/first.jpg",
+          },
+          children: [],
+        },
+        {
+          type: "element",
+          tag: "figcaption",
+          children: [
+            {
+              type: "text",
+              text: "alt",
+            },
+          ],
+        },
+      ],
+    };
+    expect(stripPos(mdFindFeatured(parseMarkdown(mdText)))).toStrictEqual(
+      expected,
+    );
+  });
+
+  it("pickup a tagged image", () => {
+    const mdText = `abc
+![alt](/data/first.jpg)
+def
+![alt](/data/second.jpg){featured}
+`;
+    const expected = {
+      type: "element",
+      tag: "figure",
+      attrs: {
+        class: "image-block",
+      },
+      children: [
+        {
+          type: "element",
+          tag: "img",
+          attrs: {
+            featured: true,
+            src: "/data/second.jpg",
+          },
+          children: [],
+        },
+        {
+          type: "element",
+          tag: "figcaption",
+          children: [
+            {
+              type: "text",
+              text: "alt",
+            },
+          ],
+        },
+      ],
+    };
+    expect(stripPos(mdFindFeatured(parseMarkdown(mdText)))).toStrictEqual(
+      expected,
+    );
   });
 });
 

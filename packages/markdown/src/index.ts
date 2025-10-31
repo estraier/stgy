@@ -597,8 +597,7 @@ export function mdGroupImageGrid(
   return groupInArray(nodes);
 }
 
-export function mdFilterForFeatured(nodes: MdNode[]): MdNode[] {
-  let featuredFig: MdNode | null = null;
+export function mdFindFeatured(nodes: MdNode[]): MdNode | null {
   function isFigureImageBlock(
     n: MdNode,
   ): n is MdElementNode & { tag: "figure" } {
@@ -610,7 +609,10 @@ export function mdFilterForFeatured(nodes: MdNode[]): MdNode[] {
   }
   function findMedia(n: MdNode | undefined): MdMediaElement | undefined {
     if (!n || n.type !== "element") return undefined;
-    return (n.children || []).find(isMediaElement);
+    return (n.children || []).find(
+      (c): c is MdMediaElement =>
+        c.type === "element" && (c.tag === "img" || c.tag === "video"),
+    );
   }
   function findFeaturedFig(arr: MdNode[]): MdNode | null {
     for (const node of arr) {
@@ -642,14 +644,26 @@ export function mdFilterForFeatured(nodes: MdNode[]): MdNode[] {
     }
     return null;
   }
-  featuredFig = findFeaturedFig(nodes) || findFirstFig(nodes);
+  return findFeaturedFig(nodes) || findFirstFig(nodes);
+}
+
+export function mdFilterForFeatured(nodes: MdNode[]): MdNode[] {
+  const featuredFig = mdFindFeatured(nodes);
   function removeImageBlocks(arr: MdNode[]): MdNode[] {
     const out: MdNode[] = [];
     for (const n of arr) {
-      if (isFigureImageBlock(n)) continue;
-      if (n.type === "element" && n.children?.length)
+      if (
+        n.type === "element" &&
+        n.tag === "figure" &&
+        n.attrs?.class === "image-block"
+      ) {
+        continue;
+      }
+      if (n.type === "element" && n.children?.length) {
         out.push({ ...n, children: removeImageBlocks(n.children) });
-      else out.push(n);
+      } else {
+        out.push(n);
+      }
     }
     return out;
   }
