@@ -24,35 +24,20 @@ html:has(.site-container) {
 .sh-logo:hover {
   opacity: 1;
 }
-.sh-viewas {
-  padding: 0.4ex 0.8ex;
-  color: #333;
-  text-decoration: none;
-  background: #ddd;
-  border: solid 1px #aaa;
-  border-radius: 1ex;
-  opacity: 0.5;
-}
-.sh-viewas:hover {
-  color: #246;
-  background: #def;
-  border-color: #8ac;
-  opacity: 1;
-}
 .sh-nickname {
-  display: inline-block;
-  vertical-align: top;
   max-width: 12ex;
-  overflow: hidden;
-  word-break: none;
 }
+.sh-nickname,
 .sh-button {
-  padding: 0.4ex 0.8ex;
+  padding: 0.3ex 0.8ex;
   color: #246;
   background: #ddd;
   border: solid 1px #aaa;
+  border-radius: 0.5ex;
+  text-decoration: none;
   opacity: 0.5;
 }
+.sh-nickname:hover,
 .sh-button:hover {
   color: #246;
   background: #def;

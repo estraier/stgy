@@ -36,6 +36,7 @@ export default function PubServiceHeader({ showServiceHeader, redirectTo, viewAs
       try {
         const s = await getSessionInfo();
         if (!cancelled) setSession(s ?? null);
+      } catch {
       } finally {
         if (!cancelled) setLoaded(true);
       }
@@ -61,10 +62,10 @@ export default function PubServiceHeader({ showServiceHeader, redirectTo, viewAs
         {loaded && session ? (
           <Link
             href={viewHref}
-            className="sh-viewas text-sm text-blue-600 hover:underline truncate max-w-[28ch]"
+            className="sh-nickname text-sm text-blue-600 hover:underline truncate max-w-[28ch]"
             title={session.userNickname}
           >
-            view as <span className="sh-nickname">{session.userNickname}</span>
+            {session.userNickname}
           </Link>
         ) : (
           <>
