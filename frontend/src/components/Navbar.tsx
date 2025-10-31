@@ -108,7 +108,6 @@ export default function Navbar() {
               focus:outline-none focus:ring-2 focus:ring-blue-200 text-sm
               w-[clamp(80px,20vw,200px)] sm:w-[clamp(120px,30vw,240px)]
             "
-            placeholder="Search…"
             value={searchValue}
             onChange={(e) => setSearchValue(e.target.value)}
             aria-label="Search"
