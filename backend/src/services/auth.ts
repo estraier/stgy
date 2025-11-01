@@ -45,10 +45,12 @@ type SwitchUserRow = {
 export class AuthService {
   private pgPool: Pool;
   private redis: Redis;
+
   constructor(pgPool: Pool, redis: Redis) {
     this.pgPool = pgPool;
     this.redis = redis;
   }
+
   async login(email: string, password: string): Promise<LoginResult> {
     const result = await pgQuery<LoginRow>(
       this.pgPool,
@@ -61,11 +63,10 @@ export class AuthService {
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
         s.password,
-        d.locale,
-        d.timezone
+        u.locale,
+        u.timezone
       FROM users u
       JOIN user_secrets s ON s.user_id = u.id
-      JOIN user_details d ON d.user_id = u.id
       WHERE s.email = $1
       `,
       [email],
@@ -100,6 +101,7 @@ export class AuthService {
     await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", SESSION_TTL);
     return { sessionId, userId };
   }
+
   async switchUser(userId: string): Promise<LoginResult> {
     const result = await pgQuery<SwitchUserRow>(
       this.pgPool,
@@ -111,11 +113,10 @@ export class AuthService {
         u.is_admin,
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
-        d.locale,
-        d.timezone
+        u.locale,
+        u.timezone
       FROM users u
       JOIN user_secrets s ON s.user_id = u.id
-      JOIN user_details d ON d.user_id = u.id
       WHERE u.id = $1
       `,
       [hexToDec(userId)],
@@ -146,6 +147,7 @@ export class AuthService {
     await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", SESSION_TTL);
     return { sessionId, userId: sessionInfo.userId };
   }
+
   async getSessionInfo(sessionId: string): Promise<SessionInfo | null> {
     if (!sessionId) return null;
     const value = await this.redis.getex(`session:${sessionId}`, "EX", SESSION_TTL);
@@ -156,6 +158,7 @@ export class AuthService {
       return null;
     }
   }
+
   async refreshSessionInfo(sessionId: string): Promise<SessionInfo | null> {
     if (!sessionId) return null;
     const current = await this.getSessionInfo(sessionId);
@@ -169,11 +172,10 @@ export class AuthService {
         u.is_admin,
         id_to_timestamp(u.id) AS created_at,
         u.updated_at,
-        d.locale,
-        d.timezone
+        u.locale,
+        u.timezone
       FROM users u
       JOIN user_secrets s ON s.user_id = u.id
-      JOIN user_details d ON d.user_id = u.id
       WHERE u.id = $1
       `,
       [hexToDec(current.userId)],
@@ -202,6 +204,7 @@ export class AuthService {
     await this.redis.set(`session:${sessionId}`, JSON.stringify(next), "EX", SESSION_TTL);
     return next;
   }
+
   async logout(sessionId: string): Promise<void> {
     if (sessionId) {
       await this.redis.del(`session:${sessionId}`);

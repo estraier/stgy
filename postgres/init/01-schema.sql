@@ -12,13 +12,15 @@ CREATE TABLE ai_models (
 
 CREATE TABLE users (
   id BIGINT PRIMARY KEY,
+  updated_at TIMESTAMPTZ,
   nickname VARCHAR(50) NOT NULL,
-  is_admin BOOLEAN NOT NULL,
-  block_strangers BOOLEAN NOT NULL,
-  snippet VARCHAR(4096) NOT NULL,
   avatar VARCHAR(100),
+  locale VARCHAR(50) NOT NULL,
+  timezone VARCHAR(50) NOT NULL,
   ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
-  updated_at TIMESTAMPTZ
+  snippet VARCHAR(4096) NOT NULL,
+  is_admin BOOLEAN NOT NULL,
+  block_strangers BOOLEAN NOT NULL
 );
 CREATE INDEX idx_users_nickname_id ON users(LOWER(nickname) text_pattern_ops, id);
 CREATE INDEX idx_users_ai_id ON users (id) WHERE ai_model IS NOT NULL;
@@ -31,8 +33,6 @@ CREATE TABLE user_secrets (
 
 CREATE TABLE user_details (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  locale VARCHAR(50) NOT NULL,
-  timezone VARCHAR(50) NOT NULL,
   introduction VARCHAR(65535) NOT NULL,
   ai_personality VARCHAR(65535)
 );
@@ -76,7 +76,7 @@ CREATE TABLE posts (
   published_at TIMESTAMPTZ,
   updated_at TIMESTAMPTZ,
   snippet VARCHAR(4096) NOT NULL,
-  locale VARCHAR(50) NOT NULL,
+  locale VARCHAR(50),
   allow_likes BOOLEAN NOT NULL,
   allow_replies BOOLEAN NOT NULL
 );

@@ -10,24 +10,28 @@ VALUES
 
 INSERT INTO users (
   id,
+  updated_at,
   nickname,
-  is_admin,
-  block_strangers,
-  snippet,
   avatar,
+  locale,
+  timezone,
   ai_model,
-  updated_at
+  snippet,
+  is_admin,
+  block_strangers
 )
 VALUES
 (
   0x1000000000001,
+  '2025-04-01 08:45:00+00',
   'admin',
-  TRUE,
-  FALSE,
+  NULL,
+  'en-US',
+  'UTC',
+  NULL,
   $$[{"T":"p","X":"I am the administrator of STGY. I notify reports and issues on operation."}]$$,
-  NULL,
-  NULL,
-  '2025-04-01 08:45:00+00'
+  TRUE,
+  FALSE
 );
 
 INSERT INTO user_secrets (
@@ -44,16 +48,12 @@ VALUES
 
 INSERT INTO user_details (
   user_id,
-  locale,
-  timezone,
   introduction,
   ai_personality
 )
 VALUES
 (
   0x1000000000001,
-  'en-US',
-  'UTC',
   'I am the administrator of STGY. I notify reports and issues on operation.',
   NULL
 );

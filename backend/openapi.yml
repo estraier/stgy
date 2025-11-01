@@ -111,10 +111,11 @@ components:
         publishedAt: { type: string, format: date-time, nullable: true }
         updatedAt: { type: string, format: date-time, nullable: true }
         snippet: { type: string }
-        locale: { type: string }
+        locale: { type: string, nullable: true }
         allowLikes: { type: boolean }
         allowReplies: { type: boolean }
         ownerNickname: { type: string }
+        ownerLocale: { type: string }
         replyToOwnerNickname: { type: string, nullable: true }
         countLikes: { type: integer }
         countReplies: { type: integer }
@@ -143,6 +144,7 @@ components:
           allowLikes,
           allowReplies,
           ownerNickname,
+          ownerLocale,
           countLikes,
           countReplies,
           tags,
@@ -168,6 +170,7 @@ components:
         allowLikes: { type: boolean }
         allowReplies: { type: boolean }
         ownerNickname: { type: string }
+        ownerLocale: { type: string }
         replyToOwnerNickname: { type: string, nullable: true }
         countLikes: { type: integer }
         countReplies: { type: integer }
@@ -185,6 +188,7 @@ components:
           publishedAt,
           updatedAt,
           ownerNickname,
+          ownerLocale,
           countLikes,
           countReplies,
           tags,
@@ -291,7 +295,7 @@ components:
         showServiceHeader: { type: boolean }
         showSideProfile: { type: boolean }
         showSideRecent: { type: boolean }
-        locale: { type: boolean }
+        locale: { type: string }
       required:
         [
           siteName,

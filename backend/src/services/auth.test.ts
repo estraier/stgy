@@ -194,7 +194,7 @@ describe("AuthService class", () => {
     const [sqlText, sqlParams] = (pgClient.query as jest.Mock).mock.calls[0];
     const normalized = String(sqlText).replace(/\s+/g, " ").trim();
     expect(normalized).toBe(
-      "SELECT s.email, u.nickname, u.is_admin, id_to_timestamp(u.id) AS created_at, u.updated_at, d.locale, d.timezone FROM users u JOIN user_secrets s ON s.user_id = u.id JOIN user_details d ON d.user_id = u.id WHERE u.id = $1",
+      "SELECT s.email, u.nickname, u.is_admin, id_to_timestamp(u.id) AS created_at, u.updated_at, u.locale, u.timezone FROM users u JOIN user_secrets s ON s.user_id = u.id WHERE u.id = $1",
     );
     expect(sqlParams).toEqual([hexToDec(userHex)]);
     const stored = JSON.parse(redis.store[`session:${sessionId}`]);

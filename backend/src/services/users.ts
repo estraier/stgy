@@ -98,12 +98,16 @@ export class UsersService {
       `
         SELECT
           u.id,
+          u.updated_at,
           u.nickname,
+          u.avatar,
+          u.locale,
+          u.timezone,
+          u.ai_model,
+          u.snippet,
           u.is_admin,
           u.block_strangers,
-          u.ai_model,
           id_to_timestamp(u.id) AS created_at,
-          u.updated_at,
           COALESCE(uc.follower_count, 0) AS count_followers,
           COALESCE(uc.followee_count, 0) AS count_followees,
           COALESCE(uc.post_count, 0) AS count_posts
@@ -125,8 +129,8 @@ export class UsersService {
       this.pgPool,
       `
         SELECT locale
-        FROM user_details
-        WHERE user_id = $1
+        FROM users
+        WHERE id = $1
         LIMIT 1
       `,
       [hexToDec(id)],
@@ -139,8 +143,8 @@ export class UsersService {
       this.pgPool,
       `
         SELECT timezone
-        FROM user_details
-        WHERE user_id = $1
+        FROM users
+        WHERE id = $1
         LIMIT 1
       `,
       [hexToDec(id)],
@@ -154,20 +158,20 @@ export class UsersService {
       `
         SELECT
           u.id,
-          s.email,
+          u.updated_at,
           u.nickname,
+          u.avatar,
+          u.locale,
+          u.timezone,
+          u.ai_model,
+          u.snippet,
           u.is_admin,
           u.block_strangers,
-          u.snippet,
-          u.avatar,
-          u.ai_model,
           id_to_timestamp(u.id) AS created_at,
-          u.updated_at,
           COALESCE(uc.follower_count, 0) AS count_followers,
           COALESCE(uc.followee_count, 0) AS count_followees,
           COALESCE(uc.post_count, 0) AS count_posts,
-          d.locale,
-          d.timezone,
+          s.email,
           d.introduction,
           d.ai_personality
         FROM users u
@@ -230,14 +234,16 @@ export class UsersService {
     let baseSelect = `
       SELECT
         u.id,
+        u.updated_at,
         u.nickname,
+        u.avatar,
+        u.locale,
+        u.timezone,
+        u.ai_model,
+        u.snippet,
         u.is_admin,
         u.block_strangers,
-        u.snippet,
-        u.avatar,
-        u.ai_model,
         id_to_timestamp(u.id) AS created_at,
-        u.updated_at,
         COALESCE(uc.follower_count, 0) AS count_followers,
         COALESCE(uc.followee_count, 0) AS count_followees,
         COALESCE(uc.post_count, 0) AS count_posts
@@ -385,7 +391,7 @@ export class UsersService {
     }
 
     const passwordHash = await generatePasswordHash(input.password);
-    const snippet = makeSnippetJsonFromMarkdown(input.introduction ?? "");
+    const snippet = makeSnippetJsonFromMarkdown(input.introduction ?? "").slice(0, 4096);
 
     await pgQuery(this.pgPool, "BEGIN");
     try {
@@ -393,18 +399,29 @@ export class UsersService {
         this.pgPool,
         `
           INSERT INTO users (
-            id, nickname, is_admin, block_strangers, snippet, avatar, ai_model, updated_at
+            id,
+            updated_at,
+            nickname,
+            avatar,
+            locale,
+            timezone,
+            ai_model,
+            snippet,
+            is_admin,
+            block_strangers
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7, NULL)
+          VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9)
         `,
         [
           hexToDec(id),
           input.nickname,
+          input.avatar,
+          input.locale,
+          input.timezone,
+          input.aiModel,
+          snippet,
           input.isAdmin,
           input.blockStrangers,
-          snippet,
-          input.avatar,
-          input.aiModel,
         ],
       );
 
@@ -420,21 +437,13 @@ export class UsersService {
       await pgQuery(
         this.pgPool,
         `
-          INSERT INTO user_details (user_id, locale, timezone, introduction, ai_personality)
-          VALUES ($1, $2, $3, $4, $5)
+          INSERT INTO user_details (user_id, introduction, ai_personality)
+          VALUES ($1, $2, $3)
           ON CONFLICT (user_id) DO UPDATE
-            SET locale = EXCLUDED.locale,
-                timezone = EXCLUDED.timezone,
-                introduction = EXCLUDED.introduction,
+            SET introduction = EXCLUDED.introduction,
                 ai_personality = EXCLUDED.ai_personality
         `,
-        [
-          hexToDec(id),
-          input.locale,
-          input.timezone,
-          input.introduction,
-          input.aiPersonality ?? null,
-        ],
+        [hexToDec(id), input.introduction, input.aiPersonality ?? null],
       );
 
       const res = await pgQuery(
@@ -442,14 +451,16 @@ export class UsersService {
         `
           SELECT
             u.id,
+            u.updated_at,
             u.nickname,
+            u.avatar,
+            u.locale,
+            u.timezone,
+            u.ai_model,
+            u.snippet,
             u.is_admin,
             u.block_strangers,
-            u.snippet,
-            u.avatar,
-            u.ai_model,
             id_to_timestamp(u.id) AS created_at,
-            u.updated_at,
             COALESCE(uc.follower_count, 0) AS count_followers,
             COALESCE(uc.followee_count, 0) AS count_followees,
             COALESCE(uc.post_count, 0) AS count_posts
@@ -481,6 +492,29 @@ export class UsersService {
       userCols.push(`nickname = $${uidx++}`);
       userVals.push(input.nickname);
     }
+    if (input.avatar !== undefined) {
+      userCols.push(`avatar = $${uidx++}`);
+      userVals.push(input.avatar);
+    }
+    if (input.locale !== undefined) {
+      if (!validateLocale(input.locale)) throw new Error("given locale is invalid");
+      userCols.push(`locale = $${uidx++}`);
+      userVals.push(input.locale);
+    }
+    if (input.timezone !== undefined) {
+      if (!validateTimezone(input.timezone)) throw new Error("given timezone is invalid");
+      userCols.push(`timezone = $${uidx++}`);
+      userVals.push(input.timezone);
+    }
+    if (input.aiModel !== undefined) {
+      userCols.push(`ai_model = $${uidx++}`);
+      userVals.push(input.aiModel);
+    }
+    if (input.introduction !== undefined) {
+      userCols.push(`snippet = $${uidx++}`);
+      const snippet = makeSnippetJsonFromMarkdown(input.introduction).slice(0, 4096);
+      userVals.push(snippet);
+    }
     if (input.isAdmin !== undefined) {
       userCols.push(`is_admin = $${uidx++}`);
       userVals.push(input.isAdmin);
@@ -489,23 +523,6 @@ export class UsersService {
       userCols.push(`block_strangers = $${uidx++}`);
       userVals.push(input.blockStrangers);
     }
-    if (input.avatar !== undefined) {
-      userCols.push(`avatar = $${uidx++}`);
-      userVals.push(input.avatar);
-    }
-    if (input.aiModel !== undefined) {
-      userCols.push(`ai_model = $${uidx++}`);
-      userVals.push(input.aiModel);
-    }
-
-    if (input.locale !== undefined && !validateLocale(input.locale)) {
-      throw new Error("given locale is invalid");
-    }
-    if (input.timezone !== undefined && !validateTimezone(input.timezone)) {
-      throw new Error("given timezone is invalid");
-    }
-
-    const touchSnippet = input.introduction !== undefined;
 
     await pgQuery(this.pgPool, "BEGIN");
     try {
@@ -523,46 +540,6 @@ export class UsersService {
         );
       }
 
-      if (input.locale !== undefined || input.timezone !== undefined) {
-        const detailExists = await pgQuery(
-          this.pgPool,
-          `
-            SELECT 1
-            FROM user_details
-            WHERE user_id = $1
-            LIMIT 1
-          `,
-          [hexToDec(input.id)],
-        );
-        if ((detailExists.rowCount ?? 0) === 0) {
-          if (input.locale === undefined || input.timezone === undefined) {
-            throw new Error("both locale and timezone are required");
-          }
-          await pgQuery(
-            this.pgPool,
-            `
-              INSERT INTO user_details (user_id, locale, timezone)
-              VALUES ($1, $2, $3)
-              ON CONFLICT (user_id) DO UPDATE
-                SET locale = EXCLUDED.locale,
-                    timezone = EXCLUDED.timezone
-            `,
-            [hexToDec(input.id), input.locale, input.timezone],
-          );
-        } else {
-          await pgQuery(
-            this.pgPool,
-            `
-              UPDATE user_details
-              SET locale   = COALESCE($2, locale),
-                  timezone = COALESCE($3, timezone)
-              WHERE user_id = $1
-            `,
-            [hexToDec(input.id), input.locale ?? null, input.timezone ?? null],
-          );
-        }
-      }
-
       if (input.introduction !== undefined || input.aiPersonality !== undefined) {
         await pgQuery(
           this.pgPool,
@@ -574,12 +551,6 @@ export class UsersService {
           `,
           [hexToDec(input.id), input.introduction ?? null, input.aiPersonality ?? null],
         );
-      }
-
-      if (touchSnippet && typeof input.introduction === "string") {
-        userCols.push(`snippet = $${uidx++}`);
-        const snippet = makeSnippetJsonFromMarkdown(input.introduction);
-        userVals.push(snippet);
       }
 
       userCols.push(`updated_at = now()`);
@@ -599,14 +570,16 @@ export class UsersService {
         `
         SELECT
           u.id,
+          u.updated_at,
           u.nickname,
+          u.avatar,
+          u.locale,
+          u.timezone,
+          u.ai_model,
+          u.snippet,
           u.is_admin,
           u.block_strangers,
-          u.snippet,
-          u.avatar,
-          u.ai_model,
           id_to_timestamp(u.id) AS created_at,
-          u.updated_at,
           COALESCE(uc.follower_count, 0) AS count_followers,
           COALESCE(uc.followee_count, 0) AS count_followees,
           COALESCE(uc.post_count, 0) AS count_posts
@@ -800,14 +773,16 @@ export class UsersService {
     const sql = `
       SELECT
         u.id,
+        u.updated_at,
         u.nickname,
+        u.avatar,
+        u.locale,
+        u.timezone,
+        u.ai_model,
+        u.snippet,
         u.is_admin,
         u.block_strangers,
-        u.snippet,
-        u.avatar,
-        u.ai_model,
         id_to_timestamp(u.id) AS created_at,
-        u.updated_at,
         COALESCE(uc.follower_count, 0) AS count_followers,
         COALESCE(uc.followee_count, 0) AS count_followees,
         COALESCE(uc.post_count, 0) AS count_posts
@@ -898,14 +873,16 @@ export class UsersService {
     const sql = `
       SELECT
         u.id,
+        u.updated_at,
         u.nickname,
+        u.avatar,
+        u.locale,
+        u.timezone,
+        u.ai_model,
+        u.snippet,
         u.is_admin,
         u.block_strangers,
-        u.snippet,
-        u.avatar,
-        u.ai_model,
         id_to_timestamp(u.id) AS created_at,
-        u.updated_at,
         COALESCE(uc.follower_count, 0) AS count_followers,
         COALESCE(uc.followee_count, 0) AS count_followees,
         COALESCE(uc.post_count, 0) AS count_posts
@@ -1154,14 +1131,16 @@ export class UsersService {
       )
       SELECT
         u.id,
+        u.updated_at,
         u.nickname,
+        u.avatar,
+        u.locale,
+        u.timezone,
+        u.ai_model,
+        u.snippet,
         u.is_admin,
         u.block_strangers,
-        u.snippet,
-        u.avatar,
-        u.ai_model,
         id_to_timestamp(u.id) AS created_at,
-        u.updated_at,
         COALESCE(uc.follower_count, 0) AS count_followers,
         COALESCE(uc.followee_count, 0) AS count_followees,
         COALESCE(uc.post_count, 0) AS count_posts
@@ -1196,9 +1175,9 @@ export class UsersService {
         upc.show_pagenation,
         upc.show_side_profile,
         upc.show_side_recent,
-        ud.locale
+        u.locale
       FROM user_pub_configs upc
-      LEFT JOIN user_details ud ON ud.user_id = upc.user_id
+      LEFT JOIN users u ON u.id = upc.user_id
       WHERE upc.user_id = $1
       LIMIT 1
     `,
@@ -1209,8 +1188,8 @@ export class UsersService {
         this.pgPool,
         `
           SELECT locale
-          FROM user_details
-          WHERE user_id = $1
+          FROM users
+          WHERE id = $1
           LIMIT 1
         `,
         [decId],

@@ -66,11 +66,11 @@ const SQL_UPSERT_DETAILS_LOCALE_TZ =
 const SQL_UPSERT_DETAILS =
   "INSERT INTO user_details (user_id, introduction, ai_personality) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET introduction = COALESCE(EXCLUDED.introduction, user_details.introduction), ai_personality = COALESCE(EXCLUDED.ai_personality, user_details.ai_personality)";
 
-const SQL_SELECT_PUBCONFIG =
-  "SELECT upc.site_name, upc.subtitle, upc.author, upc.introduction, upc.design_theme, upc.show_service_header, upc.show_site_name, upc.show_pagenation, upc.show_side_profile, upc.show_side_recent, ud.locale FROM user_pub_configs upc LEFT JOIN user_details ud ON ud.user_id = upc.user_id WHERE upc.user_id = $1 LIMIT 1";
-
 const SQL_UPSERT_PUBCONFIG =
   "INSERT INTO user_pub_configs ( user_id, site_name, subtitle, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11) ON CONFLICT (user_id) DO UPDATE SET site_name = EXCLUDED.site_name, subtitle = EXCLUDED.subtitle, author = EXCLUDED.author, introduction = EXCLUDED.introduction, design_theme = EXCLUDED.design_theme, show_service_header = EXCLUDED.show_service_header, show_site_name = EXCLUDED.show_site_name, show_pagenation = EXCLUDED.show_pagenation, show_side_profile = EXCLUDED.show_side_profile, show_side_recent = EXCLUDED.show_side_recent RETURNING site_name, subtitle, author, introduction, design_theme, show_service_header, show_site_name, show_pagenation, show_side_profile, show_side_recent";
+
+const SQL_SELECT_PUBCONFIG =
+  "SELECT upc.site_name, upc.subtitle, upc.author, upc.introduction, upc.design_theme, upc.show_service_header, upc.show_site_name, upc.show_pagenation, upc.show_side_profile, upc.show_side_recent, u.locale FROM user_pub_configs upc LEFT JOIN users u ON u.id = upc.user_id WHERE upc.user_id = $1 LIMIT 1";
 
 class MockPgClient {
   users: MockUser[];
@@ -183,9 +183,11 @@ class MockPgClient {
   private cntFollowers(idHex: string) {
     return this.follows.filter((f) => f.followeeId === idHex).length;
   }
+
   private cntFollowees(idHex: string) {
     return this.follows.filter((f) => f.followerId === idHex).length;
   }
+
   private rowFromUser(u: MockUser, includeEmail: boolean) {
     const base: any = {
       id: hexToDec(u.id),
@@ -229,6 +231,18 @@ class MockPgClient {
     }
 
     if (n === "SELECT timezone FROM user_details WHERE user_id = $1 LIMIT 1") {
+      const userId = decToHex(params[0]);
+      const d = this.details[userId];
+      return d ? { rows: [{ timezone: d.timezone }] } : { rows: [] };
+    }
+
+    if (n === "SELECT locale FROM users WHERE id = $1 LIMIT 1") {
+      const userId = decToHex(params[0]);
+      const d = this.details[userId];
+      return d ? { rows: [{ locale: d.locale }] } : { rows: [] };
+    }
+
+    if (n === "SELECT timezone FROM users WHERE id = $1 LIMIT 1") {
       const userId = decToHex(params[0]);
       const d = this.details[userId];
       return d ? { rows: [{ timezone: d.timezone }] } : { rows: [] };
@@ -301,6 +315,38 @@ class MockPgClient {
           },
         ],
       };
+    }
+
+    if (
+      n ===
+      "SELECT u.id, u.updated_at, u.nickname, u.avatar, u.locale, u.timezone, u.ai_model, u.snippet, u.is_admin, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE f.follower_id = $1 ORDER BY f.created_at DESC, f.followee_id DESC OFFSET $2 LIMIT $3"
+    ) {
+      const followerId = decToHex(params[0]);
+      const offset = params[1] || 0;
+      const limit = params[2] || 100;
+      const list = this.follows
+        .filter((f) => f.followerId === followerId)
+        .map((f) => this.users.find((u) => u.id === f.followeeId))
+        .filter((u): u is MockUser => !!u)
+        .slice(offset, offset + limit)
+        .map((u) => this.rowFromUser(u, false));
+      return { rows: list };
+    }
+
+    if (
+      n ===
+      "SELECT u.id, u.updated_at, u.nickname, u.avatar, u.locale, u.timezone, u.ai_model, u.snippet, u.is_admin, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE f.followee_id = $1 ORDER BY f.created_at DESC, f.follower_id DESC OFFSET $2 LIMIT $3"
+    ) {
+      const followeeId = decToHex(params[0]);
+      const offset = params[1] || 0;
+      const limit = params[2] || 100;
+      const list = this.follows
+        .filter((f) => f.followeeId === followeeId)
+        .map((f) => this.users.find((u) => u.id === f.followerId))
+        .filter((u): u is MockUser => !!u)
+        .slice(offset, offset + limit)
+        .map((u) => this.rowFromUser(u, false));
+      return { rows: list };
     }
 
     if (n.includes("FROM users u") && !n.includes("WHERE u.id = $1") && !n.startsWith("WITH")) {
@@ -379,6 +425,70 @@ class MockPgClient {
       return { rows: exists ? [1] : [] };
     }
 
+    if (
+      n ===
+      "INSERT INTO users ( id, updated_at, nickname, snippet, avatar, locale, timezone, ai_model, is_admin, block_strangers ) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9)"
+    ) {
+      const [idDec, nickname, snippet, avatar, locale, timezone, aiModel, isAdmin, blockStrangers] =
+        params;
+      const idHex = decToHex(idDec);
+      const createdAt = new Date().toISOString();
+      const user: MockUser = {
+        id: idHex,
+        nickname,
+        isAdmin: !!isAdmin,
+        blockStrangers: !!blockStrangers,
+        snippet,
+        avatar,
+        aiModel,
+        createdAt,
+        updatedAt: null,
+        countFollowers: 0,
+        countFollowees: 0,
+        countPosts: 0,
+      };
+      this.users.push(user);
+      this.details[idHex] = {
+        locale: locale ?? "en-US",
+        timezone: timezone ?? "UTC",
+        introduction: "",
+        aiPersonality: null,
+      };
+      return { rowCount: 1, rows: [] };
+    }
+
+    if (
+      n ===
+      "INSERT INTO users ( id, updated_at, nickname, avatar, locale, timezone, ai_model, snippet, is_admin, block_strangers ) VALUES ($1, NULL, $2, $3, $4, $5, $6, $7, $8, $9)"
+    ) {
+      const [idDec, nickname, avatar, locale, timezone, aiModel, snippet, isAdmin, blockStrangers] =
+        params;
+      const idHex = decToHex(idDec);
+      const createdAt = new Date().toISOString();
+      const user: MockUser = {
+        id: idHex,
+        nickname,
+        isAdmin: !!isAdmin,
+        blockStrangers: !!blockStrangers,
+        snippet,
+        avatar,
+        aiModel,
+        createdAt,
+        updatedAt: null,
+        countFollowers: 0,
+        countFollowees: 0,
+        countPosts: 0,
+      };
+      this.users.push(user);
+      this.details[idHex] = {
+        locale: locale ?? "en-US",
+        timezone: timezone ?? "UTC",
+        introduction: "",
+        aiPersonality: null,
+      };
+      return { rowCount: 1, rows: [] };
+    }
+
     if (n.startsWith(SQL_INSERT_USERS_PREFIX)) {
       const [idDec, nickname, isAdmin, blockStrangers, snippet, avatar, aiModel] = params;
       const idHex = decToHex(idDec);
@@ -420,6 +530,27 @@ class MockPgClient {
       this.details[userId] = {
         locale: locale ?? "en-US",
         timezone: timezone ?? "UTC",
+        introduction: introduction ?? "",
+        aiPersonality: aiPersonality ?? null,
+      };
+      return { rowCount: 1, rows: [] };
+    }
+
+    if (
+      n ===
+      "INSERT INTO user_details (user_id, introduction, ai_personality) VALUES ($1, $2, $3) ON CONFLICT (user_id) DO UPDATE SET introduction = EXCLUDED.introduction, ai_personality = EXCLUDED.ai_personality"
+    ) {
+      const [userIdDec, introduction, aiPersonality] = params;
+      const userId = decToHex(userIdDec);
+      const prev = this.details[userId] ?? {
+        locale: "en-US",
+        timezone: "UTC",
+        introduction: "",
+        aiPersonality: null,
+      };
+      this.details[userId] = {
+        locale: prev.locale,
+        timezone: prev.timezone,
         introduction: introduction ?? "",
         aiPersonality: aiPersonality ?? null,
       };
@@ -649,13 +780,13 @@ class MockPgClient {
     if (n === SQL_SELECT_PUBCONFIG) {
       const userId = decToHex(params[0]);
       const cfg = this.pubConfigs[userId];
+      const locale = this.details[userId]?.locale ?? null;
       if (cfg) {
-        const d = this.details[userId];
         return {
           rows: [
             {
               ...cfg,
-              locale: d?.locale ?? null,
+              locale,
             },
           ],
         };
