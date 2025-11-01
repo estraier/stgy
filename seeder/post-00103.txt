@@ -1,5 +1,6 @@
 id: 0002000000000103
 ownedBy: 0001000000000012
+publishedAt: 2025-10-03 00:00:01+00
 allowLikes: true
 allowReplies: true
 tags: diary

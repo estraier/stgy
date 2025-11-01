@@ -11,15 +11,41 @@ ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
 ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "stgystgy")
 BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
 
-REQUIRED_KEYS = ["email", "nickname", "password", "isAdmin", "blockStrangers",
-                 "locale", "timezone", "introduction"]
+REQUIRED_KEYS = [
+  "email",
+  "nickname",
+  "password",
+  "isAdmin",
+  "blockStrangers",
+  "locale",
+  "timezone",
+  "introduction",
+]
 NULLABLE_KEYS = ["avatar", "aiModel", "aiPersonality"]
+PUBCONFIG_STR_KEYS = [
+  "pubConfigSiteName",
+  "pubConfigSubtitle",
+  "pubConfigAuthor",
+  "pubConfigIntroduction",
+  "pubConfigDesignTheme",
+]
+PUBCONFIG_BOOL_KEYS = [
+  "pubConfigShowServiceHeader",
+  "pubConfigShowSiteName",
+  "pubConfigShowPagenation",
+  "pubConfigShowSideProfile",
+  "pubConfigShowSideRecent",
+]
+
 
 def to_bool(s: str) -> bool:
   v = s.strip().lower()
-  if v in ("true", "1", "yes", "y", "on"): return True
-  if v in ("false", "0", "no", "n", "off"): return False
+  if v in ("true", "1", "yes", "y", "on"):
+    return True
+  if v in ("false", "0", "no", "n", "off"):
+    return False
   raise ValueError(f"must be boolean, got: {s!r}")
+
 
 def parse_kv_file(path: str) -> dict:
   with open(path, "r", encoding="utf-8") as f:
@@ -49,12 +75,15 @@ def parse_kv_file(path: str) -> dict:
         buf.append(lines[i])
         i += 1
       if not found:
-        raise ValueError(f"{path}: heredoc terminator not found for key '{key}' (sep={sep!r})")
+        raise ValueError(
+          f"{path}: heredoc terminator not found for key '{key}' (sep={sep!r})"
+        )
       data[key] = "\n".join(buf).strip()
       continue
     data[key] = val.strip()
     i += 1
   return data
+
 
 def normalize_payload(raw: dict) -> dict:
   out = {}
@@ -85,9 +114,19 @@ def normalize_payload(raw: dict) -> dict:
   out["blockStrangers"] = to_bool(str(raw["blockStrangers"]).strip())
   for k in NULLABLE_KEYS:
     v = raw.get(k, "")
-    v = (v.strip() if isinstance(v, str) else v)
-    out[k] = (None if (isinstance(v, str) and v == "") else v)
+    v = v.strip() if isinstance(v, str) else v
+    out[k] = None if (isinstance(v, str) and v == "") else v
+  for k in PUBCONFIG_STR_KEYS:
+    v = raw.get(k, "")
+    if isinstance(v, str):
+      v = v.strip()
+    if v:
+      out[k] = v
+  for k in PUBCONFIG_BOOL_KEYS:
+    if k in raw and str(raw[k]).strip() != "":
+      out[k] = to_bool(str(raw[k]).strip())
   return out
+
 
 def build_update_body(payload: dict) -> dict:
   return {
@@ -103,10 +142,49 @@ def build_update_body(payload: dict) -> dict:
     "aiPersonality": payload.get("aiPersonality"),
   }
 
+
+def has_pub_config(payload: dict) -> bool:
+  for k in PUBCONFIG_STR_KEYS:
+    if k in payload:
+      return True
+  for k in PUBCONFIG_BOOL_KEYS:
+    if k in payload:
+      return True
+  return False
+
+
+def build_pub_config_body(payload: dict) -> dict:
+  body: dict = {}
+  if "pubConfigSiteName" in payload:
+    body["siteName"] = payload["pubConfigSiteName"]
+  if "pubConfigSubtitle" in payload:
+    body["subtitle"] = payload["pubConfigSubtitle"]
+  if "pubConfigAuthor" in payload:
+    body["author"] = payload["pubConfigAuthor"]
+  if "pubConfigIntroduction" in payload:
+    body["introduction"] = payload["pubConfigIntroduction"]
+  if "pubConfigDesignTheme" in payload:
+    body["designTheme"] = payload["pubConfigDesignTheme"]
+  if "pubConfigShowServiceHeader" in payload:
+    body["showServiceHeader"] = payload["pubConfigShowServiceHeader"]
+  if "pubConfigShowSiteName" in payload:
+    body["showSiteName"] = payload["pubConfigShowSiteName"]
+  if "pubConfigShowPagenation" in payload:
+    body["showPagenation"] = payload["pubConfigShowPagenation"]
+  if "pubConfigShowSideProfile" in payload:
+    body["showSideProfile"] = payload["pubConfigShowSideProfile"]
+  if "pubConfigShowSideRecent" in payload:
+    body["showSideRecent"] = payload["pubConfigShowSideRecent"]
+  return body
+
+
 def login_admin(session: requests.Session) -> None:
-  r = session.post(f"{BASE_URL}/auth", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
+  r = session.post(
+    f"{BASE_URL}/auth", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD}
+  )
   if r.status_code != 200:
     raise RuntimeError(f"admin login failed: {r.status_code} {r.text}")
+
 
 def get_user_by_id(session: requests.Session, user_id: str):
   r = session.get(f"{BASE_URL}/users/{user_id}")
@@ -115,6 +193,7 @@ def get_user_by_id(session: requests.Session, user_id: str):
   if r.status_code != 200:
     raise RuntimeError(f"get user failed: {r.status_code} {r.text}")
   return r.json()
+
 
 def create_user(session: requests.Session, payload: dict) -> dict:
   body = {
@@ -136,6 +215,7 @@ def create_user(session: requests.Session, payload: dict) -> dict:
     raise RuntimeError(f"create user failed: {r.status_code} {r.text}")
   return r.json()
 
+
 def update_user(session: requests.Session, user_id: str, payload: dict) -> dict:
   body = build_update_body(payload)
   r = session.put(f"{BASE_URL}/users/{user_id}", json=body)
@@ -143,12 +223,25 @@ def update_user(session: requests.Session, user_id: str, payload: dict) -> dict:
     raise RuntimeError(f"update user failed: {r.status_code} {r.text}")
   return r.json()
 
+
 def update_user_password(session: requests.Session, user_id: str, password: str) -> None:
   if not password.strip():
     return
-  r = session.put(f"{BASE_URL}/users/{user_id}/password", json={"password": password})
+  r = session.put(
+    f"{BASE_URL}/users/{user_id}/password", json={"password": password}
+  )
   if r.status_code != 200:
     raise RuntimeError(f"update password failed: {r.status_code} {r.text}")
+
+
+def update_user_pub_config(session: requests.Session, user_id: str, payload: dict) -> None:
+  body = build_pub_config_body(payload)
+  if not body:
+    return
+  r = session.put(f"{BASE_URL}/users/{user_id}/pub-config", json=body)
+  if r.status_code != 200:
+    raise RuntimeError(f"update pub-config failed: {r.status_code} {r.text}")
+
 
 def upsert_user(session: requests.Session, payload: dict) -> tuple[str, str]:
   user_id = payload.get("id", "") or ""
@@ -162,8 +255,8 @@ def upsert_user(session: requests.Session, payload: dict) -> tuple[str, str]:
   created = create_user(session, payload)
   return ("CREATED", created.get("id"))
 
+
 def parse_cli(argv: list[str]) -> tuple[bool, list[str]]:
-  """returns: (insecure_password, files)"""
   insecure = False
   files: list[str] = []
   for a in argv[1:]:
@@ -172,6 +265,7 @@ def parse_cli(argv: list[str]) -> tuple[bool, list[str]]:
     else:
       files.append(a)
   return insecure, files
+
 
 def main(argv: list[str]) -> int:
   insecure, files = parse_cli(argv)
@@ -192,6 +286,8 @@ def main(argv: list[str]) -> int:
         raw["password"] = nick.lower()
       payload = normalize_payload(raw)
       action, uid = upsert_user(sess, payload)
+      if has_pub_config(payload):
+        update_user_pub_config(sess, uid, payload)
       email = payload.get("email")
       nickname = payload.get("nickname")
       print(f"[{action}] {path} -> id={uid} email={email} nickname={nickname}")
@@ -204,6 +300,7 @@ def main(argv: list[str]) -> int:
       err += 1
   print(f"[SUMMARY] ok={ok} err={err}")
   return 0 if err == 0 else 1
+
 
 if __name__ == "__main__":
   sys.exit(main(sys.argv))

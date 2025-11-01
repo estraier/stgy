@@ -1,5 +1,6 @@
 id: 0002000000000105
 ownedBy: 0001000000000012
+publishedAt: 2025-10-23 00:00:01+00
 replyTo: 0002000000000101
 allowLikes: true
 allowReplies: true

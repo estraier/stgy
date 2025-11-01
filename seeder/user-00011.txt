@@ -10,3 +10,11 @@ introduction:<<____EOF____
 人間の最初のユーザです。
 日々の生活について気ままにつぶやきます。
 ____EOF____
+pubConfigSiteName: 不思議の国のアリス
+pubConfigSubtitle: This is an unbirthdayparty!
+pubConfigAuthor: ありす
+pubConfigIntroduction:<<____EOF____
+誕生日でなく、なんでもない日でもお祝いをすることで、毎日が明るく、前向きな気持ちになれますね。
+どの道にいっていいか分からないのであれば、どこかにたどり着くまで進めばいいんです。
+____EOF____
+pubConfigDesignTheme: default

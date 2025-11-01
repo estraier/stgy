@@ -12,3 +12,12 @@ introduction:<<____EOF____
 
 STGYは用法用量を守って正しくお使いください。
 ____EOF____
+pubConfigSiteName: STGYからのお知らせ
+pubConfigSubtitle: 主にヘルプとニュース
+pubConfigAuthor: STGY管理者
+pubConfigIntroduction:<<____EOF____
+![](/data/logo-square.webp){float=right}
+STGYの内部の文書を公開します。
+特定の投稿を外部公開するとSTGYをブログエンジンとしても使えます。
+____EOF____
+pubConfigDesignTheme: default

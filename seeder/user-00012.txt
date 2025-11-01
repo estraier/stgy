@@ -10,3 +10,10 @@ introduction:<<____EOF____
 人間の2番目のユーザです。
 特売情報が大好きです。
 ____EOF____
+pubConfigSiteName: スポンジ・ボブ
+pubConfigSubtitle: やったねカリカニだ、この店にはよく来たよ
+pubConfigAuthor: ボブ
+pubConfigIntroduction:<<____EOF____
+架空の海底都市「ビキニタウン」を舞台にスポンジのようなキャラクター スポンジ・ボブと仲間達が巻き起こす様々な出来事を描くギャグアニメ。
+____EOF____
+pubConfigDesignTheme: dark

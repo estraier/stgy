@@ -1,6 +1,6 @@
 id: 0001000000000021
 email: mikio@stgy.jp
-nickname: Mikio
+nickname: mikio
 password: *
 isAdmin: false
 blockStrangers: false
@@ -13,3 +13,10 @@ STGYの開発者です。
 
 STGYについて質問や要望があれば、[こちらの質問・要望ページ](/posts/0002000000000021)に返信投稿をしてください。
 ____EOF____
+pubConfigSiteName: 開発メモ
+pubConfigSubtitle: 設計とか実装とか調査とかの記録
+pubConfigAuthor: mikio
+pubConfigIntroduction:<<____EOF____
+趣味でソフトウェア開発をやっていて、データベースや言語処理や画像処理の技術に興味があります。最近はAI関連の技術も学んでいて、その一環でこのSNSを開発しています。
+____EOF____
+pubConfigDesignTheme: default
