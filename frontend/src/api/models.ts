@@ -47,7 +47,7 @@ export type UserDetail = User & {
 export type Post = {
   id: string;
   snippet: string;
-  locale: string;
+  locale: string | null;
   ownedBy: string;
   replyTo: string | null;
   allowLikes: boolean;

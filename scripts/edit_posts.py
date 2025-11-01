@@ -11,7 +11,7 @@ ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "stgystgy")
 BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
 
 REQUIRED_KEYS = ["content", "ownedBy", "allowLikes", "allowReplies"]
-NULLABLE_KEYS = ["id", "replyTo", "publishedAt"]
+NULLABLE_KEYS = ["id", "replyTo", "locale", "publishedAt"]
 
 def to_bool(s: str) -> bool:
   v = s.strip().lower()
@@ -100,6 +100,7 @@ def create_post(session: requests.Session, payload: dict) -> dict:
     "content": payload["content"],
     "ownedBy": payload["ownedBy"],
     "replyTo": payload["replyTo"],
+    "locale": payload["locale"],
     "publishedAt": payload["publishedAt"],
     "allowLikes": payload["allowLikes"],
     "allowReplies": payload["allowReplies"],
@@ -117,6 +118,7 @@ def update_post(session: requests.Session, post_id: str, payload: dict) -> dict:
     "content": payload["content"],
     "ownedBy": payload["ownedBy"],
     "replyTo": payload["replyTo"],
+    "locale": payload["locale"],
     "publishedAt": payload["publishedAt"],
     "allowLikes": payload["allowLikes"],
     "allowReplies": payload["allowReplies"],

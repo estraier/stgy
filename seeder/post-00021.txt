@@ -1,5 +1,6 @@
 id: 0002000000000021
 ownedBy: 0001000000000021
+locale: ja-JP
 allowLikes: true
 allowReplies: true
 tags: stgy-help

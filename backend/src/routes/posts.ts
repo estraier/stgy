@@ -312,7 +312,7 @@ export default function createPostsRouter(
       return res.status(403).json({ error: "too often posts" });
     }
     const locale =
-      req.body.locale === "string" ? (normalizeOneLiner(req.body.locale) ?? null) : null;
+      typeof req.body.locale === "string" ? (normalizeOneLiner(req.body.locale) ?? null) : null;
     try {
       const input: CreatePostInput = {
         id: typeof req.body.id === "string" ? (normalizeOneLiner(req.body.id) ?? "") : undefined,
@@ -362,20 +362,12 @@ export default function createPostsRouter(
       }
       dataSize += content.length;
     }
-
     let locale: string | null | undefined;
-    if ("locale" in req.body) {
-      if (req.body.locale === null) {
-        locale = null;
-      } else if (typeof req.body.locale === "string") {
-        locale = req.body.locale;
-      } else {
-        locale = undefined;
-      }
-    } else {
-      locale = undefined;
+    if (req.body.locale === null) {
+      locale = null;
+    } else if (typeof req.body.locale === "string") {
+      locale = req.body.locale;
     }
-
     let tags;
     if ("tags" in req.body) {
       if (!Array.isArray(req.body.tags)) {

@@ -3,7 +3,7 @@ export type Post = {
   ownedBy: string;
   replyTo: string | null;
   snippet: string;
-  locale: string;
+  locale: string | null;
   allowLikes: boolean;
   allowReplies: boolean;
   createdAt: string;

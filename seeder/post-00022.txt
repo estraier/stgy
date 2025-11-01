@@ -1,5 +1,6 @@
 id: 0002000000000022
 ownedBy: 0001000000000021
+locale: ja-JP
 allowLikes: true
 allowReplies: true
 tags: dev-memo

@@ -426,7 +426,6 @@ export class PostsService {
       }
       columns.push(`updated_at = now()`);
       values.push(hexToDec(input.id));
-
       if (columns.length > 0) {
         const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id`;
         await pgQuery(this.pgPool, sql, values);

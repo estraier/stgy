@@ -1,5 +1,6 @@
 id: 0002000000000201
 ownedBy: 0001000000000201
+locale: ja-JP
 allowLikes: true
 allowReplies: true
 content:<<____EOF____

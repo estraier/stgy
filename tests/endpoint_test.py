@@ -356,6 +356,7 @@ def test_posts():
   assert "hello" in post["snippet"]
   assert post["content"] == post_input["content"]
   assert post["ownerNickname"] == "admin"
+  assert "ownerLocale" in post
   assert "countLikes" in post
   assert "countReplies" in post
   assert set(post["tags"]) == {"hop", "step"}
