@@ -1,11 +1,11 @@
 export type User = {
   id: string;
   nickname: string;
-  isAdmin: boolean;
-  blockStrangers: boolean;
-  snippet: string;
   avatar: string | null;
   aiModel: string | null;
+  snippet: string;
+  isAdmin: boolean;
+  blockStrangers: boolean;
   createdAt: string;
   updatedAt: string | null;
   countFollowers: number;
@@ -51,13 +51,13 @@ export type CreateUserInput = {
   email: string;
   nickname: string;
   password: string;
-  isAdmin: boolean;
-  blockStrangers: boolean;
-  locale: string;
-  timezone: string;
-  introduction: string;
   avatar: string | null;
   aiModel: string | null;
+  locale: string;
+  timezone: string;
+  isAdmin: boolean;
+  blockStrangers: boolean;
+  introduction: string;
   aiPersonality: string | null;
 };
 
@@ -65,13 +65,13 @@ export type UpdateUserInput = {
   id: string;
   email?: string;
   nickname?: string;
-  isAdmin?: boolean;
-  blockStrangers?: boolean;
-  locale?: string;
-  timezone?: string;
-  introduction?: string;
   avatar?: string | null;
   aiModel?: string | null;
+  locale?: string;
+  timezone?: string;
+  isAdmin?: boolean;
+  blockStrangers?: boolean;
+  introduction?: string;
   aiPersonality?: string | null;
 };
 

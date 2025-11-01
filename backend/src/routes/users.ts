@@ -166,7 +166,7 @@ export default function createUsersRouter(
         : undefined;
     const watch = timerThrottleService.startWatch(loginUser);
     let users = await usersService.listUsers(
-      { offset, limit, order, query, nickname, nicknamePrefix },
+      { query, nickname, nicknamePrefix, offset, limit, order },
       focusUserId,
     );
     watch.done();
@@ -679,8 +679,7 @@ function maskUserSensitiveInfo<T extends { id: string; email: string }>(
 ): T {
   if (!user) return user;
   if (isAdmin || user.id === loginUserId) return user;
-  return {
-    ...user,
-    email: maskEmailByHash(user.email),
-  };
+  const masked = { ...user };
+  masked.email = maskEmailByHash(user.email);
+  return masked;
 }

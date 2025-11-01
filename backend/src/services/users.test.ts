@@ -319,7 +319,7 @@ class MockPgClient {
 
     if (
       n ===
-      "SELECT u.id, u.updated_at, u.nickname, u.avatar, u.locale, u.timezone, u.ai_model, u.snippet, u.is_admin, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE f.follower_id = $1 ORDER BY f.created_at DESC, f.followee_id DESC OFFSET $2 LIMIT $3"
+      "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_follows f JOIN users u ON f.followee_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE f.follower_id = $1 ORDER BY f.created_at DESC, f.followee_id DESC OFFSET $2 LIMIT $3"
     ) {
       const followerId = decToHex(params[0]);
       const offset = params[1] || 0;
@@ -335,7 +335,7 @@ class MockPgClient {
 
     if (
       n ===
-      "SELECT u.id, u.updated_at, u.nickname, u.avatar, u.locale, u.timezone, u.ai_model, u.snippet, u.is_admin, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE f.followee_id = $1 ORDER BY f.created_at DESC, f.follower_id DESC OFFSET $2 LIMIT $3"
+      "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_follows f JOIN users u ON f.follower_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE f.followee_id = $1 ORDER BY f.created_at DESC, f.follower_id DESC OFFSET $2 LIMIT $3"
     ) {
       const followeeId = decToHex(params[0]);
       const offset = params[1] || 0;
@@ -423,6 +423,43 @@ class MockPgClient {
       const email = params[0];
       const exists = Object.values(this.userSecrets).some((s) => s.email === email);
       return { rows: exists ? [1] : [] };
+    }
+
+    if (n.startsWith("INSERT INTO users ( id, updated_at") && n.includes(") VALUES ($1, NULL")) {
+      const m = /^INSERT INTO users \(\s*id,\s*updated_at,\s*([^)]+)\)\s*VALUES/i.exec(n);
+      if (!m) {
+        return { rowCount: 0, rows: [] };
+      }
+      const cols = m[1].split(",").map((c) => c.trim());
+      const idDec = params[0];
+      const idHex = decToHex(idDec);
+      const vals: Record<string, any> = {};
+      cols.forEach((c, i) => {
+        vals[c] = params[i + 1];
+      });
+      const createdAt = new Date().toISOString();
+      const user: MockUser = {
+        id: idHex,
+        nickname: vals["nickname"] ?? "",
+        isAdmin: !!vals["is_admin"],
+        blockStrangers: !!vals["block_strangers"],
+        snippet: vals["snippet"] ?? "",
+        avatar: vals["avatar"] ?? null,
+        aiModel: vals["ai_model"] ?? null,
+        createdAt,
+        updatedAt: null,
+        countFollowers: 0,
+        countFollowees: 0,
+        countPosts: 0,
+      };
+      this.users.push(user);
+      this.details[idHex] = {
+        locale: vals["locale"] ?? "en-US",
+        timezone: vals["timezone"] ?? "UTC",
+        introduction: "",
+        aiPersonality: null,
+      };
+      return { rowCount: 1, rows: [] };
     }
 
     if (

@@ -13,12 +13,12 @@ CREATE TABLE ai_models (
 CREATE TABLE users (
   id BIGINT PRIMARY KEY,
   updated_at TIMESTAMPTZ,
+  snippet VARCHAR(4096) NOT NULL,
   nickname VARCHAR(50) NOT NULL,
   avatar VARCHAR(100),
   locale VARCHAR(50) NOT NULL,
   timezone VARCHAR(50) NOT NULL,
   ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
-  snippet VARCHAR(4096) NOT NULL,
   is_admin BOOLEAN NOT NULL,
   block_strangers BOOLEAN NOT NULL
 );
