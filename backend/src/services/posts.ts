@@ -91,6 +91,7 @@ export class PostsService {
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
         u.nickname AS owner_nickname,
+        u.locale AS owner_locale,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
         COALESCE(pc.like_count,0) AS count_likes,
@@ -126,6 +127,7 @@ export class PostsService {
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
         u.nickname AS owner_nickname,
+        u.locale AS owner_locale,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
         COALESCE(pc.like_count,0) AS count_likes,
@@ -199,6 +201,7 @@ export class PostsService {
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
         u.nickname AS owner_nickname,
+        u.locale AS owner_locale,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
         COALESCE(pc.like_count,0) AS count_likes,
@@ -283,10 +286,11 @@ export class PostsService {
     return out;
   }
 
-  async createPost(input: CreatePostInput): Promise<Post> {
+  async createPost(input: CreatePostInput): Promise<PostDetail> {
     if (typeof input.content !== "string" || input.content.trim() === "")
       throw new Error("content is required");
-    if (!validateLocale(input.locale)) throw new Error("locale is required");
+    if (input.locale !== null && !validateLocale(input.locale))
+      throw new Error("locale is required");
     if (typeof input.ownedBy !== "string" || input.ownedBy.trim() === "")
       throw new Error("ownedBy is required");
     let id: string;
@@ -294,7 +298,9 @@ export class PostsService {
       const hexId = input.id.trim();
       if (!/^[0-9A-F]{16}$/.test(hexId)) throw new Error("invalid id format");
       id = hexId;
-    } else id = await this.idIssueService.issueId();
+    } else {
+      id = await this.idIssueService.issueId();
+    }
     const snippet = makeSnippetJsonFromMarkdown(input.content);
     await pgQuery(this.pgPool, "BEGIN");
     try {
@@ -308,11 +314,10 @@ export class PostsService {
         if (!chk.rows[0].allow_replies)
           throw new Error("replies are not allowed for the target post");
       }
-      const res = await pgQuery(
+      await pgQuery(
         this.pgPool,
         `INSERT INTO posts (id, owned_by, reply_to, published_at, updated_at, snippet, locale, allow_likes, allow_replies)
-         VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8)
-         RETURNING id, owned_by, reply_to, published_at, updated_at, snippet, locale, allow_likes, allow_replies, id_to_timestamp(id) AS created_at`,
+         VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8)`,
         [
           hexToDec(id),
           hexToDec(input.ownedBy),
@@ -326,7 +331,8 @@ export class PostsService {
       );
       await pgQuery(
         this.pgPool,
-        `INSERT INTO post_details (post_id, content) VALUES ($1, $2) ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
+        `INSERT INTO post_details (post_id, content) VALUES ($1, $2)
+         ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
         [hexToDec(id), input.content],
       );
       if (input.tags && input.tags.length > 0) {
@@ -351,15 +357,13 @@ export class PostsService {
           });
         } catch {}
       }
-      const row = res.rows[0];
-      row.id = decToHex(row.id);
-      row.owned_by = decToHex(row.owned_by);
-      row.reply_to = row.reply_to == null ? null : decToHex(row.reply_to);
-      return snakeToCamel<Post>(row);
     } catch (e) {
       await pgQuery(this.pgPool, "ROLLBACK");
       throw e;
     }
+    const created = await this.getPost(id);
+    if (!created) throw new Error("created post not found");
+    return created;
   }
 
   async updatePost(input: UpdatePostInput): Promise<PostDetail | null> {
@@ -401,12 +405,14 @@ export class PostsService {
         values.push(snippet);
         await pgQuery(
           this.pgPool,
-          `INSERT INTO post_details (post_id, content) VALUES ($1, $2) ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
+          `INSERT INTO post_details (post_id, content) VALUES ($1, $2)
+           ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
           [hexToDec(input.id), input.content],
         );
       }
       if (input.locale !== undefined) {
-        if (!validateLocale(input.locale)) throw new Error("locale is required");
+        if (input.locale !== null && !validateLocale(input.locale))
+          throw new Error("locale is required");
         columns.push(`locale = $${idx++}`);
         values.push(input.locale);
       }
@@ -553,6 +559,7 @@ export class PostsService {
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
         u.nickname AS owner_nickname,
+        u.locale AS owner_locale,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
         COALESCE(pc.like_count,0) AS count_likes
@@ -635,6 +642,7 @@ export class PostsService {
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
         u.nickname AS owner_nickname,
+        u.locale AS owner_locale,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
         COALESCE(pc.like_count,0) AS count_likes,
@@ -745,6 +753,7 @@ export class PostsService {
           p.allow_replies,
           id_to_timestamp(p.id) AS created_at,
           u.nickname AS owner_nickname,
+          u.locale AS owner_locale,
           pu.nickname AS reply_to_owner_nickname,
           COALESCE(pc.reply_count,0) AS count_replies,
           COALESCE(pc.like_count,0) AS count_likes,
@@ -821,6 +830,7 @@ export class PostsService {
         p.allow_replies,
         id_to_timestamp(p.id) AS created_at,
         u.nickname AS owner_nickname,
+        u.locale AS owner_locale,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
         COALESCE(pc.like_count,0) AS count_likes,

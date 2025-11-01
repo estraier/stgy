@@ -28,11 +28,11 @@ components:
       properties:
         id: { type: string }
         nickname: { type: string }
-        isAdmin: { type: boolean }
-        blockStrangers: { type: boolean }
-        snippet: { type: string }
         avatar: { type: string, nullable: true }
         aiModel: { type: string, nullable: true }
+        snippet: { type: string }
+        isAdmin: { type: boolean }
+        blockStrangers: { type: boolean }
         createdAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time, nullable: true }
         countFollowers: { type: integer }
@@ -54,12 +54,13 @@ components:
         [
           id,
           nickname,
-          isAdmin,
-          blockStrangers,
-          snippet,
           avatar,
           aiModel,
+          snippet,
+          isAdmin,
+          blockStrangers,
           createdAt,
+          updatedAt,
           countFollowers,
           countFollowees,
           countPosts,

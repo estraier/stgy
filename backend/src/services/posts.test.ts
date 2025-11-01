@@ -33,6 +33,7 @@ type MockPostRow = {
   publishedAt: string | null;
   updatedAt: string | null;
   content: string;
+  locale: string | null;
 };
 
 class MockPgClientMain {
@@ -40,7 +41,7 @@ class MockPgClientMain {
   tags: { postId: string; name: string }[] = [];
   likes: { postId: string; likedBy: string }[] = [];
   follows: { followerId: string; followeeId: string }[] = [];
-  users: { id: string; nickname: string }[] = [];
+  users: { id: string; nickname: string; locale?: string | null }[] = [];
   blocks: { blockerId: string; blockeeId: string }[] = [];
   userBlockStrangers: Record<string, boolean> = {};
   txCount = 0;
@@ -103,6 +104,7 @@ class MockPgClientMain {
         publishedAt: publishedAt ?? null,
         updatedAt: null,
         content: "",
+        locale: locale ?? null,
       };
       this.data.push(newPost);
       return {
@@ -114,7 +116,7 @@ class MockPgClientMain {
             published_at: publishedAt ?? null,
             updated_at: null,
             snippet,
-            locale,
+            locale: locale ?? null,
             allow_likes: !!allowLikes,
             allow_replies: !!allowReplies,
             created_at: createdAt,
@@ -176,6 +178,7 @@ class MockPgClientMain {
         allow_replies: "allowReplies",
         created_at: "createdAt",
         updated_at: "updatedAt",
+        locale: "locale",
       };
 
       let paramCursor = 0;
@@ -245,10 +248,13 @@ class MockPgClientMain {
         reply_to: cur.replyTo,
         published_at: cur.publishedAt,
         updated_at: cur.updatedAt,
+        snippet: "",
+        locale: cur.locale,
         allow_likes: cur.allowLikes,
         allow_replies: cur.allowReplies,
         created_at: cur.createdAt,
         owner_nickname: owner?.nickname ?? "",
+        owner_locale: owner?.locale ?? null,
         reply_to_owner_nickname: replyNickname,
         count_replies: this.countRepliesFor(cur.id),
         count_likes: this.countLikesFor(cur.id),
@@ -325,11 +331,14 @@ class MockPgClientMain {
           id: p.id,
           owned_by: p.ownedBy,
           reply_to: p.replyTo,
+          published_at: p.publishedAt,
+          locale: p.locale,
           allow_likes: p.allowLikes,
           allow_replies: p.allowReplies,
           created_at: p.createdAt,
           updated_at: p.updatedAt,
           owner_nickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
+          owner_locale: this.users.find((u) => u.id === p.ownedBy)?.locale ?? null,
           reply_to_owner_nickname,
           count_replies: this.countRepliesFor(p.id),
           count_likes: this.countLikesFor(p.id),
@@ -368,10 +377,13 @@ class MockPgClientMain {
           reply_to: p.replyTo,
           published_at: p.publishedAt,
           updated_at: p.updatedAt,
+          snippet: "",
+          locale: p.locale,
           allow_likes: p.allowLikes,
           allow_replies: p.allowReplies,
           created_at: p.createdAt,
           owner_nickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
+          owner_locale: this.users.find((u) => u.id === p.ownedBy)?.locale ?? null,
           reply_to_owner_nickname,
           count_replies: this.countRepliesFor(p.id),
           count_likes: this.countLikesFor(p.id),
@@ -401,7 +413,7 @@ class MockPgClientMain {
 
     if (
       sql.startsWith(
-        "SELECT p.id, p.owned_by, p.reply_to, p.published_at, p.updated_at, p.allow_likes, p.allow_replies",
+        "SELECT p.id, p.owned_by, p.reply_to, p.published_at, p.updated_at, p.snippet, p.locale, p.allow_likes, p.allow_replies",
       ) &&
       sql.includes("FROM posts p") &&
       sql.includes("JOIN users u ON p.owned_by = u.id") &&
@@ -423,16 +435,21 @@ class MockPgClientMain {
         ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
         : null;
 
+      const owner = this.users.find((u) => u.id === post.ownedBy);
+
       const row: any = {
         id: post.id,
         owned_by: post.ownedBy,
         reply_to: post.replyTo,
         published_at: post.publishedAt ?? null,
         updated_at: post.updatedAt,
+        snippet: "",
+        locale: post.locale,
         allow_likes: post.allowLikes,
         allow_replies: post.allowReplies,
         created_at: post.createdAt,
-        owner_nickname: this.users.find((u) => u.id === post.ownedBy)?.nickname ?? "",
+        owner_nickname: owner?.nickname || "",
+        owner_locale: owner?.locale ?? null,
         reply_to_owner_nickname,
         count_replies: this.countRepliesFor(post.id),
         count_likes: this.countLikesFor(post.id),
@@ -440,6 +457,7 @@ class MockPgClientMain {
           .filter((t) => t.postId === post.id)
           .map((t) => t.name)
           .sort(),
+        content: post.content,
       };
       if (includeBlocking && focusUserId)
         row.is_blocking_focus_user = this.computeIsBlocking(post.ownedBy, focusUserId);
@@ -456,17 +474,21 @@ class MockPgClientMain {
         const reply_to_owner_nickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
+        const owner = this.users.find((u) => u.id === p.ownedBy);
         const row: any = {
           id: p.id,
           content: p.content,
           owned_by: p.ownedBy,
           reply_to: p.replyTo,
           published_at: p.publishedAt ?? null,
+          updated_at: p.updatedAt,
+          snippet: "",
+          locale: p.locale,
           allow_likes: p.allowLikes,
           allow_replies: p.allowReplies,
           created_at: p.createdAt,
-          updated_at: p.updatedAt,
-          owner_nickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
+          owner_nickname: owner?.nickname ?? "",
+          owner_locale: owner?.locale ?? null,
           reply_to_owner_nickname,
           count_replies: this.countRepliesFor(p.id),
           count_likes: this.countLikesFor(p.id),
@@ -525,6 +547,7 @@ class MockPgClientMain {
                 allow_replies: post.allowReplies,
                 created_at: post.createdAt,
                 updated_at: post.updatedAt,
+                locale: post.locale,
               },
             ]
           : [],
@@ -545,17 +568,20 @@ class MockPgClientMain {
         const replyToNickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
+        const owner = this.users.find((u) => u.id === p.ownedBy);
         const row: any = {
           id: p.id,
           content: p.content,
           owned_by: p.ownedBy,
           reply_to: p.replyTo,
           published_at: p.publishedAt ?? null,
+          locale: p.locale,
           allow_likes: p.allowLikes,
           allow_replies: p.allowReplies,
           created_at: p.createdAt,
           updated_at: p.updatedAt,
-          owner_nickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
+          owner_nickname: owner?.nickname ?? "",
+          owner_locale: owner?.locale ?? null,
           reply_to_owner_nickname: replyToNickname,
           count_replies: this.countRepliesFor(p.id),
           count_likes: this.countLikesFor(p.id),
@@ -620,9 +646,9 @@ describe("posts service", () => {
     user2Hex = hex16();
     user3Hex = hex16();
 
-    pgClient.users.push({ id: toDecStr(user1Hex), nickname: "Alice" });
-    pgClient.users.push({ id: toDecStr(user2Hex), nickname: "Bob" });
-    pgClient.users.push({ id: toDecStr(user3Hex), nickname: "Carol" });
+    pgClient.users.push({ id: toDecStr(user1Hex), nickname: "Alice", locale: "ja-JP" });
+    pgClient.users.push({ id: toDecStr(user2Hex), nickname: "Bob", locale: "en-US" });
+    pgClient.users.push({ id: toDecStr(user3Hex), nickname: "Carol", locale: "fr-FR" });
 
     postSample = {
       id: hex16(),
@@ -634,6 +660,7 @@ describe("posts service", () => {
       createdAt: new Date().toISOString(),
       publishedAt: null,
       updatedAt: null,
+      locale: "ja-JP",
     };
 
     pgClient.data.push({
@@ -675,17 +702,18 @@ describe("posts service", () => {
     const posts = await postsService.listPosts();
     expect(posts.length).toBeGreaterThanOrEqual(1);
     expect(posts[0].ownerNickname).toBe("Alice");
+    expect(posts[0].ownerLocale).toBe("ja-JP");
     expect(posts[0].tags).toContain("tag1");
     expect(posts[0].countLikes).toBeGreaterThanOrEqual(1);
   });
 
-  test("createPost (then getPost for content)", async () => {
+  test("createPost (then getPost for content) with locale null", async () => {
     const parentId = postSample.id;
     const input: CreatePostInput = {
       content: "new post content",
       ownedBy: user2Hex,
       replyTo: parentId,
-      locale: "und",
+      locale: null,
       allowLikes: true,
       allowReplies: true,
       publishedAt: null,
@@ -694,19 +722,18 @@ describe("posts service", () => {
     const created = await postsService.createPost(input);
     expect(created.ownedBy).toBe(user2Hex);
     expect(created.replyTo).toBe(parentId);
-
-    const detail = await postsService.getPost(created.id);
-    expect(detail!.content).toBe("new post content");
-
+    expect(created.locale).toBeNull();
     expect(pgClient.tags.some((t) => t.postId === toDecStr(created.id) && t.name === "hello")).toBe(
       true,
     );
+    expect(created.content).toBe("new post content");
   });
 
   test("getPost", async () => {
     const post = await postsService.getPost(postSample.id);
     expect(post).not.toBeNull();
     expect(post!.content).toBe(postSample.content);
+    expect(post!.ownerLocale).toBe("ja-JP");
   });
 
   test("getPost: not found", async () => {
@@ -735,6 +762,13 @@ describe("posts service", () => {
     const post = await postsService.updatePost(input);
     expect(post).not.toBeNull();
     expect(post!.content).toBe("only content changed");
+  });
+
+  test("updatePost: locale can be set to null", async () => {
+    const input: UpdatePostInput = { id: postSample.id, locale: null };
+    const post = await postsService.updatePost(input);
+    expect(post).not.toBeNull();
+    expect(post!.locale).toBeNull();
   });
 
   test("updatePost: not found", async () => {
@@ -822,9 +856,9 @@ describe("listPostsByFollowees", () => {
     bob = hex16();
     carol = hex16();
 
-    pgClient.users.push({ id: toDecStr(alice), nickname: "Alice" });
-    pgClient.users.push({ id: toDecStr(bob), nickname: "Bob" });
-    pgClient.users.push({ id: toDecStr(carol), nickname: "Carol" });
+    pgClient.users.push({ id: toDecStr(alice), nickname: "Alice", locale: "ja-JP" });
+    pgClient.users.push({ id: toDecStr(bob), nickname: "Bob", locale: "en-US" });
+    pgClient.users.push({ id: toDecStr(carol), nickname: "Carol", locale: "fr-FR" });
 
     pgClient.follows.push({ followerId: toDecStr(alice), followeeId: toDecStr(bob) });
 
@@ -838,6 +872,7 @@ describe("listPostsByFollowees", () => {
       createdAt: new Date().toISOString(),
       publishedAt: null,
       updatedAt: null,
+      locale: "ja-JP",
     };
     postBob = {
       id: hex16(),
@@ -849,6 +884,7 @@ describe("listPostsByFollowees", () => {
       createdAt: new Date().toISOString(),
       publishedAt: null,
       updatedAt: null,
+      locale: "en-US",
     };
     postCarol = {
       id: hex16(),
@@ -860,6 +896,7 @@ describe("listPostsByFollowees", () => {
       createdAt: new Date().toISOString(),
       publishedAt: null,
       updatedAt: null,
+      locale: "fr-FR",
     };
 
     pgClient.data.push(
@@ -927,8 +964,8 @@ describe("listPostsLikedByUser", () => {
     alice = hex16();
     bob = hex16();
 
-    pgClient.users.push({ id: toDecStr(alice), nickname: "Alice" });
-    pgClient.users.push({ id: toDecStr(bob), nickname: "Bob" });
+    pgClient.users.push({ id: toDecStr(alice), nickname: "Alice", locale: "ja-JP" });
+    pgClient.users.push({ id: toDecStr(bob), nickname: "Bob", locale: "en-US" });
 
     post1 = {
       id: hex16(),
@@ -940,6 +977,7 @@ describe("listPostsLikedByUser", () => {
       createdAt: new Date().toISOString(),
       publishedAt: null,
       updatedAt: null,
+      locale: "en-US",
     };
     post2 = {
       id: hex16(),
@@ -951,6 +989,7 @@ describe("listPostsLikedByUser", () => {
       createdAt: new Date().toISOString(),
       publishedAt: null,
       updatedAt: null,
+      locale: "en-US",
     };
 
     pgClient.data.push(
@@ -967,6 +1006,7 @@ describe("listPostsLikedByUser", () => {
     expect(Array.isArray(result)).toBe(true);
     expect(result.some((p) => p.id === post1.id)).toBe(true);
     expect(result.some((p) => p.id === post2.id)).toBe(false);
+    expect(result[0].ownerLocale).toBe("en-US");
   });
 
   test("should return empty array if user has not liked any posts", async () => {
@@ -986,7 +1026,7 @@ describe("listPostsLikedByUser", () => {
 describe("getPost", () => {
   class MockPgClient {
     posts: MockPostRow[] = [];
-    users: { id: string; nickname: string }[] = [];
+    users: { id: string; nickname: string; locale?: string | null }[] = [];
     postLikes: { postId: string; likedBy: string }[] = [];
     postTags: { postId: string; name: string }[] = [];
     blocks: { blockerId: string; blockeeId: string }[] = [];
@@ -1041,10 +1081,13 @@ describe("getPost", () => {
           created_at: p.createdAt,
           updated_at: p.updatedAt,
           owner_nickname: u?.nickname || "",
+          owner_locale: u?.locale ?? null,
           reply_to_owner_nickname,
           count_replies,
           count_likes,
           tags,
+          locale: p.locale,
+          published_at: p.publishedAt,
         };
         if (includeBlocking && focusUserId)
           row.is_blocking_focus_user = this.computeIsBlocking(p.ownedBy, focusUserId);
@@ -1071,15 +1114,15 @@ describe("getPost", () => {
   let redis: MockRedis;
   let postsService: PostsService;
   let post: MockPostRow;
-  let owner: { id: string; nickname: string };
+  let owner: { id: string; nickname: string; locale?: string | null };
 
   beforeEach(() => {
     pgClient = new MockPgClient();
     redis = new MockRedis();
     postsService = new PostsService(pgClient as any, redis as any);
 
-    owner = { id: hex16(), nickname: "Poster" };
-    pgClient.users.push({ id: toDecStr(owner.id), nickname: owner.nickname });
+    owner = { id: hex16(), nickname: "Poster", locale: "ja-JP" };
+    pgClient.users.push({ id: toDecStr(owner.id), nickname: owner.nickname, locale: owner.locale });
 
     post = {
       id: hex16(),
@@ -1091,6 +1134,7 @@ describe("getPost", () => {
       createdAt: new Date().toISOString(),
       publishedAt: null,
       updatedAt: null,
+      locale: "ja-JP",
     };
 
     pgClient.posts.push({ ...post, id: toDecStr(post.id), ownedBy: toDecStr(post.ownedBy) });
@@ -1113,6 +1157,7 @@ describe("getPost", () => {
         createdAt: new Date().toISOString(),
         publishedAt: null,
         updatedAt: null,
+        locale: "en-US",
       },
       {
         id: toDecStr(hex16()),
@@ -1124,6 +1169,7 @@ describe("getPost", () => {
         createdAt: new Date().toISOString(),
         publishedAt: null,
         updatedAt: null,
+        locale: "en-US",
       },
     );
   });
@@ -1133,9 +1179,11 @@ describe("getPost", () => {
     expect(result).not.toBeNull();
     expect(result!.id).toBe(post.id);
     expect(result!.ownerNickname).toBe(owner.nickname);
+    expect(result!.ownerLocale).toBe("ja-JP");
     expect(result!.countReplies).toBe(2);
     expect(result!.countLikes).toBe(2);
     expect(result!.tags.sort()).toEqual(["tag1", "tag2"]);
+    expect(result!.locale).toBe("ja-JP");
   });
 
   test("getPost: not found returns null", async () => {
@@ -1144,8 +1192,12 @@ describe("getPost", () => {
   });
 
   test("getPost: no likes, no replies, no tags", async () => {
-    const anotherOwner = { id: hex16(), nickname: "Nobody" };
-    pgClient.users.push({ id: toDecStr(anotherOwner.id), nickname: anotherOwner.nickname });
+    const anotherOwner = { id: hex16(), nickname: "Nobody", locale: "en-US" };
+    pgClient.users.push({
+      id: toDecStr(anotherOwner.id),
+      nickname: anotherOwner.nickname,
+      locale: anotherOwner.locale,
+    });
 
     const p2: MockPostRow = {
       id: hex16(),
@@ -1157,12 +1209,14 @@ describe("getPost", () => {
       createdAt: new Date().toISOString(),
       publishedAt: null,
       updatedAt: null,
+      locale: "en-US",
     };
     pgClient.posts.push({ ...p2, id: toDecStr(p2.id), ownedBy: toDecStr(p2.ownedBy) });
 
     const got = await postsService.getPost(p2.id);
     expect(got).not.toBeNull();
     expect(got!.ownerNickname).toBe("Nobody");
+    expect(got!.ownerLocale).toBe("en-US");
     expect(got!.countReplies).toBe(0);
     expect(got!.countLikes).toBe(0);
     expect(got!.tags).toEqual([]);
@@ -1360,8 +1414,8 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
     alice = hex16();
     bob = hex16();
 
-    pgClient.users.push({ id: toDecStr(alice), nickname: "Alice" });
-    pgClient.users.push({ id: toDecStr(bob), nickname: "Bob" });
+    pgClient.users.push({ id: toDecStr(alice), nickname: "Alice", locale: "ja-JP" });
+    pgClient.users.push({ id: toDecStr(bob), nickname: "Bob", locale: "en-US" });
   });
 
   test("getPubPost returns only when publishedAt <= publishedUntil", async () => {
@@ -1376,6 +1430,7 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
       publishedAt: "2024-01-10T00:00:00Z",
       updatedAt: null,
       content: "A",
+      locale: "ja-JP",
     };
     pgClient.data.push(p1);
 
@@ -1389,10 +1444,12 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
     const hitEq = await postsService.getPubPost(idHex, until2);
     expect(hitEq).not.toBeNull();
     expect(hitEq!.publishedAt).toBe("2024-01-10T00:00:00Z");
+    expect(hitEq!.ownerLocale).toBe("ja-JP");
 
     const hitGt = await postsService.getPubPost(idHex, until3);
     expect(hitGt).not.toBeNull();
     expect(hitGt!.publishedAt).toBe("2024-01-10T00:00:00Z");
+    expect(hitGt!.ownerLocale).toBe("ja-JP");
   });
 
   test("listPubPostsByUser includes equality (<=) and honors order asc", async () => {
@@ -1406,6 +1463,7 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
       publishedAt: "2024-01-01T00:00:00Z",
       updatedAt: null,
       content: "A1",
+      locale: "ja-JP",
     };
     const pA2: MockPostRow = {
       id: toDecStr(hex16()),
@@ -1417,6 +1475,7 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
       publishedAt: "2024-01-03T00:00:00Z",
       updatedAt: null,
       content: "A2",
+      locale: "ja-JP",
     };
     const pB1: MockPostRow = {
       id: toDecStr(hex16()),
@@ -1428,6 +1487,7 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
       publishedAt: "2024-01-02T00:00:00Z",
       updatedAt: null,
       content: "B1",
+      locale: "en-US",
     };
     pgClient.data.push(pA1, pA2, pB1);
 
@@ -1439,6 +1499,7 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
       order: "asc",
     } as PostPagination);
     expect(listAsc.map((p) => p.publishedAt)).toEqual([pA1.publishedAt, pA2.publishedAt]);
+    expect(listAsc[0].ownerLocale).toBe("ja-JP");
   });
 
   test("listPubPostsByUser offset/limit", async () => {
@@ -1453,6 +1514,7 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
         publishedAt: d,
         updatedAt: null,
         content: d,
+        locale: "ja-JP",
       }) as MockPostRow;
     const rows = [
       mk("2024-01-01T00:00:00Z"),
@@ -1491,6 +1553,7 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
         publishedAt: d,
         updatedAt: null,
         content: d,
+        locale: owner === alice ? "ja-JP" : "en-US",
       }) as MockPostRow;
     const a1 = mk(alice, "2024-02-01T00:00:00Z");
     const a2 = mk(alice, "2024-02-10T00:00:00Z");

@@ -20,11 +20,11 @@ export type AIModel = {
 export type User = {
   id: string;
   nickname: string;
-  isAdmin: boolean;
-  blockStrangers: boolean;
-  snippet: string;
   avatar: string | null;
   aiModel: string | null;
+  snippet: string;
+  isAdmin: boolean;
+  blockStrangers: boolean;
   createdAt: string;
   updatedAt: string | null;
   countFollowers: number;

@@ -10,6 +10,7 @@ export type Post = {
   publishedAt: string | null;
   updatedAt: string | null;
   ownerNickname: string;
+  ownerLocale: string;
   replyToOwnerNickname: string | null;
   countLikes: number;
   countReplies: number;
@@ -53,7 +54,7 @@ export type ListPostsInput = PostFilter & PostPagination;
 export type CreatePostInput = {
   id?: string;
   content: string;
-  locale: string;
+  locale: string | null;
   ownedBy: string;
   replyTo: string | null;
   allowLikes: boolean;
@@ -66,7 +67,7 @@ export type UpdatePostInput = {
   id: string;
   ownedBy?: string;
   content?: string;
-  locale?: string;
+  locale?: string | null;
   replyTo?: string | null;
   allowLikes?: boolean;
   allowReplies?: boolean;
