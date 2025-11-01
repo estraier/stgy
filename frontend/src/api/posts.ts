@@ -35,7 +35,7 @@ export async function createPost(post: {
   replyTo?: string | null;
   ownedBy?: string;
   publishedAt?: string | null;
-  locale?: string;
+  locale?: string | null;
 }): Promise<Post> {
   const res = await apiFetch("/posts", {
     method: "POST",

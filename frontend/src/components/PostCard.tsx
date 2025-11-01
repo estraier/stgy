@@ -44,7 +44,6 @@ export default function PostCard({
 }: PostCardProps) {
   const router = useRouter();
   const contentRef = useRef<HTMLDivElement | null>(null);
-
   const hasContent =
     "content" in post && typeof post.content === "string" && post.content.length > 0;
 
@@ -59,10 +58,8 @@ export default function PostCard({
   const isBlockedForFocusUser = Boolean(
     (post as { isBlockingFocusUser?: boolean }).isBlockingFocusUser,
   );
-
   const postLang =
-    typeof post.locale === "string" && post.locale.trim() !== "" ? post.locale : undefined;
-
+    typeof post.locale === "string" ? post.locale : post.ownerLocale;
   const [publishedAtLocal, setPublishedAtLocal] = useState<Post["publishedAt"]>(
     (post.publishedAt ?? null) as Post["publishedAt"],
   );
@@ -281,7 +278,7 @@ export default function PostCard({
           />
         </a>
         <a
-          lang={postLang}
+          lang={post.ownerLocale}
           className="-mt-1 text-lg text-slate-900 hover:text-blue-700 hover:underline min-w-[20ex] max-w-[48ex] truncate inline-block align-bottom max-md:min-w-[10ex]"
           href={`/users/${post.ownedBy}`}
           onClick={(e) => e.stopPropagation()}

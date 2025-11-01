@@ -46,16 +46,17 @@ export type UserDetail = User & {
 
 export type Post = {
   id: string;
-  snippet: string;
-  locale: string | null;
   ownedBy: string;
   replyTo: string | null;
-  allowLikes: boolean;
-  allowReplies: boolean;
   createdAt: string;
   publishedAt: string | null;
   updatedAt: string | null;
+  snippet: string;
+  locale: string | null;
+  allowLikes: boolean;
+  allowReplies: boolean;
   ownerNickname: string;
+  ownerLocale: string;
   replyToOwnerNickname: string | null;
   countLikes: number;
   countReplies: number;
