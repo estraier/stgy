@@ -181,18 +181,25 @@ body {
   width: 40ex;
   max-height: 40ex;
   cursor: zoom-in;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .markdown-body .image-block.expanded {
   width: 98%;
   max-height: 80ex;
   clear: both;
   cursor: zoom-out;
+  display: block;
 }
 .markdown-body .featured-block {
   float: right;
-  width: min(20ex, 40%);
+  width: min(22ex, 40%);
   max-height: 24ex;
   margin: 0.5ex 0 0.5ex 0.5ex;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 .markdown-body .image-block figcaption {
   position: absolute;
@@ -285,7 +292,9 @@ body {
 .markdown-body .image-block img,
 .markdown-body .image-block video {
   display: block;
-  width: 100%;
+  max-width: 100%;
+  max-height: inherit;
+  width: auto;
   height: auto;
   border: 1px solid #ddd;
   border-radius: 0.7ex;
@@ -293,7 +302,9 @@ body {
 .markdown-body .featured-block img,
 .markdown-body .featured-block video {
   display: block;
-  width: 100%;
+  max-width: 100%;
+  max-height: inherit;
+  width: auto;
   height: auto;
   border: 1px solid #ddd;
   border-radius: 0.5ex;
