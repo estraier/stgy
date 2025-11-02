@@ -80,7 +80,7 @@ html:has(.site-container) {
 .pub-container .pub-subtitle,
 .site-container .pub-subtitle {
   text-align: center;
-  margin-top: -2.5ex;
+  margin-top: -2ex;
   margin-bottom: 3ex;
   color: #566;
   font-size: 85%;
