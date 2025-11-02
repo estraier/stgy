@@ -66,9 +66,16 @@ body {
 
 .markdown-body ul {
   margin: 1.1ex 0;
-  line-height: 1.5;
+  line-height: 1.4;
   list-style-type: disc;
-  padding-left: 1.2em;
+  padding-left: 1.4em;
+}
+.markdown-body ul[data-bullet="number"] {
+  list-style-type: decimal;
+}
+.markdown-body ul[data-bullet="none"] {
+  line-height: inherit;
+  list-style: none;
 }
 .markdown-body ul ul {
   margin: 0;

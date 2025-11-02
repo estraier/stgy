@@ -386,8 +386,8 @@ export default function MarkdownSnippetSandbox({
 - リスト2。**あいうえお**
 - リスト3。::かきくけこ::
 
-$$E = mc^2$$ by $$\\LaTeX$$
-$$\\int_0^{\\sqrt{N}} x^2 \\, dx = \\lim_{n \\to \\infty} \\sum_{i=1}^{n} f\\left( \\frac{i \\cdot x}{n} \\right) \\cdot \\left( \\frac{x}{n} \\right)$$
+-: $$E = mc^2$$ by $$\\LaTeX$$
+-: $$\\int_0^{\\sqrt{N}} x^2 \\, dx = \\lim_{n \\to \\infty} \\sum_{i=1}^{n} f\\left( \\frac{i \\cdot x}{n} \\right) \\cdot \\left( \\frac{x}{n} \\right)$$
 
 {{竜破斬|ドラグ・スレイブ}}と{{爆霊地獄|ベノン}}と{{三日月型砂丘|バルハン}}。
 {{未完の新人|リトル・ルーキー}} → {{白兎の脚|ラビット・フット}} → {{獅兎の光|レグルス・アルネ}}。
@@ -395,8 +395,8 @@ $$\\int_0^{\\sqrt{N}} x^2 \\, dx = \\lim_{n \\to \\infty} \\sum_{i=1}^{n} f\\lef
 ## Go to [Google](https://google.com/) and **Yahoo**
 ## Set: http://example.com/ and __Yapoo__
 
-- Go to [Google](https://google.com/) and **Yahoo**
-  - Set: http://example.com/ and __Yapoo__
+-+ Go to [Google](https://google.com/) and **Yahoo**
+  -+ Set: http://example.com/ and __Yapoo__
 
 - We __live__ ::in:: **Tokyo** [Shinjuku](https://ja.wikipedia.org/wiki/%E6%96%B0%E5%AE%BF)
 
