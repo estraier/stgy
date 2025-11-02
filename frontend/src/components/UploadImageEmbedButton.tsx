@@ -1,10 +1,21 @@
 "use client";
 
 import { Config } from "@/config";
-import React, { useRef, useState, useCallback, useMemo } from "react";
+import React, {
+  useRef,
+  useState,
+  useCallback,
+  useMemo,
+  forwardRef,
+  useImperativeHandle,
+} from "react";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import ImageUploadDialog, { DialogFileItem, UploadResult } from "@/components/ImageUploadDialog";
 import { Upload as UploadIcon } from "lucide-react";
+
+export type UploadImageEmbedButtonHandle = {
+  openWithFiles: (files: File[]) => void;
+};
 
 type Props = {
   onInsert: (markdown: string) => void;
@@ -12,11 +23,19 @@ type Props = {
   title?: string;
 };
 
-export default function UploadImageEmbedButton({
-  onInsert,
-  className = "",
-  title = "Upload images",
-}: Props) {
+function cryptoRandomId() {
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  return Math.random().toString(36).slice(2);
+}
+
+const UploadImageEmbedButton = forwardRef<UploadImageEmbedButtonHandle, Props>(function UploadImageEmbedButton(
+  {
+    onInsert,
+    className = "",
+    title = "Upload images",
+  }: Props,
+  ref,
+) {
   const status = useRequireLogin();
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
 
@@ -60,10 +79,12 @@ export default function UploadImageEmbedButton({
   }, [userId]);
 
   const onFilesChosen = useCallback(
-    async (list: FileList | null) => {
-      if (!list || list.length === 0) return;
+    async (list: FileList | File[] | null) => {
+      if (!list || (list instanceof FileList && list.length === 0) || (Array.isArray(list) && list.length === 0)) {
+        return;
+      }
 
-      const files = Array.from(list);
+      const files = Array.isArray(list) ? list : Array.from(list);
       const textFiles = files.filter(isTextFile);
       const imageFiles = files.filter(isImageFile);
 
@@ -100,7 +121,7 @@ export default function UploadImageEmbedButton({
         setShowDialog(true);
       }
 
-      if (inputRef.current) inputRef.current.value = "";
+      if (inputRef.current && list instanceof FileList) inputRef.current.value = "";
     },
     [onInsert, userId, isTextFile, isImageFile, normalizeText],
   );
@@ -134,6 +155,16 @@ export default function UploadImageEmbedButton({
     setShowDialog(false);
     setDialogFiles(null);
   }, []);
+
+  useImperativeHandle(
+    ref,
+    () => ({
+      openWithFiles(files: File[]) {
+        void onFilesChosen(files);
+      },
+    }),
+    [onFilesChosen],
+  );
 
   const disabled = status.state !== "authenticated";
 
@@ -171,9 +202,6 @@ export default function UploadImageEmbedButton({
       )}
     </div>
   );
-}
+});
 
-function cryptoRandomId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
-  return Math.random().toString(36).slice(2);
-}
+export default UploadImageEmbedButton;

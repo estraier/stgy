@@ -14,7 +14,7 @@ import { parseBodyAndTags } from "@/utils/parse";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import UserMentionButton from "@/components/UserMentionButton";
 import ExistingImageEmbedButton from "@/components/ExistingImageEmbedButton";
-import UploadImageEmbedButton from "@/components/UploadImageEmbedButton";
+import UploadImageEmbedButton, { UploadImageEmbedButtonHandle } from "@/components/UploadImageEmbedButton";
 import {
   Heading1,
   Heading2,
@@ -65,7 +65,7 @@ function makePrefixRegex(prefix: string): RegExp {
   return new RegExp(pattern, "u");
 }
 function clamp(n: number, min: number, max: number) {
-  return Math.max(min, Math.min(max, n));
+  return Math.max(min, Math.min(n, max));
 }
 function lineStartAt(text: string, i: number) {
   return text.lastIndexOf("\n", Math.max(0, i - 1)) + 1;
@@ -422,6 +422,8 @@ export default function PostForm({
   const overlayBodyBRef = useRef<HTMLDivElement>(null);
   const previewFrontIsARef = useRef(true);
   const overlayFrontIsARef = useRef(true);
+
+  const uploadBtnRef = useRef<UploadImageEmbedButtonHandle | null>(null);
 
   const toolbarBtn =
     "h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-[1px]";
@@ -1026,7 +1028,6 @@ export default function PostForm({
           if (--tries > 0) requestAnimationFrame(tick);
           return;
         }
-        rebuildAnchors();
         if (anchorsRef.current.length === 0 && body.clientHeight === 0) {
           if (--tries > 0) requestAnimationFrame(tick);
           return;
@@ -1069,7 +1070,6 @@ export default function PostForm({
       showPreview,
       activePreviewWrap,
       activePreviewBody,
-      rebuildAnchors,
       scheduleSync,
       schedulePreviewHighlight,
     ],
@@ -1510,6 +1510,28 @@ export default function PostForm({
     });
   }
 
+  const handlePasteToUpload = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const dt = e.clipboardData;
+      if (!dt) return;
+      const items = Array.from(dt.items);
+      const imageFiles: File[] = [];
+      for (const it of items) {
+        if (it.kind === "file") {
+          const f = it.getAsFile();
+          if (f && f.type && f.type.startsWith("image/")) {
+            imageFiles.push(f);
+          }
+        }
+      }
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        uploadBtnRef.current?.openWithFiles(imageFiles);
+      }
+    },
+    [],
+  );
+
   return (
     <div className="relative group">
       <form
@@ -1654,7 +1676,7 @@ export default function PostForm({
             <div className="flex items-center gap-1">
               <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)} />
               <ExistingImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
-              <UploadImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
+              <UploadImageEmbedButton ref={uploadBtnRef} onInsert={(md) => insertAtCursor(md)} />
             </div>
           </div>
         </div>
@@ -1730,6 +1752,7 @@ export default function PostForm({
                   schedulePreviewHighlightRef.current();
                 }
               }}
+              onPaste={handlePasteToUpload}
               maxLength={65535}
               onFocus={handleFocus}
               rows={1}
@@ -2003,7 +2026,7 @@ export default function PostForm({
                     <div className="flex items-center gap-1">
                       <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)} />
                       <ExistingImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
-                      <UploadImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
+                      <UploadImageEmbedButton ref={uploadBtnRef} onInsert={(md) => insertAtCursor(md)} />
                     </div>
                   </div>
                 </div>
@@ -2070,6 +2093,7 @@ export default function PostForm({
                           scheduleEditorHighlightRef.current();
                           schedulePreviewHighlightRef.current();
                         }}
+                        onPaste={handlePasteToUpload}
                         maxLength={65535}
                         onFocus={handleFocus}
                         rows={1}
