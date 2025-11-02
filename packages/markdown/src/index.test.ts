@@ -884,6 +884,13 @@ describe("mdRenderHtml basics", () => {
     expect(makeHtml(mdText)).toBe("<ul><li>hello world</li></ul>");
   });
 
+  it("list number", () => {
+    const mdText = "-+ hello world\n  -: second\n-+ love";
+    expect(makeHtml(mdText)).toBe(
+      '<ul data-bullet="number"><li>hello world<ul data-bullet="none"><li>second</li></ul></li><li>love</li></ul>',
+    );
+  });
+
   it("table", () => {
     const mdText = "|=text=|hello world|>>a|=><b=|{colspan=2}{rowspan=3}c|";
     expect(makeHtml(mdText)).toBe(
@@ -1100,6 +1107,17 @@ describe("serialization", () => {
     const serialized = serializeMdNodes(nodes);
     expect(serialized).toBe(
       '[{"T":"ul","C":[{"T":"li","X":"hello world"},{"T":"li","X":"me too"}]}]',
+    );
+    const deserialized = deserializeMdNodes(serialized);
+    expect(stripPos(deserialized)).toStrictEqual(stripPos(nodes));
+  });
+
+  it("list number", () => {
+    const mdText = "-+ hello world\n-+ me too";
+    const nodes = parseMarkdown(mdText);
+    const serialized = serializeMdNodes(nodes);
+    expect(serialized).toBe(
+      '[{"T":"ul","C":[{"T":"li","X":"hello world"},{"T":"li","X":"me too"}],"BT":"number"}]',
     );
     const deserialized = deserializeMdNodes(serialized);
     expect(stripPos(deserialized)).toStrictEqual(stripPos(nodes));

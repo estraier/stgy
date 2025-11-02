@@ -49,7 +49,11 @@ export function parseMarkdown(mdText: string): MdNode[] {
   let codeStartLine = -1,
     codeStartChar = -1,
     codeFenceLen = 0;
-  const currList: { level: number; items: MdNode[] }[] = [];
+  const currList: {
+    level: number;
+    items: MdNode[];
+    bullet?: "number" | "none";
+  }[] = [];
   let currPara: string[] = [];
   let paraStartLine = -1,
     paraStartChar = -1;
@@ -94,8 +98,9 @@ export function parseMarkdown(mdText: string): MdNode[] {
   function flushList() {
     while (currList.length > 0) {
       const list = currList.pop()!;
+      const attrs = list.bullet ? { bullet: list.bullet } : undefined;
       if (currList.length === 0) {
-        nodes.push(inheritPosFromFirstChild("ul", list.items));
+        nodes.push(inheritPosFromFirstChild("ul", list.items, attrs));
       } else {
         const parentItems = currList[currList.length - 1].items;
         const lastLi =
@@ -104,7 +109,9 @@ export function parseMarkdown(mdText: string): MdNode[] {
             : undefined;
         if (lastLi && lastLi.type === "element" && lastLi.tag === "li") {
           if (!lastLi.children) lastLi.children = [];
-          lastLi.children.push(inheritPosFromFirstChild("ul", list.items));
+          lastLi.children.push(
+            inheritPosFromFirstChild("ul", list.items, attrs),
+          );
         }
       }
     }
@@ -382,19 +389,25 @@ export function parseMarkdown(mdText: string): MdNode[] {
       );
       continue;
     }
-    const li = line.match(/^(\s*)- (.+)$/);
+    const li = line.match(/^(\s*)-(\+|:)? (.+)$/);
     if (li) {
       flushPara();
       flushTable();
       flushQuote();
       const level = Math.floor(li[1].length / 2);
+      const bulletMark = li[2];
+      const text = li[3];
+      const bullet =
+        bulletMark === "+" ? "number" : bulletMark === ":" ? "none" : undefined;
+
       while (
         currList.length > 0 &&
         currList[currList.length - 1].level > level
       ) {
         const done = currList.pop();
+        const attrs = done?.bullet ? { bullet: done.bullet } : undefined;
         if (currList.length === 0) {
-          nodes.push(inheritPosFromFirstChild("ul", done!.items));
+          nodes.push(inheritPosFromFirstChild("ul", done!.items, attrs));
         } else {
           const parentItems = currList[currList.length - 1].items;
           const lastLi =
@@ -403,7 +416,9 @@ export function parseMarkdown(mdText: string): MdNode[] {
               : undefined;
           if (lastLi && lastLi.type === "element" && lastLi.tag === "li") {
             if (!lastLi.children) lastLi.children = [];
-            lastLi.children.push(inheritPosFromFirstChild("ul", done!.items));
+            lastLi.children.push(
+              inheritPosFromFirstChild("ul", done!.items, attrs),
+            );
           }
         }
       }
@@ -411,10 +426,14 @@ export function parseMarkdown(mdText: string): MdNode[] {
         currList.length === 0 ||
         currList[currList.length - 1].level < level
       ) {
-        currList.push({ level, items: [] });
+        currList.push({ level, items: [], bullet });
+      } else {
+        if (!currList[currList.length - 1].bullet && bullet) {
+          currList[currList.length - 1].bullet = bullet;
+        }
       }
       currList[currList.length - 1].items.push(
-        makeElement("li", parseInline(li[2]), undefined, i, lineCharStart),
+        makeElement("li", parseInline(text), undefined, i, lineCharStart),
       );
       continue;
     }
@@ -1138,6 +1157,10 @@ export function mdRenderHtml(
     let out = "";
     for (const k of keys) {
       const v = a[k];
+      if (k === "bullet") {
+        out += ` data-bullet="${escapeHTML(String(v))}"`;
+        continue;
+      }
       if (v === false || v === undefined || v === null) continue;
       if (v === true) out += ` ${k}`;
       else out += ` ${k}="${escapeHTML(String(v))}"`;
@@ -1678,6 +1701,7 @@ const ATTR_ENC: Record<string, string> = {
   src: "SR",
   alt: "AT",
   href: "HF",
+  bullet: "BT",
   controls: "CT",
   "aria-label": "AL",
   class: "CL",
