@@ -186,6 +186,11 @@ export default async function PubPostPage({ params }: Props) {
             )}
           </div>
         </main>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){if(typeof window==="undefined")return;if(window.__stgyImageBlockBound)return;window.__stgyImageBlockBound=true;document.body.addEventListener("click",function(e){var t=e.target;if(!t||!t.closest)return;var b=t.closest(".image-block");if(b){b.classList.toggle("expanded");e.stopPropagation();}});})();`,
+          }}
+        />
       </div>
     );
   } catch (e) {
