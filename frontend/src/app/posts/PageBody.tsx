@@ -279,7 +279,8 @@ export default function PageBody() {
       }
       const allowLikes = attrs.noLikes === true ? false : true;
       const allowReplies = attrs.noReplies === true ? false : true;
-      await createPost({ content, tags, allowLikes, allowReplies });
+      const locale = typeof attrs.locale === "string" ? attrs.locale : null;
+      await createPost({ content, tags, allowLikes, allowReplies, locale });
       setBody("");
       setQuery({
         tab: "following",
@@ -324,7 +325,8 @@ export default function PageBody() {
       }
       const allowLikes = attrs.noLikes === true ? false : true;
       const allowReplies = attrs.noReplies === true ? false : true;
-      await createPost({ content, tags, replyTo, allowLikes, allowReplies });
+      const locale = typeof attrs.locale === "string" ? attrs.locale : null;
+      await createPost({ content, tags, replyTo, allowLikes, allowReplies, locale });
       setReplyBody("");
       setReplyTo(null);
       setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100);

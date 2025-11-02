@@ -58,8 +58,7 @@ export default function PostCard({
   const isBlockedForFocusUser = Boolean(
     (post as { isBlockingFocusUser?: boolean }).isBlockingFocusUser,
   );
-  const postLang =
-    typeof post.locale === "string" ? post.locale : post.ownerLocale;
+  const postLang = typeof post.locale === "string" ? post.locale : post.ownerLocale;
   const [publishedAtLocal, setPublishedAtLocal] = useState<Post["publishedAt"]>(
     (post.publishedAt ?? null) as Post["publishedAt"],
   );

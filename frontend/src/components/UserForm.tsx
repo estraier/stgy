@@ -423,7 +423,9 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
         <div className="flex flex-col gap-1">
           <div className="flex flex-row items-center justify-between">
             <label className="font-bold text-sm">Locale</label>
-            <span className="text-xs text-gray-400 ml-2 mr-1">(used for your public posts)</span>
+            <span className="text-xs text-gray-400 ml-2 mr-1">
+              (profile language and default post language)
+            </span>
           </div>
           <select
             className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
@@ -441,7 +443,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
         <div className="flex flex-col gap-1">
           <div className="flex flex-row items-center justify-between">
             <label className="font-bold text-sm">Timezone</label>
-            <span className="text-xs text-gray-400 ml-2 mr-1">(used for your public posts)</span>
+            <span className="text-xs text-gray-400 ml-2 mr-1">(used in notifications etc)</span>
           </div>
           <select
             className="border border-gray-400 rounded px-2 py-1 bg-gray-50 text-gray-700 focus:outline-none focus:ring-2 focus:ring-blue-200"
@@ -511,8 +513,9 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
               disabled={submitting}
             />
             <label htmlFor="blockStrangers" className="font-semibold text-sm">
-              Block strangers (only allow followees to like/reply)
+              Block strangers
             </label>
+            <span className="text-xs text-gray-400 ml-1">(only allow followees to like/reply)</span>
           </div>
         )}
 

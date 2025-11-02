@@ -26,7 +26,7 @@ export async function generateMetadata({
   const { id } = await params;
   const { pubcfg, intro } = await getPubSiteData(id);
 
-  const locale = pubcfg.locale || "mul";
+  const locale = pubcfg.locale || "und";
   const siteTitle = pubcfg.siteName || intro.title || "Untitled";
   const siteDesc = intro.desc || siteTitle;
   const author = (pubcfg.author || "").trim();
@@ -90,7 +90,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const newerHref = `${baseHref}?page=${page - 1}`;
     const olderHref = `${baseHref}?page=${page + 1}`;
 
-    const locale = pubcfg.locale || "mul";
+    const locale = pubcfg.locale || "und";
     const siteIntroHtml = intro.html;
     const siteTitle = pubcfg.siteName || intro.title || "Untitled";
 

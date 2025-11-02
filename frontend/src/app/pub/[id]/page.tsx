@@ -30,7 +30,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { id } = await params;
   const { post, pubcfg, article } = await getPubPageData(id);
-  const locale = post.locale;
+  const locale = post.locale || pubcfg.locale || "und";
   const artTitle =
     article.title ||
     "POST@" + new Date(post.publishedAt ?? "").toISOString().slice(0, 10).replace(/\//g, "-");
@@ -95,7 +95,7 @@ export default async function PubPostPage({ params }: Props) {
     }
 
     const siteHref = `/pub/sites/${post.ownedBy}`;
-    const locale = post.locale;
+    const locale = post.locale || pubcfg.locale || "und";
 
     return (
       <div className={`pub-page pub-theme-${theme} pub-theme-kind-${themeKind}`}>

@@ -255,7 +255,8 @@ export default function PageBody() {
       }
       const allowLikes = !(attrs && (attrs["noLikes"] === true || attrs["nolikes"] === true));
       const allowReplies = !(attrs && (attrs["noReplies"] === true || attrs["noreplies"] === true));
-      await createPost({ content, tags, replyTo, allowLikes, allowReplies });
+      const locale = typeof attrs.locale === "string" ? attrs.locale : null;
+      await createPost({ content, tags, replyTo, allowLikes, allowReplies, locale });
       setReplyBody("");
       setReplyTo(null);
       setTimeout(() => {

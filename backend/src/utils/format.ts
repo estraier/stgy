@@ -136,10 +136,14 @@ export function validateEmail(email: string): boolean {
 export function validateLocale(input: string | undefined | null): boolean {
   if (!input) return false;
   const s = input.trim().replace(/_/g, "-");
+  if (/^x(?:-[0-9A-Za-z]{1,20}){1,2}$/.test(s)) {
+    return true;
+  }
   try {
     const canon = Intl.getCanonicalLocales([s]);
     return canon.length === 1;
-  } catch {
+  } catch (e) {
+    console.log(e);
     return false;
   }
 }

@@ -75,6 +75,7 @@ export default function PageBody() {
         const specials: string[] = [];
         if (data.allowLikes === false) specials.push("[nolikes]");
         if (data.allowReplies === false) specials.push("[noreplies]");
+        if (data.locale !== null) specials.push("[locale=" + data.locale + "]");
         const allTags = [...specials, ...(data.tags ?? [])];
         const tagLine = allTags.length > 0 ? "\n\n#" + allTags.join(", #") : "";
         setEditBody(data.content + tagLine);
@@ -246,11 +247,13 @@ export default function PageBody() {
         tags: string[];
         allowLikes: boolean;
         allowReplies: boolean;
+        locale: string | null;
       } = {
         content,
         tags,
         allowLikes: attrs.noLikes === true ? false : true,
         allowReplies: attrs.noReplies === true ? false : true,
+        locale: typeof attrs.locale === "string" ? attrs.locale : null,
       };
       await updatePost(postId, patch);
       setEditing(false);
@@ -304,7 +307,8 @@ export default function PageBody() {
       }
       const allowLikes = attrs.noLikes === true ? false : true;
       const allowReplies = attrs.noReplies === true ? false : true;
-      await createPost({ content, tags, replyTo: replyingTo, allowLikes, allowReplies });
+      const locale = typeof attrs.locale === "string" ? attrs.locale : null;
+      await createPost({ content, tags, replyTo: replyingTo, allowLikes, allowReplies, locale });
       setReplyBody("");
       setReplyingTo(null);
 
@@ -423,6 +427,7 @@ export default function PageBody() {
                 const specials: string[] = [];
                 if (post.allowLikes === false) specials.push("[nolikes]");
                 if (post.allowReplies === false) specials.push("[noreplies]");
+                if (post.locale !== null) specials.push("[locale=" + post.locale + "]");
                 const allTags = [...specials, ...(post.tags ?? [])];
                 const tagLine = allTags.length > 0 ? "\n\n#" + allTags.join(", #") : "";
                 setEditBody(post.content + tagLine);

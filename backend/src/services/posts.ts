@@ -289,8 +289,9 @@ export class PostsService {
   async createPost(input: CreatePostInput): Promise<PostDetail> {
     if (typeof input.content !== "string" || input.content.trim() === "")
       throw new Error("content is required");
-    if (input.locale !== null && !validateLocale(input.locale))
-      throw new Error("locale is required");
+    if (input.locale !== null && !validateLocale(input.locale)) {
+      throw new Error("locale is invalid");
+    }
     if (typeof input.ownedBy !== "string" || input.ownedBy.trim() === "")
       throw new Error("ownedBy is required");
     let id: string;
@@ -411,8 +412,9 @@ export class PostsService {
         );
       }
       if (input.locale !== undefined) {
-        if (input.locale !== null && !validateLocale(input.locale))
-          throw new Error("locale is required");
+        if (input.locale !== null && !validateLocale(input.locale)) {
+          throw new Error("locale is invalid");
+        }
         columns.push(`locale = $${idx++}`);
         values.push(input.locale);
       }

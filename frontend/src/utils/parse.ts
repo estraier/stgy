@@ -179,7 +179,10 @@ export function parseBodyAndTags(body: string): {
   const attrs: Record<string, string | number | boolean> = {};
   const tags: string[] = [];
   for (const t of collectedTags) {
-    if (t === "[nolikes]") {
+    const localeMatch = t.match(/^\[locale=(.*)\]$/);
+    if (localeMatch) {
+      attrs.locale = localeMatch[1];
+    } else if (t === "[nolikes]") {
       attrs.noLikes = true;
     } else if (t === "[noreplies]") {
       attrs.noReplies = true;
