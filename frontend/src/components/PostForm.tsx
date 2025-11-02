@@ -14,7 +14,9 @@ import { parseBodyAndTags } from "@/utils/parse";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import UserMentionButton from "@/components/UserMentionButton";
 import ExistingImageEmbedButton from "@/components/ExistingImageEmbedButton";
-import UploadImageEmbedButton, { UploadImageEmbedButtonHandle } from "@/components/UploadImageEmbedButton";
+import UploadImageEmbedButton, {
+  UploadImageEmbedButtonHandle,
+} from "@/components/UploadImageEmbedButton";
 import {
   Heading1,
   Heading2,
@@ -1066,13 +1068,7 @@ export default function PostForm({
         });
       }
     },
-    [
-      showPreview,
-      activePreviewWrap,
-      activePreviewBody,
-      scheduleSync,
-      schedulePreviewHighlight,
-    ],
+    [showPreview, activePreviewWrap, activePreviewBody, scheduleSync, schedulePreviewHighlight],
   );
 
   const attachPreviewObservers = useCallback(() => {
@@ -1510,27 +1506,24 @@ export default function PostForm({
     });
   }
 
-  const handlePasteToUpload = useCallback(
-    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-      const dt = e.clipboardData;
-      if (!dt) return;
-      const items = Array.from(dt.items);
-      const imageFiles: File[] = [];
-      for (const it of items) {
-        if (it.kind === "file") {
-          const f = it.getAsFile();
-          if (f && f.type && f.type.startsWith("image/")) {
-            imageFiles.push(f);
-          }
+  const handlePasteToUpload = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+    const dt = e.clipboardData;
+    if (!dt) return;
+    const items = Array.from(dt.items);
+    const imageFiles: File[] = [];
+    for (const it of items) {
+      if (it.kind === "file") {
+        const f = it.getAsFile();
+        if (f && f.type && f.type.startsWith("image/")) {
+          imageFiles.push(f);
         }
       }
-      if (imageFiles.length > 0) {
-        e.preventDefault();
-        uploadBtnRef.current?.openWithFiles(imageFiles);
-      }
-    },
-    [],
-  );
+    }
+    if (imageFiles.length > 0) {
+      e.preventDefault();
+      uploadBtnRef.current?.openWithFiles(imageFiles);
+    }
+  }, []);
 
   return (
     <div className="relative group">
@@ -2026,7 +2019,10 @@ export default function PostForm({
                     <div className="flex items-center gap-1">
                       <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)} />
                       <ExistingImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
-                      <UploadImageEmbedButton ref={uploadBtnRef} onInsert={(md) => insertAtCursor(md)} />
+                      <UploadImageEmbedButton
+                        ref={uploadBtnRef}
+                        onInsert={(md) => insertAtCursor(md)}
+                      />
                     </div>
                   </div>
                 </div>
