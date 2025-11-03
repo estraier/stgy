@@ -1,4 +1,5 @@
 import { cache } from "react";
+import Link from "next/link";
 import { Config } from "@/config";
 import { HeadLangPatcher } from "@/components/HeadLangPatcher";
 import PubServiceHeader from "@/components/PubServiceHeader";
@@ -67,7 +68,7 @@ export async function generateMetadata({
       },
       authors: author ? [{ name: author }] : undefined,
     };
-  } catch (e: any) {
+  } catch (e: unknown) {
     const canonical = makeAbsoluteUrl(`/pub/${id}`);
     const msg = e instanceof Error ? e.message : String(e ?? "");
     const is404 = /(^|\b)404(\b|$)/.test(msg) || /not\s*found/i.test(msg) || /no\s*such/i.test(msg);
@@ -213,7 +214,7 @@ export default async function PubPostPage({ params }: Props) {
         />
       </div>
     );
-  } catch (e: any) {
+  } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to load";
     const is404 =
       /(^|\b)404(\b|$)/.test(String(msg)) ||
@@ -229,9 +230,9 @@ export default async function PubPostPage({ params }: Props) {
             <>
               <p>This publication page doesn’t exist or is private.</p>
               <p>
-                <a className="pager-btn" href="/">
+                <Link className="pager-btn" href="/">
                   Go to Home
-                </a>
+                </Link>
               </p>
             </>
           ) : (

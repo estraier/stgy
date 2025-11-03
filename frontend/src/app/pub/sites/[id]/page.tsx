@@ -1,4 +1,5 @@
 import { cache } from "react";
+import Link from "next/link";
 import { Config } from "@/config";
 import { HeadLangPatcher } from "@/components/HeadLangPatcher";
 import PubServiceHeader from "@/components/PubServiceHeader";
@@ -57,7 +58,7 @@ export async function generateMetadata({
       },
       authors: author ? [{ name: author }] : undefined,
     };
-  } catch (e: any) {
+  } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : String(e ?? "");
     const is404 = /(^|\b)404(\b|$)/.test(msg) || /not\s*found/i.test(msg) || /no\s*such/i.test(msg);
 
@@ -126,7 +127,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
           <div className="site-layout">
             <section className="site-main">
               <h1 className="pub-site-name">
-                <a href={baseHref}>{siteTitle}</a>
+                <Link href={baseHref}>{siteTitle}</Link>
               </h1>
               {pubcfg.subtitle?.trim() && (
                 <div className="pub-subtitle">{pubcfg.subtitle.trim()}</div>
@@ -158,18 +159,18 @@ export default async function PubSitePage({ params, searchParams }: Props) {
               <nav className="pub-pager" aria-label="Pagination">
                 <div className="pager-row">
                   {hasPrev ? (
-                    <a className="pager-btn" href={newerHref}>
+                    <Link className="pager-btn" href={newerHref}>
                       ← Newer
-                    </a>
+                    </Link>
                   ) : (
                     <span className="pager-btn disabled" aria-disabled="true">
                       ← Newer
                     </span>
                   )}
                   {hasNext ? (
-                    <a className="pager-btn" href={olderHref}>
+                    <Link className="pager-btn" href={olderHref}>
                       Older →
-                    </a>
+                    </Link>
                   ) : (
                     <span className="pager-btn disabled" aria-disabled="true">
                       Older →
@@ -187,7 +188,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
         />
       </div>
     );
-  } catch (e: any) {
+  } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to load";
     const is404 =
       /(^|\b)404(\b|$)/.test(String(msg)) ||
@@ -203,9 +204,9 @@ export default async function PubSitePage({ params, searchParams }: Props) {
             <>
               <p>This publication site doesn’t exist or is private.</p>
               <p>
-                <a className="pager-btn" href="/">
+                <Link className="pager-btn" href="/">
                   Go to Home
-                </a>
+                </Link>
               </p>
             </>
           ) : (
