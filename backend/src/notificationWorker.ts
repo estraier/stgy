@@ -497,7 +497,7 @@ async function drain(
       logger.error(`[notificationworker] purge event logs error (p=${partitionId}): ${e}`);
     }
   }
-  if (purgeScore >= 100) {
+  if (purgeScore >= 1000) {
     purgeScore = 0;
     try {
       await notificationsService.purgeOldRecords();

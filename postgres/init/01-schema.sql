@@ -160,6 +160,8 @@ CREATE TABLE notifications (
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, slot, term)
 ) PARTITION BY HASH (user_id);
+CREATE INDEX idx_notifications_user_read_ts ON notifications(user_id, is_read, updated_at);
+CREATE INDEX idx_notifications_created_at ON notifications(created_at);
 
 DO $$
 DECLARE
@@ -182,9 +184,6 @@ BEGIN
     );
   END LOOP;
 END$$;
-
-CREATE INDEX idx_notifications_user_read_ts ON notifications(user_id, is_read, updated_at);
-CREATE INDEX idx_notifications_created_at ON notifications(created_at);
 
 CREATE TABLE user_counts (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
