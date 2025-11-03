@@ -804,6 +804,11 @@ describe("mdRenderText basics", () => {
     expect(makeText(mdText)).toBe("hello world");
   });
 
+  it("header 6", () => {
+    const mdText = "###### hello world";
+    expect(makeText(mdText)).toBe("hello world");
+  });
+
   it("list", () => {
     const mdText = "- hello world";
     expect(makeText(mdText)).toBe("- hello world");
@@ -870,6 +875,11 @@ describe("mdRenderHtml basics", () => {
   it("header 3", () => {
     const mdText = "### hello world";
     expect(makeHtml(mdText)).toBe('<h3 id="h-0-0-1">hello world</h3>');
+  });
+
+  it("header 6", () => {
+    const mdText = "###### hello world";
+    expect(makeHtml(mdText)).toBe('<h6 id="h-0-0-0-0-0-1">hello world</h6>');
   });
 
   it("escape characters", () => {

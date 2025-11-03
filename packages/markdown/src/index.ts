@@ -371,7 +371,7 @@ export function parseMarkdown(mdText: string): MdNode[] {
       flushQuote();
       continue;
     }
-    const h = line.match(/^(#{1,3}) (.+)$/);
+    const h = line.match(/^(#{1,6}) (.+)$/);
     if (h) {
       flushPara();
       flushList();
@@ -1121,8 +1121,20 @@ export function mdRenderHtml(
   const sanitizeIdPrefix = (s: string) =>
     (s || "h").replace(/[^a-zA-Z0-9_-]+/g, "-") || "h";
   const pfx = sanitizeIdPrefix(idPrefix ?? "h");
-  const headingLevel = (tag: string): 1 | 2 | 3 | undefined =>
-    tag === "h1" ? 1 : tag === "h2" ? 2 : tag === "h3" ? 3 : undefined;
+  const headingLevel = (tag: string): 1 | 2 | 3 | 4 | 5 | 6 | undefined =>
+    tag === "h1"
+      ? 1
+      : tag === "h2"
+        ? 2
+        : tag === "h3"
+          ? 3
+          : tag === "h4"
+            ? 4
+            : tag === "h5"
+              ? 5
+              : tag === "h6"
+                ? 6
+                : undefined;
 
   function headingLabelText(ns: MdNode[] | undefined): string {
     if (!ns) return "";
@@ -1214,11 +1226,14 @@ export function mdRenderHtml(
   const headerIdMap = new WeakMap<MdElementNode, string>();
   let countH1 = 0,
     countH2 = 0,
-    countH3 = 0;
+    countH3 = 0,
+    countH4 = 0,
+    countH5 = 0,
+    countH6 = 0;
   let seenFirstToc = false;
 
   type HeadingInfo = {
-    level: 1 | 2 | 3;
+    level: 1 | 2 | 3 | 4 | 5 | 6;
     node: MdElementNode;
     id: string;
     label: string;
@@ -1240,11 +1255,29 @@ export function mdRenderHtml(
           id = `${pfx}-${++countH1}`;
           countH2 = 0;
           countH3 = 0;
+          countH4 = 0;
+          countH5 = 0;
+          countH6 = 0;
         } else if (lvl === 2) {
           id = `${pfx}-${countH1}-${++countH2}`;
           countH3 = 0;
-        } else {
+          countH4 = 0;
+          countH5 = 0;
+          countH6 = 0;
+        } else if (lvl === 3) {
           id = `${pfx}-${countH1}-${countH2}-${++countH3}`;
+          countH4 = 0;
+          countH5 = 0;
+          countH6 = 0;
+        } else if (lvl === 4) {
+          id = `${pfx}-${countH1}-${countH2}-${countH3}-${++countH4}`;
+          countH5 = 0;
+          countH6 = 0;
+        } else if (lvl === 5) {
+          id = `${pfx}-${countH1}-${countH2}-${countH3}-${countH4}-${++countH5}`;
+          countH6 = 0;
+        } else {
+          id = `${pfx}-${countH1}-${countH2}-${countH3}-${countH4}-${countH5}-${++countH6}`;
         }
         headerIdMap.set(n, id);
 
@@ -1263,8 +1296,14 @@ export function mdRenderHtml(
   }
   prewalk(nodes);
 
-  const baseLevel: 1 | 2 | 3 | null = headingsAfterToc.length
-    ? (Math.min(...headingsAfterToc.map((h) => h.level)) as 1 | 2 | 3)
+  const baseLevel: 1 | 2 | 3 | 4 | 5 | 6 | null = headingsAfterToc.length
+    ? (Math.min(...headingsAfterToc.map((h) => h.level)) as
+        | 1
+        | 2
+        | 3
+        | 4
+        | 5
+        | 6)
     : null;
 
   type TocNode = {
