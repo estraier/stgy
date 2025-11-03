@@ -1509,6 +1509,12 @@ export default function PostForm({
   const handlePasteToUpload = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const dt = e.clipboardData;
     if (!dt) return;
+
+    const html = dt.getData("text/html");
+    if (html) {
+      console.log(html);
+    }
+
     const items = Array.from(dt.items);
     const imageFiles: File[] = [];
     for (const it of items) {

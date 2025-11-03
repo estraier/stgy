@@ -36,7 +36,6 @@ body {
 .markdown-body.user-introduction h1 {
   font-size: 120%;
 }
-
 .markdown-body h2 {
   margin: 1.05ex 0 0.95ex 0;
   font-size: 115%;
@@ -45,11 +44,28 @@ body {
 .markdown-body.user-introduction h2 {
   font-size: 110%;
 }
-
 .markdown-body h3 {
   margin: 1.1ex 0;
   font-size: 105%;
   font-weight: bold;
+}
+.markdown-body h4 {
+  margin: 1.1ex 0;
+  font-size: 100%;
+  font-weight: bold;
+  opacity: 0.9;
+}
+.markdown-body h5 {
+  margin: 1.1ex 0;
+  font-size: 90%;
+  font-weight: bold;
+  opacity: 0.8;
+}
+.markdown-body h6 {
+  margin: 1.1ex 0;
+  font-size: 85%;
+  font-weight: bold;
+  opacity: 0.7;
 }
 
 .markdown-body p {
