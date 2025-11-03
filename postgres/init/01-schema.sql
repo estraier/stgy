@@ -127,6 +127,13 @@ CREATE TABLE post_likes (
 CREATE INDEX idx_post_likes_post_id_created_at ON post_likes(post_id, created_at);
 CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_at);
 
+CREATE TABLE ai_actions (
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  done_at TIMESTAMPTZ NOT NULL,
+  action VARCHAR(65535) NOT NULL
+);
+CREATE INDEX idx_ai_actions_user_id_done_at ON ai_actions(user_id, done_at);
+
 CREATE TABLE event_logs (
   partition_id SMALLINT NOT NULL,
   event_id BIGINT NOT NULL,
@@ -152,16 +159,32 @@ CREATE TABLE notifications (
   updated_at TIMESTAMPTZ NOT NULL,
   created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   PRIMARY KEY (user_id, slot, term)
-);
+) PARTITION BY HASH (user_id);
+
+DO $$
+DECLARE
+  parts int := 8;
+  i int;
+BEGIN
+  FOR i IN 0..parts-1 LOOP
+    EXECUTE format(
+      'CREATE TABLE IF NOT EXISTS %I PARTITION OF %I
+         FOR VALUES WITH (MODULUS %s, REMAINDER %s);',
+      'notifications_p' || i, 'notifications', parts, i
+    );
+    EXECUTE format(
+      'ALTER TABLE %I SET (
+         fillfactor=75,
+         autovacuum_vacuum_scale_factor=0.1, autovacuum_vacuum_threshold=1000,
+         autovacuum_analyze_scale_factor=0.3, autovacuum_analyze_threshold=1000
+       );',
+      'notifications_p' || i
+    );
+  END LOOP;
+END$$;
+
 CREATE INDEX idx_notifications_user_read_ts ON notifications(user_id, is_read, updated_at);
 CREATE INDEX idx_notifications_created_at ON notifications(created_at);
-
-CREATE TABLE ai_actions (
-  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  done_at TIMESTAMPTZ NOT NULL,
-  action VARCHAR(65535) NOT NULL
-);
-CREATE INDEX idx_ai_actions_user_id_done_at ON ai_actions(user_id, done_at);
 
 CREATE TABLE user_counts (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

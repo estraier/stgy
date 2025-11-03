@@ -142,8 +142,7 @@ export function validateLocale(input: string | undefined | null): boolean {
   try {
     const canon = Intl.getCanonicalLocales([s]);
     return canon.length === 1;
-  } catch (e) {
-    console.log(e);
+  } catch {
     return false;
   }
 }

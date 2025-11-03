@@ -13,7 +13,7 @@ import type { Metadata } from "next";
 type PageParams = { id: string };
 
 const getPubSiteData = cache(async (id: string) => {
-  const pubcfg = await getPubConfig(id);
+  const pubcfg = await getPubConfig(id); // may throw (e.g., not found/private)
   const intro = makePubArticleHtmlFromMarkdown(pubcfg.introduction.trim() || "my publications");
   return { pubcfg, intro };
 });
@@ -24,40 +24,60 @@ export async function generateMetadata({
   params: Promise<PageParams>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const { pubcfg, intro } = await getPubSiteData(id);
-
-  const locale = pubcfg.locale || "und";
-  const siteTitle = pubcfg.siteName || intro.title || "Untitled";
-  const siteDesc = intro.desc || siteTitle;
-  const author = (pubcfg.author || "").trim();
   const canonical = makeAbsoluteUrl(`/pub/sites/${id}`);
-  const featruedImageUrl =
-    intro.featured && typeof intro.featured === "string"
-      ? makeAbsoluteUrl(intro.featured)
-      : undefined;
 
-  return {
-    title: siteTitle,
-    description: siteDesc,
-    alternates: {
-      canonical,
-    },
-    openGraph: {
+  try {
+    const { pubcfg, intro } = await getPubSiteData(id);
+    const locale = pubcfg.locale || "und";
+    const siteTitle = pubcfg.siteName || intro.title || "STGY Publications";
+    const siteDesc = intro.desc || siteTitle;
+    const author = (pubcfg.author || "").trim();
+    const featuredImageUrl =
+      intro.featured && typeof intro.featured === "string"
+        ? makeAbsoluteUrl(intro.featured)
+        : undefined;
+
+    return {
       title: siteTitle,
       description: siteDesc,
-      type: "website",
-      locale,
-      images: featruedImageUrl ? [{ url: featruedImageUrl }] : undefined,
-    },
-    twitter: {
-      card: "summary",
-      title: siteTitle,
-      description: siteDesc,
-      creator: author || undefined,
-      images: featruedImageUrl ? [featruedImageUrl] : undefined,
-    },
-    authors: author ? [{ name: author }] : undefined,
-  };
+      alternates: { canonical },
+      openGraph: {
+        title: siteTitle,
+        description: siteDesc,
+        type: "website",
+        locale,
+        images: featuredImageUrl ? [{ url: featuredImageUrl }] : undefined,
+      },
+      twitter: {
+        card: "summary",
+        title: siteTitle,
+        description: siteDesc,
+        creator: author || undefined,
+        images: featuredImageUrl ? [featuredImageUrl] : undefined,
+      },
+      authors: author ? [{ name: author }] : undefined,
+    };
+  } catch (e: any) {
+    const msg = e instanceof Error ? e.message : String(e ?? "");
+    const is404 = /(^|\b)404(\b|$)/.test(msg) || /not\s*found/i.test(msg) || /no\s*such/i.test(msg);
+
+    if (is404) {
+      return {
+        title: "Not found",
+        description: "This publication site does not exist.",
+        alternates: { canonical },
+        robots: { index: false, follow: false },
+        openGraph: { title: "Not found", type: "website" },
+        twitter: { card: "summary", title: "Not found" },
+      };
+    }
+    return {
+      title: "Error",
+      description: "Failed to load the publication site.",
+      alternates: { canonical },
+      robots: { index: false, follow: false },
+    };
+  }
 }
 
 type Props = {
@@ -92,7 +112,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
 
     const locale = pubcfg.locale || "und";
     const siteIntroHtml = intro.html;
-    const siteTitle = pubcfg.siteName || intro.title || "Untitled";
+    const siteTitle = pubcfg.siteName || intro.title || "STGY Publications";
 
     return (
       <div className={`pub-page pub-theme-${theme} pub-theme-kind-${themeKind}`}>
@@ -108,7 +128,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
               <h1 className="pub-site-name">
                 <a href={baseHref}>{siteTitle}</a>
               </h1>
-              {pubcfg.subtitle.trim() && (
+              {pubcfg.subtitle?.trim() && (
                 <div className="pub-subtitle">{pubcfg.subtitle.trim()}</div>
               )}
               <section className="site-profile">
@@ -167,14 +187,30 @@ export default async function PubSitePage({ params, searchParams }: Props) {
         />
       </div>
     );
-  } catch (e) {
+  } catch (e: any) {
     const msg = e instanceof Error ? e.message : "Failed to load";
+    const is404 =
+      /(^|\b)404(\b|$)/.test(String(msg)) ||
+      /not\s*found/i.test(String(msg)) ||
+      /no\s*such/i.test(String(msg));
+
     return (
       <div className="pub-page pub-theme-default">
         <PubServiceHeader showServiceHeader={true} />
-        <main className="pub-container">
-          <h1>Error</h1>
-          <pre>{msg}</pre>
+        <main className="pub-container" lang="und">
+          <h1>{is404 ? "Not found" : "Error"}</h1>
+          {is404 ? (
+            <>
+              <p>This publication site doesn’t exist or is private.</p>
+              <p>
+                <a className="pager-btn" href="/">
+                  Go to Home
+                </a>
+              </p>
+            </>
+          ) : (
+            <pre>{msg}</pre>
+          )}
         </main>
       </div>
     );
