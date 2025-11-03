@@ -30,6 +30,7 @@ import {
   Strikethrough as StrikethroughIcon,
   Code2 as InlineCodeIcon,
   Highlighter as MarkIcon,
+  CaseLower as SmallIcon,
   Braces as RubyIcon,
   Link as LinkIcon,
   X as CloseIcon,
@@ -1645,11 +1646,20 @@ export default function PostForm({
               </button>
               <button
                 type="button"
-                onMouseDown={actInline("%%")}
+                onMouseDown={actInline("@@")}
                 title="Mark"
                 className={`hidden md:inline-flex ${toolbarBtn}`}
               >
                 <MarkIcon className="w-4 h-4 opacity-80" aria-hidden />
+                <span className="sr-only">Mark</span>
+              </button>
+              <button
+                type="button"
+                onMouseDown={actInline("%%")}
+                title="Small"
+                className={`hidden md:inline-flex ${toolbarBtn}`}
+              >
+                <SmallIcon className="w-4 h-4 opacity-80" aria-hidden />
                 <span className="sr-only">Mark</span>
               </button>
               <button
@@ -1995,11 +2005,20 @@ export default function PostForm({
                       </button>
                       <button
                         type="button"
-                        onMouseDown={actInline("%%")}
+                        onMouseDown={actInline("@@")}
                         title="Mark"
                         className={`hidden xl:inline-flex ${toolbarBtn}`}
                       >
                         <MarkIcon className="w-4 h-4 opacity-80" aria-hidden />
+                        <span className="sr-only">Mark</span>
+                      </button>
+                      <button
+                        type="button"
+                        onMouseDown={actInline("%%")}
+                        title="Small"
+                        className={`hidden xl:inline-flex ${toolbarBtn}`}
+                      >
+                        <SmallIcon className="w-4 h-4 opacity-80" aria-hidden />
                         <span className="sr-only">Mark</span>
                       </button>
                       <button
