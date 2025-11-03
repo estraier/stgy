@@ -1579,11 +1579,12 @@ export function deserializeMdNodes(data: string): MdNode[] {
 }
 
 function parseInline(text: string): MdNode[] {
-  const esc = /\\([\\~`*_\[\](){}#+:%$\|\-\.!])/;
+  const esc = /\\([\\~`*_\[\](){}#+:%$\|\-\.!@])/;
   const bold = /\*\*([^\*]+)\*\*/;
   const italic = /::([^:]+?)::/;
   const ruby = /\{\{([^|{}]+?)\|([^{}]+?)\}\}/;
-  const mark = /%%([^%]+?)%%/;
+  const small = /%%([^%]+?)%%/;
+  const mark = /@@([^%]+?)@@/;
   const underline = /__([^_]+)__/;
   const strike = /~~([^~]+)~~/;
   const code = /``([^`]+)``/;
@@ -1622,6 +1623,13 @@ function parseInline(text: string): MdNode[] {
     return [
       ...parseInline(text.slice(0, m.index)),
       { type: "element", tag: "em", children: parseInline(m[1]!) },
+      ...parseInline(text.slice(m.index + m[0]!.length)),
+    ];
+  }
+  if ((m = small.exec(text))) {
+    return [
+      ...parseInline(text.slice(0, m.index)),
+      { type: "element", tag: "small", children: parseInline(m[1]!) },
       ...parseInline(text.slice(m.index + m[0]!.length)),
     ];
   }

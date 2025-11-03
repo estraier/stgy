@@ -826,8 +826,10 @@ describe("mdRenderText basics", () => {
 
   it("inline basics", () => {
     const mdText =
-      "**bold** ::italic:: __underline__ ~~strike~~ ``code`` %%mark%%";
-    expect(makeText(mdText)).toBe("bold italic underline strike code mark");
+      "**bold** ::italic:: __underline__ ~~strike~~ ``code`` @@mark@@ %%small%%";
+    expect(makeText(mdText)).toBe(
+      "bold italic underline strike code mark small",
+    );
   });
 
   it("ruby", () => {
@@ -929,9 +931,9 @@ describe("mdRenderHtml basics", () => {
 
   it("decorations", () => {
     const mdText =
-      "**strong** ::em:: __underline__ ~~strike~~ ``code`` %%mark%%";
+      "**strong** ::em:: __underline__ ~~strike~~ ``code`` @@mark@@ %%small%%";
     expect(makeHtml(mdText)).toBe(
-      "<p><strong>strong</strong> <em>em</em> <u>underline</u> <s>strike</s> <code>code</code> <mark>mark</mark></p>",
+      "<p><strong>strong</strong> <em>em</em> <u>underline</u> <s>strike</s> <code>code</code> <mark>mark</mark> <small>small</small></p>",
     );
   });
 
