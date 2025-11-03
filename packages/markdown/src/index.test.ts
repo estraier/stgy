@@ -1125,11 +1125,13 @@ describe("serialization", () => {
 
   it("grid", () => {
     const mdText = `![img1](/data/img1.jpg){grid}
-![img2](/data/img2.jpg){grid}`;
+![img2](/data/img2.jpg){grid}
+
+![img3](/data/img3.jpg){grid}`;
     const nodes = mdGroupImageGrid(parseMarkdown(mdText));
     const serialized = serializeMdNodes(nodes);
     expect(serialized).toBe(
-      '[{"T":"div","C":[{"T":"figure","C":[{"T":"img","SR":"/data/img1.jpg","GD":true},{"T":"figcaption","X":"img1"}],"CL":"image-block"},{"T":"figure","C":[{"T":"img","SR":"/data/img2.jpg","GD":true},{"T":"figcaption","X":"img2"}],"CL":"image-block"}],"CL":"image-grid","DC":2}]',
+      '[{"T":"div","C":[{"T":"figure","C":[{"T":"img","SR":"/data/img1.jpg","GD":true},{"T":"figcaption","X":"img1"}],"CL":"image-block"},{"T":"figure","C":[{"T":"img","SR":"/data/img2.jpg","GD":true},{"T":"figcaption","X":"img2"}],"CL":"image-block"}],"CL":"image-grid","DC":2},{"T":"div","C":[{"T":"figure","C":[{"T":"img","SR":"/data/img3.jpg","GD":true},{"T":"figcaption","X":"img3"}],"CL":"image-block"}],"CL":"image-grid","DC":1}]',
     );
     const deserialized = deserializeMdNodes(serialized);
     expect(stripPos(deserialized)).toStrictEqual(stripPos(nodes));

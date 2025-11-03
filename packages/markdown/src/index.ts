@@ -574,6 +574,9 @@ export function mdGroupImageGrid(
     if (!a) return false;
     return !!a["grid"];
   }
+  function getLine(n: MdNode): number | undefined {
+    return n.type === "element" ? n.linePosition : undefined;
+  }
   function groupInArray(arr: MdNode[]): MdNode[] {
     const out: MdNode[] = [];
     for (let i = 0; i < arr.length; ) {
@@ -581,12 +584,22 @@ export function mdGroupImageGrid(
       if (isFigureImageBlock(node) && hasGridFlag(findMedia(node)?.attrs)) {
         const group: MdNode[] = [node];
         let j = i + 1;
+        let prevLine = getLine(node);
         while (
           j < arr.length &&
           isFigureImageBlock(arr[j]) &&
           hasGridFlag(findMedia(arr[j])?.attrs)
         ) {
+          const candLine = getLine(arr[j]);
+          if (
+            typeof prevLine === "number" &&
+            typeof candLine === "number" &&
+            candLine !== prevLine + 1
+          ) {
+            break;
+          }
           group.push(arr[j]);
+          prevLine = candLine;
           j++;
         }
         for (let k = 0; k < group.length; k += maxElements) {
