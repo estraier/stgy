@@ -379,47 +379,45 @@ I will follow you
 
 ```
 ![STGYロゴ](/data/logo-square.webp){grid}
----
+
 ![STGYロゴ](/data/logo-square.webp){grid}
 ![STGYロゴ](/data/logo-square.webp){grid}
----
-![STGYロゴ](/data/logo-square.webp){grid}
-![STGYロゴ](/data/logo-square.webp){grid}
-![STGYロゴ](/data/logo-square.webp){grid}
----
+
 ![STGYロゴ](/data/logo-square.webp){grid}
 ![STGYロゴ](/data/logo-square.webp){grid}
 ![STGYロゴ](/data/logo-square.webp){grid}
-![STGYロゴ](/data/logo-square.webp){grid}
----
+
 ![STGYロゴ](/data/logo-square.webp){grid}
 ![STGYロゴ](/data/logo-square.webp){grid}
 ![STGYロゴ](/data/logo-square.webp){grid}
 ![STGYロゴ](/data/logo-square.webp){grid}
+
 ![STGYロゴ](/data/logo-square.webp){grid}
----
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
 ```
 
 ![STGYロゴ](/data/logo-square.webp){grid}
----
+
 ![STGYロゴ](/data/logo-square.webp){grid}
 ![STGYロゴ](/data/logo-square.webp){grid}
----
-![STGYロゴ](/data/logo-square.webp){grid}
-![STGYロゴ](/data/logo-square.webp){grid}
-![STGYロゴ](/data/logo-square.webp){grid}
----
+
 ![STGYロゴ](/data/logo-square.webp){grid}
 ![STGYロゴ](/data/logo-square.webp){grid}
 ![STGYロゴ](/data/logo-square.webp){grid}
-![STGYロゴ](/data/logo-square.webp){grid}
----
+
 ![STGYロゴ](/data/logo-square.webp){grid}
 ![STGYロゴ](/data/logo-square.webp){grid}
 ![STGYロゴ](/data/logo-square.webp){grid}
 ![STGYロゴ](/data/logo-square.webp){grid}
+
 ![STGYロゴ](/data/logo-square.webp){grid}
----
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
+![STGYロゴ](/data/logo-square.webp){grid}
 
 投稿詳細画面には記事内の全ての画像が表示されますが、投稿一覧画像にはひとつの代表画像のサムネイルしか表示されません。デフォルトでは、最初の画像が代表画像になります。最初の画像以外を代表画像にしたい場合には、その画像に ``{featured}`` マクロを付与します。あるいは、代表画像にしたくない画像に ``{no-featured}`` をつけても良いでしょう。全ての画像に ``{no-featured}`` をつければ、代表画像は表示されなくなります。
 

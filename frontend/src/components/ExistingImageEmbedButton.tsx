@@ -34,7 +34,7 @@ export default function ExistingImageEmbedButton({
         setOpen(false);
         return;
       }
-      const useGrid = keys.length >= 2;
+      const useGrid = true;
       const md = keys.map((k) => `![](/images/${k})${useGrid ? "{grid}" : ""}`).join("\n") + "\n";
       onInsert(md);
       setOpen(false);

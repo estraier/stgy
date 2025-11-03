@@ -133,7 +133,7 @@ const UploadImageEmbedButton = forwardRef<UploadImageEmbedButtonHandle, Props>(
         const errs = results.filter((r): r is Extract<UploadResult, { ok: false }> => !r.ok);
 
         if (oks.length > 0 || errs.length > 0) {
-          const useGrid = oks.length >= 2;
+          const useGrid = true;
           const mdParts: string[] = [];
 
           if (oks.length > 0) {
