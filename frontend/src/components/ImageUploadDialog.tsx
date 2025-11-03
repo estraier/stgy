@@ -659,6 +659,16 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
     onComplete(results);
   }, [items, onComplete, userId, SINGLE_LIMIT, effectiveUploadSize]);
 
+  const gridClass = useMemo(() => {
+    if (items.length === 1) {
+      return "grid-cols-1";
+    }
+    if (items.length === 2) {
+      return "grid-cols-1 sm:grid-cols-2";
+    }
+    return "grid-cols-1 sm:grid-cols-2 md:grid-cols-3";
+  }, [items.length]);
+
   if (!mounted) return null;
 
   return createPortal(
@@ -708,13 +718,13 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         </div>
 
         <div className="mt-3 overflow-auto max-h-[60vh]">
-          <ul className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-3">
+          <ul className={`grid ${gridClass} gap-3 justify-center`}>
             {items.map((it) => {
               const effSize = effectiveUploadSize(it);
               const isOver = SINGLE_LIMIT ? effSize > SINGLE_LIMIT : false;
               const showOver = isOver && allOptimizingDone;
               return (
-                <li key={it.id} className="rounded border bg-white overflow-hidden">
+                <li key={it.id} className="rounded border bg-white overflow-hidden mx-auto">
                   <div className="relative w-[70vw] sm:w-[44vw] md:w-[28vw] lg:w-[24vw] xl:w-[22vw] aspect-video bg-gray-50">
                     {it.previewUrl && it.decodable ? (
                       <NextImage
