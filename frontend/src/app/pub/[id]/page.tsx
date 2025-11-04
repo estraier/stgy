@@ -105,16 +105,16 @@ export default async function PubPostPage({ params }: Props) {
     const siteIntroHtml = makeSnippetHtmlFromMarkdown(
       pubcfg.introduction.trim() || "my publications",
     );
-
-    let recent: Awaited<ReturnType<typeof listPubPostsByUser>> = [];
+   let recent: Awaited<ReturnType<typeof listPubPostsByUser>> = [];
     if (pubcfg.showSideRecent) {
+      const desired = Config.PUB_SIDE_RECENT_POSTS_SIZE;
       recent = await listPubPostsByUser(post.ownedBy, {
         offset: 0,
-        limit: 5,
+        limit: desired + 1,
         order: "desc",
       });
+      recent = recent.filter((r) => String(r.id) !== String(post.id)).slice(0, desired);
     }
-
     const siteHref = `/pub/sites/${post.ownedBy}`;
     const locale = post.locale || pubcfg.locale || "und";
 
@@ -171,7 +171,7 @@ export default async function PubPostPage({ params }: Props) {
                 </nav>
               )}
             </section>
-            {(pubcfg.showSideProfile || pubcfg.showSideRecent) && (
+            {(pubcfg.showSideProfile || recent.length > 0) && (
               <aside className="pub-sidebar">
                 {pubcfg.showSideProfile && (
                   <section className="pub-side-profile">
@@ -185,7 +185,7 @@ export default async function PubPostPage({ params }: Props) {
                     </LinkDiv>
                   </section>
                 )}
-                {pubcfg.showSideRecent && (
+                {recent.length > 0 && (
                   <section className="pub-side-recent">
                     <h2 className="side-header">Recent posts</h2>
                     {recent.map((r, idx) => {
