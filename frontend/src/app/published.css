@@ -63,8 +63,8 @@ html:has(.site-container) {
   margin-top: 3ex;
   margin-left: auto;
   margin-right: auto;
-  padding: 0.25em;
-  border: 1px solid #bbb;
+  padding: 0.5ex;
+  border: 1px solid #bbc;
   border-radius: 3ex;
 }
 .pub-container .pub-site-name,
@@ -73,7 +73,7 @@ html:has(.site-container) {
   font-weight: bold;
   color: #136;
   text-align: center;
-  margin-top: 1ex;
+  margin-top: 1.5ex;
   margin-bottom: 1ex;
   padding: 0;
 }
@@ -207,7 +207,7 @@ html:has(.site-container) {
     max-width: 24ex;
   }
   .pub-container .markdown-body {
-    padding: 1ex 2ex;
+    padding: 3ex 2ex 2ex 2ex;
   }
   .pub-container:has(.pub-sidebar) {
     max-width: calc(128ex);
