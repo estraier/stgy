@@ -1482,6 +1482,359 @@ export function mdRenderHtml(
   return serializeAll(nodes);
 }
 
+export function mdRenderMarkdown(nodes: MdNode[]): string {
+  // ===== helpers: predicates =====
+  const isElement = (n: MdNode, tag?: string): n is MdElementNode =>
+    n.type === "element" && (!tag || n.tag === tag);
+
+  const hasClass = (el: MdElementNode | undefined, cls: string): boolean => {
+    if (!el || el.type !== "element") return false;
+    const c = el.attrs?.class;
+    return typeof c === "string" ? c.split(/\s+/).includes(cls) : false;
+  };
+
+  const getAttrStr = (a: MdAttrs | undefined, k: string): string | undefined => {
+    const v = a?.[k];
+    return typeof v === "string" ? v : typeof v === "number" ? String(v) : undefined;
+  };
+
+  const sanitizeUrl = (u: string): string => u.replace(/\)/g, "%29").replace(/ /g, "%20");
+
+  // ===== helpers: text & inline =====
+  const collectPlainText = (ns: MdNode[] | undefined): string => {
+    if (!ns) return "";
+    let out = "";
+    for (const n of ns) {
+      if (n.type === "text") {
+        out += n.text;
+      } else if (n.type === "element") {
+        if (n.tag === "br") out += "\n";
+        else if (n.tag === "math") out += String(n.attrs?.tex ?? "");
+        else out += collectPlainText(n.children);
+      }
+    }
+    return out;
+  };
+
+  // 装飾トリガのみ最小限エスケープ（リンクの []() は触らない）
+  const escapeForInline = (s: string): string => {
+    let out = s.replace(/\\/g, "\\\\");   // バックスラッシュは常に
+    out = out.replace(/\*\*/g, "\\*\\*"); // ** (bold)
+    out = out.replace(/::/g, "\\::");     // :: (italic)
+    out = out.replace(/%%/g, "\\%\\%");   // %% (small)
+    out = out.replace(/@@/g, "\\@\\@");   // @@ (mark)
+    out = out.replace(/__/g, "\\_\\_");   // __ (underline)
+    out = out.replace(/~~/g, "\\~\\~");   // ~~ (strike)
+    out = out.replace(/``/g, "\\`\\`");   // `` (inline code)
+    out = out.replace(/\$\$/g, "\\$\\$"); // $$ (math)
+    return out;
+  };
+
+  const backtickRun = (s: string): number => {
+    let maxRun = 0, cur = 0;
+    for (let i = 0; i < s.length; i++) {
+      if (s[i] === "`") cur++;
+      else {
+        if (cur > maxRun) maxRun = cur;
+        cur = 0;
+      }
+    }
+    if (cur > maxRun) maxRun = cur;
+    return maxRun;
+  };
+
+  // 段落等の行頭トリガ誤爆を防ぐ
+  const protectBlockStarts = (text: string): string =>
+    text
+      .split("\n")
+      .map((line) => {
+        if (/^-{3,}$/.test(line)) return "\\" + line; // ---/----/-----
+        if (/^(?:#{1,6}\s|>\s|`{3,}|-(?:\+|:)?\s)/.test(line)) return "\\" + line; // #, >, ``` , -, -+, -:
+        return line;
+      })
+      .join("\n");
+
+  const renderInline = (ns: MdNode[] | undefined): string => {
+    if (!ns || ns.length === 0) return "";
+    let out = "";
+    for (const n of ns) {
+      if (n.type === "text") {
+        out += escapeForInline(n.text);
+        continue;
+      }
+      const el = n as MdElementNode;
+      switch (el.tag) {
+        case "strong":
+          out += `**${renderInline(el.children)}**`;
+          break;
+        case "em":
+          out += `::${renderInline(el.children)}::`;
+          break;
+        case "small":
+          out += `%%${renderInline(el.children)}%%`;
+          break;
+        case "mark":
+          out += `@@${renderInline(el.children)}@@`;
+          break;
+        case "u":
+          out += `__${renderInline(el.children)}__`;
+          break;
+        case "s":
+          out += `~~${renderInline(el.children)}~~`;
+          break;
+        case "code": {
+          const inner = collectPlainText(el.children || []);
+          const ticks = "`".repeat(Math.max(2, backtickRun(inner) + 1));
+          out += `${ticks}${inner}${ticks}`;
+          break;
+        }
+        case "math": {
+          const tex = String(el.attrs?.tex ?? "");
+          out += `$$${tex}$$`;
+          break;
+        }
+        case "ruby": {
+          const rb = (el.children || []).find((c) => isElement(c, "rb")) as MdElementNode | undefined;
+          const rt = (el.children || []).find((c) => isElement(c, "rt")) as MdElementNode | undefined;
+          const rbTxt = collectPlainText(rb?.children || []);
+          const rtTxt = collectPlainText(rt?.children || []);
+          out += `{{${rbTxt}|${rtTxt}}}`;
+          break;
+        }
+        case "a": {
+          const href0 = getAttrStr(el.attrs, "href") || "";
+          const href = sanitizeUrl(href0);
+          const anchor = collectPlainText(el.children || [])
+            .replace(/\\/g, "\\\\")
+            .replace(/\]/g, "\\]");
+          if (/^https?:\/\//.test(href) && href === anchor) {
+            out += href; // 裸URL最適化
+          } else {
+            out += `[${anchor}](${href})`;
+          }
+          break;
+        }
+        case "br":
+          out += "\n";
+          break;
+        case "img":
+        case "video": {
+          // インラインに出現した場合のフォールバック（1行マクロ）
+          const src = sanitizeUrl(getAttrStr(el.attrs, "src") || "");
+          const macroAttrs: string[] = [];
+          const entries = Object.entries(el.attrs || {}).filter(
+            ([k]) => !["src", "alt", "aria-label", "controls", "loading", "decoding"].includes(k),
+          );
+          // ★ 不要な media=video は追加しない
+          entries
+            .sort(([a], [b]) => a.localeCompare(b))
+            .forEach(([k, v]) => {
+              if (v === true) macroAttrs.push(k);
+              else if (v !== false && v != null && String(v) !== "") macroAttrs.push(`${k}=${String(v)}`);
+            });
+          const attrsStr = macroAttrs.length ? `{${macroAttrs.join(", ")}}` : "";
+          out += `![](${src})${attrsStr}`;
+          break;
+        }
+        default:
+          out += renderInline(el.children);
+      }
+    }
+    return out;
+  };
+
+  // ===== helpers: block pieces =====
+  const renderFigureMacro = (fig: MdElementNode): string => {
+    const media = (fig.children || []).find(
+      (c): c is MdMediaElement => c.type === "element" && (c.tag === "img" || c.tag === "video"),
+    );
+    const captionEl = (fig.children || []).find((c) => isElement(c, "figcaption")) as
+      | MdElementNode
+      | undefined;
+
+    const src = media ? sanitizeUrl(getAttrStr(media.attrs, "src") || "") : "";
+    const desc = captionEl
+      ? collectPlainText(captionEl.children || [])
+          .replace(/\\/g, "\\\\")
+          .replace(/\]/g, "\\]")
+      : "";
+
+    const macro: string[] = [];
+    const entries = media
+      ? Object.entries(media.attrs || {}).filter(
+          ([k]) => !["src", "alt", "aria-label", "controls", "loading", "decoding"].includes(k),
+        )
+      : [];
+    // ★ 不要な media=video は追加しない（拡張子や既存属性で判定可能）
+    entries
+      .sort(([a], [b]) => a.localeCompare(b))
+      .forEach(([k, v]) => {
+        if (v === true) macro.push(k);
+        else if (v !== false && v != null && String(v) !== "") macro.push(`${k}=${String(v)}`);
+      });
+
+    const attrsStr = macro.length ? `{${macro.join(", ")}}` : "";
+    return `![${desc}](${src})${attrsStr}`;
+  };
+
+  const tableCellAlign = (cell: MdElementNode): "right" | "center" | undefined => {
+    const raw = getAttrStr(cell.attrs, "align");
+    if (raw === "right" || raw === "center") return raw;
+    const cls = cell.attrs?.class;
+    if (typeof cls === "string") {
+      if (cls.split(/\s+/).includes("align-right")) return "right";
+      if (cls.split(/\s+/).includes("align-center")) return "center";
+    }
+    return undefined;
+  };
+
+  const renderTableCell = (cell: MdElementNode): string => {
+    const tokens: string[] = [];
+    const csRaw = getAttrStr(cell.attrs, "colspan");
+    const rsRaw = getAttrStr(cell.attrs, "rowspan");
+    const cs = csRaw ? parseInt(csRaw, 10) : 0;
+    const rs = rsRaw ? parseInt(rsRaw, 10) : 0;
+    if (cs > 1) tokens.push(`{colspan=${cs}}`);
+    if (rs > 1) tokens.push(`{rowspan=${rs}}`);
+
+    const align = tableCellAlign(cell);
+    if (align === "right") tokens.push(">>");
+    else if (align === "center") tokens.push("><");
+
+    let inner = renderInline(cell.children || []).replace(/\n+/g, " ").trim();
+    inner = inner.replace(/\|/g, "\\|");
+
+    // ★ トークンはスペースなしで連結、本文前にも空白を入れない
+    let body = tokens.join("");
+    if (inner) body = body ? `${body}${inner}` : inner;
+
+    // ★ 見出しはスペースなしの =...=
+    if (cell.tag === "th") body = `=${body}=`;
+    return body;
+  };
+
+  const renderList = (ul: MdElementNode, depth: number): string => {
+    const bullet = ((): "- " | "-+ " | "-: " => {
+      const b = ul.attrs?.["bullet"];
+      if (b === "number") return "-+ ";
+      if (b === "none") return "-: ";
+      return "- ";
+    })();
+
+    let out = "";
+    for (const child of ul.children || []) {
+      if (!isElement(child, "li")) continue;
+      const indent = "  ".repeat(Math.max(0, depth));
+      const inlineParts: MdNode[] = [];
+      const nestedLists: MdElementNode[] = [];
+      for (const c of child.children || []) {
+        if (isElement(c, "ul")) nestedLists.push(c);
+        else inlineParts.push(c);
+      }
+      const line = indent + bullet + renderInline(inlineParts);
+      out += line + "\n";
+      for (const nl of nestedLists) {
+        out += renderList(nl, depth + 1);
+      }
+    }
+    if (depth === 0) out += "\n"; // blank line after top-level list
+    return out;
+  };
+
+  const renderBlock = (n: MdNode): string | null => {
+    if (n.type === "text") {
+      const t = n.text.trim();
+      return t ? escapeForInline(t) : null;
+    }
+    const el = n as MdElementNode;
+
+    // image-grid wrapper: 連続figureを空行なしで並べる
+    if (el.tag === "div" && hasClass(el, "image-grid")) {
+      const lines: string[] = [];
+      for (const c of el.children || []) {
+        if (isElement(c, "figure")) lines.push(renderFigureMacro(c));
+      }
+      return lines.join("\n");
+    }
+
+    switch (el.tag) {
+      case "p":
+        return protectBlockStarts(renderInline(el.children || []));
+      case "h1":
+      case "h2":
+      case "h3":
+      case "h4":
+      case "h5":
+      case "h6": {
+        const level = Number(el.tag.slice(1));
+        const content = renderInline(el.children || []).replace(/\n+/g, " ").trim();
+        return `${"#".repeat(level)} ${content}`;
+      }
+      case "blockquote": {
+        const content = renderInline(el.children || []);
+        const lines = content.split("\n").map((l) => `> ${l}`);
+        return lines.join("\n");
+      }
+      case "ul":
+        return renderList(el, 0).trimEnd();
+      case "pre": {
+        const code = collectPlainText(el.children || []);
+        const maxTicks = backtickRun(code);
+        const fence = "`".repeat(Math.max(3, maxTicks + 1)); // at least 3
+        const mode = getAttrStr(el.attrs, "pre-mode");
+        const style = getAttrStr(el.attrs, "pre-style");
+        const info = mode && style ? `${mode}:${style}` : mode ? mode : style ? `:${style}` : "";
+        return info ? `${fence}${info}\n${code}\n${fence}` : `${fence}\n${code}\n${fence}`;
+      }
+      case "hr": {
+        const lvl = Number(el.attrs?.["hr-level"] ?? 1);
+        const dashes = lvl === 2 ? "----" : lvl >= 3 ? "-----" : "---";
+        return dashes;
+      }
+      case "toc":
+        return "<!TOC!>";
+      case "figure":
+        return renderFigureMacro(el);
+      case "table": {
+        const rows: string[] = [];
+        for (const tr of el.children || []) {
+          if (!isElement(tr, "tr")) continue;
+          const cells: string[] = [];
+          for (const td of tr.children || []) {
+            if (!isElement(td) || (td.tag !== "td" && td.tag !== "th")) continue;
+            cells.push(renderTableCell(td));
+          }
+          rows.push("|" + cells.join("|") + "|");
+        }
+        return rows.join("\n");
+      }
+      case "omitted":
+        return "…";
+      case "br":
+        return ""; // block-level <br> は通常出ない
+      case "img":
+      case "video":
+        // ブロック媒体が素で来たら figure マクロ化
+        return renderFigureMacro(makeElement("figure", [el], { class: "image-block" }));
+      default:
+        // パラグラフ相当フォールバック
+        return protectBlockStarts(renderInline(el.children || []));
+    }
+  };
+
+  // ===== main assembly: join blocks with one blank line =====
+  const blocks: string[] = [];
+  for (const n of nodes) {
+    const b = renderBlock(n);
+    if (b == null) continue;
+    const trimmed = b.replace(/[ \t]+\n/g, "\n").trimEnd();
+    if (trimmed === "") continue;
+    if (blocks.length > 0) blocks.push(""); // blank line between blocks
+    blocks.push(trimmed);
+  }
+  return blocks.join("\n") + (blocks.length ? "\n" : "");
+}
+
 export function mdSeparateTitle(nodes: MdNode[]): {
   title: string | null;
   otherNodes: MdNode[];

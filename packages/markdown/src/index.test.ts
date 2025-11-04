@@ -9,6 +9,7 @@ import {
   mdCutOff,
   mdRenderText,
   mdRenderHtml,
+  mdRenderMarkdown,
   mdSeparateTitle,
   serializeMdNodes,
   deserializeMdNodes,
@@ -35,6 +36,11 @@ function makeText(mdText: string) {
 function makeHtml(mdText: string, usePosAttrs = false) {
   const nodes = parseMarkdown(mdText);
   return mdRenderHtml(nodes, usePosAttrs);
+}
+
+function makeMarkdown(mdText: string) {
+  const nodes = parseMarkdown(mdText);
+  return mdRenderMarkdown(nodes);
 }
 
 describe("parseMarkdown", () => {
@@ -1063,6 +1069,98 @@ abc
     const expected = `<h1 id="h-1">H1</h1><p>abc<br>def</p><p>xyz</p><pre data-pre-mode="xml" data-pre-style="small">&lt;a&gt;tako&lt;/a&gt;
 ika</pre><h2 id="h-1-1">H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul><li>e</li></ul></li><li>f</li></ul></li><li>g</li><li>h<ul><li>j<ul><li>k</li></ul></li></ul></li></ul><p>abc</p><table><tr><td><em>a</em></td><td>b</td></tr><tr><td>c</td><td><strong>d</strong></td></tr></table><figure class="image-block" data-thumbnail><img src="/data/def/ghi" alt="" decoding="async" loading="lazy"><figcaption>abc</figcaption></figure><h3 id="h-1-1-1">H3</h3>`;
     expect(makeHtml(mdText)).toBe(expected);
+  });
+});
+
+describe("mdRenderMarkdown basics", () => {
+  it("empty body", () => {
+    const mdText = "";
+    expect(makeMarkdown(mdText)).toBe("");
+  });
+
+  it("paragraph", () => {
+    const mdText = "hello world";
+    expect(makeMarkdown(mdText)).toBe("hello world\n");
+  });
+
+  it("header 1", () => {
+    const mdText = "# hello world";
+    expect(makeMarkdown(mdText)).toBe("# hello world\n");
+  });
+
+  it("header 2", () => {
+    const mdText = "## hello world";
+    expect(makeMarkdown(mdText)).toBe("## hello world\n");
+  });
+
+  it("header 3", () => {
+    const mdText = "### hello world";
+    expect(makeMarkdown(mdText)).toBe("### hello world\n");
+  });
+
+  it("header 6", () => {
+    const mdText = "###### hello world";
+    expect(makeMarkdown(mdText)).toBe("###### hello world\n");
+  });
+  it("list", () => {
+    const mdText = "- hello world";
+    expect(makeMarkdown(mdText)).toBe("- hello world\n");
+  });
+
+  it("list number", () => {
+    const mdText = "-+ hello world\n  -: second\n-+ love";
+    expect(makeMarkdown(mdText)).toBe("-+ hello world\n  -: second\n-+ love\n");
+  });
+
+  it("table", () => {
+    const mdText = "|=text=|hello world|>>a|=><b=|{colspan=2}{rowspan=3}c|";
+    expect(makeMarkdown(mdText)).toBe("|=text=|hello world|>>a|=><b=|{colspan=2}{rowspan=3}c|\n");
+  });
+
+  it("image", () => {
+    const mdText = "![tako](/data/tako.jpg)";
+    expect(makeMarkdown(mdText)).toBe("![tako](/data/tako.jpg)\n");
+  });
+
+  it("video", () => {
+    const mdText = "![tako](/data/tako.mp4){autoplay}";
+    expect(makeMarkdown(mdText)).toBe("![tako](/data/tako.mp4){autoplay}\n");
+  });
+
+  it("quote", () => {
+    const mdText = "> hello world";
+    expect(makeMarkdown(mdText)).toBe("> hello world\n");
+  });
+
+  it("decorations", () => {
+    const mdText =
+      "**strong** ::em:: __underline__ ~~strike~~ ``code`` @@mark@@ %%small%%";
+    expect(makeMarkdown(mdText)).toBe("**strong** ::em:: __underline__ ~~strike~~ ``code`` @@mark@@ %%small%%\n");
+  });
+
+  it("ruby", () => {
+    const mdText = "{{tako|ika}} {{uni **ebi**|<ikura>}}";
+    expect(makeMarkdown(mdText)).toBe("{{tako|ika}} {{uni ebi|<ikura>}}\n");
+  });
+
+  it("math", () => {
+    const mdText = "$$E = mc^2$$ $$\\sum_{i=1}^{\\sqrt{n}}$$";
+    expect(makeMarkdown(mdText)).toBe("$$E = mc^2$$ $$\\sum_{i=1}^{\\sqrt{n}}$$\n");
+  });
+
+  it("links", () => {
+    const mdText = "[tako](tako.html) http://example.com/ika?uni=ebi#time";
+    expect(makeMarkdown(mdText)).toBe("[tako](tako.html) http://example.com/ika?uni=ebi#time\n");
+  });
+
+  it("nested", () => {
+    const mdText = "- **::__tako__::**";
+    expect(makeMarkdown(mdText)).toBe("- **::__tako__::**\n");
+  });
+
+  it("structures", () => {
+    const mdText = "abc\n- one\n  - two\n### **three**\n|four|::five::|\n";
+    expect(makeMarkdown(mdText)).toBe("abc\n\n- one\n  - two\n\n### **three**\n\n|four|::five::|\n");
   });
 });
 
