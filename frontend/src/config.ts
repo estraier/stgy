@@ -88,7 +88,10 @@ export class Config {
   static readonly PUB_DESIGN_THEMES = ["default", "dark"];
   static readonly PUB_DESIGN_DARK_THEMES = ["dark"];
   static readonly PUB_POSTS_PAGE_SIZE = normNum(process.env.NEXT_PUBLIC_PUB_POSTS_PAGE_SIZE, 10);
-  static readonly PUB_SIDE_RECENT_POSTS_SIZE = normNum(process.env.NEXT_PUBLIC_PUB_SIDE_RECENT_POSTS_SIZE, 5);
+  static readonly PUB_SIDE_RECENT_POSTS_SIZE = normNum(
+    process.env.NEXT_PUBLIC_PUB_SIDE_RECENT_POSTS_SIZE,
+    5,
+  );
 }
 
 export function normStr(

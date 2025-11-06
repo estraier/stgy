@@ -169,3 +169,16 @@ export async function getImagesMonthlyQuota(
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
+
+export async function checkImageExistenceDirectly(
+  userId: string,
+  restPath: string,
+): Promise<boolean> {
+  const imagesPrefix = Config.STORAGE_S3_PUBLIC_URL_PREFIX.replace(
+    /\{bucket\}/g,
+    Config.MEDIA_BUCKET_IMAGES,
+  );
+  const url = `${imagesPrefix}${encodeURIComponent(userId)}/${restPath}`;
+  const res = await fetch(url, { method: "HEAD" });
+  return res.ok;
+}

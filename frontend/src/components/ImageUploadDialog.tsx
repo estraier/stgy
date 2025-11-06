@@ -10,6 +10,7 @@ import {
   uploadToPresigned,
   finalizeImage,
   getImagesMonthlyQuota,
+  checkImageExistenceDirectly,
 } from "@/api/media";
 
 export type DialogFileItem = {
@@ -45,6 +46,10 @@ type SelectedItem = {
   };
   status: "pending" | "optimizing" | "ready" | "uploading" | "done" | "error";
   error?: string;
+  hash?: string;
+  reusableUserId?: string;
+  reusableRestPath?: string;
+  reuse?: boolean;
 };
 
 type Props = {
@@ -395,6 +400,69 @@ function shouldAutoOptimize(meta: Pick<SelectedItem, "width" | "height" | "size"
   );
 }
 
+async function sha256Hex(file: File): Promise<string> {
+  const buf = await file.arrayBuffer();
+  const digest = await crypto.subtle.digest("SHA-256", buf);
+  return Array.from(new Uint8Array(digest))
+    .map((b) => b.toString(16).padStart(2, "0"))
+    .join("");
+}
+
+type LruItem = { hash: string; userId: string; restPath: string };
+const LRU_STORAGE_KEY = "mediaReusableObjects";
+const LRU_CAPACITY = 200;
+
+function loadLru(): LruItem[] {
+  try {
+    const s = localStorage.getItem(LRU_STORAGE_KEY);
+    const v = s ? JSON.parse(s) : [];
+    if (!Array.isArray(v)) return [];
+    return v.filter(
+      (x) =>
+        x &&
+        typeof x.hash === "string" &&
+        typeof x.userId === "string" &&
+        typeof x.restPath === "string",
+    );
+  } catch {
+    return [];
+  }
+}
+
+function saveLru(arr: LruItem[]) {
+  try {
+    const capped = arr.length > LRU_CAPACITY ? arr.slice(arr.length - LRU_CAPACITY) : arr;
+    localStorage.setItem(LRU_STORAGE_KEY, JSON.stringify(capped));
+  } catch {}
+}
+
+function touchLru(arr: LruItem[], idx: number): LruItem[] {
+  if (idx < 0 || idx >= arr.length) return arr;
+  const copy = arr.slice();
+  const [it] = copy.splice(idx, 1);
+  copy.push(it);
+  return copy;
+}
+
+function upsertLru(hash: string, userId: string, restPath: string) {
+  let arr = loadLru();
+  const idx = arr.findIndex((x) => x.hash === hash);
+  if (idx >= 0) {
+    arr[idx] = { hash, userId, restPath };
+    arr = touchLru(arr, idx);
+  } else {
+    arr.push({ hash, userId, restPath });
+  }
+  if (arr.length > LRU_CAPACITY) arr = arr.slice(arr.length - LRU_CAPACITY);
+  saveLru(arr);
+}
+
+function splitObjectKey(objectKey: string): { userId: string; restPath: string } {
+  const p = objectKey.indexOf("/");
+  if (p < 0) return { userId: "", restPath: objectKey };
+  return { userId: objectKey.slice(0, p), restPath: objectKey.slice(p + 1) };
+}
+
 export default function ImageUploadDialog({ userId, files, maxCount, onClose, onComplete }: Props) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => {
@@ -468,6 +536,27 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
           size: f.size,
         });
 
+        let hash: string | undefined = undefined;
+        let reusableUserId: string | undefined = undefined;
+        let reusableRestPath: string | undefined = undefined;
+        let reuse = false;
+
+        try {
+          hash = await sha256Hex(f.file);
+          const lru = loadLru();
+          const idx = lru.findIndex((x) => x.hash === hash);
+          if (idx >= 0) {
+            const cand = lru[idx];
+            const ok = await checkImageExistenceDirectly(cand.userId, cand.restPath);
+            if (ok) {
+              reusableUserId = cand.userId;
+              reusableRestPath = cand.restPath;
+              reuse = true;
+              saveLru(touchLru(lru, idx));
+            }
+          }
+        } catch {}
+
         setItems((prev) =>
           prev.map((x) =>
             x.id === f.id
@@ -481,6 +570,10 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                   forceOptimize: force,
                   status: "optimizing",
                   error: undefined,
+                  hash,
+                  reusableUserId,
+                  reusableRestPath,
+                  reuse,
                 }
               : x,
           ),
@@ -614,6 +707,14 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         continue;
       }
 
+      if (it.reusableUserId && it.reusableRestPath && it.reuse) {
+        const objectKey = `${it.reusableUserId}/${it.reusableRestPath}`;
+        next[idx] = { ...it, status: "done" };
+        setItems([...next]);
+        results.push({ ok: true, objectKey });
+        continue;
+      }
+
       let useOptimized = false;
       if (it.forceOptimize) {
         if (!it.optimized) {
@@ -643,6 +744,10 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
         const presigned = await presignImageUpload(userId, name, blob.size);
         await uploadToPresigned(presigned, blob, name, type);
         const meta = await finalizeImage(userId, presigned.objectKey);
+
+        const { userId: savedUserId, restPath } = splitObjectKey(meta.key);
+        const h = it.hash || (await sha256Hex(it.file));
+        if (h && savedUserId && restPath) upsertLru(h, savedUserId, restPath);
 
         next[idx] = { ...next[idx], status: "done" };
         setItems([...next]);
@@ -766,6 +871,23 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                     </div>
 
                     <div className="flex items-center gap-2">
+                      {!!(it.reusableUserId && it.reusableRestPath) && (
+                        <label className="inline-flex items-center gap-2 cursor-pointer">
+                          <input
+                            type="checkbox"
+                            className="accent-blue-600"
+                            checked={!!it.reuse}
+                            onChange={() =>
+                              setItems((prev) =>
+                                prev.map((x) => (x.id === it.id ? { ...x, reuse: !x.reuse } : x)),
+                              )
+                            }
+                            disabled={it.status === "optimizing" || it.status === "uploading"}
+                          />
+                          <span className="text-[13px]">Use existing data</span>
+                        </label>
+                      )}
+
                       <label className="inline-flex items-center gap-2 cursor-pointer">
                         <input
                           type="checkbox"

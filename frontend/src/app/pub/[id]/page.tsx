@@ -105,7 +105,7 @@ export default async function PubPostPage({ params }: Props) {
     const siteIntroHtml = makeSnippetHtmlFromMarkdown(
       pubcfg.introduction.trim() || "my publications",
     );
-   let recent: Awaited<ReturnType<typeof listPubPostsByUser>> = [];
+    let recent: Awaited<ReturnType<typeof listPubPostsByUser>> = [];
     if (pubcfg.showSideRecent) {
       const desired = Config.PUB_SIDE_RECENT_POSTS_SIZE;
       recent = await listPubPostsByUser(post.ownedBy, {
