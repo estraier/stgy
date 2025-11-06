@@ -482,7 +482,10 @@ export function getDomRootOrThrow(html: string): {
   return { document: doc, root };
 }
 
-export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdNode[] {
+export function parseHtml(
+  html: string,
+  opts?: { baseFontSizePt?: number },
+): MdNode[] {
   const basePt = opts?.baseFontSizePt ?? 11;
   const { root } = getDomRootOrThrow(html);
 
@@ -502,13 +505,19 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
 
   const t = (text: string): MdTextNode => ({ type: "text", text });
 
-  const e = (tag: string, children: MdNode[], attrs?: MdAttrs): MdElementNode => {
+  const e = (
+    tag: string,
+    children: MdNode[],
+    attrs?: MdAttrs,
+  ): MdElementNode => {
     const node: MdElementNode = { type: "element", tag, children };
     if (attrs && Object.keys(attrs).length) node.attrs = attrs;
     return node;
   };
 
-  const parseStyle = (styleAttr: string | null | undefined): Record<string, string> => {
+  const parseStyle = (
+    styleAttr: string | null | undefined,
+  ): Record<string, string> => {
     const m: Record<string, string> = {};
     if (!styleAttr) return m;
     const parts = styleAttr
@@ -575,7 +584,8 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
     const ta = (s["text-align"] || "").toLowerCase();
     if (ta === "center") marks.align = "center";
     if (ta === "right") marks.align = "right";
-    if ((s["list-style"] || "").toLowerCase() === "none") marks.bulletNone = true;
+    if ((s["list-style"] || "").toLowerCase() === "none")
+      marks.bulletNone = true;
     return marks;
   };
 
@@ -627,7 +637,9 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
       if (buf.length) {
         const attrs: MdAttrs = {};
         if (align) attrs.align = align;
-        out.push(e(blockTag, buf, Object.keys(attrs).length ? attrs : undefined));
+        out.push(
+          e(blockTag, buf, Object.keys(attrs).length ? attrs : undefined),
+        );
         buf = [];
       }
     };
@@ -763,7 +775,6 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
           continue;
         }
 
-        // Fallback: inline-parse unknown/other tags
         out.push(...parseInline(x));
       }
     }
@@ -775,11 +786,16 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
     if (tag === "b" || tag === "strong") return [e("strong", parseInline(el))];
     if (tag === "i" || tag === "em") return [e("em", parseInline(el))];
     if (tag === "u") return [e("u", parseInline(el))];
-    if (tag === "s" || tag === "strike" || tag === "del") return [e("s", parseInline(el))];
+    if (tag === "s" || tag === "strike" || tag === "del")
+      return [e("s", parseInline(el))];
     if (tag === "code" || tag === "kbd") return [e("code", parseInline(el))];
     if (tag === "mark") return [e("mark", parseInline(el))];
     if (tag === "small") return [e("small", parseInline(el))];
-    if (tag === "span") return wrapMarks(parseInline(el), marksFromStyle(el.getAttribute("style")));
+    if (tag === "span")
+      return wrapMarks(
+        parseInline(el),
+        marksFromStyle(el.getAttribute("style")),
+      );
     if (tag === "ruby") return parseRubyNodes(el);
     if (tag === "a") {
       const href = el.getAttribute("href") || "";
@@ -789,18 +805,25 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
     return parseInline(el);
   };
 
-  // ---- nested list support (without breaking existing behaviors) ----
-  const parseList = (listEl: Element): MdElementNode => {
+  // ---- list helpers (unify <ul>/<ol> to AST "ul" with bullet attr) ----
+  const listAttrsFor = (listEl: Element): MdAttrs | undefined => {
     const tag = listEl.tagName.toLowerCase();
-    const isUl = tag === "ul";
-    const bulletNone = marksFromStyle(listEl.getAttribute("style")).bulletNone;
+    const { bulletNone } = marksFromStyle(listEl.getAttribute("style"));
+    const attrs: MdAttrs = {};
+    if (bulletNone) {
+      attrs.bullet = "none";
+    } else if (tag === "ol") {
+      attrs.bullet = "number";
+    }
+    return Object.keys(attrs).length ? attrs : undefined;
+  };
+
+  const parseList = (listEl: Element): MdElementNode => {
     const lis = Array.from(listEl.children).filter(
       (c) => c.tagName.toLowerCase() === "li",
     ) as Element[];
     const liNodes = lis.map((li) => parseListItem(li));
-    const attrs: MdAttrs = {};
-    if (isUl && bulletNone) attrs.bullet = "none";
-    return e(isUl ? "ul" : "ol", liNodes, Object.keys(attrs).length ? attrs : undefined);
+    return e("ul", liNodes, listAttrsFor(listEl));
   };
 
   const parseListItem = (li: Element): MdElementNode => {
@@ -811,7 +834,6 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
       if (!inlineBuf.length) return;
       const blocks = splitInlineToBlocks(inlineBuf, "p");
       if (blocks.length === 1 && blocks[0].tag === "p") {
-        // inline-only -> append inline children directly (keeps previous behavior)
         sink.push(...blocks[0].children);
       } else {
         sink.push(...(blocks as MdNode[]));
@@ -834,7 +856,7 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
 
       if (tag === "ul" || tag === "ol") {
         flushInline();
-        sink.push(parseList(el)); // preserve nested lists
+        sink.push(parseList(el));
         continue;
       }
 
@@ -896,6 +918,14 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
             const align = alignFromStyle(c.getAttribute("style"));
             const attrs: MdAttrs = {};
             if (align) attrs.align = align;
+
+            const csRaw = c.getAttribute("colspan");
+            const rsRaw = c.getAttribute("rowspan");
+            const cs = csRaw ? parseInt(csRaw, 10) : NaN;
+            const rs = rsRaw ? parseInt(rsRaw, 10) : NaN;
+            if (!Number.isNaN(cs) && cs > 1) attrs.colspan = cs;
+            if (!Number.isNaN(rs) && rs > 1) attrs.rowspan = rs;
+
             cellNodes.push(
               e(
                 c.tagName.toLowerCase(),
@@ -935,12 +965,30 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
 
       if (tag === "pre") {
         flushInline();
-        const txt = el.textContent ?? "";
+        const txtRaw = el.textContent ?? "";
+        const txt = trimPreText(txtRaw);
         sink.push(e("pre", [t(txt)]));
         continue;
       }
 
-      if (tag === "div" || tag === "section" || tag === "article" || tag === "main") {
+      if (tag === "hr") {
+        flushInline();
+        const levelRaw = el.getAttribute("data-hr-level");
+        const level = levelRaw ? parseInt(levelRaw, 10) : NaN;
+        const attrs: MdAttrs | undefined =
+          !Number.isNaN(level) && level >= 1
+            ? { "hr-level": level }
+            : undefined;
+        sink.push(e("hr", [], attrs));
+        continue;
+      }
+
+      if (
+        tag === "div" ||
+        tag === "section" ||
+        tag === "article" ||
+        tag === "main"
+      ) {
         flushInline();
         const tmp: MdNode[] = [];
         parseBlock(el, tmp);
@@ -948,7 +996,6 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
         continue;
       }
 
-      // inline-ish fallback
       const inlineFromEl = makeInlineForElement(el);
       inlineBuf.push(...inlineFromEl);
     }
@@ -972,6 +1019,14 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
     const blocks = splitInlineToBlocks(inlineBuf, "p");
     for (const b of blocks) sink.push(b);
     inlineBuf.length = 0;
+  };
+
+  // --- special handling for <pre>: drop first/last empty lines only ---
+  const trimPreText = (s: string): string => {
+    const lines = s.replace(/\r\n?/g, "\n").split("\n");
+    if (lines.length && lines[0].trim() === "") lines.shift();
+    if (lines.length && lines[lines.length - 1].trim() === "") lines.pop();
+    return lines.join("\n");
   };
 
   const parseBlock = (scope: Element | Document, sink: MdNode[]) => {
@@ -1023,18 +1078,7 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
 
         if (tag === "ul" || tag === "ol") {
           flushInlineBufTo(sink, inlineBuf);
-          // Keep original behavior for top-level lists
-          const isUl = tag === "ul";
-          const bulletNone = marksFromStyle(el.getAttribute("style")).bulletNone;
-          const lis = Array.from(el.children).filter(
-            (c) => c.tagName.toLowerCase() === "li",
-          ) as Element[];
-          const liNodes = lis.map((li) => parseListItem(li));
-          const attrs: MdAttrs = {};
-          if (isUl && bulletNone) attrs.bullet = "none";
-          sink.push(
-            e(isUl ? "ul" : "ol", liNodes, Object.keys(attrs).length ? attrs : undefined),
-          );
+          sink.push(parseList(el));
           continue;
         }
 
@@ -1063,6 +1107,14 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
               const align = alignFromStyle(c.getAttribute("style"));
               const attrs: MdAttrs = {};
               if (align) attrs.align = align;
+
+              const csRaw = c.getAttribute("colspan");
+              const rsRaw = c.getAttribute("rowspan");
+              const cs = csRaw ? parseInt(csRaw, 10) : NaN;
+              const rs = rsRaw ? parseInt(rsRaw, 10) : NaN;
+              if (!Number.isNaN(cs) && cs > 1) attrs.colspan = cs;
+              if (!Number.isNaN(rs) && rs > 1) attrs.rowspan = rs;
+
               cellNodes.push(
                 e(
                   c.tagName.toLowerCase(),
@@ -1102,12 +1154,30 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
 
         if (tag === "pre") {
           flushInlineBufTo(sink, inlineBuf);
-          const txt = el.textContent ?? "";
+          const txtRaw = el.textContent ?? "";
+          const txt = trimPreText(txtRaw);
           sink.push(e("pre", [t(txt)]));
           continue;
         }
 
-        if (tag === "div" || tag === "section" || tag === "article" || tag === "main") {
+        if (tag === "hr") {
+          flushInlineBufTo(sink, inlineBuf);
+          const levelRaw = el.getAttribute("data-hr-level");
+          const level = levelRaw ? parseInt(levelRaw, 10) : NaN;
+          const attrs: MdAttrs | undefined =
+            !Number.isNaN(level) && level >= 1
+              ? { "hr-level": level }
+              : undefined;
+          sink.push(e("hr", [], attrs));
+          continue;
+        }
+
+        if (
+          tag === "div" ||
+          tag === "section" ||
+          tag === "article" ||
+          tag === "main"
+        ) {
           flushInlineBufTo(sink, inlineBuf);
           parseBlock(el, sink);
           continue;
@@ -1136,7 +1206,15 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
     tag === "th";
 
   const flattenSameMarksOnce = (node: MdElementNode): MdElementNode => {
-    const flatSet = new Set<string>(["strong", "em", "s", "u", "code", "mark", "small"]);
+    const flatSet = new Set<string>([
+      "strong",
+      "em",
+      "s",
+      "u",
+      "code",
+      "mark",
+      "small",
+    ]);
     if (!flatSet.has(node.tag)) return node;
     const flat: MdNode[] = [];
     for (const ch of node.children) {
@@ -1158,7 +1236,15 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
   };
 
   const mergeAdjacentMarks = (children: MdNode[]): MdNode[] => {
-    const markSet = new Set<string>(["strong", "em", "s", "u", "code", "mark", "small"]);
+    const markSet = new Set<string>([
+      "strong",
+      "em",
+      "s",
+      "u",
+      "code",
+      "mark",
+      "small",
+    ]);
     const out: MdNode[] = [];
     for (const node of children) {
       if (out.length > 0 && node.type === "element") {
@@ -1207,10 +1293,11 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
   };
 
   const removeEmptyTextNodes = (nodes: MdNode[]) =>
-    nodes.filter((ch) => !(isTextNode(ch) && (ch as MdTextNode).text.length === 0));
+    nodes.filter(
+      (ch) => !(isTextNode(ch) && (ch as MdTextNode).text.length === 0),
+    );
 
   // --- Empty-element handling policy ---
-  // Keep void/atomic elements even when they have no children.
   const VOID_OR_ATOMIC = new Set<string>([
     "area",
     "base",
@@ -1226,9 +1313,8 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
     "source",
     "track",
     "wbr",
-    "video", // treated as atomic in this AST (uses src attribute)
+    "video",
   ]);
-  // Do NOT drop these even if empty (explicitly exempted).
   const EXEMPT_EMPTY = new Set<string>(["tr", "td", "th"]);
   const isDroppableWhenEmpty = (tag: string) =>
     !VOID_OR_ATOMIC.has(tag) && !EXEMPT_EMPTY.has(tag);
@@ -1243,28 +1329,21 @@ export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdN
       const tag = n.tag;
       const nextAncestorPre = ancestorPre || isPreLike(tag);
 
-      // Recurse
       let kids = postProcess(n.children, nextAncestorPre);
 
-      // Merge adjacent same-style marks first
       kids = mergeAdjacentMarks(kids);
-
-      // Merge adjacent text nodes
       kids = mergeAdjacentText(kids);
 
-      // Normalize whitespace for non-pre contexts
       if (!nextAncestorPre) {
         kids = normalizeTextWhitespace(kids);
         if (isBlockContainer(tag)) kids = trimBlockTextEdges(kids);
       }
 
-      // Remove any empty text nodes introduced by trimming/normalization
       kids = removeEmptyTextNodes(kids);
 
       let el = e(tag, kids, n.attrs);
       el = flattenSameMarksOnce(el);
 
-      // Drop empty elements broadly (except void/atomic and table cells/rows)
       if (isDroppableWhenEmpty(tag) && el.children.length === 0) {
         continue;
       }
@@ -2294,11 +2373,13 @@ export function mdRenderHtml(
 export function mdRenderMarkdown(nodes: MdNode[]): string {
   const isElement = (n: MdNode, tag?: string): n is MdElementNode =>
     n.type === "element" && (!tag || n.tag === tag);
+
   const hasClass = (el: MdElementNode | undefined, cls: string): boolean => {
     if (!el || el.type !== "element") return false;
     const c = el.attrs?.class;
     return typeof c === "string" ? c.split(/\s+/).includes(cls) : false;
   };
+
   const getAttrStr = (
     a: MdAttrs | undefined,
     k: string,
@@ -2310,8 +2391,10 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
         ? String(v)
         : undefined;
   };
+
   const sanitizeUrl = (u: string): string =>
     u.replace(/\)/g, "%29").replace(/ /g, "%20");
+
   const collectPlainText = (ns: MdNode[] | undefined): string => {
     if (!ns) return "";
     let out = "";
@@ -2326,6 +2409,7 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     }
     return out;
   };
+
   const escapeForInline = (s: string): string => {
     let out = s.replace(/\\/g, "\\\\");
     out = out.replace(/\*\*/g, "\\*\\*");
@@ -2338,6 +2422,7 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     out = out.replace(/\$\$/g, "\\$\\$");
     return out;
   };
+
   const backtickRun = (s: string): number => {
     let maxRun = 0,
       cur = 0;
@@ -2351,6 +2436,7 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     if (cur > maxRun) maxRun = cur;
     return maxRun;
   };
+
   const protectBlockStarts = (text: string): string =>
     text
       .split("\n")
@@ -2361,6 +2447,7 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
         return line;
       })
       .join("\n");
+
   const renderInline = (ns: MdNode[] | undefined): string => {
     if (!ns || ns.length === 0) return "";
     let out = "";
@@ -2431,6 +2518,10 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
         case "img":
         case "video": {
           const src = sanitizeUrl(getAttrStr(el.attrs, "src") || "");
+
+          const altRaw = typeof el.attrs?.alt === "string" ? el.attrs.alt : "";
+          const alt = altRaw.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
+
           const macroAttrs: string[] = [];
           const entries = Object.entries(el.attrs || {}).filter(
             ([k]) =>
@@ -2453,7 +2544,7 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
           const attrsStr = macroAttrs.length
             ? `{${macroAttrs.join(", ")}}`
             : "";
-          out += `![](${src})${attrsStr}`;
+          out += `![${alt}](${src})${attrsStr}`;
           break;
         }
         default:
@@ -2462,20 +2553,46 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     }
     return out;
   };
+
+  const extractAltFromFigureOrImg = (node: MdElementNode): string => {
+    if (node.tag === "figure") {
+      const caption = node.children.find(
+        (ch) => ch.type === "element" && ch.tag === "figcaption",
+      ) as MdElementNode | undefined;
+      if (caption) {
+        const txt = collectPlainText(caption.children || []).trim();
+        if (txt) {
+          return txt.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
+        }
+      }
+      const img = node.children.find(
+        (ch) => ch.type === "element" && ch.tag === "img",
+      ) as MdElementNode | undefined;
+      if (img && typeof img.attrs?.alt === "string") {
+        return img.attrs.alt
+          .trim()
+          .replace(/\\/g, "\\\\")
+          .replace(/\]/g, "\\]");
+      }
+      return "";
+    }
+
+    if (node.tag === "img") {
+      const alt =
+        typeof node.attrs?.alt === "string" ? node.attrs.alt.trim() : "";
+      return alt.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
+    }
+
+    return "";
+  };
+
   const renderFigureMacro = (fig: MdElementNode): string => {
     const media = (fig.children || []).find(
       (c): c is MdMediaElement =>
         c.type === "element" && (c.tag === "img" || c.tag === "video"),
     );
-    const captionEl = (fig.children || []).find((c) =>
-      isElement(c, "figcaption"),
-    ) as MdElementNode | undefined;
     const src = media ? sanitizeUrl(getAttrStr(media.attrs, "src") || "") : "";
-    const desc = captionEl
-      ? collectPlainText(captionEl.children || [])
-          .replace(/\\/g, "\\\\")
-          .replace(/\]/g, "\\]")
-      : "";
+    const desc = extractAltFromFigureOrImg(fig);
     const macro: string[] = [];
     const entries = media
       ? Object.entries(media.attrs || {}).filter(
@@ -2500,6 +2617,7 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     const attrsStr = macro.length ? `{${macro.join(", ")}}` : "";
     return `![${desc}](${src})${attrsStr}`;
   };
+
   const tableCellAlign = (
     cell: MdElementNode,
   ): "right" | "center" | undefined => {
@@ -2512,6 +2630,7 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     }
     return undefined;
   };
+
   const renderTableCell = (cell: MdElementNode): string => {
     const tokens: string[] = [];
     const csRaw = getAttrStr(cell.attrs, "colspan");
@@ -2532,6 +2651,7 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     if (cell.tag === "th") body = `=${body}=`;
     return body;
   };
+
   const renderList = (ul: MdElementNode, depth: number): string => {
     const bullet = ((): "- " | "-+ " | "-: " => {
       const b = ul.attrs?.["bullet"];
@@ -2558,12 +2678,14 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     if (depth === 0) out += "\n";
     return out;
   };
+
   const renderBlock = (n: MdNode): string | null => {
     if (n.type === "text") {
       const t = n.text.trim();
       return t ? escapeForInline(t) : null;
     }
     const el = n as MdElementNode;
+
     if (el.tag === "div" && hasClass(el, "image-grid")) {
       const lines: string[] = [];
       for (const c of el.children || []) {
@@ -2571,6 +2693,7 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
       }
       return lines.join("\n");
     }
+
     switch (el.tag) {
       case "p":
         return protectBlockStarts(renderInline(el.children || []));
@@ -2647,6 +2770,7 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
         return protectBlockStarts(renderInline(el.children || []));
     }
   };
+
   const blocks: string[] = [];
   for (const n of nodes) {
     const b = renderBlock(n);

@@ -444,60 +444,60 @@ abc
       '<b>bold</b><ruby><rb>ruby</rb><rt>RUBY</rt></ruby><a href="/foo.html">link</a>';
     expect(parseHtml(html)).toStrictEqual([
       {
-        "type": "element",
-        "tag": "p",
-        "children": [
+        type: "element",
+        tag: "p",
+        children: [
           {
-            "type": "element",
-            "tag": "strong",
-            "children": [
+            type: "element",
+            tag: "strong",
+            children: [
               {
-                "type": "text",
-                "text": "bold"
-              }
-            ]
+                type: "text",
+                text: "bold",
+              },
+            ],
           },
           {
-            "type": "element",
-            "tag": "ruby",
-            "children": [
+            type: "element",
+            tag: "ruby",
+            children: [
               {
-                "type": "element",
-                "tag": "rb",
-                "children": [
+                type: "element",
+                tag: "rb",
+                children: [
                   {
-                    "type": "text",
-                    "text": "ruby"
-                  }
-                ]
+                    type: "text",
+                    text: "ruby",
+                  },
+                ],
               },
               {
-                "type": "element",
-                "tag": "rt",
-                "children": [
+                type: "element",
+                tag: "rt",
+                children: [
                   {
-                    "type": "text",
-                    "text": "RUBY"
-                  }
-                ]
-              }
-            ]
+                    type: "text",
+                    text: "RUBY",
+                  },
+                ],
+              },
+            ],
           },
           {
-            "type": "element",
-            "tag": "a",
-            "children": [
+            type: "element",
+            tag: "a",
+            children: [
               {
-                "type": "text",
-                "text": "link"
-              }
+                type: "text",
+                text: "link",
+              },
             ],
-            "attrs": {
-              "href": "/foo.html"
-            }
-          }
-        ]
-      }
+            attrs: {
+              href: "/foo.html",
+            },
+          },
+        ],
+      },
     ]);
   });
 
@@ -506,51 +506,51 @@ abc
       '<b>bold<b><ruby><rb>ruby</rb><rt>RUBY</rt><a href="/foo.html">link</a>';
     expect(parseHtml(html)).toStrictEqual([
       {
-        "type": "element",
-        "tag": "p",
-        "children": [
+        type: "element",
+        tag: "p",
+        children: [
           {
-            "type": "element",
-            "tag": "strong",
-            "children": [
+            type: "element",
+            tag: "strong",
+            children: [
               {
-                "type": "text",
-                "text": "bold"
+                type: "text",
+                text: "bold",
               },
               {
-                "type": "element",
-                "tag": "ruby",
-                "children": [
+                type: "element",
+                tag: "ruby",
+                children: [
                   {
-                    "type": "element",
-                    "tag": "rb",
-                    "children": [
+                    type: "element",
+                    tag: "rb",
+                    children: [
                       {
-                        "type": "text",
-                        "text": "ruby"
-                      }
-                    ]
+                        type: "text",
+                        text: "ruby",
+                      },
+                    ],
                   },
                   {
-                    "type": "element",
-                    "tag": "rt",
-                    "children": [
+                    type: "element",
+                    tag: "rt",
+                    children: [
                       {
-                        "type": "text",
-                        "text": "RUBY"
-                      }
-                    ]
-                  }
-                ]
+                        type: "text",
+                        text: "RUBY",
+                      },
+                    ],
+                  },
+                ],
               },
               {
-                "type": "text",
-                "text": "link"
-              }
-            ]
-          }
-        ]
-      }
+                type: "text",
+                text: "link",
+              },
+            ],
+          },
+        ],
+      },
     ]);
   });
 
@@ -558,51 +558,52 @@ abc
     const html = "<div><h1>h1</h1><h2>h2</h2><h6>h6</h6></div>";
     expect(parseHtml(html)).toStrictEqual([
       {
-        "type": "element",
-        "tag": "h1",
-        "children": [
+        type: "element",
+        tag: "h1",
+        children: [
           {
-            "type": "text",
-            "text": "h1"
-          }
-        ]
+            type: "text",
+            text: "h1",
+          },
+        ],
       },
       {
-        "type": "element",
-        "tag": "h2",
-        "children": [
+        type: "element",
+        tag: "h2",
+        children: [
           {
-            "type": "text",
-            "text": "h2"
-          }
-        ]
+            type: "text",
+            text: "h2",
+          },
+        ],
       },
       {
-        "type": "element",
-        "tag": "h6",
-        "children": [
+        type: "element",
+        tag: "h6",
+        children: [
           {
-            "type": "text",
-            "text": "h6"
-          }
-        ]
-      }
+            type: "text",
+            text: "h6",
+          },
+        ],
+      },
     ]);
   });
 
   it("blockquote", () => {
-    const html = "<div><blockquote><p><blockquote>abc</blockquote></p></blockquote></div>";
+    const html =
+      "<div><blockquote><p><blockquote>abc</blockquote></p></blockquote></div>";
     expect(parseHtml(html)).toStrictEqual([
       {
-        "type": "element",
-        "tag": "blockquote",
-        "children": [
+        type: "element",
+        tag: "blockquote",
+        children: [
           {
-            "type": "text",
-            "text": "abc"
-          }
-        ]
-      }
+            type: "text",
+            text: "abc",
+          },
+        ],
+      },
     ]);
   });
 
@@ -610,113 +611,113 @@ abc
     const html = ' ab <b>cd</b> <img src="/foo.png" alt="img"/> <i>ef</i> gh ';
     expect(parseHtml(html)).toStrictEqual([
       {
-        "type": "element",
-        "tag": "p",
-        "children": [
+        type: "element",
+        tag: "p",
+        children: [
           {
-            "type": "text",
-            "text": "ab "
+            type: "text",
+            text: "ab ",
           },
           {
-            "type": "element",
-            "tag": "strong",
-            "children": [
+            type: "element",
+            tag: "strong",
+            children: [
               {
-                "type": "text",
-                "text": "cd"
-              }
-            ]
-          }
-        ]
-      },
-      {
-        "type": "element",
-        "tag": "figure",
-        "children": [
-          {
-            "type": "element",
-            "tag": "img",
-            "children": [],
-            "attrs": {
-              "src": "/foo.png",
-              "alt": "img"
-            }
-          }
+                type: "text",
+                text: "cd",
+              },
+            ],
+          },
         ],
-        "attrs": {
-          "class": "image-block"
-        }
       },
       {
-        "type": "element",
-        "tag": "p",
-        "children": [
+        type: "element",
+        tag: "figure",
+        children: [
           {
-            "type": "element",
-            "tag": "em",
-            "children": [
+            type: "element",
+            tag: "img",
+            children: [],
+            attrs: {
+              src: "/foo.png",
+              alt: "img",
+            },
+          },
+        ],
+        attrs: {
+          class: "image-block",
+        },
+      },
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "element",
+            tag: "em",
+            children: [
               {
-                "type": "text",
-                "text": "ef"
-              }
-            ]
+                type: "text",
+                text: "ef",
+              },
+            ],
           },
           {
-            "type": "text",
-            "text": " gh"
-          }
-        ]
-      }
+            type: "text",
+            text: " gh",
+          },
+        ],
+      },
     ]);
   });
 
   it("empty elements", () => {
-    const html = '<p></p> a <b></b> b <ul></ul> c <div></div>A <i>B  C</i> D';
+    const html = "<p></p> a <b></b> b <ul></ul> c <div></div>A <i>B  C</i> D";
     expect(parseHtml(html)).toStrictEqual([
       {
-        "type": "element",
-        "tag": "p",
-        "children": [
+        type: "element",
+        tag: "p",
+        children: [
           {
-            "type": "text",
-            "text": "a b"
-          }
-        ]
+            type: "text",
+            text: "a b",
+          },
+        ],
       },
       {
-        "type": "element",
-        "tag": "p",
-        "children": [
+        type: "element",
+        tag: "p",
+        children: [
           {
-            "type": "text",
-            "text": "c"
-          }
-        ]
+            type: "text",
+            text: "c",
+          },
+        ],
       },
       {
-        "type": "element",
-        "tag": "p",
-        "children": [
+        type: "element",
+        tag: "p",
+        children: [
           {
-            "type": "text",
-            "text": "A "
+            type: "text",
+            text: "A ",
           },
           {
-            "type": "element",
-            "tag": "em",
-            "children": [
+            type: "element",
+            tag: "em",
+            children: [
               {
-                "type": "text",
-                "text": "B C"
-              }
-            ]
+                type: "text",
+                text: "B C",
+              },
+            ],
           },
           {
-            "type": "text",
-            "text": " D"
-          }
-        ]
-      }
+            type: "text",
+            text: " D",
+          },
+        ],
+      },
     ]);
   });
 });
@@ -1635,8 +1636,35 @@ describe("mdRenderMarkdown from HTML", () => {
 <span style="background-color:#ff0;">mark2</span>
 <small>small1</small>
 <span style="font-size: 8pt;">small2</span>
+<ruby><rb>ruby</rb><rt>RUBY</rt></ruby>
 `;
-    expect(makeMarkdownFromHtml(html)).toBe("normal **bold1** **bold2** **bold3** ::italic1:: ::italic2:: ::italic3:: __underline1__ __underline2__ ~~strike1~~ ~~strike2~~ ~~strike3~~ ``code1`` ``code2`` ``code3`` @@mark1@@ @@mark2@@ %%small1%% %%small2%%\n");
+    expect(makeMarkdownFromHtml(html)).toBe(
+      "normal **bold1** **bold2** **bold3** ::italic1:: ::italic2:: ::italic3:: __underline1__ __underline2__ ~~strike1~~ ~~strike2~~ ~~strike3~~ ``code1`` ``code2`` ``code3`` @@mark1@@ @@mark2@@ %%small1%% %%small2%% {{ruby|RUBY}}\n",
+    );
+  });
+
+  it("header variations", () => {
+    const html = `<body>
+<h1>h1 <a href="/foo.html">link</a></h1>
+<h2>h2 <u>underline</u></h2>
+<h3>h3 <s>strike</s></h3>
+<h4>h4 <code>code</code></h4>
+<h5>h5 <mark>mark</mark></h5>
+<h6>h6 <small>small</small></h6>
+</body>
+`;
+    expect(makeMarkdownFromHtml(html)).toBe(`# h1 [link](/foo.html)
+
+## h2 __underline__
+
+### h3 ~~strike~~
+
+#### h4 \`\`code\`\`
+
+##### h5 @@mark@@
+
+###### h6 %%small%%
+`);
   });
 
   it("list variations", () => {
@@ -1649,19 +1677,90 @@ describe("mdRenderMarkdown from HTML", () => {
 
 <ol>
 <li>1<li>
-<li>2<li>
+<li>2 <b>bold</b><li>
 </ol>
 
 <ul style="list-style: none">
 <li>1<li>
-<li>2<li>
+<li>2 <i>italic</i><li>
 </ul>
-
+</div>
 `;
-    console.log(makeMarkdownFromHtml(html));
+    expect(makeMarkdownFromHtml(html)).toBe(`- 1
+  - 1-1
+    - 1-1-1
+- 2
+  - 2-1
+- 3
+
+-+ 1
+-+ 2 **bold**
+
+-: 1
+-: 2 ::italic::
+`);
+  });
+
+  it("blockquote variations", () => {
+    const html = `<blockquote>one<br>two</blockquote>
+`;
+    expect(makeMarkdownFromHtml(html)).toBe(`> one
+> two
+`);
+  });
+
+  it("table variations", () => {
+    const html = `<table><tbody>
+<tr><th style="text-align:center;">one</th><th style="text-align:right;">two</th></tr>
+<tr><td><b>three</b></td><td><i>four</i></td></tr>
+<tr><td colspan="2" rowspan="2">five</td></tr>
+</tbody></table>
+`;
+    expect(makeMarkdownFromHtml(html)).toBe(`|=><one=|=>>two=|
+|**three**|::four::|
+|{colspan=2}{rowspan=2}five|
+`);
+  });
+
+  it("pre variations", () => {
+    const html = `<pre>
+  one two
+  <b>three</b> <i>four</i>
+</pre>`;
+    expect(makeMarkdownFromHtml(html)).toBe(`\`\`\`
+  one two
+  three four
+\`\`\`
+`);
+  });
+
+  it("hr variations", () => {
+    const html = `<hr>
+<hr data-hr-level="2">
+<hr data-hr-level="3">
+`;
+    expect(makeMarkdownFromHtml(html)).toBe(`---
+
+----
+
+-----
+`);
+  });
+
+  it("image variations", () => {
+    const html = `<img src="/foo1.png" alt="alt1">
+<div>abc<img src="/foo2.png" alt="alt2">def</div>
+`;
+    expect(makeMarkdownFromHtml(html)).toBe(`![alt1](/foo1.png)
+
+abc
+
+![alt2](/foo2.png)
+
+def
+`);
   });
 });
-
 
 describe("mdSeparateTitle", () => {
   it("returns first h1", () => {
