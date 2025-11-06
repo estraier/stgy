@@ -482,42 +482,22 @@ export function getDomRootOrThrow(html: string): {
   return { document: doc, root };
 }
 
-export function parseHtml(
-  html: string,
-  opts?: { baseFontSizePt?: number },
-): MdNode[] {
+export function parseHtml(html: string, opts?: { baseFontSizePt?: number }): MdNode[] {
   const basePt = opts?.baseFontSizePt ?? 11;
   const { root } = getDomRootOrThrow(html);
   const result: MdNode[] = [];
-  const isHidden = (tag: string) =>
-    tag === "head" ||
-    tag === "meta" ||
-    tag === "script" ||
-    tag === "link" ||
-    tag === "canvas" ||
-    tag === "style" ||
-    tag === "template" ||
-    tag === "noscript";
+  const isHidden = (tag: string) => tag === "head" || tag === "meta" || tag === "script" || tag === "link" || tag === "canvas" || tag === "style" || tag === "template" || tag === "noscript";
   const isTextNode = (n: MdNode): n is MdTextNode => n.type === "text";
   const t = (text: string): MdTextNode => ({ type: "text", text });
-  const e = (
-    tag: string,
-    children: MdNode[],
-    attrs?: MdAttrs,
-  ): MdElementNode => {
+  const e = (tag: string, children: MdNode[], attrs?: MdAttrs): MdElementNode => {
     const node: MdElementNode = { type: "element", tag, children };
     if (attrs && Object.keys(attrs).length) node.attrs = attrs;
     return node;
   };
-  const parseStyle = (
-    styleAttr: string | null | undefined,
-  ): Record<string, string> => {
+  const parseStyle = (styleAttr: string | null | undefined): Record<string, string> => {
     const m: Record<string, string> = {};
     if (!styleAttr) return m;
-    const parts = styleAttr
-      .split(";")
-      .map((s) => s.trim())
-      .filter(Boolean);
+    const parts = styleAttr.split(";").map((s) => s.trim()).filter(Boolean);
     for (const part of parts) {
       const i = part.indexOf(":");
       if (i >= 0) {
@@ -530,13 +510,7 @@ export function parseHtml(
   };
   const isWhiteLike = (v: string) => {
     const s = v.trim().toLowerCase().replace(/\s+/g, "");
-    return (
-      s === "white" ||
-      s === "#fff" ||
-      s === "#ffffff" ||
-      s === "rgb(255,255,255)" ||
-      s === "transparent"
-    );
+    return s === "white" || s === "#fff" || s === "#ffffff" || s === "rgb(255,255,255)" || s === "transparent";
   };
   const ptFromCss = (v: string | undefined): number | null => {
     if (!v) return null;
@@ -547,17 +521,7 @@ export function parseHtml(
   };
   const marksFromStyle = (styleAttr: string | null | undefined) => {
     const s = parseStyle(styleAttr);
-    const marks: {
-      strong?: true;
-      em?: true;
-      s?: true;
-      u?: true;
-      code?: true;
-      mark?: true;
-      small?: true;
-      align?: "center" | "right";
-      bulletNone?: true;
-    } = {};
+    const marks: { strong?: true; em?: true; s?: true; u?: true; code?: true; mark?: true; small?: true; align?: "center" | "right"; bulletNone?: true } = {};
     const fw = (s["font-weight"] || "").toLowerCase();
     const fwNum = /^\d+$/.test(fw) ? parseInt(fw, 10) : NaN;
     if (fw === "bold" || fw === "bolder" || fwNum >= 600) marks.strong = true;
@@ -575,13 +539,10 @@ export function parseHtml(
     const ta = (s["text-align"] || "").toLowerCase();
     if (ta === "center") marks.align = "center";
     if (ta === "right") marks.align = "right";
-    if ((s["list-style"] || "").toLowerCase() === "none")
-      marks.bulletNone = true;
+    if ((s["list-style"] || "").toLowerCase() === "none") marks.bulletNone = true;
     return marks;
   };
-  const alignFromStyle = (
-    styleAttr: string | null | undefined,
-  ): "center" | "right" | undefined => {
+  const alignFromStyle = (styleAttr: string | null | undefined): "center" | "right" | undefined => {
     const ta = (parseStyle(styleAttr)["text-align"] || "").toLowerCase();
     if (ta === "center") return "center";
     if (ta === "right") return "right";
@@ -593,10 +554,7 @@ export function parseHtml(
     const s = el.querySelector("source");
     return s ? s.getAttribute("src") : null;
   };
-  const wrapMarks = (
-    children: MdNode[],
-    marks: ReturnType<typeof marksFromStyle>,
-  ): MdNode[] => {
+  const wrapMarks = (children: MdNode[], marks: ReturnType<typeof marksFromStyle>): MdNode[] => {
     let cur: MdNode[] = children;
     if (marks.strong) cur = [e("strong", cur)];
     if (marks.em) cur = [e("em", cur)];
@@ -607,24 +565,16 @@ export function parseHtml(
     if (marks.small) cur = [e("small", cur)];
     return cur;
   };
-  const isMediaInline = (n: MdNode) =>
-    n.type === "element" && (n.tag === "img" || n.tag === "video");
-  const mediaToFigure = (node: MdElementNode): MdElementNode =>
-    e("figure", [node], { class: "image-block" });
-  const splitInlineToBlocks = (
-    inlineNodes: MdNode[],
-    blockTag: "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6",
-    align?: "center" | "right",
-  ): MdElementNode[] => {
+  const isMediaInline = (n: MdNode) => n.type === "element" && (n.tag === "img" || n.tag === "video");
+  const mediaToFigure = (node: MdElementNode): MdElementNode => e("figure", [node], { class: "image-block" });
+  const splitInlineToBlocks = (inlineNodes: MdNode[], blockTag: "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6", align?: "center" | "right"): MdElementNode[] => {
     const out: MdElementNode[] = [];
     let buf: MdNode[] = [];
     const flush = () => {
       if (buf.length) {
         const attrs: MdAttrs = {};
         if (align) attrs.align = align;
-        out.push(
-          e(blockTag, buf, Object.keys(attrs).length ? attrs : undefined),
-        );
+        out.push(e(blockTag, buf, Object.keys(attrs).length ? attrs : undefined));
         buf = [];
       }
     };
@@ -641,9 +591,7 @@ export function parseHtml(
   };
   const parseRubyNodes = (ruby: Element): MdNode[] => {
     const kids = Array.from(ruby.childNodes);
-    const hasExplicitRb = kids.some(
-      (n) => n.nodeType === 1 && (n as Element).tagName.toLowerCase() === "rb",
-    );
+    const hasExplicitRb = kids.some((n) => n.nodeType === 1 && (n as Element).tagName.toLowerCase() === "rb");
     if (!hasExplicitRb) {
       const pairs: MdNode[] = [];
       const pendingRb: MdNode[] = [];
@@ -653,8 +601,7 @@ export function parseHtml(
           const el = n as Element;
           const tag = el.tagName.toLowerCase();
           if (tag === "rt") {
-            if (pendingRb.length)
-              pairs.push(e("rb", pendingRb.splice(0, pendingRb.length)));
+            if (pendingRb.length) pairs.push(e("rb", pendingRb.splice(0, pendingRb.length)));
             pairs.push(e("rt", parseInline(el)));
           } else if (tag === "rp") {
           } else {
@@ -766,16 +713,11 @@ export function parseHtml(
     if (tag === "b" || tag === "strong") return [e("strong", parseInline(el))];
     if (tag === "i" || tag === "em") return [e("em", parseInline(el))];
     if (tag === "u") return [e("u", parseInline(el))];
-    if (tag === "s" || tag === "strike" || tag === "del")
-      return [e("s", parseInline(el))];
+    if (tag === "s" || tag === "strike" || tag === "del") return [e("s", parseInline(el))];
     if (tag === "code" || tag === "kbd") return [e("code", parseInline(el))];
     if (tag === "mark") return [e("mark", parseInline(el))];
     if (tag === "small") return [e("small", parseInline(el))];
-    if (tag === "span")
-      return wrapMarks(
-        parseInline(el),
-        marksFromStyle(el.getAttribute("style")),
-      );
+    if (tag === "span") return wrapMarks(parseInline(el), marksFromStyle(el.getAttribute("style")));
     if (tag === "ruby") return parseRubyNodes(el);
     if (tag === "a") {
       const href = el.getAttribute("href") || "";
@@ -787,12 +729,8 @@ export function parseHtml(
   const parseListItem = (li: Element): MdElementNode => {
     const inline = parseInline(li);
     const parts = splitInlineToBlocks(inline, "p");
-    if (parts.length === 1 && parts[0].tag === "p")
-      return e("li", parts[0].children);
-    return e(
-      "li",
-      parts.map((p) => p as MdNode),
-    );
+    if (parts.length === 1 && parts[0].tag === "p") return e("li", parts[0].children);
+    return e("li", parts.map((p) => p as MdNode));
   };
   const parseTableCellInline = (cell: Element): MdNode[] => {
     const inline = parseInline(cell);
@@ -822,21 +760,10 @@ export function parseHtml(
         const el = n as Element;
         const tag = el.tagName.toLowerCase();
         if (isHidden(tag)) continue;
-        if (
-          tag === "h1" ||
-          tag === "h2" ||
-          tag === "h3" ||
-          tag === "h4" ||
-          tag === "h5" ||
-          tag === "h6"
-        ) {
+        if (tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6") {
           flushInlineBufTo(sink, inlineBuf);
           const align = alignFromStyle(el.getAttribute("style"));
-          const blocks = splitInlineToBlocks(
-            parseInline(el),
-            tag as "h1" | "h2" | "h3" | "h4" | "h5" | "h6",
-            align,
-          );
+          const blocks = splitInlineToBlocks(parseInline(el), tag as "h1" | "h2" | "h3" | "h4" | "h5" | "h6", align);
           for (const b of blocks) sink.push(b);
           continue;
         }
@@ -847,25 +774,20 @@ export function parseHtml(
           for (const b of blocks) sink.push(b);
           continue;
         }
+        if (tag === "blockquote") {
+          flushInlineBufTo(sink, inlineBuf);
+          sink.push(e("blockquote", parseInline(el)));
+          continue;
+        }
         if (tag === "ul" || tag === "ol") {
           flushInlineBufTo(sink, inlineBuf);
           const isUl = tag === "ul";
-          const bulletNone = marksFromStyle(
-            el.getAttribute("style"),
-          ).bulletNone;
-          const lis = Array.from(el.children).filter(
-            (c) => c.tagName.toLowerCase() === "li",
-          ) as Element[];
+          const bulletNone = marksFromStyle(el.getAttribute("style")).bulletNone;
+          const lis = Array.from(el.children).filter((c) => c.tagName.toLowerCase() === "li") as Element[];
           const liNodes = lis.map((li) => parseListItem(li));
           const attrs: MdAttrs = {};
           if (isUl && bulletNone) attrs.bullet = "none";
-          sink.push(
-            e(
-              isUl ? "ul" : "ol",
-              liNodes,
-              Object.keys(attrs).length ? attrs : undefined,
-            ),
-          );
+          sink.push(e(isUl ? "ul" : "ol", liNodes, Object.keys(attrs).length ? attrs : undefined));
           continue;
         }
         if (tag === "table") {
@@ -875,12 +797,7 @@ export function parseHtml(
           for (const c of children) {
             const ct = c.tagName.toLowerCase();
             if (ct === "tr") rows.push(c);
-            else if (ct === "thead" || ct === "tbody" || ct === "tfoot")
-              rows.push(
-                ...(Array.from(c.children).filter(
-                  (x) => x.tagName.toLowerCase() === "tr",
-                ) as Element[]),
-              );
+            else if (ct === "thead" || ct === "tbody" || ct === "tfoot") rows.push(...(Array.from(c.children).filter((x) => x.tagName.toLowerCase() === "tr") as Element[]));
           }
           const tableChildren: MdNode[] = [];
           for (const tr of rows) {
@@ -893,13 +810,7 @@ export function parseHtml(
               const align = alignFromStyle(c.getAttribute("style"));
               const attrs: MdAttrs = {};
               if (align) attrs.align = align;
-              cellNodes.push(
-                e(
-                  c.tagName.toLowerCase(),
-                  parseTableCellInline(c),
-                  Object.keys(attrs).length ? attrs : undefined,
-                ),
-              );
+              cellNodes.push(e(c.tagName.toLowerCase(), parseTableCellInline(c), Object.keys(attrs).length ? attrs : undefined));
             }
             tableChildren.push(e("tr", cellNodes));
           }
@@ -910,29 +821,16 @@ export function parseHtml(
           flushInlineBufTo(sink, inlineBuf);
           const src = el.getAttribute("src") || "";
           const alt = el.getAttribute("alt") || "";
-          sink.push(
-            e("figure", [e("img", [], alt ? { src, alt } : { src })], {
-              class: "image-block",
-            }),
-          );
+          sink.push(e("figure", [e("img", [], alt ? { src, alt } : { src })], { class: "image-block" }));
           continue;
         }
         if (tag === "video") {
           flushInlineBufTo(sink, inlineBuf);
           const src = firstVideoSrc(el) || "";
-          sink.push(
-            e("figure", [e("video", [], src ? { src } : undefined)], {
-              class: "image-block",
-            }),
-          );
+          sink.push(e("figure", [e("video", [], src ? { src } : undefined)], { class: "image-block" }));
           continue;
         }
-        if (
-          tag === "div" ||
-          tag === "section" ||
-          tag === "article" ||
-          tag === "main"
-        ) {
+        if (tag === "div" || tag === "section" || tag === "article" || tag === "main") {
           flushInlineBufTo(sink, inlineBuf);
           parseBlock(el, sink);
           continue;
@@ -944,57 +842,18 @@ export function parseHtml(
     flushInlineBufTo(sink, inlineBuf);
   };
   const isPreLike = (tag: string) => tag === "pre";
-  const isBlockContainer = (tag: string) =>
-    tag === "p" ||
-    tag === "li" ||
-    tag === "h1" ||
-    tag === "h2" ||
-    tag === "h3" ||
-    tag === "h4" ||
-    tag === "h5" ||
-    tag === "h6" ||
-    tag === "td" ||
-    tag === "th";
-  const isDroppableEmpty = (tag: string) =>
-    tag === "p" ||
-    tag === "li" ||
-    tag === "a" ||
-    tag === "h1" ||
-    tag === "h2" ||
-    tag === "h3" ||
-    tag === "h4" ||
-    tag === "h5" ||
-    tag === "h6" ||
-    tag === "rb" ||
-    tag === "rt" ||
-    tag === "strong" ||
-    tag === "em" ||
-    tag === "small" ||
-    tag === "mark" ||
-    tag === "u" ||
-    tag === "s" ||
-    tag === "code" ||
-    tag === "ruby";
+  const isBlockContainer = (tag: string) => tag === "p" || tag === "li" || tag === "blockquote" || tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6" || tag === "td" || tag === "th";
+  const isDroppableEmpty = (tag: string) => tag === "p" || tag === "li" || tag === "a" || tag === "h1" || tag === "h2" || tag === "h3" || tag === "h4" || tag === "h5" || tag === "h6" || tag === "rb" || tag === "rt" || tag === "strong" || tag === "em" || tag === "small" || tag === "mark" || tag === "u" || tag === "s" || tag === "code" || tag === "ruby";
   const collapseWs = (s: string) => s.replace(/\s+/g, " ");
   const trimBlockEdges = (children: MdNode[]): MdNode[] => {
     let i = 0;
-    while (
-      i < children.length &&
-      isTextNode(children[i]) &&
-      (children[i] as MdTextNode).text.length === 0
-    )
-      i++;
+    while (i < children.length && isTextNode(children[i]) && (children[i] as MdTextNode).text.length === 0) i++;
     if (i < children.length && isTextNode(children[i])) {
       const tn = children[i] as MdTextNode;
       children[i] = { type: "text", text: tn.text.replace(/^\s+/, "") };
     }
     let j = children.length - 1;
-    while (
-      j >= 0 &&
-      isTextNode(children[j]) &&
-      (children[j] as MdTextNode).text.length === 0
-    )
-      j--;
+    while (j >= 0 && isTextNode(children[j]) && (children[j] as MdTextNode).text.length === 0) j--;
     if (j >= 0 && isTextNode(children[j])) {
       const tj = children[j] as MdTextNode;
       children[j] = { type: "text", text: tj.text.replace(/\s+$/, "") };
@@ -1002,24 +861,11 @@ export function parseHtml(
     return children;
   };
   const flattenSameMarksOnce = (node: MdElementNode): MdElementNode => {
-    const flatSet = new Set<string>([
-      "strong",
-      "em",
-      "s",
-      "u",
-      "code",
-      "mark",
-      "small",
-    ]);
+    const flatSet = new Set<string>(["strong", "em", "s", "u", "code", "mark", "small"]);
     if (!flatSet.has(node.tag)) return node;
     const flat: MdNode[] = [];
     for (const ch of node.children) {
-      if (
-        ch.type === "element" &&
-        ch.tag === node.tag &&
-        (!ch.attrs || Object.keys(ch.attrs).length === 0)
-      )
-        flat.push(...ch.children);
+      if (ch.type === "element" && ch.tag === node.tag && (!ch.attrs || Object.keys(ch.attrs).length === 0)) flat.push(...ch.children);
       else flat.push(ch);
     }
     return e(node.tag, flat, node.attrs);
@@ -1030,25 +876,12 @@ export function parseHtml(
     return keys.map((k) => `${k}:${String((attrs as MdAttrs)[k])}`).join("|");
   };
   const mergeAdjacentMarks = (children: MdNode[]): MdNode[] => {
-    const markSet = new Set<string>([
-      "strong",
-      "em",
-      "s",
-      "u",
-      "code",
-      "mark",
-      "small",
-    ]);
+    const markSet = new Set<string>(["strong", "em", "s", "u", "code", "mark", "small"]);
     const out: MdNode[] = [];
     for (const node of children) {
       if (out.length > 0 && node.type === "element") {
         const prev = out[out.length - 1];
-        if (
-          prev.type === "element" &&
-          markSet.has(prev.tag) &&
-          prev.tag === node.tag &&
-          attrsKey(prev.attrs) === attrsKey(node.attrs)
-        ) {
+        if (prev.type === "element" && markSet.has(prev.tag) && prev.tag === node.tag && attrsKey(prev.attrs) === attrsKey(node.attrs)) {
           prev.children = [...prev.children, ...node.children];
           continue;
         }
@@ -1068,13 +901,8 @@ export function parseHtml(
       const tag = n.tag;
       const nextAncestorPre = ancestorPre || isPreLike(tag);
       const processedChildren = postProcess(n.children, nextAncestorPre);
-      const cleanedChildren = processedChildren.filter(
-        (ch) => !(isTextNode(ch) && (ch as MdTextNode).text.length === 0),
-      );
-      const withEdges =
-        isBlockContainer(tag) && !nextAncestorPre
-          ? trimBlockEdges(cleanedChildren)
-          : cleanedChildren;
+      const cleanedChildren = processedChildren.filter((ch) => !(isTextNode(ch) && (ch as MdTextNode).text.length === 0));
+      const withEdges = isBlockContainer(tag) && !nextAncestorPre ? trimBlockEdges(cleanedChildren) : cleanedChildren;
       const mergedInline = mergeAdjacentMarks(withEdges);
       let el = e(tag, mergedInline, n.attrs);
       el = flattenSameMarksOnce(el);

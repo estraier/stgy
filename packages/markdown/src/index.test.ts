@@ -375,7 +375,6 @@ describe("parseHtml", () => {
     const mdText = `<table><tr>
 <td>one</td><td>two</td>
 </tr></table>`;
-    console.log(JSON.stringify(parseHtml(mdText), null, 2));
     expect(parseHtml(mdText)).toStrictEqual([
       {
         type: "element",
@@ -438,22 +437,178 @@ abc
   it("inline", () => {
     const mdText =
       '<b>bold</b><ruby><rb>ruby</rb><rt>RUBY</rt></ruby><a href="/foo.html">link</a>';
-
     console.log(JSON.stringify(parseHtml(mdText), null, 2));
+    expect(parseHtml(mdText)).toStrictEqual([
+      {
+        "type": "element",
+        "tag": "p",
+        "children": [
+          {
+            "type": "element",
+            "tag": "strong",
+            "children": [
+              {
+                "type": "text",
+                "text": "bold"
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tag": "ruby",
+            "children": [
+              {
+                "type": "element",
+                "tag": "rb",
+                "children": [
+                  {
+                    "type": "text",
+                    "text": "ruby"
+                  }
+                ]
+              },
+              {
+                "type": "element",
+                "tag": "rt",
+                "children": [
+                  {
+                    "type": "text",
+                    "text": "RUBY"
+                  }
+                ]
+              }
+            ]
+          },
+          {
+            "type": "element",
+            "tag": "a",
+            "children": [
+              {
+                "type": "text",
+                "text": "link"
+              }
+            ],
+            "attrs": {
+              "href": "/foo.html"
+            }
+          }
+        ]
+      }
+    ]);
   });
 
   it("broken tags", () => {
     const mdText =
       '<b>bold<b><ruby><rb>ruby</rb><rt>RUBY</rt><a href="/foo.html">link</a>';
-
     console.log(JSON.stringify(parseHtml(mdText), null, 2));
+    expect(parseHtml(mdText)).toStrictEqual([
+      {
+        "type": "element",
+        "tag": "p",
+        "children": [
+          {
+            "type": "element",
+            "tag": "strong",
+            "children": [
+              {
+                "type": "text",
+                "text": "bold"
+              },
+              {
+                "type": "element",
+                "tag": "ruby",
+                "children": [
+                  {
+                    "type": "element",
+                    "tag": "rb",
+                    "children": [
+                      {
+                        "type": "text",
+                        "text": "ruby"
+                      }
+                    ]
+                  },
+                  {
+                    "type": "element",
+                    "tag": "rt",
+                    "children": [
+                      {
+                        "type": "text",
+                        "text": "RUBY"
+                      }
+                    ]
+                  }
+                ]
+              },
+              {
+                "type": "text",
+                "text": "link"
+              }
+            ]
+          }
+        ]
+      }
+    ]);
+  });
+
+  it("headers", () => {
+    const mdText = "<div><h1>h1</h1><h2>h2</h2><h6>h6</h6></div>";
+    expect(parseHtml(mdText)).toStrictEqual([
+      {
+        "type": "element",
+        "tag": "h1",
+        "children": [
+          {
+            "type": "text",
+            "text": "h1"
+          }
+        ]
+      },
+      {
+        "type": "element",
+        "tag": "h2",
+        "children": [
+          {
+            "type": "text",
+            "text": "h2"
+          }
+        ]
+      },
+      {
+        "type": "element",
+        "tag": "h6",
+        "children": [
+          {
+            "type": "text",
+            "text": "h6"
+          }
+        ]
+      }
+    ]);
   });
 
   it("blockquote", () => {
-    const mdText = "<blockquote>abc</blockquote>";
+    const mdText = "<div><blockquote><p><blockquote>abc</blockquote></p></blockquote></div>";
+    console.log(JSON.stringify(parseHtml(mdText), null, 2));
+    expect(parseHtml(mdText)).toStrictEqual([
+      {
+        "type": "element",
+        "tag": "blockquote",
+        "children": [
+          {
+            "type": "text",
+            "text": "abc"
+          }
+        ]
+      }
+    ]);
+  });
 
+  it("image", () => {
+    const mdText = ' ab <b>cd</b> <img src="/foo.png" alt="img"/> <i>ef</i> gh ';
     console.log(JSON.stringify(parseHtml(mdText), null, 2));
   });
+
 });
 
 describe("mdRewriteLinkUrls", () => {
