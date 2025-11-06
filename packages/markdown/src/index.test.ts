@@ -44,6 +44,11 @@ function makeMarkdown(mdText: string) {
   return mdRenderMarkdown(nodes);
 }
 
+function makeMarkdownFromHtml(html: string) {
+  const nodes = parseHtml(html);
+  return mdRenderMarkdown(nodes);
+}
+
 describe("parseMarkdown", () => {
   it("empty body", () => {
     const mdText = "";
@@ -284,13 +289,13 @@ describe("mdGroupImageGrid", () => {
 
 describe("parseHtml", () => {
   it("empty body", () => {
-    const mdText = "";
-    expect(parseHtml(mdText)).toStrictEqual([]);
+    const html = "";
+    expect(parseHtml(html)).toStrictEqual([]);
   });
 
   it("plaintext", () => {
-    const mdText = "abc";
-    expect(parseHtml(mdText)).toStrictEqual([
+    const html = "abc";
+    expect(parseHtml(html)).toStrictEqual([
       {
         children: [
           {
@@ -305,8 +310,8 @@ describe("parseHtml", () => {
   });
 
   it("plaintext", () => {
-    const mdText = "abc";
-    expect(parseHtml(mdText)).toStrictEqual([
+    const html = "abc";
+    expect(parseHtml(html)).toStrictEqual([
       {
         children: [
           {
@@ -321,8 +326,8 @@ describe("parseHtml", () => {
   });
 
   it("paragraph", () => {
-    const mdText = "<p>abc</p>";
-    expect(parseHtml(mdText)).toStrictEqual([
+    const html = "<p>abc</p>";
+    expect(parseHtml(html)).toStrictEqual([
       {
         children: [
           {
@@ -337,11 +342,11 @@ describe("parseHtml", () => {
   });
 
   it("list", () => {
-    const mdText = `<ul>
+    const html = `<ul>
 <li>one</li>
 <li>two</li>
 </ul>`;
-    expect(parseHtml(mdText)).toStrictEqual([
+    expect(parseHtml(html)).toStrictEqual([
       {
         type: "element",
         tag: "ul",
@@ -372,10 +377,10 @@ describe("parseHtml", () => {
   });
 
   it("table", () => {
-    const mdText = `<table><tr>
+    const html = `<table><tr>
 <td>one</td><td>two</td>
 </tr></table>`;
-    expect(parseHtml(mdText)).toStrictEqual([
+    expect(parseHtml(html)).toStrictEqual([
       {
         type: "element",
         tag: "table",
@@ -412,7 +417,7 @@ describe("parseHtml", () => {
   });
 
   it("body only", () => {
-    const mdText = `<html>
+    const html = `<html>
 <head>
 <title>hoge</title>
 </head>
@@ -420,7 +425,7 @@ describe("parseHtml", () => {
 abc
 </body>
 </html>`;
-    expect(parseHtml(mdText)).toStrictEqual([
+    expect(parseHtml(html)).toStrictEqual([
       {
         type: "element",
         tag: "p",
@@ -434,11 +439,10 @@ abc
     ]);
   });
 
-  it("inline", () => {
-    const mdText =
+  it("inline basics", () => {
+    const html =
       '<b>bold</b><ruby><rb>ruby</rb><rt>RUBY</rt></ruby><a href="/foo.html">link</a>';
-    console.log(JSON.stringify(parseHtml(mdText), null, 2));
-    expect(parseHtml(mdText)).toStrictEqual([
+    expect(parseHtml(html)).toStrictEqual([
       {
         "type": "element",
         "tag": "p",
@@ -498,10 +502,9 @@ abc
   });
 
   it("broken tags", () => {
-    const mdText =
+    const html =
       '<b>bold<b><ruby><rb>ruby</rb><rt>RUBY</rt><a href="/foo.html">link</a>';
-    console.log(JSON.stringify(parseHtml(mdText), null, 2));
-    expect(parseHtml(mdText)).toStrictEqual([
+    expect(parseHtml(html)).toStrictEqual([
       {
         "type": "element",
         "tag": "p",
@@ -552,8 +555,8 @@ abc
   });
 
   it("headers", () => {
-    const mdText = "<div><h1>h1</h1><h2>h2</h2><h6>h6</h6></div>";
-    expect(parseHtml(mdText)).toStrictEqual([
+    const html = "<div><h1>h1</h1><h2>h2</h2><h6>h6</h6></div>";
+    expect(parseHtml(html)).toStrictEqual([
       {
         "type": "element",
         "tag": "h1",
@@ -588,9 +591,8 @@ abc
   });
 
   it("blockquote", () => {
-    const mdText = "<div><blockquote><p><blockquote>abc</blockquote></p></blockquote></div>";
-    console.log(JSON.stringify(parseHtml(mdText), null, 2));
-    expect(parseHtml(mdText)).toStrictEqual([
+    const html = "<div><blockquote><p><blockquote>abc</blockquote></p></blockquote></div>";
+    expect(parseHtml(html)).toStrictEqual([
       {
         "type": "element",
         "tag": "blockquote",
@@ -605,10 +607,118 @@ abc
   });
 
   it("image", () => {
-    const mdText = ' ab <b>cd</b> <img src="/foo.png" alt="img"/> <i>ef</i> gh ';
-    console.log(JSON.stringify(parseHtml(mdText), null, 2));
+    const html = ' ab <b>cd</b> <img src="/foo.png" alt="img"/> <i>ef</i> gh ';
+    expect(parseHtml(html)).toStrictEqual([
+      {
+        "type": "element",
+        "tag": "p",
+        "children": [
+          {
+            "type": "text",
+            "text": "ab "
+          },
+          {
+            "type": "element",
+            "tag": "strong",
+            "children": [
+              {
+                "type": "text",
+                "text": "cd"
+              }
+            ]
+          }
+        ]
+      },
+      {
+        "type": "element",
+        "tag": "figure",
+        "children": [
+          {
+            "type": "element",
+            "tag": "img",
+            "children": [],
+            "attrs": {
+              "src": "/foo.png",
+              "alt": "img"
+            }
+          }
+        ],
+        "attrs": {
+          "class": "image-block"
+        }
+      },
+      {
+        "type": "element",
+        "tag": "p",
+        "children": [
+          {
+            "type": "element",
+            "tag": "em",
+            "children": [
+              {
+                "type": "text",
+                "text": "ef"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "text": " gh"
+          }
+        ]
+      }
+    ]);
   });
 
+  it("empty elements", () => {
+    const html = '<p></p> a <b></b> b <ul></ul> c <div></div>A <i>B  C</i> D';
+    expect(parseHtml(html)).toStrictEqual([
+      {
+        "type": "element",
+        "tag": "p",
+        "children": [
+          {
+            "type": "text",
+            "text": "a b"
+          }
+        ]
+      },
+      {
+        "type": "element",
+        "tag": "p",
+        "children": [
+          {
+            "type": "text",
+            "text": "c"
+          }
+        ]
+      },
+      {
+        "type": "element",
+        "tag": "p",
+        "children": [
+          {
+            "type": "text",
+            "text": "A "
+          },
+          {
+            "type": "element",
+            "tag": "em",
+            "children": [
+              {
+                "type": "text",
+                "text": "B C"
+              }
+            ]
+          },
+          {
+            "type": "text",
+            "text": " D"
+          }
+        ]
+      }
+    ]);
+  });
 });
 
 describe("mdRewriteLinkUrls", () => {
@@ -1503,6 +1613,55 @@ describe("mdRenderMarkdown basics", () => {
     );
   });
 });
+
+describe("mdRenderMarkdown from HTML", () => {
+  it("inline variations", () => {
+    const html = `<span>normal</span>
+<strong>bold1</strong>
+<b>bold2</b>
+<span style="font-weight: bold;">bold3</span>
+<em>italic1</em>
+<i>italic2</i>
+<span style="font-style: italic;">italic3</span>
+<u>underline1</u>
+<span style="text-decoration: underline;">underline2</span>
+<s>strike1</s>
+<del>strike2</del>
+<span style="text-decoration: line-through;">strike3</span>
+<code>code1</code>
+<kbd>code2</kbd>
+<span style="font-family: monospace;">code3</span>
+<mark>mark1</mark>
+<span style="background-color:#ff0;">mark2</span>
+<small>small1</small>
+<span style="font-size: 8pt;">small2</span>
+`;
+    expect(makeMarkdownFromHtml(html)).toBe("normal **bold1** **bold2** **bold3** ::italic1:: ::italic2:: ::italic3:: __underline1__ __underline2__ ~~strike1~~ ~~strike2~~ ~~strike3~~ ``code1`` ``code2`` ``code3`` @@mark1@@ @@mark2@@ %%small1%% %%small2%%\n");
+  });
+
+  it("list variations", () => {
+    const html = `<div>
+<ul>
+<li>1<ul><li>1-1<ul><li>1-1-1</li></ul></li></ul></li>
+<li>2<ul><li>2-1</li></ul></li>
+<li>3</li>
+</ul>
+
+<ol>
+<li>1<li>
+<li>2<li>
+</ol>
+
+<ul style="list-style: none">
+<li>1<li>
+<li>2<li>
+</ul>
+
+`;
+    console.log(makeMarkdownFromHtml(html));
+  });
+});
+
 
 describe("mdSeparateTitle", () => {
   it("returns first h1", () => {
