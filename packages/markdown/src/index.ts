@@ -469,6 +469,623 @@ export function parseMarkdown(mdText: string): MdNode[] {
   return nodes;
 }
 
+export function getDomRootOrThrow(html: string): {
+  document: Document;
+  root: Element | Document;
+} {
+  if (typeof html !== "string") throw new Error("html must be a string");
+  if (typeof DOMParser === "undefined")
+    throw new Error("DOMParser is not available");
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const body = doc.querySelector("body");
+  const root: Element | Document = body ? body : doc;
+  return { document: doc, root };
+}
+
+export function parseHtml(
+  html: string,
+  opts?: { baseFontSizePt?: number },
+): MdNode[] {
+  const basePt = opts?.baseFontSizePt ?? 11;
+  const { root } = getDomRootOrThrow(html);
+  const result: MdNode[] = [];
+  const isHidden = (tag: string) =>
+    tag === "head" ||
+    tag === "meta" ||
+    tag === "script" ||
+    tag === "link" ||
+    tag === "canvas" ||
+    tag === "style" ||
+    tag === "template" ||
+    tag === "noscript";
+  const isTextNode = (n: MdNode): n is MdTextNode => n.type === "text";
+  const t = (text: string): MdTextNode => ({ type: "text", text });
+  const e = (
+    tag: string,
+    children: MdNode[],
+    attrs?: MdAttrs,
+  ): MdElementNode => {
+    const node: MdElementNode = { type: "element", tag, children };
+    if (attrs && Object.keys(attrs).length) node.attrs = attrs;
+    return node;
+  };
+  const parseStyle = (
+    styleAttr: string | null | undefined,
+  ): Record<string, string> => {
+    const m: Record<string, string> = {};
+    if (!styleAttr) return m;
+    const parts = styleAttr
+      .split(";")
+      .map((s) => s.trim())
+      .filter(Boolean);
+    for (const part of parts) {
+      const i = part.indexOf(":");
+      if (i >= 0) {
+        const k = part.slice(0, i).trim().toLowerCase();
+        const v = part.slice(i + 1).trim();
+        m[k] = v;
+      }
+    }
+    return m;
+  };
+  const isWhiteLike = (v: string) => {
+    const s = v.trim().toLowerCase().replace(/\s+/g, "");
+    return (
+      s === "white" ||
+      s === "#fff" ||
+      s === "#ffffff" ||
+      s === "rgb(255,255,255)" ||
+      s === "transparent"
+    );
+  };
+  const ptFromCss = (v: string | undefined): number | null => {
+    if (!v) return null;
+    const s = v.trim().toLowerCase();
+    if (s.endsWith("pt")) return parseFloat(s);
+    if (s.endsWith("%")) return (parseFloat(s) / 100) * basePt;
+    return null;
+  };
+  const marksFromStyle = (styleAttr: string | null | undefined) => {
+    const s = parseStyle(styleAttr);
+    const marks: {
+      strong?: true;
+      em?: true;
+      s?: true;
+      u?: true;
+      code?: true;
+      mark?: true;
+      small?: true;
+      align?: "center" | "right";
+      bulletNone?: true;
+    } = {};
+    const fw = (s["font-weight"] || "").toLowerCase();
+    const fwNum = /^\d+$/.test(fw) ? parseInt(fw, 10) : NaN;
+    if (fw === "bold" || fw === "bolder" || fwNum >= 600) marks.strong = true;
+    const fs = (s["font-style"] || "").toLowerCase();
+    if (fs === "italic" || fs === "oblique") marks.em = true;
+    const td = (s["text-decoration"] || "").toLowerCase();
+    if (td.includes("line-through")) marks.s = true;
+    if (td.includes("underline")) marks.u = true;
+    const ff = (s["font-family"] || "").toLowerCase();
+    if (ff.includes("monospace")) marks.code = true;
+    const bg = s["background-color"];
+    if (bg && !isWhiteLike(bg)) marks.mark = true;
+    const fz = ptFromCss(s["font-size"]);
+    if (fz !== null && fz <= basePt * 0.85) marks.small = true;
+    const ta = (s["text-align"] || "").toLowerCase();
+    if (ta === "center") marks.align = "center";
+    if (ta === "right") marks.align = "right";
+    if ((s["list-style"] || "").toLowerCase() === "none")
+      marks.bulletNone = true;
+    return marks;
+  };
+  const alignFromStyle = (
+    styleAttr: string | null | undefined,
+  ): "center" | "right" | undefined => {
+    const ta = (parseStyle(styleAttr)["text-align"] || "").toLowerCase();
+    if (ta === "center") return "center";
+    if (ta === "right") return "right";
+    return undefined;
+  };
+  const firstVideoSrc = (el: Element): string | null => {
+    const direct = el.getAttribute("src");
+    if (direct) return direct;
+    const s = el.querySelector("source");
+    return s ? s.getAttribute("src") : null;
+  };
+  const wrapMarks = (
+    children: MdNode[],
+    marks: ReturnType<typeof marksFromStyle>,
+  ): MdNode[] => {
+    let cur: MdNode[] = children;
+    if (marks.strong) cur = [e("strong", cur)];
+    if (marks.em) cur = [e("em", cur)];
+    if (marks.s) cur = [e("s", cur)];
+    if (marks.u) cur = [e("u", cur)];
+    if (marks.code) cur = [e("code", cur)];
+    if (marks.mark) cur = [e("mark", cur)];
+    if (marks.small) cur = [e("small", cur)];
+    return cur;
+  };
+  const isMediaInline = (n: MdNode) =>
+    n.type === "element" && (n.tag === "img" || n.tag === "video");
+  const mediaToFigure = (node: MdElementNode): MdElementNode =>
+    e("figure", [node], { class: "image-block" });
+  const splitInlineToBlocks = (
+    inlineNodes: MdNode[],
+    blockTag: "p" | "h1" | "h2" | "h3" | "h4" | "h5" | "h6",
+    align?: "center" | "right",
+  ): MdElementNode[] => {
+    const out: MdElementNode[] = [];
+    let buf: MdNode[] = [];
+    const flush = () => {
+      if (buf.length) {
+        const attrs: MdAttrs = {};
+        if (align) attrs.align = align;
+        out.push(
+          e(blockTag, buf, Object.keys(attrs).length ? attrs : undefined),
+        );
+        buf = [];
+      }
+    };
+    for (const n of inlineNodes) {
+      if (isMediaInline(n)) {
+        flush();
+        out.push(mediaToFigure(n as MdElementNode));
+      } else {
+        buf.push(n);
+      }
+    }
+    flush();
+    return out;
+  };
+  const parseRubyNodes = (ruby: Element): MdNode[] => {
+    const kids = Array.from(ruby.childNodes);
+    const hasExplicitRb = kids.some(
+      (n) => n.nodeType === 1 && (n as Element).tagName.toLowerCase() === "rb",
+    );
+    if (!hasExplicitRb) {
+      const pairs: MdNode[] = [];
+      const pendingRb: MdNode[] = [];
+      const extras: MdNode[] = [];
+      for (const n of kids) {
+        if (n.nodeType === 1) {
+          const el = n as Element;
+          const tag = el.tagName.toLowerCase();
+          if (tag === "rt") {
+            if (pendingRb.length)
+              pairs.push(e("rb", pendingRb.splice(0, pendingRb.length)));
+            pairs.push(e("rt", parseInline(el)));
+          } else if (tag === "rp") {
+          } else {
+            extras.push(...parseInline(el));
+          }
+        } else if (n.nodeType === 3) {
+          const s = (n as Text).nodeValue ?? "";
+          if (s.length) pendingRb.push(t(s));
+        }
+      }
+      if (pendingRb.length) pairs.push(e("rb", pendingRb));
+      if (pairs.length === 0) return extras;
+      return [e("ruby", pairs), ...extras];
+    }
+    const outPairs: MdNode[] = [];
+    const extras: MdNode[] = [];
+    for (const n of kids) {
+      if (n.nodeType === 1) {
+        const el = n as Element;
+        const tag = el.tagName.toLowerCase();
+        if (tag === "rb") outPairs.push(e("rb", parseInline(el)));
+        else if (tag === "rt") outPairs.push(e("rt", parseInline(el)));
+        else if (tag === "rp") {
+        } else extras.push(...parseInline(el));
+      } else if (n.nodeType === 3) {
+        const s = (n as Text).nodeValue ?? "";
+        if (s.length) extras.push(t(s));
+      }
+    }
+    if (outPairs.length === 0) return extras;
+    return [e("ruby", outPairs), ...extras];
+  };
+  const parseInline = (el: Element | Document): MdNode[] => {
+    const out: MdNode[] = [];
+    const nodes = Array.from(el.childNodes);
+    for (const n of nodes) {
+      if (n.nodeType === 3) {
+        const text = (n as Text).nodeValue ?? "";
+        if (text.length) out.push(t(text));
+      } else if (n.nodeType === 1) {
+        const x = n as Element;
+        const tag = x.tagName.toLowerCase();
+        if (isHidden(tag)) continue;
+        if (tag === "b" || tag === "strong") {
+          out.push(e("strong", parseInline(x)));
+          continue;
+        }
+        if (tag === "i" || tag === "em") {
+          out.push(e("em", parseInline(x)));
+          continue;
+        }
+        if (tag === "u") {
+          out.push(e("u", parseInline(x)));
+          continue;
+        }
+        if (tag === "s" || tag === "strike" || tag === "del") {
+          out.push(e("s", parseInline(x)));
+          continue;
+        }
+        if (tag === "code" || tag === "kbd") {
+          out.push(e("code", parseInline(x)));
+          continue;
+        }
+        if (tag === "mark") {
+          out.push(e("mark", parseInline(x)));
+          continue;
+        }
+        if (tag === "small") {
+          out.push(e("small", parseInline(x)));
+          continue;
+        }
+        if (tag === "span") {
+          const marks = marksFromStyle(x.getAttribute("style"));
+          const wrapped = wrapMarks(parseInline(x), marks);
+          out.push(...wrapped);
+          continue;
+        }
+        if (tag === "ruby") {
+          out.push(...parseRubyNodes(x));
+          continue;
+        }
+        if (tag === "a") {
+          const href = x.getAttribute("href") || "";
+          out.push(e("a", parseInline(x), href ? { href } : undefined));
+          continue;
+        }
+        if (tag === "br") {
+          out.push(e("br", []));
+          continue;
+        }
+        if (tag === "img") {
+          const src = x.getAttribute("src") || "";
+          const alt = x.getAttribute("alt") || "";
+          out.push(e("img", [], alt ? { src, alt } : { src }));
+          continue;
+        }
+        if (tag === "video") {
+          const src = firstVideoSrc(x) || "";
+          out.push(e("video", [], src ? { src } : undefined));
+          continue;
+        }
+        out.push(...parseInline(x));
+      }
+    }
+    return out;
+  };
+  const makeInlineForElement = (el: Element): MdNode[] => {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "b" || tag === "strong") return [e("strong", parseInline(el))];
+    if (tag === "i" || tag === "em") return [e("em", parseInline(el))];
+    if (tag === "u") return [e("u", parseInline(el))];
+    if (tag === "s" || tag === "strike" || tag === "del")
+      return [e("s", parseInline(el))];
+    if (tag === "code" || tag === "kbd") return [e("code", parseInline(el))];
+    if (tag === "mark") return [e("mark", parseInline(el))];
+    if (tag === "small") return [e("small", parseInline(el))];
+    if (tag === "span")
+      return wrapMarks(
+        parseInline(el),
+        marksFromStyle(el.getAttribute("style")),
+      );
+    if (tag === "ruby") return parseRubyNodes(el);
+    if (tag === "a") {
+      const href = el.getAttribute("href") || "";
+      return [e("a", parseInline(el), href ? { href } : undefined)];
+    }
+    if (tag === "br") return [e("br", [])];
+    return parseInline(el);
+  };
+  const parseListItem = (li: Element): MdElementNode => {
+    const inline = parseInline(li);
+    const parts = splitInlineToBlocks(inline, "p");
+    if (parts.length === 1 && parts[0].tag === "p")
+      return e("li", parts[0].children);
+    return e(
+      "li",
+      parts.map((p) => p as MdNode),
+    );
+  };
+  const parseTableCellInline = (cell: Element): MdNode[] => {
+    const inline = parseInline(cell);
+    const out: MdNode[] = [];
+    for (const n of inline) {
+      if (isMediaInline(n)) out.push(mediaToFigure(n as MdElementNode));
+      else out.push(n);
+    }
+    return out;
+  };
+  const flushInlineBufTo = (sink: MdNode[], inlineBuf: MdNode[]) => {
+    if (!inlineBuf.length) return;
+    const blocks = splitInlineToBlocks(inlineBuf, "p");
+    for (const b of blocks) sink.push(b);
+    inlineBuf.length = 0;
+  };
+  const parseBlock = (scope: Element | Document, sink: MdNode[]) => {
+    const kids = Array.from(scope.childNodes);
+    const inlineBuf: MdNode[] = [];
+    for (const n of kids) {
+      if (n.nodeType === 3) {
+        const text = (n as Text).nodeValue ?? "";
+        if (text.length) inlineBuf.push(t(text));
+        continue;
+      }
+      if (n.nodeType === 1) {
+        const el = n as Element;
+        const tag = el.tagName.toLowerCase();
+        if (isHidden(tag)) continue;
+        if (
+          tag === "h1" ||
+          tag === "h2" ||
+          tag === "h3" ||
+          tag === "h4" ||
+          tag === "h5" ||
+          tag === "h6"
+        ) {
+          flushInlineBufTo(sink, inlineBuf);
+          const align = alignFromStyle(el.getAttribute("style"));
+          const blocks = splitInlineToBlocks(
+            parseInline(el),
+            tag as "h1" | "h2" | "h3" | "h4" | "h5" | "h6",
+            align,
+          );
+          for (const b of blocks) sink.push(b);
+          continue;
+        }
+        if (tag === "p") {
+          flushInlineBufTo(sink, inlineBuf);
+          const align = alignFromStyle(el.getAttribute("style"));
+          const blocks = splitInlineToBlocks(parseInline(el), "p", align);
+          for (const b of blocks) sink.push(b);
+          continue;
+        }
+        if (tag === "ul" || tag === "ol") {
+          flushInlineBufTo(sink, inlineBuf);
+          const isUl = tag === "ul";
+          const bulletNone = marksFromStyle(
+            el.getAttribute("style"),
+          ).bulletNone;
+          const lis = Array.from(el.children).filter(
+            (c) => c.tagName.toLowerCase() === "li",
+          ) as Element[];
+          const liNodes = lis.map((li) => parseListItem(li));
+          const attrs: MdAttrs = {};
+          if (isUl && bulletNone) attrs.bullet = "none";
+          sink.push(
+            e(
+              isUl ? "ul" : "ol",
+              liNodes,
+              Object.keys(attrs).length ? attrs : undefined,
+            ),
+          );
+          continue;
+        }
+        if (tag === "table") {
+          flushInlineBufTo(sink, inlineBuf);
+          const rows: Element[] = [];
+          const children = Array.from(el.children);
+          for (const c of children) {
+            const ct = c.tagName.toLowerCase();
+            if (ct === "tr") rows.push(c);
+            else if (ct === "thead" || ct === "tbody" || ct === "tfoot")
+              rows.push(
+                ...(Array.from(c.children).filter(
+                  (x) => x.tagName.toLowerCase() === "tr",
+                ) as Element[]),
+              );
+          }
+          const tableChildren: MdNode[] = [];
+          for (const tr of rows) {
+            const cells = Array.from(tr.children).filter((x) => {
+              const tt = x.tagName.toLowerCase();
+              return tt === "td" || tt === "th";
+            }) as Element[];
+            const cellNodes: MdNode[] = [];
+            for (const c of cells) {
+              const align = alignFromStyle(c.getAttribute("style"));
+              const attrs: MdAttrs = {};
+              if (align) attrs.align = align;
+              cellNodes.push(
+                e(
+                  c.tagName.toLowerCase(),
+                  parseTableCellInline(c),
+                  Object.keys(attrs).length ? attrs : undefined,
+                ),
+              );
+            }
+            tableChildren.push(e("tr", cellNodes));
+          }
+          sink.push(e("table", tableChildren));
+          continue;
+        }
+        if (tag === "img") {
+          flushInlineBufTo(sink, inlineBuf);
+          const src = el.getAttribute("src") || "";
+          const alt = el.getAttribute("alt") || "";
+          sink.push(
+            e("figure", [e("img", [], alt ? { src, alt } : { src })], {
+              class: "image-block",
+            }),
+          );
+          continue;
+        }
+        if (tag === "video") {
+          flushInlineBufTo(sink, inlineBuf);
+          const src = firstVideoSrc(el) || "";
+          sink.push(
+            e("figure", [e("video", [], src ? { src } : undefined)], {
+              class: "image-block",
+            }),
+          );
+          continue;
+        }
+        if (
+          tag === "div" ||
+          tag === "section" ||
+          tag === "article" ||
+          tag === "main"
+        ) {
+          flushInlineBufTo(sink, inlineBuf);
+          parseBlock(el, sink);
+          continue;
+        }
+        const inlineFromEl = makeInlineForElement(el);
+        inlineBuf.push(...inlineFromEl);
+      }
+    }
+    flushInlineBufTo(sink, inlineBuf);
+  };
+  const isPreLike = (tag: string) => tag === "pre";
+  const isBlockContainer = (tag: string) =>
+    tag === "p" ||
+    tag === "li" ||
+    tag === "h1" ||
+    tag === "h2" ||
+    tag === "h3" ||
+    tag === "h4" ||
+    tag === "h5" ||
+    tag === "h6" ||
+    tag === "td" ||
+    tag === "th";
+  const isDroppableEmpty = (tag: string) =>
+    tag === "p" ||
+    tag === "li" ||
+    tag === "a" ||
+    tag === "h1" ||
+    tag === "h2" ||
+    tag === "h3" ||
+    tag === "h4" ||
+    tag === "h5" ||
+    tag === "h6" ||
+    tag === "rb" ||
+    tag === "rt" ||
+    tag === "strong" ||
+    tag === "em" ||
+    tag === "small" ||
+    tag === "mark" ||
+    tag === "u" ||
+    tag === "s" ||
+    tag === "code" ||
+    tag === "ruby";
+  const collapseWs = (s: string) => s.replace(/\s+/g, " ");
+  const trimBlockEdges = (children: MdNode[]): MdNode[] => {
+    let i = 0;
+    while (
+      i < children.length &&
+      isTextNode(children[i]) &&
+      (children[i] as MdTextNode).text.length === 0
+    )
+      i++;
+    if (i < children.length && isTextNode(children[i])) {
+      const tn = children[i] as MdTextNode;
+      children[i] = { type: "text", text: tn.text.replace(/^\s+/, "") };
+    }
+    let j = children.length - 1;
+    while (
+      j >= 0 &&
+      isTextNode(children[j]) &&
+      (children[j] as MdTextNode).text.length === 0
+    )
+      j--;
+    if (j >= 0 && isTextNode(children[j])) {
+      const tj = children[j] as MdTextNode;
+      children[j] = { type: "text", text: tj.text.replace(/\s+$/, "") };
+    }
+    return children;
+  };
+  const flattenSameMarksOnce = (node: MdElementNode): MdElementNode => {
+    const flatSet = new Set<string>([
+      "strong",
+      "em",
+      "s",
+      "u",
+      "code",
+      "mark",
+      "small",
+    ]);
+    if (!flatSet.has(node.tag)) return node;
+    const flat: MdNode[] = [];
+    for (const ch of node.children) {
+      if (
+        ch.type === "element" &&
+        ch.tag === node.tag &&
+        (!ch.attrs || Object.keys(ch.attrs).length === 0)
+      )
+        flat.push(...ch.children);
+      else flat.push(ch);
+    }
+    return e(node.tag, flat, node.attrs);
+  };
+  const attrsKey = (attrs?: MdAttrs): string => {
+    if (!attrs) return "";
+    const keys = Object.keys(attrs).sort();
+    return keys.map((k) => `${k}:${String((attrs as MdAttrs)[k])}`).join("|");
+  };
+  const mergeAdjacentMarks = (children: MdNode[]): MdNode[] => {
+    const markSet = new Set<string>([
+      "strong",
+      "em",
+      "s",
+      "u",
+      "code",
+      "mark",
+      "small",
+    ]);
+    const out: MdNode[] = [];
+    for (const node of children) {
+      if (out.length > 0 && node.type === "element") {
+        const prev = out[out.length - 1];
+        if (
+          prev.type === "element" &&
+          markSet.has(prev.tag) &&
+          prev.tag === node.tag &&
+          attrsKey(prev.attrs) === attrsKey(node.attrs)
+        ) {
+          prev.children = [...prev.children, ...node.children];
+          continue;
+        }
+      }
+      out.push(node);
+    }
+    return out;
+  };
+  const postProcess = (nodes: MdNode[], ancestorPre: boolean): MdNode[] => {
+    const out: MdNode[] = [];
+    for (const n of nodes) {
+      if (n.type === "text") {
+        const text = ancestorPre ? n.text : collapseWs(n.text);
+        if (text.length) out.push({ type: "text", text });
+        continue;
+      }
+      const tag = n.tag;
+      const nextAncestorPre = ancestorPre || isPreLike(tag);
+      const processedChildren = postProcess(n.children, nextAncestorPre);
+      const cleanedChildren = processedChildren.filter(
+        (ch) => !(isTextNode(ch) && (ch as MdTextNode).text.length === 0),
+      );
+      const withEdges =
+        isBlockContainer(tag) && !nextAncestorPre
+          ? trimBlockEdges(cleanedChildren)
+          : cleanedChildren;
+      const mergedInline = mergeAdjacentMarks(withEdges);
+      let el = e(tag, mergedInline, n.attrs);
+      el = flattenSameMarksOnce(el);
+      if (!(isDroppableEmpty(tag) && el.children.length === 0)) out.push(el);
+    }
+    return out;
+  };
+  parseBlock(root as Element | Document, result);
+  return postProcess(result, false);
+}
+
 export type MdRewriteRule = {
   pattern: RegExp;
   replacement: string;
@@ -1483,24 +2100,26 @@ export function mdRenderHtml(
 }
 
 export function mdRenderMarkdown(nodes: MdNode[]): string {
-  // ===== helpers: predicates =====
   const isElement = (n: MdNode, tag?: string): n is MdElementNode =>
     n.type === "element" && (!tag || n.tag === tag);
-
   const hasClass = (el: MdElementNode | undefined, cls: string): boolean => {
     if (!el || el.type !== "element") return false;
     const c = el.attrs?.class;
     return typeof c === "string" ? c.split(/\s+/).includes(cls) : false;
   };
-
-  const getAttrStr = (a: MdAttrs | undefined, k: string): string | undefined => {
+  const getAttrStr = (
+    a: MdAttrs | undefined,
+    k: string,
+  ): string | undefined => {
     const v = a?.[k];
-    return typeof v === "string" ? v : typeof v === "number" ? String(v) : undefined;
+    return typeof v === "string"
+      ? v
+      : typeof v === "number"
+        ? String(v)
+        : undefined;
   };
-
-  const sanitizeUrl = (u: string): string => u.replace(/\)/g, "%29").replace(/ /g, "%20");
-
-  // ===== helpers: text & inline =====
+  const sanitizeUrl = (u: string): string =>
+    u.replace(/\)/g, "%29").replace(/ /g, "%20");
   const collectPlainText = (ns: MdNode[] | undefined): string => {
     if (!ns) return "";
     let out = "";
@@ -1515,23 +2134,21 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     }
     return out;
   };
-
-  // 装飾トリガのみ最小限エスケープ（リンクの []() は触らない）
   const escapeForInline = (s: string): string => {
-    let out = s.replace(/\\/g, "\\\\");   // バックスラッシュは常に
-    out = out.replace(/\*\*/g, "\\*\\*"); // ** (bold)
-    out = out.replace(/::/g, "\\::");     // :: (italic)
-    out = out.replace(/%%/g, "\\%\\%");   // %% (small)
-    out = out.replace(/@@/g, "\\@\\@");   // @@ (mark)
-    out = out.replace(/__/g, "\\_\\_");   // __ (underline)
-    out = out.replace(/~~/g, "\\~\\~");   // ~~ (strike)
-    out = out.replace(/``/g, "\\`\\`");   // `` (inline code)
-    out = out.replace(/\$\$/g, "\\$\\$"); // $$ (math)
+    let out = s.replace(/\\/g, "\\\\");
+    out = out.replace(/\*\*/g, "\\*\\*");
+    out = out.replace(/::/g, "\\::");
+    out = out.replace(/%%/g, "\\%\\%");
+    out = out.replace(/@@/g, "\\@\\@");
+    out = out.replace(/__/g, "\\_\\_");
+    out = out.replace(/~~/g, "\\~\\~");
+    out = out.replace(/``/g, "\\`\\`");
+    out = out.replace(/\$\$/g, "\\$\\$");
     return out;
   };
-
   const backtickRun = (s: string): number => {
-    let maxRun = 0, cur = 0;
+    let maxRun = 0,
+      cur = 0;
     for (let i = 0; i < s.length; i++) {
       if (s[i] === "`") cur++;
       else {
@@ -1542,18 +2159,16 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     if (cur > maxRun) maxRun = cur;
     return maxRun;
   };
-
-  // 段落等の行頭トリガ誤爆を防ぐ
   const protectBlockStarts = (text: string): string =>
     text
       .split("\n")
       .map((line) => {
-        if (/^-{3,}$/.test(line)) return "\\" + line; // ---/----/-----
-        if (/^(?:#{1,6}\s|>\s|`{3,}|-(?:\+|:)?\s)/.test(line)) return "\\" + line; // #, >, ``` , -, -+, -:
+        if (/^-{3,}$/.test(line)) return "\\" + line;
+        if (/^(?:#{1,6}\s|>\s|`{3,}|-(?:\+|:)?\s)/.test(line))
+          return "\\" + line; // #, >, ``` , -, -+, -:
         return line;
       })
       .join("\n");
-
   const renderInline = (ns: MdNode[] | undefined): string => {
     if (!ns || ns.length === 0) return "";
     let out = "";
@@ -1594,8 +2209,12 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
           break;
         }
         case "ruby": {
-          const rb = (el.children || []).find((c) => isElement(c, "rb")) as MdElementNode | undefined;
-          const rt = (el.children || []).find((c) => isElement(c, "rt")) as MdElementNode | undefined;
+          const rb = (el.children || []).find((c) => isElement(c, "rb")) as
+            | MdElementNode
+            | undefined;
+          const rt = (el.children || []).find((c) => isElement(c, "rt")) as
+            | MdElementNode
+            | undefined;
           const rbTxt = collectPlainText(rb?.children || []);
           const rtTxt = collectPlainText(rt?.children || []);
           out += `{{${rbTxt}|${rtTxt}}}`;
@@ -1608,7 +2227,7 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
             .replace(/\\/g, "\\\\")
             .replace(/\]/g, "\\]");
           if (/^https?:\/\//.test(href) && href === anchor) {
-            out += href; // 裸URL最適化
+            out += href;
           } else {
             out += `[${anchor}](${href})`;
           }
@@ -1619,20 +2238,29 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
           break;
         case "img":
         case "video": {
-          // インラインに出現した場合のフォールバック（1行マクロ）
           const src = sanitizeUrl(getAttrStr(el.attrs, "src") || "");
           const macroAttrs: string[] = [];
           const entries = Object.entries(el.attrs || {}).filter(
-            ([k]) => !["src", "alt", "aria-label", "controls", "loading", "decoding"].includes(k),
+            ([k]) =>
+              ![
+                "src",
+                "alt",
+                "aria-label",
+                "controls",
+                "loading",
+                "decoding",
+              ].includes(k),
           );
-          // ★ 不要な media=video は追加しない
           entries
             .sort(([a], [b]) => a.localeCompare(b))
             .forEach(([k, v]) => {
               if (v === true) macroAttrs.push(k);
-              else if (v !== false && v != null && String(v) !== "") macroAttrs.push(`${k}=${String(v)}`);
+              else if (v !== false && v != null && String(v) !== "")
+                macroAttrs.push(`${k}=${String(v)}`);
             });
-          const attrsStr = macroAttrs.length ? `{${macroAttrs.join(", ")}}` : "";
+          const attrsStr = macroAttrs.length
+            ? `{${macroAttrs.join(", ")}}`
+            : "";
           out += `![](${src})${attrsStr}`;
           break;
         }
@@ -1642,42 +2270,47 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     }
     return out;
   };
-
-  // ===== helpers: block pieces =====
   const renderFigureMacro = (fig: MdElementNode): string => {
     const media = (fig.children || []).find(
-      (c): c is MdMediaElement => c.type === "element" && (c.tag === "img" || c.tag === "video"),
+      (c): c is MdMediaElement =>
+        c.type === "element" && (c.tag === "img" || c.tag === "video"),
     );
-    const captionEl = (fig.children || []).find((c) => isElement(c, "figcaption")) as
-      | MdElementNode
-      | undefined;
-
+    const captionEl = (fig.children || []).find((c) =>
+      isElement(c, "figcaption"),
+    ) as MdElementNode | undefined;
     const src = media ? sanitizeUrl(getAttrStr(media.attrs, "src") || "") : "";
     const desc = captionEl
       ? collectPlainText(captionEl.children || [])
           .replace(/\\/g, "\\\\")
           .replace(/\]/g, "\\]")
       : "";
-
     const macro: string[] = [];
     const entries = media
       ? Object.entries(media.attrs || {}).filter(
-          ([k]) => !["src", "alt", "aria-label", "controls", "loading", "decoding"].includes(k),
+          ([k]) =>
+            ![
+              "src",
+              "alt",
+              "aria-label",
+              "controls",
+              "loading",
+              "decoding",
+            ].includes(k),
         )
       : [];
-    // ★ 不要な media=video は追加しない（拡張子や既存属性で判定可能）
     entries
       .sort(([a], [b]) => a.localeCompare(b))
       .forEach(([k, v]) => {
         if (v === true) macro.push(k);
-        else if (v !== false && v != null && String(v) !== "") macro.push(`${k}=${String(v)}`);
+        else if (v !== false && v != null && String(v) !== "")
+          macro.push(`${k}=${String(v)}`);
       });
-
     const attrsStr = macro.length ? `{${macro.join(", ")}}` : "";
     return `![${desc}](${src})${attrsStr}`;
   };
-
-  const tableCellAlign = (cell: MdElementNode): "right" | "center" | undefined => {
+  const tableCellAlign = (
+    cell: MdElementNode,
+  ): "right" | "center" | undefined => {
     const raw = getAttrStr(cell.attrs, "align");
     if (raw === "right" || raw === "center") return raw;
     const cls = cell.attrs?.class;
@@ -1687,7 +2320,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     }
     return undefined;
   };
-
   const renderTableCell = (cell: MdElementNode): string => {
     const tokens: string[] = [];
     const csRaw = getAttrStr(cell.attrs, "colspan");
@@ -1696,23 +2328,18 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     const rs = rsRaw ? parseInt(rsRaw, 10) : 0;
     if (cs > 1) tokens.push(`{colspan=${cs}}`);
     if (rs > 1) tokens.push(`{rowspan=${rs}}`);
-
     const align = tableCellAlign(cell);
     if (align === "right") tokens.push(">>");
     else if (align === "center") tokens.push("><");
-
-    let inner = renderInline(cell.children || []).replace(/\n+/g, " ").trim();
+    let inner = renderInline(cell.children || [])
+      .replace(/\n+/g, " ")
+      .trim();
     inner = inner.replace(/\|/g, "\\|");
-
-    // ★ トークンはスペースなしで連結、本文前にも空白を入れない
     let body = tokens.join("");
     if (inner) body = body ? `${body}${inner}` : inner;
-
-    // ★ 見出しはスペースなしの =...=
     if (cell.tag === "th") body = `=${body}=`;
     return body;
   };
-
   const renderList = (ul: MdElementNode, depth: number): string => {
     const bullet = ((): "- " | "-+ " | "-: " => {
       const b = ul.attrs?.["bullet"];
@@ -1720,7 +2347,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
       if (b === "none") return "-: ";
       return "- ";
     })();
-
     let out = "";
     for (const child of ul.children || []) {
       if (!isElement(child, "li")) continue;
@@ -1737,18 +2363,15 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
         out += renderList(nl, depth + 1);
       }
     }
-    if (depth === 0) out += "\n"; // blank line after top-level list
+    if (depth === 0) out += "\n";
     return out;
   };
-
   const renderBlock = (n: MdNode): string | null => {
     if (n.type === "text") {
       const t = n.text.trim();
       return t ? escapeForInline(t) : null;
     }
     const el = n as MdElementNode;
-
-    // image-grid wrapper: 連続figureを空行なしで並べる
     if (el.tag === "div" && hasClass(el, "image-grid")) {
       const lines: string[] = [];
       for (const c of el.children || []) {
@@ -1756,7 +2379,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
       }
       return lines.join("\n");
     }
-
     switch (el.tag) {
       case "p":
         return protectBlockStarts(renderInline(el.children || []));
@@ -1767,7 +2389,9 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
       case "h5":
       case "h6": {
         const level = Number(el.tag.slice(1));
-        const content = renderInline(el.children || []).replace(/\n+/g, " ").trim();
+        const content = renderInline(el.children || [])
+          .replace(/\n+/g, " ")
+          .trim();
         return `${"#".repeat(level)} ${content}`;
       }
       case "blockquote": {
@@ -1783,8 +2407,17 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
         const fence = "`".repeat(Math.max(3, maxTicks + 1)); // at least 3
         const mode = getAttrStr(el.attrs, "pre-mode");
         const style = getAttrStr(el.attrs, "pre-style");
-        const info = mode && style ? `${mode}:${style}` : mode ? mode : style ? `:${style}` : "";
-        return info ? `${fence}${info}\n${code}\n${fence}` : `${fence}\n${code}\n${fence}`;
+        const info =
+          mode && style
+            ? `${mode}:${style}`
+            : mode
+              ? mode
+              : style
+                ? `:${style}`
+                : "";
+        return info
+          ? `${fence}${info}\n${code}\n${fence}`
+          : `${fence}\n${code}\n${fence}`;
       }
       case "hr": {
         const lvl = Number(el.attrs?.["hr-level"] ?? 1);
@@ -1801,7 +2434,8 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
           if (!isElement(tr, "tr")) continue;
           const cells: string[] = [];
           for (const td of tr.children || []) {
-            if (!isElement(td) || (td.tag !== "td" && td.tag !== "th")) continue;
+            if (!isElement(td) || (td.tag !== "td" && td.tag !== "th"))
+              continue;
             cells.push(renderTableCell(td));
           }
           rows.push("|" + cells.join("|") + "|");
@@ -1811,25 +2445,23 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
       case "omitted":
         return "…";
       case "br":
-        return ""; // block-level <br> は通常出ない
+        return "";
       case "img":
       case "video":
-        // ブロック媒体が素で来たら figure マクロ化
-        return renderFigureMacro(makeElement("figure", [el], { class: "image-block" }));
+        return renderFigureMacro(
+          makeElement("figure", [el], { class: "image-block" }),
+        );
       default:
-        // パラグラフ相当フォールバック
         return protectBlockStarts(renderInline(el.children || []));
     }
   };
-
-  // ===== main assembly: join blocks with one blank line =====
   const blocks: string[] = [];
   for (const n of nodes) {
     const b = renderBlock(n);
     if (b == null) continue;
     const trimmed = b.replace(/[ \t]+\n/g, "\n").trimEnd();
     if (trimmed === "") continue;
-    if (blocks.length > 0) blocks.push(""); // blank line between blocks
+    if (blocks.length > 0) blocks.push("");
     blocks.push(trimmed);
   }
   return blocks.join("\n") + (blocks.length ? "\n" : "");

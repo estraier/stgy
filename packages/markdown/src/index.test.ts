@@ -1,5 +1,6 @@
 import {
   parseMarkdown,
+  parseHtml,
   mdGroupImageGrid,
   MdMediaRewriteOptions,
   mdRewriteLinkUrls,
@@ -278,6 +279,180 @@ describe("mdGroupImageGrid", () => {
     expect(stripPos(mdGroupImageGrid(parseMarkdown(mdText)))).toStrictEqual(
       expected,
     );
+  });
+});
+
+describe("parseHtml", () => {
+  it("empty body", () => {
+    const mdText = "";
+    expect(parseHtml(mdText)).toStrictEqual([]);
+  });
+
+  it("plaintext", () => {
+    const mdText = "abc";
+    expect(parseHtml(mdText)).toStrictEqual([
+      {
+        children: [
+          {
+            text: "abc",
+            type: "text",
+          },
+        ],
+        tag: "p",
+        type: "element",
+      },
+    ]);
+  });
+
+  it("plaintext", () => {
+    const mdText = "abc";
+    expect(parseHtml(mdText)).toStrictEqual([
+      {
+        children: [
+          {
+            text: "abc",
+            type: "text",
+          },
+        ],
+        tag: "p",
+        type: "element",
+      },
+    ]);
+  });
+
+  it("paragraph", () => {
+    const mdText = "<p>abc</p>";
+    expect(parseHtml(mdText)).toStrictEqual([
+      {
+        children: [
+          {
+            text: "abc",
+            type: "text",
+          },
+        ],
+        tag: "p",
+        type: "element",
+      },
+    ]);
+  });
+
+  it("list", () => {
+    const mdText = `<ul>
+<li>one</li>
+<li>two</li>
+</ul>`;
+    expect(parseHtml(mdText)).toStrictEqual([
+      {
+        type: "element",
+        tag: "ul",
+        children: [
+          {
+            type: "element",
+            tag: "li",
+            children: [
+              {
+                type: "text",
+                text: "one",
+              },
+            ],
+          },
+          {
+            type: "element",
+            tag: "li",
+            children: [
+              {
+                type: "text",
+                text: "two",
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("table", () => {
+    const mdText = `<table><tr>
+<td>one</td><td>two</td>
+</tr></table>`;
+    console.log(JSON.stringify(parseHtml(mdText), null, 2));
+    expect(parseHtml(mdText)).toStrictEqual([
+      {
+        type: "element",
+        tag: "table",
+        children: [
+          {
+            type: "element",
+            tag: "tr",
+            children: [
+              {
+                type: "element",
+                tag: "td",
+                children: [
+                  {
+                    type: "text",
+                    text: "one",
+                  },
+                ],
+              },
+              {
+                type: "element",
+                tag: "td",
+                children: [
+                  {
+                    type: "text",
+                    text: "two",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("body only", () => {
+    const mdText = `<html>
+<head>
+<title>hoge</title>
+</head>
+<body>
+abc
+</body>
+</html>`;
+    expect(parseHtml(mdText)).toStrictEqual([
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "abc",
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("inline", () => {
+    const mdText =
+      '<b>bold</b><ruby><rb>ruby</rb><rt>RUBY</rt></ruby><a href="/foo.html">link</a>';
+
+    console.log(JSON.stringify(parseHtml(mdText), null, 2));
+  });
+
+  it("broken tags", () => {
+    const mdText =
+      '<b>bold<b><ruby><rb>ruby</rb><rt>RUBY</rt><a href="/foo.html">link</a>';
+
+    console.log(JSON.stringify(parseHtml(mdText), null, 2));
+  });
+
+  it("blockquote", () => {
+    const mdText = "<blockquote>abc</blockquote>";
+
+    console.log(JSON.stringify(parseHtml(mdText), null, 2));
   });
 });
 
@@ -1114,7 +1289,9 @@ describe("mdRenderMarkdown basics", () => {
 
   it("table", () => {
     const mdText = "|=text=|hello world|>>a|=><b=|{colspan=2}{rowspan=3}c|";
-    expect(makeMarkdown(mdText)).toBe("|=text=|hello world|>>a|=><b=|{colspan=2}{rowspan=3}c|\n");
+    expect(makeMarkdown(mdText)).toBe(
+      "|=text=|hello world|>>a|=><b=|{colspan=2}{rowspan=3}c|\n",
+    );
   });
 
   it("image", () => {
@@ -1135,7 +1312,9 @@ describe("mdRenderMarkdown basics", () => {
   it("decorations", () => {
     const mdText =
       "**strong** ::em:: __underline__ ~~strike~~ ``code`` @@mark@@ %%small%%";
-    expect(makeMarkdown(mdText)).toBe("**strong** ::em:: __underline__ ~~strike~~ ``code`` @@mark@@ %%small%%\n");
+    expect(makeMarkdown(mdText)).toBe(
+      "**strong** ::em:: __underline__ ~~strike~~ ``code`` @@mark@@ %%small%%\n",
+    );
   });
 
   it("ruby", () => {
@@ -1145,12 +1324,16 @@ describe("mdRenderMarkdown basics", () => {
 
   it("math", () => {
     const mdText = "$$E = mc^2$$ $$\\sum_{i=1}^{\\sqrt{n}}$$";
-    expect(makeMarkdown(mdText)).toBe("$$E = mc^2$$ $$\\sum_{i=1}^{\\sqrt{n}}$$\n");
+    expect(makeMarkdown(mdText)).toBe(
+      "$$E = mc^2$$ $$\\sum_{i=1}^{\\sqrt{n}}$$\n",
+    );
   });
 
   it("links", () => {
     const mdText = "[tako](tako.html) http://example.com/ika?uni=ebi#time";
-    expect(makeMarkdown(mdText)).toBe("[tako](tako.html) http://example.com/ika?uni=ebi#time\n");
+    expect(makeMarkdown(mdText)).toBe(
+      "[tako](tako.html) http://example.com/ika?uni=ebi#time\n",
+    );
   });
 
   it("nested", () => {
@@ -1160,7 +1343,9 @@ describe("mdRenderMarkdown basics", () => {
 
   it("structures", () => {
     const mdText = "abc\n- one\n  - two\n### **three**\n|four|::five::|\n";
-    expect(makeMarkdown(mdText)).toBe("abc\n\n- one\n  - two\n\n### **three**\n\n|four|::five::|\n");
+    expect(makeMarkdown(mdText)).toBe(
+      "abc\n\n- one\n  - two\n\n### **three**\n\n|four|::five::|\n",
+    );
   });
 });
 
