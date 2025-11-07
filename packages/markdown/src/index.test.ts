@@ -776,9 +776,9 @@ describe("structurizeHtml", () => {
 
   it("promote headers", () => {
     const html =
-      '<p><span style="font-size:20pt">abc</span></p><h1>h1</h1><h5>h5</h5><h6>h6</h6>';
+      '<p><span style="font-size:20pt">abc</span></p><p><span>subtitle</span></p><h1>h1</h1><h5>h5</h5><h6>h6</h6>';
     expect(structurizeHtml(html)).toBe(
-      '<h1><span style=\"font-size:20pt\">abc</span></h1><h2>h1</h2><h6>h5</h6><h6>h6</h6>',
+      '<h1><span style="font-size:20pt">abc</span></h1><p><span>subtitle</span></p><h2>h1</h2><h6>h5</h6><h6>h6</h6>',
     );
   });
 });
