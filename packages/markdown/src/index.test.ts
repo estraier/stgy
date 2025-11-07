@@ -554,6 +554,28 @@ abc
     ]);
   });
 
+  it("inline wrapping blocks", () => {
+    const html = "<b><p>abc</p><ul><li>def</li></ul></b>";
+    expect(parseHtml(html)).toStrictEqual([
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "element",
+            tag: "strong",
+            children: [
+              {
+                type: "text",
+                text: "abcdef",
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
   it("headers", () => {
     const html = "<div><h1>h1</h1><h2>h2</h2><h6>h6</h6></div>";
     expect(parseHtml(html)).toStrictEqual([
