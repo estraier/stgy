@@ -7,9 +7,13 @@ import type { Post, PostDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
 import { Heart, MessageCircle } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
-import { makeArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
+import {
+  makeArticleHtmlFromMarkdown,
+  makeHtmlFromJsonSnippet,
+  makeSnippetTextFromMarkdown,
+} from "@/utils/article";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
-import { updatePost } from "@/api/posts";
+import { updatePost, getPost } from "@/api/posts";
 
 type PostCardProps = {
   post: Post | PostDetail;
@@ -67,25 +71,23 @@ export default function PostCard({
     setPublishedAtLocal((post.publishedAt ?? null) as Post["publishedAt"]);
   }, [post]);
 
-  const effectivePublishedAt = publishedAtLocal;
-  const showPublishedLabel =
-    typeof effectivePublishedAt === "string" &&
-    effectivePublishedAt.trim() !== "" &&
-    new Date(effectivePublishedAt).getTime() <= Date.now();
-
-  const [menuOpen, setMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-
+  const [contentCache, setContentCache] = useState<string | null>(
+    hasContent ? (post as PostDetail).content : null,
+  );
   useEffect(() => {
-    function onDocMouseDown(e: MouseEvent) {
-      if (!menuOpen) return;
-      if (!menuRef.current) return;
-      if (menuRef.current.contains(e.target as Node)) return;
-      setMenuOpen(false);
+    setContentCache(hasContent ? (post as PostDetail).content : null);
+  }, [hasContent, post]);
+
+  const ensureContent = useCallback(async (): Promise<string | null> => {
+    if (typeof contentCache === "string") return contentCache;
+    try {
+      const full = await getPost(post.id, focusUserId);
+      setContentCache(full.content);
+      return full.content;
+    } catch {
+      return null;
     }
-    document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, [menuOpen]);
+  }, [contentCache, post.id, focusUserId]);
 
   async function copyToClipboard(text: string) {
     try {
@@ -107,6 +109,86 @@ export default function PostCard({
       document.body.removeChild(ta);
     }
   }
+
+  async function copyHtmlRich(html: string, plainFallback?: string) {
+    try {
+      if (typeof navigator !== "undefined" && "clipboard" in navigator && typeof ClipboardItem !== "undefined") {
+        const item = new ClipboardItem({
+          "text/html": new Blob([html], { type: "text/html" }),
+          "text/plain": new Blob(
+            [plainFallback ?? html.replace(/<[^>]*>/g, "")],
+            { type: "text/plain" },
+          ),
+        });
+        await navigator.clipboard.write([item]);
+        return;
+      }
+    } catch {}
+    try {
+      let ok = false;
+      const onCopy = (e: ClipboardEvent) => {
+        if (e.clipboardData) {
+          e.clipboardData.setData("text/html", html);
+          e.clipboardData.setData("text/plain", plainFallback ?? html.replace(/<[^>]*>/g, ""));
+          e.preventDefault();
+          ok = true;
+        }
+      };
+      document.addEventListener("copy", onCopy, { once: true });
+      const sel = window.getSelection();
+      const range = document.createRange();
+      const div = document.createElement("div");
+      div.style.position = "fixed";
+      div.style.left = "-9999px";
+      div.setAttribute("contenteditable", "true");
+      div.innerHTML = html;
+      document.body.appendChild(div);
+      range.selectNodeContents(div);
+      sel?.removeAllRanges();
+      sel?.addRange(range);
+      document.execCommand("copy");
+      sel?.removeAllRanges();
+      document.body.removeChild(div);
+      document.removeEventListener("copy", onCopy);
+      if (ok) return;
+    } catch {}
+    try {
+      await navigator.clipboard.writeText(plainFallback ?? html.replace(/<[^>]*>/g, ""));
+    } catch {}
+  }
+
+  const handleCopyMarkdown = useCallback(async () => {
+    const content = await ensureContent();
+    if (content !== null) {
+      await copyToClipboard(content);
+    }
+    setMenuOpen(false);
+  }, [ensureContent]);
+
+  const handleCopyPlain = useCallback(async () => {
+    const content = await ensureContent();
+    if (content !== null) {
+      const plain = makeSnippetTextFromMarkdown(content, Number.MAX_SAFE_INTEGER);
+      await copyToClipboard(plain);
+    } else {
+      const plain = bodyHtml.replace(/<[^>]*>/g, "");
+      await copyToClipboard(plain);
+    }
+    setMenuOpen(false);
+  }, [ensureContent, bodyHtml]);
+
+  const handleCopyHtml = useCallback(async () => {
+    const content = await ensureContent();
+    if (content !== null) {
+      const html = convertHtmlMathInline(makeArticleHtmlFromMarkdown(content, false, idPrefix));
+      const plain = makeSnippetTextFromMarkdown(content, Number.MAX_SAFE_INTEGER);
+      await copyHtmlRich(html, plain);
+    } else {
+      const html = convertHtmlMathInline(makeHtmlFromJsonSnippet(post.snippet, idPrefix));
+      await copyHtmlRich(html);
+    }
+    setMenuOpen(false);
+  }, [ensureContent, idPrefix, post.snippet]);
 
   function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
@@ -152,12 +234,12 @@ export default function PostCard({
 
   useEffect(() => {
     if (!pubDialogOpen) return;
-    const has = typeof effectivePublishedAt === "string" && effectivePublishedAt.trim() !== "";
+    const has = typeof publishedAtLocal === "string" && publishedAtLocal.trim() !== "";
     setPubChecked(has);
-    const base = has ? new Date(effectivePublishedAt as string) : new Date();
+    const base = has ? new Date(publishedAtLocal as string) : new Date();
     setPubInput(toLocalInputValue(base));
     setPubError("");
-  }, [effectivePublishedAt, pubDialogOpen, toLocalInputValue]);
+  }, [publishedAtLocal, pubDialogOpen, toLocalInputValue]);
 
   async function applyPublication() {
     setPubError("");
@@ -201,6 +283,26 @@ export default function PostCard({
     }
   }
 
+  const effectivePublishedAt = publishedAtLocal;
+  const showPublishedLabel =
+    typeof effectivePublishedAt === "string" &&
+    effectivePublishedAt.trim() !== "" &&
+    new Date(effectivePublishedAt).getTime() <= Date.now();
+
+  const [menuOpen, setMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    function onDocMouseDown(e: MouseEvent) {
+      if (!menuOpen) return;
+      if (!menuRef.current) return;
+      if (menuRef.current.contains(e.target as Node)) return;
+      setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [menuOpen]);
+
   const isOwner = focusUserId && focusUserId === post.ownedBy;
   const canConfigurePublication = Boolean(isOwner || focusUserIsAdmin);
 
@@ -229,6 +331,24 @@ export default function PostCard({
         }}
       >
         Copy mention Markdown
+      </button>
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={handleCopyMarkdown}
+      >
+        Copy content Markdown
+      </button>
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={handleCopyPlain}
+      >
+        Copy content plaintext
+      </button>
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={handleCopyHtml}
+      >
+        Copy content HTML
       </button>
       {canConfigurePublication && (
         <button
