@@ -757,8 +757,11 @@ describe("structurizeHtml", () => {
   });
 
   it("whole page", () => {
-    const html = "<html><head><title>t</title></head><body><p>p</p></body></html>";
-    expect(structurizeHtml(html)).toBe("<html><head><title>t</title></head><body><p>p</p></body></html>");
+    const html =
+      "<html><head><title>t</title></head><body><p>p</p></body></html>";
+    expect(structurizeHtml(html)).toBe(
+      "<html><head><title>t</title></head><body><p>p</p></body></html>",
+    );
   });
 
   it("strip invalid inline", () => {
@@ -772,8 +775,11 @@ describe("structurizeHtml", () => {
   });
 
   it("promote headers", () => {
-    const html = '<p><span style="font-size:20pt">abc</span></p><h1>h1</h1><h5>h5</h5><h6>h6</h6>';
-    expect(structurizeHtml(html)).toBe('<h1><span style=\"font-size:20pt\">abc</span></h1><h2>h1</h2><h6>h5</h6><h6>h6</h6>');
+    const html =
+      '<p><span style="font-size:20pt">abc</span></p><h1>h1</h1><h5>h5</h5><h6>h6</h6>';
+    expect(structurizeHtml(html)).toBe(
+      '<h1><span style=\"font-size:20pt\">abc</span></h1><h2>h1</h2><h6>h5</h6><h6>h6</h6>',
+    );
   });
 });
 
@@ -1817,24 +1823,24 @@ def
   });
 });
 
-describe("copy-paste from gdoc", () => {
+describe("copy-paste from gdocs", () => {
   it("typical setting", () => {
-    const html = '<meta charset="utf-8"><b style="font-weight:normal;"><p><span style="font-size:20pt">abc</span></p><h1>h1</h1><p>abc</p><p>def</p><br><p>012</p><p>345</p><p><img src="data:image/png;base64,abcd"></p></b>';
-    expect(makeMarkdownFromHtml(structurizeHtml(html))).toBe(`# abc
+    const html =
+      '<meta charset="utf-8"><b style="font-weight:normal;"><p><span style="font-size:20pt;font-weight:normal;">title</span></p><h1>h1</h1><p>abc</p><p>def</p><br><p><span style="font-weight:bold;">012</span></p><p><span style="font-style:italic;">345</span></p><p><img src="data:image/png;base64,abcd"></p></b>';
+    expect(makeMarkdownFromHtml(structurizeHtml(html))).toBe(`# title
 
 ## h1
 
 abc
 def
 
-012
-345
+**012**
+::345::
 
 ![](data:image/png;base64,abcd)
 `);
   });
 });
-
 
 describe("mdSeparateTitle", () => {
   it("returns first h1", () => {

@@ -1307,27 +1307,14 @@ export function parseHtml(
   return postProcess(result, false);
 }
 
-export function structurizeHtml(html: string, opts?: { topMinFontSizePt?: number }): string {
-  const minPt = typeof opts?.topMinFontSizePt === "number" ? opts!.topMinFontSizePt! : 20;
+export function structurizeHtml(
+  html: string,
+  opts?: { topMinFontSizePt?: number },
+): string {
+  const minPt =
+    typeof opts?.topMinFontSizePt === "number" ? opts.topMinFontSizePt : 20;
   const hadBodyTag = /<body[\s>]/i.test(html);
   const { document: doc, root: domRoot } = getDomRootOrThrow(html);
-
-  const workBody: Element = (() => {
-    if (hadBodyTag) {
-      const asDoc = (domRoot as any).nodeType === 9 ? (domRoot as Document) : null;
-      if (asDoc?.body) return asDoc.body as Element;
-      const q1 = (domRoot as Document).querySelector?.("body") as Element | null | undefined;
-      if (q1) return q1;
-      const q2 = (domRoot as Element).querySelector?.("body") as Element | null | undefined;
-      if (q2) return q2;
-      return domRoot as Element;
-    } else {
-      const div = doc.createElement("div");
-      div.innerHTML = html || "";
-      return div;
-    }
-  })();
-
   const isBlockTag = (tag: string): boolean => {
     const t = tag.toLowerCase();
     return (
@@ -1362,13 +1349,11 @@ export function structurizeHtml(html: string, opts?: { topMinFontSizePt?: number
       t === "h6"
     );
   };
-
   const hasBlockDescendant = (el: Element): boolean => {
-    const sel =
-      "p,div,pre,blockquote,figure,figcaption,ul,ol,li,table,thead,tbody,tfoot,tr,td,th,section,article,aside,header,footer,nav,hr,h1,h2,h3,h4,h5,h6";
-    return !!el.querySelector(sel);
+    return !!el.querySelector(
+      "p,div,pre,blockquote,figure,figcaption,ul,ol,li,table,thead,tbody,tfoot,tr,td,th,section,article,aside,header,footer,nav,hr,h1,h2,h3,h4,h5,h6",
+    );
   };
-
   const isInlineElement = (el: Element): boolean => {
     if (isBlockTag(el.tagName)) return false;
     const t = el.tagName.toLowerCase();
@@ -1376,31 +1361,33 @@ export function structurizeHtml(html: string, opts?: { topMinFontSizePt?: number
     if (t === "script" || t === "style") return false;
     return true;
   };
-
   const unwrap = (el: Element) => {
     const parent = el.parentNode;
     if (!parent) return;
     while (el.firstChild) parent.insertBefore(el.firstChild, el);
     parent.removeChild(el);
   };
-
   const stage1UnwrapInlineContainingBlocks = (rootEl: Element) => {
     const candidates = Array.from(rootEl.querySelectorAll("*")) as Element[];
     const toUnwrap: Element[] = [];
-    for (const el of candidates) {
+    for (const el of candidates)
       if (isInlineElement(el) && hasBlockDescendant(el)) toUnwrap.push(el);
-    }
     for (const el of toUnwrap) unwrap(el);
   };
-
   const stage2MergeAdjacentPsByBr = (rootEl: Element) => {
     const stack: Element[] = [rootEl];
     while (stack.length) {
-      const parent = stack.pop()!;
+      const parent = stack.pop() as Element;
       let i = 0;
       while (i < parent.childNodes.length) {
         const start = parent.childNodes[i];
-        if (!(start && start.nodeType === 1 && (start as Element).tagName.toLowerCase() === "p")) {
+        if (
+          !(
+            start &&
+            start.nodeType === Node.ELEMENT_NODE &&
+            (start as Element).tagName.toLowerCase() === "p"
+          )
+        ) {
           i++;
           continue;
         }
@@ -1408,7 +1395,7 @@ export function structurizeHtml(html: string, opts?: { topMinFontSizePt?: number
         const run: Node[] = [];
         while (j < parent.childNodes.length) {
           const n = parent.childNodes[j];
-          if (n.nodeType === 1) {
+          if (n.nodeType === Node.ELEMENT_NODE) {
             const tag = (n as Element).tagName.toLowerCase();
             if (tag === "p" || tag === "br") {
               run.push(n);
@@ -1431,15 +1418,14 @@ export function structurizeHtml(html: string, opts?: { topMinFontSizePt?: number
               segments.push(current);
               current = [];
             }
-          } else if (tag === "p") {
-            current.push(n as Element);
-          }
+          } else if (tag === "p") current.push(n as Element);
         }
         if (current.length > 0) segments.push(current);
         const insertionPoint = parent.childNodes[i];
         for (const group of segments) {
           const newP = doc.createElement("p");
-          for (const attr of Array.from(group[0].attributes)) newP.setAttribute(attr.name, attr.value);
+          for (const attr of Array.from(group[0].attributes))
+            newP.setAttribute(attr.name, attr.value);
           for (let gi = 0; gi < group.length; gi++) {
             if (gi > 0) newP.appendChild(doc.createElement("br"));
             const p = group[gi];
@@ -1450,10 +1436,9 @@ export function structurizeHtml(html: string, opts?: { topMinFontSizePt?: number
         for (const n of run) parent.removeChild(n);
         i += segments.length;
       }
-      for (let k = 0; k < parent.children.length; k++) stack.push(parent.children[k]);
+      for (const child of Array.from(parent.children)) stack.push(child);
     }
   };
-
   const parseFontSizePtFromStyle = (style: string): number | null => {
     const m = /font-size\s*:\s*([0-9.]+)\s*(pt|px)/i.exec(style);
     if (!m) return null;
@@ -1463,21 +1448,26 @@ export function structurizeHtml(html: string, opts?: { topMinFontSizePt?: number
     if (unit === "px") return v * 0.75;
     return null;
   };
-
   const onlyWhitespaceText = (n: Node): boolean => {
-    return n.nodeType === 3 && !/\S/.test((n as Text).data || "");
+    return n.nodeType === Node.TEXT_NODE && !/\S/.test((n as Text).data || "");
   };
-
-  const pickTitleCandidateP = (bodyEl: Element, minPtLocal: number): Element | null => {
+  const pickTitleCandidateP = (
+    bodyEl: Element,
+    minPtLocal: number,
+  ): Element | null => {
     let seenP = 0;
     for (let i = 0; i < bodyEl.childNodes.length && seenP < 5; i++) {
       const n = bodyEl.childNodes[i];
-      if (n.nodeType !== 1) continue;
+      if (n.nodeType !== Node.ELEMENT_NODE) continue;
       const el = n as Element;
       if (el.tagName.toLowerCase() !== "p") continue;
       seenP++;
-      const elementChildren = Array.from(el.childNodes).filter((x) => x.nodeType === 1) as Element[];
-      const otherNodes = Array.from(el.childNodes).filter((x) => x.nodeType !== 1);
+      const elementChildren = Array.from(el.childNodes).filter(
+        (x) => x.nodeType === Node.ELEMENT_NODE,
+      ) as Element[];
+      const otherNodes = Array.from(el.childNodes).filter(
+        (x) => x.nodeType !== Node.ELEMENT_NODE,
+      );
       if (elementChildren.length !== 1) continue;
       if (!otherNodes.every(onlyWhitespaceText)) continue;
       const child = elementChildren[0];
@@ -1488,36 +1478,48 @@ export function structurizeHtml(html: string, opts?: { topMinFontSizePt?: number
     }
     return null;
   };
-
-  const replaceTagKeepAttrsAndChildren = (el: Element, newTag: string): Element => {
+  const replaceTagKeepAttrsAndChildren = (
+    el: Element,
+    newTag: string,
+  ): Element => {
     const ne = doc.createElement(newTag);
-    for (const attr of Array.from(el.attributes)) ne.setAttribute(attr.name, attr.value);
+    for (const attr of Array.from(el.attributes))
+      ne.setAttribute(attr.name, attr.value);
     while (el.firstChild) ne.appendChild(el.firstChild);
     el.parentNode!.replaceChild(ne, el);
     return ne;
   };
-
-  const stage3PromoteTitleAndDemoteHeadings = (bodyEl: Element, minPtLocal: number) => {
+  const stage3PromoteTitleAndDemoteHeadings = (
+    bodyEl: Element,
+    minPtLocal: number,
+  ) => {
     const titleP = pickTitleCandidateP(bodyEl, minPtLocal);
     if (!titleP) return;
     const heads = bodyEl.querySelectorAll("h1,h2,h3,h4,h5");
     const list = Array.from(heads) as Element[];
     for (const h of list) {
       const level = parseInt(h.tagName.substring(1), 10);
-      if (level >= 1 && level <= 5) replaceTagKeepAttrsAndChildren(h, "h" + (level + 1));
+      if (level >= 1 && level <= 5)
+        replaceTagKeepAttrsAndChildren(h, "h" + (level + 1));
     }
     replaceTagKeepAttrsAndChildren(titleP, "h1");
   };
-
+  const workBody: Element = (() => {
+    if (hadBodyTag) {
+      const bodyFound = domRoot.querySelector("body");
+      if (bodyFound) return bodyFound;
+      if (doc.body) return doc.body;
+      return doc.createElement("body");
+    } else {
+      const div = doc.createElement("div");
+      div.innerHTML = html || "";
+      return div;
+    }
+  })();
   stage1UnwrapInlineContainingBlocks(workBody);
   stage2MergeAdjacentPsByBr(workBody);
   stage3PromoteTitleAndDemoteHeadings(workBody, minPt);
-
-  if (hadBodyTag) {
-    const outDoc =
-      ((domRoot as any).nodeType === 9 ? (domRoot as Document) : (domRoot as Element).ownerDocument!) as Document;
-    return outDoc.documentElement.outerHTML;
-  }
+  if (hadBodyTag) return doc.documentElement.outerHTML;
   return workBody.innerHTML;
 }
 
