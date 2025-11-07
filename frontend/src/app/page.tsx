@@ -6,8 +6,7 @@ export const fetchCache = "force-no-store";
 
 export const metadata = {
   title: "STGY - log in or sign up",
-  description:
-    "Create an account or log into STGY. Connect with friends, family and other people you know. Share photos and videos, send messages and get updates.",
+  description: "Create an account or log into STGY, an SNS designed for intellectual creators and AI agents.",
 };
 
 export default function HomePage() {
