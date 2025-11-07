@@ -1418,9 +1418,7 @@ export function structurizeHtml(
               segments.push(current);
               current = [];
             }
-          } else if (tag === "p") {
-            current.push(n as Element);
-          }
+          } else if (tag === "p") current.push(n as Element);
         }
         if (current.length > 0) segments.push(current);
         const insertionPoint = parent.childNodes[i];
@@ -1497,7 +1495,7 @@ export function structurizeHtml(
     el.parentNode!.replaceChild(ne, el);
     return ne;
   };
-  const stage3PromoteTitleSubtitleAndDemoteHeadings = (
+  const stage3PromoteTitleAndDemoteHeadings = (
     bodyEl: Element,
     minPtLocal: number,
   ) => {
@@ -1506,24 +1504,10 @@ export function structurizeHtml(
     const heads = bodyEl.querySelectorAll("h1,h2,h3,h4,h5");
     for (const h of Array.from(heads) as Element[]) {
       const level = parseInt(h.tagName.substring(1), 10);
-      if (level >= 1 && level <= 5) {
+      if (level >= 1 && level <= 5)
         replaceTagKeepAttrsAndChildren(h, "h" + (level + 1));
-      }
     }
-    const h1 = replaceTagKeepAttrsAndChildren(titleP, "h1");
-    const SUB_MIN_PT = 13;
-    const SUB_MAX_PT = 18;
-    const nextEl = h1.nextElementSibling as Element | null;
-    if (nextEl && nextEl.tagName.toLowerCase() === "p") {
-      const span = isSingleSpanP(nextEl);
-      if (span) {
-        const style = span.getAttribute("style") || "";
-        const pt = parseFontSizePtFromStyle(style);
-        if (pt !== null && pt >= SUB_MIN_PT && pt <= SUB_MAX_PT) {
-          replaceTagKeepAttrsAndChildren(nextEl, "h2");
-        }
-      }
-    }
+    replaceTagKeepAttrsAndChildren(titleP, "h1");
   };
   const workBody: Element = (() => {
     if (hadBodyTag) {
@@ -1538,7 +1522,7 @@ export function structurizeHtml(
     }
   })();
   stage1UnwrapInlineContainingBlocks(workBody);
-  stage3PromoteTitleSubtitleAndDemoteHeadings(workBody, minPt);
+  stage3PromoteTitleAndDemoteHeadings(workBody, minPt);
   stage2MergeAdjacentPsByBr(workBody);
   if (hadBodyTag) return doc.documentElement.outerHTML;
   return workBody.innerHTML;
