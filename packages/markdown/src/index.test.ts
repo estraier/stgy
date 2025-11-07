@@ -1,6 +1,7 @@
 import {
   parseMarkdown,
   parseHtml,
+  structurizeHtml,
   mdGroupImageGrid,
   MdMediaRewriteOptions,
   mdRewriteLinkUrls,
@@ -741,6 +742,38 @@ abc
         ],
       },
     ]);
+  });
+});
+
+describe("structurizeHtml", () => {
+  it("empty body", () => {
+    const html = "";
+    expect(structurizeHtml(html)).toBe("");
+  });
+
+  it("paragraph", () => {
+    const html = "<p>abc</p>";
+    expect(structurizeHtml(html)).toBe("<p>abc</p>");
+  });
+
+  it("whole page", () => {
+    const html = "<html><head><title>t</title></head><body><p>p</p></body></html>";
+    expect(structurizeHtml(html)).toBe("<html><head><title>t</title></head><body><p>p</p></body></html>");
+  });
+
+  it("strip invalid inline", () => {
+    const html = "<b><p>abc</p></b>";
+    expect(structurizeHtml(html)).toBe("<p>abc</p>");
+  });
+
+  it("restructure paragraphs", () => {
+    const html = "<p>1-1</p><p>1-2</p><br><p>2-1</p><p>2-2</p>";
+    expect(structurizeHtml(html)).toBe("<p>1-1<br>1-2</p><p>2-1<br>2-2</p>");
+  });
+
+  it("promote headers", () => {
+    const html = '<p><span style="font-size:20pt">abc</span></p><h1>h1</h1><h5>h5</h5><h6>h6</h6>';
+    expect(structurizeHtml(html)).toBe('<h1><span style=\"font-size:20pt\">abc</span></h1><h2>h1</h2><h6>h5</h6><h6>h6</h6>');
   });
 });
 
@@ -1783,6 +1816,25 @@ def
 `);
   });
 });
+
+describe("copy-paste from gdoc", () => {
+  it("typical setting", () => {
+    const html = '<meta charset="utf-8"><b style="font-weight:normal;"><p><span style="font-size:20pt">abc</span></p><h1>h1</h1><p>abc</p><p>def</p><br><p>012</p><p>345</p><p><img src="data:image/png;base64,abcd"></p></b>';
+    expect(makeMarkdownFromHtml(structurizeHtml(html))).toBe(`# abc
+
+## h1
+
+abc
+def
+
+012
+345
+
+![](data:image/png;base64,abcd)
+`);
+  });
+});
+
 
 describe("mdSeparateTitle", () => {
   it("returns first h1", () => {
