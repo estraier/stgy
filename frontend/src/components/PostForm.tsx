@@ -40,7 +40,6 @@ import { useRequireLogin } from "@/hooks/useRequireLogin";
 import ImageUploadDialog, { DialogFileItem, UploadResult } from "@/components/ImageUploadDialog";
 import { Config } from "@/config";
 
-/** ---- Local AST types (ライブラリ未公開でも動くようにローカル定義) ---- */
 type MdAttrs = Record<string, string | number | boolean>;
 type MdTextNode = { type: "text"; text: string };
 type MdElementNode = {
@@ -116,7 +115,6 @@ function getTargetRange(text: string, selStart: number, selEnd: number) {
   const e0 = clamp(Math.max(selStart, selEnd), 0, text.length);
   return s0 === e0 ? getCurrentLineRange(text, e0) : getSelectedLinesRange(text, s0, e0);
 }
-
 function applyPrefixToggleFromTextarea(
   ta: HTMLTextAreaElement,
   setBody: (next: string) => void,
@@ -148,7 +146,6 @@ function applyPrefixToggleFromTextarea(
     ta.setSelectionRange(selFrom, selTo);
   });
 }
-
 function applyCodeFenceToggleFromTextarea(
   ta: HTMLTextAreaElement,
   setBody: (next: string) => void,
@@ -191,7 +188,6 @@ function applyCodeFenceToggleFromTextarea(
     ta.setSelectionRange(selFrom, selTo);
   });
 }
-
 function applyInlineToggleFromTextarea(
   ta: HTMLTextAreaElement,
   setBody: (next: string) => void,
@@ -233,7 +229,6 @@ function applyInlineToggleFromTextarea(
     ta.setSelectionRange(selFrom, selTo);
   });
 }
-
 function applyRubyToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: string) => void) {
   const text = ta.value;
   const s0 = ta.selectionStart ?? 0;
@@ -271,7 +266,6 @@ function applyRubyToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
     ta.setSelectionRange(selFrom, selTo);
   });
 }
-
 function applyLinkToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: string) => void) {
   const text = ta.value;
   const s0 = ta.selectionStart ?? 0;
@@ -309,11 +303,9 @@ function applyLinkToggleFromTextarea(ta: HTMLTextAreaElement, setBody: (next: st
     ta.setSelectionRange(selFrom, selTo);
   });
 }
-
 function afterNextPaint(cb: () => void) {
   requestAnimationFrame(() => requestAnimationFrame(cb));
 }
-
 function resolveLineHeight(ta: HTMLTextAreaElement) {
   const s = window.getComputedStyle(ta);
   const lh = s.lineHeight;
@@ -324,7 +316,6 @@ function resolveLineHeight(ta: HTMLTextAreaElement) {
   const v = parseFloat(lh);
   return Number.isFinite(v) ? v : 20;
 }
-
 function centerTextareaCaret(ta: HTMLTextAreaElement) {
   if (document.activeElement === ta) return;
   const lineHeight = resolveLineHeight(ta);
@@ -335,7 +326,6 @@ function centerTextareaCaret(ta: HTMLTextAreaElement) {
   const maxScroll = Math.max(0, ta.scrollHeight - ta.clientHeight);
   ta.scrollTop = Math.min(maxScroll, desired);
 }
-
 function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement) {
   const cs = getComputedStyle(ta);
   const pl = parseFloat(cs.paddingLeft || "0");
@@ -390,11 +380,9 @@ export default function PostForm({
   autoFocus = false,
 }: PostFormProps) {
   const formRef = useRef<HTMLFormElement>(null);
-
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const previewWrapRef = useRef<HTMLDivElement>(null);
   const previewBodyRef = useRef<HTMLDivElement>(null);
-
   const overlayTextareaRef = useRef<HTMLTextAreaElement>(null);
   const overlayEditorColRef = useRef<HTMLDivElement>(null);
   const overlayToolbarRef = useRef<HTMLDivElement>(null);
@@ -403,16 +391,12 @@ export default function PostForm({
   const overlayEditorInnerRef = useRef<HTMLDivElement>(null);
   const overlayWrapRef = useRef<HTMLDivElement>(null);
   const overlayBodyRef = useRef<HTMLDivElement>(null);
-
   const gutterRef = useRef<HTMLDivElement | null>(null);
-
   const caretMirrorRef = useRef<HTMLDivElement | null>(null);
   const editorHighlightOverlayRef = useRef<HTMLDivElement | null>(null);
   const editorHighlightBandRef = useRef<HTMLDivElement | null>(null);
-
   const previewHighlightOverlayRef = useRef<HTMLDivElement | null>(null);
   const previewHighlightBandRef = useRef<HTMLDivElement | null>(null);
-
   const anchorsRef = useRef<{ char: number; el: HTMLElement }[]>([]);
   const rafRef = useRef<number | null>(null);
   const editorHighlightRafRef = useRef<number | null>(null);
@@ -420,7 +404,6 @@ export default function PostForm({
   const caretRef = useRef<number>(0);
   const selStartRef = useRef<number>(0);
   const selEndRef = useRef<number>(0);
-
   const didApplyAutoFocusRef = useRef(false);
   const prevIsEditRef = useRef<boolean>(isEdit);
   const prevOverlayActiveRef = useRef<boolean>(false);
@@ -429,14 +412,11 @@ export default function PostForm({
   const previewResizeWrapRef = useRef<ResizeObserver | null>(null);
   const previewResizeBodyRef = useRef<ResizeObserver | null>(null);
   const ensureTimersRef = useRef<number[]>([]);
-
   const pinsRef = useRef<HTMLButtonElement[]>([]);
   const [showPreview, setShowPreview] = useState(false);
   const [hasFocusedOnce, setHasFocusedOnce] = useState(false);
   const [isXl, setIsXl] = useState(false);
   const overlayActive = showPreview && isXl;
-
-  // Live refs for stable callbacks
   const bodyLiveRef = useRef(body);
   useEffect(() => {
     bodyLiveRef.current = body;
@@ -445,28 +425,22 @@ export default function PostForm({
   useEffect(() => {
     overlayActiveLiveRef.current = overlayActive;
   }, [overlayActive]);
-
   const formId = useId();
-
   const previewBodyARef = useRef<HTMLDivElement>(null);
   const previewBodyBRef = useRef<HTMLDivElement>(null);
   const overlayBodyARef = useRef<HTMLDivElement>(null);
   const overlayBodyBRef = useRef<HTMLDivElement>(null);
   const previewFrontIsARef = useRef(true);
   const overlayFrontIsARef = useRef(true);
-
   const uploadBtnRef = useRef<UploadImageEmbedButtonHandle | null>(null);
-
   const toolbarBtn =
     "h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-[1px]";
-
   const status = useRequireLogin();
   const userId =
     status.state === "authenticated" &&
     typeof (status.session as unknown as { userId?: unknown }).userId === "string"
       ? ((status.session as unknown as { userId?: unknown }).userId as string)
       : undefined;
-
   const [pasteDialogFiles, setPasteDialogFiles] = useState<DialogFileItem[] | null>(null);
   const [showPasteDialog, setShowPasteDialog] = useState(false);
   const pasteNodesRef = useRef<MdNode[] | null>(null);
@@ -477,6 +451,12 @@ export default function PostForm({
       return (crypto as Crypto).randomUUID();
     }
     return Math.random().toString(36).slice(2);
+  }
+
+  function u8ToArrayBuffer(u8: Uint8Array): ArrayBuffer {
+    const buf = new ArrayBuffer(u8.byteLength);
+    new Uint8Array(buf).set(u8);
+    return buf;
   }
 
   const dataUrlToFile = useCallback((dataUrl: string, baseName: string): File | null => {
@@ -500,7 +480,8 @@ export default function PostForm({
       }
       const ext = (mime.split("/")[1] || "bin").split("+")[0];
       const name = `${baseName}.${ext}`;
-      return new File([bytes], name, { type: mime });
+      const buf = u8ToArrayBuffer(bytes);
+      return new File([buf], name, { type: mime });
     } catch {
       return null;
     }
@@ -764,7 +745,6 @@ export default function PostForm({
     const caret = Math.min(Math.max(0, caretRef.current), content.length);
     if (!wrap) return false;
     const before = wrap.scrollTop;
-
     const target = findAnchor(caret);
     if (target) {
       const wrapRect = wrap.getBoundingClientRect();
@@ -876,7 +856,6 @@ export default function PostForm({
     const overlay = editorHighlightOverlayRef.current;
     const band = editorHighlightBandRef.current;
     if (!ta || !overlay || !band) return;
-
     overlay.style.position = "absolute";
     overlay.style.pointerEvents = "none";
     overlay.style.left = `${ta.offsetLeft}px`;
@@ -886,19 +865,16 @@ export default function PostForm({
     overlay.style.zIndex = "0";
     overlay.style.background = "#ffffff";
     overlay.style.borderRadius = getComputedStyle(ta).borderRadius || "0px";
-
     const { topWithin, lineHeight, inView } = computeCaretTopWithinTextarea(ta);
     const cs = getComputedStyle(ta);
     const pl = parseFloat(cs.paddingLeft || "0");
     const pr = parseFloat(cs.paddingRight || "0");
     const bt = parseFloat(cs.borderTopWidth || "0");
     const bl = parseFloat(cs.borderLeftWidth || "0");
-
     if (!inView) {
       band.style.display = "none";
       return;
     }
-
     band.style.display = "block";
     band.style.position = "absolute";
     band.style.background = "#eef8ff";
@@ -978,12 +954,10 @@ export default function PostForm({
         outline: "none",
         display: "none",
       } as Partial<CSSStyleDeclaration>);
-
       btn.addEventListener("mouseenter", () => (btn.style.background = "#cbd5e1"));
       btn.addEventListener("mouseleave", () => (btn.style.background = "#e2e8f0"));
       btn.addEventListener("mousedown", () => (btn.style.background = "#94a3b8"));
       btn.addEventListener("mouseup", () => (btn.style.background = "#cbd5e1"));
-
       btn.addEventListener("click", (e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -1000,7 +974,6 @@ export default function PostForm({
         else schedulePreviewHighlight();
         scheduleEditorHighlight();
       });
-
       gutter.appendChild(btn);
       return btn;
     },
@@ -1022,23 +995,19 @@ export default function PostForm({
     const wrap = overlayWrapRef.current;
     const bodyEl = overlayBodyRef.current;
     if (!wrap || !bodyEl) return;
-
     const gutter = ensureGutter();
     if (!gutter) return;
-
     const candidates = Array.from(
       bodyEl.querySelectorAll<HTMLElement>("[data-char-position]:not([data-no-pin])"),
     );
     const needed = candidates.length;
     const pool = pinsRef.current;
-
     if (pool.length < needed) {
       for (let i = pool.length; i < needed; i++) {
         const pin = createPin(gutter);
         pool.push(pin);
       }
     }
-
     const wrapRect = wrap.getBoundingClientRect();
     for (let i = 0; i < needed; i++) {
       const el = candidates[i]!;
@@ -1153,7 +1122,6 @@ export default function PostForm({
     previewMutObsRef.current?.disconnect();
     previewResizeWrapRef.current?.disconnect();
     previewResizeBodyRef.current?.disconnect();
-
     if (bodyEl) {
       const mo = new MutationObserver((muts: MutationRecord[]) => {
         if (!showPreview) return;
@@ -1194,7 +1162,6 @@ export default function PostForm({
       });
       ro.observe(wrap);
       previewResizeWrapRef.current = ro;
-
       const onScroll = () => {
         refreshGutterPins();
         schedulePreviewHighlight();
@@ -1331,10 +1298,8 @@ export default function PostForm({
     selStartRef.current = s;
     selEndRef.current = e;
     caretRef.current = e;
-
     restoreCaretToActiveTextarea({ focus: false });
     if (overlayActive) resizeOverlayTextareaRef.current();
-
     afterNextPaint(() => {
       const t = activeTextarea();
       if (t) {
@@ -1348,7 +1313,6 @@ export default function PostForm({
       attachPreviewObservers();
       ensurePreviewReadyAndSync(160);
     });
-
     prevOverlayActiveRef.current = overlayActive;
   }, [
     overlayActive,
@@ -1504,7 +1468,6 @@ export default function PostForm({
     }
   }
 
-  // ---- insertAtCursor / insertInlineAtCursor: useCallback + ライブRef参照で安定化 ----
   const insertAtCursor = useCallback(
     (snippet: string) => {
       const ta = overlayActiveLiveRef.current ? overlayTextareaRef.current : textareaRef.current;
@@ -1653,8 +1616,6 @@ export default function PostForm({
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
       const dt = e.clipboardData;
       if (!dt) return;
-
-      // 1) image files from clipboard
       const imageFiles: File[] = [];
       for (let i = 0; i < dt.items.length; i++) {
         const it = dt.items[i];
@@ -1670,8 +1631,6 @@ export default function PostForm({
         uploadBtnRef.current?.openWithFiles(imageFiles);
         return;
       }
-
-      // 2) HTML content from clipboard
       const htmlRaw = dt.getData("text/html");
       if (htmlRaw) {
         e.preventDefault();
@@ -1679,10 +1638,8 @@ export default function PostForm({
         const nodes = (parseHtml(html) as unknown as MdNode[]) ?? [];
         const imageNodes: MdElementNode[] = [];
         const files: File[] = [];
-
         const getAttr = (el: MdElementNode, key: string): unknown =>
           el.attrs ? (el.attrs as Record<string, unknown>)[key] : undefined;
-
         const walk = (list: MdNode[]) => {
           for (const n of list) {
             if (isElementNode(n)) {
@@ -1710,9 +1667,7 @@ export default function PostForm({
             }
           }
         };
-
         walk(Array.isArray(nodes) ? nodes : []);
-
         if (files.length > 0 && userId) {
           pasteNodesRef.current = nodes;
           pasteImageNodesRef.current = imageNodes;
@@ -1871,7 +1826,7 @@ export default function PostForm({
                 className={`hidden md:inline-flex ${toolbarBtn}`}
               >
                 <SmallIcon className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">Mark</span>
+                <span className="sr-only">Small</span>
               </button>
               <button
                 type="button"
@@ -2230,7 +2185,7 @@ export default function PostForm({
                         className={`hidden xl:inline-flex ${toolbarBtn}`}
                       >
                         <SmallIcon className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">Mark</span>
+                        <span className="sr-only">Small</span>
                       </button>
                       <button
                         type="button"
