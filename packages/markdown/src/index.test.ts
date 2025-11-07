@@ -1745,11 +1745,11 @@ describe("mdRenderMarkdown from HTML", () => {
   });
 
   it("pre variations", () => {
-    const html = `<pre>
+    const html = `<pre data-pre-mode="natural" data-pre-style="small">
   one two
   <b>three</b> <i>four</i>
 </pre>`;
-    expect(makeMarkdownFromHtml(html)).toBe(`\`\`\`
+    expect(makeMarkdownFromHtml(html)).toBe(`\`\`\`natural:small
   one two
   three four
 \`\`\`
