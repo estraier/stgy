@@ -35,6 +35,10 @@ import {
   Link as LinkIcon,
   X as CloseIcon,
 } from "lucide-react";
+import { structurizeHtml, parseHtml, mdRenderMarkdown } from "stgy-markdown";
+import { useRequireLogin } from "@/hooks/useRequireLogin";
+import ImageUploadDialog, { DialogFileItem, UploadResult } from "@/components/ImageUploadDialog";
+import { Config } from "@/config";
 
 type PostFormProps = {
   body: string;
@@ -430,6 +434,47 @@ export default function PostForm({
 
   const toolbarBtn =
     "h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-[1px]";
+
+  const status = useRequireLogin();
+  const userId =
+    status.state === "authenticated" ? (status.session as any).userId ?? status.session.userId : undefined;
+
+  const [pasteDialogFiles, setPasteDialogFiles] = useState<DialogFileItem[] | null>(null);
+  const [showPasteDialog, setShowPasteDialog] = useState(false);
+  const pasteNodesRef = useRef<any[] | null>(null);
+  const pasteImageNodesRef = useRef<any[] | null>(null);
+
+  function cryptoRandomId() {
+    if (typeof crypto !== "undefined" && "randomUUID" in crypto) return (crypto as any).randomUUID();
+    return Math.random().toString(36).slice(2);
+  }
+
+  const dataUrlToFile = useCallback((dataUrl: string, baseName: string): File | null => {
+    const m = /^data:([^;,]+)(;base64)?,(.*)$/i.exec(dataUrl);
+    if (!m) return null;
+    const mime = m[1];
+    const isB64 = !!m[2];
+    const data = m[3];
+    try {
+      let bytes: Uint8Array;
+      if (isB64) {
+        const bin = atob(data);
+        const arr = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+        bytes = arr;
+      } else {
+        const txt = decodeURIComponent(data);
+        const arr = new Uint8Array(txt.length);
+        for (let i = 0; i < txt.length; i++) arr[i] = txt.charCodeAt(i);
+        bytes = arr;
+      }
+      const ext = (mime.split("/")[1] || "bin").split("+")[0];
+      const name = `${baseName}.${ext}`;
+      return new File([bytes], name, { type: mime });
+    } catch {
+      return null;
+    }
+  }, []);
 
   useEffect(() => {
     const mq = window.matchMedia("(min-width: 1000px)");
@@ -1507,13 +1552,119 @@ export default function PostForm({
     });
   }
 
+  const handlePasteUploadComplete = useCallback(
+    (results: UploadResult[]) => {
+      const nodes = pasteNodesRef.current;
+      const imgs = pasteImageNodesRef.current || [];
+      if (!nodes) {
+        setShowPasteDialog(false);
+        setPasteDialogFiles(null);
+        pasteNodesRef.current = null;
+        pasteImageNodesRef.current = null;
+        return;
+      }
+      const n = Math.min(imgs.length, results.length);
+      for (let i = 0; i < n; i++) {
+        const el = imgs[i] as any;
+        const r = results[i];
+        if (r.ok) {
+          el.attrs = { ...(el.attrs || {}), src: `/images/${r.objectKey}` };
+        } else {
+          el.attrs = { ...(el.attrs || {}), src: "/data/no-image.svg" };
+        }
+      }
+      if (imgs.length > results.length) {
+        for (let i = results.length; i < imgs.length; i++) {
+          const el = imgs[i] as any;
+          el.attrs = { ...(el.attrs || {}), src: "/data/no-image.svg" };
+        }
+      }
+      const md = mdRenderMarkdown(nodes);
+      insertAtCursor(md);
+      setShowPasteDialog(false);
+      setPasteDialogFiles(null);
+      pasteNodesRef.current = null;
+      pasteImageNodesRef.current = null;
+    },
+    [insertAtCursor],
+  );
+
+  const handlePasteDialogClose = useCallback(() => {
+    const nodes = pasteNodesRef.current;
+    const imgs = pasteImageNodesRef.current || [];
+    if (nodes) {
+      for (const el of imgs) {
+        (el as any).attrs = { ...(((el as any).attrs as any) || {}), src: "/data/no-image.svg" };
+      }
+      const md = mdRenderMarkdown(nodes);
+      insertAtCursor(md);
+    }
+    setShowPasteDialog(false);
+    setPasteDialogFiles(null);
+    pasteNodesRef.current = null;
+    pasteImageNodesRef.current = null;
+  }, [insertAtCursor]);
+
   const handlePasteToUpload = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
     const dt = e.clipboardData;
     if (!dt) return;
 
-    const html = dt.getData("text/html");
-    if (html) {
-      console.log(html);
+    const htmlRaw = dt.getData("text/html");
+    if (htmlRaw) {
+      e.preventDefault();
+      const html = structurizeHtml(htmlRaw);
+      const nodes = parseHtml(html);
+      const imageNodes: any[] = [];
+      const files: File[] = [];
+      const walk = (list: any[]) => {
+        for (const n of list) {
+          if (n && n.type === "element") {
+            if (n.tag === "video") {
+              n.attrs = { ...(n.attrs || {}), src: "/data/no-video.mp4" };
+            } else if (n.tag === "img") {
+              const src = n.attrs?.src || n.attrs?.SR || "";
+              if (typeof src === "string" && src.startsWith("data:")) {
+                const f = dataUrlToFile(src, `pasted-image-${files.length + 1}`);
+                if (f) {
+                  files.push(f);
+                  imageNodes.push(n);
+                } else {
+                  n.attrs = { ...(n.attrs || {}), src: "/data/no-image.svg" };
+                }
+              }
+            }
+            if (Array.isArray(n.children) && n.children.length > 0) walk(n.children);
+          }
+        }
+      };
+      walk(Array.isArray(nodes) ? nodes : []);
+      if (files.length > 0 && userId) {
+        pasteNodesRef.current = nodes as any[];
+        pasteImageNodesRef.current = imageNodes;
+        const limited = files.slice(0, Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE);
+        const dialogFiles: DialogFileItem[] = limited.map((f, i) => ({
+          id: cryptoRandomId(),
+          file: f,
+          name: f.name,
+          type: f.type,
+          size: f.size,
+        }));
+        if (files.length > limited.length) {
+          for (let i = limited.length; i < imageNodes.length; i++) {
+            const el = imageNodes[i] as any;
+            el.attrs = { ...(el.attrs || {}), src: "/data/no-image.svg" };
+          }
+        }
+        setPasteDialogFiles(dialogFiles);
+        setShowPasteDialog(true);
+      } else {
+        for (const el of imageNodes) {
+          (el as any).attrs = { ...(((el as any).attrs as any) || {}), src: "/data/no-image.svg" };
+        }
+        const md = mdRenderMarkdown(nodes);
+        insertAtCursor(md);
+      }
+      return;
     }
 
     const items = Array.from(dt.items);
@@ -1530,7 +1681,7 @@ export default function PostForm({
       e.preventDefault();
       uploadBtnRef.current?.openWithFiles(imageFiles);
     }
-  }, []);
+  }, [dataUrlToFile, insertAtCursor, userId]);
 
   return (
     <div className="relative group">
@@ -2290,6 +2441,16 @@ export default function PostForm({
             <div className="h-0" />
           </div>
         </div>
+      )}
+
+      {showPasteDialog && pasteDialogFiles && userId && (
+        <ImageUploadDialog
+          userId={userId}
+          files={pasteDialogFiles}
+          maxCount={Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE}
+          onClose={handlePasteDialogClose}
+          onComplete={handlePasteUploadComplete}
+        />
       )}
     </div>
   );
