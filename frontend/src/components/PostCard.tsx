@@ -9,6 +9,7 @@ import { Heart, MessageCircle } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
 import {
   makeArticleHtmlFromMarkdown,
+  makeArticleTextFromMarkdown,
   makeHtmlFromJsonSnippet,
   makeSnippetTextFromMarkdown,
 } from "@/utils/article";
@@ -168,7 +169,7 @@ export default function PostCard({
   const handleCopyPlain = useCallback(async () => {
     const content = await ensureContent();
     if (content !== null) {
-      const plain = makeSnippetTextFromMarkdown(content, Number.MAX_SAFE_INTEGER);
+      const plain = makeArticleTextFromMarkdown(content);
       await copyToClipboard(plain);
     } else {
       const plain = bodyHtml.replace(/<[^>]*>/g, "");

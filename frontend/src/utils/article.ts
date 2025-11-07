@@ -27,6 +27,13 @@ export function makeArticleHtmlFromMarkdown(
   return mdRenderHtml(nodes, usePosAttrs, idPrefix);
 }
 
+export function makeArticleTextFromMarkdown(
+  mdText: string,
+) {
+  let nodes = parseMarkdown(mdText);
+  return mdRenderText(nodes);
+}
+
 export function makePubArticleHtmlFromMarkdown(
   mdText: string,
   idPrefix?: string,
