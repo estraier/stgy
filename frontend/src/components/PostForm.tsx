@@ -40,6 +40,21 @@ import { useRequireLogin } from "@/hooks/useRequireLogin";
 import ImageUploadDialog, { DialogFileItem, UploadResult } from "@/components/ImageUploadDialog";
 import { Config } from "@/config";
 
+/** ---- Local AST types (ライブラリ未公開でも動くようにローカル定義) ---- */
+type MdAttrs = Record<string, string | number | boolean>;
+type MdTextNode = { type: "text"; text: string };
+type MdElementNode = {
+  type: "element";
+  tag: string;
+  attrs?: MdAttrs;
+  children: MdNode[];
+  charPosition?: number;
+  linePosition?: number;
+};
+type MdNode = MdTextNode | MdElementNode;
+
+const isElementNode = (n: MdNode): n is MdElementNode => n?.type === "element";
+
 type PostFormProps = {
   body: string;
   setBody: (body: string) => void;
@@ -421,6 +436,16 @@ export default function PostForm({
   const [isXl, setIsXl] = useState(false);
   const overlayActive = showPreview && isXl;
 
+  // Live refs for stable callbacks
+  const bodyLiveRef = useRef(body);
+  useEffect(() => {
+    bodyLiveRef.current = body;
+  }, [body]);
+  const overlayActiveLiveRef = useRef(overlayActive);
+  useEffect(() => {
+    overlayActiveLiveRef.current = overlayActive;
+  }, [overlayActive]);
+
   const formId = useId();
 
   const previewBodyARef = useRef<HTMLDivElement>(null);
@@ -437,15 +462,20 @@ export default function PostForm({
 
   const status = useRequireLogin();
   const userId =
-    status.state === "authenticated" ? (status.session as any).userId ?? status.session.userId : undefined;
+    status.state === "authenticated" &&
+    typeof (status.session as unknown as { userId?: unknown }).userId === "string"
+      ? ((status.session as unknown as { userId?: unknown }).userId as string)
+      : undefined;
 
   const [pasteDialogFiles, setPasteDialogFiles] = useState<DialogFileItem[] | null>(null);
   const [showPasteDialog, setShowPasteDialog] = useState(false);
-  const pasteNodesRef = useRef<any[] | null>(null);
-  const pasteImageNodesRef = useRef<any[] | null>(null);
+  const pasteNodesRef = useRef<MdNode[] | null>(null);
+  const pasteImageNodesRef = useRef<MdElementNode[] | null>(null);
 
   function cryptoRandomId() {
-    if (typeof crypto !== "undefined" && "randomUUID" in crypto) return (crypto as any).randomUUID();
+    if (typeof crypto !== "undefined" && typeof (crypto as Crypto).randomUUID === "function") {
+      return (crypto as Crypto).randomUUID();
+    }
     return Math.random().toString(36).slice(2);
   }
 
@@ -1067,8 +1097,8 @@ export default function PostForm({
         if (myGen !== genRef.current) return;
         if (!showPreview) return;
         const wrap = activePreviewWrap();
-        const body = activePreviewBody();
-        if (!wrap || !body) {
+        const bodyEl = activePreviewBody();
+        if (!wrap || !bodyEl) {
           if (--tries > 0) requestAnimationFrame(tick);
           return;
         }
@@ -1076,7 +1106,7 @@ export default function PostForm({
           if (--tries > 0) requestAnimationFrame(tick);
           return;
         }
-        if (anchorsRef.current.length === 0 && body.clientHeight === 0) {
+        if (anchorsRef.current.length === 0 && bodyEl.clientHeight === 0) {
           if (--tries > 0) requestAnimationFrame(tick);
           return;
         }
@@ -1119,12 +1149,12 @@ export default function PostForm({
 
   const attachPreviewObservers = useCallback(() => {
     const wrap = activePreviewWrap();
-    const body = activePreviewBody();
+    const bodyEl = activePreviewBody();
     previewMutObsRef.current?.disconnect();
     previewResizeWrapRef.current?.disconnect();
     previewResizeBodyRef.current?.disconnect();
 
-    if (body) {
+    if (bodyEl) {
       const mo = new MutationObserver((muts: MutationRecord[]) => {
         if (!showPreview) return;
         muts.forEach((m) => {
@@ -1145,8 +1175,8 @@ export default function PostForm({
         scheduleSync();
         schedulePreviewHighlight();
       });
-      mo.observe(body, { childList: true, subtree: true });
-      body.querySelectorAll("img").forEach((img) => {
+      mo.observe(bodyEl, { childList: true, subtree: true });
+      bodyEl.querySelectorAll("img").forEach((img) => {
         const once = () => {
           scheduleSync();
           schedulePreviewHighlight();
@@ -1173,13 +1203,13 @@ export default function PostForm({
       const prevWrap = wrap;
       return () => prevWrap.removeEventListener("scroll", onScroll);
     }
-    if (body) {
+    if (bodyEl) {
       const ro2 = new ResizeObserver(() => {
         if (!showPreview) return;
         scheduleSync();
         schedulePreviewHighlight();
       });
-      ro2.observe(body);
+      ro2.observe(bodyEl);
       previewResizeBodyRef.current = ro2;
     }
     return;
@@ -1474,83 +1504,93 @@ export default function PostForm({
     }
   }
 
-  function insertAtCursor(snippet: string) {
-    const ta = activeTextarea();
-    if (!ta) {
-      const needsNL = body.length > 0 && !body.endsWith("\n");
-      const next = body + (needsNL ? "\n" : "") + snippet;
+  // ---- insertAtCursor / insertInlineAtCursor: useCallback + ライブRef参照で安定化 ----
+  const insertAtCursor = useCallback(
+    (snippet: string) => {
+      const ta = overlayActiveLiveRef.current ? overlayTextareaRef.current : textareaRef.current;
+      if (!ta) {
+        const base = bodyLiveRef.current ?? "";
+        const needsNL = base.length > 0 && !base.endsWith("\n");
+        const next = base + (needsNL ? "\n" : "") + snippet;
+        setBody(next);
+        caretRef.current = next.length;
+        selStartRef.current = next.length;
+        selEndRef.current = next.length;
+        scheduleSyncRef.current();
+        if (overlayActiveLiveRef.current) {
+          scheduleEditorHighlightRef.current();
+          schedulePreviewHighlightRef.current();
+        }
+        return;
+      }
+      const text = ta.value;
+      const start = ta.selectionStart ?? text.length;
+      const end = ta.selectionEnd ?? start;
+      const before = text.slice(0, start);
+      const after = text.slice(end);
+      const needsPrefixNL = start > 0 && before[before.length - 1] !== "\n";
+      const insert = (needsPrefixNL ? "\n" : "") + snippet;
+      const next = before + insert + after;
       setBody(next);
-      caretRef.current = next.length;
-      selStartRef.current = next.length;
-      selEndRef.current = next.length;
-      scheduleSyncRef.current();
-      if (overlayActive) {
-        scheduleEditorHighlightRef.current();
-        schedulePreviewHighlightRef.current();
+      requestAnimationFrame(() => {
+        const pos = before.length + insert.length;
+        ta.setSelectionRange(pos, pos);
+        centerTextareaCaret(ta);
+        caretRef.current = pos;
+        selStartRef.current = pos;
+        selEndRef.current = pos;
+        scheduleSyncRef.current();
+        if (overlayActiveLiveRef.current) {
+          scheduleEditorHighlightRef.current();
+          schedulePreviewHighlightRef.current();
+        }
+        if (overlayActiveLiveRef.current) resizeOverlayTextareaRef.current();
+      });
+    },
+    [setBody],
+  );
+
+  const insertInlineAtCursor = useCallback(
+    (snippet: string) => {
+      const ta = overlayActiveLiveRef.current ? overlayTextareaRef.current : textareaRef.current;
+      if (!ta) {
+        const base = bodyLiveRef.current ?? "";
+        const next = base + snippet;
+        setBody(next);
+        caretRef.current = next.length;
+        selStartRef.current = next.length;
+        selEndRef.current = next.length;
+        scheduleSyncRef.current();
+        if (overlayActiveLiveRef.current) {
+          scheduleEditorHighlightRef.current();
+          schedulePreviewHighlightRef.current();
+        }
+        return;
       }
-      return;
-    }
-    const text = ta.value;
-    const start = ta.selectionStart ?? text.length;
-    const end = ta.selectionEnd ?? start;
-    const before = text.slice(0, start);
-    const after = text.slice(end);
-    const needsPrefixNL = start > 0 && before[before.length - 1] !== "\n";
-    const insert = (needsPrefixNL ? "\n" : "") + snippet;
-    const next = before + insert + after;
-    setBody(next);
-    requestAnimationFrame(() => {
-      const pos = before.length + insert.length;
-      ta.setSelectionRange(pos, pos);
-      centerTextareaCaret(ta);
-      caretRef.current = pos;
-      selStartRef.current = pos;
-      selEndRef.current = pos;
-      scheduleSyncRef.current();
-      if (overlayActive) {
-        scheduleEditorHighlightRef.current();
-        schedulePreviewHighlightRef.current();
-      }
-      if (overlayActive) resizeOverlayTextareaRef.current();
-    });
-  }
-  function insertInlineAtCursor(snippet: string) {
-    const ta = activeTextarea();
-    if (!ta) {
-      const next = body + snippet;
+      const text = ta.value;
+      const start = ta.selectionStart ?? text.length;
+      const end = ta.selectionEnd ?? start;
+      const before = text.slice(0, start);
+      const after = text.slice(end);
+      const next = before + snippet + after;
       setBody(next);
-      caretRef.current = next.length;
-      selStartRef.current = next.length;
-      selEndRef.current = next.length;
-      scheduleSyncRef.current();
-      if (overlayActive) {
-        scheduleEditorHighlightRef.current();
-        schedulePreviewHighlightRef.current();
-      }
-      return;
-    }
-    const text = ta.value;
-    const start = ta.selectionStart ?? text.length;
-    const end = ta.selectionEnd ?? start;
-    const before = text.slice(0, start);
-    const after = text.slice(end);
-    const next = before + snippet + after;
-    setBody(next);
-    requestAnimationFrame(() => {
-      const pos = before.length + snippet.length;
-      ta.setSelectionRange(pos, pos);
-      centerTextareaCaret(ta);
-      caretRef.current = pos;
-      selStartRef.current = pos;
-      selEndRef.current = pos;
-      scheduleSyncRef.current();
-      if (overlayActive) {
-        scheduleEditorHighlightRef.current();
-        schedulePreviewHighlightRef.current();
-      }
-      if (overlayActive) resizeOverlayTextareaRef.current();
-    });
-  }
+      requestAnimationFrame(() => {
+        const pos = before.length + snippet.length;
+        ta.setSelectionRange(pos, pos);
+        centerTextareaCaret(ta);
+        caretRef.current = pos;
+        selStartRef.current = pos;
+        selEndRef.current = pos;
+        scheduleSyncRef.current();
+        if (overlayActiveLiveRef.current) {
+          scheduleEditorHighlightRef.current();
+          schedulePreviewHighlightRef.current();
+        }
+        if (overlayActiveLiveRef.current) resizeOverlayTextareaRef.current();
+      });
+    },
+    [setBody],
+  );
 
   const handlePasteUploadComplete = useCallback(
     (results: UploadResult[]) => {
@@ -1565,18 +1605,21 @@ export default function PostForm({
       }
       const n = Math.min(imgs.length, results.length);
       for (let i = 0; i < n; i++) {
-        const el = imgs[i] as any;
-        const r = results[i];
+        const el = imgs[i]!;
+        const r = results[i]!;
         if (r.ok) {
-          el.attrs = { ...(el.attrs || {}), src: `/images/${r.objectKey}` };
+          const attrs: MdAttrs = { ...(el.attrs ?? {}), src: `/images/${r.objectKey}` };
+          el.attrs = attrs;
         } else {
-          el.attrs = { ...(el.attrs || {}), src: "/data/no-image.svg" };
+          const attrs: MdAttrs = { ...(el.attrs ?? {}), src: "/data/no-image.svg" };
+          el.attrs = attrs;
         }
       }
       if (imgs.length > results.length) {
         for (let i = results.length; i < imgs.length; i++) {
-          const el = imgs[i] as any;
-          el.attrs = { ...(el.attrs || {}), src: "/data/no-image.svg" };
+          const el = imgs[i]!;
+          const attrs: MdAttrs = { ...(el.attrs ?? {}), src: "/data/no-image.svg" };
+          el.attrs = attrs;
         }
       }
       const md = mdRenderMarkdown(nodes);
@@ -1594,7 +1637,8 @@ export default function PostForm({
     const imgs = pasteImageNodesRef.current || [];
     if (nodes) {
       for (const el of imgs) {
-        (el as any).attrs = { ...(((el as any).attrs as any) || {}), src: "/data/no-image.svg" };
+        const attrs: MdAttrs = { ...(el.attrs ?? {}), src: "/data/no-image.svg" };
+        el.attrs = attrs;
       }
       const md = mdRenderMarkdown(nodes);
       insertAtCursor(md);
@@ -1605,83 +1649,99 @@ export default function PostForm({
     pasteImageNodesRef.current = null;
   }, [insertAtCursor]);
 
-  const handlePasteToUpload = useCallback((e: React.ClipboardEvent<HTMLTextAreaElement>) => {
-    const dt = e.clipboardData;
-    if (!dt) return;
+  const handlePasteToUpload = useCallback(
+    (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+      const dt = e.clipboardData;
+      if (!dt) return;
 
-    const htmlRaw = dt.getData("text/html");
-    if (htmlRaw) {
-      e.preventDefault();
-      const html = structurizeHtml(htmlRaw);
-      const nodes = parseHtml(html);
-      const imageNodes: any[] = [];
-      const files: File[] = [];
-      const walk = (list: any[]) => {
-        for (const n of list) {
-          if (n && n.type === "element") {
-            if (n.tag === "video") {
-              n.attrs = { ...(n.attrs || {}), src: "/data/no-video.mp4" };
-            } else if (n.tag === "img") {
-              const src = n.attrs?.src || n.attrs?.SR || "";
-              if (typeof src === "string" && src.startsWith("data:")) {
-                const f = dataUrlToFile(src, `pasted-image-${files.length + 1}`);
-                if (f) {
-                  files.push(f);
-                  imageNodes.push(n);
-                } else {
-                  n.attrs = { ...(n.attrs || {}), src: "/data/no-image.svg" };
+      // 1) image files from clipboard
+      const imageFiles: File[] = [];
+      for (let i = 0; i < dt.items.length; i++) {
+        const it = dt.items[i];
+        if (it && it.kind === "file") {
+          const f = it.getAsFile();
+          if (f && f.type && f.type.startsWith("image/")) {
+            imageFiles.push(f);
+          }
+        }
+      }
+      if (imageFiles.length > 0) {
+        e.preventDefault();
+        uploadBtnRef.current?.openWithFiles(imageFiles);
+        return;
+      }
+
+      // 2) HTML content from clipboard
+      const htmlRaw = dt.getData("text/html");
+      if (htmlRaw) {
+        e.preventDefault();
+        const html = structurizeHtml(htmlRaw);
+        const nodes = (parseHtml(html) as unknown as MdNode[]) ?? [];
+        const imageNodes: MdElementNode[] = [];
+        const files: File[] = [];
+
+        const getAttr = (el: MdElementNode, key: string): unknown =>
+          el.attrs ? (el.attrs as Record<string, unknown>)[key] : undefined;
+
+        const walk = (list: MdNode[]) => {
+          for (const n of list) {
+            if (isElementNode(n)) {
+              if (n.tag === "video") {
+                const attrs: MdAttrs = { ...(n.attrs ?? {}), src: "/data/no-video.mp4" };
+                n.attrs = attrs;
+              } else if (n.tag === "img") {
+                const srcVal =
+                  (getAttr(n, "src") as unknown) ??
+                  (getAttr(n, "SR") as unknown) ??
+                  (getAttr(n, "data-src") as unknown);
+                const src = typeof srcVal === "string" ? srcVal : "";
+                if (src.startsWith("data:")) {
+                  const f = dataUrlToFile(src, `pasted-image-${files.length + 1}`);
+                  if (f) {
+                    files.push(f);
+                    imageNodes.push(n);
+                  } else {
+                    const attrs: MdAttrs = { ...(n.attrs ?? {}), src: "/data/no-image.svg" };
+                    n.attrs = attrs;
+                  }
                 }
               }
+              if (Array.isArray(n.children) && n.children.length > 0) walk(n.children);
             }
-            if (Array.isArray(n.children) && n.children.length > 0) walk(n.children);
           }
-        }
-      };
-      walk(Array.isArray(nodes) ? nodes : []);
-      if (files.length > 0 && userId) {
-        pasteNodesRef.current = nodes as any[];
-        pasteImageNodesRef.current = imageNodes;
-        const limited = files.slice(0, Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE);
-        const dialogFiles: DialogFileItem[] = limited.map((f, i) => ({
-          id: cryptoRandomId(),
-          file: f,
-          name: f.name,
-          type: f.type,
-          size: f.size,
-        }));
-        if (files.length > limited.length) {
-          for (let i = limited.length; i < imageNodes.length; i++) {
-            const el = imageNodes[i] as any;
-            el.attrs = { ...(el.attrs || {}), src: "/data/no-image.svg" };
-          }
-        }
-        setPasteDialogFiles(dialogFiles);
-        setShowPasteDialog(true);
-      } else {
-        for (const el of imageNodes) {
-          (el as any).attrs = { ...(((el as any).attrs as any) || {}), src: "/data/no-image.svg" };
-        }
-        const md = mdRenderMarkdown(nodes);
-        insertAtCursor(md);
-      }
-      return;
-    }
+        };
 
-    const items = Array.from(dt.items);
-    const imageFiles: File[] = [];
-    for (const it of items) {
-      if (it.kind === "file") {
-        const f = it.getAsFile();
-        if (f && f.type && f.type.startsWith("image/")) {
-          imageFiles.push(f);
+        walk(Array.isArray(nodes) ? nodes : []);
+
+        if (files.length > 0 && userId) {
+          pasteNodesRef.current = nodes;
+          pasteImageNodesRef.current = imageNodes;
+          const limited = files.slice(0, Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE);
+          const dialogFiles: DialogFileItem[] = limited.map((f, _i) => ({
+            id: cryptoRandomId(),
+            file: f,
+            name: f.name,
+            type: f.type,
+            size: f.size,
+          }));
+          if (files.length > limited.length) {
+            for (let i = limited.length; i < imageNodes.length; i++) {
+              const el = imageNodes[i]!;
+              const attrs: MdAttrs = { ...(el.attrs ?? {}), src: "/data/no-image.svg" };
+              el.attrs = attrs;
+            }
+          }
+          setPasteDialogFiles(dialogFiles);
+          setShowPasteDialog(true);
+        } else {
+          const md = mdRenderMarkdown(nodes);
+          insertAtCursor(md);
         }
+        return;
       }
-    }
-    if (imageFiles.length > 0) {
-      e.preventDefault();
-      uploadBtnRef.current?.openWithFiles(imageFiles);
-    }
-  }, [dataUrlToFile, insertAtCursor, userId]);
+    },
+    [dataUrlToFile, insertAtCursor, userId],
+  );
 
   return (
     <div className="relative group">
