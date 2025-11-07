@@ -774,6 +774,11 @@ describe("structurizeHtml", () => {
     expect(structurizeHtml(html)).toBe("<p>1-1<br>1-2</p><p>2-1<br>2-2</p>");
   });
 
+  it("restructure list", () => {
+    const html = "<ul><li>1</li><ul><li>1-1</li></ul><li>2</li></ul>";
+    expect(structurizeHtml(html)).toBe("<ul><li>1<ul><li>1-1</li></ul></li><li>2</li></ul>");
+  });
+
   it("promote headers", () => {
     const html =
       '<p><span style="font-size:20pt">abc</span></p><p><span>subtitle</span></p><h1>h1</h1><h5>h5</h5><h6>h6</h6>';

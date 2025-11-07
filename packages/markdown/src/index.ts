@@ -1509,6 +1509,33 @@ export function structurizeHtml(
     }
     replaceTagKeepAttrsAndChildren(titleP, "h1");
   };
+  const stage4FixOrphanSubLists = (rootEl: Element) => {
+    const lists = Array.from(rootEl.querySelectorAll("ul,ol")) as Element[];
+    for (const list of lists) {
+      let n: Node | null = list.firstChild;
+      while (n) {
+        const next = n.nextSibling;
+        if (n.nodeType === Node.ELEMENT_NODE) {
+          const el = n as Element;
+          const tag = el.tagName.toLowerCase();
+          if (tag === "ul" || tag === "ol") {
+            let p: Node | null = el.previousSibling;
+            while (p && (p.nodeType !== Node.ELEMENT_NODE || (p as Element).tagName.toLowerCase() !== "li")) {
+              if (onlyWhitespaceText(p)) {
+                p = p.previousSibling;
+                continue;
+              }
+              break;
+            }
+            if (p && p.nodeType === Node.ELEMENT_NODE && (p as Element).tagName.toLowerCase() === "li") {
+              (p as Element).appendChild(el);
+            }
+          }
+        }
+        n = next;
+      }
+    }
+  };
   const workBody: Element = (() => {
     if (hadBodyTag) {
       const bodyFound = domRoot.querySelector("body");
@@ -1524,6 +1551,7 @@ export function structurizeHtml(
   stage1UnwrapInlineContainingBlocks(workBody);
   stage3PromoteTitleAndDemoteHeadings(workBody, minPt);
   stage2MergeAdjacentPsByBr(workBody);
+  stage4FixOrphanSubLists(workBody);
   if (hadBodyTag) return doc.documentElement.outerHTML;
   return workBody.innerHTML;
 }
