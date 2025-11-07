@@ -190,6 +190,27 @@ export default function PostCard({
     setMenuOpen(false);
   }, [ensureContent, idPrefix, post.snippet]);
 
+const handleViewHtml = useCallback(async () => {
+  const content = await ensureContent();
+  const html =
+    content !== null
+      ? convertHtmlMathInline(makeArticleHtmlFromMarkdown(content, false, idPrefix))
+      : convertHtmlMathInline(makeHtmlFromJsonSnippet(post.snippet, idPrefix));
+
+  const doc =
+    '<!doctype html><html><head><meta charset="utf-8">' +
+    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+    "<title>Content HTML</title></head><body>" +
+    html +
+    "</body></html>";
+
+  const blob = new Blob([doc], { type: "text/html" });
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank", "noopener");
+  setTimeout(() => URL.revokeObjectURL(url), 60_000);
+  setMenuOpen(false);
+}, [ensureContent, idPrefix, post.snippet]);
+
   function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
     if (typeof window !== "undefined" && window.getSelection()?.toString()) return;
@@ -349,6 +370,12 @@ export default function PostCard({
         onClick={handleCopyHtml}
       >
         Copy content HTML
+      </button>
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={handleViewHtml}
+      >
+        View content HTML
       </button>
       {canConfigurePublication && (
         <button
