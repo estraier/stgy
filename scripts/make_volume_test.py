@@ -60,6 +60,8 @@ def ensure_user(
   password: str,
   is_admin: bool,
   block_strangers: bool,
+  locale: str,
+  timezone: str,
   introduction: str,
   ai_model: str | None = None,
   ai_personality: str | None = None,
@@ -72,6 +74,8 @@ def ensure_user(
       "nickname": nickname,
       "isAdmin": is_admin,
       "blockStrangers": block_strangers,
+      "locale": locale,
+      "timezone": timezone,
       "introduction": introduction,
       "avatar": avatar,
       "aiModel": ai_model,
@@ -88,6 +92,8 @@ def ensure_user(
     "password": password,
     "isAdmin": is_admin,
     "blockStrangers": block_strangers,
+    "locale": locale,
+    "timezone": timezone,
     "introduction": introduction,
     "avatar": avatar,
     "aiModel": ai_model,
@@ -105,6 +111,7 @@ def create_post_as_admin(
   owned_by: str,
   content: str,
   reply_to: str | None,
+  published_at: str | None,
   tags: list[str] | None = None,
   allow_likes: bool = True,
   allow_replies: bool = True,
@@ -113,6 +120,7 @@ def create_post_as_admin(
     "content": content,
     "ownedBy": owned_by,
     "replyTo": reply_to,
+    "publishedAt": published_at,
     "allowLikes": allow_likes,
     "allowReplies": allow_replies,
     "tags": tags or [],
@@ -169,6 +177,8 @@ def main(argv: list[str]) -> int:
     password="taro-taro",
     is_admin=True,
     block_strangers=False,
+    locale="en",
+    timezone="Asia/Tokyo",
     introduction="I'm taro.",
     ai_model=None,
     ai_personality=None,
@@ -182,6 +192,7 @@ def main(argv: list[str]) -> int:
     owned_by=TARO_ID,
     content="Hello, world",
     reply_to=None,
+    published_at="1978-02-11 18:30:00+09",
     tags=["bulk"],
   )
   print(f"[post] created: {p1['id']}")
@@ -193,6 +204,7 @@ def main(argv: list[str]) -> int:
     owned_by=TARO_ID,
     content="We will rock you.",
     reply_to=None,
+    published_at="1978-02-12 15:11:13+09",
     tags=["bulk"],
   )
   print(f"[post] created: {p2['id']}")
@@ -210,6 +222,8 @@ def main(argv: list[str]) -> int:
       password=f"{name}-pw",
       is_admin=i % 10 == 0,
       block_strangers=i % 3 == 0,
+      locale="en",
+      timezone="Asia/Tokyo",
       introduction=f"I'm {name}.",
       ai_model=None,
       ai_personality=None,
@@ -221,6 +235,7 @@ def main(argv: list[str]) -> int:
       owned_by=uid,
       content=f"Post by {name}.",
       reply_to=None,
+      published_at="2000-10-15 02:40:15+09",
       tags=["bulk", f"tagA{int(i/10):05d}", f"tagB{int(i%10):05d}"],
     )
     if i % 10 == 0:
@@ -237,6 +252,7 @@ def main(argv: list[str]) -> int:
       owned_by=u["id"],
       content=f"Reply to taro by {name}.",
       reply_to=TARO_POST2_ID,
+      published_at="2001-07-07 07:07:07+09",
       tags=["bulk"],
     )
     replies.append(pr)
