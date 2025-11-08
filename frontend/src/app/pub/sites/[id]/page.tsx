@@ -14,7 +14,7 @@ import type { Metadata } from "next";
 type PageParams = { id: string };
 
 const getPubSiteData = cache(async (id: string) => {
-  const pubcfg = await getPubConfig(id); // may throw (e.g., not found/private)
+  const pubcfg = await getPubConfig(id);
   const intro = makePubArticleHtmlFromMarkdown(pubcfg.introduction.trim() || "my publications");
   return { pubcfg, intro };
 });
@@ -116,7 +116,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const siteTitle = pubcfg.siteName || intro.title || "STGY Publications";
 
     return (
-      <div className={`pub-page pub-theme-${theme} pub-theme-kind-${themeKind}`}>
+      <div className={`pub-page pub-theme-${theme} pub-theme-kind-${themeKind}`} data-page={page}>
         <HeadLangPatcher lang={locale} />
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}
@@ -145,7 +145,14 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                   const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`);
                   const publishedAtDate = new Date(r.publishedAt ?? "");
                   return (
-                    <LinkDiv key={String(r.id)} href={postHref} className="link-div post-div">
+                    <LinkDiv
+                      key={String(r.id)}
+                      href={postHref}
+                      className="link-div post-div"
+                      id={`pubpost-${r.id}`}
+                      data-restore-id={String(r.id)}
+                      data-restore-page={String(page)}
+                    >
                       <div className="date">{formatDateTime(publishedAtDate)}</div>
                       <ArticleWithDecoration
                         lang={r.locale || pubcfg.locale || locale}
@@ -181,6 +188,61 @@ export default async function PubSitePage({ params, searchParams }: Props) {
             </section>
           </div>
         </main>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `(function(){
+var RID="lastPubPostId";var RPG="lastPubPostPage";
+if(typeof window==="undefined")return;
+if(!window.__stgyPubSiteBound){
+  window.__stgyPubSiteBound=true;
+  document.body.addEventListener("mousedown",function(e){
+    var t=e.target;if(!t||!t.closest)return;
+    var n=t.closest(".post-div");
+    if(n){
+      var id=n.getAttribute("data-restore-id");
+      var pg=n.getAttribute("data-restore-page");
+      if(id&&pg){
+        try{
+          var st=window.history.state||{};
+          window.history.replaceState(Object.assign({},st,((o)=>{o[RID]=id;o[RPG]=pg;return o;})({})), "");
+        }catch(_){}
+      }
+    }
+  },true);
+}
+try{
+  var st2=window.history.state||{};
+  var pid=typeof st2[RID]==="string"?st2[RID]:null;
+  var pgRaw=st2[RPG];
+  var pg=typeof pgRaw==="number"?pgRaw:(typeof pgRaw==="string"?parseInt(pgRaw,10):NaN);
+  var currentPage=${page};
+  if(pid && !Number.isNaN(pg) && Number(pg)===Number(currentPage)){
+    var tryScroll=function(){
+      var el=document.getElementById("pubpost-"+pid);
+      if(el){
+        var rect=el.getBoundingClientRect();
+        var absTop=window.scrollY+rect.top;
+        var desired=Math.max(0,absTop-window.innerHeight*0.4);
+        window.scrollTo({top:desired});
+        try{
+          var st3=window.history.state||{};
+          var rest={};for(var k in st3){if(k!==RID && k!==RPG){rest[k]=st3[k];}}
+          window.history.replaceState(rest,"");
+        }catch(__){}
+        return true;
+      }
+      return false;
+    };
+    if(!tryScroll()){
+      var i=0;var max=10;
+      var raf=function(){if(tryScroll())return;i++;if(i<max)requestAnimationFrame(raf);};
+      requestAnimationFrame(raf);
+    }
+  }
+}catch(___){}
+})();`,
+          }}
+        />
         <script
           dangerouslySetInnerHTML={{
             __html: `(function(){if(typeof window==="undefined")return;if(window.__stgyImageBlockBound)return;window.__stgyImageBlockBound=true;document.body.addEventListener("click",function(e){var t=e.target;if(!t||!t.closest)return;var b=t.closest(".image-block");if(b){b.classList.toggle("expanded");e.stopPropagation();}});})();`,
