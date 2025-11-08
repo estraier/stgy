@@ -1499,13 +1499,16 @@ export function structurizeHtml(
     bodyEl: Element,
     minPtLocal: number,
   ) => {
+    const hasOriginalH1 = !!doc.querySelector("h1");
     const titleP = pickTitleCandidateP(bodyEl, minPtLocal);
     if (!titleP) return;
-    const heads = bodyEl.querySelectorAll("h1,h2,h3,h4,h5");
-    for (const h of Array.from(heads) as Element[]) {
-      const level = parseInt(h.tagName.substring(1), 10);
-      if (level >= 1 && level <= 5)
-        replaceTagKeepAttrsAndChildren(h, "h" + (level + 1));
+    if (hasOriginalH1) {
+      const heads = bodyEl.querySelectorAll("h1,h2,h3,h4,h5");
+      for (const h of Array.from(heads) as Element[]) {
+        const level = parseInt(h.tagName.substring(1), 10);
+        if (level >= 1 && level <= 5)
+          replaceTagKeepAttrsAndChildren(h, "h" + (level + 1));
+      }
     }
     replaceTagKeepAttrsAndChildren(titleP, "h1");
   };
@@ -3084,7 +3087,7 @@ function parseInline(text: string): MdNode[] {
   const italic = /::([^:]+?)::/;
   const ruby = /\{\{([^|{}]+?)\|([^{}]+?)\}\}/;
   const small = /%%([^%]+?)%%/;
-  const mark = /@@([^%]+?)@@/;
+  const mark = /@@([^@]+?)@@/;
   const underline = /__([^_]+)__/;
   const strike = /~~([^~]+)~~/;
   const code = /``([^`]+)``/;
