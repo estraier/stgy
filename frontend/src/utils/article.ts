@@ -101,11 +101,16 @@ export function makeHtmlFromJsonSnippet(snippet: string, idPrefix?: string) {
 }
 
 function rewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {
+  const dataPrefix = Config.FRONTEND_CANONICAL_URL + "/data/";
   const imagesPrefix = Config.STORAGE_S3_PUBLIC_URL_PREFIX.replace(
     /\{bucket\}/g,
     Config.MEDIA_BUCKET_IMAGES,
   );
   const rewriteRules: MdRewriteRule[] = [];
+  rewriteRules.push({
+    pattern: /^\/data\//,
+    replacement: dataPrefix,
+  });
   if (useThumbnail) {
     rewriteRules.push({
       pattern: /^\/images\/(.*?)\/masters\/((?:[^\/?#]+\/)*)([^\/?#]+?)(?:\.[^\/?#]+)?(?:[?#].*)?$/,
