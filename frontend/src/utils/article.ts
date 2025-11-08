@@ -30,7 +30,7 @@ export function makeArticleHtmlFromMarkdown(
 export function makeArticleTextFromMarkdown(
   mdText: string,
 ) {
-  let nodes = parseMarkdown(mdText);
+  const nodes = parseMarkdown(mdText);
   return mdRenderText(nodes);
 }
 
