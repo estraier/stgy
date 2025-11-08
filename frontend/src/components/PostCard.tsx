@@ -5,7 +5,7 @@ import { useRef, useMemo, useEffect, useState, useCallback } from "react";
 import PrismHighlighter from "@/components/PrismHighlighter";
 import type { Post, PostDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
-import { Heart, MessageCircle } from "lucide-react";
+import { Heart, MessageCircle, Copy } from "lucide-react";
 import { formatDateTime } from "@/utils/format";
 import {
   makeArticleHtmlFromMarkdown,
@@ -163,7 +163,7 @@ export default function PostCard({
     if (content !== null) {
       await copyToClipboard(content);
     }
-    setMenuOpen(false);
+    setCopyMenuOpen(false);
   }, [ensureContent]);
 
   const handleCopyPlain = useCallback(async () => {
@@ -175,7 +175,7 @@ export default function PostCard({
       const plain = bodyHtml.replace(/<[^>]*>/g, "");
       await copyToClipboard(plain);
     }
-    setMenuOpen(false);
+    setCopyMenuOpen(false);
   }, [ensureContent, bodyHtml]);
 
   const handleCopyHtml = useCallback(async () => {
@@ -188,29 +188,29 @@ export default function PostCard({
       const html = convertHtmlMathInline(makeHtmlFromJsonSnippet(post.snippet, idPrefix));
       await copyHtmlRich(html);
     }
-    setMenuOpen(false);
+    setCopyMenuOpen(false);
   }, [ensureContent, idPrefix, post.snippet]);
 
-const handleViewHtml = useCallback(async () => {
-  const content = await ensureContent();
-  const html =
-    content !== null
-      ? convertHtmlMathInline(makeArticleHtmlFromMarkdown(content, false, idPrefix))
-      : convertHtmlMathInline(makeHtmlFromJsonSnippet(post.snippet, idPrefix));
+  const handleViewHtml = useCallback(async () => {
+    const content = await ensureContent();
+    const html =
+      content !== null
+        ? convertHtmlMathInline(makeArticleHtmlFromMarkdown(content, false, idPrefix))
+        : convertHtmlMathInline(makeHtmlFromJsonSnippet(post.snippet, idPrefix));
 
-  const doc =
-    '<!doctype html><html><head><meta charset="utf-8">' +
-    '<meta name="viewport" content="width=device-width,initial-scale=1">' +
-    "<title>Content HTML</title></head><body>" +
-    html +
-    "</body></html>";
+    const doc =
+      '<!doctype html><html><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      "<title>Content HTML</title></head><body>" +
+      html +
+      "</body></html>";
 
-  const blob = new Blob([doc], { type: "text/html" });
-  const url = URL.createObjectURL(blob);
-  window.open(url, "_blank", "noopener");
-  setTimeout(() => URL.revokeObjectURL(url), 60_000);
-  setMenuOpen(false);
-}, [ensureContent, idPrefix, post.snippet]);
+    const blob = new Blob([doc], { type: "text/html" });
+    const url = URL.createObjectURL(blob);
+    window.open(url, "_blank", "noopener");
+    setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    setCopyMenuOpen(false);
+  }, [ensureContent, idPrefix, post.snippet]);
 
   function handleCardClick(_e: React.MouseEvent | React.KeyboardEvent) {
     if (!clickable) return;
@@ -312,21 +312,61 @@ const handleViewHtml = useCallback(async () => {
     new Date(effectivePublishedAt).getTime() <= Date.now();
 
   const [menuOpen, setMenuOpen] = useState(false);
+  const [copyMenuOpen, setCopyMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
+  const copyMenuRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
-      if (!menuOpen) return;
-      if (!menuRef.current) return;
-      if (menuRef.current.contains(e.target as Node)) return;
-      setMenuOpen(false);
+      const t = e.target as Node;
+      if (menuOpen && menuRef.current && !menuRef.current.contains(t)) {
+        setMenuOpen(false);
+      }
+      if (copyMenuOpen && copyMenuRef.current && !copyMenuRef.current.contains(t)) {
+        setCopyMenuOpen(false);
+      }
     }
     document.addEventListener("mousedown", onDocMouseDown);
     return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, [menuOpen]);
+  }, [menuOpen, copyMenuOpen]);
 
   const isOwner = focusUserId && focusUserId === post.ownedBy;
   const canConfigurePublication = Boolean(isOwner || focusUserIsAdmin);
+
+  const copyMenu = (
+    <div
+      ref={copyMenuRef}
+      className={`absolute right-0 top-full mt-1 w-56 rounded-md border bg-white shadow-lg z-20 ${
+        copyMenuOpen ? "block" : "hidden"
+      }`}
+      onClick={(e) => e.stopPropagation()}
+    >
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={handleCopyMarkdown}
+      >
+        Copy content Markdown
+      </button>
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={handleCopyPlain}
+      >
+        Copy content plaintext
+      </button>
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={handleCopyHtml}
+      >
+        Copy content HTML
+      </button>
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={handleViewHtml}
+      >
+        View content HTML
+      </button>
+    </div>
+  );
 
   const menu = (
     <div
@@ -353,30 +393,6 @@ const handleViewHtml = useCallback(async () => {
         }}
       >
         Copy mention Markdown
-      </button>
-      <button
-        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
-        onClick={handleCopyMarkdown}
-      >
-        Copy content Markdown
-      </button>
-      <button
-        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
-        onClick={handleCopyPlain}
-      >
-        Copy content plaintext
-      </button>
-      <button
-        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
-        onClick={handleCopyHtml}
-      >
-        Copy content HTML
-      </button>
-      <button
-        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
-        onClick={handleViewHtml}
-      >
-        View content HTML
       </button>
       {canConfigurePublication && (
         <button
@@ -497,27 +513,51 @@ const handleViewHtml = useCallback(async () => {
         )}
 
         {showActions && (
-          <div className="ml-auto relative flex items-center gap-1">
-            <button
-              type="button"
-              className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-200 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100"
-              aria-haspopup="menu"
-              aria-expanded={menuOpen}
-              onClick={(e) => {
-                e.stopPropagation();
-                setMenuOpen((v) => !v);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") setMenuOpen(false);
-              }}
-              title="More actions"
-            >
-              ⋯
-            </button>
-            {menu}
+          <div className="ml-auto flex items-center gap-1">
+            <div className="relative">
+              <button
+                type="button"
+                className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-200 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100"
+                aria-haspopup="menu"
+                aria-expanded={copyMenuOpen}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setCopyMenuOpen((v) => !v);
+                  if (menuOpen) setMenuOpen(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setCopyMenuOpen(false);
+                }}
+                title="Copy content"
+              >
+                <Copy size={16} className="opacity-60" />
+              </button>
+              {copyMenu}
+            </div>
+
+            <div className="relative">
+              <button
+                type="button"
+                className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-200 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100"
+                aria-haspopup="menu"
+                aria-expanded={menuOpen}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  setMenuOpen((v) => !v);
+                  if (copyMenuOpen) setCopyMenuOpen(false);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setMenuOpen(false);
+                }}
+                title="More actions"
+              >
+                ⋯
+              </button>
+              {menu}
+            </div>
 
             <button
-              className={`flex items-center gap-1 px-2 py-1 rounded cursor-pointer
+              className={`flex items-center gap-1 pr-1 pl-2 py-1 rounded cursor-pointer
                 ${post.isLikedByFocusUser ? "bg-pink-100 text-pink-600" : "hover:bg-gray-100"}
                 disabled:opacity-40 disabled:cursor-not-allowed`}
               onClick={(e) => {
@@ -558,7 +598,7 @@ const handleViewHtml = useCallback(async () => {
                     ? "You cannot reply to this post"
                     : undefined
               }
-              className={`flex items-center gap-1 px-2 py-1 rounded
+              className={`flex items-center gap-1 pr-1 pl-1 py-1 rounded
                 ${post.isRepliedByFocusUser ? "bg-blue-100 text-blue-600" : "hover:bg-gray-100"}
                 disabled:opacity-40 disabled:cursor-not-allowed`}
             >
