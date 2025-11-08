@@ -1,7 +1,7 @@
 "use client";
 
 import { Config } from "@/config";
-import { useEffect, useState } from "react";
+import { useEffect, useState, useCallback } from "react";
 import { getUser, listFollowers, listFollowees } from "@/api/users";
 import { listPosts, addLike, removeLike, createPost } from "@/api/posts";
 import type { User, UserDetail, Post } from "@/api/models";
@@ -14,6 +14,11 @@ import PostForm from "@/components/PostForm";
 import { parseBodyAndTags } from "@/utils/parse";
 
 const TAB_VALUES = ["posts", "replies", "followers", "followees"] as const;
+
+const RESTORE_POST_ID_KEY = "lastPostId";
+const RESTORE_POST_PAGE_KEY = "lastPostPage";
+const RESTORE_USER_ID_KEY = "lastUserId";
+const RESTORE_USER_PAGE_KEY = "lastUserPage";
 
 export default function PageBody() {
   const params = useParams();
@@ -34,23 +39,21 @@ export default function PageBody() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
 
-  function setQuery(
-    updates: Partial<{ tab: string; page: number; oldestFirst: string | undefined }>,
-  ) {
-    const sp = new URLSearchParams(searchParams);
-    for (const key of ["tab", "page", "oldestFirst"]) {
-      if (
-        updates[key as keyof typeof updates] !== undefined &&
-        updates[key as keyof typeof updates] !== null &&
-        updates[key as keyof typeof updates] !== ""
-      ) {
-        sp.set(key, String(updates[key as keyof typeof updates]));
-      } else {
-        sp.delete(key);
+  const setQuery = useCallback(
+    (updates: Partial<{ tab: string; page: number; oldestFirst: string | undefined }>) => {
+      const sp = new URLSearchParams(searchParams);
+      for (const key of ["tab", "page", "oldestFirst"]) {
+        const v = updates[key as keyof typeof updates];
+        if (v !== undefined && v !== null && v !== "") {
+          sp.set(key, String(v));
+        } else {
+          sp.delete(key);
+        }
       }
-    }
-    router.push(`${pathname}?${sp.toString()}`);
-  }
+      router.push(`${pathname}?${sp.toString()}`);
+    },
+    [router, pathname, searchParams],
+  );
 
   function getQuery() {
     return {
@@ -75,6 +78,12 @@ export default function PageBody() {
   const [replyBody, setReplyBody] = useState("");
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replySubmitting, setReplySubmitting] = useState(false);
+
+  const [pendingRestore, setPendingRestore] = useState<{
+    kind: "post" | "user";
+    id: string;
+    page: number;
+  } | null>(null);
 
   useEffect(() => {
     if (!status) return;
@@ -189,6 +198,70 @@ export default function PageBody() {
       document.body.removeEventListener("click", handler);
     };
   }, []);
+
+  useEffect(() => {
+    try {
+      const st = window.history.state as Record<string, unknown> | null;
+      const pid =
+        st && typeof st[RESTORE_POST_ID_KEY] === "string"
+          ? (st[RESTORE_POST_ID_KEY] as string)
+          : null;
+      const ppgRaw =
+        st && st[RESTORE_POST_PAGE_KEY] !== undefined ? st[RESTORE_POST_PAGE_KEY] : null;
+      const ppg =
+        typeof ppgRaw === "number"
+          ? ppgRaw
+          : typeof ppgRaw === "string"
+            ? parseInt(ppgRaw, 10)
+            : NaN;
+
+      const uid =
+        st && typeof st[RESTORE_USER_ID_KEY] === "string"
+          ? (st[RESTORE_USER_ID_KEY] as string)
+          : null;
+      const upgRaw =
+        st && st[RESTORE_USER_PAGE_KEY] !== undefined ? st[RESTORE_USER_PAGE_KEY] : null;
+      const upg =
+        typeof upgRaw === "number"
+          ? upgRaw
+          : typeof upgRaw === "string"
+            ? parseInt(upgRaw, 10)
+            : NaN;
+
+      if ((tab === "posts" || tab === "replies") && pid && !Number.isNaN(ppg)) {
+        setPendingRestore({ kind: "post", id: pid, page: Math.max(1, (ppg as number) || 1) });
+      } else if ((tab === "followers" || tab === "followees") && uid && !Number.isNaN(upg)) {
+        setPendingRestore({ kind: "user", id: uid, page: Math.max(1, (upg as number) || 1) });
+      }
+    } catch {}
+  }, [tab]);
+
+  useEffect(() => {
+    if (!pendingRestore) return;
+    if (pendingRestore.page !== page) {
+      setQuery({ page: pendingRestore.page, tab, oldestFirst: oldestFirst ? "1" : undefined });
+      return;
+    }
+    if (listLoading) return;
+    const targetId =
+      pendingRestore.kind === "post" ? `post-${pendingRestore.id}` : `user-${pendingRestore.id}`;
+    const el = document.getElementById(targetId);
+    if (el) {
+      const absoluteTop = window.scrollY + el.getBoundingClientRect().top;
+      const desiredTop = Math.max(0, absoluteTop - window.innerHeight * 0.4);
+      window.scrollTo({ top: desiredTop });
+    }
+    setPendingRestore(null);
+    try {
+      const st = (window.history.state as Record<string, unknown>) || {};
+      const rest: Record<string, unknown> = { ...st };
+      delete rest[RESTORE_POST_ID_KEY];
+      delete rest[RESTORE_POST_PAGE_KEY];
+      delete rest[RESTORE_USER_ID_KEY];
+      delete rest[RESTORE_USER_PAGE_KEY];
+      window.history.replaceState(rest, "");
+    } catch {}
+  }, [pendingRestore, page, listLoading, oldestFirst, tab, setQuery]);
 
   async function handleLike(post: Post) {
     const oldCountLikes = post.countLikes ?? 0;
@@ -385,7 +458,19 @@ export default function PageBody() {
                   </li>
                 )}
                 {posts.map((post, idx) => (
-                  <li key={post.id}>
+                  <li
+                    key={post.id}
+                    id={`post-${post.id}`}
+                    onMouseDown={() => {
+                      try {
+                        const st = (window.history.state as Record<string, unknown>) || {};
+                        window.history.replaceState(
+                          { ...st, [RESTORE_POST_ID_KEY]: post.id, [RESTORE_POST_PAGE_KEY]: page },
+                          "",
+                        );
+                      } catch {}
+                    }}
+                  >
                     <PostCard
                       post={post}
                       avatarVersion={post.ownedBy === userId ? (updatedAt ?? undefined) : undefined}
@@ -425,10 +510,22 @@ export default function PageBody() {
             {tab === "followers" && (
               <ul className="space-y-4">
                 {followers.length === 0 && (
-                  <li className="text-gray-400 text-center">No followers found.</li>
+                  <li className="text-gray-400 text中心">No followers found.</li>
                 )}
                 {followers.map((user, idx) => (
-                  <li key={user.id}>
+                  <li
+                    key={user.id}
+                    id={`user-${user.id}`}
+                    onMouseDown={() => {
+                      try {
+                        const st = (window.history.state as Record<string, unknown>) || {};
+                        window.history.replaceState(
+                          { ...st, [RESTORE_USER_ID_KEY]: user.id, [RESTORE_USER_PAGE_KEY]: page },
+                          "",
+                        );
+                      } catch {}
+                    }}
+                  >
                     <UserCard
                       user={user}
                       focusUserId={userId}
@@ -442,10 +539,22 @@ export default function PageBody() {
             {tab === "followees" && (
               <ul className="space-y-4">
                 {followees.length === 0 && (
-                  <li className="text-gray-400 text-center">No followees found.</li>
+                  <li className="text-gray-400 text中心">No followees found.</li>
                 )}
                 {followees.map((user, idx) => (
-                  <li key={user.id}>
+                  <li
+                    key={user.id}
+                    id={`user-${user.id}`}
+                    onMouseDown={() => {
+                      try {
+                        const st = (window.history.state as Record<string, unknown>) || {};
+                        window.history.replaceState(
+                          { ...st, [RESTORE_USER_ID_KEY]: user.id, [RESTORE_USER_PAGE_KEY]: page },
+                          "",
+                        );
+                      } catch {}
+                    }}
+                  >
                     <UserCard
                       user={user}
                       focusUserId={userId}

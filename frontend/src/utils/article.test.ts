@@ -41,7 +41,7 @@ describe("article utils (normal cases)", () => {
   });
 
   test("makeArticleTextFromMarkdown", () => {
-    const md = "# Hello World\n- I am Nancy."
+    const md = "# Hello World\n- I am Nancy.";
     const text = makeArticleTextFromMarkdown(md);
     console.log(text);
     expect(text).toBe("Hello World\n\n- I am Nancy.");

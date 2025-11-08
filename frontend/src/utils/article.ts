@@ -27,9 +27,7 @@ export function makeArticleHtmlFromMarkdown(
   return mdRenderHtml(nodes, usePosAttrs, idPrefix);
 }
 
-export function makeArticleTextFromMarkdown(
-  mdText: string,
-) {
+export function makeArticleTextFromMarkdown(mdText: string) {
   const nodes = parseMarkdown(mdText);
   return mdRenderText(nodes);
 }

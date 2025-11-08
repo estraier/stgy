@@ -11,6 +11,14 @@ import UserCard from "@/components/UserCard";
 
 const TAB_VALUES = ["followees", "followers", "all"] as const;
 
+const RESTORE_ID_KEY = "lastUserId";
+const RESTORE_PAGE_KEY = "lastUserPage";
+
+type UserSearchQuery = {
+  query?: string;
+  nickname?: string;
+};
+
 export default function PageBody() {
   const status = useRequireLogin();
   const router = useRouter();
@@ -27,7 +35,10 @@ export default function PageBody() {
   }
   const { tab, page, qParam, oldestFirst } = getQuery();
 
-  const searchQueryObj = useMemo(() => (qParam ? parseUserSearchQuery(qParam) : {}), [qParam]);
+  const searchQueryObj: UserSearchQuery = useMemo(
+    () => (qParam ? (parseUserSearchQuery(qParam) as UserSearchQuery) : {}),
+    [qParam],
+  );
 
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
   const isSearchMode = useMemo(
@@ -43,6 +54,9 @@ export default function PageBody() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [hasNext, setHasNext] = useState(false);
+  const [pendingRestore, setPendingRestore] = useState<{ userId: string; page: number } | null>(
+    null,
+  );
 
   const setQuery = useCallback(
     (
@@ -50,12 +64,9 @@ export default function PageBody() {
     ) => {
       const sp = new URLSearchParams(searchParams);
       for (const key of ["tab", "page", "q", "oldestFirst"]) {
-        if (
-          updates[key as keyof typeof updates] !== undefined &&
-          updates[key as keyof typeof updates] !== null &&
-          updates[key as keyof typeof updates] !== ""
-        ) {
-          sp.set(key, String(updates[key as keyof typeof updates]));
+        const v = updates[key as keyof typeof updates];
+        if (v !== undefined && v !== null && v !== "") {
+          sp.set(key, String(v));
         } else {
           sp.delete(key);
         }
@@ -88,9 +99,8 @@ export default function PageBody() {
 
     let fetcher: Promise<User[]>;
     if (isSearchMode) {
-      if ("query" in searchQueryObj && searchQueryObj.query) params.query = searchQueryObj.query;
-      if ("nickname" in searchQueryObj && searchQueryObj.nickname)
-        params.nickname = searchQueryObj.nickname;
+      if (searchQueryObj.query) params.query = searchQueryObj.query;
+      if (searchQueryObj.nickname) params.nickname = searchQueryObj.nickname;
       fetcher = listUsers(params);
     } else if (effectiveTab === "followees") {
       fetcher = listFollowees(userId!, {
@@ -162,6 +172,45 @@ export default function PageBody() {
     };
   }, []);
 
+  useEffect(() => {
+    try {
+      const st = window.history.state as Record<string, unknown> | null;
+      const id =
+        st && typeof st[RESTORE_ID_KEY] === "string" ? (st[RESTORE_ID_KEY] as string) : null;
+      const pgRaw = st && RESTORE_PAGE_KEY in st ? (st[RESTORE_PAGE_KEY] as unknown) : null;
+      const pg =
+        typeof pgRaw === "number" ? pgRaw : typeof pgRaw === "string" ? parseInt(pgRaw, 10) : NaN;
+      if (id && !Number.isNaN(pg)) {
+        setPendingRestore({ userId: id, page: Math.max(1, (pg as number) || 1) });
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!pendingRestore) return;
+    if (pendingRestore.page !== page) {
+      setQuery({ page: pendingRestore.page });
+      return;
+    }
+    if (loading) return;
+    const el = document.getElementById(`user-${pendingRestore.userId}`);
+    if (el) {
+      const absoluteTop = window.scrollY + el.getBoundingClientRect().top;
+      const desiredTop = Math.max(0, absoluteTop - window.innerHeight * 0.4);
+      window.scrollTo({ top: desiredTop });
+    }
+    setPendingRestore(null);
+    try {
+      const st = (window.history.state as Record<string, unknown>) || {};
+      if (RESTORE_ID_KEY in st || RESTORE_PAGE_KEY in st) {
+        const rest: Record<string, unknown> = { ...st };
+        delete rest[RESTORE_ID_KEY];
+        delete rest[RESTORE_PAGE_KEY];
+        window.history.replaceState(rest, "");
+      }
+    } catch {}
+  }, [pendingRestore, page, loading, setQuery]);
+
   if (status.state !== "authenticated") return null;
 
   function handleOldestFirstToggle(checked: boolean) {
@@ -204,7 +253,7 @@ export default function PageBody() {
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
-        <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer ml-4 max-md:ml-1">
+        <label className="flex items中心 gap-1 text-sm text-gray-700 cursor-pointer ml-4 max-md:ml-1">
           <input
             type="checkbox"
             checked={oldestFirst}
@@ -229,7 +278,19 @@ export default function PageBody() {
         {loading && <div className="text-gray-500">Loading…</div>}
         <ul className="space-y-4">
           {users.map((user, idx) => (
-            <li key={user.id}>
+            <li
+              key={user.id}
+              id={`user-${user.id}`}
+              onMouseDown={() => {
+                try {
+                  const st = (window.history.state as Record<string, unknown>) || {};
+                  window.history.replaceState(
+                    { ...st, [RESTORE_ID_KEY]: user.id, [RESTORE_PAGE_KEY]: page },
+                    "",
+                  );
+                } catch {}
+              }}
+            >
               <UserCard
                 user={user}
                 focusUserId={userId}

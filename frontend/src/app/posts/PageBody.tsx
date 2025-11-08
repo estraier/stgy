@@ -27,6 +27,9 @@ type PostSearchQuery = {
   ownedBy?: string;
 };
 
+const RESTORE_ID_KEY = "lastPostId";
+const RESTORE_PAGE_KEY = "lastPage";
+
 export default function PageBody() {
   const status = useRequireLogin();
   const router = useRouter();
@@ -45,6 +48,9 @@ export default function PageBody() {
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replySubmitting, setReplySubmitting] = useState(false);
   const [resolvedOwnedBy, setResolvedOwnedBy] = useState<string | undefined>(undefined);
+  const [pendingRestore, setPendingRestore] = useState<{ postId: string; page: number } | null>(
+    null,
+  );
 
   function getQueryParams() {
     const sp = searchParams;
@@ -255,6 +261,45 @@ export default function PageBody() {
     };
   }, []);
 
+  useEffect(() => {
+    try {
+      const st = window.history.state as Record<string, unknown> | null;
+      const pid =
+        st && typeof st[RESTORE_ID_KEY] === "string" ? (st[RESTORE_ID_KEY] as string) : null;
+      const pgRaw = st && RESTORE_PAGE_KEY in st ? (st[RESTORE_PAGE_KEY] as unknown) : null;
+      const pg =
+        typeof pgRaw === "number" ? pgRaw : typeof pgRaw === "string" ? parseInt(pgRaw, 10) : NaN;
+      if (pid && !Number.isNaN(pg)) {
+        setPendingRestore({ postId: pid, page: Math.max(1, pg || 1) });
+      }
+    } catch {}
+  }, []);
+
+  useEffect(() => {
+    if (!pendingRestore) return;
+    if (pendingRestore.page !== page) {
+      setQuery({ page: pendingRestore.page });
+      return;
+    }
+    if (loading) return;
+    const el = document.getElementById(`post-${pendingRestore.postId}`);
+    if (el) {
+      const absoluteTop = window.scrollY + el.getBoundingClientRect().top;
+      const desiredTop = Math.max(0, absoluteTop - window.innerHeight * 0.4);
+      window.scrollTo({ top: desiredTop });
+    }
+    setPendingRestore(null);
+    try {
+      const st = (window.history.state as Record<string, unknown>) || {};
+      if (RESTORE_ID_KEY in st || RESTORE_PAGE_KEY in st) {
+        const rest: Record<string, unknown> = { ...st };
+        delete rest[RESTORE_ID_KEY];
+        delete rest[RESTORE_PAGE_KEY];
+        window.history.replaceState(rest, "");
+      }
+    } catch {}
+  }, [pendingRestore, page, loading, setQuery]);
+
   function clearError() {
     if (error) setError(null);
   }
@@ -449,7 +494,19 @@ export default function PageBody() {
         {loading && <div className="text-gray-500">Loading…</div>}
         <ul className="space-y-4">
           {posts.map((post, idx) => (
-            <li key={post.id}>
+            <li
+              key={post.id}
+              id={`post-${post.id}`}
+              onMouseDown={() => {
+                try {
+                  const st = (window.history.state as Record<string, unknown>) || {};
+                  window.history.replaceState(
+                    { ...st, [RESTORE_ID_KEY]: post.id, [RESTORE_PAGE_KEY]: page },
+                    "",
+                  );
+                } catch {}
+              }}
+            >
               <PostCard
                 post={post}
                 avatarVersion={post.ownedBy === userId ? (userUpdatedAt ?? undefined) : undefined}

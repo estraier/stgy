@@ -113,13 +113,16 @@ export default function PostCard({
 
   async function copyHtmlRich(html: string, plainFallback?: string) {
     try {
-      if (typeof navigator !== "undefined" && "clipboard" in navigator && typeof ClipboardItem !== "undefined") {
+      if (
+        typeof navigator !== "undefined" &&
+        "clipboard" in navigator &&
+        typeof ClipboardItem !== "undefined"
+      ) {
         const item = new ClipboardItem({
           "text/html": new Blob([html], { type: "text/html" }),
-          "text/plain": new Blob(
-            [plainFallback ?? html.replace(/<[^>]*>/g, "")],
-            { type: "text/plain" },
-          ),
+          "text/plain": new Blob([plainFallback ?? html.replace(/<[^>]*>/g, "")], {
+            type: "text/plain",
+          }),
         });
         await navigator.clipboard.write([item]);
         return;

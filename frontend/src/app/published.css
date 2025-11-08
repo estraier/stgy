@@ -528,7 +528,7 @@ html:has(.pub-theme-dark) {
   .pub-page main.site-container article.markdown-body * {
     color: #000 !important;
     background: none !important;
-    opacity: 1.0;
+    opacity: 1;
     border: none;
   }
   nav {
