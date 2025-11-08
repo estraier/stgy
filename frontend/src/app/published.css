@@ -515,3 +515,46 @@ html:has(.pub-theme-dark) {
 .pub-theme-kind-dark .line-numbers-rows > span:before {
   color: #6b7280;
 }
+
+@media print {
+  .pub-page *,
+  .pub-page main.pub-container *,
+  .pub-page main.pub-container h1.pub-site-name,
+  .pub-page main.pub-container div.pub-subtitle,
+  .pub-page main.site-container *,
+  .pub-page main.site-container h1.pub-site-name,
+  .pub-page main.site-container div.pub-subtitle,
+  .pub-page main.pub-container article.markdown-body *,
+  .pub-page main.site-container article.markdown-body * {
+    color: #000 !important;
+    background: none !important;
+    opacity: 1.0;
+    border: none;
+  }
+  nav {
+    display: none;
+  }
+  aside {
+    display: none;
+  }
+  .pub-page main.pub-container .pub-main div.date,
+  .pub-page main.site-container .pub-main div.date {
+    color: #333 !important;
+  }
+  .pub-page main.pub-container article.markdown-body,
+  .pub-page main.site-container article.markdown-body {
+    border: 1px solid #888 !important;
+  }
+  .pub-page main.pub-container article.markdown-body pre,
+  .pub-page main.site-container article.markdown-body pre {
+    border: 1px solid #bbb !important;
+  }
+  .pub-page main.pub-container article.markdown-body pre,
+  .pub-page main.site-container article.markdown-body pre {
+    border: 1px solid #bbb !important;
+  }
+  .pub-page main.pub-container article.markdown-body blockquote,
+  .pub-page main.site-container article.markdown-body blockquote {
+    border-left: 2px solid #ddd !important;
+  }
+}
