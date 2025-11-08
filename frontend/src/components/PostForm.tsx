@@ -1656,6 +1656,9 @@ export default function PostForm({
                   const f = dataUrlToFile(src, `pasted-image-${files.length + 1}`);
                   if (f) {
                     files.push(f);
+                    if (n.attrs !== undefined) {
+                      n.attrs["grid"] = true;
+                    }
                     imageNodes.push(n);
                   } else {
                     const attrs: MdAttrs = { ...(n.attrs ?? {}), src: "/data/no-image.svg" };
