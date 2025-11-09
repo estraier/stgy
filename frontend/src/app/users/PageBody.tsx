@@ -253,7 +253,7 @@ export default function PageBody() {
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
-        <label className="flex items中心 gap-1 text-sm text-gray-700 cursor-pointer ml-4 max-md:ml-1">
+        <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer ml-4 max-md:ml-1">
           <input
             type="checkbox"
             checked={oldestFirst}

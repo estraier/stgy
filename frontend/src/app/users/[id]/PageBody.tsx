@@ -510,7 +510,7 @@ export default function PageBody() {
             {tab === "followers" && (
               <ul className="space-y-4">
                 {followers.length === 0 && (
-                  <li className="text-gray-400 text中心">No followers found.</li>
+                  <li className="text-gray-400 text-center">No followers found.</li>
                 )}
                 {followers.map((user, idx) => (
                   <li
@@ -539,7 +539,7 @@ export default function PageBody() {
             {tab === "followees" && (
               <ul className="space-y-4">
                 {followees.length === 0 && (
-                  <li className="text-gray-400 text中心">No followees found.</li>
+                  <li className="text-gray-400 text-center">No followees found.</li>
                 )}
                 {followees.map((user, idx) => (
                   <li

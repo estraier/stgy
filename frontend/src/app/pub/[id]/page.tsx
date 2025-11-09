@@ -98,7 +98,7 @@ export default async function PubPostPage({ params }: Props) {
   const { id } = await params;
   try {
     const { post, pubcfg, article } = await getPubPageData(id);
-    const theme = Config.PUB_DESIGN_DARK_THEMES.includes(pubcfg.designTheme ?? "")
+    const theme = Config.PUB_DESIGN_THEMES.includes(pubcfg.designTheme ?? "")
       ? pubcfg.designTheme
       : "default";
     const themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
