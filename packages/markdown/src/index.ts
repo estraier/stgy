@@ -1567,6 +1567,97 @@ export function structurizeHtml(
   return workBody.innerHTML;
 }
 
+export function countHtmlElements(html: string): {
+  countBlockElements: number;
+  countInlineElements: number;
+  countOtherElements: number;
+} {
+  const { document: doc } = getDomRootOrThrow(html);
+  const blockTags = new Set([
+    "p",
+    "div",
+    "pre",
+    "blockquote",
+    "figure",
+    "figcaption",
+    "ul",
+    "ol",
+    "li",
+    "table",
+    "thead",
+    "tbody",
+    "tfoot",
+    "tr",
+    "td",
+    "th",
+    "section",
+    "article",
+    "aside",
+    "header",
+    "footer",
+    "nav",
+    "hr",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+  ]);
+  const inlineTags = new Set([
+    "a",
+    "span",
+    "b",
+    "strong",
+    "i",
+    "em",
+    "u",
+    "s",
+    "strike",
+    "del",
+    "code",
+    "kbd",
+    "mark",
+    "small",
+    "br",
+    "img",
+    "video",
+    "ruby",
+    "rb",
+    "rt",
+    "rp",
+    "sup",
+    "sub",
+    "wbr",
+    "q",
+    "cite",
+    "abbr",
+    "dfn",
+    "var",
+    "samp",
+    "bdi",
+    "bdo",
+    "label",
+    "input",
+    "textarea",
+    "select",
+    "option",
+    "button",
+  ]);
+  let countBlockElements = 0;
+  let countInlineElements = 0;
+  let countOtherElements = 0;
+  const all = Array.from(doc.querySelectorAll("*"));
+  for (const el of all) {
+    const tag = el.tagName.toLowerCase();
+    if (tag === "html" || tag === "head" || tag === "body") continue;
+    if (blockTags.has(tag)) countBlockElements++;
+    else if (inlineTags.has(tag)) countInlineElements++;
+    else countOtherElements++;
+  }
+  return { countBlockElements, countInlineElements, countOtherElements };
+}
+
 export type MdRewriteRule = {
   pattern: RegExp;
   replacement: string;

@@ -2,6 +2,7 @@ import {
   parseMarkdown,
   parseHtml,
   structurizeHtml,
+  countHtmlElements,
   mdGroupImageGrid,
   MdMediaRewriteOptions,
   mdRewriteLinkUrls,
@@ -795,6 +796,45 @@ describe("structurizeHtml", () => {
     expect(structurizeHtml(html)).toBe(
       '<h1><span style="font-size:20pt">abc</span></h1><p><span>subtitle</span></p><h2>h2</h2><h5>h5</h5><h6>h6</h6>',
     );
+  });
+});
+
+describe("countHtmlElements", () => {
+  it("empty body", () => {
+    const html = "";
+    expect(countHtmlElements(html)).toStrictEqual({
+      countBlockElements: 0,
+      countInlineElements: 0,
+      countOtherElements: 0,
+    });
+  });
+
+  it("simple text", () => {
+    const html = "<meta charset='utf-8'><strong>foo</strong>";
+    expect(countHtmlElements(html)).toStrictEqual({
+      countBlockElements: 0,
+      countInlineElements: 1,
+      countOtherElements: 1,
+    });
+  });
+
+  it("complex text", () => {
+    const html = "<meta charset='utf-8'><strong>foo</strong> <span>bar</span>";
+    expect(countHtmlElements(html)).toStrictEqual({
+      countBlockElements: 0,
+      countInlineElements: 2,
+      countOtherElements: 1,
+    });
+  });
+
+  it("structured text", () => {
+    const html =
+      "<meta charset='utf-8'><b><p><strong>foo</strong> <span>bar</span></p></b>";
+    expect(countHtmlElements(html)).toStrictEqual({
+      countBlockElements: 1,
+      countInlineElements: 3,
+      countOtherElements: 1,
+    });
   });
 });
 
