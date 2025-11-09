@@ -16,31 +16,26 @@ export const viewport: Viewport = {
   themeColor: "#f8f8ff",
 };
 
-type FontSpec = { family: string; weights?: number[] };
-
-function buildGoogleFontsHref(fonts: FontSpec[]) {
-  const families = fonts
-    .map((f) => {
-      const name = f.family.trim().split(/\s+/).join("+");
-      const weights =
-        f.weights && f.weights.length
-          ? `:wght@${Array.from(new Set(f.weights)).sort((a, b) => a - b).join(";")}`
-          : "";
-      return `family=${name}${weights}`;
-    })
+function buildGoogleFontsHref(
+  families: string[],
+  weights: number[] = [300, 400, 500, 600, 700, 800, 900],
+  display: "auto" | "block" | "swap" | "fallback" | "optional" = "swap",
+) {
+  const famParam = families
+    .map((f) => `family=${f.trim().replace(/\s+/g, "+")}:wght@${weights.join(";")}`)
     .join("&");
-  return `https://fonts.googleapis.com/css2?${families}&display=swap`;
+  return `https://fonts.googleapis.com/css2?${famParam}&display=${display}`;
 }
 
-const FONT_SPECS: FontSpec[] = [
-  { family: "IBM Plex Sans JP", weights: [400, 700] },
-  { family: "Noto Sans JP", weights: [400, 700] },
-  { family: "Inconsolata", weights: [400, 700] },
-  { family: "Source Code Pro", weights: [400, 700] },
-  { family: "Klee One", weights: [400, 700] },
+const FONT_FAMILIES = [
+  "IBM Plex Sans JP",
+  "Noto Sans JP",
+  "Inconsolata",
+  "Source Code Pro",
+  "Klee One",
 ];
 
-const GOOGLE_FONTS_HREF = buildGoogleFontsHref(FONT_SPECS);
+const GOOGLE_FONTS_HREF = buildGoogleFontsHref(FONT_FAMILIES);
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
