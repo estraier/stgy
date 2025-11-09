@@ -916,4 +916,12 @@ html:has(.pub-theme-blackboard) {
   .pub-page main.site-container article.markdown-body blockquote {
     border-left: 2px solid #ddd !important;
   }
+  .pub-page main.pub-container article.markdown-body hr[data-hr-level="2"],
+  .pub-page main.site-container article.markdown-body hr[data-hr-level="2"] {
+    border-bottom: 1px solid #bbb;
+  }
+  .pub-page main.pub-container article.markdown-body hr[data-hr-level="3"],
+  .pub-page main.site-container article.markdown-body hr[data-hr-level="3"] {
+    border-bottom: 1px solid #888;
+  }
 }
