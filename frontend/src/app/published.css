@@ -310,7 +310,7 @@ html:has(.pub-theme-whiteboard) {
 }
 .pub-theme-whiteboard .pub-container .pub-sidebar article.post-content-excerpt:hover,
 .pub-theme-whiteboard .site-container article.post-content-excerpt:hover {
-  border-color: #084 !important;
+  border-color: #048 !important;
 }
 .pub-theme-whiteboard .pub-container .markdown-body,
 .pub-theme-whiteboard .site-container .markdown-body,
