@@ -110,7 +110,7 @@ body {
   white-space: pre-wrap;
   border-radius: 0.5ex;
   font-family: "Inconsolata", "Source Code Pro", monospace;
-  font-size: 90%;
+  font-size: 95%;
   border: 1px solid #eee;
 }
 .markdown-body pre[data-pre-mode]::before {
@@ -344,11 +344,12 @@ body {
   text-decoration: underline;
 }
 .markdown-body code {
-  font-size: 95%;
+  padding: 0 0.3ex;
   font-family: "Inconsolata", "Source Code Pro", monospace;
   background: #eee;
 }
 .markdown-body pre code {
+  padding: unset;
   font-size: unset;
   background: unset;
   line-height: 1.3;

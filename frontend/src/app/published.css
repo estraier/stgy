@@ -372,8 +372,11 @@ html:has(.pub-theme-whiteboard) {
   color: #888 !important;
 }
 .pub-theme-whiteboard .markdown-body code {
-  background-color: transparent !important;
   color: #060 !important;
+  background-color: #f8f8f8 !important;
+}
+.pub-theme-whiteboard .markdown-body pre code {
+  background-color: unset !important;
 }
 .pub-theme-whiteboard .markdown-body mark {
   background-color: #ff8 !important;
@@ -548,8 +551,11 @@ html:has(.pub-theme-dark) {
   color: #bbb !important;
 }
 .pub-theme-dark .markdown-body code {
-  background-color: transparent !important;
   color: #bfb !important;
+  background-color: #111 !important;
+}
+.pub-theme-dark .markdown-body pre code {
+  background-color: unset !important;
 }
 .pub-theme-dark .markdown-body mark {
   background-color: #053 !important;
@@ -690,13 +696,13 @@ html:has(.pub-theme-blackboard) {
   color: #ddd !important;
 }
 .pub-theme-blackboard .pub-pager .pager-btn {
-  background-color: #676 !important;
-  border-color: #565 !important;
-  color: #eee !important;
+  background-color: #354 !important;
+  border-color: #243 !important;
+  color: #ddd !important;
 }
 .pub-theme-blackboard .pub-pager .pager-btn:hover {
-  background-color: #686 !important;
-  border-color: #565 !important;
+  background-color: #364 !important;
+  border-color: #243 !important;
   color: #efe !important;
 }
 .pub-theme-blackboard .pub-pager .pager-btn.disabled {
@@ -730,8 +736,11 @@ html:has(.pub-theme-blackboard) {
   color: #bbb !important;
 }
 .pub-theme-blackboard .markdown-body code {
-  background-color: transparent !important;
   color: #9e9 !important;
+  background-color: #011;
+}
+.pub-theme-blackboard .markdown-body pre code {
+  background-color: unset !important;
 }
 .pub-theme-blackboard .markdown-body mark {
   background-color: #053 !important;
@@ -746,7 +755,7 @@ html:has(.pub-theme-blackboard) {
   background-color: transparent !important;
 }
 .pub-theme-blackboard .markdown-body pre {
-  background-color: #001111 !important;
+  background-color: #011 !important;
   border-color: #333 !important;
   color: #f4f4f8 !important;
 }
