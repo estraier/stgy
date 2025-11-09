@@ -776,7 +776,9 @@ describe("structurizeHtml", () => {
 
   it("restructure list", () => {
     const html = "<ul><li>1</li><ul><li>1-1</li></ul><li>2</li></ul>";
-    expect(structurizeHtml(html)).toBe("<ul><li>1<ul><li>1-1</li></ul></li><li>2</li></ul>");
+    expect(structurizeHtml(html)).toBe(
+      "<ul><li>1<ul><li>1-1</li></ul></li><li>2</li></ul>",
+    );
   });
 
   it("promote headers with demotion", () => {

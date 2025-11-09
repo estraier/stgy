@@ -138,9 +138,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
 
     // propagate design to links
     const siteHrefBase = `/pub/sites/${post.ownedBy}`;
-    const siteHref = design
-      ? `${siteHrefBase}?design=${encodeURIComponent(design)}`
-      : siteHrefBase;
+    const siteHref = design ? `${siteHrefBase}?design=${encodeURIComponent(design)}` : siteHrefBase;
 
     const locale = post.locale || pubcfg.locale || "und";
     const newerHref = post.newerPostId

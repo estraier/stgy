@@ -1523,14 +1523,22 @@ export function structurizeHtml(
           const tag = el.tagName.toLowerCase();
           if (tag === "ul" || tag === "ol") {
             let p: Node | null = el.previousSibling;
-            while (p && (p.nodeType !== Node.ELEMENT_NODE || (p as Element).tagName.toLowerCase() !== "li")) {
+            while (
+              p &&
+              (p.nodeType !== Node.ELEMENT_NODE ||
+                (p as Element).tagName.toLowerCase() !== "li")
+            ) {
               if (onlyWhitespaceText(p)) {
                 p = p.previousSibling;
                 continue;
               }
               break;
             }
-            if (p && p.nodeType === Node.ELEMENT_NODE && (p as Element).tagName.toLowerCase() === "li") {
+            if (
+              p &&
+              p.nodeType === Node.ELEMENT_NODE &&
+              (p as Element).tagName.toLowerCase() === "li"
+            ) {
               (p as Element).appendChild(el);
             }
           }
