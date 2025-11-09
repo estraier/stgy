@@ -35,7 +35,7 @@ import {
   Link as LinkIcon,
   X as CloseIcon,
 } from "lucide-react";
-import { structurizeHtml, parseHtml, mdRenderMarkdown } from "stgy-markdown";
+import { structurizeHtml, parseHtml, mdRenderMarkdown, countHtmlElements } from "stgy-markdown";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import ImageUploadDialog, { DialogFileItem, UploadResult } from "@/components/ImageUploadDialog";
 import { Config } from "@/config";
@@ -445,6 +445,7 @@ export default function PostForm({
   const [showPasteDialog, setShowPasteDialog] = useState(false);
   const pasteNodesRef = useRef<MdNode[] | null>(null);
   const pasteImageNodesRef = useRef<MdElementNode[] | null>(null);
+  const pasteHasBlockRef = useRef<boolean>(false);
 
   function cryptoRandomId() {
     if (typeof crypto !== "undefined" && typeof (crypto as Crypto).randomUUID === "function") {
@@ -1585,14 +1586,17 @@ export default function PostForm({
           el.attrs = attrs;
         }
       }
-      const md = mdRenderMarkdown(nodes);
-      insertAtCursor(md);
+      const md0 = mdRenderMarkdown(nodes);
+      const hasBlocks = pasteHasBlockRef.current;
+      const md = hasBlocks ? md0 : md0.replace(/^\n+/, "").replace(/\n+$/, "");
+      if (hasBlocks) insertAtCursor(md);
+      else insertInlineAtCursor(md);
       setShowPasteDialog(false);
       setPasteDialogFiles(null);
       pasteNodesRef.current = null;
       pasteImageNodesRef.current = null;
     },
-    [insertAtCursor],
+    [insertAtCursor, insertInlineAtCursor],
   );
 
   const handlePasteDialogClose = useCallback(() => {
@@ -1603,14 +1607,17 @@ export default function PostForm({
         const attrs: MdAttrs = { ...(el.attrs ?? {}), src: "/data/no-image.svg" };
         el.attrs = attrs;
       }
-      const md = mdRenderMarkdown(nodes);
-      insertAtCursor(md);
+      const md0 = mdRenderMarkdown(nodes);
+      const hasBlocks = pasteHasBlockRef.current;
+      const md = hasBlocks ? md0 : md0.replace(/^\n+/, "").replace(/\n+$/, "");
+      if (hasBlocks) insertAtCursor(md);
+      else insertInlineAtCursor(md);
     }
     setShowPasteDialog(false);
     setPasteDialogFiles(null);
     pasteNodesRef.current = null;
     pasteImageNodesRef.current = null;
-  }, [insertAtCursor]);
+  }, [insertAtCursor, insertInlineAtCursor]);
 
   const handlePasteToUpload = useCallback(
     (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
@@ -1633,6 +1640,14 @@ export default function PostForm({
       }
       const htmlRaw = dt.getData("text/html");
       if (htmlRaw) {
+        const { countBlockElements, countInlineElements } = countHtmlElements(htmlRaw);
+        const meaningful = countBlockElements + countInlineElements;
+        if (meaningful < 2) {
+          e.preventDefault();
+          const plain = dt.getData("text/plain") || "";
+          if (plain) insertInlineAtCursor(plain);
+          return;
+        }
         e.preventDefault();
         const html = structurizeHtml(htmlRaw);
         const nodes = (parseHtml(html) as unknown as MdNode[]) ?? [];
@@ -1671,9 +1686,11 @@ export default function PostForm({
           }
         };
         walk(Array.isArray(nodes) ? nodes : []);
+        const hasBlocks = countBlockElements > 0;
         if (files.length > 0 && userId) {
           pasteNodesRef.current = nodes;
           pasteImageNodesRef.current = imageNodes;
+          pasteHasBlockRef.current = hasBlocks;
           const limited = files.slice(0, Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE);
           const dialogFiles: DialogFileItem[] = limited.map((f, _i) => ({
             id: cryptoRandomId(),
@@ -1692,13 +1709,15 @@ export default function PostForm({
           setPasteDialogFiles(dialogFiles);
           setShowPasteDialog(true);
         } else {
-          const md = mdRenderMarkdown(nodes);
-          insertAtCursor(md);
+          const md0 = mdRenderMarkdown(nodes);
+          const md = hasBlocks ? md0 : md0.replace(/^\n+/, "").replace(/\n+$/, "");
+          if (hasBlocks) insertAtCursor(md);
+          else insertInlineAtCursor(md);
         }
         return;
       }
     },
-    [dataUrlToFile, insertAtCursor, userId],
+    [dataUrlToFile, insertAtCursor, insertInlineAtCursor, userId],
   );
 
   return (

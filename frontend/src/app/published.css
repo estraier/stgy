@@ -362,7 +362,9 @@ html:has(.pub-theme-whiteboard) {
 .pub-theme-whiteboard .markdown-body h4,
 .pub-theme-whiteboard .markdown-body h5,
 .pub-theme-whiteboard .markdown-body h6 {
-  text-shadow: 0 0.01em 0 currentColor, 0 -0.01em 0 currentColor;
+  text-shadow:
+    0 0.01em 0 currentColor,
+    0 -0.01em 0 currentColor;
 }
 .pub-theme-whiteboard .markdown-body a {
   color: #06c !important;
@@ -372,7 +374,9 @@ html:has(.pub-theme-whiteboard) {
 }
 .pub-theme-whiteboard .markdown-body strong {
   color: #e10 !important;
-  text-shadow: 0 0.01em 0 currentColor, 0 -0.01em 0 currentColor;
+  text-shadow:
+    0 0.01em 0 currentColor,
+    0 -0.01em 0 currentColor;
 }
 .pub-theme-whiteboard .markdown-body em {
   color: #c50 !important;
@@ -738,7 +742,9 @@ html:has(.pub-theme-blackboard) {
 .pub-theme-blackboard .markdown-body h4,
 .pub-theme-blackboard .markdown-body h5,
 .pub-theme-blackboard .markdown-body h6 {
-  text-shadow: 0 0.01em 0 currentColor, 0 -0.01em 0 currentColor;
+  text-shadow:
+    0 0.01em 0 currentColor,
+    0 -0.01em 0 currentColor;
 }
 .pub-theme-blackboard .markdown-body a {
   color: #7bf !important;
@@ -748,7 +754,9 @@ html:has(.pub-theme-blackboard) {
 }
 .pub-theme-blackboard .markdown-body strong {
   color: #f9b !important;
-  text-shadow: 0 0.01em 0 currentColor, 0 -0.01em 0 currentColor;
+  text-shadow:
+    0 0.01em 0 currentColor,
+    0 -0.01em 0 currentColor;
 }
 .pub-theme-blackboard .markdown-body em {
   color: #fc8 !important;
