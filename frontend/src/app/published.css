@@ -609,10 +609,10 @@ html:has(.pub-theme-dark) {
   color: #cfe0ff !important;
 }
 .pub-theme-dark .markdown-body .toc a {
-  color: #6aa8ff !important;
+  color: #9cf !important;
 }
 .pub-theme-dark .markdown-body .toc a:hover {
-  color: #8bbcff !important;
+  color: #7cf !important;
 }
 .pub-theme-dark .markdown-body hr[data-hr-level="2"] {
   border-top-color: #bbb !important;
