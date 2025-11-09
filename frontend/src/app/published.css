@@ -360,13 +360,13 @@ html:has(.pub-theme-whiteboard) {
   color: #06f !important;
 }
 .pub-theme-whiteboard .markdown-body strong {
-  color: #c10 !important;
+  color: #e10 !important;
 }
 .pub-theme-whiteboard .markdown-body em {
-  color: #b30 !important;
+  color: #c50 !important;
 }
 .pub-theme-whiteboard .markdown-body u {
-  text-decoration-color: #c10 !important;
+  text-decoration-color: #e10 !important;
 }
 .pub-theme-whiteboard .markdown-body s {
   color: #888 !important;
@@ -724,13 +724,13 @@ html:has(.pub-theme-blackboard) {
   color: #4af !important;
 }
 .pub-theme-blackboard .markdown-body strong {
-  color: #f8b !important;
+  color: #f9b !important;
 }
 .pub-theme-blackboard .markdown-body em {
   color: #fc8 !important;
 }
 .pub-theme-blackboard .markdown-body u {
-  text-decoration-color: #f8b !important;
+  text-decoration-color: #f9b !important;
 }
 .pub-theme-blackboard .markdown-body s {
   color: #bbb !important;
