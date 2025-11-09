@@ -18,7 +18,7 @@ export const viewport: Viewport = {
 
 function buildGoogleFontsHref(
   families: string[],
-  weights: number[] = [300, 400, 500, 600, 700, 800, 900],
+  weights: number[] = [400, 500, 600, 700, 800],
   display: "auto" | "block" | "swap" | "fallback" | "optional" = "swap",
 ) {
   const famParam = families
