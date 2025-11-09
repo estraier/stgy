@@ -11,7 +11,7 @@ body {
   background: #f8f8ff;
   color: #000;
   font-size: 16px;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: "IBM Plex Sans JP", "Noto Sans JP", Arial, Helvetica, sans-serif;
   word-break: break-all;
 }
 
@@ -109,7 +109,7 @@ body {
   background: #f7f7fa;
   white-space: pre-wrap;
   border-radius: 0.5ex;
-  font-family: "JetBrains Mono", "Menlo", "Monaco", "Consolas", monospace;
+  font-family: "Inconsolata", "Source Code Pro", monospace;
   font-size: 90%;
   border: 1px solid #eee;
 }
@@ -162,7 +162,7 @@ body {
 .markdown-body pre[data-pre-mode="natural"] {
   line-height: 1.5;
   background: none;
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: "IBM Plex Sans JP", "Noto Sans JP", Arial, Helvetica, sans-serif;
   font-size: 100%;
   border: none;
   border-left: 3px solid #eee;
@@ -345,7 +345,7 @@ body {
 }
 .markdown-body code {
   font-size: 95%;
-  font-family: "JetBrains Mono", "Menlo", "Monaco", "Consolas", monospace;
+  font-family: "Inconsolata", "Source Code Pro", monospace;
   background: #eee;
 }
 .markdown-body pre code {

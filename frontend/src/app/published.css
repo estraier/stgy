@@ -1,5 +1,4 @@
 .pub-page {
-  font-family: "Zen Kurenaido", sans-serif;
   min-height: 100dvh;
   background: #eee;
   padding-bottom: 3ex;
@@ -321,6 +320,7 @@ html:has(.pub-theme-whiteboard) {
   background-color: #fff !important;
   border: 3px solid #888 !important;
   color: #111 !important;
+  font-family: "Klee One";
 }
 .pub-theme-whiteboard .pub-container .pub-site-name,
 .pub-theme-whiteboard .site-container .pub-site-name,
@@ -678,6 +678,7 @@ html:has(.pub-theme-blackboard) {
   background-color: #001a1a !important;
   border: 3px solid #888 !important;
   color: #f8f8ff !important;
+  font-family: "Klee One";
 }
 .pub-theme-blackboard .pub-container .pub-site-name,
 .pub-theme-blackboard .site-container .pub-site-name,
@@ -751,7 +752,7 @@ html:has(.pub-theme-blackboard) {
 }
 .pub-theme-blackboard .markdown-body pre[data-pre-mode="natural"] {
   background-color: transparent !important;
-  border-left-color: #111 !important;
+  border-left-color: #555 !important;
   color: #eee !important;
 }
 .pub-theme-blackboard .markdown-body th,

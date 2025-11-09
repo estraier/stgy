@@ -8,7 +8,7 @@ tags: sample
 content:<<____EOF____
 # Tkrzwの各種言語バインディング
 
-DBMライブラリであるTkrzwは様々な言語のバンディングをサポートしている。C++、C、Java、Python、Ruby、Goにおける最も簡単なサンプルコードを個々に示す。
+DBMライブラリであるTkrzwは様々な言語のバインディングをサポートしている。C++、C、Java、Python、Ruby、Goにおける最も簡単なサンプルコードを個々に示す。
 
 ## C++
 

@@ -1,6 +1,5 @@
 import "./globals.css";
 import "./published.css";
-import Head from "next/head";
 import type { Metadata, Viewport } from "next";
 
 export const metadata: Metadata = {
@@ -17,17 +16,23 @@ export const viewport: Viewport = {
   themeColor: "#f8f8ff",
 };
 
+const GOOGLE_FONTS: string[] = [
+  "family=IBM Plex Sans JP:wght@400;700",
+  "family=Noto+Sans+JP:wght@400;700",
+  "family=Inconsolata:wght@400;700",
+  "family=Source Code Pro:wght@400;700",
+  "family=Klee One:wght@400;700",
+];
+const GOOGLE_FONTS_HREF = `https://fonts.googleapis.com/css2?${GOOGLE_FONTS.join("&")}&display=swap`;
+
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   return (
     <html lang="mul">
-      <Head>
+      <head>
         <link rel="preconnect" href="https://fonts.googleapis.com" />
-        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="" />
-        <link
-          href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@400;700&display=swap"
-          rel="stylesheet"
-        />
-      </Head>
+        <link rel="preconnect" href="https://fonts.gstatic.com" crossOrigin="anonymous" />
+        <link href={GOOGLE_FONTS_HREF} rel="stylesheet" />
+      </head>
       <body lang="en" className="min-h-screen bg-white text-slate-900">
         {children}
       </body>
