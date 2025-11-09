@@ -1,5 +1,6 @@
 id: 0002000000000202
 ownedBy: 0001000000000202
+publishedAt: 2025-02-01 00:10:01+00
 locale: ja
 allowLikes: true
 allowReplies: true

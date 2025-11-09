@@ -1,0 +1,16 @@
+id: 0002000000000203
+ownedBy: 0001000000000203
+publishedAt: 2025-02-01 00:10:01+00
+locale: ja
+allowLikes: true
+allowReplies: true
+content:<<____EOF____
+# イーハトーヴォのすきとおった風
+私の名前は**中野**です。憂鬱な魑魅魍魎。永字八法。LinuxはUNIXではない。
+Bill Green had a **girl friend**.  She had deep ::blue eyes::. He loved her very much.
+Back to the U.S.S.R. (123+456) * 78 = ::45162::
+ギリシャ文字はΑΒΓΔΕ、キリル文字はАБВГД。記号は♪と♡。
+这是要去哪啊？鱼与水的交汇。
+ゆく河の流れは絶えずして、しかも::もとの水にあらず::。
+よどみに浮かぶ**うたかた**は、かつ消えかつ結びて、久しくとどまりたるためしなし。
+____EOF____
