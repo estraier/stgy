@@ -83,20 +83,35 @@ export async function generateMetadata({
 
 type Props = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ page?: string }>;
+  searchParams: Promise<{ page?: string; design?: string }>;
 };
 
 export default async function PubSitePage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { page: pageStr } = await searchParams;
+  const { page: pageStr, design: designRaw } = await searchParams;
   const page = Math.max(1, Number.parseInt(pageStr ?? "1", 10) || 1);
+  const design = Array.isArray(designRaw) ? designRaw[0] : designRaw;
 
   try {
     const { pubcfg, intro } = await getPubSiteData(id);
-    const theme = Config.PUB_DESIGN_DARK_THEMES.includes(pubcfg.designTheme ?? "")
+
+    // base theme from config
+    const baseTheme = Config.PUB_DESIGN_THEMES.includes(pubcfg.designTheme ?? "")
       ? pubcfg.designTheme
       : "default";
-    const themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
+
+    // allow ?design= to override theme or just the light/dark kind
+    let theme = baseTheme;
+    let themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
+    if (design) {
+      const d = String(design).toLowerCase();
+      if (Array.isArray(Config.PUB_DESIGN_THEMES) && Config.PUB_DESIGN_THEMES.includes(d)) {
+        theme = d;
+        themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
+      } else if (d === "dark" || d === "light") {
+        themeKind = d as "dark" | "light";
+      }
+    }
 
     const offset = (page - 1) * Config.PUB_POSTS_PAGE_SIZE;
     const posts = await listPubPostsByUser(id, {
@@ -107,9 +122,18 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const hasPrev = page > 1;
     const hasNext = posts.length > Config.PUB_POSTS_PAGE_SIZE;
     const items = posts.slice(0, Config.PUB_POSTS_PAGE_SIZE);
-    const baseHref = `/pub/sites/${id}`;
-    const newerHref = `${baseHref}?page=${page - 1}`;
-    const olderHref = `${baseHref}?page=${page + 1}`;
+
+    // helpers to build hrefs while preserving ?design=
+    const siteRoot = `/pub/sites/${id}`;
+    const baseHref = design ? `${siteRoot}?design=${encodeURIComponent(design)}` : siteRoot;
+    const buildPageHref = (p: number) => {
+      const qs = new URLSearchParams();
+      qs.set("page", String(p));
+      if (design) qs.set("design", String(design));
+      return `${siteRoot}?${qs.toString()}`;
+    };
+    const newerHref = buildPageHref(page - 1);
+    const olderHref = buildPageHref(page + 1);
 
     const locale = pubcfg.locale || "und";
     const siteIntroHtml = intro.html;
@@ -141,7 +165,9 @@ export default async function PubSitePage({ params, searchParams }: Props) {
               </section>
               <section className="site-recent">
                 {items.map((r, idx) => {
-                  const postHref = `/pub/${r.id}`;
+                  const postHref = `/pub/${r.id}${
+                    design ? `?design=${encodeURIComponent(design)}` : ""
+                  }`;
                   const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`);
                   const publishedAtDate = new Date(r.publishedAt ?? "");
                   return (

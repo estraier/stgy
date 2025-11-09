@@ -18,7 +18,7 @@ import type { Metadata } from "next";
 type PageParams = { id: string };
 
 const getPubPageData = cache(async (id: string) => {
-  const post = await getPubPost(id); // throws Error(message) when not found
+  const post = await getPubPost(id);
   const pubcfg = await getPubConfig(post.ownedBy);
   const article = makePubArticleHtmlFromMarkdown(post.content);
   return { post, pubcfg, article };
@@ -92,19 +92,39 @@ export async function generateMetadata({
   }
 }
 
-type Props = { params: Promise<{ id: string }> };
+type Props = { params: Promise<{ id: string }>; searchParams?: Promise<{ design?: string }> };
 
-export default async function PubPostPage({ params }: Props) {
+export default async function PubPostPage({ params, searchParams }: Props) {
   const { id } = await params;
+  const qs = (await searchParams) || {};
+  const designRaw = qs.design;
+  const design = Array.isArray(designRaw) ? designRaw[0] : designRaw;
+
   try {
     const { post, pubcfg, article } = await getPubPageData(id);
-    const theme = Config.PUB_DESIGN_THEMES.includes(pubcfg.designTheme ?? "")
+
+    // base theme from config
+    const baseTheme = Config.PUB_DESIGN_THEMES.includes(pubcfg.designTheme ?? "")
       ? pubcfg.designTheme
       : "default";
-    const themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
+
+    // allow ?design= to override theme or only light/dark kind
+    let theme = baseTheme;
+    let themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
+    if (design) {
+      const d = String(design).toLowerCase();
+      if (Array.isArray(Config.PUB_DESIGN_THEMES) && Config.PUB_DESIGN_THEMES.includes(d)) {
+        theme = d;
+        themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
+      } else if (d === "dark" || d === "light") {
+        themeKind = d as "dark" | "light";
+      }
+    }
+
     const siteIntroHtml = makeSnippetHtmlFromMarkdown(
       pubcfg.introduction.trim() || "my publications",
     );
+
     let recent: Awaited<ReturnType<typeof listPubPostsByUser>> = [];
     if (pubcfg.showSideRecent) {
       const desired = Config.PUB_SIDE_RECENT_POSTS_SIZE;
@@ -115,8 +135,20 @@ export default async function PubPostPage({ params }: Props) {
       });
       recent = recent.filter((r) => String(r.id) !== String(post.id)).slice(0, desired);
     }
-    const siteHref = `/pub/sites/${post.ownedBy}`;
+
+    // propagate design to links
+    const siteHrefBase = `/pub/sites/${post.ownedBy}`;
+    const siteHref = design
+      ? `${siteHrefBase}?design=${encodeURIComponent(design)}`
+      : siteHrefBase;
+
     const locale = post.locale || pubcfg.locale || "und";
+    const newerHref = post.newerPostId
+      ? `/pub/${post.newerPostId}${design ? `?design=${encodeURIComponent(design)}` : ""}`
+      : "";
+    const olderHref = post.olderPostId
+      ? `/pub/${post.olderPostId}${design ? `?design=${encodeURIComponent(design)}` : ""}`
+      : "";
 
     return (
       <div className={`pub-page pub-theme-${theme} pub-theme-kind-${themeKind}`}>
@@ -150,7 +182,7 @@ export default async function PubPostPage({ params }: Props) {
                 <nav className="pub-pager" aria-label="Pagination">
                   <div className="pager-row">
                     {post.newerPostId ? (
-                      <a className="pager-btn" href={`/pub/${post.newerPostId}`}>
+                      <a className="pager-btn" href={newerHref}>
                         ← Newer
                       </a>
                     ) : (
@@ -159,7 +191,7 @@ export default async function PubPostPage({ params }: Props) {
                       </span>
                     )}
                     {post.olderPostId ? (
-                      <a className="pager-btn" href={`/pub/${post.olderPostId}`}>
+                      <a className="pager-btn" href={olderHref}>
                         Older →
                       </a>
                     ) : (
@@ -189,7 +221,9 @@ export default async function PubPostPage({ params }: Props) {
                   <section className="pub-side-recent">
                     <h2 className="side-header">Recent posts</h2>
                     {recent.map((r, idx) => {
-                      const postHref = `/pub/${r.id}`;
+                      const postHref = `/pub/${r.id}${
+                        design ? `?design=${encodeURIComponent(design)}` : ""
+                      }`;
                       const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`);
                       return (
                         <LinkDiv key={String(r.id)} href={postHref} className="link-div">
