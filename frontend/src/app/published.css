@@ -1,7 +1,7 @@
 .pub-page {
   min-height: 100dvh;
   background: #eee;
-  padding-bottom: 3ex;
+  padding-bottom: 1.5em;
 }
 html:has(.pub-container),
 html:has(.site-container) {
@@ -16,7 +16,7 @@ html:has(.site-container) {
 .sh-logo {
   color: #04f;
   font-weight: bold;
-  margin-left: 1ex;
+  margin-left: 0.5em;
   letter-spacing: -0.5px;
   transform: scaleX(1.5);
   opacity: 0.7;
@@ -25,7 +25,7 @@ html:has(.site-container) {
   opacity: 1;
 }
 .sh-nav .counts {
-  margin-right: 1ex;
+  margin-right: 0.5em;
   font-size: 85%;
   opacity: 0.8;
 }
@@ -36,15 +36,15 @@ html:has(.site-container) {
   color: #36e;
 }
 .sh-nickname {
-  max-width: 12ex;
+  max-width: 6em;
 }
 .sh-nickname,
 .sh-button {
-  padding: 0.3ex 0.8ex;
+  padding: 0.15em 0.4em;
   color: #246;
   background: #ddd;
   border: solid 1px #aaa;
-  border-radius: 0.5ex;
+  border-radius: 0.25em;
   text-decoration: none;
   opacity: 0.5;
 }
@@ -56,13 +56,13 @@ html:has(.site-container) {
 .pub-container,
 .site-container {
   background: #f8f8ff;
-  max-width: 96ex;
-  margin-top: 3ex;
+  max-width: 48em;
+  margin-top: 1.5em;
   margin-left: auto;
   margin-right: auto;
-  padding: 0.5ex;
+  padding: 0.25em;
   border: 1px solid #bbc;
-  border-radius: 3ex;
+  border-radius: 1.5em;
 }
 .pub-container .pub-site-name,
 .site-container .pub-site-name {
@@ -70,15 +70,15 @@ html:has(.site-container) {
   font-weight: bold;
   color: #136;
   text-align: center;
-  margin-top: 1.5ex;
-  margin-bottom: 1ex;
+  margin-top: 0.75em;
+  margin-bottom: 0.5em;
   padding: 0;
 }
 .pub-container .pub-subtitle,
 .site-container .pub-subtitle {
   text-align: center;
-  margin-top: -2ex;
-  margin-bottom: 3ex;
+  margin-top: -1em;
+  margin-bottom: 1.5em;
   color: #566;
   font-size: 85%;
 }
@@ -89,15 +89,15 @@ html:has(.site-container) {
 }
 .pub-container .pub-main .date {
   text-align: right;
-  padding-right: 1ex;
+  padding-right: 0.5em;
   font-size: 85%;
   opacity: 0.4;
 }
 .pub-container .markdown-body {
-  padding: 0.5ex 1ex;
+  padding: 0.25em 0.5em;
   background: #fff;
   border: 1px solid #ddd;
-  border-radius: 0.8ex;
+  border-radius: 0.4em;
 }
 .pub-container .pub-sidebar article.post-content-excerpt:hover {
   border-color: #6af;
@@ -113,10 +113,10 @@ html:has(.site-container) {
 }
 .pager-btn {
   display: inline-block;
-  padding: 0.6ex 1.2ex;
+  padding: 0.3em 0.6em;
   background: #fff;
   border: 1px solid #ddd;
-  border-radius: 0.7ex;
+  border-radius: 0.35em;
   text-decoration: none;
   color: #333;
 }
@@ -132,12 +132,12 @@ html:has(.site-container) {
 
 .pub-side-profile,
 .pub-side-recent {
-  margin-top: 1ex;
-  padding: 1ex 0;
+  margin-top: 0.5em;
+  padding: 0.5em 0;
   border-top: 1px solid #888;
 }
 .pub-sidebar .side-header {
-  margin-top: 2.5ex;
+  margin-top: 1.25em;
   font-weight: bold;
   color: #777;
 }
@@ -145,10 +145,10 @@ html:has(.site-container) {
 .pub-side-profile article,
 .pub-side-recent article {
   zoom: 85%;
-  margin: 1ex 0.3ex;
-  padding: 0.8ex 1.2ex;
+  margin: 0.5em 0.15em;
+  padding: 0.4em 0.6em;
   border: 1px solid #ddd;
-  border-radius: 0.8ex;
+  border-radius: 0.4em;
 }
 
 .site-container .link-div {
@@ -161,26 +161,26 @@ html:has(.site-container) {
 }
 
 .site-profile {
-  margin-top: 3ex;
+  margin-top: 1.5em;
 }
 .site-container .site-profile article.site-intro {
   border: 1px solid #555;
 }
 
 .site-container .site-recent .post-div {
-  margin-top: 1.5ex;
+  margin-top: 0.75em;
 }
 .site-container .site-recent .date {
   text-align: right;
-  padding-right: 1ex;
+  padding-right: 0.5em;
   font-size: 85%;
   opacity: 0.4;
 }
 .site-container .markdown-body {
-  padding: 0.5ex 1.5ex;
+  padding: 0.25em 0.75em;
   background: #fff;
   border: 1px solid #ddd;
-  border-radius: 0.8ex;
+  border-radius: 0.4em;
 }
 
 @media (min-width: 640px) {
@@ -201,18 +201,18 @@ html:has(.site-container) {
 
 @media (min-width: 1060px) {
   .sh-nickname {
-    max-width: 24ex;
+    max-width: 12em;
   }
   .pub-container .markdown-body {
-    padding: 3ex 2ex 2ex 2ex;
+    padding: 1.5em 1em 1em 1em;
   }
   .pub-container:has(.pub-sidebar) {
-    max-width: calc(128ex);
+    max-width: calc(64em);
   }
   .pub-container:has(.pub-sidebar) .pub-layout {
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 30ex;
-    column-gap: 1.5ex;
+    grid-template-columns: minmax(0, 1fr) 15em;
+    column-gap: 0.75em;
     align-items: start;
   }
   .pub-container:has(.pub-sidebar) .pub-main {
@@ -220,7 +220,7 @@ html:has(.site-container) {
   }
   .pub-container:has(.pub-sidebar) .pub-sidebar {
     grid-column: 2;
-    margin-top: -3ex;
+    margin-top: -1.5em;
   }
   .pub-container:has(.pub-sidebar) .pub-side-profile,
   .pub-container:has(.pub-sidebar) .pub-side-recent {
@@ -234,38 +234,40 @@ html:has(.site-container) {
   .pub-container:has(.pub-sidebar) .pub-side-profile article {
     display: inline-block;
     zoom: 80%;
-    width: 37.5ex;
-    margin: 0.75ex 0.225ex;
-    padding: 0.6ex 0.9ex;
+    width: 18.75em;
+    margin: 0.375em 0.1125em;
+    padding: 0.3em 0.45em;
     border: 1px solid #ddd;
-    border-radius: 0.8ex;
+    border-radius: 0.4em;
   }
   .pub-container:has(.pub-sidebar) .pub-side-recent article {
     display: inline-block;
     zoom: 60%;
-    width: 50ex;
-    margin: 1ex 0.3ex;
-    padding: 0.8ex 1.2ex;
+    width: 25em;
+    margin: 0.5em 0.15em;
+    padding: 0.4em 0.6em;
     border: 1px solid #ddd;
-    border-radius: 0.8ex;
+    border-radius: 0.4em;
   }
   .pub-container:has(.pub-sidebar) .pub-side-recent .markdown-body h1 {
-    margin-top: 0.6ex;
+    margin-top: 0.3em;
   }
   .pub-container:has(.pub-sidebar) .pub-side-recent .markdown-body h2 {
-    margin-top: 0.95ex;
+    margin-top: 0.475em;
   }
 }
 
 html:has(.pub-theme-whiteboard) {
-  background-color: #eee !important;
+  background-color: #e4e4e4 !important;
 }
 .pub-theme-whiteboard {
   background-color: #ddd !important;
   color: #000 !important;
+  background: conic-gradient(from 45deg, #e4e4e4 0 90deg, transparent 0 180deg, #e4e4e4 0 270deg, transparent 0) 0 0 / 8px 8px;
+  background-size: 32px 32px;
 }
 .pub-theme-whiteboard .sh-nav {
-  background: #eee;
+  background: #f2f2f2;
   border-bottom: 1px solid #aab;
   box-shadow: 3px 3px 5px rgba(200, 200, 210, 0.4);
 }
@@ -318,7 +320,7 @@ html:has(.pub-theme-whiteboard) {
 .pub-theme-whiteboard .pub-side-profile .profile-column,
 .pub-theme-whiteboard .site-profile .profile-column {
   background-color: #fff !important;
-  border: 3px solid #888 !important;
+  border: 3px solid #aaa !important;
   color: #111 !important;
   font-family: "Klee One";
 }
@@ -332,7 +334,7 @@ html:has(.pub-theme-whiteboard) {
   color: #445 !important;
 }
 .pub-theme-whiteboard .pub-pager .pager-btn {
-  background-color: #def !important;
+  background-color: #eef8ff !important;
   border-color: #cde !important;
   color: #334 !important;
 }
@@ -645,11 +647,13 @@ html:has(.pub-theme-blackboard) {
   background-color: #665 !important;
 }
 .pub-theme-blackboard {
-  background-color: #665 !important;
+  background-color: #828473 !important;
   color: #eee !important;
+  background: conic-gradient(from 45deg, #887 0 90deg, transparent 0 180deg, #887 0 270deg, transparent 0) 0 0 / 8px 8px;
+  background-size: 32px 32px;
 }
 .pub-theme-blackboard .sh-nav {
-  background: #222;
+  background: #282822;
   border-bottom: 1px solid #221;
   box-shadow: 3px 3px 5px rgba(40, 50, 45, 0.4);
 }
@@ -664,7 +668,7 @@ html:has(.pub-theme-blackboard) {
 }
 .pub-theme-blackboard .sh-nickname {
   color: #eca !important;
-  background-color: #222 !important;
+  background-color: #333 !important;
   border-color: #555 !important;
 }
 .pub-theme-blackboard .sh-button {
@@ -674,7 +678,7 @@ html:has(.pub-theme-blackboard) {
 }
 .pub-theme-blackboard .pub-container,
 .pub-theme-blackboard .site-container {
-  background: #303833;
+  background: #444a43;
   border-color: #333 !important;
 }
 @media (max-width: 800px) {

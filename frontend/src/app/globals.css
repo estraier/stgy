@@ -29,7 +29,7 @@ body {
 }
 
 .markdown-body h1 {
-  margin: 1ex 0 0.92ex 0;
+  margin: 0.5em 0 0.46em 0;
   font-size: 130%;
   font-weight: bold;
   color: #025;
@@ -39,7 +39,7 @@ body {
   font-size: 120%;
 }
 .markdown-body h2 {
-  margin: 1.05ex 0 0.95ex 0;
+  margin: 0.525em 0 0.475em 0;
   font-size: 115%;
   font-weight: bold;
 }
@@ -47,43 +47,43 @@ body {
   font-size: 110%;
 }
 .markdown-body h3 {
-  margin: 1.1ex 0;
+  margin: 0.55em 0;
   font-size: 105%;
   font-weight: bold;
 }
 .markdown-body h4 {
-  margin: 1.1ex 0;
+  margin: 0.55em 0;
   font-size: 100%;
   font-weight: bold;
   opacity: 0.9;
 }
 .markdown-body h5 {
-  margin: 1.1ex 0;
+  margin: 0.55em 0;
   font-size: 90%;
   font-weight: bold;
   opacity: 0.8;
 }
 .markdown-body h6 {
-  margin: 1.1ex 0;
+  margin: 0.55em 0;
   font-size: 85%;
   font-weight: bold;
   opacity: 0.7;
 }
 
 .markdown-body p {
-  margin: 1.1ex 0;
+  margin: 0.55em 0;
 }
 
 .markdown-body blockquote {
-  margin: 1.1ex 0 1ex 0.8ex;
-  padding-left: 0.8ex;
+  margin: 0.55em 0 0.5em 0.4em;
+  padding-left: 0.4em;
   line-height: 1.5;
   font-size: 95%;
   border-left: 3px solid #ddd;
 }
 
 .markdown-body ul {
-  margin: 1.1ex 0;
+  margin: 0.55em 0;
   line-height: 1.4;
   list-style-type: disc;
   padding-left: 1.4em;
@@ -105,13 +105,13 @@ body {
 
 .markdown-body pre {
   position: relative;
-  margin: 1.1ex 0.5ex;
-  padding: 0.2ex 0.5ex;
+  margin: 0.55em 0.25em;
+  padding: 0.1em 0.25em;
   line-height: 1.4;
   background: #f7f7fa;
   white-space: pre-wrap;
   word-break: break-all;
-  border-radius: 0.5ex;
+  border-radius: 0.25em;
   font-family: "Inconsolata", "Source Code Pro", monospace;
   font-size: 95%;
   border: 1px solid #eee;
@@ -119,8 +119,8 @@ body {
 .markdown-body pre[data-pre-mode]::before {
   position: absolute;
   content: attr(data-pre-mode);
-  top: 0.7ex;
-  right: 0.8ex;
+  top: 0.35em;
+  right: 0.4em;
   font-size: 80%;
   opacity: 0.3;
   pointer-events: none;
@@ -177,12 +177,12 @@ body {
 }
 
 .markdown-body table {
-  margin: 1.1ex 0.5ex;
+  margin: 0.55em 0.25em;
   border-collapse: collapse;
 }
 .markdown-body th,
 .markdown-body td {
-  padding: 0.2ex 0.5ex;
+  padding: 0.1em 0.25em;
   line-height: 1.2;
   font-size: 95%;
   font-weight: normal;
@@ -203,9 +203,9 @@ body {
 
 .markdown-body .image-block {
   position: relative;
-  margin: 1.1ex 0.5ex;
-  width: 40ex;
-  max-height: 40ex;
+  margin: 0.55em 0.25em;
+  width: 20em;
+  max-height: 20em;
   cursor: zoom-in;
   display: flex;
   align-items: center;
@@ -213,29 +213,29 @@ body {
 }
 .markdown-body .image-block.expanded {
   width: 98%;
-  max-height: 80ex;
+  max-height: 40em;
   clear: both;
   cursor: zoom-out;
   display: block;
 }
 .markdown-body .featured-block {
   float: right;
-  width: min(22ex, 40%);
-  max-height: 24ex;
-  margin: 0.5ex 0 0.5ex 0.5ex;
+  width: min(11em, 40%);
+  max-height: 12em;
+  margin: 0.25em 0 0.25em 0.25em;
   display: flex;
   align-items: center;
   justify-content: center;
 }
 .markdown-body .image-block figcaption {
   position: absolute;
-  bottom: 0.5ex;
-  right: 0.5ex;
-  padding: 0.1ex 0.5ex;
+  bottom: 0.25em;
+  right: 0.25em;
+  padding: 0.05em 0.25em;
   background: #fff;
   color: #000;
   border: 1px solid #ddd;
-  border-radius: 0.5ex;
+  border-radius: 0.25em;
   opacity: 0.7;
   font-size: 65%;
 }
@@ -244,33 +244,33 @@ body {
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-float="left"] {
   float: left;
-  margin: 0.3ex 1.2ex 0.3ex 0;
-  width: min(35ex, 50%);
+  margin: 0.15em 0.6em 0.15em 0;
+  width: min(17.5em, 50%);
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-float="right"] {
   float: right;
-  margin: 0.3ex 0 0.3ex 1.2ex;
-  width: min(35ex, 50%);
+  margin: 0.15em 0 0.15em 0.6em;
+  width: min(17.5em, 50%);
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="xsmall"] {
-  width: min(26ex, 32%);
-  max-height: 26ex;
+  width: min(13em, 32%);
+  max-height: 13em;
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="small"] {
-  width: min(32ex, 40%);
-  max-height: 32ex;
+  width: min(16em, 40%);
+  max-height: 16em;
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="medium"] {
-  width: min(40ex, 50%);
-  max-height: 40ex;
+  width: min(20em, 50%);
+  max-height: 20em;
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="large"] {
-  width: min(55ex, 60%);
-  max-height: 55ex;
+  width: min(27.5em, 60%);
+  max-height: 27.5em;
 }
 .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="xlarge"] {
-  width: min(70ex, 70%);
-  max-height: 70ex;
+  width: min(35em, 70%);
+  max-height: 35em;
 }
 
 .markdown-body:not(.excerpt) .image-grid {
@@ -358,7 +358,7 @@ body {
   width: auto;
   height: auto;
   border: 1px solid #ddd;
-  border-radius: 0.7ex;
+  border-radius: 0.35em;
 }
 .markdown-body .featured-block img,
 .markdown-body .featured-block video {
@@ -368,7 +368,7 @@ body {
   width: auto;
   height: auto;
   border: 1px solid #ddd;
-  border-radius: 0.5ex;
+  border-radius: 0.25em;
 }
 .markdown-body .featured-block figcaption {
   display: none;
@@ -382,7 +382,7 @@ body {
   text-decoration: underline;
 }
 .markdown-body code {
-  padding: 0 0.2ex;
+  padding: 0 0.1em;
   word-break: break-all;
   font-family: "Inconsolata", "Source Code Pro", monospace;
   background: #eee;
@@ -411,34 +411,34 @@ body {
 .markdown-body hr {
   clear: both;
   border: 0;
-  margin: 0 5ex;
+  margin: 0 2.5em;
 }
 .markdown-body hr[data-hr-level="2"] {
   border-top: 1px solid #aaa;
-  margin: 1.5ex 5ex;
+  margin: 0.75em 2.5em;
 }
 .markdown-body hr[data-hr-level="3"] {
   border-top: 1px solid #666;
-  margin: 2ex 1ex;
+  margin: 1em 0.5em;
 }
 
 .markdown-body .omitted {
-  margin: 0 0.2ex;
+  margin: 0 0.1em;
 }
 
 .markdown-body .toc {
   position: relative;
-  margin: 1.1ex 0.4ex 1.1ex 0.4ex;
-  padding-left: 0.8ex;
+  margin: 0.55em 0.2em 0.55em 0.2em;
+  padding-left: 0.4em;
   line-height: 1.5;
   font-size: 95%;
   border: 1px solid #ddd;
-  border-radius: 0.5ex;
+  border-radius: 0.25em;
 }
 .markdown-body .toc::before {
   position: absolute;
-  top: 0.2ex;
-  right: 0.8ex;
+  top: 0.1em;
+  right: 0.4em;
   font-size: 85%;
   color: #012;
   content: "table of contents";
