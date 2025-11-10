@@ -12,13 +12,15 @@ body {
   color: #000;
   font-size: 16px;
   font-family: "IBM Plex Sans JP", "Noto Sans JP", Arial, Helvetica, sans-serif;
-  word-break: break-all;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 
 .markdown-body {
   position: relative;
   line-height: 1.6;
-  word-break: break-all;
+  word-break: normal;
+  overflow-wrap: break-word;
 }
 .markdown-body::after {
   content: "";
@@ -108,6 +110,7 @@ body {
   line-height: 1.4;
   background: #f7f7fa;
   white-space: pre-wrap;
+  word-break: break-all;
   border-radius: 0.5ex;
   font-family: "Inconsolata", "Source Code Pro", monospace;
   font-size: 95%;
