@@ -351,7 +351,7 @@ html:has(.pub-theme-whiteboard) {
   border-bottom: 1px solid #455;
 }
 .pub-theme-whiteboard .markdown-body h2 {
-  color: #061;
+  color: #051;
 }
 .pub-theme-whiteboard .markdown-body h3 {
   color: #024;
@@ -388,7 +388,7 @@ html:has(.pub-theme-whiteboard) {
   color: #888 !important;
 }
 .pub-theme-whiteboard .markdown-body code {
-  color: #060 !important;
+  color: #050 !important;
   background-color: #f8f8f8 !important;
 }
 .pub-theme-whiteboard .markdown-body pre code {

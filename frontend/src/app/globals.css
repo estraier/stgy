@@ -375,7 +375,8 @@ body {
   text-decoration: underline;
 }
 .markdown-body code {
-  padding: 0 0.3ex;
+  padding: 0 0.2ex;
+  word-break: break-all;
   font-family: "Inconsolata", "Source Code Pro", monospace;
   background: #eee;
 }
