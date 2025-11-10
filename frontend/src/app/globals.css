@@ -127,25 +127,25 @@ body {
 .markdown-body pre[data-pre-style^="xsmall:"],
 .markdown-body pre[data-pre-style$=":xsmall"],
 .markdown-body pre[data-pre-style*=":xsmall:"] {
-  font-size: 70%;
+  font-size: 75%;
 }
 .markdown-body pre[data-pre-style="small"],
 .markdown-body pre[data-pre-style^="small:"],
 .markdown-body pre[data-pre-style$=":small"],
 .markdown-body pre[data-pre-style*=":small:"] {
-  font-size: 80%;
+  font-size: 85%;
 }
 .markdown-body pre[data-pre-style="large"],
 .markdown-body pre[data-pre-style^="large:"],
 .markdown-body pre[data-pre-style$=":large"],
 .markdown-body pre[data-pre-style*=":large:"] {
-  font-size: 100%;
+  font-size: 105%;
 }
 .markdown-body pre[data-pre-style="xlarge"],
 .markdown-body pre[data-pre-style^="xlarge:"],
 .markdown-body pre[data-pre-style$=":xlarge"],
 .markdown-body pre[data-pre-style*=":xlarge:"] {
-  font-size: 110%;
+  font-size: 115%;
 }
 .markdown-body pre[data-pre-style="bold"],
 .markdown-body pre[data-pre-style^="bold:"],
