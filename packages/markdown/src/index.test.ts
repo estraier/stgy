@@ -1266,11 +1266,6 @@ describe("mdCutOff", () => {
                 type: "text",
                 text: "hello…",
               },
-              {
-                type: "element",
-                tag: "omitted",
-                children: [],
-              },
             ],
           },
         ],
@@ -1338,6 +1333,123 @@ describe("mdCutOff", () => {
     expect(
       stripPos(mdCutOff(parseMarkdown(mdText), { maxLen: 100 })),
     ).toStrictEqual(expected);
+  });
+
+  it("long paragraph is partially kept with ellipsis instead of being dropped", () => {
+    const md = "test **abc** [def](/ghi.html) ::jkl:: {{mno|pqr}}\n".repeat(30);
+    let nodes = parseMarkdown(md);
+    nodes = mdCutOff(nodes, {
+      maxLen: 200,
+      maxHeight: 10,
+      imgLen: 50,
+      imgHeight: 2,
+    });
+    const text = mdRenderText(nodes);
+    expect(nodes.length).toBeGreaterThan(0);
+    expect(JSON.stringify(nodes)).toContain('"tag":"p"');
+    expect(text.length).toBeGreaterThan(0);
+    expect(text.endsWith("…")).toBe(true);
+    expect(JSON.stringify(nodes)).not.toEqual(
+      JSON.stringify([{ type: "element", tag: "omitted", children: [] }]),
+    );
+  });
+
+  it("height cap still yields at least some text", () => {
+    const md = "A".repeat(1000);
+    let nodes = parseMarkdown(md);
+    nodes = mdCutOff(nodes, {
+      maxLen: 1000,
+      maxHeight: 1,
+      imgLen: 50,
+      imgHeight: 2,
+    });
+    const text = mdRenderText(nodes);
+    expect(text.length).toBeGreaterThan(0);
+  });
+
+  it("dynamic image cost allows first figure and cuts on second", () => {
+    const md = [
+      "![one](https://ex/a.jpg)",
+      "",
+      "![two-two-two-two-two](https://ex/b.jpg)",
+    ].join("\n");
+    let nodes = parseMarkdown(md);
+    nodes = mdCutOff(nodes, {
+      maxLen: 8,
+      maxHeight: 10,
+      imgLen: -1,
+      imgHeight: 1,
+    });
+    const json = JSON.stringify(nodes);
+    expect(json).toContain('"figure"');
+    expect(json).toContain('"omitted"');
+  });
+
+  it("fixed image cost consumes remain and indicates truncation after first figure", () => {
+    const md = ["![a](https://ex/a.jpg)", "", "![b](https://ex/b.jpg)"].join(
+      "\n",
+    );
+    let nodes = parseMarkdown(md);
+    nodes = mdCutOff(nodes, {
+      maxLen: 7,
+      maxHeight: 10,
+      imgLen: 5,
+      imgHeight: 1,
+    });
+    const figures = nodes.filter(
+      (n) => n.type === "element" && (n as any).tag === "figure",
+    ) as any[];
+    expect(figures.length).toBeGreaterThanOrEqual(1);
+    expect(JSON.stringify(figures[0])).toContain("https://ex/a.jpg");
+    if (figures.length >= 2) {
+      const f2 = JSON.stringify(figures[1]);
+      expect(f2.includes('"omitted"') && !f2.includes('"img"')).toBe(true);
+    } else {
+      const json = JSON.stringify(nodes);
+      expect(json).toContain('"omitted"');
+    }
+  });
+
+  it("pre with many newlines respects available height", () => {
+    const code = Array.from({ length: 12 }, (_, i) => `L${i}`).join("\n");
+    const md = ["```", code, "```"].join("\n");
+    let nodes = parseMarkdown(md);
+    nodes = mdCutOff(nodes, {
+      maxLen: 1000,
+      maxHeight: 3,
+      imgLen: 50,
+      imgHeight: 2,
+    });
+    const json = JSON.stringify(nodes);
+    expect(json).toContain('"pre"');
+  });
+
+  it("figcaption is trimmed when captMaxLen is set", () => {
+    const md = "![this is a very very very long caption](https://ex/a.jpg)";
+    let nodes = parseMarkdown(md);
+    nodes = mdCutOff(nodes, {
+      maxLen: 1000,
+      maxHeight: 10,
+      imgLen: 50,
+      imgHeight: 2,
+      captMaxLen: 10,
+    });
+    const text = mdRenderText(nodes);
+    expect(text).toContain("…");
+  });
+
+  it("does not insert omitted when ellipsis was already added by text trim", () => {
+    const md = "X".repeat(300);
+    let nodes = parseMarkdown(md);
+    nodes = mdCutOff(nodes, {
+      maxLen: 50,
+      maxHeight: 100,
+      imgLen: 50,
+      imgHeight: 2,
+    });
+    const json = JSON.stringify(nodes);
+    expect(mdRenderText(nodes).endsWith("…")).toBe(true);
+    expect(json).not.toContain('"omitted"');
   });
 });
 

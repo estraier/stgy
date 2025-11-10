@@ -1929,6 +1929,7 @@ export function mdCutOff(
         : Number.POSITIVE_INFINITY,
     cut: false,
     omittedInserted: false,
+    ellipsisAdded: false,
   };
   const blockTags = new Set([
     "p",
@@ -2025,7 +2026,10 @@ export function mdCutOff(
     if (s.length > state.remain) {
       const sliceLen = Math.max(0, state.remain);
       let part = s.slice(0, sliceLen);
-      if (part.length < s.length) part = part + "…";
+      if (part.length < s.length) {
+        part = part + "…";
+        state.ellipsisAdded = true;
+      }
       state.remain = 0;
       state.cut = true;
       return { text: part, cut: true };
@@ -2088,9 +2092,14 @@ export function mdCutOff(
       const { length: contentLength, newlines } = computeTextMetrics(
         el.children || [],
       );
-      let inc = 1 + Math.floor(contentLength / 100);
-      if (el.tag === "pre" && newlines > 1) inc = Math.max(inc, newlines);
-      if (!bumpHeight(inc)) {
+      const chargeLen = Math.min(contentLength, Math.max(0, state.remain));
+      const avail = Math.max(0, state.maxHeight - state.height);
+      let inc = 1 + Math.floor(chargeLen / 100);
+      if (el.tag === "pre" && newlines > 1)
+        inc = Math.max(inc, Math.min(newlines, avail));
+      inc = Math.min(inc, avail);
+      const need = inc > 0 ? inc : 1;
+      if (!bumpHeight(need)) {
         state.cut = true;
         return null;
       }
@@ -2119,7 +2128,7 @@ export function mdCutOff(
       const cc = walk(c, childFreeMedia, childFreeText);
       if (cc) outChildren.push(cc);
       if (state.cut) {
-        if (!state.omittedInserted) {
+        if (!state.omittedInserted && !state.ellipsisAdded) {
           outChildren.push(makeOmittedNode());
           state.omittedInserted = true;
         }
@@ -2136,7 +2145,7 @@ export function mdCutOff(
     const nn = walk(n, false, false);
     if (nn) out.push(nn);
     if (state.cut) {
-      if (!state.omittedInserted) {
+      if (!state.omittedInserted && !state.ellipsisAdded) {
         out.push(makeOmittedNode());
         state.omittedInserted = true;
       }

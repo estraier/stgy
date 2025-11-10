@@ -853,10 +853,7 @@ export default function ImageUploadDialog({ userId, files, maxCount, onClose, on
                   </div>
 
                   <div className="p-3 text-sm text-gray-800 space-y-2 min-w-[260px]">
-                    <div
-                      className="font-medium truncate max-w-60"
-                      title={it.name}
-                    >
+                    <div className="font-medium truncate max-w-60" title={it.name}>
                       {it.name}
                     </div>
                     <div className="text-[12px] text-gray-700 space-y-1">
