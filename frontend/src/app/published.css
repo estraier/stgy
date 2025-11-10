@@ -697,7 +697,7 @@ html:has(.pub-theme-blackboard) {
 .pub-theme-blackboard .pub-side-recent article,
 .pub-theme-blackboard .pub-side-profile .profile-column,
 .pub-theme-blackboard .site-profile .profile-column {
-  background-color: #001a1a !important;
+  background-color: #00221a !important;
   border: 3px solid #888 !important;
   color: #f8f8ff !important;
   font-family: "Klee One";
