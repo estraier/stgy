@@ -701,7 +701,7 @@ html:has(.pub-theme-blackboard) {
 .pub-theme-blackboard .pub-side-recent article,
 .pub-theme-blackboard .pub-side-profile .profile-column,
 .pub-theme-blackboard .site-profile .profile-column {
-  background-color: #00221a !important;
+  background-color: #00201a !important;
   border: 3px solid #888 !important;
   color: #f8f8ff !important;
   font-family: "Klee One";
@@ -738,7 +738,7 @@ html:has(.pub-theme-blackboard) {
   color: #fc8;
 }
 .pub-theme-blackboard .markdown-body h3 {
-  color: #ebf;
+  color: #9df;
 }
 .pub-theme-blackboard .markdown-body h1,
 .pub-theme-blackboard .markdown-body h2,
@@ -783,7 +783,7 @@ html:has(.pub-theme-blackboard) {
   background-color: unset !important;
 }
 .pub-theme-blackboard .markdown-body mark {
-  background-color: #053 !important;
+  background-color: #043 !important;
   color: #fff !important;
 }
 .pub-theme-blackboard .markdown-body small {
