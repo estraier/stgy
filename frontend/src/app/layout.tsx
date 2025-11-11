@@ -33,6 +33,8 @@ const FONT_FAMILIES = [
   "Inconsolata",
   "Source Code Pro",
   "Klee One",
+  "BIZ UDMincho",
+  "BIZ UDGothic",
 ];
 
 const GOOGLE_FONTS_HREF = buildGoogleFontsHref(FONT_FAMILIES);
