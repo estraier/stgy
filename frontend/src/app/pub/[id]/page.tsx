@@ -108,8 +108,8 @@ export default async function PubPostPage({ params, searchParams }: Props) {
     const theme = typeof design === "string" && Config.PUB_DESIGN_THEMES.includes(design) ?
       design : baseTheme;
     console.log(design);
-    const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
     const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "virt" : "norm";
+    const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
     const siteIntroHtml = makeSnippetHtmlFromMarkdown(
       pubcfg.introduction.trim() || "my publications",
     );
@@ -134,7 +134,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       : "";
 
     return (
-      <div className={`pub-page pub-theme-${theme} pub-theme-tone-${themeTone} pub-theme-dir-${themeDir}`}>
+      <div className={`pub-page pub-theme-${theme} pub-theme-dir-${themeDir} pub-theme-tone-${themeTone}`}>
         <HeadLangPatcher lang={locale} />
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}
@@ -144,14 +144,14 @@ export default async function PubPostPage({ params, searchParams }: Props) {
         />
         <main className="pub-container" lang={locale}>
           {pubcfg.showSiteName && (
-            <>
+            <div className="pub-site-name-region">
               <h1 className="pub-site-name">
                 <a href={siteHref}>{pubcfg.siteName.trim() || "STGY Publications"}</a>
               </h1>
               {pubcfg.subtitle?.trim() && (
                 <div className="pub-subtitle">{pubcfg.subtitle.trim()}</div>
               )}
-            </>
+            </div>
           )}
           <div className="pub-layout">
             <section className="pub-main">

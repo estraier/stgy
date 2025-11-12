@@ -102,8 +102,8 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const theme = typeof design === "string" && Config.PUB_DESIGN_THEMES.includes(design) ?
       design : baseTheme;
     console.log(design);
-    const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
     const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "virt" : "norm";
+    const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
     const offset = (page - 1) * Config.PUB_POSTS_PAGE_SIZE;
     const posts = await listPubPostsByUser(id, {
       offset,
@@ -131,7 +131,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const siteTitle = pubcfg.siteName || intro.title || "STGY Publications";
 
     return (
-      <div className={`pub-page pub-theme-${theme} pub-theme-tone-${themeTone} pub-theme-dir-${themeDir}`} data-page={page}>
+      <div className={`pub-page pub-theme-${theme} pub-theme-dir-${themeDir} pub-theme-tone-${themeTone}`} data-page={page}>
         <HeadLangPatcher lang={locale} />
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}
@@ -141,12 +141,14 @@ export default async function PubSitePage({ params, searchParams }: Props) {
         <main className="site-container" lang={locale}>
           <div className="site-layout">
             <section className="site-main">
-              <h1 className="pub-site-name">
-                <Link href={baseHref}>{siteTitle}</Link>
-              </h1>
-              {pubcfg.subtitle?.trim() && (
-                <div className="pub-subtitle">{pubcfg.subtitle.trim()}</div>
-              )}
+              <div className="pub-site-name-region">
+                <h1 className="pub-site-name">
+                  <a href={baseHref}>{siteTitle}</a>
+                </h1>
+                {pubcfg.subtitle?.trim() && (
+                  <div className="pub-subtitle">{pubcfg.subtitle.trim()}</div>
+                )}
+              </div>
               <section className="site-profile">
                 <ArticleWithDecoration
                   lang={locale}
