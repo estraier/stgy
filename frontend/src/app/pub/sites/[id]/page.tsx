@@ -99,20 +99,11 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const baseTheme = Config.PUB_DESIGN_THEMES.includes(pubcfg.designTheme ?? "")
       ? pubcfg.designTheme
       : "default";
-
-    // allow ?design= to override theme or just the light/dark kind
-    let theme = baseTheme;
-    let themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
-    if (design) {
-      const d = String(design).toLowerCase();
-      if (Array.isArray(Config.PUB_DESIGN_THEMES) && Config.PUB_DESIGN_THEMES.includes(d)) {
-        theme = d;
-        themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
-      } else if (d === "dark" || d === "light") {
-        themeKind = d as "dark" | "light";
-      }
-    }
-
+    const theme = typeof design === "string" && Config.PUB_DESIGN_THEMES.includes(design) ?
+      design : baseTheme;
+    console.log(design);
+    const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
+    const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "virt" : "norm";
     const offset = (page - 1) * Config.PUB_POSTS_PAGE_SIZE;
     const posts = await listPubPostsByUser(id, {
       offset,
@@ -140,7 +131,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const siteTitle = pubcfg.siteName || intro.title || "STGY Publications";
 
     return (
-      <div className={`pub-page pub-theme-${theme} pub-theme-kind-${themeKind}`} data-page={page}>
+      <div className={`pub-page pub-theme-${theme} pub-theme-tone-${themeTone} pub-theme-dir-${themeDir}`} data-page={page}>
         <HeadLangPatcher lang={locale} />
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}

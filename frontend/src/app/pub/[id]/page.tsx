@@ -102,29 +102,17 @@ export default async function PubPostPage({ params, searchParams }: Props) {
 
   try {
     const { post, pubcfg, article } = await getPubPageData(id);
-
-    // base theme from config
     const baseTheme = Config.PUB_DESIGN_THEMES.includes(pubcfg.designTheme ?? "")
       ? pubcfg.designTheme
       : "default";
-
-    // allow ?design= to override theme or only light/dark kind
-    let theme = baseTheme;
-    let themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
-    if (design) {
-      const d = String(design).toLowerCase();
-      if (Array.isArray(Config.PUB_DESIGN_THEMES) && Config.PUB_DESIGN_THEMES.includes(d)) {
-        theme = d;
-        themeKind = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
-      } else if (d === "dark" || d === "light") {
-        themeKind = d as "dark" | "light";
-      }
-    }
-
+    const theme = typeof design === "string" && Config.PUB_DESIGN_THEMES.includes(design) ?
+      design : baseTheme;
+    console.log(design);
+    const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
+    const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "virt" : "norm";
     const siteIntroHtml = makeSnippetHtmlFromMarkdown(
       pubcfg.introduction.trim() || "my publications",
     );
-
     let recent: Awaited<ReturnType<typeof listPubPostsByUser>> = [];
     if (pubcfg.showSideRecent) {
       const desired = Config.PUB_SIDE_RECENT_POSTS_SIZE;
@@ -135,11 +123,8 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       });
       recent = recent.filter((r) => String(r.id) !== String(post.id)).slice(0, desired);
     }
-
-    // propagate design to links
     const siteHrefBase = `/pub/sites/${post.ownedBy}`;
     const siteHref = design ? `${siteHrefBase}?design=${encodeURIComponent(design)}` : siteHrefBase;
-
     const locale = post.locale || pubcfg.locale || "und";
     const newerHref = post.newerPostId
       ? `/pub/${post.newerPostId}${design ? `?design=${encodeURIComponent(design)}` : ""}`
@@ -149,7 +134,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       : "";
 
     return (
-      <div className={`pub-page pub-theme-${theme} pub-theme-kind-${themeKind}`}>
+      <div className={`pub-page pub-theme-${theme} pub-theme-tone-${themeTone} pub-theme-dir-${themeDir}`}>
         <HeadLangPatcher lang={locale} />
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}
