@@ -94,14 +94,11 @@ export default async function PubSitePage({ params, searchParams }: Props) {
 
   try {
     const { pubcfg, intro } = await getPubSiteData(id);
-
-    // base theme from config
     const baseTheme = Config.PUB_DESIGN_THEMES.includes(pubcfg.designTheme ?? "")
       ? pubcfg.designTheme
       : "default";
     const theme = typeof design === "string" && Config.PUB_DESIGN_THEMES.includes(design) ?
       design : baseTheme;
-    console.log(design);
     const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "virt" : "norm";
     const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
     const offset = (page - 1) * Config.PUB_POSTS_PAGE_SIZE;

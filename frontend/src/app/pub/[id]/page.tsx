@@ -107,7 +107,6 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       : "default";
     const theme = typeof design === "string" && Config.PUB_DESIGN_THEMES.includes(design) ?
       design : baseTheme;
-    console.log(design);
     const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "virt" : "norm";
     const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
     const siteIntroHtml = makeSnippetHtmlFromMarkdown(
