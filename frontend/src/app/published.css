@@ -1340,8 +1340,8 @@ html:has(.site-container) {
     display: grid;
     place-items: center;
   }
-  .pub-theme-dir-virt .markdown-body .image-grid figure.image-block > img,
-  .pub-theme-dir-virt .markdown-body .image-grid figure.image-block > video {
+  .pub-theme-dir-virt .markdown-body .image-grid figure.image-block img,
+  .pub-theme-dir-virt .markdown-body .image-grid figure.image-block video {
     inline-size: 100%;
     block-size: 100%;
     max-inline-size: 100% !important;
@@ -1470,15 +1470,6 @@ html:has(.site-container) {
   }
   .pub-theme-dir-virt .markdown-body .image-block img,
   .pub-theme-dir-virt .markdown-body .image-block video {
-    /*
-    max-inline-size: 100%;
-    max-block-size: inherit;
-    min-inline-size: 0;
-    width: auto;
-    height: auto;
-    object-fit: contain;
-    box-sizing: border-box;
-    */
     display: block;
     width: auto;
     height: auto;
@@ -1493,8 +1484,7 @@ html:has(.site-container) {
     object-fit: contain;
     box-sizing: border-box;
     flex: 0 1 auto;
-
-
+    writing-mode: horizontal-tb !important;
   }
   .pub-theme-dir-virt .pub-pager .pager-row {
     display: flex;
