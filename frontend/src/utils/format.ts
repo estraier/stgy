@@ -75,3 +75,25 @@ export function makeAbsoluteUrl(url: string): string {
     return normUrl;
   }
 }
+
+export function convertToFullWidth(text: string): string {
+  let result = "";
+  for (const ch of text) {
+    const code = ch.charCodeAt(0);
+    if (code === 0x20) {
+      result += "\u3000";
+    } else if (code >= 0x21 && code <= 0x7e) {
+      result += String.fromCharCode(code - 0x21 + 0xff01);
+    } else {
+      result += ch;
+    }
+  }
+  return result;
+}
+
+export function convertForDirection(text: string, dirMode: string): string {
+  if (dirMode === "vert") {
+    return convertToFullWidth(text);
+  }
+  return text;
+}

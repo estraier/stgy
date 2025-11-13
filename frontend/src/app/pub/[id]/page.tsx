@@ -12,7 +12,7 @@ import {
 } from "@/utils/article";
 import LinkDiv from "@/components/LinkDiv";
 import ArticleWithDecoration from "@/components/ArticleWithDecoration";
-import { formatDateTime, makeAbsoluteUrl } from "@/utils/format";
+import { formatDateTime, makeAbsoluteUrl, convertForDirection } from "@/utils/format";
 import type { Metadata } from "next";
 
 type PageParams = { id: string };
@@ -107,7 +107,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       : "default";
     const theme =
       typeof design === "string" && Config.PUB_DESIGN_THEMES.includes(design) ? design : baseTheme;
-    const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "virt" : "norm";
+    const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "vert" : "norm";
     const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
     const siteIntroHtml = makeSnippetHtmlFromMarkdown(
       pubcfg.introduction.trim() || "my publications",
@@ -156,7 +156,9 @@ export default async function PubPostPage({ params, searchParams }: Props) {
           )}
           <div className="pub-layout">
             <section className="pub-main">
-              <div className="date">{formatDateTime(new Date(post.publishedAt ?? ""))}</div>
+              <div className="date">
+                {convertForDirection(formatDateTime(new Date(post.publishedAt ?? "")), themeDir)}
+              </div>
               <ArticleWithDecoration
                 lang={locale}
                 className="markdown-body post-content"
@@ -167,20 +169,20 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                   <div className="pager-row">
                     {post.newerPostId ? (
                       <a className="pager-btn" href={newerHref}>
-                        ← Newer
+                        {convertForDirection("← Newer", themeDir)}
                       </a>
                     ) : (
                       <span className="pager-btn disabled" aria-disabled="true">
-                        ← Newer
+                        {convertForDirection("← Newer", themeDir)}
                       </span>
                     )}
                     {post.olderPostId ? (
                       <a className="pager-btn" href={olderHref}>
-                        Older →
+                        {convertForDirection("Older →", themeDir)}
                       </a>
                     ) : (
                       <span className="pager-btn disabled" aria-disabled="true">
-                        Older →
+                        {convertForDirection("Older →", themeDir)}
                       </span>
                     )}
                   </div>
@@ -191,7 +193,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
               <aside className="pub-sidebar">
                 {pubcfg.showSideProfile && (
                   <section className="pub-side-profile">
-                    <h2 className="side-header">Profile</h2>
+                    <h2 className="side-header">{convertForDirection("Profile", themeDir)}</h2>
                     <LinkDiv href={siteHref} className="link-div">
                       <ArticleWithDecoration
                         lang={pubcfg.locale || locale}
@@ -203,7 +205,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                 )}
                 {recent.length > 0 && (
                   <section className="pub-side-recent">
-                    <h2 className="side-header">Recent posts</h2>
+                    <h2 className="side-header">{convertForDirection("Recent posts", themeDir)}</h2>
                     {recent.map((r, idx) => {
                       const postHref = `/pub/${r.id}${
                         design ? `?design=${encodeURIComponent(design)}` : ""

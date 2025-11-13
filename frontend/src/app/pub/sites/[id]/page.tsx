@@ -8,7 +8,7 @@ import { getPubConfig } from "@/api/users";
 import { makePubArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
 import LinkDiv from "@/components/LinkDiv";
 import ArticleWithDecoration from "@/components/ArticleWithDecoration";
-import { formatDateTime, makeAbsoluteUrl } from "@/utils/format";
+import { formatDateTime, makeAbsoluteUrl, convertForDirection } from "@/utils/format";
 import type { Metadata } from "next";
 
 type PageParams = { id: string };
@@ -99,7 +99,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       : "default";
     const theme =
       typeof design === "string" && Config.PUB_DESIGN_THEMES.includes(design) ? design : baseTheme;
-    const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "virt" : "norm";
+    const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "vert" : "norm";
     const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
     const offset = (page - 1) * Config.PUB_POSTS_PAGE_SIZE;
     const posts = await listPubPostsByUser(id, {
@@ -172,7 +172,9 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                       data-restore-id={String(r.id)}
                       data-restore-page={String(page)}
                     >
-                      <div className="date">{formatDateTime(publishedAtDate)}</div>
+                      <div className="date">
+                        {convertForDirection(formatDateTime(publishedAtDate), themeDir)}
+                      </div>
                       <ArticleWithDecoration
                         lang={r.locale || pubcfg.locale || locale}
                         className="markdown-body post-content-excerpt"
@@ -186,20 +188,20 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                 <div className="pager-row">
                   {hasPrev ? (
                     <Link className="pager-btn" href={newerHref}>
-                      ← Newer
+                      {convertForDirection("← Newer", themeDir)}
                     </Link>
                   ) : (
                     <span className="pager-btn disabled" aria-disabled="true">
-                      ← Newer
+                      {convertForDirection("← Newer", themeDir)}
                     </span>
                   )}
                   {hasNext ? (
                     <Link className="pager-btn" href={olderHref}>
-                      Older →
+                      {convertForDirection("Older →", themeDir)}
                     </Link>
                   ) : (
                     <span className="pager-btn disabled" aria-disabled="true">
-                      Older →
+                      {convertForDirection("Older →", themeDir)}
                     </span>
                   )}
                 </div>
