@@ -1249,13 +1249,18 @@ html:has(.site-container) {
     max-inline-size: 100%;
     overflow: visible;
   }
+  .pub-theme-dir-virt .pub-container .link-div {
+    margin: 0;
+    padding: 0;
+    cursor: pointer;
+  }
   .pub-theme-dir-virt .pub-main .date,
   .pub-theme-dir-virt .site-main .date {
-    margin-top: 1em;
+    margin-top: 1.2em;
     color: #888;
   }
   .pub-theme-dir-virt .pub-sidebar .side-header {
-    margin-top: 1em;
+    margin-top: 1.2em;
     color: #666;
   }
   .pub-theme-dir-virt .pub-main .markdown-body,
