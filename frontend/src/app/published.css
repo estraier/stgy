@@ -1305,7 +1305,7 @@ html:has(.site-container) {
     max-height: min(16em, 40%);
   }
   .pub-theme-dir-virt .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="medium"] {
-    max-width: 13em;
+    max-width: 20em;
     max-height: min(20em, 50%);
   }
   .pub-theme-dir-virt .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="large"] {
