@@ -1190,6 +1190,9 @@ html:has(.site-container) {
     padding-bottom: 0;
     overflow-y: hidden;
   }
+  .pub-theme-dir-vert .sh-pad {
+    display: none;
+  }
   .pub-theme-dir-vert .sh-nav {
     position: sticky;
     top: 0;
