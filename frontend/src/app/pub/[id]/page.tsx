@@ -105,8 +105,8 @@ export default async function PubPostPage({ params, searchParams }: Props) {
     const baseTheme = Config.PUB_DESIGN_THEMES.includes(pubcfg.designTheme ?? "")
       ? pubcfg.designTheme
       : "default";
-    const theme = typeof design === "string" && Config.PUB_DESIGN_THEMES.includes(design) ?
-      design : baseTheme;
+    const theme =
+      typeof design === "string" && Config.PUB_DESIGN_THEMES.includes(design) ? design : baseTheme;
     const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "virt" : "norm";
     const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
     const siteIntroHtml = makeSnippetHtmlFromMarkdown(
@@ -133,7 +133,9 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       : "";
 
     return (
-      <div className={`pub-page pub-theme-${theme} pub-theme-dir-${themeDir} pub-theme-tone-${themeTone}`}>
+      <div
+        className={`pub-page pub-theme-${theme} pub-theme-dir-${themeDir} pub-theme-tone-${themeTone}`}
+      >
         <HeadLangPatcher lang={locale} />
         <PubServiceHeader
           showServiceHeader={pubcfg.showServiceHeader}

@@ -264,7 +264,14 @@ html:has(.site-container) {
   .pub-theme-whiteboard {
     background-color: #ddd !important;
     color: #000 !important;
-    background: conic-gradient(from 45deg, #e4e4e4 0 90deg, transparent 0 180deg, #e4e4e4 0 270deg, transparent 0) 0 0 / 8px 8px;
+    background: conic-gradient(
+        from 45deg,
+        #e4e4e4 0 90deg,
+        transparent 0 180deg,
+        #e4e4e4 0 270deg,
+        transparent 0
+      )
+      0 0 / 8px 8px;
     background-size: 32px 32px;
   }
   .pub-theme-whiteboard .sh-nav {
@@ -467,7 +474,14 @@ html:has(.site-container) {
   .pub-theme-newspaper {
     background-color: #525252 !important;
     color: #000 !important;
-    background: conic-gradient(from 45deg, #555 0 90deg, transparent 0 180deg, #555 0 270deg, transparent 0) 0 0 / 8px 8px;
+    background: conic-gradient(
+        from 45deg,
+        #555 0 90deg,
+        transparent 0 180deg,
+        #555 0 270deg,
+        transparent 0
+      )
+      0 0 / 8px 8px;
     background-size: 48px 48px;
   }
   .pub-theme-newspaper .sh-nav {
@@ -503,7 +517,10 @@ html:has(.site-container) {
       repeating-linear-gradient(2deg, #e6e6e6 0, #e6e6e6 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(43deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(87deg, #eee 0, #eee 0.5px, transparent 0.5px, transparent 2px);
-    background-size: 3px 3px, 4px 4px, 2px 2px !important;
+    background-size:
+      3px 3px,
+      4px 4px,
+      2px 2px !important;
   }
   @media (max-width: 800px) {
     .pub-theme-newspaper {
@@ -512,7 +529,10 @@ html:has(.site-container) {
         repeating-linear-gradient(2deg, #e6e6e6 0, #e6e6e6 1px, transparent 1px, transparent 3px),
         repeating-linear-gradient(48deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
         repeating-linear-gradient(87deg, #eee 0, #eee 0.5px, transparent 0.5px, transparent 2px) !important;
-      background-size: 3px 3px, 4px 4px, 2px 2px !important;
+      background-size:
+        3px 3px,
+        4px 4px,
+        2px 2px !important;
     }
     .pub-theme-newspaper .pub-container,
     .pub-theme-newspaper .site-container {
@@ -542,7 +562,10 @@ html:has(.site-container) {
       repeating-linear-gradient(0deg, #f6f6f4 0, #f6f6f4 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(55deg, #fafaf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(85deg, #ffe 0, #ffe 0.5px, transparent 0.5px, transparent 2px);
-    background-size: 3px 3px, 4px 4px, 2px 2px !important;
+    background-size:
+      3px 3px,
+      4px 4px,
+      2px 2px !important;
     color: #111 !important;
     font-family: "BIZ UDMincho", serif !important;
   }
@@ -870,7 +893,14 @@ html:has(.site-container) {
   .pub-theme-blackboard {
     background-color: #828473 !important;
     color: #eee !important;
-    background: conic-gradient(from 45deg, #887 0 90deg, transparent 0 180deg, #887 0 270deg, transparent 0) 0 0 / 8px 8px;
+    background: conic-gradient(
+        from 45deg,
+        #887 0 90deg,
+        transparent 0 180deg,
+        #887 0 270deg,
+        transparent 0
+      )
+      0 0 / 8px 8px;
     background-size: 32px 32px;
   }
   .pub-theme-blackboard .sh-nav {
@@ -1291,31 +1321,51 @@ html:has(.site-container) {
     margin: 2.5em 0 1.5em 0 !important;
     height: min(17.5em, 50%) !important;
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt) figure.image-block:not(.expanded) {
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
+    figure.image-block:not(.expanded):not([data-grid]) {
     width: unset;
     max-width: 20em;
     max-height: min(20em, 100%);
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="xsmall"] {
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
+    figure.image-block:not(.expanded):not([data-grid])[data-size="xsmall"] {
     max-width: 13em;
     max-height: min(13em, 32%);
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="small"] {
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
+    figure.image-block:not(.expanded):not([data-grid])[data-size="small"] {
     max-width: 16em;
     max-height: min(16em, 40%);
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="medium"] {
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
+    figure.image-block:not(.expanded):not([data-grid])[data-size="medium"] {
     max-width: 20em;
     max-height: min(20em, 50%);
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="large"] {
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
+    figure.image-block:not(.expanded):not([data-grid])[data-size="large"] {
     max-width: 27em;
     max-height: min(27em, 60%);
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="xlarge"] {
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
+    figure.image-block:not(.expanded):not([data-grid])[data-size="xlarge"] {
     max-width: 35em;
     max-height: min(35em, 70%);
   }
+
+  .pub-theme-dir-virt .markdown-body:not(.excerpt) .image-grid figure.image-block[data-size] {
+    inline-size: 100%;
+    block-size: 100%;
+    max-inline-size: none;
+    max-block-size: none;
+  }
+
   .pub-theme-dir-virt .pub-main .markdown-body .featured-block,
   .pub-theme-dir-virt .site-main .markdown-body .featured-block {
     margin: 2em 0 1.5em 0 !important;
@@ -1355,19 +1405,23 @@ html:has(.site-container) {
     margin-top: auto;
     margin-bottom: auto;
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt)
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
     .image-grid[data-cols="1"]:has(figure.image-block:not(.expanded)[data-size="xsmall"]) {
     height: 35%;
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt)
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
     .image-grid[data-cols="1"]:has(figure.image-block:not(.expanded)[data-size="small"]) {
     height: 46%;
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt)
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
     .image-grid[data-cols="1"]:has(figure.image-block:not(.expanded)[data-size="large"]) {
     height: 73%;
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt)
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
     .image-grid[data-cols="1"]:has(figure.image-block:not(.expanded)[data-size="xlarge"]) {
     height: 95%;
   }
@@ -1385,8 +1439,6 @@ html:has(.site-container) {
     max-block-size: 100%;
     object-fit: contain;
   }
-
-
 
   .pub-theme-dir-virt .markdown-body .toc::before {
     display: none;
@@ -1448,23 +1500,33 @@ html:has(.site-container) {
     width: auto;
     height: auto;
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="xsmall"] {
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
+    figure.image-block:not(.expanded):not([data-grid])[data-size="xsmall"] {
     inline-size: min(13em, 32%);
     max-block-size: 13em;
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="small"] {
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
+    figure.image-block:not(.expanded):not([data-grid])[data-size="small"] {
     inline-size: min(16em, 40%);
     max-block-size: 16em;
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="medium"] {
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
+    figure.image-block:not(.expanded):not([data-grid])[data-size="medium"] {
     inline-size: min(20em, 50%);
     max-block-size: 20em;
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="large"] {
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
+    figure.image-block:not(.expanded):not([data-grid])[data-size="large"] {
     inline-size: min(27.5em, 60%);
     max-block-size: 27.5em;
   }
-  .pub-theme-dir-virt .markdown-body:not(.excerpt) figure.image-block:not(.expanded)[data-size="xlarge"] {
+  .pub-theme-dir-virt
+    .markdown-body:not(.excerpt)
+    figure.image-block:not(.expanded):not([data-grid])[data-size="xlarge"] {
     inline-size: min(35em, 70%);
     max-block-size: 35em;
   }
