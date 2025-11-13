@@ -92,8 +92,9 @@ export class Config {
     "dark",
     "blackboard",
     "tategaki",
+    "shimbun",
   ];
-  static readonly PUB_DESIGN_VERTICAL_THEMES = ["tategaki"];
+  static readonly PUB_DESIGN_VERTICAL_THEMES = ["tategaki", "shimbun"];
   static readonly PUB_DESIGN_DARK_THEMES = ["dark", "blackboard"];
   static readonly PUB_POSTS_PAGE_SIZE = normNum(process.env.NEXT_PUBLIC_PUB_POSTS_PAGE_SIZE, 10);
   static readonly PUB_SIDE_RECENT_POSTS_SIZE = normNum(
