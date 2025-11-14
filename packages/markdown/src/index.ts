@@ -3185,6 +3185,61 @@ export function mdSeparateTitle(nodes: MdNode[]): {
   return { title: null, otherNodes: nodes };
 }
 
+export function mdExtractMetadata(nodes: MdNode[]): Record<string, string> {
+  const result: Record<string, string> = {};
+  const collectText = (ns: MdNode[] | undefined): string => {
+    if (!ns) return "";
+    let out = "";
+    for (const n of ns) {
+      if (n.type === "text") {
+        out += n.text;
+      } else if (n.type === "element") {
+        if (n.tag === "br") {
+          out += " ";
+        } else if (n.tag === "math") {
+          const tex =
+            n.attrs && typeof n.attrs.tex === "string" ? n.attrs.tex : "";
+          out += tex;
+        } else if (n.tag === "ruby") {
+          for (const c of n.children || []) {
+            if (c.type === "text") {
+              out += c.text;
+            } else if (c.type === "element" && c.tag === "rt") {
+              const rtText = collectText(c.children);
+              if (rtText) out += `(${rtText})`;
+            } else {
+              out += collectText([c]);
+            }
+          }
+        } else {
+          out += collectText(n.children);
+        }
+      }
+    }
+    return out.replace(/\s+/g, " ").trim();
+  };
+  const visit = (n: MdNode): void => {
+    if (n.type === "element") {
+      if (n.tag === "li") {
+        const metaAttr = n.attrs?.meta;
+        if (typeof metaAttr === "string" && metaAttr.length > 0) {
+          const value = collectText(n.children);
+          if (value.length > 0) {
+            result[metaAttr] = value;
+          }
+        }
+      }
+      for (const c of n.children || []) {
+        visit(c);
+      }
+    }
+  };
+  for (const n of nodes) {
+    visit(n);
+  }
+  return result;
+}
+
 export function serializeMdNodes(nodes: MdNode[]): string {
   const enc = nodes.map(encodeNode);
   return JSON.stringify(enc);

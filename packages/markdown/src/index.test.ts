@@ -14,6 +14,7 @@ import {
   mdRenderHtml,
   mdRenderMarkdown,
   mdSeparateTitle,
+  mdExtractMetadata,
   serializeMdNodes,
   deserializeMdNodes,
 } from "./index";
@@ -2057,6 +2058,14 @@ describe("mdSeparateTitle", () => {
     expect(mdRenderHtml(otherNodes)).toBe(
       '<p>intro</p><h3 id="h-0-0-1">Only H3</h3><p>body</p>',
     );
+  });
+});
+
+describe("mdExtractMetadata", () => {
+  it("basic usage", () => {
+    const md = "-@author John Doe\n-@subtitle **Super** ::Fire::";
+    const expected = { author: "John Doe", subtitle: "Super Fire" };
+    expect(mdExtractMetadata(parseMarkdown(md))).toStrictEqual(expected);
   });
 });
 
