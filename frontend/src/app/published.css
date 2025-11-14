@@ -613,6 +613,9 @@ html:has(.site-container) {
   .pub-theme-newspaper .markdown-body h6 {
     font-family: "BIZ UDGothic", sans-serif !important;
   }
+  .pub-theme-newspaper .markdown-body li[data-meta]::before {
+    content: "";
+  }
   .pub-theme-newspaper .markdown-body a {
     color: #028 !important;
   }
@@ -1317,6 +1320,7 @@ html:has(.site-container) {
     margin-top: 1.5em;
   }
   .pub-theme-dir-vert .markdown-body li[data-meta] {
+    margin-right: unset;
     margin-bottom: 1em;
   }
   .pub-theme-dir-vert .markdown-body li[data-meta]::before {

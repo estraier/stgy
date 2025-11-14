@@ -97,6 +97,7 @@ body {
 }
 .markdown-body ul:has(li[data-meta]) {
   text-align: right;
+  margin-right: 0.5em;
   list-style: none;
   opacity: 0.9;
 }
