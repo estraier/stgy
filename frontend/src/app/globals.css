@@ -95,6 +95,16 @@ body {
   line-height: inherit;
   list-style: none;
 }
+.markdown-body ul:has(li[data-meta]) {
+  text-align: right;
+  list-style: none;
+  opacity: 0.9;
+}
+.markdown-body li[data-meta]::before {
+  content: attr(data-meta) ": ";
+  font-size: 90%;
+  opacity: 0.5;
+}
 .markdown-body ul ul {
   margin: 0;
 }
