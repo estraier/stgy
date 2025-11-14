@@ -13,6 +13,7 @@ import {
   mdRenderHtml,
   mdRenderText,
   mdSeparateTitle,
+  mdExtractMetadata,
   deserializeMdNodes,
 } from "stgy-markdown";
 
@@ -40,6 +41,7 @@ export function makePubArticleHtmlFromMarkdown(
   title: string | null;
   desc: string;
   featured: string | null;
+  meta: Record<string, string>;
 } {
   let nodes = parseMarkdown(mdText);
   const { title, otherNodes } = mdSeparateTitle(nodes);
@@ -65,7 +67,8 @@ export function makePubArticleHtmlFromMarkdown(
       }
     }
   }
-  return { html, title, desc, featured };
+  const meta = mdExtractMetadata(nodes);
+  return { html, title, desc, featured, meta };
 }
 
 export function makeSnippetHtmlFromMarkdown(mdText: string, idPrefix?: string) {

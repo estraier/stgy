@@ -3185,8 +3185,11 @@ export function mdSeparateTitle(nodes: MdNode[]): {
   return { title: null, otherNodes: nodes };
 }
 
-export function mdExtractMetadata(nodes: MdNode[]): Record<string, string> {
-  const result: Record<string, string> = {};
+export function mdSeparateMetadata(nodes: MdNode[]): {
+  metadata: Record<string, string>;
+  otherNodes: MdNode[];
+} {
+  const metadata: Record<string, string> = {};
   const collectText = (ns: MdNode[] | undefined): string => {
     if (!ns) return "";
     let out = "";
@@ -3218,26 +3221,42 @@ export function mdExtractMetadata(nodes: MdNode[]): Record<string, string> {
     }
     return out.replace(/\s+/g, " ").trim();
   };
-  const visit = (n: MdNode): void => {
-    if (n.type === "element") {
-      if (n.tag === "li") {
-        const metaAttr = n.attrs?.meta;
-        if (typeof metaAttr === "string" && metaAttr.length > 0) {
-          const value = collectText(n.children);
-          if (value.length > 0) {
-            result[metaAttr] = value;
-          }
+  const walk = (n: MdNode): MdNode | null => {
+    if (n.type === "text") return n;
+    const el = n as MdElementNode;
+    if (el.tag === "li") {
+      const metaAttr = el.attrs?.meta;
+      if (typeof metaAttr === "string" && metaAttr.length > 0) {
+        const value = collectText(el.children);
+        if (value.length > 0) {
+          metadata[metaAttr] = value;
         }
-      }
-      for (const c of n.children || []) {
-        visit(c);
+        return null;
       }
     }
+    const origChildren = el.children || [];
+    const newChildren: MdNode[] = [];
+    for (const c of origChildren) {
+      const cc = walk(c);
+      if (cc) newChildren.push(cc);
+    }
+    if (newChildren.length === 0 && el.tag === "ul") {
+      return null;
+    }
+    if (newChildren.length === origChildren.length) {
+      return el;
+    }
+    return {
+      ...el,
+      children: newChildren,
+    };
   };
+  const otherNodes: MdNode[] = [];
   for (const n of nodes) {
-    visit(n);
+    const nn = walk(n);
+    if (nn) otherNodes.push(nn);
   }
-  return result;
+  return { metadata, otherNodes };
 }
 
 export function serializeMdNodes(nodes: MdNode[]): string {
