@@ -43,14 +43,13 @@ describe("article utils (normal cases)", () => {
   test("makeArticleTextFromMarkdown", () => {
     const md = "# Hello World\n- I am Nancy.";
     const text = makeArticleTextFromMarkdown(md);
-    console.log(text);
     expect(text).toBe("Hello World\n\n- I am Nancy.");
   });
 
   test("makePubArticleHtmlFromMarkdown", () => {
     const md =
       "abc\n# **title**\n-@author Nancy\n![cap](/images/u1/masters/folder/pic.png)\n[U](/users/123), [P](/posts/456)";
-    const { html, title, desc, featured, meta } = makePubArticleHtmlFromMarkdown(md);
+    const { html, title, desc, featured, metadata } = makePubArticleHtmlFromMarkdown(md);
     expect(html).toContain("<figure");
     expect(html).toContain('class="image-block"');
     expect(html).toContain('src="https://cdn.test/images-bkt/u1/thumbs/folder/pic_image.webp"');
@@ -59,10 +58,7 @@ describe("article utils (normal cases)", () => {
     expect(title).toBe("title");
     expect(desc).toBe("abc cap U, P");
     expect(featured).toBe("https://cdn.test/images-bkt/u1/thumbs/folder/pic_image.webp");
-
-
-    console.log(meta);
-
+    expect(metadata["author"]).toBe("Nancy");
   });
 
   test("makeSnippetHtmlFromMarkdown", () => {

@@ -1316,6 +1316,9 @@ html:has(.site-container) {
   .pub-theme-dir-vert .markdown-body ul {
     margin-top: 1.5em;
   }
+  .pub-theme-dir-vert .markdown-body li[data-meta]::before {
+    content: "";
+  }
   .pub-theme-dir-vert .markdown-body pre[data-pre-mode]::before {
     content: "";
   }

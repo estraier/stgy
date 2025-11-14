@@ -13,7 +13,7 @@ import {
   mdRenderHtml,
   mdRenderText,
   mdSeparateTitle,
-  mdExtractMetadata,
+  mdSeparateMetadata,
   deserializeMdNodes,
 } from "stgy-markdown";
 
@@ -41,11 +41,12 @@ export function makePubArticleHtmlFromMarkdown(
   title: string | null;
   desc: string;
   featured: string | null;
-  meta: Record<string, string>;
+  metadata: Record<string, string>;
 } {
   let nodes = parseMarkdown(mdText);
-  const { title, otherNodes } = mdSeparateTitle(nodes);
-  let desc = mdRenderText(otherNodes);
+  const { title, otherNodes: nodesWithoutTitle } = mdSeparateTitle(nodes);
+  const { metadata, otherNodes: nodesWithoutMeta } = mdSeparateMetadata(nodesWithoutTitle);
+  let desc = mdRenderText(nodesWithoutMeta);
   desc = desc.replace(/\s+/g, " ").trim();
   if (desc.length > 150) {
     desc = desc.substring(0, 150) + "...";
@@ -67,8 +68,7 @@ export function makePubArticleHtmlFromMarkdown(
       }
     }
   }
-  const meta = mdExtractMetadata(nodes);
-  return { html, title, desc, featured, meta };
+  return { html, title, desc, featured, metadata };
 }
 
 export function makeSnippetHtmlFromMarkdown(mdText: string, idPrefix?: string) {

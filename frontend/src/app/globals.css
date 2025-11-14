@@ -102,7 +102,7 @@ body {
 }
 .markdown-body li[data-meta]::before {
   content: attr(data-meta) ": ";
-  font-size: 90%;
+  font-size: 80%;
   opacity: 0.5;
 }
 .markdown-body ul ul {
