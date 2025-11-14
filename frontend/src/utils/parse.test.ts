@@ -4,6 +4,7 @@ import {
   parseUserSearchQuery,
   serializeUserSearchQuery,
   parseBodyAndTags,
+  parseDateString,
 } from "./parse";
 
 describe("parsePostSearchQuery", () => {
@@ -156,5 +157,48 @@ describe("parseBodyAndTags", () => {
     expect(result.content).toBe("line1\n#notatag\nend");
     expect(result.tags).toEqual([]);
     expect(result.attrs).toEqual({});
+  });
+});
+
+describe("parseDateString", () => {
+  test("canonical data", () => {
+    expect(parseDateString("0").toISOString()).toBe("0000-01-01T00:00:00.000Z");
+    expect(parseDateString("0012").toISOString()).toBe("0012-01-01T00:00:00.000Z");
+    expect(parseDateString("0012-11").toISOString()).toBe("0012-11-01T00:00:00.000Z");
+    expect(parseDateString("0012-11-22").toISOString()).toBe("0012-11-22T00:00:00.000Z");
+    expect(parseDateString("0012-11-22T11").toISOString()).toBe("0012-11-22T11:00:00.000Z");
+    expect(parseDateString("0012-11-22T11:22").toISOString()).toBe("0012-11-22T11:22:00.000Z");
+    expect(parseDateString("0012-11-22T11:22:33").toISOString()).toBe("0012-11-22T11:22:33.000Z");
+    expect(parseDateString("0012-11-22T11:22:33.44").toISOString()).toBe(
+      "0012-11-22T11:22:33.440Z",
+    );
+    expect(parseDateString("0012-11-22T11:22:33.44+09:00").toISOString()).toBe(
+      "0012-11-22T02:22:33.440Z",
+    );
+  });
+
+  test("human readable data", () => {
+    expect(parseDateString("1978/02/11").toISOString()).toBe("1978-02-11T00:00:00.000Z");
+    expect(parseDateString("1978/02-11 18:35:05+09").toISOString()).toBe(
+      "1978-02-11T09:35:05.000Z",
+    );
+    expect(parseDateString("1978年").toISOString()).toBe("1978-01-01T00:00:00.000Z");
+    expect(parseDateString("1978年02月").toISOString()).toBe("1978-02-01T00:00:00.000Z");
+    expect(parseDateString("1978年02月11日").toISOString()).toBe("1978-02-11T00:00:00.000Z");
+    expect(parseDateString("1978年02月11日18時").toISOString()).toBe("1978-02-11T18:00:00.000Z");
+    expect(parseDateString("1978年02月11日18時35分").toISOString()).toBe(
+      "1978-02-11T18:35:00.000Z",
+    );
+    expect(parseDateString("1978年02月11日18時35分05秒").toISOString()).toBe(
+      "1978-02-11T18:35:05.000Z",
+    );
+    expect(parseDateString("1978年02月11日18時35分05秒+09").toISOString()).toBe(
+      "1978-02-11T09:35:05.000Z",
+    );
+  });
+
+  test("invalid data", () => {
+    expect(parseDateString("")).toBe(null);
+    expect(parseDateString("abc")).toBe(null);
   });
 });

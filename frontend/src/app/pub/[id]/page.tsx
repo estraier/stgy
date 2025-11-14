@@ -13,6 +13,7 @@ import {
 import LinkDiv from "@/components/LinkDiv";
 import ArticleWithDecoration from "@/components/ArticleWithDecoration";
 import { formatDateTime, makeAbsoluteUrl, convertForDirection } from "@/utils/format";
+import { parseDateString } from "@/utils/parse";
 import type { Metadata } from "next";
 
 type PageParams = { id: string };
@@ -38,7 +39,12 @@ export async function generateMetadata({
     const artDesc = article.desc || artTitle;
     const siteName = pubcfg.siteName?.trim() || "";
     const pageTitle = siteName ? `${siteName}: ${artTitle}` : artTitle;
-    const author = (pubcfg.author || "").trim();
+    const author = (article.metadata.author || pubcfg.author || "").trim();
+    const metaDate = parseDateString(article.metadata.date ?? "");
+    const metaDateIso = metaDate ? metaDate.toISOString() : undefined;
+    const createdDate = metaDate || parseDateString(post.createdAt);
+    const createdAtIso = createdDate ? createdDate.toISOString() : undefined;
+    const issuedAt = post.publishedAt ?? undefined;
     const canonical = makeAbsoluteUrl(`/pub/${post.id}`);
     const featuredImageUrl =
       article.featured && typeof article.featured === "string"
@@ -67,6 +73,11 @@ export async function generateMetadata({
         images: featuredImageUrl ? [featuredImageUrl] : undefined,
       },
       authors: author ? [{ name: author }] : undefined,
+      other: {
+        ...(metaDateIso ? { "dc:date": metaDateIso } : {}),
+        ...(createdAtIso ? { "dcterms:created": createdAtIso } : {}),
+        ...(issuedAt ? { "dcterms:issued": issuedAt } : {}),
+      },
     };
   } catch (e: unknown) {
     const canonical = makeAbsoluteUrl(`/pub/${id}`);
@@ -239,7 +250,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
     const is404 =
       /(^|\b)404(\b|$)/.test(String(msg)) ||
       /not\s*found/i.test(String(msg)) ||
-      /no\s*such/i.test(String(msg));
+      /no\s*such/i.test(msg);
 
     return (
       <div className="pub-page pub-theme-default">

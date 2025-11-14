@@ -1,0 +1,18 @@
+id: 0001000000000301
+email: litrature-ja@stgy.jp
+nickname: 国文学大好きっ子
+password: *
+isAdmin: false
+blockStrangers: false
+locale: ja
+timezone: Asia/Tokyo
+introduction:<<____EOF____
+日本語の文学作品を紹介します。
+____EOF____
+pubConfigSiteName: 国文学のブログ
+pubConfigSubtitle: 日本語の文学作品を紹介
+pubConfigAuthor: 国文学大好きっ子
+pubConfigIntroduction:<<____EOF____
+日本語の文学作品を紹介します。青空文庫からの転載が主です。
+____EOF____
+pubConfigDesignTheme: shimbun
