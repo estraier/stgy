@@ -389,16 +389,24 @@ export function parseMarkdown(mdText: string): MdNode[] {
       );
       continue;
     }
-    const li = line.match(/^(\s*)-(\+|:)? (.+)$/);
+
+    const li = line.match(/^(\s*)-(\+|:|@[-a-zA-Z0-9]+)?\s+(.+)$/);
     if (li) {
       flushPara();
       flushTable();
       flushQuote();
       const level = Math.floor(li[1].length / 2);
-      const bulletMark = li[2];
+      const marker = li[2] || "";
       const text = li[3];
-      const bullet =
-        bulletMark === "+" ? "number" : bulletMark === ":" ? "none" : undefined;
+      let bullet: "number" | "none" | undefined;
+      let meta: string | undefined;
+      if (marker === "+") {
+        bullet = "number";
+      } else if (marker === ":") {
+        bullet = "none";
+      } else if (marker.startsWith("@") && marker.length > 1) {
+        meta = marker.slice(1);
+      }
 
       while (
         currList.length > 0 &&
@@ -432,11 +440,13 @@ export function parseMarkdown(mdText: string): MdNode[] {
           currList[currList.length - 1].bullet = bullet;
         }
       }
+      const liAttrs: MdAttrs | undefined = meta ? { meta } : undefined;
       currList[currList.length - 1].items.push(
-        makeElement("li", parseInline(text), undefined, i, lineCharStart),
+        makeElement("li", parseInline(text), liAttrs, i, lineCharStart),
       );
       continue;
     }
+
     if (currList.length > 0) {
       flushList();
     }
@@ -2384,6 +2394,10 @@ export function mdRenderHtml(
         out += ` data-bullet="${escapeHTML(String(v))}"`;
         continue;
       }
+      if (k === "meta") {
+        out += ` data-meta="${escapeHTML(String(v))}"`;
+        continue;
+      }
       if (v === false || v === undefined || v === null) continue;
       if (v === true) out += ` ${k}`;
       else out += ` ${k}="${escapeHTML(String(v))}"`;
@@ -2683,13 +2697,11 @@ export function mdRenderHtml(
 export function mdRenderMarkdown(nodes: MdNode[]): string {
   const isElement = (n: MdNode, tag?: string): n is MdElementNode =>
     n.type === "element" && (!tag || n.tag === tag);
-
   const hasClass = (el: MdElementNode | undefined, cls: string): boolean => {
     if (!el || el.type !== "element") return false;
     const c = el.attrs?.class;
     return typeof c === "string" ? c.split(/\s+/).includes(cls) : false;
   };
-
   const getAttrStr = (
     a: MdAttrs | undefined,
     k: string,
@@ -2701,10 +2713,8 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
         ? String(v)
         : undefined;
   };
-
   const sanitizeUrl = (u: string): string =>
     u.replace(/\)/g, "%29").replace(/ /g, "%20");
-
   const collectPlainText = (ns: MdNode[] | undefined): string => {
     if (!ns) return "";
     let out = "";
@@ -2719,7 +2729,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     }
     return out;
   };
-
   const escapeForInline = (s: string): string => {
     let out = s.replace(/\\/g, "\\\\");
     out = out.replace(/\*\*/g, "\\*\\*");
@@ -2732,7 +2741,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     out = out.replace(/\$\$/g, "\\$\\$");
     return out;
   };
-
   const backtickRun = (s: string): number => {
     let maxRun = 0,
       cur = 0;
@@ -2746,7 +2754,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     if (cur > maxRun) maxRun = cur;
     return maxRun;
   };
-
   const protectBlockStarts = (text: string): string =>
     text
       .split("\n")
@@ -2757,7 +2764,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
         return line;
       })
       .join("\n");
-
   const renderInline = (ns: MdNode[] | undefined): string => {
     if (!ns || ns.length === 0) return "";
     let out = "";
@@ -2863,7 +2869,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     }
     return out;
   };
-
   const extractAltFromFigureOrImg = (node: MdElementNode): string => {
     if (node.tag === "figure") {
       const caption = node.children.find(
@@ -2895,7 +2900,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
 
     return "";
   };
-
   const renderFigureMacro = (fig: MdElementNode): string => {
     const media = (fig.children || []).find(
       (c): c is MdMediaElement =>
@@ -2927,7 +2931,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     const attrsStr = macro.length ? `{${macro.join(", ")}}` : "";
     return `![${desc}](${src})${attrsStr}`;
   };
-
   const tableCellAlign = (
     cell: MdElementNode,
   ): "right" | "center" | undefined => {
@@ -2940,7 +2943,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     }
     return undefined;
   };
-
   const renderTableCell = (cell: MdElementNode): string => {
     const tokens: string[] = [];
     const csRaw = getAttrStr(cell.attrs, "colspan");
@@ -2961,14 +2963,13 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     if (cell.tag === "th") body = `=${body}=`;
     return body;
   };
-
   const renderList = (ul: MdElementNode, depth: number): string => {
-    const bullet = ((): "- " | "-+ " | "-: " => {
+    const defaultBullet = (): string => {
       const b = ul.attrs?.["bullet"];
       if (b === "number") return "-+ ";
       if (b === "none") return "-: ";
       return "- ";
-    })();
+    };
     let out = "";
     for (const child of ul.children || []) {
       if (!isElement(child, "li")) continue;
@@ -2979,6 +2980,14 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
         if (isElement(c, "ul")) nestedLists.push(c);
         else inlineParts.push(c);
       }
+      let bullet = defaultBullet();
+      const meta =
+        child.attrs && typeof child.attrs.meta === "string"
+          ? (child.attrs.meta as string)
+          : undefined;
+      if (meta && meta.length > 0) {
+        bullet = `-@${meta} `;
+      }
       const line = indent + bullet + renderInline(inlineParts);
       out += line + "\n";
       for (const nl of nestedLists) {
@@ -2988,7 +2997,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     if (depth === 0) out += "\n";
     return out;
   };
-
   const renderBlock = (n: MdNode): string | null => {
     if (n.type === "text") {
       const t = n.text.trim();
@@ -3003,7 +3011,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
       }
       return lines.join("\n");
     }
-
     switch (el.tag) {
       case "p":
         return protectBlockStarts(renderInline(el.children || []));
@@ -3080,7 +3087,6 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
         return protectBlockStarts(renderInline(el.children || []));
     }
   };
-
   const blocks: string[] = [];
   for (const n of nodes) {
     const b = renderBlock(n);

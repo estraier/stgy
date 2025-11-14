@@ -75,7 +75,7 @@ describe("parseMarkdown", () => {
   });
 
   it("list", () => {
-    const mdText = "- hello world\n- me too";
+    const mdText = "- hello world\n- me too\n-@author John Doe";
     const expected = [
       {
         type: "element",
@@ -98,6 +98,19 @@ describe("parseMarkdown", () => {
               {
                 type: "text",
                 text: "me too",
+              },
+            ],
+          },
+          {
+            type: "element",
+            tag: "li",
+            attrs: {
+              meta: "author",
+            },
+            children: [
+              {
+                type: "text",
+                text: "John Doe",
               },
             ],
           },
@@ -1578,6 +1591,13 @@ describe("mdRenderHtml basics", () => {
     );
   });
 
+  it("list meta", () => {
+    const mdText = "-@title hello world\n  -@date 2024/02/11";
+    expect(makeHtml(mdText)).toBe(
+      '<ul><li data-meta="title">hello world<ul><li data-meta="date">2024/02/11</li></ul></li></ul>',
+    );
+  });
+
   it("table", () => {
     const mdText = "|=text=|hello world|>>a|=><b=|{colspan=2}{rowspan=3}c|";
     expect(makeHtml(mdText)).toBe(
@@ -1777,8 +1797,10 @@ describe("mdRenderMarkdown basics", () => {
   });
 
   it("list number", () => {
-    const mdText = "-+ hello world\n  -: second\n-+ love";
-    expect(makeMarkdown(mdText)).toBe("-+ hello world\n  -: second\n-+ love\n");
+    const mdText = "-+ hello world\n  -: second\n-@word love";
+    expect(makeMarkdown(mdText)).toBe(
+      "-+ hello world\n  -: second\n-@word love\n",
+    );
   });
 
   it("table", () => {

@@ -1316,6 +1316,12 @@ html:has(.site-container) {
   .pub-theme-dir-vert .markdown-body ul {
     margin-top: 1.5em;
   }
+  .pub-theme-dir-vert .markdown-body pre[data-pre-mode]::before {
+    content: "";
+  }
+  .pub-theme-dir-vert .markdown-body pre[data-pre-mode="natural"] {
+    border: none;
+  }
   .pub-theme-dir-vert .markdown-body table {
     margin-top: 0.5em;
   }
@@ -1448,7 +1454,6 @@ html:has(.site-container) {
     max-block-size: 100%;
     object-fit: contain;
   }
-
   .pub-theme-dir-vert .markdown-body .toc::before {
     display: none;
   }
@@ -1773,7 +1778,6 @@ html:has(.site-container) {
   }
   .pub-theme-shimbun .markdown-body pre[data-pre-mode="natural"] {
     background-color: transparent !important;
-    border-left-color: #f8f8f8 !important;
     color: #333 !important;
   }
   .pub-theme-shimbun .markdown-body th,
