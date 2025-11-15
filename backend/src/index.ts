@@ -20,7 +20,7 @@ const logger = createLogger({ file: "index" });
 
 async function main() {
   Object.entries(Config).forEach(([key, value]) => {
-    if (key.endsWith("_PASSWORD")) {
+    if (key.endsWith("_PASSWORD") || key.endsWith("_API_KEY")) {
       value = "****";
     }
     logger.info(`[config] ${key}: ${JSON.stringify(value)}`);

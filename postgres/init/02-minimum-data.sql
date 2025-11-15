@@ -1,9 +1,9 @@
 INSERT INTO ai_models
 (label, service, name)
 VALUES
-('advanced', 'openapi', 'gpt-5.1'),
-('balanced', 'openapi', 'gpt-5-mini'),
-('basic', 'openapi', 'gpt-5-nano');
+('advanced', 'openai', 'gpt-5.1'),
+('balanced', 'openai', 'gpt-5-mini'),
+('basic', 'openai', 'gpt-5-nano');
 
 INSERT INTO users (
   id,

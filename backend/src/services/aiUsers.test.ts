@@ -29,9 +29,22 @@ class MockPgPool {
   }[] = [];
   user_secrets: { user_id: number; email: string }[] = [];
   user_details: { user_id: number; introduction: string; ai_personality: string | null }[] = [];
+  ai_models: { label: string; service: string; name: string }[] = [];
 
   async query(sql: string, params?: any[]) {
     sql = normalizeSql(sql);
+
+    if (sql.startsWith("SELECT label, service, name FROM ai_models WHERE label = $1")) {
+      const label = params?.[0];
+      const rows = this.ai_models
+        .filter((m) => m.label === label)
+        .map((m) => ({
+          label: m.label,
+          service: m.service,
+          name: m.name,
+        }));
+      return { rows, rowCount: rows.length };
+    }
 
     if (
       sql.startsWith(
@@ -104,12 +117,12 @@ describe("AiUsersService", () => {
 
     pgPool.users.push(
       { id: 1000, nickname: "Human", is_admin: false, ai_model: null, updated_at: null },
-      { id: 1001, nickname: "BotOne", is_admin: false, ai_model: "gpt-5-mini", updated_at: null },
+      { id: 1001, nickname: "BotOne", is_admin: false, ai_model: "balanced", updated_at: null },
       {
         id: 1002,
         nickname: "BotTwo",
         is_admin: true,
-        ai_model: "gpt-5-mini",
+        ai_model: "balanced",
         updated_at: new Date("2025-02-02T00:00:00Z"),
       },
     );
@@ -123,6 +136,12 @@ describe("AiUsersService", () => {
       { user_id: 1001, introduction: "Hello, I'm BotOne.", ai_personality: "Calm and logical." },
       { user_id: 1002, introduction: "Hi, I'm BotTwo.", ai_personality: "Cheerful and curious." },
     );
+
+    pgPool.ai_models.push({
+      label: "balanced",
+      service: "openai",
+      name: "gpt-5-mini",
+    });
   });
 
   test("listAiUsers: returns AI users only, default desc", async () => {
@@ -134,7 +153,7 @@ describe("AiUsersService", () => {
     expect(out[1].id).toBe("00000000000003E9");
     expect(out[0].isAdmin).toBe(true);
     expect(out[1].isAdmin).toBe(false);
-    expect(out[0].aiModel).toBe("gpt-5-mini");
+    expect(out[0].aiModel).toBe("balanced");
   });
 
   test("listAiUsers: asc and pagination", async () => {
@@ -155,7 +174,7 @@ describe("AiUsersService", () => {
     expect(detail).not.toBeNull();
     expect(detail!.nickname).toBe("BotOne");
     expect(detail!.isAdmin).toBe(false);
-    expect(detail!.aiModel).toBe("gpt-5-mini");
+    expect(detail!.aiModel).toBe("balanced");
     expect(detail!.email).toBe("botone@example.com");
     expect(detail!.introduction).toBe("Hello, I'm BotOne.");
     expect(detail!.aiPersonality).toBe("Calm and logical.");
@@ -165,7 +184,7 @@ describe("AiUsersService", () => {
 
   test("getAiUser: ai_personality null becomes empty string", async () => {
     const uid = 2001;
-    pgPool.users.push({ id: uid, nickname: "BotNull", is_admin: false, ai_model: "gpt-5-mini" });
+    pgPool.users.push({ id: uid, nickname: "BotNull", is_admin: false, ai_model: "balanced" });
     pgPool.user_secrets.push({ user_id: uid, email: "botnull@example.com" });
     pgPool.user_details.push({ user_id: uid, introduction: "intro", ai_personality: null });
 
@@ -193,7 +212,7 @@ describe("AiUsersService", () => {
     });
 
     const res = await service.chat({
-      model: "gpt-5-mini",
+      model: "balanced",
       messages: [{ role: "user", content: "hi" }],
     });
 
@@ -209,7 +228,7 @@ describe("AiUsersService", () => {
     mockCreate.mockResolvedValue({ choices: [] });
 
     const res = await service.chat({
-      model: "gpt-5-mini",
+      model: "balanced",
       messages: [{ role: "user", content: "anything" }],
     });
 

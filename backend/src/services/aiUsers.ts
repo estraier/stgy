@@ -112,14 +112,27 @@ export class AiUsersService {
   }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
-    const r = await this.openai.chat.completions.create({
-      model: req.model!,
-      messages: req.messages,
-    });
-    return {
-      message: {
-        content: r.choices[0]?.message?.content ?? "",
-      },
-    };
+    const res = await pgQuery<{
+      label: string;
+      service: string;
+      name: string;
+    }>(this.pgPool, `SELECT label, service, name FROM ai_models WHERE label = $1`, [req.model]);
+    if (res.rowCount === 0) {
+      throw new Error("no such model");
+    }
+    const model_service = res.rows[0].service;
+    const model_name = res.rows[0].name;
+    if (model_service === "openai") {
+      const r = await this.openai.chat.completions.create({
+        model: model_name,
+        messages: req.messages,
+      });
+      return {
+        message: {
+          content: r.choices[0]?.message?.content ?? "",
+        },
+      };
+    }
+    throw new Error("unsupported service");
   }
 }
