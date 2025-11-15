@@ -74,6 +74,7 @@ export async function generateMetadata({
       },
       authors: author ? [{ name: author }] : undefined,
       other: {
+        ...(article.title ? { "dc:title": article.title } : {}),
         ...(metaDateIso ? { "dc:date": metaDateIso } : {}),
         ...(createdAtIso ? { "dcterms:created": createdAtIso } : {}),
         ...(issuedAt ? { "dcterms:issued": issuedAt } : {}),
