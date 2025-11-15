@@ -9,39 +9,31 @@ export class AIModelsService {
     this.pgPool = pgPool;
   }
 
-  async getAIModel(name: string): Promise<AIModel | null> {
+  async getAIModel(label: string): Promise<AIModel | null> {
     const res = await pgQuery<{
+      label: string;
+      service: string;
       name: string;
-      description: string;
-      input_cost: number;
-      output_cost: number;
-    }>(
-      this.pgPool,
-      `SELECT name, description, input_cost, output_cost FROM ai_models WHERE name = $1`,
-      [name],
-    );
+    }>(this.pgPool, `SELECT label, service, name FROM ai_models WHERE label = $1`, [label]);
     if (res.rowCount === 0) return null;
     const row = res.rows[0];
     return {
+      label: row.label,
+      service: row.service,
       name: row.name,
-      description: row.description,
-      inputCost: row.input_cost,
-      outputCost: row.output_cost,
     };
   }
 
   async listAIModels(): Promise<AIModel[]> {
     const res = await pgQuery<{
+      label: string;
+      service: string;
       name: string;
-      description: string;
-      input_cost: number;
-      output_cost: number;
-    }>(this.pgPool, "SELECT name, description, input_cost, output_cost FROM ai_models", []);
+    }>(this.pgPool, "SELECT label, service, name FROM ai_models ORDER BY label", []);
     return res.rows.map((row) => ({
+      label: row.label,
+      service: row.service,
       name: row.name,
-      description: row.description,
-      inputCost: row.input_cost,
-      outputCost: row.output_cost,
     }));
   }
 }

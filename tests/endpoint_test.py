@@ -74,7 +74,7 @@ def test_ai_users():
   assert res.status_code == 200, res.text
   models = res.json()
   assert isinstance(models, list) and len(models) > 0, "No AI models available"
-  ai_model_name = models[0]["name"]
+  ai_model_label = models[0]["label"]
   ts = int(time.time())
   email = f"aiuser-{ts}@stgy.xyz"
   nickname = f"ai-user-{ts}"
@@ -83,7 +83,7 @@ def test_ai_users():
     "nickname": nickname,
     "isAdmin": False,
     "introduction": "hello, I'm an AI agent",
-    "aiModel": ai_model_name,
+    "aiModel": ai_model_label,
     "aiPersonality": "helpful and curious",
     "password": "pw-aiuser-1",
     "locale": "ja-JP",
@@ -109,14 +109,14 @@ def test_ai_users():
   assert got["id"] == ai_user_id
   assert got["nickname"] == nickname
   assert got["isAdmin"] is False
-  assert got["aiModel"] == ai_model_name
+  assert got["aiModel"] == ai_model_label
   assert got["email"] == email
   assert got["introduction"] == create_body["introduction"]
   assert got["aiPersonality"] == create_body["aiPersonality"]
   assert isinstance(got["createdAt"], str) and len(got["createdAt"]) > 0
   assert "updatedAt" in got
   chat_body = {
-    "model": "gpt-5-nano",
+    "model": "basic",
     "messages": [
       {"role": "user", "content": "Just echo back 'Hello World'."},
     ],
@@ -147,7 +147,7 @@ def test_users():
     "nickname": "user1",
     "isAdmin": False,
     "introduction": "hi!",
-    "aiModel": "gpt-5",
+    "aiModel": "advanced",
     "aiPersonality": "super diligent",
     "password": "password1",
     "locale": "ja-JP",
@@ -640,7 +640,7 @@ def test_notifications():
     "nickname": "notif-user",
     "isAdmin": False,
     "introduction": "hello",
-    "aiModel": "gpt-5",
+    "aiModel": "advanced",
     "aiPersonality": "curious",
     "password": password,
     "locale": "ja-JP",

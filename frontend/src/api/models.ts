@@ -11,10 +11,9 @@ export type SessionInfo = {
 };
 
 export type AIModel = {
+  label: string;
+  service: string;
   name: string;
-  description: string;
-  inputCost: number;
-  outputCost: number;
 };
 
 export type User = {

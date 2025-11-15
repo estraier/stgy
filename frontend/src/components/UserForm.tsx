@@ -89,7 +89,7 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
   const [locale, setLocale] = useState(user.locale || "en-US");
   const [timezone, setTimezone] = useState(user.timezone || "UTC");
 
-  const [aiModels, setAIModels] = useState<{ name: string; description: string }[]>([]);
+  const [aiModels, setAIModels] = useState<{ label: string; service: string; name: string }[]>([]);
   const [aiModelsLoading, setAIModelsLoading] = useState(true);
 
   const [submitting, setSubmitting] = useState(false);
@@ -478,9 +478,10 @@ export default function UserForm({ user, isAdmin, isSelf, onUpdated, onCancel }:
             >
               <option value="">(None)</option>
               {aiModels.map((m) => (
-                <option key={m.name} value={m.name}>
-                  {m.name}
-                  {m.description ? ` - ${m.description}` : ""}
+                <option key={m.label} value={m.label}>
+                  {m.label}
+                  {m.service ? ` - ${m.service}` : ""}
+                  {m.name ? ` - ${m.name}` : ""}
                 </option>
               ))}
             </select>

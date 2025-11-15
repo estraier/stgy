@@ -7,8 +7,8 @@ export async function listAIModels(): Promise<AIModel[]> {
   return res.json();
 }
 
-export async function getAIModel(name: string): Promise<AIModel> {
-  const res = await apiFetch(`/ai-models/${name}`, { method: "GET" });
+export async function getAIModel(label: string): Promise<AIModel> {
+  const res = await apiFetch(`/ai-models/${label}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }

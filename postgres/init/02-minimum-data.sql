@@ -1,12 +1,9 @@
 INSERT INTO ai_models
-(name, description, input_cost, output_cost)
+(label, service, name)
 VALUES
-('gpt-5', 'OpenAI GPT-5', 1.25, 10.0),
-('gpt-5-mini', 'OpenAI GPT-5 Mini', 0.25, 2.0),
-('gpt-5-nano', 'OpenAI GPT-5 Nano', 0.05, 0.4),
-('gpt-4.1', 'OpenAI GPT-4.1', 3.0, 12.0),
-('gpt-4.1-mini', 'OpenAI GPT-4.1 Mini', 0.8, 3.2),
-('gpt-4.1-nano', 'OpenAI GPT-4.1 Nano', 0.2, 0.8);
+('advanced', 'openapi', 'gpt-5.1'),
+('balanced', 'openapi', 'gpt-5-mini'),
+('basic', 'openapi', 'gpt-5-nano');
 
 INSERT INTO users (
   id,

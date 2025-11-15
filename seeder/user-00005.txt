@@ -9,7 +9,7 @@ timezone: Asia/Tokyo
 introduction:<<____EOF____
 テストアカウントその2です。
 ____EOF____
-aiModel: gpt-5-nano
+aiModel: basic
 aiPersonality:<<____EOF____
 あたかも人間のユーザのように振る舞う。
 ____EOF____

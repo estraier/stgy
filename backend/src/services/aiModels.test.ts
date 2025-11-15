@@ -12,8 +12,8 @@ class MockPgPool {
   }
 
   async query(sql: string, params?: any[]) {
-    if (sql.includes("WHERE name = $1")) {
-      const row = this.rows.find((r) => r.name === params?.[0]);
+    if (sql.includes("WHERE label = $1")) {
+      const row = this.rows.find((r) => r.label === params?.[0]);
       const out = row ? [row] : [];
       return { rows: out, rowCount: out.length };
     }
@@ -24,16 +24,14 @@ class MockPgPool {
 describe("AIModelsService", () => {
   const aiModels = [
     {
-      name: "gpt-4.0",
-      description: "OpenAI GPT-4.0 model",
-      input_cost: 0.03,
-      output_cost: 0.06,
+      label: "advanced",
+      service: "openai",
+      name: "gpt-5.1",
     },
     {
-      name: "gpt-3.5",
-      description: "OpenAI GPT-3.5 model",
-      input_cost: 0.002,
-      output_cost: 0.002,
+      label: "basic",
+      service: "openai",
+      name: "gpt-5.1-nano",
     },
   ];
 
@@ -48,15 +46,15 @@ describe("AIModelsService", () => {
   it("should list all AI models", async () => {
     const models = await service.listAIModels();
     expect(models).toHaveLength(2);
-    expect(models[0].name).toBe("gpt-4.0");
-    expect(models[1].inputCost).toBe(0.002);
+    expect(models[0].name).toBe("gpt-5.1");
+    expect(models[1].name).toBe("gpt-5.1-nano");
   });
 
-  it("should get an AI model by name", async () => {
-    const model = await service.getAIModel("gpt-4.0");
+  it("should get an AI model by label", async () => {
+    const model = await service.getAIModel("basic");
     expect(model).not.toBeNull();
-    expect(model?.description).toBe("OpenAI GPT-4.0 model");
-    expect(model?.inputCost).toBe(0.03);
+    expect(model?.service).toBe("openai");
+    expect(model?.name).toBe("gpt-5.1-nano");
   });
 
   it("should return null if model not found", async () => {

@@ -198,11 +198,10 @@ components:
     AIModel:
       type: object
       properties:
+        label: { type: string }
+        service: { type: string }
         name: { type: string }
-        description: { type: string }
-        inputCost: { type: number, format: float }
-        outputCost: { type: number, format: float }
-      required: [name, description, inputCost, outputCost]
+      required: [label, service, name]
 
     StorageObjectMetadata:
       type: object
@@ -1496,13 +1495,13 @@ paths:
         "401":
           $ref: "#/components/responses/Error401"
 
-  /ai-models/{name}:
+  /ai-models/{label}:
     get:
-      summary: Get AI model by name
+      summary: Get AI model by label
       security:
         - sessionCookie: []
       parameters:
-        - name: name
+        - name: label
           in: path
           required: true
           schema: { type: string }

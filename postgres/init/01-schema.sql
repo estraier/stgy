@@ -4,10 +4,9 @@ ALTER DATABASE :"db" SET default_toast_compression = 'lz4';
 ALTER SYSTEM SET timezone = 'UTC';
 
 CREATE TABLE ai_models (
-  name VARCHAR(50) PRIMARY KEY,
-  description VARCHAR(500) NOT NULL,
-  input_cost REAL NOT NULL,
-  output_cost REAL NOT NULL
+  label VARCHAR(50) PRIMARY KEY,
+  service VARCHAR(50) NOT NULL,
+  name VARCHAR(50) NOT NULL
 );
 
 CREATE TABLE users (
@@ -18,7 +17,7 @@ CREATE TABLE users (
   avatar VARCHAR(100),
   locale VARCHAR(50) NOT NULL,
   timezone VARCHAR(50) NOT NULL,
-  ai_model VARCHAR(50) REFERENCES ai_models(name) ON DELETE SET NULL,
+  ai_model VARCHAR(50) REFERENCES ai_models(label) ON DELETE SET NULL,
   is_admin BOOLEAN NOT NULL,
   block_strangers BOOLEAN NOT NULL
 );

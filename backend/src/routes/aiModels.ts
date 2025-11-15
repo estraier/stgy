@@ -21,14 +21,14 @@ export default function createAIModelsRouter(pgPool: Pool, redis: Redis) {
     Config.DAILY_DB_TIMER_LIMIT_MS,
   );
 
-  router.get("/:name", async (req: Request, res: Response) => {
+  router.get("/:label", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
     const watch = timerThrottleService.startWatch(loginUser);
-    const model = await aiModelsService.getAIModel(req.params.name);
+    const model = await aiModelsService.getAIModel(req.params.label);
     watch.done();
     if (!model) return res.status(404).json({ error: "not found" });
     res.json(model);
