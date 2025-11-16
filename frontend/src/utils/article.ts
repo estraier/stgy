@@ -9,6 +9,7 @@ import {
   mdGroupImageGrid,
   mdFindFeatured,
   mdFilterForFeatured,
+  mdAnnotateElements,
   mdCutOff,
   mdRenderHtml,
   mdRenderText,
@@ -54,6 +55,7 @@ export function makePubArticleHtmlFromMarkdown(
   nodes = rewriteMediaUrls(nodes, true);
   nodes = rewritePublishedUrls(nodes);
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
+  nodes = mdAnnotateElements(nodes);
   const html = mdRenderHtml(nodes, false, idPrefix);
   let featured: string | null = null;
   const featuredNode = mdFindFeatured(nodes);

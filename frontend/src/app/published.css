@@ -1316,6 +1316,9 @@ html:has(.site-container) {
   .pub-theme-dir-vert .markdown-body p {
     text-indent: 1em;
   }
+  .pub-theme-dir-vert .markdown-body p[dialogue] {
+    text-indent: unset;
+  }
   .pub-theme-dir-vert .markdown-body ul {
     margin-top: 1.5em;
   }

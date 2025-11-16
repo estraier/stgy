@@ -48,15 +48,16 @@ describe("article utils (normal cases)", () => {
 
   test("makePubArticleHtmlFromMarkdown", () => {
     const md =
-      "abc\n# **title**\n-@author Nancy\n![cap](/images/u1/masters/folder/pic.png)\n[U](/users/123), [P](/posts/456)";
+      "abc\n# **title**\n-@author Nancy\n![cap](/images/u1/masters/folder/pic.png)\n[U](/users/123), [P](/posts/456)\n\n「あ」";
     const { html, title, desc, featured, metadata } = makePubArticleHtmlFromMarkdown(md);
     expect(html).toContain("<figure");
     expect(html).toContain('class="image-block"');
     expect(html).toContain('src="https://cdn.test/images-bkt/u1/thumbs/folder/pic_image.webp"');
     expect(html).toContain('<a href="/pub/sites/123">U</a>');
     expect(html).toContain('<a href="/pub/456">P</a>');
+    expect(html).toContain("<p dialogue>「あ」</p>");
     expect(title).toBe("title");
-    expect(desc).toBe("abc cap U, P");
+    expect(desc).toBe("abc cap U, P 「あ」");
     expect(featured).toBe("https://cdn.test/images-bkt/u1/thumbs/folder/pic_image.webp");
     expect(metadata["author"]).toBe("Nancy");
   });
