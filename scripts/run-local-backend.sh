@@ -57,8 +57,7 @@ export STGY_STORAGE_S3_PUBLIC_URL_PREFIX=http://localhost:9000/{bucket}/
 export STGY_SMTP_HOST=localhost
 export STGY_BACKEND_PORT="$PORT"
 if [ "${OVERRIDING_OPENAI_API_KEY}" != "-" ]; then
-    export STGY_OPENAI_API_KEY="${OVERRIDING_OPENAI_API_KEY}"
-    echo "${OVERRIDING_OPENAI_API_KEY}"
+  export STGY_OPENAI_API_KEY="${OVERRIDING_OPENAI_API_KEY}"
 fi
 
 cleanup() {
