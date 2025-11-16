@@ -9,6 +9,7 @@ import {
   mdRewriteMediaUrls,
   mdFindFeatured,
   mdFilterForFeatured,
+  mdAnnotateElements,
   mdCutOff,
   mdRenderText,
   mdRenderHtml,
@@ -1264,6 +1265,69 @@ def
   });
 });
 
+describe("mdAnnotateElements", () => {
+  it("basic usage", () => {
+    const mdText = "ある日\n\n「森の中」\n\n- 『熊さんに』\n- 出会った。\n";
+    expect(stripPos(mdAnnotateElements(parseMarkdown(mdText)))).toStrictEqual([
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "ある日",
+          },
+        ],
+      },
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "「森の中」",
+          },
+        ],
+        attrs: {
+          dialogue: true,
+        },
+      },
+      {
+        type: "element",
+        tag: "ul",
+        children: [
+          {
+            type: "element",
+            tag: "li",
+            children: [
+              {
+                type: "text",
+                text: "『熊さんに』",
+              },
+            ],
+            attrs: {
+              dialogue: true,
+            },
+          },
+          {
+            type: "element",
+            tag: "li",
+            children: [
+              {
+                type: "text",
+                text: "出会った。",
+              },
+            ],
+          },
+        ],
+        attrs: {
+          dialogue: true,
+        },
+      },
+    ]);
+  });
+});
+
 describe("mdCutOff", () => {
   it("mdCutOff by length", () => {
     const mdText = "- hello world\n- me too";
@@ -1651,6 +1715,14 @@ describe("mdRenderHtml basics", () => {
     const mdText = "[tako](tako.html) http://example.com/ika?uni=ebi#time";
     expect(makeHtml(mdText)).toBe(
       '<p>[tako](tako.html) <a href="http://example.com/ika?uni=ebi#time">http://example.com/ika?uni=ebi#time</a></p>',
+    );
+  });
+
+  it("dialogues", () => {
+    const mdText = "1\n\n「2」\n\n> 『3』";
+    const nodes = mdAnnotateElements(parseMarkdown(mdText));
+    expect(mdRenderHtml(nodes)).toBe(
+      "<p>1</p><p dialogue>「2」</p><blockquote dialogue>『3』</blockquote>",
     );
   });
 

@@ -29,6 +29,89 @@ function makeElement(
   return el;
 }
 
+const BLOCK_TAGS = new Set<string>([
+  "p",
+  "div",
+  "pre",
+  "blockquote",
+  "figure",
+  "figcaption",
+  "ul",
+  "ol",
+  "li",
+  "table",
+  "thead",
+  "tbody",
+  "tfoot",
+  "tr",
+  "td",
+  "th",
+  "section",
+  "article",
+  "aside",
+  "header",
+  "footer",
+  "nav",
+  "hr",
+  "h1",
+  "h2",
+  "h3",
+  "h4",
+  "h5",
+  "h6",
+]);
+
+const INLINE_TAGS = new Set<string>([
+  "a",
+  "span",
+  "b",
+  "strong",
+  "i",
+  "em",
+  "u",
+  "s",
+  "strike",
+  "del",
+  "code",
+  "kbd",
+  "mark",
+  "small",
+  "br",
+  "img",
+  "video",
+  "ruby",
+  "rb",
+  "rt",
+  "rp",
+  "sup",
+  "sub",
+  "wbr",
+  "q",
+  "cite",
+  "abbr",
+  "dfn",
+  "var",
+  "samp",
+  "bdi",
+  "bdo",
+  "label",
+  "input",
+  "textarea",
+  "select",
+  "option",
+  "button",
+]);
+
+const BLOCK_DESCENDANT_SELECTOR = Array.from(BLOCK_TAGS).join(",");
+
+function isBlockTag(tag: string): boolean {
+  return BLOCK_TAGS.has(tag.toLowerCase());
+}
+
+function isInlineTag(tag: string): boolean {
+  return INLINE_TAGS.has(tag.toLowerCase());
+}
+
 export function parseMarkdown(mdText: string): MdNode[] {
   let src = mdText.replace(/\r\n/g, "\n");
   const lines = src.split("\n");
@@ -1325,52 +1408,19 @@ export function structurizeHtml(
     typeof opts?.topMinFontSizePt === "number" ? opts.topMinFontSizePt : 20;
   const hadBodyTag = /<body[\s>]/i.test(html);
   const { document: doc, root: domRoot } = getDomRootOrThrow(html);
-  const isBlockTag = (tag: string): boolean => {
-    const t = tag.toLowerCase();
-    return (
-      t === "p" ||
-      t === "div" ||
-      t === "pre" ||
-      t === "blockquote" ||
-      t === "figure" ||
-      t === "figcaption" ||
-      t === "ul" ||
-      t === "ol" ||
-      t === "li" ||
-      t === "table" ||
-      t === "thead" ||
-      t === "tbody" ||
-      t === "tfoot" ||
-      t === "tr" ||
-      t === "td" ||
-      t === "th" ||
-      t === "section" ||
-      t === "article" ||
-      t === "aside" ||
-      t === "header" ||
-      t === "footer" ||
-      t === "nav" ||
-      t === "hr" ||
-      t === "h1" ||
-      t === "h2" ||
-      t === "h3" ||
-      t === "h4" ||
-      t === "h5" ||
-      t === "h6"
-    );
-  };
+
   const hasBlockDescendant = (el: Element): boolean => {
-    return !!el.querySelector(
-      "p,div,pre,blockquote,figure,figcaption,ul,ol,li,table,thead,tbody,tfoot,tr,td,th,section,article,aside,header,footer,nav,hr,h1,h2,h3,h4,h5,h6",
-    );
+    return !!el.querySelector(BLOCK_DESCENDANT_SELECTOR);
   };
+
   const isInlineElement = (el: Element): boolean => {
-    if (isBlockTag(el.tagName)) return false;
     const t = el.tagName.toLowerCase();
+    if (isBlockTag(t)) return false;
     if (t === "br") return true;
     if (t === "script" || t === "style") return false;
     return true;
   };
+
   const unwrap = (el: Element) => {
     const parent = el.parentNode;
     if (!parent) return;
@@ -1583,77 +1633,6 @@ export function countHtmlElements(html: string): {
   countOtherElements: number;
 } {
   const { document: doc } = getDomRootOrThrow(html);
-  const blockTags = new Set([
-    "p",
-    "div",
-    "pre",
-    "blockquote",
-    "figure",
-    "figcaption",
-    "ul",
-    "ol",
-    "li",
-    "table",
-    "thead",
-    "tbody",
-    "tfoot",
-    "tr",
-    "td",
-    "th",
-    "section",
-    "article",
-    "aside",
-    "header",
-    "footer",
-    "nav",
-    "hr",
-    "h1",
-    "h2",
-    "h3",
-    "h4",
-    "h5",
-    "h6",
-  ]);
-  const inlineTags = new Set([
-    "a",
-    "span",
-    "b",
-    "strong",
-    "i",
-    "em",
-    "u",
-    "s",
-    "strike",
-    "del",
-    "code",
-    "kbd",
-    "mark",
-    "small",
-    "br",
-    "img",
-    "video",
-    "ruby",
-    "rb",
-    "rt",
-    "rp",
-    "sup",
-    "sub",
-    "wbr",
-    "q",
-    "cite",
-    "abbr",
-    "dfn",
-    "var",
-    "samp",
-    "bdi",
-    "bdo",
-    "label",
-    "input",
-    "textarea",
-    "select",
-    "option",
-    "button",
-  ]);
   let countBlockElements = 0;
   let countInlineElements = 0;
   let countOtherElements = 0;
@@ -1661,8 +1640,8 @@ export function countHtmlElements(html: string): {
   for (const el of all) {
     const tag = el.tagName.toLowerCase();
     if (tag === "html" || tag === "head" || tag === "body") continue;
-    if (blockTags.has(tag)) countBlockElements++;
-    else if (inlineTags.has(tag)) countInlineElements++;
+    if (isBlockTag(tag)) countBlockElements++;
+    else if (isInlineTag(tag)) countInlineElements++;
     else countOtherElements++;
   }
   return { countBlockElements, countInlineElements, countOtherElements };
@@ -1910,6 +1889,39 @@ export function mdFilterForFeatured(nodes: MdNode[]): MdNode[] {
     return [thumb, ...body];
   }
   return body;
+}
+
+export function mdAnnotateElements(nodes: MdNode[]): MdNode[] {
+  const startsWithDialogue = (text: string): boolean => {
+    const trimmed = text.replace(/^\s+/, "");
+    if (!trimmed) return false;
+    const ch = trimmed[0];
+    return ch === "「" || ch === "『";
+  };
+  const findFirstTextNode = (children: MdNode[]): MdTextNode | null => {
+    for (const n of children) {
+      if (n.type === "text") {
+        if (n.text.trim().length > 0) return n;
+      } else if (n.type === "element") {
+        const found = findFirstTextNode(n.children || []);
+        if (found) return found;
+      }
+    }
+    return null;
+  };
+  const visit = (n: MdNode): MdNode => {
+    if (n.type !== "element") return n;
+    const children = (n.children || []).map(visit);
+    if (isBlockTag(n.tag)) {
+      const firstText = findFirstTextNode(children);
+      if (firstText && startsWithDialogue(firstText.text)) {
+        const attrs: MdAttrs = { ...(n.attrs || {}), dialogue: true };
+        return { ...n, attrs, children };
+      }
+    }
+    return { ...n, children };
+  };
+  return nodes.map(visit);
 }
 
 export function mdCutOff(
@@ -2672,7 +2684,9 @@ export function mdRenderHtml(
         const el = n as MdElementNode;
         const id = headerIdMap.get(el)!;
         const attrs = withPos({ ...(el.attrs || {}), id }, el);
-        return `<${el.tag}${attrsToString(attrs)}>${serializeAll(el.children || [])}</${el.tag}>`;
+        return `<${el.tag}${attrsToString(attrs)}>${serializeAll(
+          el.children || [],
+        )}</${el.tag}>`;
       }
     }
 
@@ -2834,10 +2848,8 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
         case "img":
         case "video": {
           const src = sanitizeUrl(getAttrStr(el.attrs, "src") || "");
-
           const altRaw = typeof el.attrs?.alt === "string" ? el.attrs.alt : "";
           const alt = altRaw.replace(/\\/g, "\\\\").replace(/\]/g, "\\]");
-
           const macroAttrs: string[] = [];
           const entries = Object.entries(el.attrs || {}).filter(
             ([k]) =>
