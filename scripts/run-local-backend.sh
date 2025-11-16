@@ -8,6 +8,7 @@ set +a
 
 CMD="dev"
 PORT="${STGY_BACKEND_PORT:-3001}"
+OVERRIDING_OPENAI_API_KEY="-"
 
 declare -a PASS_ARGS=()
 
@@ -24,6 +25,15 @@ while [[ $# -gt 0 ]]; do
       ;;
     --port=*)
       PORT="${1#*=}"
+      shift
+      ;;
+    --openai-api-key)
+      [[ $# -ge 2 ]] || { echo "Error: --openai-api-key requires a value" >&2; exit 1; }
+      OVERRIDING_OPENAI_API_KEY="$2"
+      shift 2
+      ;;
+    --openai-api-key=*)
+      OVERRIDING_OPENAI_API_KEY="${1#*=}"
       shift
       ;;
     *)
@@ -46,6 +56,10 @@ export STGY_REDIS_HOST=localhost
 export STGY_STORAGE_S3_PUBLIC_URL_PREFIX=http://localhost:9000/{bucket}/
 export STGY_SMTP_HOST=localhost
 export STGY_BACKEND_PORT="$PORT"
+if [ "${OVERRIDING_OPENAI_API_KEY}" != "-" ]; then
+    export STGY_OPENAI_API_KEY="${OVERRIDING_OPENAI_API_KEY}"
+    echo "${OVERRIDING_OPENAI_API_KEY}"
+fi
 
 cleanup() {
   trap - INT TERM EXIT
