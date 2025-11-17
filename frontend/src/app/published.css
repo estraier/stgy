@@ -1186,6 +1186,9 @@ html:has(.site-container) {
 }
 
 @media screen {
+  html:has(.pub-theme-dir-vert) {
+    overscroll-behavior-x: contain;
+  }
   .pub-theme-dir-vert.pub-page {
     display: grid;
     grid-template-rows: auto 1fr;
