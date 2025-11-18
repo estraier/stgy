@@ -15,6 +15,7 @@ import ArticleWithDecoration from "@/components/ArticleWithDecoration";
 import { formatDateTime, makeAbsoluteUrl, convertForDirection } from "@/utils/format";
 import { parseDateString } from "@/utils/parse";
 import PubImageBlockBinder from "@/components/PubImageBlockBinder";
+import PubScrollAction from "@/components/PubScrollAction";
 import type { Metadata } from "next";
 
 type PageParams = { id: string };
@@ -241,14 +242,13 @@ export default async function PubPostPage({ params, searchParams }: Props) {
           </div>
         </main>
         <PubImageBlockBinder />
+        <PubScrollAction selectors={[".pub-container"]} />
       </div>
     );
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to load";
     const is404 =
-      /(^|\b)404(\b|$)/.test(String(msg)) ||
-      /not\s*found/i.test(msg) ||
-      /no\s*such/i.test(msg);
+      /(^|\b)404(\b|$)/.test(String(msg)) || /not\s*found/i.test(msg) || /no\s*such/i.test(msg);
 
     return (
       <div className="pub-page pub-theme-default">

@@ -10,6 +10,7 @@ import LinkDiv from "@/components/LinkDiv";
 import ArticleWithDecoration from "@/components/ArticleWithDecoration";
 import { formatDateTime, makeAbsoluteUrl, convertForDirection } from "@/utils/format";
 import PubImageBlockBinder from "@/components/PubImageBlockBinder";
+import PubScrollAction from "@/components/PubScrollAction";
 import type { Metadata } from "next";
 
 type PageParams = { id: string };
@@ -265,14 +266,13 @@ try{
           }}
         />
         <PubImageBlockBinder />
+        <PubScrollAction selectors={[".site-container"]} />
       </div>
     );
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to load";
     const is404 =
-      /(^|\b)404(\b|$)/.test(String(msg)) ||
-      /not\s*found/i.test(msg) ||
-      /no\s*such/i.test(msg);
+      /(^|\b)404(\b|$)/.test(String(msg)) || /not\s*found/i.test(msg) || /no\s*such/i.test(msg);
 
     return (
       <div className="pub-page pub-theme-default">
