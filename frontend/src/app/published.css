@@ -1270,6 +1270,11 @@ html:has(.site-container) {
     font-size: 90%;
     color: #888;
   }
+  .pub-theme-dir-vert .pub-side-profile article,
+  .pub-theme-dir-vert .pub-side-recent article {
+    margin-top: 2em !important;
+    zoom: 85%;
+  }
   .pub-theme-dir-vert .pub-sidebar .side-header {
     margin-top: 1.2em;
     font-size: 90%;
@@ -1485,14 +1490,21 @@ html:has(.site-container) {
       border: none !important;
     }
   }
-  @media (min-height: 60em) {
+  @media (min-height: 56em) {
     .pub-theme-dir-vert .pub-layout {
       flex-direction: row;
       align-items: flex-start;
       justify-content: flex-start;
     }
-    .pub-theme-dir-vert .pub-sidebar .markdown-body {
-      zoom: 85%;
+    .pub-theme-dir-vert .pub-sidebar .pub-side-profile .markdown-body {
+      margin-top: 1em !important;
+      zoom: 80%;
+      max-height: 16.25em;
+      padding: 0.4em;
+    }
+    .pub-theme-dir-vert .pub-sidebar .pub-side-recent .markdown-body {
+      margin-top: 1em !important;
+      zoom: 65%;
       max-height: 20em;
       padding: 0.5em;
     }
