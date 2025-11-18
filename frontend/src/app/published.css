@@ -581,12 +581,12 @@ html:has(.site-container) {
     font-family: serif !important;
   }
   .pub-theme-newspaper .pub-pager .pager-btn {
-    background-color: #eef8ff !important;
-    border-color: #cde !important;
+    background-color: #f4f8ff !important;
+    border-color: #def !important;
     color: #334 !important;
   }
   .pub-theme-newspaper .pub-pager .pager-btn:hover {
-    background-color: #cdf !important;
+    background-color: #def !important;
     border-color: #cde !important;
     color: #348 !important;
   }
@@ -1720,12 +1720,12 @@ html:has(.site-container) {
     font-family: serif !important;
   }
   .pub-theme-shimbun .pub-pager .pager-btn {
-    background-color: #eef8ff !important;
-    border-color: #cde !important;
+    background-color: #f4f8ff !important;
+    border-color: #def !important;
     color: #334 !important;
   }
   .pub-theme-shimbun .pub-pager .pager-btn:hover {
-    background-color: #cdf !important;
+    background-color: #def !important;
     border-color: #cde !important;
     color: #348 !important;
   }
