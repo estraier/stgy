@@ -9,6 +9,7 @@ import { makePubArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils
 import LinkDiv from "@/components/LinkDiv";
 import ArticleWithDecoration from "@/components/ArticleWithDecoration";
 import { formatDateTime, makeAbsoluteUrl, convertForDirection } from "@/utils/format";
+import PubImageBlockBinder from "@/components/PubImageBlockBinder";
 import type { Metadata } from "next";
 
 type PageParams = { id: string };
@@ -111,7 +112,6 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const hasNext = posts.length > Config.PUB_POSTS_PAGE_SIZE;
     const items = posts.slice(0, Config.PUB_POSTS_PAGE_SIZE);
 
-    // helpers to build hrefs while preserving ?design=
     const siteRoot = `/pub/sites/${id}`;
     const baseHref = design ? `${siteRoot}?design=${encodeURIComponent(design)}` : siteRoot;
     const buildPageHref = (p: number) => {
@@ -264,19 +264,15 @@ try{
 })();`,
           }}
         />
-        <script
-          dangerouslySetInnerHTML={{
-            __html: `(function(){if(typeof window==="undefined")return;if(window.__stgyImageBlockBound)return;window.__stgyImageBlockBound=true;document.body.addEventListener("click",function(e){var t=e.target;if(!t||!t.closest)return;var b=t.closest(".image-block");if(b){b.classList.toggle("expanded");e.stopPropagation();}});})();`,
-          }}
-        />
+        <PubImageBlockBinder />
       </div>
     );
   } catch (e: unknown) {
     const msg = e instanceof Error ? e.message : "Failed to load";
     const is404 =
       /(^|\b)404(\b|$)/.test(String(msg)) ||
-      /not\s*found/i.test(String(msg)) ||
-      /no\s*such/i.test(String(msg));
+      /not\s*found/i.test(msg) ||
+      /no\s*such/i.test(msg);
 
     return (
       <div className="pub-page pub-theme-default">
