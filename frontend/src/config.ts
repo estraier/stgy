@@ -87,6 +87,7 @@ export class Config {
   static readonly HELP_PAGE_PATH = "/posts/0002000000000002";
   static readonly PUB_DESIGN_THEMES = [
     "default",
+    "shimbun",
     "whiteboard",
     "newspaper",
     "dark",

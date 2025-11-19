@@ -28,13 +28,15 @@ function buildGoogleFontsHref(
 }
 
 const FONT_FAMILIES = [
-  "IBM Plex Sans JP",
   "Noto Sans JP",
-  "Inconsolata",
-  "Source Code Pro",
-  "Klee One",
+  "Noto Serif JP",
   "BIZ UDMincho",
   "BIZ UDGothic",
+  "IBM Plex Sans JP",
+  "Klee One",
+  "Zen Antique",
+  "Inconsolata",
+  "Source Code Pro",
 ];
 
 const GOOGLE_FONTS_HREF = buildGoogleFontsHref(FONT_FAMILIES);
