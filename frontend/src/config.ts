@@ -87,16 +87,18 @@ export class Config {
   static readonly HELP_PAGE_PATH = "/posts/0002000000000002";
   static readonly PUB_DESIGN_THEMES = [
     "default",
-    "shimbun",
+    "newspaper",
     "whiteboard",
     "newspaper",
     "dark",
     "blackboard",
     "tategaki",
     "shimbun",
+    "hakuban",
+    "kokuban",
   ];
-  static readonly PUB_DESIGN_VERTICAL_THEMES = ["tategaki", "shimbun"];
-  static readonly PUB_DESIGN_DARK_THEMES = ["dark", "blackboard"];
+  static readonly PUB_DESIGN_VERTICAL_THEMES = ["tategaki", "shimbun", "hakuban", "kokuban"];
+  static readonly PUB_DESIGN_DARK_THEMES = ["dark", "blackboard", "kokuban"];
   static readonly PUB_POSTS_PAGE_SIZE = normNum(process.env.NEXT_PUBLIC_PUB_POSTS_PAGE_SIZE, 10);
   static readonly PUB_SIDE_RECENT_POSTS_SIZE = normNum(
     process.env.NEXT_PUBLIC_PUB_SIDE_RECENT_POSTS_SIZE,

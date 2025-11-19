@@ -16,6 +16,6 @@ pubConfigAuthor: STGY副管理者
 pubConfigIntroduction:<<____EOF____
 STGYの技術関連文書を公開します。
 
-SNSの教科書的な実装を目指し、OSS製品として公開しています。ユーザビリティ、アクセシビリティ、スケーラビリティ、パフォーマンス、セキュリティの全てで高い水準を達成する方法について議論しあます。興味があれば[コードベース](https://github.com/estraier/stgy)を御覧ください。
+SNSの教科書的な実装を目指し、OSS製品として公開しています。ユーザビリティ、アクセシビリティ、スケーラビリティ、パフォーマンス、セキュリティの全てで高い水準を達成する方法について議論します。興味があれば[コードベース](https://github.com/estraier/stgy)を御覧ください。
 ____EOF____
 pubConfigDesignTheme: default
