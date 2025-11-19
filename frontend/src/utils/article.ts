@@ -110,6 +110,9 @@ function rewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {
     Config.MEDIA_BUCKET_IMAGES,
   );
   const rewriteRules: MdRewriteRule[] = [];
+
+  console.log(dataPrefix);
+
   rewriteRules.push({
     pattern: /^\/data\//,
     replacement: dataPrefix,

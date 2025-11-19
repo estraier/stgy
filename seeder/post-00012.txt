@@ -393,6 +393,8 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
 - フロントエンド（Node.js + Next.js）
   - Dockerサブネットでfrontend:3000をlistenし、主にJavaScriptを配信。表にはhttps://stgy.jpとして露出。
     - PORT=3000
+  - フロントエンドをhttps://stgy.jpとして認識し、UI上の相対パスを絶対パスに解決する。
+    - NEXT_PUBLIC_FRONTEND_CANONICAL_URL=https://stgy.jp
   - バックエンドをhttps://stgy.jp/backendとして認識し、その配下にAPIリクエストを送る。
     - NEXT_PUBLIC_BACKEND_API_BASE_URL=https://stgy.jp/backend
     - CSRのfetchは相対URLで動くが、SSRのfetchは絶対URLでないと動かないので注意。

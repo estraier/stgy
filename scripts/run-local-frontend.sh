@@ -38,6 +38,8 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
   exit 1
 fi
 
+export NEXT_PUBLIC_FRONTEND_CANONICAL_URL=http://localhost:8080
+
 echo "[run-local-frontend] port=${STGY_BACKEND_PORT}  cmd=${CMD}"
 echo "[run-local-frontend] npm run ${CMD} -- ${PASS_ARGS[*]-}"
 
