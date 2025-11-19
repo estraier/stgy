@@ -31,8 +31,8 @@ export default function PubScrollAction({ selectors }: Props) {
     const EDGE_EPS = 0.02;
     const DWELL_MS = 500;
     const NAV_COOLDOWN = 800;
-    const MIN_GESTURE_DELTA = 50;
-    const MIN_VERTICAL_DELTA = 100;
+    const MIN_GESTURE_DELTA = 80;
+    const MIN_VERTICAL_DELTA = 130;
     const PAGE_LOAD_GRACE = 500;
     let lastLeftEdgeEnter = 0;
     let lastRightEdgeEnter = 0;
