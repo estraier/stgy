@@ -351,7 +351,7 @@ html:has(.site-container) {
     border-radius: 0.3ex !important;
     background-image:
       repeating-linear-gradient(2deg, #f4f4f2 0, #f4f4f2 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(43deg, #fafaf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(43deg, #fbfbf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(87deg, #ffe 0, #ffe 0.5px, transparent 0.5px, transparent 2px);
     background-size:
       2.5px 2.5px,
@@ -1721,7 +1721,7 @@ html:has(.site-container) {
     border-radius: 0.3ex !important;
     background-image:
       repeating-linear-gradient(2deg, #f4f4f2 0, #f4f4f2 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(43deg, #fafaf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(43deg, #fbfbf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(87deg, #ffe 0, #ffe 0.5px, transparent 0.5px, transparent 2px);
     background-size:
       2.5px 2.5px,
