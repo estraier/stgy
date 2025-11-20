@@ -307,11 +307,11 @@ html:has(.site-container) {
     background-image:
       repeating-linear-gradient(2deg, #e6e6e6 0, #e6e6e6 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(43deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(87deg, #eee 0, #eee 0.5px, transparent 0.5px, transparent 2px);
+      repeating-linear-gradient(87deg, #ececec 0, #eee 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      3px 3px,
-      4px 4px,
-      2.5px 2.5px !important;
+      2.5px 2.5px,
+      4.3px 4.3px,
+      7.1px 7.1px !important;
   }
   @media (max-width: 800px) {
     .pub-theme-newspaper {
@@ -319,11 +319,11 @@ html:has(.site-container) {
       background-image:
         repeating-linear-gradient(2deg, #e6e6e6 0, #e6e6e6 1px, transparent 1px, transparent 3px),
         repeating-linear-gradient(48deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
-        repeating-linear-gradient(87deg, #eee 0, #eee 0.5px, transparent 0.5px, transparent 2px) !important;
+        repeating-linear-gradient(87deg, #ececec 0, #eee 0.5px, transparent 0.5px, transparent 2px) !important;
       background-size:
-        3px 3px,
-        4px 4px,
-        2.5px 2.5px !important;
+        2.5px 2.5px,
+        4.3px 4.3px,
+        7.1px 7.1px !important;
     }
     .pub-theme-newspaper .pub-container,
     .pub-theme-newspaper .site-container {
@@ -354,9 +354,9 @@ html:has(.site-container) {
       repeating-linear-gradient(55deg, #fafaf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(85deg, #ffe 0, #ffe 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      3px 3px,
-      4px 4px,
-      2.5px 2.5px !important;
+      2.5px 2.5px,
+      4.3px 4.3px,
+      7.1px 7.1px !important;
     color: #111 !important;
     font-family: "BIZ UDMincho", serif !important;
   }
@@ -570,9 +570,9 @@ html:has(.site-container) {
       repeating-linear-gradient(55deg, #fbfbfc 0, #fbfbfc 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(85deg, #fcfcff 0, #fcfcff 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      3px 3px,
-      4px 4px,
-      2.5px 2.5px !important;
+      2.5px 2.5px,
+      4.3px 4.3px,
+      7.1px 7.1px !important;
     border: 3px solid #aaa !important;
     color: #111 !important;
     font-family: "Klee One", serif !important;
@@ -974,9 +974,9 @@ html:has(.site-container) {
       repeating-linear-gradient(55deg, #081c18 0, #081c18 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(85deg, #0a1b17 0, #0a1b17 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      3px 3px,
-      4px 4px,
-      2.5px 2.5px !important;
+      2.5px 2.5px,
+      4.3px 4.3px,
+      7.1px 7.1px !important;
     border: 3px solid #888 !important;
     color: #f8f8ff !important;
     font-family: "Klee One", serif !important;
@@ -1694,11 +1694,11 @@ html:has(.site-container) {
     background-image:
       repeating-linear-gradient(2deg, #e6e6e6 0, #e6e6e6 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(43deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(87deg, #eee 0, #eee 0.5px, transparent 0.5px, transparent 2px);
+      repeating-linear-gradient(87deg, #ececec 0, #eee 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      3px 3px,
-      4px 4px,
-      2.5px 2.5px !important;
+      2.5px 2.5px,
+      4.3px 4.3px,
+      7.1px 7.1px !important;
   }
   .pub-theme-shimbun .pub-container .pub-main .date,
   .pub-theme-shimbun .site-container .site-recent .date,
@@ -1724,9 +1724,9 @@ html:has(.site-container) {
       repeating-linear-gradient(55deg, #fafaf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(85deg, #ffe 0, #ffe 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      3px 3px,
-      4px 4px,
-      2.5px 2.5px !important;
+      2.5px 2.5px,
+      4.3px 4.3px,
+      7.1px 7.1px !important;
     color: #111 !important;
     font-family: "BIZ UDMincho", serif !important;
   }
@@ -1738,9 +1738,9 @@ html:has(.site-container) {
       repeating-linear-gradient(44deg, #dadada 0, #dadada 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(88deg, #ddd 0, #ddd 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      3px 3px,
-      4px 4px,
-      2.5px 2.5px !important;
+      2.5px 2.5px,
+      4.3px 4.3px,
+      7.1px 7.1px !important;
   }
   .pub-theme-shimbun .pub-container .pub-site-name,
   .pub-theme-shimbun .site-container .pub-site-name,
@@ -1938,9 +1938,9 @@ html:has(.site-container) {
       repeating-linear-gradient(55deg, #fbfbfc 0, #fbfbfc 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(85deg, #fcfcff 0, #fcfcff 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      3px 3px,
-      4px 4px,
-      2.5px 2.5px !important;
+      2.5px 2.5px,
+      4.3px 4.3px,
+      7.1px 7.1px !important;
     border: 3px solid #aaa !important;
     color: #111 !important;
     font-family: "Klee One", serif !important;
@@ -2150,26 +2150,26 @@ html:has(.site-container) {
       repeating-linear-gradient(55deg, #081c18 0, #081c18 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(85deg, #0a1b17 0, #0a1b17 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      3px 3px,
-      4px 4px,
-      2.5px 2.5px !important;
+      2.5px 2.5px,
+      4.3px 4.3px,
+      7.1px 7.1px !important;
     border: 3px solid #888 !important;
     color: #f8f8ff !important;
     font-family: "Klee One", serif !important;
   }
   .pub-theme-kokuban .pub-container .pub-site-name-region,
   .pub-theme-kokuban .site-container .pub-site-name-region {
-    background-color: #828473;
+    background-color: #7e8070;
   }
   .pub-theme-kokuban .pub-container .pub-site-name,
   .pub-theme-kokuban .site-container .pub-site-name,
   .pub-theme-kokuban .pub-side-profile .profile-column .site-name {
-    color: #eee !important;
+    color: #d8d8dd !important;
     font-family: "Zen Antique", serif !important;
   }
   .pub-theme-kokuban .pub-container .pub-subtitle,
   .pub-theme-kokuban .site-container .pub-subtitle {
-    color: #ddd !important;
+    color: #d0d0cc !important;
     font-family: serif !important;
   }
   .pub-theme-kokuban .pub-pager .pager-btn {
