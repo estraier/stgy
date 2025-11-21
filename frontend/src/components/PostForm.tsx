@@ -54,8 +54,6 @@ type MdNode = MdTextNode | MdElementNode;
 
 const isElementNode = (n: MdNode): n is MdElementNode => n?.type === "element";
 
-const DEBUG_SHOW_CARET_MIRROR = true;
-
 type PostFormProps = {
   body: string;
   setBody: (body: string) => void;
@@ -330,25 +328,16 @@ function centerTextareaCaret(ta: HTMLTextAreaElement) {
 }
 function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement) {
   const cs = getComputedStyle(ta);
-  const rect = ta.getBoundingClientRect();
   type StyleKey = Extract<keyof CSSStyleDeclaration, string>;
   const assign = (prop: StyleKey, v: string) => {
     (mirror.style as unknown as Record<StyleKey, string>)[prop] = v;
   };
   assign("position", "absolute");
-  if (DEBUG_SHOW_CARET_MIRROR) {
-    assign("visibility", "visible");
-    assign("top", `${window.scrollY + rect.top}px`);
-    assign("left", `${window.scrollX + rect.left}px`);
-    assign("opacity", "0.5");
-    assign("pointerEvents", "none");
-  } else {
-    assign("visibility", "hidden");
-    assign("top", "0");
-    assign("left", "-99999px");
-    assign("opacity", "1");
-    assign("pointerEvents", "none");
-  }
+  assign("visibility", "hidden");
+  assign("top", "0");
+  assign("left", "-99999px");
+  assign("opacity", "1");
+  assign("pointerEvents", "none");
   assign("overflow", "hidden");
   assign("whiteSpace", cs.whiteSpace || "pre-wrap");
   assign("wordBreak", cs.wordBreak || "normal");
