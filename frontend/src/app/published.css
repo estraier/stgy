@@ -305,9 +305,9 @@ html:has(.site-container) {
     border-color: #bbb !important;
     border-radius: 0.5ex !important;
     background-image:
-      repeating-linear-gradient(2deg, #e6e6e6 0, #e6e6e6 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(43deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(87deg, #ececec 0, #eee 0.5px, transparent 0.5px, transparent 2px);
+      repeating-linear-gradient(15deg, #e6e6e6 0, #e6e6e6 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(62deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(83deg, #ececec 0, #eee 0.5px, transparent 0.5px, transparent 2px);
     background-size:
       2.7px 2.7px,
       3.5px 3.5px,
@@ -317,9 +317,9 @@ html:has(.site-container) {
     .pub-theme-newspaper {
       background: #eee !important;
       background-image:
-        repeating-linear-gradient(2deg, #e6e6e6 0, #e6e6e6 1px, transparent 1px, transparent 3px),
-        repeating-linear-gradient(48deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
-        repeating-linear-gradient(87deg, #ececec 0, #eee 0.5px, transparent 0.5px, transparent 2px) !important;
+        repeating-linear-gradient(15deg, #e6e6e6 0, #e6e6e6 1px, transparent 1px, transparent 3px),
+        repeating-linear-gradient(62deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
+        repeating-linear-gradient(38deg, #ececec 0, #eee 0.5px, transparent 0.5px, transparent 2px) !important;
       background-size:
         2.7px 2.7px,
         3.5px 3.5px,
@@ -350,9 +350,9 @@ html:has(.site-container) {
     border: 1px solid #aaa !important;
     border-radius: 0.3ex !important;
     background-image:
-      repeating-linear-gradient(2deg, #f4f4f2 0, #f4f4f2 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(43deg, #fbfbf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(87deg, #ffe 0, #ffe 0.5px, transparent 0.5px, transparent 2px);
+      repeating-linear-gradient(15deg, #f4f4f2 0, #f4f4f2 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(62deg, #fbfbf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(83deg, #ffe 0, #ffe 0.5px, transparent 0.5px, transparent 2px);
     background-size:
       2.7px 2.7px,
       3.5px 3.5px,
@@ -566,9 +566,9 @@ html:has(.site-container) {
   .pub-theme-whiteboard .site-profile .profile-column {
     background-color: #fff !important;
     background-image:
-      repeating-linear-gradient(2deg, #fafafb 0, #fafafb 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(43deg, #fbfbfc 0, #fbfbfc 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(87deg, #fcfcff 0, #fcfcff 0.5px, transparent 0.5px, transparent 2px);
+      repeating-linear-gradient(15deg, #fafafb 0, #fafafb 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(62deg, #fbfbfc 0, #fbfbfc 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(83deg, #fcfcff 0, #fcfcff 0.5px, transparent 0.5px, transparent 2px);
     background-size:
       2.7px 2.7px,
       3.5px 3.5px,
@@ -970,9 +970,9 @@ html:has(.site-container) {
   .pub-theme-blackboard .site-profile .profile-column {
     background-color: #00221a !important;
     background-image:
-      repeating-linear-gradient(2deg, #041f19 0, #041f19 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(43deg, #081e18 0, #081e18 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(87deg, #0a1d17 0, #0a1d17 0.5px, transparent 0.5px, transparent 2px);
+      repeating-linear-gradient(15deg, #041f19 0, #041f19 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(62deg, #081e18 0, #081e18 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(83deg, #0a1d17 0, #0a1d17 0.5px, transparent 0.5px, transparent 2px);
     background-size:
       2.7px 2.7px,
       3.5px 3.5px,
@@ -1692,9 +1692,9 @@ html:has(.site-container) {
     background: #eee;
     border-color: #bbb !important;
     background-image:
-      repeating-linear-gradient(2deg, #e6e6e6 0, #e6e6e6 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(43deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(87deg, #ececec 0, #eee 0.5px, transparent 0.5px, transparent 2px);
+      repeating-linear-gradient(15deg, #e6e6e6 0, #e6e6e6 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(62deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(83deg, #ececec 0, #eee 0.5px, transparent 0.5px, transparent 2px);
     background-size:
       2.7px 2.7px,
       3.5px 3.5px,
@@ -1720,9 +1720,9 @@ html:has(.site-container) {
     border: 1px solid #aaa !important;
     border-radius: 0.3ex !important;
     background-image:
-      repeating-linear-gradient(2deg, #f4f4f2 0, #f4f4f2 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(43deg, #fbfbf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(87deg, #ffe 0, #ffe 0.5px, transparent 0.5px, transparent 2px);
+      repeating-linear-gradient(18deg, #f4f4f2 0, #f4f4f2 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(62deg, #fbfbf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(83deg, #ffe 0, #ffe 0.5px, transparent 0.5px, transparent 2px);
     background-size:
       2.7px 2.7px,
       3.5px 3.5px,
@@ -1734,9 +1734,9 @@ html:has(.site-container) {
   .pub-theme-shimbun .site-container .pub-site-name-region {
     background-color: #dfdfdf;
     background-image:
-      repeating-linear-gradient(2deg, #d6d6d6 0, #d6d6d6 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(43deg, #dadada 0, #dadada 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(87deg, #ddd 0, #ddd 0.5px, transparent 0.5px, transparent 2px);
+      repeating-linear-gradient(15deg, #d6d6d6 0, #d6d6d6 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(62deg, #dadada 0, #dadada 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(83deg, #ddd 0, #ddd 0.5px, transparent 0.5px, transparent 2px);
     background-size:
       2.7px 2.7px,
       3.5px 3.5px,
@@ -1934,9 +1934,9 @@ html:has(.site-container) {
   .pub-theme-hakuban .site-profile .profile-column {
     background-color: #fff !important;
     background-image:
-      repeating-linear-gradient(2deg, #fafafb 0, #fafafb 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(43deg, #fbfbfc 0, #fbfbfc 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(87deg, #fcfcff 0, #fcfcff 0.5px, transparent 0.5px, transparent 2px);
+      repeating-linear-gradient(15deg, #fafafb 0, #fafafb 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(62deg, #fbfbfc 0, #fbfbfc 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(83deg, #fcfcff 0, #fcfcff 0.5px, transparent 0.5px, transparent 2px);
     background-size:
       2.7px 2.7px,
       3.5px 3.5px,
@@ -2146,9 +2146,9 @@ html:has(.site-container) {
   .pub-theme-kokuban .site-profile .profile-column {
     background-color: #00221a !important;
     background-image:
-      repeating-linear-gradient(2deg, #041f19 0, #041f19 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(43deg, #081e18 0, #081e18 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(87deg, #0a1d17 0, #0a1d17 0.5px, transparent 0.5px, transparent 2px);
+      repeating-linear-gradient(15deg, #041f19 0, #041f19 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(62deg, #081e18 0, #081e18 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(83deg, #0a1d17 0, #0a1d17 0.5px, transparent 0.5px, transparent 2px);
     background-size:
       2.7px 2.7px,
       3.5px 3.5px,
