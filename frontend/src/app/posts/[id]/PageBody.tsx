@@ -1,7 +1,7 @@
 "use client";
 
 import { Config } from "@/config";
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   getPost,
   listLikers,
@@ -42,6 +42,8 @@ export default function PageBody() {
     [searchParams],
   );
 
+  const isEditModeFromQuery = useMemo(() => searchParams.get("mode") === "edit", [searchParams]);
+
   const [post, setPost] = useState<PostDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
@@ -65,6 +67,21 @@ export default function PageBody() {
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replySubmitting, setReplySubmitting] = useState(false);
 
+  // 編集フォームのブロック全体
+  const editFormWrapperRef = useRef<HTMLDivElement | null>(null);
+  // 「この editing 状態が、クエリ (?mode=edit) から始まったものかどうか」のフラグ
+  const editInitializedFromQueryRef = useRef(false);
+
+  function updateEditModeInUrl(enabled: boolean) {
+    const sp = new URLSearchParams(searchParams);
+    if (enabled) {
+      sp.set("mode", "edit");
+    } else {
+      sp.delete("mode");
+    }
+    router.replace(`?${sp.toString()}`, { scroll: false });
+  }
+
   useEffect(() => {
     if (!userId) return;
     setLoading(true);
@@ -79,10 +96,59 @@ export default function PageBody() {
         const allTags = [...specials, ...(data.tags ?? [])];
         const tagLine = allTags.length > 0 ? "\n\n#" + allTags.join(", #") : "";
         setEditBody(data.content + tagLine);
+
+        const canEditFetched = isAdmin || data.ownedBy === userId;
+        if (isEditModeFromQuery && canEditFetched) {
+          // クエリから編集モード開始
+          editInitializedFromQueryRef.current = true;
+          setEditing(true);
+        } else {
+          editInitializedFromQueryRef.current = false;
+          setEditing(false);
+        }
       })
       .catch((err) => setError(err?.message ?? "Failed to fetch post."))
       .finally(() => setLoading(false));
-  }, [postId, userId]);
+  }, [postId, userId, isAdmin, isEditModeFromQuery]);
+
+  // mode=edit でページを開いたときだけ、
+  // 編集フォーム全体＋Save ボタンまで画面に入るようにスクロールする
+  useEffect(() => {
+    if (!editing) return;
+    if (!isEditModeFromQuery) return;
+    if (!editInitializedFromQueryRef.current) return;
+
+    const wrapper = editFormWrapperRef.current;
+    if (!wrapper) return;
+
+    const formEl = wrapper.querySelector("form");
+    if (!formEl) return;
+
+    const margin = 8;
+
+    const scrollOnce = () => {
+      const rect = formEl.getBoundingClientRect();
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+
+      // フォームの下端が見切れている場合は、その分だけ下にスクロール
+      const deltaBottom = rect.bottom - (viewportHeight - margin);
+      if (deltaBottom > 0) {
+        window.scrollBy({ top: deltaBottom, behavior: "smooth" });
+      } else if (rect.top < margin) {
+        // 逆にフォームの上が上に行き過ぎていたら、少し上に戻す
+        const deltaTop = rect.top - margin;
+        window.scrollBy({ top: deltaTop, behavior: "smooth" });
+      }
+    };
+
+    // PostForm 内部の auto-scroll（ensureFormBottomInView） が走り終わったあとに
+    // それを微調整するイメージで、rAF を 2 回挟んでから実行
+    const id = requestAnimationFrame(() => {
+      requestAnimationFrame(scrollOnce);
+    });
+
+    return () => cancelAnimationFrame(id);
+  }, [editing, isEditModeFromQuery]);
 
   useEffect(() => {
     if (!post) return;
@@ -256,7 +322,9 @@ export default function PageBody() {
         locale: typeof attrs.locale === "string" ? attrs.locale : null,
       };
       await updatePost(postId, patch);
+      updateEditModeInUrl(false);
       setEditing(false);
+      editInitializedFromQueryRef.current = false;
       getPost(postId, userId).then(setPost);
     } catch (err: unknown) {
       if (err instanceof Error) {
@@ -433,6 +501,8 @@ export default function PageBody() {
                 setEditBody(post.content + tagLine);
               }
               setEditing(true);
+              editInitializedFromQueryRef.current = false; // これは手動クリック開始
+              updateEditModeInUrl(true);
             }}
           >
             Edit
@@ -440,14 +510,18 @@ export default function PageBody() {
         </div>
       )}
       {editing && (
-        <div className="mb-4">
+        <div className="mb-4" ref={editFormWrapperRef}>
           <PostForm
             body={editBody}
             setBody={setEditBody}
             onSubmit={handleEditSubmit}
             submitting={editSubmitting}
             error={editError}
-            onCancel={() => setEditing(false)}
+            onCancel={() => {
+              setEditing(false);
+              editInitializedFromQueryRef.current = false;
+              updateEditModeInUrl(false);
+            }}
             buttonLabel="Save"
             placeholder="Edit your post"
             deletable={true}
