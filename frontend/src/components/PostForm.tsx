@@ -54,6 +54,8 @@ type MdNode = MdTextNode | MdElementNode;
 
 const isElementNode = (n: MdNode): n is MdElementNode => n?.type === "element";
 
+const DEBUG_SHOW_CARET_MIRROR = true;
+
 type PostFormProps = {
   body: string;
   setBody: (body: string) => void;
@@ -328,30 +330,41 @@ function centerTextareaCaret(ta: HTMLTextAreaElement) {
 }
 function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement) {
   const cs = getComputedStyle(ta);
-  const pl = parseFloat(cs.paddingLeft || "0");
-  const pr = parseFloat(cs.paddingRight || "0");
-  const contentWidth = Math.max(0, ta.clientWidth - pl - pr);
+  const rect = ta.getBoundingClientRect();
   type StyleKey = Extract<keyof CSSStyleDeclaration, string>;
   const assign = (prop: StyleKey, v: string) => {
     (mirror.style as unknown as Record<StyleKey, string>)[prop] = v;
   };
   assign("position", "absolute");
-  assign("visibility", "hidden");
-  assign("whiteSpace", "pre-wrap");
+  if (DEBUG_SHOW_CARET_MIRROR) {
+    assign("visibility", "visible");
+    assign("top", `${window.scrollY + rect.top}px`);
+    assign("left", `${window.scrollX + rect.left}px`);
+    assign("opacity", "0.5");
+    assign("pointerEvents", "none");
+  } else {
+    assign("visibility", "hidden");
+    assign("top", "0");
+    assign("left", "-99999px");
+    assign("opacity", "1");
+    assign("pointerEvents", "none");
+  }
+  assign("overflow", "hidden");
+  assign("whiteSpace", cs.whiteSpace || "pre-wrap");
   assign("wordBreak", cs.wordBreak || "normal");
   assign("overflowWrap", cs.overflowWrap || "break-word");
-  assign("top", "0");
-  assign("left", "-99999px");
-  assign("boxSizing", "content-box");
-  assign("width", `${contentWidth}px`);
-  assign("paddingTop", "0");
-  assign("paddingRight", "0");
-  assign("paddingBottom", "0");
-  assign("paddingLeft", "0");
-  assign("borderLeftWidth", "0");
-  assign("borderRightWidth", "0");
-  assign("borderTopWidth", "0");
-  assign("borderBottomWidth", "0");
+  assign("boxSizing", cs.boxSizing || "border-box");
+  assign("width", cs.width || `${ta.clientWidth}px`);
+  assign("height", cs.height || `${ta.clientHeight}px`);
+  assign("paddingTop", cs.paddingTop || "0");
+  assign("paddingRight", cs.paddingRight || "0");
+  assign("paddingBottom", cs.paddingBottom || "0");
+  assign("paddingLeft", cs.paddingLeft || "0");
+  assign("borderTopWidth", cs.borderTopWidth || "0");
+  assign("borderRightWidth", cs.borderRightWidth || "0");
+  assign("borderBottomWidth", cs.borderBottomWidth || "0");
+  assign("borderLeftWidth", cs.borderLeftWidth || "0");
+  assign("borderStyle", cs.borderStyle || "solid");
   assign("fontFamily", cs.fontFamily || "inherit");
   assign("fontSize", cs.fontSize || "inherit");
   assign("fontWeight", cs.fontWeight || "normal");
@@ -844,8 +857,14 @@ export default function PostForm({
     mirror.appendChild(textNode);
     mirror.appendChild(marker);
     if (!mirror.isConnected) document.body.appendChild(mirror);
-    const caretTopAbs = marker.getBoundingClientRect().top - mirror.getBoundingClientRect().top;
-    const visibleTop = caretTopAbs - ta.scrollTop;
+    const markerRect = marker.getBoundingClientRect();
+    const mirrorRect = mirror.getBoundingClientRect();
+    const caretTopAbs = markerRect.top - mirrorRect.top;
+    const mirrorCs = getComputedStyle(mirror);
+    const mirrorBt = parseFloat(mirrorCs.borderTopWidth || "0");
+    const mirrorPt = parseFloat(mirrorCs.paddingTop || "0");
+    const caretTopContent = caretTopAbs - mirrorBt - mirrorPt;
+    const visibleTop = caretTopContent - ta.scrollTop;
     const lh = resolveLineHeight(ta);
     const inView = visibleTop >= 0 && visibleTop <= ta.clientHeight - lh;
     return { topWithin: visibleTop, lineHeight: lh, inView };
@@ -872,6 +891,7 @@ export default function PostForm({
     const pr = parseFloat(cs.paddingRight || "0");
     const bt = parseFloat(cs.borderTopWidth || "0");
     const bl = parseFloat(cs.borderLeftWidth || "0");
+    const pt = parseFloat(cs.paddingTop || "0");
     if (!inView) {
       band.style.display = "none";
       return;
@@ -879,7 +899,7 @@ export default function PostForm({
     band.style.display = "block";
     band.style.position = "absolute";
     band.style.background = "#eef8ff";
-    band.style.top = `${bt + topWithin + 2}px`;
+    band.style.top = `${bt + pt + topWithin}px`;
     band.style.left = `${bl + pl}px`;
     band.style.height = `${Math.round(lineHeight)}px`;
     band.style.width = `${ta.clientWidth - pl - pr}px`;
