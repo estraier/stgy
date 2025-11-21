@@ -1,6 +1,6 @@
 "use client";
 
-import { useRouter } from "next/navigation";
+import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRef, useMemo, useEffect, useState, useCallback } from "react";
 import PrismHighlighter from "@/components/PrismHighlighter";
 import type { Post, PostDetail } from "@/api/models";
@@ -48,6 +48,8 @@ export default function PostCard({
   idPrefix,
 }: PostCardProps) {
   const router = useRouter();
+  const pathname = usePathname();
+  const searchParams = useSearchParams();
   const contentRef = useRef<HTMLDivElement | null>(null);
   const hasContent =
     "content" in post && typeof post.content === "string" && post.content.length > 0;
@@ -336,6 +338,9 @@ export default function PostCard({
   const isOwner = focusUserId && focusUserId === post.ownedBy;
   const canConfigurePublication = Boolean(isOwner || focusUserIsAdmin);
 
+  const isOnSelfDetailPage = pathname === `/posts/${post.id}`;
+  const isAlreadyEditMode = isOnSelfDetailPage && searchParams.get("mode") === "edit";
+
   const copyMenu = (
     <div
       ref={copyMenuRef}
@@ -397,9 +402,32 @@ export default function PostCard({
       >
         Copy mention Markdown
       </button>
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={() => {
+          const href = `/posts/${post.id}?mode=edit`;
+
+          // すでに /posts/{id}?mode=edit にいる場合は何もしない（スクロールジャンプ防止）
+          if (isAlreadyEditMode) {
+            setMenuOpen(false);
+            return;
+          }
+
+          // 詳細画面から mode=edit に切り替えるときは scroll: false
+          if (isOnSelfDetailPage) {
+            router.push(href, { scroll: false });
+          } else {
+            router.push(href);
+          }
+
+          setMenuOpen(false);
+        }}
+      >
+        Edit this post
+      </button>
       {canConfigurePublication && (
         <button
-          className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+          className="w-full text左 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
           onClick={() => {
             setMenuOpen(false);
             setPubDialogOpen(true);
@@ -413,7 +441,9 @@ export default function PostCard({
 
   return (
     <article
-      className={`p-2 sm:pt-4 sm:pb-2 sm:pl-4 sm:pr-3 border rounded bg-white shadow-sm ${clickable ? "cursor-pointer" : ""} ${className}`}
+      className={`p-2 sm:pt-4 sm:pb-2 sm:pl-4 sm:pr-3 border rounded bg-white shadow-sm ${
+        clickable ? "cursor-pointer" : ""
+      } ${className}`}
       onClick={clickable && !pubDialogOpen ? handleCardClick : undefined}
       tabIndex={clickable ? 0 : -1}
       role={clickable ? "button" : undefined}

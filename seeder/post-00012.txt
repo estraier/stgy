@@ -464,7 +464,7 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
 
 どのサービスがどのサービスの接続を知っているかという参照関係を図にしておく。これは、実際に接続しているという意味ではなく、その設定を読み込んでいるという意味だ。例えば、バックエンドサーバがCaddyに接続することはないが、バックエンドにはCaddy越しに来るフロントエンドのURLを信用する設定が必要だ。また、バックエンドサーバはフロントエンドにS3サービスのURLを伝える必要があり、そこにはCaddyのアドレスが書いてある。同様にして、フロントエンドはCaddy越しにバックエンドやS3サーバに接続するアドレスを知っておく必要がある。
 
-![サーバ間参照](/data/help-service-references.png){size=large}
+![サーバ間参照](/data/help-service-references.png){grid,size=large}
 
 上述の設定は既にenv.vps.txtとdocker-compose.vps.ymlとCaddyfile.vpsに書いてあるので、Dockerによる本番運用は、DockerとGitが動くホストさえあれば、5分で始められるようになっている。他のドメイン名を使う場合、それらのファイルのstgy.jpの部分をそのドメイン名に変えれば良い。HTTPSでなくHTTPで運用する場合、docker-compose.vps.ymlとCaddyfile.vpsのhttpsの記述をhttpに置換する。ただし、HTTPだとパスワードやセッションIDが平文で転送されるため、検証用途以外で運用するのは止めておいた方がよい。
 
