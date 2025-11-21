@@ -309,9 +309,9 @@ html:has(.site-container) {
       repeating-linear-gradient(43deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(87deg, #ececec 0, #eee 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      2.5px 2.5px,
-      4.3px 4.3px,
-      7.1px 7.1px !important;
+      2.7px 2.7px,
+      3.5px 3.5px,
+      5.3px 5.3px !important;
   }
   @media (max-width: 800px) {
     .pub-theme-newspaper {
@@ -321,9 +321,9 @@ html:has(.site-container) {
         repeating-linear-gradient(48deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
         repeating-linear-gradient(87deg, #ececec 0, #eee 0.5px, transparent 0.5px, transparent 2px) !important;
       background-size:
-        2.5px 2.5px,
-        4.3px 4.3px,
-        7.1px 7.1px !important;
+        2.7px 2.7px,
+        3.5px 3.5px,
+        5.3px 5.3px !important;
     }
     .pub-theme-newspaper .pub-container,
     .pub-theme-newspaper .site-container {
@@ -354,9 +354,9 @@ html:has(.site-container) {
       repeating-linear-gradient(43deg, #fbfbf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(87deg, #ffe 0, #ffe 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      2.5px 2.5px,
-      4.3px 4.3px,
-      7.1px 7.1px !important;
+      2.7px 2.7px,
+      3.5px 3.5px,
+      5.3px 5.3px !important;
     color: #111 !important;
     font-family: "BIZ UDMincho", serif !important;
   }
@@ -570,9 +570,9 @@ html:has(.site-container) {
       repeating-linear-gradient(43deg, #fbfbfc 0, #fbfbfc 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(87deg, #fcfcff 0, #fcfcff 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      2.5px 2.5px,
-      4.3px 4.3px,
-      7.1px 7.1px !important;
+      2.7px 2.7px,
+      3.5px 3.5px,
+      5.3px 5.3px !important;
     border: 3px solid #aaa !important;
     color: #111 !important;
     font-family: "Klee One", serif !important;
@@ -968,15 +968,15 @@ html:has(.site-container) {
   .pub-theme-blackboard .pub-side-recent article,
   .pub-theme-blackboard .pub-side-profile .profile-column,
   .pub-theme-blackboard .site-profile .profile-column {
-    background-color: #00201a !important;
+    background-color: #00221a !important;
     background-image:
-      repeating-linear-gradient(2deg, #041d19 0, #041d19 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(43deg, #081c18 0, #081c18 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(87deg, #0a1b17 0, #0a1b17 0.5px, transparent 0.5px, transparent 2px);
+      repeating-linear-gradient(2deg, #041f19 0, #041f19 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(43deg, #081e18 0, #081e18 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(87deg, #0a1d17 0, #0a1d17 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      2.5px 2.5px,
-      4.3px 4.3px,
-      7.1px 7.1px !important;
+      2.7px 2.7px,
+      3.5px 3.5px,
+      5.3px 5.3px !important;
     border: 3px solid #888 !important;
     color: #f8f8ff !important;
     font-family: "Klee One", serif !important;
@@ -1696,9 +1696,9 @@ html:has(.site-container) {
       repeating-linear-gradient(43deg, #eaeaea 0, #eaeaea 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(87deg, #ececec 0, #eee 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      2.5px 2.5px,
-      4.3px 4.3px,
-      7.1px 7.1px !important;
+      2.7px 2.7px,
+      3.5px 3.5px,
+      5.3px 5.3px !important;
   }
   .pub-theme-shimbun .pub-container .pub-main .date,
   .pub-theme-shimbun .site-container .site-recent .date,
@@ -1724,9 +1724,9 @@ html:has(.site-container) {
       repeating-linear-gradient(43deg, #fbfbf8 0, #fafaf8 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(87deg, #ffe 0, #ffe 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      2.5px 2.5px,
-      4.3px 4.3px,
-      7.1px 7.1px !important;
+      2.7px 2.7px,
+      3.5px 3.5px,
+      5.3px 5.3px !important;
     color: #111 !important;
     font-family: "BIZ UDMincho", serif !important;
   }
@@ -1738,9 +1738,9 @@ html:has(.site-container) {
       repeating-linear-gradient(43deg, #dadada 0, #dadada 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(87deg, #ddd 0, #ddd 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      2.5px 2.5px,
-      4.3px 4.3px,
-      7.1px 7.1px !important;
+      2.7px 2.7px,
+      3.5px 3.5px,
+      5.3px 5.3px !important;
   }
   .pub-theme-shimbun .pub-container .pub-site-name,
   .pub-theme-shimbun .site-container .pub-site-name,
@@ -1938,9 +1938,9 @@ html:has(.site-container) {
       repeating-linear-gradient(43deg, #fbfbfc 0, #fbfbfc 1px, transparent 1px, transparent 3px),
       repeating-linear-gradient(87deg, #fcfcff 0, #fcfcff 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      2.5px 2.5px,
-      4.3px 4.3px,
-      7.1px 7.1px !important;
+      2.7px 2.7px,
+      3.5px 3.5px,
+      5.3px 5.3px !important;
     border: 3px solid #aaa !important;
     color: #111 !important;
     font-family: "Klee One", serif !important;
@@ -2144,15 +2144,15 @@ html:has(.site-container) {
   .pub-theme-kokuban .pub-side-recent article,
   .pub-theme-kokuban .pub-side-profile .profile-column,
   .pub-theme-kokuban .site-profile .profile-column {
-    background-color: #00201a !important;
+    background-color: #00221a !important;
     background-image:
-      repeating-linear-gradient(2deg, #041d19 0, #041d19 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(43deg, #081c18 0, #081c18 1px, transparent 1px, transparent 3px),
-      repeating-linear-gradient(87deg, #0a1b17 0, #0a1b17 0.5px, transparent 0.5px, transparent 2px);
+      repeating-linear-gradient(2deg, #041f19 0, #041f19 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(43deg, #081e18 0, #081e18 1px, transparent 1px, transparent 3px),
+      repeating-linear-gradient(87deg, #0a1d17 0, #0a1d17 0.5px, transparent 0.5px, transparent 2px);
     background-size:
-      2.5px 2.5px,
-      4.3px 4.3px,
-      7.1px 7.1px !important;
+      2.7px 2.7px,
+      3.5px 3.5px,
+      5.3px 5.3px !important;
     border: 3px solid #888 !important;
     color: #f8f8ff !important;
     font-family: "Klee One", serif !important;
