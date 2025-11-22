@@ -67,9 +67,7 @@ export default function PageBody() {
   const [replyError, setReplyError] = useState<string | null>(null);
   const [replySubmitting, setReplySubmitting] = useState(false);
 
-  // 編集フォームのブロック全体
   const editFormWrapperRef = useRef<HTMLDivElement | null>(null);
-  // 「この editing 状態が、クエリ (?mode=edit) から始まったものかどうか」のフラグ
   const editInitializedFromQueryRef = useRef(false);
 
   function updateEditModeInUrl(enabled: boolean) {
@@ -99,7 +97,6 @@ export default function PageBody() {
 
         const canEditFetched = isAdmin || data.ownedBy === userId;
         if (isEditModeFromQuery && canEditFetched) {
-          // クエリから編集モード開始
           editInitializedFromQueryRef.current = true;
           setEditing(true);
         } else {
@@ -111,8 +108,6 @@ export default function PageBody() {
       .finally(() => setLoading(false));
   }, [postId, userId, isAdmin, isEditModeFromQuery]);
 
-  // mode=edit でページを開いたときだけ、
-  // 編集フォーム全体＋Save ボタンまで画面に入るようにスクロールする
   useEffect(() => {
     if (!editing) return;
     if (!isEditModeFromQuery) return;
@@ -130,19 +125,15 @@ export default function PageBody() {
       const rect = formEl.getBoundingClientRect();
       const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
 
-      // フォームの下端が見切れている場合は、その分だけ下にスクロール
       const deltaBottom = rect.bottom - (viewportHeight - margin);
       if (deltaBottom > 0) {
         window.scrollBy({ top: deltaBottom, behavior: "smooth" });
       } else if (rect.top < margin) {
-        // 逆にフォームの上が上に行き過ぎていたら、少し上に戻す
         const deltaTop = rect.top - margin;
         window.scrollBy({ top: deltaTop, behavior: "smooth" });
       }
     };
 
-    // PostForm 内部の auto-scroll（ensureFormBottomInView） が走り終わったあとに
-    // それを微調整するイメージで、rAF を 2 回挟んでから実行
     const id = requestAnimationFrame(() => {
       requestAnimationFrame(scrollOnce);
     });
@@ -501,7 +492,7 @@ export default function PageBody() {
                 setEditBody(post.content + tagLine);
               }
               setEditing(true);
-              editInitializedFromQueryRef.current = false; // これは手動クリック開始
+              editInitializedFromQueryRef.current = false;
               updateEditModeInUrl(true);
             }}
           >
