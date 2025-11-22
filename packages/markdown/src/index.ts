@@ -1924,6 +1924,32 @@ export function mdAnnotateElements(nodes: MdNode[]): MdNode[] {
   return nodes.map(visit);
 }
 
+export function mdStripRubyElements(nodes: MdNode[]): MdNode[] {
+  const visit = (n: MdNode): MdNode[] => {
+    if (n.type === "text") return [n];
+    const el = n as MdElementNode;
+    if (el.tag === "ruby") {
+      const out: MdNode[] = [];
+      for (const c of el.children || []) {
+        if (c.type === "element" && c.tag === "rb") {
+          for (const rk of c.children || []) {
+            out.push(...visit(rk));
+          }
+        }
+      }
+      return out;
+    }
+    const newChildren: MdNode[] = [];
+    for (const c of el.children || []) {
+      newChildren.push(...visit(c));
+    }
+    return [{ ...el, children: newChildren }];
+  };
+  const out: MdNode[] = [];
+  for (const n of nodes) out.push(...visit(n));
+  return out;
+}
+
 export function mdCutOff(
   nodes: MdNode[],
   params?: {

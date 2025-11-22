@@ -10,6 +10,7 @@ import {
   mdFindFeatured,
   mdFilterForFeatured,
   mdAnnotateElements,
+  mdStripRubyElements,
   mdCutOff,
   mdRenderText,
   mdRenderHtml,
@@ -1325,6 +1326,35 @@ describe("mdAnnotateElements", () => {
         },
       },
     ]);
+  });
+});
+
+describe("mdStripRubyElements", () => {
+  it("basics", () => {
+    const mdText = "hop {{step|STEP}} jump";
+    const expected = [
+      {
+        "type": "element",
+        "tag": "p",
+        "children": [
+          {
+            "type": "text",
+            "text": "hop "
+          },
+          {
+            "type": "text",
+            "text": "step"
+          },
+          {
+            "type": "text",
+            "text": " jump"
+          }
+        ]
+      }
+    ];
+    expect(
+      stripPos(mdStripRubyElements(parseMarkdown(mdText)))
+    ).toStrictEqual(expected);
   });
 });
 
