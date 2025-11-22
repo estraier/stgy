@@ -1430,12 +1430,16 @@ html:has(.site-container) {
   }
   .pub-theme-dir-vert .pub-main .markdown-body .featured-block,
   .pub-theme-dir-vert .site-main .markdown-body .featured-block {
-    margin: 2em 0 1.5em 0 !important;
+    display: flex !important;
+    margin: 2em 0 0 0 !important;
+    justify-content: center !important;
+    max-inline-size: 15em !important;
+    max-block-size: 15em !important;
   }
   .pub-theme-dir-vert .markdown-body .featured-block img,
   .pub-theme-dir-vert .markdown-body .featured-block video {
-    max-width: 15em !important;
-    max-height: 15em !important;
+    max-inline-size: 15em !important;
+    max-block-size: 15em !important;
   }
   .pub-theme-dir-vert .pub-sidebar .markdown-body .featured-block img,
   .pub-theme-dir-vert .pub-sidebar .markdown-body .featured-block video {
