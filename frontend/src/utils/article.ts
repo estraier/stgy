@@ -10,6 +10,7 @@ import {
   mdFindFeatured,
   mdFilterForFeatured,
   mdAnnotateElements,
+  mdStripRubyElements,
   mdCutOff,
   mdRenderHtml,
   mdRenderText,
@@ -47,7 +48,7 @@ export function makePubArticleHtmlFromMarkdown(
   let nodes = parseMarkdown(mdText);
   const { title, otherNodes: nodesWithoutTitle } = mdSeparateTitle(nodes);
   const { metadata, otherNodes: nodesWithoutMeta } = mdSeparateMetadata(nodesWithoutTitle);
-  let desc = mdRenderText(nodesWithoutMeta);
+  let desc = mdRenderText(mdStripRubyElements(nodesWithoutMeta));
   desc = desc.replace(/\s+/g, " ").trim();
   if (desc.length > 150) {
     desc = desc.substring(0, 150) + "...";
@@ -81,7 +82,7 @@ export function makeSnippetHtmlFromMarkdown(mdText: string, idPrefix?: string) {
   let nodes = parseMarkdown(mdText);
   nodes = rewriteMediaUrls(nodes, true);
   nodes = mdFilterForFeatured(nodes);
-  nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen, imgHeight });
+  nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen, imgHeight, cutOnHr: true });
   return mdRenderHtml(nodes, false, idPrefix);
 }
 

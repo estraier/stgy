@@ -15,7 +15,7 @@ export function makeSnippetJsonFromMarkdown(mdText: string) {
   const imgHeight = Config.SNIPPET_MAX_HEIGHT / 4;
   let nodes = parseMarkdown(mdText);
   nodes = mdFilterForFeatured(nodes);
-  nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen, imgHeight });
+  nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen, imgHeight, cutOnHr: true });
   return serializeMdNodes(nodes);
 }
 
