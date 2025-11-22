@@ -1384,6 +1384,30 @@ describe("mdCutOff", () => {
     ).toStrictEqual(expected);
   });
 
+  it("mdCutOff by hr", () => {
+    const mdText = "hop\n---\nstep";
+    const expected = [
+      {
+        "type": "element",
+        "tag": "p",
+        "children": [
+          {
+            "type": "text",
+            "text": "hop"
+          }
+        ]
+      },
+      {
+        "type": "element",
+        "tag": "omitted",
+        "children": []
+      }
+    ];
+    expect(
+      stripPos(mdCutOff(parseMarkdown(mdText), { maxHeight: 1 })),
+    ).toStrictEqual(expected);
+  });
+
   it("toc", () => {
     const mdText = "abc\n<!TOC!>\ndef";
     const expected = [

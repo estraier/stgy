@@ -1932,6 +1932,7 @@ export function mdCutOff(
     imgLen?: number;
     imgHeight?: number;
     captMaxLen?: number;
+    cutOnHr?: boolean;
   },
 ): MdNode[] {
   const imgLenParam = params?.imgLen ?? 50;
@@ -1939,6 +1940,7 @@ export function mdCutOff(
   const fixedImgLen = Math.max(0, imgLenParam);
   const imgHeight = params?.imgHeight ?? 6;
   const captMaxLen = params?.captMaxLen ?? 25;
+  const cutOnHr = params?.cutOnHr ?? false;
   const state = {
     remain:
       typeof params?.maxLen === "number"
@@ -1952,6 +1954,7 @@ export function mdCutOff(
     cut: false,
     omittedInserted: false,
     ellipsisAdded: false,
+    textConsumed: 0,
   };
   const blockTags = new Set([
     "p",
@@ -1967,6 +1970,7 @@ export function mdCutOff(
     "li",
     "hr",
   ]);
+
   function getKind(attrs?: MdAttrs): string | undefined {
     if (!attrs) return undefined;
     const k = attrs["kind"];
@@ -1979,9 +1983,11 @@ export function mdCutOff(
     }
     return undefined;
   }
+
   function isFeaturedFigure(el: MdElementNode): boolean {
     return el.tag === "figure" && getKind(el.attrs) === "featured-block";
   }
+
   function computeTextMetrics(ns: MdNode[]): {
     length: number;
     newlines: number;
@@ -2000,23 +2006,28 @@ export function mdCutOff(
     }
     return { length, newlines };
   }
+
   const captionLengthOfFigure = (el: MdElementNode): number => {
     const cap = (el.children || []).find(
-      (c): c is MdElementNode => c.type === "element" && c.tag === "figcaption",
+      (c): c is MdElementNode =>
+        c.type === "element" && c.tag === "figcaption",
     );
     if (!cap) return 0;
     return computeTextMetrics(cap.children || []).length;
   };
+
   const figureHasMedia = (el: MdElementNode): boolean =>
     (el.children || []).some(
       (c) => c.type === "element" && (c.tag === "img" || c.tag === "video"),
     );
+
   function bumpHeight(inc: number): boolean {
     const next = state.height + inc;
     if (next > state.maxHeight) return false;
     state.height = next;
     return true;
   }
+
   function consumeFixedImageBudget(): boolean {
     const nextRemain = state.remain - fixedImgLen;
     const nextHeight = state.height + imgHeight;
@@ -2025,6 +2036,7 @@ export function mdCutOff(
     state.height = nextHeight;
     return true;
   }
+
   function consumeDynamicImageBudget(captionLen: number): boolean {
     const nextRemain = state.remain - captionLen;
     const nextHeight = state.height + imgHeight;
@@ -2033,9 +2045,11 @@ export function mdCutOff(
     state.height = nextHeight;
     return true;
   }
+
   function makeOmittedNode(): MdElementNode {
     return { type: "element", tag: "omitted", children: [] };
   }
+
   function cutTextContent(
     s: string,
     charge: boolean,
@@ -2052,13 +2066,16 @@ export function mdCutOff(
         part = part + "…";
         state.ellipsisAdded = true;
       }
+      state.textConsumed += sliceLen;
       state.remain = 0;
       state.cut = true;
       return { text: part, cut: true };
     }
+    state.textConsumed += s.length;
     state.remain -= s.length;
     return { text: s, cut: false };
   }
+
   function trimCaptionChildren(children: MdNode[]): MdNode[] {
     if (dynamicImgCost) return children;
     if (captMaxLen < 0) return children;
@@ -2071,21 +2088,26 @@ export function mdCutOff(
       ) + "…";
     return [{ type: "text", text }];
   }
+
   function walk(
     n: MdNode,
     freeMedia: boolean,
     freeText: boolean,
   ): MdNode | null {
     if (state.cut) return null;
+
     if (n.type === "text") {
       const { text, cut } = cutTextContent(n.text, !freeText);
       if (text === "" && cut) return null;
       return { ...n, text };
     }
+
     const el = n as MdElementNode;
+
     if (el.tag === "toc") {
       return null;
     }
+
     if (el.tag === "br") {
       if (!freeText) {
         if (!bumpHeight(1)) {
@@ -2095,7 +2117,9 @@ export function mdCutOff(
       }
       return { ...el, children: [] };
     }
+
     let chargedAtFigure = false;
+
     if (
       el.tag === "figure" &&
       !freeMedia &&
@@ -2110,6 +2134,7 @@ export function mdCutOff(
       }
       chargedAtFigure = true;
     }
+
     if (!freeText && blockTags.has(el.tag)) {
       const { length: contentLength, newlines } = computeTextMetrics(
         el.children || [],
@@ -2126,6 +2151,7 @@ export function mdCutOff(
         return null;
       }
     }
+
     if ((el.tag === "img" || el.tag === "video") && !freeMedia) {
       if (dynamicImgCost) {
         if (!bumpHeight(imgHeight)) {
@@ -2139,12 +2165,23 @@ export function mdCutOff(
         }
       }
     }
+
+    if (el.tag === "hr") {
+      if (cutOnHr && state.textConsumed > 0) {
+        // hr 自体は出力せず、この位置で打ち切る
+        state.cut = true;
+        return null;
+      }
+      return { ...el, children: [] };
+    }
+
     const childFreeMedia =
       freeMedia ||
       isFeaturedFigure(el) ||
       (el.tag === "figure" && chargedAtFigure) ||
       el.tag === "figcaption";
     const childFreeText = freeText || el.tag === "figcaption";
+
     const outChildren: MdNode[] = [];
     for (const c of el.children || []) {
       const cc = walk(c, childFreeMedia, childFreeText);
@@ -2157,10 +2194,13 @@ export function mdCutOff(
         break;
       }
     }
+
     const finalChildren =
       el.tag === "figcaption" ? trimCaptionChildren(outChildren) : outChildren;
+
     return { ...el, children: finalChildren };
   }
+
   const out: MdNode[] = [];
   for (const n of nodes) {
     if (state.cut) break;
