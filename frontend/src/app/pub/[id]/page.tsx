@@ -136,7 +136,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
       });
       recent = recent.filter((r) => String(r.id) !== String(post.id)).slice(0, desired);
     }
-    const siteHrefBase = `/pub/sites/${post.ownedBy}`;
+    const siteHrefBase = `/sites/${post.ownedBy}`;
     const siteHref = design ? `${siteHrefBase}?design=${encodeURIComponent(design)}` : siteHrefBase;
     const locale = post.locale || pubcfg.locale || "und";
     const newerHref = post.newerPostId

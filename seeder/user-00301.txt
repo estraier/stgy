@@ -13,6 +13,11 @@ pubConfigSiteName: 国文学のブログ
 pubConfigSubtitle: 日本語の文学作品を紹介
 pubConfigAuthor: 国文学大好きっ子
 pubConfigIntroduction:<<____EOF____
-日本語の文学作品を紹介します。青空文庫から10分程度で読める短編を選んで転載しています。
+日本語の文学作品を紹介します。青空文庫から１０分程度で読める短編を選んで転載しています。
+---
+### 今月のおすすめ
+- [檸檬](http://localhost:8080/pub/0002000000000317)
+- [蜜柑](http://localhost:8080/pub/0002000000000310)
+- [赤い蝋燭](http://localhost:8080/pub/0002000000000312)
 ____EOF____
 pubConfigDesignTheme: shimbun

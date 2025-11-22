@@ -142,7 +142,7 @@ function rewritePublishedUrls(nodes: MdNode[]): MdNode[] {
   });
   rewriteRules.push({
     pattern: /^\/users\//,
-    replacement: "/pub/sites/",
+    replacement: "/sites/",
   });
   return mdRewriteLinkUrls(nodes, rewriteRules);
 }

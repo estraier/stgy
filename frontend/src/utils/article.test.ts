@@ -53,7 +53,7 @@ describe("article utils (normal cases)", () => {
     expect(html).toContain("<figure");
     expect(html).toContain('class="image-block"');
     expect(html).toContain('src="https://cdn.test/images-bkt/u1/thumbs/folder/pic_image.webp"');
-    expect(html).toContain('<a href="/pub/sites/123">U</a>');
+    expect(html).toContain('<a href="/sites/123">U</a>');
     expect(html).toContain('<a href="/pub/456">P</a>');
     expect(html).toContain("<p dialogue>「<ruby><rb>あ</rb><rt>a</rt></ruby>」</p>");
     expect(title).toBe("title");

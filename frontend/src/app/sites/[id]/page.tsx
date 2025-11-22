@@ -27,7 +27,7 @@ export async function generateMetadata({
   params: Promise<PageParams>;
 }): Promise<Metadata> {
   const { id } = await params;
-  const canonical = makeAbsoluteUrl(`/pub/sites/${id}`);
+  const canonical = makeAbsoluteUrl(`/sites/${id}`);
 
   try {
     const { pubcfg, intro } = await getPubSiteData(id);
@@ -113,7 +113,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const hasNext = posts.length > Config.PUB_POSTS_PAGE_SIZE;
     const items = posts.slice(0, Config.PUB_POSTS_PAGE_SIZE);
 
-    const siteRoot = `/pub/sites/${id}`;
+    const siteRoot = `/sites/${id}`;
     const baseHref = design ? `${siteRoot}?design=${encodeURIComponent(design)}` : siteRoot;
     const buildPageHref = (p: number) => {
       const qs = new URLSearchParams();
