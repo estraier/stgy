@@ -402,32 +402,30 @@ export default function PostCard({
       >
         Copy mention Markdown
       </button>
-      <button
-        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
-        onClick={() => {
-          const href = `/posts/${post.id}?mode=edit`;
-
-          // すでに /posts/{id}?mode=edit にいる場合は何もしない（スクロールジャンプ防止）
-          if (isAlreadyEditMode) {
-            setMenuOpen(false);
-            return;
-          }
-
-          // 詳細画面から mode=edit に切り替えるときは scroll: false
-          if (isOnSelfDetailPage) {
-            router.push(href, { scroll: false });
-          } else {
-            router.push(href);
-          }
-
-          setMenuOpen(false);
-        }}
-      >
-        Edit this post
-      </button>
       {canConfigurePublication && (
         <button
-          className="w-full text左 px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+          className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+          onClick={() => {
+            const href = `/posts/${post.id}?mode=edit`;
+            if (isAlreadyEditMode) {
+              setMenuOpen(false);
+              return;
+            }
+            if (isOnSelfDetailPage) {
+              router.push(href, { scroll: false });
+            } else {
+              router.push(href);
+            }
+
+            setMenuOpen(false);
+          }}
+        >
+          Edit this post
+        </button>
+      )}
+      {canConfigurePublication && (
+        <button
+          className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
           onClick={() => {
             setMenuOpen(false);
             setPubDialogOpen(true);
