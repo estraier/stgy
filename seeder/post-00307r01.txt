@@ -1,5 +1,5 @@
 ownedBy: 0001000000000301
-replyTo: 0002000000000301
+replyTo: 0002000000000307
 locale: ja-JP
 allowLikes: true
 allowReplies: true
