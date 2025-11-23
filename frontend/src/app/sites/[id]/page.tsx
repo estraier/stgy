@@ -240,7 +240,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                           data-restore-page={String(page)}
                         >
                           <span className="date">
-                            {convertForDirection(formatDateTime(publishedAtDate), themeDir)}
+                            {convertForDirection(formatDateTime(publishedAtDate).replace(/\s.*$/, ''), themeDir)}
                           </span>{" "}
                           <Link href={postHref}>{snippetText}</Link>
                         </li>
