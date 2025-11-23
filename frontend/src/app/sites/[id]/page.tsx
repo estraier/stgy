@@ -5,7 +5,11 @@ import { HeadLangPatcher } from "@/components/HeadLangPatcher";
 import PubServiceHeader from "@/components/PubServiceHeader";
 import { listPubPostsByUser } from "@/api/posts";
 import { getPubConfig } from "@/api/users";
-import { makePubArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
+import {
+  makePubArticleHtmlFromMarkdown,
+  makeHtmlFromJsonSnippet,
+  makeTextFromJsonSnippet,
+} from "@/utils/article";
 import LinkDiv from "@/components/LinkDiv";
 import ArticleWithDecoration from "@/components/ArticleWithDecoration";
 import { formatDateTime, makeAbsoluteUrl, convertForDirection } from "@/utils/format";
@@ -85,14 +89,22 @@ export async function generateMetadata({
 
 type Props = {
   params: Promise<{ id: string }>;
-  searchParams: Promise<{ page?: string; design?: string }>;
+  searchParams: Promise<{ page?: string; design?: string; tab?: string; oldestFirst?: string }>;
 };
 
 export default async function PubSitePage({ params, searchParams }: Props) {
   const { id } = await params;
-  const { page: pageStr, design: designRaw } = await searchParams;
+  const {
+    page: pageStr,
+    design: designRaw,
+    tab: tabRaw,
+    oldestFirst: oldestFirstRaw,
+  } = await searchParams;
   const page = Math.max(1, Number.parseInt(pageStr ?? "1", 10) || 1);
   const design = Array.isArray(designRaw) ? designRaw[0] : designRaw;
+  const tab = Array.isArray(tabRaw) ? tabRaw[0] : tabRaw;
+  const tabMode = tab === "plain" ? "plain" : "snippet";
+  const oldestFirst = oldestFirstRaw === "1";
 
   try {
     const { pubcfg, intro } = await getPubSiteData(id);
@@ -103,26 +115,54 @@ export default async function PubSitePage({ params, searchParams }: Props) {
       typeof design === "string" && Config.PUB_DESIGN_THEMES.includes(design) ? design : baseTheme;
     const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "vert" : "norm";
     const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
-    const offset = (page - 1) * Config.PUB_POSTS_PAGE_SIZE;
+    const order = oldestFirst ? "asc" : "desc";
+    const page_size = tabMode === "plain" ? Config.PUB_POSTS_PLAIN_PAGE_SIZE : Config.PUB_POSTS_SNIPPET_PAGE_SIZE;
+    const offset = (page - 1) * page_size;
     const posts = await listPubPostsByUser(id, {
       offset,
-      limit: Config.PUB_POSTS_PAGE_SIZE + 1,
-      order: "desc",
+      limit: page_size + 1,
+      order,
     });
     const hasPrev = page > 1;
-    const hasNext = posts.length > Config.PUB_POSTS_PAGE_SIZE;
-    const items = posts.slice(0, Config.PUB_POSTS_PAGE_SIZE);
-
+    const hasNext = posts.length > page_size;
+    const items = posts.slice(0, page_size);
     const siteRoot = `/sites/${id}`;
     const baseHref = design ? `${siteRoot}?design=${encodeURIComponent(design)}` : siteRoot;
     const buildPageHref = (p: number) => {
       const qs = new URLSearchParams();
       qs.set("page", String(p));
       if (design) qs.set("design", String(design));
-      return `${siteRoot}?${qs.toString()}`;
+      if (tabMode === "plain") qs.set("tab", "plain");
+      if (oldestFirst) qs.set("oldestFirst", "1");
+      const query = qs.toString();
+      return query ? `${siteRoot}?${query}` : siteRoot;
     };
     const newerHref = buildPageHref(page - 1);
     const olderHref = buildPageHref(page + 1);
+
+    const buildTabHref = (mode: "snippet" | "plain") => {
+      const qs = new URLSearchParams();
+      qs.set("page", "1");
+      if (design) qs.set("design", String(design));
+      if (mode === "plain") qs.set("tab", "plain");
+      const query = qs.toString();
+      return query ? `${siteRoot}?${query}` : siteRoot;
+    };
+
+    const snippetHref = buildTabHref("snippet");
+    const listHref = buildTabHref("plain");
+
+    const buildOldestFirstHref = (on: boolean) => {
+      const qs = new URLSearchParams();
+      qs.set("page", String(page));
+      if (design) qs.set("design", String(design));
+      if (tabMode === "plain") qs.set("tab", "plain");
+      if (on) qs.set("oldestFirst", "1");
+      const query = qs.toString();
+      return query ? `${siteRoot}?${query}` : siteRoot;
+    };
+
+    const oldestFirstHref = buildOldestFirstHref(!oldestFirst);
 
     const locale = pubcfg.locale || "und";
     const siteIntroHtml = intro.html;
@@ -157,33 +197,84 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                   html={siteIntroHtml}
                 />
               </section>
-              <section className="site-recent">
-                {items.map((r, idx) => {
-                  const postHref = `/pub/${r.id}${
-                    design ? `?design=${encodeURIComponent(design)}` : ""
-                  }`;
-                  const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`);
-                  const publishedAtDate = new Date(r.publishedAt ?? "");
-                  return (
-                    <LinkDiv
-                      key={String(r.id)}
-                      href={postHref}
-                      className="link-div post-div"
-                      id={`pubpost-${r.id}`}
-                      data-restore-id={String(r.id)}
-                      data-restore-page={String(page)}
+              <nav className="site-posts-controls">
+                <div className="posts-controls-row">
+                  <span className="posts-label">Posts:</span>
+                  <div className="posts-tabs">
+                    <Link
+                      className={`posts-tab${tabMode === "snippet" ? " active" : ""}`}
+                      href={snippetHref}
                     >
-                      <div className="date">
-                        {convertForDirection(formatDateTime(publishedAtDate), themeDir)}
-                      </div>
-                      <ArticleWithDecoration
-                        lang={r.locale || pubcfg.locale || locale}
-                        className="markdown-body post-content-excerpt"
-                        html={snippetHtml}
-                      />
-                    </LinkDiv>
-                  );
-                })}
+                      Snippet
+                    </Link>
+                    <Link
+                      className={`posts-tab${tabMode === "plain" ? " active" : ""}`}
+                      href={listHref}
+                    >
+                      Plain
+                    </Link>
+                  </div>
+                  <div className="posts-order">
+                    <Link href={oldestFirstHref} className="oldest-first-label">
+                      <input type="checkbox" checked={oldestFirst} readOnly />
+                      <span>Oldest first</span>
+                    </Link>
+                  </div>
+                </div>
+              </nav>
+              <section className="site-recent">
+                {tabMode === "plain" ? (
+                  <ul className="pub-post-list">
+                    {items.map((r) => {
+                      const postHref = `/pub/${r.id}${
+                        design ? `?design=${encodeURIComponent(design)}` : ""
+                      }`;
+                      const publishedAtDate = new Date(r.publishedAt ?? "");
+                      const snippetText = makeTextFromJsonSnippet(r.snippet);
+                      return (
+                        <li
+                          key={String(r.id)}
+                          className="post-div post-list-item"
+                          id={`pubpost-${r.id}`}
+                          data-restore-id={String(r.id)}
+                          data-restore-page={String(page)}
+                        >
+                          <span className="date">
+                            {convertForDirection(formatDateTime(publishedAtDate), themeDir)}
+                          </span>{" "}
+                          <Link href={postHref}>{snippetText}</Link>
+                        </li>
+                      );
+                    })}
+                  </ul>
+                ) : (
+                  items.map((r, idx) => {
+                    const postHref = `/pub/${r.id}${
+                      design ? `?design=${encodeURIComponent(design)}` : ""
+                    }`;
+                    const snippetHtml = makeHtmlFromJsonSnippet(r.snippet, `p${idx + 1}-h`);
+                    const publishedAtDate = new Date(r.publishedAt ?? "");
+                    return (
+                      <LinkDiv
+                        key={String(r.id)}
+                        href={postHref}
+                        className="link-div post-div"
+                        id={`pubpost-${r.id}`}
+                        data-restore-id={String(r.id)}
+                        data-restore-page={String(page)}
+                      >
+                        <div className="date">
+                          {convertForDirection(formatDateTime(publishedAtDate), themeDir)}
+                        </div>
+                        <ArticleWithDecoration
+                          lang={r.locale || pubcfg.locale || locale}
+                          className="markdown-body post-content-excerpt"
+                          html={snippetHtml}
+                        />
+                      </LinkDiv>
+                    );
+                  })
+                )}
               </section>
               <nav className="pub-pager" aria-label="Pagination">
                 <div className="pager-row">
