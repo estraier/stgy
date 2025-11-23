@@ -32,7 +32,7 @@ export function makeArticleHtmlFromMarkdown(
 
 export function makeArticleTextFromMarkdown(mdText: string) {
   const nodes = parseMarkdown(mdText);
-  return mdRenderText(nodes);
+  return mdRenderText(mdStripRubyElements(nodes));
 }
 
 export function makePubArticleHtmlFromMarkdown(
@@ -95,7 +95,23 @@ export function makeSnippetTextFromMarkdown(mdText: string, maxLen = 50) {
 
 export function makeTextFromJsonSnippet(snippet: string) {
   const nodes = deserializeMdNodes(snippet);
-  return mdRenderText(nodes).slice(0, 50);
+  return mdRenderText(mdStripRubyElements(nodes)).slice(0, 50);
+}
+
+export function makePubAttributesFromJsonSnippet(snippet: string): {
+  title: string | null;
+  desc: string;
+  metadata: Record<string, string>;
+} {
+  const nodes = deserializeMdNodes(snippet);
+  const { title, otherNodes: nodesWithoutTitle } = mdSeparateTitle(nodes);
+  const { metadata, otherNodes: nodesWithoutMeta } = mdSeparateMetadata(nodesWithoutTitle);
+  let desc = mdRenderText(mdStripRubyElements(nodesWithoutMeta));
+  desc = desc.replace(/\s+/g, " ").trim();
+  if (desc.length > 150) {
+    desc = desc.substring(0, 150) + "...";
+  }
+  return { title, desc, metadata };
 }
 
 export function makeHtmlFromJsonSnippet(snippet: string, idPrefix?: string) {

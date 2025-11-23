@@ -16,6 +16,7 @@ import {
   makeSnippetTextFromMarkdown,
   makeTextFromJsonSnippet,
   makeHtmlFromJsonSnippet,
+  makePubAttributesFromJsonSnippet,
 } from "./article";
 import { serializeMdNodes } from "stgy-markdown";
 
@@ -110,5 +111,48 @@ describe("article utils (normal cases)", () => {
     const snippet = serializeMdNodes(nodes);
     const html = makeHtmlFromJsonSnippet(snippet);
     expect(html).toContain('src="https://cdn.test/images-bkt/u2/thumbs/pic_image.webp"');
+  });
+
+  test("makePubAttributesFromJsonSnippet", () => {
+    const nodes = [
+      {
+        type: "element" as const,
+        tag: "h1",
+        children: [
+          {
+            type: "text" as const,
+            text: "hello",
+          },
+        ],
+      },
+      {
+        type: "element",
+        tag: "li",
+        attrs: {
+          meta: "author",
+        },
+        children: [
+          {
+            type: "text",
+            text: "john",
+          },
+        ],
+      },
+      {
+        type: "element" as const,
+        tag: "p",
+        children: [
+          {
+            type: "text" as const,
+            text: "world",
+          },
+        ],
+      },
+    ];
+    const snippet = serializeMdNodes(nodes);
+    const attrs = makePubAttributesFromJsonSnippet(snippet);
+    expect(attrs.title).toBe("hello");
+    expect(attrs.desc).toBe("world");
+    expect(attrs.metadata.author).toBe("john");
   });
 });

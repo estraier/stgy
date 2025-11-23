@@ -8,7 +8,7 @@ import { getPubConfig } from "@/api/users";
 import {
   makePubArticleHtmlFromMarkdown,
   makeHtmlFromJsonSnippet,
-  makeTextFromJsonSnippet,
+  makePubAttributesFromJsonSnippet,
 } from "@/utils/article";
 import LinkDiv from "@/components/LinkDiv";
 import ArticleWithDecoration from "@/components/ArticleWithDecoration";
@@ -116,7 +116,8 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const themeDir = Config.PUB_DESIGN_VERTICAL_THEMES.includes(theme) ? "vert" : "norm";
     const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
     const order = oldestFirst ? "asc" : "desc";
-    const page_size = tabMode === "plain" ? Config.PUB_POSTS_PLAIN_PAGE_SIZE : Config.PUB_POSTS_SNIPPET_PAGE_SIZE;
+    const page_size =
+      tabMode === "plain" ? Config.PUB_POSTS_PLAIN_PAGE_SIZE : Config.PUB_POSTS_SNIPPET_PAGE_SIZE;
     const offset = (page - 1) * page_size;
     const posts = await listPubPostsByUser(id, {
       offset,
@@ -230,7 +231,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                         design ? `?design=${encodeURIComponent(design)}` : ""
                       }`;
                       const publishedAtDate = new Date(r.publishedAt ?? "");
-                      const snippetText = makeTextFromJsonSnippet(r.snippet);
+                      const attrs = makePubAttributesFromJsonSnippet(r.snippet);
                       return (
                         <li
                           key={String(r.id)}
@@ -240,9 +241,18 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                           data-restore-page={String(page)}
                         >
                           <span className="date">
-                            {convertForDirection(formatDateTime(publishedAtDate).replace(/\s.*$/, ''), themeDir)}
+                            {convertForDirection(
+                              formatDateTime(publishedAtDate).replace(/\s.*$/, ""),
+                              themeDir,
+                            )}
                           </span>{" "}
-                          <Link href={postHref}>{snippetText}</Link>
+                          <Link href={postHref}>
+                            {attrs.title && <strong className="title">{attrs.title}</strong>}
+                            {attrs.metadata.author && (
+                              <em className="author">{attrs.metadata.author}</em>
+                            )}
+                            {attrs.desc}
+                          </Link>
                         </li>
                       );
                     })}
