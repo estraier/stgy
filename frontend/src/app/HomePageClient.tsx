@@ -26,7 +26,7 @@ export default function HomePageClient() {
         if (s) {
           const now = Date.now();
           const regTs = Date.parse(s.userCreatedAt || "");
-          const isNewbie = Number.isFinite(regTs) && now - regTs <= 48 * 60 * 60 * 1000;
+          const isNewbie = Number.isFinite(regTs) && now - regTs <= 12 * 60 * 60 * 1000;
           const target = isNewbie ? Config.WELCOME_PAGE_PATH : "/posts";
 
           setPhase("redirecting");
