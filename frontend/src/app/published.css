@@ -274,7 +274,7 @@ html:has(.site-container) {
 }
 .pub-theme-dir-norm .site-container .posts-tab {
   display: inline-block;
-  width: 7em;
+  width: 6em;
   padding: 0.15em 0.6em;
   text-align: center;
   border-radius: 0.3em;
@@ -1915,7 +1915,7 @@ html:has(.site-container) {
     display: inline-block;
     padding: 0.15em 0.3em;
     text-align: center;
-    height: 10em;
+    height: 8em;
     border-radius: 0.3em;
     text-decoration: none;
     border: 1px solid transparent;

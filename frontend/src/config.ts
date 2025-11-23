@@ -99,8 +99,8 @@ export class Config {
   ];
   static readonly PUB_DESIGN_VERTICAL_THEMES = ["tategaki", "shimbun", "hakuban", "kokuban"];
   static readonly PUB_DESIGN_DARK_THEMES = ["dark", "blackboard", "kokuban"];
-  static readonly PUB_POSTS_SNIPPET_PAGE_SIZE = normNum(
-    process.env.NEXT_PUBLIC_PUB_POSTS_SNIPPET_PAGE_SIZE,
+  static readonly PUB_POSTS_RICH_PAGE_SIZE = normNum(
+    process.env.NEXT_PUBLIC_PUB_POSTS_RICH_PAGE_SIZE,
     10,
   );
   static readonly PUB_POSTS_PLAIN_PAGE_SIZE = normNum(

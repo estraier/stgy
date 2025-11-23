@@ -117,7 +117,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
     const themeTone = Config.PUB_DESIGN_DARK_THEMES.includes(theme) ? "dark" : "light";
     const order = oldestFirst ? "asc" : "desc";
     const page_size =
-      tabMode === "plain" ? Config.PUB_POSTS_PLAIN_PAGE_SIZE : Config.PUB_POSTS_SNIPPET_PAGE_SIZE;
+      tabMode === "plain" ? Config.PUB_POSTS_PLAIN_PAGE_SIZE : Config.PUB_POSTS_RICH_PAGE_SIZE;
     const offset = (page - 1) * page_size;
     const posts = await listPubPostsByUser(id, {
       offset,
@@ -200,25 +200,29 @@ export default async function PubSitePage({ params, searchParams }: Props) {
               </section>
               <nav className="site-posts-controls">
                 <div className="posts-controls-row">
-                  <span className="posts-label">Posts:</span>
+                  <span className="posts-label">
+                    {convertForDirection("Posts:", themeDir)}
+                  </span>
                   <div className="posts-tabs">
                     <Link
                       className={`posts-tab${tabMode === "snippet" ? " active" : ""}`}
                       href={snippetHref}
                     >
-                      Snippet
+                      {convertForDirection("Rich", themeDir)}
                     </Link>
                     <Link
                       className={`posts-tab${tabMode === "plain" ? " active" : ""}`}
                       href={listHref}
                     >
-                      Plain
+                      {convertForDirection("Plain", themeDir)}
                     </Link>
                   </div>
                   <div className="posts-order">
                     <Link href={oldestFirstHref} className="oldest-first-label">
                       <input type="checkbox" checked={oldestFirst} readOnly />
-                      <span>Oldest first</span>
+                      <span>
+                        {convertForDirection("Oldest", themeDir)}
+                      </span>
                     </Link>
                   </div>
                 </div>
