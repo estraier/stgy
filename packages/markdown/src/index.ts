@@ -1892,30 +1892,39 @@ export function mdFilterForFeatured(nodes: MdNode[]): MdNode[] {
 }
 
 export function mdAnnotateElements(nodes: MdNode[]): MdNode[] {
-  const startsWithDialogue = (text: string): boolean => {
-    const trimmed = text.replace(/^\s+/, "");
-    if (!trimmed) return false;
-    const ch = trimmed[0];
-    return ch === "「" || ch === "『";
-  };
-  const findFirstTextNode = (children: MdNode[]): MdTextNode | null => {
-    for (const n of children) {
+  const collectText = (ns: MdNode[]): string => {
+    let out = "";
+    for (const n of ns) {
       if (n.type === "text") {
-        if (n.text.trim().length > 0) return n;
+        out += n.text;
       } else if (n.type === "element") {
-        const found = findFirstTextNode(n.children || []);
-        if (found) return found;
+        out += collectText(n.children || []);
       }
     }
-    return null;
+    return out;
+  };
+  const detectMode = (children: MdNode[]): "quote" | "mixed" | undefined => {
+    const text = collectText(children);
+    const trimmed = text.replace(/^\s+/, "").replace(/\s+$/, "");
+    if (!trimmed) return undefined;
+    const first = trimmed[0];
+    if (first !== "「" && first !== "『") return undefined;
+    if (trimmed.length === 1) return "mixed";
+    const last = trimmed[trimmed.length - 1];
+    const middle = trimmed.slice(1, trimmed.length - 1);
+    const hasInnerClose = /[」』]/.test(middle);
+    if ((last === "」" || last === "』") && !hasInnerClose) {
+      return "quote";
+    }
+    return "mixed";
   };
   const visit = (n: MdNode): MdNode => {
     if (n.type !== "element") return n;
     const children = (n.children || []).map(visit);
     if (isBlockTag(n.tag)) {
-      const firstText = findFirstTextNode(children);
-      if (firstText && startsWithDialogue(firstText.text)) {
-        const attrs: MdAttrs = { ...(n.attrs || {}), dialogue: true };
+      const mode = detectMode(children);
+      if (mode) {
+        const attrs: MdAttrs = { ...(n.attrs || {}), mode };
         return { ...n, attrs, children };
       }
     }
@@ -2035,8 +2044,7 @@ export function mdCutOff(
 
   const captionLengthOfFigure = (el: MdElementNode): number => {
     const cap = (el.children || []).find(
-      (c): c is MdElementNode =>
-        c.type === "element" && c.tag === "figcaption",
+      (c): c is MdElementNode => c.type === "element" && c.tag === "figcaption",
     );
     if (!cap) return 0;
     return computeTextMetrics(cap.children || []).length;
@@ -2446,7 +2454,6 @@ export function mdRenderHtml(
     for (const n of ns) walk(n);
     return out.replace(/\s+/g, " ").trim();
   }
-
   function withPos(attrs: MdAttrs | undefined, node: MdElementNode): MdAttrs {
     const out: MdAttrs = { ...(attrs || {}) };
     if (usePosAttrs) {
@@ -2474,6 +2481,10 @@ export function mdRenderHtml(
       }
       if (k === "meta") {
         out += ` data-meta="${escapeHTML(String(v))}"`;
+        continue;
+      }
+      if (k === "mode") {
+        out += ` data-mode="${escapeHTML(String(v))}"`;
         continue;
       }
       if (v === false || v === undefined || v === null) continue;
@@ -2533,11 +2544,9 @@ export function mdRenderHtml(
   function prewalk(arr: MdNode[]) {
     for (const n of arr) {
       if (n.type !== "element") continue;
-
       if (n.tag === "toc") {
         if (!seenFirstToc) seenFirstToc = true;
       }
-
       const lvl = headingLevel(n.tag);
       if (lvl) {
         let id: string;
@@ -2570,7 +2579,6 @@ export function mdRenderHtml(
           id = `${pfx}-${countH1}-${countH2}-${countH3}-${countH4}-${countH5}-${++countH6}`;
         }
         headerIdMap.set(n, id);
-
         if (seenFirstToc) {
           headingsAfterToc.push({
             level: lvl,
@@ -2580,7 +2588,6 @@ export function mdRenderHtml(
           });
         }
       }
-
       if (n.children?.length) prewalk(n.children);
     }
   }
@@ -2612,7 +2619,6 @@ export function mdRenderHtml(
       children: [],
     };
     const stack: TocNode[] = [root];
-
     for (const h of items) {
       const lvl = Math.max(baseLevel, h.level);
       while (stack.length && stack[stack.length - 1].level >= lvl) {
@@ -3530,6 +3536,7 @@ const ATTR_ENC: Record<string, string> = {
   src: "SR",
   alt: "AT",
   href: "HF",
+  "data-mode": "MD",
   bullet: "BT",
   controls: "CT",
   "aria-label": "AL",

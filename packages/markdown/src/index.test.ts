@@ -1290,7 +1290,7 @@ describe("mdAnnotateElements", () => {
           },
         ],
         attrs: {
-          dialogue: true,
+          mode: "quote",
         },
       },
       {
@@ -1307,7 +1307,7 @@ describe("mdAnnotateElements", () => {
               },
             ],
             attrs: {
-              dialogue: true,
+              mode: "quote",
             },
           },
           {
@@ -1322,7 +1322,7 @@ describe("mdAnnotateElements", () => {
           },
         ],
         attrs: {
-          dialogue: true,
+          mode: "mixed",
         },
       },
     ]);
@@ -1334,27 +1334,27 @@ describe("mdStripRubyElements", () => {
     const mdText = "hop {{step|STEP}} jump";
     const expected = [
       {
-        "type": "element",
-        "tag": "p",
-        "children": [
+        type: "element",
+        tag: "p",
+        children: [
           {
-            "type": "text",
-            "text": "hop "
+            type: "text",
+            text: "hop ",
           },
           {
-            "type": "text",
-            "text": "step"
+            type: "text",
+            text: "step",
           },
           {
-            "type": "text",
-            "text": " jump"
-          }
-        ]
-      }
+            type: "text",
+            text: " jump",
+          },
+        ],
+      },
     ];
-    expect(
-      stripPos(mdStripRubyElements(parseMarkdown(mdText)))
-    ).toStrictEqual(expected);
+    expect(stripPos(mdStripRubyElements(parseMarkdown(mdText)))).toStrictEqual(
+      expected,
+    );
   });
 });
 
@@ -1418,20 +1418,20 @@ describe("mdCutOff", () => {
     const mdText = "hop\n---\nstep";
     const expected = [
       {
-        "type": "element",
-        "tag": "p",
-        "children": [
+        type: "element",
+        tag: "p",
+        children: [
           {
-            "type": "text",
-            "text": "hop"
-          }
-        ]
+            type: "text",
+            text: "hop",
+          },
+        ],
       },
       {
-        "type": "element",
-        "tag": "omitted",
-        "children": []
-      }
+        type: "element",
+        tag: "omitted",
+        children: [],
+      },
     ];
     expect(
       stripPos(mdCutOff(parseMarkdown(mdText), { maxHeight: 1 })),
@@ -1773,10 +1773,10 @@ describe("mdRenderHtml basics", () => {
   });
 
   it("dialogues", () => {
-    const mdText = "1\n\n「2」\n\n> 『3』";
+    const mdText = "1\n\n「2」\n\n> 『3』だ";
     const nodes = mdAnnotateElements(parseMarkdown(mdText));
     expect(mdRenderHtml(nodes)).toBe(
-      "<p>1</p><p dialogue>「2」</p><blockquote dialogue>『3』</blockquote>",
+      '<p>1</p><p data-mode="quote">「2」</p><blockquote data-mode="mixed">『3』だ</blockquote>',
     );
   });
 
