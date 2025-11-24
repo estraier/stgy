@@ -1583,7 +1583,11 @@ html:has(.site-container) {
   .pub-theme-dir-vert .markdown-body p {
     text-indent: 1em;
   }
-  .pub-theme-dir-vert .markdown-body p[dialogue] {
+  .pub-theme-dir-vert .markdown-body p[data-mode="quote"] {
+    text-indent: -1em;
+    margin-top: 1em;
+  }
+  .pub-theme-dir-vert .markdown-body p[data-mode="mixed"] {
     text-indent: unset;
   }
   .pub-theme-dir-vert .markdown-body ul {
