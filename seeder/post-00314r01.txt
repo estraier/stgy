@@ -1,4 +1,4 @@
-ownedBy: 0001000000000301
+ownedBy: 0001000000000021
 replyTo: 0002000000000314
 locale: ja-JP
 allowLikes: true

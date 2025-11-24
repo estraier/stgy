@@ -1,12 +1,86 @@
+import fs from "fs";
+import path from "path";
 import { createLogger } from "./utils/logger";
 import type { UserLite, UserDetail } from "./models/user";
 
+type AiUserConfig = {
+  backendApiBaseUrl?: string;
+  adminEmail?: string;
+  adminPassword?: string;
+  userPageSize?: number;
+  userLimit?: number | null;
+};
+
 const logger = createLogger({ file: "mailWorker" });
 
-const BACKEND_API_BASE_URL = process.env.STGY_BACKEND_API_BASE_URL || "http://localhost:3001";
-const ADMIN_EMAIL = process.env.STGY_ADMIN_EMAIL || "admin@stgy.jp";
-const ADMIN_PASSWORD = process.env.STGY_ADMIN_PASSWORD || "stgystgy";
-const PAGE_LIMIT = 100;
+const DEFAULT_CONFIG_FILENAME = "ai-user-config.json";
+
+function getConfigPath(): string {
+  const argPath = process.argv[2];
+  if (argPath && argPath.trim() !== "") {
+    return path.resolve(argPath);
+  }
+  return path.resolve(__dirname, DEFAULT_CONFIG_FILENAME);
+}
+
+function loadConfig(configPath: string): AiUserConfig {
+  if (!fs.existsSync(configPath)) {
+    throw new Error(`config file not found: ${configPath}`);
+  }
+  const json = fs.readFileSync(configPath, "utf8");
+  const raw = JSON.parse(json) as unknown;
+  if (typeof raw !== "object" || raw === null) {
+    throw new Error(`invalid config JSON: ${configPath}`);
+  }
+  const obj = raw as Record<string, unknown>;
+  const config: AiUserConfig = {};
+
+  if (typeof obj.backendApiBaseUrl === "string") {
+    config.backendApiBaseUrl = obj.backendApiBaseUrl;
+  }
+  if (typeof obj.adminEmail === "string") {
+    config.adminEmail = obj.adminEmail;
+  }
+  if (typeof obj.adminPassword === "string") {
+    config.adminPassword = obj.adminPassword;
+  }
+  if (typeof obj.userPageSize === "number" && Number.isFinite(obj.userPageSize)) {
+    config.userPageSize = obj.userPageSize;
+  }
+  if (
+    typeof obj.userLimit === "number"
+      ? Number.isFinite(obj.userLimit)
+      : obj.userLimit === null
+  ) {
+    config.userLimit = obj.userLimit as number | null;
+  }
+
+  return config;
+}
+
+const configPath = getConfigPath();
+const fileConfig = loadConfig(configPath);
+
+const BACKEND_API_BASE_URL =
+  process.env.STGY_BACKEND_API_BASE_URL ||
+  fileConfig.backendApiBaseUrl ||
+  "http://localhost:3001";
+
+const ADMIN_EMAIL =
+  process.env.STGY_ADMIN_EMAIL || fileConfig.adminEmail || "admin@stgy.jp";
+
+const ADMIN_PASSWORD =
+  process.env.STGY_ADMIN_PASSWORD || fileConfig.adminPassword || "stgystgy";
+
+const PAGE_LIMIT =
+  typeof fileConfig.userPageSize === "number" && fileConfig.userPageSize > 0
+    ? fileConfig.userPageSize
+    : 100;
+
+const USER_LIMIT =
+  typeof fileConfig.userLimit === "number" && fileConfig.userLimit > 0
+    ? fileConfig.userLimit
+    : undefined;
 
 async function loginAsAdmin(): Promise<string> {
   const resp = await fetch(`${BACKEND_API_BASE_URL}/auth`, {
@@ -109,25 +183,40 @@ async function processUser(user: UserLite): Promise<void> {
   const userSessionCookie = await switchToUser(adminSessionCookie, user.id);
   const profile = await fetchUserProfile(userSessionCookie, user.id);
   logger.info(
-    `AI user profile: id=${profile.id}, nickname=${profile.nickname}, aiModel=${profile.aiModel ?? ""}, locale=${profile.locale}, timezone=${profile.timezone}, isAdmin=${profile.isAdmin}, blockStrangers=${profile.blockStrangers}, introduction=${profile.introduction}`,
+    `AI user profile: id=${profile.id}, nickname=${profile.nickname}, aiModel=${
+      profile.aiModel ?? ""
+    }, locale=${profile.locale}, timezone=${profile.timezone}, isAdmin=${
+      profile.isAdmin
+    }, blockStrangers=${profile.blockStrangers}, introduction=${profile.introduction}`,
   );
 }
 
 async function main() {
   logger.info("STGY AI user worker started");
   logger.info(`BACNEND: ${BACKEND_API_BASE_URL}`);
+  if (USER_LIMIT !== undefined) {
+    logger.info(`User processing limit from config: ${USER_LIMIT}`);
+  }
   logger.info("Logging in as admin for listing AI users");
   const sessionCookie = await loginAsAdmin();
   logger.info("Admin login for listing succeeded");
 
   let offset = 0;
+  let processedCount = 0;
   for (;;) {
+    if (USER_LIMIT !== undefined && processedCount >= USER_LIMIT) {
+      break;
+    }
     const users = await fetchNextUsers(sessionCookie, offset, PAGE_LIMIT);
     if (users.length === 0) {
       break;
     }
     for (const user of users) {
+      if (USER_LIMIT !== undefined && processedCount >= USER_LIMIT) {
+        break;
+      }
       await processUser(user);
+      processedCount += 1;
     }
     if (users.length < PAGE_LIMIT) {
       break;
