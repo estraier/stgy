@@ -138,6 +138,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
     }
     const siteHrefBase = `/sites/${post.ownedBy}`;
     const siteHref = design ? `${siteHrefBase}?design=${encodeURIComponent(design)}` : siteHrefBase;
+    const siteHrefWithPlainTab = `${siteHref}${siteHref.includes("?") ? "&" : "?"}tab=plain#pub-post-list`;
     const locale = post.locale || pubcfg.locale || "und";
     const newerHref = post.newerPostId
       ? `/pub/${post.newerPostId}${design ? `?design=${encodeURIComponent(design)}` : ""}`
@@ -235,6 +236,11 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                         </LinkDiv>
                       );
                     })}
+                    <nav className="recent-nav">
+                      <a className="pager-btn" href={siteHrefWithPlainTab}>
+                        {convertForDirection("more", themeDir)}
+                      </a>
+                    </nav>
                   </section>
                 )}
               </aside>

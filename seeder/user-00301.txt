@@ -1,5 +1,5 @@
 id: 0001000000000301
-email: litrature-ja@stgy.jp
+email: literature-ja@stgy.jp
 nickname: 国文学大好きっ子
 password: *
 isAdmin: false

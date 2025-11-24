@@ -229,7 +229,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
               </nav>
               <section className="site-recent">
                 {tabMode === "plain" ? (
-                  <ul className="pub-post-list">
+                  <ul className="pub-post-list" id="pub-post-list">
                     {items.map((r) => {
                       const postHref = `/pub/${r.id}${
                         design ? `?design=${encodeURIComponent(design)}` : ""

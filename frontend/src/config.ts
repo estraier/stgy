@@ -89,7 +89,6 @@ export class Config {
     "default",
     "newspaper",
     "whiteboard",
-    "newspaper",
     "dark",
     "blackboard",
     "tategaki",
