@@ -79,6 +79,7 @@ export type ListPostsByFolloweesInput = {
   userId: string;
   includeSelf?: boolean;
   includeReplies?: boolean;
+  limitPerUser?: number;
 } & PostPagination;
 
 export type ListPostsLikedByUserInput = {

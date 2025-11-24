@@ -110,6 +110,7 @@ export async function listPostsByFollowees(params: {
   includeSelf?: boolean;
   includeReplies?: boolean;
   focusUserId?: string;
+  limitPerUser?: number;
 }): Promise<Post[]> {
   const search = new URLSearchParams();
   if (params.userId) search.append("userId", params.userId);
@@ -120,6 +121,7 @@ export async function listPostsByFollowees(params: {
   if (params.includeReplies !== undefined)
     search.append("includeReplies", String(params.includeReplies));
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);
+  if (params.limitPerUser) search.append("limitPerUser", params.limitPerUser);
   const q = search.toString();
   const res = await apiFetch(`/posts/by-followees${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));

@@ -183,6 +183,7 @@ export default function PageBody() {
         ...params,
         includeSelf: true,
         includeReplies: includingReplies,
+        limitPerUser: Config.TIMELINE_PER_USER_LIMIT,
       });
     } else if (effectiveTab === "liked") {
       fetcher = listPostsLikedByUser({

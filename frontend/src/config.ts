@@ -35,6 +35,7 @@ export class Config {
   );
   static readonly POSTS_PAGE_SIZE = normNum(process.env.NEXT_PUBLIC_POSTS_PAGE_SIZE, 20);
   static readonly USERS_PAGE_SIZE = normNum(process.env.NEXT_PUBLIC_USERS_PAGE_SIZE, 20);
+  static readonly TIMELINE_PER_USER_LIMIT = normNum(process.env.NEXT_PUBLIC_TIMELINE_PER_USER_LIMIT, 3);
   static readonly LIKERS_LIST_FIRST_LIMIT = normNum(process.env.NEXT_PUBLIC_LIKERS_FIRST_LIMIT, 10);
   static readonly LIKERS_LIST_SECOND_LIMIT = normNum(
     process.env.NEXT_PUBLIC_LIKERS_SECOND_LIMIT,

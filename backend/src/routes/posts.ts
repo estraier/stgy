@@ -152,6 +152,8 @@ export default function createPostsRouter(
       typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
         ? req.query.focusUserId.trim()
         : undefined;
+    const limitPerUser = typeof req.query.limitPerUser === "string"
+      ? parseInt(req.query.limitPerUser) : undefined;
     const watch = timerThrottleService.startWatch(loginUser);
     const result = await postsService.listPostsByFollowees(
       {
@@ -161,6 +163,7 @@ export default function createPostsRouter(
         order,
         includeSelf,
         includeReplies,
+        limitPerUser,
       },
       focusUserId,
     );
