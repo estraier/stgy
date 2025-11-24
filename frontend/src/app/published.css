@@ -1538,11 +1538,11 @@ html:has(.site-container) {
   .pub-theme-dir-vert .pub-sidebar .markdown-body,
   .pub-theme-dir-vert .site-main .markdown-body,
   .pub-theme-dir-vert .site-profile .markdown-body {
-    max-height: 38em;
+    max-height: 40em;
     margin: 1em 0 0 1em;
     background: #fff;
     border: 1px solid #ddd;
-    padding: 1em;
+    padding: 1.5em 1em 1em 1em;
   }
   .pub-theme-dir-vert .markdown-body * {
     margin: unset;
@@ -1566,6 +1566,22 @@ html:has(.site-container) {
     right: 0.25em;
     bottom: unset;
     padding: 0.25em 0.05em;
+  }
+  .pub-theme-dir-vert .markdown-body h1,
+  .pub-theme-dir-vert .markdown-body h2,
+  .pub-theme-dir-vert .markdown-body h3,
+  .pub-theme-dir-vert .markdown-body h4,
+  .pub-theme-dir-vert .markdown-body h5,
+  .pub-theme-dir-vert .markdown-body h6 {
+    margin-top: 1.2em;
+  }
+  .pub-theme-dir-vert .pub-sidebar .markdown-body h1,
+  .pub-theme-dir-vert .pub-sidebar .markdown-body h2,
+  .pub-theme-dir-vert .pub-sidebar .markdown-body h3,
+  .pub-theme-dir-vert .pub-sidebar .markdown-body h4,
+  .pub-theme-dir-vert .pub-sidebar .markdown-body h5,
+  .pub-theme-dir-vert .pub-sidebar .markdown-body h6 {
+    margin-top: 0.2em;
   }
   .pub-theme-dir-vert .pub-sidebar .markdown-body h1,
   .pub-theme-dir-vert .pub-sidebar .markdown-body h2,
@@ -1595,6 +1611,9 @@ html:has(.site-container) {
   }
   .pub-theme-dir-vert .markdown-body li[data-meta] {
     margin-right: unset;
+    margin-bottom: 1.7em;
+  }
+  .pub-theme-dir-vert .pub-sidebar .markdown-body li[data-meta] {
     margin-bottom: 1em;
   }
   .pub-theme-dir-vert .markdown-body li[data-meta]::before {
@@ -1752,12 +1771,16 @@ html:has(.site-container) {
     .pub-theme-dir-vert {
       background: #fff;
     }
+    .pub-theme-dir-vert .sh-nav {
+      zoom: 0.7;
+    }
     .pub-theme-dir-vert .markdown-body {
       margin: 0 !important;
+      padding: 0.5em 1em 0.5em 1em !important;
       border: none !important;
     }
   }
-  @media (min-height: 56em) {
+  @media (min-height: 58em) {
     .pub-theme-dir-vert .pub-layout {
       flex-direction: row;
       align-items: flex-start;
