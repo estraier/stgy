@@ -1611,7 +1611,7 @@ html:has(.site-container) {
   }
   .pub-theme-dir-vert .markdown-body li[data-meta] {
     margin-right: unset;
-    margin-bottom: 1.7em;
+    margin-bottom: 1.3em;
   }
   .pub-theme-dir-vert .pub-sidebar .markdown-body li[data-meta] {
     margin-bottom: 1em;
