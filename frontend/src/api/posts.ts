@@ -121,7 +121,7 @@ export async function listPostsByFollowees(params: {
   if (params.includeReplies !== undefined)
     search.append("includeReplies", String(params.includeReplies));
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);
-  if (params.limitPerUser) search.append("limitPerUser", params.limitPerUser);
+  if (params.limitPerUser) search.append("limitPerUser", String(params.limitPerUser));
   const q = search.toString();
   const res = await apiFetch(`/posts/by-followees${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));

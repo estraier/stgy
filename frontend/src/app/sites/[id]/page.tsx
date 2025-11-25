@@ -200,9 +200,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
               </section>
               <nav className="site-posts-controls">
                 <div className="posts-controls-row">
-                  <span className="posts-label">
-                    {convertForDirection("Posts:", themeDir)}
-                  </span>
+                  <span className="posts-label">{convertForDirection("Posts:", themeDir)}</span>
                   <div className="posts-tabs">
                     <Link
                       className={`posts-tab${tabMode === "snippet" ? " active" : ""}`}
@@ -220,9 +218,7 @@ export default async function PubSitePage({ params, searchParams }: Props) {
                   <div className="posts-order">
                     <Link href={oldestFirstHref} className="oldest-first-label">
                       <input type="checkbox" checked={oldestFirst} readOnly />
-                      <span>
-                        {convertForDirection("Oldest", themeDir)}
-                      </span>
+                      <span>{convertForDirection("Oldest", themeDir)}</span>
                     </Link>
                   </div>
                 </div>
