@@ -63,12 +63,13 @@ html:has(.site-container) {
   padding: 0.25em;
   border: 1px solid #bbc;
   border-radius: 1.5em;
-  font-family: "Hiragino Kaku Gothic Pro", "Noto Sans JP", sans-serif;
+  font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", "Noto Sans JP", sans-serif;
 }
 .pub-theme-dir-norm .pub-container .pub-site-name,
 .pub-theme-dir-norm .site-container .pub-site-name {
   font-size: 160%;
   font-weight: bold;
+  font-feature-settings: "palt" 1, "kern" 1;
   color: #136;
   text-align: center;
   margin-top: 0.75em;
@@ -82,6 +83,7 @@ html:has(.site-container) {
   margin-bottom: 1.5em;
   color: #566;
   font-size: 85%;
+  font-feature-settings: "palt" 1, "kern" 1;
 }
 .pub-theme-dir-norm .pub-container .link-div {
   margin: 0;
@@ -162,6 +164,7 @@ html:has(.site-container) {
   padding: 0.4em 0.6em;
   border: 1px solid #ddd;
   border-radius: 0.4em;
+  font-feature-settings: "palt" 1, "kern" 1;
 }
 .pub-theme-dir-norm .site-container .link-div {
   margin: 0;
@@ -1478,7 +1481,7 @@ html:has(.site-container) {
     text-orientation: mixed;
     overflow-x: auto;
     overflow-y: hidden;
-    font-family: "Hiragino Mincho Pro", "Noto Serif JP", sans-serif;
+    font-family: "Hiragino Mincho ProN", "Yu Mincho", "Noto Serif JP", sans-serif;
   }
   .pub-theme-dir-vert .pub-container *,
   .pub-theme-dir-vert .site-container * {
@@ -1503,10 +1506,12 @@ html:has(.site-container) {
     margin-top: 1em;
     font-weight: bold;
     font-size: 150%;
+    font-feature-settings: "vpal" 1, "vkrn" 1;
     color: #468;
   }
   .pub-theme-dir-vert .pub-site-name-region .pub-subtitle {
     margin-top: 1em;
+    font-feature-settings: "vpal" 1, "vkrn" 1;
     color: #555;
   }
   .pub-theme-dir-vert .pub-layout,
@@ -1540,10 +1545,12 @@ html:has(.site-container) {
   .pub-theme-dir-vert .pub-side-recent article {
     margin-top: 2em !important;
     zoom: 85%;
+    font-feature-settings: "vpal" 1, "vkrn" 1;
   }
   .pub-theme-dir-vert .pub-sidebar .side-header {
     margin-top: 1.2em;
     font-size: 90%;
+    font-feature-settings: "vpal" 1, "vkrn" 1;
     color: #888;
   }
   .pub-theme-dir-vert .pub-main .markdown-body,
@@ -1596,6 +1603,9 @@ html:has(.site-container) {
   .pub-theme-dir-vert .pub-sidebar .markdown-body h5,
   .pub-theme-dir-vert .pub-sidebar .markdown-body h6 {
     margin-top: 0.2em;
+  }
+  .pub-theme-dir-vert .pub-sidebar .markdown-body p {
+    text-indent: 0;
   }
   .pub-theme-dir-vert .pub-sidebar .markdown-body h1,
   .pub-theme-dir-vert .pub-sidebar .markdown-body h2,
@@ -1820,6 +1830,7 @@ html:has(.site-container) {
   .pub-theme-dir-vert .site-main .date {
     align-self: flex-start;
     opacity: 0.6;
+    font-feature-settings: "vpal" 1, "vkrn" 1;
   }
   .pub-theme-dir-vert .markdown-body {
     border-radius: 0.4em;
@@ -1914,6 +1925,7 @@ html:has(.site-container) {
     border-radius: 0.35em;
     text-decoration: none;
     color: #333;
+    font-feature-settings: "vpal" 1, "vkrn" 1;
   }
   .pub-theme-dir-vert .pager-btn:hover {
     background: #def;
@@ -1958,6 +1970,7 @@ html:has(.site-container) {
     align-items: center;
     gap: 0.5em;
     font-size: 85%;
+    font-feature-settings: "vpal" 1, "vkrn" 1;
   }
   .pub-theme-dir-vert .site-container .posts-label {
     font-weight: bold;
