@@ -2,6 +2,7 @@ import fs from "fs";
 import path from "path";
 import { createLogger } from "./utils/logger";
 import type { UserLite, UserDetail } from "./models/user";
+import type { Post } from "./models/post";
 
 type AiUserConfig = {
   backendApiBaseUrl?: string;
@@ -177,6 +178,38 @@ async function fetchUserProfile(sessionCookie: string, userId: string): Promise<
   return profile;
 }
 
+async function fetchFolloweePosts(
+  sessionCookie: string,
+  userId: string,
+): Promise<Post[]> {
+  const params = new URLSearchParams();
+  params.set("userId", userId);
+  params.set("offset", "0");
+  params.set("limit", "30");
+  params.set("includeSelf", "false");
+  params.set("includeReplies", "true");
+  params.set("focusUserId", userId);
+  params.set("limitPerUser", "3");
+
+  const resp = await fetch(
+    `${BACKEND_API_BASE_URL}/posts/by-followees?${params.toString()}`,
+    {
+      method: "GET",
+      headers: {
+        Cookie: sessionCookie,
+      },
+    },
+  );
+
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    throw new Error(`failed to fetch posts by followees: ${resp.status} ${body}`);
+  }
+
+  const posts = (await resp.json()) as Post[];
+  return posts;
+}
+
 async function processUser(user: UserLite): Promise<void> {
   logger.info(`Processing AI user: id=${user.id}, nickname=${user.nickname}`);
   const adminSessionCookie = await loginAsAdmin();
@@ -188,6 +221,12 @@ async function processUser(user: UserLite): Promise<void> {
     }, locale=${profile.locale}, timezone=${profile.timezone}, isAdmin=${
       profile.isAdmin
     }, blockStrangers=${profile.blockStrangers}, introduction=${profile.introduction}`,
+  );
+  const followeePosts = await fetchFolloweePosts(userSessionCookie, user.id);
+  logger.info(
+    `AI user followee posts (to read): count=${followeePosts.length}, posts=${JSON.stringify(
+      followeePosts,
+    )}`,
   );
 }
 
