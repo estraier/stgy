@@ -1809,16 +1809,12 @@ html:has(.site-container) {
     display: none;
   }
   @media (max-height: 44em) {
-    .pub-theme-dir-vert {
-      background: #fff;
-    }
     .pub-theme-dir-vert .sh-nav {
       zoom: 0.7;
     }
     .pub-theme-dir-vert .markdown-body,
     .pub-theme-dir-vert .site-container .pub-post-list {
-      margin: 0.3em 0 0.5em 0.5em !important;
-      padding: 0.8em 1em 0.5em 1em !important;
+      margin: 0.5em 0 0.5em 0.5em !important;
       border: none !important;
     }
   }
@@ -2047,7 +2043,7 @@ html:has(.site-container) {
   }
   .pub-theme-dir-vert .site-container .pub-post-list {
     list-style: none;
-    max-height: min(40em, calc(100dvh - 2.7em));
+    max-height: min(40em, calc(100dvh - 3em));
     margin: 1em 0 0 1em;
     padding: 0.25em 0.4em 0 0.4em;
     background: #fff;
