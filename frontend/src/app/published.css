@@ -1652,7 +1652,7 @@ html:has(.site-container) {
     margin-bottom: 1.3em;
   }
   .pub-theme-dir-vert .markdown-body h1 + ul:has(li[data-meta]) {
-    margin-right: 0;
+    margin-right: -0.3em;
   }
   .pub-theme-dir-vert .pub-sidebar .markdown-body li[data-meta] {
     margin-bottom: 1em;
@@ -2040,6 +2040,10 @@ html:has(.site-container) {
   .pub-theme-dir-vert .site-container .oldest-first-label a {
     text-decoration: none;
     color: inherit;
+  }
+  .pub-theme-dir-vert .markdown-body.post-content-excerpt {
+    padding-right: 0.5em;
+    padding-left: 0.5em;
   }
   .pub-theme-dir-vert .site-container .pub-post-list {
     list-style: none;
