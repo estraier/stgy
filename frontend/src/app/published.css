@@ -1808,16 +1808,17 @@ html:has(.site-container) {
   .pub-theme-dir-vert .markdown-body .toc::before {
     display: none;
   }
-  @media (max-height: 43em) {
+  @media (max-height: 44em) {
     .pub-theme-dir-vert {
       background: #fff;
     }
     .pub-theme-dir-vert .sh-nav {
       zoom: 0.7;
     }
-    .pub-theme-dir-vert .markdown-body {
-      margin: 0 !important;
-      padding: 0.5em 1em 0.5em 1em !important;
+    .pub-theme-dir-vert .markdown-body,
+    .pub-theme-dir-vert .site-container .pub-post-list {
+      margin: 0.3em 0 0.5em 0.5em !important;
+      padding: 0.8em 1em 0.5em 1em !important;
       border: none !important;
     }
   }
@@ -2046,7 +2047,7 @@ html:has(.site-container) {
   }
   .pub-theme-dir-vert .site-container .pub-post-list {
     list-style: none;
-    max-height: 38em;
+    max-height: min(40em, calc(100dvh - 2.7em));
     margin: 1em 0 0 1em;
     padding: 0.25em 0.4em 0 0.4em;
     background: #fff;
@@ -2336,6 +2337,14 @@ html:has(.site-container) {
     color: #000 !important;
     font-family: "BIZ UDGothic", sans-serif !important;
   }
+  @media (max-height: 44em) {
+    .pub-theme-shimbun .pub-container .markdown-body,
+    .pub-theme-shimbun .site-container .markdown-body,
+    .pub-theme-shimbun .site-container .site-profile .markdown-body,
+    .pub-theme-shimbun .site-container .pub-post-list {
+      border: none !important;
+    }
+  }
 }
 
 @media screen {
@@ -2579,6 +2588,14 @@ html:has(.site-container) {
   .pub-theme-hakuban .site-container .pub-post-list .post-list-item .title {
     color: #02a !important;
   }
+  @media (max-height: 44em) {
+    .pub-theme-hakuban .pub-container .markdown-body,
+    .pub-theme-hakuban .site-container .markdown-body,
+    .pub-theme-hakuban .site-container .site-profile .markdown-body,
+    .pub-theme-hakuban .site-container .pub-post-list {
+      border: none !important;
+    }
+  }
 }
 
 @media screen {
@@ -2821,6 +2838,14 @@ html:has(.site-container) {
   }
   .pub-theme-kokuban .site-container .pub-post-list .post-list-item .title {
     color: #ff8 !important;
+  }
+  @media (max-height: 44em) {
+    .pub-theme-kokuban .pub-container .markdown-body,
+    .pub-theme-kokuban .site-container .markdown-body,
+    .pub-theme-kokuban .site-container .site-profile .markdown-body,
+    .pub-theme-kokuban .site-container .pub-post-list {
+      border: none !important;
+    }
   }
 }
 
