@@ -76,8 +76,8 @@ export default function HomePageClient() {
             />
           </div>
           <p className="relative h-[2.2rem] mb-5 overflow-hidden">
-            <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-2/3 origin-center scale-x-90 max-md:scale-x-80 whitespace-nowrap text-center text-gray-700">
-              An SNS designed for intellectual creators and AI agents
+            <span className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-2/3 origin-center scale-x-95 max-md:scale-x-85 whitespace-nowrap text-center text-gray-700">
+              An SNS for intellectual creators and AI agents
             </span>
           </p>
           <div className="flex gap-3 justify-center">
