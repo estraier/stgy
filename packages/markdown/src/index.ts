@@ -1408,11 +1408,9 @@ export function structurizeHtml(
     typeof opts?.topMinFontSizePt === "number" ? opts.topMinFontSizePt : 20;
   const hadBodyTag = /<body[\s>]/i.test(html);
   const { document: doc, root: domRoot } = getDomRootOrThrow(html);
-
   const hasBlockDescendant = (el: Element): boolean => {
     return !!el.querySelector(BLOCK_DESCENDANT_SELECTOR);
   };
-
   const isInlineElement = (el: Element): boolean => {
     const t = el.tagName.toLowerCase();
     if (isBlockTag(t)) return false;
@@ -1420,7 +1418,6 @@ export function structurizeHtml(
     if (t === "script" || t === "style") return false;
     return true;
   };
-
   const unwrap = (el: Element) => {
     const parent = el.parentNode;
     if (!parent) return;
@@ -1434,20 +1431,69 @@ export function structurizeHtml(
       if (isInlineElement(el) && hasBlockDescendant(el)) toUnwrap.push(el);
     for (const el of toUnwrap) unwrap(el);
   };
-  const stage2MergeAdjacentPsByBr = (rootEl: Element) => {
+  const INLINE_ANCESTOR_TAGS_FOR_P_MERGE = new Set([
+    "span",
+    "b",
+    "strong",
+    "i",
+    "em",
+    "u",
+    "a",
+    "font",
+    "sup",
+    "sub",
+    "small",
+    "big",
+    "s",
+    "strike",
+    "del",
+    "ins",
+    "mark",
+  ]);
+  const markPsInInlineAncestors = (rootEl: Element): Set<Element> => {
+    const ps = Array.from(rootEl.querySelectorAll("p")) as Element[];
+    const set = new Set<Element>();
+    for (const p of ps) {
+      let current: Node | null = p.parentNode;
+      while (current && current.nodeType === Node.ELEMENT_NODE) {
+        const el = current as Element;
+        const tag = el.tagName.toLowerCase();
+        if (INLINE_ANCESTOR_TAGS_FOR_P_MERGE.has(tag)) {
+          set.add(p);
+          break;
+        }
+        if (tag === "body" || tag === "html" || isBlockTag(tag)) {
+          break;
+        }
+        current = el.parentNode;
+      }
+    }
+    return set;
+  };
+  const stage2MergeAdjacentPsByBr = (
+    rootEl: Element,
+    mergeTargets?: Set<Element>,
+  ) => {
+    const isPForMerge = (n: Node): boolean => {
+      if (n.nodeType !== Node.ELEMENT_NODE) return false;
+      const el = n as Element;
+      if (el.tagName.toLowerCase() !== "p") return false;
+      if (!mergeTargets) return true;
+      return mergeTargets.has(el);
+    };
+    const isBr = (n: Node): boolean => {
+      return (
+        n.nodeType === Node.ELEMENT_NODE &&
+        (n as Element).tagName.toLowerCase() === "br"
+      );
+    };
     const stack: Element[] = [rootEl];
     while (stack.length) {
       const parent = stack.pop() as Element;
       let i = 0;
       while (i < parent.childNodes.length) {
         const start = parent.childNodes[i];
-        if (
-          !(
-            start &&
-            start.nodeType === Node.ELEMENT_NODE &&
-            (start as Element).tagName.toLowerCase() === "p"
-          )
-        ) {
+        if (!isPForMerge(start)) {
           i++;
           continue;
         }
@@ -1455,13 +1501,10 @@ export function structurizeHtml(
         const run: Node[] = [];
         while (j < parent.childNodes.length) {
           const n = parent.childNodes[j];
-          if (n.nodeType === Node.ELEMENT_NODE) {
-            const tag = (n as Element).tagName.toLowerCase();
-            if (tag === "p" || tag === "br") {
-              run.push(n);
-              j++;
-              continue;
-            }
+          if (isPForMerge(n) || isBr(n)) {
+            run.push(n);
+            j++;
+            continue;
           }
           break;
         }
@@ -1472,13 +1515,14 @@ export function structurizeHtml(
         const segments: Element[][] = [];
         let current: Element[] = [];
         for (const n of run) {
-          const tag = (n as Element).tagName?.toLowerCase?.() || "";
-          if (tag === "br") {
+          if (isBr(n)) {
             if (current.length > 0) {
               segments.push(current);
               current = [];
             }
-          } else if (tag === "p") current.push(n as Element);
+          } else if (isPForMerge(n)) {
+            current.push(n as Element);
+          }
         }
         if (current.length > 0) segments.push(current);
         const insertionPoint = parent.childNodes[i];
@@ -1528,6 +1572,7 @@ export function structurizeHtml(
   const pickTitleCandidateP = (
     bodyEl: Element,
     minPtLocal: number,
+    titleCandidates?: Set<Element>,
   ): Element | null => {
     let seenP = 0;
     for (let i = 0; i < bodyEl.childNodes.length && seenP < 5; i++) {
@@ -1535,6 +1580,7 @@ export function structurizeHtml(
       if (n.nodeType !== Node.ELEMENT_NODE) continue;
       const el = n as Element;
       if (el.tagName.toLowerCase() !== "p") continue;
+      if (titleCandidates && !titleCandidates.has(el)) continue;
       seenP++;
       const span = isSingleSpanP(el);
       if (!span) continue;
@@ -1558,9 +1604,10 @@ export function structurizeHtml(
   const stage3PromoteTitleAndDemoteHeadings = (
     bodyEl: Element,
     minPtLocal: number,
+    titleCandidates?: Set<Element>,
   ) => {
     const hasOriginalH1 = !!doc.querySelector("h1");
-    const titleP = pickTitleCandidateP(bodyEl, minPtLocal);
+    const titleP = pickTitleCandidateP(bodyEl, minPtLocal, titleCandidates);
     if (!titleP) return;
     if (hasOriginalH1) {
       const heads = bodyEl.querySelectorAll("h1,h2,h3,h4,h5");
@@ -1619,9 +1666,10 @@ export function structurizeHtml(
       return div;
     }
   })();
+  const psInsideInline = markPsInInlineAncestors(workBody);
   stage1UnwrapInlineContainingBlocks(workBody);
-  stage3PromoteTitleAndDemoteHeadings(workBody, minPt);
-  stage2MergeAdjacentPsByBr(workBody);
+  stage3PromoteTitleAndDemoteHeadings(workBody, minPt, psInsideInline);
+  stage2MergeAdjacentPsByBr(workBody, psInsideInline);
   stage4FixOrphanSubLists(workBody);
   if (hadBodyTag) return doc.documentElement.outerHTML;
   return workBody.innerHTML;

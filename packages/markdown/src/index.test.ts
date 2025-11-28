@@ -787,7 +787,7 @@ describe("structurizeHtml", () => {
   });
 
   it("restructure paragraphs", () => {
-    const html = "<p>1-1</p><p>1-2</p><br><p>2-1</p><p>2-2</p>";
+    const html = "<b><p>1-1</p><p>1-2</p><br><p>2-1</p><p>2-2</p></b>";
     expect(structurizeHtml(html)).toBe("<p>1-1<br>1-2</p><p>2-1<br>2-2</p>");
   });
 
@@ -800,7 +800,7 @@ describe("structurizeHtml", () => {
 
   it("promote headers with demotion", () => {
     const html =
-      '<p><span style="font-size:20pt">abc</span></p><p><span>subtitle</span></p><h1>h1</h1><h5>h5</h5><h6>h6</h6>';
+      '<b><p><span style="font-size:20pt">abc</span></p><p><span>subtitle</span></p><h1>h1</h1><h5>h5</h5><h6>h6</h6></b>';
     expect(structurizeHtml(html)).toBe(
       '<h1><span style="font-size:20pt">abc</span></h1><p><span>subtitle</span></p><h2>h1</h2><h6>h5</h6><h6>h6</h6>',
     );
@@ -808,7 +808,7 @@ describe("structurizeHtml", () => {
 
   it("promote headers without demotion", () => {
     const html =
-      '<p><span style="font-size:20pt">abc</span></p><p><span>subtitle</span></p><h2>h2</h2><h5>h5</h5><h6>h6</h6>';
+      '<b><p><span style="font-size:20pt">abc</span></p><p><span>subtitle</span></p><h2>h2</h2><h5>h5</h5><h6>h6</h6></b>';
     expect(structurizeHtml(html)).toBe(
       '<h1><span style="font-size:20pt">abc</span></h1><p><span>subtitle</span></p><h2>h2</h2><h5>h5</h5><h6>h6</h6>',
     );
