@@ -203,6 +203,10 @@ html:has(.site-container) {
 }
 
 @media (min-width: 640px) {
+  .pub-theme-dir-norm .pub-container .markdown-body,
+  .pub-theme-dir-norm .site-container .markdown-body {
+    padding: 0.5em 1em;
+  }
   .pub-theme-dir-norm .pub-container,
   .pub-theme-dir-norm .site-container {
     padding: 1em;
