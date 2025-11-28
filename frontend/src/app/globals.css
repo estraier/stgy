@@ -70,6 +70,14 @@ body {
   font-weight: bold;
   opacity: 0.7;
 }
+.markdown-body h1:first-child,
+.markdown-body h2:first-child,
+.markdown-body h3:first-child,
+.markdown-body h4:first-child,
+.markdown-body h5:first-child,
+.markdown-body h6:first-child {
+  margin-top: 0.3em;
+}
 
 .markdown-body p {
   margin: 0.55em 0;
