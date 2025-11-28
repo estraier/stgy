@@ -15,6 +15,7 @@ import ArticleWithDecoration from "@/components/ArticleWithDecoration";
 import { formatDateTime, makeAbsoluteUrl, convertForDirection } from "@/utils/format";
 import PubImageBlockBinder from "@/components/PubImageBlockBinder";
 import PubScrollAction from "@/components/PubScrollAction";
+import PubHorizontalScrollRestore from "./PubHorizontalScrollRestore";
 import type { Metadata } from "next";
 
 type PageParams = { id: string };
@@ -74,8 +75,14 @@ export async function generateMetadata({
         description: "This publication site does not exist.",
         alternates: { canonical },
         robots: { index: false, follow: false },
-        openGraph: { title: "Not found", type: "website" },
-        twitter: { card: "summary", title: "Not found" },
+        openGraph: {
+          title: "Not found",
+          type: "website",
+        },
+        twitter: {
+          card: "summary",
+          title: "Not found",
+        },
       };
     }
     return {
@@ -368,6 +375,7 @@ try{
         />
         <PubImageBlockBinder />
         <PubScrollAction selectors={[".site-container"]} />
+        <PubHorizontalScrollRestore />
       </div>
     );
   } catch (e: unknown) {
