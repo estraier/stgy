@@ -16,6 +16,10 @@ import {
   Highlighter as MarkIcon,
   Braces as RubyIcon,
   Link as LinkIcon,
+  LayoutPanelTop,
+  LayoutGrid,
+  LayoutList,
+  AlignStartVertical,
 } from "lucide-react";
 import {
   parseMarkdown,
@@ -87,6 +91,93 @@ function getTargetRange(text: string, selStart: number, selEnd: number) {
   const s0 = clamp(Math.min(selStart, selEnd), 0, text.length);
   const e0 = clamp(Math.max(selStart, selEnd), 0, text.length);
   return s0 === e0 ? getCurrentLineRange(text, e0) : getSelectedLinesRange(text, s0, e0);
+}
+
+type ImageLineMatch = {
+  leading: string;
+  alt: string;
+  url: string;
+  options: string | null;
+  trailing: string;
+};
+
+type ImageOptionToken = {
+  key: string;
+  value: string | null;
+};
+
+function parseImageMarkdownLine(line: string): ImageLineMatch | null {
+  const re = /^(\s*)!\[([^\]]*)\]\(([^)]*)\)(\{([^}]*)\})?(\s*)$/u;
+  const m = line.match(re);
+  if (!m) return null;
+  return {
+    leading: m[1] ?? "",
+    alt: m[2] ?? "",
+    url: m[3] ?? "",
+    options: m[5] ?? null,
+    trailing: m[6] ?? "",
+  };
+}
+
+function parseImageOptions(options: string | null | undefined): ImageOptionToken[] {
+  if (!options) return [];
+  return options
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .map((t) => {
+      const idx = t.indexOf("=");
+      if (idx === -1) {
+        return { key: t, value: null };
+      }
+      const key = t.slice(0, idx).trim();
+      const value = t.slice(idx + 1).trim();
+      return { key, value: value || null };
+    });
+}
+
+function buildImageOptions(tokens: ImageOptionToken[]): string | null {
+  if (!tokens.length) return null;
+  return tokens
+    .map((t) => {
+      if (t.value == null || t.value === "") return t.key;
+      return `${t.key}=${t.value}`;
+    })
+    .join(",");
+}
+
+function buildImageMarkdownLine(match: ImageLineMatch, tokens: ImageOptionToken[]): string {
+  const opts = buildImageOptions(tokens);
+  const optionsPart = opts ? `{${opts}}` : "";
+  return `${match.leading}![${match.alt}](${match.url})${optionsPart}${match.trailing}`;
+}
+
+function applyImageOptionFromTextarea(
+  ta: HTMLTextAreaElement,
+  setBody: (next: string) => void,
+  updater: (tokens: ImageOptionToken[]) => ImageOptionToken[],
+) {
+  const text = ta.value;
+  const selStart = ta.selectionStart ?? 0;
+  const selEnd = ta.selectionEnd ?? selStart;
+  const caret = Math.max(selStart, selEnd);
+  const { start, end } = getCurrentLineRange(text, caret);
+  const line = text.slice(start, end);
+  const parsed = parseImageMarkdownLine(line);
+  if (!parsed) return;
+  const tokens = parseImageOptions(parsed.options);
+  const nextTokens = updater(tokens);
+  const newLine = buildImageMarkdownLine(parsed, nextTokens);
+  const before = text.slice(0, start);
+  const after = text.slice(end);
+  const nextText = before + newLine + after;
+  const delta = newLine.length - (end - start);
+  const newCaret = caret + delta;
+  setBody(nextText);
+  requestAnimationFrame(() => {
+    const pos = clamp(newCaret, start, start + newLine.length);
+    ta.setSelectionRange(pos, pos);
+  });
 }
 
 function applyPrefixToggleFromTextarea(
@@ -351,6 +442,9 @@ type IdleDeadline = { readonly didTimeout: boolean; timeRemaining: () => number 
 type IdleRequestCallback = (deadline: IdleDeadline) => void;
 type IdleRequestOptions = { timeout: number };
 
+type ImageLayout = "default" | "grid" | "float-left" | "float-right";
+type ImageSize = "xs" | "s" | "m" | "l" | "xl";
+
 export default function MarkdownSnippetSandbox({
   initialBody = `# サイドバイサイドエディタのデモ
 
@@ -451,6 +545,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
   const [maxLen, setMaxLen] = useState<number | undefined>(undefined);
   const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
   const [useFeatured, setUseFeatured] = useState<boolean>(false);
+  const [isImageLine, setIsImageLine] = useState<boolean>(false);
 
   const [previewSrc, setPreviewSrc] = useState<string>(initialBody);
   const bodyRef = useRef(body);
@@ -538,6 +633,16 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
     (): (HTMLDivElement | HTMLPreElement) | null => previewBodyRef.current,
     [],
   );
+
+  const updateIsImageLine = useCallback(() => {
+    const ta = textareaRef.current;
+    if (!ta) return;
+    const text = ta.value;
+    const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+    const { start, end } = getCurrentLineRange(text, pos);
+    const line = text.slice(start, end);
+    setIsImageLine(!!parseImageMarkdownLine(line));
+  }, []);
 
   const rebuildAnchors = useCallback(() => {
     const root = activePreviewBody();
@@ -770,11 +875,19 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
         syncToCaret();
         scheduleHighlight();
         schedulePreviewHighlight();
+        updateIsImageLine();
       });
       gutter.appendChild(btn);
       return btn;
     },
-    [centerCaretAtRatio, rebuildAnchors, syncToCaret, scheduleHighlight, schedulePreviewHighlight],
+    [
+      centerCaretAtRatio,
+      rebuildAnchors,
+      syncToCaret,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateIsImageLine,
+    ],
   );
 
   const refreshGutterPins = useCallback(() => {
@@ -1020,9 +1133,10 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
         didAutoFocusRef.current = true;
         scheduleHighlight();
         schedulePreviewHighlight();
+        updateIsImageLine();
       }
     }
-  }, [autoFocus, scheduleHighlight, schedulePreviewHighlight]);
+  }, [autoFocus, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine]);
 
   useEffect(() => {
     const cleanup = attachObservers();
@@ -1129,12 +1243,19 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
+        updateIsImageLine();
         scheduleSync();
         scheduleHighlight();
         schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateIsImageLine,
+    ],
   );
 
   const onToolbarFence = useCallback(
@@ -1146,12 +1267,19 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
+        updateIsImageLine();
         scheduleSync();
         scheduleHighlight();
         schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateIsImageLine,
+    ],
   );
 
   const onToolbarInline = useCallback(
@@ -1163,12 +1291,19 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
+        updateIsImageLine();
         scheduleSync();
         scheduleHighlight();
         schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateIsImageLine,
+    ],
   );
 
   const onToolbarRuby = useCallback(
@@ -1180,12 +1315,19 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
+        updateIsImageLine();
         scheduleSync();
         scheduleHighlight();
         schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateIsImageLine,
+    ],
   );
 
   const onToolbarLink = useCallback(
@@ -1197,12 +1339,89 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
+        updateIsImageLine();
         scheduleSync();
         scheduleHighlight();
         schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateIsImageLine,
+    ],
+  );
+
+  const onToolbarImageLayout = useCallback(
+    (layout: ImageLayout) => (e: React.MouseEvent) => {
+      e.preventDefault();
+      const ta = activeTextarea();
+      if (!ta) return;
+      applyImageOptionFromTextarea(ta, setBody, (tokens) => {
+        let next = tokens.filter((t) => t.key !== "grid" && t.key !== "float");
+        if (layout === "grid") {
+          next = [...next, { key: "grid", value: null }];
+        } else if (layout === "float-left") {
+          next = [...next, { key: "float", value: "left" }];
+        } else if (layout === "float-right") {
+          next = [...next, { key: "float", value: "right" }];
+        }
+        return next;
+      });
+      requestAnimationFrame(() => {
+        const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+        caretRef.current = pos;
+        updateIsImageLine();
+        scheduleSync();
+        scheduleHighlight();
+        schedulePreviewHighlight();
+      });
+    },
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateIsImageLine,
+    ],
+  );
+
+  const onToolbarImageSize = useCallback(
+    (size: ImageSize) => (e: React.MouseEvent) => {
+      e.preventDefault();
+      const ta = activeTextarea();
+      if (!ta) return;
+      applyImageOptionFromTextarea(ta, setBody, (tokens) => {
+        let next = tokens.filter((t) => t.key !== "size");
+        if (size === "xs") {
+          next = [...next, { key: "size", value: "xsmall" }];
+        } else if (size === "s") {
+          next = [...next, { key: "size", value: "small" }];
+        } else if (size === "l") {
+          next = [...next, { key: "size", value: "large" }];
+        } else if (size === "xl") {
+          next = [...next, { key: "size", value: "xlarge" }];
+        }
+        return next;
+      });
+      requestAnimationFrame(() => {
+        const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+        caretRef.current = pos;
+        updateIsImageLine();
+        scheduleSync();
+        scheduleHighlight();
+        schedulePreviewHighlight();
+      });
+    },
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateIsImageLine,
+    ],
   );
 
   return (
@@ -1255,7 +1474,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
               onChange={(e) => setUseFeatured(e.target.checked)}
               disabled={mode !== "html"}
             />
-            <span className="text-sm">useFeatured</span>
+          <span className="text-sm">useFeatured</span>
           </label>
           <div className="ml-auto text-xs text-gray-500">
             {contentLengthLimit != null
@@ -1269,118 +1488,198 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
           <div className="relative border-r min-h-0 flex flex-col">
             <div className="sticky top-0 z-10 bg-white/80 backdrop-blur-sm border-b border-gray-200 w-full">
               <div className="px-1.5 py-1 flex items-center gap-1 bg-[#eee]">
-                <button
-                  type="button"
-                  onMouseDown={onToolbarPrefix("# ")}
-                  className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="Heading 1"
-                >
-                  <Heading1 className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={onToolbarPrefix("## ")}
-                  className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="Heading 2"
-                >
-                  <Heading2 className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={onToolbarPrefix("### ")}
-                  className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="Heading 3"
-                >
-                  <Heading3 className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={onToolbarPrefix("- ")}
-                  className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="List"
-                >
-                  <ListIcon className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={onToolbarPrefix("> ")}
-                  className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="Quote"
-                >
-                  <QuoteIcon className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={onToolbarFence}
-                  className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="Code block"
-                >
-                  <CodeBlockIcon className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={onToolbarInline("**")}
-                  className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="Bold"
-                >
-                  <BoldIcon className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={onToolbarInline("::")}
-                  className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="Italic"
-                >
-                  <ItalicIcon className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={onToolbarInline("__")}
-                  className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="Underline"
-                >
-                  <UnderlineIcon className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={onToolbarInline("~~")}
-                  className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="Strikethrough"
-                >
-                  <StrikethroughIcon className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={onToolbarInline("``")}
-                  className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="Inline code"
-                >
-                  <InlineCodeIcon className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={onToolbarInline("%%")}
-                  className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="Mark"
-                >
-                  <MarkIcon className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={onToolbarRuby}
-                  className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="Ruby"
-                >
-                  <RubyIcon className="w-4 h-4" />
-                </button>
-                <button
-                  type="button"
-                  onMouseDown={onToolbarLink}
-                  className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
-                  title="Link"
-                >
-                  <LinkIcon className="w-4 h-4" />
-                </button>
+                {isImageLine ? (
+                  <>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarImageLayout("default")}
+                      className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Default layout"
+                    >
+                      <AlignStartVertical className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarImageLayout("grid")}
+                      className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Grid layout"
+                    >
+                      <LayoutGrid className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarImageLayout("float-left")}
+                      className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Float left"
+                    >
+                      <LayoutList className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarImageLayout("float-right")}
+                      className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Float right"
+                    >
+                      <LayoutList className="w-4 h-4" style={{ transform: "scaleX(-1)" }}/>
+                    </button>
+                    <div className="w-4" />
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarImageSize("xs")}
+                      className="inline-flex h-7 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs"
+                      title="Size XS"
+                    >
+                      XS
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarImageSize("s")}
+                      className="inline-flex h-7 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs"
+                      title="Size S"
+                    >
+                      S
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarImageSize("m")}
+                      className="inline-flex h-7 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs"
+                      title="Size M (default)"
+                    >
+                      M
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarImageSize("l")}
+                      className="inline-flex h-7 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs"
+                      title="Size L"
+                    >
+                      L
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarImageSize("xl")}
+                      className="inline-flex h-7 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 text-xs"
+                      title="Size XL"
+                    >
+                      XL
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarPrefix("# ")}
+                      className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Heading 1"
+                    >
+                      <Heading1 className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarPrefix("## ")}
+                      className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Heading 2"
+                    >
+                      <Heading2 className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarPrefix("### ")}
+                      className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Heading 3"
+                    >
+                      <Heading3 className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarPrefix("- ")}
+                      className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="List"
+                    >
+                      <ListIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarPrefix("> ")}
+                      className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Quote"
+                    >
+                      <QuoteIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarFence}
+                      className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Code block"
+                    >
+                      <CodeBlockIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarInline("**")}
+                      className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Bold"
+                    >
+                      <BoldIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarInline("::")}
+                      className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Italic"
+                    >
+                      <ItalicIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarInline("__")}
+                      className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Underline"
+                    >
+                      <UnderlineIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarInline("~~")}
+                      className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Strikethrough"
+                    >
+                      <StrikethroughIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarInline("``")}
+                      className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Inline code"
+                    >
+                      <InlineCodeIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarInline("%%")}
+                      className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Mark"
+                    >
+                      <MarkIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarRuby}
+                      className="hidden md:inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Ruby"
+                    >
+                      <RubyIcon className="w-4 h-4" />
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarLink}
+                      className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Link"
+                    >
+                      <LinkIcon className="w-4 h-4" />
+                    </button>
+                  </>
+                )}
               </div>
             </div>
 
@@ -1400,6 +1699,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
                       scheduleSync();
                       scheduleHighlight();
                       schedulePreviewHighlight();
+                      updateIsImageLine();
                     }}
                     onKeyUp={() => {
                       const ta = textareaRef.current;
@@ -1410,6 +1710,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
                       scheduleSync();
                       scheduleHighlight();
                       schedulePreviewHighlight();
+                      updateIsImageLine();
                     }}
                     onClick={() => {
                       const ta = textareaRef.current;
@@ -1420,6 +1721,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
                       scheduleSync();
                       scheduleHighlight();
                       schedulePreviewHighlight();
+                      updateIsImageLine();
                     }}
                     onSelect={() => {
                       const ta = textareaRef.current;
@@ -1430,10 +1732,12 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
                       scheduleSync();
                       scheduleHighlight();
                       schedulePreviewHighlight();
+                      updateIsImageLine();
                     }}
                     onFocus={() => {
                       scheduleHighlight();
                       schedulePreviewHighlight();
+                      updateIsImageLine();
                     }}
                     maxLength={65535}
                     rows={1}
