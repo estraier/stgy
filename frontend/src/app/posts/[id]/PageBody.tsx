@@ -70,6 +70,11 @@ export default function PageBody() {
   const editFormWrapperRef = useRef<HTMLDivElement | null>(null);
   const editInitializedFromQueryRef = useRef(false);
 
+  const topTriangleRef = useRef<HTMLButtonElement | null>(null);
+  const bottomTriangleRef = useRef<HTMLButtonElement | null>(null);
+  const [topInView, setTopInView] = useState(false);
+  const [bottomInView, setBottomInView] = useState(false);
+
   function updateEditModeInUrl(enabled: boolean) {
     const sp = new URLSearchParams(searchParams);
     if (enabled) {
@@ -201,6 +206,69 @@ export default function PageBody() {
     document.body.addEventListener("click", handler);
     return () => document.body.removeEventListener("click", handler);
   }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const update = () => {
+      const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+
+      const topEl = topTriangleRef.current;
+      if (topEl) {
+        const rect = topEl.getBoundingClientRect();
+        const visible = rect.bottom >= 0 && rect.top <= viewportHeight;
+        setTopInView(visible);
+      } else {
+        setTopInView(false);
+      }
+
+      const bottomEl = bottomTriangleRef.current;
+      if (bottomEl) {
+        const rect = bottomEl.getBoundingClientRect();
+        const visible = rect.bottom >= 0 && rect.top <= viewportHeight;
+        setBottomInView(visible);
+      } else {
+        setBottomInView(false);
+      }
+    };
+
+    const id = requestAnimationFrame(update);
+
+    window.addEventListener("scroll", update, { passive: true });
+    window.addEventListener("resize", update);
+
+    return () => {
+      cancelAnimationFrame(id);
+      window.removeEventListener("scroll", update);
+      window.removeEventListener("resize", update);
+    };
+  }, [postId, post]);
+
+  function scrollToTriangle(target: HTMLButtonElement | null) {
+    if (!target || typeof window === "undefined") return;
+
+    const viewportHeight = window.innerHeight || document.documentElement.clientHeight;
+    const rect = target.getBoundingClientRect();
+    const currentY = window.scrollY || window.pageYOffset;
+    const desiredTop = viewportHeight * 0.4;
+    const targetY = Math.max(0, currentY + rect.top - desiredTop);
+    const startY = currentY;
+    const distance = targetY - startY;
+    const duration = 200;
+    const startTime = performance.now();
+
+    const step = (now: number) => {
+      const elapsed = now - startTime;
+      const t = elapsed >= duration ? 1 : elapsed / duration;
+      const eased = 1 - Math.pow(1 - t, 3);
+      window.scrollTo(0, startY + distance * eased);
+      if (t < 1) {
+        requestAnimationFrame(step);
+      }
+    };
+
+    requestAnimationFrame(step);
+  }
 
   async function handleLike(p: Post) {
     if (!userId || !post) return;
@@ -419,6 +487,9 @@ export default function PageBody() {
   if (error) return <div className="text-center mt-10 text-red-600">{error}</div>;
   if (!post) return <div className="text-center mt-10 text-gray-500">No post found.</div>;
 
+  const topTriangleOpacityClass = bottomInView ? "opacity-10" : "opacity-50 hover:opacity-100";
+  const bottomTriangleOpacityClass = topInView ? "opacity-10" : "opacity-50 hover:opacity-100";
+
   function handleReplyPageChange(nextPage: number) {
     const sp = new URLSearchParams(searchParams);
     sp.set("replyPage", String(nextPage));
@@ -443,19 +514,43 @@ export default function PageBody() {
 
   return (
     <main className="max-w-3xl mx-auto mt-8 p-1 sm:p-4">
-      <PostCard
-        post={post}
-        avatarVersion={post.ownedBy === userId ? (updatedAt ?? undefined) : undefined}
-        truncated={false}
-        showActions={true}
-        onLike={() => handleLike(post)}
-        onReply={() => setReplyingTo(post.id)}
-        isReplying={replyingTo === post.id}
-        clickable={false}
-        className="mb-8"
-        focusUserId={userId}
-        focusUserIsAdmin={!!isAdmin}
-      />
+      <div className="relative">
+        <button
+          type="button"
+          ref={topTriangleRef}
+          className={
+            "absolute -top-8 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full border border-gray-300 bg-white text-xs shadow-sm cursor-pointer hover:bg-gray-50 " +
+            topTriangleOpacityClass
+          }
+          onClick={() => scrollToTriangle(bottomTriangleRef.current)}
+        >
+          ▽
+        </button>
+        <PostCard
+          post={post}
+          avatarVersion={post.ownedBy === userId ? (updatedAt ?? undefined) : undefined}
+          truncated={false}
+          showActions={true}
+          onLike={() => handleLike(post)}
+          onReply={() => setReplyingTo(post.id)}
+          isReplying={replyingTo === post.id}
+          clickable={false}
+          className="mb-8"
+          focusUserId={userId}
+          focusUserIsAdmin={!!isAdmin}
+        />
+        <button
+          type="button"
+          ref={bottomTriangleRef}
+          className={
+            "absolute -bottom-8 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full border border-gray-300 bg-white text-xs shadow-sm cursor-pointer hover:bg-gray-50 " +
+            bottomTriangleOpacityClass
+          }
+          onClick={() => scrollToTriangle(topTriangleRef.current)}
+        >
+          △
+        </button>
+      </div>
 
       {replyingTo === post.id && (
         <div className="mb-6">
