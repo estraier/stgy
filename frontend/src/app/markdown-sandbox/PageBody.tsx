@@ -16,7 +16,6 @@ import {
   Highlighter as MarkIcon,
   Braces as RubyIcon,
   Link as LinkIcon,
-  LayoutPanelTop,
   LayoutGrid,
   LayoutList,
   AlignStartVertical,

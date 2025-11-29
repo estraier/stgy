@@ -34,6 +34,9 @@ import {
   Braces as RubyIcon,
   Link as LinkIcon,
   X as CloseIcon,
+  LayoutGrid,
+  LayoutList,
+  AlignStartVertical,
 } from "lucide-react";
 import { structurizeHtml, parseHtml, mdRenderMarkdown, countHtmlElements } from "stgy-markdown";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
@@ -53,6 +56,93 @@ type MdElementNode = {
 type MdNode = MdTextNode | MdElementNode;
 
 const isElementNode = (n: MdNode): n is MdElementNode => n?.type === "element";
+
+type ImageLineMatch = {
+  leading: string;
+  alt: string;
+  url: string;
+  options: string | null;
+  trailing: string;
+};
+
+type ImageOptionToken = {
+  key: string;
+  value: string | null;
+};
+
+function parseImageMarkdownLine(line: string): ImageLineMatch | null {
+  const re = /^(\s*)!\[([^\]]*)\]\(([^)]*)\)(\{([^}]*)\})?(\s*)$/u;
+  const m = line.match(re);
+  if (!m) return null;
+  return {
+    leading: m[1] ?? "",
+    alt: m[2] ?? "",
+    url: m[3] ?? "",
+    options: m[5] ?? null,
+    trailing: m[6] ?? "",
+  };
+}
+
+function parseImageOptions(options: string | null | undefined): ImageOptionToken[] {
+  if (!options) return [];
+  return options
+    .split(",")
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0)
+    .map((t) => {
+      const idx = t.indexOf("=");
+      if (idx === -1) {
+        return { key: t, value: null };
+      }
+      const key = t.slice(0, idx).trim();
+      const value = t.slice(idx + 1).trim();
+      return { key, value: value || null };
+    });
+}
+
+function buildImageOptions(tokens: ImageOptionToken[]): string | null {
+  if (!tokens.length) return null;
+  return tokens
+    .map((t) => {
+      if (t.value == null || t.value === "") return t.key;
+      return `${t.key}=${t.value}`;
+    })
+    .join(",");
+}
+
+function buildImageMarkdownLine(match: ImageLineMatch, tokens: ImageOptionToken[]): string {
+  const opts = buildImageOptions(tokens);
+  const optionsPart = opts ? `{${opts}}` : "";
+  return `${match.leading}![${match.alt}](${match.url})${optionsPart}${match.trailing}`;
+}
+
+function applyImageOptionFromTextarea(
+  ta: HTMLTextAreaElement,
+  setBody: (next: string) => void,
+  updater: (tokens: ImageOptionToken[]) => ImageOptionToken[],
+) {
+  const text = ta.value;
+  const selStart = ta.selectionStart ?? 0;
+  const selEnd = ta.selectionEnd ?? selStart;
+  const caret = Math.max(selStart, selEnd);
+  const { start, end } = getCurrentLineRange(text, caret);
+  const line = text.slice(start, end);
+  const parsed = parseImageMarkdownLine(line);
+  if (!parsed) return;
+  const tokens = parseImageOptions(parsed.options);
+  const nextTokens = updater(tokens);
+  const newLine = buildImageMarkdownLine(parsed, nextTokens);
+  const before = text.slice(0, start);
+  const after = text.slice(end);
+  const nextText = before + newLine + after;
+  const delta = newLine.length - (end - start);
+  const newCaret = caret + delta;
+  setBody(nextText);
+  requestAnimationFrame(() => {
+    const pos = clamp(newCaret, start, start + newLine.length);
+    ta.setSelectionRange(pos, pos);
+  });
+}
 
 type PostFormProps = {
   body: string;
@@ -364,6 +454,9 @@ function buildMirrorFromTextarea(ta: HTMLTextAreaElement, mirror: HTMLDivElement
   mirror.style.setProperty("tab-size", tabSize);
 }
 
+type ImageLayout = "default" | "grid" | "float-left" | "float-right";
+type ImageSize = "xs" | "s" | "m" | "l" | "xl";
+
 export default function PostForm({
   body,
   setBody,
@@ -418,6 +511,7 @@ export default function PostForm({
   const [showPreview, setShowPreview] = useState(false);
   const [hasFocusedOnce, setHasFocusedOnce] = useState(false);
   const [isXl, setIsXl] = useState(false);
+  const [isImageLine, setIsImageLine] = useState(false);
   const overlayActive = showPreview && isXl;
   const bodyLiveRef = useRef(body);
   useEffect(() => {
@@ -580,6 +674,16 @@ export default function PostForm({
     return overlayActive ? overlayBodyRef.current : previewBodyRef.current;
   }, [overlayActive]);
 
+  const updateIsImageLine = useCallback(() => {
+    const ta = activeTextarea();
+    if (!ta) return;
+    const text = ta.value;
+    const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+    const { start, end } = getCurrentLineRange(text, pos);
+    const line = text.slice(start, end);
+    setIsImageLine(!!parseImageMarkdownLine(line));
+  }, [activeTextarea]);
+
   const handleFocus = useCallback(() => {
     if (!hasFocusedOnce) setHasFocusedOnce(true);
     const textarea = activeTextarea();
@@ -601,7 +705,8 @@ export default function PostForm({
       schedulePreviewHighlightRef.current();
     }
     if (overlayActive) resizeOverlayTextareaRef.current();
-  }, [activeTextarea, hasFocusedOnce, onErrorClear, overlayActive]);
+    updateIsImageLine();
+  }, [activeTextarea, hasFocusedOnce, onErrorClear, overlayActive, updateIsImageLine]);
 
   const actPrefix = (prefix: string) => (e: React.MouseEvent) => {
     e.preventDefault();
@@ -620,6 +725,7 @@ export default function PostForm({
         schedulePreviewHighlightRef.current();
       }
       if (overlayActive) resizeOverlayTextareaRef.current();
+      updateIsImageLine();
     });
   };
   const actFence = (e: React.MouseEvent) => {
@@ -639,6 +745,7 @@ export default function PostForm({
         schedulePreviewHighlightRef.current();
       }
       if (overlayActive) resizeOverlayTextareaRef.current();
+      updateIsImageLine();
     });
   };
   const actInline = (open: string, close?: string) => (e: React.MouseEvent) => {
@@ -658,6 +765,7 @@ export default function PostForm({
         schedulePreviewHighlightRef.current();
       }
       if (overlayActive) resizeOverlayTextareaRef.current();
+      updateIsImageLine();
     });
   };
   const actRuby = (e: React.MouseEvent) => {
@@ -677,6 +785,7 @@ export default function PostForm({
         schedulePreviewHighlightRef.current();
       }
       if (overlayActive) resizeOverlayTextareaRef.current();
+      updateIsImageLine();
     });
   };
   const actLink = (e: React.MouseEvent) => {
@@ -696,6 +805,71 @@ export default function PostForm({
         schedulePreviewHighlightRef.current();
       }
       if (overlayActive) resizeOverlayTextareaRef.current();
+      updateIsImageLine();
+    });
+  };
+
+  const actImageLayout = (layout: ImageLayout) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    const ta = activeTextarea();
+    if (!ta) return;
+    applyImageOptionFromTextarea(ta, setBody, (tokens) => {
+      let next = tokens.filter((t) => t.key !== "grid" && t.key !== "float");
+      if (layout === "grid") {
+        next = [...next, { key: "grid", value: null }];
+      } else if (layout === "float-left") {
+        next = [...next, { key: "float", value: "left" }];
+      } else if (layout === "float-right") {
+        next = [...next, { key: "float", value: "right" }];
+      }
+      return next;
+    });
+    afterNextPaint(() => {
+      const s = ta.selectionStart ?? caretRef.current;
+      const ed = ta.selectionEnd ?? s;
+      selStartRef.current = s;
+      selEndRef.current = ed;
+      caretRef.current = ed;
+      scheduleSyncRef.current();
+      if (overlayActive) {
+        scheduleEditorHighlightRef.current();
+        schedulePreviewHighlightRef.current();
+      }
+      if (overlayActive) resizeOverlayTextareaRef.current();
+      updateIsImageLine();
+    });
+  };
+
+  const actImageSize = (size: ImageSize) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    const ta = activeTextarea();
+    if (!ta) return;
+    applyImageOptionFromTextarea(ta, setBody, (tokens) => {
+      let next = tokens.filter((t) => t.key !== "size");
+      if (size === "xs") {
+        next = [...next, { key: "size", value: "xsmall" }];
+      } else if (size === "s") {
+        next = [...next, { key: "size", value: "small" }];
+      } else if (size === "l") {
+        next = [...next, { key: "size", value: "large" }];
+      } else if (size === "xl") {
+        next = [...next, { key: "size", value: "xlarge" }];
+      }
+      return next;
+    });
+    afterNextPaint(() => {
+      const s = ta.selectionStart ?? caretRef.current;
+      const ed = ta.selectionEnd ?? s;
+      selStartRef.current = s;
+      selEndRef.current = ed;
+      caretRef.current = ed;
+      scheduleSyncRef.current();
+      if (overlayActive) {
+        scheduleEditorHighlightRef.current();
+        schedulePreviewHighlightRef.current();
+      }
+      if (overlayActive) resizeOverlayTextareaRef.current();
+      updateIsImageLine();
     });
   };
 
@@ -983,6 +1157,7 @@ export default function PostForm({
         if (did) requestAnimationFrame(() => schedulePreviewHighlight());
         else schedulePreviewHighlight();
         scheduleEditorHighlight();
+        updateIsImageLine();
       });
       gutter.appendChild(btn);
       return btn;
@@ -993,6 +1168,7 @@ export default function PostForm({
       syncToCaret,
       scheduleEditorHighlight,
       schedulePreviewHighlight,
+      updateIsImageLine,
     ],
   );
 
@@ -1226,8 +1402,9 @@ export default function PostForm({
       scheduleSync();
       scheduleEditorHighlight();
       schedulePreviewHighlight();
+      updateIsImageLine();
     },
-    [activeTextarea, scheduleSync, scheduleEditorHighlight, schedulePreviewHighlight],
+    [activeTextarea, scheduleSync, scheduleEditorHighlight, schedulePreviewHighlight, updateIsImageLine],
   );
 
   const ensureFormBottomInView = useCallback(
@@ -1494,6 +1671,7 @@ export default function PostForm({
           scheduleEditorHighlightRef.current();
           schedulePreviewHighlightRef.current();
         }
+        updateIsImageLine();
         return;
       }
       const text = ta.value;
@@ -1518,9 +1696,10 @@ export default function PostForm({
           schedulePreviewHighlightRef.current();
         }
         if (overlayActiveLiveRef.current) resizeOverlayTextareaRef.current();
+        updateIsImageLine();
       });
     },
-    [setBody],
+    [setBody, updateIsImageLine],
   );
 
   const insertInlineAtCursor = useCallback(
@@ -1538,6 +1717,7 @@ export default function PostForm({
           scheduleEditorHighlightRef.current();
           schedulePreviewHighlightRef.current();
         }
+        updateIsImageLine();
         return;
       }
       const text = ta.value;
@@ -1560,9 +1740,10 @@ export default function PostForm({
           schedulePreviewHighlightRef.current();
         }
         if (overlayActiveLiveRef.current) resizeOverlayTextareaRef.current();
+        updateIsImageLine();
       });
     },
-    [setBody],
+    [setBody, updateIsImageLine],
   );
 
   const handlePasteUploadComplete = useCallback(
@@ -1742,141 +1923,229 @@ export default function PostForm({
         <div className="hidden group-focus-within:flex absolute left-0 right-0 top-0 -translate-y-full">
           <div className="w-full px-1.5 text-gray-600 backdrop-blur-sm flex items-center justify-between">
             <div className="flex items-center gap-1">
-              <button
-                type="button"
-                onMouseDown={actPrefix("# ")}
-                title="Heading 1"
-                className={`inline-flex ${toolbarBtn}`}
-              >
-                <Heading1 className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">H1</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actPrefix("## ")}
-                title="Heading 2"
-                className={`inline-flex ${toolbarBtn}`}
-              >
-                <Heading2 className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">H2</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actPrefix("### ")}
-                title="Heading 3"
-                className={`hidden md:inline-flex ${toolbarBtn}`}
-              >
-                <Heading3 className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">H3</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actPrefix("- ")}
-                title="List"
-                className={`inline-flex ${toolbarBtn}`}
-              >
-                <ListIcon className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">List</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actPrefix("> ")}
-                title="Quote"
-                className={`hidden md:inline-flex ${toolbarBtn}`}
-              >
-                <QuoteIcon className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">Quote</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actFence}
-                title="Code block"
-                className={`hidden md:inline-flex ${toolbarBtn}`}
-              >
-                <CodeBlockIcon className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">Code Block</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actInline("**")}
-                title="Bold"
-                className={`inline-flex ${toolbarBtn}`}
-              >
-                <BoldIcon className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">Bold</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actInline("::")}
-                title="Italic"
-                className={`inline-flex ${toolbarBtn}`}
-              >
-                <ItalicIcon className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">Italic</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actInline("__")}
-                title="Underline"
-                className={`hidden md:inline-flex ${toolbarBtn}`}
-              >
-                <UnderlineIcon className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">Underline</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actInline("~~")}
-                title="Strikethrough"
-                className={`hidden md:inline-flex ${toolbarBtn}`}
-              >
-                <StrikethroughIcon className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">Strikethrough</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actInline("``")}
-                title="Inline code"
-                className={`hidden md:inline-flex ${toolbarBtn}`}
-              >
-                <InlineCodeIcon className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">Inline Code</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actInline("@@")}
-                title="Mark"
-                className={`hidden md:inline-flex ${toolbarBtn}`}
-              >
-                <MarkIcon className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">Mark</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actInline("%%")}
-                title="Small"
-                className={`hidden md:inline-flex ${toolbarBtn}`}
-              >
-                <SmallIcon className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">Small</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actRuby}
-                title="Ruby"
-                className={`hidden md:inline-flex ${toolbarBtn}`}
-              >
-                <RubyIcon className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">Ruby</span>
-              </button>
-              <button
-                type="button"
-                onMouseDown={actLink}
-                title="Link"
-                className={`inline-flex ${toolbarBtn}`}
-              >
-                <LinkIcon className="w-4 h-4 opacity-80" aria-hidden />
-                <span className="sr-only">Link</span>
-              </button>
+              {isImageLine ? (
+                <>
+                  <button
+                    type="button"
+                    onMouseDown={actImageLayout("default")}
+                    title="Default layout"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <AlignStartVertical className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Default layout</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actImageLayout("grid")}
+                    title="Grid layout"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <LayoutGrid className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Grid layout</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actImageLayout("float-left")}
+                    title="Float left"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <LayoutList className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Float left</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actImageLayout("float-right")}
+                    title="Float right"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <LayoutList
+                      className="w-4 h-4 opacity-80"
+                      aria-hidden
+                      style={{ transform: "scaleX(-1)" }}
+                    />
+                    <span className="sr-only">Float right</span>
+                  </button>
+                  <div className="w-4" />
+                  <button
+                    type="button"
+                    onMouseDown={actImageSize("xs")}
+                    title="Size XS"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <span className="text-[10px] leading-none">XS</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actImageSize("s")}
+                    title="Size S"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <span className="text-[10px] leading-none">S</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actImageSize("m")}
+                    title="Size M (default)"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <span className="text-[10px] leading-none">M</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actImageSize("l")}
+                    title="Size L"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <span className="text-[10px] leading-none">L</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actImageSize("xl")}
+                    title="Size XL"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <span className="text-[10px] leading-none">XL</span>
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    type="button"
+                    onMouseDown={actPrefix("# ")}
+                    title="Heading 1"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <Heading1 className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">H1</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actPrefix("## ")}
+                    title="Heading 2"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <Heading2 className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">H2</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actPrefix("### ")}
+                    title="Heading 3"
+                    className={`hidden md:inline-flex ${toolbarBtn}`}
+                  >
+                    <Heading3 className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">H3</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actPrefix("- ")}
+                    title="List"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <ListIcon className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">List</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actPrefix("> ")}
+                    title="Quote"
+                    className={`hidden md:inline-flex ${toolbarBtn}`}
+                  >
+                    <QuoteIcon className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Quote</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actFence}
+                    title="Code block"
+                    className={`hidden md:inline-flex ${toolbarBtn}`}
+                  >
+                    <CodeBlockIcon className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Code Block</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actInline("**")}
+                    title="Bold"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <BoldIcon className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Bold</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actInline("::")}
+                    title="Italic"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <ItalicIcon className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Italic</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actInline("__")}
+                    title="Underline"
+                    className={`hidden md:inline-flex ${toolbarBtn}`}
+                  >
+                    <UnderlineIcon className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Underline</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actInline("~~")}
+                    title="Strikethrough"
+                    className={`hidden md:inline-flex ${toolbarBtn}`}
+                  >
+                    <StrikethroughIcon className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Strikethrough</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actInline("``")}
+                    title="Inline code"
+                    className={`hidden md:inline-flex ${toolbarBtn}`}
+                  >
+                    <InlineCodeIcon className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Inline Code</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actInline("@@")}
+                    title="Mark"
+                    className={`hidden md:inline-flex ${toolbarBtn}`}
+                  >
+                    <MarkIcon className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Mark</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actInline("%%")}
+                    title="Small"
+                    className={`hidden md:inline-flex ${toolbarBtn}`}
+                  >
+                    <SmallIcon className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Small</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actRuby}
+                    title="Ruby"
+                    className={`hidden md:inline-flex ${toolbarBtn}`}
+                  >
+                    <RubyIcon className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Ruby</span>
+                  </button>
+                  <button
+                    type="button"
+                    onMouseDown={actLink}
+                    title="Link"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <LinkIcon className="w-4 h-4 opacity-80" aria-hidden />
+                    <span className="sr-only">Link</span>
+                  </button>
+                </>
+              )}
             </div>
 
             <div className="flex items-center gap-1">
@@ -1906,6 +2175,7 @@ export default function PostForm({
                   scheduleEditorHighlightRef.current();
                   schedulePreviewHighlightRef.current();
                 }
+                updateIsImageLine();
               }}
               onKeyUp={() => {
                 const ta = textareaRef.current;
@@ -1921,6 +2191,7 @@ export default function PostForm({
                   scheduleEditorHighlightRef.current();
                   schedulePreviewHighlightRef.current();
                 }
+                updateIsImageLine();
               }}
               onClick={() => {
                 const ta = textareaRef.current;
@@ -1936,6 +2207,7 @@ export default function PostForm({
                   scheduleEditorHighlightRef.current();
                   schedulePreviewHighlightRef.current();
                 }
+                updateIsImageLine();
               }}
               onSelect={() => {
                 const ta = textareaRef.current;
@@ -1951,6 +2223,7 @@ export default function PostForm({
                   scheduleEditorHighlightRef.current();
                   schedulePreviewHighlightRef.current();
                 }
+                updateIsImageLine();
               }}
               onScroll={() => {
                 if (overlayActive) {
@@ -2025,6 +2298,7 @@ export default function PostForm({
                     ensurePreviewReadyAndSync(160);
                     scheduleEditorHighlightRef.current();
                     schedulePreviewHighlightRef.current();
+                    updateIsImageLine();
                   });
                 }
               }}
@@ -2101,141 +2375,229 @@ export default function PostForm({
                 >
                   <div className="mx-auto max-w-[85ex] w-full px-1.5 py-1 flex items-center justify-between">
                     <div className="flex items-center gap-1">
-                      <button
-                        type="button"
-                        onMouseDown={actPrefix("# ")}
-                        title="Heading 1"
-                        className={`inline-flex ${toolbarBtn}`}
-                      >
-                        <Heading1 className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">H1</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actPrefix("## ")}
-                        title="Heading 2"
-                        className={`inline-flex ${toolbarBtn}`}
-                      >
-                        <Heading2 className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">H2</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actPrefix("### ")}
-                        title="Heading 3"
-                        className={`hidden xl:inline-flex ${toolbarBtn}`}
-                      >
-                        <Heading3 className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">H3</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actPrefix("- ")}
-                        title="List"
-                        className={`inline-flex ${toolbarBtn}`}
-                      >
-                        <ListIcon className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">List</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actPrefix("> ")}
-                        title="Quote"
-                        className={`hidden xl:inline-flex ${toolbarBtn}`}
-                      >
-                        <QuoteIcon className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">Quote</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actFence}
-                        title="Code block"
-                        className={`hidden xl:inline-flex ${toolbarBtn}`}
-                      >
-                        <CodeBlockIcon className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">Code Block</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actInline("**")}
-                        title="Bold"
-                        className={`inline-flex ${toolbarBtn}`}
-                      >
-                        <BoldIcon className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">Bold</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actInline("::")}
-                        title="Italic"
-                        className={`inline-flex ${toolbarBtn}`}
-                      >
-                        <ItalicIcon className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">Italic</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actInline("__")}
-                        title="Underline"
-                        className={`hidden xl:inline-flex ${toolbarBtn}`}
-                      >
-                        <UnderlineIcon className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">Underline</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actInline("~~")}
-                        title="Strikethrough"
-                        className={`hidden xl:inline-flex ${toolbarBtn}`}
-                      >
-                        <StrikethroughIcon className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">Strikethrough</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actInline("``")}
-                        title="Inline code"
-                        className={`hidden xl:inline-flex ${toolbarBtn}`}
-                      >
-                        <InlineCodeIcon className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">Inline Code</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actInline("@@")}
-                        title="Mark"
-                        className={`hidden xl:inline-flex ${toolbarBtn}`}
-                      >
-                        <MarkIcon className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">Mark</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actInline("%%")}
-                        title="Small"
-                        className={`hidden xl:inline-flex ${toolbarBtn}`}
-                      >
-                        <SmallIcon className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">Small</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actRuby}
-                        title="Ruby"
-                        className={`hidden xl:inline-flex ${toolbarBtn}`}
-                      >
-                        <RubyIcon className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">Ruby</span>
-                      </button>
-                      <button
-                        type="button"
-                        onMouseDown={actLink}
-                        title="Link"
-                        className={`inline-flex ${toolbarBtn}`}
-                      >
-                        <LinkIcon className="w-4 h-4 opacity-80" aria-hidden />
-                        <span className="sr-only">Link</span>
-                      </button>
+                      {isImageLine ? (
+                        <>
+                          <button
+                            type="button"
+                            onMouseDown={actImageLayout("default")}
+                            title="Default layout"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <AlignStartVertical className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Default layout</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actImageLayout("grid")}
+                            title="Grid layout"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <LayoutGrid className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Grid layout</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actImageLayout("float-left")}
+                            title="Float left"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <LayoutList className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Float left</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actImageLayout("float-right")}
+                            title="Float right"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <LayoutList
+                              className="w-4 h-4 opacity-80"
+                              aria-hidden
+                              style={{ transform: "scaleX(-1)" }}
+                            />
+                            <span className="sr-only">Float right</span>
+                          </button>
+                          <div className="w-4" />
+                          <button
+                            type="button"
+                            onMouseDown={actImageSize("xs")}
+                            title="Size XS"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <span className="text-[10px] leading-none">XS</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actImageSize("s")}
+                            title="Size S"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <span className="text-[10px] leading-none">S</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actImageSize("m")}
+                            title="Size M (default)"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <span className="text-[10px] leading-none">M</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actImageSize("l")}
+                            title="Size L"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <span className="text-[10px] leading-none">L</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actImageSize("xl")}
+                            title="Size XL"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <span className="text-[10px] leading-none">XL</span>
+                          </button>
+                        </>
+                      ) : (
+                        <>
+                          <button
+                            type="button"
+                            onMouseDown={actPrefix("# ")}
+                            title="Heading 1"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <Heading1 className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">H1</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actPrefix("## ")}
+                            title="Heading 2"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <Heading2 className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">H2</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actPrefix("### ")}
+                            title="Heading 3"
+                            className={`hidden xl:inline-flex ${toolbarBtn}`}
+                          >
+                            <Heading3 className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">H3</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actPrefix("- ")}
+                            title="List"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <ListIcon className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">List</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actPrefix("> ")}
+                            title="Quote"
+                            className={`hidden xl:inline-flex ${toolbarBtn}`}
+                          >
+                            <QuoteIcon className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Quote</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actFence}
+                            title="Code block"
+                            className={`hidden xl:inline-flex ${toolbarBtn}`}
+                          >
+                            <CodeBlockIcon className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Code Block</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actInline("**")}
+                            title="Bold"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <BoldIcon className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Bold</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actInline("::")}
+                            title="Italic"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <ItalicIcon className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Italic</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actInline("__")}
+                            title="Underline"
+                            className={`hidden xl:inline-flex ${toolbarBtn}`}
+                          >
+                            <UnderlineIcon className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Underline</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actInline("~~")}
+                            title="Strikethrough"
+                            className={`hidden xl:inline-flex ${toolbarBtn}`}
+                          >
+                            <StrikethroughIcon className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Strikethrough</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actInline("``")}
+                            title="Inline code"
+                            className={`hidden xl:inline-flex ${toolbarBtn}`}
+                          >
+                            <InlineCodeIcon className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Inline Code</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actInline("@@")}
+                            title="Mark"
+                            className={`hidden xl:inline-flex ${toolbarBtn}`}
+                          >
+                            <MarkIcon className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Mark</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actInline("%%")}
+                            title="Small"
+                            className={`hidden xl:inline-flex ${toolbarBtn}`}
+                          >
+                            <SmallIcon className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Small</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actRuby}
+                            title="Ruby"
+                            className={`hidden xl:inline-flex ${toolbarBtn}`}
+                          >
+                            <RubyIcon className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Ruby</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actLink}
+                            title="Link"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <LinkIcon className="w-4 h-4 opacity-80" aria-hidden />
+                            <span className="sr-only">Link</span>
+                          </button>
+                        </>
+                      )}
                     </div>
 
                     <div className="flex items-center gap-1">
@@ -2267,6 +2629,7 @@ export default function PostForm({
                           scheduleSyncRef.current();
                           scheduleEditorHighlightRef.current();
                           schedulePreviewHighlightRef.current();
+                          updateIsImageLine();
                         }}
                         onKeyUp={() => {
                           const ta = overlayTextareaRef.current;
@@ -2280,6 +2643,7 @@ export default function PostForm({
                           scheduleSyncRef.current();
                           scheduleEditorHighlightRef.current();
                           schedulePreviewHighlightRef.current();
+                          updateIsImageLine();
                         }}
                         onClick={() => {
                           const ta = overlayTextareaRef.current;
@@ -2293,6 +2657,7 @@ export default function PostForm({
                           scheduleSyncRef.current();
                           scheduleEditorHighlightRef.current();
                           schedulePreviewHighlightRef.current();
+                          updateIsImageLine();
                         }}
                         onSelect={() => {
                           const ta = overlayTextareaRef.current;
@@ -2306,6 +2671,7 @@ export default function PostForm({
                           scheduleSyncRef.current();
                           scheduleEditorHighlightRef.current();
                           schedulePreviewHighlightRef.current();
+                          updateIsImageLine();
                         }}
                         onScroll={() => {
                           scheduleEditorHighlightRef.current();
@@ -2376,6 +2742,7 @@ export default function PostForm({
                           ensurePreviewReadyAndSync(160);
                           scheduleEditorHighlightRef.current();
                           schedulePreviewHighlightRef.current();
+                          updateIsImageLine();
                         });
                       }}
                     >
@@ -2430,6 +2797,7 @@ export default function PostForm({
                       ensurePreviewReadyAndSync(160);
                       scheduleEditorHighlightRef.current();
                       schedulePreviewHighlightRef.current();
+                      updateIsImageLine();
                     });
                   }}
                 >
