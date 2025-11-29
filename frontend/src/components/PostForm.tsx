@@ -37,6 +37,7 @@ import {
   LayoutGrid,
   LayoutList,
   AlignStartVertical,
+  Sparkle as SparkleIcon,
 } from "lucide-react";
 import { structurizeHtml, parseHtml, mdRenderMarkdown, countHtmlElements } from "stgy-markdown";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
@@ -814,13 +815,24 @@ export default function PostForm({
     const ta = activeTextarea();
     if (!ta) return;
     applyImageOptionFromTextarea(ta, setBody, (tokens) => {
+      const hasGrid = tokens.some((t) => t.key === "grid");
+      const floatToken = tokens.find((t) => t.key === "float");
+      const currentLayout: ImageLayout = hasGrid
+        ? "grid"
+        : floatToken?.value === "left"
+          ? "float-left"
+          : floatToken?.value === "right"
+            ? "float-right"
+            : "default";
       let next = tokens.filter((t) => t.key !== "grid" && t.key !== "float");
-      if (layout === "grid") {
-        next = [...next, { key: "grid", value: null }];
-      } else if (layout === "float-left") {
-        next = [...next, { key: "float", value: "left" }];
-      } else if (layout === "float-right") {
-        next = [...next, { key: "float", value: "right" }];
+      if (layout !== currentLayout) {
+        if (layout === "grid") {
+          next = [...next, { key: "grid", value: null }];
+        } else if (layout === "float-left") {
+          next = [...next, { key: "float", value: "left" }];
+        } else if (layout === "float-right") {
+          next = [...next, { key: "float", value: "right" }];
+        }
       }
       return next;
     });
@@ -845,15 +857,53 @@ export default function PostForm({
     const ta = activeTextarea();
     if (!ta) return;
     applyImageOptionFromTextarea(ta, setBody, (tokens) => {
+      const sizeToken = tokens.find((t) => t.key === "size");
+      let currentSize: ImageSize = "m";
+      if (sizeToken) {
+        if (sizeToken.value === "xsmall") currentSize = "xs";
+        else if (sizeToken.value === "small") currentSize = "s";
+        else if (sizeToken.value === "large") currentSize = "l";
+        else if (sizeToken.value === "xlarge") currentSize = "xl";
+      }
       let next = tokens.filter((t) => t.key !== "size");
-      if (size === "xs") {
-        next = [...next, { key: "size", value: "xsmall" }];
-      } else if (size === "s") {
-        next = [...next, { key: "size", value: "small" }];
-      } else if (size === "l") {
-        next = [...next, { key: "size", value: "large" }];
-      } else if (size === "xl") {
-        next = [...next, { key: "size", value: "xlarge" }];
+      if (size !== currentSize) {
+        if (size === "xs") {
+          next = [...next, { key: "size", value: "xsmall" }];
+        } else if (size === "s") {
+          next = [...next, { key: "size", value: "small" }];
+        } else if (size === "l") {
+          next = [...next, { key: "size", value: "large" }];
+        } else if (size === "xl") {
+          next = [...next, { key: "size", value: "xlarge" }];
+        }
+      }
+      return next;
+    });
+    afterNextPaint(() => {
+      const s = ta.selectionStart ?? caretRef.current;
+      const ed = ta.selectionEnd ?? s;
+      selStartRef.current = s;
+      selEndRef.current = ed;
+      caretRef.current = ed;
+      scheduleSyncRef.current();
+      if (overlayActive) {
+        scheduleEditorHighlightRef.current();
+        schedulePreviewHighlightRef.current();
+      }
+      if (overlayActive) resizeOverlayTextareaRef.current();
+      updateIsImageLine();
+    });
+  };
+
+  const actImageFeatured = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const ta = activeTextarea();
+    if (!ta) return;
+    applyImageOptionFromTextarea(ta, setBody, (tokens) => {
+      const hasFeatured = tokens.some((t) => t.key === "featured");
+      let next = tokens.filter((t) => t.key !== "featured");
+      if (!hasFeatured) {
+        next = [...next, { key: "featured", value: null }];
       }
       return next;
     });
@@ -1404,7 +1454,13 @@ export default function PostForm({
       schedulePreviewHighlight();
       updateIsImageLine();
     },
-    [activeTextarea, scheduleSync, scheduleEditorHighlight, schedulePreviewHighlight, updateIsImageLine],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleEditorHighlight,
+      schedulePreviewHighlight,
+      updateIsImageLine,
+    ],
   );
 
   const ensureFormBottomInView = useCallback(
@@ -2006,6 +2062,15 @@ export default function PostForm({
                   >
                     <span className="text-[10px] leading-none">XL</span>
                   </button>
+                  <button
+                    type="button"
+                    onMouseDown={actImageFeatured}
+                    title="Featured"
+                    className={`inline-flex ${toolbarBtn}`}
+                  >
+                    <SparkleIcon className="w-4 h-4 opacity-80 scale-90" aria-hidden />
+                    <span className="sr-only">Featured</span>
+                  </button>
                 </>
               ) : (
                 <>
@@ -2457,6 +2522,15 @@ export default function PostForm({
                             className={`inline-flex ${toolbarBtn}`}
                           >
                             <span className="text-[10px] leading-none">XL</span>
+                          </button>
+                          <button
+                            type="button"
+                            onMouseDown={actImageFeatured}
+                            title="Featured"
+                            className={`inline-flex ${toolbarBtn}`}
+                          >
+                            <SparkleIcon className="w-4 h-4 opacity-80 scale-90" aria-hidden />
+                            <span className="sr-only">Featured</span>
                           </button>
                         </>
                       ) : (

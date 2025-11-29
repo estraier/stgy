@@ -19,6 +19,7 @@ import {
   LayoutGrid,
   LayoutList,
   AlignStartVertical,
+  Sparkle,
 } from "lucide-react";
 import {
   parseMarkdown,
@@ -1248,13 +1249,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
         schedulePreviewHighlight();
       });
     },
-    [
-      activeTextarea,
-      scheduleSync,
-      scheduleHighlight,
-      schedulePreviewHighlight,
-      updateIsImageLine,
-    ],
+    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
   );
 
   const onToolbarFence = useCallback(
@@ -1272,13 +1267,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
         schedulePreviewHighlight();
       });
     },
-    [
-      activeTextarea,
-      scheduleSync,
-      scheduleHighlight,
-      schedulePreviewHighlight,
-      updateIsImageLine,
-    ],
+    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
   );
 
   const onToolbarInline = useCallback(
@@ -1296,13 +1285,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
         schedulePreviewHighlight();
       });
     },
-    [
-      activeTextarea,
-      scheduleSync,
-      scheduleHighlight,
-      schedulePreviewHighlight,
-      updateIsImageLine,
-    ],
+    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
   );
 
   const onToolbarRuby = useCallback(
@@ -1320,13 +1303,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
         schedulePreviewHighlight();
       });
     },
-    [
-      activeTextarea,
-      scheduleSync,
-      scheduleHighlight,
-      schedulePreviewHighlight,
-      updateIsImageLine,
-    ],
+    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
   );
 
   const onToolbarLink = useCallback(
@@ -1344,13 +1321,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
         schedulePreviewHighlight();
       });
     },
-    [
-      activeTextarea,
-      scheduleSync,
-      scheduleHighlight,
-      schedulePreviewHighlight,
-      updateIsImageLine,
-    ],
+    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
   );
 
   const onToolbarImageLayout = useCallback(
@@ -1359,15 +1330,23 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       const ta = activeTextarea();
       if (!ta) return;
       applyImageOptionFromTextarea(ta, setBody, (tokens) => {
-        let next = tokens.filter((t) => t.key !== "grid" && t.key !== "float");
+        const hasGrid = tokens.some((t) => t.key === "grid");
+        const hasFloatLeft = tokens.some((t) => t.key === "float" && (t.value ?? "") === "left");
+        const hasFloatRight = tokens.some((t) => t.key === "float" && (t.value ?? "") === "right");
+        const base = tokens.filter((t) => t.key !== "grid" && t.key !== "float");
         if (layout === "grid") {
-          next = [...next, { key: "grid", value: null }];
-        } else if (layout === "float-left") {
-          next = [...next, { key: "float", value: "left" }];
-        } else if (layout === "float-right") {
-          next = [...next, { key: "float", value: "right" }];
+          if (hasGrid) return base;
+          return [...base, { key: "grid", value: null }];
         }
-        return next;
+        if (layout === "float-left") {
+          if (hasFloatLeft) return base;
+          return [...base, { key: "float", value: "left" }];
+        }
+        if (layout === "float-right") {
+          if (hasFloatRight) return base;
+          return [...base, { key: "float", value: "right" }];
+        }
+        return base;
       });
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
@@ -1378,13 +1357,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
         schedulePreviewHighlight();
       });
     },
-    [
-      activeTextarea,
-      scheduleSync,
-      scheduleHighlight,
-      schedulePreviewHighlight,
-      updateIsImageLine,
-    ],
+    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
   );
 
   const onToolbarImageSize = useCallback(
@@ -1393,17 +1366,34 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       const ta = activeTextarea();
       if (!ta) return;
       applyImageOptionFromTextarea(ta, setBody, (tokens) => {
-        let next = tokens.filter((t) => t.key !== "size");
+        const currentSize = tokens.find((t) => t.key === "size");
+        const currentValue = currentSize?.value ?? null;
+        const withoutSize = tokens.filter((t) => t.key !== "size");
         if (size === "xs") {
-          next = [...next, { key: "size", value: "xsmall" }];
-        } else if (size === "s") {
-          next = [...next, { key: "size", value: "small" }];
-        } else if (size === "l") {
-          next = [...next, { key: "size", value: "large" }];
-        } else if (size === "xl") {
-          next = [...next, { key: "size", value: "xlarge" }];
+          const target = "xsmall";
+          if (currentValue === target) return withoutSize;
+          return [...withoutSize, { key: "size", value: target }];
         }
-        return next;
+        if (size === "s") {
+          const target = "small";
+          if (currentValue === target) return withoutSize;
+          return [...withoutSize, { key: "size", value: target }];
+        }
+        if (size === "m") {
+          if (!currentSize) return tokens;
+          return withoutSize;
+        }
+        if (size === "l") {
+          const target = "large";
+          if (currentValue === target) return withoutSize;
+          return [...withoutSize, { key: "size", value: target }];
+        }
+        if (size === "xl") {
+          const target = "xlarge";
+          if (currentValue === target) return withoutSize;
+          return [...withoutSize, { key: "size", value: target }];
+        }
+        return tokens;
       });
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
@@ -1414,13 +1404,31 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
         schedulePreviewHighlight();
       });
     },
-    [
-      activeTextarea,
-      scheduleSync,
-      scheduleHighlight,
-      schedulePreviewHighlight,
-      updateIsImageLine,
-    ],
+    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
+  );
+
+  const onToolbarImageFeatured = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const ta = activeTextarea();
+      if (!ta) return;
+      applyImageOptionFromTextarea(ta, setBody, (tokens) => {
+        const hasFeatured = tokens.some((t) => t.key === "featured");
+        if (hasFeatured) {
+          return tokens.filter((t) => t.key !== "featured");
+        }
+        return [...tokens, { key: "featured", value: null }];
+      });
+      requestAnimationFrame(() => {
+        const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+        caretRef.current = pos;
+        updateIsImageLine();
+        scheduleSync();
+        scheduleHighlight();
+        schedulePreviewHighlight();
+      });
+    },
+    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
   );
 
   return (
@@ -1473,7 +1481,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
               onChange={(e) => setUseFeatured(e.target.checked)}
               disabled={mode !== "html"}
             />
-          <span className="text-sm">useFeatured</span>
+            <span className="text-sm">useFeatured</span>
           </label>
           <div className="ml-auto text-xs text-gray-500">
             {contentLengthLimit != null
@@ -1519,7 +1527,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
                       className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
                       title="Float right"
                     >
-                      <LayoutList className="w-4 h-4" style={{ transform: "scaleX(-1)" }}/>
+                      <LayoutList className="w-4 h-4" style={{ transform: "scaleX(-1)" }} />
                     </button>
                     <div className="w-4" />
                     <button
@@ -1561,6 +1569,14 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
                       title="Size XL"
                     >
                       XL
+                    </button>
+                    <button
+                      type="button"
+                      onMouseDown={onToolbarImageFeatured}
+                      className="inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700"
+                      title="Featured"
+                    >
+                      <Sparkle className="w-4 h-4 scale-90" />
                     </button>
                   </>
                 ) : (
