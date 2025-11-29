@@ -516,8 +516,7 @@ export class PostsService {
     } = input;
     const orderDir = order.toLowerCase() === "asc" ? "ASC" : "DESC";
     const activeFolloweeLimit = limit;
-    const perFolloweeLimit =
-      limitPerUser === undefined ? limit : Math.min(limit, limitPerUser);
+    const perFolloweeLimit = limitPerUser === undefined ? limit : Math.min(limit, limitPerUser);
     const repliesFilter = includeReplies === false ? "AND p2.reply_to IS NULL" : "";
     const focusParamIndex = 6;
     const sql = `

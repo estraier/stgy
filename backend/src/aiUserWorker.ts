@@ -48,11 +48,7 @@ function loadConfig(configPath: string): AiUserConfig {
   if (typeof obj.userPageSize === "number" && Number.isFinite(obj.userPageSize)) {
     config.userPageSize = obj.userPageSize;
   }
-  if (
-    typeof obj.userLimit === "number"
-      ? Number.isFinite(obj.userLimit)
-      : obj.userLimit === null
-  ) {
+  if (typeof obj.userLimit === "number" ? Number.isFinite(obj.userLimit) : obj.userLimit === null) {
     config.userLimit = obj.userLimit as number | null;
   }
 
@@ -63,15 +59,11 @@ const configPath = getConfigPath();
 const fileConfig = loadConfig(configPath);
 
 const BACKEND_API_BASE_URL =
-  process.env.STGY_BACKEND_API_BASE_URL ||
-  fileConfig.backendApiBaseUrl ||
-  "http://localhost:3001";
+  process.env.STGY_BACKEND_API_BASE_URL || fileConfig.backendApiBaseUrl || "http://localhost:3001";
 
-const ADMIN_EMAIL =
-  process.env.STGY_ADMIN_EMAIL || fileConfig.adminEmail || "admin@stgy.jp";
+const ADMIN_EMAIL = process.env.STGY_ADMIN_EMAIL || fileConfig.adminEmail || "admin@stgy.jp";
 
-const ADMIN_PASSWORD =
-  process.env.STGY_ADMIN_PASSWORD || fileConfig.adminPassword || "stgystgy";
+const ADMIN_PASSWORD = process.env.STGY_ADMIN_PASSWORD || fileConfig.adminPassword || "stgystgy";
 
 const PAGE_LIMIT =
   typeof fileConfig.userPageSize === "number" && fileConfig.userPageSize > 0
@@ -116,15 +108,12 @@ async function fetchNextUsers(
   offset: number,
   limit: number,
 ): Promise<UserLite[]> {
-  const resp = await fetch(
-    `${BACKEND_API_BASE_URL}/ai-users?offset=${offset}&limit=${limit}`,
-    {
-      method: "GET",
-      headers: {
-        Cookie: sessionCookie,
-      },
+  const resp = await fetch(`${BACKEND_API_BASE_URL}/ai-users?offset=${offset}&limit=${limit}`, {
+    method: "GET",
+    headers: {
+      Cookie: sessionCookie,
     },
-  );
+  });
 
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
@@ -178,10 +167,7 @@ async function fetchUserProfile(sessionCookie: string, userId: string): Promise<
   return profile;
 }
 
-async function fetchFolloweePosts(
-  sessionCookie: string,
-  userId: string,
-): Promise<Post[]> {
+async function fetchFolloweePosts(sessionCookie: string, userId: string): Promise<Post[]> {
   const params = new URLSearchParams();
   params.set("userId", userId);
   params.set("offset", "0");
@@ -191,15 +177,12 @@ async function fetchFolloweePosts(
   params.set("focusUserId", userId);
   params.set("limitPerUser", "3");
 
-  const resp = await fetch(
-    `${BACKEND_API_BASE_URL}/posts/by-followees?${params.toString()}`,
-    {
-      method: "GET",
-      headers: {
-        Cookie: sessionCookie,
-      },
+  const resp = await fetch(`${BACKEND_API_BASE_URL}/posts/by-followees?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      Cookie: sessionCookie,
     },
-  );
+  });
 
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");

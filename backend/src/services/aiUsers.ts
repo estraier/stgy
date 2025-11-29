@@ -116,11 +116,7 @@ export class AiUsersService {
       label: string;
       service: string;
       name: string;
-    }>(
-      this.pgPool,
-      `SELECT label, service, name FROM ai_models WHERE label = $1`,
-      [req.model],
-    );
+    }>(this.pgPool, `SELECT label, service, name FROM ai_models WHERE label = $1`, [req.model]);
     if (res.rowCount === 0) {
       throw new Error("no such model");
     }

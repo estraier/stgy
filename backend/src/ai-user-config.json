@@ -6,10 +6,8 @@
   "userLimit": 1,
   "defaultLanguage": "ja",
   "readPostsPerUser": 2,
-  "updatePostImpressionPromptFile": "update-post",
-
+  "updatePostImpressionPromptFile": "update-post"
 
   // ../ai-user/config.json
   //
-
 }
