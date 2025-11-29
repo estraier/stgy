@@ -2674,7 +2674,7 @@ export default function PostForm({
                       )}
                     </div>
 
-                    <div className="flex items-center gap-1">
+                    <div className="flex items-center gap-1 -mb-0.5">
                       <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)} />
                       <ExistingImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
                       <UploadImageEmbedButton

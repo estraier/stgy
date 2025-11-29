@@ -3,7 +3,7 @@
 import React, { useCallback, useState } from "react";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import ExistingImageEmbedDialog from "@/components/ExistingImageEmbedDialog";
-import { LayoutGrid as GridIcon } from "lucide-react";
+import { Images as ImagesIcon } from "lucide-react";
 
 type Props = {
   onInsert: (markdown: string) => void;
@@ -54,7 +54,7 @@ export default function ExistingImageEmbedButton({
         title={title}
       >
         <span className="inline-flex items-center gap-1 leading-none">
-          <GridIcon className="w-4 h-4 opacity-80" aria-hidden />
+          <ImagesIcon className="w-4 h-4 opacity-80" aria-hidden />
         </span>
       </button>
 
