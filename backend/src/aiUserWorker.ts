@@ -10,6 +10,7 @@ type AiUserConfig = {
   adminPassword?: string;
   userPageSize?: number;
   userLimit?: number | null;
+  postImpressionPromptFile?: string;
 };
 
 const logger = createLogger({ file: "mailWorker" });
@@ -51,12 +52,47 @@ function loadConfig(configPath: string): AiUserConfig {
   if (typeof obj.userLimit === "number" ? Number.isFinite(obj.userLimit) : obj.userLimit === null) {
     config.userLimit = obj.userLimit as number | null;
   }
+  if (typeof obj.postImpressionPromptFile === "string") {
+    config.postImpressionPromptFile = obj.postImpressionPromptFile;
+  }
 
   return config;
 }
 
+function readPromptFile(prefix: string, locale: string): string {
+  const normalizedLocale = locale.replace(/_/g, "-");
+  const parts = normalizedLocale.split("-");
+  const candidates: string[] = [];
+
+  if (normalizedLocale) {
+    candidates.push(`${prefix}-${normalizedLocale}.txt`);
+  }
+  if (parts[0]) {
+    candidates.push(`${prefix}-${parts[0]}.txt`);
+  }
+  candidates.push(`${prefix}.txt`);
+
+  for (const filePath of candidates) {
+    if (fs.existsSync(filePath)) {
+      return fs.readFileSync(filePath, "utf8");
+    }
+  }
+
+  throw new Error(`prompt file not found for prefix=${prefix} locale=${locale}`);
+}
+
 const configPath = getConfigPath();
 const fileConfig = loadConfig(configPath);
+const CONFIG_DIR = path.dirname(configPath);
+
+const POST_IMPRESSION_PROMPT_PREFIX = (() => {
+  if (!fileConfig.postImpressionPromptFile) {
+    throw new Error("postImpressionPromptFile is not configured in ai-user-config.json");
+  }
+  return path.isAbsolute(fileConfig.postImpressionPromptFile)
+    ? fileConfig.postImpressionPromptFile
+    : path.resolve(CONFIG_DIR, fileConfig.postImpressionPromptFile);
+})();
 
 const BACKEND_API_BASE_URL =
   process.env.STGY_BACKEND_API_BASE_URL || fileConfig.backendApiBaseUrl || "http://localhost:3001";
@@ -211,6 +247,11 @@ async function processUser(user: UserLite): Promise<void> {
       followeePosts,
     )}`,
   );
+  if (!profile.locale) {
+    throw new Error(`user locale is not set: id=${user.id}`);
+  }
+  const promptText = readPromptFile(POST_IMPRESSION_PROMPT_PREFIX, profile.locale);
+  logger.info(`Post impression prompt: ${promptText}`);
 }
 
 async function main() {

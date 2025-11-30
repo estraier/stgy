@@ -4,10 +4,6 @@
   "adminPassword": "stgystgy",
   "userPageSize": 100,
   "userLimit": 1,
-  "defaultLanguage": "ja",
   "readPostsPerUser": 2,
-  "updatePostImpressionPromptFile": "update-post"
-
-  // ../ai-user/config.json
-  //
+  "postImpressionPromptFile": "../prompts/post-impression"
 }

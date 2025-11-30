@@ -31,6 +31,7 @@ export class Config {
   static readonly ID_ISSUE_WORKER_ID = envNum("STGY_ID_ISSUE_WORKER_ID", 0);
   static readonly OPENAI_API_KEY = envStr("STGY_OPENAI_API_KEY", "");
   static readonly TEST_SIGNUP_CODE = envStr("STGY_TEST_SIGNUP_CODE", "");
+  static readonly LOG_FORMAT = envStr("STGY_LOG_FORMAT", "");
   static readonly MEDIA_BUCKET_IMAGES = Config.STORAGE_S3_BUCKET_PREFIX + "-images";
   static readonly MEDIA_BUCKET_PROFILES = Config.STORAGE_S3_BUCKET_PREFIX + "-profiles";
   static readonly MEDIA_IMAGE_BYTE_LIMIT = envNum("STGY_MEDIA_IMAGE_BYTE_LIMIT", 10 * 1024 * 1024);
