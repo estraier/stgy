@@ -1976,7 +1976,7 @@ export default function PostForm({
         onClick={(e) => e.stopPropagation()}
         aria-hidden={overlayActive ? true : undefined}
       >
-        <div className="hidden group-focus-within:flex absolute left-0 right-0 top-0 -translate-y-full">
+        <div className="hidden group-focus-within:flex absolute left-0 right-0 top-0 -translate-y-full z-20">
           <div className="w-full px-1.5 text-gray-600 backdrop-blur-sm flex items-center justify-between">
             <div className="flex items-center gap-1">
               {isImageLine ? (
