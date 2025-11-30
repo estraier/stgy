@@ -34,3 +34,51 @@ export type ChatResponse = {
     content: string;
   };
 };
+
+export type AiUserInterest = {
+  userId: string;
+  description: string;
+};
+
+export type SetAiUserInterestInput = {
+  userId: string;
+  description: string;
+};
+
+export type AiPeerImpression = {
+  userId: string;
+  peerId: string;
+  updatedAt: string;
+  description: string;
+};
+
+export type AiPeerImpressionFilter = {
+  peerId?: string;
+};
+
+export type ListAiPeerImpressionsInput = AiPeerImpressionFilter & AiUserPagination;
+
+export type SetAiPeerImpressionInput = {
+  userId: string;
+  peerId: string;
+  description: string;
+};
+
+export type AiPostImpression = {
+  userId: string;
+  postId: string;
+  updatedAt: string;
+  description: string;
+};
+
+export type AiPostImpressionFilter = {
+  postId?: string;
+};
+
+export type ListAiPostImpressionsInput = AiPostImpressionFilter & AiUserPagination;
+
+export type SetAiPostImpressionInput = {
+  userId: string;
+  postId: string;
+  description: string;
+};

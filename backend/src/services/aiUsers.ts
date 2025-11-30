@@ -10,6 +10,14 @@ import type {
   AiUserPagination,
   ChatRequest,
   ChatResponse,
+  AiUserInterest,
+  SetAiUserInterestInput,
+  AiPeerImpression,
+  ListAiPeerImpressionsInput,
+  SetAiPeerImpressionInput,
+  AiPostImpression,
+  ListAiPostImpressionsInput,
+  SetAiPostImpressionInput,
 } from "../models/aiUser";
 
 type RowList = {
@@ -29,6 +37,25 @@ type RowDetail = {
   email: string;
   introduction: string;
   ai_personality: string | null;
+};
+
+type RowAiUserInterest = {
+  user_id: string;
+  description: string;
+};
+
+type RowAiPeerImpression = {
+  user_id: string;
+  peer_id: string;
+  updated_at: Date;
+  description: string;
+};
+
+type RowAiPostImpression = {
+  user_id: string;
+  post_id: string;
+  updated_at: Date;
+  description: string;
 };
 
 export class AiUsersService {
@@ -140,5 +167,217 @@ export class AiUsersService {
       };
     }
     throw new Error("unsupported service");
+  }
+
+  async getAiUserInterest(userId: string): Promise<AiUserInterest | null> {
+    const userIdDec = hexToDec(userId);
+    const sql = `
+      SELECT user_id, description
+      FROM ai_interests
+      WHERE user_id = $1
+      LIMIT 1
+    `;
+    const res = await pgQuery<RowAiUserInterest>(this.pgPool, sql, [userIdDec]);
+    if (res.rowCount === 0) return null;
+    const row = res.rows[0];
+    return {
+      userId: decToHex(String(row.user_id)),
+      description: row.description,
+    };
+  }
+
+  async setAiUserInterest(input: SetAiUserInterestInput): Promise<AiUserInterest> {
+    const userIdDec = hexToDec(input.userId);
+    const sql = `
+      INSERT INTO ai_interests (user_id, description)
+      VALUES ($1, $2)
+      ON CONFLICT (user_id)
+      DO UPDATE SET description = EXCLUDED.description
+      RETURNING user_id, description
+    `;
+    const res = await pgQuery<RowAiUserInterest>(this.pgPool, sql, [userIdDec, input.description]);
+    const row = res.rows[0];
+    return {
+      userId: decToHex(String(row.user_id)),
+      description: row.description,
+    };
+  }
+
+  async listAiPeerImpressions(
+    userId: string,
+    input: ListAiPeerImpressionsInput = {},
+  ): Promise<AiPeerImpression[]> {
+    const userIdDec = hexToDec(userId);
+    const offset = Math.max(0, input.offset ?? 0);
+    const limit = Math.min(Math.max(1, input.limit ?? 50), 200);
+    const order = (input.order ?? "desc") === "asc" ? "ASC" : "DESC";
+    const peerId = input.peerId;
+    const sql = `
+      SELECT user_id, peer_id, updated_at, description
+      FROM ai_peer_impressions
+      WHERE user_id = $1
+      ${peerId ? "AND peer_id = $4" : ""}
+      ORDER BY updated_at ${order}, peer_id ${order}
+      LIMIT $2 OFFSET $3
+    `;
+    const params: unknown[] = [userIdDec, limit, offset];
+    if (peerId) {
+      params.push(hexToDec(peerId));
+    }
+    const res = await pgQuery<RowAiPeerImpression>(this.pgPool, sql, params);
+    return res.rows.map<AiPeerImpression>((row) => {
+      const updatedAtISO =
+        row.updated_at instanceof Date
+          ? row.updated_at.toISOString()
+          : new Date(row.updated_at as unknown as string).toISOString();
+      return {
+        userId: decToHex(String(row.user_id)),
+        peerId: decToHex(String(row.peer_id)),
+        updatedAt: updatedAtISO,
+        description: row.description,
+      };
+    });
+  }
+
+  async getAiPeerImpression(userId: string, peerId: string): Promise<AiPeerImpression | null> {
+    const userIdDec = hexToDec(userId);
+    const peerIdDec = hexToDec(peerId);
+    const sql = `
+      SELECT user_id, peer_id, updated_at, description
+      FROM ai_peer_impressions
+      WHERE user_id = $1
+        AND peer_id = $2
+      LIMIT 1
+    `;
+    const res = await pgQuery<RowAiPeerImpression>(this.pgPool, sql, [userIdDec, peerIdDec]);
+    if (res.rowCount === 0) return null;
+    const row = res.rows[0];
+    const updatedAtISO =
+      row.updated_at instanceof Date
+        ? row.updated_at.toISOString()
+        : new Date(row.updated_at as unknown as string).toISOString();
+    return {
+      userId: decToHex(String(row.user_id)),
+      peerId: decToHex(String(row.peer_id)),
+      updatedAt: updatedAtISO,
+      description: row.description,
+    };
+  }
+
+  async setAiPeerImpression(input: SetAiPeerImpressionInput): Promise<AiPeerImpression> {
+    const userIdDec = hexToDec(input.userId);
+    const peerIdDec = hexToDec(input.peerId);
+    const sql = `
+      INSERT INTO ai_peer_impressions (user_id, peer_id, updated_at, description)
+      VALUES ($1, $2, now(), $3)
+      ON CONFLICT (user_id, peer_id)
+      DO UPDATE SET updated_at = now(), description = EXCLUDED.description
+      RETURNING user_id, peer_id, updated_at, description
+    `;
+    const res = await pgQuery<RowAiPeerImpression>(this.pgPool, sql, [
+      userIdDec,
+      peerIdDec,
+      input.description,
+    ]);
+    const row = res.rows[0];
+    const updatedAtISO =
+      row.updated_at instanceof Date
+        ? row.updated_at.toISOString()
+        : new Date(row.updated_at as unknown as string).toISOString();
+    return {
+      userId: decToHex(String(row.user_id)),
+      peerId: decToHex(String(row.peer_id)),
+      updatedAt: updatedAtISO,
+      description: row.description,
+    };
+  }
+
+  async listAiPostImpressions(
+    userId: string,
+    input: ListAiPostImpressionsInput = {},
+  ): Promise<AiPostImpression[]> {
+    const userIdDec = hexToDec(userId);
+    const offset = Math.max(0, input.offset ?? 0);
+    const limit = Math.min(Math.max(1, input.limit ?? 50), 200);
+    const order = (input.order ?? "desc") === "asc" ? "ASC" : "DESC";
+    const postId = input.postId;
+    const sql = `
+      SELECT user_id, post_id, updated_at, description
+      FROM ai_post_impressions
+      WHERE user_id = $1
+      ${postId ? "AND post_id = $4" : ""}
+      ORDER BY updated_at ${order}, post_id ${order}
+      LIMIT $2 OFFSET $3
+    `;
+    const params: unknown[] = [userIdDec, limit, offset];
+    if (postId) {
+      params.push(hexToDec(postId));
+    }
+    const res = await pgQuery<RowAiPostImpression>(this.pgPool, sql, params);
+    return res.rows.map<AiPostImpression>((row) => {
+      const updatedAtISO =
+        row.updated_at instanceof Date
+          ? row.updated_at.toISOString()
+          : new Date(row.updated_at as unknown as string).toISOString();
+      return {
+        userId: decToHex(String(row.user_id)),
+        postId: decToHex(String(row.post_id)),
+        updatedAt: updatedAtISO,
+        description: row.description,
+      };
+    });
+  }
+
+  async getAiPostImpression(userId: string, postId: string): Promise<AiPostImpression | null> {
+    const userIdDec = hexToDec(userId);
+    const postIdDec = hexToDec(postId);
+    const sql = `
+      SELECT user_id, post_id, updated_at, description
+      FROM ai_post_impressions
+      WHERE user_id = $1
+        AND post_id = $2
+      LIMIT 1
+    `;
+    const res = await pgQuery<RowAiPostImpression>(this.pgPool, sql, [userIdDec, postIdDec]);
+    if (res.rowCount === 0) return null;
+    const row = res.rows[0];
+    const updatedAtISO =
+      row.updated_at instanceof Date
+        ? row.updated_at.toISOString()
+        : new Date(row.updated_at as unknown as string).toISOString();
+    return {
+      userId: decToHex(String(row.user_id)),
+      postId: decToHex(String(row.post_id)),
+      updatedAt: updatedAtISO,
+      description: row.description,
+    };
+  }
+
+  async setAiPostImpression(input: SetAiPostImpressionInput): Promise<AiPostImpression> {
+    const userIdDec = hexToDec(input.userId);
+    const postIdDec = hexToDec(input.postId);
+    const sql = `
+      INSERT INTO ai_post_impressions (user_id, post_id, updated_at, description)
+      VALUES ($1, $2, now(), $3)
+      ON CONFLICT (user_id, post_id)
+      DO UPDATE SET updated_at = now(), description = EXCLUDED.description
+      RETURNING user_id, post_id, updated_at, description
+    `;
+    const res = await pgQuery<RowAiPostImpression>(this.pgPool, sql, [
+      userIdDec,
+      postIdDec,
+      input.description,
+    ]);
+    const row = res.rows[0];
+    const updatedAtISO =
+      row.updated_at instanceof Date
+        ? row.updated_at.toISOString()
+        : new Date(row.updated_at as unknown as string).toISOString();
+    return {
+      userId: decToHex(String(row.user_id)),
+      postId: decToHex(String(row.post_id)),
+      updatedAt: updatedAtISO,
+      description: row.description,
+    };
   }
 }

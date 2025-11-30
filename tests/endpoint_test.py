@@ -115,6 +115,8 @@ def test_ai_users():
   assert got["aiPersonality"] == create_body["aiPersonality"]
   assert isinstance(got["createdAt"], str) and len(got["createdAt"]) > 0
   assert "updatedAt" in got
+  sess = get_session(session_id)
+  admin_id = sess["userId"]
   chat_body = {
     "model": "basic",
     "messages": [
@@ -131,6 +133,157 @@ def test_ai_users():
     message = chat_res["message"]
     assert "content" in message
     print(f"[ai_users] chat response: {message['content']}")
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/interests",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 404, res.text
+  interest_body = {"description": "I am currently interested in integration tests"}
+  res = requests.post(
+    f"{BASE_URL}/ai-users/{ai_user_id}/interests",
+    json=interest_body,
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  saved_interest = res.json()
+  assert saved_interest["userId"] == ai_user_id
+  assert saved_interest["description"] == interest_body["description"]
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/interests",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  got_interest = res.json()
+  assert got_interest == saved_interest
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  peer_impressions = res.json()
+  assert isinstance(peer_impressions, list)
+  assert len(peer_impressions) == 0
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 404, res.text
+  peer_body = {
+    "peerId": admin_id,
+    "description": "admin user looks reliable",
+  }
+  res = requests.post(
+    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions",
+    json=peer_body,
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  saved_peer = res.json()
+  assert saved_peer["userId"] == ai_user_id
+  assert saved_peer["peerId"] == admin_id
+  assert saved_peer["description"] == peer_body["description"]
+  assert isinstance(saved_peer.get("updatedAt"), str) and len(saved_peer["updatedAt"]) > 0
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  peer_impressions = res.json()
+  assert any(p["peerId"] == admin_id for p in peer_impressions)
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc&peerId={admin_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  filtered_peer_impressions = res.json()
+  assert len(filtered_peer_impressions) == 1
+  assert filtered_peer_impressions[0]["peerId"] == admin_id
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  got_peer = res.json()
+  assert got_peer["peerId"] == admin_id
+  assert got_peer["description"] == peer_body["description"]
+  post_body = {
+    "content": "hello from ai-users impression test",
+    "replyTo": None,
+    "tags": ["ai-users", "impression"],
+  }
+  res = requests.post(f"{BASE_URL}/posts", json=post_body, headers=headers, cookies=cookies)
+  assert res.status_code == 201, res.text
+  post = res.json()
+  post_id = post["id"]
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  post_impressions = res.json()
+  assert isinstance(post_impressions, list)
+  assert len(post_impressions) == 0
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 404, res.text
+  post_imp_body = {
+    "postId": post_id,
+    "description": "this post looks great",
+  }
+  res = requests.post(
+    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions",
+    json=post_imp_body,
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  saved_post_imp = res.json()
+  assert saved_post_imp["userId"] == ai_user_id
+  assert saved_post_imp["postId"] == post_id
+  assert saved_post_imp["description"] == post_imp_body["description"]
+  assert isinstance(saved_post_imp.get("updatedAt"), str) and len(saved_post_imp["updatedAt"]) > 0
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  post_impressions = res.json()
+  assert any(p["postId"] == post_id for p in post_impressions)
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc&postId={post_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  filtered_post_impressions = res.json()
+  assert len(filtered_post_impressions) == 1
+  assert filtered_post_impressions[0]["postId"] == post_id
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  got_post_imp = res.json()
+  assert got_post_imp["postId"] == post_id
+  assert got_post_imp["description"] == post_imp_body["description"]
+  res = requests.delete(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  print("[ai_users] cleanup post deleted")
   res = requests.delete(f"{BASE_URL}/users/{ai_user_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[ai_users] cleanup user deleted")

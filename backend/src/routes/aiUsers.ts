@@ -102,5 +102,203 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     }
   });
 
+  router.get("/:id/interests", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const watch = timerThrottleService.startWatch(loginUser);
+    const interest = await aiUsersService.getAiUserInterest(req.params.id);
+    watch.done();
+    if (!interest) return res.status(404).json({ error: "not found" });
+    res.json(interest);
+  });
+
+  router.post("/:id/interests", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && loginUser.id !== req.params.id) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const body = req.body;
+    const description =
+      isRecord(body) && typeof body["description"] === "string" ? body["description"] : null;
+    if (!description || description.trim() === "") {
+      return res.status(400).json({ error: "description is required" });
+    }
+    const watch = timerThrottleService.startWatch(loginUser);
+    try {
+      const saved = await aiUsersService.setAiUserInterest({
+        userId: req.params.id,
+        description,
+      });
+      watch.done();
+      res.json(saved);
+    } catch {
+      watch.done();
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
+  router.get("/:id/peer-impressions", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
+    const peerId =
+      typeof req.query.peerId === "string" && req.query.peerId.trim() !== ""
+        ? req.query.peerId
+        : undefined;
+
+    const watch = timerThrottleService.startWatch(loginUser);
+    const items = await aiUsersService.listAiPeerImpressions(req.params.id, {
+      offset,
+      limit,
+      order,
+      peerId,
+    });
+    watch.done();
+    res.json(items);
+  });
+
+  router.get("/:id/peer-impressions/:peerId", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const watch = timerThrottleService.startWatch(loginUser);
+    const impression = await aiUsersService.getAiPeerImpression(req.params.id, req.params.peerId);
+    watch.done();
+    if (!impression) return res.status(404).json({ error: "not found" });
+    res.json(impression);
+  });
+
+  router.post("/:id/peer-impressions", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && loginUser.id !== req.params.id) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+
+    const body = req.body;
+    const peerId = isRecord(body) && typeof body["peerId"] === "string" ? body["peerId"] : null;
+    const description =
+      isRecord(body) && typeof body["description"] === "string" ? body["description"] : null;
+
+    if (!peerId || peerId.trim() === "") {
+      return res.status(400).json({ error: "peerId is required" });
+    }
+    if (!description || description.trim() === "") {
+      return res.status(400).json({ error: "description is required" });
+    }
+
+    const watch = timerThrottleService.startWatch(loginUser);
+    try {
+      const saved = await aiUsersService.setAiPeerImpression({
+        userId: req.params.id,
+        peerId,
+        description,
+      });
+      watch.done();
+      res.json(saved);
+    } catch {
+      watch.done();
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
+  router.get("/:id/post-impressions", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
+    const postId =
+      typeof req.query.postId === "string" && req.query.postId.trim() !== ""
+        ? req.query.postId
+        : undefined;
+
+    const watch = timerThrottleService.startWatch(loginUser);
+    const items = await aiUsersService.listAiPostImpressions(req.params.id, {
+      offset,
+      limit,
+      order,
+      postId,
+    });
+    watch.done();
+    res.json(items);
+  });
+
+  router.get("/:id/post-impressions/:postId", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const watch = timerThrottleService.startWatch(loginUser);
+    const impression = await aiUsersService.getAiPostImpression(req.params.id, req.params.postId);
+    watch.done();
+    if (!impression) return res.status(404).json({ error: "not found" });
+    res.json(impression);
+  });
+
+  router.post("/:id/post-impressions", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && loginUser.id !== req.params.id) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+
+    const body = req.body;
+    const postId = isRecord(body) && typeof body["postId"] === "string" ? body["postId"] : null;
+    const description =
+      isRecord(body) && typeof body["description"] === "string" ? body["description"] : null;
+
+    if (!postId || postId.trim() === "") {
+      return res.status(400).json({ error: "postId is required" });
+    }
+    if (!description || description.trim() === "") {
+      return res.status(400).json({ error: "description is required" });
+    }
+
+    const watch = timerThrottleService.startWatch(loginUser);
+    try {
+      const saved = await aiUsersService.setAiPostImpression({
+        userId: req.params.id,
+        postId,
+        description,
+      });
+      watch.done();
+      res.json(saved);
+    } catch {
+      watch.done();
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
   return router;
 }

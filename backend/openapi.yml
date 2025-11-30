@@ -159,6 +159,14 @@ components:
             content: { type: string }
           required: [content]
 
+    PubPostDetail:
+      allOf:
+        - $ref: "#/components/schemas/PostDetail"
+        - type: object
+          properties:
+            olderPostId: { type: string, nullable: true }
+            newerPostId: { type: string, nullable: true }
+
     PostLite:
       type: object
       properties:
@@ -202,6 +210,81 @@ components:
         service: { type: string }
         name: { type: string }
       required: [label, service, name]
+
+    AiUser:
+      type: object
+      properties:
+        id: { type: string }
+        nickname: { type: string }
+        isAdmin: { type: boolean }
+        aiModel: { type: string, nullable: true }
+      required: [id, nickname, isAdmin, aiModel]
+
+    AiUserDetail:
+      allOf:
+        - $ref: "#/components/schemas/AiUser"
+        - type: object
+          properties:
+            email: { type: string }
+            createdAt: { type: string, format: date-time }
+            updatedAt: { type: string, format: date-time, nullable: true }
+            introduction: { type: string }
+            aiPersonality: { type: string }
+          required: [email, createdAt, introduction, aiPersonality]
+
+    AiUserInterest:
+      type: object
+      properties:
+        userId: { type: string }
+        description: { type: string }
+      required: [userId, description]
+
+    AiPeerImpression:
+      type: object
+      properties:
+        userId: { type: string }
+        peerId: { type: string }
+        updatedAt: { type: string, format: date-time }
+        description: { type: string }
+      required: [userId, peerId, updatedAt, description]
+
+    AiPostImpression:
+      type: object
+      properties:
+        userId: { type: string }
+        postId: { type: string }
+        updatedAt: { type: string, format: date-time }
+        description: { type: string }
+      required: [userId, postId, updatedAt, description]
+
+    ChatMessage:
+      type: object
+      properties:
+        role:
+          type: string
+          enum: [system, user, assistant]
+        content: { type: string }
+      required: [role, content]
+
+    ChatRequest:
+      type: object
+      properties:
+        model: { type: string }
+        messages:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChatMessage"
+      required: [messages]
+
+    ChatResponse:
+      type: object
+      properties:
+        message:
+          type: object
+          properties:
+            content: { type: string }
+          required: [content]
+      required: [message]
 
     StorageObjectMetadata:
       type: object
@@ -293,6 +376,8 @@ components:
         introduction: { type: string }
         designTheme: { type: string }
         showServiceHeader: { type: boolean }
+        showSiteName: { type: boolean }
+        showPagenation: { type: boolean }
         showSideProfile: { type: boolean }
         showSideRecent: { type: boolean }
         locale: { type: string }
@@ -304,8 +389,11 @@ components:
           introduction,
           designTheme,
           showServiceHeader,
+          showSiteName,
+          showPagenation,
           showSideProfile,
           showSideRecent,
+          locale,
         ]
 
   responses:
@@ -1519,6 +1607,348 @@ paths:
         "404":
           $ref: "#/components/responses/Error404"
 
+  /ai-users:
+    get:
+      summary: List AI users
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 50 }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+      responses:
+        "200":
+          description: AI users list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AiUser"
+        "401":
+          $ref: "#/components/responses/Error401"
+
+  /ai-users/{id}:
+    get:
+      summary: Get AI user detail
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: AI user detail
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiUserDetail"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /ai-users/chat:
+    post:
+      summary: Chat with AI model
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ChatRequest"
+      responses:
+        "200":
+          description: Chat response
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ChatResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "501":
+          description: AI features are disabled
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+
+  /ai-users/{id}/interests:
+    get:
+      summary: Get current interests of AI user
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Current interests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiUserInterest"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "404":
+          $ref: "#/components/responses/Error404"
+    post:
+      summary: Upsert current interests of AI user
+      description: Inserts or overwrites the current interests for the AI user.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                description: { type: string }
+              required: [description]
+      responses:
+        "200":
+          description: Saved interests
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiUserInterest"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /ai-users/{id}/peer-impressions:
+    get:
+      summary: List peer impressions of an AI user
+      description: Lists impressions this AI user has about other users.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - name: peerId
+          in: query
+          schema: { type: string }
+          description: Optional filter by peer user id.
+      responses:
+        "200":
+          description: Peer impressions list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AiPeerImpression"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+    post:
+      summary: Upsert peer impression
+      description: Inserts or overwrites the impression about a specific peer.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                peerId: { type: string }
+                description: { type: string }
+              required: [peerId, description]
+      responses:
+        "200":
+          description: Saved peer impression
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiPeerImpression"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /ai-users/{id}/peer-impressions/{userId}:
+    get:
+      summary: Get peer impression about a specific user
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Peer impression
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiPeerImpression"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /ai-users/{id}/post-impressions:
+    get:
+      summary: List post impressions of an AI user
+      description: Lists impressions this AI user has about posts.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - name: postId
+          in: query
+          schema: { type: string }
+          description: Optional filter by post id.
+      responses:
+        "200":
+          description: Post impressions list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/AiPostImpression"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+    post:
+      summary: Upsert post impression
+      description: Inserts or overwrites the impression about a specific post.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                postId: { type: string }
+                description: { type: string }
+              required: [postId, description]
+      responses:
+        "200":
+          description: Saved post impression
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiPostImpression"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
+  /ai-users/{id}/post-impressions/{postId}:
+    get:
+      summary: Get post impression about a specific post
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Post impression
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AiPostImpression"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
   /media/{userId}/images/presigned:
     post:
       summary: Get presigned POST for image upload
@@ -1933,7 +2363,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PostDetail"
+                $ref: "#/components/schemas/PubPostDetail"
         "400":
           $ref: "#/components/responses/Error400"
         "404":
@@ -1972,8 +2402,7 @@ paths:
   /users/{userId}/pub-config:
     get:
       summary: Get user's public site config
-      security:
-        - sessionCookie: []
+      description: Publicly accessible; returns defaults if not set.
       parameters:
         - name: userId
           in: path
@@ -1986,8 +2415,6 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/UserPubConfig"
-        "401":
-          $ref: "#/components/responses/Error401"
         "403":
           $ref: "#/components/responses/Error403"
 
@@ -2008,10 +2435,13 @@ paths:
               type: object
               properties:
                 siteName: { type: string }
+                subtitle: { type: string }
                 author: { type: string }
                 introduction: { type: string }
                 designTheme: { type: string }
                 showServiceHeader: { type: boolean }
+                showSiteName: { type: boolean }
+                showPagenation: { type: boolean }
                 showSideProfile: { type: boolean }
                 showSideRecent: { type: boolean }
       responses:
