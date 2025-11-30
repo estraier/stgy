@@ -5,6 +5,7 @@ import type {
   ReplyEventPayload,
   LikeEventPayload,
   FollowEventPayload,
+  MentionEventPayload,
 } from "../models/eventLog";
 import { Pool, PoolClient } from "pg";
 import Redis from "ioredis";
@@ -51,6 +52,21 @@ export class EventLogService {
       replyToPostId: input.replyToPostId,
     };
     const partitionId = this.partitionForId(input.replyToPostId);
+    return this.insert(partitionId, payload);
+  }
+
+  async recordMention(input: {
+    userId: string;
+    postId: string;
+    mentionedUserId: string;
+  }): Promise<bigint> {
+    const payload: MentionEventPayload = {
+      type: "mention",
+      userId: input.userId,
+      postId: input.postId,
+      mentionedUserId: input.mentionedUserId,
+    };
+    const partitionId = this.partitionForId(input.mentionedUserId);
     return this.insert(partitionId, payload);
   }
 

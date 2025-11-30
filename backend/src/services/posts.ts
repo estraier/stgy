@@ -24,7 +24,7 @@ import {
   decToHex,
   hexArrayToDec,
 } from "../utils/format";
-import { makeSnippetJsonFromMarkdown } from "../utils/snippet";
+import { makeSnippetJsonFromMarkdown, getMentionsFromMarkdown } from "../utils/snippet";
 import { Pool } from "pg";
 import Redis from "ioredis";
 import { pgQuery } from "../utils/servers";
@@ -303,6 +303,7 @@ export class PostsService {
       id = await this.idIssueService.issueId();
     }
     const snippet = makeSnippetJsonFromMarkdown(input.content);
+    const mentions = this.eventLogService != null ? getMentionsFromMarkdown(input.content) : [];
     await pgQuery(this.pgPool, "BEGIN");
     try {
       if (input.replyTo != null) {
@@ -349,14 +350,43 @@ export class PostsService {
         );
       }
       await pgQuery(this.pgPool, "COMMIT");
-      if (this.eventLogService && input.replyTo) {
-        try {
-          this.eventLogService.recordReply({
-            userId: input.ownedBy,
-            postId: id,
-            replyToPostId: input.replyTo,
-          });
-        } catch {}
+      if (this.eventLogService) {
+        if (input.replyTo) {
+          try {
+            this.eventLogService.recordReply({
+              userId: input.ownedBy,
+              postId: id,
+              replyToPostId: input.replyTo,
+            });
+          } catch {}
+        }
+        if (mentions.length > 0) {
+          try {
+            const uniqueSorted = Array.from(new Set(mentions)).sort().slice(0, 10);
+            if (uniqueSorted.length > 0) {
+              const ownerIdDec = hexToDec(input.ownedBy);
+              const mentionedDecIds = uniqueSorted.map((m) => hexToDec(m));
+              const followRes = await pgQuery<{ follower_id: string | number | bigint }>(
+                this.pgPool,
+                `SELECT follower_id
+                   FROM user_follows
+                  WHERE follower_id = ANY($1) AND followee_id = $2`,
+                [mentionedDecIds, ownerIdDec],
+              );
+              const allowedFollowerIds = new Set(followRes.rows.map((r) => String(r.follower_id)));
+              for (const mentionedUserId of uniqueSorted) {
+                const decId = hexToDec(mentionedUserId);
+                if (!allowedFollowerIds.has(String(decId))) continue;
+
+                this.eventLogService.recordMention({
+                  userId: input.ownedBy,
+                  postId: id,
+                  mentionedUserId,
+                });
+              }
+            }
+          } catch {}
+        }
       }
     } catch (e) {
       await pgQuery(this.pgPool, "ROLLBACK");

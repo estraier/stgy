@@ -2250,7 +2250,6 @@ export function mdCutOff(
 
     if (el.tag === "hr") {
       if (cutOnHr && state.textConsumed > 0) {
-        // hr 自体は出力せず、この位置で打ち切る
         state.cut = true;
         return null;
       }

@@ -1,0 +1,14 @@
+id: 0002000000000004
+ownedBy: 0001000000000001
+locale: ja-JP
+allowLikes: false
+allowReplies: false
+tags: sample
+content:<<____EOF____
+以下の管理者を任命します。
+
+- [@subadmin](/users/0001000000000002) : サブ管理者
+- [@AI admin](/users/0001000000000003) : AI管理者
+
+開発についての問い合わせは[@mikio](/users/0001000000000021)までお願いします。
+____EOF____

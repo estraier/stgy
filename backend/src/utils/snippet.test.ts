@@ -1,4 +1,8 @@
-import { makeSnippetJsonFromMarkdown, makeTextFromJsonSnippet } from "./snippet";
+import {
+  makeSnippetJsonFromMarkdown,
+  makeTextFromJsonSnippet,
+  getMentionsFromMarkdown,
+} from "./snippet";
 
 describe("makeSnippetJsonFromMarkdown", () => {
   it("simple", () => {
@@ -25,5 +29,15 @@ describe("makeTextFromJsonSnippet", () => {
     const snippet = '[{"T":"p","X":"hello world"}]';
     const expected = "hello world";
     expect(makeTextFromJsonSnippet(snippet)).toStrictEqual(expected);
+  });
+});
+
+describe("getMentionsFromMarkdown", () => {
+  it("simple", () => {
+    const md = `
+hello [@alice](/users/ALICE1) and [@bob](/users/bob42)
+and a normal link [site](/users/not-mention)
+`;
+    expect(getMentionsFromMarkdown(md)).toEqual(["ALICE1", "bob42"]);
   });
 });

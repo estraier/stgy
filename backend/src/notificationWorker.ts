@@ -7,6 +7,7 @@ import type {
   FollowEventPayload,
   LikeEventPayload,
   ReplyEventPayload,
+  MentionEventPayload,
 } from "./models/eventLog";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 import { NotificationPostRecord, NotificationUserRecord } from "./models/notifications";
@@ -53,6 +54,10 @@ function isSelfInteraction(payload: AnyEventPayload, recipientUserId: string): b
       return payload.userId === recipientUserId;
     case "reply":
       return payload.userId === recipientUserId;
+    case "mention":
+      return payload.userId === recipientUserId;
+    default:
+      return false;
   }
 }
 
@@ -99,6 +104,7 @@ function dedupePerPost(records: NotificationPostRecord[], cap: number): Notifica
 type FollowPayload = { countUsers: number; records: NotificationUserRecord[] };
 type LikePayload = { countUsers: number; records: NotificationPostRecord[] };
 type ReplyPayload = { countUsers: number; countPosts: number; records: NotificationPostRecord[] };
+type MentionPayload = { countUsers: number; countPosts: number; records: NotificationPostRecord[] };
 
 function parseFollowPayload(raw: unknown): FollowPayload {
   const obj = isObject(raw) ? raw : {};
@@ -141,6 +147,28 @@ function parseLikePayload(raw: unknown): LikePayload {
 }
 
 function parseReplyPayload(raw: unknown): ReplyPayload {
+  const obj = isObject(raw) ? raw : {};
+  const countUsers = typeof obj.countUsers === "number" ? obj.countUsers : 0;
+  const countPosts = typeof obj.countPosts === "number" ? obj.countPosts : 0;
+  const arr = Array.isArray((obj as { records?: unknown }).records)
+    ? ((obj as { records: unknown[] }).records as unknown[])
+    : [];
+  const records: NotificationPostRecord[] = [];
+  for (const it of arr) {
+    if (!isObject(it)) continue;
+    const r = it as Record<string, unknown>;
+    const userId = typeof r.userId === "string" ? r.userId : undefined;
+    const userNickname = typeof r.userNickname === "string" ? r.userNickname : "";
+    const postId = typeof r.postId === "string" ? r.postId : undefined;
+    const postSnippet = typeof r.postSnippet === "string" ? r.postSnippet : "";
+    const ts = typeof r.ts === "number" ? r.ts : undefined;
+    if (!userId || !postId || ts === undefined) continue;
+    records.push({ userId, userNickname, postId, postSnippet, ts });
+  }
+  return { countUsers, countPosts, records };
+}
+
+function parseMentionPayload(raw: unknown): MentionPayload {
   const obj = isObject(raw) ? raw : {};
   const countUsers = typeof obj.countUsers === "number" ? obj.countUsers : 0;
   const countPosts = typeof obj.countPosts === "number" ? obj.countPosts : 0;
@@ -348,21 +376,105 @@ async function upsertReply(
   );
 }
 
+async function upsertMention(
+  db: PoolClient,
+  recipientUserIdHex: string,
+  postId: string,
+  term: string,
+  eventMs: number,
+  entry: { userId: string; ts: number },
+): Promise<void> {
+  const slot = `mention:${postId}`;
+  const sel = await db.query<{ payload: unknown }>(
+    `SELECT payload::json AS payload FROM notifications
+      WHERE user_id = $1 AND slot = $2 AND term = $3
+      FOR UPDATE`,
+    [hexToDec(recipientUserIdHex), slot, term],
+  );
+  const updatedAtISO = new Date(eventMs).toISOString();
+  const cap = Config.NOTIFICATION_PAYLOAD_RECORDS;
+
+  if (sel.rows.length === 0) {
+    const nick = await getUserNickname(db, entry.userId);
+    const snippet = await getPostSnippet(db, postId);
+    const rec: NotificationPostRecord = {
+      userId: entry.userId,
+      userNickname: nick,
+      postId,
+      postSnippet: snippet,
+      ts: entry.ts,
+    };
+    const payload: MentionPayload = { countUsers: 1, countPosts: 1, records: [rec] };
+    await db.query(
+      `INSERT INTO notifications (user_id, slot, term, is_read, payload, updated_at)
+       VALUES ($1, $2, $3, FALSE, $4, $5)`,
+      [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(payload), updatedAtISO],
+    );
+    return;
+  }
+
+  const current = parseMentionPayload(sel.rows[0].payload);
+  const records = current.records;
+  const existingUser = records.find((r) => r.userId === entry.userId);
+
+  const userNickname = existingUser
+    ? existingUser.userNickname
+    : await getUserNickname(db, entry.userId);
+  const postSnippet = records[0]?.postSnippet ?? (await getPostSnippet(db, postId));
+
+  const rec: NotificationPostRecord = {
+    userId: entry.userId,
+    userNickname,
+    postId,
+    postSnippet,
+    ts: entry.ts,
+  };
+
+  const userSet = new Set(records.map((r) => r.userId));
+  const postSet = new Set(records.map((r) => r.postId));
+  const isNewUser = !userSet.has(entry.userId);
+  const isNewPost = !postSet.has(postId);
+
+  const nextRecords = dedupePerPost([...records, rec], cap);
+  const nextPayload: MentionPayload = {
+    countUsers: (current.countUsers ?? userSet.size) + (isNewUser ? 1 : 0),
+    countPosts: (current.countPosts ?? postSet.size) + (isNewPost ? 1 : 0),
+    records: nextRecords,
+  };
+
+  await db.query(
+    `UPDATE notifications
+       SET is_read = FALSE, payload = $4, updated_at = $5
+     WHERE user_id = $1 AND slot = $2 AND term = $3`,
+    [hexToDec(recipientUserIdHex), slot, term, JSON.stringify(nextPayload), updatedAtISO],
+  );
+}
+
 async function resolveRecipientUserId(
   db: PoolClient,
   payload: AnyEventPayload,
 ): Promise<string | null> {
   if (payload.type === "follow") return payload.followeeId;
+
   if (payload.type === "like") {
     const res = await db.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
       hexToDec(payload.postId),
     ]);
     return res.rows[0]?.owned_by ? (decToHex(res.rows[0].owned_by) as string) : null;
   }
-  const res = await db.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
-    hexToDec(payload.replyToPostId),
-  ]);
-  return res.rows[0]?.owned_by ? (decToHex(res.rows[0].owned_by) as string) : null;
+
+  if (payload.type === "reply") {
+    const res = await db.query<{ owned_by: string }>(`SELECT owned_by FROM posts WHERE id = $1`, [
+      hexToDec(payload.replyToPostId),
+    ]);
+    return res.rows[0]?.owned_by ? (decToHex(res.rows[0].owned_by) as string) : null;
+  }
+
+  if (payload.type === "mention") {
+    return payload.mentionedUserId;
+  }
+
+  return null;
 }
 
 async function processFollowEvent(
@@ -401,6 +513,19 @@ async function processReplyEvent(
   await upsertReply(db, recipientUserId, payload.replyToPostId, term, eventMs, {
     userId: payload.userId,
     postId: payload.postId,
+    ts: Math.floor(eventMs / 1000),
+  });
+}
+
+async function processMentionEvent(
+  db: PoolClient,
+  recipientUserId: string,
+  payload: MentionEventPayload,
+  eventMs: number,
+  term: string,
+): Promise<void> {
+  await upsertMention(db, recipientUserId, payload.postId, term, eventMs, {
+    userId: payload.userId,
     ts: Math.floor(eventMs / 1000),
   });
 }
@@ -452,6 +577,8 @@ async function processPartition(
         await processLikeEvent(client, recipient, payload, ms, term);
       } else if (payload.type === "follow") {
         await processFollowEvent(client, recipient, payload, ms, term);
+      } else if (payload.type === "mention") {
+        await processMentionEvent(client, recipient, payload, ms, term);
       } else {
         logger.warn(
           `[notificationworker] unknown payload type: ${(payload as { type?: string }).type}`,

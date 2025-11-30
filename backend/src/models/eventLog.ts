@@ -5,6 +5,13 @@ export type ReplyEventPayload = {
   replyToPostId: string;
 };
 
+export type MentionEventPayload = {
+  type: "mention";
+  userId: string;
+  postId: string;
+  mentionedUserId: string;
+};
+
 export type LikeEventPayload = {
   type: "like";
   userId: string;
@@ -17,4 +24,8 @@ export type FollowEventPayload = {
   followeeId: string;
 };
 
-export type AnyEventPayload = ReplyEventPayload | LikeEventPayload | FollowEventPayload;
+export type AnyEventPayload =
+  | ReplyEventPayload
+  | MentionEventPayload
+  | LikeEventPayload
+  | FollowEventPayload;

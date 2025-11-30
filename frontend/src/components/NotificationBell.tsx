@@ -19,13 +19,15 @@ type Props = {
 type SlotInfo =
   | { kind: "follow" }
   | { kind: "like"; postId: string }
-  | { kind: "reply"; postId?: string };
+  | { kind: "reply"; postId?: string }
+  | { kind: "mention"; postId?: string };
 
 function parseSlot(slot: string): SlotInfo {
   if (slot === "follow") return { kind: "follow" };
   const [k, v] = slot.split(":");
   if (k === "like" && v) return { kind: "like", postId: v };
   if (k === "reply") return { kind: "reply", postId: v || undefined };
+  if (k === "mention") return { kind: "mention", postId: v || undefined };
   return { kind: "follow" };
 }
 
@@ -156,6 +158,9 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
       } else if (slotInfo.kind === "reply") {
         const rootPostId = slotInfo.postId;
         if (rootPostId) target = `/posts/${rootPostId}`;
+      } else if (slotInfo.kind === "mention") {
+        const postId = slotInfo.postId;
+        if (postId) target = `/posts/${postId}`;
       }
 
       setFeed((prev) =>
@@ -292,6 +297,13 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
                   title = `${countUsers} like${countUsers === 1 ? "" : "s"} on`;
                 } else if (slotInfo.kind === "reply") {
                   title = `${countPosts} repl${countPosts === 1 ? "y" : "ies"} to`;
+                } else if (slotInfo.kind === "mention") {
+                  const posts = countPosts || 0;
+                  if (posts > 0) {
+                    title = `${posts} mention${posts === 1 ? "" : "s"} in`;
+                  } else {
+                    title = `${countUsers} mention${countUsers === 1 ? "" : "s"}`;
+                  }
                 }
 
                 const fullTitle =
@@ -303,7 +315,7 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
                 return (
                   <li key={`${n.slot}:${n.term}`}>
                     <button
-                      className={`w-full text-left px-4 py-3 cursor-pointer hover:bg-gray-50 ${
+                      className={`w-full text-left px-2 pt-3 pb-2 cursor-pointer hover:bg-gray-50 ${
                         !n.isRead ? "bg-orange-50/70" : ""
                       }`}
                       onClick={() => handleCardClick(n)}
@@ -316,19 +328,19 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
                         </div>
 
                         <div className="min-w-0">
-                          <div className="font-medium text-gray-900 truncate" title={fullTitle}>
+                          <div className="text-[14px] text-gray-900 truncate" title={fullTitle}>
                             {fullTitle}
                           </div>
                           {names.length > 0 && (
                             <div
-                              className="text-[13px] text-gray-700 whitespace-nowrap overflow-hidden text-ellipsis"
+                              className="text-[12px] text-gray-700 whitespace-nowrap overflow-hidden text-ellipsis"
                               title={`${label}${names.join(", ")}`}
                             >
                               {label}
                               {names.join(", ")}
                             </div>
                           )}
-                          <div className="text-xs text-gray-500 mt-0.5">
+                          <div className="text-[12px] text-gray-500 mt-0.5">
                             {latest ? formatDateTime(new Date(latest.ts * 1000)) : n.term}
                           </div>
                         </div>

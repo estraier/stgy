@@ -218,10 +218,16 @@ describe("AiUsersService", () => {
 
     expect(res).toEqual({ message: { content: "Hello from model!" } });
     expect(mockCreate).toHaveBeenCalledTimes(1);
-    expect(mockCreate).toHaveBeenCalledWith({
-      model: "gpt-5-mini",
-      messages: [{ role: "user", content: "hi" }],
-    });
+    expect(mockCreate).toHaveBeenCalledWith(
+      {
+        model: "gpt-5-mini",
+        service_tier: "flex",
+        messages: [{ role: "user", content: "hi" }],
+      },
+      {
+        timeout: 60000,
+      },
+    );
   });
 
   test("chat: returns empty string if provider returns no choices", async () => {
