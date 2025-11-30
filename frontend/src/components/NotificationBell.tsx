@@ -298,12 +298,7 @@ export default function NotificationBell({ userId, intervalMs = 30_000 }: Props)
                 } else if (slotInfo.kind === "reply") {
                   title = `${countPosts} repl${countPosts === 1 ? "y" : "ies"} to`;
                 } else if (slotInfo.kind === "mention") {
-                  const posts = countPosts || 0;
-                  if (posts > 0) {
-                    title = `${posts} mention${posts === 1 ? "" : "s"} in`;
-                  } else {
-                    title = `${countUsers} mention${countUsers === 1 ? "" : "s"}`;
-                  }
+                  title = "Mentioned in";
                 }
 
                 const fullTitle =
