@@ -53,6 +53,7 @@ type RowAiPeerImpression = {
 
 type RowAiPostImpression = {
   user_id: string;
+  owner_id: string;
   post_id: string;
   updated_at: Date;
   description: string;
@@ -204,26 +205,39 @@ export class AiUsersService {
   }
 
   async listAiPeerImpressions(
-    userId: string,
     input: ListAiPeerImpressionsInput = {},
   ): Promise<AiPeerImpression[]> {
-    const userIdDec = hexToDec(userId);
     const offset = Math.max(0, input.offset ?? 0);
     const limit = Math.min(Math.max(1, input.limit ?? 50), 200);
     const order = (input.order ?? "desc") === "asc" ? "ASC" : "DESC";
-    const peerId = input.peerId;
-    const sql = `
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    let idx = 1;
+
+    if (input.userId) {
+      where.push(`user_id = $${idx}`);
+      params.push(hexToDec(input.userId));
+      idx++;
+    }
+    if (input.peerId) {
+      where.push(`peer_id = $${idx}`);
+      params.push(hexToDec(input.peerId));
+      idx++;
+    }
+
+    let sql = `
       SELECT user_id, peer_id, updated_at, description
       FROM ai_peer_impressions
-      WHERE user_id = $1
-      ${peerId ? "AND peer_id = $4" : ""}
-      ORDER BY updated_at ${order}, peer_id ${order}
-      LIMIT $2 OFFSET $3
     `;
-    const params: unknown[] = [userIdDec, limit, offset];
-    if (peerId) {
-      params.push(hexToDec(peerId));
+    if (where.length > 0) {
+      sql += ` WHERE ${where.join(" AND ")}`;
     }
+    sql += ` ORDER BY updated_at ${order}, user_id ${order}, peer_id ${order}
+      LIMIT $${idx} OFFSET $${idx + 1}
+    `;
+    params.push(limit, offset);
+
     const res = await pgQuery<RowAiPeerImpression>(this.pgPool, sql, params);
     return res.rows.map<AiPeerImpression>((row) => {
       const updatedAtISO =
@@ -293,26 +307,56 @@ export class AiUsersService {
   }
 
   async listAiPostImpressions(
-    userId: string,
     input: ListAiPostImpressionsInput = {},
   ): Promise<AiPostImpression[]> {
-    const userIdDec = hexToDec(userId);
     const offset = Math.max(0, input.offset ?? 0);
     const limit = Math.min(Math.max(1, input.limit ?? 50), 200);
     const order = (input.order ?? "desc") === "asc" ? "ASC" : "DESC";
-    const postId = input.postId;
-    const sql = `
-      SELECT user_id, post_id, updated_at, description
-      FROM ai_post_impressions
-      WHERE user_id = $1
-      ${postId ? "AND post_id = $4" : ""}
-      ORDER BY updated_at ${order}, post_id ${order}
-      LIMIT $2 OFFSET $3
-    `;
-    const params: unknown[] = [userIdDec, limit, offset];
-    if (postId) {
-      params.push(hexToDec(postId));
+
+    const where: string[] = [];
+    const params: unknown[] = [];
+    let idx = 1;
+
+    const hasUserId = !!input.userId;
+    const hasOwnerId = !!input.ownerId;
+    const hasPostId = !!input.postId;
+
+    if (hasUserId) {
+      where.push(`user_id = $${idx}`);
+      params.push(hexToDec(input.userId as string));
+      idx++;
     }
+    if (hasOwnerId) {
+      where.push(`owner_id = $${idx}`);
+      params.push(hexToDec(input.ownerId as string));
+      idx++;
+    }
+    if (hasPostId) {
+      where.push(`post_id = $${idx}`);
+      params.push(hexToDec(input.postId as string));
+      idx++;
+    }
+
+    let sql = `
+      SELECT user_id, owner_id, post_id, updated_at, description
+      FROM ai_post_impressions
+    `;
+    if (where.length > 0) {
+      sql += ` WHERE ${where.join(" AND ")}`;
+    }
+
+    // userId + ownerId（+ no postId）のときは PK (user_id, owner_id, post_id) を活かせるよう post_id でソート
+    const usePostIdOrder = hasUserId && hasOwnerId && !hasPostId;
+
+    if (usePostIdOrder) {
+      sql += ` ORDER BY post_id ${order}`;
+    } else {
+      sql += ` ORDER BY updated_at ${order}, user_id ${order}, owner_id ${order}, post_id ${order}`;
+    }
+
+    sql += ` LIMIT $${idx} OFFSET $${idx + 1}`;
+    params.push(limit, offset);
+
     const res = await pgQuery<RowAiPostImpression>(this.pgPool, sql, params);
     return res.rows.map<AiPostImpression>((row) => {
       const updatedAtISO =
@@ -321,6 +365,7 @@ export class AiUsersService {
           : new Date(row.updated_at as unknown as string).toISOString();
       return {
         userId: decToHex(String(row.user_id)),
+        ownerId: decToHex(String(row.owner_id)),
         postId: decToHex(String(row.post_id)),
         updatedAt: updatedAtISO,
         description: row.description,
@@ -332,7 +377,7 @@ export class AiUsersService {
     const userIdDec = hexToDec(userId);
     const postIdDec = hexToDec(postId);
     const sql = `
-      SELECT user_id, post_id, updated_at, description
+      SELECT user_id, owner_id, post_id, updated_at, description
       FROM ai_post_impressions
       WHERE user_id = $1
         AND post_id = $2
@@ -347,6 +392,7 @@ export class AiUsersService {
         : new Date(row.updated_at as unknown as string).toISOString();
     return {
       userId: decToHex(String(row.user_id)),
+      ownerId: decToHex(String(row.owner_id)),
       postId: decToHex(String(row.post_id)),
       updatedAt: updatedAtISO,
       description: row.description,
@@ -356,15 +402,32 @@ export class AiUsersService {
   async setAiPostImpression(input: SetAiPostImpressionInput): Promise<AiPostImpression> {
     const userIdDec = hexToDec(input.userId);
     const postIdDec = hexToDec(input.postId);
+
+    // post から owner_id を引いてくる
+    const postRes = await pgQuery<{ owned_by: string | number | bigint }>(
+      this.pgPool,
+      `
+      SELECT owned_by
+      FROM posts
+      WHERE id = $1
+      `,
+      [postIdDec],
+    );
+    if (postRes.rowCount === 0) {
+      throw new Error("post not found");
+    }
+    const ownerIdDec = postRes.rows[0].owned_by;
+
     const sql = `
-      INSERT INTO ai_post_impressions (user_id, post_id, updated_at, description)
-      VALUES ($1, $2, now(), $3)
-      ON CONFLICT (user_id, post_id)
+      INSERT INTO ai_post_impressions (user_id, owner_id, post_id, updated_at, description)
+      VALUES ($1, $2, $3, now(), $4)
+      ON CONFLICT (user_id, owner_id, post_id)
       DO UPDATE SET updated_at = now(), description = EXCLUDED.description
-      RETURNING user_id, post_id, updated_at, description
+      RETURNING user_id, owner_id, post_id, updated_at, description
     `;
     const res = await pgQuery<RowAiPostImpression>(this.pgPool, sql, [
       userIdDec,
+      ownerIdDec,
       postIdDec,
       input.description,
     ]);
@@ -375,6 +438,7 @@ export class AiUsersService {
         : new Date(row.updated_at as unknown as string).toISOString();
     return {
       userId: decToHex(String(row.user_id)),
+      ownerId: decToHex(String(row.owner_id)),
       postId: decToHex(String(row.post_id)),
       updatedAt: updatedAtISO,
       description: row.description,

@@ -94,8 +94,11 @@ def test_ai_users():
   created = res.json()
   ai_user_id = created["id"]
   print(f"[ai_users] created AI user: {created}")
-  res = requests.get(f"{BASE_URL}/ai-users?limit=2000&order=desc",
-                     headers=headers, cookies=cookies)
+  res = requests.get(
+    f"{BASE_URL}/ai-users?limit=2000&order=desc",
+    headers=headers,
+    cookies=cookies,
+  )
   assert res.status_code == 200, res.text
   ai_users = res.json()
   print(f"[ai_users] list: {ai_users}")
@@ -118,12 +121,17 @@ def test_ai_users():
   sess = get_session(session_id)
   admin_id = sess["userId"]
   chat_body = {
-    "model": "basic",
+    "model": ai_model_label,
     "messages": [
       {"role": "user", "content": "Just echo back 'Hello World'."},
     ],
   }
-  res = requests.post(f"{BASE_URL}/ai-users/chat", json=chat_body, headers=headers, cookies=cookies)
+  res = requests.post(
+    f"{BASE_URL}/ai-users/chat",
+    json=chat_body,
+    headers=headers,
+    cookies=cookies,
+  )
   if res.status_code == 501:
     print(f"[ai_users] chat is disabled")
   else:
@@ -224,6 +232,8 @@ def test_ai_users():
   assert res.status_code == 201, res.text
   post = res.json()
   post_id = post["id"]
+  owner_id = post["ownedBy"]
+  print(f"[ai_users] created post for impression test: {post}")
   res = requests.get(
     f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc",
     headers=headers,
@@ -253,6 +263,7 @@ def test_ai_users():
   saved_post_imp = res.json()
   assert saved_post_imp["userId"] == ai_user_id
   assert saved_post_imp["postId"] == post_id
+  assert saved_post_imp["ownerId"] == owner_id
   assert saved_post_imp["description"] == post_imp_body["description"]
   assert isinstance(saved_post_imp.get("updatedAt"), str) and len(saved_post_imp["updatedAt"]) > 0
   res = requests.get(
@@ -262,9 +273,12 @@ def test_ai_users():
   )
   assert res.status_code == 200, res.text
   post_impressions = res.json()
-  assert any(p["postId"] == post_id for p in post_impressions)
+  assert any(
+    p["postId"] == post_id and p["ownerId"] == owner_id for p in post_impressions
+  )
   res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc&postId={post_id}",
+    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions"
+    f"?limit=10&offset=0&order=desc&postId={post_id}",
     headers=headers,
     cookies=cookies,
   )
@@ -272,6 +286,31 @@ def test_ai_users():
   filtered_post_impressions = res.json()
   assert len(filtered_post_impressions) == 1
   assert filtered_post_impressions[0]["postId"] == post_id
+  assert filtered_post_impressions[0]["ownerId"] == owner_id
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions"
+    f"?limit=10&offset=0&order=desc&ownerId={owner_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  by_owner = res.json()
+  assert len(by_owner) >= 1
+  assert any(
+    p["postId"] == post_id and p["ownerId"] == owner_id for p in by_owner
+  )
+  res = requests.get(
+    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions"
+    f"?limit=10&offset=0&order=desc&ownerId={owner_id}&postId={post_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  by_owner_and_post = res.json()
+  assert len(by_owner_and_post) == 1
+  assert by_owner_and_post[0]["userId"] == ai_user_id
+  assert by_owner_and_post[0]["ownerId"] == owner_id
+  assert by_owner_and_post[0]["postId"] == post_id
   res = requests.get(
     f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}",
     headers=headers,
@@ -280,6 +319,7 @@ def test_ai_users():
   assert res.status_code == 200, res.text
   got_post_imp = res.json()
   assert got_post_imp["postId"] == post_id
+  assert got_post_imp["ownerId"] == owner_id
   assert got_post_imp["description"] == post_imp_body["description"]
   res = requests.delete(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text

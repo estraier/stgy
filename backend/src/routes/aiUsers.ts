@@ -162,7 +162,8 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
         : undefined;
 
     const watch = timerThrottleService.startWatch(loginUser);
-    const items = await aiUsersService.listAiPeerImpressions(req.params.id, {
+    const items = await aiUsersService.listAiPeerImpressions({
+      userId: req.params.id,
       offset,
       limit,
       order,
@@ -234,17 +235,25 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
       ["desc", "asc"] as const,
     );
+
     const postId =
       typeof req.query.postId === "string" && req.query.postId.trim() !== ""
         ? req.query.postId
         : undefined;
 
+    const ownerId =
+      typeof req.query.ownerId === "string" && req.query.ownerId.trim() !== ""
+        ? req.query.ownerId
+        : undefined;
+
     const watch = timerThrottleService.startWatch(loginUser);
-    const items = await aiUsersService.listAiPostImpressions(req.params.id, {
+    const items = await aiUsersService.listAiPostImpressions({
+      userId: req.params.id,
+      ownerId,
+      postId,
       offset,
       limit,
       order,
-      postId,
     });
     watch.done();
     res.json(items);

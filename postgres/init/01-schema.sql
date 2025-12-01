@@ -150,10 +150,11 @@ CREATE INDEX idx_ai_peer_impressions_updated_at ON ai_peer_impressions(updated_a
 
 CREATE TABLE ai_post_impressions (
   user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+  owner_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
   post_id BIGINT REFERENCES posts(id) ON DELETE CASCADE,
   updated_at TIMESTAMPTZ NOT NULL,
   description VARCHAR(65535) NOT NULL,
-  PRIMARY KEY (user_id, post_id)
+  PRIMARY KEY (user_id, owner_id, post_id)
 );
 CREATE INDEX idx_ai_post_impressions_updated_at ON ai_post_impressions(updated_at);
 

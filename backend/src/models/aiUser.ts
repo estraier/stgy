@@ -53,6 +53,7 @@ export type AiPeerImpression = {
 };
 
 export type AiPeerImpressionFilter = {
+  userId?: string;
   peerId?: string;
 };
 
@@ -66,12 +67,15 @@ export type SetAiPeerImpressionInput = {
 
 export type AiPostImpression = {
   userId: string;
+  ownerId: string;
   postId: string;
   updatedAt: string;
   description: string;
 };
 
 export type AiPostImpressionFilter = {
+  userId?: string;
+  ownerId?: string;
   postId?: string;
 };
 

@@ -39,9 +39,14 @@ class MockPgPool {
   }[] = [];
   ai_post_impressions: {
     user_id: number;
+    owner_id: number;
     post_id: number;
     updated_at: Date;
     description: string;
+  }[] = [];
+  posts: {
+    id: number;
+    owned_by: number;
   }[] = [];
 
   async query(sql: string, params?: any[]) {
@@ -143,28 +148,35 @@ class MockPgPool {
       sql.startsWith("SELECT user_id, peer_id, updated_at, description FROM ai_peer_impressions")
     ) {
       if (sql.includes("ORDER BY updated_at")) {
-        const userParam = params?.[0];
-        const uid = typeof userParam === "string" ? Number(userParam) : userParam;
-        const limit = params?.[1] ?? 50;
-        const offset = params?.[2] ?? 0;
-        const hasPeerFilter = sql.includes("AND peer_id = $4");
-        const peerParam = hasPeerFilter ? params?.[3] : undefined;
-        const pid =
-          peerParam === undefined
-            ? undefined
-            : typeof peerParam === "string"
-              ? Number(peerParam)
-              : peerParam;
+        const limit = params?.[params.length - 2] ?? 50;
+        const offset = params?.[params.length - 1] ?? 0;
+        let filtered = this.ai_peer_impressions.slice();
+        const userMatch = sql.match(/user_id\s*=\s*\$(\d+)/);
+        if (userMatch) {
+          const idx = Number(userMatch[1]) - 1;
+          const userParam = params?.[idx];
+          const uid = typeof userParam === "string" ? Number(userParam) : userParam;
+          filtered = filtered.filter((r) => r.user_id === uid);
+        }
+
+        const peerMatch = sql.match(/peer_id\s*=\s*\$(\d+)/);
+        if (peerMatch) {
+          const idx = Number(peerMatch[1]) - 1;
+          const peerParam = params?.[idx];
+          const pid = typeof peerParam === "string" ? Number(peerParam) : peerParam;
+          filtered = filtered.filter((r) => r.peer_id === pid);
+        }
+
         const asc = sql.includes("ORDER BY updated_at ASC");
-        const filtered = this.ai_peer_impressions.filter(
-          (r) => r.user_id === uid && (pid === undefined || r.peer_id === pid),
-        );
         const sorted = filtered.sort((a, b) => {
           const cmpTime = a.updated_at.getTime() - b.updated_at.getTime();
           if (cmpTime !== 0) return asc ? cmpTime : -cmpTime;
+          const cmpUser = a.user_id - b.user_id;
+          if (cmpUser !== 0) return asc ? cmpUser : -cmpUser;
           const cmpPeer = a.peer_id - b.peer_id;
           return asc ? cmpPeer : -cmpPeer;
         });
+
         const sliced = sorted.slice(offset, offset + limit).map((r) => ({
           user_id: String(r.user_id),
           peer_id: String(r.peer_id),
@@ -172,21 +184,21 @@ class MockPgPool {
           description: r.description,
         }));
         return { rows: sliced, rowCount: sliced.length };
-      } else {
-        const userParam = params?.[0];
-        const peerParam = params?.[1];
-        const uid = typeof userParam === "string" ? Number(userParam) : userParam;
-        const pid = typeof peerParam === "string" ? Number(peerParam) : peerParam;
-        const found = this.ai_peer_impressions.find((r) => r.user_id === uid && r.peer_id === pid);
-        if (!found) return { rows: [], rowCount: 0 };
-        const row = {
-          user_id: String(found.user_id),
-          peer_id: String(found.peer_id),
-          updated_at: found.updated_at,
-          description: found.description,
-        };
-        return { rows: [row], rowCount: 1 };
       }
+
+      const userParam = params?.[0];
+      const peerParam = params?.[1];
+      const uid = typeof userParam === "string" ? Number(userParam) : userParam;
+      const pid = typeof peerParam === "string" ? Number(peerParam) : peerParam;
+      const found = this.ai_peer_impressions.find((r) => r.user_id === uid && r.peer_id === pid);
+      if (!found) return { rows: [], rowCount: 0 };
+      const row = {
+        user_id: String(found.user_id),
+        peer_id: String(found.peer_id),
+        updated_at: found.updated_at,
+        description: found.description,
+      };
+      return { rows: [row], rowCount: 1 };
     }
 
     if (
@@ -219,72 +231,123 @@ class MockPgPool {
       return { rows: [row], rowCount: 1 };
     }
 
+    if (sql.startsWith("SELECT owned_by FROM posts WHERE id = $1")) {
+      const idParam = params?.[0];
+      const pid = typeof idParam === "string" ? Number(idParam) : idParam;
+      const post = this.posts.find((p) => p.id === pid);
+      if (!post) return { rows: [], rowCount: 0 };
+      return {
+        rows: [{ owned_by: String(post.owned_by) }],
+        rowCount: 1,
+      };
+    }
+
     if (
-      sql.startsWith("SELECT user_id, post_id, updated_at, description FROM ai_post_impressions")
+      sql.startsWith(
+        "SELECT user_id, owner_id, post_id, updated_at, description FROM ai_post_impressions",
+      )
     ) {
-      if (sql.includes("ORDER BY updated_at")) {
-        const userParam = params?.[0];
-        const uid = typeof userParam === "string" ? Number(userParam) : userParam;
-        const limit = params?.[1] ?? 50;
-        const offset = params?.[2] ?? 0;
-        const hasPostFilter = sql.includes("AND post_id = $4");
-        const postParam = hasPostFilter ? params?.[3] : undefined;
-        const pid =
-          postParam === undefined
-            ? undefined
-            : typeof postParam === "string"
-              ? Number(postParam)
-              : postParam;
-        const asc = sql.includes("ORDER BY updated_at ASC");
-        const filtered = this.ai_post_impressions.filter(
-          (r) => r.user_id === uid && (pid === undefined || r.post_id === pid),
-        );
-        const sorted = filtered.sort((a, b) => {
-          const cmpTime = a.updated_at.getTime() - b.updated_at.getTime();
-          if (cmpTime !== 0) return asc ? cmpTime : -cmpTime;
-          const cmpPost = a.post_id - b.post_id;
-          return asc ? cmpPost : -cmpPost;
-        });
+      if (sql.includes("ORDER BY")) {
+        const limit = params?.[params.length - 2] ?? 50;
+        const offset = params?.[params.length - 1] ?? 0;
+        let filtered = this.ai_post_impressions.slice();
+        const userMatch = sql.match(/user_id\s*=\s*\$(\d+)/);
+        if (userMatch) {
+          const idx = Number(userMatch[1]) - 1;
+          const userParam = params?.[idx];
+          const uid = typeof userParam === "string" ? Number(userParam) : userParam;
+          filtered = filtered.filter((r) => r.user_id === uid);
+        }
+
+        const ownerMatch = sql.match(/owner_id\s*=\s*\$(\d+)/);
+        if (ownerMatch) {
+          const idx = Number(ownerMatch[1]) - 1;
+          const ownerParam = params?.[idx];
+          const oid = typeof ownerParam === "string" ? Number(ownerParam) : ownerParam;
+          filtered = filtered.filter((r) => r.owner_id === oid);
+        }
+
+        const postMatch = sql.match(/post_id\s*=\s*\$(\d+)/);
+        if (postMatch) {
+          const idx = Number(postMatch[1]) - 1;
+          const postParam = params?.[idx];
+          const pid = typeof postParam === "string" ? Number(postParam) : postParam;
+          filtered = filtered.filter((r) => r.post_id === pid);
+        }
+
+        const asc =
+          sql.includes("ORDER BY post_id ASC") || sql.includes("ORDER BY updated_at ASC");
+
+        let sorted: typeof filtered;
+        if (sql.includes("ORDER BY post_id")) {
+          sorted = filtered.sort((a, b) => {
+            const cmp = a.post_id - b.post_id;
+            return asc ? cmp : -cmp;
+          });
+        } else {
+          sorted = filtered.sort((a, b) => {
+            const cmpTime = a.updated_at.getTime() - b.updated_at.getTime();
+            if (cmpTime !== 0) return asc ? cmpTime : -cmpTime;
+            const cmpUser = a.user_id - b.user_id;
+            if (cmpUser !== 0) return asc ? cmpUser : -cmpUser;
+            const cmpOwner = a.owner_id - b.owner_id;
+            if (cmpOwner !== 0) return asc ? cmpOwner : -cmpOwner;
+            const cmpPost = a.post_id - b.post_id;
+            return asc ? cmpPost : -cmpPost;
+          });
+        }
+
         const sliced = sorted.slice(offset, offset + limit).map((r) => ({
           user_id: String(r.user_id),
+          owner_id: String(r.owner_id),
           post_id: String(r.post_id),
           updated_at: r.updated_at,
           description: r.description,
         }));
         return { rows: sliced, rowCount: sliced.length };
-      } else {
-        const userParam = params?.[0];
-        const postParam = params?.[1];
-        const uid = typeof userParam === "string" ? Number(userParam) : userParam;
-        const pid = typeof postParam === "string" ? Number(postParam) : postParam;
-        const found = this.ai_post_impressions.find((r) => r.user_id === uid && r.post_id === pid);
-        if (!found) return { rows: [], rowCount: 0 };
-        const row = {
-          user_id: String(found.user_id),
-          post_id: String(found.post_id),
-          updated_at: found.updated_at,
-          description: found.description,
-        };
-        return { rows: [row], rowCount: 1 };
       }
+
+      const userParam = params?.[0];
+      const postParam = params?.[1];
+      const uid = typeof userParam === "string" ? Number(userParam) : userParam;
+      const pid = typeof postParam === "string" ? Number(postParam) : postParam;
+      const found = this.ai_post_impressions.find(
+        (r) => r.user_id === uid && r.post_id === pid,
+      );
+      if (!found) return { rows: [], rowCount: 0 };
+      const row = {
+        user_id: String(found.user_id),
+        owner_id: String(found.owner_id),
+        post_id: String(found.post_id),
+        updated_at: found.updated_at,
+        description: found.description,
+      };
+      return { rows: [row], rowCount: 1 };
     }
 
     if (
-      sql.startsWith("INSERT INTO ai_post_impressions (user_id, post_id, updated_at, description)")
+      sql.startsWith(
+        "INSERT INTO ai_post_impressions (user_id, owner_id, post_id, updated_at, description)",
+      )
     ) {
       const userParam = params?.[0];
-      const postParam = params?.[1];
-      const description = params?.[2] ?? "";
+      const ownerParam = params?.[1];
+      const postParam = params?.[2];
+      const description = params?.[3] ?? "";
       const uid = typeof userParam === "string" ? Number(userParam) : userParam;
+      const oid = typeof ownerParam === "string" ? Number(ownerParam) : ownerParam;
       const pid = typeof postParam === "string" ? Number(postParam) : postParam;
       const now = new Date("2025-01-01T00:00:00.000Z");
-      const existing = this.ai_post_impressions.find((r) => r.user_id === uid && r.post_id === pid);
+      const existing = this.ai_post_impressions.find(
+        (r) => r.user_id === uid && r.owner_id === oid && r.post_id === pid,
+      );
       if (existing) {
         existing.description = description;
         existing.updated_at = now;
       } else {
         this.ai_post_impressions.push({
           user_id: uid,
+          owner_id: oid,
           post_id: pid,
           updated_at: now,
           description,
@@ -292,6 +355,7 @@ class MockPgPool {
       }
       const row = {
         user_id: String(uid),
+        owner_id: String(oid),
         post_id: String(pid),
         updated_at: now,
         description,
@@ -526,12 +590,13 @@ describe("AiUsersService", () => {
       description: "Peer two",
     });
 
-    const all = await service.listAiPeerImpressions(userHex, { limit: 10, offset: 0 });
+    const all = await service.listAiPeerImpressions({ userId: userHex, limit: 10, offset: 0 });
     expect(all).toHaveLength(2);
     const peerIds = all.map((p) => p.peerId).sort();
     expect(peerIds).toEqual([expectedPeer2Hex, expectedPeer1Hex].sort());
 
-    const filtered = await service.listAiPeerImpressions(userHex, {
+    const filtered = await service.listAiPeerImpressions({
+      userId: userHex,
       peerId: peer1Hex,
       limit: 10,
       offset: 0,
@@ -548,11 +613,18 @@ describe("AiUsersService", () => {
     expect(impression).toBeNull();
   });
 
-  test("setAiPostImpression and getAiPostImpression", async () => {
-    const userHex = BigInt(1001).toString(16).toUpperCase();
-    const postHex = BigInt(5001).toString(16).toUpperCase();
-    const expectedUserHex = BigInt(1001).toString(16).toUpperCase().padStart(16, "0");
-    const expectedPostHex = BigInt(5001).toString(16).toUpperCase().padStart(16, "0");
+  test("setAiPostImpression and getAiPostImpression (ownerId derived from posts)", async () => {
+    const userId = 1001;
+    const ownerId = 2000;
+    const postId = 5001;
+
+    pgPool.posts.push({ id: postId, owned_by: ownerId });
+
+    const userHex = BigInt(userId).toString(16).toUpperCase();
+    const postHex = BigInt(postId).toString(16).toUpperCase();
+    const expectedUserHex = BigInt(userId).toString(16).toUpperCase().padStart(16, "0");
+    const expectedOwnerHex = BigInt(ownerId).toString(16).toUpperCase().padStart(16, "0");
+    const expectedPostHex = BigInt(postId).toString(16).toUpperCase().padStart(16, "0");
 
     const saved = await service.setAiPostImpression({
       userId: userHex,
@@ -560,6 +632,7 @@ describe("AiUsersService", () => {
       description: "Interesting post",
     });
     expect(saved.userId).toBe(expectedUserHex);
+    expect(saved.ownerId).toBe(expectedOwnerHex);
     expect(saved.postId).toBe(expectedPostHex);
     expect(saved.description).toBe("Interesting post");
     expect(typeof saved.updatedAt).toBe("string");
@@ -567,41 +640,123 @@ describe("AiUsersService", () => {
     const fetched = await service.getAiPostImpression(userHex, postHex);
     expect(fetched).not.toBeNull();
     expect(fetched!.userId).toBe(expectedUserHex);
+    expect(fetched!.ownerId).toBe(expectedOwnerHex);
     expect(fetched!.postId).toBe(expectedPostHex);
     expect(fetched!.description).toBe("Interesting post");
     expect(typeof fetched!.updatedAt).toBe("string");
   });
 
-  test("listAiPostImpressions: list and filter by postId", async () => {
-    const userHex = BigInt(1001).toString(16).toUpperCase();
-    const post1Hex = BigInt(5001).toString(16).toUpperCase();
-    const post2Hex = BigInt(5002).toString(16).toUpperCase();
-    const expectedPost1Hex = BigInt(5001).toString(16).toUpperCase().padStart(16, "0");
-    const expectedPost2Hex = BigInt(5002).toString(16).toUpperCase().padStart(16, "0");
+  test("listAiPostImpressions: list and filter by postId / ownerId / userId", async () => {
+    const user1Id = 1001;
+    const user2Id = 1002;
+    const owner1Id = 3000;
+    const owner2Id = 3001;
+    const post1Id = 5001;
+    const post2Id = 5002;
+    const post3Id = 5003;
+
+    pgPool.posts.push(
+      { id: post1Id, owned_by: owner1Id },
+      { id: post2Id, owned_by: owner2Id },
+      { id: post3Id, owned_by: owner1Id },
+    );
+
+    const user1Hex = BigInt(user1Id).toString(16).toUpperCase();
+    const user2Hex = BigInt(user2Id).toString(16).toUpperCase();
+    const owner1Hex = BigInt(owner1Id).toString(16).toUpperCase();
+    const owner2Hex = BigInt(owner2Id).toString(16).toUpperCase();
+    const post1Hex = BigInt(post1Id).toString(16).toUpperCase();
+    const post2Hex = BigInt(post2Id).toString(16).toUpperCase();
+    const post3Hex = BigInt(post3Id).toString(16).toUpperCase();
+
+    const expectedUser1Hex = BigInt(user1Id).toString(16).toUpperCase().padStart(16, "0");
+    const expectedUser2Hex = BigInt(user2Id).toString(16).toUpperCase().padStart(16, "0");
+    const expectedOwner1Hex = BigInt(owner1Id).toString(16).toUpperCase().padStart(16, "0");
+    const expectedOwner2Hex = BigInt(owner2Id).toString(16).toUpperCase().padStart(16, "0");
+    const expectedPost1Hex = BigInt(post1Id).toString(16).toUpperCase().padStart(16, "0");
+    const expectedPost2Hex = BigInt(post2Id).toString(16).toUpperCase().padStart(16, "0");
+    const expectedPost3Hex = BigInt(post3Id).toString(16).toUpperCase().padStart(16, "0");
 
     await service.setAiPostImpression({
-      userId: userHex,
+      userId: user1Hex,
       postId: post1Hex,
-      description: "Post one",
+      description: "u1 p1 o1",
     });
     await service.setAiPostImpression({
-      userId: userHex,
+      userId: user1Hex,
       postId: post2Hex,
-      description: "Post two",
+      description: "u1 p2 o2",
+    });
+    await service.setAiPostImpression({
+      userId: user2Hex,
+      postId: post3Hex,
+      description: "u2 p3 o1",
     });
 
-    const all = await service.listAiPostImpressions(userHex, { limit: 10, offset: 0 });
-    expect(all).toHaveLength(2);
-    const postIds = all.map((p) => p.postId).sort();
-    expect(postIds).toEqual([expectedPost1Hex, expectedPost2Hex].sort());
+    const all = await service.listAiPostImpressions({ limit: 10, offset: 0 });
+    expect(all).toHaveLength(3);
 
-    const filtered = await service.listAiPostImpressions(userHex, {
+    const byPost1 = await service.listAiPostImpressions({
       postId: post1Hex,
       limit: 10,
       offset: 0,
     });
-    expect(filtered).toHaveLength(1);
-    expect(filtered[0].postId).toBe(expectedPost1Hex);
-    expect(filtered[0].description).toBe("Post one");
+    expect(byPost1).toHaveLength(1);
+    expect(byPost1[0].userId).toBe(expectedUser1Hex);
+    expect(byPost1[0].ownerId).toBe(expectedOwner1Hex);
+    expect(byPost1[0].postId).toBe(expectedPost1Hex);
+    expect(byPost1[0].description).toBe("u1 p1 o1");
+
+    const byOwner1 = await service.listAiPostImpressions({
+      ownerId: owner1Hex,
+      limit: 10,
+      offset: 0,
+    });
+    expect(byOwner1).toHaveLength(2);
+    const owner1Posts = byOwner1.map((r) => r.postId).sort();
+    expect(owner1Posts).toEqual([expectedPost1Hex, expectedPost3Hex].sort());
+
+    const byUser1 = await service.listAiPostImpressions({
+      userId: user1Hex,
+      limit: 10,
+      offset: 0,
+    });
+    expect(byUser1).toHaveLength(2);
+    const user1Posts = byUser1.map((r) => r.postId).sort();
+    expect(user1Posts).toEqual([expectedPost1Hex, expectedPost2Hex].sort());
+
+    const byUser1Owner1 = await service.listAiPostImpressions({
+      userId: user1Hex,
+      ownerId: owner1Hex,
+      limit: 10,
+      offset: 0,
+    });
+    expect(byUser1Owner1).toHaveLength(1);
+    expect(byUser1Owner1[0].userId).toBe(expectedUser1Hex);
+    expect(byUser1Owner1[0].ownerId).toBe(expectedOwner1Hex);
+    expect(byUser1Owner1[0].postId).toBe(expectedPost1Hex);
+    expect(byUser1Owner1[0].description).toBe("u1 p1 o1");
+
+    const byOwner2 = await service.listAiPostImpressions({
+      ownerId: owner2Hex,
+      limit: 10,
+      offset: 0,
+    });
+    expect(byOwner2).toHaveLength(1);
+    expect(byOwner2[0].userId).toBe(expectedUser1Hex);
+    expect(byOwner2[0].ownerId).toBe(expectedOwner2Hex);
+    expect(byOwner2[0].postId).toBe(expectedPost2Hex);
+    expect(byOwner2[0].description).toBe("u1 p2 o2");
+
+    const byUser2 = await service.listAiPostImpressions({
+      userId: user2Hex,
+      limit: 10,
+      offset: 0,
+    });
+    expect(byUser2).toHaveLength(1);
+    expect(byUser2[0].userId).toBe(expectedUser2Hex);
+    expect(byUser2[0].ownerId).toBe(expectedOwner1Hex);
+    expect(byUser2[0].postId).toBe(expectedPost3Hex);
+    expect(byUser2[0].description).toBe("u2 p3 o1");
   });
 });
