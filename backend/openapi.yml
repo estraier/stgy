@@ -252,10 +252,11 @@ components:
       type: object
       properties:
         userId: { type: string }
+        ownerId: { type: string }
         postId: { type: string }
         updatedAt: { type: string, format: date-time }
         description: { type: string }
-      required: [userId, postId, updatedAt, description]
+      required: [userId, ownerId, postId, updatedAt, description]
 
     ChatMessage:
       type: object
@@ -1818,7 +1819,7 @@ paths:
         "404":
           $ref: "#/components/responses/Error404"
 
-  /ai-users/{id}/peer-impressions/{userId}:
+  /ai-users/{id}/peer-impressions/{peerId}:
     get:
       summary: Get peer impression about a specific user
       security:
@@ -1828,7 +1829,7 @@ paths:
           in: path
           required: true
           schema: { type: string }
-        - name: userId
+        - name: peerId
           in: path
           required: true
           schema: { type: string }
@@ -1849,7 +1850,11 @@ paths:
   /ai-users/{id}/post-impressions:
     get:
       summary: List post impressions of an AI user
-      description: Lists impressions this AI user has about posts.
+      description: |
+        Lists impressions this AI user has about posts.
+        - No filters: all impressions for this AI user.
+        - postId: only impressions about the given post.
+        - ownerId: only impressions for posts owned by the given user.
       security:
         - sessionCookie: []
       parameters:
@@ -1870,6 +1875,10 @@ paths:
           in: query
           schema: { type: string }
           description: Optional filter by post id.
+        - name: ownerId
+          in: query
+          schema: { type: string }
+          description: Optional filter by post owner user id.
       responses:
         "200":
           description: Post impressions list
