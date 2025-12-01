@@ -1846,6 +1846,29 @@ paths:
           $ref: "#/components/responses/Error403"
         "404":
           $ref: "#/components/responses/Error404"
+    head:
+      summary: Check existence of peer impression about a specific user
+      description: Returns 200 if the peer impression exists, 404 if not.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: peerId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Peer impression exists
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
 
   /ai-users/{id}/post-impressions:
     get:
@@ -1951,6 +1974,29 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/AiPostImpression"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+    head:
+      summary: Check existence of post impression about a specific post
+      description: Returns 200 if the post impression exists, 404 if not.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Post impression exists
         "401":
           $ref: "#/components/responses/Error401"
         "403":

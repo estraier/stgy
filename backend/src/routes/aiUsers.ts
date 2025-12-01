@@ -173,6 +173,19 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     res.json(items);
   });
 
+  router.head("/:id/peer-impressions/:peerId", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const watch = timerThrottleService.startWatch(loginUser);
+    const exists = await aiUsersService.checkAiPeerImpression(req.params.id, req.params.peerId);
+    watch.done();
+    if (!exists) return res.sendStatus(404);
+    return res.sendStatus(200);
+  });
+
   router.get("/:id/peer-impressions/:peerId", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
@@ -257,6 +270,19 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     });
     watch.done();
     res.json(items);
+  });
+
+  router.head("/:id/post-impressions/:postId", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const watch = timerThrottleService.startWatch(loginUser);
+    const exists = await aiUsersService.checkAiPostImpression(req.params.id, req.params.postId);
+    watch.done();
+    if (!exists) return res.sendStatus(404);
+    return res.sendStatus(200);
   });
 
   router.get("/:id/post-impressions/:postId", async (req: Request, res: Response) => {

@@ -65,9 +65,7 @@ class MockPgPool {
     }
 
     if (
-      sql.startsWith(
-        "SELECT u.id, u.nickname, u.is_admin, u.ai_model FROM users u WHERE u.ai_model IS NOT NULL",
-      )
+      sql.startsWith("SELECT u.id, u.nickname, u.is_admin, u.ai_model FROM users u WHERE u.ai_model IS NOT NULL")
     ) {
       const limit = params?.[0] ?? 50;
       const offset = params?.[1] ?? 0;
@@ -201,6 +199,18 @@ class MockPgPool {
       return { rows: [row], rowCount: 1 };
     }
 
+    if (sql.startsWith("SELECT 1 FROM ai_peer_impressions")) {
+      const userParam = params?.[0];
+      const peerParam = params?.[1];
+      const uid = typeof userParam === "string" ? Number(userParam) : userParam;
+      const pid = typeof peerParam === "string" ? Number(peerParam) : peerParam;
+      const found = this.ai_peer_impressions.some(
+        (r) => r.user_id === uid && r.peer_id === pid,
+      );
+      if (!found) return { rows: [], rowCount: 0 };
+      return { rows: [{ exists: 1 }], rowCount: 1 };
+    }
+
     if (
       sql.startsWith("INSERT INTO ai_peer_impressions (user_id, peer_id, updated_at, description)")
     ) {
@@ -240,6 +250,18 @@ class MockPgPool {
         rows: [{ owned_by: String(post.owned_by) }],
         rowCount: 1,
       };
+    }
+
+    if (sql.startsWith("SELECT 1 FROM ai_post_impressions")) {
+      const userParam = params?.[0];
+      const postParam = params?.[1];
+      const uid = typeof userParam === "string" ? Number(userParam) : userParam;
+      const pid = typeof postParam === "string" ? Number(postParam) : postParam;
+      const found = this.ai_post_impressions.some(
+        (r) => r.user_id === uid && r.post_id === pid,
+      );
+      if (!found) return { rows: [], rowCount: 0 };
+      return { rows: [{ exists: 1 }], rowCount: 1 };
     }
 
     if (
@@ -572,6 +594,23 @@ describe("AiUsersService", () => {
     expect(typeof fetched!.updatedAt).toBe("string");
   });
 
+  test("checkAiPeerImpression: false when not set, true after set", async () => {
+    const userHex = BigInt(1001).toString(16).toUpperCase();
+    const peerHex = BigInt(1002).toString(16).toUpperCase();
+
+    const before = await service.checkAiPeerImpression(userHex, peerHex);
+    expect(before).toBe(false);
+
+    await service.setAiPeerImpression({
+      userId: userHex,
+      peerId: peerHex,
+      description: "Friendly peer",
+    });
+
+    const after = await service.checkAiPeerImpression(userHex, peerHex);
+    expect(after).toBe(true);
+  });
+
   test("listAiPeerImpressions: list and filter by peerId", async () => {
     const userHex = BigInt(1001).toString(16).toUpperCase();
     const peer1Hex = BigInt(1002).toString(16).toUpperCase();
@@ -644,6 +683,29 @@ describe("AiUsersService", () => {
     expect(fetched!.postId).toBe(expectedPostHex);
     expect(fetched!.description).toBe("Interesting post");
     expect(typeof fetched!.updatedAt).toBe("string");
+  });
+
+  test("checkAiPostImpression: false when not set, true after set", async () => {
+    const userId = 1001;
+    const ownerId = 2000;
+    const postId = 6001;
+
+    pgPool.posts.push({ id: postId, owned_by: ownerId });
+
+    const userHex = BigInt(userId).toString(16).toUpperCase();
+    const postHex = BigInt(postId).toString(16).toUpperCase();
+
+    const before = await service.checkAiPostImpression(userHex, postHex);
+    expect(before).toBe(false);
+
+    await service.setAiPostImpression({
+      userId: userHex,
+      postId: postHex,
+      description: "Checked post",
+    });
+
+    const after = await service.checkAiPostImpression(userHex, postHex);
+    expect(after).toBe(true);
   });
 
   test("listAiPostImpressions: list and filter by postId / ownerId / userId", async () => {

@@ -181,6 +181,12 @@ def test_ai_users():
     cookies=cookies,
   )
   assert res.status_code == 404, res.text
+  res = requests.head(
+    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 404, res.text
   peer_body = {
     "peerId": admin_id,
     "description": "admin user looks reliable",
@@ -197,6 +203,12 @@ def test_ai_users():
   assert saved_peer["peerId"] == admin_id
   assert saved_peer["description"] == peer_body["description"]
   assert isinstance(saved_peer.get("updatedAt"), str) and len(saved_peer["updatedAt"]) > 0
+  res = requests.head(
+    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
   res = requests.get(
     f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc",
     headers=headers,
@@ -249,6 +261,12 @@ def test_ai_users():
     cookies=cookies,
   )
   assert res.status_code == 404, res.text
+  res = requests.head(
+    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 404, res.text
   post_imp_body = {
     "postId": post_id,
     "description": "this post looks great",
@@ -266,6 +284,12 @@ def test_ai_users():
   assert saved_post_imp["ownerId"] == owner_id
   assert saved_post_imp["description"] == post_imp_body["description"]
   assert isinstance(saved_post_imp.get("updatedAt"), str) and len(saved_post_imp["updatedAt"]) > 0
+  res = requests.head(
+    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
   res = requests.get(
     f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc",
     headers=headers,

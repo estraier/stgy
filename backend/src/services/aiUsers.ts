@@ -253,6 +253,20 @@ export class AiUsersService {
     });
   }
 
+  async checkAiPeerImpression(userId: string, peerId: string): Promise<boolean> {
+    const userIdDec = hexToDec(userId);
+    const peerIdDec = hexToDec(peerId);
+    const sql = `
+      SELECT 1
+      FROM ai_peer_impressions
+      WHERE user_id = $1
+        AND peer_id = $2
+      LIMIT 1
+    `;
+    const res = await pgQuery(this.pgPool, sql, [userIdDec, peerIdDec]);
+    return (res.rowCount ?? 0) > 0;
+  }
+
   async getAiPeerImpression(userId: string, peerId: string): Promise<AiPeerImpression | null> {
     const userIdDec = hexToDec(userId);
     const peerIdDec = hexToDec(peerId);
@@ -345,9 +359,7 @@ export class AiUsersService {
       sql += ` WHERE ${where.join(" AND ")}`;
     }
 
-    // userId + ownerId（+ no postId）のときは PK (user_id, owner_id, post_id) を活かせるよう post_id でソート
     const usePostIdOrder = hasUserId && hasOwnerId && !hasPostId;
-
     if (usePostIdOrder) {
       sql += ` ORDER BY post_id ${order}`;
     } else {
@@ -371,6 +383,20 @@ export class AiUsersService {
         description: row.description,
       };
     });
+  }
+
+  async checkAiPostImpression(userId: string, postId: string): Promise<boolean> {
+    const userIdDec = hexToDec(userId);
+    const postIdDec = hexToDec(postId);
+    const sql = `
+      SELECT 1
+      FROM ai_post_impressions
+      WHERE user_id = $1
+        AND post_id = $2
+      LIMIT 1
+    `;
+    const res = await pgQuery(this.pgPool, sql, [userIdDec, postIdDec]);
+    return (res.rowCount ?? 0) > 0;
   }
 
   async getAiPostImpression(userId: string, postId: string): Promise<AiPostImpression | null> {
@@ -403,7 +429,6 @@ export class AiUsersService {
     const userIdDec = hexToDec(input.userId);
     const postIdDec = hexToDec(input.postId);
 
-    // post から owner_id を引いてくる
     const postRes = await pgQuery<{ owned_by: string | number | bigint }>(
       this.pgPool,
       `
