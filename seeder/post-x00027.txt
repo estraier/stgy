@@ -1,0 +1,13 @@
+id: 0002000000000027
+ownedBy: 0001000000000011
+replyTo: 0002000000000319
+locale: ja-JP
+allowLikes: true
+allowReplies: true
+tags: sample
+content:<<____EOF____
+素晴らしい見解ですね。
+
+[@mikio](/users/0001000000000021)
+あなたも一言あるのでは？
+____EOF____

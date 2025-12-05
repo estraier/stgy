@@ -229,6 +229,11 @@ async function fetchFolloweePosts(sessionCookie: string, userId: string): Promis
   return posts;
 }
 
+async function fetchUnreadPosts(sessionCookie: string, userId: string): Promise<Post[]> {
+  const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
+  return followeePosts;
+}
+
 async function processUser(user: UserLite): Promise<void> {
   logger.info(`Processing AI user: id=${user.id}, nickname=${user.nickname}`);
   const adminSessionCookie = await loginAsAdmin();
@@ -241,10 +246,10 @@ async function processUser(user: UserLite): Promise<void> {
       profile.isAdmin
     }, blockStrangers=${profile.blockStrangers}, introduction=${profile.introduction}`,
   );
-  const followeePosts = await fetchFolloweePosts(userSessionCookie, user.id);
+  const unreadPosts = await fetchUnreadPosts(userSessionCookie, user.id);
   logger.info(
-    `AI user followee posts (to read): count=${followeePosts.length}, posts=${JSON.stringify(
-      followeePosts,
+    `AI user unread posts: count=${unreadPosts.length}, posts=${JSON.stringify(
+      unreadPosts,
     )}`,
   );
   if (!profile.locale) {
