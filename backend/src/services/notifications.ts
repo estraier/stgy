@@ -5,7 +5,7 @@ import {
   NotificationAnyRecord,
   MarkAllNotificationsInput,
   MarkNotificationInput,
-} from "../models/notifications";
+} from "../models/notification";
 import { hexToDec } from "../utils/format";
 import { pgQuery } from "../utils/servers";
 

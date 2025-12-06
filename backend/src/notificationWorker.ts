@@ -10,7 +10,7 @@ import type {
   MentionEventPayload,
 } from "./models/eventLog";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
-import { NotificationPostRecord, NotificationUserRecord } from "./models/notifications";
+import { NotificationPostRecord, NotificationUserRecord } from "./models/notification";
 import { makeTextFromJsonSnippet } from "./utils/snippet";
 import { EventLogService } from "./services/eventLog";
 import { NotificationsService } from "./services/notifications";

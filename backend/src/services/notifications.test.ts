@@ -105,7 +105,7 @@ describe("NotificationsService", () => {
     expect(first.countPosts).toBe(1);
     expect(first.records).toHaveLength(2);
 
-    const nicknames = first.records.map((r) => r.userNickname);
+    const nicknames = first.records.map((r: any) => r.userNickname);
     expect(nicknames).toEqual(["User One", "User Two"]);
   });
 
@@ -151,7 +151,7 @@ describe("NotificationsService", () => {
 
     expect(out).not.toBeNull();
     expect(out!.length).toBe(1);
-    expect(out![0]!.records.map((r) => r.userNickname)).toEqual(["User One", "User Two"]);
+    expect(out![0]!.records.map((r: any) => r.userNickname)).toEqual(["User One", "User Two"]);
 
     expect(query).toHaveBeenNthCalledWith(
       1,

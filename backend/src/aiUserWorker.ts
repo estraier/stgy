@@ -3,6 +3,7 @@ import path from "path";
 import { createLogger } from "./utils/logger";
 import type { UserLite, UserDetail } from "./models/user";
 import type { Post, PostDetail } from "./models/post";
+import type { Notification } from "./models/notification";
 
 type AiUserConfig = {
   backendApiBaseUrl?: string;
@@ -11,10 +12,6 @@ type AiUserConfig = {
   userPageSize?: number;
   userLimit?: number | null;
   postImpressionPromptFile?: string;
-};
-
-type Notification = {
-  slot: string;
 };
 
 type PostCandidate = {
@@ -341,67 +338,67 @@ async function fetchPostById(
 
 async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<PostDetail[]> {
   const candidates: PostCandidate[] = [];
-
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
   for (const post of followeePosts) {
+    if (post.ownedBy === userId) continue;
     const hasImpression = await checkPostImpression(sessionCookie, userId, post.id);
     if (!hasImpression) {
       candidates.push({ postId: post.id, weight: 1 });
     }
   }
-
   const latestPosts = await fetchLatestPosts(sessionCookie, userId);
   for (const post of latestPosts) {
+    if (post.ownedBy === userId) continue;
     const hasImpression = await checkPostImpression(sessionCookie, userId, post.id);
     if (!hasImpression) {
       candidates.push({ postId: post.id, weight: 1 });
     }
   }
-
   const notifications = await fetchNotifications(sessionCookie);
   for (const n of notifications) {
     if (n.slot.startsWith("reply:")) {
-      const postId = n.slot.slice("reply:".length);
-      if (!postId) continue;
-      const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
-      if (!hasImpression) {
-        candidates.push({ postId, weight: 0.5 });
+      for (const record of n.records) {
+        if (!("postId" in record) || typeof record.postId !== "string") continue;
+        if (!("userId" in record) || record.userId === userId) continue;
+        const hasImpression = await checkPostImpression(sessionCookie, userId, record.postId);
+        if (!hasImpression) {
+          candidates.push({ postId: record.postId, weight: 0.5 });
+        }
+      }
+    }
+    if (n.slot.startsWith("mention:")) {
+      for (const record of n.records) {
+        if (!("postId" in record) || typeof record.postId !== "string") continue;
+        if (!("userId" in record) || record.userId === userId) continue;
+        const hasImpression = await checkPostImpression(sessionCookie, userId, record.postId);
+        if (!hasImpression) {
+          candidates.push({ postId: record.postId, weight: 0.3 });
+        }
       }
     }
   }
-  for (const n of notifications) {
-    if (n.slot.startsWith("like:")) {
-      const postId = n.slot.slice("like:".length);
-      if (!postId) continue;
-      const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
-      if (!hasImpression) {
-        candidates.push({ postId, weight: 0.3 });
-      }
-    }
-  }
-
   if (candidates.length === 0) {
     logger.info("No candidate posts to read");
     return [];
   }
-
-  const scoresByPost = new Map<string, number>();
+  const weightByPost = new Map<string, number>();
   for (const { postId, weight } of candidates) {
-    if (weight <= 0) continue;
-    const score = Math.random() * weight;
-    const prev = scoresByPost.get(postId);
-    if (prev === undefined || score > prev) {
-      scoresByPost.set(postId, score);
+    const prev = weightByPost.get(postId);
+    if (prev === undefined || weight > prev) {
+      weightByPost.set(postId, weight);
     }
   }
-
+  const scoresByPost = new Map<string, number>();
+  for (const [postId, weight] of weightByPost.entries()) {
+    if (weight <= 0) continue;
+    const score = Math.random() * weight;
+    scoresByPost.set(postId, score);
+  }
   const topPostIds = [...scoresByPost.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
     .map(([postId]) => postId);
-
   logger.info(`Selected post IDs to read: ${topPostIds.join(",")}`);
-
   const result: PostDetail[] = [];
   for (const postId of topPostIds) {
     try {
@@ -411,7 +408,6 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       logger.info(`Failed to fetch post detail for postId=${postId}: ${e}`);
     }
   }
-
   return result;
 }
 
@@ -571,10 +567,21 @@ async function processUser(user: UserLite): Promise<void> {
   }
   const unreadPosts = await fetchPostsToRead(userSessionCookie, user.id);
   const impressionPrompt = readPromptFile(POST_IMPRESSION_PROMPT_PREFIX, profile.locale);
+  const peerIdSet = new Set();
   for (const post of unreadPosts) {
     await createPostImpression(userSessionCookie, profile, impressionPrompt, post);
+    peerIdSet.add(post.ownedBy);
+
+    // for debug.
     break;
   }
+  const peerIds = Array.from(peerIdSet);
+  logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
+
+
+  console.log(peerIds);
+
+
 }
 
 async function main() {
