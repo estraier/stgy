@@ -12,6 +12,7 @@ type AiUserConfig = {
   userPageSize?: number;
   userLimit?: number | null;
   postImpressionPromptFile?: string;
+  peerImpressionPromptFile?: string;
 };
 
 type PostCandidate = {
@@ -67,6 +68,9 @@ function loadConfig(configPath: string): AiUserConfig {
   if (typeof obj.postImpressionPromptFile === "string") {
     config.postImpressionPromptFile = obj.postImpressionPromptFile;
   }
+  if (typeof obj.peerImpressionPromptFile === "string") {
+    config.peerImpressionPromptFile = obj.peerImpressionPromptFile;
+  }
 
   return config;
 }
@@ -104,6 +108,15 @@ const POST_IMPRESSION_PROMPT_PREFIX = (() => {
   return path.isAbsolute(fileConfig.postImpressionPromptFile)
     ? fileConfig.postImpressionPromptFile
     : path.resolve(CONFIG_DIR, fileConfig.postImpressionPromptFile);
+})();
+
+const PEER_IMPRESSION_PROMPT_PREFIX = (() => {
+  if (!fileConfig.peerImpressionPromptFile) {
+    throw new Error("peerImpressionPromptFile is not configured in ai-user-config.json");
+  }
+  return path.isAbsolute(fileConfig.peerImpressionPromptFile)
+    ? fileConfig.peerImpressionPromptFile
+    : path.resolve(CONFIG_DIR, fileConfig.peerImpressionPromptFile);
 })();
 
 const BACKEND_API_BASE_URL =
@@ -338,6 +351,7 @@ async function fetchPostById(
 
 async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<PostDetail[]> {
   const candidates: PostCandidate[] = [];
+
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
   for (const post of followeePosts) {
     if (post.ownedBy === userId) continue;
@@ -346,6 +360,7 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       candidates.push({ postId: post.id, weight: 1 });
     }
   }
+
   const latestPosts = await fetchLatestPosts(sessionCookie, userId);
   for (const post of latestPosts) {
     if (post.ownedBy === userId) continue;
@@ -354,6 +369,7 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       candidates.push({ postId: post.id, weight: 1 });
     }
   }
+
   const notifications = await fetchNotifications(sessionCookie);
   for (const n of notifications) {
     if (n.slot.startsWith("reply:")) {
@@ -377,10 +393,13 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       }
     }
   }
+
   if (candidates.length === 0) {
     logger.info("No candidate posts to read");
     return [];
   }
+
+  // postId ごとに最大 weight を採用して dedup
   const weightByPost = new Map<string, number>();
   for (const { postId, weight } of candidates) {
     const prev = weightByPost.get(postId);
@@ -388,17 +407,22 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       weightByPost.set(postId, weight);
     }
   }
+
+  // 重みに応じてスコアを乱択（大きい weight ほど大きい値を取りやすい）
   const scoresByPost = new Map<string, number>();
   for (const [postId, weight] of weightByPost.entries()) {
     if (weight <= 0) continue;
     const score = Math.random() * weight;
     scoresByPost.set(postId, score);
   }
+
   const topPostIds = [...scoresByPost.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
     .map(([postId]) => postId);
+
   logger.info(`Selected post IDs to read: ${topPostIds.join(",")}`);
+
   const result: PostDetail[] = [];
   for (const postId of topPostIds) {
     try {
@@ -408,6 +432,7 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       logger.info(`Failed to fetch post detail for postId=${postId}: ${e}`);
     }
   }
+
   return result;
 }
 
@@ -557,6 +582,268 @@ async function createPostImpression(
   }
 }
 
+async function createPeerImpression(
+  userSessionCookie: string,
+  profile: UserDetail,
+  prompt: string,
+  peerId: string,
+): Promise<void> {
+  try {
+    // AIエージェント自身のプロフィール(JSON)
+    const profileExcerpt = {
+      nickname: profile.nickname,
+      locale: profile.locale,
+      introduction: profile.introduction.slice(0, 1000),
+      aiPersonality: profile.aiPersonality,
+    };
+    const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+
+    // 対象ピアのプロフィール
+    const peerProfile = await fetchUserProfile(userSessionCookie, peerId);
+    const peerIntro = peerProfile.introduction.slice(0, 1000);
+
+    // 直近のユーザ印象 (AiPeerImpression) を取得
+    let lastImpression = "";
+    try {
+      const resp = await fetch(
+        `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(
+          profile.id,
+        )}/peer-impressions/${encodeURIComponent(peerId)}`,
+        {
+          method: "GET",
+          headers: {
+            Cookie: userSessionCookie,
+          },
+        },
+      );
+
+      if (resp.status === 404) {
+        // まだ印象なし
+      } else if (!resp.ok) {
+        const bodyText = await resp.text().catch(() => "");
+        logger.error(
+          `failed to fetch peer impression for aiUserId=${profile.id}, peerId=${peerId}: ${resp.status} ${bodyText}`,
+        );
+      } else {
+        const data = (await resp.json()) as { description?: unknown };
+        if (typeof data.description === "string") {
+          lastImpression = data.description;
+        }
+      }
+    } catch (e) {
+      logger.error(
+        `Error while fetching last peer impression for aiUserId=${profile.id}, peerId=${peerId}: ${e}`,
+      );
+    }
+
+    // ピアの投稿印象 (AiPostImpression) の最新3件
+    type RawPostImpression = {
+      postId?: unknown;
+      description?: unknown;
+    };
+
+    const peerPosts: { postId: string; summary: string; impression: string }[] = [];
+
+    try {
+      const params = new URLSearchParams();
+      params.set("ownerId", peerId);
+      params.set("limit", "3");
+      params.set("offset", "0");
+      params.set("order", "desc");
+
+      const resp = await fetch(
+        `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(
+          profile.id,
+        )}/post-impressions?${params.toString()}`,
+        {
+          method: "GET",
+          headers: {
+            Cookie: userSessionCookie,
+          },
+        },
+      );
+
+      if (!resp.ok) {
+        const bodyText = await resp.text().catch(() => "");
+        logger.error(
+          `failed to fetch peer post impressions for aiUserId=${profile.id}, peerId=${peerId}: ${resp.status} ${bodyText}`,
+        );
+      } else {
+        const arr = (await resp.json()) as RawPostImpression[];
+        for (const imp of arr) {
+          if (typeof imp.postId !== "string") continue;
+          if (typeof imp.description !== "string") continue;
+
+          let summary = "";
+          let impression = "";
+
+          try {
+            const obj = JSON.parse(imp.description) as {
+              summary?: unknown;
+              impression?: unknown;
+            };
+            if (typeof obj.summary === "string") summary = obj.summary;
+            if (typeof obj.impression === "string") impression = obj.impression;
+          } catch (e) {
+            // description がJSONでない場合はスキップ（ログだけ残す）
+            logger.error(
+              `failed to parse post impression JSON for aiUserId=${profile.id}, peerId=${peerId}, postId=${imp.postId}: ${e}`,
+            );
+            continue;
+          }
+
+          summary = summary.trim().slice(0, 400);
+          impression = impression.trim().slice(0, 400);
+          if (!summary && !impression) continue;
+
+          peerPosts.push({
+            postId: imp.postId,
+            summary,
+            impression,
+          });
+        }
+      }
+    } catch (e) {
+      logger.error(
+        `Error while fetching/processing peer post impressions for aiUserId=${profile.id}, peerId=${peerId}: ${e}`,
+      );
+    }
+
+    // PEER_JSON を構築
+    const peerJsonObj = {
+      peerId,
+      nickname: peerProfile.nickname,
+      introduction: peerIntro,
+      lastImpression,
+      posts: peerPosts,
+    };
+
+    const peerJson = JSON.stringify(peerJsonObj, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+
+    const modifiedPrompt = prompt
+      .replace("{{PROFILE_JSON}}", profileJson)
+      .replace("{{PEER_JSON}}", peerJson);
+
+    // --- ここから chat 呼び出し（投稿印象と同じポリシー） ---
+    const chatBody = {
+      messages: [
+        {
+          role: "user" as const,
+          content: modifiedPrompt,
+        },
+      ],
+    };
+
+    const chatResp = await fetch(`${BACKEND_API_BASE_URL}/ai-users/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: userSessionCookie,
+      },
+      body: JSON.stringify(chatBody),
+    });
+
+    if (chatResp.status === 501) {
+      const bodyText = await chatResp.text().catch(() => "");
+      logger.error(
+        `AI features are disabled when calling ai-users/chat for aiUserId=${profile.id}, peerId=${peerId}: ${bodyText}`,
+      );
+      return;
+    }
+
+    if (!chatResp.ok) {
+      const bodyText = await chatResp.text().catch(() => "");
+      logger.error(
+        `failed to call ai-users/chat for aiUserId=${profile.id}, peerId=${peerId}: ${chatResp.status} ${bodyText}`,
+      );
+      return;
+    }
+
+    const chatJson = (await chatResp.json()) as ChatResponse;
+    let content = chatJson.message?.content;
+    if (typeof content !== "string" || content.trim() === "") {
+      logger.error(
+        `ai-users/chat returned empty content for aiUserId=${profile.id}, peerId=${peerId}`,
+      );
+      return;
+    }
+
+    let jsonText = content.trim();
+    if (!jsonText.startsWith("{")) {
+      const first = jsonText.indexOf("{");
+      const last = jsonText.lastIndexOf("}");
+      if (first !== -1 && last !== -1 && last > first) {
+        jsonText = jsonText.slice(first, last + 1);
+      }
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (e) {
+      logger.error(
+        `failed to parse AI output as JSON for aiUserId=${profile.id}, peerId=${peerId}: ${e} content=${jsonText}`,
+      );
+      return;
+    }
+
+    if (typeof parsed !== "object" || parsed === null) {
+      logger.error(
+        `AI output JSON is not an object for aiUserId=${profile.id}, peerId=${peerId}: ${jsonText}`,
+      );
+      return;
+    }
+
+    const obj = parsed as { impression?: unknown };
+    if (typeof obj.impression !== "string") {
+      logger.error(
+        `AI output JSON missing impression string field for aiUserId=${profile.id}, peerId=${peerId}: ${jsonText}`,
+      );
+      return;
+    }
+
+    const trimmedImpression = obj.impression.trim().slice(0, 400);
+    if (!trimmedImpression) {
+      logger.error(
+        `AI output JSON impression is empty after trimming for aiUserId=${profile.id}, peerId=${peerId}: ${jsonText}`,
+      );
+      return;
+    }
+
+    // ピア印象を保存（description はプレーンテキスト）
+    const saveResp = await fetch(
+      `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(profile.id)}/peer-impressions`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: userSessionCookie,
+        },
+        body: JSON.stringify({
+          peerId,
+          description: trimmedImpression,
+        }),
+      },
+    );
+
+    if (!saveResp.ok) {
+      const bodyText = await saveResp.text().catch(() => "");
+      logger.error(
+        `failed to save peer impression for aiUserId=${profile.id}, peerId=${peerId}: ${saveResp.status} ${bodyText}`,
+      );
+      return;
+    }
+
+    logger.info(
+      `Saved peer impression for aiUserId=${profile.id}, peerId=${peerId}: ${trimmedImpression}`,
+    );
+  } catch (e) {
+    logger.error(
+      `Error in createPeerImpression for aiUserId=${profile.id}, peerId=${peerId}: ${e}`,
+    );
+  }
+}
+
 async function processUser(user: UserLite): Promise<void> {
   logger.info(`Processing AI user: id=${user.id}, nickname=${user.nickname}`);
   const adminSessionCookie = await loginAsAdmin();
@@ -565,23 +852,27 @@ async function processUser(user: UserLite): Promise<void> {
   if (!profile.locale) {
     throw new Error(`user locale is not set: id=${user.id}`);
   }
+
   const unreadPosts = await fetchPostsToRead(userSessionCookie, user.id);
-  const impressionPrompt = readPromptFile(POST_IMPRESSION_PROMPT_PREFIX, profile.locale);
-  const peerIdSet = new Set();
+  const postImpressionPrompt = readPromptFile(POST_IMPRESSION_PROMPT_PREFIX, profile.locale);
+  const peerImpressionPrompt = readPromptFile(PEER_IMPRESSION_PROMPT_PREFIX, profile.locale);
+
+  const peerIdSet = new Set<string>();
+
   for (const post of unreadPosts) {
-    await createPostImpression(userSessionCookie, profile, impressionPrompt, post);
+    await createPostImpression(userSessionCookie, profile, postImpressionPrompt, post);
     peerIdSet.add(post.ownedBy);
 
-    // for debug.
+    // for debug: ひとまず1件だけ処理
     break;
   }
+
   const peerIds = Array.from(peerIdSet);
   logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
 
-
-  console.log(peerIds);
-
-
+  for (const peerId of peerIds) {
+    await createPeerImpression(userSessionCookie, profile, peerImpressionPrompt, peerId);
+  }
 }
 
 async function main() {
