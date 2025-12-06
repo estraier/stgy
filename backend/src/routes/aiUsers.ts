@@ -68,18 +68,23 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       return res.status(501).json({ error: "ai features are disabled" });
     }
     const body = req.body as ChatRequest;
-    let modelToUse: string | undefined;
+    let modelToUse: string;
     if (loginUser.isAdmin) {
-      modelToUse = body.model;
-      if (!modelToUse) {
-        if (loginUser.aiModel) modelToUse = loginUser.aiModel ?? "";
+      if (body.model && body.model.trim() !== "") {
+        modelToUse = body.model;
+      } else if (loginUser.aiModel && loginUser.aiModel.trim() !== "") {
+        modelToUse = loginUser.aiModel;
+      } else {
+        return res.status(400).json({ error: "model is required" });
       }
-      if (!modelToUse) return res.status(400).json({ error: "model is required" });
     } else {
-      if (body.model) return res.status(403).json({ error: "model override not allowed" });
-      if (loginUser.aiModel)
+      if (body.model) {
+        return res.status(403).json({ error: "model override not allowed" });
+      }
+      if (!loginUser.aiModel || loginUser.aiModel.trim() === "") {
         return res.status(403).json({ error: "no model configured for this user" });
-      modelToUse = loginUser.aiModel ?? "";
+      }
+      modelToUse = loginUser.aiModel;
     }
     if (!Array.isArray(body.messages) || body.messages.length === 0) {
       return res.status(400).json({ error: "messages must be a non-empty array" });

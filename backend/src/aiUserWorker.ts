@@ -2,7 +2,7 @@ import fs from "fs";
 import path from "path";
 import { createLogger } from "./utils/logger";
 import type { UserLite, UserDetail } from "./models/user";
-import type { Post } from "./models/post";
+import type { Post, PostDetail } from "./models/post";
 
 type AiUserConfig = {
   backendApiBaseUrl?: string;
@@ -11,6 +11,21 @@ type AiUserConfig = {
   userPageSize?: number;
   userLimit?: number | null;
   postImpressionPromptFile?: string;
+};
+
+type Notification = {
+  slot: string;
+};
+
+type PostCandidate = {
+  postId: string;
+  weight: number;
+};
+
+type ChatResponse = {
+  message?: {
+    content?: string;
+  };
 };
 
 const logger = createLogger({ file: "mailWorker" });
@@ -229,9 +244,321 @@ async function fetchFolloweePosts(sessionCookie: string, userId: string): Promis
   return posts;
 }
 
-async function fetchUnreadPosts(sessionCookie: string, userId: string): Promise<Post[]> {
+async function fetchLatestPosts(sessionCookie: string, userId: string): Promise<Post[]> {
+  const params = new URLSearchParams();
+  params.set("offset", "0");
+  params.set("limit", "30");
+  params.set("order", "desc");
+  params.set("focusUserId", userId);
+
+  const resp = await fetch(`${BACKEND_API_BASE_URL}/posts?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      Cookie: sessionCookie,
+    },
+  });
+
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    throw new Error(`failed to fetch latest posts: ${resp.status} ${body}`);
+  }
+
+  const posts = (await resp.json()) as Post[];
+  return posts;
+}
+
+async function fetchNotifications(sessionCookie: string): Promise<Notification[]> {
+  const resp = await fetch(`${BACKEND_API_BASE_URL}/notifications/feed`, {
+    method: "GET",
+    headers: {
+      Cookie: sessionCookie,
+    },
+  });
+
+  if (resp.status === 304) {
+    return [];
+  }
+
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    throw new Error(`failed to fetch notifications: ${resp.status} ${body}`);
+  }
+
+  const notifications = (await resp.json()) as Notification[];
+  return notifications;
+}
+
+async function checkPostImpression(
+  sessionCookie: string,
+  aiUserId: string,
+  postId: string,
+): Promise<boolean> {
+  const resp = await fetch(
+    `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(
+      aiUserId,
+    )}/post-impressions/${encodeURIComponent(postId)}`,
+    {
+      method: "HEAD",
+      headers: {
+        Cookie: sessionCookie,
+      },
+    },
+  );
+
+  if (resp.status === 200) {
+    return true;
+  }
+  if (resp.status === 404) {
+    return false;
+  }
+  const body = await resp.text().catch(() => "");
+  throw new Error(`failed to check post impression: ${resp.status} ${body}`);
+}
+
+async function fetchPostById(
+  sessionCookie: string,
+  postId: string,
+  focusUserId: string,
+): Promise<PostDetail> {
+  const url = new URL(`${BACKEND_API_BASE_URL}/posts/${encodeURIComponent(postId)}`);
+  url.searchParams.set("focusUserId", focusUserId);
+
+  const resp = await fetch(url.toString(), {
+    method: "GET",
+    headers: {
+      Cookie: sessionCookie,
+    },
+  });
+
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    throw new Error(`failed to fetch post detail: ${resp.status} ${body}`);
+  }
+
+  const post = (await resp.json()) as PostDetail;
+  return post;
+}
+
+async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<PostDetail[]> {
+  const candidates: PostCandidate[] = [];
+
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
-  return followeePosts;
+  for (const post of followeePosts) {
+    const hasImpression = await checkPostImpression(sessionCookie, userId, post.id);
+    if (!hasImpression) {
+      candidates.push({ postId: post.id, weight: 1 });
+    }
+  }
+
+  const latestPosts = await fetchLatestPosts(sessionCookie, userId);
+  for (const post of latestPosts) {
+    const hasImpression = await checkPostImpression(sessionCookie, userId, post.id);
+    if (!hasImpression) {
+      candidates.push({ postId: post.id, weight: 1 });
+    }
+  }
+
+  const notifications = await fetchNotifications(sessionCookie);
+  for (const n of notifications) {
+    if (n.slot.startsWith("reply:")) {
+      const postId = n.slot.slice("reply:".length);
+      if (!postId) continue;
+      const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
+      if (!hasImpression) {
+        candidates.push({ postId, weight: 0.5 });
+      }
+    }
+  }
+  for (const n of notifications) {
+    if (n.slot.startsWith("like:")) {
+      const postId = n.slot.slice("like:".length);
+      if (!postId) continue;
+      const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
+      if (!hasImpression) {
+        candidates.push({ postId, weight: 0.3 });
+      }
+    }
+  }
+
+  if (candidates.length === 0) {
+    logger.info("No candidate posts to read");
+    return [];
+  }
+
+  const scoresByPost = new Map<string, number>();
+  for (const { postId, weight } of candidates) {
+    if (weight <= 0) continue;
+    const score = Math.random() * weight;
+    const prev = scoresByPost.get(postId);
+    if (prev === undefined || score > prev) {
+      scoresByPost.set(postId, score);
+    }
+  }
+
+  const topPostIds = [...scoresByPost.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 10)
+    .map(([postId]) => postId);
+
+  logger.info(`Selected post IDs to read: ${topPostIds.join(",")}`);
+
+  const result: PostDetail[] = [];
+  for (const postId of topPostIds) {
+    try {
+      const post = await fetchPostById(sessionCookie, postId, userId);
+      result.push(post);
+    } catch (e) {
+      logger.info(`Failed to fetch post detail for postId=${postId}: ${e}`);
+    }
+  }
+
+  return result;
+}
+
+async function createPostImpression(
+  userSessionCookie: string,
+  profile: UserDetail,
+  prompt: string,
+  post: PostDetail,
+): Promise<void> {
+  try {
+    const profileExcerpt = {
+      nickname: profile.nickname,
+      locale: profile.locale,
+      introduction: profile.introduction.slice(0, 1000),
+      aiPersonality: profile.aiPersonality,
+    };
+    const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+
+    const postExcerpt = {
+      author: post.ownerNickname,
+      locale: post.locale,
+      createdAt: post.createdAt,
+      content: post.content.slice(0, 300),
+    };
+    const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+
+    const modifiedPrompt = prompt
+      .replace("{{PROFILE_JSON}}", profileJson)
+      .replace("{{POST_JSON}}", postJson);
+
+    const chatBody = {
+      messages: [
+        {
+          role: "user" as const,
+          content: modifiedPrompt,
+        },
+      ],
+    };
+
+    const chatResp = await fetch(`${BACKEND_API_BASE_URL}/ai-users/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: userSessionCookie,
+      },
+      body: JSON.stringify(chatBody),
+    });
+
+    if (chatResp.status === 501) {
+      const bodyText = await chatResp.text().catch(() => "");
+      logger.error(
+        `AI features are disabled when calling ai-users/chat for aiUserId=${profile.id}, postId=${post.id}: ${bodyText}`,
+      );
+      return;
+    }
+
+    if (!chatResp.ok) {
+      const bodyText = await chatResp.text().catch(() => "");
+      logger.error(
+        `failed to call ai-users/chat for aiUserId=${profile.id}, postId=${post.id}: ${chatResp.status} ${bodyText}`,
+      );
+      return;
+    }
+
+    const chatJson = (await chatResp.json()) as {
+      message?: { content?: string };
+    };
+    let content = chatJson.message?.content;
+    if (typeof content !== "string" || content.trim() === "") {
+      logger.error(
+        `ai-users/chat returned empty content for aiUserId=${profile.id}, postId=${post.id}`,
+      );
+      return;
+    }
+
+    let jsonText = content.trim();
+    if (!jsonText.startsWith("{")) {
+      const first = jsonText.indexOf("{");
+      const last = jsonText.lastIndexOf("}");
+      if (first !== -1 && last !== -1 && last > first) {
+        jsonText = jsonText.slice(first, last + 1);
+      }
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = JSON.parse(jsonText);
+    } catch (e) {
+      logger.error(
+        `failed to parse AI output as JSON for aiUserId=${profile.id}, postId=${post.id}: ${e} content=${jsonText}`,
+      );
+      return;
+    }
+
+    if (typeof parsed !== "object" || parsed === null) {
+      logger.error(
+        `AI output JSON is not an object for aiUserId=${profile.id}, postId=${post.id}: ${jsonText}`,
+      );
+      return;
+    }
+
+    const obj = parsed as { summary?: unknown; impression?: unknown };
+    if (typeof obj.summary !== "string" || typeof obj.impression !== "string") {
+      logger.error(
+        `AI output JSON missing summary/impression string fields for aiUserId=${profile.id}, postId=${post.id}: ${jsonText}`,
+      );
+      return;
+    }
+
+    const trimmed = {
+      summary: obj.summary.trim().slice(0, 400),
+      impression: obj.impression.trim().slice(0, 400),
+    };
+
+    const description = JSON.stringify(trimmed);
+
+    const saveResp = await fetch(
+      `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(profile.id)}/post-impressions`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: userSessionCookie,
+        },
+        body: JSON.stringify({
+          postId: post.id,
+          description,
+        }),
+      },
+    );
+
+    if (!saveResp.ok) {
+      const bodyText = await saveResp.text().catch(() => "");
+      logger.error(
+        `failed to save post impression for aiUserId=${profile.id}, postId=${post.id}: ${saveResp.status} ${bodyText}`,
+      );
+      return;
+    }
+
+    logger.info(
+      `Saved post impression for aiUserId=${profile.id}, postId=${post.id}: ${description}`,
+    );
+  } catch (e) {
+    logger.error(
+      `Error in createPostImpression for aiUserId=${profile.id}, postId=${post.id}: ${e}`,
+    );
+  }
 }
 
 async function processUser(user: UserLite): Promise<void> {
@@ -239,24 +566,15 @@ async function processUser(user: UserLite): Promise<void> {
   const adminSessionCookie = await loginAsAdmin();
   const userSessionCookie = await switchToUser(adminSessionCookie, user.id);
   const profile = await fetchUserProfile(userSessionCookie, user.id);
-  logger.info(
-    `AI user profile: id=${profile.id}, nickname=${profile.nickname}, aiModel=${
-      profile.aiModel ?? ""
-    }, locale=${profile.locale}, timezone=${profile.timezone}, isAdmin=${
-      profile.isAdmin
-    }, blockStrangers=${profile.blockStrangers}, introduction=${profile.introduction}`,
-  );
-  const unreadPosts = await fetchUnreadPosts(userSessionCookie, user.id);
-  logger.info(
-    `AI user unread posts: count=${unreadPosts.length}, posts=${JSON.stringify(
-      unreadPosts,
-    )}`,
-  );
   if (!profile.locale) {
     throw new Error(`user locale is not set: id=${user.id}`);
   }
-  const promptText = readPromptFile(POST_IMPRESSION_PROMPT_PREFIX, profile.locale);
-  logger.info(`Post impression prompt: ${promptText}`);
+  const unreadPosts = await fetchPostsToRead(userSessionCookie, user.id);
+  const impressionPrompt = readPromptFile(POST_IMPRESSION_PROMPT_PREFIX, profile.locale);
+  for (const post of unreadPosts) {
+    await createPostImpression(userSessionCookie, profile, impressionPrompt, post);
+    break;
+  }
 }
 
 async function main() {
