@@ -24,10 +24,7 @@ describe("fileConfig", () => {
     });
 
     test("throws if file does not exist", () => {
-      const filePath = path.join(
-        os.tmpdir(),
-        `fileConfigTest-missing-${Date.now()}.json`,
-      );
+      const filePath = path.join(os.tmpdir(), `fileConfigTest-missing-${Date.now()}.json`);
       expect(() => loadConfig(filePath)).toThrow(/config file not found/);
     });
 
@@ -62,18 +59,12 @@ describe("fileConfig", () => {
     });
 
     test("throws if param is not set", () => {
-      expect(() => getFileConfigStr(cfg, "missing")).toThrow(
-        /config param "missing" is not set/,
-      );
+      expect(() => getFileConfigStr(cfg, "missing")).toThrow(/config param "missing" is not set/);
     });
 
     test("throws if param is not a string", () => {
-      expect(() => getFileConfigStr(cfg, "n")).toThrow(
-        /config param "n" must be string/,
-      );
-      expect(() => getFileConfigStr(cfg, "b")).toThrow(
-        /config param "b" must be string/,
-      );
+      expect(() => getFileConfigStr(cfg, "n")).toThrow(/config param "n" must be string/);
+      expect(() => getFileConfigStr(cfg, "b")).toThrow(/config param "b" must be string/);
     });
   });
 
@@ -89,15 +80,11 @@ describe("fileConfig", () => {
     });
 
     test("throws if param is not set", () => {
-      expect(() => getFileConfigNum(cfg, "missing")).toThrow(
-        /config param "missing" is not set/,
-      );
+      expect(() => getFileConfigNum(cfg, "missing")).toThrow(/config param "missing" is not set/);
     });
 
     test("throws if param is not a number", () => {
-      expect(() => getFileConfigNum(cfg, "s")).toThrow(
-        /config param "s" must be a finite number/,
-      );
+      expect(() => getFileConfigNum(cfg, "s")).toThrow(/config param "s" must be a finite number/);
     });
 
     test("throws if param is not finite", () => {
@@ -119,18 +106,12 @@ describe("fileConfig", () => {
     });
 
     test("throws if param is not set", () => {
-      expect(() => getFileConfigBool(cfg, "missing")).toThrow(
-        /config param "missing" is not set/,
-      );
+      expect(() => getFileConfigBool(cfg, "missing")).toThrow(/config param "missing" is not set/);
     });
 
     test("throws if param is not a boolean", () => {
-      expect(() => getFileConfigBool(cfg, "s")).toThrow(
-        /config param "s" must be boolean/,
-      );
-      expect(() => getFileConfigBool(cfg, "n")).toThrow(
-        /config param "n" must be boolean/,
-      );
+      expect(() => getFileConfigBool(cfg, "s")).toThrow(/config param "s" must be boolean/);
+      expect(() => getFileConfigBool(cfg, "n")).toThrow(/config param "n" must be boolean/);
     });
   });
 });

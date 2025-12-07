@@ -9,9 +9,7 @@ function paramNotSetError(name: string): Error {
 
 function paramTypeError(name: string, expected: string, actual: unknown): Error {
   const actualType = actual === null ? "null" : typeof actual;
-  return new Error(
-    `config param "${name}" must be ${expected}, but got ${actualType}`,
-  );
+  return new Error(`config param "${name}" must be ${expected}, but got ${actualType}`);
 }
 
 export function loadConfig(configPath: string): FileConfig {

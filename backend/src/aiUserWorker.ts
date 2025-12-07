@@ -78,10 +78,8 @@ const configPath = getConfigPath();
 const fileConfig: FileConfig = loadFileConfig(configPath);
 const CONFIG_DIR = path.dirname(configPath);
 const BACKEND_API_BASE_URL =
-  process.env.STGY_BACKEND_API_BASE_URL ??
-  getFileConfigStr(fileConfig, "backendApiBaseUrl");
-const ADMIN_EMAIL =
-  process.env.STGY_ADMIN_EMAIL ?? getFileConfigStr(fileConfig, "adminEmail");
+  process.env.STGY_BACKEND_API_BASE_URL ?? getFileConfigStr(fileConfig, "backendApiBaseUrl");
+const ADMIN_EMAIL = process.env.STGY_ADMIN_EMAIL ?? getFileConfigStr(fileConfig, "adminEmail");
 const ADMIN_PASSWORD =
   process.env.STGY_ADMIN_PASSWORD ?? getFileConfigStr(fileConfig, "adminPassword");
 const CONCURRENCY = Math.max(1, Math.floor(getFileConfigNum(fileConfig, "concurrency")));
@@ -97,7 +95,6 @@ const POST_IMPRESSION_PROMPT_PREFIX = (() => {
   const rel = getFileConfigStr(fileConfig, "postImpressionPromptFile");
   return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
 })();
-
 const PEER_IMPRESSION_PROMPT_PREFIX = (() => {
   const rel = getFileConfigStr(fileConfig, "peerImpressionPromptFile");
   return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
@@ -411,7 +408,9 @@ async function createPostImpression(
       nickname: profile.nickname,
       locale: profile.locale,
       introduction: profile.introduction.slice(0, PROFILE_CHAR_LIMIT),
-      aiPersonality: profile.aiPersonality ? profile.aiPersonality.slice(0, PROFILE_CHAR_LIMIT) : "",
+      aiPersonality: profile.aiPersonality
+        ? profile.aiPersonality.slice(0, PROFILE_CHAR_LIMIT)
+        : "",
       currentInterest: interest ? interest.description.slice(0, PROFILE_CHAR_LIMIT) : "",
     };
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
@@ -425,6 +424,9 @@ async function createPostImpression(
     const modifiedPrompt = prompt
       .replace("{{PROFILE_JSON}}", profileJson)
       .replace("{{POST_JSON}}", postJson);
+
+    console.log(modifiedPrompt);
+
     const chatBody = {
       messages: [
         {
@@ -534,7 +536,9 @@ async function createPeerImpression(
       nickname: profile.nickname,
       locale: profile.locale,
       introduction: profile.introduction.slice(0, PROFILE_CHAR_LIMIT),
-      aiPersonality: profile.aiPersonality ? profile.aiPersonality.slice(0, PROFILE_CHAR_LIMIT) : "",
+      aiPersonality: profile.aiPersonality
+        ? profile.aiPersonality.slice(0, PROFILE_CHAR_LIMIT)
+        : "",
       currentInterest: interest ? interest.description.slice(0, PROFILE_CHAR_LIMIT) : "",
     };
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
@@ -643,6 +647,9 @@ async function createPeerImpression(
     const modifiedPrompt = prompt
       .replace("{{PROFILE_JSON}}", profileJson)
       .replace("{{PEER_JSON}}", peerJson);
+
+    console.log(modifiedPrompt);
+
     const chatBody = {
       messages: [
         {
@@ -747,12 +754,177 @@ async function createInterest(
   interest: AiUserInterest | null,
   prompt: string,
 ): Promise<void> {
+  try {
+    const profileExcerpt = {
+      userId: profile.id,
+      nickname: profile.nickname,
+      locale: profile.locale,
+      introduction: profile.introduction.slice(0, PROFILE_CHAR_LIMIT),
+      aiPersonality: profile.aiPersonality
+        ? profile.aiPersonality.slice(0, PROFILE_CHAR_LIMIT)
+        : "",
+      currentInterest: interest ? interest.description.slice(0, PROFILE_CHAR_LIMIT) : "",
+    };
+    const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
 
+    type RawPostImpression = {
+      postId?: unknown;
+      description?: unknown;
+    };
+    const posts: { summary: string; impression: string }[] = [];
+    try {
+      const params = new URLSearchParams();
+      params.set("limit", String(READ_IMPRESSION_LIMIT));
+      params.set("offset", "0");
+      params.set("order", "desc");
+      const resp = await fetch(
+        `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(
+          profile.id,
+        )}/post-impressions?${params.toString()}`,
+        {
+          method: "GET",
+          headers: {
+            Cookie: userSessionCookie,
+          },
+        },
+      );
+      if (!resp.ok) {
+        const bodyText = await resp.text().catch(() => "");
+        logger.error(
+          `failed to fetch post impressions for interest of aiUserId=${profile.id}: ${resp.status} ${bodyText}`,
+        );
+      } else {
+        const arr = (await resp.json()) as RawPostImpression[];
+        for (const imp of arr) {
+          if (typeof imp.description !== "string") continue;
+          let summary = "";
+          let impression = "";
+          try {
+            const obj = JSON.parse(imp.description) as {
+              summary?: unknown;
+              impression?: unknown;
+            };
+            if (typeof obj.summary === "string") summary = obj.summary;
+            if (typeof obj.impression === "string") impression = obj.impression;
+          } catch (e) {
+            logger.error(
+              `failed to parse post impression JSON for interest of aiUserId=${profile.id}, postId=${String(
+                imp.postId,
+              )}: ${e}`,
+            );
+            continue;
+          }
+          summary = summary.trim().slice(0, OUTPUT_CHAR_LIMIT);
+          impression = impression.trim().slice(0, OUTPUT_CHAR_LIMIT);
+          if (!summary && !impression) continue;
+          posts.push({ summary, impression });
+        }
+      }
+    } catch (e) {
+      logger.error(
+        `Error while fetching/processing post impressions for interest of aiUserId=${profile.id}: ${e}`,
+      );
+    }
 
-  console.log(interest);
-  console.log(prompt);
+    const postsJsonObj = { posts };
+    const postsJson = JSON.stringify(postsJsonObj, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+    const modifiedPrompt = prompt
+      .replace("{{PROFILE_JSON}}", profileJson)
+      .replace("{{POSTS_JSON}}", postsJson);
 
+    console.log(modifiedPrompt);
 
+    const chatBody = {
+      messages: [
+        {
+          role: "user" as const,
+          content: modifiedPrompt,
+        },
+      ],
+    };
+    const chatResp = await fetch(`${BACKEND_API_BASE_URL}/ai-users/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: userSessionCookie,
+      },
+      body: JSON.stringify(chatBody),
+    });
+    if (chatResp.status === 501) {
+      const bodyText = await chatResp.text().catch(() => "");
+      logger.error(
+        `AI features are disabled when calling ai-users/chat for interest of aiUserId=${profile.id}: ${bodyText}`,
+      );
+      return;
+    }
+    if (!chatResp.ok) {
+      const bodyText = await chatResp.text().catch(() => "");
+      logger.error(
+        `failed to call ai-users/chat for interest of aiUserId=${profile.id}: ${chatResp.status} ${bodyText}`,
+      );
+      return;
+    }
+    const chatJson = (await chatResp.json()) as ChatResponse;
+    const content = chatJson.message?.content;
+    if (typeof content !== "string" || content.trim() === "") {
+      logger.error(`ai-users/chat returned empty content for interest of aiUserId=${profile.id}`);
+      return;
+    }
+
+    let parsed: unknown;
+    try {
+      parsed = evaluateChatResponseAsJson(content);
+    } catch (e) {
+      logger.error(
+        `failed to parse AI output as JSON for interest of aiUserId=${profile.id}: ${e} content=${content}`,
+      );
+      return;
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      logger.error(
+        `AI output JSON is not an object for interest of aiUserId=${profile.id}: ${content}`,
+      );
+      return;
+    }
+    const obj = parsed as { interest?: unknown };
+    if (typeof obj.interest !== "string") {
+      logger.error(
+        `AI output JSON missing interest string field for aiUserId=${profile.id}: ${content}`,
+      );
+      return;
+    }
+    const trimmedInterest = obj.interest.trim().slice(0, OUTPUT_CHAR_LIMIT);
+    if (!trimmedInterest) {
+      logger.error(
+        `AI output JSON interest is empty after trimming for aiUserId=${profile.id}: ${content}`,
+      );
+      return;
+    }
+
+    const saveResp = await fetch(
+      `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(profile.id)}/interests`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: userSessionCookie,
+        },
+        body: JSON.stringify({
+          description: trimmedInterest,
+        }),
+      },
+    );
+    if (!saveResp.ok) {
+      const bodyText = await saveResp.text().catch(() => "");
+      logger.error(
+        `failed to save interest for aiUserId=${profile.id}: ${saveResp.status} ${bodyText}`,
+      );
+      return;
+    }
+    logger.info(`Saved interest for aiUserId=${profile.id}: ${trimmedInterest}`);
+  } catch (e) {
+    logger.error(`Error in createInterest for aiUserId=${profile.id}: ${e}`);
+  }
 }
 
 async function processUser(user: UserLite): Promise<void> {
