@@ -79,7 +79,6 @@ function readPromptFile(prefix: string, locale: string): string {
   const normalizedLocale = locale.replace(/_/g, "-");
   const parts = normalizedLocale.split("-");
   const candidates: string[] = [];
-
   if (normalizedLocale) {
     candidates.push(`${prefix}-${normalizedLocale}.txt`);
   }
@@ -87,13 +86,11 @@ function readPromptFile(prefix: string, locale: string): string {
     candidates.push(`${prefix}-${parts[0]}.txt`);
   }
   candidates.push(`${prefix}.txt`);
-
   for (const filePath of candidates) {
     if (fs.existsSync(filePath)) {
       return fs.readFileSync(filePath, "utf8");
     }
   }
-
   throw new Error(`prompt file not found for prefix=${prefix} locale=${locale}`);
 }
 
@@ -109,7 +106,6 @@ const POST_IMPRESSION_PROMPT_PREFIX = (() => {
     ? fileConfig.postImpressionPromptFile
     : path.resolve(CONFIG_DIR, fileConfig.postImpressionPromptFile);
 })();
-
 const PEER_IMPRESSION_PROMPT_PREFIX = (() => {
   if (!fileConfig.peerImpressionPromptFile) {
     throw new Error("peerImpressionPromptFile is not configured in ai-user-config.json");
@@ -118,19 +114,14 @@ const PEER_IMPRESSION_PROMPT_PREFIX = (() => {
     ? fileConfig.peerImpressionPromptFile
     : path.resolve(CONFIG_DIR, fileConfig.peerImpressionPromptFile);
 })();
-
 const BACKEND_API_BASE_URL =
   process.env.STGY_BACKEND_API_BASE_URL || fileConfig.backendApiBaseUrl || "http://localhost:3001";
-
 const ADMIN_EMAIL = process.env.STGY_ADMIN_EMAIL || fileConfig.adminEmail || "admin@stgy.jp";
-
 const ADMIN_PASSWORD = process.env.STGY_ADMIN_PASSWORD || fileConfig.adminPassword || "stgystgy";
-
 const PAGE_LIMIT =
   typeof fileConfig.userPageSize === "number" && fileConfig.userPageSize > 0
     ? fileConfig.userPageSize
     : 100;
-
 const USER_LIMIT =
   typeof fileConfig.userLimit === "number" && fileConfig.userLimit > 0
     ? fileConfig.userLimit
@@ -147,12 +138,10 @@ async function loginAsAdmin(): Promise<string> {
       password: ADMIN_PASSWORD,
     }),
   });
-
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
     throw new Error(`failed to login as admin: ${resp.status} ${body}`);
   }
-
   const setCookie = resp.headers.get("set-cookie");
   if (!setCookie) {
     throw new Error("no set-cookie header in login response");
@@ -175,12 +164,10 @@ async function fetchNextUsers(
       Cookie: sessionCookie,
     },
   });
-
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
     throw new Error(`failed to fetch ai users: ${resp.status} ${body}`);
   }
-
   const users = (await resp.json()) as UserLite[];
   return users;
 }
@@ -194,12 +181,10 @@ async function switchToUser(adminSessionCookie: string, userId: string): Promise
     },
     body: JSON.stringify({ id: userId }),
   });
-
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
     throw new Error(`failed to switch user: ${resp.status} ${body}`);
   }
-
   const setCookie = resp.headers.get("set-cookie");
   if (!setCookie) {
     throw new Error("no set-cookie header in switch-user response");
@@ -218,12 +203,10 @@ async function fetchUserProfile(sessionCookie: string, userId: string): Promise<
       Cookie: sessionCookie,
     },
   });
-
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
     throw new Error(`failed to fetch user profile: ${resp.status} ${body}`);
   }
-
   const profile = (await resp.json()) as UserDetail;
   return profile;
 }
@@ -237,19 +220,16 @@ async function fetchFolloweePosts(sessionCookie: string, userId: string): Promis
   params.set("includeReplies", "true");
   params.set("focusUserId", userId);
   params.set("limitPerUser", "3");
-
   const resp = await fetch(`${BACKEND_API_BASE_URL}/posts/by-followees?${params.toString()}`, {
     method: "GET",
     headers: {
       Cookie: sessionCookie,
     },
   });
-
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
     throw new Error(`failed to fetch posts by followees: ${resp.status} ${body}`);
   }
-
   const posts = (await resp.json()) as Post[];
   return posts;
 }
@@ -260,19 +240,16 @@ async function fetchLatestPosts(sessionCookie: string, userId: string): Promise<
   params.set("limit", "30");
   params.set("order", "desc");
   params.set("focusUserId", userId);
-
   const resp = await fetch(`${BACKEND_API_BASE_URL}/posts?${params.toString()}`, {
     method: "GET",
     headers: {
       Cookie: sessionCookie,
     },
   });
-
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
     throw new Error(`failed to fetch latest posts: ${resp.status} ${body}`);
   }
-
   const posts = (await resp.json()) as Post[];
   return posts;
 }
@@ -284,16 +261,13 @@ async function fetchNotifications(sessionCookie: string): Promise<Notification[]
       Cookie: sessionCookie,
     },
   });
-
   if (resp.status === 304) {
     return [];
   }
-
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
     throw new Error(`failed to fetch notifications: ${resp.status} ${body}`);
   }
-
   const notifications = (await resp.json()) as Notification[];
   return notifications;
 }
@@ -314,7 +288,6 @@ async function checkPostImpression(
       },
     },
   );
-
   if (resp.status === 200) {
     return true;
   }
@@ -332,26 +305,22 @@ async function fetchPostById(
 ): Promise<PostDetail> {
   const url = new URL(`${BACKEND_API_BASE_URL}/posts/${encodeURIComponent(postId)}`);
   url.searchParams.set("focusUserId", focusUserId);
-
   const resp = await fetch(url.toString(), {
     method: "GET",
     headers: {
       Cookie: sessionCookie,
     },
   });
-
   if (!resp.ok) {
     const body = await resp.text().catch(() => "");
     throw new Error(`failed to fetch post detail: ${resp.status} ${body}`);
   }
-
   const post = (await resp.json()) as PostDetail;
   return post;
 }
 
 async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<PostDetail[]> {
   const candidates: PostCandidate[] = [];
-
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
   for (const post of followeePosts) {
     if (post.ownedBy === userId) continue;
@@ -360,7 +329,6 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       candidates.push({ postId: post.id, weight: 1 });
     }
   }
-
   const latestPosts = await fetchLatestPosts(sessionCookie, userId);
   for (const post of latestPosts) {
     if (post.ownedBy === userId) continue;
@@ -369,7 +337,6 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       candidates.push({ postId: post.id, weight: 1 });
     }
   }
-
   const notifications = await fetchNotifications(sessionCookie);
   for (const n of notifications) {
     if (n.slot.startsWith("reply:")) {
@@ -393,13 +360,10 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       }
     }
   }
-
   if (candidates.length === 0) {
     logger.info("No candidate posts to read");
     return [];
   }
-
-  // postId ごとに最大 weight を採用して dedup
   const weightByPost = new Map<string, number>();
   for (const { postId, weight } of candidates) {
     const prev = weightByPost.get(postId);
@@ -407,22 +371,17 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       weightByPost.set(postId, weight);
     }
   }
-
-  // 重みに応じてスコアを乱択（大きい weight ほど大きい値を取りやすい）
   const scoresByPost = new Map<string, number>();
   for (const [postId, weight] of weightByPost.entries()) {
     if (weight <= 0) continue;
     const score = Math.random() * weight;
     scoresByPost.set(postId, score);
   }
-
   const topPostIds = [...scoresByPost.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, 10)
     .map(([postId]) => postId);
-
   logger.info(`Selected post IDs to read: ${topPostIds.join(",")}`);
-
   const result: PostDetail[] = [];
   for (const postId of topPostIds) {
     try {
@@ -432,7 +391,6 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       logger.info(`Failed to fetch post detail for postId=${postId}: ${e}`);
     }
   }
-
   return result;
 }
 
@@ -450,7 +408,6 @@ async function createPostImpression(
       aiPersonality: profile.aiPersonality,
     };
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-
     const postExcerpt = {
       author: post.ownerNickname,
       locale: post.locale,
@@ -458,11 +415,9 @@ async function createPostImpression(
       content: post.content.slice(0, 300),
     };
     const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-
     const modifiedPrompt = prompt
       .replace("{{PROFILE_JSON}}", profileJson)
       .replace("{{POST_JSON}}", postJson);
-
     const chatBody = {
       messages: [
         {
@@ -471,7 +426,6 @@ async function createPostImpression(
         },
       ],
     };
-
     const chatResp = await fetch(`${BACKEND_API_BASE_URL}/ai-users/chat`, {
       method: "POST",
       headers: {
@@ -480,7 +434,6 @@ async function createPostImpression(
       },
       body: JSON.stringify(chatBody),
     });
-
     if (chatResp.status === 501) {
       const bodyText = await chatResp.text().catch(() => "");
       logger.error(
@@ -488,7 +441,6 @@ async function createPostImpression(
       );
       return;
     }
-
     if (!chatResp.ok) {
       const bodyText = await chatResp.text().catch(() => "");
       logger.error(
@@ -496,7 +448,6 @@ async function createPostImpression(
       );
       return;
     }
-
     const chatJson = (await chatResp.json()) as {
       message?: { content?: string };
     };
@@ -507,7 +458,6 @@ async function createPostImpression(
       );
       return;
     }
-
     let jsonText = content.trim();
     if (!jsonText.startsWith("{")) {
       const first = jsonText.indexOf("{");
@@ -516,7 +466,6 @@ async function createPostImpression(
         jsonText = jsonText.slice(first, last + 1);
       }
     }
-
     let parsed: unknown;
     try {
       parsed = JSON.parse(jsonText);
@@ -526,14 +475,12 @@ async function createPostImpression(
       );
       return;
     }
-
     if (typeof parsed !== "object" || parsed === null) {
       logger.error(
         `AI output JSON is not an object for aiUserId=${profile.id}, postId=${post.id}: ${jsonText}`,
       );
       return;
     }
-
     const obj = parsed as { summary?: unknown; impression?: unknown };
     if (typeof obj.summary !== "string" || typeof obj.impression !== "string") {
       logger.error(
@@ -541,14 +488,11 @@ async function createPostImpression(
       );
       return;
     }
-
     const trimmed = {
       summary: obj.summary.trim().slice(0, 400),
       impression: obj.impression.trim().slice(0, 400),
     };
-
     const description = JSON.stringify(trimmed);
-
     const saveResp = await fetch(
       `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(profile.id)}/post-impressions`,
       {
@@ -563,7 +507,6 @@ async function createPostImpression(
         }),
       },
     );
-
     if (!saveResp.ok) {
       const bodyText = await saveResp.text().catch(() => "");
       logger.error(
@@ -571,7 +514,6 @@ async function createPostImpression(
       );
       return;
     }
-
     logger.info(
       `Saved post impression for aiUserId=${profile.id}, postId=${post.id}: ${description}`,
     );
@@ -589,7 +531,6 @@ async function createPeerImpression(
   peerId: string,
 ): Promise<void> {
   try {
-    // AIエージェント自身のプロフィール(JSON)
     const profileExcerpt = {
       nickname: profile.nickname,
       locale: profile.locale,
@@ -597,12 +538,8 @@ async function createPeerImpression(
       aiPersonality: profile.aiPersonality,
     };
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-
-    // 対象ピアのプロフィール
     const peerProfile = await fetchUserProfile(userSessionCookie, peerId);
     const peerIntro = peerProfile.introduction.slice(0, 1000);
-
-    // 直近のユーザ印象 (AiPeerImpression) を取得
     let lastImpression = "";
     try {
       const resp = await fetch(
@@ -616,9 +553,7 @@ async function createPeerImpression(
           },
         },
       );
-
       if (resp.status === 404) {
-        // まだ印象なし
       } else if (!resp.ok) {
         const bodyText = await resp.text().catch(() => "");
         logger.error(
@@ -635,22 +570,17 @@ async function createPeerImpression(
         `Error while fetching last peer impression for aiUserId=${profile.id}, peerId=${peerId}: ${e}`,
       );
     }
-
-    // ピアの投稿印象 (AiPostImpression) の最新3件
     type RawPostImpression = {
       postId?: unknown;
       description?: unknown;
     };
-
     const peerPosts: { postId: string; summary: string; impression: string }[] = [];
-
     try {
       const params = new URLSearchParams();
       params.set("ownerId", peerId);
       params.set("limit", "3");
       params.set("offset", "0");
       params.set("order", "desc");
-
       const resp = await fetch(
         `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(
           profile.id,
@@ -662,7 +592,6 @@ async function createPeerImpression(
           },
         },
       );
-
       if (!resp.ok) {
         const bodyText = await resp.text().catch(() => "");
         logger.error(
@@ -673,10 +602,8 @@ async function createPeerImpression(
         for (const imp of arr) {
           if (typeof imp.postId !== "string") continue;
           if (typeof imp.description !== "string") continue;
-
           let summary = "";
           let impression = "";
-
           try {
             const obj = JSON.parse(imp.description) as {
               summary?: unknown;
@@ -685,17 +612,14 @@ async function createPeerImpression(
             if (typeof obj.summary === "string") summary = obj.summary;
             if (typeof obj.impression === "string") impression = obj.impression;
           } catch (e) {
-            // description がJSONでない場合はスキップ（ログだけ残す）
             logger.error(
               `failed to parse post impression JSON for aiUserId=${profile.id}, peerId=${peerId}, postId=${imp.postId}: ${e}`,
             );
             continue;
           }
-
           summary = summary.trim().slice(0, 400);
           impression = impression.trim().slice(0, 400);
           if (!summary && !impression) continue;
-
           peerPosts.push({
             postId: imp.postId,
             summary,
@@ -708,8 +632,6 @@ async function createPeerImpression(
         `Error while fetching/processing peer post impressions for aiUserId=${profile.id}, peerId=${peerId}: ${e}`,
       );
     }
-
-    // PEER_JSON を構築
     const peerJsonObj = {
       peerId,
       nickname: peerProfile.nickname,
@@ -717,14 +639,10 @@ async function createPeerImpression(
       lastImpression,
       posts: peerPosts,
     };
-
     const peerJson = JSON.stringify(peerJsonObj, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-
     const modifiedPrompt = prompt
       .replace("{{PROFILE_JSON}}", profileJson)
       .replace("{{PEER_JSON}}", peerJson);
-
-    // --- ここから chat 呼び出し（投稿印象と同じポリシー） ---
     const chatBody = {
       messages: [
         {
@@ -733,7 +651,6 @@ async function createPeerImpression(
         },
       ],
     };
-
     const chatResp = await fetch(`${BACKEND_API_BASE_URL}/ai-users/chat`, {
       method: "POST",
       headers: {
@@ -742,7 +659,6 @@ async function createPeerImpression(
       },
       body: JSON.stringify(chatBody),
     });
-
     if (chatResp.status === 501) {
       const bodyText = await chatResp.text().catch(() => "");
       logger.error(
@@ -750,7 +666,6 @@ async function createPeerImpression(
       );
       return;
     }
-
     if (!chatResp.ok) {
       const bodyText = await chatResp.text().catch(() => "");
       logger.error(
@@ -758,7 +673,6 @@ async function createPeerImpression(
       );
       return;
     }
-
     const chatJson = (await chatResp.json()) as ChatResponse;
     let content = chatJson.message?.content;
     if (typeof content !== "string" || content.trim() === "") {
@@ -767,7 +681,6 @@ async function createPeerImpression(
       );
       return;
     }
-
     let jsonText = content.trim();
     if (!jsonText.startsWith("{")) {
       const first = jsonText.indexOf("{");
@@ -776,7 +689,6 @@ async function createPeerImpression(
         jsonText = jsonText.slice(first, last + 1);
       }
     }
-
     let parsed: unknown;
     try {
       parsed = JSON.parse(jsonText);
@@ -793,7 +705,6 @@ async function createPeerImpression(
       );
       return;
     }
-
     const obj = parsed as { impression?: unknown };
     if (typeof obj.impression !== "string") {
       logger.error(
@@ -801,7 +712,6 @@ async function createPeerImpression(
       );
       return;
     }
-
     const trimmedImpression = obj.impression.trim().slice(0, 400);
     if (!trimmedImpression) {
       logger.error(
@@ -809,8 +719,6 @@ async function createPeerImpression(
       );
       return;
     }
-
-    // ピア印象を保存（description はプレーンテキスト）
     const saveResp = await fetch(
       `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(profile.id)}/peer-impressions`,
       {
@@ -825,7 +733,6 @@ async function createPeerImpression(
         }),
       },
     );
-
     if (!saveResp.ok) {
       const bodyText = await saveResp.text().catch(() => "");
       logger.error(
@@ -833,7 +740,6 @@ async function createPeerImpression(
       );
       return;
     }
-
     logger.info(
       `Saved peer impression for aiUserId=${profile.id}, peerId=${peerId}: ${trimmedImpression}`,
     );
@@ -856,9 +762,7 @@ async function processUser(user: UserLite): Promise<void> {
   const unreadPosts = await fetchPostsToRead(userSessionCookie, user.id);
   const postImpressionPrompt = readPromptFile(POST_IMPRESSION_PROMPT_PREFIX, profile.locale);
   const peerImpressionPrompt = readPromptFile(PEER_IMPRESSION_PROMPT_PREFIX, profile.locale);
-
   const peerIdSet = new Set<string>();
-
   for (const post of unreadPosts) {
     await createPostImpression(userSessionCookie, profile, postImpressionPrompt, post);
     peerIdSet.add(post.ownedBy);
@@ -866,10 +770,8 @@ async function processUser(user: UserLite): Promise<void> {
     // for debug: ひとまず1件だけ処理
     break;
   }
-
   const peerIds = Array.from(peerIdSet);
   logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
-
   for (const peerId of peerIds) {
     await createPeerImpression(userSessionCookie, profile, peerImpressionPrompt, peerId);
   }

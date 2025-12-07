@@ -65,7 +65,9 @@ class MockPgPool {
     }
 
     if (
-      sql.startsWith("SELECT u.id, u.nickname, u.is_admin, u.ai_model FROM users u WHERE u.ai_model IS NOT NULL")
+      sql.startsWith(
+        "SELECT u.id, u.nickname, u.is_admin, u.ai_model FROM users u WHERE u.ai_model IS NOT NULL",
+      )
     ) {
       const limit = params?.[0] ?? 50;
       const offset = params?.[1] ?? 0;
@@ -204,9 +206,7 @@ class MockPgPool {
       const peerParam = params?.[1];
       const uid = typeof userParam === "string" ? Number(userParam) : userParam;
       const pid = typeof peerParam === "string" ? Number(peerParam) : peerParam;
-      const found = this.ai_peer_impressions.some(
-        (r) => r.user_id === uid && r.peer_id === pid,
-      );
+      const found = this.ai_peer_impressions.some((r) => r.user_id === uid && r.peer_id === pid);
       if (!found) return { rows: [], rowCount: 0 };
       return { rows: [{ exists: 1 }], rowCount: 1 };
     }
@@ -257,9 +257,7 @@ class MockPgPool {
       const postParam = params?.[1];
       const uid = typeof userParam === "string" ? Number(userParam) : userParam;
       const pid = typeof postParam === "string" ? Number(postParam) : postParam;
-      const found = this.ai_post_impressions.some(
-        (r) => r.user_id === uid && r.post_id === pid,
-      );
+      const found = this.ai_post_impressions.some((r) => r.user_id === uid && r.post_id === pid);
       if (!found) return { rows: [], rowCount: 0 };
       return { rows: [{ exists: 1 }], rowCount: 1 };
     }
@@ -297,8 +295,7 @@ class MockPgPool {
           filtered = filtered.filter((r) => r.post_id === pid);
         }
 
-        const asc =
-          sql.includes("ORDER BY post_id ASC") || sql.includes("ORDER BY updated_at ASC");
+        const asc = sql.includes("ORDER BY post_id ASC") || sql.includes("ORDER BY updated_at ASC");
 
         let sorted: typeof filtered;
         if (sql.includes("ORDER BY post_id")) {
@@ -333,9 +330,7 @@ class MockPgPool {
       const postParam = params?.[1];
       const uid = typeof userParam === "string" ? Number(userParam) : userParam;
       const pid = typeof postParam === "string" ? Number(postParam) : postParam;
-      const found = this.ai_post_impressions.find(
-        (r) => r.user_id === uid && r.post_id === pid,
-      );
+      const found = this.ai_post_impressions.find((r) => r.user_id === uid && r.post_id === pid);
       if (!found) return { rows: [], rowCount: 0 };
       const row = {
         user_id: String(found.user_id),

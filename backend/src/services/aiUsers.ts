@@ -204,9 +204,7 @@ export class AiUsersService {
     };
   }
 
-  async listAiPeerImpressions(
-    input: ListAiPeerImpressionsInput = {},
-  ): Promise<AiPeerImpression[]> {
+  async listAiPeerImpressions(input: ListAiPeerImpressionsInput = {}): Promise<AiPeerImpression[]> {
     const offset = Math.max(0, input.offset ?? 0);
     const limit = Math.min(Math.max(1, input.limit ?? 50), 200);
     const order = (input.order ?? "desc") === "asc" ? "ASC" : "DESC";
@@ -320,9 +318,7 @@ export class AiUsersService {
     };
   }
 
-  async listAiPostImpressions(
-    input: ListAiPostImpressionsInput = {},
-  ): Promise<AiPostImpression[]> {
+  async listAiPostImpressions(input: ListAiPostImpressionsInput = {}): Promise<AiPostImpression[]> {
     const offset = Math.max(0, input.offset ?? 0);
     const limit = Math.min(Math.max(1, input.limit ?? 50), 200);
     const order = (input.order ?? "desc") === "asc" ? "ASC" : "DESC";
