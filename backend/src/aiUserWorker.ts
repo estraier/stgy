@@ -27,6 +27,26 @@ const logger = createLogger({ file: "mailWorker" });
 
 const DEFAULT_CONFIG_FILENAME = "ai-user-config.json";
 
+function evaluateChatResponseAsJson<T = unknown>(raw: string): T {
+  let s = raw.trim();
+  const fenced = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (fenced) {
+    s = fenced[1].trim();
+  }
+  const firstBrace = s.indexOf("{");
+  const lastBrace = s.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    const afterLast = s.slice(lastBrace + 1);
+    if (/^\s*$/.test(afterLast)) {
+      s = s.slice(firstBrace, lastBrace + 1);
+    }
+  }
+  if (/,\s*[}\]]\s*$/.test(s)) {
+    s = s.replace(/,\s*([}\]])\s*$/u, "$1");
+  }
+  return JSON.parse(s) as T;
+}
+
 function getConfigPath(): string {
   const argPath = process.argv[2];
   if (argPath && argPath.trim() !== "") {
@@ -57,17 +77,6 @@ function readPromptFile(prefix: string, locale: string): string {
 const configPath = getConfigPath();
 const fileConfig: FileConfig = loadFileConfig(configPath);
 const CONFIG_DIR = path.dirname(configPath);
-
-const POST_IMPRESSION_PROMPT_PREFIX = (() => {
-  const rel = getFileConfigStr(fileConfig, "postImpressionPromptFile");
-  return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
-})();
-
-const PEER_IMPRESSION_PROMPT_PREFIX = (() => {
-  const rel = getFileConfigStr(fileConfig, "peerImpressionPromptFile");
-  return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
-})();
-
 const BACKEND_API_BASE_URL =
   process.env.STGY_BACKEND_API_BASE_URL ??
   getFileConfigStr(fileConfig, "backendApiBaseUrl");
@@ -83,6 +92,20 @@ const READ_POST_LIMIT = getFileConfigNum(fileConfig, "readPostLimit");
 const PROFILE_CHAR_LIMIT = getFileConfigNum(fileConfig, "profileCharLimit");
 const POST_CHAR_LIMIT = getFileConfigNum(fileConfig, "postCharLimit");
 const OUTPUT_CHAR_LIMIT = getFileConfigNum(fileConfig, "outputCharLimit");
+const READ_IMPRESSION_LIMIT = getFileConfigNum(fileConfig, "readImpressionLimit");
+const POST_IMPRESSION_PROMPT_PREFIX = (() => {
+  const rel = getFileConfigStr(fileConfig, "postImpressionPromptFile");
+  return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
+})();
+
+const PEER_IMPRESSION_PROMPT_PREFIX = (() => {
+  const rel = getFileConfigStr(fileConfig, "peerImpressionPromptFile");
+  return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
+})();
+const INTEREST_PROMPT_PREFIX = (() => {
+  const rel = getFileConfigStr(fileConfig, "interestPromptFile");
+  return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
+})();
 
 async function loginAsAdmin(): Promise<string> {
   const resp = await fetch(`${BACKEND_API_BASE_URL}/auth`, {
@@ -171,7 +194,7 @@ async function fetchUserProfile(sessionCookie: string, userId: string): Promise<
 async function fetchUserInterest(
   sessionCookie: string,
   userId: string,
-): Promise<{ userId: string; description: string; createdAt?: string; updatedAt?: string } | null> {
+): Promise<AiUserInterest | null> {
   const resp = await fetch(
     `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(userId)}/interests`,
     {
@@ -188,10 +211,7 @@ async function fetchUserInterest(
     const body = await resp.text().catch(() => "");
     throw new Error(`failed to fetch user interest: ${resp.status} ${body}`);
   }
-  const interest = (await resp.json()) as {
-    userId: string;
-    description: string;
-  };
+  const interest = (await resp.json()) as AiUserInterest;
   return interest;
 }
 
@@ -387,15 +407,13 @@ async function createPostImpression(
 ): Promise<void> {
   try {
     const profileExcerpt = {
+      userId: profile.id,
       nickname: profile.nickname,
       locale: profile.locale,
       introduction: profile.introduction.slice(0, PROFILE_CHAR_LIMIT),
       aiPersonality: profile.aiPersonality ? profile.aiPersonality.slice(0, PROFILE_CHAR_LIMIT) : "",
       currentInterest: interest ? interest.description.slice(0, PROFILE_CHAR_LIMIT) : "",
     };
-
-    console.log(profileExcerpt);
-
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
     const postExcerpt = {
       author: post.ownerNickname,
@@ -437,43 +455,33 @@ async function createPostImpression(
       );
       return;
     }
-    const chatJson = (await chatResp.json()) as {
-      message?: { content?: string };
-    };
-    let content = chatJson.message?.content;
+    const chatJson = (await chatResp.json()) as ChatResponse;
+    const content = chatJson.message?.content;
     if (typeof content !== "string" || content.trim() === "") {
       logger.error(
         `ai-users/chat returned empty content for aiUserId=${profile.id}, postId=${post.id}`,
       );
       return;
     }
-    let jsonText = content.trim();
-    if (!jsonText.startsWith("{")) {
-      const first = jsonText.indexOf("{");
-      const last = jsonText.lastIndexOf("}");
-      if (first !== -1 && last !== -1 && last > first) {
-        jsonText = jsonText.slice(first, last + 1);
-      }
-    }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(jsonText);
+      parsed = evaluateChatResponseAsJson(content);
     } catch (e) {
       logger.error(
-        `failed to parse AI output as JSON for aiUserId=${profile.id}, postId=${post.id}: ${e} content=${jsonText}`,
+        `failed to parse AI output as JSON for aiUserId=${profile.id}, postId=${post.id}: ${e} content=${content}`,
       );
       return;
     }
     if (typeof parsed !== "object" || parsed === null) {
       logger.error(
-        `AI output JSON is not an object for aiUserId=${profile.id}, postId=${post.id}: ${jsonText}`,
+        `AI output JSON is not an object for aiUserId=${profile.id}, postId=${post.id}: ${content}`,
       );
       return;
     }
     const obj = parsed as { summary?: unknown; impression?: unknown };
     if (typeof obj.summary !== "string" || typeof obj.impression !== "string") {
       logger.error(
-        `AI output JSON missing summary/impression string fields for aiUserId=${profile.id}, postId=${post.id}: ${jsonText}`,
+        `AI output JSON missing summary/impression string fields for aiUserId=${profile.id}, postId=${post.id}: ${content}`,
       );
       return;
     }
@@ -522,16 +530,13 @@ async function createPeerImpression(
 ): Promise<void> {
   try {
     const profileExcerpt = {
+      userId: profile.id,
       nickname: profile.nickname,
       locale: profile.locale,
       introduction: profile.introduction.slice(0, PROFILE_CHAR_LIMIT),
       aiPersonality: profile.aiPersonality ? profile.aiPersonality.slice(0, PROFILE_CHAR_LIMIT) : "",
       currentInterest: interest ? interest.description.slice(0, PROFILE_CHAR_LIMIT) : "",
     };
-
-    console.log(profileExcerpt);
-
-
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
     const peerProfile = await fetchUserProfile(userSessionCookie, peerId);
     const peerIntro = peerProfile.introduction.slice(0, PROFILE_CHAR_LIMIT);
@@ -573,7 +578,7 @@ async function createPeerImpression(
     try {
       const params = new URLSearchParams();
       params.set("ownerId", peerId);
-      params.set("limit", "3");
+      params.set("limit", String(READ_IMPRESSION_LIMIT));
       params.set("offset", "0");
       params.set("order", "desc");
       const resp = await fetch(
@@ -628,7 +633,7 @@ async function createPeerImpression(
       );
     }
     const peerJsonObj = {
-      peerId,
+      userId: peerId,
       nickname: peerProfile.nickname,
       introduction: peerIntro,
       lastImpression,
@@ -669,47 +674,39 @@ async function createPeerImpression(
       return;
     }
     const chatJson = (await chatResp.json()) as ChatResponse;
-    let content = chatJson.message?.content;
+    const content = chatJson.message?.content;
     if (typeof content !== "string" || content.trim() === "") {
       logger.error(
         `ai-users/chat returned empty content for aiUserId=${profile.id}, peerId=${peerId}`,
       );
       return;
     }
-    let jsonText = content.trim();
-    if (!jsonText.startsWith("{")) {
-      const first = jsonText.indexOf("{");
-      const last = jsonText.lastIndexOf("}");
-      if (first !== -1 && last !== -1 && last > first) {
-        jsonText = jsonText.slice(first, last + 1);
-      }
-    }
     let parsed: unknown;
     try {
-      parsed = JSON.parse(jsonText);
+      parsed = evaluateChatResponseAsJson(content);
     } catch (e) {
       logger.error(
-        `failed to parse AI output as JSON for aiUserId=${profile.id}, peerId=${peerId}: ${e} content=${jsonText}`,
+        `failed to parse AI output as JSON for aiUserId=${profile.id}, peerId=${peerId}: ${e} content=${content}`,
       );
       return;
     }
     if (typeof parsed !== "object" || parsed === null) {
       logger.error(
-        `AI output JSON is not an object for aiUserId=${profile.id}, peerId=${peerId}: ${jsonText}`,
+        `AI output JSON is not an object for aiUserId=${profile.id}, peerId=${peerId}: ${content}`,
       );
       return;
     }
     const obj = parsed as { impression?: unknown };
     if (typeof obj.impression !== "string") {
       logger.error(
-        `AI output JSON missing impression string field for aiUserId=${profile.id}, peerId=${peerId}: ${jsonText}`,
+        `AI output JSON missing impression string field for aiUserId=${profile.id}, peerId=${peerId}: ${content}`,
       );
       return;
     }
     const trimmedImpression = obj.impression.trim().slice(0, OUTPUT_CHAR_LIMIT);
     if (!trimmedImpression) {
       logger.error(
-        `AI output JSON impression is empty after trimming for aiUserId=${profile.id}, peerId=${peerId}: ${jsonText}`,
+        `AI output JSON impression is empty after trimming for aiUserId=${profile.id}, peerId=${peerId}: ${content}`,
       );
       return;
     }
@@ -744,6 +741,20 @@ async function createPeerImpression(
   }
 }
 
+async function createInterest(
+  userSessionCookie: string,
+  profile: UserDetail,
+  interest: AiUserInterest | null,
+  prompt: string,
+): Promise<void> {
+
+
+  console.log(interest);
+  console.log(prompt);
+
+
+}
+
 async function processUser(user: UserLite): Promise<void> {
   logger.info(`Processing AI user: id=${user.id}, nickname=${user.nickname}`);
   const adminSessionCookie = await loginAsAdmin();
@@ -768,6 +779,13 @@ async function processUser(user: UserLite): Promise<void> {
     logger.info(`Failed to read the peer impression prompt for ${profile.locale}: ${e}`);
     return;
   }
+  let interestPrompt;
+  try {
+    interestPrompt = readPromptFile(INTEREST_PROMPT_PREFIX, profile.locale);
+  } catch (e) {
+    logger.info(`Failed to read the interest prompt for ${profile.locale}: ${e}`);
+    return;
+  }
   const peerIdSet = new Set<string>();
   for (const post of unreadPosts) {
     await createPostImpression(userSessionCookie, profile, interest, postImpressionPrompt, post);
@@ -778,6 +796,7 @@ async function processUser(user: UserLite): Promise<void> {
   for (const peerId of peerIds) {
     await createPeerImpression(userSessionCookie, profile, interest, peerImpressionPrompt, peerId);
   }
+  await createInterest(userSessionCookie, profile, interest, interestPrompt);
 }
 
 async function main() {

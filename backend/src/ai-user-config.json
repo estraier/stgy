@@ -10,6 +10,8 @@
   "profileCharLimit": 1000,
   "postCharLimit": 1000,
   "outputCharLimit": 10000,
+  "readImpressionLimit": 3,
   "postImpressionPromptFile": "../prompts/post-impression",
-  "peerImpressionPromptFile": "../prompts/peer-impression"
+  "peerImpressionPromptFile": "../prompts/peer-impression",
+  "interestPromptFile": "../prompts/interest"
 }
