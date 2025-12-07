@@ -4,7 +4,11 @@
   "adminPassword": "stgystgy",
   "userPageSize": 100,
   "userLimit": 1,
-  "readPostsPerUser": 2,
+  "fetchPostLimit": 30,
+  "readPostLimit": 1,
+  "profileCharLimit": 1000,
+  "postCharLimit": 1000,
+  "outputCharLimit": 10000,
   "postImpressionPromptFile": "../prompts/post-impression",
   "peerImpressionPromptFile": "../prompts/peer-impression"
 }

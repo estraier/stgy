@@ -4,16 +4,12 @@ import { createLogger } from "./utils/logger";
 import type { UserLite, UserDetail } from "./models/user";
 import type { Post, PostDetail } from "./models/post";
 import type { Notification } from "./models/notification";
-
-type AiUserConfig = {
-  backendApiBaseUrl?: string;
-  adminEmail?: string;
-  adminPassword?: string;
-  userPageSize?: number;
-  userLimit?: number | null;
-  postImpressionPromptFile?: string;
-  peerImpressionPromptFile?: string;
-};
+import {
+  loadConfig as loadFileConfig,
+  getFileConfigStr,
+  getFileConfigNum,
+  type FileConfig,
+} from "./utils/fileConfig";
 
 type PostCandidate = {
   postId: string;
@@ -38,43 +34,6 @@ function getConfigPath(): string {
   return path.resolve(__dirname, DEFAULT_CONFIG_FILENAME);
 }
 
-function loadConfig(configPath: string): AiUserConfig {
-  if (!fs.existsSync(configPath)) {
-    throw new Error(`config file not found: ${configPath}`);
-  }
-  const json = fs.readFileSync(configPath, "utf8");
-  const raw = JSON.parse(json) as unknown;
-  if (typeof raw !== "object" || raw === null) {
-    throw new Error(`invalid config JSON: ${configPath}`);
-  }
-  const obj = raw as Record<string, unknown>;
-  const config: AiUserConfig = {};
-
-  if (typeof obj.backendApiBaseUrl === "string") {
-    config.backendApiBaseUrl = obj.backendApiBaseUrl;
-  }
-  if (typeof obj.adminEmail === "string") {
-    config.adminEmail = obj.adminEmail;
-  }
-  if (typeof obj.adminPassword === "string") {
-    config.adminPassword = obj.adminPassword;
-  }
-  if (typeof obj.userPageSize === "number" && Number.isFinite(obj.userPageSize)) {
-    config.userPageSize = obj.userPageSize;
-  }
-  if (typeof obj.userLimit === "number" ? Number.isFinite(obj.userLimit) : obj.userLimit === null) {
-    config.userLimit = obj.userLimit as number | null;
-  }
-  if (typeof obj.postImpressionPromptFile === "string") {
-    config.postImpressionPromptFile = obj.postImpressionPromptFile;
-  }
-  if (typeof obj.peerImpressionPromptFile === "string") {
-    config.peerImpressionPromptFile = obj.peerImpressionPromptFile;
-  }
-
-  return config;
-}
-
 function readPromptFile(prefix: string, locale: string): string {
   const normalizedLocale = locale.replace(/_/g, "-");
   const parts = normalizedLocale.split("-");
@@ -95,37 +54,33 @@ function readPromptFile(prefix: string, locale: string): string {
 }
 
 const configPath = getConfigPath();
-const fileConfig = loadConfig(configPath);
+const fileConfig: FileConfig = loadFileConfig(configPath);
 const CONFIG_DIR = path.dirname(configPath);
 
 const POST_IMPRESSION_PROMPT_PREFIX = (() => {
-  if (!fileConfig.postImpressionPromptFile) {
-    throw new Error("postImpressionPromptFile is not configured in ai-user-config.json");
-  }
-  return path.isAbsolute(fileConfig.postImpressionPromptFile)
-    ? fileConfig.postImpressionPromptFile
-    : path.resolve(CONFIG_DIR, fileConfig.postImpressionPromptFile);
+  const rel = getFileConfigStr(fileConfig, "postImpressionPromptFile");
+  return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
 })();
+
 const PEER_IMPRESSION_PROMPT_PREFIX = (() => {
-  if (!fileConfig.peerImpressionPromptFile) {
-    throw new Error("peerImpressionPromptFile is not configured in ai-user-config.json");
-  }
-  return path.isAbsolute(fileConfig.peerImpressionPromptFile)
-    ? fileConfig.peerImpressionPromptFile
-    : path.resolve(CONFIG_DIR, fileConfig.peerImpressionPromptFile);
+  const rel = getFileConfigStr(fileConfig, "peerImpressionPromptFile");
+  return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
 })();
+
 const BACKEND_API_BASE_URL =
-  process.env.STGY_BACKEND_API_BASE_URL || fileConfig.backendApiBaseUrl || "http://localhost:3001";
-const ADMIN_EMAIL = process.env.STGY_ADMIN_EMAIL || fileConfig.adminEmail || "admin@stgy.jp";
-const ADMIN_PASSWORD = process.env.STGY_ADMIN_PASSWORD || fileConfig.adminPassword || "stgystgy";
-const PAGE_LIMIT =
-  typeof fileConfig.userPageSize === "number" && fileConfig.userPageSize > 0
-    ? fileConfig.userPageSize
-    : 100;
-const USER_LIMIT =
-  typeof fileConfig.userLimit === "number" && fileConfig.userLimit > 0
-    ? fileConfig.userLimit
-    : undefined;
+  process.env.STGY_BACKEND_API_BASE_URL ??
+  getFileConfigStr(fileConfig, "backendApiBaseUrl");
+const ADMIN_EMAIL =
+  process.env.STGY_ADMIN_EMAIL ?? getFileConfigStr(fileConfig, "adminEmail");
+const ADMIN_PASSWORD =
+  process.env.STGY_ADMIN_PASSWORD ?? getFileConfigStr(fileConfig, "adminPassword");
+const USER_PAGE_SIZE = getFileConfigNum(fileConfig, "userPageSize");
+const USER_LIMIT = getFileConfigNum(fileConfig, "userLimit");
+const FETCH_POST_LIMIT = getFileConfigNum(fileConfig, "fetchPostLimit");
+const READ_POST_LIMIT = getFileConfigNum(fileConfig, "readPostLimit");
+const PROFILE_CHAR_LIMIT = getFileConfigNum(fileConfig, "profileCharLimit");
+const POST_CHAR_LIMIT = getFileConfigNum(fileConfig, "postCharLimit");
+const OUTPUT_CHAR_LIMIT = getFileConfigNum(fileConfig, "outputCharLimit");
 
 async function loginAsAdmin(): Promise<string> {
   const resp = await fetch(`${BACKEND_API_BASE_URL}/auth`, {
@@ -215,7 +170,7 @@ async function fetchFolloweePosts(sessionCookie: string, userId: string): Promis
   const params = new URLSearchParams();
   params.set("userId", userId);
   params.set("offset", "0");
-  params.set("limit", "30");
+  params.set("limit", String(FETCH_POST_LIMIT));
   params.set("includeSelf", "false");
   params.set("includeReplies", "true");
   params.set("focusUserId", userId);
@@ -237,7 +192,7 @@ async function fetchFolloweePosts(sessionCookie: string, userId: string): Promis
 async function fetchLatestPosts(sessionCookie: string, userId: string): Promise<Post[]> {
   const params = new URLSearchParams();
   params.set("offset", "0");
-  params.set("limit", "30");
+  params.set("limit", String(FETCH_POST_LIMIT));
   params.set("order", "desc");
   params.set("focusUserId", userId);
   const resp = await fetch(`${BACKEND_API_BASE_URL}/posts?${params.toString()}`, {
@@ -379,7 +334,7 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
   }
   const topPostIds = [...scoresByPost.entries()]
     .sort((a, b) => b[1] - a[1])
-    .slice(0, 10)
+    .slice(0, READ_POST_LIMIT)
     .map(([postId]) => postId);
   logger.info(`Selected post IDs to read: ${topPostIds.join(",")}`);
   const result: PostDetail[] = [];
@@ -404,7 +359,7 @@ async function createPostImpression(
     const profileExcerpt = {
       nickname: profile.nickname,
       locale: profile.locale,
-      introduction: profile.introduction.slice(0, 1000),
+      introduction: profile.introduction.slice(0, PROFILE_CHAR_LIMIT),
       aiPersonality: profile.aiPersonality,
     };
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
@@ -412,7 +367,7 @@ async function createPostImpression(
       author: post.ownerNickname,
       locale: post.locale,
       createdAt: post.createdAt,
-      content: post.content.slice(0, 300),
+      content: post.content.slice(0, POST_CHAR_LIMIT),
     };
     const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
     const modifiedPrompt = prompt
@@ -489,8 +444,8 @@ async function createPostImpression(
       return;
     }
     const trimmed = {
-      summary: obj.summary.trim().slice(0, 400),
-      impression: obj.impression.trim().slice(0, 400),
+      summary: obj.summary.trim().slice(0, OUTPUT_CHAR_LIMIT),
+      impression: obj.impression.trim().slice(0, OUTPUT_CHAR_LIMIT),
     };
     const description = JSON.stringify(trimmed);
     const saveResp = await fetch(
@@ -534,12 +489,12 @@ async function createPeerImpression(
     const profileExcerpt = {
       nickname: profile.nickname,
       locale: profile.locale,
-      introduction: profile.introduction.slice(0, 1000),
+      introduction: profile.introduction.slice(0, PROFILE_CHAR_LIMIT),
       aiPersonality: profile.aiPersonality,
     };
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
     const peerProfile = await fetchUserProfile(userSessionCookie, peerId);
-    const peerIntro = peerProfile.introduction.slice(0, 1000);
+    const peerIntro = peerProfile.introduction.slice(0, PROFILE_CHAR_LIMIT);
     let lastImpression = "";
     try {
       const resp = await fetch(
@@ -617,8 +572,8 @@ async function createPeerImpression(
             );
             continue;
           }
-          summary = summary.trim().slice(0, 400);
-          impression = impression.trim().slice(0, 400);
+          summary = summary.trim().slice(0, OUTPUT_CHAR_LIMIT);
+          impression = impression.trim().slice(0, OUTPUT_CHAR_LIMIT);
           if (!summary && !impression) continue;
           peerPosts.push({
             postId: imp.postId,
@@ -698,7 +653,6 @@ async function createPeerImpression(
       );
       return;
     }
-
     if (typeof parsed !== "object" || parsed === null) {
       logger.error(
         `AI output JSON is not an object for aiUserId=${profile.id}, peerId=${peerId}: ${jsonText}`,
@@ -712,7 +666,7 @@ async function createPeerImpression(
       );
       return;
     }
-    const trimmedImpression = obj.impression.trim().slice(0, 400);
+    const trimmedImpression = obj.impression.trim().slice(0, OUTPUT_CHAR_LIMIT);
     if (!trimmedImpression) {
       logger.error(
         `AI output JSON impression is empty after trimming for aiUserId=${profile.id}, peerId=${peerId}: ${jsonText}`,
@@ -758,17 +712,25 @@ async function processUser(user: UserLite): Promise<void> {
   if (!profile.locale) {
     throw new Error(`user locale is not set: id=${user.id}`);
   }
-
   const unreadPosts = await fetchPostsToRead(userSessionCookie, user.id);
-  const postImpressionPrompt = readPromptFile(POST_IMPRESSION_PROMPT_PREFIX, profile.locale);
-  const peerImpressionPrompt = readPromptFile(PEER_IMPRESSION_PROMPT_PREFIX, profile.locale);
+  let postImpressionPrompt;
+  try {
+    postImpressionPrompt = readPromptFile(POST_IMPRESSION_PROMPT_PREFIX, profile.locale);
+  } catch (e) {
+    logger.info(`Failed to read the post impression prompt for ${profile.locale}: ${e}`);
+    return;
+  }
+  let peerImpressionPrompt;
+  try {
+    peerImpressionPrompt = readPromptFile(PEER_IMPRESSION_PROMPT_PREFIX, profile.locale);
+  } catch (e) {
+    logger.info(`Failed to read the peer impression prompt for ${profile.locale}: ${e}`);
+    return;
+  }
   const peerIdSet = new Set<string>();
   for (const post of unreadPosts) {
     await createPostImpression(userSessionCookie, profile, postImpressionPrompt, post);
     peerIdSet.add(post.ownedBy);
-
-    // for debug: ひとまず1件だけ処理
-    break;
   }
   const peerIds = Array.from(peerIdSet);
   logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
@@ -780,34 +742,31 @@ async function processUser(user: UserLite): Promise<void> {
 async function main() {
   logger.info("STGY AI user worker started");
   logger.info(`BACNEND: ${BACKEND_API_BASE_URL}`);
-  if (USER_LIMIT !== undefined) {
-    logger.info(`User processing limit from config: ${USER_LIMIT}`);
-  }
+  logger.info(`User processing limit from config: ${USER_LIMIT}`);
   logger.info("Logging in as admin for listing AI users");
   const sessionCookie = await loginAsAdmin();
   logger.info("Admin login for listing succeeded");
-
   let offset = 0;
   let processedCount = 0;
   for (;;) {
-    if (USER_LIMIT !== undefined && processedCount >= USER_LIMIT) {
+    if (processedCount >= USER_LIMIT) {
       break;
     }
-    const users = await fetchNextUsers(sessionCookie, offset, PAGE_LIMIT);
+    const users = await fetchNextUsers(sessionCookie, offset, USER_PAGE_SIZE);
     if (users.length === 0) {
       break;
     }
     for (const user of users) {
-      if (USER_LIMIT !== undefined && processedCount >= USER_LIMIT) {
+      if (processedCount >= USER_LIMIT) {
         break;
       }
       await processUser(user);
       processedCount += 1;
     }
-    if (users.length < PAGE_LIMIT) {
+    if (users.length < USER_PAGE_SIZE) {
       break;
     }
-    offset += PAGE_LIMIT;
+    offset += USER_PAGE_SIZE;
   }
 }
 
