@@ -1,6 +1,7 @@
 import fs from "fs";
 import path from "path";
 import { createLogger } from "./utils/logger";
+import type { AiUserInterest } from "./models/aiUser";
 import type { UserLite, UserDetail } from "./models/user";
 import type { Post, PostDetail } from "./models/post";
 import type { Notification } from "./models/notification";
@@ -74,6 +75,7 @@ const ADMIN_EMAIL =
   process.env.STGY_ADMIN_EMAIL ?? getFileConfigStr(fileConfig, "adminEmail");
 const ADMIN_PASSWORD =
   process.env.STGY_ADMIN_PASSWORD ?? getFileConfigStr(fileConfig, "adminPassword");
+const CONCURRENCY = Math.max(1, Math.floor(getFileConfigNum(fileConfig, "concurrency")));
 const USER_PAGE_SIZE = getFileConfigNum(fileConfig, "userPageSize");
 const USER_LIMIT = getFileConfigNum(fileConfig, "userLimit");
 const FETCH_POST_LIMIT = getFileConfigNum(fileConfig, "fetchPostLimit");
@@ -164,6 +166,33 @@ async function fetchUserProfile(sessionCookie: string, userId: string): Promise<
   }
   const profile = (await resp.json()) as UserDetail;
   return profile;
+}
+
+async function fetchUserInterest(
+  sessionCookie: string,
+  userId: string,
+): Promise<{ userId: string; description: string; createdAt?: string; updatedAt?: string } | null> {
+  const resp = await fetch(
+    `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(userId)}/interests`,
+    {
+      method: "GET",
+      headers: {
+        Cookie: sessionCookie,
+      },
+    },
+  );
+  if (resp.status === 404) {
+    return null;
+  }
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    throw new Error(`failed to fetch user interest: ${resp.status} ${body}`);
+  }
+  const interest = (await resp.json()) as {
+    userId: string;
+    description: string;
+  };
+  return interest;
 }
 
 async function fetchFolloweePosts(sessionCookie: string, userId: string): Promise<Post[]> {
@@ -352,6 +381,7 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
 async function createPostImpression(
   userSessionCookie: string,
   profile: UserDetail,
+  interest: AiUserInterest | null,
   prompt: string,
   post: PostDetail,
 ): Promise<void> {
@@ -360,8 +390,12 @@ async function createPostImpression(
       nickname: profile.nickname,
       locale: profile.locale,
       introduction: profile.introduction.slice(0, PROFILE_CHAR_LIMIT),
-      aiPersonality: profile.aiPersonality,
+      aiPersonality: profile.aiPersonality ? profile.aiPersonality.slice(0, PROFILE_CHAR_LIMIT) : "",
+      currentInterest: interest ? interest.description.slice(0, PROFILE_CHAR_LIMIT) : "",
     };
+
+    console.log(profileExcerpt);
+
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
     const postExcerpt = {
       author: post.ownerNickname,
@@ -482,6 +516,7 @@ async function createPostImpression(
 async function createPeerImpression(
   userSessionCookie: string,
   profile: UserDetail,
+  interest: AiUserInterest | null,
   prompt: string,
   peerId: string,
 ): Promise<void> {
@@ -490,8 +525,13 @@ async function createPeerImpression(
       nickname: profile.nickname,
       locale: profile.locale,
       introduction: profile.introduction.slice(0, PROFILE_CHAR_LIMIT),
-      aiPersonality: profile.aiPersonality,
+      aiPersonality: profile.aiPersonality ? profile.aiPersonality.slice(0, PROFILE_CHAR_LIMIT) : "",
+      currentInterest: interest ? interest.description.slice(0, PROFILE_CHAR_LIMIT) : "",
     };
+
+    console.log(profileExcerpt);
+
+
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
     const peerProfile = await fetchUserProfile(userSessionCookie, peerId);
     const peerIntro = peerProfile.introduction.slice(0, PROFILE_CHAR_LIMIT);
@@ -712,6 +752,7 @@ async function processUser(user: UserLite): Promise<void> {
   if (!profile.locale) {
     throw new Error(`user locale is not set: id=${user.id}`);
   }
+  const interest = await fetchUserInterest(userSessionCookie, user.id);
   const unreadPosts = await fetchPostsToRead(userSessionCookie, user.id);
   let postImpressionPrompt;
   try {
@@ -729,13 +770,13 @@ async function processUser(user: UserLite): Promise<void> {
   }
   const peerIdSet = new Set<string>();
   for (const post of unreadPosts) {
-    await createPostImpression(userSessionCookie, profile, postImpressionPrompt, post);
+    await createPostImpression(userSessionCookie, profile, interest, postImpressionPrompt, post);
     peerIdSet.add(post.ownedBy);
   }
   const peerIds = Array.from(peerIdSet);
   logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
   for (const peerId of peerIds) {
-    await createPeerImpression(userSessionCookie, profile, peerImpressionPrompt, peerId);
+    await createPeerImpression(userSessionCookie, profile, interest, peerImpressionPrompt, peerId);
   }
 }
 
@@ -743,29 +784,32 @@ async function main() {
   logger.info("STGY AI user worker started");
   logger.info(`BACNEND: ${BACKEND_API_BASE_URL}`);
   logger.info(`User processing limit from config: ${USER_LIMIT}`);
+  logger.info(`Concurrency from config: ${CONCURRENCY}`);
   logger.info("Logging in as admin for listing AI users");
   const sessionCookie = await loginAsAdmin();
   logger.info("Admin login for listing succeeded");
   let offset = 0;
   let processedCount = 0;
   for (;;) {
-    if (processedCount >= USER_LIMIT) {
-      break;
-    }
+    if (processedCount >= USER_LIMIT) break;
     const users = await fetchNextUsers(sessionCookie, offset, USER_PAGE_SIZE);
-    if (users.length === 0) {
-      break;
+    if (users.length === 0) break;
+    for (let i = 0; i < users.length && processedCount < USER_LIMIT; i += CONCURRENCY) {
+      const remaining = USER_LIMIT - processedCount;
+      const batchSize = Math.min(CONCURRENCY, remaining, users.length - i);
+      const batch = users.slice(i, i + batchSize);
+      await Promise.all(
+        batch.map(async (user) => {
+          try {
+            await processUser(user);
+          } catch (e) {
+            logger.info(`Failed to process the user of userId=${user.id}: ${e}`);
+          }
+          processedCount += 1;
+        }),
+      );
     }
-    for (const user of users) {
-      if (processedCount >= USER_LIMIT) {
-        break;
-      }
-      await processUser(user);
-      processedCount += 1;
-    }
-    if (users.length < USER_PAGE_SIZE) {
-      break;
-    }
+    if (users.length < USER_PAGE_SIZE) break;
     offset += USER_PAGE_SIZE;
   }
 }
