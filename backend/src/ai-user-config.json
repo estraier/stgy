@@ -6,15 +6,16 @@
   "loopInterval": 43200,
   "concurrency": 1,
   "userPageSize": 1000,
-  "userLimit": 1,
+  "userLimit": 100,
   "fetchPostLimit": 30,
-  "readPostLimit": 1,
+  "readPostLimit": 5,
   "profileCharLimit": 2000,
   "postCharLimit": 10000,
   "outputCharLimit": 10000,
-  "readImpressionLimit": 3,
+  "readImpressionLimit": 5,
   "commonProfilePromptFile": "../prompts/common-profile",
   "postImpressionPromptFile": "../prompts/post-impression",
   "peerImpressionPromptFile": "../prompts/peer-impression",
-  "interestPromptFile": "../prompts/interest"
+  "interestPromptFile": "../prompts/interest",
+  "newPostPromptFile": "../prompts/new-post"
 }

@@ -27,6 +27,7 @@ const logger = createLogger({ file: "mailWorker" });
 
 const DEFAULT_CONFIG_FILENAME = "ai-user-config.json";
 const LOG_TEXT_LIMIT = 100;
+const OWN_POST_CONTEXT_LIMIT = 3;
 
 function truncateForLog(value: unknown, max = LOG_TEXT_LIMIT): string {
   const s = String(value);
@@ -114,6 +115,10 @@ const PEER_IMPRESSION_PROMPT_PREFIX = (() => {
 })();
 const INTEREST_PROMPT_PREFIX = (() => {
   const rel = getFileConfigStr(fileConfig, "interestPromptFile");
+  return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
+})();
+const NEW_POST_PROMPT_PREFIX = (() => {
+  const rel = getFileConfigStr(fileConfig, "newPostPromptFile");
   return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
 })();
 
@@ -405,6 +410,41 @@ async function fetchPostById(
   }
   const post = (await resp.json()) as PostDetail;
   return post;
+}
+
+async function fetchOwnRecentPosts(
+  sessionCookie: string,
+  userId: string,
+): Promise<PostDetail[]> {
+  const params = new URLSearchParams();
+  params.set("offset", "0");
+  params.set("limit", String(READ_POST_LIMIT));
+  params.set("order", "desc");
+  params.set("ownedBy", userId);
+  params.set("focusUserId", userId);
+  const resp = await fetch(`${BACKEND_API_BASE_URL}/posts?${params.toString()}`, {
+    method: "GET",
+    headers: {
+      Cookie: sessionCookie,
+    },
+  });
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    const bodySnippet = truncateForLog(body);
+    throw new Error(`failed to fetch own posts: ${resp.status} ${bodySnippet}`);
+  }
+  const list = (await resp.json()) as Post[];
+  const ids = list.map((p) => p.id).slice(0, READ_POST_LIMIT);
+  const result: PostDetail[] = [];
+  for (const postId of ids) {
+    try {
+      const detail = await fetchPostById(sessionCookie, postId, userId);
+      result.push(detail);
+    } catch (e) {
+      logger.info(`Failed to fetch own post detail for aiUserId=${userId}, postId=${postId}: ${e}`);
+    }
+  }
+  return result;
 }
 
 async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<PostDetail[]> {
@@ -701,9 +741,7 @@ async function createPeerImpression(
     const modifiedPrompt = prompt
       .replace("{{PROFILE_JSON}}", profileJson)
       .replace("{{PEER_JSON}}", peerJson);
-
     console.log(modifiedPrompt);
-
     const chatBody = {
       messages: [
         {
@@ -883,9 +921,7 @@ async function createInterest(
     const modifiedPrompt = prompt
       .replace("{{PROFILE_JSON}}", profileJson)
       .replace("{{POSTS_JSON}}", postsJson);
-
     console.log(modifiedPrompt);
-
     const chatBody = {
       messages: [
         {
@@ -985,6 +1021,127 @@ async function createInterest(
   }
 }
 
+async function createNewPost(
+  userSessionCookie: string,
+  profile: UserDetail,
+  interest: AiUserInterest | null,
+  prompt: string,
+): Promise<void> {
+  try {
+    const profileExcerpt = buildProfileExcerpt(profile, interest);
+    const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+    const recentPosts = await fetchOwnRecentPosts(
+      userSessionCookie,
+      profile.id,
+    );
+    const posts = recentPosts.map((post) => ({
+      postId: post.id,
+      createdAt: post.createdAt,
+      content: post.content.slice(0, POST_CHAR_LIMIT),
+    }));
+    const postsJsonObj = { posts };
+    const postsJson = JSON.stringify(postsJsonObj, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+    const modifiedPrompt = prompt
+      .replace("{{PROFILE_JSON}}", profileJson)
+      .replace("{{POSTS_JSON}}", postsJson);
+    console.log(modifiedPrompt);
+    const chatBody = {
+      messages: [
+        {
+          role: "user" as const,
+          content: modifiedPrompt,
+        },
+      ],
+    };
+    const chatResp = await fetch(`${BACKEND_API_BASE_URL}/ai-users/chat`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: userSessionCookie,
+      },
+      body: JSON.stringify(chatBody),
+    });
+    if (chatResp.status === 501) {
+      const bodyText = await chatResp.text().catch(() => "");
+      const bodySnippet = truncateForLog(bodyText);
+      logger.error(
+        `AI features are disabled when calling ai-users/chat for new post of aiUserId=${profile.id}: ${bodySnippet}`,
+      );
+      return;
+    }
+    if (!chatResp.ok) {
+      const bodyText = await chatResp.text().catch(() => "");
+      const bodySnippet = truncateForLog(bodyText);
+      logger.error(
+        `failed to call ai-users/chat for new post of aiUserId=${profile.id}: ${chatResp.status} ${bodySnippet}`,
+      );
+      return;
+    }
+    const chatJson = (await chatResp.json()) as ChatResponse;
+    const content = chatJson.message?.content;
+    if (typeof content !== "string" || content.trim() === "") {
+      logger.error(`ai-users/chat returned empty content for new post of aiUserId=${profile.id}`);
+      return;
+    }
+    let parsed: unknown;
+    try {
+      parsed = evaluateChatResponseAsJson(content);
+    } catch (e) {
+      const contentSnippet = truncateForLog(content);
+      logger.error(
+        `failed to parse AI output as JSON for new post of aiUserId=${profile.id}: ${e} content=${contentSnippet}`,
+      );
+      return;
+    }
+    if (typeof parsed !== "object" || parsed === null) {
+      const contentSnippet = truncateForLog(content);
+      logger.error(
+        `AI output JSON is not an object for new post of aiUserId=${profile.id}: ${contentSnippet}`,
+      );
+      return;
+    }
+    const obj = parsed as { content?: unknown };
+    if (typeof obj.content !== "string") {
+      const contentSnippet = truncateForLog(content);
+      logger.error(
+        `AI output JSON missing content string field for new post of aiUserId=${profile.id}: ${contentSnippet}`,
+      );
+      return;
+    }
+    const trimmedContent = obj.content.trim().slice(0, POST_CHAR_LIMIT);
+    if (!trimmedContent) {
+      const contentSnippet = truncateForLog(content);
+      logger.error(
+        `AI output JSON content is empty after trimming for new post of aiUserId=${profile.id}: ${contentSnippet}`,
+      );
+      return;
+    }
+    const trimmedContentSnippet = truncateForLog(trimmedContent);
+    const saveResp = await fetch(`${BACKEND_API_BASE_URL}/posts`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        Cookie: userSessionCookie,
+      },
+      body: JSON.stringify({
+        content: trimmedContent,
+        tags: [],
+      }),
+    });
+    if (!saveResp.ok) {
+      const bodyText = await saveResp.text().catch(() => "");
+      const bodySnippet = truncateForLog(bodyText);
+      logger.error(
+        `failed to create new post for aiUserId=${profile.id}: ${saveResp.status} ${bodySnippet}`,
+      );
+      return;
+    }
+    logger.info(`Created new post for aiUserId=${profile.id}: ${trimmedContentSnippet}`);
+  } catch (e) {
+    logger.error(`Error in createNewPost for aiUserId=${profile.id}: ${e}`);
+  }
+}
+
 async function processUser(user: UserLite): Promise<void> {
   logger.info(`Processing AI user: id=${user.id}, nickname=${user.nickname}`);
   const adminSessionCookie = await loginAsAdmin();
@@ -1024,6 +1181,13 @@ async function processUser(user: UserLite): Promise<void> {
     logger.info(`Failed to read the interest prompt for ${profile.locale}: ${e}`);
     return;
   }
+  let newPostPrompt;
+  try {
+    newPostPrompt = commonProfilePrompt + readPromptFile(NEW_POST_PROMPT_PREFIX, profile.locale);
+  } catch (e) {
+    logger.info(`Failed to read the new post prompt for ${profile.locale}: ${e}`);
+    return;
+  }
   const interest = await fetchUserInterest(userSessionCookie, user.id);
   const unreadPosts = await fetchPostsToRead(userSessionCookie, user.id);
   const peerIdSet = new Set<string>();
@@ -1037,6 +1201,7 @@ async function processUser(user: UserLite): Promise<void> {
     await createPeerImpression(userSessionCookie, profile, interest, peerImpressionPrompt, peerId);
   }
   await createInterest(userSessionCookie, profile, interest, interestPrompt);
+  await createNewPost(userSessionCookie, profile, interest, newPostPrompt);
 }
 
 async function runOnce(): Promise<void> {
