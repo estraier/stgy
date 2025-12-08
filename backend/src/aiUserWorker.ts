@@ -100,6 +100,10 @@ const PROFILE_CHAR_LIMIT = getFileConfigNum(fileConfig, "profileCharLimit");
 const POST_CHAR_LIMIT = getFileConfigNum(fileConfig, "postCharLimit");
 const OUTPUT_CHAR_LIMIT = getFileConfigNum(fileConfig, "outputCharLimit");
 const READ_IMPRESSION_LIMIT = getFileConfigNum(fileConfig, "readImpressionLimit");
+const COMMON_PROFILE_PROMPT_PREFIX = (() => {
+  const rel = getFileConfigStr(fileConfig, "commonProfilePromptFile");
+  return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
+})();
 const POST_IMPRESSION_PROMPT_PREFIX = (() => {
   const rel = getFileConfigStr(fileConfig, "postImpressionPromptFile");
   return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
@@ -966,29 +970,40 @@ async function processUser(user: UserLite): Promise<void> {
   if (!profile.locale) {
     throw new Error(`user locale is not set: id=${user.id}`);
   }
-  const interest = await fetchUserInterest(userSessionCookie, user.id);
-  const unreadPosts = await fetchPostsToRead(userSessionCookie, user.id);
+  let commonProfilePrompt;
+  try {
+    commonProfilePrompt = readPromptFile(COMMON_PROFILE_PROMPT_PREFIX, profile.locale);
+  } catch (e) {
+    logger.info(`Failed to read the common profile prompt for ${profile.locale}: ${e}`);
+    return;
+  }
+  commonProfilePrompt = commonProfilePrompt.trim() + "\n\n";
   let postImpressionPrompt;
   try {
-    postImpressionPrompt = readPromptFile(POST_IMPRESSION_PROMPT_PREFIX, profile.locale);
+    postImpressionPrompt = commonProfilePrompt + readPromptFile(
+      POST_IMPRESSION_PROMPT_PREFIX, profile.locale);
   } catch (e) {
     logger.info(`Failed to read the post impression prompt for ${profile.locale}: ${e}`);
     return;
   }
   let peerImpressionPrompt;
   try {
-    peerImpressionPrompt = readPromptFile(PEER_IMPRESSION_PROMPT_PREFIX, profile.locale);
+    peerImpressionPrompt = commonProfilePrompt + readPromptFile(
+      PEER_IMPRESSION_PROMPT_PREFIX, profile.locale);
   } catch (e) {
     logger.info(`Failed to read the peer impression prompt for ${profile.locale}: ${e}`);
     return;
   }
   let interestPrompt;
   try {
-    interestPrompt = readPromptFile(INTEREST_PROMPT_PREFIX, profile.locale);
+    interestPrompt = commonProfilePrompt + readPromptFile(
+      INTEREST_PROMPT_PREFIX, profile.locale);
   } catch (e) {
     logger.info(`Failed to read the interest prompt for ${profile.locale}: ${e}`);
     return;
   }
+  const interest = await fetchUserInterest(userSessionCookie, user.id);
+  const unreadPosts = await fetchPostsToRead(userSessionCookie, user.id);
   const peerIdSet = new Set<string>();
   for (const post of unreadPosts) {
     await createPostImpression(userSessionCookie, profile, interest, postImpressionPrompt, post);
