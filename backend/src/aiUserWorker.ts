@@ -23,7 +23,7 @@ type ChatResponse = {
   };
 };
 
-const logger = createLogger({ file: "mailWorker" });
+const logger = createLogger({ file: "aiUserWorker" });
 
 const DEFAULT_CONFIG_FILENAME = "ai-user-config.json";
 const LOG_TEXT_LIMIT = 100;
@@ -447,6 +447,57 @@ async function fetchOwnRecentPosts(
   return result;
 }
 
+async function fetchFollowerRecentRandomPostIds(
+  sessionCookie: string,
+  userId: string,
+): Promise<string[]> {
+  const params = new URLSearchParams();
+  params.set("offset", "0");
+  params.set("limit", "100");
+  params.set("order", "desc");
+  const resp = await fetch(
+    `${BACKEND_API_BASE_URL}/users/${encodeURIComponent(
+      userId,
+    )}/followers?${params.toString()}`,
+    {
+      method: "GET",
+      headers: {
+        Cookie: sessionCookie,
+      },
+    },
+  );
+  if (!resp.ok) {
+    const body = await resp.text().catch(() => "");
+    const bodySnippet = truncateForLog(body);
+    throw new Error(
+      `failed to fetch followers for aiUserId=${userId}: ${resp.status} ${bodySnippet}`,
+    );
+  }
+  const followers = (await resp.json()) as UserLite[];
+  if (followers.length === 0) {
+    return [];
+  }
+  const shuffledFollowerIds = followers
+    .map((f) => ({ id: f.id, score: Math.random() }))
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 5)
+    .map((x) => x.id);
+  const postIds: string[] = [];
+  for (const followerId of shuffledFollowerIds) {
+    try {
+      const posts = await fetchOwnRecentPosts(sessionCookie, followerId);
+      for (const post of posts.slice(0, 3)) {
+        postIds.push(post.id);
+      }
+    } catch (e) {
+      logger.info(
+        `Failed to fetch recent posts for followerId=${followerId} of aiUserId=${userId}: ${e}`,
+      );
+    }
+  }
+  return postIds;
+}
+
 async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<PostDetail[]> {
   const candidates: PostCandidate[] = [];
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
@@ -488,6 +539,27 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       }
     }
   }
+
+  try {
+    const followerPostIds = await fetchFollowerRecentRandomPostIds(sessionCookie, userId);
+
+    console.log("F", followerPostIds);
+
+    for (const postId of followerPostIds) {
+      const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
+      if (!hasImpression) {
+        candidates.push({ postId, weight: 0.3 });
+      }
+    }
+  } catch (e) {
+    logger.error(
+      `Error while fetching follower recent random post ids for aiUserId=${userId}: ${e}`,
+    );
+  }
+
+  console.log(candidates);
+
+
   if (candidates.length === 0) {
     logger.info("No candidate posts to read");
     return [];
@@ -567,6 +639,10 @@ async function createPostImpression(
       },
       body: JSON.stringify(chatBody),
     });
+
+
+    console.log(chatResp);
+
     if (chatResp.status === 501) {
       const bodyText = await chatResp.text().catch(() => "");
       const bodySnippet = truncateForLog(bodyText);
