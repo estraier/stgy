@@ -253,6 +253,47 @@ async function fetchUserInterest(
   return interest;
 }
 
+async function fetchPeerImpression(
+  userSessionCookie: string,
+  aiUserId: string,
+  peerId: string,
+): Promise<string> {
+  let lastImpression = "";
+  try {
+    const resp = await fetch(
+      `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(
+        aiUserId,
+      )}/peer-impressions/${encodeURIComponent(peerId)}`,
+      {
+        method: "GET",
+        headers: {
+          Cookie: userSessionCookie,
+        },
+      },
+    );
+    if (resp.status === 404) {
+      return "";
+    }
+    if (!resp.ok) {
+      const bodyText = await resp.text().catch(() => "");
+      const bodySnippet = truncateForLog(bodyText);
+      logger.error(
+        `failed to fetch peer impression for aiUserId=${aiUserId}, peerId=${peerId}: ${resp.status} ${bodySnippet}`,
+      );
+      return "";
+    }
+    const data = (await resp.json()) as { description?: unknown };
+    if (typeof data.description === "string") {
+      lastImpression = data.description;
+    }
+  } catch (e) {
+    logger.error(
+      `Error while fetching last peer impression for aiUserId=${aiUserId}, peerId=${peerId}: ${e}`,
+    );
+  }
+  return lastImpression;
+}
+
 async function fetchFolloweePosts(sessionCookie: string, userId: string): Promise<Post[]> {
   const params = new URLSearchParams();
   params.set("userId", userId);
@@ -451,16 +492,25 @@ async function createPostImpression(
   try {
     const profileExcerpt = buildProfileExcerpt(profile, interest);
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+    const peerImpression = await fetchPeerImpression(
+      userSessionCookie,
+      profile.id,
+      post.ownedBy,
+    );
     const postExcerpt = {
       author: post.ownerNickname,
       locale: post.locale,
       createdAt: post.createdAt,
       content: post.content.slice(0, POST_CHAR_LIMIT),
+      peerImpression,
     };
     const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
     const modifiedPrompt = prompt
       .replace("{{PROFILE_JSON}}", profileJson)
       .replace("{{POST_JSON}}", postJson);
+
+    console.log(modifiedPrompt);
+
     const chatBody = {
       messages: [
         {
@@ -576,37 +626,7 @@ async function createPeerImpression(
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
     const peerProfile = await fetchUserProfile(userSessionCookie, peerId);
     const peerIntro = peerProfile.introduction.slice(0, PROFILE_CHAR_LIMIT);
-    let lastImpression = "";
-    try {
-      const resp = await fetch(
-        `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(
-          profile.id,
-        )}/peer-impressions/${encodeURIComponent(peerId)}`,
-        {
-          method: "GET",
-          headers: {
-            Cookie: userSessionCookie,
-          },
-        },
-      );
-      if (resp.status === 404) {
-      } else if (!resp.ok) {
-        const bodyText = await resp.text().catch(() => "");
-        const bodySnippet = truncateForLog(bodyText);
-        logger.error(
-          `failed to fetch peer impression for aiUserId=${profile.id}, peerId=${peerId}: ${resp.status} ${bodySnippet}`,
-        );
-      } else {
-        const data = (await resp.json()) as { description?: unknown };
-        if (typeof data.description === "string") {
-          lastImpression = data.description;
-        }
-      }
-    } catch (e) {
-      logger.error(
-        `Error while fetching last peer impression for aiUserId=${profile.id}, peerId=${peerId}: ${e}`,
-      );
-    }
+    const lastImpression = await fetchPeerImpression(userSessionCookie, profile.id, peerId);
     type RawPostImpression = {
       postId?: unknown;
       description?: unknown;
@@ -681,6 +701,9 @@ async function createPeerImpression(
     const modifiedPrompt = prompt
       .replace("{{PROFILE_JSON}}", profileJson)
       .replace("{{PEER_JSON}}", peerJson);
+
+    console.log(modifiedPrompt);
+
     const chatBody = {
       messages: [
         {
@@ -796,7 +819,6 @@ async function createInterest(
   try {
     const profileExcerpt = buildProfileExcerpt(profile, interest);
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-
     type RawPostImpression = {
       postId?: unknown;
       description?: unknown;
@@ -861,6 +883,9 @@ async function createInterest(
     const modifiedPrompt = prompt
       .replace("{{PROFILE_JSON}}", profileJson)
       .replace("{{POSTS_JSON}}", postsJson);
+
+    console.log(modifiedPrompt);
+
     const chatBody = {
       messages: [
         {
@@ -899,7 +924,6 @@ async function createInterest(
       logger.error(`ai-users/chat returned empty content for interest of aiUserId=${profile.id}`);
       return;
     }
-
     let parsed: unknown;
     try {
       parsed = evaluateChatResponseAsJson(content);
@@ -933,7 +957,6 @@ async function createInterest(
       );
       return;
     }
-
     const trimmedInterestSnippet = truncateForLog(trimmedInterest);
     const saveResp = await fetch(
       `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(profile.id)}/interests`,
@@ -980,24 +1003,23 @@ async function processUser(user: UserLite): Promise<void> {
   commonProfilePrompt = commonProfilePrompt.trim() + "\n\n";
   let postImpressionPrompt;
   try {
-    postImpressionPrompt = commonProfilePrompt + readPromptFile(
-      POST_IMPRESSION_PROMPT_PREFIX, profile.locale);
+    postImpressionPrompt =
+      commonProfilePrompt + readPromptFile(POST_IMPRESSION_PROMPT_PREFIX, profile.locale);
   } catch (e) {
     logger.info(`Failed to read the post impression prompt for ${profile.locale}: ${e}`);
     return;
   }
   let peerImpressionPrompt;
   try {
-    peerImpressionPrompt = commonProfilePrompt + readPromptFile(
-      PEER_IMPRESSION_PROMPT_PREFIX, profile.locale);
+    peerImpressionPrompt =
+      commonProfilePrompt + readPromptFile(PEER_IMPRESSION_PROMPT_PREFIX, profile.locale);
   } catch (e) {
     logger.info(`Failed to read the peer impression prompt for ${profile.locale}: ${e}`);
     return;
   }
   let interestPrompt;
   try {
-    interestPrompt = commonProfilePrompt + readPromptFile(
-      INTEREST_PROMPT_PREFIX, profile.locale);
+    interestPrompt = commonProfilePrompt + readPromptFile(INTEREST_PROMPT_PREFIX, profile.locale);
   } catch (e) {
     logger.info(`Failed to read the interest prompt for ${profile.locale}: ${e}`);
     return;
