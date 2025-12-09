@@ -622,9 +622,6 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
 
   try {
     const followerPostIds = await fetchFollowerRecentRandomPostIds(sessionCookie, userId);
-
-    console.log("F", followerPostIds);
-
     for (const postId of followerPostIds) {
       const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
       if (!hasImpression) {
@@ -636,9 +633,6 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       `Error while fetching follower recent random post ids for aiUserId=${userId}: ${e}`,
     );
   }
-
-  console.log(candidates);
-
   if (candidates.length === 0) {
     logger.info("No candidate posts to read");
     return [];
@@ -728,8 +722,6 @@ async function createPostImpression(
       body: JSON.stringify(chatBody),
     });
 
-    console.log(chatResp);
-
     if (chatResp.status === 501) {
       const bodyText = await chatResp.text().catch(() => "");
       const bodySnippet = truncateForLog(bodyText);
@@ -748,6 +740,7 @@ async function createPostImpression(
     }
 
     const chatJson = (await chatResp.json()) as ChatResponse;
+    console.log(chatJson);
     const content = chatJson.message?.content;
     if (typeof content !== "string" || content.trim() === "") {
       logger.error(
@@ -978,6 +971,7 @@ async function createPeerImpression(
     }
 
     const chatJson = (await chatResp.json()) as ChatResponse;
+    console.log(chatJson);
     const content = chatJson.message?.content;
     if (typeof content !== "string" || content.trim() === "") {
       logger.error(
@@ -1184,6 +1178,7 @@ async function createInterest(
       return;
     }
     const chatJson = (await chatResp.json()) as ChatResponse;
+    console.log(chatJson);
     const content = chatJson.message?.content;
     if (typeof content !== "string" || content.trim() === "") {
       logger.error(`ai-users/chat returned empty content for interest of aiUserId=${profile.id}`);
@@ -1417,6 +1412,7 @@ async function createNewPost(
       return;
     }
     const chatJson = (await chatResp.json()) as ChatResponse;
+    console.log(chatJson);
     const content = chatJson.message?.content;
     if (typeof content !== "string" || content.trim() === "") {
       logger.error(`ai-users/chat returned empty content for new post of aiUserId=${profile.id}`);
