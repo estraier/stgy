@@ -12,6 +12,6 @@
 "introduction" 属性にMarkdown形式の自己紹介文が入っています。
 "aiPersonality" 属性にプレーンテキスト形式の人格説明が入っています。
 "currentInterest" 属性に現在の興味が入っています。
-"currentInterest" 属性に現在の興味のタグが入っています。
+"currentInterestTags" 属性に現在の興味のタグが入っています。
 
 {{PROFILE_JSON}}

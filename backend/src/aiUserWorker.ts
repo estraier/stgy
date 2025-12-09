@@ -90,7 +90,6 @@ const BACKEND_API_BASE_URL =
 const ADMIN_EMAIL = process.env.STGY_ADMIN_EMAIL ?? getFileConfigStr(fileConfig, "adminEmail");
 const ADMIN_PASSWORD =
   process.env.STGY_ADMIN_PASSWORD ?? getFileConfigStr(fileConfig, "adminPassword");
-
 const INFINITE_LOOP = (() => {
   const cfg = fileConfig as { infiniteLoop?: unknown };
   if (typeof cfg.infiniteLoop === "boolean") {
@@ -98,7 +97,6 @@ const INFINITE_LOOP = (() => {
   }
   return false;
 })();
-
 const LOOP_INTERVAL = getFileConfigNum(fileConfig, "loopInterval");
 const CONCURRENCY = Math.max(1, Math.floor(getFileConfigNum(fileConfig, "concurrency")));
 const USER_PAGE_SIZE = getFileConfigNum(fileConfig, "userPageSize");
@@ -109,6 +107,13 @@ const PROFILE_CHAR_LIMIT = getFileConfigNum(fileConfig, "profileCharLimit");
 const POST_CHAR_LIMIT = getFileConfigNum(fileConfig, "postCharLimit");
 const OUTPUT_CHAR_LIMIT = getFileConfigNum(fileConfig, "outputCharLimit");
 const READ_IMPRESSION_LIMIT = getFileConfigNum(fileConfig, "readImpressionLimit");
+const PUBLISH_NEW_POSTS = (() => {
+  const cfg = fileConfig as { publishNewPosts?: unknown };
+  if (typeof cfg.publishNewPosts === "boolean") {
+    return cfg.publishNewPosts;
+  }
+  return false;
+})();
 const COMMON_PROFILE_PROMPT_PREFIX = (() => {
   const rel = getFileConfigStr(fileConfig, "commonProfilePromptFile");
   return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
@@ -1453,7 +1458,6 @@ async function createNewPost(
     }
 
     const postTags = parseTagsField(obj.tags, 3);
-
     const trimmedContentSnippet = truncateForLog(trimmedContent);
     const saveResp = await fetch(`${BACKEND_API_BASE_URL}/posts`, {
       method: "POST",
@@ -1464,6 +1468,7 @@ async function createNewPost(
       body: JSON.stringify({
         content: trimmedContent,
         tags: postTags,
+        publishedAt: PUBLISH_NEW_POSTS ? new Date().toISOString() : undefined,
       }),
     });
     if (!saveResp.ok) {
