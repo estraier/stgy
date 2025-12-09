@@ -1548,7 +1548,8 @@ async function processUser(user: UserLite): Promise<void> {
     await createPeerImpression(userSessionCookie, profile, interest, peerImpressionPrompt, peerId);
   }
   await createInterest(userSessionCookie, profile, interest, interestPrompt);
-  await createNewPost(userSessionCookie, profile, interest, topPeerPosts, newPostPrompt);
+  const newInterest = await fetchUserInterest(userSessionCookie, user.id);
+  await createNewPost(userSessionCookie, profile, newInterest, topPeerPosts, newPostPrompt);
 }
 
 async function runOnce(): Promise<void> {
