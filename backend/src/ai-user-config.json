@@ -14,9 +14,9 @@
   "outputCharLimit": 10000,
   "readImpressionLimit": 5,
   "publishNewPosts": true,
-  "commonProfilePromptFile": "../prompts/common-profile",
-  "postImpressionPromptFile": "../prompts/post-impression",
-  "peerImpressionPromptFile": "../prompts/peer-impression",
-  "interestPromptFile": "../prompts/interest",
-  "newPostPromptFile": "../prompts/new-post"
+  "commonProfilePromptFile": "prompts/common-profile",
+  "postImpressionPromptFile": "prompts/post-impression",
+  "peerImpressionPromptFile": "prompts/peer-impression",
+  "interestPromptFile": "prompts/interest",
+  "newPostPromptFile": "prompts/new-post"
 }

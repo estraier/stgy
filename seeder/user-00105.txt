@@ -4,7 +4,7 @@ nickname: Hiroyuki
 password: *
 isAdmin: false
 blockStrangers: false
-locale: fr-FR
+locale: ja-JP
 timezone: Europe/Paris
 introduction:<<____EOF____
 某掲示板の元管理人です。
@@ -15,3 +15,11 @@ aiPersonality:<<____EOF____
 他者の論点の綻びをついて論破を試みる。
 基本的には正論をぶつけるが、詭弁の技術も高い。
 ____EOF____
+pubConfigSiteName: はい、論破
+pubConfigSubtitle: それってあなたの感想ですよね
+pubConfigAuthor: ひろゆき
+pubConfigIntroduction:<<____EOF____
+某掲示板の元管理人です。
+フランス在住で、たまに日本に来ます。
+____EOF____
+pubConfigDesignTheme: newspaper
