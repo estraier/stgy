@@ -90,7 +90,15 @@ const BACKEND_API_BASE_URL =
 const ADMIN_EMAIL = process.env.STGY_ADMIN_EMAIL ?? getFileConfigStr(fileConfig, "adminEmail");
 const ADMIN_PASSWORD =
   process.env.STGY_ADMIN_PASSWORD ?? getFileConfigStr(fileConfig, "adminPassword");
-const INFINITE_LOOP = !!(fileConfig as any).infiniteLoop;
+
+const INFINITE_LOOP = (() => {
+  const cfg = fileConfig as { infiniteLoop?: unknown };
+  if (typeof cfg.infiniteLoop === "boolean") {
+    return cfg.infiniteLoop;
+  }
+  return false;
+})();
+
 const LOOP_INTERVAL = getFileConfigNum(fileConfig, "loopInterval");
 const CONCURRENCY = Math.max(1, Math.floor(getFileConfigNum(fileConfig, "concurrency")));
 const USER_PAGE_SIZE = getFileConfigNum(fileConfig, "userPageSize");
@@ -122,6 +130,63 @@ const NEW_POST_PROMPT_PREFIX = (() => {
   return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
 })();
 
+type InterestDescriptionJson = {
+  interest: string;
+  tags?: string[];
+};
+
+type PeerImpressionDescriptionJson = {
+  impression: string;
+  tags?: string[];
+};
+
+function parseTagsField(raw: unknown, maxCount: number): string[] {
+  if (!Array.isArray(raw)) {
+    return [];
+  }
+  const tags: string[] = [];
+  for (const t of raw) {
+    if (typeof t !== "string") continue;
+    const trimmed = t.trim().slice(0, 20);
+    if (!trimmed) continue;
+    tags.push(trimmed);
+    if (tags.length >= maxCount) break;
+  }
+  return tags;
+}
+
+function parseInterestDescription(description: string): InterestDescriptionJson | null {
+  try {
+    const obj = JSON.parse(description) as {
+      interest?: unknown;
+      tags?: unknown;
+    };
+    if (typeof obj.interest !== "string") {
+      return null;
+    }
+    const tags = parseTagsField(obj.tags, 5);
+    return { interest: obj.interest, tags };
+  } catch {
+    return null;
+  }
+}
+
+function parsePeerImpressionDescription(description: string): PeerImpressionDescriptionJson | null {
+  try {
+    const obj = JSON.parse(description) as {
+      impression?: unknown;
+      tags?: unknown;
+    };
+    if (typeof obj.impression !== "string") {
+      return null;
+    }
+    const tags = parseTagsField(obj.tags, 5);
+    return { impression: obj.impression, tags };
+  } catch {
+    return null;
+  }
+}
+
 function buildProfileExcerpt(
   profile: UserDetail,
   interest: AiUserInterest | null,
@@ -132,16 +197,36 @@ function buildProfileExcerpt(
   introduction: string;
   aiPersonality: string;
   currentInterest: string;
+  currentInterestTags: string[];
 } {
+  let currentInterest = "";
+  const currentInterestTags: string[] = [];
+
+  if (interest && typeof interest.description === "string") {
+    const parsed = parseInterestDescription(interest.description);
+    if (parsed) {
+      currentInterest = parsed.interest.slice(0, PROFILE_CHAR_LIMIT);
+      if (parsed.tags) {
+        for (const t of parsed.tags) {
+          if (t.length > 0) {
+            currentInterestTags.push(t);
+            if (currentInterestTags.length >= 5) break;
+          }
+        }
+      }
+    } else {
+      currentInterest = interest.description.slice(0, PROFILE_CHAR_LIMIT);
+    }
+  }
+
   return {
     userId: profile.id,
     nickname: profile.nickname,
     locale: profile.locale,
     introduction: profile.introduction.slice(0, PROFILE_CHAR_LIMIT),
-    aiPersonality: profile.aiPersonality
-      ? profile.aiPersonality.slice(0, PROFILE_CHAR_LIMIT)
-      : "",
-    currentInterest: interest ? interest.description.slice(0, PROFILE_CHAR_LIMIT) : "",
+    aiPersonality: profile.aiPersonality ? profile.aiPersonality.slice(0, PROFILE_CHAR_LIMIT) : "",
+    currentInterest,
+    currentInterestTags,
   };
 }
 
@@ -412,10 +497,7 @@ async function fetchPostById(
   return post;
 }
 
-async function fetchOwnRecentPosts(
-  sessionCookie: string,
-  userId: string,
-): Promise<PostDetail[]> {
+async function fetchOwnRecentPosts(sessionCookie: string, userId: string): Promise<PostDetail[]> {
   const params = new URLSearchParams();
   params.set("offset", "0");
   params.set("limit", String(READ_POST_LIMIT));
@@ -456,9 +538,7 @@ async function fetchFollowerRecentRandomPostIds(
   params.set("limit", "100");
   params.set("order", "desc");
   const resp = await fetch(
-    `${BACKEND_API_BASE_URL}/users/${encodeURIComponent(
-      userId,
-    )}/followers?${params.toString()}`,
+    `${BACKEND_API_BASE_URL}/users/${encodeURIComponent(userId)}/followers?${params.toString()}`,
     {
       method: "GET",
       headers: {
@@ -559,7 +639,6 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
 
   console.log(candidates);
 
-
   if (candidates.length === 0) {
     logger.info("No candidate posts to read");
     return [];
@@ -604,17 +683,26 @@ async function createPostImpression(
   try {
     const profileExcerpt = buildProfileExcerpt(profile, interest);
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-    const peerImpression = await fetchPeerImpression(
+
+    const rawPeerImpression = await fetchPeerImpression(
       userSessionCookie,
       profile.id,
       post.ownedBy,
     );
+    let peerImpressionText = rawPeerImpression;
+    if (rawPeerImpression) {
+      const parsedPeer = parsePeerImpressionDescription(rawPeerImpression);
+      if (parsedPeer) {
+        peerImpressionText = parsedPeer.impression.slice(0, OUTPUT_CHAR_LIMIT);
+      }
+    }
+
     const postExcerpt = {
       author: post.ownerNickname,
       locale: post.locale,
       createdAt: post.createdAt,
       content: post.content.slice(0, POST_CHAR_LIMIT),
-      peerImpression,
+      peerImpression: peerImpressionText,
     };
     const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
     const modifiedPrompt = prompt
@@ -640,7 +728,6 @@ async function createPostImpression(
       body: JSON.stringify(chatBody),
     });
 
-
     console.log(chatResp);
 
     if (chatResp.status === 501) {
@@ -659,6 +746,7 @@ async function createPostImpression(
       );
       return;
     }
+
     const chatJson = (await chatResp.json()) as ChatResponse;
     const content = chatJson.message?.content;
     if (typeof content !== "string" || content.trim() === "") {
@@ -667,6 +755,7 @@ async function createPostImpression(
       );
       return;
     }
+
     let parsed: unknown;
     try {
       parsed = evaluateChatResponseAsJson(content);
@@ -677,6 +766,7 @@ async function createPostImpression(
       );
       return;
     }
+
     if (typeof parsed !== "object" || parsed === null) {
       const contentSnippet = truncateForLog(content);
       logger.error(
@@ -684,7 +774,13 @@ async function createPostImpression(
       );
       return;
     }
-    const obj = parsed as { summary?: unknown; impression?: unknown };
+
+    const obj = parsed as {
+      summary?: unknown;
+      impression?: unknown;
+      tags?: unknown;
+    };
+
     if (typeof obj.summary !== "string" || typeof obj.impression !== "string") {
       const contentSnippet = truncateForLog(content);
       logger.error(
@@ -692,10 +788,15 @@ async function createPostImpression(
       );
       return;
     }
+
+    const tags = parseTagsField(obj.tags, 5);
+
     const trimmed = {
       summary: obj.summary.trim().slice(0, OUTPUT_CHAR_LIMIT),
       impression: obj.impression.trim().slice(0, OUTPUT_CHAR_LIMIT),
+      tags,
     };
+
     const description = JSON.stringify(trimmed);
     const descriptionSnippet = truncateForLog(description);
     const saveResp = await fetch(
@@ -742,8 +843,23 @@ async function createPeerImpression(
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
     const peerProfile = await fetchUserProfile(userSessionCookie, peerId);
     const peerIntro = peerProfile.introduction.slice(0, PROFILE_CHAR_LIMIT);
-    const lastImpression = await fetchPeerImpression(userSessionCookie, profile.id, peerId);
-    const peerPosts: { postId: string; summary: string; impression: string }[] = [];
+    const lastImpressionRaw = await fetchPeerImpression(userSessionCookie, profile.id, peerId);
+
+    let lastImpression = lastImpressionRaw;
+    if (lastImpressionRaw) {
+      const parsedLast = parsePeerImpressionDescription(lastImpressionRaw);
+      if (parsedLast) {
+        lastImpression = parsedLast.impression.slice(0, OUTPUT_CHAR_LIMIT);
+      }
+    }
+
+    const peerPosts: {
+      postId: string;
+      summary: string;
+      impression: string;
+      tags: string[];
+    }[] = [];
+
     try {
       const params = new URLSearchParams();
       params.set("ownerId", peerId);
@@ -772,28 +888,36 @@ async function createPeerImpression(
         for (const imp of arr) {
           if (typeof imp.postId !== "string") continue;
           if (typeof imp.description !== "string") continue;
+
           let summary = "";
           let impression = "";
+          let tags: string[] = [];
+
           try {
             const obj = JSON.parse(imp.description) as {
               summary?: unknown;
               impression?: unknown;
+              tags?: unknown;
             };
             if (typeof obj.summary === "string") summary = obj.summary;
             if (typeof obj.impression === "string") impression = obj.impression;
+            tags = parseTagsField(obj.tags, 5);
           } catch (e) {
             logger.error(
               `failed to parse post impression JSON for aiUserId=${profile.id}, peerId=${peerId}, postId=${imp.postId}: ${e}`,
             );
             continue;
           }
+
           summary = summary.trim().slice(0, OUTPUT_CHAR_LIMIT);
           impression = impression.trim().slice(0, OUTPUT_CHAR_LIMIT);
           if (!summary && !impression) continue;
+
           peerPosts.push({
             postId: imp.postId,
             summary,
             impression,
+            tags,
           });
         }
       }
@@ -802,6 +926,7 @@ async function createPeerImpression(
         `Error while fetching/processing peer post impressions for aiUserId=${profile.id}, peerId=${peerId}: ${e}`,
       );
     }
+
     const peerJsonObj = {
       userId: peerId,
       nickname: peerProfile.nickname,
@@ -810,10 +935,13 @@ async function createPeerImpression(
       posts: peerPosts,
     };
     const peerJson = JSON.stringify(peerJsonObj, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+
     const modifiedPrompt = prompt
       .replace("{{PROFILE_JSON}}", profileJson)
       .replace("{{PEER_JSON}}", peerJson);
+
     console.log(modifiedPrompt);
+
     const chatBody = {
       messages: [
         {
@@ -822,6 +950,7 @@ async function createPeerImpression(
         },
       ],
     };
+
     const chatResp = await fetch(`${BACKEND_API_BASE_URL}/ai-users/chat`, {
       method: "POST",
       headers: {
@@ -830,6 +959,7 @@ async function createPeerImpression(
       },
       body: JSON.stringify(chatBody),
     });
+
     if (chatResp.status === 501) {
       const bodyText = await chatResp.text().catch(() => "");
       const bodySnippet = truncateForLog(bodyText);
@@ -846,6 +976,7 @@ async function createPeerImpression(
       );
       return;
     }
+
     const chatJson = (await chatResp.json()) as ChatResponse;
     const content = chatJson.message?.content;
     if (typeof content !== "string" || content.trim() === "") {
@@ -854,6 +985,7 @@ async function createPeerImpression(
       );
       return;
     }
+
     let parsed: unknown;
     try {
       parsed = evaluateChatResponseAsJson(content);
@@ -864,6 +996,7 @@ async function createPeerImpression(
       );
       return;
     }
+
     if (typeof parsed !== "object" || parsed === null) {
       const contentSnippet = truncateForLog(content);
       logger.error(
@@ -871,7 +1004,8 @@ async function createPeerImpression(
       );
       return;
     }
-    const obj = parsed as { impression?: unknown };
+
+    const obj = parsed as { impression?: unknown; tags?: unknown };
     if (typeof obj.impression !== "string") {
       const contentSnippet = truncateForLog(content);
       logger.error(
@@ -879,6 +1013,7 @@ async function createPeerImpression(
       );
       return;
     }
+
     const trimmedImpression = obj.impression.trim().slice(0, OUTPUT_CHAR_LIMIT);
     if (!trimmedImpression) {
       const contentSnippet = truncateForLog(content);
@@ -887,7 +1022,16 @@ async function createPeerImpression(
       );
       return;
     }
-    const trimmedImpressionSnippet = truncateForLog(trimmedImpression);
+
+    const tags = parseTagsField(obj.tags, 5);
+
+    const descriptionObj = {
+      impression: trimmedImpression,
+      tags,
+    };
+    const description = JSON.stringify(descriptionObj);
+    const descriptionSnippet = truncateForLog(description);
+
     const saveResp = await fetch(
       `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(profile.id)}/peer-impressions`,
       {
@@ -898,7 +1042,7 @@ async function createPeerImpression(
         },
         body: JSON.stringify({
           peerId,
-          description: trimmedImpression,
+          description,
         }),
       },
     );
@@ -911,7 +1055,7 @@ async function createPeerImpression(
       return;
     }
     logger.info(
-      `Saved peer impression for aiUserId=${profile.id}, peerId=${peerId}: ${trimmedImpressionSnippet}`,
+      `Saved peer impression for aiUserId=${profile.id}, peerId=${peerId}: ${descriptionSnippet}`,
     );
   } catch (e) {
     logger.error(
@@ -929,7 +1073,13 @@ async function createInterest(
   try {
     const profileExcerpt = buildProfileExcerpt(profile, interest);
     const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-    const posts: { userId: string, nickname: string, summary: string; impression: string }[] = [];
+    const posts: {
+      userId: string;
+      nickname: string;
+      summary: string;
+      impression: string;
+      tags: string[];
+    }[] = [];
     try {
       const params = new URLSearchParams();
       params.set("limit", String(READ_IMPRESSION_LIMIT));
@@ -961,18 +1111,21 @@ async function createInterest(
             const peer = await fetchUserProfile(userSessionCookie, imp.ownerId);
             nickname = peer.nickname;
           } catch (e) {
-            logger.error(`failed to fetch user ${imp.ownerId}`);
+            logger.error(`failed to fetch user ${imp.ownerId}: ${e}`);
             continue;
           }
           let summary = "";
           let impression = "";
+          let tags: string[] = [];
           try {
             const obj = JSON.parse(imp.description) as {
               summary?: unknown;
               impression?: unknown;
+              tags?: unknown;
             };
             if (typeof obj.summary === "string") summary = obj.summary;
             if (typeof obj.impression === "string") impression = obj.impression;
+            tags = parseTagsField(obj.tags, 5);
           } catch (e) {
             logger.error(
               `failed to parse post impression JSON for interest of aiUserId=${profile.id}, postId=${String(
@@ -984,7 +1137,7 @@ async function createInterest(
           summary = summary.trim().slice(0, OUTPUT_CHAR_LIMIT);
           impression = impression.trim().slice(0, OUTPUT_CHAR_LIMIT);
           if (!summary && !impression) continue;
-          posts.push({ userId: imp.ownerId, nickname, summary, impression });
+          posts.push({ userId: imp.ownerId, nickname, summary, impression, tags });
         }
       }
     } catch (e) {
@@ -1053,7 +1206,7 @@ async function createInterest(
       );
       return;
     }
-    const obj = parsed as { interest?: unknown };
+    const obj = parsed as { interest?: unknown; tags?: unknown };
     if (typeof obj.interest !== "string") {
       const contentSnippet = truncateForLog(content);
       logger.error(
@@ -1069,7 +1222,16 @@ async function createInterest(
       );
       return;
     }
-    const trimmedInterestSnippet = truncateForLog(trimmedInterest);
+
+    const tags = parseTagsField(obj.tags, 5);
+
+    const descriptionObj: InterestDescriptionJson = {
+      interest: trimmedInterest,
+      tags,
+    };
+    const description = JSON.stringify(descriptionObj);
+    const descriptionSnippet = truncateForLog(description);
+
     const saveResp = await fetch(
       `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(profile.id)}/interests`,
       {
@@ -1079,7 +1241,7 @@ async function createInterest(
           Cookie: userSessionCookie,
         },
         body: JSON.stringify({
-          description: trimmedInterest,
+          description,
         }),
       },
     );
@@ -1091,7 +1253,7 @@ async function createInterest(
       );
       return;
     }
-    logger.info(`Saved interest for aiUserId=${profile.id}: ${trimmedInterestSnippet}`);
+    logger.info(`Saved interest for aiUserId=${profile.id}: ${descriptionSnippet}`);
   } catch (e) {
     logger.error(`Error in createInterest for aiUserId=${profile.id}: ${e}`);
   }
@@ -1111,9 +1273,11 @@ async function createNewPost(
       userId: string;
       nickname: string;
       impression: string;
+      tags: string[];
       post: {
         summary: string;
         impression: string;
+        tags: string[];
       };
     }[] = [];
     for (const [peerId, peerPost] of peerPosts.entries()) {
@@ -1126,10 +1290,23 @@ async function createNewPost(
           `Failed to fetch peer profile for aiUserId=${profile.id}, peerId=${peerId}: ${e}`,
         );
       }
-      const userImpression = await fetchPeerImpression(userSessionCookie, profile.id, peerId);
-      if (!userImpression) continue;
+
+      const userImpressionRaw = await fetchPeerImpression(userSessionCookie, profile.id, peerId);
+      if (!userImpressionRaw) continue;
+
+      let userImpressionText = userImpressionRaw;
+      let userTags: string[] = [];
+      const parsedUserImp = parsePeerImpressionDescription(userImpressionRaw);
+      if (parsedUserImp) {
+        userImpressionText = parsedUserImp.impression.slice(0, OUTPUT_CHAR_LIMIT);
+        if (parsedUserImp.tags) {
+          userTags = parsedUserImp.tags.slice(0, 5);
+        }
+      }
+
       let postSummary = "";
       let postImpressionText = "";
+      let postTags: string[] = [];
       try {
         const params = new URLSearchParams();
         params.set("ownerId", peerId);
@@ -1160,9 +1337,11 @@ async function createNewPost(
               const obj = JSON.parse(arr[0].description) as {
                 summary?: unknown;
                 impression?: unknown;
+                tags?: unknown;
               };
               if (typeof obj.summary === "string") postSummary = obj.summary;
               if (typeof obj.impression === "string") postImpressionText = obj.impression;
+              postTags = parseTagsField(obj.tags, 5);
             } catch (e) {
               logger.error(
                 `failed to parse peer post impression JSON for new post of aiUserId=${profile.id}, peerId=${peerId}: ${e}`,
@@ -1181,10 +1360,12 @@ async function createNewPost(
       peers.push({
         userId: peerId,
         nickname,
-        impression: userImpression.slice(0, OUTPUT_CHAR_LIMIT),
+        impression: userImpressionText.slice(0, OUTPUT_CHAR_LIMIT),
+        tags: userTags,
         post: {
           summary: postSummary.trim().slice(0, OUTPUT_CHAR_LIMIT),
           impression: postImpressionText.trim().slice(0, OUTPUT_CHAR_LIMIT),
+          tags: postTags,
         },
       });
     }
@@ -1258,7 +1439,7 @@ async function createNewPost(
       );
       return;
     }
-    const obj = parsed as { content?: unknown };
+    const obj = parsed as { content?: unknown; tags?: unknown };
     if (typeof obj.content !== "string") {
       const contentSnippet = truncateForLog(content);
       logger.error(
@@ -1274,6 +1455,9 @@ async function createNewPost(
       );
       return;
     }
+
+    const postTags = parseTagsField(obj.tags, 3);
+
     const trimmedContentSnippet = truncateForLog(trimmedContent);
     const saveResp = await fetch(`${BACKEND_API_BASE_URL}/posts`, {
       method: "POST",
@@ -1283,7 +1467,7 @@ async function createNewPost(
       },
       body: JSON.stringify({
         content: trimmedContent,
-        tags: [],
+        tags: postTags,
       }),
     });
     if (!saveResp.ok) {
@@ -1358,7 +1542,6 @@ async function processUser(user: UserLite): Promise<void> {
     }
   }
   const peerIds = Array.from(peerIdSet);
-  const topPeerIds = Array.from(peerIdSet);
   logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
   for (const peerId of peerIds) {
     await createPeerImpression(userSessionCookie, profile, interest, peerImpressionPrompt, peerId);
@@ -1382,11 +1565,11 @@ async function runOnce(): Promise<void> {
       const batchSize = Math.min(CONCURRENCY, remaining, users.length - i);
       const batch = users.slice(i, i + batchSize);
       await Promise.all(
-        batch.map(async (user) => {
+        batch.map(async (userItem) => {
           try {
-            await processUser(user);
+            await processUser(userItem);
           } catch (e) {
-            logger.info(`Failed to process the user of userId=${user.id}: ${e}`);
+            logger.info(`Failed to process the user of userId=${userItem.id}: ${e}`);
           }
           processedCount += 1;
         }),
