@@ -126,6 +126,12 @@ CREATE TABLE post_likes (
 CREATE INDEX idx_post_likes_post_id_created_at ON post_likes(post_id, created_at);
 CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_at);
 
+CREATE TABLE ai_post_summaries (
+  post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+  summary VARCHAR(65535)
+);
+CREATE INDEX idx_ai_post_summaries_empty ON ai_post_summaries (post_id) WHERE summary IS NULL;
+
 CREATE TABLE ai_actions (
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   done_at TIMESTAMPTZ NOT NULL,
@@ -136,14 +142,14 @@ CREATE INDEX idx_ai_actions_done_at ON ai_actions(done_at);
 
 CREATE TABLE ai_interests (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  description VARCHAR(65535) NOT NULL
+  payload VARCHAR(65535) NOT NULL
 );
 
 CREATE TABLE ai_peer_impressions (
   user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
   peer_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
   updated_at TIMESTAMPTZ NOT NULL,
-  description VARCHAR(65535) NOT NULL,
+  payload VARCHAR(65535) NOT NULL,
   PRIMARY KEY (user_id, peer_id)
 );
 CREATE INDEX idx_ai_peer_impressions_updated_at ON ai_peer_impressions(updated_at);
@@ -153,7 +159,7 @@ CREATE TABLE ai_post_impressions (
   owner_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
   post_id BIGINT REFERENCES posts(id) ON DELETE CASCADE,
   updated_at TIMESTAMPTZ NOT NULL,
-  description VARCHAR(65535) NOT NULL,
+  payload VARCHAR(65535) NOT NULL,
   PRIMARY KEY (user_id, owner_id, post_id)
 );
 CREATE INDEX idx_ai_post_impressions_updated_at ON ai_post_impressions(updated_at);

@@ -30,19 +30,19 @@ class MockPgPool {
   user_secrets: { user_id: number; email: string }[] = [];
   user_details: { user_id: number; introduction: string; ai_personality: string | null }[] = [];
   ai_models: { label: string; service: string; name: string }[] = [];
-  ai_interests: { user_id: number; description: string }[] = [];
+  ai_interests: { user_id: number; payload: string }[] = [];
   ai_peer_impressions: {
     user_id: number;
     peer_id: number;
     updated_at: Date;
-    description: string;
+    payload: string;
   }[] = [];
   ai_post_impressions: {
     user_id: number;
     owner_id: number;
     post_id: number;
     updated_at: Date;
-    description: string;
+    payload: string;
   }[] = [];
   posts: {
     id: number;
@@ -115,38 +115,36 @@ class MockPgPool {
       return { rows: [row], rowCount: 1 };
     }
 
-    if (sql.startsWith("SELECT user_id, description FROM ai_interests WHERE user_id = $1")) {
+    if (sql.startsWith("SELECT user_id, payload FROM ai_interests WHERE user_id = $1")) {
       const idParam = params?.[0];
       const uid = typeof idParam === "string" ? Number(idParam) : idParam;
       const found = this.ai_interests.find((x) => x.user_id === uid);
       if (!found) return { rows: [], rowCount: 0 };
       const row = {
         user_id: String(found.user_id),
-        description: found.description,
+        payload: found.payload,
       };
       return { rows: [row], rowCount: 1 };
     }
 
-    if (sql.startsWith("INSERT INTO ai_interests (user_id, description)")) {
+    if (sql.startsWith("INSERT INTO ai_interests (user_id, payload)")) {
       const idParam = params?.[0];
-      const description = params?.[1] ?? "";
+      const payload = params?.[1] ?? "";
       const uid = typeof idParam === "string" ? Number(idParam) : idParam;
       const existing = this.ai_interests.find((x) => x.user_id === uid);
       if (existing) {
-        existing.description = description;
+        existing.payload = payload;
       } else {
-        this.ai_interests.push({ user_id: uid, description });
+        this.ai_interests.push({ user_id: uid, payload });
       }
       const row = {
         user_id: String(uid),
-        description,
+        payload,
       };
       return { rows: [row], rowCount: 1 };
     }
 
-    if (
-      sql.startsWith("SELECT user_id, peer_id, updated_at, description FROM ai_peer_impressions")
-    ) {
+    if (sql.startsWith("SELECT user_id, peer_id, updated_at, payload FROM ai_peer_impressions")) {
       if (sql.includes("ORDER BY updated_at")) {
         const limit = params?.[params.length - 2] ?? 50;
         const offset = params?.[params.length - 1] ?? 0;
@@ -181,7 +179,7 @@ class MockPgPool {
           user_id: String(r.user_id),
           peer_id: String(r.peer_id),
           updated_at: r.updated_at,
-          description: r.description,
+          payload: r.payload,
         }));
         return { rows: sliced, rowCount: sliced.length };
       }
@@ -196,7 +194,7 @@ class MockPgPool {
         user_id: String(found.user_id),
         peer_id: String(found.peer_id),
         updated_at: found.updated_at,
-        description: found.description,
+        payload: found.payload,
       };
       return { rows: [row], rowCount: 1 };
     }
@@ -211,32 +209,30 @@ class MockPgPool {
       return { rows: [{ exists: 1 }], rowCount: 1 };
     }
 
-    if (
-      sql.startsWith("INSERT INTO ai_peer_impressions (user_id, peer_id, updated_at, description)")
-    ) {
+    if (sql.startsWith("INSERT INTO ai_peer_impressions (user_id, peer_id, updated_at, payload)")) {
       const userParam = params?.[0];
       const peerParam = params?.[1];
-      const description = params?.[2] ?? "";
+      const payload = params?.[2] ?? "";
       const uid = typeof userParam === "string" ? Number(userParam) : userParam;
       const pid = typeof peerParam === "string" ? Number(peerParam) : peerParam;
       const now = new Date("2025-01-01T00:00:00.000Z");
       const existing = this.ai_peer_impressions.find((r) => r.user_id === uid && r.peer_id === pid);
       if (existing) {
-        existing.description = description;
+        existing.payload = payload;
         existing.updated_at = now;
       } else {
         this.ai_peer_impressions.push({
           user_id: uid,
           peer_id: pid,
           updated_at: now,
-          description,
+          payload,
         });
       }
       const row = {
         user_id: String(uid),
         peer_id: String(pid),
         updated_at: now,
-        description,
+        payload,
       };
       return { rows: [row], rowCount: 1 };
     }
@@ -264,7 +260,7 @@ class MockPgPool {
 
     if (
       sql.startsWith(
-        "SELECT user_id, owner_id, post_id, updated_at, description FROM ai_post_impressions",
+        "SELECT user_id, owner_id, post_id, updated_at, payload FROM ai_post_impressions",
       )
     ) {
       if (sql.includes("ORDER BY")) {
@@ -321,7 +317,7 @@ class MockPgPool {
           owner_id: String(r.owner_id),
           post_id: String(r.post_id),
           updated_at: r.updated_at,
-          description: r.description,
+          payload: r.payload,
         }));
         return { rows: sliced, rowCount: sliced.length };
       }
@@ -337,20 +333,20 @@ class MockPgPool {
         owner_id: String(found.owner_id),
         post_id: String(found.post_id),
         updated_at: found.updated_at,
-        description: found.description,
+        payload: found.payload,
       };
       return { rows: [row], rowCount: 1 };
     }
 
     if (
       sql.startsWith(
-        "INSERT INTO ai_post_impressions (user_id, owner_id, post_id, updated_at, description)",
+        "INSERT INTO ai_post_impressions (user_id, owner_id, post_id, updated_at, payload)",
       )
     ) {
       const userParam = params?.[0];
       const ownerParam = params?.[1];
       const postParam = params?.[2];
-      const description = params?.[3] ?? "";
+      const payload = params?.[3] ?? "";
       const uid = typeof userParam === "string" ? Number(userParam) : userParam;
       const oid = typeof ownerParam === "string" ? Number(ownerParam) : ownerParam;
       const pid = typeof postParam === "string" ? Number(postParam) : postParam;
@@ -359,7 +355,7 @@ class MockPgPool {
         (r) => r.user_id === uid && r.owner_id === oid && r.post_id === pid,
       );
       if (existing) {
-        existing.description = description;
+        existing.payload = payload;
         existing.updated_at = now;
       } else {
         this.ai_post_impressions.push({
@@ -367,7 +363,7 @@ class MockPgPool {
           owner_id: oid,
           post_id: pid,
           updated_at: now,
-          description,
+          payload,
         });
       }
       const row = {
@@ -375,7 +371,7 @@ class MockPgPool {
         owner_id: String(oid),
         post_id: String(pid),
         updated_at: now,
-        description,
+        payload,
       };
       return { rows: [row], rowCount: 1 };
     }
@@ -508,7 +504,7 @@ describe("AiUsersService", () => {
         messages: [{ role: "user", content: "hi" }],
       },
       {
-        timeout: 60000,
+        timeout: 600000,
       },
     );
   });
@@ -536,26 +532,26 @@ describe("AiUsersService", () => {
 
     const saved1 = await service.setAiUserInterest({
       userId: userHex,
-      description: "First interest",
+      payload: "First interest",
     });
     expect(saved1.userId).toBe(expectedHex);
-    expect(saved1.description).toBe("First interest");
+    expect(saved1.payload).toBe("First interest");
 
     const fetched1 = await service.getAiUserInterest(userHex);
     expect(fetched1).not.toBeNull();
     expect(fetched1!.userId).toBe(expectedHex);
-    expect(fetched1!.description).toBe("First interest");
+    expect(fetched1!.payload).toBe("First interest");
 
     const saved2 = await service.setAiUserInterest({
       userId: userHex,
-      description: "Updated interest",
+      payload: "Updated interest",
     });
     expect(saved2.userId).toBe(expectedHex);
-    expect(saved2.description).toBe("Updated interest");
+    expect(saved2.payload).toBe("Updated interest");
 
     const fetched2 = await service.getAiUserInterest(userHex);
     expect(fetched2).not.toBeNull();
-    expect(fetched2!.description).toBe("Updated interest");
+    expect(fetched2!.payload).toBe("Updated interest");
   });
 
   test("getAiPeerImpression: returns null when not set", async () => {
@@ -574,18 +570,18 @@ describe("AiUsersService", () => {
     const saved = await service.setAiPeerImpression({
       userId: userHex,
       peerId: peerHex,
-      description: "Friendly peer",
+      payload: "Friendly peer",
     });
     expect(saved.userId).toBe(expectedUserHex);
     expect(saved.peerId).toBe(expectedPeerHex);
-    expect(saved.description).toBe("Friendly peer");
+    expect(saved.payload).toBe("Friendly peer");
     expect(typeof saved.updatedAt).toBe("string");
 
     const fetched = await service.getAiPeerImpression(userHex, peerHex);
     expect(fetched).not.toBeNull();
     expect(fetched!.userId).toBe(expectedUserHex);
     expect(fetched!.peerId).toBe(expectedPeerHex);
-    expect(fetched!.description).toBe("Friendly peer");
+    expect(fetched!.payload).toBe("Friendly peer");
     expect(typeof fetched!.updatedAt).toBe("string");
   });
 
@@ -599,7 +595,7 @@ describe("AiUsersService", () => {
     await service.setAiPeerImpression({
       userId: userHex,
       peerId: peerHex,
-      description: "Friendly peer",
+      payload: "Friendly peer",
     });
 
     const after = await service.checkAiPeerImpression(userHex, peerHex);
@@ -616,12 +612,12 @@ describe("AiUsersService", () => {
     await service.setAiPeerImpression({
       userId: userHex,
       peerId: peer1Hex,
-      description: "Peer one",
+      payload: "Peer one",
     });
     await service.setAiPeerImpression({
       userId: userHex,
       peerId: peer2Hex,
-      description: "Peer two",
+      payload: "Peer two",
     });
 
     const all = await service.listAiPeerImpressions({ userId: userHex, limit: 10, offset: 0 });
@@ -637,7 +633,7 @@ describe("AiUsersService", () => {
     });
     expect(filtered).toHaveLength(1);
     expect(filtered[0].peerId).toBe(expectedPeer1Hex);
-    expect(filtered[0].description).toBe("Peer one");
+    expect(filtered[0].payload).toBe("Peer one");
   });
 
   test("getAiPostImpression: returns null when not set", async () => {
@@ -663,12 +659,12 @@ describe("AiUsersService", () => {
     const saved = await service.setAiPostImpression({
       userId: userHex,
       postId: postHex,
-      description: "Interesting post",
+      payload: "Interesting post",
     });
     expect(saved.userId).toBe(expectedUserHex);
     expect(saved.ownerId).toBe(expectedOwnerHex);
     expect(saved.postId).toBe(expectedPostHex);
-    expect(saved.description).toBe("Interesting post");
+    expect(saved.payload).toBe("Interesting post");
     expect(typeof saved.updatedAt).toBe("string");
 
     const fetched = await service.getAiPostImpression(userHex, postHex);
@@ -676,7 +672,7 @@ describe("AiUsersService", () => {
     expect(fetched!.userId).toBe(expectedUserHex);
     expect(fetched!.ownerId).toBe(expectedOwnerHex);
     expect(fetched!.postId).toBe(expectedPostHex);
-    expect(fetched!.description).toBe("Interesting post");
+    expect(fetched!.payload).toBe("Interesting post");
     expect(typeof fetched!.updatedAt).toBe("string");
   });
 
@@ -696,7 +692,7 @@ describe("AiUsersService", () => {
     await service.setAiPostImpression({
       userId: userHex,
       postId: postHex,
-      description: "Checked post",
+      payload: "Checked post",
     });
 
     const after = await service.checkAiPostImpression(userHex, postHex);
@@ -737,17 +733,17 @@ describe("AiUsersService", () => {
     await service.setAiPostImpression({
       userId: user1Hex,
       postId: post1Hex,
-      description: "u1 p1 o1",
+      payload: "u1 p1 o1",
     });
     await service.setAiPostImpression({
       userId: user1Hex,
       postId: post2Hex,
-      description: "u1 p2 o2",
+      payload: "u1 p2 o2",
     });
     await service.setAiPostImpression({
       userId: user2Hex,
       postId: post3Hex,
-      description: "u2 p3 o1",
+      payload: "u2 p3 o1",
     });
 
     const all = await service.listAiPostImpressions({ limit: 10, offset: 0 });
@@ -762,7 +758,7 @@ describe("AiUsersService", () => {
     expect(byPost1[0].userId).toBe(expectedUser1Hex);
     expect(byPost1[0].ownerId).toBe(expectedOwner1Hex);
     expect(byPost1[0].postId).toBe(expectedPost1Hex);
-    expect(byPost1[0].description).toBe("u1 p1 o1");
+    expect(byPost1[0].payload).toBe("u1 p1 o1");
 
     const byOwner1 = await service.listAiPostImpressions({
       ownerId: owner1Hex,
@@ -792,7 +788,7 @@ describe("AiUsersService", () => {
     expect(byUser1Owner1[0].userId).toBe(expectedUser1Hex);
     expect(byUser1Owner1[0].ownerId).toBe(expectedOwner1Hex);
     expect(byUser1Owner1[0].postId).toBe(expectedPost1Hex);
-    expect(byUser1Owner1[0].description).toBe("u1 p1 o1");
+    expect(byUser1Owner1[0].payload).toBe("u1 p1 o1");
 
     const byOwner2 = await service.listAiPostImpressions({
       ownerId: owner2Hex,
@@ -803,7 +799,7 @@ describe("AiUsersService", () => {
     expect(byOwner2[0].userId).toBe(expectedUser1Hex);
     expect(byOwner2[0].ownerId).toBe(expectedOwner2Hex);
     expect(byOwner2[0].postId).toBe(expectedPost2Hex);
-    expect(byOwner2[0].description).toBe("u1 p2 o2");
+    expect(byOwner2[0].payload).toBe("u1 p2 o2");
 
     const byUser2 = await service.listAiPostImpressions({
       userId: user2Hex,
@@ -814,6 +810,6 @@ describe("AiUsersService", () => {
     expect(byUser2[0].userId).toBe(expectedUser2Hex);
     expect(byUser2[0].ownerId).toBe(expectedOwner1Hex);
     expect(byUser2[0].postId).toBe(expectedPost3Hex);
-    expect(byUser2[0].description).toBe("u2 p3 o1");
+    expect(byUser2[0].payload).toBe("u2 p3 o1");
   });
 });

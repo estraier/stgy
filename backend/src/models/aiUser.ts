@@ -37,19 +37,19 @@ export type ChatResponse = {
 
 export type AiUserInterest = {
   userId: string;
-  description: string;
+  payload: string;
 };
 
 export type SetAiUserInterestInput = {
   userId: string;
-  description: string;
+  payload: string;
 };
 
 export type AiPeerImpression = {
   userId: string;
   peerId: string;
   updatedAt: string;
-  description: string;
+  payload: string;
 };
 
 export type AiPeerImpressionFilter = {
@@ -62,7 +62,7 @@ export type ListAiPeerImpressionsInput = AiPeerImpressionFilter & AiUserPaginati
 export type SetAiPeerImpressionInput = {
   userId: string;
   peerId: string;
-  description: string;
+  payload: string;
 };
 
 export type AiPostImpression = {
@@ -70,7 +70,7 @@ export type AiPostImpression = {
   ownerId: string;
   postId: string;
   updatedAt: string;
-  description: string;
+  payload: string;
 };
 
 export type AiPostImpressionFilter = {
@@ -84,5 +84,5 @@ export type ListAiPostImpressionsInput = AiPostImpressionFilter & AiUserPaginati
 export type SetAiPostImpressionInput = {
   userId: string;
   postId: string;
-  description: string;
+  payload: string;
 };

@@ -147,7 +147,7 @@ def test_ai_users():
     cookies=cookies,
   )
   assert res.status_code == 404, res.text
-  interest_body = {"description": "I am currently interested in integration tests"}
+  interest_body = {"payload": "I am currently interested in integration tests"}
   res = requests.post(
     f"{BASE_URL}/ai-users/{ai_user_id}/interests",
     json=interest_body,
@@ -157,7 +157,7 @@ def test_ai_users():
   assert res.status_code == 200, res.text
   saved_interest = res.json()
   assert saved_interest["userId"] == ai_user_id
-  assert saved_interest["description"] == interest_body["description"]
+  assert saved_interest["payload"] == interest_body["payload"]
   res = requests.get(
     f"{BASE_URL}/ai-users/{ai_user_id}/interests",
     headers=headers,
@@ -189,7 +189,7 @@ def test_ai_users():
   assert res.status_code == 404, res.text
   peer_body = {
     "peerId": admin_id,
-    "description": "admin user looks reliable",
+    "payload": "admin user looks reliable",
   }
   res = requests.post(
     f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions",
@@ -201,7 +201,7 @@ def test_ai_users():
   saved_peer = res.json()
   assert saved_peer["userId"] == ai_user_id
   assert saved_peer["peerId"] == admin_id
-  assert saved_peer["description"] == peer_body["description"]
+  assert saved_peer["payload"] == peer_body["payload"]
   assert isinstance(saved_peer.get("updatedAt"), str) and len(saved_peer["updatedAt"]) > 0
   res = requests.head(
     f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}",
@@ -234,7 +234,7 @@ def test_ai_users():
   assert res.status_code == 200, res.text
   got_peer = res.json()
   assert got_peer["peerId"] == admin_id
-  assert got_peer["description"] == peer_body["description"]
+  assert got_peer["payload"] == peer_body["payload"]
   post_body = {
     "content": "hello from ai-users impression test",
     "replyTo": None,
@@ -269,7 +269,7 @@ def test_ai_users():
   assert res.status_code == 404, res.text
   post_imp_body = {
     "postId": post_id,
-    "description": "this post looks great",
+    "payload": "this post looks great",
   }
   res = requests.post(
     f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions",
@@ -282,7 +282,7 @@ def test_ai_users():
   assert saved_post_imp["userId"] == ai_user_id
   assert saved_post_imp["postId"] == post_id
   assert saved_post_imp["ownerId"] == owner_id
-  assert saved_post_imp["description"] == post_imp_body["description"]
+  assert saved_post_imp["payload"] == post_imp_body["payload"]
   assert isinstance(saved_post_imp.get("updatedAt"), str) and len(saved_post_imp["updatedAt"]) > 0
   res = requests.head(
     f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}",
@@ -344,7 +344,7 @@ def test_ai_users():
   got_post_imp = res.json()
   assert got_post_imp["postId"] == post_id
   assert got_post_imp["ownerId"] == owner_id
-  assert got_post_imp["description"] == post_imp_body["description"]
+  assert got_post_imp["payload"] == post_imp_body["payload"]
   res = requests.delete(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[ai_users] cleanup post deleted")

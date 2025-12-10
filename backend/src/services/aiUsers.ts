@@ -41,14 +41,14 @@ type RowDetail = {
 
 type RowAiUserInterest = {
   user_id: string;
-  description: string;
+  payload: string;
 };
 
 type RowAiPeerImpression = {
   user_id: string;
   peer_id: string;
   updated_at: Date;
-  description: string;
+  payload: string;
 };
 
 type RowAiPostImpression = {
@@ -56,7 +56,7 @@ type RowAiPostImpression = {
   owner_id: string;
   post_id: string;
   updated_at: Date;
-  description: string;
+  payload: string;
 };
 
 export class AiUsersService {
@@ -173,7 +173,7 @@ export class AiUsersService {
   async getAiUserInterest(userId: string): Promise<AiUserInterest | null> {
     const userIdDec = hexToDec(userId);
     const sql = `
-      SELECT user_id, description
+      SELECT user_id, payload
       FROM ai_interests
       WHERE user_id = $1
       LIMIT 1
@@ -183,24 +183,24 @@ export class AiUsersService {
     const row = res.rows[0];
     return {
       userId: decToHex(String(row.user_id)),
-      description: row.description,
+      payload: row.payload,
     };
   }
 
   async setAiUserInterest(input: SetAiUserInterestInput): Promise<AiUserInterest> {
     const userIdDec = hexToDec(input.userId);
     const sql = `
-      INSERT INTO ai_interests (user_id, description)
+      INSERT INTO ai_interests (user_id, payload)
       VALUES ($1, $2)
       ON CONFLICT (user_id)
-      DO UPDATE SET description = EXCLUDED.description
-      RETURNING user_id, description
+      DO UPDATE SET payload = EXCLUDED.payload
+      RETURNING user_id, payload
     `;
-    const res = await pgQuery<RowAiUserInterest>(this.pgPool, sql, [userIdDec, input.description]);
+    const res = await pgQuery<RowAiUserInterest>(this.pgPool, sql, [userIdDec, input.payload]);
     const row = res.rows[0];
     return {
       userId: decToHex(String(row.user_id)),
-      description: row.description,
+      payload: row.payload,
     };
   }
 
@@ -225,7 +225,7 @@ export class AiUsersService {
     }
 
     let sql = `
-      SELECT user_id, peer_id, updated_at, description
+      SELECT user_id, peer_id, updated_at, payload
       FROM ai_peer_impressions
     `;
     if (where.length > 0) {
@@ -246,7 +246,7 @@ export class AiUsersService {
         userId: decToHex(String(row.user_id)),
         peerId: decToHex(String(row.peer_id)),
         updatedAt: updatedAtISO,
-        description: row.description,
+        payload: row.payload,
       };
     });
   }
@@ -269,7 +269,7 @@ export class AiUsersService {
     const userIdDec = hexToDec(userId);
     const peerIdDec = hexToDec(peerId);
     const sql = `
-      SELECT user_id, peer_id, updated_at, description
+      SELECT user_id, peer_id, updated_at, payload
       FROM ai_peer_impressions
       WHERE user_id = $1
         AND peer_id = $2
@@ -286,7 +286,7 @@ export class AiUsersService {
       userId: decToHex(String(row.user_id)),
       peerId: decToHex(String(row.peer_id)),
       updatedAt: updatedAtISO,
-      description: row.description,
+      payload: row.payload,
     };
   }
 
@@ -294,16 +294,16 @@ export class AiUsersService {
     const userIdDec = hexToDec(input.userId);
     const peerIdDec = hexToDec(input.peerId);
     const sql = `
-      INSERT INTO ai_peer_impressions (user_id, peer_id, updated_at, description)
+      INSERT INTO ai_peer_impressions (user_id, peer_id, updated_at, payload)
       VALUES ($1, $2, now(), $3)
       ON CONFLICT (user_id, peer_id)
-      DO UPDATE SET updated_at = now(), description = EXCLUDED.description
-      RETURNING user_id, peer_id, updated_at, description
+      DO UPDATE SET updated_at = now(), payload = EXCLUDED.payload
+      RETURNING user_id, peer_id, updated_at, payload
     `;
     const res = await pgQuery<RowAiPeerImpression>(this.pgPool, sql, [
       userIdDec,
       peerIdDec,
-      input.description,
+      input.payload,
     ]);
     const row = res.rows[0];
     const updatedAtISO =
@@ -314,7 +314,7 @@ export class AiUsersService {
       userId: decToHex(String(row.user_id)),
       peerId: decToHex(String(row.peer_id)),
       updatedAt: updatedAtISO,
-      description: row.description,
+      payload: row.payload,
     };
   }
 
@@ -348,7 +348,7 @@ export class AiUsersService {
     }
 
     let sql = `
-      SELECT user_id, owner_id, post_id, updated_at, description
+      SELECT user_id, owner_id, post_id, updated_at, payload
       FROM ai_post_impressions
     `;
     if (where.length > 0) {
@@ -376,7 +376,7 @@ export class AiUsersService {
         ownerId: decToHex(String(row.owner_id)),
         postId: decToHex(String(row.post_id)),
         updatedAt: updatedAtISO,
-        description: row.description,
+        payload: row.payload,
       };
     });
   }
@@ -399,7 +399,7 @@ export class AiUsersService {
     const userIdDec = hexToDec(userId);
     const postIdDec = hexToDec(postId);
     const sql = `
-      SELECT user_id, owner_id, post_id, updated_at, description
+      SELECT user_id, owner_id, post_id, updated_at, payload
       FROM ai_post_impressions
       WHERE user_id = $1
         AND post_id = $2
@@ -417,7 +417,7 @@ export class AiUsersService {
       ownerId: decToHex(String(row.owner_id)),
       postId: decToHex(String(row.post_id)),
       updatedAt: updatedAtISO,
-      description: row.description,
+      payload: row.payload,
     };
   }
 
@@ -440,17 +440,17 @@ export class AiUsersService {
     const ownerIdDec = postRes.rows[0].owned_by;
 
     const sql = `
-      INSERT INTO ai_post_impressions (user_id, owner_id, post_id, updated_at, description)
+      INSERT INTO ai_post_impressions (user_id, owner_id, post_id, updated_at, payload)
       VALUES ($1, $2, $3, now(), $4)
       ON CONFLICT (user_id, owner_id, post_id)
-      DO UPDATE SET updated_at = now(), description = EXCLUDED.description
-      RETURNING user_id, owner_id, post_id, updated_at, description
+      DO UPDATE SET updated_at = now(), payload = EXCLUDED.payload
+      RETURNING user_id, owner_id, post_id, updated_at, payload
     `;
     const res = await pgQuery<RowAiPostImpression>(this.pgPool, sql, [
       userIdDec,
       ownerIdDec,
       postIdDec,
-      input.description,
+      input.payload,
     ]);
     const row = res.rows[0];
     const updatedAtISO =
@@ -462,7 +462,7 @@ export class AiUsersService {
       ownerId: decToHex(String(row.owner_id)),
       postId: decToHex(String(row.post_id)),
       updatedAt: updatedAtISO,
-      description: row.description,
+      payload: row.payload,
     };
   }
 }

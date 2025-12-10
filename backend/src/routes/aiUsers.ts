@@ -130,16 +130,15 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       return res.status(403).json({ error: "too often operations" });
     }
     const body = req.body;
-    const description =
-      isRecord(body) && typeof body["description"] === "string" ? body["description"] : null;
-    if (!description || description.trim() === "") {
-      return res.status(400).json({ error: "description is required" });
+    const payload = isRecord(body) && typeof body["payload"] === "string" ? body["payload"] : null;
+    if (!payload || payload.trim() === "") {
+      return res.status(400).json({ error: "payload is required" });
     }
     const watch = timerThrottleService.startWatch(loginUser);
     try {
       const saved = await aiUsersService.setAiUserInterest({
         userId: req.params.id,
-        description,
+        payload,
       });
       watch.done();
       res.json(saved);
@@ -216,14 +215,13 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
 
     const body = req.body;
     const peerId = isRecord(body) && typeof body["peerId"] === "string" ? body["peerId"] : null;
-    const description =
-      isRecord(body) && typeof body["description"] === "string" ? body["description"] : null;
+    const payload = isRecord(body) && typeof body["payload"] === "string" ? body["payload"] : null;
 
     if (!peerId || peerId.trim() === "") {
       return res.status(400).json({ error: "peerId is required" });
     }
-    if (!description || description.trim() === "") {
-      return res.status(400).json({ error: "description is required" });
+    if (!payload || payload.trim() === "") {
+      return res.status(400).json({ error: "payload is required" });
     }
 
     const watch = timerThrottleService.startWatch(loginUser);
@@ -231,7 +229,7 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       const saved = await aiUsersService.setAiPeerImpression({
         userId: req.params.id,
         peerId,
-        description,
+        payload,
       });
       watch.done();
       res.json(saved);
@@ -315,14 +313,13 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
 
     const body = req.body;
     const postId = isRecord(body) && typeof body["postId"] === "string" ? body["postId"] : null;
-    const description =
-      isRecord(body) && typeof body["description"] === "string" ? body["description"] : null;
+    const payload = isRecord(body) && typeof body["payload"] === "string" ? body["payload"] : null;
 
     if (!postId || postId.trim() === "") {
       return res.status(400).json({ error: "postId is required" });
     }
-    if (!description || description.trim() === "") {
-      return res.status(400).json({ error: "description is required" });
+    if (!payload || payload.trim() === "") {
+      return res.status(400).json({ error: "payload is required" });
     }
 
     const watch = timerThrottleService.startWatch(loginUser);
@@ -330,7 +327,7 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       const saved = await aiUsersService.setAiPostImpression({
         userId: req.params.id,
         postId,
-        description,
+        payload,
       });
       watch.done();
       res.json(saved);

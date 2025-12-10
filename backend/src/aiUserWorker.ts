@@ -135,12 +135,12 @@ const NEW_POST_PROMPT_PREFIX = (() => {
   return path.isAbsolute(rel) ? rel : path.resolve(CONFIG_DIR, rel);
 })();
 
-type InterestDescriptionJson = {
+type InterestPayloadJson = {
   interest: string;
   tags?: string[];
 };
 
-type PeerImpressionDescriptionJson = {
+type PeerImpressionPayloadJson = {
   impression: string;
   tags?: string[];
 };
@@ -160,9 +160,9 @@ function parseTagsField(raw: unknown, maxCount: number): string[] {
   return tags;
 }
 
-function parseInterestDescription(description: string): InterestDescriptionJson | null {
+function parseInterestPayload(payload: string): InterestPayloadJson | null {
   try {
-    const obj = JSON.parse(description) as {
+    const obj = JSON.parse(payload) as {
       interest?: unknown;
       tags?: unknown;
     };
@@ -176,9 +176,9 @@ function parseInterestDescription(description: string): InterestDescriptionJson 
   }
 }
 
-function parsePeerImpressionDescription(description: string): PeerImpressionDescriptionJson | null {
+function parsePeerImpressionPayload(payload: string): PeerImpressionPayloadJson | null {
   try {
-    const obj = JSON.parse(description) as {
+    const obj = JSON.parse(payload) as {
       impression?: unknown;
       tags?: unknown;
     };
@@ -207,8 +207,8 @@ function buildProfileExcerpt(
   let currentInterest = "";
   const currentInterestTags: string[] = [];
 
-  if (interest && typeof interest.description === "string") {
-    const parsed = parseInterestDescription(interest.description);
+  if (interest && typeof interest.payload === "string") {
+    const parsed = parseInterestPayload(interest.payload);
     if (parsed) {
       currentInterest = parsed.interest.slice(0, PROFILE_CHAR_LIMIT);
       if (parsed.tags) {
@@ -220,7 +220,7 @@ function buildProfileExcerpt(
         }
       }
     } else {
-      currentInterest = interest.description.slice(0, PROFILE_CHAR_LIMIT);
+      currentInterest = interest.payload.slice(0, PROFILE_CHAR_LIMIT);
     }
   }
 
@@ -377,9 +377,9 @@ async function fetchPeerImpression(
       );
       return "";
     }
-    const data = (await resp.json()) as { description?: unknown };
-    if (typeof data.description === "string") {
-      lastImpression = data.description;
+    const data = (await resp.json()) as { payload?: unknown };
+    if (typeof data.payload === "string") {
+      lastImpression = data.payload;
     }
   } catch (e) {
     logger.error(
@@ -691,7 +691,7 @@ async function createPostImpression(
     let peerImpressionText = rawPeerImpression;
     let peerTags: string[] = [];
     if (rawPeerImpression) {
-      const parsedPeer = parsePeerImpressionDescription(rawPeerImpression);
+      const parsedPeer = parsePeerImpressionPayload(rawPeerImpression);
       if (parsedPeer) {
         peerImpressionText = parsedPeer.impression.slice(0, OUTPUT_CHAR_LIMIT);
         if (parsedPeer.tags) {
@@ -799,8 +799,8 @@ async function createPostImpression(
       tags,
     };
 
-    const description = JSON.stringify(trimmed);
-    const descriptionSnippet = truncateForLog(description);
+    const payload = JSON.stringify(trimmed);
+    const payloadSnippet = truncateForLog(payload);
     const saveResp = await fetch(
       `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(profile.id)}/post-impressions`,
       {
@@ -811,7 +811,7 @@ async function createPostImpression(
         },
         body: JSON.stringify({
           postId: post.id,
-          description,
+          payload,
         }),
       },
     );
@@ -824,7 +824,7 @@ async function createPostImpression(
       return;
     }
     logger.info(
-      `Saved post impression for aiUserId=${profile.id}, postId=${post.id}: ${descriptionSnippet}`,
+      `Saved post impression for aiUserId=${profile.id}, postId=${post.id}: ${payloadSnippet}`,
     );
   } catch (e) {
     logger.error(
@@ -849,7 +849,7 @@ async function createPeerImpression(
 
     let lastImpression = lastImpressionRaw;
     if (lastImpressionRaw) {
-      const parsedLast = parsePeerImpressionDescription(lastImpressionRaw);
+      const parsedLast = parsePeerImpressionPayload(lastImpressionRaw);
       if (parsedLast) {
         lastImpression = parsedLast.impression.slice(0, OUTPUT_CHAR_LIMIT);
       }
@@ -889,14 +889,14 @@ async function createPeerImpression(
         const arr = (await resp.json()) as AiPostImpression[];
         for (const imp of arr) {
           if (typeof imp.postId !== "string") continue;
-          if (typeof imp.description !== "string") continue;
+          if (typeof imp.payload !== "string") continue;
 
           let summary = "";
           let impression = "";
           let tags: string[] = [];
 
           try {
-            const obj = JSON.parse(imp.description) as {
+            const obj = JSON.parse(imp.payload) as {
               summary?: unknown;
               impression?: unknown;
               tags?: unknown;
@@ -1028,12 +1028,12 @@ async function createPeerImpression(
 
     const tags = parseTagsField(obj.tags, 5);
 
-    const descriptionObj = {
+    const payloadObj = {
       impression: trimmedImpression,
       tags,
     };
-    const description = JSON.stringify(descriptionObj);
-    const descriptionSnippet = truncateForLog(description);
+    const payload = JSON.stringify(payloadObj);
+    const payloadSnippet = truncateForLog(payload);
 
     const saveResp = await fetch(
       `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(profile.id)}/peer-impressions`,
@@ -1045,7 +1045,7 @@ async function createPeerImpression(
         },
         body: JSON.stringify({
           peerId,
-          description,
+          payload,
         }),
       },
     );
@@ -1058,7 +1058,7 @@ async function createPeerImpression(
       return;
     }
     logger.info(
-      `Saved peer impression for aiUserId=${profile.id}, peerId=${peerId}: ${descriptionSnippet}`,
+      `Saved peer impression for aiUserId=${profile.id}, peerId=${peerId}: ${payloadSnippet}`,
     );
   } catch (e) {
     logger.error(
@@ -1108,7 +1108,7 @@ async function createInterest(
       } else {
         const arr = (await resp.json()) as AiPostImpression[];
         for (const imp of arr) {
-          if (typeof imp.description !== "string") continue;
+          if (typeof imp.payload !== "string") continue;
           let nickname = "";
           try {
             const peer = await fetchUserProfile(userSessionCookie, imp.ownerId);
@@ -1121,7 +1121,7 @@ async function createInterest(
           let impression = "";
           let tags: string[] = [];
           try {
-            const obj = JSON.parse(imp.description) as {
+            const obj = JSON.parse(imp.payload) as {
               summary?: unknown;
               impression?: unknown;
               tags?: unknown;
@@ -1229,12 +1229,12 @@ async function createInterest(
 
     const tags = parseTagsField(obj.tags, 5);
 
-    const descriptionObj: InterestDescriptionJson = {
+    const payloadObj: InterestPayloadJson = {
       interest: trimmedInterest,
       tags,
     };
-    const description = JSON.stringify(descriptionObj);
-    const descriptionSnippet = truncateForLog(description);
+    const payload = JSON.stringify(payloadObj);
+    const payloadSnippet = truncateForLog(payload);
 
     const saveResp = await fetch(
       `${BACKEND_API_BASE_URL}/ai-users/${encodeURIComponent(profile.id)}/interests`,
@@ -1245,7 +1245,7 @@ async function createInterest(
           Cookie: userSessionCookie,
         },
         body: JSON.stringify({
-          description,
+          payload,
         }),
       },
     );
@@ -1257,7 +1257,7 @@ async function createInterest(
       );
       return;
     }
-    logger.info(`Saved interest for aiUserId=${profile.id}: ${descriptionSnippet}`);
+    logger.info(`Saved interest for aiUserId=${profile.id}: ${payloadSnippet}`);
   } catch (e) {
     logger.error(`Error in createInterest for aiUserId=${profile.id}: ${e}`);
   }
@@ -1300,7 +1300,7 @@ async function createNewPost(
 
       let userImpressionText = userImpressionRaw;
       let userTags: string[] = [];
-      const parsedUserImp = parsePeerImpressionDescription(userImpressionRaw);
+      const parsedUserImp = parsePeerImpressionPayload(userImpressionRaw);
       if (parsedUserImp) {
         userImpressionText = parsedUserImp.impression.slice(0, OUTPUT_CHAR_LIMIT);
         if (parsedUserImp.tags) {
@@ -1336,9 +1336,9 @@ async function createNewPost(
           );
         } else {
           const arr = (await resp.json()) as AiPostImpression[];
-          if (arr.length > 0 && typeof arr[0].description === "string") {
+          if (arr.length > 0 && typeof arr[0].payload === "string") {
             try {
-              const obj = JSON.parse(arr[0].description) as {
+              const obj = JSON.parse(arr[0].payload) as {
                 summary?: unknown;
                 impression?: unknown;
                 tags?: unknown;
