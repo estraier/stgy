@@ -399,3 +399,17 @@ LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
 AS $$
   SELECT timestamptz 'epoch' + (id >> 20) * interval '1 millisecond';
 $$;
+
+CREATE OR REPLACE FUNCTION timestamp_to_id_min(ts timestamptz)
+RETURNS bigint
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT ceil(EXTRACT(EPOCH FROM ts) * 1000.0)::bigint << 20;
+$$;
+
+CREATE OR REPLACE FUNCTION timestamp_to_id_max(ts timestamptz)
+RETURNS bigint
+LANGUAGE sql IMMUTABLE STRICT PARALLEL SAFE
+AS $$
+  SELECT ((floor(EXTRACT(EPOCH FROM ts) * 1000.0)::bigint + 1) << 20) - 1;
+$$;
