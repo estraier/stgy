@@ -158,7 +158,7 @@ export class AiUsersService {
           service_tier: "flex",
         },
         {
-          timeout: 60_000,
+          timeout: 600_000,
         },
       );
       return {

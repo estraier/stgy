@@ -689,19 +689,23 @@ async function createPostImpression(
       post.ownedBy,
     );
     let peerImpressionText = rawPeerImpression;
+    let peerTags: string[] = [];
     if (rawPeerImpression) {
       const parsedPeer = parsePeerImpressionDescription(rawPeerImpression);
       if (parsedPeer) {
         peerImpressionText = parsedPeer.impression.slice(0, OUTPUT_CHAR_LIMIT);
+        if (parsedPeer.tags) {
+          peerTags = parsedPeer.tags.slice(0, 5);
+        }
       }
     }
-
     const postExcerpt = {
       author: post.ownerNickname,
       locale: post.locale,
       createdAt: post.createdAt,
       content: post.content.slice(0, POST_CHAR_LIMIT),
       peerImpression: peerImpressionText,
+      peerTags: peerTags,
     };
     const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
     const modifiedPrompt = prompt
