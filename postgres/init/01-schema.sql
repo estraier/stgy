@@ -132,6 +132,13 @@ CREATE TABLE ai_post_summaries (
 );
 CREATE INDEX idx_ai_post_summaries_empty ON ai_post_summaries (post_id) WHERE summary IS NULL;
 
+CREATE TABLE ai_post_tags (
+  post_id BIGINT NOT NULL REFERENCES posts(id) ON DELETE CASCADE,
+  name VARCHAR(50) NOT NULL,
+  PRIMARY KEY (post_id, name)
+);
+CREATE INDEX idx_ai_post_tags_name_post_id ON ai_post_tags(name, post_id);
+
 CREATE TABLE ai_actions (
   user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
   done_at TIMESTAMPTZ NOT NULL,

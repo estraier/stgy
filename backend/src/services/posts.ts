@@ -337,6 +337,11 @@ export class PostsService {
          ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
         [hexToDec(id), input.content],
       );
+      await pgQuery(
+        this.pgPool,
+        `INSERT INTO ai_post_summaries (post_id, summary) VALUES ($1, NULL)`,
+        [hexToDec(id)],
+      );
       if (input.tags && input.tags.length > 0) {
         const isRoot = input.replyTo == null;
         await pgQuery(
@@ -490,6 +495,14 @@ export class PostsService {
           );
         }
       }
+      await pgQuery(
+        this.pgPool,
+        `UPDATE ai_post_summaries SET summary = NULL WHERE post_id = $1 AND summary IS NOT NULL`,
+        [hexToDec(input.id)],
+      );
+      await pgQuery(this.pgPool, `DELETE FROM ai_post_tags WHERE post_id = $1`, [
+        hexToDec(input.id),
+      ]);
       await pgQuery(this.pgPool, "COMMIT");
       return this.getPost(input.id);
     } catch (e) {
