@@ -354,6 +354,66 @@ def test_ai_users():
   logout(session_id)
   print("[test_ai_users] OK")
 
+def test_ai_posts():
+  print("[ai_posts] admin login")
+  session_id = login()
+  headers = {"Content-Type": "application/json"}
+  cookies = {"session_id": session_id}
+  post_input = {
+    "content": "hello from ai-posts test",
+    "replyTo": None,
+    "tags": ["ai-posts", "summary-test"],
+  }
+  res = requests.post(f"{BASE_URL}/posts", json=post_input, headers=headers, cookies=cookies)
+  assert res.status_code == 201, res.text
+  post = res.json()
+  post_id = post["id"]
+  print(f"[ai_posts] created post: {post}")
+  res = requests.get(
+    f"{BASE_URL}/ai-posts?limit=3&order=desc",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  summaries = res.json()
+  print("[ai_posts] list:", summaries)
+  assert isinstance(summaries, list)
+  assert len(summaries) > 0
+  target = next((s for s in summaries if s["postId"] == post_id), None)
+  assert target is not None, "created post not found in ai-posts list"
+  res = requests.get(f"{BASE_URL}/ai-posts/{post_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  detail = res.json()
+  print("[ai_posts] get:", detail)
+  assert detail["postId"] == post_id
+  res = requests.get(f"{BASE_URL}/ai-posts/{post_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  got_null = res.json()
+  print("[ai_posts] get after NULL:", got_null)
+  assert got_null["summary"] is None
+  dummy_summary = "dummy summary for ai-posts test"
+  res = requests.put(
+    f"{BASE_URL}/ai-posts/{post_id}",
+    json={"summary": dummy_summary},
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  updated_dummy = res.json()
+  print("[ai_posts] updated to dummy:", updated_dummy)
+  assert updated_dummy["postId"] == post_id
+  assert updated_dummy["summary"] == dummy_summary
+  res = requests.get(f"{BASE_URL}/ai-posts/{post_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  got_dummy = res.json()
+  print("[ai_posts] get after dummy:", got_dummy)
+  assert got_dummy["summary"] == dummy_summary
+  res = requests.delete(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  print("[ai_posts] cleanup post deleted")
+  logout(session_id)
+  print("[test_ai_posts] OK")
+
 def test_users():
   print("[users] admin login")
   session_id = login()

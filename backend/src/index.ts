@@ -9,6 +9,7 @@ import createRootRouter from "./routes/root";
 import createAuthRouter from "./routes/auth";
 import createAIModelsRouter from "./routes/aiModels";
 import createAIUsersRouter from "./routes/aiUsers";
+import createAIPostsRouter from "./routes/aiPosts";
 import createUsersRouter from "./routes/users";
 import createPostsRouter from "./routes/posts";
 import createSignupRouter from "./routes/signup";
@@ -49,6 +50,7 @@ async function main() {
   app.use("/signup", createSignupRouter(pgPool, redis));
   app.use("/ai-models", createAIModelsRouter(pgPool, redis));
   app.use("/ai-users", createAIUsersRouter(pgPool, redis));
+  app.use("/ai-posts", createAIPostsRouter(pgPool, redis, eventLogService));
   app.use("/users", createUsersRouter(pgPool, redis, storageService, eventLogService));
   app.use("/posts", createPostsRouter(pgPool, redis, storageService, eventLogService));
   app.use("/media", createMediaRouter(pgPool, redis, storageService));
