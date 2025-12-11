@@ -2,12 +2,10 @@ import { Config } from "./config";
 import { createLogger } from "./utils/logger";
 import type { AiPostSummary } from "./models/aiPost";
 import http from "http";
+import https from "https";
 import { URLSearchParams } from "url";
 
 const logger = createLogger({ file: "aiSummaryWorker" });
-
-const APP_HOST = process.env.STGY_APP_HOST || "127.0.0.1";
-const APP_PORT = Config.BACKEND_PORT;
 
 const ADMIN_EMAIL = process.env.STGY_ADMIN_EMAIL || "admin@stgy.jp";
 const ADMIN_PASSWORD = process.env.STGY_ADMIN_PASSWORD || "stgystgy";
@@ -33,13 +31,16 @@ function httpRequest(
   const method = options.method ?? "GET";
   const headers = options.headers ?? {};
   const body = options.body ?? "";
-
+  const url = new URL(path, Config.BACKEND_API_BASE_URL);
+  const isHttps = url.protocol === "https:";
+  const client = isHttps ? https : http;
   return new Promise((resolve, reject) => {
-    const req = http.request(
+    const req = client.request(
       {
-        host: APP_HOST,
-        port: APP_PORT,
-        path,
+        protocol: url.protocol,
+        hostname: url.hostname,
+        port: url.port || undefined,
+        path: url.pathname + url.search,
         method,
         headers,
       },
@@ -169,10 +170,10 @@ async function processLoop(): Promise<void> {
       inflight.add(p);
       p.finally(() => inflight.delete(p));
     }
-
     if (inflight.size > 0) {
       await Promise.allSettled(Array.from(inflight));
     }
+    await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
   }
 }
 
@@ -190,7 +191,7 @@ async function shutdown(): Promise<void> {
 
 async function main(): Promise<void> {
   logger.info(
-    `STGY AI summary worker started (lookbackMs=${Config.AI_SUMMARY_POST_LOOKBACK_MS}, batch=${Config.AI_SUMMARY_BATCH_SIZE}, concurrency=${Config.AI_SUMMARY_CONCURRENCY})`,
+    `STGY AI summary worker started (concurrency=${Config.AI_SUMMARY_CONCURRENCY})`,
   );
   const onSig = () => {
     shutdown().catch(() => {

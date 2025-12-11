@@ -48,6 +48,7 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
   exit 1
 fi
 
+export STGY_BACKEND_API_BASE_URL="http://localhost:3001"
 export STGY_FRONTEND_HOST=localhost
 export STGY_BACKEND_HOST=localhost
 export STGY_DATABASE_HOST=localhost
@@ -68,10 +69,10 @@ cleanup() {
 trap cleanup INT TERM EXIT
 
 echo "[run-local-backend] running workers"
-npm run backend:mail-worker &
-npm run backend:media-worker &
-npm run backend:notification-worker &
-npm run backend:ai-summary-worker &
+(sleep 3 ; npm run backend:mail-worker) &
+(sleep 3 ; npm run backend:media-worker) &
+(sleep 3 ; npm run backend:notification-worker) &
+(sleep 3 ; npm run backend:ai-summary-worker) &
 
 echo "[run-local-backend] port=${STGY_BACKEND_PORT}  cmd=${CMD}"
 echo "[run-local-backend] npm run ${CMD} -- ${PASS_ARGS[*]-}"
