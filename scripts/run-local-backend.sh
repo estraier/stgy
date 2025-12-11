@@ -71,6 +71,7 @@ echo "[run-local-backend] running workers"
 npm run backend:mail-worker &
 npm run backend:media-worker &
 npm run backend:notification-worker &
+npm run backend:ai-summary-worker &
 
 echo "[run-local-backend] port=${STGY_BACKEND_PORT}  cmd=${CMD}"
 echo "[run-local-backend] npm run ${CMD} -- ${PASS_ARGS[*]-}"

@@ -11,6 +11,7 @@
     "mail-worker": "ts-node src/mailWorker.ts",
     "media-worker": "ts-node src/mediaWorker.ts",
     "notification-worker": "ts-node src/notificationWorker.ts",
+    "ai-summary-worker": "ts-node src/aiSummaryWorker.ts",
     "ai-user-worker": "ts-node src/aiUserWorker.ts",
     "database-util": "ts-node src/databaseUtil.ts",
     "storage-util": "ts-node src/storageUtil.ts",
