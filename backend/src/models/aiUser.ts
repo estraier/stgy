@@ -48,7 +48,6 @@ export type SetAiUserInterestInput = {
 export type AiPeerImpression = {
   userId: string;
   peerId: string;
-  updatedAt: string;
   payload: string;
 };
 
@@ -67,15 +66,14 @@ export type SetAiPeerImpressionInput = {
 
 export type AiPostImpression = {
   userId: string;
-  ownerId: string;
+  peerId: string;
   postId: string;
-  updatedAt: string;
   payload: string;
 };
 
 export type AiPostImpressionFilter = {
   userId?: string;
-  ownerId?: string;
+  peerId?: string;
   postId?: string;
 };
 

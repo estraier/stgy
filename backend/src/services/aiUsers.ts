@@ -47,15 +47,13 @@ type RowAiUserInterest = {
 type RowAiPeerImpression = {
   user_id: string;
   peer_id: string;
-  updated_at: Date;
   payload: string;
 };
 
 type RowAiPostImpression = {
   user_id: string;
-  owner_id: string;
+  peer_id: string;
   post_id: string;
-  updated_at: Date;
   payload: string;
 };
 
@@ -113,6 +111,7 @@ export class AiUsersService {
     const res = await pgQuery<RowDetail>(this.pgPool, sql, [userIdDec]);
     if (res.rowCount === 0) return null;
     const r = res.rows[0];
+
     const createdAtISO =
       r.created_at instanceof Date
         ? r.created_at.toISOString()
@@ -122,12 +121,14 @@ export class AiUsersService {
         ? r.updated_at.toISOString()
         : new Date(r.updated_at as unknown as string).toISOString()
       : null;
+
     const base: AiUser = {
       id: decToHex(String(r.id)),
       nickname: r.nickname,
       isAdmin: r.is_admin,
       aiModel: r.ai_model,
     };
+
     const detail: AiUserDetail = {
       ...base,
       email: r.email,
@@ -136,6 +137,7 @@ export class AiUsersService {
       introduction: r.introduction,
       aiPersonality: r.ai_personality ?? "",
     };
+
     return detail;
   }
 
@@ -225,30 +227,23 @@ export class AiUsersService {
     }
 
     let sql = `
-      SELECT user_id, peer_id, updated_at, payload
+      SELECT user_id, peer_id, payload
       FROM ai_peer_impressions
     `;
     if (where.length > 0) {
       sql += ` WHERE ${where.join(" AND ")}`;
     }
-    sql += ` ORDER BY updated_at ${order}, user_id ${order}, peer_id ${order}
+    sql += ` ORDER BY user_id ${order}, peer_id ${order}
       LIMIT $${idx} OFFSET $${idx + 1}
     `;
     params.push(limit, offset);
 
     const res = await pgQuery<RowAiPeerImpression>(this.pgPool, sql, params);
-    return res.rows.map<AiPeerImpression>((row) => {
-      const updatedAtISO =
-        row.updated_at instanceof Date
-          ? row.updated_at.toISOString()
-          : new Date(row.updated_at as unknown as string).toISOString();
-      return {
-        userId: decToHex(String(row.user_id)),
-        peerId: decToHex(String(row.peer_id)),
-        updatedAt: updatedAtISO,
-        payload: row.payload,
-      };
-    });
+    return res.rows.map<AiPeerImpression>((row) => ({
+      userId: decToHex(String(row.user_id)),
+      peerId: decToHex(String(row.peer_id)),
+      payload: row.payload,
+    }));
   }
 
   async checkAiPeerImpression(userId: string, peerId: string): Promise<boolean> {
@@ -269,7 +264,7 @@ export class AiUsersService {
     const userIdDec = hexToDec(userId);
     const peerIdDec = hexToDec(peerId);
     const sql = `
-      SELECT user_id, peer_id, updated_at, payload
+      SELECT user_id, peer_id, payload
       FROM ai_peer_impressions
       WHERE user_id = $1
         AND peer_id = $2
@@ -278,14 +273,9 @@ export class AiUsersService {
     const res = await pgQuery<RowAiPeerImpression>(this.pgPool, sql, [userIdDec, peerIdDec]);
     if (res.rowCount === 0) return null;
     const row = res.rows[0];
-    const updatedAtISO =
-      row.updated_at instanceof Date
-        ? row.updated_at.toISOString()
-        : new Date(row.updated_at as unknown as string).toISOString();
     return {
       userId: decToHex(String(row.user_id)),
       peerId: decToHex(String(row.peer_id)),
-      updatedAt: updatedAtISO,
       payload: row.payload,
     };
   }
@@ -294,11 +284,11 @@ export class AiUsersService {
     const userIdDec = hexToDec(input.userId);
     const peerIdDec = hexToDec(input.peerId);
     const sql = `
-      INSERT INTO ai_peer_impressions (user_id, peer_id, updated_at, payload)
-      VALUES ($1, $2, now(), $3)
+      INSERT INTO ai_peer_impressions (user_id, peer_id, payload)
+      VALUES ($1, $2, $3)
       ON CONFLICT (user_id, peer_id)
-      DO UPDATE SET updated_at = now(), payload = EXCLUDED.payload
-      RETURNING user_id, peer_id, updated_at, payload
+      DO UPDATE SET payload = EXCLUDED.payload
+      RETURNING user_id, peer_id, payload
     `;
     const res = await pgQuery<RowAiPeerImpression>(this.pgPool, sql, [
       userIdDec,
@@ -306,14 +296,9 @@ export class AiUsersService {
       input.payload,
     ]);
     const row = res.rows[0];
-    const updatedAtISO =
-      row.updated_at instanceof Date
-        ? row.updated_at.toISOString()
-        : new Date(row.updated_at as unknown as string).toISOString();
     return {
       userId: decToHex(String(row.user_id)),
       peerId: decToHex(String(row.peer_id)),
-      updatedAt: updatedAtISO,
       payload: row.payload,
     };
   }
@@ -328,7 +313,7 @@ export class AiUsersService {
     let idx = 1;
 
     const hasUserId = !!input.userId;
-    const hasOwnerId = !!input.ownerId;
+    const hasPeerId = !!input.peerId;
     const hasPostId = !!input.postId;
 
     if (hasUserId) {
@@ -336,9 +321,9 @@ export class AiUsersService {
       params.push(hexToDec(input.userId as string));
       idx++;
     }
-    if (hasOwnerId) {
-      where.push(`owner_id = $${idx}`);
-      params.push(hexToDec(input.ownerId as string));
+    if (hasPeerId) {
+      where.push(`peer_id = $${idx}`);
+      params.push(hexToDec(input.peerId as string));
       idx++;
     }
     if (hasPostId) {
@@ -348,37 +333,30 @@ export class AiUsersService {
     }
 
     let sql = `
-      SELECT user_id, owner_id, post_id, updated_at, payload
+      SELECT user_id, peer_id, post_id, payload
       FROM ai_post_impressions
     `;
     if (where.length > 0) {
       sql += ` WHERE ${where.join(" AND ")}`;
     }
 
-    const usePostIdOrder = hasUserId && hasOwnerId && !hasPostId;
+    const usePostIdOrder = hasUserId && hasPeerId && !hasPostId;
     if (usePostIdOrder) {
       sql += ` ORDER BY post_id ${order}`;
     } else {
-      sql += ` ORDER BY updated_at ${order}, user_id ${order}, owner_id ${order}, post_id ${order}`;
+      sql += ` ORDER BY user_id ${order}, peer_id ${order}, post_id ${order}`;
     }
 
     sql += ` LIMIT $${idx} OFFSET $${idx + 1}`;
     params.push(limit, offset);
 
     const res = await pgQuery<RowAiPostImpression>(this.pgPool, sql, params);
-    return res.rows.map<AiPostImpression>((row) => {
-      const updatedAtISO =
-        row.updated_at instanceof Date
-          ? row.updated_at.toISOString()
-          : new Date(row.updated_at as unknown as string).toISOString();
-      return {
-        userId: decToHex(String(row.user_id)),
-        ownerId: decToHex(String(row.owner_id)),
-        postId: decToHex(String(row.post_id)),
-        updatedAt: updatedAtISO,
-        payload: row.payload,
-      };
-    });
+    return res.rows.map<AiPostImpression>((row) => ({
+      userId: decToHex(String(row.user_id)),
+      peerId: decToHex(String(row.peer_id)),
+      postId: decToHex(String(row.post_id)),
+      payload: row.payload,
+    }));
   }
 
   async checkAiPostImpression(userId: string, postId: string): Promise<boolean> {
@@ -399,7 +377,7 @@ export class AiUsersService {
     const userIdDec = hexToDec(userId);
     const postIdDec = hexToDec(postId);
     const sql = `
-      SELECT user_id, owner_id, post_id, updated_at, payload
+      SELECT user_id, peer_id, post_id, payload
       FROM ai_post_impressions
       WHERE user_id = $1
         AND post_id = $2
@@ -408,15 +386,10 @@ export class AiUsersService {
     const res = await pgQuery<RowAiPostImpression>(this.pgPool, sql, [userIdDec, postIdDec]);
     if (res.rowCount === 0) return null;
     const row = res.rows[0];
-    const updatedAtISO =
-      row.updated_at instanceof Date
-        ? row.updated_at.toISOString()
-        : new Date(row.updated_at as unknown as string).toISOString();
     return {
       userId: decToHex(String(row.user_id)),
-      ownerId: decToHex(String(row.owner_id)),
+      peerId: decToHex(String(row.peer_id)),
       postId: decToHex(String(row.post_id)),
-      updatedAt: updatedAtISO,
       payload: row.payload,
     };
   }
@@ -437,31 +410,26 @@ export class AiUsersService {
     if (postRes.rowCount === 0) {
       throw new Error("post not found");
     }
-    const ownerIdDec = postRes.rows[0].owned_by;
+    const peerIdDec = postRes.rows[0].owned_by;
 
     const sql = `
-      INSERT INTO ai_post_impressions (user_id, owner_id, post_id, updated_at, payload)
-      VALUES ($1, $2, $3, now(), $4)
-      ON CONFLICT (user_id, owner_id, post_id)
-      DO UPDATE SET updated_at = now(), payload = EXCLUDED.payload
-      RETURNING user_id, owner_id, post_id, updated_at, payload
+      INSERT INTO ai_post_impressions (user_id, peer_id, post_id, payload)
+      VALUES ($1, $2, $3, $4)
+      ON CONFLICT (user_id, peer_id, post_id)
+      DO UPDATE SET payload = EXCLUDED.payload
+      RETURNING user_id, peer_id, post_id, payload
     `;
     const res = await pgQuery<RowAiPostImpression>(this.pgPool, sql, [
       userIdDec,
-      ownerIdDec,
+      peerIdDec,
       postIdDec,
       input.payload,
     ]);
     const row = res.rows[0];
-    const updatedAtISO =
-      row.updated_at instanceof Date
-        ? row.updated_at.toISOString()
-        : new Date(row.updated_at as unknown as string).toISOString();
     return {
       userId: decToHex(String(row.user_id)),
-      ownerId: decToHex(String(row.owner_id)),
+      peerId: decToHex(String(row.peer_id)),
       postId: decToHex(String(row.post_id)),
-      updatedAt: updatedAtISO,
       payload: row.payload,
     };
   }

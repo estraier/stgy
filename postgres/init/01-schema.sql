@@ -155,21 +155,19 @@ CREATE TABLE ai_interests (
 CREATE TABLE ai_peer_impressions (
   user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
   peer_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
-  updated_at TIMESTAMPTZ NOT NULL,
   payload VARCHAR(65535) NOT NULL,
   PRIMARY KEY (user_id, peer_id)
 );
-CREATE INDEX idx_ai_peer_impressions_updated_at ON ai_peer_impressions(updated_at);
+CREATE INDEX idx_ai_peer_impressions_peer_id ON ai_peer_impressions(peer_id);
 
 CREATE TABLE ai_post_impressions (
   user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
-  owner_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+  peer_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
   post_id BIGINT REFERENCES posts(id) ON DELETE CASCADE,
-  updated_at TIMESTAMPTZ NOT NULL,
   payload VARCHAR(65535) NOT NULL,
-  PRIMARY KEY (user_id, owner_id, post_id)
+  PRIMARY KEY (user_id, peer_id, post_id)
 );
-CREATE INDEX idx_ai_post_impressions_updated_at ON ai_post_impressions(updated_at);
+CREATE INDEX idx_ai_post_impressions_post_id_user_id ON ai_post_impressions(post_id, user_id);
 
 CREATE TABLE event_logs (
   partition_id SMALLINT NOT NULL,

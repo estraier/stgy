@@ -864,7 +864,7 @@ async function createPeerImpression(
 
     try {
       const params = new URLSearchParams();
-      params.set("ownerId", peerId);
+      params.set("peerId", peerId);
       params.set("limit", String(READ_IMPRESSION_LIMIT));
       params.set("offset", "0");
       params.set("order", "desc");
@@ -1111,10 +1111,10 @@ async function createInterest(
           if (typeof imp.payload !== "string") continue;
           let nickname = "";
           try {
-            const peer = await fetchUserProfile(userSessionCookie, imp.ownerId);
+            const peer = await fetchUserProfile(userSessionCookie, imp.peerId);
             nickname = peer.nickname;
           } catch (e) {
-            logger.error(`failed to fetch user ${imp.ownerId}: ${e}`);
+            logger.error(`failed to fetch user ${imp.peerId}: ${e}`);
             continue;
           }
           let summary = "";
@@ -1140,7 +1140,7 @@ async function createInterest(
           summary = summary.trim().slice(0, OUTPUT_CHAR_LIMIT);
           impression = impression.trim().slice(0, OUTPUT_CHAR_LIMIT);
           if (!summary && !impression) continue;
-          posts.push({ userId: imp.ownerId, nickname, summary, impression, tags });
+          posts.push({ userId: imp.peerId, nickname, summary, impression, tags });
         }
       }
     } catch (e) {
@@ -1313,7 +1313,7 @@ async function createNewPost(
       let postTags: string[] = [];
       try {
         const params = new URLSearchParams();
-        params.set("ownerId", peerId);
+        params.set("peerId", peerId);
         params.set("limit", "1");
         params.set("offset", "0");
         params.set("order", "desc");

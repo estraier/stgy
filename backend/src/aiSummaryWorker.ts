@@ -190,9 +190,7 @@ async function shutdown(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  logger.info(
-    `STGY AI summary worker started (concurrency=${Config.AI_SUMMARY_CONCURRENCY})`,
-  );
+  logger.info(`STGY AI summary worker started (concurrency=${Config.AI_SUMMARY_CONCURRENCY})`);
   const onSig = () => {
     shutdown().catch(() => {
       process.exit(1);

@@ -86,8 +86,14 @@ class MockPgClient {
 
       const desc = sql.includes("ORDER BY aps.post_id DESC");
       list.sort((a, b) => {
-        if (a.postId === b.postId) return 0;
-        return desc ? (a.postId < b.postId ? 1 : -1) : a.postId < b.postId ? -1 : 1;
+        const aNum = BigInt(a.postId);
+        const bNum = BigInt(b.postId);
+        if (aNum === bNum) return 0;
+        if (desc) {
+          return aNum < bNum ? 1 : -1;
+        } else {
+          return aNum < bNum ? -1 : 1;
+        }
       });
 
       const sliced = list.slice(offset, offset + limit);

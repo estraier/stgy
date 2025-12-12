@@ -257,15 +257,15 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
         ? req.query.postId
         : undefined;
 
-    const ownerId =
-      typeof req.query.ownerId === "string" && req.query.ownerId.trim() !== ""
-        ? req.query.ownerId
+    const peerId =
+      typeof req.query.peerId === "string" && req.query.peerId.trim() !== ""
+        ? req.query.peerId
         : undefined;
 
     const watch = timerThrottleService.startWatch(loginUser);
     const items = await aiUsersService.listAiPostImpressions({
       userId: req.params.id,
-      ownerId,
+      peerId,
       postId,
       offset,
       limit,
