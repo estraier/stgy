@@ -11,6 +11,16 @@ import { EventLogService } from "../services/eventLog";
 import { UpdateAiPostSummaryInput } from "../models/aiPost";
 import { normalizeOneLiner, parseBoolean } from "../utils/format";
 
+function int8ToBase64(v: Int8Array | null): string | null {
+  if (!v) return null;
+  return Buffer.from(v).toString("base64");
+}
+
+function base64ToInt8(v: string): Int8Array {
+  const buf = Buffer.from(v, "base64");
+  return new Int8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+}
+
 export default function createAiPostsRouter(
   pgPool: Pool,
   redis: Redis,
@@ -42,7 +52,7 @@ export default function createAiPostsRouter(
 
     let nullOnly: boolean | undefined;
     if (typeof req.query.nullOnly === "string") {
-      nullOnly = parseBoolean(req.query.nullOnly as string, false);
+      nullOnly = parseBoolean(req.query.nullOnly, false);
     }
 
     const newerThan =
@@ -60,7 +70,13 @@ export default function createAiPostsRouter(
         newerThan,
       });
       watch.done();
-      res.json(result);
+
+      res.json(
+        result.map((r) => ({
+          ...r,
+          features: int8ToBase64(r.features),
+        })),
+      );
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "invalid request" });
     }
@@ -78,7 +94,11 @@ export default function createAiPostsRouter(
       const summary = await aiPostsService.getAiPostSummary(req.params.id);
       watch.done();
       if (!summary) return res.status(404).json({ error: "not found" });
-      res.json(summary);
+
+      res.json({
+        ...summary,
+        features: int8ToBase64(summary.features),
+      });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "invalid request" });
     }
@@ -94,30 +114,54 @@ export default function createAiPostsRouter(
       return res.status(403).json({ error: "forbidden" });
     }
 
+    const body = req.body as unknown;
+    const b = (body && typeof body === "object" ? body : {}) as Record<string, unknown>;
+
     let summary: string | null | undefined = undefined;
-    if ("summary" in req.body) {
-      if (req.body.summary === null) {
+    if ("summary" in b) {
+      if (b.summary === null) {
         summary = null;
-      } else if (typeof req.body.summary === "string") {
-        summary = req.body.summary;
+      } else if (typeof b.summary === "string") {
+        summary = b.summary;
       } else {
         return res.status(400).json({ error: "summary must be string or null if specified" });
       }
     }
 
+    let features: Int8Array | null | undefined = undefined;
+    if ("features" in b) {
+      if (b.features === null) {
+        features = null;
+      } else if (typeof b.features === "string") {
+        try {
+          features = base64ToInt8(b.features);
+        } catch {
+          return res
+            .status(400)
+            .json({ error: "features must be base64 string or null if specified" });
+        }
+      } else {
+        return res
+          .status(400)
+          .json({ error: "features must be base64 string or null if specified" });
+      }
+    }
+
     let tags: string[] | undefined;
-    if ("tags" in req.body) {
-      if (!Array.isArray(req.body.tags)) {
+    if ("tags" in b) {
+      if (!Array.isArray(b.tags)) {
         return res.status(400).json({ error: "tags must be array if specified" });
       }
-      tags = req.body.tags
-        .filter((t: unknown) => typeof t === "string")
-        .map((t: string) => normalizeOneLiner(t));
+      tags = (b.tags as unknown[])
+        .filter((t): t is string => typeof t === "string")
+        .map((t) => normalizeOneLiner(t))
+        .filter((t): t is string => typeof t === "string" && t.trim() !== "");
     }
 
     const input: UpdateAiPostSummaryInput = {
       postId: req.params.id,
       summary,
+      features,
       tags,
     };
 
@@ -126,7 +170,11 @@ export default function createAiPostsRouter(
       const updated = await aiPostsService.updateAiPost(input);
       watch.done();
       if (!updated) return res.status(404).json({ error: "not found" });
-      res.json(updated);
+
+      res.json({
+        ...updated,
+        features: int8ToBase64(updated.features),
+      });
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "update error" });
     }

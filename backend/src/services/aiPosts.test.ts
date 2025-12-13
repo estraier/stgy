@@ -1,4 +1,5 @@
 import { AiPostsService } from "./aiPosts";
+import type { Pool } from "pg";
 import { ListAiPostSummariesInput, UpdateAiPostSummaryInput } from "../models/aiPost";
 import crypto from "crypto";
 import { hexToDec } from "../utils/format";
@@ -17,9 +18,17 @@ function normalizeSql(sql: string) {
 const hex16 = () => crypto.randomBytes(8).toString("hex").toUpperCase();
 const toDecStr = (hex: string) => String(hexToDec(hex));
 
+function int8eq(a: Int8Array | null | undefined, b: Int8Array): boolean {
+  if (!a) return false;
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+}
+
 type MockAiPostSummaryRow = {
   postId: string;
   summary: string | null;
+  features: Buffer | null;
   createdAt: string;
 };
 
@@ -40,11 +49,11 @@ class MockPgClient {
     }
 
     if (
-      sql.startsWith("SELECT aps.post_id, aps.summary") &&
+      sql.startsWith("SELECT aps.post_id, aps.summary, aps.features") &&
       sql.includes("FROM ai_post_summaries aps") &&
       sql.includes("WHERE aps.post_id = $1")
     ) {
-      const postId = params?.[0] as string;
+      const postId = params ? String(params[0]) : "";
       const s = this.summaries.find((row) => row.postId === postId);
       if (!s) return { rows: [] };
       const tags = this.tags
@@ -56,6 +65,7 @@ class MockPgClient {
           {
             post_id: s.postId,
             summary: s.summary,
+            features: s.features,
             tags,
           },
         ],
@@ -63,17 +73,16 @@ class MockPgClient {
     }
 
     if (
-      sql.startsWith("SELECT aps.post_id, aps.summary") &&
+      sql.startsWith("SELECT aps.post_id, aps.summary, aps.features") &&
       sql.includes("FROM ai_post_summaries aps") &&
       sql.includes("ORDER BY aps.post_id")
     ) {
       const offset = (params && (params[params.length - 2] as number)) ?? 0;
       const limit = (params && (params[params.length - 1] as number)) ?? 100;
+
       let newerThan: string | undefined;
       if (sql.includes("id_to_timestamp(aps.post_id) >")) {
-        if (params && params.length >= 3) {
-          newerThan = params[0] as string;
-        }
+        newerThan = params && params.length >= 3 ? (params[0] as string) : undefined;
       }
 
       let list = this.summaries.slice();
@@ -81,7 +90,7 @@ class MockPgClient {
         list = list.filter((s) => s.summary === null);
       }
       if (newerThan) {
-        list = list.filter((s) => s.createdAt > newerThan!);
+        list = list.filter((s) => s.createdAt > newerThan);
       }
 
       const desc = sql.includes("ORDER BY aps.post_id DESC");
@@ -89,17 +98,15 @@ class MockPgClient {
         const aNum = BigInt(a.postId);
         const bNum = BigInt(b.postId);
         if (aNum === bNum) return 0;
-        if (desc) {
-          return aNum < bNum ? 1 : -1;
-        } else {
-          return aNum < bNum ? -1 : 1;
-        }
+        if (desc) return aNum < bNum ? 1 : -1;
+        return aNum < bNum ? -1 : 1;
       });
 
       const sliced = list.slice(offset, offset + limit);
       const rows = sliced.map((s) => ({
         post_id: s.postId,
         summary: s.summary,
+        features: s.features,
         tags: this.tags
           .filter((t) => t.postId === s.postId)
           .map((t) => t.name)
@@ -110,10 +117,36 @@ class MockPgClient {
 
     if (
       sql.startsWith(
+        "INSERT INTO ai_post_summaries (post_id, summary, features) VALUES ($1, $2, $3) ON CONFLICT (post_id) DO UPDATE SET summary = EXCLUDED.summary, features = EXCLUDED.features",
+      )
+    ) {
+      const postId = params ? String(params[0]) : "";
+      const summary = (params?.[1] as string | null) ?? null;
+      const features = (params?.[2] as Buffer | null) ?? null;
+
+      const existing = this.summaries.find((s) => s.postId === postId);
+      if (existing) {
+        existing.summary = summary;
+        existing.features = features;
+      } else {
+        this.summaries.push({
+          postId,
+          summary,
+          features,
+          createdAt: new Date().toISOString(),
+        });
+      }
+      return { rowCount: 1, rows: [] };
+    }
+
+    if (
+      sql.startsWith(
         "INSERT INTO ai_post_summaries (post_id, summary) VALUES ($1, $2) ON CONFLICT (post_id) DO UPDATE SET summary = EXCLUDED.summary",
       )
     ) {
-      const [postId, summary] = params as [string, string | null];
+      const postId = params ? String(params[0]) : "";
+      const summary = (params?.[1] as string | null) ?? null;
+
       const existing = this.summaries.find((s) => s.postId === postId);
       if (existing) {
         existing.summary = summary;
@@ -121,6 +154,29 @@ class MockPgClient {
         this.summaries.push({
           postId,
           summary,
+          features: null,
+          createdAt: new Date().toISOString(),
+        });
+      }
+      return { rowCount: 1, rows: [] };
+    }
+
+    if (
+      sql.startsWith(
+        "INSERT INTO ai_post_summaries (post_id, features) VALUES ($1, $2) ON CONFLICT (post_id) DO UPDATE SET features = EXCLUDED.features",
+      )
+    ) {
+      const postId = params ? String(params[0]) : "";
+      const features = (params?.[1] as Buffer | null) ?? null;
+
+      const existing = this.summaries.find((s) => s.postId === postId);
+      if (existing) {
+        existing.features = features;
+      } else {
+        this.summaries.push({
+          postId,
+          summary: null,
+          features,
           createdAt: new Date().toISOString(),
         });
       }
@@ -128,7 +184,7 @@ class MockPgClient {
     }
 
     if (sql.startsWith("DELETE FROM ai_post_tags WHERE post_id = $1")) {
-      const postId = params?.[0] as string;
+      const postId = params ? String(params[0]) : "";
       const before = this.tags.length;
       this.tags = this.tags.filter((t) => t.postId !== postId);
       return { rowCount: before - this.tags.length, rows: [] };
@@ -138,7 +194,8 @@ class MockPgClient {
       sql.startsWith("INSERT INTO ai_post_tags (post_id, name)") &&
       sql.includes("FROM unnest($2::text[])")
     ) {
-      const [postId, tagArray] = params as [string, string[]];
+      const postId = params ? String(params[0]) : "";
+      const tagArray = (params?.[1] as string[]) ?? [];
       for (const name of tagArray) {
         this.tags.push({ postId, name });
       }
@@ -157,7 +214,7 @@ describe("AiPostsService getAiPostSummary", () => {
 
   beforeEach(() => {
     pgClient = new MockPgClient();
-    service = new AiPostsService(pgClient as any);
+    service = new AiPostsService(pgClient as unknown as Pool);
 
     postIdHex = hex16();
     postIdDec = toDecStr(postIdHex);
@@ -165,6 +222,7 @@ describe("AiPostsService getAiPostSummary", () => {
     pgClient.summaries.push({
       postId: postIdDec,
       summary: "initial summary",
+      features: Buffer.from(new Int8Array([1, -2, 3, 4])),
       createdAt: "2024-01-01T00:00:00Z",
     });
     pgClient.tags.push({ postId: postIdDec, name: "tagB" });
@@ -177,12 +235,14 @@ describe("AiPostsService getAiPostSummary", () => {
     expect(result).toBeNull();
   });
 
-  test("returns summary and sorted tags", async () => {
+  test("returns summary, features, and sorted tags", async () => {
     const result = await service.getAiPostSummary(postIdHex);
     expect(result).not.toBeNull();
     expect(result?.postId).toBe(postIdHex);
     expect(result?.summary).toBe("initial summary");
     expect(result?.tags).toEqual(["tagA", "tagB"]);
+    expect(result?.features).toBeInstanceOf(Int8Array);
+    expect(int8eq(result?.features, new Int8Array([1, -2, 3, 4]))).toBe(true);
   });
 });
 
@@ -195,7 +255,7 @@ describe("AiPostsService listAiPostsSummaries", () => {
 
   beforeEach(() => {
     pgClient = new MockPgClient();
-    service = new AiPostsService(pgClient as any);
+    service = new AiPostsService(pgClient as unknown as Pool);
 
     post1Hex = hex16();
     post2Hex = hex16();
@@ -209,16 +269,19 @@ describe("AiPostsService listAiPostsSummaries", () => {
       {
         postId: post1Dec,
         summary: null,
+        features: Buffer.from(new Int8Array([1, 2, 3])),
         createdAt: "2024-01-01T00:00:00Z",
       },
       {
         postId: post2Dec,
         summary: "has summary",
+        features: Buffer.from(new Int8Array([9, 8, -7])),
         createdAt: "2025-01-01T00:00:00Z",
       },
       {
         postId: post3Dec,
         summary: null,
+        features: null,
         createdAt: "2025-06-01T00:00:00Z",
       },
     );
@@ -235,8 +298,20 @@ describe("AiPostsService listAiPostsSummaries", () => {
     const result = await service.listAiPostsSummaries(input);
     expect(Array.isArray(result)).toBe(true);
     expect(result.length).toBe(3);
+
     const ids = result.map((r) => r.postId).sort();
     expect(ids).toEqual([post1Hex, post2Hex, post3Hex].sort());
+
+    const r2 = result.find((r) => r.postId === post2Hex);
+    expect(r2?.features).toBeInstanceOf(Int8Array);
+    expect(int8eq(r2?.features, new Int8Array([9, 8, -7]))).toBe(true);
+
+    const r1 = result.find((r) => r.postId === post1Hex);
+    expect(r1?.features).toBeInstanceOf(Int8Array);
+    expect(int8eq(r1?.features, new Int8Array([1, 2, 3]))).toBe(true);
+
+    const r3 = result.find((r) => r.postId === post3Hex);
+    expect(r3?.features).toBeNull();
   });
 
   test("supports offset and limit", async () => {
@@ -296,7 +371,7 @@ describe("AiPostsService updateAiPost", () => {
 
   beforeEach(() => {
     pgClient = new MockPgClient();
-    service = new AiPostsService(pgClient as any);
+    service = new AiPostsService(pgClient as unknown as Pool);
 
     postIdHex = hex16();
     postIdDec = toDecStr(postIdHex);
@@ -304,6 +379,7 @@ describe("AiPostsService updateAiPost", () => {
     pgClient.summaries.push({
       postId: postIdDec,
       summary: "original summary",
+      features: Buffer.from(new Int8Array([1, 2, 3])),
       createdAt: "2024-01-01T00:00:00Z",
     });
     pgClient.tags.push({ postId: postIdDec, name: "old1" }, { postId: postIdDec, name: "old2" });
@@ -320,13 +396,41 @@ describe("AiPostsService updateAiPost", () => {
     expect(result?.postId).toBe(postIdHex);
     expect(result?.summary).toBe("updated summary");
     expect(result?.tags.sort()).toEqual(["a", "b"]);
+
+    expect(result?.features).toBeInstanceOf(Int8Array);
+    expect(int8eq(result?.features, new Int8Array([1, 2, 3]))).toBe(true);
+
     const internal = pgClient.summaries.find((s) => s.postId === postIdDec);
     expect(internal?.summary).toBe("updated summary");
+    expect(internal?.features).toBeInstanceOf(Buffer);
+    expect(
+      Buffer.compare(internal?.features ?? Buffer.alloc(0), Buffer.from(new Int8Array([1, 2, 3]))),
+    ).toBe(0);
+
     const internalTags = pgClient.tags
       .filter((t) => t.postId === postIdDec)
       .map((t) => t.name)
       .sort();
     expect(internalTags).toEqual(["a", "b"]);
+  });
+
+  test("updates summary and features together", async () => {
+    const input: UpdateAiPostSummaryInput = {
+      postId: postIdHex,
+      summary: "summary+features",
+      features: new Int8Array([9, -9]),
+    };
+    const result = await service.updateAiPost(input);
+    expect(result).not.toBeNull();
+    expect(result?.summary).toBe("summary+features");
+    expect(result?.features).toBeInstanceOf(Int8Array);
+    expect(int8eq(result?.features, new Int8Array([9, -9]))).toBe(true);
+
+    const internal = pgClient.summaries.find((s) => s.postId === postIdDec);
+    expect(internal?.summary).toBe("summary+features");
+    expect(
+      Buffer.compare(internal?.features ?? Buffer.alloc(0), Buffer.from(new Int8Array([9, -9]))),
+    ).toBe(0);
   });
 
   test("partial update: only summary", async () => {
@@ -337,11 +441,27 @@ describe("AiPostsService updateAiPost", () => {
     const result = await service.updateAiPost(input);
     expect(result).not.toBeNull();
     expect(result?.summary).toBe("only summary changed");
+
+    expect(result?.features).toBeInstanceOf(Int8Array);
+    expect(int8eq(result?.features, new Int8Array([1, 2, 3]))).toBe(true);
+
     const internalTags = pgClient.tags
       .filter((t) => t.postId === postIdDec)
       .map((t) => t.name)
       .sort();
     expect(internalTags).toEqual(["old1", "old2"]);
+  });
+
+  test("partial update: only features", async () => {
+    const input: UpdateAiPostSummaryInput = {
+      postId: postIdHex,
+      features: new Int8Array([-1, 0, 1]),
+    };
+    const result = await service.updateAiPost(input);
+    expect(result).not.toBeNull();
+    expect(result?.summary).toBe("original summary");
+    expect(result?.features).toBeInstanceOf(Int8Array);
+    expect(int8eq(result?.features, new Int8Array([-1, 0, 1]))).toBe(true);
   });
 
   test("partial update: only tags", async () => {
@@ -352,6 +472,10 @@ describe("AiPostsService updateAiPost", () => {
     const result = await service.updateAiPost(input);
     expect(result).not.toBeNull();
     expect(result?.summary).toBe("original summary");
+
+    expect(result?.features).toBeInstanceOf(Int8Array);
+    expect(int8eq(result?.features, new Int8Array([1, 2, 3]))).toBe(true);
+
     const internalTags = pgClient.tags
       .filter((t) => t.postId === postIdDec)
       .map((t) => t.name)
@@ -369,6 +493,19 @@ describe("AiPostsService updateAiPost", () => {
     expect(result?.summary).toBeNull();
     const internal = pgClient.summaries.find((s) => s.postId === postIdDec);
     expect(internal?.summary).toBeNull();
+  });
+
+  test("allows setting features to null", async () => {
+    const input: UpdateAiPostSummaryInput = {
+      postId: postIdHex,
+      features: null,
+    };
+    const result = await service.updateAiPost(input);
+    expect(result).not.toBeNull();
+    expect(result?.features).toBeNull();
+
+    const internal = pgClient.summaries.find((s) => s.postId === postIdDec);
+    expect(internal?.features).toBeNull();
   });
 
   test("setting tags to empty array clears tags", async () => {

@@ -357,25 +357,23 @@ def test_ai_users():
   print("[test_ai_users] OK")
 
 def test_ai_posts():
+  def int8_list_to_b64(xs):
+    b = bytes(((x + 256) % 256) for x in xs)
+    return base64.b64encode(b).decode("ascii")
+  def b64_to_int8_list(s):
+    b = base64.b64decode(s)
+    return [x - 256 if x >= 128 else x for x in b]
   print("[ai_posts] admin login")
   session_id = login()
   headers = {"Content-Type": "application/json"}
   cookies = {"session_id": session_id}
-  post_input = {
-    "content": "hello from ai-posts test",
-    "replyTo": None,
-    "tags": ["ai-posts", "summary-test"],
-  }
+  post_input = {"content": "hello from ai-posts test", "replyTo": None, "tags": ["ai-posts", "summary-test"]}
   res = requests.post(f"{BASE_URL}/posts", json=post_input, headers=headers, cookies=cookies)
   assert res.status_code == 201, res.text
   post = res.json()
   post_id = post["id"]
   print(f"[ai_posts] created post: {post}")
-  res = requests.get(
-    f"{BASE_URL}/ai-posts?limit=3&order=desc",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.get(f"{BASE_URL}/ai-posts?limit=3&order=desc", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   summaries = res.json()
   print("[ai_posts] list:", summaries)
@@ -383,33 +381,45 @@ def test_ai_posts():
   assert len(summaries) > 0
   target = next((s for s in summaries if s["postId"] == post_id), None)
   assert target is not None, "created post not found in ai-posts list"
+  assert "features" in target
   res = requests.get(f"{BASE_URL}/ai-posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   detail = res.json()
   print("[ai_posts] get:", detail)
   assert detail["postId"] == post_id
-  res = requests.get(f"{BASE_URL}/ai-posts/{post_id}", headers=headers, cookies=cookies)
-  assert res.status_code == 200, res.text
-  got_null = res.json()
-  print("[ai_posts] get after NULL:", got_null)
-  assert got_null["summary"] is None
+  assert "summary" in detail
+  assert "features" in detail
+  assert detail["features"] is None or isinstance(detail["features"], str)
   dummy_summary = "dummy summary for ai-posts test"
-  res = requests.put(
-    f"{BASE_URL}/ai-posts/{post_id}",
-    json={"summary": dummy_summary},
-    headers=headers,
-    cookies=cookies,
-  )
+  feats = [1, -2, 3, 4]
+  feats_b64 = int8_list_to_b64(feats)
+  res = requests.put(f"{BASE_URL}/ai-posts/{post_id}", json={"summary": dummy_summary, "features": feats_b64}, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
-  updated_dummy = res.json()
-  print("[ai_posts] updated to dummy:", updated_dummy)
-  assert updated_dummy["postId"] == post_id
-  assert updated_dummy["summary"] == dummy_summary
+  updated = res.json()
+  print("[ai_posts] updated:", updated)
+  assert updated["postId"] == post_id
+  assert updated["summary"] == dummy_summary
+  assert updated["features"] == feats_b64
+  assert b64_to_int8_list(updated["features"]) == feats
   res = requests.get(f"{BASE_URL}/ai-posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
-  got_dummy = res.json()
-  print("[ai_posts] get after dummy:", got_dummy)
-  assert got_dummy["summary"] == dummy_summary
+  got = res.json()
+  print("[ai_posts] get after update:", got)
+  assert got["summary"] == dummy_summary
+  assert got["features"] == feats_b64
+  assert b64_to_int8_list(got["features"]) == feats
+  res = requests.get(f"{BASE_URL}/ai-posts?limit=10&order=desc", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  summaries2 = res.json()
+  target2 = next((s for s in summaries2 if s["postId"] == post_id), None)
+  assert target2 is not None
+  assert target2["features"] == feats_b64
+  res = requests.put(f"{BASE_URL}/ai-posts/{post_id}", json={"features": None}, headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  cleared = res.json()
+  print("[ai_posts] cleared features:", cleared)
+  assert cleared["postId"] == post_id
+  assert cleared["features"] is None
   res = requests.delete(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[ai_posts] cleanup post deleted")
