@@ -114,7 +114,7 @@ async function fetchPendingSummaries(): Promise<AiPostSummary[]> {
   return parsed as AiPostSummary[];
 }
 
-async function summaryzePost(postId: string): Promise<void> {
+async function summarizePost(postId: string): Promise<void> {
   logger.info(`[aiSummaryWorker] summaryzePost ${postId}`);
 }
 
@@ -141,7 +141,7 @@ async function processLoop(): Promise<void> {
       const { postId } = summaries[index++];
       const p = (async () => {
         try {
-          await summaryzePost(postId);
+          await summarizePost(postId);
         } catch (e) {
           logger.error(`[aiSummaryWorker] error summarizing post ${postId}: ${e}`);
         }
