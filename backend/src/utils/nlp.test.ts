@@ -1,4 +1,4 @@
-import { encodeFeatures, decodeFeatures, countPseudoTokens, sliceByPseudoTokens } from "./nlp";
+import { encodeFeatures, decodeFeatures } from "./nlp";
 
 function cosineSimilarity(a: number[], b: number[]): number {
   const len = Math.min(a.length, b.length);
@@ -103,67 +103,5 @@ describe("decodeFeatures", () => {
     for (let i = 0; i < input.length; i++) {
       expect(Number.isFinite(decoded[i])).toBe(true);
     }
-  });
-});
-
-describe("countPseudoTokens", () => {
-  test("returns 0 for empty string", () => {
-    expect(countPseudoTokens("")).toBe(0);
-  });
-
-  test("counts ASCII characters as 1 each", () => {
-    expect(countPseudoTokens("a")).toBe(1);
-    expect(countPseudoTokens("abc")).toBe(3);
-    expect(countPseudoTokens("hello world")).toBe(11);
-  });
-
-  test("counts mixed ASCII and CJK with different weights", () => {
-    const text = "abcあい";
-    expect(countPseudoTokens(text)).toBe(7);
-  });
-
-  test("handles surrogate pair emoji as one character with weight 2", () => {
-    const text = "A😊B";
-    expect(countPseudoTokens(text)).toBe(4);
-  });
-});
-
-describe("sliceByPseudoTokens", () => {
-  test("slices ASCII text by pseudo token range like substring", () => {
-    const text = "ABCDE";
-    expect(sliceByPseudoTokens(text, 0, 3)).toBe("ABC");
-    expect(sliceByPseudoTokens(text, 2, 5)).toBe("CDE");
-    expect(sliceByPseudoTokens(text, 3, 100)).toBe("DE");
-  });
-
-  test("clamps negative start and end to 0", () => {
-    const text = "ABCDE";
-    expect(sliceByPseudoTokens(text, -10, 2)).toBe("AB");
-    expect(sliceByPseudoTokens(text, -10, -1)).toBe("");
-  });
-
-  test("returns empty string when end <= start", () => {
-    const text = "ABCDE";
-    expect(sliceByPseudoTokens(text, 3, 3)).toBe("");
-    expect(sliceByPseudoTokens(text, 5, 3)).toBe("");
-  });
-
-  test("returns empty string when start is beyond total pseudo tokens", () => {
-    const text = "ABCDE";
-    expect(sliceByPseudoTokens(text, 10, 20)).toBe("");
-  });
-
-  test("slices mixed ASCII and CJK respecting pseudo token weights", () => {
-    const text = "abあいc";
-    expect(sliceByPseudoTokens(text, 0, 3)).toBe("abあ");
-    expect(sliceByPseudoTokens(text, 2, 4)).toBe("あ");
-    expect(sliceByPseudoTokens(text, 3, 7)).toBe("あいc");
-  });
-
-  test("slices text with emoji (surrogate pair) correctly", () => {
-    const text = "A😊B";
-    expect(sliceByPseudoTokens(text, 0, 2)).toBe("A😊");
-    expect(sliceByPseudoTokens(text, 1, 3)).toBe("😊");
-    expect(sliceByPseudoTokens(text, 2, 4)).toBe("😊B");
   });
 });

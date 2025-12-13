@@ -6,9 +6,9 @@ import {
   serializeMdNodes,
   deserializeMdNodes,
   mdRenderText,
+  sliceByPseudoTokens,
 } from "stgy-markdown";
 import type { MdNode } from "stgy-markdown";
-import { sliceByPseudoTokens } from "./nlp";
 
 export function makeSnippetJsonFromMarkdown(mdText: string) {
   const maxLen = Config.SNIPPET_MAX_LENGTH;
