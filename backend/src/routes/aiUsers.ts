@@ -35,13 +35,11 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
-
     const { offset, limit, order } = AuthHelpers.getPageParams(
       req,
       loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
       ["desc", "asc"] as const,
     );
-
     const watch = timerThrottleService.startWatch(loginUser);
     const users = await aiUsersService.listAiUsers({ offset, limit, order });
     watch.done();

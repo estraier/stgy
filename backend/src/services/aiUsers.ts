@@ -175,7 +175,7 @@ export class AiUsersService {
       );
       const emb = r.data[0]?.embedding;
       if (!emb || !Array.isArray(emb) || emb.length === 0) throw new Error("embedding failed");
-      const features = encodeFeatures(emb, emb.length);
+      const features = encodeFeatures(emb);
       return { features };
     }
     throw new Error("unsupported service");

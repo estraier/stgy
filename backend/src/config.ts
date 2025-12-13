@@ -97,9 +97,12 @@ export class Config {
     "STGY_AI_SUMMARY_POST_LOOKBACK_MS",
     2 * 24 * 60 * 60 * 1000,
   );
-  static readonly AI_SUMMARY_BATCH_SIZE = envNum("STGY_AI_SUMMARY_BATCH_SIZE", 100);
+  //static readonly AI_SUMMARY_BATCH_SIZE = envNum("STGY_AI_SUMMARY_BATCH_SIZE", 100);
+  static readonly AI_SUMMARY_BATCH_SIZE = envNum("STGY_AI_SUMMARY_BATCH_SIZE", 1);
+
   static readonly AI_SUMMARY_CONCURRENCY = envNum("STGY_AI_SUMMARY_CONCURRENCY", 1);
-  static readonly AI_SUMMARY_IDLE_SLEEP_MS = envNum("STGY_AI_SUMMARY_IDLE_SLEEP_MS", 10 * 1000);
+  //static readonly AI_SUMMARY_IDLE_SLEEP_MS = envNum("STGY_AI_SUMMARY_IDLE_SLEEP_MS", 10 * 1000);
+  static readonly AI_SUMMARY_IDLE_SLEEP_MS = envNum("STGY_AI_SUMMARY_IDLE_SLEEP_MS", 100 * 1000);
 
   static readonly PASSWORD_CONFIG = envStr("STGY_PASSWORD_CONFIG", "scrypt:12:20:4096:8:1");
   static readonly DEFAULT_LOCALE = envStr("STGY_DEFAULT_LOCALE", "ja-JP");
