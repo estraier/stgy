@@ -87,6 +87,51 @@ describe("AuthService class", () => {
     );
   });
 
+  test("loginAsAdmin: success", async () => {
+    const dbIdDec = "1";
+    const adminHex = decToHex(dbIdDec);
+    (pgClient.query as jest.Mock).mockResolvedValueOnce({
+      rows: [
+        {
+          id: dbIdDec,
+          email: "admin@example.com",
+          nickname: "admin",
+          is_admin: true,
+          created_at: "2025-07-01T02:03:04Z",
+          updated_at: null,
+          locale: "ja-JP",
+          timezone: "Asia/Tokyo",
+        },
+      ],
+      rowCount: 1,
+    });
+    const result = await authService.loginAsAdmin();
+    expect(result.userId).toBe(adminHex);
+    expect(result.sessionId).toBeDefined();
+    const [sqlText, sqlParams] = (pgClient.query as jest.Mock).mock.calls[0];
+    const normalized = String(sqlText).replace(/\s+/g, " ").trim();
+    expect(normalized).toBe(
+      "SELECT u.id, s.email, u.nickname, u.is_admin, id_to_timestamp(u.id) AS created_at, u.updated_at, u.locale, u.timezone FROM users u JOIN user_secrets s ON s.user_id = u.id ORDER BY u.id ASC LIMIT 1",
+    );
+    expect(sqlParams).toEqual([]);
+    expect(redis.set).toHaveBeenCalled();
+    const stored = JSON.parse(redis.store[`session:${result.sessionId}`]);
+    expect(stored.userId).toBe(adminHex);
+    expect(stored.userEmail).toBe("admin@example.com");
+    expect(stored.userNickname).toBe("admin");
+    expect(stored.userIsAdmin).toBe(true);
+    expect(stored.userCreatedAt).toBe("2025-07-01T02:03:04.000Z");
+    expect(stored.userUpdatedAt).toBe(null);
+    expect(stored.userLocale).toBe("ja-JP");
+    expect(stored.userTimezone).toBe("Asia/Tokyo");
+    expect(stored.loggedInAt).toBeDefined();
+  });
+
+  test("loginAsAdmin: admin not found", async () => {
+    (pgClient.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
+    await expect(authService.loginAsAdmin()).rejects.toThrow("admin not found");
+  });
+
   test("switchUser: success", async () => {
     const dbIdDec = "9876543210000000";
     const userHex = decToHex(dbIdDec);

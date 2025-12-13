@@ -102,6 +102,53 @@ export class AuthService {
     return { sessionId, userId };
   }
 
+  async loginAsAdmin(): Promise<LoginResult> {
+    const result = await pgQuery<SwitchUserRow>(
+      this.pgPool,
+      `
+      SELECT
+        u.id,
+        s.email,
+        u.nickname,
+        u.is_admin,
+        id_to_timestamp(u.id) AS created_at,
+        u.updated_at,
+        u.locale,
+        u.timezone
+      FROM users u
+      JOIN user_secrets s ON s.user_id = u.id
+      ORDER BY u.id ASC
+      LIMIT 1
+      `,
+      [],
+    );
+    if (result.rows.length === 0) throw new Error("admin not found");
+    const {
+      id,
+      email: userEmail,
+      nickname: userNickname,
+      is_admin: userIsAdmin,
+      created_at: userCreatedAt,
+      updated_at: userUpdatedAt,
+      locale: userLocale,
+      timezone: userTimezone,
+    } = result.rows[0];
+    const sessionId = crypto.randomBytes(32).toString("hex");
+    const sessionInfo: SessionInfo = {
+      userId: decToHex(id),
+      userEmail,
+      userNickname,
+      userIsAdmin: !!userIsAdmin,
+      userCreatedAt: new Date(userCreatedAt).toISOString(),
+      userUpdatedAt: userUpdatedAt ? new Date(userUpdatedAt).toISOString() : null,
+      userLocale,
+      userTimezone,
+      loggedInAt: new Date().toISOString(),
+    };
+    await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", SESSION_TTL);
+    return { sessionId, userId: sessionInfo.userId };
+  }
+
   async switchUser(userId: string): Promise<LoginResult> {
     const result = await pgQuery<SwitchUserRow>(
       this.pgPool,
