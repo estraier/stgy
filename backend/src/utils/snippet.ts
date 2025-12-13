@@ -8,6 +8,7 @@ import {
   mdRenderText,
 } from "stgy-markdown";
 import type { MdNode } from "stgy-markdown";
+import { sliceByPseudoTokens } from "./nlp";
 
 export function makeSnippetJsonFromMarkdown(mdText: string) {
   const maxLen = Config.SNIPPET_MAX_LENGTH;
@@ -22,7 +23,7 @@ export function makeSnippetJsonFromMarkdown(mdText: string) {
 
 export function makeTextFromJsonSnippet(snippet: string) {
   const nodes = deserializeMdNodes(snippet);
-  return mdRenderText(nodes).slice(0, 50);
+  return sliceByPseudoTokens(mdRenderText(nodes), 0, 50);
 }
 
 export function getMentionsFromMarkdown(mdText: string): string[] {
