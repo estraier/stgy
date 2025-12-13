@@ -356,11 +356,6 @@ async function processLoop(): Promise<void> {
     try {
       summaries = await fetchPendingSummaries(sessionCookie);
     } catch (e) {
-      if (e instanceof UnauthorizedError) {
-        logger.warn(`[aiSummaryWorker] session expired while fetching pending summaries; relogin`);
-        await sleep(200);
-        continue;
-      }
       logger.error(`[aiSummaryWorker] fetchPendingSummaries error: ${e}`);
       await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
       continue;
