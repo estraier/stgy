@@ -152,7 +152,7 @@ export class AiUsersService {
     if (model_service === "openai") {
       const r = await this.openai.chat.completions.create(
         { model: model_name, messages: req.messages, service_tier: "flex" },
-        { timeout: 600_000 },
+        { timeout: Config.AI_RPC_TIMEOUT_MS },
       );
       return { message: { content: r.choices[0]?.message?.content ?? "" } };
     }
@@ -171,7 +171,7 @@ export class AiUsersService {
     if (model_service === "openai") {
       const r = await this.openai.embeddings.create(
         { model: model_name, input: req.input },
-        { timeout: 600_000 },
+        { timeout: Config.AI_RPC_TIMEOUT_MS },
       );
       const emb = r.data[0]?.embedding;
       if (!emb || !Array.isArray(emb) || emb.length === 0) throw new Error("embedding failed");
