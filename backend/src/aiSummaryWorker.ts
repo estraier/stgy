@@ -16,9 +16,6 @@ const logger = createLogger({ file: "aiSummaryWorker" });
 
 const BASIC_MODEL = "basic";
 
-const POST_TEXT_LIMIT = 10000;
-const SUMMARY_TEXT_LIMIT = 2000;
-
 let pgPool: Pool | null = null;
 let redis: Redis | null = null;
 let authService: AuthService | null = null;
@@ -277,14 +274,14 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     } content=${truncateForLog(post.content, 50)}`,
   );
   const promptTpl = readPrompt("post-summary", locale, "en");
-  const postText = truncateText(post.content, POST_TEXT_LIMIT);
+  const postText = truncateText(post.content, Config.AI_SUMMARY_POST_TEXT_LIMIT);
   const postJsonObj = {
     locale,
     nickname: post.ownerNickname,
     content: postText,
   };
   const postJson = JSON.stringify(postJsonObj, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-  let maxCharsText = "800";
+  let maxChars = Config.AI_SUMMARY_SUMMARY_LENGTH;
   if (
     locale === "ja" ||
     locale.startsWith("ja-") ||
@@ -292,14 +289,15 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     locale.startsWith("zh-") ||
     locale === "ko" ||
     locale.startsWith("ko-")
-  )
-    maxCharsText = "400";
+  ) {
+    maxChars = Config.AI_SUMMARY_SUMMARY_LENGTH_CJK;
+  }
   let localeText = locale;
   if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
   if (locale === "ja" || locale.startsWith("ja-")) localeText = `日本語（${locale}）`;
   const prompt = promptTpl
     .replaceAll("{{POST_JSON}}", postJson)
-    .replaceAll("{{MAX_CHARS}}", maxCharsText)
+    .replaceAll("{{MAX_CHARS}}", String(maxChars))
     .replaceAll("{{LOCALE}}", localeText);
   console.log(prompt);
   const chatRes = await apiRequest(sessionCookie, `/ai-users/chat`, {
@@ -326,7 +324,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   if (typeof obj.summary !== "string") {
     throw new Error(`AI output missing summary string: postId=${postId}`);
   }
-  const summary = truncateText(obj.summary, SUMMARY_TEXT_LIMIT);
+  const summary = truncateText(obj.summary, Config.AI_SUMMARY_SUMMARY_TEXT_LIMIT);
   const tags = parseTagsField(obj.tags, 5);
   logger.info(
     `[aiSummaryWorker] parsed result postId=${postId} summary=${truncateForLog(
