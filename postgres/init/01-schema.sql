@@ -9,6 +9,12 @@ CREATE TABLE ai_models (
   name VARCHAR(50) NOT NULL
 );
 
+CREATE TABLE ai_feature_models (
+  label VARCHAR(50) PRIMARY KEY,
+  service VARCHAR(50) NOT NULL,
+  name VARCHAR(50) NOT NULL
+);
+
 CREATE TABLE users (
   id BIGINT PRIMARY KEY,
   updated_at TIMESTAMPTZ,

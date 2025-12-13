@@ -29,7 +29,10 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function httpRequest(path: string, options: { method?: string; headers?: Record<string, string>; body?: string } = {}): Promise<HttpResult> {
+function httpRequest(
+  path: string,
+  options: { method?: string; headers?: Record<string, string>; body?: string } = {},
+): Promise<HttpResult> {
   const method = options.method ?? "GET";
   const headers = options.headers ?? {};
   const body = options.body ?? "";
@@ -37,16 +40,26 @@ function httpRequest(path: string, options: { method?: string; headers?: Record<
   const isHttps = url.protocol === "https:";
   const client = isHttps ? https : http;
   return new Promise((resolve, reject) => {
-    const req = client.request({ protocol: url.protocol, hostname: url.hostname, port: url.port || undefined, path: url.pathname + url.search, method, headers }, (res) => {
-      const chunks: Buffer[] = [];
-      res.on("data", (chunk) => {
-        chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-      });
-      res.on("end", () => {
-        const bodyStr = Buffer.concat(chunks).toString("utf8");
-        resolve({ statusCode: res.statusCode ?? 0, headers: res.headers, body: bodyStr });
-      });
-    });
+    const req = client.request(
+      {
+        protocol: url.protocol,
+        hostname: url.hostname,
+        port: url.port || undefined,
+        path: url.pathname + url.search,
+        method,
+        headers,
+      },
+      (res) => {
+        const chunks: Buffer[] = [];
+        res.on("data", (chunk) => {
+          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+        });
+        res.on("end", () => {
+          const bodyStr = Buffer.concat(chunks).toString("utf8");
+          resolve({ statusCode: res.statusCode ?? 0, headers: res.headers, body: bodyStr });
+        });
+      },
+    );
     req.on("error", reject);
     if (body.length > 0) req.write(body);
     req.end();
@@ -60,7 +73,11 @@ async function loginAsAdmin(): Promise<void> {
   logger.info(`[aiSummaryWorker] loginAsAdmin ok; session_id length=${sessionId.length}`);
 }
 
-async function apiRequest(path: string, options: { method?: string; body?: unknown } = {}, allowRetry = true): Promise<HttpResult> {
+async function apiRequest(
+  path: string,
+  options: { method?: string; body?: unknown } = {},
+  allowRetry = true,
+): Promise<HttpResult> {
   if (!sessionId) await loginAsAdmin();
   const method = options.method ?? "GET";
   let bodyStr = "";
@@ -77,13 +94,20 @@ async function apiRequest(path: string, options: { method?: string; body?: unkno
     await loginAsAdmin();
     return apiRequest(path, options, false);
   }
-  if (res.statusCode < 200 || res.statusCode >= 300) throw new Error(`request failed: ${res.statusCode} ${res.body}`);
+  if (res.statusCode < 200 || res.statusCode >= 300)
+    throw new Error(`request failed: ${res.statusCode} ${res.body}`);
   return res;
 }
 
 async function fetchPendingSummaries(): Promise<AiPostSummary[]> {
   const newerThan = new Date(Date.now() - Config.AI_SUMMARY_POST_LOOKBACK_MS).toISOString();
-  const params = new URLSearchParams({ offset: "0", limit: String(Config.AI_SUMMARY_BATCH_SIZE), order: "asc", nullOnly: "true", newerThan });
+  const params = new URLSearchParams({
+    offset: "0",
+    limit: String(Config.AI_SUMMARY_BATCH_SIZE),
+    order: "asc",
+    nullOnly: "true",
+    newerThan,
+  });
   const res = await apiRequest(`/ai-posts?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];

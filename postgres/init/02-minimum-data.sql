@@ -5,6 +5,12 @@ VALUES
 ('balanced', 'openai', 'gpt-5-mini'),
 ('basic', 'openai', 'gpt-5-nano');
 
+INSERT INTO ai_feature_models
+(label, service, name)
+VALUES
+('advanced', 'openai', 'text-embedding-3-large'),
+('basic', 'openai', 'text-embedding-3-small');
+
 INSERT INTO users (
   id,
   updated_at,

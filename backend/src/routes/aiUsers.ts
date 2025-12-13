@@ -7,7 +7,7 @@ import { UsersService } from "../services/users";
 import { AuthService } from "../services/auth";
 import { DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
-import type { ChatRequest } from "../models/aiUser";
+import type { ChatRequest, GenerateFeaturesRequest } from "../models/aiUser";
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null;
@@ -107,6 +107,47 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     }
   });
 
+  router.post("/features", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!Config.OPENAI_API_KEY) {
+      return res.status(501).json({ error: "ai features are disabled" });
+    }
+    const body = req.body as unknown as GenerateFeaturesRequest;
+    let modelToUse = "basic";
+    if (loginUser.isAdmin) {
+      if (body.model && body.model.trim() !== "") {
+        modelToUse = body.model;
+      } else if (loginUser.aiModel && loginUser.aiModel.trim() === "advanced") {
+        modelToUse = "advanced";
+      }
+    } else {
+      if (body.model) {
+        return res.status(403).json({ error: "model override not allowed" });
+      }
+      if (!loginUser.aiModel || loginUser.aiModel.trim() === "") {
+        return res.status(403).json({ error: "no model configured for this user" });
+      }
+      if (loginUser.aiModel.trim() === "advanced") {
+        modelToUse = loginUser.aiModel;
+      }
+    }
+    const input = typeof body?.input === "string" ? body.input : "";
+    if (input.trim() === "") {
+      return res.status(400).json({ error: "input is required" });
+    }
+    try {
+      const out = await aiUsersService.generateFeatures({ model: modelToUse, input });
+      res.json({ features: Buffer.from(out.features).toString("base64") });
+    } catch (e) {
+      const msg = (e as Error).message || "internal_error";
+      if (msg === "no such model" || msg === "unsupported service") {
+        return res.status(400).json({ error: msg });
+      }
+      res.status(500).json({ error: "internal_error" });
+    }
+  });
+
   router.get("/:id/interests", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
@@ -136,10 +177,7 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     }
     const watch = timerThrottleService.startWatch(loginUser);
     try {
-      const saved = await aiUsersService.setAiUserInterest({
-        userId: req.params.id,
-        payload,
-      });
+      const saved = await aiUsersService.setAiUserInterest({ userId: req.params.id, payload });
       watch.done();
       res.json(saved);
     } catch {

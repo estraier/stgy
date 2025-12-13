@@ -66,6 +66,9 @@ def test_auth():
   print("[test_auth] OK")
 
 def test_ai_users():
+  def b64_to_int8_list(s):
+    b = base64.b64decode(s)
+    return [x - 256 if x >= 128 else x for x in b]
   print("[ai_users] admin login")
   session_id = login()
   cookies = {"session_id": session_id}
@@ -78,27 +81,13 @@ def test_ai_users():
   ts = int(time.time())
   email = f"aiuser-{ts}@stgy.xyz"
   nickname = f"ai-user-{ts}"
-  create_body = {
-    "email": email,
-    "nickname": nickname,
-    "isAdmin": False,
-    "introduction": "hello, I'm an AI agent",
-    "aiModel": ai_model_label,
-    "aiPersonality": "helpful and curious",
-    "password": "pw-aiuser-1",
-    "locale": "ja-JP",
-    "timezone": "Asia/Tokyo",
-  }
+  create_body = {"email": email, "nickname": nickname, "isAdmin": False, "introduction": "hello, I'm an AI agent", "aiModel": ai_model_label, "aiPersonality": "helpful and curious", "password": "pw-aiuser-1", "locale": "ja-JP", "timezone": "Asia/Tokyo"}
   res = requests.post(f"{BASE_URL}/users", json=create_body, headers=headers, cookies=cookies)
   assert res.status_code == 201, res.text
   created = res.json()
   ai_user_id = created["id"]
   print(f"[ai_users] created AI user: {created}")
-  res = requests.get(
-    f"{BASE_URL}/ai-users?limit=2000&order=desc",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.get(f"{BASE_URL}/ai-users?limit=2000&order=desc", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   ai_users = res.json()
   print(f"[ai_users] list: {ai_users}")
@@ -120,18 +109,8 @@ def test_ai_users():
   assert "updatedAt" in got
   sess = get_session(session_id)
   admin_id = sess["userId"]
-  chat_body = {
-    "model": ai_model_label,
-    "messages": [
-      {"role": "user", "content": "Just echo back 'Hello World'."},
-    ],
-  }
-  res = requests.post(
-    f"{BASE_URL}/ai-users/chat",
-    json=chat_body,
-    headers=headers,
-    cookies=cookies,
-  )
+  chat_body = {"model": ai_model_label, "messages": [{"role": "user", "content": "Just echo back 'Hello World'."}]}
+  res = requests.post(f"{BASE_URL}/ai-users/chat", json=chat_body, headers=headers, cookies=cookies)
   if res.status_code == 501:
     print(f"[ai_users] chat is disabled")
   else:
@@ -141,62 +120,42 @@ def test_ai_users():
     message = chat_res["message"]
     assert "content" in message
     print(f"[ai_users] chat response: {message['content']}")
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/interests",
-    headers=headers,
-    cookies=cookies,
-  )
+  feat_body = {"model": "basic", "input": "Hello, generate feature vector for this text."}
+  res = requests.post(f"{BASE_URL}/ai-users/features", json=feat_body, headers=headers, cookies=cookies)
+  if res.status_code == 501:
+    print(f"[ai_users] features is disabled")
+  else:
+    assert res.status_code == 200, res.text
+    feat_res = res.json()
+    assert "features" in feat_res
+    feat_b64 = feat_res["features"]
+    assert isinstance(feat_b64, str) and len(feat_b64) > 0
+    xs = b64_to_int8_list(feat_b64)
+    assert isinstance(xs, list) and len(xs) > 0
+    assert all(isinstance(x, int) and -128 <= x <= 127 for x in xs)
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/interests", headers=headers, cookies=cookies)
   assert res.status_code == 404, res.text
   interest_body = {"payload": "I am currently interested in integration tests"}
-  res = requests.post(
-    f"{BASE_URL}/ai-users/{ai_user_id}/interests",
-    json=interest_body,
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.post(f"{BASE_URL}/ai-users/{ai_user_id}/interests", json=interest_body, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   saved_interest = res.json()
   assert saved_interest["userId"] == ai_user_id
   assert saved_interest["payload"] == interest_body["payload"]
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/interests",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/interests", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   got_interest = res.json()
   assert got_interest == saved_interest
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   peer_impressions = res.json()
   assert isinstance(peer_impressions, list)
   assert len(peer_impressions) == 0
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}", headers=headers, cookies=cookies)
   assert res.status_code == 404, res.text
-  res = requests.head(
-    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.head(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}", headers=headers, cookies=cookies)
   assert res.status_code == 404, res.text
-  peer_body = {
-    "peerId": admin_id,
-    "payload": "admin user looks reliable",
-  }
-  res = requests.post(
-    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions",
-    json=peer_body,
-    headers=headers,
-    cookies=cookies,
-  )
+  peer_body = {"peerId": admin_id, "payload": "admin user looks reliable"}
+  res = requests.post(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions", json=peer_body, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   saved_peer = res.json()
   assert saved_peer["userId"] == ai_user_id
@@ -204,80 +163,40 @@ def test_ai_users():
   assert saved_peer["payload"] == peer_body["payload"]
   if "updatedAt" in saved_peer:
     assert isinstance(saved_peer["updatedAt"], str) and len(saved_peer["updatedAt"]) > 0
-  res = requests.head(
-    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.head(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   peer_impressions = res.json()
   assert any(p["peerId"] == admin_id for p in peer_impressions)
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc&peerId={admin_id}",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions?limit=10&offset=0&order=desc&peerId={admin_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   filtered_peer_impressions = res.json()
   assert len(filtered_peer_impressions) == 1
   assert filtered_peer_impressions[0]["peerId"] == admin_id
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/peer-impressions/{admin_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   got_peer = res.json()
   assert got_peer["peerId"] == admin_id
   assert got_peer["payload"] == peer_body["payload"]
-  post_body = {
-    "content": "hello from ai-users impression test",
-    "replyTo": None,
-    "tags": ["ai-users", "impression"],
-  }
+  post_body = {"content": "hello from ai-users impression test", "replyTo": None, "tags": ["ai-users", "impression"]}
   res = requests.post(f"{BASE_URL}/posts", json=post_body, headers=headers, cookies=cookies)
   assert res.status_code == 201, res.text
   post = res.json()
   post_id = post["id"]
   owner_id = post["ownedBy"]
   print(f"[ai_users] created post for impression test: {post}")
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   post_impressions = res.json()
   assert isinstance(post_impressions, list)
   assert len(post_impressions) == 0
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 404, res.text
-  res = requests.head(
-    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.head(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 404, res.text
-  post_imp_body = {
-    "postId": post_id,
-    "payload": "this post looks great",
-  }
-  res = requests.post(
-    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions",
-    json=post_imp_body,
-    headers=headers,
-    cookies=cookies,
-  )
+  post_imp_body = {"postId": post_id, "payload": "this post looks great"}
+  res = requests.post(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions", json=post_imp_body, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   saved_post_imp = res.json()
   assert saved_post_imp["userId"] == ai_user_id
@@ -286,62 +205,31 @@ def test_ai_users():
   assert saved_post_imp["payload"] == post_imp_body["payload"]
   if "updatedAt" in saved_post_imp:
     assert isinstance(saved_post_imp["updatedAt"], str) and len(saved_post_imp["updatedAt"]) > 0
-  res = requests.head(
-    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.head(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   post_impressions = res.json()
-  assert any(
-    p["postId"] == post_id and p["peerId"] == owner_id for p in post_impressions
-  )
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions"
-    f"?limit=10&offset=0&order=desc&postId={post_id}",
-    headers=headers,
-    cookies=cookies,
-  )
+  assert any(p["postId"] == post_id and p["peerId"] == owner_id for p in post_impressions)
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc&postId={post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   filtered_post_impressions = res.json()
   assert len(filtered_post_impressions) == 1
   assert filtered_post_impressions[0]["postId"] == post_id
   assert filtered_post_impressions[0]["peerId"] == owner_id
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions"
-    f"?limit=10&offset=0&order=desc&peerId={owner_id}",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc&peerId={owner_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   by_peer = res.json()
   assert len(by_peer) >= 1
-  assert any(
-    p["postId"] == post_id and p["peerId"] == owner_id for p in by_peer
-  )
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions"
-    f"?limit=10&offset=0&order=desc&peerId={owner_id}&postId={post_id}",
-    headers=headers,
-    cookies=cookies,
-  )
+  assert any(p["postId"] == post_id and p["peerId"] == owner_id for p in by_peer)
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions?limit=10&offset=0&order=desc&peerId={owner_id}&postId={post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   by_peer_and_post = res.json()
   assert len(by_peer_and_post) == 1
   assert by_peer_and_post[0]["userId"] == ai_user_id
   assert by_peer_and_post[0]["peerId"] == owner_id
   assert by_peer_and_post[0]["postId"] == post_id
-  res = requests.get(
-    f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}",
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/post-impressions/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   got_post_imp = res.json()
   assert got_post_imp["postId"] == post_id

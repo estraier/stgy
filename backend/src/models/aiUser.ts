@@ -35,6 +35,15 @@ export type ChatResponse = {
   };
 };
 
+export type GenerateFeaturesRequest = {
+  model?: string;
+  input: string;
+};
+
+export type GenerateFeaturesResponse = {
+  features: Int8Array;
+};
+
 export type AiUserInterest = {
   userId: string;
   payload: string;

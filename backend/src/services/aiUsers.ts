@@ -4,6 +4,7 @@ import Redis from "ioredis";
 import { decToHex, hexToDec } from "../utils/format";
 import OpenAI from "openai";
 import { Config } from "../config";
+import { encodeFeatures } from "../utils/vectorSpace";
 import type {
   AiUser,
   AiUserDetail,
@@ -18,6 +19,8 @@ import type {
   AiPostImpression,
   ListAiPostImpressionsInput,
   SetAiPostImpressionInput,
+  GenerateFeaturesRequest,
+  GenerateFeaturesResponse,
 } from "../models/aiUser";
 
 type RowList = {
@@ -111,7 +114,6 @@ export class AiUsersService {
     const res = await pgQuery<RowDetail>(this.pgPool, sql, [userIdDec]);
     if (res.rowCount === 0) return null;
     const r = res.rows[0];
-
     const createdAtISO =
       r.created_at instanceof Date
         ? r.created_at.toISOString()
@@ -121,14 +123,12 @@ export class AiUsersService {
         ? r.updated_at.toISOString()
         : new Date(r.updated_at as unknown as string).toISOString()
       : null;
-
     const base: AiUser = {
       id: decToHex(String(r.id)),
       nickname: r.nickname,
       isAdmin: r.is_admin,
       aiModel: r.ai_model,
     };
-
     const detail: AiUserDetail = {
       ...base,
       email: r.email,
@@ -137,37 +137,46 @@ export class AiUsersService {
       introduction: r.introduction,
       aiPersonality: r.ai_personality ?? "",
     };
-
     return detail;
   }
 
   async chat(req: ChatRequest): Promise<ChatResponse> {
-    const res = await pgQuery<{
-      label: string;
-      service: string;
-      name: string;
-    }>(this.pgPool, `SELECT label, service, name FROM ai_models WHERE label = $1`, [req.model]);
-    if (res.rowCount === 0) {
-      throw new Error("no such model");
-    }
+    const res = await pgQuery<{ label: string; service: string; name: string }>(
+      this.pgPool,
+      `SELECT label, service, name FROM ai_models WHERE label = $1`,
+      [req.model],
+    );
+    if (res.rowCount === 0) throw new Error("no such model");
     const model_service = res.rows[0].service;
     const model_name = res.rows[0].name;
     if (model_service === "openai") {
       const r = await this.openai.chat.completions.create(
-        {
-          model: model_name,
-          messages: req.messages,
-          service_tier: "flex",
-        },
-        {
-          timeout: 600_000,
-        },
+        { model: model_name, messages: req.messages, service_tier: "flex" },
+        { timeout: 600_000 },
       );
-      return {
-        message: {
-          content: r.choices[0]?.message?.content ?? "",
-        },
-      };
+      return { message: { content: r.choices[0]?.message?.content ?? "" } };
+    }
+    throw new Error("unsupported service");
+  }
+
+  async generateFeatures(req: GenerateFeaturesRequest): Promise<GenerateFeaturesResponse> {
+    const res = await pgQuery<{ label: string; service: string; name: string }>(
+      this.pgPool,
+      `SELECT label, service, name FROM ai_feature_models WHERE label = $1`,
+      [req.model],
+    );
+    if (res.rowCount === 0) throw new Error("no such model");
+    const model_service = res.rows[0].service;
+    const model_name = res.rows[0].name;
+    if (model_service === "openai") {
+      const r = await this.openai.embeddings.create(
+        { model: model_name, input: req.input },
+        { timeout: 600_000 },
+      );
+      const emb = r.data[0]?.embedding;
+      if (!emb || !Array.isArray(emb) || emb.length === 0) throw new Error("embedding failed");
+      const features = encodeFeatures(emb, emb.length);
+      return { features };
     }
     throw new Error("unsupported service");
   }
@@ -183,10 +192,7 @@ export class AiUsersService {
     const res = await pgQuery<RowAiUserInterest>(this.pgPool, sql, [userIdDec]);
     if (res.rowCount === 0) return null;
     const row = res.rows[0];
-    return {
-      userId: decToHex(String(row.user_id)),
-      payload: row.payload,
-    };
+    return { userId: decToHex(String(row.user_id)), payload: row.payload };
   }
 
   async setAiUserInterest(input: SetAiUserInterestInput): Promise<AiUserInterest> {
@@ -200,21 +206,16 @@ export class AiUsersService {
     `;
     const res = await pgQuery<RowAiUserInterest>(this.pgPool, sql, [userIdDec, input.payload]);
     const row = res.rows[0];
-    return {
-      userId: decToHex(String(row.user_id)),
-      payload: row.payload,
-    };
+    return { userId: decToHex(String(row.user_id)), payload: row.payload };
   }
 
   async listAiPeerImpressions(input: ListAiPeerImpressionsInput = {}): Promise<AiPeerImpression[]> {
     const offset = Math.max(0, input.offset ?? 0);
     const limit = Math.min(Math.max(1, input.limit ?? 50), 200);
     const order = (input.order ?? "desc") === "asc" ? "ASC" : "DESC";
-
     const where: string[] = [];
     const params: unknown[] = [];
     let idx = 1;
-
     if (input.userId) {
       where.push(`user_id = $${idx}`);
       params.push(hexToDec(input.userId));
@@ -225,19 +226,15 @@ export class AiUsersService {
       params.push(hexToDec(input.peerId));
       idx++;
     }
-
     let sql = `
       SELECT user_id, peer_id, payload
       FROM ai_peer_impressions
     `;
-    if (where.length > 0) {
-      sql += ` WHERE ${where.join(" AND ")}`;
-    }
+    if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
     sql += ` ORDER BY user_id ${order}, peer_id ${order}
       LIMIT $${idx} OFFSET $${idx + 1}
     `;
     params.push(limit, offset);
-
     const res = await pgQuery<RowAiPeerImpression>(this.pgPool, sql, params);
     return res.rows.map<AiPeerImpression>((row) => ({
       userId: decToHex(String(row.user_id)),
@@ -307,15 +304,12 @@ export class AiUsersService {
     const offset = Math.max(0, input.offset ?? 0);
     const limit = Math.min(Math.max(1, input.limit ?? 50), 200);
     const order = (input.order ?? "desc") === "asc" ? "ASC" : "DESC";
-
     const where: string[] = [];
     const params: unknown[] = [];
     let idx = 1;
-
     const hasUserId = !!input.userId;
     const hasPeerId = !!input.peerId;
     const hasPostId = !!input.postId;
-
     if (hasUserId) {
       where.push(`user_id = $${idx}`);
       params.push(hexToDec(input.userId as string));
@@ -331,25 +325,19 @@ export class AiUsersService {
       params.push(hexToDec(input.postId as string));
       idx++;
     }
-
     let sql = `
       SELECT user_id, peer_id, post_id, payload
       FROM ai_post_impressions
     `;
-    if (where.length > 0) {
-      sql += ` WHERE ${where.join(" AND ")}`;
-    }
-
+    if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
     const usePostIdOrder = hasUserId && hasPeerId && !hasPostId;
     if (usePostIdOrder) {
       sql += ` ORDER BY post_id ${order}`;
     } else {
       sql += ` ORDER BY user_id ${order}, peer_id ${order}, post_id ${order}`;
     }
-
     sql += ` LIMIT $${idx} OFFSET $${idx + 1}`;
     params.push(limit, offset);
-
     const res = await pgQuery<RowAiPostImpression>(this.pgPool, sql, params);
     return res.rows.map<AiPostImpression>((row) => ({
       userId: decToHex(String(row.user_id)),
@@ -397,7 +385,6 @@ export class AiUsersService {
   async setAiPostImpression(input: SetAiPostImpressionInput): Promise<AiPostImpression> {
     const userIdDec = hexToDec(input.userId);
     const postIdDec = hexToDec(input.postId);
-
     const postRes = await pgQuery<{ owned_by: string | number | bigint }>(
       this.pgPool,
       `
@@ -407,11 +394,8 @@ export class AiUsersService {
       `,
       [postIdDec],
     );
-    if (postRes.rowCount === 0) {
-      throw new Error("post not found");
-    }
+    if (postRes.rowCount === 0) throw new Error("post not found");
     const peerIdDec = postRes.rows[0].owned_by;
-
     const sql = `
       INSERT INTO ai_post_impressions (user_id, peer_id, post_id, payload)
       VALUES ($1, $2, $3, $4)
