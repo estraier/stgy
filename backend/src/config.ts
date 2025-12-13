@@ -93,6 +93,10 @@ export class Config {
   static readonly NOTIFICATION_PAYLOAD_RECORDS = envNum("STGY_NOTIFICATION_PAYLOAD_RECORDS", 10);
   static readonly NOTIFICATION_RETENTION_DAYS = envNum("STGY_NOTIFICATION_RETENTION_DAYS", 31);
   static readonly NOTIFICATION_SHOWN_RECORDS = envNum("STGY_NOTIFICATION_SHOWN_RECORDS", 50);
+  static readonly PASSWORD_CONFIG = envStr("STGY_PASSWORD_CONFIG", "scrypt:12:20:4096:8:1");
+  static readonly DEFAULT_LOCALE = envStr("STGY_DEFAULT_LOCALE", "ja-JP");
+  static readonly DEFAULT_TIMEZONE = envStr("STGY_DEFAULT_TIMEZONE", "Asia/Tokyo");
+  static readonly MAX_PAGE_LIMIT = envNum("STGY_MAX_PAGE_LIMIT", 100);
   static readonly AI_RPC_TIMEOUT_MS = envNum("STGY_AI_RPC_TIMEOUT_MS", 600 * 1000);
   static readonly AI_SUMMARY_POST_LOOKBACK_MS = envNum(
     "STGY_AI_SUMMARY_POST_LOOKBACK_MS",
@@ -108,17 +112,14 @@ export class Config {
   static readonly AI_SUMMARY_CONCURRENCY = envNum("STGY_AI_SUMMARY_CONCURRENCY", 1);
   //static readonly AI_SUMMARY_IDLE_SLEEP_MS = envNum("STGY_AI_SUMMARY_IDLE_SLEEP_MS", 10 * 1000);
   static readonly AI_SUMMARY_IDLE_SLEEP_MS = envNum("STGY_AI_SUMMARY_IDLE_SLEEP_MS", 3 * 1000);
+  static readonly AI_SUMMARY_MODEL = envStr("STGY_AI_SUMMARY_MODEL", "basic");
   static readonly AI_SUMMARY_POST_TEXT_LIMIT = envNum("STGY_AI_SUMMARY_POST_TEXT_LIMIT", 10000);
   static readonly AI_SUMMARY_SUMMARY_TEXT_LIMIT = envNum(
     "STGY_AI_SUMMARY_SUMMARY_TEXT_LIMIT",
     2000,
   );
   static readonly AI_SUMMARY_SUMMARY_LENGTH = envNum("STGY_AI_SUMMARY_SUMMARY_LENGTH", 800);
-  static readonly AI_SUMMARY_SUMMARY_LENGTH_CJK = envNum("STGY_AI_SUMMARY_SUMMARY_LENGTH", 400);
-  static readonly PASSWORD_CONFIG = envStr("STGY_PASSWORD_CONFIG", "scrypt:12:20:4096:8:1");
-  static readonly DEFAULT_LOCALE = envStr("STGY_DEFAULT_LOCALE", "ja-JP");
-  static readonly DEFAULT_TIMEZONE = envStr("STGY_DEFAULT_TIMEZONE", "Asia/Tokyo");
-  static readonly MAX_PAGE_LIMIT = envNum("STGY_MAX_PAGE_LIMIT", 100);
+  static readonly AI_SUMMARY_SUMMARY_LENGTH_CJK = envNum("STGY_AI_SUMMARY_SUMMARY_LENGTH_CJK", 400);
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {

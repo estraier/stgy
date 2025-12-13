@@ -14,8 +14,6 @@ import { URLSearchParams } from "url";
 
 const logger = createLogger({ file: "aiSummaryWorker" });
 
-const BASIC_MODEL = "basic";
-
 let pgPool: Pool | null = null;
 let redis: Redis | null = null;
 let authService: AuthService | null = null;
@@ -252,7 +250,6 @@ async function postSummaryResult(
   sessionCookie: string,
   postId: string,
   body: {
-    model: string;
     summary: string;
     tags: string[];
     features: string;
@@ -299,11 +296,11 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     .replaceAll("{{POST_JSON}}", postJson)
     .replaceAll("{{MAX_CHARS}}", String(maxChars))
     .replaceAll("{{LOCALE}}", localeText);
-  console.log(prompt);
+  //console.log(prompt);
   const chatRes = await apiRequest(sessionCookie, `/ai-users/chat`, {
     method: "POST",
     body: {
-      model: BASIC_MODEL,
+      model: Config.AI_SUMMARY_MODEL,
       messages: [{ role: "user" as const, content: prompt }],
     },
   });
@@ -312,7 +309,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   if (typeof aiContent !== "string" || aiContent.trim() === "") {
     throw new Error(`ai-users/chat returned empty content for postId=${postId}`);
   }
-  console.log(aiContent);
+  //console.log(aiContent);
   const parsed = evaluateChatResponseAsJson<{
     summary?: unknown;
     tags?: unknown;
@@ -334,11 +331,10 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   );
   const featuresInput = buildFeaturesInput(summary, tags);
   const feat = await generateFeaturesViaBackend(sessionCookie, {
-    model: BASIC_MODEL,
+    model: Config.AI_SUMMARY_MODEL,
     input: featuresInput,
   });
   await postSummaryResult(sessionCookie, postId, {
-    model: BASIC_MODEL,
     summary,
     tags,
     features: feat.features,
