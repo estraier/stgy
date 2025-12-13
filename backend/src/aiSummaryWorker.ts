@@ -284,11 +284,24 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     content: postText,
   };
   const postJson = JSON.stringify(postJsonObj, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+  let maxCharsText = "800";
+  if (
+    locale === "ja" ||
+    locale.startsWith("ja-") ||
+    locale === "zh" ||
+    locale.startsWith("zh-") ||
+    locale === "ko" ||
+    locale.startsWith("ko-")
+  )
+    maxCharsText = "400";
   let localeText = locale;
   if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
   if (locale === "ja" || locale.startsWith("ja-")) localeText = `日本語（${locale}）`;
-  const prompt = promptTpl.replace("{{POST_JSON}}", postJson).replace("{{LOCALE}}", localeText);
-  //console.log(prompt);
+  const prompt = promptTpl
+    .replaceAll("{{POST_JSON}}", postJson)
+    .replaceAll("{{MAX_CHARS}}", maxCharsText)
+    .replaceAll("{{LOCALE}}", localeText);
+  console.log(prompt);
   const chatRes = await apiRequest(sessionCookie, `/ai-users/chat`, {
     method: "POST",
     body: {
@@ -301,7 +314,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   if (typeof aiContent !== "string" || aiContent.trim() === "") {
     throw new Error(`ai-users/chat returned empty content for postId=${postId}`);
   }
-  //console.log(aiContent);
+  console.log(aiContent);
   const parsed = evaluateChatResponseAsJson<{
     summary?: unknown;
     tags?: unknown;
