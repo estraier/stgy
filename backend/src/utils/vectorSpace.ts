@@ -65,10 +65,7 @@ export function encodeFeatures(
   return out;
 }
 
-export function decodeFeatures(
-  encoded: ArrayLike<number>,
-  gamma = 0.5,
-): number[] {
+export function decodeFeatures(encoded: ArrayLike<number>, gamma = 0.5): number[] {
   const lut = buildDecodeLut();
   const invGamma = gamma > 0 ? 1 / gamma : 1;
   const out = new Array<number>(encoded.length);
@@ -84,4 +81,30 @@ export function decodeFeatures(
     out[i] = restored;
   }
   return out;
+}
+
+export function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): number {
+  const n = a.length;
+  if (n !== b.length) {
+    throw new Error(`vector dimensions mismatch: a=${n} b=${b.length}`);
+  }
+  if (n <= 0) {
+    throw new Error("vector dimension must be > 0");
+  }
+  let dot = 0;
+  let normA2 = 0;
+  let normB2 = 0;
+  for (let i = 0; i < n; i++) {
+    const x = a[i];
+    const y = b[i];
+    dot += x * y;
+    normA2 += x * x;
+    normB2 += y * y;
+  }
+  if (normA2 === 0 || normB2 === 0) return 0;
+  const denom = Math.sqrt(normA2 * normB2);
+  let v = dot / denom;
+  if (v > 1) v = 1;
+  if (v < -1) v = -1;
+  return v;
 }
