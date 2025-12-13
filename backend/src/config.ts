@@ -48,7 +48,7 @@ export class Config {
   static readonly AI_PERSONALITY_LENGTH_LIMIT = envNum("STGY_AI_PERSONALITY_LENGTH_LIMIT", 2500);
   static readonly CONTENT_LENGTH_LIMIT = envNum("STGY_CONTENT_LENGTH_LIMIT", 10000);
   static readonly TAGS_NUMBER_LIMIT = envNum("STGY_TAGS_NUMBER_LIMIT", 5);
-  static readonly SNIPPET_MAX_LENGTH = envNum("STGY_SNIPPET_MAX_LENGTH", 200);
+  static readonly SNIPPET_MAX_LENGTH = envNum("STGY_SNIPPET_MAX_LENGTH", 300);
   static readonly SNIPPET_MAX_HEIGHT = envNum("STGY_SNIPPET_MAX_HEIGHT", 10);
   static readonly DAILY_DB_TIMER_LIMIT_MS = envNum("STGY_DAILY_DB_TIMER_LIMIT_MS", 180 * 1000);
   static readonly DAILY_MEDIA_TIMER_LIMIT_MS = envNum(

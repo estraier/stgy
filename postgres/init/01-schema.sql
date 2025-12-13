@@ -128,7 +128,8 @@ CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_
 
 CREATE TABLE ai_post_summaries (
   post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
-  summary VARCHAR(65535)
+  summary VARCHAR(65535),
+  features BYTEA
 );
 CREATE INDEX idx_ai_post_summaries_empty ON ai_post_summaries (post_id) WHERE summary IS NULL;
 

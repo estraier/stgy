@@ -109,3 +109,15 @@ $$
 Just read and write!
 $$
 );
+
+INSERT INTO ai_post_summaries (
+  post_id,
+  summary,
+  features
+)
+VALUES
+(
+  0x2000000000001,
+  NULL,
+  NULL
+);
