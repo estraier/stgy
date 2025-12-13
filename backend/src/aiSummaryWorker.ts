@@ -390,6 +390,10 @@ async function processLoop(): Promise<void> {
   }
 }
 
+async function idleLoop(): Promise<void> {
+  while (!shuttingDown) await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
+}
+
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
@@ -414,7 +418,12 @@ async function main(): Promise<void> {
   };
   process.on("SIGINT", onSig);
   process.on("SIGTERM", onSig);
-  await processLoop();
+  if (Config.OPENAI_API_KEY) {
+    await processLoop();
+  } else {
+    logger.info("OPENAI_API_KEY is not set so do nothing.");
+    await idleLoop();
+  }
 }
 
 main().catch((e) => {
