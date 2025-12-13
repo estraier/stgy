@@ -2024,6 +2024,33 @@ export function mdCutOff(
   const imgHeight = params?.imgHeight ?? 6;
   const captMaxLen = params?.captMaxLen ?? 25;
   const cutOnHr = params?.cutOnHr ?? false;
+  const charWeight = (ch: string): number => {
+    const cp = ch.codePointAt(0);
+    if (cp == null) return 0;
+    return cp < 0x2000 ? 1 : 2;
+  };
+  const textWeight = (s: string): number => {
+    let w = 0;
+    for (const ch of s) w += charWeight(ch);
+    return w;
+  };
+  const truncateByWeight = (
+    s: string,
+    maxWeight: number,
+  ): { text: string; used: number; fullyUsed: boolean } => {
+    if (maxWeight <= 0) return { text: "", used: 0, fullyUsed: false };
+    let used = 0;
+    let endIndex = 0;
+    for (const ch of s) {
+      const w = charWeight(ch);
+      if (used + w > maxWeight) break;
+      used += w;
+      endIndex += ch.length;
+    }
+    const fullyUsed = endIndex === s.length;
+    return { text: s.slice(0, endIndex), used, fullyUsed };
+  };
+
   const state = {
     remain:
       typeof params?.maxLen === "number"
@@ -2053,7 +2080,6 @@ export function mdCutOff(
     "li",
     "hr",
   ]);
-
   function getKind(attrs?: MdAttrs): string | undefined {
     if (!attrs) return undefined;
     const k = attrs["kind"];
@@ -2066,11 +2092,9 @@ export function mdCutOff(
     }
     return undefined;
   }
-
   function isFeaturedFigure(el: MdElementNode): boolean {
     return el.tag === "figure" && getKind(el.attrs) === "featured-block";
   }
-
   function computeTextMetrics(ns: MdNode[]): {
     length: number;
     newlines: number;
@@ -2079,7 +2103,7 @@ export function mdCutOff(
     let newlines = 0;
     for (const n of ns) {
       if (n.type === "text") {
-        length += n.text.length;
+        length += textWeight(n.text);
         newlines += n.text.match(/\n/g)?.length ?? 0;
       } else {
         const r = computeTextMetrics(n.children || []);
@@ -2089,7 +2113,6 @@ export function mdCutOff(
     }
     return { length, newlines };
   }
-
   const captionLengthOfFigure = (el: MdElementNode): number => {
     const cap = (el.children || []).find(
       (c): c is MdElementNode => c.type === "element" && c.tag === "figcaption",
@@ -2097,19 +2120,16 @@ export function mdCutOff(
     if (!cap) return 0;
     return computeTextMetrics(cap.children || []).length;
   };
-
   const figureHasMedia = (el: MdElementNode): boolean =>
     (el.children || []).some(
       (c) => c.type === "element" && (c.tag === "img" || c.tag === "video"),
     );
-
   function bumpHeight(inc: number): boolean {
     const next = state.height + inc;
     if (next > state.maxHeight) return false;
     state.height = next;
     return true;
   }
-
   function consumeFixedImageBudget(): boolean {
     const nextRemain = state.remain - fixedImgLen;
     const nextHeight = state.height + imgHeight;
@@ -2118,7 +2138,6 @@ export function mdCutOff(
     state.height = nextHeight;
     return true;
   }
-
   function consumeDynamicImageBudget(captionLen: number): boolean {
     const nextRemain = state.remain - captionLen;
     const nextHeight = state.height + imgHeight;
@@ -2127,11 +2146,9 @@ export function mdCutOff(
     state.height = nextHeight;
     return true;
   }
-
   function makeOmittedNode(): MdElementNode {
     return { type: "element", tag: "omitted", children: [] };
   }
-
   function cutTextContent(
     s: string,
     charge: boolean,
@@ -2141,55 +2158,49 @@ export function mdCutOff(
       state.cut = true;
       return { text: "", cut: true };
     }
-    if (s.length > state.remain) {
-      const sliceLen = Math.max(0, state.remain);
-      let part = s.slice(0, sliceLen);
-      if (part.length < s.length) {
+    const total = textWeight(s);
+    if (total > state.remain) {
+      const { text: base, used } = truncateByWeight(s, state.remain);
+      let part = base;
+      if (base.length < s.length) {
         part = part + "…";
         state.ellipsisAdded = true;
       }
-      state.textConsumed += sliceLen;
+      state.textConsumed += used;
       state.remain = 0;
       state.cut = true;
       return { text: part, cut: true };
     }
-    state.textConsumed += s.length;
-    state.remain -= s.length;
+    state.textConsumed += total;
+    state.remain -= total;
     return { text: s, cut: false };
   }
-
   function trimCaptionChildren(children: MdNode[]): MdNode[] {
     if (dynamicImgCost) return children;
     if (captMaxLen < 0) return children;
     const total = computeTextMetrics(children).length;
     if (total <= captMaxLen) return children;
-    const text =
-      mdRenderText([{ type: "element", tag: "span", children }]).slice(
-        0,
-        captMaxLen,
-      ) + "…";
-    return [{ type: "text", text }];
+    const fullText = mdRenderText([{ type: "element", tag: "span", children }]);
+    const { text: truncated } = truncateByWeight(fullText, captMaxLen);
+    const result =
+      truncated.length < fullText.length ? truncated + "…" : truncated;
+    return [{ type: "text", text: result }];
   }
-
   function walk(
     n: MdNode,
     freeMedia: boolean,
     freeText: boolean,
   ): MdNode | null {
     if (state.cut) return null;
-
     if (n.type === "text") {
       const { text, cut } = cutTextContent(n.text, !freeText);
       if (text === "" && cut) return null;
       return { ...n, text };
     }
-
     const el = n as MdElementNode;
-
     if (el.tag === "toc") {
       return null;
     }
-
     if (el.tag === "br") {
       if (!freeText) {
         if (!bumpHeight(1)) {
@@ -2199,9 +2210,7 @@ export function mdCutOff(
       }
       return { ...el, children: [] };
     }
-
     let chargedAtFigure = false;
-
     if (
       el.tag === "figure" &&
       !freeMedia &&
@@ -2216,7 +2225,6 @@ export function mdCutOff(
       }
       chargedAtFigure = true;
     }
-
     if (!freeText && blockTags.has(el.tag)) {
       const { length: contentLength, newlines } = computeTextMetrics(
         el.children || [],
@@ -2233,7 +2241,6 @@ export function mdCutOff(
         return null;
       }
     }
-
     if ((el.tag === "img" || el.tag === "video") && !freeMedia) {
       if (dynamicImgCost) {
         if (!bumpHeight(imgHeight)) {
@@ -2247,7 +2254,6 @@ export function mdCutOff(
         }
       }
     }
-
     if (el.tag === "hr") {
       if (cutOnHr && state.textConsumed > 0) {
         state.cut = true;
@@ -2255,14 +2261,12 @@ export function mdCutOff(
       }
       return { ...el, children: [] };
     }
-
     const childFreeMedia =
       freeMedia ||
       isFeaturedFigure(el) ||
       (el.tag === "figure" && chargedAtFigure) ||
       el.tag === "figcaption";
     const childFreeText = freeText || el.tag === "figcaption";
-
     const outChildren: MdNode[] = [];
     for (const c of el.children || []) {
       const cc = walk(c, childFreeMedia, childFreeText);
@@ -2275,13 +2279,10 @@ export function mdCutOff(
         break;
       }
     }
-
     const finalChildren =
       el.tag === "figcaption" ? trimCaptionChildren(outChildren) : outChildren;
-
     return { ...el, children: finalChildren };
   }
-
   const out: MdNode[] = [];
   for (const n of nodes) {
     if (state.cut) break;
@@ -3696,4 +3697,47 @@ function decodeNode(e: EncodedNode): MdNode {
   }
   const txt = (e as EncodedText)[NODE_KEY_TEXT];
   return { type: "text", text: String(txt) };
+}
+
+export function countPseudoTokens(text: string): number {
+  let count = 0;
+  for (let i = 0; i < text.length; ) {
+    const cp = text.codePointAt(i)!;
+    const unitLen = cp > 0xffff ? 2 : 1;
+    count += cp < 0x2000 ? 1 : 2;
+    i += unitLen;
+  }
+  return count;
+}
+
+export function sliceByPseudoTokens(
+  text: string,
+  start: number,
+  end: number,
+): string {
+  if (start < 0) start = 0;
+  if (end < 0) end = 0;
+  if (end <= start) return "";
+  let pseudo = 0;
+  let started = false;
+  let startIdx = 0;
+  let endIdx = text.length;
+  for (let i = 0; i < text.length; ) {
+    const cp = text.codePointAt(i)!;
+    const unitLen = cp > 0xffff ? 2 : 1;
+    const weight = cp < 0x2000 ? 1 : 2;
+    const nextPseudo = pseudo + weight;
+    if (!started && nextPseudo > start) {
+      started = true;
+      startIdx = i;
+    }
+    if (started && nextPseudo >= end) {
+      endIdx = i + unitLen;
+      break;
+    }
+    pseudo = nextPseudo;
+    i += unitLen;
+  }
+  if (!started) return "";
+  return text.slice(startIdx, endIdx);
 }
