@@ -13,14 +13,20 @@ export class AIModelsService {
     const res = await pgQuery<{
       label: string;
       service: string;
-      name: string;
-    }>(this.pgPool, `SELECT label, service, name FROM ai_models WHERE label = $1`, [label]);
+      chat_model: string;
+      feature_model: string;
+    }>(
+      this.pgPool,
+      `SELECT label, service, chat_model, feature_model FROM ai_models WHERE label = $1`,
+      [label],
+    );
     if (res.rowCount === 0) return null;
     const row = res.rows[0];
     return {
       label: row.label,
       service: row.service,
-      name: row.name,
+      chatModel: row.chat_model,
+      featureModel: row.feature_model,
     };
   }
 
@@ -28,12 +34,18 @@ export class AIModelsService {
     const res = await pgQuery<{
       label: string;
       service: string;
-      name: string;
-    }>(this.pgPool, "SELECT label, service, name FROM ai_models ORDER BY label", []);
+      chat_model: string;
+      feature_model: string;
+    }>(
+      this.pgPool,
+      "SELECT label, service, chat_model, feature_model FROM ai_models ORDER BY label",
+      [],
+    );
     return res.rows.map((row) => ({
       label: row.label,
       service: row.service,
-      name: row.name,
+      chatModel: row.chat_model,
+      featureModel: row.feature_model,
     }));
   }
 }

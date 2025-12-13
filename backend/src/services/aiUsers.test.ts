@@ -32,8 +32,7 @@ class MockPgPool {
   }[] = [];
   user_secrets: { user_id: number; email: string }[] = [];
   user_details: { user_id: number; introduction: string; ai_personality: string | null }[] = [];
-  ai_models: { label: string; service: string; name: string }[] = [];
-  ai_feature_models: { label: string; service: string; name: string }[] = [];
+  ai_models: { label: string; service: string; chat_model: string; feature_model: string }[] = [];
   ai_interests: { user_id: number; payload: string }[] = [];
   ai_peer_impressions: { user_id: number; peer_id: number; payload: string }[] = [];
   ai_post_impressions: { user_id: number; peer_id: number; post_id: number; payload: string }[] =
@@ -42,23 +41,20 @@ class MockPgPool {
 
   async query(sql: string, params?: any[]) {
     sql = normalizeSql(sql);
-
-    if (sql.startsWith("SELECT label, service, name FROM ai_models WHERE label = $1")) {
+    if (sql.startsWith("SELECT label, service, chat_model FROM ai_models WHERE label = $1")) {
       const label = params?.[0];
       const rows = this.ai_models
         .filter((m) => m.label === label)
-        .map((m) => ({ label: m.label, service: m.service, name: m.name }));
+        .map((m) => ({ label: m.label, service: m.service, chat_model: m.chat_model }));
       return { rows, rowCount: rows.length };
     }
-
-    if (sql.startsWith("SELECT label, service, name FROM ai_feature_models WHERE label = $1")) {
+    if (sql.startsWith("SELECT label, service, feature_model FROM ai_models WHERE label = $1")) {
       const label = params?.[0];
-      const rows = this.ai_feature_models
+      const rows = this.ai_models
         .filter((m) => m.label === label)
-        .map((m) => ({ label: m.label, service: m.service, name: m.name }));
+        .map((m) => ({ label: m.label, service: m.service, feature_model: m.feature_model }));
       return { rows, rowCount: rows.length };
     }
-
     if (
       sql.startsWith(
         "SELECT u.id, u.nickname, u.is_admin, u.ai_model FROM users u WHERE u.ai_model IS NOT NULL",
@@ -79,7 +75,6 @@ class MockPgPool {
         }));
       return { rows, rowCount: rows.length };
     }
-
     if (
       sql.includes("LEFT JOIN user_secrets s ON s.user_id = u.id") &&
       sql.includes("LEFT JOIN user_details d ON d.user_id = u.id")
@@ -103,7 +98,6 @@ class MockPgPool {
       };
       return { rows: [row], rowCount: 1 };
     }
-
     if (sql.startsWith("SELECT user_id, payload FROM ai_interests WHERE user_id = $1")) {
       const idParam = params?.[0];
       const uid = typeof idParam === "string" ? Number(idParam) : idParam;
@@ -111,7 +105,6 @@ class MockPgPool {
       if (!found) return { rows: [], rowCount: 0 };
       return { rows: [{ user_id: String(found.user_id), payload: found.payload }], rowCount: 1 };
     }
-
     if (sql.startsWith("INSERT INTO ai_interests (user_id, payload)")) {
       const idParam = params?.[0];
       const payload = params?.[1] ?? "";
@@ -121,7 +114,6 @@ class MockPgPool {
       else this.ai_interests.push({ user_id: uid, payload });
       return { rows: [{ user_id: String(uid), payload }], rowCount: 1 };
     }
-
     if (sql.startsWith("SELECT user_id, peer_id, payload FROM ai_peer_impressions")) {
       if (sql.includes("ORDER BY")) {
         const limit = params?.[params.length - 2] ?? 50;
@@ -172,7 +164,6 @@ class MockPgPool {
         rowCount: 1,
       };
     }
-
     if (sql.startsWith("SELECT 1 FROM ai_peer_impressions")) {
       const userParam = params?.[0];
       const peerParam = params?.[1];
@@ -182,7 +173,6 @@ class MockPgPool {
       if (!found) return { rows: [], rowCount: 0 };
       return { rows: [{ exists: 1 }], rowCount: 1 };
     }
-
     if (sql.startsWith("INSERT INTO ai_peer_impressions (user_id, peer_id, payload)")) {
       const userParam = params?.[0];
       const peerParam = params?.[1];
@@ -194,7 +184,6 @@ class MockPgPool {
       else this.ai_peer_impressions.push({ user_id: uid, peer_id: pid, payload });
       return { rows: [{ user_id: String(uid), peer_id: String(pid), payload }], rowCount: 1 };
     }
-
     if (sql.startsWith("SELECT owned_by FROM posts WHERE id = $1")) {
       const idParam = params?.[0];
       const pid = typeof idParam === "string" ? Number(idParam) : idParam;
@@ -202,7 +191,6 @@ class MockPgPool {
       if (!post) return { rows: [], rowCount: 0 };
       return { rows: [{ owned_by: String(post.owned_by) }], rowCount: 1 };
     }
-
     if (sql.startsWith("SELECT 1 FROM ai_post_impressions")) {
       const userParam = params?.[0];
       const postParam = params?.[1];
@@ -212,7 +200,6 @@ class MockPgPool {
       if (!found) return { rows: [], rowCount: 0 };
       return { rows: [{ exists: 1 }], rowCount: 1 };
     }
-
     if (sql.startsWith("SELECT user_id, peer_id, post_id, payload FROM ai_post_impressions")) {
       if (sql.includes("ORDER BY")) {
         const limit = params?.[params.length - 2] ?? 50;
@@ -282,7 +269,6 @@ class MockPgPool {
         rowCount: 1,
       };
     }
-
     if (sql.startsWith("INSERT INTO ai_post_impressions (user_id, peer_id, post_id, payload)")) {
       const userParam = params?.[0];
       const peerParam = params?.[1];
@@ -301,7 +287,6 @@ class MockPgPool {
         rowCount: 1,
       };
     }
-
     return { rows: [], rowCount: 0 };
   }
 }
@@ -319,7 +304,6 @@ describe("AiUsersService", () => {
     service = new AiUsersService(pgPool as any, redis as any);
     mockCreate.mockReset();
     mockEmbeddingsCreate.mockReset();
-
     pgPool.users.push(
       { id: 1000, nickname: "Human", is_admin: false, ai_model: null, updated_at: null },
       { id: 1001, nickname: "BotOne", is_admin: false, ai_model: "balanced", updated_at: null },
@@ -331,23 +315,26 @@ describe("AiUsersService", () => {
         updated_at: new Date("2025-02-02T00:00:00Z"),
       },
     );
-
     pgPool.user_secrets.push(
       { user_id: 1001, email: "botone@example.com" },
       { user_id: 1002, email: "bottwo@example.com" },
     );
-
     pgPool.user_details.push(
       { user_id: 1001, introduction: "Hello, I'm BotOne.", ai_personality: "Calm and logical." },
       { user_id: 1002, introduction: "Hi, I'm BotTwo.", ai_personality: "Cheerful and curious." },
     );
-
-    pgPool.ai_models.push({ label: "balanced", service: "openai", name: "gpt-5-mini" });
-
-    pgPool.ai_feature_models.push(
-      { label: "advanced", service: "openai", name: "text-embedding-3-large" },
-      { label: "basic", service: "openai", name: "text-embedding-3-small" },
-    );
+    pgPool.ai_models.push({
+      label: "balanced",
+      service: "openai",
+      chat_model: "gpt-5-mini",
+      feature_model: "text-embedding-3-small",
+    });
+    pgPool.ai_models.push({
+      label: "advanced",
+      service: "openai",
+      chat_model: "gpt-5",
+      feature_model: "text-embedding-3-large",
+    });
   });
 
   test("listAiUsers: returns AI users only, default desc", async () => {
@@ -433,9 +420,9 @@ describe("AiUsersService", () => {
     expect(res.message.content).toBe("");
   });
 
-  test("generateFeatures: uses default model and returns encoded Int8Array", async () => {
+  test("generateFeatures: returns encoded Int8Array", async () => {
     mockEmbeddingsCreate.mockResolvedValue({ data: [{ embedding: [1, -2, 3, 4] }] });
-    const out = await service.generateFeatures({ model: "basic", input: "hello" });
+    const out = await service.generateFeatures({ model: "balanced", input: "hello" });
     expect(mockEmbeddingsCreate).toHaveBeenCalledTimes(1);
     expect(mockEmbeddingsCreate).toHaveBeenCalledWith(
       { model: "text-embedding-3-small", input: "hello" },
@@ -446,7 +433,7 @@ describe("AiUsersService", () => {
     expect(Array.from(out.features)).toEqual(Array.from(expected));
   });
 
-  test("generateFeatures: supports explicit model label", async () => {
+  test("generateFeatures: supports another model label", async () => {
     mockEmbeddingsCreate.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, -0.3] }] });
     const out = await service.generateFeatures({ model: "advanced", input: "x" });
     expect(mockEmbeddingsCreate).toHaveBeenCalledWith(
@@ -464,7 +451,12 @@ describe("AiUsersService", () => {
   });
 
   test("generateFeatures: throws on unsupported service", async () => {
-    pgPool.ai_feature_models.push({ label: "weird", service: "other", name: "x" });
+    pgPool.ai_models.push({
+      label: "weird",
+      service: "other",
+      chat_model: "x",
+      feature_model: "y",
+    });
     await expect(service.generateFeatures({ model: "weird", input: "x" })).rejects.toThrow(
       "unsupported service",
     );

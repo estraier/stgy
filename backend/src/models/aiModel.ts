@@ -1,5 +1,6 @@
 export type AIModel = {
   label: string;
   service: string;
-  name: string;
+  chatModel: string;
+  featureModel: string;
 };

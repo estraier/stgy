@@ -65,6 +65,51 @@ def test_auth():
   logout(session_id)
   print("[test_auth] OK")
 
+def test_ai_models():
+  print("[ai_models] admin login")
+  session_id = login()
+  cookies = {"session_id": session_id}
+  headers = {"Content-Type": "application/json"}
+
+  # list
+  res = requests.get(f"{BASE_URL}/ai-models", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  models = res.json()
+  assert isinstance(models, list) and len(models) > 0, "No AI models available"
+
+  labels = []
+  for m in models:
+    assert isinstance(m, dict), f"invalid model item: {m}"
+    assert isinstance(m.get("label"), str) and m["label"].strip() != "", f"missing label: {m}"
+    assert isinstance(m.get("service"), str) and m["service"].strip() != "", f"missing service: {m}"
+    assert isinstance(m.get("chatModel"), str) and m["chatModel"].strip() != "", f"missing chatModel: {m}"
+    assert (
+      isinstance(m.get("featureModel"), str) and m["featureModel"].strip() != ""
+    ), f"missing featureModel: {m}"
+    labels.append(m["label"])
+
+  assert len(set(labels)) == len(labels), f"duplicate labels: {labels}"
+  print(f"[ai_models] list OK: {labels}")
+
+  # detail
+  label = models[0]["label"]
+  res = requests.get(f"{BASE_URL}/ai-models/{label}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  detail = res.json()
+  assert detail["label"] == label
+  assert isinstance(detail.get("service"), str) and detail["service"].strip() != ""
+  assert isinstance(detail.get("chatModel"), str) and detail["chatModel"].strip() != ""
+  assert isinstance(detail.get("featureModel"), str) and detail["featureModel"].strip() != ""
+
+  m0 = next(m for m in models if m["label"] == label)
+  assert detail["service"] == m0["service"]
+  assert detail["chatModel"] == m0["chatModel"]
+  assert detail["featureModel"] == m0["featureModel"]
+  print(f"[ai_models] detail OK: {label}")
+
+  logout(session_id)
+  print("[test_ai_models] OK")
+
 def test_ai_users():
   def b64_to_int8_list(s):
     b = base64.b64decode(s)

@@ -114,12 +114,14 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       return res.status(501).json({ error: "ai features are disabled" });
     }
     const body = req.body as unknown as GenerateFeaturesRequest;
-    let modelToUse = "basic";
+    let modelToUse: string;
     if (loginUser.isAdmin) {
       if (body.model && body.model.trim() !== "") {
         modelToUse = body.model;
-      } else if (loginUser.aiModel && loginUser.aiModel.trim() === "advanced") {
-        modelToUse = "advanced";
+      } else if (loginUser.aiModel && loginUser.aiModel.trim() !== "") {
+        modelToUse = loginUser.aiModel;
+      } else {
+        return res.status(400).json({ error: "model is required" });
       }
     } else {
       if (body.model) {
@@ -128,9 +130,7 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       if (!loginUser.aiModel || loginUser.aiModel.trim() === "") {
         return res.status(403).json({ error: "no model configured for this user" });
       }
-      if (loginUser.aiModel.trim() === "advanced") {
-        modelToUse = loginUser.aiModel;
-      }
+      modelToUse = loginUser.aiModel;
     }
     const input = typeof body?.input === "string" ? body.input : "";
     if (input.trim() === "") {
