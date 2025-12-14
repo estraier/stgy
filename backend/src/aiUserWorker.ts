@@ -1,22 +1,22 @@
 import { Config } from "./config";
-import http from "http";
-import https from "https";
-import { URLSearchParams } from "url";
 import { createLogger } from "./utils/logger";
 import { AuthService } from "./services/auth";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
+import { countPseudoTokens, sliceByPseudoTokens } from "stgy-markdown";
 import type { Pool } from "pg";
 import type Redis from "ioredis";
+import http from "http";
+import https from "https";
+import { URLSearchParams } from "url";
 
 const logger = createLogger({ file: "aiUserWorker" });
-
-const HAS_API_KEY = Boolean(process.env.OPENAI_API_KEY && process.env.OPENAI_API_KEY.trim() !== "");
 
 let pgPool: Pool | null = null;
 let redis: Redis | null = null;
 let authService: AuthService | null = null;
 
 let shuttingDown = false;
+const inflight = new Set<Promise<void>>();
 
 type HttpResult = {
   statusCode: number;
@@ -39,6 +39,17 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function truncateForLog(value: unknown, max: number): string {
+  const s = String(value ?? "")
+    .replaceAll(/\s+/g, " ")
+    .trim();
+  if (countPseudoTokens(s) <= max) {
+    return s;
+  }
+  if (s.length <= max) return s;
+  return sliceByPseudoTokens(s, 0, max);
+}
+
 function httpRequest(
   path: string,
   options: { method?: string; headers?: Record<string, string>; body?: string } = {},
@@ -46,7 +57,6 @@ function httpRequest(
   const method = options.method ?? "GET";
   const headers = options.headers ?? {};
   const body = options.body ?? "";
-
   const url = new URL(path, Config.BACKEND_API_BASE_URL);
   const isHttps = url.protocol === "https:";
   const client = isHttps ? https : http;
@@ -101,20 +111,20 @@ async function apiRequest(
   }
   if (res.statusCode < 200 || res.statusCode >= 300) {
     throw new Error(
-      `request failed: ${res.statusCode} ${method} ${path} body=${res.body.slice(0, 200)}`,
+      `request failed: ${res.statusCode} ${method} ${path} ${truncateForLog(res.body, 50)}`,
     );
   }
   return res;
 }
 
 /**
- * ★ バックドア（aiSummaryWorker と同じ）
- * /auth を叩かずに AuthService から session_id を発行する
+ * バックドア（aiSummaryWorker と同様）
  */
 async function loginAsAdmin(): Promise<string> {
   if (!authService) throw new Error("authService is not initialized");
-  const res = await authService.loginAsAdmin(); // { sessionId }
-  return `session_id=${res.sessionId}`;
+  const res = await authService.loginAsAdmin();
+  const sessionCookie = `session_id=${res.sessionId}`;
+  return sessionCookie;
 }
 
 async function fetchNextUsers(
@@ -126,22 +136,24 @@ async function fetchNextUsers(
     offset: String(offset),
     limit: String(limit),
   });
-
   const res = await apiRequest(sessionCookie, `/ai-users?${params.toString()}`, { method: "GET" });
+
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
 
+  // id だけ保証して返す（落ちにくくする）
   const out: UserLite[] = [];
   for (const item of parsed) {
     if (typeof item !== "object" || item === null) continue;
     const id = (item as { id?: unknown }).id;
-    if (typeof id === "string" && id.trim() !== "") out.push({ id });
+    if (typeof id !== "string" || id.trim() === "") continue;
+    out.push({ id });
   }
   return out;
 }
 
 /**
- * summarizePost 相当：まずはユーザIDを出すだけ
+ * summarizePost 相当：まずは userId を出すだけ
  */
 async function processUser(_sessionCookie: string, userId: string): Promise<void> {
   console.log(userId);
@@ -152,8 +164,8 @@ async function processLoop(): Promise<void> {
 
   while (!shuttingDown) {
     let sessionCookie: string;
+
     try {
-      // ループ冒頭で loginAsAdmin
       sessionCookie = await loginAsAdmin();
     } catch (e) {
       logger.error(`[aiUserWorker] loginAsAdmin error: ${e}`);
@@ -176,18 +188,33 @@ async function processLoop(): Promise<void> {
       continue;
     }
 
-    for (let i = 0; i < users.length && !shuttingDown; i += Config.AI_USER_CONCURRENCY) {
-      const batch = users.slice(i, i + Config.AI_USER_CONCURRENCY);
-      await Promise.all(
-        batch.map(async (u) => {
-          try {
-            await processUser(sessionCookie, u.id);
-          } catch (e) {
-            logger.error(`[aiUserWorker] processUser error userId=${u.id}: ${e}`);
+    let index = 0;
+
+    while (index < users.length && !shuttingDown) {
+      if (inflight.size >= Config.AI_USER_CONCURRENCY) {
+        await Promise.race(inflight);
+        continue;
+      }
+
+      const { id: userId } = users[index++];
+
+      const p = (async () => {
+        try {
+          await processUser(sessionCookie, userId);
+        } catch (e) {
+          if (e instanceof UnauthorizedError) {
+            logger.warn(`[aiUserWorker] 401 while processing userId=${userId}; will relogin`);
+            return;
           }
-        }),
-      );
+          logger.error(`[aiUserWorker] error processing userId=${userId}: ${e}`);
+        }
+      })();
+
+      inflight.add(p);
+      p.finally(() => inflight.delete(p));
     }
+
+    if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
 
     offset += users.length;
     if (users.length < Config.AI_USER_BATCH_SIZE) offset = 0;
@@ -197,15 +224,14 @@ async function processLoop(): Promise<void> {
 }
 
 async function idleLoop(): Promise<void> {
-  while (!shuttingDown) {
-    await sleep(Config.AI_USER_IDLE_SLEEP_MS);
-  }
+  while (!shuttingDown) await sleep(Config.AI_USER_IDLE_SLEEP_MS);
 }
 
 async function shutdown(): Promise<void> {
   if (shuttingDown) return;
   shuttingDown = true;
   try {
+    if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
     const tasks: Promise<unknown>[] = [];
     if (pgPool) tasks.push(pgPool.end());
     if (redis) tasks.push(redis.quit());
@@ -216,21 +242,22 @@ async function shutdown(): Promise<void> {
 }
 
 async function main(): Promise<void> {
-  logger.info(
-    `[aiUserWorker] started concurrency=${Config.AI_SUMMARY_CONCURRENCY}`,
-  );
-
-  process.on("SIGINT", () => shutdown().catch(() => process.exit(1)));
-  process.on("SIGTERM", () => shutdown().catch(() => process.exit(1)));
+  logger.info(`STGY AI user worker started (concurrency=${Config.AI_USER_CONCURRENCY})`);
 
   pgPool = await connectPgWithRetry();
   redis = await connectRedisWithRetry();
   authService = new AuthService(pgPool, redis);
 
-  if (HAS_API_KEY) {
+  const onSig = () => {
+    shutdown().catch(() => process.exit(1));
+  };
+  process.on("SIGINT", onSig);
+  process.on("SIGTERM", onSig);
+
+  if (Config.OPENAI_API_KEY) {
     await processLoop();
   } else {
-    logger.info("[aiUserWorker] OPENAI_API_KEY is not set so do nothing.");
+    logger.info("OPENAI_API_KEY is not set so do nothing.");
     await idleLoop();
   }
 }
