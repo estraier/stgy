@@ -189,6 +189,28 @@ services:
     command: ["node", "dist/aiSummaryWorker.js"]
     restart: unless-stopped
 
+  aiuserworker:
+    <<: *host_gw
+    networks: [stgy_net]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      STGY_BACKEND_API_BASE_URL: ${STGY_BACKEND_API_BASE_URL:?}
+      STGY_DATABASE_HOST: ${STGY_DATABASE_HOST:?}
+      STGY_DATABASE_PORT: ${STGY_DATABASE_PORT:-5432}
+      STGY_DATABASE_USER: ${STGY_DATABASE_USER:?}
+      STGY_DATABASE_PASSWORD: ${STGY_DATABASE_PASSWORD:?}
+      STGY_DATABASE_NAME: ${STGY_DATABASE_NAME:?}
+      STGY_REDIS_HOST: ${STGY_REDIS_HOST:?}
+      STGY_REDIS_PORT: ${STGY_REDIS_PORT:-6379}
+      STGY_REDIS_PASSWORD: ${STGY_REDIS_PASSWORD:?}
+    command: ["node", "dist/aiUserWorker.js"]
+    restart: unless-stopped
+
   backend:
     <<: *host_gw
     networks: [stgy_net]

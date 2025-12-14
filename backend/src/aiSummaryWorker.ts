@@ -184,7 +184,6 @@ function evaluateChatResponseAsJson<T = unknown>(raw: string): T {
   let s = raw.trim();
   const fenced = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
   if (fenced) s = fenced[1].trim();
-
   const firstBrace = s.indexOf("{");
   const lastBrace = s.lastIndexOf("}");
   if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
@@ -193,11 +192,9 @@ function evaluateChatResponseAsJson<T = unknown>(raw: string): T {
       s = s.slice(firstBrace, lastBrace + 1);
     }
   }
-
   if (/,\s*[}\]]\s*$/.test(s)) {
     s = s.replace(/,\s*([}\]])\s*$/u, "$1");
   }
-
   return JSON.parse(s) as T;
 }
 
@@ -222,17 +219,14 @@ async function generateFeaturesViaBackend(
     method: "POST",
     body: { model: req.model, input: req.input },
   });
-
   const parsed = JSON.parse(res.body) as unknown;
   if (typeof parsed !== "object" || parsed === null) {
     throw new Error(`features api returned non-object: ${truncateForLog(res.body, 50)}`);
   }
-
   const obj = parsed as { features?: unknown };
   if (typeof obj.features !== "string" || obj.features.trim() === "") {
     throw new Error(`features api missing features string: ${truncateForLog(res.body, 50)}`);
   }
-
   const dims = Buffer.from(obj.features, "base64").byteLength;
   return { features: obj.features, dims };
 }
@@ -270,6 +264,12 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
       post.ownerNickname
     } content=${truncateForLog(post.content, 50)}`,
   );
+
+  // TODO:
+  // Check Redis if the same post has been processed twice in 24 hours.
+  // Check Redis if the same author has been processed 100 times within the same date.
+  // If so, generate and register dummy data to avoid further wastes.
+
   const promptTpl = readPrompt("post-summary", locale, "en");
   const postText = truncateText(post.content, Config.AI_SUMMARY_POST_TEXT_LIMIT);
   const postJsonObj = {

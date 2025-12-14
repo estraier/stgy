@@ -100,15 +100,14 @@ export class Config {
   static readonly AI_RPC_TIMEOUT_MS = envNum("STGY_AI_RPC_TIMEOUT_MS", 600 * 1000);
   static readonly AI_SUMMARY_POST_LOOKBACK_MS = envNum(
     "STGY_AI_SUMMARY_POST_LOOKBACK_MS",
-    2 * 24 * 60 * 60 * 1000,
-    //Date.now() - 1000,
+    //2 * 24 * 60 * 60 * 1000,
+    Date.now() - 1000,
   );
   static readonly AI_SUMMARY_POST_SKIP_LATEST_MS = envNum(
     "STGY_AI_SUMMARY_POST_SKIP_LATEST_MS",
     600 * 1000,
   );
-  //static readonly AI_SUMMARY_BATCH_SIZE = envNum("STGY_AI_SUMMARY_BATCH_SIZE", 100);
-  static readonly AI_SUMMARY_BATCH_SIZE = envNum("STGY_AI_SUMMARY_BATCH_SIZE", 1);
+  static readonly AI_SUMMARY_BATCH_SIZE = envNum("STGY_AI_SUMMARY_BATCH_SIZE", 1000);
   static readonly AI_SUMMARY_CONCURRENCY = envNum("STGY_AI_SUMMARY_CONCURRENCY", 1);
   //static readonly AI_SUMMARY_IDLE_SLEEP_MS = envNum("STGY_AI_SUMMARY_IDLE_SLEEP_MS", 10 * 1000);
   static readonly AI_SUMMARY_IDLE_SLEEP_MS = envNum("STGY_AI_SUMMARY_IDLE_SLEEP_MS", 3 * 1000);
@@ -120,6 +119,25 @@ export class Config {
   );
   static readonly AI_SUMMARY_SUMMARY_LENGTH = envNum("STGY_AI_SUMMARY_SUMMARY_LENGTH", 800);
   static readonly AI_SUMMARY_SUMMARY_LENGTH_CJK = envNum("STGY_AI_SUMMARY_SUMMARY_LENGTH_CJK", 400);
+
+
+
+  static readonly AI_USER_BATCH_SIZE = envNum("STGY_AI_USER_BATCH_SIZE", 1);
+  static readonly AI_USER_CONCURRENCY = envNum("STGY_AI_USER_CONCURRENCY", 1);
+  //static readonly AI_USER_IDLE_SLEEP_MS = envNum("STGY_AI_USER_IDLE_SLEEP_MS", 10 * 1000);
+  static readonly AI_USER_IDLE_SLEEP_MS = envNum("STGY_AI_USER_IDLE_SLEEP_MS", 3 * 1000);
+  static readonly AI_USER_POST_TEXT_LIMIT = envNum("STGY_AI_USER_POST_TEXT_LIMIT", 10000);
+  static readonly AI_USER_IMPRESSION_TEXT_LIMIT = envNum(
+    "STGY_AI_USER_IMPRESSION_TEXT_LIMIT",
+    2000,
+  );
+  static readonly AI_USER_IMPRESSION_LENGTH = envNum("STGY_AI_USER_USER_LENGTH", 800);
+  static readonly AI_USER_IMPRESSION_LENGTH_CJK = envNum("STGY_AI_USER_USER_LENGTH_CJK", 400);
+
+
+
+
+
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {

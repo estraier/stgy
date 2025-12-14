@@ -73,6 +73,7 @@ echo "[run-local-backend] running workers"
 (sleep 3 ; npm run backend:media-worker) &
 (sleep 3 ; npm run backend:notification-worker) &
 (sleep 3 ; npm run backend:ai-summary-worker) &
+(sleep 3 ; npm run backend:ai-user-worker) &
 
 echo "[run-local-backend] port=${STGY_BACKEND_PORT}  cmd=${CMD}"
 echo "[run-local-backend] npm run ${CMD} -- ${PASS_ARGS[*]-}"
