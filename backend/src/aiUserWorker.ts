@@ -3,6 +3,7 @@
 
 import { Config } from "./config";
 import { createLogger } from "./utils/logger";
+import { readPrompt } from "./utils/prompt";
 import { AuthService } from "./services/auth";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 import { countPseudoTokens, sliceByPseudoTokens } from "stgy-markdown";
@@ -43,6 +44,17 @@ class UnauthorizedError extends Error {
   }
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
+
+function getTrimmedStringProp(obj: Record<string, unknown>, key: string): string | null {
+  const v = obj[key];
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return s === "" ? null : s;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -56,6 +68,13 @@ function truncateForLog(value: unknown, max: number): string {
   }
   if (s.length <= max) return s;
   return sliceByPseudoTokens(s, 0, max);
+}
+
+function truncateText(text: string, max: number): string {
+  if (countPseudoTokens(text) <= max) {
+    return text;
+  }
+  return sliceByPseudoTokens(text, 0, max) + "…";
 }
 
 function httpRequest(
@@ -142,10 +161,10 @@ async function fetchNextUsers(
   if (!Array.isArray(parsed)) return [];
   const out: UserLite[] = [];
   for (const item of parsed) {
-    if (typeof item !== "object" || item === null) continue;
-    const id = (item as { id?: unknown }).id;
-    if (typeof id !== "string" || id.trim() === "") continue;
-    out.push(item as UserLite);
+    if (!isRecord(item)) continue;
+    const id = getTrimmedStringProp(item, "id");
+    if (!id) continue;
+    out.push(item as unknown as UserLite);
   }
   return out;
 }
@@ -155,14 +174,14 @@ async function fetchUserProfile(sessionCookie: string, userId: string): Promise<
     method: "GET",
   });
   const parsed = JSON.parse(res.body) as unknown;
-  if (typeof parsed !== "object" || parsed === null) {
+  if (!isRecord(parsed)) {
     throw new Error(`user profile api returned non-object: ${truncateForLog(res.body, 50)}`);
   }
-  const id = (parsed as { id?: unknown }).id;
-  if (typeof id !== "string" || id.trim() === "") {
+  const id = getTrimmedStringProp(parsed, "id");
+  if (!id) {
     throw new Error(`user profile missing id: ${truncateForLog(res.body, 50)}`);
   }
-  return parsed as UserDetail;
+  return parsed as unknown as UserDetail;
 }
 
 async function fetchFolloweePosts(sessionCookie: string, userId: string): Promise<Post[]> {
@@ -179,7 +198,7 @@ async function fetchFolloweePosts(sessionCookie: string, userId: string): Promis
   });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
-  return parsed as Post[];
+  return parsed as unknown as Post[];
 }
 
 async function fetchLatestPosts(sessionCookie: string, userId: string): Promise<Post[]> {
@@ -191,7 +210,7 @@ async function fetchLatestPosts(sessionCookie: string, userId: string): Promise<
   const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
-  return parsed as Post[];
+  return parsed as unknown as Post[];
 }
 
 async function fetchNotifications(sessionCookie: string): Promise<Notification[]> {
@@ -213,7 +232,7 @@ async function fetchNotifications(sessionCookie: string): Promise<Notification[]
   }
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
-  return parsed as Notification[];
+  return parsed as unknown as Notification[];
 }
 
 async function checkPostImpression(
@@ -261,11 +280,16 @@ async function fetchOwnRecentPosts(sessionCookie: string, userId: string): Promi
   const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
-  const list = parsed as Post[];
+
+  const list = parsed as unknown as Post[];
   const ids = list
-    .map((p) => (typeof (p as { id?: unknown }).id === "string" ? (p as { id: string }).id : ""))
+    .map((p) => {
+      const id = (p as unknown as { id?: unknown }).id;
+      return typeof id === "string" ? id.trim() : "";
+    })
     .filter(Boolean)
     .slice(0, Config.AI_USER_READ_POST_LIMIT);
+
   const result: PostDetail[] = [];
   for (const id of ids) {
     try {
@@ -294,24 +318,24 @@ async function fetchFollowerRecentRandomPostIds(
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
 
-  const followers = parsed as UserLite[];
+  const followers = parsed as unknown as UserLite[];
   if (followers.length === 0) return [];
+
   const shuffledFollowerIds = followers
-    .map((f) => ({
-      id: typeof (f as { id?: unknown }).id === "string" ? (f as { id: string }).id : "",
-      score: Math.random(),
-    }))
-    .filter((x) => x.id)
+    .map((f) => ({ id: String((f as unknown as { id?: unknown }).id ?? "").trim(), score: Math.random() }))
+    .filter((x) => x.id !== "")
     .sort((a, b) => a.score - b.score)
     .slice(0, 5)
     .map((x) => x.id);
+
   const postIds: string[] = [];
   for (const followerId of shuffledFollowerIds) {
     try {
       const posts = await fetchOwnRecentPosts(sessionCookie, followerId);
       for (const post of posts.slice(0, 3)) {
-        if (typeof (post as { id?: unknown }).id === "string") {
-          postIds.push((post as { id: string }).id);
+        const id = (post as unknown as { id?: unknown }).id;
+        if (typeof id === "string" && id.trim() !== "") {
+          postIds.push(id);
         }
       }
     } catch (e) {
@@ -324,37 +348,51 @@ async function fetchFollowerRecentRandomPostIds(
 
 async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<PostDetail[]> {
   const candidates: PostCandidate[] = [];
+
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
   for (const post of followeePosts) {
-    if ((post as { ownedBy?: unknown }).ownedBy === userId) continue;
-    const postId = (post as { id?: unknown }).id;
+    const ownedBy = (post as unknown as { ownedBy?: unknown }).ownedBy;
+    if (ownedBy === userId) continue;
+
+    const postId = (post as unknown as { id?: unknown }).id;
     if (typeof postId !== "string" || postId.trim() === "") continue;
+
     const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
     if (!hasImpression) {
       candidates.push({ postId, weight: 1 });
     }
   }
+
   const latestPosts = await fetchLatestPosts(sessionCookie, userId);
   for (const post of latestPosts) {
-    if ((post as { ownedBy?: unknown }).ownedBy === userId) continue;
-    const postId = (post as { id?: unknown }).id;
+    const ownedBy = (post as unknown as { ownedBy?: unknown }).ownedBy;
+    if (ownedBy === userId) continue;
+
+    const postId = (post as unknown as { id?: unknown }).id;
     if (typeof postId !== "string" || postId.trim() === "") continue;
+
     const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
     if (!hasImpression) {
       candidates.push({ postId, weight: 1 });
     }
   }
+
   const notifications = await fetchNotifications(sessionCookie);
   for (const n of notifications) {
-    const slot = (n as { slot?: unknown }).slot;
-    const records = (n as { records?: unknown }).records;
-    if (typeof slot !== "string" || !Array.isArray(records)) continue;
+    const slotRaw = (n as unknown as { slot?: unknown }).slot;
+    const recordsRaw = (n as unknown as { records?: unknown }).records;
+    if (typeof slotRaw !== "string" || !Array.isArray(recordsRaw)) continue;
+
+    const slot = slotRaw;
+    const records: unknown[] = recordsRaw;
+
     if (slot.startsWith("reply:")) {
-      for (const record of records as any[]) {
-        const postId = record?.postId;
-        const recordUserId = record?.userId;
-        if (typeof postId !== "string") continue;
-        if (typeof recordUserId !== "string" || recordUserId === userId) continue;
+      for (const record of records) {
+        if (!isRecord(record)) continue;
+        const postId = getTrimmedStringProp(record, "postId");
+        const recordUserId = getTrimmedStringProp(record, "userId");
+        if (!postId) continue;
+        if (!recordUserId || recordUserId === userId) continue;
 
         const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
         if (!hasImpression) {
@@ -362,12 +400,14 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
         }
       }
     }
+
     if (slot.startsWith("mention:")) {
-      for (const record of records as any[]) {
-        const postId = record?.postId;
-        const recordUserId = record?.userId;
-        if (typeof postId !== "string") continue;
-        if (typeof recordUserId !== "string" || recordUserId === userId) continue;
+      for (const record of records) {
+        if (!isRecord(record)) continue;
+        const postId = getTrimmedStringProp(record, "postId");
+        const recordUserId = getTrimmedStringProp(record, "userId");
+        if (!postId) continue;
+        if (!recordUserId || recordUserId === userId) continue;
 
         const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
         if (!hasImpression) {
@@ -376,6 +416,7 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       }
     }
   }
+
   try {
     const followerPostIds = await fetchFollowerRecentRandomPostIds(sessionCookie, userId);
     for (const postId of followerPostIds) {
@@ -387,10 +428,12 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
   } catch (e) {
     logger.error(`Error while fetching follower recent random post ids for userId=${userId}: ${e}`);
   }
+
   if (candidates.length === 0) {
     logger.info("No candidate posts to read");
     return [];
   }
+
   const weightByPost = new Map<string, number>();
   for (const { postId, weight } of candidates) {
     const prev = weightByPost.get(postId);
@@ -398,17 +441,21 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       weightByPost.set(postId, weight);
     }
   }
+
   const scoresByPost = new Map<string, number>();
   for (const [postId, weight] of weightByPost.entries()) {
     if (weight <= 0) continue;
     const score = Math.random() * weight;
     scoresByPost.set(postId, score);
   }
+
   const topPostIds = [...scoresByPost.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, Config.AI_USER_READ_POST_LIMIT)
     .map(([postId]) => postId);
+
   logger.info(`Selected post IDs to read: ${topPostIds.join(",")}`);
+
   const result: PostDetail[] = [];
   for (const postId of topPostIds) {
     try {
@@ -418,6 +465,7 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       logger.info(`Failed to fetch post detail for postId=${postId}: ${e}`);
     }
   }
+
   return result;
 }
 
@@ -427,34 +475,49 @@ async function createPostImpression(
   interest: AiUserInterest | null,
   post: PostDetail,
 ): Promise<void> {
-
-  //const locale = (post.locale || post.ownerLocale || "en").replace(/_/g, "-");
-
+  const locale = (post.locale || post.ownerLocale || "en").replace(/_/g, "-");
   console.log(post);
+
+
+  const promptTpl = readPrompt("post-impression", locale, "en");
+  const postText = truncateText(post.content, Config.AI_USER_POST_TEXT_LIMIT);
+
+  console.log(promptTpl);
+
+  console.log(postText);
+
+
 
 
 }
 
 async function processUser(sessionCookie: string, user: UserLite): Promise<void> {
-  logger.info(`Processing AI user: id=${user.id}, nickname=${user.nickname}`);
+  logger.info(`Processing AI user: id=${user.id}`);
+
   const profile = await fetchUserProfile(sessionCookie, user.id);
   const interest: AiUserInterest | null = null;
+
   const posts = await fetchPostsToRead(sessionCookie, user.id);
   logger.info(`postsToRead userId=${user.id} count=${posts.length}`);
+
   const peerIdSet = new Set<string>();
   const topPeerPosts = new Map<string, PostDetail>();
-  for (const post of posts) {
 
+  for (const post of posts) {
     await createPostImpression(sessionCookie, profile, interest, post);
 
-    peerIdSet.add(post.ownedBy);
-    if (topPeerPosts.size < 5 && !topPeerPosts.has(post.ownedBy)) {
-      topPeerPosts.set(post.ownedBy, post);
+    const ownedBy = (post as unknown as { ownedBy?: unknown }).ownedBy;
+    if (typeof ownedBy === "string" && ownedBy.trim() !== "") {
+      peerIdSet.add(ownedBy);
+      if (topPeerPosts.size < 5 && !topPeerPosts.has(ownedBy)) {
+        topPeerPosts.set(ownedBy, post);
+      }
     }
   }
 
   const peerIds = Array.from(peerIdSet);
   logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
+  void topPeerPosts;
 }
 
 async function processLoop(): Promise<void> {
@@ -467,8 +530,10 @@ async function processLoop(): Promise<void> {
       await sleep(Config.AI_USER_IDLE_SLEEP_MS);
       continue;
     }
+
     let needRelogin = false;
     let offset = 0;
+
     while (!shuttingDown) {
       let users: UserLite[] = [];
       try {
@@ -482,14 +547,18 @@ async function processLoop(): Promise<void> {
         logger.error(`fetchNextUsers error: ${e}`);
         break;
       }
+
       if (users.length === 0) break;
+
       let index = 0;
       while (index < users.length && !shuttingDown) {
         if (inflight.size >= Config.AI_USER_CONCURRENCY) {
           await Promise.race(inflight);
           continue;
         }
+
         const user = users[index++];
+
         const p = (async () => {
           try {
             await processUser(sessionCookie, user);
@@ -502,19 +571,22 @@ async function processLoop(): Promise<void> {
             logger.error(`error processing userId=${user.id}: ${e}`);
           }
         })();
+
         inflight.add(p);
         p.finally(() => inflight.delete(p));
       }
+
       if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
       if (needRelogin) break;
+
       offset += users.length;
       if (users.length < Config.AI_USER_BATCH_SIZE) break;
     }
+
     if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
     await sleep(Config.AI_USER_IDLE_SLEEP_MS);
 
-    // for debug
-    logger.info(`done`);
+    logger.info("done");
     await sleep(60 * 1000);
   }
 }
@@ -542,11 +614,13 @@ async function main(): Promise<void> {
   pgPool = await connectPgWithRetry();
   redis = await connectRedisWithRetry();
   authService = new AuthService(pgPool, redis);
+
   const onSig = () => {
     shutdown().catch(() => process.exit(1));
   };
   process.on("SIGINT", onSig);
   process.on("SIGTERM", onSig);
+
   if (Config.OPENAI_API_KEY) {
     await processLoop();
   } else {
