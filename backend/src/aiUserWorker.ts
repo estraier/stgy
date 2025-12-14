@@ -536,33 +536,45 @@ async function fetchFollowerRecentRandomPostIds(
   return postIds;
 }
 
-async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<PostDetail[]> {
+function computeLocaleWeight(userLocale: string, postLocale: string): number {
+  const langOf = (s: string): string => {
+    const t = s.trim().replaceAll("_", "-").toLowerCase();
+    if (!t) return "";
+    const i = t.indexOf("-");
+    return (i === -1 ? t : t.slice(0, i)).trim();
+  };
+  const userLang = langOf(userLocale);
+  const postLang = langOf(postLocale);
+  if (userLang !== "" && userLang === postLang) return 1;
+  if (postLang === "en") return 0.5;
+  return 0.3;
+}
+
+async function fetchPostsToRead(sessionCookie: string, userId: string, userLocale: string): Promise<PostDetail[]> {
   const candidates: PostCandidate[] = [];
 
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
   for (const post of followeePosts) {
     if (post.ownedBy === userId) continue;
-
     const hasSummary = await checkPostSummary(sessionCookie, post.id);
     if (!hasSummary) continue;
-
     const hasImpression = await checkPostImpression(sessionCookie, userId, post.id);
-    if (!hasImpression) {
-      candidates.push({ postId: post.id, weight: 1 });
-    }
+    if (hasImpression) continue;
+    const locale = post.locale || post.ownerLocale;
+    const localeWeight = computeLocaleWeight(userLocale, locale);
+    candidates.push({ postId: post.id, weight: 1 * localeWeight});
   }
 
   const latestPosts = await fetchLatestPosts(sessionCookie, userId);
   for (const post of latestPosts) {
     if (post.ownedBy === userId) continue;
-
     const hasSummary = await checkPostSummary(sessionCookie, post.id);
     if (!hasSummary) continue;
-
     const hasImpression = await checkPostImpression(sessionCookie, userId, post.id);
-    if (!hasImpression) {
-      candidates.push({ postId: post.id, weight: 1 });
-    }
+    if (hasImpression) continue;
+    const locale = post.locale || post.ownerLocale;
+    const localeWeight = computeLocaleWeight(userLocale, locale);
+    candidates.push({ postId: post.id, weight: 0.5 * localeWeight });
   }
 
   const notifications = await fetchNotifications(sessionCookie);
@@ -574,14 +586,11 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
         if (!("userId" in record)) continue;
         if (typeof record.userId !== "string") continue;
         if (record.userId === userId) continue;
-
         const hasSummary = await checkPostSummary(sessionCookie, record.postId);
         if (!hasSummary) continue;
-
         const hasImpression = await checkPostImpression(sessionCookie, userId, record.postId);
-        if (!hasImpression) {
-          candidates.push({ postId: record.postId, weight: 0.5 });
-        }
+        if (hasImpression) continue;
+        candidates.push({ postId: record.postId, weight: 0.8 });
       }
     }
     if (n.slot.startsWith("mention:")) {
@@ -591,14 +600,11 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
         if (!("userId" in record)) continue;
         if (typeof record.userId !== "string") continue;
         if (record.userId === userId) continue;
-
         const hasSummary = await checkPostSummary(sessionCookie, record.postId);
         if (!hasSummary) continue;
-
         const hasImpression = await checkPostImpression(sessionCookie, userId, record.postId);
-        if (!hasImpression) {
-          candidates.push({ postId: record.postId, weight: 0.3 });
-        }
+        if (hasImpression) continue;
+        candidates.push({ postId: record.postId, weight: 0.6 });
       }
     }
   }
@@ -608,11 +614,9 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
     for (const postId of followerPostIds) {
       const hasSummary = await checkPostSummary(sessionCookie, postId);
       if (!hasSummary) continue;
-
       const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
-      if (!hasImpression) {
-        candidates.push({ postId, weight: 0.3 });
-      }
+      if (hasImpression) continue;
+      candidates.push({ postId, weight: 0.5 });
     }
   } catch (e) {
     logger.error(`Error while fetching follower recent random post ids for userId=${userId}: ${e}`);
@@ -802,7 +806,7 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
   const userSessionCookie = await switchToUser(adminSessionCookie, user.id);
   const profile = await fetchUserProfile(userSessionCookie, user.id);
   const interest: AiUserInterest | null = null;
-  const posts = await fetchPostsToRead(userSessionCookie, user.id);
+  const posts = await fetchPostsToRead(userSessionCookie, user.id, profile.locale);
   logger.info(`postsToRead userId=${user.id} count=${posts.length}`);
   const peerIdSet = new Set<string>();
   const topPeerPosts = new Map<string, PostDetail>();
