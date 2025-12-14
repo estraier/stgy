@@ -1,3 +1,6 @@
+// このコードの中では絶対にanyを使わない。このコメントは消さない。
+// AIはコード内にコメントを書かない。人間は書いても良い。
+
 import { Config } from "./config";
 import { createLogger } from "./utils/logger";
 import { AuthService } from "./services/auth";
@@ -8,7 +11,7 @@ import type Redis from "ioredis";
 import http from "http";
 import https from "https";
 import { URLSearchParams } from "url";
-
+import type { AiUserInterest, AiPostImpression } from "./models/aiUser";
 import type { UserLite, UserDetail } from "./models/user";
 import type { Post, PostDetail } from "./models/post";
 import type { Notification } from "./models/notification";
@@ -62,11 +65,9 @@ function httpRequest(
   const method = options.method ?? "GET";
   const headers = options.headers ?? {};
   const body = options.body ?? "";
-
   const url = new URL(path, Config.BACKEND_API_BASE_URL);
   const isHttps = url.protocol === "https:";
   const client = isHttps ? https : http;
-
   return new Promise((resolve, reject) => {
     const req = client.request(
       {
@@ -103,15 +104,12 @@ async function apiRequest(
   const method = options.method ?? "GET";
   let bodyStr = "";
   const headers: Record<string, string> = { Cookie: sessionCookie };
-
   if (options.body !== undefined) {
     bodyStr = JSON.stringify(options.body);
     headers["Content-Type"] = "application/json";
     headers["Content-Length"] = Buffer.byteLength(bodyStr).toString();
   }
-
   const res = await httpRequest(path, { method, headers, body: bodyStr });
-
   if (res.statusCode === 401) {
     throw new UnauthorizedError(`401 from ${path}`);
   }
@@ -123,12 +121,9 @@ async function apiRequest(
   return res;
 }
 
-/**
- * バックドア（aiSummaryWorker と同様）
- */
 async function loginAsAdmin(): Promise<string> {
   if (!authService) throw new Error("authService is not initialized");
-  const res = await authService.loginAsAdmin(); // { sessionId }
+  const res = await authService.loginAsAdmin();
   const sessionCookie = `session_id=${res.sessionId}`;
   return sessionCookie;
 }
@@ -142,12 +137,9 @@ async function fetchNextUsers(
     offset: String(offset),
     limit: String(limit),
   });
-
   const res = await apiRequest(sessionCookie, `/ai-users?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
-
-  // id だけ保証して返す（落ちにくくする）
   const out: UserLite[] = [];
   for (const item of parsed) {
     if (typeof item !== "object" || item === null) continue;
@@ -162,17 +154,14 @@ async function fetchUserProfile(sessionCookie: string, userId: string): Promise<
   const res = await apiRequest(sessionCookie, `/users/${encodeURIComponent(userId)}`, {
     method: "GET",
   });
-
   const parsed = JSON.parse(res.body) as unknown;
   if (typeof parsed !== "object" || parsed === null) {
     throw new Error(`user profile api returned non-object: ${truncateForLog(res.body, 50)}`);
   }
-
   const id = (parsed as { id?: unknown }).id;
   if (typeof id !== "string" || id.trim() === "") {
     throw new Error(`user profile missing id: ${truncateForLog(res.body, 50)}`);
   }
-
   return parsed as UserDetail;
 }
 
@@ -185,11 +174,9 @@ async function fetchFolloweePosts(sessionCookie: string, userId: string): Promis
   params.set("includeReplies", "true");
   params.set("focusUserId", userId);
   params.set("limitPerUser", "3");
-
   const res = await apiRequest(sessionCookie, `/posts/by-followees?${params.toString()}`, {
     method: "GET",
   });
-
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
   return parsed as Post[];
@@ -201,7 +188,6 @@ async function fetchLatestPosts(sessionCookie: string, userId: string): Promise<
   params.set("limit", String(Config.AI_USER_FETCH_POST_LIMIT));
   params.set("order", "desc");
   params.set("focusUserId", userId);
-
   const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
@@ -209,7 +195,6 @@ async function fetchLatestPosts(sessionCookie: string, userId: string): Promise<
 }
 
 async function fetchNotifications(sessionCookie: string): Promise<Notification[]> {
-  // 304 を許容したいので apiRequest ではなく httpRequest を使う
   const res = await httpRequest("/notifications/feed", {
     method: "GET",
     headers: { Cookie: sessionCookie },
@@ -226,7 +211,6 @@ async function fetchNotifications(sessionCookie: string): Promise<Notification[]
       `request failed: ${res.statusCode} GET /notifications/feed ${truncateForLog(res.body, 50)}`,
     );
   }
-
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
   return parsed as Notification[];
@@ -241,7 +225,6 @@ async function checkPostImpression(
     `/ai-users/${encodeURIComponent(aiUserId)}/post-impressions/${encodeURIComponent(postId)}`,
     { method: "HEAD", headers: { Cookie: sessionCookie } },
   );
-
   if (res.statusCode === 401) {
     throw new UnauthorizedError(
       `401 from /ai-users/${encodeURIComponent(aiUserId)}/post-impressions/${encodeURIComponent(postId)}`,
@@ -249,7 +232,6 @@ async function checkPostImpression(
   }
   if (res.statusCode === 200) return true;
   if (res.statusCode === 404) return false;
-
   throw new Error(
     `request failed: ${res.statusCode} HEAD /ai-users/${encodeURIComponent(
       aiUserId,
@@ -264,8 +246,6 @@ async function fetchPostById(
 ): Promise<PostDetail> {
   const url = new URL(`/posts/${encodeURIComponent(postId)}`, Config.BACKEND_API_BASE_URL);
   url.searchParams.set("focusUserId", focusUserId);
-
-  // httpRequest は base url を取るので、ここは path+query を渡す
   const path = url.pathname + url.search;
   const res = await apiRequest(sessionCookie, path, { method: "GET" });
   return JSON.parse(res.body) as PostDetail;
@@ -278,17 +258,14 @@ async function fetchOwnRecentPosts(sessionCookie: string, userId: string): Promi
   params.set("order", "desc");
   params.set("ownedBy", userId);
   params.set("focusUserId", userId);
-
   const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
-
   const list = parsed as Post[];
   const ids = list
     .map((p) => (typeof (p as { id?: unknown }).id === "string" ? (p as { id: string }).id : ""))
     .filter(Boolean)
     .slice(0, Config.AI_USER_READ_POST_LIMIT);
-
   const result: PostDetail[] = [];
   for (const id of ids) {
     try {
@@ -307,9 +284,8 @@ async function fetchFollowerRecentRandomPostIds(
 ): Promise<string[]> {
   const params = new URLSearchParams();
   params.set("offset", "0");
-  params.set("limit", "100");
+  params.set("limit", String(Config.AI_USER_FETCH_POST_LIMIT));
   params.set("order", "desc");
-
   const res = await apiRequest(
     sessionCookie,
     `/users/${encodeURIComponent(userId)}/followers?${params.toString()}`,
@@ -320,7 +296,6 @@ async function fetchFollowerRecentRandomPostIds(
 
   const followers = parsed as UserLite[];
   if (followers.length === 0) return [];
-
   const shuffledFollowerIds = followers
     .map((f) => ({
       id: typeof (f as { id?: unknown }).id === "string" ? (f as { id: string }).id : "",
@@ -330,7 +305,6 @@ async function fetchFollowerRecentRandomPostIds(
     .sort((a, b) => a.score - b.score)
     .slice(0, 5)
     .map((x) => x.id);
-
   const postIds: string[] = [];
   for (const followerId of shuffledFollowerIds) {
     try {
@@ -350,38 +324,31 @@ async function fetchFollowerRecentRandomPostIds(
 
 async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<PostDetail[]> {
   const candidates: PostCandidate[] = [];
-
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
   for (const post of followeePosts) {
     if ((post as { ownedBy?: unknown }).ownedBy === userId) continue;
     const postId = (post as { id?: unknown }).id;
     if (typeof postId !== "string" || postId.trim() === "") continue;
-
     const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
     if (!hasImpression) {
       candidates.push({ postId, weight: 1 });
     }
   }
-
   const latestPosts = await fetchLatestPosts(sessionCookie, userId);
   for (const post of latestPosts) {
     if ((post as { ownedBy?: unknown }).ownedBy === userId) continue;
     const postId = (post as { id?: unknown }).id;
     if (typeof postId !== "string" || postId.trim() === "") continue;
-
     const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
     if (!hasImpression) {
       candidates.push({ postId, weight: 1 });
     }
   }
-
   const notifications = await fetchNotifications(sessionCookie);
   for (const n of notifications) {
     const slot = (n as { slot?: unknown }).slot;
     const records = (n as { records?: unknown }).records;
-
     if (typeof slot !== "string" || !Array.isArray(records)) continue;
-
     if (slot.startsWith("reply:")) {
       for (const record of records as any[]) {
         const postId = record?.postId;
@@ -395,7 +362,6 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
         }
       }
     }
-
     if (slot.startsWith("mention:")) {
       for (const record of records as any[]) {
         const postId = record?.postId;
@@ -410,7 +376,6 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       }
     }
   }
-
   try {
     const followerPostIds = await fetchFollowerRecentRandomPostIds(sessionCookie, userId);
     for (const postId of followerPostIds) {
@@ -422,12 +387,10 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
   } catch (e) {
     logger.error(`Error while fetching follower recent random post ids for userId=${userId}: ${e}`);
   }
-
   if (candidates.length === 0) {
     logger.info("No candidate posts to read");
     return [];
   }
-
   const weightByPost = new Map<string, number>();
   for (const { postId, weight } of candidates) {
     const prev = weightByPost.get(postId);
@@ -435,21 +398,17 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       weightByPost.set(postId, weight);
     }
   }
-
   const scoresByPost = new Map<string, number>();
   for (const [postId, weight] of weightByPost.entries()) {
     if (weight <= 0) continue;
     const score = Math.random() * weight;
     scoresByPost.set(postId, score);
   }
-
   const topPostIds = [...scoresByPost.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, Config.AI_USER_READ_POST_LIMIT)
     .map(([postId]) => postId);
-
   logger.info(`Selected post IDs to read: ${topPostIds.join(",")}`);
-
   const result: PostDetail[] = [];
   for (const postId of topPostIds) {
     try {
@@ -459,48 +418,48 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
       logger.info(`Failed to fetch post detail for postId=${postId}: ${e}`);
     }
   }
-
   return result;
 }
 
-/**
- * summarizePost 相当：profile を表示して fetchPostsToRead の結果も表示
- */
-async function processUser(sessionCookie: string, userId: string): Promise<void> {
-  const profile = await fetchUserProfile(sessionCookie, userId);
+async function createPostImpression(
+  userSessionCookie: string,
+  profile: UserDetail,
+  interest: AiUserInterest | null,
+  post: PostDetail,
+): Promise<void> {
 
-  logger.info(
-    `user profile fetched userId=${userId} nickname=${truncateForLog(
-      (profile as any).nickname,
-      20,
-    )} locale=${truncateForLog((profile as any).locale, 20)} intro=${truncateForLog(
-      (profile as any).introduction,
-      50,
-    )}`,
-  );
+  //const locale = (post.locale || post.ownerLocale || "en").replace(/_/g, "-");
 
-  const posts = await fetchPostsToRead(sessionCookie, userId);
+  console.log(post);
 
-  logger.info(`postsToRead userId=${userId} count=${posts.length}`);
 
-  // とりあえず見える化：ID と author と本文スニペット
-  for (const p of posts) {
-    const postId = (p as any).id;
-    const author = (p as any).ownerNickname ?? (p as any).ownedBy ?? "";
-    const content = (p as any).content ?? "";
-    logger.info(
-      `postToRead userId=${userId} postId=${postId} author=${truncateForLog(
-        author,
-        20,
-      )} content=${truncateForLog(content, 50)}`,
-    );
+}
+
+async function processUser(sessionCookie: string, user: UserLite): Promise<void> {
+  logger.info(`Processing AI user: id=${user.id}, nickname=${user.nickname}`);
+  const profile = await fetchUserProfile(sessionCookie, user.id);
+  const interest: AiUserInterest | null = null;
+  const posts = await fetchPostsToRead(sessionCookie, user.id);
+  logger.info(`postsToRead userId=${user.id} count=${posts.length}`);
+  const peerIdSet = new Set<string>();
+  const topPeerPosts = new Map<string, PostDetail>();
+  for (const post of posts) {
+
+    await createPostImpression(sessionCookie, profile, interest, post);
+
+    peerIdSet.add(post.ownedBy);
+    if (topPeerPosts.size < 5 && !topPeerPosts.has(post.ownedBy)) {
+      topPeerPosts.set(post.ownedBy, post);
+    }
   }
+
+  const peerIds = Array.from(peerIdSet);
+  logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
 }
 
 async function processLoop(): Promise<void> {
   while (!shuttingDown) {
     let sessionCookie: string;
-
     try {
       sessionCookie = await loginAsAdmin();
     } catch (e) {
@@ -508,10 +467,8 @@ async function processLoop(): Promise<void> {
       await sleep(Config.AI_USER_IDLE_SLEEP_MS);
       continue;
     }
-
     let needRelogin = false;
     let offset = 0;
-
     while (!shuttingDown) {
       let users: UserLite[] = [];
       try {
@@ -525,45 +482,35 @@ async function processLoop(): Promise<void> {
         logger.error(`fetchNextUsers error: ${e}`);
         break;
       }
-
       if (users.length === 0) break;
-
       let index = 0;
       while (index < users.length && !shuttingDown) {
         if (inflight.size >= Config.AI_USER_CONCURRENCY) {
           await Promise.race(inflight);
           continue;
         }
-
-        const userId = (users[index++] as any).id as string;
-
+        const user = users[index++];
         const p = (async () => {
           try {
-            await processUser(sessionCookie, userId);
+            await processUser(sessionCookie, user);
           } catch (e) {
             if (e instanceof UnauthorizedError) {
               needRelogin = true;
-              logger.warn(`401 while processing userId=${userId}; will relogin`);
+              logger.warn(`401 while processing userId=${user.id}; will relogin`);
               return;
             }
-            logger.error(`error processing userId=${userId}: ${e}`);
+            logger.error(`error processing userId=${user.id}: ${e}`);
           }
         })();
-
         inflight.add(p);
         p.finally(() => inflight.delete(p));
       }
-
       if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
-
       if (needRelogin) break;
-
       offset += users.length;
       if (users.length < Config.AI_USER_BATCH_SIZE) break;
     }
-
     if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
-
     await sleep(Config.AI_USER_IDLE_SLEEP_MS);
 
     // for debug
@@ -592,17 +539,14 @@ async function shutdown(): Promise<void> {
 
 async function main(): Promise<void> {
   logger.info(`STGY AI user worker started (concurrency=${Config.AI_USER_CONCURRENCY})`);
-
   pgPool = await connectPgWithRetry();
   redis = await connectRedisWithRetry();
   authService = new AuthService(pgPool, redis);
-
   const onSig = () => {
     shutdown().catch(() => process.exit(1));
   };
   process.on("SIGINT", onSig);
   process.on("SIGTERM", onSig);
-
   if (Config.OPENAI_API_KEY) {
     await processLoop();
   } else {
