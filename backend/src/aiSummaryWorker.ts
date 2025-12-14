@@ -3,6 +3,7 @@ import { createLogger } from "./utils/logger";
 import { readPrompt } from "./utils/prompt";
 import type { AiPostSummary } from "./models/aiPost";
 import type { PostDetail } from "./models/post";
+import type { ChatRequest, ChatResponse, GenerateFeaturesRequest } from "./models/aiUser";
 import { AuthService } from "./services/auth";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 import { countPseudoTokens, sliceByPseudoTokens } from "stgy-markdown";
@@ -27,21 +28,10 @@ type HttpResult = {
   body: string;
 };
 
-type ChatResponse = {
-  message?: {
-    content?: string;
-  };
-};
-
-type GenerateFeaturesRequest = {
-  model: string;
-  input: string;
-};
-
-type GenerateFeaturesResponse = {
-  features: string;
-  dims: number;
-};
+type GenerateFeaturesResponseWire =
+  | { features: string }
+  | { features: number[] }
+  | { features: { type: "Buffer"; data: number[] } };
 
 class UnauthorizedError extends Error {
   constructor(message = "unauthorized") {
@@ -211,24 +201,65 @@ function parseTagsField(raw: unknown, maxCount: number): string[] {
   return tags;
 }
 
+function normalizeFeaturesToBase64(respBody: string): { features: string; dims: number } {
+  const parsed = JSON.parse(respBody) as unknown;
+
+  const getFromNumbers = (nums: number[]): { base64: string; dims: number } => {
+    const allU8 = nums.every((n) => Number.isInteger(n) && n >= 0 && n <= 255);
+    if (allU8) {
+      const buf = Buffer.from(Uint8Array.from(nums));
+      return { base64: buf.toString("base64"), dims: buf.byteLength };
+    }
+    const allI8 = nums.every((n) => Number.isInteger(n) && n >= -128 && n <= 127);
+    if (allI8) {
+      const arr = Int8Array.from(nums);
+      const buf = Buffer.from(arr.buffer);
+      return { base64: buf.toString("base64"), dims: arr.byteLength };
+    }
+    throw new Error("features array has invalid byte values");
+  };
+
+  if (typeof parsed === "object" && parsed !== null) {
+    const obj = parsed as GenerateFeaturesResponseWire;
+    if (typeof obj.features === "string" && obj.features.trim() !== "") {
+      const dims = Buffer.from(obj.features, "base64").byteLength;
+      return { features: obj.features, dims };
+    }
+    if (Array.isArray(obj.features)) {
+      const { base64, dims } = getFromNumbers(obj.features);
+      return { features: base64, dims };
+    }
+    if (
+      typeof obj.features === "object" &&
+      obj.features !== null &&
+      "type" in obj.features &&
+      (obj.features as { type?: unknown }).type === "Buffer" &&
+      "data" in obj.features &&
+      Array.isArray((obj.features as { data?: unknown }).data)
+    ) {
+      const data = (obj.features as { data: unknown }).data as unknown[];
+      const nums: number[] = [];
+      for (const x of data) {
+        if (typeof x !== "number") throw new Error("features Buffer data contains non-number");
+        nums.push(x);
+      }
+      const { base64, dims } = getFromNumbers(nums);
+      return { features: base64, dims };
+    }
+  }
+
+  throw new Error(`features api returned invalid payload: ${truncateForLog(respBody, 50)}`);
+}
+
 async function generateFeaturesViaBackend(
   sessionCookie: string,
   req: GenerateFeaturesRequest,
-): Promise<GenerateFeaturesResponse> {
+): Promise<{ features: string; dims: number }> {
   const res = await apiRequest(sessionCookie, "/ai-users/features", {
     method: "POST",
     body: { model: req.model, input: req.input },
   });
-  const parsed = JSON.parse(res.body) as unknown;
-  if (typeof parsed !== "object" || parsed === null) {
-    throw new Error(`features api returned non-object: ${truncateForLog(res.body, 50)}`);
-  }
-  const obj = parsed as { features?: unknown };
-  if (typeof obj.features !== "string" || obj.features.trim() === "") {
-    throw new Error(`features api missing features string: ${truncateForLog(res.body, 50)}`);
-  }
-  const dims = Buffer.from(obj.features, "base64").byteLength;
-  return { features: obj.features, dims };
+  return normalizeFeaturesToBase64(res.body);
 }
 
 function buildFeaturesInput(summary: string, tags: string[]): string {
@@ -266,11 +297,6 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     )}`,
   );
 
-  // TODO:
-  // Check Redis if the same post has been processed twice in 24 hours.
-  // Check Redis if the same author has been processed 100 times within the same date.
-  // If so, generate and register dummy data to avoid further wastes.
-
   const promptTpl = readPrompt("post-summary", locale, "en");
   const postText = truncateText(post.content, Config.AI_SUMMARY_POST_TEXT_LIMIT);
   const postJsonObj = {
@@ -280,6 +306,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   };
   const postJson = JSON.stringify(postJsonObj, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
   let maxChars = Config.AI_SUMMARY_SUMMARY_LENGTH;
+  let tagChars = Config.AI_TAG_MAX_LENGTH;
   if (
     locale === "ja" ||
     locale.startsWith("ja-") ||
@@ -289,6 +316,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     locale.startsWith("ko-")
   ) {
     maxChars = Config.AI_SUMMARY_SUMMARY_LENGTH_CJK;
+    tagChars = Config.AI_TAG_MAX_LENGTH_CJK;
   }
   let localeText = locale;
   if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
@@ -296,25 +324,35 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   const prompt = promptTpl
     .replaceAll("{{POST_JSON}}", postJson)
     .replaceAll("{{MAX_CHARS}}", String(maxChars))
+    .replaceAll("{{TAG_CHARS}}", String(tagChars))
+    .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
-  //console.log(prompt);
+
+  // console.log(prompt);
+
+  const chatReq: ChatRequest = {
+    model: Config.AI_SUMMARY_MODEL,
+    messages: [{ role: "user", content: prompt }],
+  };
+
   const chatRes = await apiRequest(sessionCookie, `/ai-users/chat`, {
     method: "POST",
-    body: {
-      model: Config.AI_SUMMARY_MODEL,
-      messages: [{ role: "user" as const, content: prompt }],
-    },
+    body: chatReq,
   });
+
   const chatJson = JSON.parse(chatRes.body) as ChatResponse;
-  const aiContent = chatJson.message?.content;
+  const aiContent = chatJson.message.content;
   if (typeof aiContent !== "string" || aiContent.trim() === "") {
     throw new Error(`ai-users/chat returned empty content for postId=${postId}`);
   }
-  //console.log(aiContent);
+
+  // console.log(aiContent);
+
   const parsed = evaluateChatResponseAsJson<{
     summary?: unknown;
     tags?: unknown;
   }>(aiContent);
+
   if (typeof parsed !== "object" || parsed === null) {
     throw new Error(`AI output is not an object: postId=${postId}`);
   }
@@ -322,21 +360,25 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   if (typeof obj.summary !== "string") {
     throw new Error(`AI output missing summary string: postId=${postId}`);
   }
+
   const summary = truncateText(obj.summary, Config.AI_SUMMARY_SUMMARY_TEXT_LIMIT);
-  const tags = parseTagsField(obj.tags, 5);
+  const tags = parseTagsField(obj.tags, Config.AI_TAG_MAX_COUNT);
   logger.info(
     `parsed result postId=${postId} summary=${truncateForLog(summary, 50)} tags=${tags.join(",")}`,
   );
+
   const featuresInput = buildFeaturesInput(summary, tags);
   const feat = await generateFeaturesViaBackend(sessionCookie, {
     model: Config.AI_SUMMARY_MODEL,
     input: featuresInput,
   });
+
   await postSummaryResult(sessionCookie, postId, {
     summary,
     tags,
     features: feat.features,
   });
+
   logger.info(`summary saved postId=${postId}`);
 }
 
@@ -350,6 +392,7 @@ async function processLoop(): Promise<void> {
       await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
       continue;
     }
+
     let summaries: AiPostSummary[] = [];
     try {
       summaries = await fetchPendingSummaries(sessionCookie);
@@ -358,16 +401,19 @@ async function processLoop(): Promise<void> {
       await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
       continue;
     }
+
     if (summaries.length === 0) {
       await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
       continue;
     }
+
     let index = 0;
     while (index < summaries.length && !shuttingDown) {
       if (inflight.size >= Config.AI_SUMMARY_CONCURRENCY) {
         await Promise.race(inflight);
         continue;
       }
+
       const { postId } = summaries[index++];
       const p = (async () => {
         try {
@@ -380,9 +426,11 @@ async function processLoop(): Promise<void> {
           logger.error(`error summarizing postId=${postId}: ${e}`);
         }
       })();
+
       inflight.add(p);
       p.finally(() => inflight.delete(p));
     }
+
     if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
     await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
   }
@@ -411,11 +459,13 @@ async function main(): Promise<void> {
   pgPool = await connectPgWithRetry();
   redis = await connectRedisWithRetry();
   authService = new AuthService(pgPool, redis);
+
   const onSig = () => {
     shutdown().catch(() => process.exit(1));
   };
   process.on("SIGINT", onSig);
   process.on("SIGTERM", onSig);
+
   if (Config.OPENAI_API_KEY) {
     await processLoop();
   } else {

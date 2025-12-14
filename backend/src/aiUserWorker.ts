@@ -1,5 +1,7 @@
-// このコードの中では絶対にanyを使わない。このコメントは消さない。
+// このコメントは消さない。
+// このコードの中では絶対にanyを使わない。
 // AIはコード内にコメントを書かない。人間は書いても良い。
+// AIがコードを書き換える際には、絶対にデグレさせてはいけない。既存の機能を許可なく削ることは許容できない。
 
 import { Config } from "./config";
 import { createLogger } from "./utils/logger";
@@ -12,7 +14,7 @@ import type Redis from "ioredis";
 import http from "http";
 import https from "https";
 import { URLSearchParams } from "url";
-import type { AiUserInterest, AiPostImpression } from "./models/aiUser";
+import type { AiUser, AiUserInterest, ChatRequest, ChatResponse } from "./models/aiUser";
 import type { UserLite, UserDetail } from "./models/user";
 import type { Post, PostDetail } from "./models/post";
 import type { Notification } from "./models/notification";
@@ -37,6 +39,11 @@ type PostCandidate = {
   weight: number;
 };
 
+type PeerImpressionPayloadJson = {
+  impression: string;
+  tags?: string[];
+};
+
 class UnauthorizedError extends Error {
   constructor(message = "unauthorized") {
     super(message);
@@ -46,13 +53,6 @@ class UnauthorizedError extends Error {
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
-}
-
-function getTrimmedStringProp(obj: Record<string, unknown>, key: string): string | null {
-  const v = obj[key];
-  if (typeof v !== "string") return null;
-  const s = v.trim();
-  return s === "" ? null : s;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -140,6 +140,104 @@ async function apiRequest(
   return res;
 }
 
+function evaluateChatResponseAsJson<T = unknown>(raw: string): T {
+  let s = raw.trim();
+  const fenced = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
+  if (fenced) s = fenced[1].trim();
+  const firstBrace = s.indexOf("{");
+  const lastBrace = s.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
+    const afterLast = s.slice(lastBrace + 1);
+    if (/^\s*$/.test(afterLast)) {
+      s = s.slice(firstBrace, lastBrace + 1);
+    }
+  }
+  if (/,\s*[}\]]\s*$/.test(s)) {
+    s = s.replace(/,\s*([}\]])\s*$/u, "$1");
+  }
+  return JSON.parse(s) as T;
+}
+
+function parseTagsField(raw: unknown, maxCount: number): string[] {
+  if (!Array.isArray(raw)) return [];
+  const tags: string[] = [];
+  for (const t of raw) {
+    if (typeof t !== "string") continue;
+    const trimmed = t.trim().slice(0, 20);
+    if (!trimmed) continue;
+    tags.push(trimmed);
+    if (tags.length >= maxCount) break;
+  }
+  return tags;
+}
+
+function parsePeerImpressionPayload(payload: string): PeerImpressionPayloadJson | null {
+  try {
+    const parsed = JSON.parse(payload) as unknown;
+    if (!isRecord(parsed)) return null;
+    const imp = parsed["impression"];
+    if (typeof imp !== "string") return null;
+    const tags = parseTagsField(parsed["tags"], 5);
+    return { impression: imp, tags };
+  } catch {
+    return null;
+  }
+}
+
+function buildProfileExcerpt(profile: UserDetail, interest: AiUserInterest | null): {
+  userId: string;
+  nickname: string;
+  locale: string;
+  introduction: string;
+  aiPersonality: string;
+  currentInterest: string;
+  currentInterestTags: string[];
+} {
+  let currentInterest = "";
+  const currentInterestTags: string[] = [];
+
+  if (interest && typeof interest.payload === "string") {
+    try {
+      const obj = JSON.parse(interest.payload) as unknown;
+      if (isRecord(obj) && typeof obj["interest"] === "string") {
+        currentInterest = truncateText(obj["interest"], 200);
+        const tags = parseTagsField(obj["tags"], 5);
+        for (const t of tags) currentInterestTags.push(t);
+      } else {
+        currentInterest = truncateText(interest.payload, 200);
+      }
+    } catch {
+      currentInterest = truncateText(interest.payload, 200);
+    }
+  }
+
+  return {
+    userId: profile.id,
+    nickname: profile.nickname,
+    locale: profile.locale,
+    introduction: truncateText(profile.introduction, 200),
+    aiPersonality: truncateText(profile.aiPersonality ?? "", 200),
+    currentInterest,
+    currentInterestTags,
+  };
+}
+
+function parseChatResponse(body: string): ChatResponse {
+  const parsed = JSON.parse(body) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error(`chat response is not an object: ${truncateForLog(body, 50)}`);
+  }
+  const msg = parsed["message"];
+  if (!isRecord(msg)) {
+    throw new Error(`chat response missing message object: ${truncateForLog(body, 50)}`);
+  }
+  const content = msg["content"];
+  if (typeof content !== "string") {
+    throw new Error(`chat response missing content string: ${truncateForLog(body, 50)}`);
+  }
+  return { message: { content } };
+}
+
 async function loginAsAdmin(): Promise<string> {
   if (!authService) throw new Error("authService is not initialized");
   const res = await authService.loginAsAdmin();
@@ -147,11 +245,37 @@ async function loginAsAdmin(): Promise<string> {
   return sessionCookie;
 }
 
+async function switchToUser(adminSessionCookie: string, userId: string): Promise<string> {
+  const res = await apiRequest(adminSessionCookie, "/auth/switch-user", {
+    method: "POST",
+    body: { id: userId },
+  });
+  const raw = res.headers["set-cookie"] as unknown;
+  let cookie: string | null = null;
+  if (Array.isArray(raw)) {
+    for (const s of raw) {
+      if (typeof s !== "string") continue;
+      const m = s.match(/session_id=[^;]+/);
+      if (m) {
+        cookie = m[0];
+        break;
+      }
+    }
+  } else if (typeof raw === "string") {
+    const m = raw.match(/session_id=[^;]+/);
+    cookie = m ? m[0] : null;
+  }
+  if (!cookie) {
+    throw new Error(`session_id cookie not found in switch-user response for userId=${userId}`);
+  }
+  return cookie;
+}
+
 async function fetchNextUsers(
   sessionCookie: string,
   offset: number,
   limit: number,
-): Promise<UserLite[]> {
+): Promise<AiUser[]> {
   const params = new URLSearchParams({
     offset: String(offset),
     limit: String(limit),
@@ -159,12 +283,14 @@ async function fetchNextUsers(
   const res = await apiRequest(sessionCookie, `/ai-users?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
-  const out: UserLite[] = [];
+  const out: AiUser[] = [];
   for (const item of parsed) {
     if (!isRecord(item)) continue;
-    const id = getTrimmedStringProp(item, "id");
-    if (!id) continue;
-    out.push(item as unknown as UserLite);
+    const id = item["id"];
+    const nickname = item["nickname"];
+    if (typeof id !== "string" || id.trim() === "") continue;
+    if (typeof nickname !== "string") continue;
+    out.push(item as AiUser);
   }
   return out;
 }
@@ -177,11 +303,37 @@ async function fetchUserProfile(sessionCookie: string, userId: string): Promise<
   if (!isRecord(parsed)) {
     throw new Error(`user profile api returned non-object: ${truncateForLog(res.body, 50)}`);
   }
-  const id = getTrimmedStringProp(parsed, "id");
-  if (!id) {
+  const id = parsed["id"];
+  if (typeof id !== "string" || id.trim() === "") {
     throw new Error(`user profile missing id: ${truncateForLog(res.body, 50)}`);
   }
-  return parsed as unknown as UserDetail;
+  return parsed as UserDetail;
+}
+
+async function fetchPeerImpression(
+  sessionCookie: string,
+  aiUserId: string,
+  peerId: string,
+): Promise<string> {
+  const path = `/ai-users/${encodeURIComponent(aiUserId)}/peer-impressions/${encodeURIComponent(
+    peerId,
+  )}`;
+  const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
+  if (res.statusCode === 401) throw new UnauthorizedError(`401 from ${path}`);
+  if (res.statusCode === 404) return "";
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    logger.error(
+      `failed to fetch peer impression userId=${aiUserId} peerId=${peerId}: ${res.statusCode} ${truncateForLog(
+        res.body,
+        50,
+      )}`,
+    );
+    return "";
+  }
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!isRecord(parsed)) return "";
+  const payload = parsed["payload"];
+  return typeof payload === "string" ? payload : "";
 }
 
 async function fetchFolloweePosts(sessionCookie: string, userId: string): Promise<Post[]> {
@@ -198,7 +350,7 @@ async function fetchFolloweePosts(sessionCookie: string, userId: string): Promis
   });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
-  return parsed as unknown as Post[];
+  return parsed as Post[];
 }
 
 async function fetchLatestPosts(sessionCookie: string, userId: string): Promise<Post[]> {
@@ -210,7 +362,7 @@ async function fetchLatestPosts(sessionCookie: string, userId: string): Promise<
   const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
-  return parsed as unknown as Post[];
+  return parsed as Post[];
 }
 
 async function fetchNotifications(sessionCookie: string): Promise<Notification[]> {
@@ -232,7 +384,7 @@ async function fetchNotifications(sessionCookie: string): Promise<Notification[]
   }
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
-  return parsed as unknown as Notification[];
+  return parsed as Notification[];
 }
 
 async function checkPostImpression(
@@ -246,7 +398,9 @@ async function checkPostImpression(
   );
   if (res.statusCode === 401) {
     throw new UnauthorizedError(
-      `401 from /ai-users/${encodeURIComponent(aiUserId)}/post-impressions/${encodeURIComponent(postId)}`,
+      `401 from /ai-users/${encodeURIComponent(aiUserId)}/post-impressions/${encodeURIComponent(
+        postId,
+      )}`,
     );
   }
   if (res.statusCode === 200) return true;
@@ -280,15 +434,8 @@ async function fetchOwnRecentPosts(sessionCookie: string, userId: string): Promi
   const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
-
-  const list = parsed as unknown as Post[];
-  const ids = list
-    .map((p) => {
-      const id = (p as unknown as { id?: unknown }).id;
-      return typeof id === "string" ? id.trim() : "";
-    })
-    .filter(Boolean)
-    .slice(0, Config.AI_USER_READ_POST_LIMIT);
+  const list = parsed as Post[];
+  const ids = list.map((p) => p.id).slice(0, Config.AI_USER_READ_POST_LIMIT);
 
   const result: PostDetail[] = [];
   for (const id of ids) {
@@ -317,13 +464,12 @@ async function fetchFollowerRecentRandomPostIds(
   );
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
-
-  const followers = parsed as unknown as UserLite[];
+  const followers = parsed as UserLite[];
   if (followers.length === 0) return [];
 
   const shuffledFollowerIds = followers
-    .map((f) => ({ id: String((f as unknown as { id?: unknown }).id ?? "").trim(), score: Math.random() }))
-    .filter((x) => x.id !== "")
+    .map((f) => ({ id: f.id, score: Math.random() }))
+    .filter((x) => x.id.trim() !== "")
     .sort((a, b) => a.score - b.score)
     .slice(0, 5)
     .map((x) => x.id);
@@ -333,13 +479,12 @@ async function fetchFollowerRecentRandomPostIds(
     try {
       const posts = await fetchOwnRecentPosts(sessionCookie, followerId);
       for (const post of posts.slice(0, 3)) {
-        const id = (post as unknown as { id?: unknown }).id;
-        if (typeof id === "string" && id.trim() !== "") {
-          postIds.push(id);
-        }
+        postIds.push(post.id);
       }
     } catch (e) {
-      logger.info(`Failed to fetch recent posts followerId=${followerId} of userId=${userId}: ${e}`);
+      logger.info(
+        `Failed to fetch recent posts followerId=${followerId} of userId=${userId}: ${e}`,
+      );
     }
   }
 
@@ -351,67 +496,49 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
 
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
   for (const post of followeePosts) {
-    const ownedBy = (post as unknown as { ownedBy?: unknown }).ownedBy;
-    if (ownedBy === userId) continue;
-
-    const postId = (post as unknown as { id?: unknown }).id;
-    if (typeof postId !== "string" || postId.trim() === "") continue;
-
-    const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
+    if (post.ownedBy === userId) continue;
+    const hasImpression = await checkPostImpression(sessionCookie, userId, post.id);
     if (!hasImpression) {
-      candidates.push({ postId, weight: 1 });
+      candidates.push({ postId: post.id, weight: 1 });
     }
   }
 
   const latestPosts = await fetchLatestPosts(sessionCookie, userId);
   for (const post of latestPosts) {
-    const ownedBy = (post as unknown as { ownedBy?: unknown }).ownedBy;
-    if (ownedBy === userId) continue;
-
-    const postId = (post as unknown as { id?: unknown }).id;
-    if (typeof postId !== "string" || postId.trim() === "") continue;
-
-    const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
+    if (post.ownedBy === userId) continue;
+    const hasImpression = await checkPostImpression(sessionCookie, userId, post.id);
     if (!hasImpression) {
-      candidates.push({ postId, weight: 1 });
+      candidates.push({ postId: post.id, weight: 1 });
     }
   }
 
   const notifications = await fetchNotifications(sessionCookie);
   for (const n of notifications) {
-    const slotRaw = (n as unknown as { slot?: unknown }).slot;
-    const recordsRaw = (n as unknown as { records?: unknown }).records;
-    if (typeof slotRaw !== "string" || !Array.isArray(recordsRaw)) continue;
+    if (n.slot.startsWith("reply:")) {
+      for (const record of n.records) {
+        if (!("postId" in record)) continue;
+        if (typeof record.postId !== "string") continue;
+        if (!("userId" in record)) continue;
+        if (typeof record.userId !== "string") continue;
+        if (record.userId === userId) continue;
 
-    const slot = slotRaw;
-    const records: unknown[] = recordsRaw;
-
-    if (slot.startsWith("reply:")) {
-      for (const record of records) {
-        if (!isRecord(record)) continue;
-        const postId = getTrimmedStringProp(record, "postId");
-        const recordUserId = getTrimmedStringProp(record, "userId");
-        if (!postId) continue;
-        if (!recordUserId || recordUserId === userId) continue;
-
-        const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
+        const hasImpression = await checkPostImpression(sessionCookie, userId, record.postId);
         if (!hasImpression) {
-          candidates.push({ postId, weight: 0.5 });
+          candidates.push({ postId: record.postId, weight: 0.5 });
         }
       }
     }
+    if (n.slot.startsWith("mention:")) {
+      for (const record of n.records) {
+        if (!("postId" in record)) continue;
+        if (typeof record.postId !== "string") continue;
+        if (!("userId" in record)) continue;
+        if (typeof record.userId !== "string") continue;
+        if (record.userId === userId) continue;
 
-    if (slot.startsWith("mention:")) {
-      for (const record of records) {
-        if (!isRecord(record)) continue;
-        const postId = getTrimmedStringProp(record, "postId");
-        const recordUserId = getTrimmedStringProp(record, "userId");
-        if (!postId) continue;
-        if (!recordUserId || recordUserId === userId) continue;
-
-        const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
+        const hasImpression = await checkPostImpression(sessionCookie, userId, record.postId);
         if (!hasImpression) {
-          candidates.push({ postId, weight: 0.3 });
+          candidates.push({ postId: record.postId, weight: 0.3 });
         }
       }
     }
@@ -475,43 +602,148 @@ async function createPostImpression(
   interest: AiUserInterest | null,
   post: PostDetail,
 ): Promise<void> {
-  const locale = (post.locale || post.ownerLocale || "en").replace(/_/g, "-");
-  console.log(post);
+  const baseLocale =
+    (post.locale ?? "") || (post.ownerLocale ?? "") || (profile.locale ?? "") || "en";
+  const locale = baseLocale.replace(/_/g, "-");
 
+  const profileExcerpt = buildProfileExcerpt(profile, interest);
+  const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+
+  const rawPeerImpression = await fetchPeerImpression(userSessionCookie, profile.id, post.ownedBy);
+  let peerImpressionText = rawPeerImpression;
+  let peerTags: string[] = [];
+
+  if (rawPeerImpression) {
+    const parsedPeer = parsePeerImpressionPayload(rawPeerImpression);
+    if (parsedPeer) {
+      peerImpressionText = truncateText(parsedPeer.impression, Config.AI_USER_OUTPUT_TEXT_LIMIT);
+      peerTags = parsedPeer.tags?.slice(0, 5) ?? [];
+    } else {
+      peerImpressionText = truncateText(rawPeerImpression, Config.AI_USER_OUTPUT_TEXT_LIMIT);
+    }
+  } else {
+    peerImpressionText = "";
+    peerTags = [];
+  }
+
+  const postText = truncateText(post.content, Config.AI_USER_POST_TEXT_LIMIT);
+  const postExcerpt = {
+    author: post.ownerNickname,
+    locale,
+    createdAt: post.createdAt,
+    content: postText,
+    peerImpression: peerImpressionText,
+    peerTags,
+  };
+
+  const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+
+  let maxChars = Config.AI_USER_IMPRESSION_LENGTH;
+  let tagChars = Config.AI_TAG_MAX_LENGTH;
+  if (
+    locale === "ja" ||
+    locale.startsWith("ja-") ||
+    locale === "zh" ||
+    locale.startsWith("zh-") ||
+    locale === "ko" ||
+    locale.startsWith("ko-")
+  ) {
+    maxChars = Config.AI_USER_IMPRESSION_LENGTH_CJK;
+    tagChars = Config.AI_TAG_MAX_LENGTH_CJK;
+  }
+
+  let localeText = locale;
+  if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
+  if (locale === "ja" || locale.startsWith("ja-")) localeText = `日本語（${locale}）`;
 
   const promptTpl = readPrompt("post-impression", locale, "en");
-  const postText = truncateText(post.content, Config.AI_USER_POST_TEXT_LIMIT);
+  const prompt = promptTpl
+    .replaceAll("{{PROFILE_JSON}}", profileJson)
+    .replaceAll("{{POST_JSON}}", postJson)
+    .replaceAll("{{MAX_CHARS}}", String(maxChars))
+    .replaceAll("{{TAG_CHARS}}", String(tagChars))
+    .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
+    .replaceAll("{{LOCALE}}", localeText);
 
-  console.log(promptTpl);
+  console.log(prompt);
 
-  console.log(postText);
+  const chatReq: ChatRequest = {
+    messages: [{ role: "user", content: prompt }],
+  };
 
+  const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
+    method: "POST",
+    body: chatReq,
+  });
 
+  const chat = parseChatResponse(chatRes.body);
+  const content = chat.message.content;
 
+  if (content.trim() === "") {
+    throw new Error(`ai-users/chat returned empty content userId=${profile.id} postId=${post.id}`);
+  }
 
+  console.log(content);
+
+  const parsed = evaluateChatResponseAsJson<unknown>(content);
+
+  if (!isRecord(parsed)) {
+    throw new Error(
+      `AI output JSON is not an object userId=${profile.id} postId=${post.id} content=${truncateForLog(
+        content,
+        50,
+      )}`,
+    );
+  }
+
+  const impressionRaw = parsed["impression"];
+  if (typeof impressionRaw !== "string") {
+    throw new Error(
+      `AI output JSON missing impression userId=${profile.id} postId=${post.id} content=${truncateForLog(
+        content,
+        50,
+      )}`,
+    );
+  }
+
+  const impression = truncateText(impressionRaw.trim(), Config.AI_USER_OUTPUT_TEXT_LIMIT);
+  const tags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
+
+  const payload = JSON.stringify({ impression, tags });
+
+  await apiRequest(userSessionCookie, `/ai-users/${encodeURIComponent(profile.id)}/post-impressions`, {
+    method: "POST",
+    body: { postId: post.id, payload },
+  });
+
+  logger.info(`Saved post impression userId=${profile.id} postId=${post.id} tags=${tags.join(",")}`);
 }
 
-async function processUser(sessionCookie: string, user: UserLite): Promise<void> {
-  logger.info(`Processing AI user: id=${user.id}`);
+async function processUser(adminSessionCookie: string, user: AiUser): Promise<void> {
+  logger.info(`Processing AI user: id=${user.id}, nickname=${user.nickname}`);
 
-  const profile = await fetchUserProfile(sessionCookie, user.id);
+  const userSessionCookie = await switchToUser(adminSessionCookie, user.id);
+
+  const profile = await fetchUserProfile(userSessionCookie, user.id);
   const interest: AiUserInterest | null = null;
 
-  const posts = await fetchPostsToRead(sessionCookie, user.id);
+  const posts = await fetchPostsToRead(userSessionCookie, user.id);
   logger.info(`postsToRead userId=${user.id} count=${posts.length}`);
 
   const peerIdSet = new Set<string>();
   const topPeerPosts = new Map<string, PostDetail>();
 
   for (const post of posts) {
-    await createPostImpression(sessionCookie, profile, interest, post);
+    peerIdSet.add(post.ownedBy);
+    if (topPeerPosts.size < 5 && !topPeerPosts.has(post.ownedBy)) {
+      topPeerPosts.set(post.ownedBy, post);
+    }
 
-    const ownedBy = (post as unknown as { ownedBy?: unknown }).ownedBy;
-    if (typeof ownedBy === "string" && ownedBy.trim() !== "") {
-      peerIdSet.add(ownedBy);
-      if (topPeerPosts.size < 5 && !topPeerPosts.has(ownedBy)) {
-        topPeerPosts.set(ownedBy, post);
-      }
+    try {
+      await createPostImpression(userSessionCookie, profile, interest, post);
+    } catch (e) {
+      if (e instanceof UnauthorizedError) throw e;
+      logger.error(`error creating post impression userId=${user.id} postId=${post.id}: ${e}`);
     }
   }
 
@@ -522,9 +754,9 @@ async function processUser(sessionCookie: string, user: UserLite): Promise<void>
 
 async function processLoop(): Promise<void> {
   while (!shuttingDown) {
-    let sessionCookie: string;
+    let adminSessionCookie: string;
     try {
-      sessionCookie = await loginAsAdmin();
+      adminSessionCookie = await loginAsAdmin();
     } catch (e) {
       logger.error(`loginAsAdmin error: ${e}`);
       await sleep(Config.AI_USER_IDLE_SLEEP_MS);
@@ -535,9 +767,9 @@ async function processLoop(): Promise<void> {
     let offset = 0;
 
     while (!shuttingDown) {
-      let users: UserLite[] = [];
+      let users: AiUser[] = [];
       try {
-        users = await fetchNextUsers(sessionCookie, offset, Config.AI_USER_BATCH_SIZE);
+        users = await fetchNextUsers(adminSessionCookie, offset, Config.AI_USER_BATCH_SIZE);
       } catch (e) {
         if (e instanceof UnauthorizedError) {
           needRelogin = true;
@@ -561,7 +793,7 @@ async function processLoop(): Promise<void> {
 
         const p = (async () => {
           try {
-            await processUser(sessionCookie, user);
+            await processUser(adminSessionCookie, user);
           } catch (e) {
             if (e instanceof UnauthorizedError) {
               needRelogin = true;

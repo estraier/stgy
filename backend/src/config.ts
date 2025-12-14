@@ -98,6 +98,10 @@ export class Config {
   static readonly DEFAULT_TIMEZONE = envStr("STGY_DEFAULT_TIMEZONE", "Asia/Tokyo");
   static readonly MAX_PAGE_LIMIT = envNum("STGY_MAX_PAGE_LIMIT", 100);
   static readonly AI_RPC_TIMEOUT_MS = envNum("STGY_AI_RPC_TIMEOUT_MS", 600 * 1000);
+  static readonly AI_TAG_MAX_COUNT = envNum("STGY_AI_TAG_MAX_COUNT", 5);
+  static readonly AI_TAG_MAX_LENGTH = envNum("STGY_AI_TAG_MAX_LENGTH", 40);
+  static readonly AI_TAG_MAX_LENGTH_CJK = envNum("STGY_AI_TAG_MAX_LENGTH", 20);
+
   static readonly AI_SUMMARY_POST_LOOKBACK_MS = envNum(
     "STGY_AI_SUMMARY_POST_LOOKBACK_MS",
     //2 * 24 * 60 * 60 * 1000,
@@ -139,6 +143,9 @@ export class Config {
   );
   static readonly AI_USER_IMPRESSION_LENGTH = envNum("STGY_AI_USER_USER_LENGTH", 800);
   static readonly AI_USER_IMPRESSION_LENGTH_CJK = envNum("STGY_AI_USER_USER_LENGTH_CJK", 400);
+
+  static readonly AI_USER_OUTPUT_TEXT_LIMIT = envNum("STGY_AI_USER_OUTPUT_TEXT_LIMIT", 10000);
+
 
 
 
