@@ -2209,6 +2209,25 @@ paths:
         "404":
           $ref: "#/components/responses/Error404"
 
+    head:
+      summary: Check existence of AI post summary
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: AI post summary exists
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
     put:
       summary: (Admin only) Update AI post summary/tags/features
       security:

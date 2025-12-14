@@ -49,6 +49,17 @@ class MockPgClient {
     }
 
     if (
+      sql.startsWith("SELECT 1") &&
+      sql.includes("FROM ai_post_summaries aps") &&
+      sql.includes("WHERE aps.post_id = $1") &&
+      sql.includes("LIMIT 1")
+    ) {
+      const postId = params ? String(params[0]) : "";
+      const exists = this.summaries.some((row) => row.postId === postId);
+      return { rows: exists ? [{ ok: 1 }] : [] };
+    }
+
+    if (
       sql.startsWith("SELECT aps.post_id, aps.summary, aps.features") &&
       sql.includes("FROM ai_post_summaries aps") &&
       sql.includes("WHERE aps.post_id = $1")
@@ -205,6 +216,39 @@ class MockPgClient {
     return { rows: [] };
   }
 }
+
+describe("AiPostsService checkAiPostSummary", () => {
+  let pgClient: MockPgClient;
+  let service: AiPostsService;
+  let postIdHex: string;
+  let postIdDec: string;
+
+  beforeEach(() => {
+    pgClient = new MockPgClient();
+    service = new AiPostsService(pgClient as unknown as Pool);
+
+    postIdHex = hex16();
+    postIdDec = toDecStr(postIdHex);
+
+    pgClient.summaries.push({
+      postId: postIdDec,
+      summary: "initial summary",
+      features: Buffer.from(new Int8Array([1, -2, 3, 4])),
+      createdAt: "2024-01-01T00:00:00Z",
+    });
+  });
+
+  test("returns false when not found", async () => {
+    const otherHex = hex16();
+    const result = await service.checkAiPostSummary(otherHex);
+    expect(result).toBe(false);
+  });
+
+  test("returns true when exists", async () => {
+    const result = await service.checkAiPostSummary(postIdHex);
+    expect(result).toBe(true);
+  });
+});
 
 describe("AiPostsService getAiPostSummary", () => {
   let pgClient: MockPgClient;

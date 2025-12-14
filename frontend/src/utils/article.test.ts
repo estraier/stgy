@@ -56,7 +56,7 @@ describe("article utils (normal cases)", () => {
     expect(html).toContain('src="https://cdn.test/images-bkt/u1/thumbs/folder/pic_image.webp"');
     expect(html).toContain('<a href="/sites/123">U</a>');
     expect(html).toContain('<a href="/pub/456">P</a>');
-    expect(html).toContain("<p dialogue>「<ruby><rb>あ</rb><rt>a</rt></ruby>」</p>");
+    expect(html).toContain('<p data-mode="quote">「<ruby><rb>あ</rb><rt>a</rt></ruby>」</p>');
     expect(title).toBe("title");
     expect(desc).toBe("abc cap U, P 「あ」");
     expect(featured).toBe("https://cdn.test/images-bkt/u1/thumbs/folder/pic_image.webp");

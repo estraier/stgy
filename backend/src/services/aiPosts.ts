@@ -31,6 +31,20 @@ export class AiPostsService {
     this.pgPool = pgPool;
   }
 
+  async checkAiPostSummary(id: string): Promise<boolean> {
+    const res = await pgQuery(
+      this.pgPool,
+      `
+      SELECT 1
+      FROM ai_post_summaries aps
+      WHERE aps.post_id = $1
+      LIMIT 1
+      `,
+      [hexToDec(id)],
+    );
+    return res.rows.length > 0;
+  }
+
   async getAiPostSummary(id: string): Promise<AiPostSummary | null> {
     const res = await pgQuery(
       this.pgPool,

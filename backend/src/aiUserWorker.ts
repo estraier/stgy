@@ -698,6 +698,7 @@ async function createPostImpression(
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
 
+  // for debug
   console.log(prompt);
 
   const chatReq: ChatRequest = {
@@ -716,6 +717,7 @@ async function createPostImpression(
     throw new Error(`ai-users/chat returned empty content userId=${profile.id} postId=${post.id}`);
   }
 
+  // for debug
   console.log(content);
 
   const parsed = evaluateChatResponseAsJson<unknown>(content);
@@ -760,24 +762,18 @@ async function createPostImpression(
 
 async function processUser(adminSessionCookie: string, user: AiUser): Promise<void> {
   logger.info(`Processing AI user: id=${user.id}, nickname=${user.nickname}`);
-
   const userSessionCookie = await switchToUser(adminSessionCookie, user.id);
-
   const profile = await fetchUserProfile(userSessionCookie, user.id);
   const interest: AiUserInterest | null = null;
-
   const posts = await fetchPostsToRead(userSessionCookie, user.id);
   logger.info(`postsToRead userId=${user.id} count=${posts.length}`);
-
   const peerIdSet = new Set<string>();
   const topPeerPosts = new Map<string, PostDetail>();
-
   for (const post of posts) {
     peerIdSet.add(post.ownedBy);
     if (topPeerPosts.size < 5 && !topPeerPosts.has(post.ownedBy)) {
       topPeerPosts.set(post.ownedBy, post);
     }
-
     try {
       await createPostImpression(userSessionCookie, profile, interest, post);
     } catch (e) {

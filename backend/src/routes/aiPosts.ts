@@ -82,13 +82,25 @@ export default function createAiPostsRouter(
     }
   });
 
+  router.head("/:id", async (req, res) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const watch = timerThrottleService.startWatch(loginUser);
+    const exists = await aiPostsService.checkAiPostSummary(req.params.id);
+    watch.done();
+    if (!exists) return res.sendStatus(404);
+    return res.sendStatus(200);
+  });
+
   router.get("/:id", async (req, res) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
-
     try {
       const watch = timerThrottleService.startWatch(loginUser);
       const summary = await aiPostsService.getAiPostSummary(req.params.id);

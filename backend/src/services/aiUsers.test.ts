@@ -421,7 +421,11 @@ describe("AiUsersService", () => {
   });
 
   test("generateFeatures: returns encoded Int8Array", async () => {
-    mockEmbeddingsCreate.mockResolvedValue({ data: [{ embedding: [1, -2, 3, 4] }] });
+    const emb = Array.from({ length: 256 }, (_, i) => {
+      const v = ((i % 97) + 1) / 1000; // 0.001..0.097
+      return i % 2 === 0 ? v : -v; // avoid zeros
+    });
+    mockEmbeddingsCreate.mockResolvedValue({ data: [{ embedding: emb }] });
     const out = await service.generateFeatures({ model: "balanced", input: "hello" });
     expect(mockEmbeddingsCreate).toHaveBeenCalledTimes(1);
     expect(mockEmbeddingsCreate).toHaveBeenCalledWith(
@@ -429,18 +433,22 @@ describe("AiUsersService", () => {
       { timeout: 600000 },
     );
     expect(out.features).toBeInstanceOf(Int8Array);
-    const expected = encodeFeatures([1, -2, 3, 4], 4);
+    const expected = encodeFeatures(emb);
     expect(Array.from(out.features)).toEqual(Array.from(expected));
   });
 
   test("generateFeatures: supports another model label", async () => {
-    mockEmbeddingsCreate.mockResolvedValue({ data: [{ embedding: [0.1, 0.2, -0.3] }] });
+    const emb = Array.from({ length: 256 }, (_, i) => {
+      const v = ((i % 89) + 1) / 2000; // 0.0005..0.0445
+      return i % 2 === 0 ? -v : v; // avoid zeros
+    });
+    mockEmbeddingsCreate.mockResolvedValue({ data: [{ embedding: emb }] });
     const out = await service.generateFeatures({ model: "advanced", input: "x" });
     expect(mockEmbeddingsCreate).toHaveBeenCalledWith(
       { model: "text-embedding-3-large", input: "x" },
       { timeout: 600000 },
     );
-    const expected = encodeFeatures([0.1, 0.2, -0.3], 3);
+    const expected = encodeFeatures(emb);
     expect(Array.from(out.features)).toEqual(Array.from(expected));
   });
 
