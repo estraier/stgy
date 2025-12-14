@@ -9,6 +9,10 @@ import http from "http";
 import https from "https";
 import { URLSearchParams } from "url";
 
+import type { UserLite, UserDetail } from "./models/user";
+import type { Post, PostDetail } from "./models/post";
+import type { Notification } from "./models/notification";
+
 const logger = createLogger({ file: "aiUserWorker" });
 
 let pgPool: Pool | null = null;
@@ -24,8 +28,9 @@ type HttpResult = {
   body: string;
 };
 
-type UserLite = {
-  id: string;
+type PostCandidate = {
+  postId: string;
+  weight: number;
 };
 
 class UnauthorizedError extends Error {
@@ -57,6 +62,7 @@ function httpRequest(
   const method = options.method ?? "GET";
   const headers = options.headers ?? {};
   const body = options.body ?? "";
+
   const url = new URL(path, Config.BACKEND_API_BASE_URL);
   const isHttps = url.protocol === "https:";
   const client = isHttps ? https : http;
@@ -122,7 +128,7 @@ async function apiRequest(
  */
 async function loginAsAdmin(): Promise<string> {
   if (!authService) throw new Error("authService is not initialized");
-  const res = await authService.loginAsAdmin();
+  const res = await authService.loginAsAdmin(); // { sessionId }
   const sessionCookie = `session_id=${res.sessionId}`;
   return sessionCookie;
 }
@@ -136,8 +142,8 @@ async function fetchNextUsers(
     offset: String(offset),
     limit: String(limit),
   });
-  const res = await apiRequest(sessionCookie, `/ai-users?${params.toString()}`, { method: "GET" });
 
+  const res = await apiRequest(sessionCookie, `/ai-users?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
 
@@ -147,79 +153,422 @@ async function fetchNextUsers(
     if (typeof item !== "object" || item === null) continue;
     const id = (item as { id?: unknown }).id;
     if (typeof id !== "string" || id.trim() === "") continue;
-    out.push({ id });
+    out.push(item as UserLite);
   }
   return out;
 }
 
+async function fetchUserProfile(sessionCookie: string, userId: string): Promise<UserDetail> {
+  const res = await apiRequest(sessionCookie, `/users/${encodeURIComponent(userId)}`, {
+    method: "GET",
+  });
+
+  const parsed = JSON.parse(res.body) as unknown;
+  if (typeof parsed !== "object" || parsed === null) {
+    throw new Error(`user profile api returned non-object: ${truncateForLog(res.body, 50)}`);
+  }
+
+  const id = (parsed as { id?: unknown }).id;
+  if (typeof id !== "string" || id.trim() === "") {
+    throw new Error(`user profile missing id: ${truncateForLog(res.body, 50)}`);
+  }
+
+  return parsed as UserDetail;
+}
+
+async function fetchFolloweePosts(sessionCookie: string, userId: string): Promise<Post[]> {
+  const params = new URLSearchParams();
+  params.set("userId", userId);
+  params.set("offset", "0");
+  params.set("limit", String(Config.AI_USER_FETCH_POST_LIMIT));
+  params.set("includeSelf", "false");
+  params.set("includeReplies", "true");
+  params.set("focusUserId", userId);
+  params.set("limitPerUser", "3");
+
+  const res = await apiRequest(sessionCookie, `/posts/by-followees?${params.toString()}`, {
+    method: "GET",
+  });
+
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!Array.isArray(parsed)) return [];
+  return parsed as Post[];
+}
+
+async function fetchLatestPosts(sessionCookie: string, userId: string): Promise<Post[]> {
+  const params = new URLSearchParams();
+  params.set("offset", "0");
+  params.set("limit", String(Config.AI_USER_FETCH_POST_LIMIT));
+  params.set("order", "desc");
+  params.set("focusUserId", userId);
+
+  const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!Array.isArray(parsed)) return [];
+  return parsed as Post[];
+}
+
+async function fetchNotifications(sessionCookie: string): Promise<Notification[]> {
+  // 304 を許容したいので apiRequest ではなく httpRequest を使う
+  const res = await httpRequest("/notifications/feed", {
+    method: "GET",
+    headers: { Cookie: sessionCookie },
+  });
+
+  if (res.statusCode === 401) {
+    throw new UnauthorizedError("401 from /notifications/feed");
+  }
+  if (res.statusCode === 304) {
+    return [];
+  }
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    throw new Error(
+      `request failed: ${res.statusCode} GET /notifications/feed ${truncateForLog(res.body, 50)}`,
+    );
+  }
+
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!Array.isArray(parsed)) return [];
+  return parsed as Notification[];
+}
+
+async function checkPostImpression(
+  sessionCookie: string,
+  aiUserId: string,
+  postId: string,
+): Promise<boolean> {
+  const res = await httpRequest(
+    `/ai-users/${encodeURIComponent(aiUserId)}/post-impressions/${encodeURIComponent(postId)}`,
+    { method: "HEAD", headers: { Cookie: sessionCookie } },
+  );
+
+  if (res.statusCode === 401) {
+    throw new UnauthorizedError(
+      `401 from /ai-users/${encodeURIComponent(aiUserId)}/post-impressions/${encodeURIComponent(postId)}`,
+    );
+  }
+  if (res.statusCode === 200) return true;
+  if (res.statusCode === 404) return false;
+
+  throw new Error(
+    `request failed: ${res.statusCode} HEAD /ai-users/${encodeURIComponent(
+      aiUserId,
+    )}/post-impressions/${encodeURIComponent(postId)} ${truncateForLog(res.body, 50)}`,
+  );
+}
+
+async function fetchPostById(
+  sessionCookie: string,
+  postId: string,
+  focusUserId: string,
+): Promise<PostDetail> {
+  const url = new URL(`/posts/${encodeURIComponent(postId)}`, Config.BACKEND_API_BASE_URL);
+  url.searchParams.set("focusUserId", focusUserId);
+
+  // httpRequest は base url を取るので、ここは path+query を渡す
+  const path = url.pathname + url.search;
+  const res = await apiRequest(sessionCookie, path, { method: "GET" });
+  return JSON.parse(res.body) as PostDetail;
+}
+
+async function fetchOwnRecentPosts(sessionCookie: string, userId: string): Promise<PostDetail[]> {
+  const params = new URLSearchParams();
+  params.set("offset", "0");
+  params.set("limit", String(Config.AI_USER_READ_POST_LIMIT));
+  params.set("order", "desc");
+  params.set("ownedBy", userId);
+  params.set("focusUserId", userId);
+
+  const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!Array.isArray(parsed)) return [];
+
+  const list = parsed as Post[];
+  const ids = list
+    .map((p) => (typeof (p as { id?: unknown }).id === "string" ? (p as { id: string }).id : ""))
+    .filter(Boolean)
+    .slice(0, Config.AI_USER_READ_POST_LIMIT);
+
+  const result: PostDetail[] = [];
+  for (const id of ids) {
+    try {
+      const detail = await fetchPostById(sessionCookie, id, userId);
+      result.push(detail);
+    } catch (e) {
+      logger.info(`Failed to fetch own post detail userId=${userId} postId=${id}: ${e}`);
+    }
+  }
+  return result;
+}
+
+async function fetchFollowerRecentRandomPostIds(
+  sessionCookie: string,
+  userId: string,
+): Promise<string[]> {
+  const params = new URLSearchParams();
+  params.set("offset", "0");
+  params.set("limit", "100");
+  params.set("order", "desc");
+
+  const res = await apiRequest(
+    sessionCookie,
+    `/users/${encodeURIComponent(userId)}/followers?${params.toString()}`,
+    { method: "GET" },
+  );
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!Array.isArray(parsed)) return [];
+
+  const followers = parsed as UserLite[];
+  if (followers.length === 0) return [];
+
+  const shuffledFollowerIds = followers
+    .map((f) => ({
+      id: typeof (f as { id?: unknown }).id === "string" ? (f as { id: string }).id : "",
+      score: Math.random(),
+    }))
+    .filter((x) => x.id)
+    .sort((a, b) => a.score - b.score)
+    .slice(0, 5)
+    .map((x) => x.id);
+
+  const postIds: string[] = [];
+  for (const followerId of shuffledFollowerIds) {
+    try {
+      const posts = await fetchOwnRecentPosts(sessionCookie, followerId);
+      for (const post of posts.slice(0, 3)) {
+        if (typeof (post as { id?: unknown }).id === "string") {
+          postIds.push((post as { id: string }).id);
+        }
+      }
+    } catch (e) {
+      logger.info(`Failed to fetch recent posts followerId=${followerId} of userId=${userId}: ${e}`);
+    }
+  }
+
+  return postIds;
+}
+
+async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<PostDetail[]> {
+  const candidates: PostCandidate[] = [];
+
+  const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
+  for (const post of followeePosts) {
+    if ((post as { ownedBy?: unknown }).ownedBy === userId) continue;
+    const postId = (post as { id?: unknown }).id;
+    if (typeof postId !== "string" || postId.trim() === "") continue;
+
+    const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
+    if (!hasImpression) {
+      candidates.push({ postId, weight: 1 });
+    }
+  }
+
+  const latestPosts = await fetchLatestPosts(sessionCookie, userId);
+  for (const post of latestPosts) {
+    if ((post as { ownedBy?: unknown }).ownedBy === userId) continue;
+    const postId = (post as { id?: unknown }).id;
+    if (typeof postId !== "string" || postId.trim() === "") continue;
+
+    const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
+    if (!hasImpression) {
+      candidates.push({ postId, weight: 1 });
+    }
+  }
+
+  const notifications = await fetchNotifications(sessionCookie);
+  for (const n of notifications) {
+    const slot = (n as { slot?: unknown }).slot;
+    const records = (n as { records?: unknown }).records;
+
+    if (typeof slot !== "string" || !Array.isArray(records)) continue;
+
+    if (slot.startsWith("reply:")) {
+      for (const record of records as any[]) {
+        const postId = record?.postId;
+        const recordUserId = record?.userId;
+        if (typeof postId !== "string") continue;
+        if (typeof recordUserId !== "string" || recordUserId === userId) continue;
+
+        const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
+        if (!hasImpression) {
+          candidates.push({ postId, weight: 0.5 });
+        }
+      }
+    }
+
+    if (slot.startsWith("mention:")) {
+      for (const record of records as any[]) {
+        const postId = record?.postId;
+        const recordUserId = record?.userId;
+        if (typeof postId !== "string") continue;
+        if (typeof recordUserId !== "string" || recordUserId === userId) continue;
+
+        const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
+        if (!hasImpression) {
+          candidates.push({ postId, weight: 0.3 });
+        }
+      }
+    }
+  }
+
+  try {
+    const followerPostIds = await fetchFollowerRecentRandomPostIds(sessionCookie, userId);
+    for (const postId of followerPostIds) {
+      const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
+      if (!hasImpression) {
+        candidates.push({ postId, weight: 0.3 });
+      }
+    }
+  } catch (e) {
+    logger.error(`Error while fetching follower recent random post ids for userId=${userId}: ${e}`);
+  }
+
+  if (candidates.length === 0) {
+    logger.info("No candidate posts to read");
+    return [];
+  }
+
+  const weightByPost = new Map<string, number>();
+  for (const { postId, weight } of candidates) {
+    const prev = weightByPost.get(postId);
+    if (prev === undefined || weight > prev) {
+      weightByPost.set(postId, weight);
+    }
+  }
+
+  const scoresByPost = new Map<string, number>();
+  for (const [postId, weight] of weightByPost.entries()) {
+    if (weight <= 0) continue;
+    const score = Math.random() * weight;
+    scoresByPost.set(postId, score);
+  }
+
+  const topPostIds = [...scoresByPost.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, Config.AI_USER_READ_POST_LIMIT)
+    .map(([postId]) => postId);
+
+  logger.info(`Selected post IDs to read: ${topPostIds.join(",")}`);
+
+  const result: PostDetail[] = [];
+  for (const postId of topPostIds) {
+    try {
+      const post = await fetchPostById(sessionCookie, postId, userId);
+      result.push(post);
+    } catch (e) {
+      logger.info(`Failed to fetch post detail for postId=${postId}: ${e}`);
+    }
+  }
+
+  return result;
+}
+
 /**
- * summarizePost 相当：まずは userId を出すだけ
+ * summarizePost 相当：profile を表示して fetchPostsToRead の結果も表示
  */
-async function processUser(_sessionCookie: string, userId: string): Promise<void> {
-  console.log(userId);
+async function processUser(sessionCookie: string, userId: string): Promise<void> {
+  const profile = await fetchUserProfile(sessionCookie, userId);
+
+  logger.info(
+    `user profile fetched userId=${userId} nickname=${truncateForLog(
+      (profile as any).nickname,
+      20,
+    )} locale=${truncateForLog((profile as any).locale, 20)} intro=${truncateForLog(
+      (profile as any).introduction,
+      50,
+    )}`,
+  );
+
+  const posts = await fetchPostsToRead(sessionCookie, userId);
+
+  logger.info(`postsToRead userId=${userId} count=${posts.length}`);
+
+  // とりあえず見える化：ID と author と本文スニペット
+  for (const p of posts) {
+    const postId = (p as any).id;
+    const author = (p as any).ownerNickname ?? (p as any).ownedBy ?? "";
+    const content = (p as any).content ?? "";
+    logger.info(
+      `postToRead userId=${userId} postId=${postId} author=${truncateForLog(
+        author,
+        20,
+      )} content=${truncateForLog(content, 50)}`,
+    );
+  }
 }
 
 async function processLoop(): Promise<void> {
-  let offset = 0;
-
   while (!shuttingDown) {
     let sessionCookie: string;
 
     try {
       sessionCookie = await loginAsAdmin();
     } catch (e) {
-      logger.error(`[aiUserWorker] loginAsAdmin error: ${e}`);
+      logger.error(`loginAsAdmin error: ${e}`);
       await sleep(Config.AI_USER_IDLE_SLEEP_MS);
       continue;
     }
 
-    let users: UserLite[] = [];
-    try {
-      users = await fetchNextUsers(sessionCookie, offset, Config.AI_USER_BATCH_SIZE);
-    } catch (e) {
-      logger.error(`[aiUserWorker] fetchNextUsers error: ${e}`);
-      await sleep(Config.AI_USER_IDLE_SLEEP_MS);
-      continue;
-    }
+    let needRelogin = false;
+    let offset = 0;
 
-    if (users.length === 0) {
-      offset = 0;
-      await sleep(Config.AI_USER_IDLE_SLEEP_MS);
-      continue;
-    }
-
-    let index = 0;
-
-    while (index < users.length && !shuttingDown) {
-      if (inflight.size >= Config.AI_USER_CONCURRENCY) {
-        await Promise.race(inflight);
-        continue;
+    while (!shuttingDown) {
+      let users: UserLite[] = [];
+      try {
+        users = await fetchNextUsers(sessionCookie, offset, Config.AI_USER_BATCH_SIZE);
+      } catch (e) {
+        if (e instanceof UnauthorizedError) {
+          needRelogin = true;
+          logger.warn("session expired while fetching users; relogin");
+          break;
+        }
+        logger.error(`fetchNextUsers error: ${e}`);
+        break;
       }
 
-      const { id: userId } = users[index++];
+      if (users.length === 0) break;
 
-      const p = (async () => {
-        try {
-          await processUser(sessionCookie, userId);
-        } catch (e) {
-          if (e instanceof UnauthorizedError) {
-            logger.warn(`[aiUserWorker] 401 while processing userId=${userId}; will relogin`);
-            return;
-          }
-          logger.error(`[aiUserWorker] error processing userId=${userId}: ${e}`);
+      let index = 0;
+      while (index < users.length && !shuttingDown) {
+        if (inflight.size >= Config.AI_USER_CONCURRENCY) {
+          await Promise.race(inflight);
+          continue;
         }
-      })();
 
-      inflight.add(p);
-      p.finally(() => inflight.delete(p));
+        const userId = (users[index++] as any).id as string;
+
+        const p = (async () => {
+          try {
+            await processUser(sessionCookie, userId);
+          } catch (e) {
+            if (e instanceof UnauthorizedError) {
+              needRelogin = true;
+              logger.warn(`401 while processing userId=${userId}; will relogin`);
+              return;
+            }
+            logger.error(`error processing userId=${userId}: ${e}`);
+          }
+        })();
+
+        inflight.add(p);
+        p.finally(() => inflight.delete(p));
+      }
+
+      if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
+
+      if (needRelogin) break;
+
+      offset += users.length;
+      if (users.length < Config.AI_USER_BATCH_SIZE) break;
     }
 
     if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
 
-    offset += users.length;
-    if (users.length < Config.AI_USER_BATCH_SIZE) offset = 0;
-
     await sleep(Config.AI_USER_IDLE_SLEEP_MS);
+
+    // for debug
+    logger.info(`done`);
+    await sleep(60 * 1000);
   }
 }
 
@@ -263,6 +612,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-  logger.error(`[aiUserWorker] Fatal error: ${e}`);
+  logger.error(`Fatal error: ${e}`);
   process.exit(1);
 });

@@ -256,13 +256,14 @@ async function postSummaryResult(
 }
 
 async function summarizePost(sessionCookie: string, postId: string): Promise<void> {
-  logger.info(`[aiSummaryWorker] summarizePost postId=${postId}`);
+  logger.info(`summarizePost postId=${postId}`);
   const post = await fetchPostDetail(sessionCookie, postId);
   const locale = (post.locale || post.ownerLocale || "en").replace(/_/g, "-");
   logger.info(
-    `[aiSummaryWorker] post fetched postId=${postId} locale=${locale} author=${
-      post.ownerNickname
-    } content=${truncateForLog(post.content, 50)}`,
+    `post fetched postId=${postId} locale=${locale} author=${post.ownerNickname} content=${truncateForLog(
+      post.content,
+      50,
+    )}`,
   );
 
   // TODO:
@@ -324,10 +325,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   const summary = truncateText(obj.summary, Config.AI_SUMMARY_SUMMARY_TEXT_LIMIT);
   const tags = parseTagsField(obj.tags, 5);
   logger.info(
-    `[aiSummaryWorker] parsed result postId=${postId} summary=${truncateForLog(
-      summary,
-      50,
-    )} tags=${tags.join(",")}`,
+    `parsed result postId=${postId} summary=${truncateForLog(summary, 50)} tags=${tags.join(",")}`,
   );
   const featuresInput = buildFeaturesInput(summary, tags);
   const feat = await generateFeaturesViaBackend(sessionCookie, {
@@ -339,7 +337,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     tags,
     features: feat.features,
   });
-  logger.info(`[aiSummaryWorker] summary saved postId=${postId}`);
+  logger.info(`summary saved postId=${postId}`);
 }
 
 async function processLoop(): Promise<void> {
@@ -348,7 +346,7 @@ async function processLoop(): Promise<void> {
     try {
       sessionCookie = await loginAsAdmin();
     } catch (e) {
-      logger.error(`[aiSummaryWorker] loginAsAdmin error: ${e}`);
+      logger.error(`loginAsAdmin error: ${e}`);
       await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
       continue;
     }
@@ -356,7 +354,7 @@ async function processLoop(): Promise<void> {
     try {
       summaries = await fetchPendingSummaries(sessionCookie);
     } catch (e) {
-      logger.error(`[aiSummaryWorker] fetchPendingSummaries error: ${e}`);
+      logger.error(`fetchPendingSummaries error: ${e}`);
       await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
       continue;
     }
@@ -376,10 +374,10 @@ async function processLoop(): Promise<void> {
           await summarizePost(sessionCookie, postId);
         } catch (e) {
           if (e instanceof UnauthorizedError) {
-            logger.warn(`[aiSummaryWorker] 401 while summarizing postId=${postId}; will relogin`);
+            logger.warn(`401 while summarizing postId=${postId}; will relogin`);
             return;
           }
-          logger.error(`[aiSummaryWorker] error summarizing postId=${postId}: ${e}`);
+          logger.error(`error summarizing postId=${postId}: ${e}`);
         }
       })();
       inflight.add(p);
@@ -427,6 +425,6 @@ async function main(): Promise<void> {
 }
 
 main().catch((e) => {
-  logger.error(`[aiSummaryWorker] Fatal error: ${e}`);
+  logger.error(`Fatal error: ${e}`);
   process.exit(1);
 });

@@ -126,6 +126,12 @@ export class Config {
   static readonly AI_USER_CONCURRENCY = envNum("STGY_AI_USER_CONCURRENCY", 1);
   //static readonly AI_USER_IDLE_SLEEP_MS = envNum("STGY_AI_USER_IDLE_SLEEP_MS", 10 * 1000);
   static readonly AI_USER_IDLE_SLEEP_MS = envNum("STGY_AI_USER_IDLE_SLEEP_MS", 3 * 1000);
+
+  static readonly AI_USER_FETCH_POST_LIMIT = envNum("STGY_AI_USER_FETCH_POST_LIMIT", 30);
+  static readonly AI_USER_READ_POST_LIMIT = envNum("STGY_AI_USER_READ_POST_LIMIT", 1);
+
+
+
   static readonly AI_USER_POST_TEXT_LIMIT = envNum("STGY_AI_USER_POST_TEXT_LIMIT", 10000);
   static readonly AI_USER_IMPRESSION_TEXT_LIMIT = envNum(
     "STGY_AI_USER_IMPRESSION_TEXT_LIMIT",
