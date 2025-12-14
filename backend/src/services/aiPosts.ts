@@ -37,7 +37,7 @@ export class AiPostsService {
       `
       SELECT 1
       FROM ai_post_summaries aps
-      WHERE aps.post_id = $1
+      WHERE aps.post_id = $1 and aps.summary IS NOT NULL
       LIMIT 1
       `,
       [hexToDec(id)],

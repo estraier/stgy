@@ -412,6 +412,26 @@ async function fetchNotifications(sessionCookie: string): Promise<Notification[]
   return parsed as Notification[];
 }
 
+async function checkPostSummary(sessionCookie: string, postId: string): Promise<boolean> {
+  const res = await httpRequest(`/ai-posts/${encodeURIComponent(postId)}`, {
+    method: "HEAD",
+    headers: { Cookie: sessionCookie },
+  });
+
+  if (res.statusCode === 401) {
+    throw new UnauthorizedError(`401 from /ai-posts/${encodeURIComponent(postId)}`);
+  }
+  if (res.statusCode === 200) return true;
+  if (res.statusCode === 404) return false;
+
+  throw new Error(
+    `request failed: ${res.statusCode} HEAD /ai-posts/${encodeURIComponent(postId)} ${truncateForLog(
+      res.body,
+      50,
+    )}`,
+  );
+}
+
 async function checkPostImpression(
   sessionCookie: string,
   aiUserId: string,
@@ -522,6 +542,10 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
   for (const post of followeePosts) {
     if (post.ownedBy === userId) continue;
+
+    const hasSummary = await checkPostSummary(sessionCookie, post.id);
+    if (!hasSummary) continue;
+
     const hasImpression = await checkPostImpression(sessionCookie, userId, post.id);
     if (!hasImpression) {
       candidates.push({ postId: post.id, weight: 1 });
@@ -531,6 +555,10 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
   const latestPosts = await fetchLatestPosts(sessionCookie, userId);
   for (const post of latestPosts) {
     if (post.ownedBy === userId) continue;
+
+    const hasSummary = await checkPostSummary(sessionCookie, post.id);
+    if (!hasSummary) continue;
+
     const hasImpression = await checkPostImpression(sessionCookie, userId, post.id);
     if (!hasImpression) {
       candidates.push({ postId: post.id, weight: 1 });
@@ -547,6 +575,9 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
         if (typeof record.userId !== "string") continue;
         if (record.userId === userId) continue;
 
+        const hasSummary = await checkPostSummary(sessionCookie, record.postId);
+        if (!hasSummary) continue;
+
         const hasImpression = await checkPostImpression(sessionCookie, userId, record.postId);
         if (!hasImpression) {
           candidates.push({ postId: record.postId, weight: 0.5 });
@@ -561,6 +592,9 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
         if (typeof record.userId !== "string") continue;
         if (record.userId === userId) continue;
 
+        const hasSummary = await checkPostSummary(sessionCookie, record.postId);
+        if (!hasSummary) continue;
+
         const hasImpression = await checkPostImpression(sessionCookie, userId, record.postId);
         if (!hasImpression) {
           candidates.push({ postId: record.postId, weight: 0.3 });
@@ -572,6 +606,9 @@ async function fetchPostsToRead(sessionCookie: string, userId: string): Promise<
   try {
     const followerPostIds = await fetchFollowerRecentRandomPostIds(sessionCookie, userId);
     for (const postId of followerPostIds) {
+      const hasSummary = await checkPostSummary(sessionCookie, postId);
+      if (!hasSummary) continue;
+
       const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
       if (!hasImpression) {
         candidates.push({ postId, weight: 0.3 });
