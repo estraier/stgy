@@ -124,8 +124,6 @@ export class Config {
   static readonly AI_SUMMARY_SUMMARY_LENGTH = envNum("STGY_AI_SUMMARY_SUMMARY_LENGTH", 800);
   static readonly AI_SUMMARY_SUMMARY_LENGTH_CJK = envNum("STGY_AI_SUMMARY_SUMMARY_LENGTH_CJK", 400);
 
-
-
   static readonly AI_USER_BATCH_SIZE = envNum("STGY_AI_USER_BATCH_SIZE", 1);
   static readonly AI_USER_CONCURRENCY = envNum("STGY_AI_USER_CONCURRENCY", 1);
   //static readonly AI_USER_IDLE_SLEEP_MS = envNum("STGY_AI_USER_IDLE_SLEEP_MS", 10 * 1000);
@@ -133,8 +131,6 @@ export class Config {
 
   static readonly AI_USER_FETCH_POST_LIMIT = envNum("STGY_AI_USER_FETCH_POST_LIMIT", 30);
   static readonly AI_USER_READ_POST_LIMIT = envNum("STGY_AI_USER_READ_POST_LIMIT", 1);
-
-
 
   static readonly AI_USER_POST_TEXT_LIMIT = envNum("STGY_AI_USER_POST_TEXT_LIMIT", 10000);
   static readonly AI_USER_IMPRESSION_TEXT_LIMIT = envNum(
@@ -145,12 +141,6 @@ export class Config {
   static readonly AI_USER_IMPRESSION_LENGTH_CJK = envNum("STGY_AI_USER_USER_LENGTH_CJK", 400);
 
   static readonly AI_USER_OUTPUT_TEXT_LIMIT = envNum("STGY_AI_USER_OUTPUT_TEXT_LIMIT", 10000);
-
-
-
-
-
-
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {

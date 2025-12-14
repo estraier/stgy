@@ -73,7 +73,6 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       } else if (loginUser.aiModel && loginUser.aiModel.trim() !== "") {
         modelToUse = loginUser.aiModel;
       } else {
-
         console.log(loginUser);
 
         return res.status(400).json({ error: "model is required" });

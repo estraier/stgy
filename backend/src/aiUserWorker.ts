@@ -184,7 +184,10 @@ function parsePeerImpressionPayload(payload: string): PeerImpressionPayloadJson 
   }
 }
 
-function buildProfileExcerpt(profile: UserDetail, interest: AiUserInterest | null): {
+function buildProfileExcerpt(
+  profile: UserDetail,
+  interest: AiUserInterest | null,
+): {
   userId: string;
   nickname: string;
   locale: string;
@@ -334,6 +337,28 @@ async function fetchPeerImpression(
   if (!isRecord(parsed)) return "";
   const payload = parsed["payload"];
   return typeof payload === "string" ? payload : "";
+}
+
+async function fetchPostSummary(sessionCookie: string, postId: string): Promise<string> {
+  const path = `/ai-posts/${encodeURIComponent(postId)}`;
+  const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
+  if (res.statusCode === 401) throw new UnauthorizedError(`401 from ${path}`);
+  if (res.statusCode === 404) return "";
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    logger.error(
+      `failed to fetch post summary postId=${postId}: ${res.statusCode} ${truncateForLog(res.body, 50)}`,
+    );
+    return "";
+  }
+  try {
+    const parsed = JSON.parse(res.body) as unknown;
+    if (!isRecord(parsed)) return "";
+    const summary = parsed["summary"];
+    return typeof summary === "string" ? summary : "";
+  } catch (e) {
+    logger.error(`failed to parse post summary postId=${postId}: ${e}`);
+    return "";
+  }
 }
 
 async function fetchFolloweePosts(sessionCookie: string, userId: string): Promise<Post[]> {
@@ -626,12 +651,16 @@ async function createPostImpression(
     peerTags = [];
   }
 
+  const rawSummary = await fetchPostSummary(userSessionCookie, post.id);
+  const summaryText = rawSummary ? truncateText(rawSummary, Config.AI_USER_POST_TEXT_LIMIT) : "";
+
   const postText = truncateText(post.content, Config.AI_USER_POST_TEXT_LIMIT);
   const postExcerpt = {
     author: post.ownerNickname,
     locale,
     createdAt: post.createdAt,
     content: postText,
+    summary: summaryText,
     peerImpression: peerImpressionText,
     peerTags,
   };
@@ -656,7 +685,11 @@ async function createPostImpression(
   if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
   if (locale === "ja" || locale.startsWith("ja-")) localeText = `日本語（${locale}）`;
 
-  const promptTpl = readPrompt("post-impression", locale, "en");
+  const promptTpl =
+    readPrompt("common-profile", locale, "en").trim() +
+    "\n\n" +
+    readPrompt("post-impression", locale, "en").trim() +
+    "\n";
   const prompt = promptTpl
     .replaceAll("{{PROFILE_JSON}}", profileJson)
     .replaceAll("{{POST_JSON}}", postJson)
@@ -711,12 +744,18 @@ async function createPostImpression(
 
   const payload = JSON.stringify({ impression, tags });
 
-  await apiRequest(userSessionCookie, `/ai-users/${encodeURIComponent(profile.id)}/post-impressions`, {
-    method: "POST",
-    body: { postId: post.id, payload },
-  });
+  await apiRequest(
+    userSessionCookie,
+    `/ai-users/${encodeURIComponent(profile.id)}/post-impressions`,
+    {
+      method: "POST",
+      body: { postId: post.id, payload },
+    },
+  );
 
-  logger.info(`Saved post impression userId=${profile.id} postId=${post.id} tags=${tags.join(",")}`);
+  logger.info(
+    `Saved post impression userId=${profile.id} postId=${post.id} tags=${tags.join(",")}`,
+  );
 }
 
 async function processUser(adminSessionCookie: string, user: AiUser): Promise<void> {
