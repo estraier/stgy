@@ -8,6 +8,7 @@ import { createLogger } from "./utils/logger";
 import { readPrompt } from "./utils/prompt";
 import { AuthService } from "./services/auth";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
+import { decodeFeatures, cosineSimilarity } from "./utils/vectorSpace";
 import { countPseudoTokens, sliceByPseudoTokens } from "stgy-markdown";
 import type { Pool } from "pg";
 import type Redis from "ioredis";
@@ -15,6 +16,7 @@ import http from "http";
 import https from "https";
 import { URLSearchParams } from "url";
 import type { AiUser, AiUserInterest, ChatRequest, ChatResponse } from "./models/aiUser";
+import type { AiPostSummary, AiPostSummaryPacket } from "./models/aiPost";
 import type { UserLite, UserDetail } from "./models/user";
 import type { Post, PostDetail } from "./models/post";
 import type { Notification } from "./models/notification";
@@ -39,9 +41,9 @@ type PostCandidate = {
   weight: number;
 };
 
-type PeerImpressionPayloadJson = {
+type PeerImpressionPayload = {
   impression: string;
-  tags?: string[];
+  tags: string[];
 };
 
 class UnauthorizedError extends Error {
@@ -108,7 +110,6 @@ function httpRequest(
         });
       },
     );
-
     req.on("error", reject);
     if (body.length > 0) req.write(body);
     req.end();
@@ -171,7 +172,12 @@ function parseTagsField(raw: unknown, maxCount: number): string[] {
   return tags;
 }
 
-function parsePeerImpressionPayload(payload: string): PeerImpressionPayloadJson | null {
+function base64ToInt8(v: string): Int8Array {
+  const buf = Buffer.from(v, "base64");
+  return new Int8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+}
+
+function parsePeerImpressionPayload(payload: string): PeerImpressionPayload | null {
   try {
     const parsed = JSON.parse(payload) as unknown;
     if (!isRecord(parsed)) return null;
@@ -198,7 +204,6 @@ function buildProfileExcerpt(
 } {
   let currentInterest = "";
   const currentInterestTags: string[] = [];
-
   if (interest && typeof interest.payload === "string") {
     try {
       const obj = JSON.parse(interest.payload) as unknown;
@@ -213,7 +218,6 @@ function buildProfileExcerpt(
       currentInterest = truncateText(interest.payload, 200);
     }
   }
-
   return {
     userId: profile.id,
     nickname: profile.nickname,
@@ -339,25 +343,39 @@ async function fetchPeerImpression(
   return typeof payload === "string" ? payload : "";
 }
 
-async function fetchPostSummary(sessionCookie: string, postId: string): Promise<string> {
+async function fetchPostSummary(sessionCookie: string, postId: string): Promise<AiPostSummary> {
   const path = `/ai-posts/${encodeURIComponent(postId)}`;
   const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
   if (res.statusCode === 401) throw new UnauthorizedError(`401 from ${path}`);
-  if (res.statusCode === 404) return "";
+  if (res.statusCode === 404) return { postId, summary: null, features: null, tags: [] };
   if (res.statusCode < 200 || res.statusCode >= 300) {
     logger.error(
       `failed to fetch post summary postId=${postId}: ${res.statusCode} ${truncateForLog(res.body, 50)}`,
     );
-    return "";
+    return { postId, summary: null, features: null, tags: [] };
   }
   try {
     const parsed = JSON.parse(res.body) as unknown;
-    if (!isRecord(parsed)) return "";
-    const summary = parsed["summary"];
-    return typeof summary === "string" ? summary : "";
+    if (!isRecord(parsed)) return { postId, summary: null, features: null, tags: [] };
+    const pkt = parsed as AiPostSummaryPacket;
+    const pid = typeof pkt.postId === "string" && pkt.postId.trim() !== "" ? pkt.postId : postId;
+    const summary = typeof pkt.summary === "string" || pkt.summary === null ? pkt.summary : null;
+    let features: Int8Array | null = null;
+    if (typeof pkt.features === "string" && pkt.features.trim() !== "") {
+      try {
+        features = base64ToInt8(pkt.features);
+      } catch (e) {
+        logger.error(`failed to decode post summary features postId=${postId}: ${e}`);
+        features = null;
+      }
+    }
+    const tags = Array.isArray(pkt.tags)
+      ? pkt.tags.filter((t): t is string => typeof t === "string")
+      : [];
+    return { postId: pid, summary, features, tags };
   } catch (e) {
     logger.error(`failed to parse post summary postId=${postId}: ${e}`);
-    return "";
+    return { postId, summary: null, features: null, tags: [] };
   }
 }
 
@@ -395,7 +413,6 @@ async function fetchNotifications(sessionCookie: string): Promise<Notification[]
     method: "GET",
     headers: { Cookie: sessionCookie },
   });
-
   if (res.statusCode === 401) {
     throw new UnauthorizedError("401 from /notifications/feed");
   }
@@ -417,13 +434,11 @@ async function checkPostSummary(sessionCookie: string, postId: string): Promise<
     method: "HEAD",
     headers: { Cookie: sessionCookie },
   });
-
   if (res.statusCode === 401) {
     throw new UnauthorizedError(`401 from /ai-posts/${encodeURIComponent(postId)}`);
   }
   if (res.statusCode === 200) return true;
   if (res.statusCode === 404) return false;
-
   throw new Error(
     `request failed: ${res.statusCode} HEAD /ai-posts/${encodeURIComponent(postId)} ${truncateForLog(
       res.body,
@@ -481,7 +496,6 @@ async function fetchOwnRecentPosts(sessionCookie: string, userId: string): Promi
   if (!Array.isArray(parsed)) return [];
   const list = parsed as Post[];
   const ids = list.map((p) => p.id).slice(0, Config.AI_USER_READ_POST_LIMIT);
-
   const result: PostDetail[] = [];
   for (const id of ids) {
     try {
@@ -511,14 +525,12 @@ async function fetchFollowerRecentRandomPostIds(
   if (!Array.isArray(parsed)) return [];
   const followers = parsed as UserLite[];
   if (followers.length === 0) return [];
-
   const shuffledFollowerIds = followers
     .map((f) => ({ id: f.id, score: Math.random() }))
     .filter((x) => x.id.trim() !== "")
     .sort((a, b) => a.score - b.score)
     .slice(0, 5)
     .map((x) => x.id);
-
   const postIds: string[] = [];
   for (const followerId of shuffledFollowerIds) {
     try {
@@ -532,7 +544,6 @@ async function fetchFollowerRecentRandomPostIds(
       );
     }
   }
-
   return postIds;
 }
 
@@ -550,9 +561,12 @@ function computeLocaleWeight(userLocale: string, postLocale: string): number {
   return 0.3;
 }
 
-async function fetchPostsToRead(sessionCookie: string, userId: string, userLocale: string): Promise<PostDetail[]> {
+async function fetchPostsToRead(
+  sessionCookie: string,
+  userId: string,
+  userLocale: string,
+): Promise<PostDetail[]> {
   const candidates: PostCandidate[] = [];
-
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
   for (const post of followeePosts) {
     if (post.ownedBy === userId) continue;
@@ -562,9 +576,8 @@ async function fetchPostsToRead(sessionCookie: string, userId: string, userLocal
     if (hasImpression) continue;
     const locale = post.locale || post.ownerLocale;
     const localeWeight = computeLocaleWeight(userLocale, locale);
-    candidates.push({ postId: post.id, weight: 1 * localeWeight});
+    candidates.push({ postId: post.id, weight: 1 * localeWeight });
   }
-
   const latestPosts = await fetchLatestPosts(sessionCookie, userId);
   for (const post of latestPosts) {
     if (post.ownedBy === userId) continue;
@@ -576,7 +589,6 @@ async function fetchPostsToRead(sessionCookie: string, userId: string, userLocal
     const localeWeight = computeLocaleWeight(userLocale, locale);
     candidates.push({ postId: post.id, weight: 0.5 * localeWeight });
   }
-
   const notifications = await fetchNotifications(sessionCookie);
   for (const n of notifications) {
     if (n.slot.startsWith("reply:")) {
@@ -608,7 +620,6 @@ async function fetchPostsToRead(sessionCookie: string, userId: string, userLocal
       }
     }
   }
-
   try {
     const followerPostIds = await fetchFollowerRecentRandomPostIds(sessionCookie, userId);
     for (const postId of followerPostIds) {
@@ -621,12 +632,10 @@ async function fetchPostsToRead(sessionCookie: string, userId: string, userLocal
   } catch (e) {
     logger.error(`Error while fetching follower recent random post ids for userId=${userId}: ${e}`);
   }
-
   if (candidates.length === 0) {
     logger.info("No candidate posts to read");
     return [];
   }
-
   const weightByPost = new Map<string, number>();
   for (const { postId, weight } of candidates) {
     const prev = weightByPost.get(postId);
@@ -634,21 +643,47 @@ async function fetchPostsToRead(sessionCookie: string, userId: string, userLocal
       weightByPost.set(postId, weight);
     }
   }
-
   const scoresByPost = new Map<string, number>();
   for (const [postId, weight] of weightByPost.entries()) {
     if (weight <= 0) continue;
     const score = Math.random() * weight;
     scoresByPost.set(postId, score);
   }
-
   const topPostIds = [...scoresByPost.entries()]
     .sort((a, b) => b[1] - a[1])
     .slice(0, Config.AI_USER_READ_POST_LIMIT)
     .map(([postId]) => postId);
 
-  logger.info(`Selected post IDs to read: ${topPostIds.join(",")}`);
+  {
+    // just for debug
+    let sumFeatures = null;
+    for (const postId of topPostIds) {
+      const postSummary = await fetchPostSummary(sessionCookie, postId);
+      if (!postSummary.features) continue;
+      const features = decodeFeatures(postSummary.features);
+      if (sumFeatures) {
+        for (let i = 0; i < features.length; i++) {
+          sumFeatures[i] += features[i];
+        }
+      } else {
+        sumFeatures = features;
+      }
+    }
+    if (sumFeatures) {
+      for (const postId of topPostIds) {
+        const postSummary = await fetchPostSummary(sessionCookie, postId);
+        if (!postSummary.features) continue;
+        const features = decodeFeatures(postSummary.features);
+        const sim = cosineSimilarity(sumFeatures, features);
+        console.log(postSummary);
+        console.log(sim);
+      }
+    }
+  }
 
+  //process.exit(1);
+
+  logger.info(`Selected post IDs to read: ${topPostIds.join(",")}`);
   const result: PostDetail[] = [];
   for (const postId of topPostIds) {
     try {
@@ -658,7 +693,6 @@ async function fetchPostsToRead(sessionCookie: string, userId: string, userLocal
       logger.info(`Failed to fetch post detail for postId=${postId}: ${e}`);
     }
   }
-
   return result;
 }
 
@@ -671,14 +705,11 @@ async function createPostImpression(
   const baseLocale =
     (post.locale ?? "") || (post.ownerLocale ?? "") || (profile.locale ?? "") || "en";
   const locale = baseLocale.replace(/_/g, "-");
-
   const profileExcerpt = buildProfileExcerpt(profile, interest);
   const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-
   const rawPeerImpression = await fetchPeerImpression(userSessionCookie, profile.id, post.ownedBy);
   let peerImpressionText = rawPeerImpression;
   let peerTags: string[] = [];
-
   if (rawPeerImpression) {
     const parsedPeer = parsePeerImpressionPayload(rawPeerImpression);
     if (parsedPeer) {
@@ -691,10 +722,9 @@ async function createPostImpression(
     peerImpressionText = "";
     peerTags = [];
   }
-
-  const rawSummary = await fetchPostSummary(userSessionCookie, post.id);
+  const postSummary = await fetchPostSummary(userSessionCookie, post.id);
+  const rawSummary = postSummary.summary ?? "";
   const summaryText = rawSummary ? truncateText(rawSummary, Config.AI_USER_POST_TEXT_LIMIT) : "";
-
   const postText = truncateText(post.content, Config.AI_USER_POST_TEXT_LIMIT);
   const postExcerpt = {
     author: post.ownerNickname,
@@ -705,9 +735,7 @@ async function createPostImpression(
     peerImpression: peerImpressionText,
     peerTags,
   };
-
   const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-
   let maxChars = Config.AI_USER_IMPRESSION_LENGTH;
   let tagChars = Config.AI_TAG_MAX_LENGTH;
   if (
@@ -721,11 +749,9 @@ async function createPostImpression(
     maxChars = Config.AI_USER_IMPRESSION_LENGTH_CJK;
     tagChars = Config.AI_TAG_MAX_LENGTH_CJK;
   }
-
   let localeText = locale;
   if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
   if (locale === "ja" || locale.startsWith("ja-")) localeText = `日本語（${locale}）`;
-
   const promptTpl =
     readPrompt("common-profile", locale, "en").trim() +
     "\n\n" +
@@ -738,31 +764,21 @@ async function createPostImpression(
     .replaceAll("{{TAG_CHARS}}", String(tagChars))
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
-
-  // for debug
   console.log(prompt);
-
   const chatReq: ChatRequest = {
     messages: [{ role: "user", content: prompt }],
   };
-
   const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
     method: "POST",
     body: chatReq,
   });
-
   const chat = parseChatResponse(chatRes.body);
   const content = chat.message.content;
-
   if (content.trim() === "") {
     throw new Error(`ai-users/chat returned empty content userId=${profile.id} postId=${post.id}`);
   }
-
-  // for debug
   console.log(content);
-
   const parsed = evaluateChatResponseAsJson<unknown>(content);
-
   if (!isRecord(parsed)) {
     throw new Error(
       `AI output JSON is not an object userId=${profile.id} postId=${post.id} content=${truncateForLog(
@@ -771,7 +787,6 @@ async function createPostImpression(
       )}`,
     );
   }
-
   const impressionRaw = parsed["impression"];
   if (typeof impressionRaw !== "string") {
     throw new Error(
@@ -781,12 +796,9 @@ async function createPostImpression(
       )}`,
     );
   }
-
   const impression = truncateText(impressionRaw.trim(), Config.AI_USER_OUTPUT_TEXT_LIMIT);
   const tags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
-
   const payload = JSON.stringify({ impression, tags });
-
   await apiRequest(
     userSessionCookie,
     `/ai-users/${encodeURIComponent(profile.id)}/post-impressions`,
@@ -795,7 +807,6 @@ async function createPostImpression(
       body: { postId: post.id, payload },
     },
   );
-
   logger.info(
     `Saved post impression userId=${profile.id} postId=${post.id} tags=${tags.join(",")}`,
   );
@@ -822,7 +833,6 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
       logger.error(`error creating post impression userId=${user.id} postId=${post.id}: ${e}`);
     }
   }
-
   const peerIds = Array.from(peerIdSet);
   logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
   void topPeerPosts;
@@ -838,10 +848,8 @@ async function processLoop(): Promise<void> {
       await sleep(Config.AI_USER_IDLE_SLEEP_MS);
       continue;
     }
-
     let needRelogin = false;
     let offset = 0;
-
     while (!shuttingDown) {
       let users: AiUser[] = [];
       try {
@@ -855,18 +863,14 @@ async function processLoop(): Promise<void> {
         logger.error(`fetchNextUsers error: ${e}`);
         break;
       }
-
       if (users.length === 0) break;
-
       let index = 0;
       while (index < users.length && !shuttingDown) {
         if (inflight.size >= Config.AI_USER_CONCURRENCY) {
           await Promise.race(inflight);
           continue;
         }
-
         const user = users[index++];
-
         const p = (async () => {
           try {
             await processUser(adminSessionCookie, user);
@@ -879,21 +883,16 @@ async function processLoop(): Promise<void> {
             logger.error(`error processing userId=${user.id}: ${e}`);
           }
         })();
-
         inflight.add(p);
         p.finally(() => inflight.delete(p));
       }
-
       if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
       if (needRelogin) break;
-
       offset += users.length;
       if (users.length < Config.AI_USER_BATCH_SIZE) break;
     }
-
     if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
     await sleep(Config.AI_USER_IDLE_SLEEP_MS);
-
     logger.info("done");
     await sleep(60 * 1000);
   }
@@ -922,13 +921,11 @@ async function main(): Promise<void> {
   pgPool = await connectPgWithRetry();
   redis = await connectRedisWithRetry();
   authService = new AuthService(pgPool, redis);
-
   const onSig = () => {
     shutdown().catch(() => process.exit(1));
   };
   process.on("SIGINT", onSig);
   process.on("SIGTERM", onSig);
-
   if (Config.OPENAI_API_KEY) {
     await processLoop();
   } else {

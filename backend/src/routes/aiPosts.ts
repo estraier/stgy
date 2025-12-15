@@ -8,7 +8,12 @@ import { UsersService } from "../services/users";
 import { DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
 import { EventLogService } from "../services/eventLog";
-import type { AiPostSummary, AiPostSummaryPacket, UpdateAiPostSummaryInput, UpdateAiPostSummaryPacket } from "../models/aiPost";
+import type {
+  AiPostSummary,
+  AiPostSummaryPacket,
+  UpdateAiPostSummaryInput,
+  UpdateAiPostSummaryPacket,
+} from "../models/aiPost";
 import { normalizeOneLiner, parseBoolean } from "../utils/format";
 
 function int8ToBase64(v: Int8Array | null): string | null {
@@ -25,12 +30,20 @@ function toPacket(s: AiPostSummary): AiPostSummaryPacket {
   return { postId: s.postId, summary: s.summary, features: int8ToBase64(s.features), tags: s.tags };
 }
 
-export default function createAiPostsRouter(pgPool: Pool, redis: Redis, eventLogService: EventLogService) {
+export default function createAiPostsRouter(
+  pgPool: Pool,
+  redis: Redis,
+  eventLogService: EventLogService,
+) {
   const router = Router();
   const aiPostsService = new AiPostsService(pgPool);
   const usersService = new UsersService(pgPool, redis, eventLogService);
   const authService = new AuthService(pgPool, redis);
-  const timerThrottleService = new DailyTimerThrottleService(redis, "db", Config.DAILY_DB_TIMER_LIMIT_MS);
+  const timerThrottleService = new DailyTimerThrottleService(
+    redis,
+    "db",
+    Config.DAILY_DB_TIMER_LIMIT_MS,
+  );
   const authHelpers = new AuthHelpers(authService, usersService);
 
   router.get("/", async (req, res) => {
@@ -39,15 +52,28 @@ export default function createAiPostsRouter(pgPool: Pool, redis: Redis, eventLog
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
-    const { offset, limit, order } = AuthHelpers.getPageParams(req, loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT, ["desc", "asc"] as const);
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
     let nullOnly: boolean | undefined;
     if (typeof req.query.nullOnly === "string") {
       nullOnly = parseBoolean(req.query.nullOnly, false);
     }
-    const newerThan = typeof req.query.newerThan === "string" && req.query.newerThan.trim() !== "" ? req.query.newerThan.trim() : undefined;
+    const newerThan =
+      typeof req.query.newerThan === "string" && req.query.newerThan.trim() !== ""
+        ? req.query.newerThan.trim()
+        : undefined;
     try {
       const watch = timerThrottleService.startWatch(loginUser);
-      const result = await aiPostsService.listAiPostsSummaries({ offset, limit, order, nullOnly, newerThan });
+      const result = await aiPostsService.listAiPostsSummaries({
+        offset,
+        limit,
+        order,
+        nullOnly,
+        newerThan,
+      });
       watch.done();
       const packets: AiPostSummaryPacket[] = result.map((r) => toPacket(r));
       res.json(packets);
@@ -118,10 +144,14 @@ export default function createAiPostsRouter(pgPool: Pool, redis: Redis, eventLog
         try {
           features = base64ToInt8(b.features);
         } catch {
-          return res.status(400).json({ error: "features must be base64 string or null if specified" });
+          return res
+            .status(400)
+            .json({ error: "features must be base64 string or null if specified" });
         }
       } else {
-        return res.status(400).json({ error: "features must be base64 string or null if specified" });
+        return res
+          .status(400)
+          .json({ error: "features must be base64 string or null if specified" });
       }
     }
     let tags: string[] | undefined;
@@ -129,10 +159,18 @@ export default function createAiPostsRouter(pgPool: Pool, redis: Redis, eventLog
       if (!Array.isArray(b.tags)) {
         return res.status(400).json({ error: "tags must be array if specified" });
       }
-      tags = (b.tags as unknown[]).filter((t): t is string => typeof t === "string").map((t) => normalizeOneLiner(t)).filter((t): t is string => typeof t === "string" && t.trim() !== "");
+      tags = (b.tags as unknown[])
+        .filter((t): t is string => typeof t === "string")
+        .map((t) => normalizeOneLiner(t))
+        .filter((t): t is string => typeof t === "string" && t.trim() !== "");
       pkt.tags = tags;
     }
-    const input: UpdateAiPostSummaryInput = { postId: pkt.postId, summary: pkt.summary, features, tags: pkt.tags };
+    const input: UpdateAiPostSummaryInput = {
+      postId: pkt.postId,
+      summary: pkt.summary,
+      features,
+      tags: pkt.tags,
+    };
     try {
       const watch = timerThrottleService.startWatch(loginUser);
       const updated = await aiPostsService.updateAiPost(input);
