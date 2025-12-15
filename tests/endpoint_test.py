@@ -308,8 +308,8 @@ def test_ai_posts():
   assert target is not None, "created post not found in ai-posts list"
   assert "features" in target
   res = requests.head(f"{BASE_URL}/ai-posts/{post_id}", headers=headers, cookies=cookies)
-  assert res.status_code == 200, res.text
-  print("[ai_posts] head: exists OK")
+  assert res.status_code == 404, res.text
+  print("[ai_posts] head: non exists OK")
   res = requests.get(f"{BASE_URL}/ai-posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   detail = res.json()
@@ -341,6 +341,9 @@ def test_ai_posts():
   assert got["summary"] == dummy_summary
   assert got["features"] == feats_b64
   assert b64_to_int8_list(got["features"]) == feats
+  res = requests.head(f"{BASE_URL}/ai-posts/{post_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  print("[ai_posts] head: exists OK")
   res = requests.get(f"{BASE_URL}/ai-posts?limit=10&order=desc", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   summaries2 = res.json()
