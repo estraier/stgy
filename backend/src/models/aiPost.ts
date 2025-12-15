@@ -18,9 +18,23 @@ export type AiPostSummary = {
   tags: string[];
 };
 
+export type AiPostSummaryPacket = {
+  postId: string;
+  summary: string | null;
+  features: string | null;
+  tags: string[];
+};
+
 export type UpdateAiPostSummaryInput = {
   postId: string;
   summary?: string | null;
   features?: Int8Array | null;
+  tags?: string[];
+};
+
+export type UpdateAiPostSummaryPacket = {
+  postId: string;
+  summary?: string | null;
+  features?: string | null;
   tags?: string[];
 };
