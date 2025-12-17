@@ -103,6 +103,9 @@ def test_ai_models():
   print("[test_ai_models] OK")
 
 def test_ai_users():
+  def int8_list_to_b64(xs):
+    b = bytes(((x + 256) % 256) for x in xs)
+    return base64.b64encode(b).decode("ascii")
   def b64_to_int8_list(s):
     b = base64.b64decode(s)
     return [x - 256 if x >= 128 else x for x in b]
@@ -172,12 +175,20 @@ def test_ai_users():
     assert all(isinstance(x, int) and -128 <= x <= 127 for x in xs)
   res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/interests", headers=headers, cookies=cookies)
   assert res.status_code == 404, res.text
-  interest_body = {"payload": "I am currently interested in integration tests"}
+  interest_text = "I am currently interested in integration tests"
+  interest_tags = ["integration", "tests"]
+  feats = [((i * 17 + 3) % 256) for i in range(256)]
+  feats_i8 = [x - 256 if x >= 128 else x for x in feats]
+  feats_b64 = int8_list_to_b64(feats_i8)
+  interest_body = {"interest": interest_text, "tags": interest_tags, "features": feats_b64}
   res = requests.post(f"{BASE_URL}/ai-users/{ai_user_id}/interests", json=interest_body, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   saved_interest = res.json()
   assert saved_interest["userId"] == ai_user_id
-  assert saved_interest["payload"] == interest_body["payload"]
+  assert saved_interest["interest"] == interest_text
+  assert saved_interest["tags"] == interest_tags
+  assert saved_interest["features"] == feats_b64
+  assert b64_to_int8_list(saved_interest["features"]) == feats_i8
   res = requests.get(f"{BASE_URL}/ai-users/{ai_user_id}/interests", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   got_interest = res.json()

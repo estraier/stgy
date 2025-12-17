@@ -44,7 +44,12 @@ type RowDetail = {
 
 type RowAiUserInterest = {
   user_id: string;
-  payload: string;
+  interest: string;
+  features: Buffer;
+};
+
+type RowAiUserTag = {
+  name: string;
 };
 
 type RowAiPeerImpression = {
@@ -59,6 +64,25 @@ type RowAiPostImpression = {
   post_id: string;
   payload: string;
 };
+
+function bufferToInt8(v: Buffer): Int8Array {
+  return new Int8Array(v.buffer, v.byteOffset, v.byteLength);
+}
+
+function int8ToBuffer(v: Int8Array): Buffer {
+  return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+}
+
+function uniqKeepOrder(xs: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const x of xs) {
+    if (seen.has(x)) continue;
+    seen.add(x);
+    out.push(x);
+  }
+  return out;
+}
 
 export class AiUsersService {
   private pgPool: Pool;
@@ -149,14 +173,47 @@ export class AiUsersService {
     if (res.rowCount === 0) throw new Error("no such model");
     const model_service = res.rows[0].service;
     const model_name = res.rows[0].chat_model;
-    if (model_service === "openai") {
-      const r = await this.openai.chat.completions.create(
-        { model: model_name, messages: req.messages, service_tier: "flex" },
-        { timeout: Config.AI_RPC_TIMEOUT_MS },
-      );
-      return { message: { content: r.choices[0]?.message?.content ?? "" } };
+    if (model_service !== "openai") throw new Error("unsupported service");
+    const cacheKey = `ai-users:disable-flex:chat:${model_name}`;
+    const ttlSec = 30 * 60;
+    const isRecord = (v: unknown): v is Record<string, unknown> =>
+      typeof v === "object" && v !== null;
+    const isRecoverable = (e: unknown): boolean => {
+      if (!isRecord(e)) return false;
+      const status = e["status"];
+      if (typeof status === "number" && status >= 500 && status < 600) return true;
+      const err = e["error"];
+      if (isRecord(err) && err["type"] === "server_error") return true;
+      return false;
+    };
+    let disableFlex = false;
+    try {
+      const v = await this.redis.get(cacheKey);
+      disableFlex = typeof v === "string" && v.trim() !== "";
+    } catch {}
+    const buildParams = (useFlex: boolean) => ({
+      model: model_name,
+      messages: req.messages,
+      ...(useFlex ? { service_tier: "flex" as const } : {}),
+    });
+    for (const useFlex of [true, false] as const) {
+      if (disableFlex && useFlex) continue;
+      try {
+        const r = await this.openai.chat.completions.create(buildParams(useFlex), {
+          timeout: Config.AI_RPC_TIMEOUT_MS,
+        });
+        if (!useFlex) {
+          try {
+            await this.redis.set(cacheKey, "1", "EX", ttlSec);
+          } catch {}
+        }
+        return { message: { content: r.choices[0]?.message?.content ?? "" } };
+      } catch (e) {
+        if (useFlex && isRecoverable(e)) continue;
+        throw e;
+      }
     }
-    throw new Error("unsupported service");
+    throw new Error("internal_error");
   }
 
   async generateFeatures(req: GenerateFeaturesRequest): Promise<GenerateFeaturesResponse> {
@@ -184,7 +241,7 @@ export class AiUsersService {
   async getAiUserInterest(userId: string): Promise<AiUserInterest | null> {
     const userIdDec = hexToDec(userId);
     const sql = `
-      SELECT user_id, payload
+      SELECT user_id, interest, features
       FROM ai_interests
       WHERE user_id = $1
       LIMIT 1
@@ -192,21 +249,70 @@ export class AiUsersService {
     const res = await pgQuery<RowAiUserInterest>(this.pgPool, sql, [userIdDec]);
     if (res.rowCount === 0) return null;
     const row = res.rows[0];
-    return { userId: decToHex(String(row.user_id)), payload: row.payload };
+    const tagsRes = await pgQuery<RowAiUserTag>(
+      this.pgPool,
+      `
+      SELECT name
+      FROM ai_user_tags
+      WHERE user_id = $1
+      ORDER BY name ASC
+      `,
+      [userIdDec],
+    );
+    const tags = tagsRes.rows.map((r) => r.name);
+    return {
+      userId: decToHex(String(row.user_id)),
+      interest: row.interest,
+      features: bufferToInt8(row.features),
+      tags,
+    };
   }
 
   async setAiUserInterest(input: SetAiUserInterestInput): Promise<AiUserInterest> {
     const userIdDec = hexToDec(input.userId);
-    const sql = `
-      INSERT INTO ai_interests (user_id, payload)
-      VALUES ($1, $2)
-      ON CONFLICT (user_id)
-      DO UPDATE SET payload = EXCLUDED.payload
-      RETURNING user_id, payload
-    `;
-    const res = await pgQuery<RowAiUserInterest>(this.pgPool, sql, [userIdDec, input.payload]);
-    const row = res.rows[0];
-    return { userId: decToHex(String(row.user_id)), payload: row.payload };
+    const tags = uniqKeepOrder(input.tags);
+    const client = await this.pgPool.connect();
+    try {
+      await client.query("BEGIN");
+      const upsertSql = `
+        INSERT INTO ai_interests (user_id, interest, features)
+        VALUES ($1, $2, $3)
+        ON CONFLICT (user_id)
+        DO UPDATE SET interest = EXCLUDED.interest, features = EXCLUDED.features
+        RETURNING user_id, interest, features
+      `;
+      const upsertRes = await client.query<RowAiUserInterest>(upsertSql, [
+        userIdDec,
+        input.interest,
+        int8ToBuffer(input.features),
+      ]);
+      await client.query(`DELETE FROM ai_user_tags WHERE user_id = $1`, [userIdDec]);
+      for (const name of tags) {
+        await client.query(
+          `
+          INSERT INTO ai_user_tags (user_id, name)
+          VALUES ($1, $2)
+          ON CONFLICT (user_id, name) DO NOTHING
+          `,
+          [userIdDec, name],
+        );
+      }
+      await client.query("COMMIT");
+      const row = upsertRes.rows[0];
+      return {
+        userId: decToHex(String(row.user_id)),
+        interest: row.interest,
+        features: bufferToInt8(row.features),
+        tags,
+      };
+    } catch (e) {
+      try {
+        await client.query("ROLLBACK");
+      } catch {}
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   async listAiPeerImpressions(input: ListAiPeerImpressionsInput = {}): Promise<AiPeerImpression[]> {

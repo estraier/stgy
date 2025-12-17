@@ -1,5 +1,7 @@
 import { AiUsersService } from "./aiUsers";
 import { encodeFeatures } from "../utils/vectorSpace";
+import type { Pool } from "pg";
+import type Redis from "ioredis";
 
 jest.mock("../utils/servers", () => {
   const pgQuery = jest.fn((pool: any, sql: string, params?: any[]) => pool.query(sql, params));
@@ -33,14 +35,34 @@ class MockPgPool {
   user_secrets: { user_id: number; email: string }[] = [];
   user_details: { user_id: number; introduction: string; ai_personality: string | null }[] = [];
   ai_models: { label: string; service: string; chat_model: string; feature_model: string }[] = [];
-  ai_interests: { user_id: number; payload: string }[] = [];
+  ai_interests: { user_id: number; interest: string; features: Buffer }[] = [];
+  ai_user_tags: { user_id: number; name: string }[] = [];
   ai_peer_impressions: { user_id: number; peer_id: number; payload: string }[] = [];
   ai_post_impressions: { user_id: number; peer_id: number; post_id: number; payload: string }[] =
     [];
   posts: { id: number; owned_by: number }[] = [];
 
+  async connect() {
+    return {
+      query: async (sql: string, params?: any[]) => this.query(sql, params),
+      release: () => {},
+    };
+  }
+
+  private toBuffer(v: unknown): Buffer {
+    if (Buffer.isBuffer(v)) return v;
+    if (v instanceof Int8Array) return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+    if (v instanceof Uint8Array) return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+    if (Array.isArray(v) && v.every((x) => typeof x === "number"))
+      return Buffer.from(v as number[]);
+    return Buffer.from([]);
+  }
+
   async query(sql: string, params?: any[]) {
     sql = normalizeSql(sql);
+    if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
+      return { rows: [], rowCount: 0 };
+    }
     if (sql.startsWith("SELECT label, service, chat_model FROM ai_models WHERE label = $1")) {
       const label = params?.[0];
       const rows = this.ai_models
@@ -98,21 +120,66 @@ class MockPgPool {
       };
       return { rows: [row], rowCount: 1 };
     }
-    if (sql.startsWith("SELECT user_id, payload FROM ai_interests WHERE user_id = $1")) {
+    if (
+      sql.startsWith("SELECT user_id, interest, features FROM ai_interests WHERE user_id = $1") ||
+      sql.startsWith(
+        "SELECT user_id, interest, features FROM ai_interests WHERE user_id = $1 LIMIT 1",
+      )
+    ) {
       const idParam = params?.[0];
       const uid = typeof idParam === "string" ? Number(idParam) : idParam;
       const found = this.ai_interests.find((x) => x.user_id === uid);
       if (!found) return { rows: [], rowCount: 0 };
-      return { rows: [{ user_id: String(found.user_id), payload: found.payload }], rowCount: 1 };
+      return {
+        rows: [
+          { user_id: String(found.user_id), interest: found.interest, features: found.features },
+        ],
+        rowCount: 1,
+      };
     }
-    if (sql.startsWith("INSERT INTO ai_interests (user_id, payload)")) {
+    if (sql.startsWith("INSERT INTO ai_interests (user_id, interest, features)")) {
       const idParam = params?.[0];
-      const payload = params?.[1] ?? "";
+      const interest = String(params?.[1] ?? "");
+      const features = this.toBuffer(params?.[2]);
       const uid = typeof idParam === "string" ? Number(idParam) : idParam;
       const existing = this.ai_interests.find((x) => x.user_id === uid);
-      if (existing) existing.payload = payload;
-      else this.ai_interests.push({ user_id: uid, payload });
-      return { rows: [{ user_id: String(uid), payload }], rowCount: 1 };
+      if (existing) {
+        existing.interest = interest;
+        existing.features = features;
+      } else {
+        this.ai_interests.push({ user_id: uid, interest, features });
+      }
+      return {
+        rows: [{ user_id: String(uid), interest, features }],
+        rowCount: 1,
+      };
+    }
+    if (sql.startsWith("SELECT name FROM ai_user_tags WHERE user_id = $1")) {
+      const idParam = params?.[0];
+      const uid = typeof idParam === "string" ? Number(idParam) : idParam;
+      const rows = this.ai_user_tags
+        .filter((x) => x.user_id === uid)
+        .map((x) => ({ name: x.name }));
+      return { rows, rowCount: rows.length };
+    }
+    if (sql.startsWith("DELETE FROM ai_user_tags WHERE user_id = $1")) {
+      const idParam = params?.[0];
+      const uid = typeof idParam === "string" ? Number(idParam) : idParam;
+      this.ai_user_tags = this.ai_user_tags.filter((x) => x.user_id !== uid);
+      return { rows: [], rowCount: 0 };
+    }
+    if (sql.startsWith("INSERT INTO ai_user_tags (user_id, name)")) {
+      const ps = params ?? [];
+      for (let i = 0; i + 1 < ps.length; i += 2) {
+        const userParam = ps[i];
+        const nameParam = ps[i + 1];
+        const uid = typeof userParam === "string" ? Number(userParam) : userParam;
+        const name = String(nameParam ?? "").trim();
+        if (!name) continue;
+        const exists = this.ai_user_tags.some((x) => x.user_id === uid && x.name === name);
+        if (!exists) this.ai_user_tags.push({ user_id: uid, name });
+      }
+      return { rows: [], rowCount: 0 };
     }
     if (sql.startsWith("SELECT user_id, peer_id, payload FROM ai_peer_impressions")) {
       if (sql.includes("ORDER BY")) {
@@ -301,7 +368,7 @@ describe("AiUsersService", () => {
   beforeEach(() => {
     pgPool = new MockPgPool();
     redis = new MockRedis();
-    service = new AiUsersService(pgPool as any, redis as any);
+    service = new AiUsersService(pgPool as unknown as Pool, redis as unknown as Redis);
     mockCreate.mockReset();
     mockEmbeddingsCreate.mockReset();
     pgPool.users.push(
@@ -422,8 +489,8 @@ describe("AiUsersService", () => {
 
   test("generateFeatures: returns encoded Int8Array", async () => {
     const emb = Array.from({ length: 256 }, (_, i) => {
-      const v = ((i % 97) + 1) / 1000; // 0.001..0.097
-      return i % 2 === 0 ? v : -v; // avoid zeros
+      const v = ((i % 97) + 1) / 1000;
+      return i % 2 === 0 ? v : -v;
     });
     mockEmbeddingsCreate.mockResolvedValue({ data: [{ embedding: emb }] });
     const out = await service.generateFeatures({ model: "balanced", input: "hello" });
@@ -439,8 +506,8 @@ describe("AiUsersService", () => {
 
   test("generateFeatures: supports another model label", async () => {
     const emb = Array.from({ length: 256 }, (_, i) => {
-      const v = ((i % 89) + 1) / 2000; // 0.0005..0.0445
-      return i % 2 === 0 ? -v : v; // avoid zeros
+      const v = ((i % 89) + 1) / 2000;
+      return i % 2 === 0 ? -v : v;
     });
     mockEmbeddingsCreate.mockResolvedValue({ data: [{ embedding: emb }] });
     const out = await service.generateFeatures({ model: "advanced", input: "x" });
@@ -479,22 +546,39 @@ describe("AiUsersService", () => {
   test("setAiUserInterest: upsert and get", async () => {
     const userHex = BigInt(1001).toString(16).toUpperCase();
     const expectedHex = BigInt(1001).toString(16).toUpperCase().padStart(16, "0");
-    const saved1 = await service.setAiUserInterest({ userId: userHex, payload: "First interest" });
+    const feats1 = Int8Array.from([1, -2, 3, 4]);
+    const saved1 = await service.setAiUserInterest({
+      userId: userHex,
+      interest: "First interest",
+      features: feats1,
+      tags: ["t1", "t2"],
+    });
     expect(saved1.userId).toBe(expectedHex);
-    expect(saved1.payload).toBe("First interest");
+    expect(saved1.interest).toBe("First interest");
+    expect(Array.from(saved1.features)).toEqual(Array.from(feats1));
+    expect(saved1.tags.slice().sort()).toEqual(["t1", "t2"].sort());
     const fetched1 = await service.getAiUserInterest(userHex);
     expect(fetched1).not.toBeNull();
     expect(fetched1!.userId).toBe(expectedHex);
-    expect(fetched1!.payload).toBe("First interest");
+    expect(fetched1!.interest).toBe("First interest");
+    expect(Array.from(fetched1!.features)).toEqual(Array.from(feats1));
+    expect(fetched1!.tags.slice().sort()).toEqual(["t1", "t2"].sort());
+    const feats2 = Int8Array.from([-1, 2, -3, 4, 5]);
     const saved2 = await service.setAiUserInterest({
       userId: userHex,
-      payload: "Updated interest",
+      interest: "Updated interest",
+      features: feats2,
+      tags: ["t3"],
     });
     expect(saved2.userId).toBe(expectedHex);
-    expect(saved2.payload).toBe("Updated interest");
+    expect(saved2.interest).toBe("Updated interest");
+    expect(Array.from(saved2.features)).toEqual(Array.from(feats2));
+    expect(saved2.tags.slice().sort()).toEqual(["t3"].sort());
     const fetched2 = await service.getAiUserInterest(userHex);
     expect(fetched2).not.toBeNull();
-    expect(fetched2!.payload).toBe("Updated interest");
+    expect(fetched2!.interest).toBe("Updated interest");
+    expect(Array.from(fetched2!.features)).toEqual(Array.from(feats2));
+    expect(fetched2!.tags.slice().sort()).toEqual(["t3"].sort());
   });
 
   test("getAiPeerImpression: returns null when not set", async () => {

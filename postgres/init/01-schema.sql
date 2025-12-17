@@ -151,8 +151,16 @@ CREATE INDEX idx_ai_actions_done_at ON ai_actions(done_at);
 
 CREATE TABLE ai_interests (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-  payload VARCHAR(65535) NOT NULL
+  interest VARCHAR(65535) NOT NULL,
+  features BYTEA NOT NULL
 );
+
+CREATE TABLE ai_user_tags (
+  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  name VARCHAR(50) NOT NULL,
+  PRIMARY KEY (user_id, name)
+);
+CREATE INDEX idx_ai_user_tags_name_user_id ON ai_user_tags(name, user_id);
 
 CREATE TABLE ai_peer_impressions (
   user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
