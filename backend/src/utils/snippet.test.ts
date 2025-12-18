@@ -1,6 +1,7 @@
 import {
   makeSnippetJsonFromMarkdown,
   makeTextFromJsonSnippet,
+  makeTextFromMarkdown,
   getMentionsFromMarkdown,
 } from "./snippet";
 
@@ -29,6 +30,14 @@ describe("makeTextFromJsonSnippet", () => {
     const snippet = '[{"T":"p","X":"hello world"}]';
     const expected = "hello world";
     expect(makeTextFromJsonSnippet(snippet)).toStrictEqual(expected);
+  });
+});
+
+describe("makeTextFromMarkdown", () => {
+  it("simple", () => {
+    const mdText = "# foo\n## bar\nbaz\n";
+    const expected = "foo\n\nbar\n\nbaz";
+    expect(makeTextFromMarkdown(mdText)).toStrictEqual(expected);
   });
 });
 

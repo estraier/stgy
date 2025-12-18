@@ -6,6 +6,7 @@ import type { PostDetail } from "./models/post";
 import type { ChatRequest, ChatResponse, GenerateFeaturesRequest } from "./models/aiUser";
 import { AuthService } from "./services/auth";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
+import { makeTextFromMarkdown } from "./utils/snippet";
 import { countPseudoTokens, sliceByPseudoTokens } from "stgy-markdown";
 import type { Pool } from "pg";
 import type Redis from "ioredis";
@@ -261,13 +262,18 @@ async function generateFeaturesViaBackend(
   return normalizeFeaturesToBase64(res.body);
 }
 
-function buildFeaturesInput(summary: string, tags: string[]): string {
-  const s = summary.trim();
-  const t = tags
-    .map((x) => x.trim())
-    .filter(Boolean)
-    .slice(0, 5);
-  return `${s}\n\n${t.join("\n")}`;
+function buildFeaturesInput(summary: string, tags: string[], postSnippet: string): string {
+  const lines: string[] = [];
+  lines.push(summary.trim());
+  if (tags.length > 0) {
+    lines.push("");
+    lines.push(...tags);
+  }
+  if (postSnippet) {
+    lines.push("");
+    lines.push(postSnippet);
+  }
+  return lines.join("\n");
 }
 
 type UpdateAiPostSummaryPutBody = { summary: string; tags: string[]; features: string };
@@ -311,8 +317,11 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     locale === "ko" ||
     locale.startsWith("ko-")
   ) {
-    maxChars = Config.AI_SUMMARY_SUMMARY_LENGTH_CJK;
-    tagChars = Config.AI_TAG_MAX_LENGTH_CJK;
+    maxChars *= 0.5;
+    tagChars *= 0.5;
+  }
+  if (postText.length < maxChars * 1.2) {
+    maxChars = Math.ceil(Math.max(postText.length * 0.8, maxChars / 4) / 10) * 10;
   }
   let localeText = locale;
   if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
@@ -323,6 +332,10 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     .replaceAll("{{TAG_CHARS}}", String(tagChars))
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
+
+  // for debug
+  console.log("--- REQ\n" + prompt);
+
   const chatReq: ChatRequest = {
     model: Config.AI_SUMMARY_MODEL,
     messages: [{ role: "user", content: prompt }],
@@ -336,6 +349,10 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   if (typeof aiContent !== "string" || aiContent.trim() === "") {
     throw new Error(`ai-users/chat returned empty content for postId=${postId}`);
   }
+
+  // for debug
+  console.log("--- RES\n" + aiContent);
+
   const parsed = evaluateChatResponseAsJson<{
     summary?: unknown;
     tags?: unknown;
@@ -352,7 +369,15 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   logger.info(
     `parsed result postId=${postId} summary=${truncateForLog(summary, 50)} tags=${tags.join(",")}`,
   );
-  const featuresInput = buildFeaturesInput(summary, tags);
+  const postSnippet = truncateText(
+    makeTextFromMarkdown(post.content).replace(/\s+/, " ").trim(),
+    Config.AI_SUMMARY_SUMMARY_LENGTH,
+  );
+  const featuresInput = buildFeaturesInput(summary, tags, postSnippet);
+
+  // for debug
+  console.log("--- FEAT\n" + featuresInput);
+
   const feat = await generateFeaturesViaBackend(sessionCookie, {
     model: Config.AI_SUMMARY_MODEL,
     input: featuresInput,

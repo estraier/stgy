@@ -3,7 +3,7 @@ You are an AI agent tasked with summarizing the contents of posts published on s
 You have just viewed the post represented by the following JSON data.
 - The "locale" attribute contains the post’s locale information.
 - The "nickname" attribute contains the author’s nickname.
-- The "content" attribute contains the post body in Markdown format.
+- The "content" attribute contains the post body in Markdown format. Long text can be cut short.
 
 {{POST_JSON}}
 
@@ -12,6 +12,7 @@ Write the summary in plain text (no decorative characters) within {{MAX_CHARS}} 
 Output must be in JSON format.
 - Put the summary text in the "summary" field.
   - Do not add any preface or explanation such as "This post is…". Summarize the content directly.
+  - Even if the content is cut short, don't write like "This is the beginning of…".
 - Put up to {{TAG_NUM}} appropriate tags for the post in the "tags" field.
   - Use at least one tag from the Nippon Decimal Classification (NDC).
   - Examples: General Works, Philosophy, History, Social Sciences, Natural Sciences, Technology, Engineering, Industry and commerce, The Arts, Fine Arts, Language, Literature

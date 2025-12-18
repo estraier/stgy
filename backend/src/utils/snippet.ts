@@ -26,6 +26,10 @@ export function makeTextFromJsonSnippet(snippet: string) {
   return sliceByPseudoTokens(mdRenderText(nodes), 0, 50);
 }
 
+export function makeTextFromMarkdown(content: string) {
+  return mdRenderText(parseMarkdown(content));
+}
+
 export function getMentionsFromMarkdown(mdText: string): string[] {
   const nodes = parseMarkdown(mdText);
   const result: string[] = [];
