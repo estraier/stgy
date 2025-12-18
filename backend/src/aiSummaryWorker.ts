@@ -370,7 +370,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     `parsed result postId=${postId} summary=${truncateForLog(summary, 50)} tags=${tags.join(",")}`,
   );
   const postSnippet = truncateText(
-    makeTextFromMarkdown(post.content).replace(/\s+/, " ").trim(),
+    makeTextFromMarkdown(post.content).replaceAll(/ +/g, " ").replaceAll(/\n+/g, "\n").trim(),
     Config.AI_SUMMARY_SUMMARY_LENGTH,
   );
   const featuresInput = buildFeaturesInput(summary, tags, postSnippet);
