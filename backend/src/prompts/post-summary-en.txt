@@ -27,7 +27,7 @@ Example output:
 
 You have just viewed the post represented by the following JSON data.
 - The "locale" attribute contains the post’s locale information.
-- The "nickname" attribute contains the author’s nickname.
+- The "author" attribute contains the author’s nickname.
 - The "content" attribute contains the post body in Markdown format. If it is long, only the beginning may be included.
 
 {{POST_JSON}}

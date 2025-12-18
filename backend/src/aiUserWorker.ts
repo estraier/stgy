@@ -593,15 +593,12 @@ async function fetchPostsToRead(
   sessionCookie: string,
   userId: string,
   userLocale: string,
+  interest: AiUserInterest | null,
 ): Promise<PostDetail[]> {
   const candidates: PostCandidate[] = [];
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
   for (const post of followeePosts) {
     if (post.ownedBy === userId) continue;
-    const hasSummary = await checkPostSummary(sessionCookie, post.id);
-    if (!hasSummary) continue;
-    const hasImpression = await checkPostImpression(sessionCookie, userId, post.id);
-    if (hasImpression) continue;
     const locale = post.locale || post.ownerLocale;
     const localeWeight = computeLocaleWeight(userLocale, locale);
     candidates.push({ postId: post.id, weight: 1 * localeWeight });
@@ -609,10 +606,6 @@ async function fetchPostsToRead(
   const latestPosts = await fetchLatestPosts(sessionCookie, userId);
   for (const post of latestPosts) {
     if (post.ownedBy === userId) continue;
-    const hasSummary = await checkPostSummary(sessionCookie, post.id);
-    if (!hasSummary) continue;
-    const hasImpression = await checkPostImpression(sessionCookie, userId, post.id);
-    if (hasImpression) continue;
     const locale = post.locale || post.ownerLocale;
     const localeWeight = computeLocaleWeight(userLocale, locale);
     candidates.push({ postId: post.id, weight: 0.5 * localeWeight });
@@ -626,10 +619,6 @@ async function fetchPostsToRead(
         if (!("userId" in record)) continue;
         if (typeof record.userId !== "string") continue;
         if (record.userId === userId) continue;
-        const hasSummary = await checkPostSummary(sessionCookie, record.postId);
-        if (!hasSummary) continue;
-        const hasImpression = await checkPostImpression(sessionCookie, userId, record.postId);
-        if (hasImpression) continue;
         candidates.push({ postId: record.postId, weight: 0.8 });
       }
     }
@@ -640,10 +629,6 @@ async function fetchPostsToRead(
         if (!("userId" in record)) continue;
         if (typeof record.userId !== "string") continue;
         if (record.userId === userId) continue;
-        const hasSummary = await checkPostSummary(sessionCookie, record.postId);
-        if (!hasSummary) continue;
-        const hasImpression = await checkPostImpression(sessionCookie, userId, record.postId);
-        if (hasImpression) continue;
         candidates.push({ postId: record.postId, weight: 0.6 });
       }
     }
@@ -651,10 +636,6 @@ async function fetchPostsToRead(
   try {
     const followerPostIds = await fetchFollowerRecentRandomPostIds(sessionCookie, userId);
     for (const postId of followerPostIds) {
-      const hasSummary = await checkPostSummary(sessionCookie, postId);
-      if (!hasSummary) continue;
-      const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
-      if (hasImpression) continue;
       candidates.push({ postId, weight: 0.5 });
     }
   } catch (e) {
@@ -674,43 +655,46 @@ async function fetchPostsToRead(
   const scoresByPost = new Map<string, number>();
   for (const [postId, weight] of weightByPost.entries()) {
     if (weight <= 0) continue;
-    const score = Math.random() * weight;
-    scoresByPost.set(postId, score);
+    scoresByPost.set(postId, Math.random() * weight);
   }
-  const topPostIds = [...scoresByPost.entries()]
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, Config.AI_USER_READ_POST_LIMIT)
-    .map(([postId]) => postId);
-
-  {
-    // just for debug
-    let sumFeatures: ReturnType<typeof decodeFeatures> | null = null;
-    for (const postId of topPostIds) {
+  const rankedByScore = [...scoresByPost.entries()].sort((a, b) => b[1] - a[1]);
+  const candPostIds: string[] = [];
+  for (const [postId] of rankedByScore) {
+    const hasImpression = await checkPostImpression(sessionCookie, userId, postId);
+    if (hasImpression) continue;
+    candPostIds.push(postId);
+    if (candPostIds.length >= Config.AI_USER_COMPARE_POST_LIMIT) break;
+  }
+  if (candPostIds.length === 0) {
+    logger.info("No candidate posts to read (after impression filtering)");
+    return [];
+  }
+  let topPostIds: string[] = [];
+  if (interest) {
+    const coreFeatures = decodeFeatures(interest.features);
+    const boostedScoresByPost = new Map<string, number>();
+    for (const postId of candPostIds) {
+      const baseScore = scoresByPost.get(postId) ?? 0;
+      if (baseScore <= 0) continue;
       const postSummary = await fetchPostSummary(sessionCookie, postId);
       if (!postSummary.features) continue;
       const features = decodeFeatures(postSummary.features);
-      if (sumFeatures) {
-        for (let i = 0; i < features.length; i++) {
-          sumFeatures[i] += features[i];
-        }
-      } else {
-        sumFeatures = features.slice();
-      }
+      const sim = cosineSimilarity(coreFeatures, features);
+      const simScore = Math.min(1, baseScore + 0.2) * (((sim + 1) / 2) ** 1.6);
+      boostedScoresByPost.set(postId, baseScore * (sim + 1));
     }
-    if (sumFeatures) {
-      for (const postId of topPostIds) {
-        const postSummary = await fetchPostSummary(sessionCookie, postId);
-        if (!postSummary.features) continue;
-        const features = decodeFeatures(postSummary.features);
-        const sim = cosineSimilarity(sumFeatures, features);
-        console.log(postSummary);
-        console.log(sim);
-      }
+    topPostIds = [...boostedScoresByPost.entries()]
+                   .sort((a, b) => b[1] - a[1])
+                   .slice(0, Config.AI_USER_READ_POST_LIMIT)
+                   .map(([postId]) => postId);
+  } else {
+    for (const postId of candPostIds) {
+      const hasSummary = await checkPostSummary(sessionCookie, postId);
+      if (!hasSummary) continue;
+      topPostIds.push(postId);
+      if (topPostIds.length >= Config.AI_USER_READ_POST_LIMIT) break;
     }
   }
-
-  //process.exit(1);
-
   logger.info(`Selected post IDs to read: ${topPostIds.join(",")}`);
   const result: PostDetail[] = [];
   for (const postId of topPostIds) {
@@ -845,7 +829,7 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
   const userSessionCookie = await switchToUser(adminSessionCookie, user.id);
   const profile = await fetchUserProfile(userSessionCookie, user.id);
   const interest = await fetchUserInterest(userSessionCookie, user.id);
-  const posts = await fetchPostsToRead(userSessionCookie, user.id, profile.locale);
+  const posts = await fetchPostsToRead(userSessionCookie, user.id, profile.locale, interest);
   logger.info(`postsToRead userId=${user.id} count=${posts.length}`);
   const peerIdSet = new Set<string>();
   const topPeerPosts = new Map<string, PostDetail>();

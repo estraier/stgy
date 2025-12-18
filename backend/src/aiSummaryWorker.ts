@@ -303,7 +303,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   const postText = truncateText(post.content, Config.AI_SUMMARY_POST_TEXT_LIMIT);
   const postJsonObj = {
     locale,
-    nickname: post.ownerNickname,
+    author: post.ownerNickname,
     content: postText,
   };
   const postJson = JSON.stringify(postJsonObj, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");

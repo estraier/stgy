@@ -118,7 +118,7 @@ export class Config {
   static readonly AI_SUMMARY_POST_TEXT_LIMIT = envNum("STGY_AI_SUMMARY_POST_TEXT_LIMIT", 10000);
   static readonly AI_SUMMARY_SUMMARY_TEXT_LIMIT = envNum(
     "STGY_AI_SUMMARY_SUMMARY_TEXT_LIMIT",
-    2000,
+    10000,
   );
   static readonly AI_SUMMARY_SUMMARY_LENGTH = envNum("STGY_AI_SUMMARY_SUMMARY_LENGTH", 1000);
 
@@ -128,6 +128,8 @@ export class Config {
   static readonly AI_USER_IDLE_SLEEP_MS = envNum("STGY_AI_USER_IDLE_SLEEP_MS", 3 * 1000);
 
   static readonly AI_USER_FETCH_POST_LIMIT = envNum("STGY_AI_USER_FETCH_POST_LIMIT", 30);
+  static readonly AI_USER_COMPARE_POST_LIMIT = envNum("STGY_AI_USER_COMPARE_POST_LIMIT", 100);
+
   static readonly AI_USER_READ_POST_LIMIT = envNum("STGY_AI_USER_READ_POST_LIMIT", 3);
 
   static readonly AI_USER_POST_TEXT_LIMIT = envNum("STGY_AI_USER_POST_TEXT_LIMIT", 10000);
@@ -135,7 +137,7 @@ export class Config {
     "STGY_AI_USER_IMPRESSION_TEXT_LIMIT",
     2000,
   );
-  static readonly AI_USER_IMPRESSION_LENGTH = envNum("STGY_AI_USER_USER_LENGTH", 800);
+  static readonly AI_USER_IMPRESSION_LENGTH = envNum("STGY_AI_USER_USER_LENGTH", 1000);
 
   static readonly AI_USER_OUTPUT_TEXT_LIMIT = envNum("STGY_AI_USER_OUTPUT_TEXT_LIMIT", 10000);
 }
