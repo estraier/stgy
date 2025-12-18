@@ -419,7 +419,6 @@ async function fetchFolloweePosts(sessionCookie: string, userId: string): Promis
   params.set("limit", String(Config.AI_USER_FETCH_POST_LIMIT));
   params.set("includeSelf", "false");
   params.set("includeReplies", "true");
-  params.set("focusUserId", userId);
   params.set("limitPerUser", "3");
   const res = await apiRequest(sessionCookie, `/posts/by-followees?${params.toString()}`, {
     method: "GET",
@@ -429,16 +428,45 @@ async function fetchFolloweePosts(sessionCookie: string, userId: string): Promis
   return parsed as Post[];
 }
 
-async function fetchLatestPosts(sessionCookie: string, userId: string): Promise<Post[]> {
+async function fetchLatestPosts(sessionCookie: string): Promise<Post[]> {
   const params = new URLSearchParams();
   params.set("offset", "0");
   params.set("limit", String(Config.AI_USER_FETCH_POST_LIMIT));
   params.set("order", "desc");
-  params.set("focusUserId", userId);
   const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
   return parsed as Post[];
+}
+
+async function fetchPeerLatestPosts(
+  sessionCookie: string,
+  peerId: string,
+): Promise<PostDetail[]> {
+  const params = new URLSearchParams();
+  params.set("offset", "0");
+  params.set("limit", String(Math.min(5, Config.AI_USER_READ_PEER_POST_LIMIT)));
+  params.set("order", "desc");
+  params.set("ownedBy", peerId);
+
+  const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!Array.isArray(parsed)) return [];
+  const list = parsed as Post[];
+  const ids = list
+    .map((p) => p.id)
+    .filter((id): id is string => typeof id === "string" && id.trim() !== "")
+    .slice(0, Math.min(5, Config.AI_USER_READ_POST_LIMIT));
+  const result: PostDetail[] = [];
+  for (const id of ids) {
+    try {
+      const detail = await fetchPostById(sessionCookie, id);
+      result.push(detail);
+    } catch (e) {
+      logger.info(`Failed to fetch peer latest post detail peerId=${peerId} postId=${id}: ${e}`);
+    }
+  }
+  return result;
 }
 
 async function fetchNotifications(sessionCookie: string): Promise<Notification[]> {
@@ -508,10 +536,8 @@ async function checkPostImpression(
 async function fetchPostById(
   sessionCookie: string,
   postId: string,
-  focusUserId: string,
 ): Promise<PostDetail> {
   const url = new URL(`/posts/${encodeURIComponent(postId)}`, Config.BACKEND_API_BASE_URL);
-  url.searchParams.set("focusUserId", focusUserId);
   const path = url.pathname + url.search;
   const res = await apiRequest(sessionCookie, path, { method: "GET" });
   return JSON.parse(res.body) as PostDetail;
@@ -523,7 +549,6 @@ async function fetchOwnRecentPosts(sessionCookie: string, userId: string): Promi
   params.set("limit", String(Config.AI_USER_READ_POST_LIMIT));
   params.set("order", "desc");
   params.set("ownedBy", userId);
-  params.set("focusUserId", userId);
   const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
@@ -532,7 +557,7 @@ async function fetchOwnRecentPosts(sessionCookie: string, userId: string): Promi
   const result: PostDetail[] = [];
   for (const id of ids) {
     try {
-      const detail = await fetchPostById(sessionCookie, id, userId);
+      const detail = await fetchPostById(sessionCookie, id);
       result.push(detail);
     } catch (e) {
       logger.info(`Failed to fetch own post detail userId=${userId} postId=${id}: ${e}`);
@@ -608,7 +633,7 @@ async function fetchPostsToRead(
     const localeWeight = computeLocaleWeight(userLocale, locale);
     candidates.push({ postId: post.id, weight: 1 * localeWeight });
   }
-  const latestPosts = await fetchLatestPosts(sessionCookie, userId);
+  const latestPosts = await fetchLatestPosts(sessionCookie);
   for (const post of latestPosts) {
     if (post.ownedBy === userId) continue;
     const locale = post.locale || post.ownerLocale;
@@ -707,7 +732,7 @@ async function fetchPostsToRead(
   const result: PostToRead[] = [];
   for (const postId of topPostIds) {
     try {
-      const post = await fetchPostById(sessionCookie, postId, userId);
+      const post = await fetchPostById(sessionCookie, postId);
       const similarity = similarityByPostId.get(postId) ?? 0;
       result.push({ post, similarity });
     } catch (e) {
