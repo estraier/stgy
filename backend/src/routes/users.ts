@@ -17,6 +17,7 @@ import {
   normalizeText,
   normalizeOneLiner,
   normalizeMultiLines,
+  normalizeLocale,
   parseBoolean,
   maskEmailByHash,
 } from "../utils/format";
