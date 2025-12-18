@@ -292,7 +292,7 @@ async function postSummaryResult(
 async function summarizePost(sessionCookie: string, postId: string): Promise<void> {
   logger.info(`summarizePost postId=${postId}`);
   const post = await fetchPostDetail(sessionCookie, postId);
-  const locale = (post.locale || post.ownerLocale || "en").replace(/_/g, "-");
+  const locale = post.locale || post.ownerLocale || "en";
   logger.info(
     `post fetched postId=${postId} locale=${locale} author=${post.ownerNickname} content=${truncateForLog(
       post.content,

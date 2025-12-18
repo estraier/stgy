@@ -200,8 +200,8 @@ function buildProfileExcerpt(
   interest: AiUserInterest | null,
 ): {
   userId: string;
-  nickname: string;
   locale: string;
+  nickname: string;
   introduction: string;
   aiPersonality: string;
   currentInterest: string;
@@ -211,8 +211,8 @@ function buildProfileExcerpt(
   const currentInterestTags = interest ? parseTagsField(interest.tags, 5) : [];
   return {
     userId: profile.id,
-    nickname: profile.nickname,
     locale: profile.locale,
+    nickname: profile.nickname,
     introduction: truncateText(profile.introduction, 200),
     aiPersonality: truncateText(profile.aiPersonality ?? "", 200),
     currentInterest,
@@ -723,33 +723,26 @@ async function createPostImpression(
   interest: AiUserInterest | null,
   post: PostDetail,
 ): Promise<void> {
-  const baseLocale =
-    (post.locale ?? "") || (post.ownerLocale ?? "") || (profile.locale ?? "") || "en";
-  const locale = baseLocale.replace(/_/g, "-");
+  const locale = (post.locale || post.ownerLocale || profile.locale).replaceAll(/_/g, "-");
   const profileExcerpt = buildProfileExcerpt(profile, interest);
   const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
   const rawPeerImpression = await fetchPeerImpression(userSessionCookie, profile.id, post.ownedBy);
-  let peerImpressionText = rawPeerImpression;
+  let peerImpressionText: string = "";
   let peerTags: string[] = [];
   if (rawPeerImpression) {
     const parsedPeer = parsePeerImpressionPayload(rawPeerImpression);
     if (parsedPeer) {
       peerImpressionText = truncateText(parsedPeer.impression, Config.AI_USER_OUTPUT_TEXT_LIMIT);
       peerTags = parsedPeer.tags?.slice(0, 5) ?? [];
-    } else {
-      peerImpressionText = truncateText(rawPeerImpression, Config.AI_USER_OUTPUT_TEXT_LIMIT);
     }
-  } else {
-    peerImpressionText = "";
-    peerTags = [];
   }
   const postSummary = await fetchPostSummary(userSessionCookie, post.id);
   const rawSummary = postSummary.summary ?? "";
   const summaryText = rawSummary ? truncateText(rawSummary, Config.AI_USER_POST_TEXT_LIMIT) : "";
   const postText = truncateText(post.content, Config.AI_USER_POST_TEXT_LIMIT);
   const postExcerpt = {
-    author: post.ownerNickname,
     locale,
+    author: post.ownerNickname,
     createdAt: post.createdAt,
     content: postText,
     summary: summaryText,
@@ -833,6 +826,45 @@ async function createPostImpression(
   );
 }
 
+async function createPeerImpression(
+  userSessionCookie: string,
+  profile: UserDetail,
+  interest: AiUserInterest | null,
+  peer: UserDetail,
+): Promise<void> {
+  const locale = peer.locale.replaceAll(/_/g, "-");
+  const profileExcerpt = buildProfileExcerpt(profile, interest);
+  const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+
+  console.log(locale);
+  console.log("ME", profileJson);
+
+  const rawPeerImpression = await fetchPeerImpression(userSessionCookie, profile.id, peer.id);
+  let peerImpressionText: string = "";
+  let peerTags: string[] = [];
+  if (rawPeerImpression) {
+    const parsedPeer = parsePeerImpressionPayload(rawPeerImpression);
+    if (parsedPeer) {
+      peerImpressionText = truncateText(parsedPeer.impression, Config.AI_USER_OUTPUT_TEXT_LIMIT);
+      peerTags = parsedPeer.tags?.slice(0, 5) ?? [];
+    }
+  }
+  const introText = truncateText(peer.introduction, Config.AI_USER_INTRO_TEXT_LIMIT);
+  const peerExcerpt = {
+    userId: peer.id,
+    locale: peer.locale,
+    nickname: peer.nickname,
+    introduction: introText,
+    peerImpression: peerImpressionText,
+    peerTags,
+  };
+
+  console.log("PEER", peerExcerpt);
+
+
+
+}
+
 async function processUser(adminSessionCookie: string, user: AiUser): Promise<void> {
   logger.info(`Processing AI user: id=${user.id}, nickname=${user.nickname}`);
   const userSessionCookie = await switchToUser(adminSessionCookie, user.id);
@@ -844,6 +876,7 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
   const topPeerPosts = new Map<string, PostDetail>();
   for (const item of posts) {
     const post = item.post;
+    if (post.ownedBy === user.id) continue;
     peerIdSet.add(post.ownedBy);
     if (topPeerPosts.size < 5 && !topPeerPosts.has(post.ownedBy)) {
       topPeerPosts.set(post.ownedBy, post);
@@ -857,7 +890,15 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
   }
   const peerIds = Array.from(peerIdSet);
   logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
-  void topPeerPosts;
+  for (const peerId of peerIds) {
+    try {
+      const peer = await fetchUserProfile(userSessionCookie, peerId);
+      await createPeerImpression(userSessionCookie, profile, interest, peer);
+    } catch (e) {
+      if (e instanceof UnauthorizedError) throw e;
+      logger.error(`error creating peer impression userId=${user.id} peerId=${peerId}: ${e}`);
+    }
+  }
 }
 
 async function processLoop(): Promise<void> {
@@ -914,9 +955,7 @@ async function processLoop(): Promise<void> {
       if (users.length < Config.AI_USER_BATCH_SIZE) break;
     }
     if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
-    await sleep(Config.AI_USER_IDLE_SLEEP_MS);
-    logger.info("done");
-    await sleep(60 * 1000);
+    await sleep(Config.AI_SUMMARY_FAMILY_SLEEP_MS);
   }
 }
 
