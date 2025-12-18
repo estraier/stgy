@@ -254,7 +254,10 @@ async function switchToUser(adminSessionCookie: string, userId: string): Promise
     method: "POST",
     body: { id: userId },
   });
-  const raw = res.headers["set-cookie"] as http.IncomingHttpHeaders["set-cookie"] | string | undefined;
+  const raw = res.headers["set-cookie"] as
+    | http.IncomingHttpHeaders["set-cookie"]
+    | string
+    | undefined;
   let cookie: string | null = null;
   if (Array.isArray(raw)) {
     for (const s of raw) {
@@ -445,10 +448,7 @@ async function fetchLatestPosts(sessionCookie: string): Promise<Post[]> {
   return parsed as Post[];
 }
 
-async function fetchPeerLatestPosts(
-  sessionCookie: string,
-  peerId: string,
-): Promise<PostDetail[]> {
+async function fetchPeerLatestPosts(sessionCookie: string, peerId: string): Promise<PostDetail[]> {
   const params = new URLSearchParams();
   params.set("offset", "0");
   params.set("limit", String(Math.min(5, Config.AI_USER_READ_PEER_POST_LIMIT)));
@@ -539,10 +539,7 @@ async function checkPostImpression(
   );
 }
 
-async function fetchPostById(
-  sessionCookie: string,
-  postId: string,
-): Promise<PostDetail> {
+async function fetchPostById(sessionCookie: string, postId: string): Promise<PostDetail> {
   const url = new URL(`/posts/${encodeURIComponent(postId)}`, Config.BACKEND_API_BASE_URL);
   const path = url.pathname + url.search;
   const res = await apiRequest(sessionCookie, path, { method: "GET" });
@@ -866,34 +863,146 @@ async function createPeerImpression(
   const locale = peer.locale.replaceAll(/_/g, "-");
   const profileExcerpt = buildProfileExcerpt(profile, interest);
   const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-
-  console.log(locale);
-  console.log("ME", profileJson);
-
   const rawPeerImpression = await fetchPeerImpression(userSessionCookie, profile.id, peer.id);
-  let peerImpressionText: string = "";
-  let peerTags: string[] = [];
+  let lastImpressionText: string = "";
   if (rawPeerImpression) {
     const parsedPeer = parsePeerImpressionPayload(rawPeerImpression);
     if (parsedPeer) {
-      peerImpressionText = truncateText(parsedPeer.impression, Config.AI_USER_OUTPUT_TEXT_LIMIT);
-      peerTags = parsedPeer.tags?.slice(0, 5) ?? [];
+      lastImpressionText = truncateText(parsedPeer.impression, Config.AI_USER_OUTPUT_TEXT_LIMIT);
     }
   }
   const introText = truncateText(peer.introduction, Config.AI_USER_INTRO_TEXT_LIMIT);
+  const peerPosts = await fetchPeerLatestPosts(userSessionCookie, peer.id);
+  const posts: { summary: string; impression: string; tags: string[] }[] = [];
+  for (const p of peerPosts) {
+    const postSummary = await fetchPostSummary(userSessionCookie, p.id);
+    const rawSummary = postSummary.summary ?? "";
+    const summaryText = rawSummary ? truncateText(rawSummary, Config.AI_USER_POST_TEXT_LIMIT) : "";
+    let postImpressionText: string = "";
+    let postTags: string[] = [];
+    const path = `/ai-users/${encodeURIComponent(profile.id)}/post-impressions/${encodeURIComponent(
+      p.id,
+    )}`;
+    try {
+      const res = await httpRequest(path, {
+        method: "GET",
+        headers: { Cookie: userSessionCookie },
+      });
+      if (res.statusCode === 401) throw new UnauthorizedError(`401 from ${path}`);
+      if (res.statusCode === 404) {
+        postImpressionText = "";
+        postTags = [];
+      } else if (res.statusCode < 200 || res.statusCode >= 300) {
+        logger.error(
+          `failed to fetch post impression userId=${profile.id} peerId=${peer.id} postId=${p.id}: ${res.statusCode} ${truncateForLog(
+            res.body,
+            50,
+          )}`,
+        );
+      } else {
+        const parsed = JSON.parse(res.body) as unknown;
+        if (isRecord(parsed)) {
+          const payload = parsed["payload"];
+          if (typeof payload === "string" && payload.trim() !== "") {
+            const parsedPayload = parsePeerImpressionPayload(payload);
+            if (parsedPayload) {
+              postImpressionText = truncateText(
+                parsedPayload.impression,
+                Config.AI_USER_OUTPUT_TEXT_LIMIT,
+              );
+              postTags = parsedPayload.tags?.slice(0, Config.AI_TAG_MAX_COUNT) ?? [];
+            }
+          }
+        }
+      }
+    } catch (e) {
+      if (e instanceof UnauthorizedError) throw e;
+      logger.info(
+        `Failed to fetch post impression userId=${profile.id} peerId=${peer.id} postId=${p.id}: ${e}`,
+      );
+    }
+    posts.push({ summary: summaryText, impression: postImpressionText, tags: postTags });
+  }
   const peerExcerpt = {
     userId: peer.id,
     locale: peer.locale,
     nickname: peer.nickname,
     introduction: introText,
-    peerImpression: peerImpressionText,
-    peerTags,
+    lastImpression: lastImpressionText,
+    posts,
   };
-
-  console.log("PEER", peerExcerpt);
-
-
-
+  const peerJson = JSON.stringify(peerExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+  let maxChars = Config.AI_USER_IMPRESSION_LENGTH;
+  let tagChars = Config.AI_TAG_MAX_LENGTH;
+  if (
+    locale === "ja" ||
+    locale.startsWith("ja-") ||
+    locale === "zh" ||
+    locale.startsWith("zh-") ||
+    locale === "ko" ||
+    locale.startsWith("ko-")
+  ) {
+    maxChars *= 0.5;
+    tagChars *= 0.5;
+  }
+  let localeText = locale;
+  if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
+  if (locale === "ja" || locale.startsWith("ja-")) localeText = `日本語（${locale}）`;
+  const commonTpl = readPrompt("common-profile", locale, "en").trim();
+  const peerTpl = readPrompt("peer-impression", locale, "en").trim() + "\n";
+  let prompt =
+    commonTpl.replaceAll("{{PROFILE_JSON}}", profileJson) +
+    "\n\n" +
+    peerTpl.replaceAll("{{PROFILE_JSON}}", peerJson);
+  prompt = prompt
+    .replaceAll("{{MAX_CHARS}}", String(maxChars))
+    .replaceAll("{{TAG_CHARS}}", String(tagChars))
+    .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
+    .replaceAll("{{LOCALE}}", localeText);
+  console.log(prompt);
+  const chatReq: ChatRequest = { messages: [{ role: "user", content: prompt }] };
+  const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
+    method: "POST",
+    body: chatReq,
+  });
+  const chat = parseChatResponse(chatRes.body);
+  const content = chat.message.content;
+  if (content.trim() === "") {
+    throw new Error(`ai-users/chat returned empty content userId=${profile.id} peerId=${peer.id}`);
+  }
+  console.log(content);
+  const parsed = evaluateChatResponseAsJson<unknown>(content);
+  if (!isRecord(parsed)) {
+    throw new Error(
+      `AI output JSON is not an object userId=${profile.id} peerId=${peer.id} content=${truncateForLog(
+        content,
+        50,
+      )}`,
+    );
+  }
+  const impressionRaw = parsed["impression"];
+  if (typeof impressionRaw !== "string") {
+    throw new Error(
+      `AI output JSON missing impression userId=${profile.id} peerId=${peer.id} content=${truncateForLog(
+        content,
+        50,
+      )}`,
+    );
+  }
+  const impression = truncateText(impressionRaw.trim(), Config.AI_USER_OUTPUT_TEXT_LIMIT);
+  const tags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
+  const payload = JSON.stringify({ impression, tags });
+  await apiRequest(
+    userSessionCookie,
+    `/ai-users/${encodeURIComponent(profile.id)}/peer-impressions`,
+    {
+      method: "POST",
+      body: { peerId: peer.id, payload },
+    },
+  );
+  logger.info(
+    `Saved peer impression userId=${profile.id} peerId=${peer.id} tags=${tags.join(",")}`,
+  );
 }
 
 async function processUser(adminSessionCookie: string, user: AiUser): Promise<void> {
