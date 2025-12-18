@@ -273,8 +273,42 @@ components:
       type: object
       properties:
         userId: { type: string }
-        payload: { type: string }
-      required: [userId, payload]
+        interest: { type: string }
+        features:
+          type: string
+          format: byte
+          description: Base64 encoded Int8Array
+        tags:
+          type: array
+          items: { type: string }
+      required: [userId, interest, features, tags]
+
+    AiUserInterestUpsertRequest:
+      allOf:
+        - type: object
+          properties:
+            interest:
+              type: string
+              description: Interest text (preferred field)
+            payload:
+              type: string
+              description: Legacy alias of interest (accepted if interest is omitted)
+            tags:
+              type: array
+              items: { type: string }
+              description: Optional tags (deduped/trimmed server-side)
+            features:
+              type: string
+              format: byte
+              description: |
+                Optional Base64 Int8Array. If omitted/empty, server may generate features (requires AI enabled).
+            model:
+              type: string
+              description: Admin-only model override used when generating features
+          additionalProperties: false
+        - anyOf:
+            - required: [interest]
+            - required: [payload]
 
     AiPeerImpression:
       type: object
@@ -577,6 +611,8 @@ paths:
                 properties:
                   result: { type: string }
                 required: [result]
+        "401":
+          $ref: "#/components/responses/Error401"
 
   /auth/switch-user:
     post:
@@ -604,6 +640,8 @@ paths:
                 required: [sessionId]
         "400":
           $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
         "403":
           $ref: "#/components/responses/Error403"
         "404":
@@ -770,11 +808,13 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/User"
-        "403":
-          $ref: "#/components/responses/Error403"
+                $ref: "#/components/schemas/UserDetail"
         "400":
           $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
 
   /users/{id}/lite:
     get:
@@ -816,7 +856,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: User info
+          description: User info (email may be masked if not admin and not self)
           content:
             application/json:
               schema:
@@ -860,7 +900,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/User"
+                $ref: "#/components/schemas/UserDetail"
         "401":
           $ref: "#/components/responses/Error401"
         "403":
@@ -1110,6 +1150,8 @@ paths:
           $ref: "#/components/responses/Error403"
         "404":
           $ref: "#/components/responses/Error404"
+        "400":
+          $ref: "#/components/responses/Error400"
 
   /users/{id}/followees:
     get:
@@ -1234,6 +1276,8 @@ paths:
           $ref: "#/components/responses/Error403"
         "404":
           $ref: "#/components/responses/Error404"
+        "400":
+          $ref: "#/components/responses/Error400"
 
   /users/friends/by-nickname-prefix:
     get:
@@ -1250,6 +1294,9 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
         - name: focusUserId
           in: query
           schema: { type: string }
@@ -1296,9 +1343,8 @@ paths:
           schema: { type: string }
           description: |
             If omitted: include all posts.
-            If empty string (""): only posts with no replyTo (not a reply).
-            If "*": only posts with any replyTo (replies).
-            Otherwise: only posts with replyTo equal to the given value.
+            If provided as empty string: treated as null (non-reply posts).
+            Otherwise: treated as an exact replyTo id.
       responses:
         "200":
           description: Post count
@@ -1341,6 +1387,10 @@ paths:
         - name: replyTo
           in: query
           schema: { type: string }
+          description: |
+            If omitted: include all posts.
+            If provided as empty string: treated as null (non-reply posts).
+            Otherwise: treated as an exact replyTo id.
         - name: focusUserId
           in: query
           schema: { type: string }
@@ -1369,10 +1419,10 @@ paths:
             schema:
               type: object
               properties:
-                id: { type: string }
+                id: { type: string, description: Admin only; ignored/forbidden for non-admin. }
                 content: { type: string }
                 locale: { type: string, nullable: true }
-                ownedBy: { type: string }
+                ownedBy: { type: string, description: Admin only; defaults to current user. }
                 replyTo: { type: string, nullable: true }
                 publishedAt: { type: string, nullable: true }
                 allowLikes: { type: boolean }
@@ -1387,9 +1437,11 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Post"
+                $ref: "#/components/schemas/PostDetail"
         "400":
           $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
         "403":
           $ref: "#/components/responses/Error403"
 
@@ -1551,7 +1603,7 @@ paths:
               properties:
                 content: { type: string }
                 locale: { type: string, nullable: true }
-                ownedBy: { type: string }
+                ownedBy: { type: string, description: Admin only; forbidden for non-admin. }
                 replyTo: { type: string, nullable: true }
                 publishedAt: { type: string, nullable: true }
                 allowLikes: { type: boolean }
@@ -1565,7 +1617,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Post"
+                $ref: "#/components/schemas/PostDetail"
         "401":
           $ref: "#/components/responses/Error401"
         "403":
@@ -1652,6 +1704,8 @@ paths:
           $ref: "#/components/responses/Error403"
         "404":
           $ref: "#/components/responses/Error404"
+        "400":
+          $ref: "#/components/responses/Error400"
 
   /posts/{id}/likers:
     get:
@@ -1858,7 +1912,7 @@ paths:
           schema: { type: string }
       responses:
         "200":
-          description: Current interests
+          description: Current interests (interest + features + tags)
           content:
             application/json:
               schema:
@@ -1883,13 +1937,10 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              properties:
-                payload: { type: string }
-              required: [payload]
+              $ref: "#/components/schemas/AiUserInterestUpsertRequest"
       responses:
         "200":
-          description: Saved interests
+          description: Saved interests (interest + features + tags)
           content:
             application/json:
               schema:
@@ -2375,14 +2426,18 @@ paths:
           required: false
           schema:
             type: string
-            pattern: '^\d{6}$'
+            pattern: "^[0-9]{6}$"
       responses:
         "200":
-          description: Monthly quota
+          description: Monthly quota (single month or list depending on query)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/StorageMonthlyQuota"
+                anyOf:
+                  - $ref: "#/components/schemas/StorageMonthlyQuota"
+                  - type: array
+                    items:
+                      $ref: "#/components/schemas/StorageMonthlyQuota"
         "400":
           $ref: "#/components/responses/Error400"
         "401":
@@ -2393,6 +2448,9 @@ paths:
   /media/{userId}/images/{path}:
     get:
       summary: Download a specific image or thumbnail
+      description: |
+        NOTE: {path} may contain slashes (server treats it as a catch-all).
+        Some OpenAPI clients may need special handling for such paths.
       security:
         - sessionCookie: []
       parameters:
@@ -2404,7 +2462,6 @@ paths:
           in: path
           required: true
           schema: { type: string }
-          allowReserved: true
       responses:
         "200":
           description: Image bytes
@@ -2421,6 +2478,8 @@ paths:
           $ref: "#/components/responses/Error403"
     delete:
       summary: Delete a specific image master (and its thumbnails)
+      description: |
+        NOTE: {path} may contain slashes (server treats it as a catch-all).
       security:
         - sessionCookie: []
       parameters:
@@ -2432,7 +2491,6 @@ paths:
           in: path
           required: true
           schema: { type: string }
-          allowReserved: true
       responses:
         "200":
           description: Deleted
@@ -2705,7 +2763,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Post"
+                  $ref: "#/components/schemas/PubPostDetail"
         "400":
           $ref: "#/components/responses/Error400"
 
