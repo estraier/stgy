@@ -13,6 +13,7 @@ import {
   normalizeText,
   normalizeOneLiner,
   normalizeMultiLines,
+  normalizeLocale,
   parseBoolean,
   maskEmailByHash,
   snakeToCamel,
@@ -287,6 +288,57 @@ describe("normalizeMultiLines", () => {
 
   it("removes successive and trailing spaces", () => {
     expect(normalizeMultiLines("  foo \n\n\nbar \nbaz\n")).toBe("  foo\n\n\nbar\nbaz");
+  });
+});
+
+describe("normalizeLocale", () => {
+  test("returns input as-is for null/undefined/empty", () => {
+    expect(normalizeLocale(undefined)).toBeUndefined();
+    expect(normalizeLocale(null)).toBeNull();
+    expect(normalizeLocale("")).toBe("");
+  });
+
+  test("trims whitespace (whitespace-only becomes empty string)", () => {
+    expect(normalizeLocale("  ja_JP  ")).toBe("ja-JP");
+    expect(normalizeLocale("   ")).toBe("");
+    expect(normalizeLocale("\n\t en_US \r")).toBe("en-US");
+  });
+
+  test("replaces underscore with hyphen", () => {
+    expect(normalizeLocale("ja_JP")).toBe("ja-JP");
+    expect(normalizeLocale("en__US")).toBe("en-US");
+  });
+
+  test("normalizes repeated/edge hyphens", () => {
+    expect(normalizeLocale("-en-US-")).toBe("en-US");
+    expect(normalizeLocale("--en---us--")).toBe("en-US");
+    expect(normalizeLocale("___en___us___")).toBe("en-US");
+  });
+
+  test("lowercases first subtag if 2-3 ASCII letters", () => {
+    expect(normalizeLocale("EN")).toBe("en");
+    expect(normalizeLocale("eN")).toBe("en");
+    expect(normalizeLocale("ENG")).toBe("eng");
+    expect(normalizeLocale("Eng-US")).toBe("eng-US");
+  });
+
+  test("uppercases subsequent subtags if 2-3 ASCII letters", () => {
+    expect(normalizeLocale("en-us")).toBe("en-US");
+    expect(normalizeLocale("eng-usa")).toBe("eng-USA");
+    expect(normalizeLocale("ja-jpn")).toBe("ja-JPN");
+  });
+
+  test("does not change non-2/3-letter subtags (except underscore->hyphen)", () => {
+    expect(normalizeLocale("zh-Hant-TW")).toBe("zh-Hant-TW");
+    expect(normalizeLocale("sr_latn_RS")).toBe("sr-latn-RS");
+    expect(normalizeLocale("abcd-ef")).toBe("abcd-EF");
+    expect(normalizeLocale("123-ab")).toBe("123-AB");
+  });
+
+  test("drops empty segments after normalization", () => {
+    expect(normalizeLocale("en--US")).toBe("en-US");
+    expect(normalizeLocale("en---")).toBe("en");
+    expect(normalizeLocale("---")).toBe("");
   });
 });
 

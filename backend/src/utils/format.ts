@@ -186,6 +186,23 @@ export function normalizeMultiLines(input: string | undefined | null): string | 
   return s;
 }
 
+export function normalizeLocale(input: string | undefined | null): string | undefined | null {
+  if (!input) return input;
+  const raw = input.normalize("NFC").trim();
+  if (raw === "") return raw;
+  let s = raw.replace(/_/g, "-").replace(/-+/g, "-").replace(/^-|-$/g, "");
+  if (s === "") return "";
+  const parts = s.split("-").filter(Boolean);
+  if (parts.length === 0) return "";
+  const first = parts[0];
+  parts[0] = /^[A-Za-z]{2,3}$/.test(first) ? first.toLowerCase() : first;
+  for (let i = 1; i < parts.length; i++) {
+    const p = parts[i];
+    if (/^[A-Za-z]{2,3}$/.test(p)) parts[i] = p.toUpperCase();
+  }
+  return parts.join("-");
+}
+
 export function parseBoolean(input: string | undefined | null, defaultValue = false): boolean {
   if (!input) return defaultValue;
   const s = input.trim().toLowerCase();

@@ -187,7 +187,7 @@ export default function createUsersRouter(
         password: normalizeText(req.body.password) ?? "",
         isAdmin: !!req.body.isAdmin,
         blockStrangers: !!req.body.blockStrangers,
-        locale: normalizeOneLiner(req.body.locale) ?? "",
+        locale: normalizeLocale(req.body.locale) ?? "",
         timezone: normalizeOneLiner(req.body.timezone) ?? "",
         introduction: normalizeMultiLines(req.body.introduction) ?? "",
         avatar: normalizeOneLiner(req.body.avatar) ?? null,
@@ -234,7 +234,7 @@ export default function createUsersRouter(
     }
     let locale;
     if (req.body.locale) {
-      locale = normalizeOneLiner(req.body.locale) ?? "";
+      locale = normalizeLocale(req.body.locale) ?? "";
       dataSize += locale.length;
     }
     let timezone;

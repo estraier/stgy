@@ -10,7 +10,12 @@ import { ThrottleService, DailyTimerThrottleService } from "../services/throttle
 import { AuthHelpers } from "./authHelpers";
 import { EventLogService } from "../services/eventLog";
 import { CreatePostInput, UpdatePostInput } from "../models/post";
-import { normalizeOneLiner, normalizeMultiLines, parseBoolean } from "../utils/format";
+import {
+  normalizeOneLiner,
+  normalizeMultiLines,
+  normalizeLocale,
+  parseBoolean,
+} from "../utils/format";
 
 export default function createPostsRouter(
   pgPool: Pool,
@@ -315,7 +320,7 @@ export default function createPostsRouter(
       return res.status(403).json({ error: "too often posts" });
     }
     const locale =
-      typeof req.body.locale === "string" ? (normalizeOneLiner(req.body.locale) ?? null) : null;
+      typeof req.body.locale === "string" ? (normalizeLocale(req.body.locale) ?? null) : null;
     try {
       const input: CreatePostInput = {
         id: typeof req.body.id === "string" ? (normalizeOneLiner(req.body.id) ?? "") : undefined,
