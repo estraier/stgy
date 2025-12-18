@@ -15,11 +15,17 @@ import type Redis from "ioredis";
 import http from "http";
 import https from "https";
 import { URLSearchParams } from "url";
-import type { AiUser, AiUserInterest, ChatRequest, ChatResponse } from "./models/aiUser";
+import type {
+  AiUser,
+  AiUserInterest,
+  AiPeerImpression,
+  ChatRequest,
+  ChatResponse,
+} from "./models/aiUser";
 import type { AiPostSummary, AiPostSummaryPacket } from "./models/aiPost";
 import type { UserLite, UserDetail } from "./models/user";
 import type { Post, PostDetail } from "./models/post";
-import type { Notification } from "./models/notification";
+import type { Notification, NotificationPostRecord } from "./models/notification";
 
 const logger = createLogger({ file: "aiUserWorker" });
 
@@ -248,7 +254,7 @@ async function switchToUser(adminSessionCookie: string, userId: string): Promise
     method: "POST",
     body: { id: userId },
   });
-  const raw = res.headers["set-cookie"] as unknown;
+  const raw = res.headers["set-cookie"] as http.IncomingHttpHeaders["set-cookie"] | string | undefined;
   let cookie: string | null = null;
   if (Array.isArray(raw)) {
     for (const s of raw) {
@@ -372,7 +378,7 @@ async function fetchPeerImpression(
   }
   const parsed = JSON.parse(res.body) as unknown;
   if (!isRecord(parsed)) return "";
-  const payload = parsed["payload"];
+  const payload = (parsed as AiPeerImpression).payload;
   return typeof payload === "string" ? payload : "";
 }
 
@@ -645,21 +651,21 @@ async function fetchPostsToRead(
     if (n.slot.startsWith("reply:")) {
       for (const record of n.records) {
         if (!("postId" in record)) continue;
-        if (typeof record.postId !== "string") continue;
-        if (!("userId" in record)) continue;
-        if (typeof record.userId !== "string") continue;
-        if (record.userId === userId) continue;
-        candidates.push({ postId: record.postId, weight: 0.8 });
+        const r = record as NotificationPostRecord;
+        if (typeof r.postId !== "string") continue;
+        if (typeof r.userId !== "string") continue;
+        if (r.userId === userId) continue;
+        candidates.push({ postId: r.postId, weight: 0.8 });
       }
     }
     if (n.slot.startsWith("mention:")) {
       for (const record of n.records) {
         if (!("postId" in record)) continue;
-        if (typeof record.postId !== "string") continue;
-        if (!("userId" in record)) continue;
-        if (typeof record.userId !== "string") continue;
-        if (record.userId === userId) continue;
-        candidates.push({ postId: record.postId, weight: 0.6 });
+        const r = record as NotificationPostRecord;
+        if (typeof r.postId !== "string") continue;
+        if (typeof r.userId !== "string") continue;
+        if (r.userId === userId) continue;
+        candidates.push({ postId: r.postId, weight: 0.6 });
       }
     }
   }
