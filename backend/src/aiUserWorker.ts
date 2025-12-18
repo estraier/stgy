@@ -41,6 +41,11 @@ type PostCandidate = {
   weight: number;
 };
 
+type PostToRead = {
+  post: PostDetail;
+  similarity: number;
+};
+
 type PeerImpressionPayload = {
   impression: string;
   tags: string[];
@@ -594,7 +599,7 @@ async function fetchPostsToRead(
   userId: string,
   userLocale: string,
   interest: AiUserInterest | null,
-): Promise<PostDetail[]> {
+): Promise<PostToRead[]> {
   const candidates: PostCandidate[] = [];
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
   for (const post of followeePosts) {
@@ -670,6 +675,7 @@ async function fetchPostsToRead(
     return [];
   }
   let topPostIds: string[] = [];
+  const similarityByPostId = new Map<string, number>();
   if (interest) {
     const coreFeatures = decodeFeatures(interest.features);
     const boostedScoresByPost = new Map<string, number>();
@@ -680,27 +686,30 @@ async function fetchPostsToRead(
       if (!postSummary.features) continue;
       const features = decodeFeatures(postSummary.features);
       const sim = cosineSimilarity(coreFeatures, features);
-      const simScore = Math.min(1, baseScore + 0.2) * (((sim + 1) / 2) ** 1.6);
+      if (!Number.isFinite(sim)) continue;
+      similarityByPostId.set(postId, sim);
       boostedScoresByPost.set(postId, baseScore * (sim + 1));
     }
     topPostIds = [...boostedScoresByPost.entries()]
-                   .sort((a, b) => b[1] - a[1])
-                   .slice(0, Config.AI_USER_READ_POST_LIMIT)
-                   .map(([postId]) => postId);
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, Config.AI_USER_READ_POST_LIMIT)
+      .map(([postId]) => postId);
   } else {
     for (const postId of candPostIds) {
       const hasSummary = await checkPostSummary(sessionCookie, postId);
       if (!hasSummary) continue;
+      similarityByPostId.set(postId, 0);
       topPostIds.push(postId);
       if (topPostIds.length >= Config.AI_USER_READ_POST_LIMIT) break;
     }
   }
   logger.info(`Selected post IDs to read: ${topPostIds.join(",")}`);
-  const result: PostDetail[] = [];
+  const result: PostToRead[] = [];
   for (const postId of topPostIds) {
     try {
       const post = await fetchPostById(sessionCookie, postId, userId);
-      result.push(post);
+      const similarity = similarityByPostId.get(postId) ?? 0;
+      result.push({ post, similarity });
     } catch (e) {
       logger.info(`Failed to fetch post detail for postId=${postId}: ${e}`);
     }
@@ -833,7 +842,8 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
   logger.info(`postsToRead userId=${user.id} count=${posts.length}`);
   const peerIdSet = new Set<string>();
   const topPeerPosts = new Map<string, PostDetail>();
-  for (const post of posts) {
+  for (const item of posts) {
+    const post = item.post;
     peerIdSet.add(post.ownedBy);
     if (topPeerPosts.size < 5 && !topPeerPosts.has(post.ownedBy)) {
       topPeerPosts.set(post.ownedBy, post);
