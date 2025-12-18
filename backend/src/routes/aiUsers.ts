@@ -28,7 +28,7 @@ function parseTagsInput(raw: unknown, maxCount: number): string[] {
   const seen = new Set<string>();
   for (const t of raw) {
     if (typeof t !== "string") continue;
-    const s = t.trim().slice(0, 50);
+    const s = t.toLowerCase().trim().slice(0, 50);
     if (!s) continue;
     if (seen.has(s)) continue;
     seen.add(s);

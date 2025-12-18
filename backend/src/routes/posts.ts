@@ -104,7 +104,7 @@ export default function createPostsRouter(
         : undefined;
     const tag =
       typeof req.query.tag === "string" && req.query.tag.trim() !== ""
-        ? req.query.tag.trim()
+        ? req.query.tag.toLowerCase().trim()
         : undefined;
     const replyTo = getReplyToParam(req);
     const focusUserId =
@@ -301,7 +301,7 @@ export default function createPostsRouter(
     }
     const tags = req.body.tags
       .filter((tag: unknown) => typeof tag === "string")
-      .map((tag: string) => normalizeOneLiner(tag));
+      .map((tag: string) => normalizeOneLiner(tag.toLowerCase()));
     if (tags.length > Config.TAGS_NUMBER_LIMIT) {
       return res.status(400).json({ error: "tags are too many" });
     }
@@ -378,7 +378,7 @@ export default function createPostsRouter(
       }
       tags = req.body.tags
         .filter((tag: unknown) => typeof tag === "string")
-        .map((tag: string) => normalizeOneLiner(tag));
+        .map((tag: string) => normalizeOneLiner(tag.toLowerCase()));
       if (tags.length > Config.TAGS_NUMBER_LIMIT) {
         return res.status(400).json({ error: "tags are too many" });
       }

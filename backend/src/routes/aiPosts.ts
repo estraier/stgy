@@ -154,16 +154,18 @@ export default function createAiPostsRouter(
           .json({ error: "features must be base64 string or null if specified" });
       }
     }
-    let tags: string[] | undefined;
     if ("tags" in b) {
       if (!Array.isArray(b.tags)) {
         return res.status(400).json({ error: "tags must be array if specified" });
       }
-      tags = (b.tags as unknown[])
-        .filter((t): t is string => typeof t === "string")
-        .map((t) => normalizeOneLiner(t))
-        .filter((t): t is string => typeof t === "string" && t.trim() !== "");
-      pkt.tags = tags;
+      pkt.tags = Array.from(
+        new Set(
+          (b.tags as unknown[])
+            .filter((t): t is string => typeof t === "string")
+            .map((t) => normalizeOneLiner(t.toLowerCase()))
+            .filter((t): t is string => typeof t === "string" && t.trim() !== ""),
+        ),
+      );
     }
     const input: UpdateAiPostSummaryInput = {
       postId: pkt.postId,
