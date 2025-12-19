@@ -9,6 +9,7 @@ import {
 
 type AiPostSummaryDbRow = {
   post_id: string;
+  updated_at: string;
   summary: string | null;
   features: Buffer | null;
   tags: string[];
@@ -51,6 +52,7 @@ export class AiPostsService {
       `
       SELECT
         aps.post_id,
+        aps.updated_at,
         aps.summary,
         aps.features,
         ARRAY(
@@ -71,6 +73,7 @@ export class AiPostsService {
 
     const tmp = snakeToCamel<{
       postId: string;
+      updatedAt: string;
       summary: string | null;
       features: Buffer | null;
       tags: string[];
@@ -78,6 +81,7 @@ export class AiPostsService {
 
     return {
       postId: tmp.postId,
+      updatedAt: tmp.updatedAt,
       summary: tmp.summary,
       features: byteaToInt8Array(tmp.features),
       tags: tmp.tags,
@@ -94,6 +98,7 @@ export class AiPostsService {
     let sql = `
       SELECT
         aps.post_id,
+        aps.updated_at,
         aps.summary,
         aps.features,
         ARRAY(
@@ -112,7 +117,7 @@ export class AiPostsService {
       where.push("aps.summary IS NULL");
     }
     if (newerThan) {
-      where.push(`id_to_timestamp(aps.post_id) > $${idx++}`);
+      where.push(`aps.updated_at > $${idx++}`);
       params.push(newerThan);
     }
     if (where.length > 0) {
@@ -130,6 +135,7 @@ export class AiPostsService {
 
       const tmp = snakeToCamel<{
         postId: string;
+        updatedAt: string;
         summary: string | null;
         features: Buffer | null;
         tags: string[];
@@ -137,6 +143,7 @@ export class AiPostsService {
 
       out.push({
         postId: tmp.postId,
+        updatedAt: tmp.updatedAt,
         summary: tmp.summary,
         features: byteaToInt8Array(tmp.features),
         tags: tmp.tags,
@@ -154,11 +161,12 @@ export class AiPostsService {
         await pgQuery(
           this.pgPool,
           `
-          INSERT INTO ai_post_summaries (post_id, summary, features)
-          VALUES ($1, $2, $3)
+          INSERT INTO ai_post_summaries (post_id, summary, features, updated_at)
+          VALUES ($1, $2, $3, now())
           ON CONFLICT (post_id) DO UPDATE
             SET summary = EXCLUDED.summary,
-                features = EXCLUDED.features
+                features = EXCLUDED.features,
+                updated_at = now()
           `,
           [postId, input.summary, int8ArrayToBytea(input.features)],
         );
@@ -166,9 +174,9 @@ export class AiPostsService {
         await pgQuery(
           this.pgPool,
           `
-          INSERT INTO ai_post_summaries (post_id, summary)
-          VALUES ($1, $2)
-          ON CONFLICT (post_id) DO UPDATE SET summary = EXCLUDED.summary
+          INSERT INTO ai_post_summaries (post_id, summary, updated_at)
+          VALUES ($1, $2, now())
+          ON CONFLICT (post_id) DO UPDATE SET summary = EXCLUDED.summary, updated_at = now()
           `,
           [postId, input.summary],
         );
@@ -176,9 +184,9 @@ export class AiPostsService {
         await pgQuery(
           this.pgPool,
           `
-          INSERT INTO ai_post_summaries (post_id, features)
-          VALUES ($1, $2)
-          ON CONFLICT (post_id) DO UPDATE SET features = EXCLUDED.features
+          INSERT INTO ai_post_summaries (post_id, features, updated_at)
+          VALUES ($1, $2, now())
+          ON CONFLICT (post_id) DO UPDATE SET features = EXCLUDED.features, updated_at = now()
           `,
           [postId, int8ArrayToBytea(input.features)],
         );

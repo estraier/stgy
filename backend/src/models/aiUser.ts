@@ -46,6 +46,7 @@ export type GenerateFeaturesResponse = {
 
 export type AiUserInterest = {
   userId: string;
+  updatedAt: string;
   interest: string;
   features: Int8Array;
   tags: string[];
@@ -53,6 +54,7 @@ export type AiUserInterest = {
 
 export type AiUserInterestPacket = {
   userId: string;
+  updatedAt: string;
   interest: string;
   features: string;
   tags: string[];
@@ -75,6 +77,7 @@ export type SetAiUserInterestInputPacket = {
 export type AiPeerImpression = {
   userId: string;
   peerId: string;
+  updatedAt: string;
   payload: string;
 };
 
@@ -95,6 +98,7 @@ export type AiPostImpression = {
   userId: string;
   peerId: string;
   postId: string;
+  updatedAt: string;
   payload: string;
 };
 

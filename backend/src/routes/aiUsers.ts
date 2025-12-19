@@ -187,6 +187,7 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     if (!interest) return res.status(404).json({ error: "not found" });
     res.json({
       userId: interest.userId,
+      updatedAt: interest.updatedAt,
       interest: interest.interest,
       features: int8ToBase64(interest.features),
       tags: interest.tags,
@@ -270,6 +271,7 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       watch.done();
       res.json({
         userId: saved.userId,
+        updatedAt: saved.updatedAt,
         interest: saved.interest,
         features: int8ToBase64(saved.features),
         tags: saved.tags,

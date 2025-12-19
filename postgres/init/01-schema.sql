@@ -129,6 +129,7 @@ CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_
 
 CREATE TABLE ai_post_summaries (
   post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   summary VARCHAR(65535),
   features BYTEA
 );
@@ -151,6 +152,7 @@ CREATE INDEX idx_ai_actions_done_at ON ai_actions(done_at);
 
 CREATE TABLE ai_interests (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   interest VARCHAR(65535) NOT NULL,
   features BYTEA NOT NULL
 );
@@ -165,6 +167,7 @@ CREATE INDEX idx_ai_user_tags_name_user_id ON ai_user_tags(name, user_id);
 CREATE TABLE ai_peer_impressions (
   user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
   peer_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   payload VARCHAR(65535) NOT NULL,
   PRIMARY KEY (user_id, peer_id)
 );
@@ -174,6 +177,7 @@ CREATE TABLE ai_post_impressions (
   user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
   peer_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
   post_id BIGINT REFERENCES posts(id) ON DELETE CASCADE,
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   payload VARCHAR(65535) NOT NULL,
   PRIMARY KEY (user_id, peer_id, post_id)
 );

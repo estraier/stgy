@@ -273,6 +273,7 @@ components:
       type: object
       properties:
         userId: { type: string }
+        updatedAt: { type: string, format: date-time }
         interest: { type: string }
         features:
           type: string
@@ -281,7 +282,7 @@ components:
         tags:
           type: array
           items: { type: string }
-      required: [userId, interest, features, tags]
+      required: [userId, updatedAt, interest, features, tags]
 
     AiUserInterestUpsertRequest:
       allOf:
@@ -315,8 +316,9 @@ components:
       properties:
         userId: { type: string }
         peerId: { type: string }
+        updatedAt: { type: string, format: date-time }
         payload: { type: string }
-      required: [userId, peerId, payload]
+      required: [userId, peerId, updatedAt, payload]
 
     AiPostImpression:
       type: object
@@ -324,8 +326,9 @@ components:
         userId: { type: string }
         peerId: { type: string }
         postId: { type: string }
+        updatedAt: { type: string, format: date-time }
         payload: { type: string }
-      required: [userId, peerId, postId, payload]
+      required: [userId, peerId, postId, updatedAt, payload]
 
     ChatMessage:
       type: object
@@ -376,6 +379,7 @@ components:
       type: object
       properties:
         postId: { type: string }
+        updatedAt: { type: string, format: date-time }
         summary: { type: string, nullable: true }
         features:
           type: string
@@ -385,7 +389,7 @@ components:
         tags:
           type: array
           items: { type: string }
-      required: [postId, summary, features, tags]
+      required: [postId, updatedAt, summary, features, tags]
 
     UpdateAiPostSummaryRequest:
       type: object

@@ -214,8 +214,12 @@ function buildProfileExcerpt(
   currentInterest: string;
   currentInterestTags: string[];
 } {
-  const currentInterest = interest ? truncateText(interest.interest, Config.AI_USER_INTRO_TEXT_LIMIT) : "";
-  const currentInterestTags = interest ? parseTagsField(interest.tags, Config.AI_TAG_MAX_COUNT) : [];
+  const currentInterest = interest
+    ? truncateText(interest.interest, Config.AI_USER_INTRO_TEXT_LIMIT)
+    : "";
+  const currentInterestTags = interest
+    ? parseTagsField(interest.tags, Config.AI_TAG_MAX_COUNT)
+    : [];
   return {
     userId: profile.id,
     locale: profile.locale,
@@ -339,10 +343,12 @@ async function fetchUserInterest(
     const parsed = JSON.parse(res.body) as unknown;
     if (!isRecord(parsed)) return null;
     const uidRaw = parsed["userId"];
+    const updatedAtRaw = parsed["updatedAt"];
     const interestRaw = parsed["interest"];
     const featuresRaw = parsed["features"];
     const tagsRaw = parsed["tags"];
     const uid = typeof uidRaw === "string" && uidRaw.trim() !== "" ? uidRaw : userId;
+    const updatedAt = typeof updatedAtRaw === "string" ? updatedAtRaw : "";
     if (typeof interestRaw !== "string") return null;
     if (typeof featuresRaw !== "string" || featuresRaw.trim() === "") return null;
     let features: Int8Array;
@@ -353,7 +359,7 @@ async function fetchUserInterest(
       return null;
     }
     const tags = parseTagsField(tagsRaw, Config.AI_TAG_MAX_COUNT);
-    return { userId: uid, interest: interestRaw, features, tags };
+    return { userId: uid, updatedAt, interest: interestRaw, features, tags };
   } catch (e) {
     logger.error(`failed to parse user interest userId=${userId}: ${e}`);
     return null;
@@ -413,11 +419,13 @@ async function fetchOwnPeerImpressions(
     if (!isRecord(item)) continue;
     const uid = item["userId"];
     const peerId = item["peerId"];
+    const updatedAt = item["updatedAt"];
     const payload = item["payload"];
     if (typeof uid !== "string" || uid.trim() === "") continue;
     if (typeof peerId !== "string" || peerId.trim() === "") continue;
+    if (typeof updatedAt !== "string") continue;
     if (typeof payload !== "string") continue;
-    out.push({ userId: uid, peerId, payload });
+    out.push({ userId: uid, peerId, updatedAt, payload });
     if (out.length >= 3) break;
   }
   return out;
@@ -451,12 +459,14 @@ async function fetchOwnPostImpressions(
     const uid = item["userId"];
     const peerId = item["peerId"];
     const postId = item["postId"];
+    const updatedAt = item["updatedAt"];
     const payload = item["payload"];
     if (typeof uid !== "string" || uid.trim() === "") continue;
     if (typeof peerId !== "string" || peerId.trim() === "") continue;
     if (typeof postId !== "string" || postId.trim() === "") continue;
+    if (typeof updatedAt !== "string") continue;
     if (typeof payload !== "string") continue;
-    out.push({ userId: uid, peerId, postId, payload });
+    out.push({ userId: uid, peerId, postId, updatedAt, payload });
     if (out.length >= 3) break;
   }
   return out;
@@ -466,18 +476,21 @@ async function fetchPostSummary(sessionCookie: string, postId: string): Promise<
   const path = `/ai-posts/${encodeURIComponent(postId)}`;
   const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
   if (res.statusCode === 401) throw new UnauthorizedError(`401 from ${path}`);
-  if (res.statusCode === 404) return { postId, summary: null, features: null, tags: [] };
+  if (res.statusCode === 404)
+    return { postId, updatedAt: "", summary: null, features: null, tags: [] };
   if (res.statusCode < 200 || res.statusCode >= 300) {
     logger.error(
       `failed to fetch post summary postId=${postId}: ${res.statusCode} ${truncateForLog(res.body, 50)}`,
     );
-    return { postId, summary: null, features: null, tags: [] };
+    return { postId, updatedAt: "", summary: null, features: null, tags: [] };
   }
   try {
     const parsed = JSON.parse(res.body) as unknown;
-    if (!isRecord(parsed)) return { postId, summary: null, features: null, tags: [] };
+    if (!isRecord(parsed))
+      return { postId, updatedAt: "", summary: null, features: null, tags: [] };
     const pkt = parsed as AiPostSummaryPacket;
     const pid = typeof pkt.postId === "string" && pkt.postId.trim() !== "" ? pkt.postId : postId;
+    const updatedAt = typeof pkt.updatedAt === "string" ? pkt.updatedAt : "";
     const summary = typeof pkt.summary === "string" || pkt.summary === null ? pkt.summary : null;
     let features: Int8Array | null = null;
     if (typeof pkt.features === "string" && pkt.features.trim() !== "") {
@@ -491,10 +504,10 @@ async function fetchPostSummary(sessionCookie: string, postId: string): Promise<
     const tags = Array.isArray(pkt.tags)
       ? pkt.tags.filter((t): t is string => typeof t === "string")
       : [];
-    return { postId: pid, summary, features, tags };
+    return { postId: pid, updatedAt, summary, features, tags };
   } catch (e) {
     logger.error(`failed to parse post summary postId=${postId}: ${e}`);
-    return { postId, summary: null, features: null, tags: [] };
+    return { postId, updatedAt: "", summary: null, features: null, tags: [] };
   }
 }
 
@@ -998,7 +1011,12 @@ async function createPeerImpression(
         `Failed to fetch post impression userId=${profile.id} peerId=${peer.id} postId=${p.id}: ${e}`,
       );
     }
-    posts.push({ locale: postLocale, summary: summaryText, impression: postImpressionText, tags: postTags });
+    posts.push({
+      locale: postLocale,
+      summary: summaryText,
+      impression: postImpressionText,
+      tags: postTags,
+    });
   }
   const peerExcerpt = {
     userId: peer.id,
@@ -1091,7 +1109,14 @@ async function createInterest(
   const profileExcerpt = buildProfileExcerpt(profile, interest);
   const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
   const peerImps = await fetchOwnPeerImpressions(userSessionCookie, profile.id);
-  const users: { userId: string, locale: string, nickname: string; introduction: string; impression: string; tags: string[] }[] = [];
+  const users: {
+    userId: string;
+    locale: string;
+    nickname: string;
+    introduction: string;
+    impression: string;
+    tags: string[];
+  }[] = [];
   for (const imp of peerImps) {
     try {
       const peer = await fetchUserProfile(userSessionCookie, imp.peerId);
@@ -1103,10 +1128,19 @@ async function createInterest(
         impressionText = truncateText(parsed.impression, Config.AI_USER_OUTPUT_TEXT_LIMIT);
         tags = parsed.tags?.slice(0, Config.AI_TAG_MAX_COUNT) ?? [];
       }
-      users.push({ userId: peer.id, locale: peer.locale, nickname: peer.nickname, introduction: introText, impression: impressionText, tags });
+      users.push({
+        userId: peer.id,
+        locale: peer.locale,
+        nickname: peer.nickname,
+        introduction: introText,
+        impression: impressionText,
+        tags,
+      });
     } catch (e) {
       if (e instanceof UnauthorizedError) throw e;
-      logger.info(`Failed to fetch peer profile for interest userId=${profile.id} peerId=${imp.peerId}: ${e}`);
+      logger.info(
+        `Failed to fetch peer profile for interest userId=${profile.id} peerId=${imp.peerId}: ${e}`,
+      );
     }
   }
   if (users.length < 1) {
@@ -1114,7 +1148,15 @@ async function createInterest(
     return;
   }
   const postImps = await fetchOwnPostImpressions(userSessionCookie, profile.id);
-  const posts: { locale: string; authorId: string, authorNickname: string; content: string; summary: string; impression: string; tags: string[] }[] = [];
+  const posts: {
+    locale: string;
+    authorId: string;
+    authorNickname: string;
+    content: string;
+    summary: string;
+    impression: string;
+    tags: string[];
+  }[] = [];
   for (const imp of postImps) {
     try {
       const post = await fetchPostById(userSessionCookie, imp.postId);
@@ -1122,7 +1164,9 @@ async function createInterest(
       const contentText = truncateText(post.content, Config.AI_USER_IMPRESSION_PEER_TEXT_LIMIT);
       const postSummary = await fetchPostSummary(userSessionCookie, post.id);
       const rawSummary = postSummary.summary ?? "";
-      const summaryText = rawSummary ? truncateText(rawSummary, Config.AI_USER_POST_TEXT_LIMIT) : "";
+      const summaryText = rawSummary
+        ? truncateText(rawSummary, Config.AI_USER_POST_TEXT_LIMIT)
+        : "";
       let impressionText = "";
       let tags: string[] = [];
       const parsed = parsePeerImpressionPayload(imp.payload);
@@ -1141,7 +1185,9 @@ async function createInterest(
       });
     } catch (e) {
       if (e instanceof UnauthorizedError) throw e;
-      logger.info(`Failed to fetch post detail for interest userId=${profile.id} postId=${imp.postId}: ${e}`);
+      logger.info(
+        `Failed to fetch post detail for interest userId=${profile.id} postId=${imp.postId}: ${e}`,
+      );
     }
   }
   if (posts.length < 1) {

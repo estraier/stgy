@@ -27,7 +27,13 @@ function base64ToInt8(v: string): Int8Array {
 }
 
 function toPacket(s: AiPostSummary): AiPostSummaryPacket {
-  return { postId: s.postId, summary: s.summary, features: int8ToBase64(s.features), tags: s.tags };
+  return {
+    postId: s.postId,
+    updatedAt: s.updatedAt,
+    summary: s.summary,
+    features: int8ToBase64(s.features),
+    tags: s.tags,
+  };
 }
 
 export default function createAiPostsRouter(
