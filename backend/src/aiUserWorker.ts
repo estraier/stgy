@@ -217,7 +217,10 @@ function parsePeerImpressionPayload(payload: string): PeerImpressionPayload | nu
   }
 }
 
-async function generateFeatures(sessionCookie: string, req: GenerateFeaturesRequest): Promise<string> {
+async function generateFeatures(
+  sessionCookie: string,
+  req: GenerateFeaturesRequest,
+): Promise<string> {
   const res = await apiRequest(sessionCookie, "/ai-users/features", {
     method: "POST",
     body: { model: req.model, input: req.input },
@@ -442,7 +445,7 @@ async function fetchOwnPeerImpressions(
 ): Promise<AiPeerImpression[]> {
   const params = new URLSearchParams();
   params.set("offset", "0");
-  params.set("limit", "3");
+  params.set("limit", String(Config.AI_USER_READ_INTEREST_LIMIT));
   params.set("order", "desc");
   const path = `/ai-users/${encodeURIComponent(userId)}/peer-impressions?${params.toString()}`;
   const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
@@ -481,7 +484,7 @@ async function fetchOwnPostImpressions(
 ): Promise<AiPostImpression[]> {
   const params = new URLSearchParams();
   params.set("offset", "0");
-  params.set("limit", "3");
+  params.set("limit", String(Config.AI_USER_READ_INTEREST_LIMIT));
   params.set("order", "desc");
   const path = `/ai-users/${encodeURIComponent(userId)}/post-impressions?${params.toString()}`;
   const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
@@ -853,7 +856,6 @@ async function fetchPostsToRead(
     }
     topPostIds = [...boostedScoresByPost.entries()]
       .sort((a, b) => b[1] - a[1])
-      .slice(0, Config.AI_USER_READ_POST_LIMIT)
       .map(([postId]) => postId);
   } else {
     for (const postId of candPostIds) {
@@ -861,14 +863,17 @@ async function fetchPostsToRead(
       if (!hasSummary) continue;
       similarityByPostId.set(postId, 0);
       topPostIds.push(postId);
-      if (topPostIds.length >= Config.AI_USER_READ_POST_LIMIT) break;
     }
   }
-  logger.info(`Selected post IDs to read: ${topPostIds.join(",")}`);
   const result: PostToRead[] = [];
+  const pickedCountByOwner = new Map<string, number>();
   for (const postId of topPostIds) {
+    if (result.length >= Config.AI_USER_READ_POST_LIMIT) break;
     try {
       const post = await fetchPostById(sessionCookie, postId);
+      const pickedCount = pickedCountByOwner.get(post.ownedBy) ?? 0;
+      if (pickedCount >= 2) continue;
+      pickedCountByOwner.set(post.ownedBy, pickedCount + 1);
       const similarity = similarityByPostId.get(postId) ?? 0;
       result.push({ post, similarity });
     } catch (e) {
@@ -1325,11 +1330,6 @@ async function createInterest(
   });
 
   console.log(feat);
-
-
-
-
-
 }
 
 async function processUser(adminSessionCookie: string, user: AiUser): Promise<void> {

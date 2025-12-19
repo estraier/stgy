@@ -7,7 +7,7 @@ import { UsersService } from "../services/users";
 import { AuthService } from "../services/auth";
 import { DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
-import type { ChatRequest, GenerateFeaturesRequest } from "../models/aiUser";
+import type { ChatRequest } from "../models/aiUser";
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null;

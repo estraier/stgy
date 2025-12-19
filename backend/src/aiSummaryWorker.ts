@@ -196,7 +196,10 @@ function parseTagsField(raw: unknown, maxCount: number): string[] {
   return tags;
 }
 
-async function generateFeatures(sessionCookie: string, req: GenerateFeaturesRequest): Promise<string> {
+async function generateFeatures(
+  sessionCookie: string,
+  req: GenerateFeaturesRequest,
+): Promise<string> {
   const res = await apiRequest(sessionCookie, "/ai-users/features", {
     method: "POST",
     body: { model: req.model, input: req.input },

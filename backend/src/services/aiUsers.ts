@@ -335,14 +335,16 @@ export class AiUsersService {
     const where: string[] = [];
     const params: unknown[] = [];
     let idx = 1;
-    if (input.userId) {
+    const hasUserId = typeof input.userId === "string" && input.userId.trim() !== "";
+    const hasPeerId = typeof input.peerId === "string" && input.peerId.trim() !== "";
+    if (hasUserId) {
       where.push(`user_id = $${idx}`);
-      params.push(hexToDec(input.userId));
+      params.push(hexToDec(input.userId as string));
       idx++;
     }
-    if (input.peerId) {
+    if (hasPeerId) {
       where.push(`peer_id = $${idx}`);
-      params.push(hexToDec(input.peerId));
+      params.push(hexToDec(input.peerId as string));
       idx++;
     }
     let sql = `
@@ -350,9 +352,11 @@ export class AiUsersService {
       FROM ai_peer_impressions
     `;
     if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
-    sql += ` ORDER BY user_id ${order}, peer_id ${order}
-      LIMIT $${idx} OFFSET $${idx + 1}
-    `;
+    const orderKeys: string[] = ["updated_at"];
+    if (!hasUserId) orderKeys.push("user_id");
+    if (!hasPeerId) orderKeys.push("peer_id");
+    sql += ` ORDER BY ${orderKeys.map((k) => `${k} ${order}`).join(", ")}`;
+    sql += ` LIMIT $${idx} OFFSET $${idx + 1}`;
     params.push(limit, offset);
     const res = await pgQuery<RowAiPeerImpression>(this.pgPool, sql, params);
     return res.rows.map<AiPeerImpression>((row) => {
@@ -466,12 +470,11 @@ export class AiUsersService {
       FROM ai_post_impressions
     `;
     if (where.length > 0) sql += ` WHERE ${where.join(" AND ")}`;
-    const usePostIdOrder = hasUserId && hasPeerId && !hasPostId;
-    if (usePostIdOrder) {
-      sql += ` ORDER BY post_id ${order}`;
-    } else {
-      sql += ` ORDER BY user_id ${order}, peer_id ${order}, post_id ${order}`;
-    }
+    const orderKeys: string[] = ["updated_at"];
+    if (!hasUserId) orderKeys.push("user_id");
+    if (!hasPeerId) orderKeys.push("peer_id");
+    if (!hasPostId) orderKeys.push("post_id");
+    sql += ` ORDER BY ${orderKeys.map((k) => `${k} ${order}`).join(", ")}`;
     sql += ` LIMIT $${idx} OFFSET $${idx + 1}`;
     params.push(limit, offset);
     const res = await pgQuery<RowAiPostImpression>(this.pgPool, sql, params);

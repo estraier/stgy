@@ -171,7 +171,8 @@ CREATE TABLE ai_peer_impressions (
   payload VARCHAR(65535) NOT NULL,
   PRIMARY KEY (user_id, peer_id)
 );
-CREATE INDEX idx_ai_peer_impressions_peer_id ON ai_peer_impressions(peer_id);
+CREATE INDEX idx_ai_peer_impressions_peer_id_updated_at ON ai_peer_impressions(peer_id, updated_at);
+CREATE INDEX idx_ai_peer_impressions_user_id_updated_at ON ai_peer_impressions(user_id, updated_at);
 
 CREATE TABLE ai_post_impressions (
   user_id BIGINT REFERENCES users(id) ON DELETE CASCADE,
@@ -181,7 +182,8 @@ CREATE TABLE ai_post_impressions (
   payload VARCHAR(65535) NOT NULL,
   PRIMARY KEY (user_id, peer_id, post_id)
 );
-CREATE INDEX idx_ai_post_impressions_post_id_user_id ON ai_post_impressions(post_id, user_id);
+CREATE INDEX idx_ai_post_impressions_post_id_user_id_updated_at ON ai_post_impressions(post_id, user_id, updated_at);
+CREATE INDEX idx_ai_post_impressions_user_id_updated_at ON ai_post_impressions(user_id, updated_at);
 
 CREATE TABLE event_logs (
   partition_id SMALLINT NOT NULL,

@@ -135,8 +135,11 @@ export class Config {
 
   static readonly AI_USER_READ_POST_LIMIT = envNum("STGY_AI_USER_READ_POST_LIMIT", 1);
   static readonly AI_USER_READ_PEER_POST_LIMIT = envNum("STGY_AI_USER_READ_PEER_POST_LIMIT", 5);
-  static readonly AI_USER_POST_TEXT_LIMIT = envNum("STGY_AI_USER_POST_TEXT_LIMIT", 10000);
 
+  static readonly AI_USER_READ_INTEREST_LIMIT = envNum("STGY_AI_USER_READ_INTEREST_LIMIT", 10);
+
+
+  static readonly AI_USER_POST_TEXT_LIMIT = envNum("STGY_AI_USER_POST_TEXT_LIMIT", 10000);
   static readonly AI_USER_INTRO_TEXT_LIMIT = envNum("STGY_AI_USER_INTRO_TEXT_LIMIT", 10000);
   static readonly AI_USER_IMPRESSION_TEXT_LIMIT = envNum(
     "STGY_AI_USER_IMPRESSION_TEXT_LIMIT",
@@ -149,8 +152,14 @@ export class Config {
   static readonly AI_USER_IMPRESSION_LENGTH = envNum("STGY_AI_USER_IMPRESSION_LENGTH", 1000);
   static readonly AI_USER_INTEREST_LENGTH = envNum("STGY_AI_USER_IMPRESSION_LENGTH", 2000);
   static readonly AI_USER_OUTPUT_TEXT_LIMIT = envNum("STGY_AI_USER_OUTPUT_TEXT_LIMIT", 10000);
-  static readonly AI_USER_SKIP_PEER_IMPRESSION_UPDATE_DAYS = envNum("STGY_AI_USER_SKIP_PEER_IMPRESSION_UPDATE_DAYS", 0);
-  static readonly AI_USER_SKIP_INTEREST_UPDATE_DAYS = envNum("STGY_AI_USER_SKIP_INTEREST_UPDATE_DAYS", 0);
+  static readonly AI_USER_SKIP_PEER_IMPRESSION_UPDATE_DAYS = envNum(
+    "STGY_AI_USER_SKIP_PEER_IMPRESSION_UPDATE_DAYS",
+    0,
+  );
+  static readonly AI_USER_SKIP_INTEREST_UPDATE_DAYS = envNum(
+    "STGY_AI_USER_SKIP_INTEREST_UPDATE_DAYS",
+    0,
+  );
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {
