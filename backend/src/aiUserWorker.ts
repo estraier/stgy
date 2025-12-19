@@ -91,6 +91,20 @@ function truncateText(text: string, max: number): string {
   return sliceByPseudoTokens(text, 0, max) + "…";
 }
 
+function parseDateMs(s: string): number | null {
+  const ms = Date.parse(s);
+  if (!Number.isFinite(ms)) return null;
+  return ms;
+}
+
+function isUpdatedAtNewerThanDays(updatedAt: string, days: number): boolean {
+  if (!updatedAt || days <= 0) return false;
+  const ms = parseDateMs(updatedAt);
+  if (ms === null) return false;
+  const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
+  return ms > cutoff;
+}
+
 function httpRequest(
   path: string,
   options: { method?: string; headers?: Record<string, string>; body?: string } = {},
@@ -370,13 +384,13 @@ async function fetchPeerImpression(
   sessionCookie: string,
   aiUserId: string,
   peerId: string,
-): Promise<string> {
+): Promise<AiPeerImpression | null> {
   const path = `/ai-users/${encodeURIComponent(aiUserId)}/peer-impressions/${encodeURIComponent(
     peerId,
   )}`;
   const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
   if (res.statusCode === 401) throw new UnauthorizedError(`401 from ${path}`);
-  if (res.statusCode === 404) return "";
+  if (res.statusCode === 404) return null;
   if (res.statusCode < 200 || res.statusCode >= 300) {
     logger.error(
       `failed to fetch peer impression userId=${aiUserId} peerId=${peerId}: ${res.statusCode} ${truncateForLog(
@@ -384,12 +398,19 @@ async function fetchPeerImpression(
         50,
       )}`,
     );
-    return "";
+    return null;
   }
   const parsed = JSON.parse(res.body) as unknown;
-  if (!isRecord(parsed)) return "";
-  const payload = (parsed as AiPeerImpression).payload;
-  return typeof payload === "string" ? payload : "";
+  if (!isRecord(parsed)) return null;
+  const uid = parsed["userId"];
+  const pid = parsed["peerId"];
+  const updatedAt = parsed["updatedAt"];
+  const payload = parsed["payload"];
+  if (typeof uid !== "string" || uid.trim() === "") return null;
+  if (typeof pid !== "string" || pid.trim() === "") return null;
+  if (typeof updatedAt !== "string") return null;
+  if (typeof payload !== "string") return null;
+  return { userId: uid, peerId: pid, updatedAt, payload };
 }
 
 async function fetchOwnPeerImpressions(
@@ -843,7 +864,8 @@ async function createPostImpression(
   const locale = (post.locale || post.ownerLocale || profile.locale).replaceAll(/_/g, "-");
   const profileExcerpt = buildProfileExcerpt(profile, interest);
   const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-  const rawPeerImpression = await fetchPeerImpression(userSessionCookie, profile.id, post.ownedBy);
+  const peerImp = await fetchPeerImpression(userSessionCookie, profile.id, post.ownedBy);
+  const rawPeerImpression = peerImp ? peerImp.payload : "";
   let peerImpressionText: string = "";
   let peerTags: string[] = [];
   if (rawPeerImpression) {
@@ -950,9 +972,19 @@ async function createPeerImpression(
   peer: UserDetail,
 ): Promise<void> {
   const locale = peer.locale.replaceAll(/_/g, "-");
+  const existing = await fetchPeerImpression(userSessionCookie, profile.id, peer.id);
+  if (
+    existing &&
+    isUpdatedAtNewerThanDays(existing.updatedAt, Config.AI_USER_SKIP_PEER_IMPRESSION_UPDATE_DAYS)
+  ) {
+    logger.info(
+      `Skip peer impression update userId=${profile.id} peerId=${peer.id} updatedAt=${existing.updatedAt}`,
+    );
+    return;
+  }
   const profileExcerpt = buildProfileExcerpt(profile, interest);
   const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-  const rawPeerImpression = await fetchPeerImpression(userSessionCookie, profile.id, peer.id);
+  const rawPeerImpression = existing ? existing.payload : "";
   let lastImpressionText: string = "";
   if (rawPeerImpression) {
     const parsedPeer = parsePeerImpressionPayload(rawPeerImpression);
@@ -1105,6 +1137,13 @@ async function createInterest(
   profile: UserDetail,
   interest: AiUserInterest | null,
 ): Promise<void> {
+  if (
+    interest &&
+    isUpdatedAtNewerThanDays(interest.updatedAt, Config.AI_USER_SKIP_INTEREST_UPDATE_DAYS)
+  ) {
+    logger.info(`Skip interest update userId=${profile.id} updatedAt=${interest.updatedAt}`);
+    return;
+  }
   const locale = profile.locale.replaceAll(/_/g, "-");
   const profileExcerpt = buildProfileExcerpt(profile, interest);
   const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");

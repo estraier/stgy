@@ -148,8 +148,9 @@ export class Config {
   );
   static readonly AI_USER_IMPRESSION_LENGTH = envNum("STGY_AI_USER_IMPRESSION_LENGTH", 1000);
   static readonly AI_USER_INTEREST_LENGTH = envNum("STGY_AI_USER_IMPRESSION_LENGTH", 2000);
-
   static readonly AI_USER_OUTPUT_TEXT_LIMIT = envNum("STGY_AI_USER_OUTPUT_TEXT_LIMIT", 10000);
+  static readonly AI_USER_SKIP_PEER_IMPRESSION_UPDATE_DAYS = envNum("STGY_AI_USER_SKIP_PEER_IMPRESSION_UPDATE_DAYS", 7);
+  static readonly AI_USER_SKIP_INTEREST_UPDATE_DAYS = envNum("STGY_AI_USER_SKIP_INTEREST_UPDATE_DAYS", 7);
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {
