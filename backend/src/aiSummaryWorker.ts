@@ -132,9 +132,7 @@ async function loginAsAdmin(): Promise<string> {
   return sessionCookie;
 }
 
-type PendingAiPostSummaryPacket = AiPostSummaryPacket & { createdAt?: string; updatedAt?: string };
-
-async function fetchPendingSummaries(sessionCookie: string): Promise<PendingAiPostSummaryPacket[]> {
+async function fetchPendingSummaries(sessionCookie: string): Promise<AiPostSummaryPacket[]> {
   const newerThan = new Date(Date.now() - Config.AI_SUMMARY_POST_LOOKBACK_MS).toISOString();
   const params = new URLSearchParams({
     offset: "0",
@@ -148,20 +146,15 @@ async function fetchPendingSummaries(sessionCookie: string): Promise<PendingAiPo
   if (!Array.isArray(parsed)) return [];
   const now = Date.now();
   const cutoff = now - Config.AI_SUMMARY_POST_SKIP_LATEST_MS;
-  const out: PendingAiPostSummaryPacket[] = [];
+  const out: AiPostSummaryPacket[] = [];
   for (const item of parsed) {
     if (typeof item !== "object" || item === null) continue;
-    const createdAtRaw = (item as { createdAt?: unknown }).createdAt;
-    if (typeof createdAtRaw === "string") {
-      const createdAtMs = Date.parse(createdAtRaw);
-      if (createdAtMs > cutoff) continue;
-    }
     const updatedAtRaw = (item as { updatedAt?: unknown }).updatedAt;
     if (typeof updatedAtRaw === "string") {
       const updatedAtMs = Date.parse(updatedAtRaw);
       if (updatedAtMs > cutoff) continue;
     }
-    out.push(item as PendingAiPostSummaryPacket);
+    out.push(item as AiPostSummaryPacket);
   }
   return out;
 }
@@ -333,7 +326,6 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
 
-  // for debug
   console.log("--- REQ\n" + prompt);
 
   const chatReq: ChatRequest = {
@@ -350,7 +342,6 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     throw new Error(`ai-users/chat returned empty content for postId=${postId}`);
   }
 
-  // for debug
   console.log("--- RES\n" + aiContent);
 
   const parsed = evaluateChatResponseAsJson<{
@@ -375,7 +366,6 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   );
   const featuresInput = buildFeaturesInput(summary, tags, postSnippet);
 
-  // for debug
   console.log("--- FEAT\n" + featuresInput);
 
   const feat = await generateFeaturesViaBackend(sessionCookie, {
@@ -401,7 +391,7 @@ async function processLoop(): Promise<void> {
       await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
       continue;
     }
-    let summaries: PendingAiPostSummaryPacket[] = [];
+    let summaries: AiPostSummaryPacket[] = [];
     try {
       summaries = await fetchPendingSummaries(sessionCookie);
     } catch (e) {
