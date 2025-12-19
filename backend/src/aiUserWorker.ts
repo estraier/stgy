@@ -1264,6 +1264,35 @@ async function createInterest(
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
   console.log(prompt);
+  const chatReq: ChatRequest = {
+    messages: [{ role: "user", content: prompt }],
+  };
+  const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
+    method: "POST",
+    body: chatReq,
+  });
+  const chat = parseChatResponse(chatRes.body);
+  const content = chat.message.content;
+  if (content.trim() === "") {
+    throw new Error(`ai-users/chat returned empty content userId=${profile.id}`);
+  }
+  console.log(content);
+  const parsed = evaluateChatResponseAsJson<unknown>(content);
+  if (!isRecord(parsed)) {
+    throw new Error(`AI output JSON is not an object userId=${profile.id}`);
+  }
+  const interestRaw = parsed["interest"];
+  if (typeof interestRaw !== "string") {
+    throw new Error(`AI output JSON missing interest userId=${profile.id}`);
+  }
+  const newInterest = truncateText(interestRaw.trim(), Config.AI_USER_OUTPUT_TEXT_LIMIT);
+  const newTags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
+
+
+  console.log("INT", newInterest);
+  console.log("TAGS", newTags);
+
+
 }
 
 async function processUser(adminSessionCookie: string, user: AiUser): Promise<void> {

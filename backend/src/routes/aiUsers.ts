@@ -94,18 +94,26 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     if (!Config.OPENAI_API_KEY) {
       return res.status(501).json({ error: "ai features are disabled" });
     }
-    const body = req.body as ChatRequest;
+
+    const bodyRaw = req.body as unknown;
+    if (!isRecord(bodyRaw)) {
+      return res.status(400).json({ error: "invalid body" });
+    }
+    const body = bodyRaw as Record<string, unknown>;
+
     let modelToUse: string;
     if (loginUser.isAdmin) {
-      if (body.model && body.model.trim() !== "") {
-        modelToUse = body.model;
+      const modelRaw = typeof body["model"] === "string" ? body["model"] : "";
+      if (modelRaw && modelRaw.trim() !== "") {
+        modelToUse = modelRaw;
       } else if (loginUser.aiModel && loginUser.aiModel.trim() !== "") {
         modelToUse = loginUser.aiModel;
       } else {
         return res.status(400).json({ error: "model is required" });
       }
     } else {
-      if (body.model) {
+      const modelRaw = typeof body["model"] === "string" ? body["model"] : "";
+      if (modelRaw) {
         return res.status(403).json({ error: "model override not allowed" });
       }
       if (!loginUser.aiModel || loginUser.aiModel.trim() === "") {
@@ -113,12 +121,15 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       }
       modelToUse = loginUser.aiModel;
     }
-    if (!Array.isArray(body.messages) || body.messages.length === 0) {
+
+    const messagesRaw = body["messages"];
+    if (!Array.isArray(messagesRaw) || messagesRaw.length === 0) {
       return res.status(400).json({ error: "messages must be a non-empty array" });
     }
+
     const allowedRoles = new Set(["system", "user", "assistant"]);
-    for (let i = 0; i < body.messages.length; i++) {
-      const m = body.messages[i] as unknown;
+    for (let i = 0; i < messagesRaw.length; i++) {
+      const m = messagesRaw[i] as unknown;
       if (!isChatMessageLike(m)) {
         return res.status(400).json({ error: `invalid messages[${i}]` });
       }
@@ -126,8 +137,10 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
         return res.status(400).json({ error: `invalid messages[${i}].role` });
       }
     }
+
     try {
-      const resp = await aiUsersService.chat({ model: modelToUse, messages: body.messages });
+      const messages = messagesRaw as ChatRequest["messages"];
+      const resp = await aiUsersService.chat({ model: modelToUse, messages });
       res.json(resp);
     } catch {
       res.status(500).json({ error: "internal_error" });
@@ -140,18 +153,26 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     if (!Config.OPENAI_API_KEY) {
       return res.status(501).json({ error: "ai features are disabled" });
     }
-    const body = req.body as unknown as GenerateFeaturesRequest;
+
+    const bodyRaw = req.body as unknown;
+    if (!isRecord(bodyRaw)) {
+      return res.status(400).json({ error: "invalid body" });
+    }
+    const body = bodyRaw as Record<string, unknown>;
+
     let modelToUse: string;
     if (loginUser.isAdmin) {
-      if (body.model && body.model.trim() !== "") {
-        modelToUse = body.model;
+      const modelRaw = typeof body["model"] === "string" ? body["model"] : "";
+      if (modelRaw && modelRaw.trim() !== "") {
+        modelToUse = modelRaw;
       } else if (loginUser.aiModel && loginUser.aiModel.trim() !== "") {
         modelToUse = loginUser.aiModel;
       } else {
         return res.status(400).json({ error: "model is required" });
       }
     } else {
-      if (body.model) {
+      const modelRaw = typeof body["model"] === "string" ? body["model"] : "";
+      if (modelRaw) {
         return res.status(403).json({ error: "model override not allowed" });
       }
       if (!loginUser.aiModel || loginUser.aiModel.trim() === "") {
@@ -159,7 +180,8 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       }
       modelToUse = loginUser.aiModel;
     }
-    const input = typeof body?.input === "string" ? body.input : "";
+
+    const input = typeof body["input"] === "string" ? body["input"] : "";
     if (input.trim() === "") {
       return res.status(400).json({ error: "input is required" });
     }

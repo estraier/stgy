@@ -29,16 +29,15 @@ type HttpResult = {
   body: string;
 };
 
-type GenerateFeaturesResponseWire =
-  | { features: string }
-  | { features: number[] }
-  | { features: { type: "Buffer"; data: number[] } };
-
 class UnauthorizedError extends Error {
   constructor(message = "unauthorized") {
     super(message);
     this.name = "UnauthorizedError";
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
 }
 
 function sleep(ms: number): Promise<void> {
@@ -148,11 +147,11 @@ async function fetchPendingSummaries(sessionCookie: string): Promise<AiPostSumma
   const cutoff = now - Config.AI_SUMMARY_POST_SKIP_LATEST_MS;
   const out: AiPostSummaryPacket[] = [];
   for (const item of parsed) {
-    if (typeof item !== "object" || item === null) continue;
-    const updatedAtRaw = (item as { updatedAt?: unknown }).updatedAt;
+    if (!isRecord(item)) continue;
+    const updatedAtRaw = item["updatedAt"];
     if (typeof updatedAtRaw === "string") {
       const updatedAtMs = Date.parse(updatedAtRaw);
-      if (updatedAtMs > cutoff) continue;
+      if (Number.isFinite(updatedAtMs) && updatedAtMs > cutoff) continue;
     }
     out.push(item as AiPostSummaryPacket);
   }
@@ -197,54 +196,25 @@ function parseTagsField(raw: unknown, maxCount: number): string[] {
   return tags;
 }
 
-function normalizeFeaturesToBase64(respBody: string): { features: string; dims: number } {
+function parseFeaturesBase64FromResponse(respBody: string): { features: string; dims: number } {
   const parsed = JSON.parse(respBody) as unknown;
-  const getFromNumbers = (nums: number[]): { base64: string; dims: number } => {
-    const allU8 = nums.every((n) => Number.isInteger(n) && n >= 0 && n <= 255);
-    if (allU8) {
-      const buf = Buffer.from(Uint8Array.from(nums));
-      return { base64: buf.toString("base64"), dims: buf.byteLength };
-    }
-    const allI8 = nums.every((n) => Number.isInteger(n) && n >= -128 && n <= 127);
-    if (allI8) {
-      const arr = Int8Array.from(nums);
-      const buf = Buffer.from(arr.buffer);
-      return { base64: buf.toString("base64"), dims: arr.byteLength };
-    }
-    throw new Error("features array has invalid byte values");
-  };
-  if (typeof parsed === "object" && parsed !== null) {
-    const obj = parsed as GenerateFeaturesResponseWire;
-    if (typeof obj.features === "string" && obj.features.trim() !== "") {
-      const dims = Buffer.from(obj.features, "base64").byteLength;
-      return { features: obj.features, dims };
-    }
-    if (Array.isArray(obj.features)) {
-      const { base64, dims } = getFromNumbers(obj.features);
-      return { features: base64, dims };
-    }
-    if (
-      typeof obj.features === "object" &&
-      obj.features !== null &&
-      "type" in obj.features &&
-      (obj.features as { type?: unknown }).type === "Buffer" &&
-      "data" in obj.features &&
-      Array.isArray((obj.features as { data?: unknown }).data)
-    ) {
-      const data = (obj.features as { data: unknown }).data as unknown[];
-      const nums: number[] = [];
-      for (const x of data) {
-        if (typeof x !== "number") throw new Error("features Buffer data contains non-number");
-        nums.push(x);
-      }
-      const { base64, dims } = getFromNumbers(nums);
-      return { features: base64, dims };
-    }
+  if (!isRecord(parsed)) {
+    throw new Error(`features api returned non-object payload: ${truncateForLog(respBody, 50)}`);
   }
-  throw new Error(`features api returned invalid payload: ${truncateForLog(respBody, 50)}`);
+  const featuresRaw = parsed["features"];
+  if (typeof featuresRaw !== "string" || featuresRaw.trim() === "") {
+    throw new Error(`features api returned invalid features: ${truncateForLog(respBody, 50)}`);
+  }
+  const features = featuresRaw.trim();
+  const buf = Buffer.from(features, "base64");
+  const dims = buf.byteLength;
+  if (dims <= 0) {
+    throw new Error(`features api returned empty features: ${truncateForLog(respBody, 50)}`);
+  }
+  return { features, dims };
 }
 
-async function generateFeaturesViaBackend(
+async function generateFeatures(
   sessionCookie: string,
   req: GenerateFeaturesRequest,
 ): Promise<{ features: string; dims: number }> {
@@ -252,7 +222,7 @@ async function generateFeaturesViaBackend(
     method: "POST",
     body: { model: req.model, input: req.input },
   });
-  return normalizeFeaturesToBase64(res.body);
+  return parseFeaturesBase64FromResponse(res.body);
 }
 
 function buildFeaturesInput(summary: string, tags: string[], postSnippet: string): string {
@@ -280,6 +250,22 @@ async function postSummaryResult(
     method: "PUT",
     body,
   });
+}
+
+function parseChatContent(body: string): string {
+  const parsed = JSON.parse(body) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error(`chat response is not an object: ${truncateForLog(body, 50)}`);
+  }
+  const msg = parsed["message"];
+  if (!isRecord(msg)) {
+    throw new Error(`chat response missing message object: ${truncateForLog(body, 50)}`);
+  }
+  const content = msg["content"];
+  if (typeof content !== "string") {
+    throw new Error(`chat response missing content string: ${truncateForLog(body, 50)}`);
+  }
+  return content;
 }
 
 async function summarizePost(sessionCookie: string, postId: string): Promise<void> {
@@ -336,30 +322,29 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     method: "POST",
     body: chatReq,
   });
-  const chatJson = JSON.parse(chatRes.body) as ChatResponse;
-  const aiContent = chatJson.message.content;
-  if (typeof aiContent !== "string" || aiContent.trim() === "") {
+
+  const aiContent = parseChatContent(chatRes.body);
+  if (aiContent.trim() === "") {
     throw new Error(`ai-users/chat returned empty content for postId=${postId}`);
   }
 
   console.log("--- RES\n" + aiContent);
 
-  const parsed = evaluateChatResponseAsJson<{
-    summary?: unknown;
-    tags?: unknown;
-  }>(aiContent);
-  if (typeof parsed !== "object" || parsed === null) {
+  const parsed = evaluateChatResponseAsJson<{ summary?: unknown; tags?: unknown }>(aiContent);
+  if (!isRecord(parsed)) {
     throw new Error(`AI output is not an object: postId=${postId}`);
   }
-  const obj = parsed as { summary?: unknown; tags?: unknown };
-  if (typeof obj.summary !== "string") {
+  const summaryRaw = parsed["summary"];
+  const tagsRaw = parsed["tags"];
+  if (typeof summaryRaw !== "string") {
     throw new Error(`AI output missing summary string: postId=${postId}`);
   }
-  const summary = truncateText(obj.summary, Config.AI_SUMMARY_SUMMARY_TEXT_LIMIT);
-  const tags = parseTagsField(obj.tags, Config.AI_TAG_MAX_COUNT);
+  const summary = truncateText(summaryRaw, Config.AI_SUMMARY_SUMMARY_TEXT_LIMIT);
+  const tags = parseTagsField(tagsRaw, Config.AI_TAG_MAX_COUNT);
   logger.info(
     `parsed result postId=${postId} summary=${truncateForLog(summary, 50)} tags=${tags.join(",")}`,
   );
+
   const postSnippet = truncateText(
     makeTextFromMarkdown(post.content).replaceAll(/ +/g, " ").replaceAll(/\n+/g, "\n").trim(),
     Config.AI_SUMMARY_SUMMARY_LENGTH,
@@ -368,10 +353,11 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
 
   console.log("--- FEAT\n" + featuresInput);
 
-  const feat = await generateFeaturesViaBackend(sessionCookie, {
+  const feat = await generateFeatures(sessionCookie, {
     model: Config.AI_SUMMARY_MODEL,
     input: featuresInput,
   });
+
   const pkt: UpdateAiPostSummaryPacket = { postId, summary, tags, features: feat.features };
   await postSummaryResult(sessionCookie, postId, {
     summary: pkt.summary ?? "",
