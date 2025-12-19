@@ -19,6 +19,7 @@ import type {
   AiUser,
   AiUserInterest,
   AiPeerImpression,
+  AiPostImpression,
   ChatRequest,
   ChatResponse,
 } from "./models/aiUser";
@@ -194,7 +195,7 @@ function parsePeerImpressionPayload(payload: string): PeerImpressionPayload | nu
     if (!isRecord(parsed)) return null;
     const imp = parsed["impression"];
     if (typeof imp !== "string") return null;
-    const tags = parseTagsField(parsed["tags"], 5);
+    const tags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
     return { impression: imp, tags };
   } catch {
     return null;
@@ -213,14 +214,14 @@ function buildProfileExcerpt(
   currentInterest: string;
   currentInterestTags: string[];
 } {
-  const currentInterest = interest ? truncateText(interest.interest, 200) : "";
-  const currentInterestTags = interest ? parseTagsField(interest.tags, 5) : [];
+  const currentInterest = interest ? truncateText(interest.interest, Config.AI_USER_INTRO_TEXT_LIMIT) : "";
+  const currentInterestTags = interest ? parseTagsField(interest.tags, Config.AI_TAG_MAX_COUNT) : [];
   return {
     userId: profile.id,
     locale: profile.locale,
     nickname: profile.nickname,
-    introduction: truncateText(profile.introduction, 200),
-    aiPersonality: truncateText(profile.aiPersonality ?? "", 200),
+    introduction: truncateText(profile.introduction, Config.AI_USER_INTRO_TEXT_LIMIT),
+    aiPersonality: truncateText(profile.aiPersonality ?? "", Config.AI_USER_INTRO_TEXT_LIMIT),
     currentInterest,
     currentInterestTags,
   };
@@ -385,6 +386,82 @@ async function fetchPeerImpression(
   return typeof payload === "string" ? payload : "";
 }
 
+async function fetchOwnPeerImpressions(
+  sessionCookie: string,
+  userId: string,
+): Promise<AiPeerImpression[]> {
+  const params = new URLSearchParams();
+  params.set("offset", "0");
+  params.set("limit", "3");
+  params.set("order", "desc");
+  const path = `/ai-users/${encodeURIComponent(userId)}/peer-impressions?${params.toString()}`;
+  const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
+  if (res.statusCode === 401) throw new UnauthorizedError(`401 from ${path}`);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    logger.error(
+      `failed to fetch own peer impressions userId=${userId}: ${res.statusCode} ${truncateForLog(
+        res.body,
+        50,
+      )}`,
+    );
+    return [];
+  }
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!Array.isArray(parsed)) return [];
+  const out: AiPeerImpression[] = [];
+  for (const item of parsed) {
+    if (!isRecord(item)) continue;
+    const uid = item["userId"];
+    const peerId = item["peerId"];
+    const payload = item["payload"];
+    if (typeof uid !== "string" || uid.trim() === "") continue;
+    if (typeof peerId !== "string" || peerId.trim() === "") continue;
+    if (typeof payload !== "string") continue;
+    out.push({ userId: uid, peerId, payload });
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
+async function fetchOwnPostImpressions(
+  sessionCookie: string,
+  userId: string,
+): Promise<AiPostImpression[]> {
+  const params = new URLSearchParams();
+  params.set("offset", "0");
+  params.set("limit", "3");
+  params.set("order", "desc");
+  const path = `/ai-users/${encodeURIComponent(userId)}/post-impressions?${params.toString()}`;
+  const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
+  if (res.statusCode === 401) throw new UnauthorizedError(`401 from ${path}`);
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    logger.error(
+      `failed to fetch own post impressions userId=${userId}: ${res.statusCode} ${truncateForLog(
+        res.body,
+        50,
+      )}`,
+    );
+    return [];
+  }
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!Array.isArray(parsed)) return [];
+  const out: AiPostImpression[] = [];
+  for (const item of parsed) {
+    if (!isRecord(item)) continue;
+    const uid = item["userId"];
+    const peerId = item["peerId"];
+    const postId = item["postId"];
+    const payload = item["payload"];
+    if (typeof uid !== "string" || uid.trim() === "") continue;
+    if (typeof peerId !== "string" || peerId.trim() === "") continue;
+    if (typeof postId !== "string" || postId.trim() === "") continue;
+    if (typeof payload !== "string") continue;
+    out.push({ userId: uid, peerId, postId, payload });
+    if (out.length >= 3) break;
+  }
+  return out;
+}
+
 async function fetchPostSummary(sessionCookie: string, postId: string): Promise<AiPostSummary> {
   const path = `/ai-posts/${encodeURIComponent(postId)}`;
   const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
@@ -454,7 +531,6 @@ async function fetchPeerLatestPosts(sessionCookie: string, peerId: string): Prom
   params.set("limit", String(Math.min(5, Config.AI_USER_READ_PEER_POST_LIMIT)));
   params.set("order", "desc");
   params.set("ownedBy", peerId);
-
   const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
@@ -873,8 +949,9 @@ async function createPeerImpression(
   }
   const introText = truncateText(peer.introduction, Config.AI_USER_INTRO_TEXT_LIMIT);
   const peerPosts = await fetchPeerLatestPosts(userSessionCookie, peer.id);
-  const posts: { summary: string; impression: string; tags: string[] }[] = [];
+  const posts: { locale: string; summary: string; impression: string; tags: string[] }[] = [];
   for (const p of peerPosts) {
+    const postLocale = p.locale || peer.locale;
     const postSummary = await fetchPostSummary(userSessionCookie, p.id);
     const rawSummary = postSummary.summary ?? "";
     const summaryText = rawSummary ? truncateText(rawSummary, Config.AI_USER_POST_TEXT_LIMIT) : "";
@@ -921,7 +998,7 @@ async function createPeerImpression(
         `Failed to fetch post impression userId=${profile.id} peerId=${peer.id} postId=${p.id}: ${e}`,
       );
     }
-    posts.push({ summary: summaryText, impression: postImpressionText, tags: postTags });
+    posts.push({ locale: postLocale, summary: summaryText, impression: postImpressionText, tags: postTags });
   }
   const peerExcerpt = {
     userId: peer.id,
@@ -1005,6 +1082,105 @@ async function createPeerImpression(
   );
 }
 
+async function createInterest(
+  userSessionCookie: string,
+  profile: UserDetail,
+  interest: AiUserInterest | null,
+): Promise<void> {
+  const locale = profile.locale.replaceAll(/_/g, "-");
+  const profileExcerpt = buildProfileExcerpt(profile, interest);
+  const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+  const peerImps = await fetchOwnPeerImpressions(userSessionCookie, profile.id);
+  const users: { userId: string, locale: string, nickname: string; introduction: string; impression: string; tags: string[] }[] = [];
+  for (const imp of peerImps) {
+    try {
+      const peer = await fetchUserProfile(userSessionCookie, imp.peerId);
+      const introText = truncateText(peer.introduction, Config.AI_USER_IMPRESSION_PEER_TEXT_LIMIT);
+      let impressionText = "";
+      let tags: string[] = [];
+      const parsed = parsePeerImpressionPayload(imp.payload);
+      if (parsed) {
+        impressionText = truncateText(parsed.impression, Config.AI_USER_OUTPUT_TEXT_LIMIT);
+        tags = parsed.tags?.slice(0, Config.AI_TAG_MAX_COUNT) ?? [];
+      }
+      users.push({ userId: peer.id, locale: peer.locale, nickname: peer.nickname, introduction: introText, impression: impressionText, tags });
+    } catch (e) {
+      if (e instanceof UnauthorizedError) throw e;
+      logger.info(`Failed to fetch peer profile for interest userId=${profile.id} peerId=${imp.peerId}: ${e}`);
+    }
+  }
+  if (users.length < 1) {
+    logger.info("no user impressions");
+    return;
+  }
+  const postImps = await fetchOwnPostImpressions(userSessionCookie, profile.id);
+  const posts: { locale: string; authorId: string, authorNickname: string; content: string; summary: string; impression: string; tags: string[] }[] = [];
+  for (const imp of postImps) {
+    try {
+      const post = await fetchPostById(userSessionCookie, imp.postId);
+      const postLocale = (post.locale || post.ownerLocale || profile.locale).replaceAll(/_/g, "-");
+      const contentText = truncateText(post.content, Config.AI_USER_IMPRESSION_PEER_TEXT_LIMIT);
+      const postSummary = await fetchPostSummary(userSessionCookie, post.id);
+      const rawSummary = postSummary.summary ?? "";
+      const summaryText = rawSummary ? truncateText(rawSummary, Config.AI_USER_POST_TEXT_LIMIT) : "";
+      let impressionText = "";
+      let tags: string[] = [];
+      const parsed = parsePeerImpressionPayload(imp.payload);
+      if (parsed) {
+        impressionText = truncateText(parsed.impression, Config.AI_USER_OUTPUT_TEXT_LIMIT);
+        tags = parsed.tags?.slice(0, Config.AI_TAG_MAX_COUNT) ?? [];
+      }
+      posts.push({
+        locale: postLocale,
+        authorId: post.ownedBy,
+        authorNickname: post.ownerNickname,
+        content: contentText,
+        summary: summaryText,
+        impression: impressionText,
+        tags,
+      });
+    } catch (e) {
+      if (e instanceof UnauthorizedError) throw e;
+      logger.info(`Failed to fetch post detail for interest userId=${profile.id} postId=${imp.postId}: ${e}`);
+    }
+  }
+  if (posts.length < 1) {
+    logger.info("no post impressions");
+    return;
+  }
+  const postsExcerpt = { users, posts };
+  const postsJson = JSON.stringify(postsExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+  let maxChars = Config.AI_USER_INTEREST_LENGTH;
+  let tagChars = Config.AI_TAG_MAX_LENGTH;
+  if (
+    locale === "ja" ||
+    locale.startsWith("ja-") ||
+    locale === "zh" ||
+    locale.startsWith("zh-") ||
+    locale === "ko" ||
+    locale.startsWith("ko-")
+  ) {
+    maxChars *= 0.5;
+    tagChars *= 0.5;
+  }
+  let localeText = locale;
+  if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
+  if (locale === "ja" || locale.startsWith("ja-")) localeText = `日本語（${locale}）`;
+  const promptTpl =
+    readPrompt("common-profile", locale, "en").trim() +
+    "\n\n" +
+    readPrompt("interest", locale, "en").trim() +
+    "\n";
+  const prompt = promptTpl
+    .replaceAll("{{PROFILE_JSON}}", profileJson)
+    .replaceAll("{{POSTS_JSON}}", postsJson)
+    .replaceAll("{{MAX_CHARS}}", String(maxChars))
+    .replaceAll("{{TAG_CHARS}}", String(tagChars))
+    .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
+    .replaceAll("{{LOCALE}}", localeText);
+  console.log(prompt);
+}
+
 async function processUser(adminSessionCookie: string, user: AiUser): Promise<void> {
   logger.info(`Processing AI user: id=${user.id}, nickname=${user.nickname}`);
   const userSessionCookie = await switchToUser(adminSessionCookie, user.id);
@@ -1038,6 +1214,9 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
       if (e instanceof UnauthorizedError) throw e;
       logger.error(`error creating peer impression userId=${user.id} peerId=${peerId}: ${e}`);
     }
+  }
+  if (peerIds.length > 0) {
+    await createInterest(userSessionCookie, profile, interest);
   }
 }
 

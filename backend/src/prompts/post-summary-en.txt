@@ -15,7 +15,7 @@ Output must be in JSON format.
     - If more suitable narrower categories exist, use them (e.g., Psychology, Information Processing, African History).
   - For the remaining tags, freely write suitable search keywords (e.g., Akuma, Shibuya, Ramen).
 - Output only the JSON data; omit any formatting, backchanneling, or explanatory text.
-- Follow the JSON specification strictly, pay attention to commas and escaping, and ensure validation will pass reliably.
+  - Follow the JSON specification strictly, pay attention to commas and escaping, and ensure validation will pass reliably.
 
 Example output:
 {
