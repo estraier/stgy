@@ -22,6 +22,7 @@ import type {
   AiPostImpression,
   ChatRequest,
   ChatResponse,
+  GenerateFeaturesRequest,
 } from "./models/aiUser";
 import type { AiPostSummary, AiPostSummaryPacket } from "./models/aiPost";
 import type { UserLite, UserDetail } from "./models/user";
@@ -214,6 +215,28 @@ function parsePeerImpressionPayload(payload: string): PeerImpressionPayload | nu
   } catch {
     return null;
   }
+}
+
+async function generateFeatures(sessionCookie: string, req: GenerateFeaturesRequest): Promise<string> {
+  const res = await apiRequest(sessionCookie, "/ai-users/features", {
+    method: "POST",
+    body: { model: req.model, input: req.input },
+  });
+
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error(`features api returned non-object payload: ${truncateForLog(res.body, 50)}`);
+  }
+  const featuresRaw = parsed["features"];
+  if (typeof featuresRaw !== "string" || featuresRaw.trim() === "") {
+    throw new Error(`features api returned invalid features: ${truncateForLog(res.body, 50)}`);
+  }
+  const features = featuresRaw.trim();
+  const buf = Buffer.from(features, "base64");
+  if (buf.byteLength <= 0) {
+    throw new Error(`features api returned empty features: ${truncateForLog(res.body, 50)}`);
+  }
+  return features;
 }
 
 function buildProfileExcerpt(
@@ -1133,6 +1156,7 @@ async function createPeerImpression(
 }
 
 async function createInterest(
+  adminSessionCookie: string,
   userSessionCookie: string,
   profile: UserDetail,
   interest: AiUserInterest | null,
@@ -1182,7 +1206,7 @@ async function createInterest(
       );
     }
   }
-  if (users.length < 1) {
+  if (users.length < 1 && !interest) {
     logger.info("no user impressions");
     return;
   }
@@ -1229,7 +1253,7 @@ async function createInterest(
       );
     }
   }
-  if (posts.length < 1) {
+  if (posts.length < 1 && !interest) {
     logger.info("no post impressions");
     return;
   }
@@ -1287,10 +1311,23 @@ async function createInterest(
   }
   const newInterest = truncateText(interestRaw.trim(), Config.AI_USER_OUTPUT_TEXT_LIMIT);
   const newTags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
+  const lines: string[] = [];
+  lines.push(newInterest.trim());
+  if (newTags.length > 0) {
+    lines.push("");
+    lines.push(...newTags);
+  }
+  const featuresInput = lines.join("\n");
+  console.log("--- INTEREST FEAT\n", featuresInput);
+  const feat = await generateFeatures(adminSessionCookie, {
+    model: Config.AI_SUMMARY_MODEL,
+    input: featuresInput,
+  });
+
+  console.log(feat);
 
 
-  console.log("INT", newInterest);
-  console.log("TAGS", newTags);
+
 
 
 }
@@ -1330,7 +1367,7 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
     }
   }
   if (peerIds.length > 0) {
-    await createInterest(userSessionCookie, profile, interest);
+    await createInterest(adminSessionCookie, userSessionCookie, profile, interest);
   }
 }
 

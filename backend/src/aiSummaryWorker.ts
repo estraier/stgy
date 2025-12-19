@@ -3,7 +3,7 @@ import { createLogger } from "./utils/logger";
 import { readPrompt } from "./utils/prompt";
 import type { AiPostSummaryPacket, UpdateAiPostSummaryPacket } from "./models/aiPost";
 import type { PostDetail } from "./models/post";
-import type { ChatRequest, ChatResponse, GenerateFeaturesRequest } from "./models/aiUser";
+import type { ChatRequest, GenerateFeaturesRequest } from "./models/aiUser";
 import { AuthService } from "./services/auth";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 import { makeTextFromMarkdown } from "./utils/snippet";
@@ -196,33 +196,26 @@ function parseTagsField(raw: unknown, maxCount: number): string[] {
   return tags;
 }
 
-function parseFeaturesBase64FromResponse(respBody: string): { features: string; dims: number } {
-  const parsed = JSON.parse(respBody) as unknown;
-  if (!isRecord(parsed)) {
-    throw new Error(`features api returned non-object payload: ${truncateForLog(respBody, 50)}`);
-  }
-  const featuresRaw = parsed["features"];
-  if (typeof featuresRaw !== "string" || featuresRaw.trim() === "") {
-    throw new Error(`features api returned invalid features: ${truncateForLog(respBody, 50)}`);
-  }
-  const features = featuresRaw.trim();
-  const buf = Buffer.from(features, "base64");
-  const dims = buf.byteLength;
-  if (dims <= 0) {
-    throw new Error(`features api returned empty features: ${truncateForLog(respBody, 50)}`);
-  }
-  return { features, dims };
-}
-
-async function generateFeatures(
-  sessionCookie: string,
-  req: GenerateFeaturesRequest,
-): Promise<{ features: string; dims: number }> {
+async function generateFeatures(sessionCookie: string, req: GenerateFeaturesRequest): Promise<string> {
   const res = await apiRequest(sessionCookie, "/ai-users/features", {
     method: "POST",
     body: { model: req.model, input: req.input },
   });
-  return parseFeaturesBase64FromResponse(res.body);
+
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!isRecord(parsed)) {
+    throw new Error(`features api returned non-object payload: ${truncateForLog(res.body, 50)}`);
+  }
+  const featuresRaw = parsed["features"];
+  if (typeof featuresRaw !== "string" || featuresRaw.trim() === "") {
+    throw new Error(`features api returned invalid features: ${truncateForLog(res.body, 50)}`);
+  }
+  const features = featuresRaw.trim();
+  const buf = Buffer.from(features, "base64");
+  if (buf.byteLength <= 0) {
+    throw new Error(`features api returned empty features: ${truncateForLog(res.body, 50)}`);
+  }
+  return features;
 }
 
 function buildFeaturesInput(summary: string, tags: string[], postSnippet: string): string {
@@ -353,12 +346,12 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
 
   console.log("--- FEAT\n" + featuresInput);
 
-  const feat = await generateFeatures(sessionCookie, {
+  const features = await generateFeatures(sessionCookie, {
     model: Config.AI_SUMMARY_MODEL,
     input: featuresInput,
   });
 
-  const pkt: UpdateAiPostSummaryPacket = { postId, summary, tags, features: feat.features };
+  const pkt: UpdateAiPostSummaryPacket = { postId, summary, tags, features };
   await postSummaryResult(sessionCookie, postId, {
     summary: pkt.summary ?? "",
     tags: pkt.tags ?? [],
