@@ -11,6 +11,7 @@ export type Post = {
   updatedAt: string | null;
   ownerNickname: string;
   ownerLocale: string;
+  replyToOwnerId: string | null;
   replyToOwnerNickname: string | null;
   countLikes: number;
   countReplies: number;

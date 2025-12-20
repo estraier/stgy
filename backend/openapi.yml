@@ -151,6 +151,7 @@ components:
         updatedAt: { type: string, format: date-time, nullable: true }
         ownerNickname: { type: string }
         ownerLocale: { type: string }
+        replyToOwnerId: { type: string, nullable: true }
         replyToOwnerNickname: { type: string, nullable: true }
         countLikes: { type: integer }
         countReplies: { type: integer }
@@ -180,6 +181,7 @@ components:
           updatedAt,
           ownerNickname,
           ownerLocale,
+          replyToOwnerId,
           replyToOwnerNickname,
           countLikes,
           countReplies,
@@ -215,6 +217,7 @@ components:
         updatedAt: { type: string, format: date-time, nullable: true }
         ownerNickname: { type: string }
         ownerLocale: { type: string }
+        replyToOwnerId: { type: string, nullable: true }
         replyToOwnerNickname: { type: string, nullable: true }
         countLikes: { type: integer }
         countReplies: { type: integer }
@@ -233,6 +236,7 @@ components:
           updatedAt,
           ownerNickname,
           ownerLocale,
+          replyToOwnerId,
           replyToOwnerNickname,
           countLikes,
           countReplies,

@@ -754,7 +754,6 @@ function computeLocaleWeight(userLocale: string, postLocale: string): number {
 async function fetchPostsToRead(
   sessionCookie: string,
   userId: string,
-  userNickname: string,
   userLocale: string,
   interest: AiUserInterest | null,
 ): Promise<PostToRead[]> {
@@ -763,8 +762,7 @@ async function fetchPostsToRead(
   for (const post of followeePosts) {
     if (post.ownedBy === userId) continue;
     let biasWeight = 1.0;
-    // should use userId.
-    if (post.replyToOwnerNickname && post.replyToOwnerNickname !== userNickname) {
+    if (post.replyToOwnerId && post.replyToOwnerId !== userId) {
       biasWeight *= 0.5;
     }
     const locale = post.locale || post.ownerLocale;
@@ -775,7 +773,7 @@ async function fetchPostsToRead(
   for (const post of latestPosts) {
     if (post.ownedBy === userId) continue;
     let biasWeight = 1.0;
-    if (post.replyToOwnerNickname && post.replyToOwnerNickname !== userNickname) {
+    if (post.replyToOwnerId && post.replyToOwnerId !== userId) {
       biasWeight *= 0.5;
     }
     const locale = post.locale || post.ownerLocale;
@@ -1646,7 +1644,6 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
   const posts = await fetchPostsToRead(
     userSessionCookie,
     user.id,
-    user.nickname,
     profile.locale,
     interest,
   );

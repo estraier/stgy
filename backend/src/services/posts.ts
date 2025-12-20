@@ -92,6 +92,7 @@ export class PostsService {
         id_to_timestamp(p.id) AS created_at,
         u.nickname AS owner_nickname,
         u.locale AS owner_locale,
+        pp.owned_by AS reply_to_owner_id,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
         COALESCE(pc.like_count,0) AS count_likes,
@@ -110,6 +111,7 @@ export class PostsService {
     row.id = decToHex(row.id);
     row.owned_by = decToHex(row.owned_by);
     row.reply_to = row.reply_to == null ? null : decToHex(row.reply_to);
+    row.reply_to_owner_id = row.reply_to_owner_id == null ? null : decToHex(row.reply_to_owner_id);
     return snakeToCamel<PostLite>(row);
   }
 
@@ -128,6 +130,7 @@ export class PostsService {
         id_to_timestamp(p.id) AS created_at,
         u.nickname AS owner_nickname,
         u.locale AS owner_locale,
+        pp.owned_by AS reply_to_owner_id,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
         COALESCE(pc.like_count,0) AS count_likes,
@@ -162,6 +165,7 @@ export class PostsService {
     row.id = decToHex(row.id);
     row.owned_by = decToHex(row.owned_by);
     row.reply_to = row.reply_to == null ? null : decToHex(row.reply_to);
+    row.reply_to_owner_id = row.reply_to_owner_id == null ? null : decToHex(row.reply_to_owner_id);
     const post = snakeToCamel<PostDetail>(row);
     if (focusUserId) {
       const likeRes = await pgQuery(
@@ -202,6 +206,7 @@ export class PostsService {
         id_to_timestamp(p.id) AS created_at,
         u.nickname AS owner_nickname,
         u.locale AS owner_locale,
+        pp.owned_by AS reply_to_owner_id,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
         COALESCE(pc.like_count,0) AS count_likes,
@@ -262,6 +267,7 @@ export class PostsService {
       r.id = decToHex(r.id);
       r.owned_by = decToHex(r.owned_by);
       r.reply_to = r.reply_to == null ? null : decToHex(r.reply_to);
+      r.reply_to_owner_id = r.reply_to_owner_id == null ? null : decToHex(r.reply_to_owner_id);
       return r;
     });
     const out = snakeToCamel<Post[]>(posts);
@@ -605,6 +611,7 @@ export class PostsService {
         id_to_timestamp(p.id) AS created_at,
         u.nickname AS owner_nickname,
         u.locale AS owner_locale,
+        pp.owned_by AS reply_to_owner_id,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
         COALESCE(pc.like_count,0) AS count_likes
@@ -642,6 +649,7 @@ export class PostsService {
       r.id = decToHex(r.id);
       r.owned_by = decToHex(r.owned_by);
       r.reply_to = r.reply_to == null ? null : decToHex(r.reply_to);
+      r.reply_to_owner_id = r.reply_to_owner_id == null ? null : decToHex(r.reply_to_owner_id);
       return r;
     });
     const posts = snakeToCamel<Post[]>(rows);
@@ -688,6 +696,7 @@ export class PostsService {
         id_to_timestamp(p.id) AS created_at,
         u.nickname AS owner_nickname,
         u.locale AS owner_locale,
+        pp.owned_by AS reply_to_owner_id,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
         COALESCE(pc.like_count,0) AS count_likes,
@@ -725,6 +734,7 @@ export class PostsService {
       r.id = decToHex(r.id);
       r.owned_by = decToHex(r.owned_by);
       r.reply_to = r.reply_to == null ? null : decToHex(r.reply_to);
+      r.reply_to_owner_id = r.reply_to_owner_id == null ? null : decToHex(r.reply_to_owner_id);
       return r;
     });
     const posts = snakeToCamel<Post[]>(rows);
@@ -799,6 +809,7 @@ export class PostsService {
           id_to_timestamp(p.id) AS created_at,
           u.nickname AS owner_nickname,
           u.locale AS owner_locale,
+          pp.owned_by AS reply_to_owner_id,
           pu.nickname AS reply_to_owner_nickname,
           COALESCE(pc.reply_count,0) AS count_replies,
           COALESCE(pc.like_count,0) AS count_likes,
@@ -849,6 +860,7 @@ export class PostsService {
     row.id = decToHex(row.id);
     row.owned_by = decToHex(row.owned_by);
     row.reply_to = row.reply_to == null ? null : decToHex(row.reply_to);
+    row.reply_to_owner_id = row.reply_to_owner_id == null ? null : decToHex(row.reply_to_owner_id);
     row.older_post_id = row.older_post_id == null ? null : decToHex(row.older_post_id);
     row.newer_post_id = row.newer_post_id == null ? null : decToHex(row.newer_post_id);
     return snakeToCamel<PubPostDetail>(row);
@@ -876,6 +888,7 @@ export class PostsService {
         id_to_timestamp(p.id) AS created_at,
         u.nickname AS owner_nickname,
         u.locale AS owner_locale,
+        pp.owned_by AS reply_to_owner_id,
         pu.nickname AS reply_to_owner_nickname,
         COALESCE(pc.reply_count,0) AS count_replies,
         COALESCE(pc.like_count,0) AS count_likes,
@@ -897,6 +910,7 @@ export class PostsService {
       r.id = decToHex(r.id);
       r.owned_by = decToHex(r.owned_by);
       r.reply_to = r.reply_to == null ? null : decToHex(r.reply_to);
+      r.reply_to_owner_id = r.reply_to_owner_id == null ? null : decToHex(r.reply_to_owner_id);
       return r;
     });
     return snakeToCamel<Post[]>(rows);

@@ -218,6 +218,7 @@ class MockPgClientMain {
       const replyNickname = replyToPost
         ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
         : null;
+      const replyOwnerId = replyToPost ? replyToPost.ownedBy : null;
 
       const sameOwnerPub = this.data.filter(
         (p) => p.ownedBy === cur.ownedBy && p.publishedAt && p.publishedAt <= until,
@@ -255,6 +256,7 @@ class MockPgClientMain {
         created_at: cur.createdAt,
         owner_nickname: owner?.nickname ?? "",
         owner_locale: owner?.locale ?? null,
+        reply_to_owner_id: replyOwnerId,
         reply_to_owner_nickname: replyNickname,
         count_replies: this.countRepliesFor(cur.id),
         count_likes: this.countLikesFor(cur.id),
@@ -327,6 +329,8 @@ class MockPgClientMain {
         const reply_to_owner_nickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
+        const reply_to_owner_id = replyToPost ? replyToPost.ownedBy : null;
+
         const base = {
           id: p.id,
           owned_by: p.ownedBy,
@@ -339,6 +343,7 @@ class MockPgClientMain {
           updated_at: p.updatedAt,
           owner_nickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
           owner_locale: this.users.find((u) => u.id === p.ownedBy)?.locale ?? null,
+          reply_to_owner_id,
           reply_to_owner_nickname,
           count_replies: this.countRepliesFor(p.id),
           count_likes: this.countLikesFor(p.id),
@@ -371,6 +376,8 @@ class MockPgClientMain {
         const reply_to_owner_nickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
+        const reply_to_owner_id = replyToPost ? replyToPost.ownedBy : null;
+
         return {
           id: p.id,
           owned_by: p.ownedBy,
@@ -384,6 +391,7 @@ class MockPgClientMain {
           created_at: p.createdAt,
           owner_nickname: this.users.find((u) => u.id === p.ownedBy)?.nickname ?? "",
           owner_locale: this.users.find((u) => u.id === p.ownedBy)?.locale ?? null,
+          reply_to_owner_id,
           reply_to_owner_nickname,
           count_replies: this.countRepliesFor(p.id),
           count_likes: this.countLikesFor(p.id),
@@ -434,6 +442,7 @@ class MockPgClientMain {
       const reply_to_owner_nickname = replyToPost
         ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
         : null;
+      const reply_to_owner_id = replyToPost ? replyToPost.ownedBy : null;
 
       const owner = this.users.find((u) => u.id === post.ownedBy);
 
@@ -450,6 +459,7 @@ class MockPgClientMain {
         created_at: post.createdAt,
         owner_nickname: owner?.nickname || "",
         owner_locale: owner?.locale ?? null,
+        reply_to_owner_id,
         reply_to_owner_nickname,
         count_replies: this.countRepliesFor(post.id),
         count_likes: this.countLikesFor(post.id),
@@ -474,6 +484,8 @@ class MockPgClientMain {
         const reply_to_owner_nickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
+        const reply_to_owner_id = replyToPost ? replyToPost.ownedBy : null;
+
         const owner = this.users.find((u) => u.id === p.ownedBy);
         const row: any = {
           id: p.id,
@@ -489,6 +501,7 @@ class MockPgClientMain {
           created_at: p.createdAt,
           owner_nickname: owner?.nickname ?? "",
           owner_locale: owner?.locale ?? null,
+          reply_to_owner_id,
           reply_to_owner_nickname,
           count_replies: this.countRepliesFor(p.id),
           count_likes: this.countLikesFor(p.id),
@@ -568,6 +581,8 @@ class MockPgClientMain {
         const replyToNickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
+        const replyToOwnerId = replyToPost ? replyToPost.ownedBy : null;
+
         const owner = this.users.find((u) => u.id === p.ownedBy);
         const row: any = {
           id: p.id,
@@ -582,6 +597,7 @@ class MockPgClientMain {
           updated_at: p.updatedAt,
           owner_nickname: owner?.nickname ?? "",
           owner_locale: owner?.locale ?? null,
+          reply_to_owner_id: replyToOwnerId,
           reply_to_owner_nickname: replyToNickname,
           count_replies: this.countRepliesFor(p.id),
           count_likes: this.countLikesFor(p.id),
@@ -693,6 +709,7 @@ describe("posts service", () => {
     expect(lite).not.toBeNull();
     expect(lite!.id).toBe(postSample.id);
     expect(lite!.ownerNickname).toBe("Alice");
+    expect(lite!.replyToOwnerId).toBeNull();
     expect(lite!.tags).toContain("tag1");
     expect(typeof lite!.countLikes).toBe("number");
     expect(typeof lite!.countReplies).toBe("number");
@@ -703,6 +720,7 @@ describe("posts service", () => {
     expect(posts.length).toBeGreaterThanOrEqual(1);
     expect(posts[0].ownerNickname).toBe("Alice");
     expect(posts[0].ownerLocale).toBe("ja-JP");
+    expect(posts[0].replyToOwnerId).toBeNull();
     expect(posts[0].tags).toContain("tag1");
     expect(posts[0].countLikes).toBeGreaterThanOrEqual(1);
   });
@@ -722,6 +740,7 @@ describe("posts service", () => {
     const created = await postsService.createPost(input);
     expect(created.ownedBy).toBe(user2Hex);
     expect(created.replyTo).toBe(parentId);
+    expect(created.replyToOwnerId).toBe(user1Hex);
     expect(created.locale).toBeNull();
     expect(pgClient.tags.some((t) => t.postId === toDecStr(created.id) && t.name === "hello")).toBe(
       true,
@@ -734,6 +753,7 @@ describe("posts service", () => {
     expect(post).not.toBeNull();
     expect(post!.content).toBe(postSample.content);
     expect(post!.ownerLocale).toBe("ja-JP");
+    expect(post!.replyToOwnerId).toBeNull();
   });
 
   test("getPost: not found", async () => {
@@ -752,6 +772,7 @@ describe("posts service", () => {
     expect(post).not.toBeNull();
     expect(post!.content).toBe("updated content");
     expect(post!.replyTo).toBe(postSample.id);
+    expect(post!.replyToOwnerId).toBe(user1Hex);
     expect(
       pgClient.tags.some((t) => t.postId === toDecStr(postSample.id) && t.name === "foo"),
     ).toBe(true);
@@ -1007,6 +1028,7 @@ describe("listPostsLikedByUser", () => {
     expect(result.some((p) => p.id === post1.id)).toBe(true);
     expect(result.some((p) => p.id === post2.id)).toBe(false);
     expect(result[0].ownerLocale).toBe("en-US");
+    expect(result[0].replyToOwnerId).toBeNull();
   });
 
   test("should return empty array if user has not liked any posts", async () => {
@@ -1070,6 +1092,7 @@ describe("getPost", () => {
         const reply_to_owner_nickname = replyToPost
           ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
           : null;
+        const reply_to_owner_id = replyToPost ? replyToPost.ownedBy : null;
 
         const row: any = {
           id: p.id,
@@ -1082,6 +1105,7 @@ describe("getPost", () => {
           updated_at: p.updatedAt,
           owner_nickname: u?.nickname || "",
           owner_locale: u?.locale ?? null,
+          reply_to_owner_id,
           reply_to_owner_nickname,
           count_replies,
           count_likes,
@@ -1180,6 +1204,7 @@ describe("getPost", () => {
     expect(result!.id).toBe(post.id);
     expect(result!.ownerNickname).toBe(owner.nickname);
     expect(result!.ownerLocale).toBe("ja-JP");
+    expect(result!.replyToOwnerId).toBeNull();
     expect(result!.countReplies).toBe(2);
     expect(result!.countLikes).toBe(2);
     expect(result!.tags.sort()).toEqual(["tag1", "tag2"]);
@@ -1217,6 +1242,7 @@ describe("getPost", () => {
     expect(got).not.toBeNull();
     expect(got!.ownerNickname).toBe("Nobody");
     expect(got!.ownerLocale).toBe("en-US");
+    expect(got!.replyToOwnerId).toBeNull();
     expect(got!.countReplies).toBe(0);
     expect(got!.countLikes).toBe(0);
     expect(got!.tags).toEqual([]);
@@ -1445,11 +1471,13 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
     expect(hitEq).not.toBeNull();
     expect(hitEq!.publishedAt).toBe("2024-01-10T00:00:00Z");
     expect(hitEq!.ownerLocale).toBe("ja-JP");
+    expect(hitEq!.replyToOwnerId).toBeNull();
 
     const hitGt = await postsService.getPubPost(idHex, until3);
     expect(hitGt).not.toBeNull();
     expect(hitGt!.publishedAt).toBe("2024-01-10T00:00:00Z");
     expect(hitGt!.ownerLocale).toBe("ja-JP");
+    expect(hitGt!.replyToOwnerId).toBeNull();
   });
 
   test("listPubPostsByUser includes equality (<=) and honors order asc", async () => {
@@ -1500,6 +1528,7 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
     } as PostPagination);
     expect(listAsc.map((p) => p.publishedAt)).toEqual([pA1.publishedAt, pA2.publishedAt]);
     expect(listAsc[0].ownerLocale).toBe("ja-JP");
+    expect(listAsc[0].replyToOwnerId).toBeNull();
   });
 
   test("listPubPostsByUser offset/limit", async () => {
