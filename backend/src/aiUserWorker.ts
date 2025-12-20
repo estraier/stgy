@@ -944,19 +944,16 @@ async function replyToPost(
   post: PostDetail,
 ): Promise<void> {
   if (!post.allowReplies) return;
-
+  if (post.replyToOwnerId && post.replyToOwnerId !== profile.id) return;
   const locale = (post.locale || post.ownerLocale || profile.locale).replaceAll(/_/g, "-");
   const profileExcerpt = buildProfileExcerpt(profile, interest);
   const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-
   const postSummary = await fetchPostSummary(userSessionCookie, post.id);
   const rawSummary = postSummary.summary ?? "";
   const summaryText = rawSummary ? truncateText(rawSummary, Config.AI_USER_POST_TEXT_LIMIT) : "";
-
   const postTags = Array.isArray(post.tags)
     ? post.tags.filter((t): t is string => typeof t === "string").slice(0, Config.AI_TAG_MAX_COUNT)
     : [];
-
   const postImp = await fetchPostImpression(userSessionCookie, profile.id, post.id);
   let impressionText = "";
   let impressionTags: string[] = [];
@@ -967,7 +964,6 @@ async function replyToPost(
       impressionTags = parsedImp.tags.slice(0, Config.AI_TAG_MAX_COUNT);
     }
   }
-
   const peerImp = await fetchPeerImpression(userSessionCookie, profile.id, post.ownedBy);
   let peerImpressionText = "";
   if (peerImp && peerImp.payload.trim() !== "") {
@@ -976,7 +972,6 @@ async function replyToPost(
       peerImpressionText = truncateText(parsedPeer.impression, Config.AI_USER_OUTPUT_TEXT_LIMIT);
     }
   }
-
   const postExcerpt = {
     locale,
     author: post.ownerNickname,
@@ -989,12 +984,10 @@ async function replyToPost(
     peerImpression: peerImpressionText,
   };
   const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-
   let maxChars = Config.AI_USER_NEW_POST_LENGTH;
   let tagChars = Config.AI_TAG_MAX_LENGTH;
   let tagNum = Math.max(2, Config.AI_USER_NEW_POST_TAGS);
   tagNum = Math.min(tagNum, Config.AI_TAG_MAX_COUNT);
-
   if (
     locale === "ja" ||
     locale.startsWith("ja-") ||
@@ -1006,17 +999,14 @@ async function replyToPost(
     maxChars = Math.ceil(maxChars * 0.5);
     tagChars = Math.ceil(tagChars * 0.5);
   }
-
   let localeText = locale;
   if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
   if (locale === "ja" || locale.startsWith("ja-")) localeText = `日本語（${locale}）`;
-
   const promptTpl =
     readPrompt("common-profile", locale, "en").trim() +
     "\n\n" +
     readPrompt("reply-post", locale, "en").trim() +
     "\n";
-
   const prompt = promptTpl
     .replaceAll("{{PROFILE_JSON}}", profileJson)
     .replaceAll("{{POST_JSON}}", postJson)
@@ -1024,19 +1014,16 @@ async function replyToPost(
     .replaceAll("{{TAG_CHARS}}", String(tagChars))
     .replaceAll("{{TAG_NUM}}", String(tagNum))
     .replaceAll("{{LOCALE}}", localeText);
-
   const chatReq: ChatRequest = { messages: [{ role: "user", content: prompt }] };
   const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
     method: "POST",
     body: chatReq,
   });
-
   const chat = parseChatResponse(chatRes.body);
   const raw = chat.message.content;
   if (raw.trim() === "") {
     throw new Error(`ai-users/chat returned empty content userId=${profile.id} postId=${post.id}`);
   }
-
   const parsed = evaluateChatResponseAsJson<unknown>(raw);
   if (!isRecord(parsed)) {
     throw new Error(
@@ -1046,7 +1033,6 @@ async function replyToPost(
       )}`,
     );
   }
-
   const contentRaw = parsed["content"];
   if (typeof contentRaw !== "string") {
     throw new Error(
@@ -1056,12 +1042,10 @@ async function replyToPost(
       )}`,
     );
   }
-
   const content = truncateText(contentRaw.trim(), Config.AI_USER_OUTPUT_TEXT_LIMIT);
   if (content.trim() === "") {
     throw new Error(`AI output content is empty userId=${profile.id} postId=${post.id}`);
   }
-
   let tags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
   if (tags.length < 2) {
     if (locale === "ja" || locale.startsWith("ja-")) {
@@ -1072,12 +1056,10 @@ async function replyToPost(
       tags = ["General", "reply"];
     }
   }
-
   const saveRes = await apiRequest(userSessionCookie, "/posts", {
     method: "POST",
     body: { content, tags: tags.slice(0, tagNum), replyTo: post.id },
   });
-
   try {
     const saved = JSON.parse(saveRes.body) as unknown;
     if (isRecord(saved) && typeof saved["id"] === "string") {
@@ -1703,12 +1685,7 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
   const userSessionCookie = await switchToUser(adminSessionCookie, user.id);
   const profile = await fetchUserProfile(userSessionCookie, user.id);
   const interest = await fetchUserInterest(userSessionCookie, user.id);
-  const posts = await fetchPostsToRead(
-    userSessionCookie,
-    user.id,
-    profile.locale,
-    interest,
-  );
+  const posts = await fetchPostsToRead(userSessionCookie, user.id, profile.locale, interest);
   logger.info(`postsToRead userId=${user.id} count=${posts.length}`);
   const peerIdSet = new Set<string>();
   const topPeerPosts = new Map<string, PostDetail>();
