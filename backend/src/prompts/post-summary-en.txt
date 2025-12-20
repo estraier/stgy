@@ -17,12 +17,6 @@ Output must be in JSON format.
 - Output only the JSON data; omit any formatting, backchanneling, or explanatory text.
   - Follow the JSON specification strictly, pay attention to commas and escaping, and ensure validation will pass reliably.
 
-Example output:
-{
-  "summary": "... (summary) ...",
-  "tags": ["Organic Chemistry", "Chemical Structure", "Molecular Formula", "Certification Exam"]
-}
-
 ==== Task ====
 
 You have just viewed the post represented by the following JSON data.
@@ -33,8 +27,14 @@ You have just viewed the post represented by the following JSON data.
 {{POST_JSON}}
 
 Notes:
-- Write the summary in plain text (no decorative characters) within {{MAX_CHARS}} characters.
+- Write the summary in plain text (no decorative characters) in approximately {{MAX_CHARS}} characters.
 - The number of tags must be between 2 and {{TAG_NUM}} (inclusive). Each tag must be within {{TAG_CHARS}} characters.
 - The language (locale) of the output summary, the NDC tags, and the other tags must be {{LOCALE}}.
+
+Example output:
+{
+  "summary": "... (summary sentences in {{MAX_CHARS}} characters) ...",
+  "tags": ["Organic Chemistry", "Chemical Structure", "Molecular Formula", "Certification Exam"]
+}
 
 Provide the task output below in JSON format.

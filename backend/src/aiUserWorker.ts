@@ -1330,6 +1330,28 @@ async function createInterest(
   });
 
   console.log(feat);
+
+  const saveRes = await apiRequest(
+    adminSessionCookie,
+    `/ai-users/${encodeURIComponent(profile.id)}/interests`,
+    {
+      method: "POST",
+      body: {
+        interest: newInterest,
+        tags: newTags,
+        features: feat,
+      },
+    },
+  );
+  const saved = JSON.parse(saveRes.body) as unknown;
+  if (isRecord(saved)) {
+    const updatedAt = typeof saved["updatedAt"] === "string" ? saved["updatedAt"] : "";
+    logger.info(
+      `Saved interest userId=${profile.id} updatedAt=${updatedAt} tags=${newTags.join(",")}`,
+    );
+  } else {
+    logger.info(`Saved interest userId=${profile.id} tags=${newTags.join(",")}`);
+  }
 }
 
 async function processUser(adminSessionCookie: string, user: AiUser): Promise<void> {

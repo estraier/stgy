@@ -135,10 +135,7 @@ export class Config {
 
   static readonly AI_USER_READ_POST_LIMIT = envNum("STGY_AI_USER_READ_POST_LIMIT", 1);
   static readonly AI_USER_READ_PEER_POST_LIMIT = envNum("STGY_AI_USER_READ_PEER_POST_LIMIT", 5);
-
   static readonly AI_USER_READ_INTEREST_LIMIT = envNum("STGY_AI_USER_READ_INTEREST_LIMIT", 10);
-
-
   static readonly AI_USER_POST_TEXT_LIMIT = envNum("STGY_AI_USER_POST_TEXT_LIMIT", 10000);
   static readonly AI_USER_INTRO_TEXT_LIMIT = envNum("STGY_AI_USER_INTRO_TEXT_LIMIT", 10000);
   static readonly AI_USER_IMPRESSION_TEXT_LIMIT = envNum(
