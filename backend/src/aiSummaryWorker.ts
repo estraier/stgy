@@ -1,6 +1,6 @@
 import { Config } from "./config";
 import { createLogger } from "./utils/logger";
-import { readPrompt } from "./utils/prompt";
+import { readPrompt, evaluateChatResponseAsJson } from "./utils/prompt";
 import type { AiPostSummaryPacket, UpdateAiPostSummaryPacket } from "./models/aiPost";
 import type { PostDetail } from "./models/post";
 import type { ChatRequest, GenerateFeaturesRequest } from "./models/aiUser";
@@ -163,24 +163,6 @@ async function fetchPostDetail(sessionCookie: string, postId: string): Promise<P
     method: "GET",
   });
   return JSON.parse(res.body) as PostDetail;
-}
-
-function evaluateChatResponseAsJson<T = unknown>(raw: string): T {
-  let s = raw.trim();
-  const fenced = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  if (fenced) s = fenced[1].trim();
-  const firstBrace = s.indexOf("{");
-  const lastBrace = s.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    const afterLast = s.slice(lastBrace + 1);
-    if (/^\s*$/.test(afterLast)) {
-      s = s.slice(firstBrace, lastBrace + 1);
-    }
-  }
-  if (/,\s*[}\]]\s*$/.test(s)) {
-    s = s.replace(/,\s*([}\]])\s*$/u, "$1");
-  }
-  return JSON.parse(s) as T;
 }
 
 function parseTagsField(raw: unknown, maxCount: number): string[] {

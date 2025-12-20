@@ -5,10 +5,11 @@
 
 import { Config } from "./config";
 import { createLogger } from "./utils/logger";
-import { readPrompt } from "./utils/prompt";
+import { readPrompt, evaluateChatResponseAsJson } from "./utils/prompt";
 import { AuthService } from "./services/auth";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 import { decodeFeatures, cosineSimilarity } from "./utils/vectorSpace";
+import { makeTextFromMarkdown } from "./utils/snippet";
 import { countPseudoTokens, sliceByPseudoTokens } from "stgy-markdown";
 import type { Pool } from "pg";
 import type Redis from "ioredis";
@@ -166,24 +167,6 @@ async function apiRequest(
     );
   }
   return res;
-}
-
-function evaluateChatResponseAsJson<T = unknown>(raw: string): T {
-  let s = raw.trim();
-  const fenced = s.match(/^```(?:json)?\s*([\s\S]*?)\s*```$/i);
-  if (fenced) s = fenced[1].trim();
-  const firstBrace = s.indexOf("{");
-  const lastBrace = s.lastIndexOf("}");
-  if (firstBrace !== -1 && lastBrace !== -1 && lastBrace > firstBrace) {
-    const afterLast = s.slice(lastBrace + 1);
-    if (/^\s*$/.test(afterLast)) {
-      s = s.slice(firstBrace, lastBrace + 1);
-    }
-  }
-  if (/,\s*[}\]]\s*$/.test(s)) {
-    s = s.replace(/,\s*([}\]])\s*$/u, "$1");
-  }
-  return JSON.parse(s) as T;
 }
 
 function parseTagsField(raw: unknown, maxCount: number): string[] {
@@ -924,7 +907,127 @@ async function replyToPost(
   interest: AiUserInterest | null,
   post: PostDetail,
 ): Promise<void> {
-  console.log("REPLY", post);
+  if (!post.allowReplies) return;
+
+  const locale = (post.locale || post.ownerLocale || profile.locale).replaceAll(/_/g, "-");
+  const profileExcerpt = buildProfileExcerpt(profile, interest);
+  const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+
+  const postSummary = await fetchPostSummary(userSessionCookie, post.id);
+  const rawSummary = postSummary.summary ?? "";
+  const summaryText = rawSummary ? truncateText(rawSummary, Config.AI_USER_POST_TEXT_LIMIT) : "";
+
+  const postTags = Array.isArray(post.tags)
+    ? post.tags.filter((t): t is string => typeof t === "string").slice(0, Config.AI_TAG_MAX_COUNT)
+    : [];
+
+  const postExcerpt = {
+    locale,
+    createdAt: post.createdAt,
+    content: truncateText(post.content, Config.AI_USER_POST_TEXT_LIMIT),
+    tags: postTags,
+    summary: summaryText,
+  };
+  const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+
+  let maxChars = Config.AI_USER_NEW_POST_LENGTH;
+  let tagChars = Config.AI_TAG_MAX_LENGTH;
+  let tagNum = Math.max(2, Config.AI_USER_NEW_POST_TAGS);
+  tagNum = Math.min(tagNum, Config.AI_TAG_MAX_COUNT);
+
+  if (
+    locale === "ja" ||
+    locale.startsWith("ja-") ||
+    locale === "zh" ||
+    locale.startsWith("zh-") ||
+    locale === "ko" ||
+    locale.startsWith("ko-")
+  ) {
+    maxChars = Math.ceil(maxChars * 0.5);
+    tagChars = Math.ceil(tagChars * 0.5);
+  }
+
+  let localeText = locale;
+  if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
+  if (locale === "ja" || locale.startsWith("ja-")) localeText = `日本語（${locale}）`;
+
+  const promptTpl =
+    readPrompt("common-profile", locale, "en").trim() +
+    "\n\n" +
+    readPrompt("reply-post", locale, "en").trim() +
+    "\n";
+
+  const prompt = promptTpl
+    .replaceAll("{{PROFILE_JSON}}", profileJson)
+    .replaceAll("{{POST_JSON}}", postJson)
+    .replaceAll("{{MAX_CHARS}}", String(maxChars))
+    .replaceAll("{{TAG_CHARS}}", String(tagChars))
+    .replaceAll("{{TAG_NUM}}", String(tagNum))
+    .replaceAll("{{LOCALE}}", localeText);
+
+  const chatReq: ChatRequest = { messages: [{ role: "user", content: prompt }] };
+  const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
+    method: "POST",
+    body: chatReq,
+  });
+
+  const chat = parseChatResponse(chatRes.body);
+  const raw = chat.message.content;
+  if (raw.trim() === "") {
+    throw new Error(`ai-users/chat returned empty content userId=${profile.id} postId=${post.id}`);
+  }
+
+  const parsed = evaluateChatResponseAsJson<unknown>(raw);
+  if (!isRecord(parsed)) {
+    throw new Error(
+      `AI output JSON is not an object userId=${profile.id} postId=${post.id} content=${truncateForLog(
+        raw,
+        50,
+      )}`,
+    );
+  }
+
+  const contentRaw = parsed["content"];
+  if (typeof contentRaw !== "string") {
+    throw new Error(
+      `AI output JSON missing content userId=${profile.id} postId=${post.id} content=${truncateForLog(
+        raw,
+        50,
+      )}`,
+    );
+  }
+
+  const content = truncateText(contentRaw.trim(), Config.AI_USER_OUTPUT_TEXT_LIMIT);
+  if (content.trim() === "") {
+    throw new Error(`AI output content is empty userId=${profile.id} postId=${post.id}`);
+  }
+
+  let tags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
+  if (tags.length < 2) {
+    if (locale === "ja" || locale.startsWith("ja-")) {
+      tags = ["総記", "返信"];
+    } else if (locale === "en" || locale.startsWith("en-")) {
+      tags = ["General works", "reply"];
+    } else {
+      tags = ["General", "reply"];
+    }
+  }
+
+  const saveRes = await apiRequest(userSessionCookie, "/posts", {
+    method: "POST",
+    body: { content, tags: tags.slice(0, tagNum), replyTo: post.id },
+  });
+
+  try {
+    const saved = JSON.parse(saveRes.body) as unknown;
+    if (isRecord(saved) && typeof saved["id"] === "string") {
+      logger.info(`Replied userId=${profile.id} postId=${post.id} replyId=${saved["id"]}`);
+    } else {
+      logger.info(`Replied userId=${profile.id} postId=${post.id}`);
+    }
+  } catch {
+    logger.info(`Replied userId=${profile.id} postId=${post.id}`);
+  }
 }
 
 async function createPostImpression(
@@ -1371,6 +1474,15 @@ async function createInterest(
     lines.push("");
     lines.push(...newTags);
   }
+  const introSnippet = truncateText(
+    makeTextFromMarkdown(profile.introduction)
+      .replaceAll(/ +/g, " ")
+      .replaceAll(/\n+/g, "\n")
+      .trim(),
+    Config.AI_USER_INTRO_TEXT_LIMIT,
+  );
+  lines.push("");
+  lines.push(introSnippet);
   const featuresInput = lines.join("\n");
   console.log("--- INTEREST FEAT\n", featuresInput);
   const feat = await generateFeatures(adminSessionCookie, {
@@ -1414,7 +1526,7 @@ async function createNewPost(
   const ownPosts = await fetchOwnRecentPosts(
     userSessionCookie,
     profile.id,
-    Config.AI_USER_READ_POST_LIMIT,
+    Config.AI_USER_READ_NEW_POST_LIMIT,
   );
   const seedPosts = ownPosts.slice(0, Math.min(5, Config.AI_USER_READ_POST_LIMIT));
   if (seedPosts.length > 0) {
@@ -1437,7 +1549,7 @@ async function createNewPost(
     const postSummary = await fetchPostSummary(userSessionCookie, p.id);
     const summaryText =
       typeof postSummary.summary === "string"
-        ? truncateText(postSummary.summary, Config.AI_USER_READ_NEW_POST_LIMIT)
+        ? truncateText(postSummary.summary, Config.AI_USER_POST_TEXT_LIMIT)
         : "";
     const tags = parseTagsField(postSummary.tags, Config.AI_TAG_MAX_COUNT);
     posts.push({
@@ -1531,7 +1643,13 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
   const userSessionCookie = await switchToUser(adminSessionCookie, user.id);
   const profile = await fetchUserProfile(userSessionCookie, user.id);
   const interest = await fetchUserInterest(userSessionCookie, user.id);
-  const posts = await fetchPostsToRead(userSessionCookie, user.id, user.nickname, profile.locale, interest);
+  const posts = await fetchPostsToRead(
+    userSessionCookie,
+    user.id,
+    user.nickname,
+    profile.locale,
+    interest,
+  );
   logger.info(`postsToRead userId=${user.id} count=${posts.length}`);
   const peerIdSet = new Set<string>();
   const topPeerPosts = new Map<string, PostDetail>();
@@ -1562,7 +1680,10 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
           logger.error(`error liking userId=${user.id} postId={post.id}: ${e}`);
         }
       }
-      if (i < Config.AI_USER_REPLY_LIMIT && item.similarity >= Config.AI_USER_REPLY_MIN_SIMILARITY) {
+      if (
+        i < Config.AI_USER_REPLY_LIMIT &&
+        item.similarity >= Config.AI_USER_REPLY_MIN_SIMILARITY
+      ) {
         try {
           await replyToPost(userSessionCookie, profile, interest, post);
         } catch (e) {
@@ -1572,10 +1693,6 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
       }
     }
   }
-
-  // debug only
-  return;
-
   const peerIds = Array.from(peerIdSet);
   logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
   for (const peerId of peerIds) {
