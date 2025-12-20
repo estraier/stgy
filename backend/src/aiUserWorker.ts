@@ -389,6 +389,44 @@ async function fetchUserInterest(
   }
 }
 
+async function fetchPostImpression(
+  sessionCookie: string,
+  aiUserId: string,
+  postId: string,
+): Promise<AiPostImpression | null> {
+  const path = `/ai-users/${encodeURIComponent(aiUserId)}/post-impressions/${encodeURIComponent(
+    postId,
+  )}`;
+  const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
+  if (res.statusCode === 401) throw new UnauthorizedError(`401 from ${path}`);
+  if (res.statusCode === 404) return null;
+  if (res.statusCode < 200 || res.statusCode >= 300) {
+    logger.error(
+      `failed to fetch post impression userId=${aiUserId} postId=${postId}: ${res.statusCode} ${truncateForLog(
+        res.body,
+        50,
+      )}`,
+    );
+    return null;
+  }
+  const parsed = JSON.parse(res.body) as unknown;
+  if (!isRecord(parsed)) return null;
+
+  const uid = parsed["userId"];
+  const peerId = parsed["peerId"];
+  const pid = parsed["postId"];
+  const updatedAt = parsed["updatedAt"];
+  const payload = parsed["payload"];
+
+  if (typeof uid !== "string" || uid.trim() === "") return null;
+  if (typeof peerId !== "string" || peerId.trim() === "") return null;
+  if (typeof pid !== "string" || pid.trim() === "") return null;
+  if (typeof updatedAt !== "string") return null;
+  if (typeof payload !== "string") return null;
+
+  return { userId: uid, peerId, postId: pid, updatedAt, payload };
+}
+
 async function fetchPeerImpression(
   sessionCookie: string,
   aiUserId: string,
@@ -919,12 +957,36 @@ async function replyToPost(
     ? post.tags.filter((t): t is string => typeof t === "string").slice(0, Config.AI_TAG_MAX_COUNT)
     : [];
 
+  const postImp = await fetchPostImpression(userSessionCookie, profile.id, post.id);
+  let impressionText = "";
+  let impressionTags: string[] = [];
+  if (postImp && postImp.payload.trim() !== "") {
+    const parsedImp = parsePeerImpressionPayload(postImp.payload);
+    if (parsedImp) {
+      impressionText = truncateText(parsedImp.impression, Config.AI_USER_OUTPUT_TEXT_LIMIT);
+      impressionTags = parsedImp.tags.slice(0, Config.AI_TAG_MAX_COUNT);
+    }
+  }
+
+  const peerImp = await fetchPeerImpression(userSessionCookie, profile.id, post.ownedBy);
+  let peerImpressionText = "";
+  if (peerImp && peerImp.payload.trim() !== "") {
+    const parsedPeer = parsePeerImpressionPayload(peerImp.payload);
+    if (parsedPeer) {
+      peerImpressionText = truncateText(parsedPeer.impression, Config.AI_USER_OUTPUT_TEXT_LIMIT);
+    }
+  }
+
   const postExcerpt = {
     locale,
+    author: post.ownerNickname,
     createdAt: post.createdAt,
     content: truncateText(post.content, Config.AI_USER_POST_TEXT_LIMIT),
     tags: postTags,
     summary: summaryText,
+    impression: impressionText,
+    impressionTags,
+    peerImpression: peerImpressionText,
   };
   const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
 
@@ -1664,6 +1726,17 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
       logger.error(`error creating post impression userId=${user.id} postId=${post.id}: ${e}`);
     }
   }
+  const peerIds = Array.from(peerIdSet);
+  logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
+  for (const peerId of peerIds) {
+    try {
+      const peer = await fetchUserProfile(userSessionCookie, peerId);
+      await createPeerImpression(userSessionCookie, profile, interest, peer);
+    } catch (e) {
+      if (e instanceof UnauthorizedError) throw e;
+      logger.error(`error creating peer impression userId=${user.id} peerId=${peerId}: ${e}`);
+    }
+  }
   if (interest) {
     const sortedItems = posts.sort((a, b) => b.similarity - a.similarity);
     for (let i = 0; i < sortedItems.length; i++) {
@@ -1688,17 +1761,6 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
           logger.error(`error replying userId=${user.id}: postId={post.id}: ${e}`);
         }
       }
-    }
-  }
-  const peerIds = Array.from(peerIdSet);
-  logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
-  for (const peerId of peerIds) {
-    try {
-      const peer = await fetchUserProfile(userSessionCookie, peerId);
-      await createPeerImpression(userSessionCookie, profile, interest, peer);
-    } catch (e) {
-      if (e instanceof UnauthorizedError) throw e;
-      logger.error(`error creating peer impression userId=${user.id} peerId=${peerId}: ${e}`);
     }
   }
   await createInterest(adminSessionCookie, userSessionCookie, profile, interest);
