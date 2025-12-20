@@ -771,6 +771,7 @@ function computeLocaleWeight(userLocale: string, postLocale: string): number {
 async function fetchPostsToRead(
   sessionCookie: string,
   userId: string,
+  userNickname: string,
   userLocale: string,
   interest: AiUserInterest | null,
 ): Promise<PostToRead[]> {
@@ -778,16 +779,25 @@ async function fetchPostsToRead(
   const followeePosts = await fetchFolloweePosts(sessionCookie, userId);
   for (const post of followeePosts) {
     if (post.ownedBy === userId) continue;
+    let biasWeight = 1.0;
+    // should use userId.
+    if (post.replyToOwnerNickname && post.replyToOwnerNickname !== userNickname) {
+      biasWeight *= 0.5;
+    }
     const locale = post.locale || post.ownerLocale;
     const localeWeight = computeLocaleWeight(userLocale, locale);
-    candidates.push({ postId: post.id, weight: 1 * localeWeight });
+    candidates.push({ postId: post.id, weight: 1 * biasWeight * localeWeight });
   }
   const latestPosts = await fetchLatestPosts(sessionCookie);
   for (const post of latestPosts) {
     if (post.ownedBy === userId) continue;
+    let biasWeight = 1.0;
+    if (post.replyToOwnerNickname && post.replyToOwnerNickname !== userNickname) {
+      biasWeight *= 0.5;
+    }
     const locale = post.locale || post.ownerLocale;
     const localeWeight = computeLocaleWeight(userLocale, locale);
-    candidates.push({ postId: post.id, weight: 0.5 * localeWeight });
+    candidates.push({ postId: post.id, weight: 0.5 * biasWeight * localeWeight });
   }
   const notifications = await fetchNotifications(sessionCookie);
   for (const n of notifications) {
@@ -891,6 +901,30 @@ async function fetchPostsToRead(
     }
   }
   return result;
+}
+
+async function addLikeToPost(
+  userSessionCookie: string,
+  profile: UserDetail,
+  post: PostDetail,
+): Promise<void> {
+  if (!post.allowLikes) return;
+  const path = `/posts/${encodeURIComponent(post.id)}/like`;
+  const res = await httpRequest(path, { method: "POST", headers: { Cookie: userSessionCookie } });
+  if (res.statusCode >= 200 && res.statusCode < 300) {
+    logger.info(`Liked post userId=${profile.id} postId=${post.id}`);
+  } else {
+    logger.error(`Failed to like post userId=${profile.id} postId=${post.id}: ${res.statusCode}`);
+  }
+}
+
+async function replyToPost(
+  userSessionCookie: string,
+  profile: UserDetail,
+  interest: AiUserInterest | null,
+  post: PostDetail,
+): Promise<void> {
+  console.log("REPLY", post);
 }
 
 async function createPostImpression(
@@ -1497,7 +1531,7 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
   const userSessionCookie = await switchToUser(adminSessionCookie, user.id);
   const profile = await fetchUserProfile(userSessionCookie, user.id);
   const interest = await fetchUserInterest(userSessionCookie, user.id);
-  const posts = await fetchPostsToRead(userSessionCookie, user.id, profile.locale, interest);
+  const posts = await fetchPostsToRead(userSessionCookie, user.id, user.nickname, profile.locale, interest);
   logger.info(`postsToRead userId=${user.id} count=${posts.length}`);
   const peerIdSet = new Set<string>();
   const topPeerPosts = new Map<string, PostDetail>();
@@ -1515,6 +1549,33 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
       logger.error(`error creating post impression userId=${user.id} postId=${post.id}: ${e}`);
     }
   }
+  if (interest) {
+    const sortedItems = posts.sort((a, b) => b.similarity - a.similarity);
+    for (let i = 0; i < sortedItems.length; i++) {
+      const item = sortedItems[i];
+      const post = item.post;
+      if (i < Config.AI_USER_LIKE_LIMIT && item.similarity >= Config.AI_USER_LIKE_MIN_SIMILARITY) {
+        try {
+          await addLikeToPost(userSessionCookie, profile, post);
+        } catch (e) {
+          if (e instanceof UnauthorizedError) throw e;
+          logger.error(`error liking userId=${user.id} postId={post.id}: ${e}`);
+        }
+      }
+      if (i < Config.AI_USER_REPLY_LIMIT && item.similarity >= Config.AI_USER_REPLY_MIN_SIMILARITY) {
+        try {
+          await replyToPost(userSessionCookie, profile, interest, post);
+        } catch (e) {
+          if (e instanceof UnauthorizedError) throw e;
+          logger.error(`error replying userId=${user.id}: postId={post.id}: ${e}`);
+        }
+      }
+    }
+  }
+
+  // debug only
+  return;
+
   const peerIds = Array.from(peerIdSet);
   logger.info(`Selected peer IDs to read: ${peerIds.join(",")}`);
   for (const peerId of peerIds) {
