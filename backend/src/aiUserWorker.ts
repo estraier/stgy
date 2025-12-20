@@ -98,9 +98,9 @@ function parseDateMs(s: string): number | null {
   return ms;
 }
 
-function isUpdatedAtNewerThanDays(updatedAt: string, days: number): boolean {
-  if (!updatedAt || days <= 0) return false;
-  const ms = parseDateMs(updatedAt);
+function isNewerThanDays(datetime: string, days: number): boolean {
+  if (!datetime || days <= 0) return false;
+  const ms = parseDateMs(datetime);
   if (ms === null) return false;
   const cutoff = Date.now() - days * 24 * 60 * 60 * 1000;
   return ms > cutoff;
@@ -442,10 +442,11 @@ async function fetchPeerImpression(
 async function fetchOwnPeerImpressions(
   sessionCookie: string,
   userId: string,
+  limit: number,
 ): Promise<AiPeerImpression[]> {
   const params = new URLSearchParams();
   params.set("offset", "0");
-  params.set("limit", String(Config.AI_USER_READ_INTEREST_LIMIT));
+  params.set("limit", String(limit));
   params.set("order", "desc");
   const path = `/ai-users/${encodeURIComponent(userId)}/peer-impressions?${params.toString()}`;
   const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
@@ -481,10 +482,11 @@ async function fetchOwnPeerImpressions(
 async function fetchOwnPostImpressions(
   sessionCookie: string,
   userId: string,
+  limit: number,
 ): Promise<AiPostImpression[]> {
   const params = new URLSearchParams();
   params.set("offset", "0");
-  params.set("limit", String(Config.AI_USER_READ_INTEREST_LIMIT));
+  params.set("limit", String(limit));
   params.set("order", "desc");
   const path = `/ai-users/${encodeURIComponent(userId)}/post-impressions?${params.toString()}`;
   const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
@@ -682,10 +684,14 @@ async function fetchPostById(sessionCookie: string, postId: string): Promise<Pos
   return JSON.parse(res.body) as PostDetail;
 }
 
-async function fetchOwnRecentPosts(sessionCookie: string, userId: string): Promise<PostDetail[]> {
+async function fetchOwnRecentPosts(
+  sessionCookie: string,
+  userId: string,
+  limit: number,
+): Promise<PostDetail[]> {
   const params = new URLSearchParams();
   params.set("offset", "0");
-  params.set("limit", String(Config.AI_USER_READ_POST_LIMIT));
+  params.set("limit", String(limit));
   params.set("order", "desc");
   params.set("ownedBy", userId);
   const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
@@ -731,7 +737,11 @@ async function fetchFollowerRecentRandomPostIds(
   const postIds: string[] = [];
   for (const followerId of shuffledFollowerIds) {
     try {
-      const posts = await fetchOwnRecentPosts(sessionCookie, followerId);
+      const posts = await fetchOwnRecentPosts(
+        sessionCookie,
+        followerId,
+        Config.AI_USER_READ_POST_LIMIT,
+      );
       for (const post of posts.slice(0, 3)) {
         postIds.push(post.id);
       }
@@ -927,8 +937,8 @@ async function createPostImpression(
     locale === "ko" ||
     locale.startsWith("ko-")
   ) {
-    maxChars *= 0.5;
-    tagChars *= 0.5;
+    maxChars = Math.ceil(maxChars * 0.5);
+    tagChars = Math.ceil(tagChars * 0.5);
   }
   let localeText = locale;
   if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
@@ -1003,7 +1013,7 @@ async function createPeerImpression(
   const existing = await fetchPeerImpression(userSessionCookie, profile.id, peer.id);
   if (
     existing &&
-    isUpdatedAtNewerThanDays(existing.updatedAt, Config.AI_USER_SKIP_PEER_IMPRESSION_UPDATE_DAYS)
+    isNewerThanDays(existing.updatedAt, Config.AI_USER_SKIP_PEER_IMPRESSION_UPDATE_DAYS)
   ) {
     logger.info(
       `Skip peer impression update userId=${profile.id} peerId=${peer.id} updatedAt=${existing.updatedAt}`,
@@ -1097,8 +1107,8 @@ async function createPeerImpression(
     locale === "ko" ||
     locale.startsWith("ko-")
   ) {
-    maxChars *= 0.5;
-    tagChars *= 0.5;
+    maxChars = Math.ceil(maxChars * 0.5);
+    tagChars = Math.ceil(tagChars * 0.5);
   }
   let localeText = locale;
   if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
@@ -1166,17 +1176,18 @@ async function createInterest(
   profile: UserDetail,
   interest: AiUserInterest | null,
 ): Promise<void> {
-  if (
-    interest &&
-    isUpdatedAtNewerThanDays(interest.updatedAt, Config.AI_USER_SKIP_INTEREST_UPDATE_DAYS)
-  ) {
+  if (interest && isNewerThanDays(interest.updatedAt, Config.AI_USER_SKIP_INTEREST_UPDATE_DAYS)) {
     logger.info(`Skip interest update userId=${profile.id} updatedAt=${interest.updatedAt}`);
     return;
   }
   const locale = profile.locale.replaceAll(/_/g, "-");
   const profileExcerpt = buildProfileExcerpt(profile, interest);
   const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
-  const peerImps = await fetchOwnPeerImpressions(userSessionCookie, profile.id);
+  const peerImps = await fetchOwnPeerImpressions(
+    userSessionCookie,
+    profile.id,
+    Config.AI_USER_READ_INTEREST_LIMIT,
+  );
   const users: {
     userId: string;
     locale: string;
@@ -1215,7 +1226,11 @@ async function createInterest(
     logger.info("no user impressions");
     return;
   }
-  const postImps = await fetchOwnPostImpressions(userSessionCookie, profile.id);
+  const postImps = await fetchOwnPostImpressions(
+    userSessionCookie,
+    profile.id,
+    Config.AI_USER_READ_INTEREST_LIMIT,
+  );
   const posts: {
     locale: string;
     authorId: string;
@@ -1274,8 +1289,8 @@ async function createInterest(
     locale === "ko" ||
     locale.startsWith("ko-")
   ) {
-    maxChars *= 0.5;
-    tagChars *= 0.5;
+    maxChars = Math.ceil(maxChars * 0.5);
+    tagChars = Math.ceil(tagChars * 0.5);
   }
   let localeText = locale;
   if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
@@ -1354,6 +1369,129 @@ async function createInterest(
   }
 }
 
+async function createNewPost(
+  userSessionCookie: string,
+  profile: UserDetail,
+  interest: AiUserInterest | null,
+): Promise<void> {
+  const locale = profile.locale.replaceAll(/_/g, "-");
+  const profileExcerpt = buildProfileExcerpt(profile, interest);
+  const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+  const ownPosts = await fetchOwnRecentPosts(
+    userSessionCookie,
+    profile.id,
+    Config.AI_USER_READ_POST_LIMIT,
+  );
+  const seedPosts = ownPosts.slice(0, Math.min(5, Config.AI_USER_READ_POST_LIMIT));
+  if (seedPosts.length > 0) {
+    const lastPost = seedPosts[0];
+    if (isNewerThanDays(lastPost.createdAt, Config.AI_USER_SKIP_NEW_POST_DAYS)) {
+      logger.info(`Skip new post userId=${profile.id} updatedAt=${lastPost.createdAt}`);
+      return;
+    }
+  }
+  const posts: {
+    locale: string;
+    createdAt: string;
+    content: string;
+    tags: string[];
+    summary: string;
+  }[] = [];
+  for (const p of seedPosts) {
+    const postLocale = (p.locale || p.ownerLocale || profile.locale).replaceAll(/_/g, "-");
+    const contentText = truncateText(p.content ?? "", Config.AI_USER_POST_TEXT_LIMIT);
+    const postSummary = await fetchPostSummary(userSessionCookie, p.id);
+    const summaryText =
+      typeof postSummary.summary === "string"
+        ? truncateText(postSummary.summary, Config.AI_USER_READ_NEW_POST_LIMIT)
+        : "";
+    const tags = parseTagsField(postSummary.tags, Config.AI_TAG_MAX_COUNT);
+    posts.push({
+      locale: postLocale,
+      createdAt: p.createdAt,
+      content: contentText,
+      tags,
+      summary: summaryText,
+    });
+  }
+  const postExcerpt = { posts };
+  const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
+  let maxChars = Config.AI_USER_NEW_POST_LENGTH;
+  let tagChars = Config.AI_TAG_MAX_LENGTH;
+  if (
+    locale === "ja" ||
+    locale.startsWith("ja-") ||
+    locale === "zh" ||
+    locale.startsWith("zh-") ||
+    locale === "ko" ||
+    locale.startsWith("ko-")
+  ) {
+    maxChars = Math.ceil(maxChars * 0.5);
+    tagChars = Math.ceil(tagChars * 0.5);
+  }
+  let localeText = locale;
+  if (locale === "en" || locale.startsWith("en-")) localeText = `English (${locale})`;
+  if (locale === "ja" || locale.startsWith("ja-")) localeText = `日本語（${locale}）`;
+  const promptTpl =
+    readPrompt("common-profile", locale, "en").trim() +
+    "\n\n" +
+    readPrompt("new-post", locale, "en").trim() +
+    "\n";
+  const prompt = promptTpl
+    .replaceAll("{{PROFILE_JSON}}", profileJson)
+    .replaceAll("{{POST_JSON}}", postJson)
+    .replaceAll("{{MAX_CHARS}}", String(maxChars))
+    .replaceAll("{{TAG_CHARS}}", String(tagChars))
+    .replaceAll("{{TAG_NUM}}", String(Config.AI_USER_NEW_POST_TAGS))
+    .replaceAll("{{LOCALE}}", localeText);
+
+  console.log(prompt);
+
+  const chatReq: ChatRequest = { messages: [{ role: "user", content: prompt }] };
+  const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
+    method: "POST",
+    body: chatReq,
+  });
+  const chat = parseChatResponse(chatRes.body);
+  const raw = chat.message.content;
+  if (raw.trim() === "") {
+    throw new Error(`ai-users/chat returned empty content userId=${profile.id}`);
+  }
+
+  console.log(raw);
+
+  const parsed = evaluateChatResponseAsJson<unknown>(raw);
+  if (!isRecord(parsed)) {
+    throw new Error(
+      `AI output JSON is not an object userId=${profile.id} content=${truncateForLog(raw, 50)}`,
+    );
+  }
+  const contentRaw = parsed["content"];
+  if (typeof contentRaw !== "string") {
+    throw new Error(
+      `AI output JSON missing content userId=${profile.id} content=${truncateForLog(raw, 50)}`,
+    );
+  }
+  const content = truncateText(contentRaw, Config.AI_USER_OUTPUT_TEXT_LIMIT);
+  const tags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
+  const saveRes = await apiRequest(userSessionCookie, "/posts", {
+    method: "POST",
+    body: { content, tags },
+  });
+  try {
+    const saved = JSON.parse(saveRes.body) as unknown;
+    if (isRecord(saved) && typeof saved["id"] === "string") {
+      logger.info(
+        `Created new post userId=${profile.id} postId=${saved["id"]} tags=${tags.join(",")}`,
+      );
+    } else {
+      logger.info(`Created new post userId=${profile.id} tags=${tags.join(",")}`);
+    }
+  } catch {
+    logger.info(`Created new post userId=${profile.id} tags=${tags.join(",")}`);
+  }
+}
+
 async function processUser(adminSessionCookie: string, user: AiUser): Promise<void> {
   logger.info(`Processing AI user: id=${user.id}, nickname=${user.nickname}`);
   const userSessionCookie = await switchToUser(adminSessionCookie, user.id);
@@ -1388,9 +1526,9 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
       logger.error(`error creating peer impression userId=${user.id} peerId=${peerId}: ${e}`);
     }
   }
-  if (peerIds.length > 0) {
-    await createInterest(adminSessionCookie, userSessionCookie, profile, interest);
-  }
+  await createInterest(adminSessionCookie, userSessionCookie, profile, interest);
+  const newInterest = (await fetchUserInterest(userSessionCookie, user.id)) ?? interest;
+  await createNewPost(userSessionCookie, profile, newInterest);
 }
 
 async function processLoop(): Promise<void> {
