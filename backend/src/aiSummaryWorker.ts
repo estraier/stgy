@@ -389,7 +389,7 @@ async function processLoop(): Promise<void> {
       p.finally(() => inflight.delete(p));
     }
     if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
-    await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
+    await sleep(Config.AI_SUMMARY_LOOP_SLEEP_MS);
   }
 }
 

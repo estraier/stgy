@@ -127,12 +127,13 @@ export class Config {
 
   static readonly AI_USER_BATCH_SIZE = envNum("STGY_AI_USER_BATCH_SIZE", 1);
   static readonly AI_USER_CONCURRENCY = envNum("STGY_AI_USER_CONCURRENCY", 1);
-  //static readonly AI_USER_IDLE_SLEEP_MS = envNum("STGY_AI_USER_IDLE_SLEEP_MS", 10 * 1000);
-  static readonly AI_USER_IDLE_SLEEP_MS = envNum("STGY_AI_USER_IDLE_SLEEP_MS", 3 * 1000);
+  static readonly AI_USER_IDLE_SLEEP_MS = envNum("STGY_AI_USER_IDLE_SLEEP_MS", 10 * 1000);
+  static readonly AI_USER_LOOP_SLEEP_MS = envNum("STGY_AI_USER_LOOP_SLEEP_MS", 12 * 60 * 60 * 1000);
 
   static readonly AI_USER_FETCH_POST_LIMIT = envNum("STGY_AI_USER_FETCH_POST_LIMIT", 30);
   static readonly AI_USER_COMPARE_POST_LIMIT = envNum("STGY_AI_USER_COMPARE_POST_LIMIT", 100);
-  static readonly AI_USER_READ_POST_LIMIT = envNum("STGY_AI_USER_READ_POST_LIMIT", 10);
+
+  static readonly AI_USER_READ_POST_LIMIT = envNum("STGY_AI_USER_READ_POST_LIMIT", 1);
 
   static readonly AI_USER_READ_PEER_POST_LIMIT = envNum("STGY_AI_USER_READ_PEER_POST_LIMIT", 5);
   static readonly AI_USER_READ_INTEREST_LIMIT = envNum("STGY_AI_USER_READ_INTEREST_LIMIT", 10);
