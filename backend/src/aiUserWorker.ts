@@ -8,7 +8,7 @@ import { createLogger } from "./utils/logger";
 import { readPrompt, evaluateChatResponseAsJson } from "./utils/prompt";
 import { AuthService } from "./services/auth";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
-import { decodeFeatures, cosineSimilarity } from "./utils/vectorSpace";
+import { decodeFeatures, cosineSimilarity, sigmoidalContrast } from "./utils/vectorSpace";
 import { makeTextFromMarkdown } from "./utils/snippet";
 import { countPseudoTokens, sliceByPseudoTokens } from "stgy-markdown";
 import type { Pool } from "pg";
@@ -891,7 +891,8 @@ async function fetchPostsToRead(
       const sim = cosineSimilarity(coreFeatures, features);
       if (!Number.isFinite(sim)) continue;
       similarityByPostId.set(postId, sim);
-      boostedScoresByPost.set(postId, baseScore * (sim + 1));
+      const simScore = sigmoidalContrast(sim + 1, 5, 0.75);
+      boostedScoresByPost.set(postId, baseScore * simScore);
     }
     topPostIds = [...boostedScoresByPost.entries()]
       .sort((a, b) => b[1] - a[1])
