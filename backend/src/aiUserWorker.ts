@@ -60,6 +60,11 @@ type PeerImpressionPayload = {
   tags: string[];
 };
 
+type PostImpressionDecision = {
+  shouldLike: boolean;
+  shouldReply: boolean;
+};
+
 class UnauthorizedError extends Error {
   constructor(message = "unauthorized") {
     super(message);
@@ -892,7 +897,7 @@ async function fetchPostsToRead(
       if (!Number.isFinite(sim)) continue;
       similarityByPostId.set(postId, sim);
       const simScore = sigmoidalContrast(sim + 1, 5, 0.75);
-      boostedScoresByPost.set(postId, baseScore * simScore);
+      boostedScoresByPost.set(postId, (baseScore + 0.2) * simScore);
     }
     topPostIds = [...boostedScoresByPost.entries()]
       .sort((a, b) => b[1] - a[1])
@@ -1078,7 +1083,7 @@ async function createPostImpression(
   profile: UserDetail,
   interest: AiUserInterest | null,
   post: PostDetail,
-): Promise<void> {
+): Promise<PostImpressionDecision> {
   const locale = (post.locale || post.ownerLocale || profile.locale).replaceAll(/_/g, "-");
   const profileExcerpt = buildProfileExcerpt(profile, interest);
   const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
@@ -1169,7 +1174,9 @@ async function createPostImpression(
   }
   const impression = truncateText(impressionRaw.trim(), Config.AI_USER_OUTPUT_TEXT_LIMIT);
   const tags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
-  const payload = JSON.stringify({ impression, tags });
+  const shouldLike = parsed["shouldLike"] ? true : false;
+  const shouldReply = parsed["shouldReply"] ? true : false;
+  const payload = JSON.stringify({ impression, tags, shouldLike, shouldReply });
   await apiRequest(
     userSessionCookie,
     `/ai-users/${encodeURIComponent(profile.id)}/post-impressions`,
@@ -1181,6 +1188,7 @@ async function createPostImpression(
   logger.info(
     `Saved post impression userId=${profile.id} postId=${post.id} tags=${tags.join(",")}`,
   );
+  return { shouldLike, shouldReply };
 }
 
 async function createPeerImpression(
@@ -1336,7 +1344,8 @@ async function createPeerImpression(
   }
   const impression = truncateText(impressionRaw.trim(), Config.AI_USER_OUTPUT_TEXT_LIMIT);
   const tags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
-  const payload = JSON.stringify({ impression, tags });
+  const shouldFollow = parsed["shouldFollow"] ? true : false;
+  const payload = JSON.stringify({ impression, tags, shouldFollow });
   await apiRequest(
     userSessionCookie,
     `/ai-users/${encodeURIComponent(profile.id)}/peer-impressions`,
@@ -1688,6 +1697,7 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
   const interest = await fetchUserInterest(userSessionCookie, user.id);
   const posts = await fetchPostsToRead(userSessionCookie, user.id, profile.locale, interest);
   logger.info(`postsToRead userId=${user.id} count=${posts.length}`);
+  const decisionByPostId = new Map<string, PostImpressionDecision>();
   const peerIdSet = new Set<string>();
   const topPeerPosts = new Map<string, PostDetail>();
   for (const item of posts) {
@@ -1698,7 +1708,8 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
       topPeerPosts.set(post.ownedBy, post);
     }
     try {
-      await createPostImpression(userSessionCookie, profile, interest, post);
+      const decision = await createPostImpression(userSessionCookie, profile, interest, post);
+      decisionByPostId.set(post.id, decision);
     } catch (e) {
       if (e instanceof UnauthorizedError) throw e;
       logger.error(`error creating post impression userId=${user.id} postId=${post.id}: ${e}`);
@@ -1716,11 +1727,22 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
     }
   }
   if (interest) {
-    const sortedItems = posts.sort((a, b) => b.similarity - a.similarity);
-    for (let i = 0; i < sortedItems.length; i++) {
-      const item = sortedItems[i];
+    const sortedPostItems = posts.sort((a, b) => b.similarity - a.similarity);
+    for (let i = 0; i < sortedPostItems.length; i++) {
+      const item = sortedPostItems[i];
       const post = item.post;
-      if (i < Config.AI_USER_LIKE_LIMIT && item.similarity >= Config.AI_USER_LIKE_MIN_SIMILARITY) {
+
+      const decision = decisionByPostId.get(post.id);
+      const shouldLike = decision ? decision.shouldLike : true;
+      const shouldReply = decision ? decision.shouldReply : true;
+
+      console.log("SIM", post.id, item.similarity, decision);
+
+      if (
+        shouldLike &&
+        i < Config.AI_USER_LIKE_LIMIT &&
+        item.similarity >= Config.AI_USER_LIKE_MIN_SIMILARITY
+      ) {
         try {
           await addLikeToPost(userSessionCookie, profile, post);
         } catch (e) {
@@ -1729,6 +1751,7 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
         }
       }
       if (
+        shouldReply &&
         i < Config.AI_USER_REPLY_LIMIT &&
         item.similarity >= Config.AI_USER_REPLY_MIN_SIMILARITY
       ) {
