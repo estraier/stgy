@@ -89,3 +89,40 @@ export function cosineSimilarity(a: ArrayLike<number>, b: ArrayLike<number>): nu
   if (v < -1) v = -1;
   return v;
 }
+
+export function normalizeL2(vec: ArrayLike<number>): number[] {
+  const n = vec.length;
+  let norm2 = 0;
+  for (let i = 0; i < n; i++) {
+    const x = vec[i];
+    norm2 += x * x;
+  }
+  const out = new Array<number>(n);
+  if (norm2 === 0) {
+    out.fill(0);
+    return out;
+  }
+  const inv = 1 / Math.sqrt(norm2);
+  for (let i = 0; i < n; i++) {
+    out[i] = vec[i] * inv;
+  }
+  return out;
+}
+
+export function naiveSigmoid(x: number, gain: number, mid: number): number {
+  const t = (x - mid) * gain;
+  if (t >= 0) {
+    const e = Math.exp(-t);
+    return 1 / (1 + e);
+  }
+  const e = Math.exp(t);
+  return e / (1 + e);
+}
+
+export function sigmoidalContrast(x: number, gain: number, mid: number): number {
+  const minVal = naiveSigmoid(0, gain, mid);
+  const maxVal = naiveSigmoid(1, gain, mid);
+  const diff = maxVal - minVal;
+  const y = (naiveSigmoid(x, gain, mid) - minVal) / diff;
+  return Math.max(0, Math.min(1, y));
+}

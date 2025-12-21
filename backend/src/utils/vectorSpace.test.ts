@@ -1,4 +1,11 @@
-import { encodeFeatures, decodeFeatures, cosineSimilarity } from "./vectorSpace";
+import {
+  encodeFeatures,
+  decodeFeatures,
+  cosineSimilarity,
+  normalizeL2,
+  naiveSigmoid,
+  sigmoidalContrast,
+} from "./vectorSpace";
 
 describe("encodeFeatures / decodeFeatures", () => {
   test("encodeFeatures: basic quantization (gamma=0.7, dim=3)", () => {
@@ -88,5 +95,84 @@ describe("cosineSimilarity", () => {
     const a = new Float32Array([1, 2, 3]);
     const b = new Float32Array([1, 2, 3]);
     expect(cosineSimilarity(a, b)).toBeCloseTo(1, 12);
+  });
+});
+
+describe("normalizeL2", () => {
+  test("normalizes a simple vector", () => {
+    const out = normalizeL2([3, 4]);
+    expect(out.length).toBe(2);
+    expect(out[0]).toBeCloseTo(0.6, 10);
+    expect(out[1]).toBeCloseTo(0.8, 10);
+  });
+
+  test("normalizes a typed array input", () => {
+    const v = new Float32Array([1, 2, 2]);
+    const out = normalizeL2(v);
+    const norm = Math.sqrt(out.reduce((s, x) => s + x * x, 0));
+    expect(norm).toBeCloseTo(1, 12);
+  });
+
+  test("zero vector returns zeros", () => {
+    const out = normalizeL2([0, 0, 0]);
+    expect(out).toEqual([0, 0, 0]);
+  });
+});
+
+describe("naiveSigmoid", () => {
+  test("x == mid returns 0.5", () => {
+    expect(naiveSigmoid(0.5, 10, 0.5)).toBeCloseTo(0.5, 12);
+  });
+
+  test("matches known values (gain=10, mid=0.5)", () => {
+    expect(naiveSigmoid(0, 10, 0.5)).toBeCloseTo(0.0066928509242848554, 12);
+    expect(naiveSigmoid(1, 10, 0.5)).toBeCloseTo(0.9933071490757153, 12);
+  });
+
+  test("stays in (0,1) and is numerically stable for large |t|", () => {
+    const y0 = naiveSigmoid(0, 1000, 1);
+    const y1 = naiveSigmoid(1, 1000, 0);
+    expect(Number.isFinite(y0)).toBe(true);
+    expect(Number.isFinite(y1)).toBe(true);
+    expect(y0).toBeGreaterThanOrEqual(0);
+    expect(y0).toBeLessThanOrEqual(1);
+    expect(y1).toBeGreaterThanOrEqual(0);
+    expect(y1).toBeLessThanOrEqual(1);
+    expect(y0).toBeCloseTo(0, 12);
+    expect(y1).toBeCloseTo(1, 12);
+  });
+});
+
+describe("sigmoidalContrast", () => {
+  test("maps endpoints exactly: 0 -> 0, 1 -> 1", () => {
+    expect(sigmoidalContrast(0, 10, 0.5)).toBe(0);
+    expect(sigmoidalContrast(1, 10, 0.5)).toBe(1);
+  });
+
+  test("with mid=0.5 maps mid to 0.5", () => {
+    expect(sigmoidalContrast(0.5, 10, 0.5)).toBeCloseTo(0.5, 12);
+  });
+
+  test("is monotonic increasing on [0,1] for gain>0", () => {
+    const gain = 12;
+    const mid = 0.4;
+    const xs = [0, 0.1, 0.25, 0.4, 0.6, 0.9, 1];
+    const ys = xs.map((x) => sigmoidalContrast(x, gain, mid));
+
+    for (let i = 1; i < ys.length; i++) {
+      expect(ys[i]).toBeGreaterThanOrEqual(ys[i - 1]);
+    }
+  });
+
+  test("stays within [0,1] for representative inputs", () => {
+    const gain = 8;
+    const mid = 0.3;
+    const xs = [0, 0.05, 0.2, 0.3, 0.55, 0.8, 1];
+    for (const x of xs) {
+      const y = sigmoidalContrast(x, gain, mid);
+      expect(Number.isFinite(y)).toBe(true);
+      expect(y).toBeGreaterThanOrEqual(0);
+      expect(y).toBeLessThanOrEqual(1);
+    }
   });
 });
