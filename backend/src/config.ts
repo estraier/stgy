@@ -159,6 +159,16 @@ export class Config {
   static readonly AI_USER_NEW_POST_LENGTH = envNum("STGY_AI_USER_NEW_POST_LENGTH", 2000);
   static readonly AI_USER_NEW_POST_TAGS = envNum("STGY_AI_USER_NEW_POST_TAGS", 3);
   static readonly AI_USER_OUTPUT_TEXT_LIMIT = envNum("STGY_AI_USER_OUTPUT_TEXT_LIMIT", 10000);
+  static readonly AI_USER_FOLLOWEES_LIMIT = envNum("STGY_AI_USER_FOLLOWEES_LIMIT", 30);
+  static readonly AI_USER_FOLLOWEES_MAX_SWAP = envNum("STGY_AI_USER_FOLLOWEES_MAX_SWAP", 3);
+  static readonly AI_USER_FOLLOWEES_UP_SIMILARITY = envNum(
+    "STGY_AI_USER_FOLLOWEES_UP_SIMILARITY",
+    0.6,
+  );
+  static readonly AI_USER_FOLLOWEES_DOWN_SIMILARITY = envNum(
+    "STGY_AI_USER_FOLLOWEES_DOWN_SIMILARITY",
+    0.4,
+  );
   static readonly AI_USER_SKIP_PEER_IMPRESSION_UPDATE_DAYS = envNum(
     "STGY_AI_USER_SKIP_PEER_IMPRESSION_UPDATE_DAYS",
     0,
@@ -168,6 +178,7 @@ export class Config {
     0,
   );
   static readonly AI_USER_SKIP_NEW_POST_DAYS = envNum("STGY_AI_USER_SKIP_NEW_POST_DAYS", 0);
+  static readonly AI_USER_FOLLOWEE_ACTIVE_DAYS = envNum("STGY_AI_USER_FOLLOWEE_ACTIVE_DAYS", 30);
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {

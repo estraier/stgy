@@ -3,6 +3,7 @@ import {
   decodeFeatures,
   cosineSimilarity,
   normalizeL2,
+  addVectors,
   naiveSigmoid,
   sigmoidalContrast,
 } from "./vectorSpace";
@@ -116,6 +117,35 @@ describe("normalizeL2", () => {
   test("zero vector returns zeros", () => {
     const out = normalizeL2([0, 0, 0]);
     expect(out).toEqual([0, 0, 0]);
+  });
+});
+
+describe("addVectors", () => {
+  it("adds two number arrays", () => {
+    expect(addVectors([1, 2, 3], [4, 5, 6])).toEqual([5, 7, 9]);
+  });
+
+  it("adds ArrayLike values (typed arrays)", () => {
+    const a = new Float32Array([0.5, -1.25, 3]);
+    const b = new Float32Array([1.5, 0.25, -2]);
+    expect(addVectors(a, b)).toEqual([2, -1, 1]);
+  });
+
+  it("does not mutate inputs", () => {
+    const a = [1, 2, 3];
+    const b = [4, 5, 6];
+    const out = addVectors(a, b);
+    expect(out).toEqual([5, 7, 9]);
+    expect(a).toEqual([1, 2, 3]);
+    expect(b).toEqual([4, 5, 6]);
+  });
+
+  it("throws on length mismatch", () => {
+    expect(() => addVectors([1, 2], [1])).toThrow(/vector dimensions mismatch/);
+  });
+
+  it("supports empty vectors", () => {
+    expect(addVectors([], [])).toEqual([]);
   });
 });
 

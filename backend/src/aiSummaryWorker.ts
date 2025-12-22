@@ -290,7 +290,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
 
-  console.log("--- REQ\n" + prompt);
+  //console.log(prompt);
 
   const chatReq: ChatRequest = {
     model: Config.AI_SUMMARY_MODEL,
@@ -306,7 +306,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     throw new Error(`ai-users/chat returned empty content for postId=${postId}`);
   }
 
-  console.log("--- RES\n" + aiContent);
+  //console.log(aiContent);
 
   const parsed = evaluateChatResponseAsJson<{ summary?: unknown; tags?: unknown }>(aiContent);
   if (!isRecord(parsed)) {
@@ -322,20 +322,15 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   logger.info(
     `parsed result postId=${postId} summary=${truncateForLog(summary, 50)} tags=${tags.join(",")}`,
   );
-
   const postSnippet = truncateText(
     makeTextFromMarkdown(post.content).replaceAll(/ +/g, " ").replaceAll(/\n+/g, "\n").trim(),
     Config.AI_SUMMARY_SUMMARY_LENGTH,
   );
   const featuresInput = buildFeaturesInput(summary, tags, postSnippet);
-
-  console.log("--- FEAT\n" + featuresInput);
-
   const features = await generateFeatures(sessionCookie, {
     model: Config.AI_SUMMARY_MODEL,
     input: featuresInput,
   });
-
   const pkt: UpdateAiPostSummaryPacket = { postId, summary, tags, features };
   await postSummaryResult(sessionCookie, postId, {
     summary: pkt.summary ?? "",

@@ -109,6 +109,18 @@ export function normalizeL2(vec: ArrayLike<number>): number[] {
   return out;
 }
 
+export function addVectors(a: ArrayLike<number>, b: ArrayLike<number>): number[] {
+  const n = a.length;
+  if (n !== b.length) {
+    throw new Error(`vector dimensions mismatch: a=${n} b=${b.length}`);
+  }
+  const out = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    out[i] = a[i] + b[i];
+  }
+  return out;
+}
+
 export function naiveSigmoid(x: number, gain: number, mid: number): number {
   const t = (x - mid) * gain;
   if (t >= 0) {

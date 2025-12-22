@@ -8,7 +8,13 @@ import { createLogger } from "./utils/logger";
 import { readPrompt, evaluateChatResponseAsJson } from "./utils/prompt";
 import { AuthService } from "./services/auth";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
-import { decodeFeatures, cosineSimilarity, sigmoidalContrast } from "./utils/vectorSpace";
+import {
+  decodeFeatures,
+  cosineSimilarity,
+  normalizeL2,
+  addVectors,
+  sigmoidalContrast,
+} from "./utils/vectorSpace";
 import { makeTextFromMarkdown } from "./utils/snippet";
 import { countPseudoTokens, sliceByPseudoTokens } from "stgy-markdown";
 import type { Pool } from "pg";
@@ -63,6 +69,10 @@ type PeerImpressionPayload = {
 type PostImpressionDecision = {
   shouldLike: boolean;
   shouldReply: boolean;
+};
+
+type PeerImpressionDecision = {
+  shouldFollow: boolean;
 };
 
 class UnauthorizedError extends Error {
@@ -780,6 +790,18 @@ async function fetchFollowerRecentRandomPostIds(
   return postIds;
 }
 
+async function followUser(sessionCookie: string, followeeId: string): Promise<void> {
+  await apiRequest(sessionCookie, `/users/${encodeURIComponent(followeeId)}/follow`, {
+    method: "POST",
+  });
+}
+
+async function unfollowUser(sessionCookie: string, followeeId: string): Promise<void> {
+  await apiRequest(sessionCookie, `/users/${encodeURIComponent(followeeId)}/follow`, {
+    method: "DELETE",
+  });
+}
+
 function computeLocaleWeight(userLocale: string, postLocale: string): number {
   const langOf = (s: string): string => {
     const t = s.trim().replaceAll("_", "-").toLowerCase();
@@ -1140,7 +1162,9 @@ async function createPostImpression(
     .replaceAll("{{TAG_CHARS}}", String(tagChars))
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
-  console.log(prompt);
+
+  //console.log(prompt);
+
   const chatReq: ChatRequest = {
     messages: [{ role: "user", content: prompt }],
   };
@@ -1153,7 +1177,9 @@ async function createPostImpression(
   if (content.trim() === "") {
     throw new Error(`ai-users/chat returned empty content userId=${profile.id} postId=${post.id}`);
   }
-  console.log(content);
+
+  //console.log(content);
+
   const parsed = evaluateChatResponseAsJson<unknown>(content);
   if (!isRecord(parsed)) {
     throw new Error(
@@ -1196,7 +1222,7 @@ async function createPeerImpression(
   profile: UserDetail,
   interest: AiUserInterest | null,
   peer: UserDetail,
-): Promise<void> {
+): Promise<PeerImpressionDecision> {
   const locale = peer.locale.replaceAll(/_/g, "-");
   const existing = await fetchPeerImpression(userSessionCookie, profile.id, peer.id);
   if (
@@ -1206,7 +1232,7 @@ async function createPeerImpression(
     logger.info(
       `Skip peer impression update userId=${profile.id} peerId=${peer.id} updatedAt=${existing.updatedAt}`,
     );
-    return;
+    return { shouldFollow: false };
   }
   const profileExcerpt = buildProfileExcerpt(profile, interest);
   const profileJson = JSON.stringify(profileExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
@@ -1312,7 +1338,9 @@ async function createPeerImpression(
     .replaceAll("{{TAG_CHARS}}", String(tagChars))
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
-  console.log(prompt);
+
+  //console.log(prompt);
+
   const chatReq: ChatRequest = { messages: [{ role: "user", content: prompt }] };
   const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
     method: "POST",
@@ -1323,7 +1351,9 @@ async function createPeerImpression(
   if (content.trim() === "") {
     throw new Error(`ai-users/chat returned empty content userId=${profile.id} peerId=${peer.id}`);
   }
-  console.log(content);
+
+  //console.log(content);
+
   const parsed = evaluateChatResponseAsJson<unknown>(content);
   if (!isRecord(parsed)) {
     throw new Error(
@@ -1357,6 +1387,7 @@ async function createPeerImpression(
   logger.info(
     `Saved peer impression userId=${profile.id} peerId=${peer.id} tags=${tags.join(",")}`,
   );
+  return { shouldFollow };
 }
 
 async function createInterest(
@@ -1496,7 +1527,9 @@ async function createInterest(
     .replaceAll("{{TAG_CHARS}}", String(tagChars))
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
-  console.log(prompt);
+
+  //console.log(prompt);
+
   const chatReq: ChatRequest = {
     messages: [{ role: "user", content: prompt }],
   };
@@ -1509,7 +1542,9 @@ async function createInterest(
   if (content.trim() === "") {
     throw new Error(`ai-users/chat returned empty content userId=${profile.id}`);
   }
-  console.log(content);
+
+  //console.log(content);
+
   const parsed = evaluateChatResponseAsJson<unknown>(content);
   if (!isRecord(parsed)) {
     throw new Error(`AI output JSON is not an object userId=${profile.id}`);
@@ -1536,14 +1571,10 @@ async function createInterest(
   lines.push("");
   lines.push(introSnippet);
   const featuresInput = lines.join("\n");
-  console.log("--- INTEREST FEAT\n", featuresInput);
   const feat = await generateFeatures(adminSessionCookie, {
     model: Config.AI_SUMMARY_MODEL,
     input: featuresInput,
   });
-
-  console.log(feat);
-
   const saveRes = await apiRequest(
     adminSessionCookie,
     `/ai-users/${encodeURIComponent(profile.id)}/interests`,
@@ -1570,7 +1601,7 @@ async function createInterest(
 async function createNewPost(
   userSessionCookie: string,
   profile: UserDetail,
-  interest: AiUserInterest | null,
+  interest: AiUserInterest,
 ): Promise<void> {
   const locale = profile.locale.replaceAll(/_/g, "-");
   const profileExcerpt = buildProfileExcerpt(profile, interest);
@@ -1643,7 +1674,7 @@ async function createNewPost(
     .replaceAll("{{TAG_NUM}}", String(Config.AI_USER_NEW_POST_TAGS))
     .replaceAll("{{LOCALE}}", localeText);
 
-  console.log(prompt);
+  //console.log(prompt);
 
   const chatReq: ChatRequest = { messages: [{ role: "user", content: prompt }] };
   const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
@@ -1656,7 +1687,7 @@ async function createNewPost(
     throw new Error(`ai-users/chat returned empty content userId=${profile.id}`);
   }
 
-  console.log(raw);
+  //console.log(raw);
 
   const parsed = evaluateChatResponseAsJson<unknown>(raw);
   if (!isRecord(parsed)) {
@@ -1690,6 +1721,200 @@ async function createNewPost(
   }
 }
 
+async function organizeFollowees(
+  userSessionCookie: string,
+  profile: UserDetail,
+  interest: AiUserInterest,
+  peerIds: string[],
+): Promise<void> {
+  const interestVec = decodeFeatures(interest.features);
+  type FolloweeAnalysis = {
+    userId: string;
+    similarity: number;
+    latestPostAt: string;
+  };
+  const fetchUserLatestPosts = async (userId: string, limit: number): Promise<Post[]> => {
+    const params = new URLSearchParams();
+    params.set("offset", "0");
+    params.set("limit", String(limit));
+    params.set("order", "desc");
+    params.set("ownedBy", userId);
+    const res = await apiRequest(userSessionCookie, `/posts?${params.toString()}`, {
+      method: "GET",
+    });
+    const parsed = JSON.parse(res.body) as unknown;
+    if (!Array.isArray(parsed)) return [];
+    return parsed as Post[];
+  };
+  const fetchAllFolloweeIds = async (): Promise<string[]> => {
+    const out: string[] = [];
+    let offset = 0;
+    const limit = 100;
+    while (true) {
+      const params = new URLSearchParams();
+      params.set("offset", String(offset));
+      params.set("limit", String(limit));
+      params.set("order", "desc");
+      const res = await apiRequest(
+        userSessionCookie,
+        `/users/${encodeURIComponent(profile.id)}/followees?${params.toString()}`,
+        { method: "GET" },
+      );
+      const parsed = JSON.parse(res.body) as unknown;
+      if (!Array.isArray(parsed) || parsed.length === 0) break;
+      let added = 0;
+      for (const item of parsed) {
+        if (!isRecord(item)) continue;
+        const idRaw = item["id"];
+        if (typeof idRaw !== "string") continue;
+        const id = idRaw.trim();
+        if (!id || id === profile.id) continue;
+        out.push(id);
+        added++;
+      }
+      if (parsed.length < limit || added === 0) break;
+      offset += parsed.length;
+    }
+    return Array.from(new Set(out));
+  };
+  const analyzeFollowee = async (userId: string): Promise<FolloweeAnalysis | null> => {
+    const posts = await fetchUserLatestPosts(userId, 12);
+    if (posts.length === 0) return null;
+    const latestPostAt = typeof posts[0].createdAt === "string" ? posts[0].createdAt : "";
+    let sumVec: number[] | null = null;
+    let used = 0;
+    for (const p of posts) {
+      if (used >= 10) break;
+      const postId = typeof p.id === "string" ? p.id : "";
+      if (!postId) continue;
+      let summary: AiPostSummary;
+      try {
+        summary = await fetchPostSummary(userSessionCookie, postId);
+      } catch (e) {
+        logger.info(
+          `Failed to fetch post summary for followee analyze userId=${userId} postId=${postId}: ${e}`,
+        );
+        continue;
+      }
+      if (!summary.features) continue;
+      let vec: number[];
+      try {
+        vec = decodeFeatures(summary.features);
+      } catch (e) {
+        logger.info(
+          `Failed to decode features for followee analyze userId=${userId} postId=${postId}: ${e}`,
+        );
+        continue;
+      }
+      if (vec.length !== interestVec.length) continue;
+      const norm = normalizeL2(vec);
+      if (sumVec === null) {
+        sumVec = norm.slice();
+      } else {
+        sumVec = addVectors(sumVec, norm);
+      }
+      used++;
+    }
+    if (!sumVec) return null;
+    let similarity = 0;
+    try {
+      similarity = cosineSimilarity(sumVec, interestVec);
+    } catch (e) {
+      logger.info(`Failed to compute similarity for followee analyze userId=${userId}: ${e}`);
+      return null;
+    }
+
+    console.log("USER", userId, similarity, latestPostAt);
+
+    return { userId, similarity, latestPostAt };
+  };
+  const uniqueCandidateIds = Array.from(new Set(peerIds))
+    .map((id) => id.trim())
+    .filter((id) => id !== "" && id !== profile.id);
+  const newAnalyses: FolloweeAnalysis[] = [];
+  for (const id of uniqueCandidateIds) {
+    try {
+      const a = await analyzeFollowee(id);
+      if (a) newAnalyses.push(a);
+    } catch (e) {
+      if (e instanceof UnauthorizedError) throw e;
+      logger.info(
+        `Failed to analyze new followee candidate userId=${profile.id} peerId=${id}: ${e}`,
+      );
+    }
+  }
+  const top3New = newAnalyses
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, Config.AI_USER_FOLLOWEES_MAX_SWAP);
+  const selectedNew = top3New.filter(
+    (a) =>
+      a.similarity >= Config.AI_USER_FOLLOWEES_UP_SIMILARITY &&
+      isNewerThanDays(a.latestPostAt, Config.AI_USER_FOLLOWEE_ACTIVE_DAYS),
+  );
+  const currentFolloweeIds = await fetchAllFolloweeIds();
+  const currentAnalyses: FolloweeAnalysis[] = [];
+  for (const id of currentFolloweeIds) {
+    try {
+      const a = await analyzeFollowee(id);
+      if (a) currentAnalyses.push(a);
+    } catch (e) {
+      if (e instanceof UnauthorizedError) throw e;
+      logger.info(`Failed to analyze current followee userId=${profile.id} followeeId=${id}: ${e}`);
+    }
+  }
+  const selectedCurrent =
+    currentAnalyses.length < Config.AI_USER_FOLLOWEES_LIMIT - Config.AI_USER_FOLLOWEES_MAX_SWAP
+      ? currentAnalyses
+      : currentAnalyses.filter(
+          (a) =>
+            a.similarity >= Config.AI_USER_FOLLOWEES_DOWN_SIMILARITY &&
+            isNewerThanDays(a.latestPostAt, Config.AI_USER_FOLLOWEE_ACTIVE_DAYS),
+        );
+  const selectedMap = new Map<string, FolloweeAnalysis>();
+  for (const a of selectedNew) {
+    const prev = selectedMap.get(a.userId);
+    if (!prev || a.similarity > prev.similarity) selectedMap.set(a.userId, a);
+  }
+  for (const a of selectedCurrent) {
+    const prev = selectedMap.get(a.userId);
+    if (!prev || a.similarity > prev.similarity) selectedMap.set(a.userId, a);
+  }
+  const finalSelected = Array.from(selectedMap.values())
+    .sort((a, b) => b.similarity - a.similarity)
+    .slice(0, Config.AI_USER_FOLLOWEES_LIMIT);
+  const finalIdSet = new Set(finalSelected.map((a) => a.userId));
+  const currentIdSet = new Set(currentFolloweeIds);
+  const toUnfollow: string[] = [];
+  for (const id of currentFolloweeIds) {
+    if (!finalIdSet.has(id)) toUnfollow.push(id);
+  }
+  const toFollow: string[] = [];
+  for (const id of finalIdSet) {
+    if (!currentIdSet.has(id)) toFollow.push(id);
+  }
+  for (const id of toUnfollow) {
+    try {
+      await unfollowUser(userSessionCookie, id);
+      logger.info(`Unfollowed userId=${profile.id} followeeId=${id}`);
+    } catch (e) {
+      if (e instanceof UnauthorizedError) throw e;
+      logger.error(`Failed to unfollow userId=${profile.id} followeeId=${id}: ${e}`);
+    }
+  }
+  for (const id of toFollow) {
+    try {
+      await followUser(userSessionCookie, id);
+      logger.info(`Followed userId=${profile.id} followeeId=${id}`);
+    } catch (e) {
+      if (e instanceof UnauthorizedError) throw e;
+      logger.error(`Failed to follow userId=${profile.id} followeeId=${id}: ${e}`);
+    }
+  }
+  logger.info(
+    `Organized followees userId=${profile.id} selected=${finalSelected.length} follow=${toFollow.length} unfollow=${toUnfollow.length}`,
+  );
+}
+
 async function processUser(adminSessionCookie: string, user: AiUser): Promise<void> {
   logger.info(`Processing AI user: id=${user.id}, nickname=${user.nickname}`);
   const userSessionCookie = await switchToUser(adminSessionCookie, user.id);
@@ -1698,6 +1923,7 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
   const posts = await fetchPostsToRead(userSessionCookie, user.id, profile.locale, interest);
   logger.info(`postsToRead userId=${user.id} count=${posts.length}`);
   const decisionByPostId = new Map<string, PostImpressionDecision>();
+  const peerDecisionByPeerId = new Map<string, PeerImpressionDecision>();
   const peerIdSet = new Set<string>();
   const topPeerPosts = new Map<string, PostDetail>();
   for (const item of posts) {
@@ -1720,7 +1946,8 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
   for (const peerId of peerIds) {
     try {
       const peer = await fetchUserProfile(userSessionCookie, peerId);
-      await createPeerImpression(userSessionCookie, profile, interest, peer);
+      const decision = await createPeerImpression(userSessionCookie, profile, interest, peer);
+      peerDecisionByPeerId.set(peerId, decision);
     } catch (e) {
       if (e instanceof UnauthorizedError) throw e;
       logger.error(`error creating peer impression userId=${user.id} peerId=${peerId}: ${e}`);
@@ -1731,7 +1958,6 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
     for (let i = 0; i < sortedPostItems.length; i++) {
       const item = sortedPostItems[i];
       const post = item.post;
-
       const decision = decisionByPostId.get(post.id);
       const shouldLike = decision ? decision.shouldLike : true;
       const shouldReply = decision ? decision.shouldReply : true;
@@ -1766,7 +1992,13 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
   }
   await createInterest(adminSessionCookie, userSessionCookie, profile, interest);
   const newInterest = (await fetchUserInterest(userSessionCookie, user.id)) ?? interest;
-  await createNewPost(userSessionCookie, profile, newInterest);
+  if (newInterest) {
+    await createNewPost(userSessionCookie, profile, newInterest);
+    const followPeerIds = peerIds.filter(
+      (id) => peerDecisionByPeerId.get(id)?.shouldFollow ?? false,
+    );
+    await organizeFollowees(userSessionCookie, profile, newInterest, followPeerIds);
+  }
 }
 
 async function processLoop(): Promise<void> {
