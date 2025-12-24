@@ -1,8 +1,12 @@
 import { AiPostsService } from "./aiPosts";
 import type { Pool } from "pg";
-import { ListAiPostSummariesInput, UpdateAiPostSummaryInput } from "../models/aiPost";
+import {
+  ListAiPostSummariesInput,
+  RecommendPostsByTagsInput,
+  UpdateAiPostSummaryInput,
+} from "../models/aiPost";
 import crypto from "crypto";
-import { hexToDec } from "../utils/format";
+import { decToHex, hexToDec } from "../utils/format";
 
 jest.mock("../utils/servers", () => {
   const pgQuery = jest.fn((pool: unknown, sql: string, params?: unknown[]) =>
@@ -17,6 +21,7 @@ function normalizeSql(sql: string) {
 
 const hex16 = () => crypto.randomBytes(8).toString("hex").toUpperCase();
 const toDecStr = (hex: string) => String(hexToDec(hex));
+const toHexStrFromDec = (dec: string) => decToHex(dec);
 
 function int8eq(a: Int8Array | null | undefined, b: Int8Array): boolean {
   if (!a) return false;
@@ -37,9 +42,22 @@ type MockAiPostTagRow = {
   name: string;
 };
 
+type MockPostTagRow = {
+  postId: string;
+  name: string;
+};
+
+type MockPostRow = {
+  postId: string;
+  replyTo: string | null;
+  publishedAt: string | null;
+};
+
 class MockPgClient {
   summaries: MockAiPostSummaryRow[] = [];
   tags: MockAiPostTagRow[] = [];
+  postTags: MockPostTagRow[] = [];
+  posts: MockPostRow[] = [];
 
   async query(sql: string, params?: unknown[]) {
     sql = normalizeSql(sql);
@@ -220,6 +238,59 @@ class MockPgClient {
         this.tags.push({ postId, name });
       }
       return { rowCount: tagArray.length, rows: [] };
+    }
+
+    if (
+      sql.startsWith(
+        "WITH query_tags(tag) AS ( SELECT unnest($1::text[]) ), matched_tag_posts AS (",
+      ) &&
+      sql.includes("FROM post_tags") &&
+      sql.includes("FROM ai_post_tags") &&
+      sql.includes("FROM matched_tag_posts mtp") &&
+      sql.includes("JOIN posts p ON p.id = mtp.post_id")
+    ) {
+      const tagArray = (params?.[0] as string[]) ?? [];
+      const limitPerTag = 100;
+
+      const rows: { post_id: string; tag: string; is_root: boolean }[] = [];
+
+      const postIndex = new Map<string, MockPostRow>();
+      for (const p of this.posts) postIndex.set(p.postId, p);
+
+      const sortPostIdDesc = (a: string, b: string) => {
+        const aa = BigInt(a);
+        const bb = BigInt(b);
+        if (aa === bb) return 0;
+        return aa > bb ? -1 : 1;
+      };
+
+      for (const tag of tagArray) {
+        const fromPostTags = this.postTags
+          .filter((r) => r.name === tag)
+          .map((r) => r.postId)
+          .sort(sortPostIdDesc)
+          .slice(0, limitPerTag);
+
+        for (const postId of fromPostTags) {
+          const p = postIndex.get(postId);
+          if (!p) continue;
+          rows.push({ post_id: postId, tag, is_root: p.replyTo === null });
+        }
+
+        const fromAiPostTags = this.tags
+          .filter((r) => r.name === tag)
+          .map((r) => r.postId)
+          .sort(sortPostIdDesc)
+          .slice(0, limitPerTag);
+
+        for (const postId of fromAiPostTags) {
+          const p = postIndex.get(postId);
+          if (!p) continue;
+          rows.push({ post_id: postId, tag, is_root: p.replyTo === null });
+        }
+      }
+
+      return { rows };
     }
 
     return { rows: [] };
@@ -585,5 +656,89 @@ describe("AiPostsService updateAiPost", () => {
     expect(result?.tags).toEqual([]);
     const internalTags = pgClient.tags.filter((t) => t.postId === postIdDec);
     expect(internalTags.length).toBe(0);
+  });
+});
+
+describe("AiPostsService RecommendPostsByTags", () => {
+  let pgClient: MockPgClient;
+  let service: AiPostsService;
+
+  const dec = (n: number) => String(n);
+  const hex = (n: number) => toHexStrFromDec(dec(n));
+
+  beforeEach(() => {
+    pgClient = new MockPgClient();
+    service = new AiPostsService(pgClient as unknown as Pool);
+
+    pgClient.posts.push(
+      { postId: dec(121), replyTo: null, publishedAt: "2025-10-10T00:00:01Z" },
+      { postId: dec(122), replyTo: null, publishedAt: "2025-10-10T00:00:02Z" },
+      { postId: dec(123), replyTo: dec(122), publishedAt: "2025-10-10T00:00:03Z" },
+      { postId: dec(124), replyTo: dec(121), publishedAt: "2025-10-10T00:00:04Z" },
+      { postId: dec(125), replyTo: null, publishedAt: "2025-10-10T00:00:05Z" },
+      { postId: dec(126), replyTo: dec(122), publishedAt: "2025-10-10T00:00:06Z" },
+      { postId: dec(127), replyTo: null, publishedAt: "2025-10-10T00:00:07Z" },
+      { postId: dec(128), replyTo: null, publishedAt: "2025-10-10T00:00:08Z" },
+      { postId: dec(129), replyTo: null, publishedAt: "2025-10-10T00:00:09Z" },
+    );
+
+    pgClient.postTags.push(
+      { postId: dec(121), name: "tech" },
+      { postId: dec(122), name: "tech" },
+      { postId: dec(123), name: "tech" },
+      { postId: dec(124), name: "tech" },
+      { postId: dec(121), name: "eco" },
+      { postId: dec(123), name: "eco" },
+      { postId: dec(125), name: "eco" },
+      { postId: dec(127), name: "eco" },
+      { postId: dec(129), name: "eco" },
+    );
+
+    pgClient.tags.push(
+      { postId: dec(121), name: "tech" },
+      { postId: dec(123), name: "tech" },
+      { postId: dec(121), name: "eco" },
+      { postId: dec(125), name: "eco" },
+      { postId: dec(127), name: "eco" },
+      { postId: dec(123), name: "game" },
+      { postId: dec(124), name: "game" },
+    );
+  });
+
+  test("returns empty when tags empty", async () => {
+    const input: RecommendPostsByTagsInput = { tags: [], limit: 10, order: "desc" };
+    const result = await service.RecommendPostsByTags(input);
+    expect(result).toEqual([]);
+  });
+
+  test("returns ranked post ids (desc) according to algorithm", async () => {
+    const input: RecommendPostsByTagsInput = {
+      tags: ["tech", "eco", "game"],
+      limit: 100,
+      order: "desc",
+    };
+    const result = await service.RecommendPostsByTags(input);
+    expect(result).toEqual([hex(121), hex(123), hex(124), hex(127), hex(125), hex(122), hex(129)]);
+  });
+
+  test("supports order asc", async () => {
+    const input: RecommendPostsByTagsInput = {
+      tags: ["tech", "eco", "game"],
+      limit: 100,
+      order: "asc",
+    };
+    const result = await service.RecommendPostsByTags(input);
+    expect(result).toEqual([hex(129), hex(122), hex(125), hex(127), hex(124), hex(123), hex(121)]);
+  });
+
+  test("applies offset and limit after ranking", async () => {
+    const input: RecommendPostsByTagsInput = {
+      tags: ["tech", "eco", "game"],
+      offset: 1,
+      limit: 3,
+      order: "desc",
+    };
+    const result = await service.RecommendPostsByTags(input);
+    expect(result).toEqual([hex(123), hex(124), hex(127)]);
   });
 });

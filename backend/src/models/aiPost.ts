@@ -40,3 +40,7 @@ export type UpdateAiPostSummaryPacket = {
   features?: string | null;
   tags?: string[];
 };
+
+export type RecommendPostsByTagsInput = {
+  tags: string[];
+} & AiPostPagination;

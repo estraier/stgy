@@ -332,12 +332,7 @@ def test_ai_posts():
   dummy_summary = "dummy summary for ai-posts test"
   feats = [1, -2, 3, 4]
   feats_b64 = int8_list_to_b64(feats)
-  res = requests.put(
-    f"{BASE_URL}/ai-posts/{post_id}",
-    json={"summary": dummy_summary, "features": feats_b64},
-    headers=headers,
-    cookies=cookies,
-  )
+  res = requests.put(f"{BASE_URL}/ai-posts/{post_id}", json={"summary": dummy_summary, "features": feats_b64}, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   updated = res.json()
   print("[ai_posts] updated:", updated)
@@ -367,6 +362,40 @@ def test_ai_posts():
   print("[ai_posts] cleared features:", cleared)
   assert cleared["postId"] == post_id
   assert cleared["features"] is None
+  ts = int(time.time())
+  tag_a = f"reco-a-{ts}"
+  tag_b = f"reco-b-{ts}"
+  res = requests.post(f"{BASE_URL}/posts", json={"content": f"reco p1 {ts}", "replyTo": None, "tags": [tag_a]}, headers=headers, cookies=cookies)
+  assert res.status_code == 201, res.text
+  p1 = res.json()
+  p1_id = p1["id"]
+  res = requests.post(f"{BASE_URL}/posts", json={"content": f"reco p2 {ts}", "replyTo": None, "tags": [tag_b]}, headers=headers, cookies=cookies)
+  assert res.status_code == 201, res.text
+  p2 = res.json()
+  p2_id = p2["id"]
+  res = requests.post(f"{BASE_URL}/posts", json={"content": f"reco p3 {ts}", "replyTo": p1_id, "tags": [tag_a, tag_b]}, headers=headers, cookies=cookies)
+  assert res.status_code == 201, res.text
+  p3 = res.json()
+  p3_id = p3["id"]
+  reco_url = f"{BASE_URL}/ai-posts/recommendations/by-tags"
+  res = requests.get(reco_url, params=[("tags", tag_a), ("tags", tag_b), ("limit", "10"), ("order", "desc")], headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  ranked = res.json()
+  assert ranked == [p3_id, p1_id, p2_id]
+  res = requests.get(reco_url, params=[("tags", tag_a), ("tags", tag_b), ("limit", "10"), ("order", "asc")], headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  ranked2 = res.json()
+  assert ranked2 == [p2_id, p1_id, p3_id]
+  res = requests.get(reco_url, params=[("tags", tag_a), ("tags", tag_b), ("offset", "1"), ("limit", "1"), ("order", "desc")], headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  ranked3 = res.json()
+  assert ranked3 == [p1_id]
+  res = requests.delete(f"{BASE_URL}/posts/{p3_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  res = requests.delete(f"{BASE_URL}/posts/{p2_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  res = requests.delete(f"{BASE_URL}/posts/{p1_id}", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
   res = requests.delete(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[ai_posts] cleanup post deleted")

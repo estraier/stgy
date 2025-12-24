@@ -11,6 +11,7 @@ import { EventLogService } from "../services/eventLog";
 import type {
   AiPostSummary,
   AiPostSummaryPacket,
+  RecommendPostsByTagsInput,
   UpdateAiPostSummaryInput,
   UpdateAiPostSummaryPacket,
 } from "../models/aiPost";
@@ -34,6 +35,25 @@ function toPacket(s: AiPostSummary): AiPostSummaryPacket {
     features: int8ToBase64(s.features),
     tags: s.tags,
   };
+}
+
+function parseTagsQueryParam(v: unknown): string[] {
+  const raw: string[] = [];
+  if (typeof v === "string") {
+    raw.push(v);
+  } else if (Array.isArray(v)) {
+    for (const e of v) {
+      if (typeof e === "string") raw.push(e);
+    }
+  }
+  const expanded = raw.flatMap((s) => s.split(","));
+  return Array.from(
+    new Set(
+      expanded
+        .map((t) => normalizeOneLiner(t.toLowerCase()))
+        .filter((t): t is string => typeof t === "string" && t.trim() !== ""),
+    ),
+  );
 }
 
 export default function createAiPostsRouter(
@@ -83,6 +103,36 @@ export default function createAiPostsRouter(
       watch.done();
       const packets: AiPostSummaryPacket[] = result.map((r) => toPacket(r));
       res.json(packets);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "invalid request" });
+    }
+  });
+
+  router.get("/recommendations/by-tags", async (req, res) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
+    const tags = parseTagsQueryParam(req.query.tags);
+    if (tags.length === 0) {
+      return res.status(400).json({ error: "tags is required" });
+    }
+    try {
+      const watch = timerThrottleService.startWatch(loginUser);
+      const result = await aiPostsService.RecommendPostsByTags({
+        tags,
+        offset,
+        limit,
+        order,
+      } satisfies RecommendPostsByTagsInput);
+      watch.done();
+      res.json(result);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "invalid request" });
     }
