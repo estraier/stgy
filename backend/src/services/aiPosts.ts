@@ -1,6 +1,12 @@
 import { Pool } from "pg";
 import { pgQuery } from "../utils/servers";
-import { hexToDec, decToHex, snakeToCamel } from "../utils/format";
+import {
+  hexToDec,
+  decToHex,
+  snakeToCamel,
+  bufferToInt8Array,
+  int8ArrayToBuffer,
+} from "../utils/format";
 import {
   AiPostSummary,
   ListAiPostSummariesInput,
@@ -32,16 +38,6 @@ type ScoredPost = {
   postId: bigint;
   score: number;
 };
-
-function byteaToInt8Array(v: Buffer | null): Int8Array | null {
-  if (!v) return null;
-  return new Int8Array(v.buffer, v.byteOffset, v.byteLength);
-}
-
-function int8ArrayToBytea(v: Int8Array | null): Buffer | null {
-  if (v === null) return null;
-  return Buffer.from(v);
-}
 
 const compareBigIntDesc = (a: bigint, b: bigint): number => (a === b ? 0 : a > b ? -1 : 1);
 
@@ -103,7 +99,7 @@ export class AiPostsService {
       postId: tmp.postId,
       updatedAt: tmp.updatedAt,
       summary: tmp.summary,
-      features: byteaToInt8Array(tmp.features),
+      features: tmp.features ? bufferToInt8Array(tmp.features) : null,
       tags: tmp.tags,
     };
   }
@@ -165,7 +161,7 @@ export class AiPostsService {
         postId: tmp.postId,
         updatedAt: tmp.updatedAt,
         summary: tmp.summary,
-        features: byteaToInt8Array(tmp.features),
+        features: tmp.features ? bufferToInt8Array(tmp.features) : null,
         tags: tmp.tags,
       });
     }
@@ -178,6 +174,7 @@ export class AiPostsService {
       const postId = hexToDec(input.postId);
 
       if (input.summary !== undefined && input.features !== undefined) {
+        const featuresBytea = input.features === null ? null : int8ArrayToBuffer(input.features);
         await pgQuery(
           this.pgPool,
           `
@@ -188,7 +185,7 @@ export class AiPostsService {
                 features = EXCLUDED.features,
                 updated_at = now()
           `,
-          [postId, input.summary, int8ArrayToBytea(input.features)],
+          [postId, input.summary, featuresBytea],
         );
       } else if (input.summary !== undefined) {
         await pgQuery(
@@ -201,6 +198,7 @@ export class AiPostsService {
           [postId, input.summary],
         );
       } else if (input.features !== undefined) {
+        const featuresBytea = input.features === null ? null : int8ArrayToBuffer(input.features);
         await pgQuery(
           this.pgPool,
           `
@@ -208,7 +206,7 @@ export class AiPostsService {
           VALUES ($1, $2, now())
           ON CONFLICT (post_id) DO UPDATE SET features = EXCLUDED.features, updated_at = now()
           `,
-          [postId, int8ArrayToBytea(input.features)],
+          [postId, featuresBytea],
         );
       }
 

@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 import { pgQuery } from "../utils/servers";
 import Redis from "ioredis";
-import { decToHex, hexToDec } from "../utils/format";
+import { decToHex, hexToDec, bufferToInt8Array, int8ArrayToBuffer } from "../utils/format";
 import OpenAI from "openai";
 import { Config } from "../config";
 import { encodeFeatures } from "../utils/vectorSpace";
@@ -67,14 +67,6 @@ type RowAiPostImpression = {
   updated_at: Date | string;
   payload: string;
 };
-
-function bufferToInt8(v: Buffer): Int8Array {
-  return new Int8Array(v.buffer, v.byteOffset, v.byteLength);
-}
-
-function int8ToBuffer(v: Int8Array): Buffer {
-  return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
-}
 
 function uniqKeepOrder(xs: string[]): string[] {
   const seen = new Set<string>();
@@ -271,7 +263,7 @@ export class AiUsersService {
       userId: decToHex(String(row.user_id)),
       updatedAt: updatedAtISO,
       interest: row.interest,
-      features: bufferToInt8(row.features),
+      features: bufferToInt8Array(row.features),
       tags,
     };
   }
@@ -292,7 +284,7 @@ export class AiUsersService {
       const upsertRes = await client.query<RowAiUserInterest>(upsertSql, [
         userIdDec,
         input.interest,
-        int8ToBuffer(input.features),
+        int8ArrayToBuffer(input.features),
       ]);
       await client.query(`DELETE FROM ai_user_tags WHERE user_id = $1`, [userIdDec]);
       for (const name of tags) {
@@ -315,7 +307,7 @@ export class AiUsersService {
         userId: decToHex(String(row.user_id)),
         updatedAt: updatedAtISO,
         interest: row.interest,
-        features: bufferToInt8(row.features),
+        features: bufferToInt8Array(row.features),
         tags,
       };
     } catch (e) {

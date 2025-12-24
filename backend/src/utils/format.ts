@@ -268,3 +268,11 @@ export function base64ToInt8(v: string): Int8Array {
   const buf = Buffer.from(v, "base64");
   return new Int8Array(buf.buffer, buf.byteOffset, buf.byteLength);
 }
+
+export function bufferToInt8Array(v: Buffer): Int8Array {
+  return new Int8Array(v.buffer, v.byteOffset, v.byteLength);
+}
+
+export function int8ArrayToBuffer(v: Int8Array): Buffer {
+  return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
+}

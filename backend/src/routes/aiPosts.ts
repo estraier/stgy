@@ -15,14 +15,14 @@ import type {
   UpdateAiPostSummaryInput,
   UpdateAiPostSummaryPacket,
 } from "../models/aiPost";
-import { normalizeOneLiner, parseBoolean, int8ToBase64, base64ToInt8  } from "../utils/format";
+import { normalizeOneLiner, parseBoolean, int8ToBase64, base64ToInt8 } from "../utils/format";
 
 function toPacket(s: AiPostSummary): AiPostSummaryPacket {
   return {
     postId: s.postId,
     updatedAt: s.updatedAt,
     summary: s.summary,
-    features: int8ToBase64(s.features),
+    features: s.features ? int8ToBase64(s.features) : null,
     tags: s.tags,
   };
 }

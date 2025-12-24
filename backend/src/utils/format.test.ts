@@ -21,6 +21,8 @@ import {
   formatDateInTz,
   int8ToBase64,
   base64ToInt8,
+  bufferToInt8Array,
+  int8ArrayToBuffer,
 } from "./format";
 
 describe("generatePasswordHash, checkPasswordHash", () => {
@@ -473,6 +475,58 @@ const int8eq = (a: Int8Array, b: Int8Array) => {
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
 };
+
+describe("bufferToInt8Array", () => {
+  test("converts Buffer bytes to signed Int8Array values", () => {
+    const buf = Buffer.from([0x80, 0xff, 0x00, 0x01, 0x7f]);
+    const v = bufferToInt8Array(buf);
+    expect(Array.from(v)).toEqual([-128, -1, 0, 1, 127]);
+  });
+
+  test("handles Buffer slice (non-zero byteOffset)", () => {
+    const base = Buffer.from([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const slice = base.subarray(2, 6);
+    const v = bufferToInt8Array(slice);
+    expect(Array.from(v)).toEqual([2, 3, 4, 5]);
+  });
+});
+
+describe("int8ArrayToBuffer", () => {
+  test("converts signed Int8Array values to Buffer bytes", () => {
+    const v = new Int8Array([-128, -1, 0, 1, 127]);
+    const buf = int8ArrayToBuffer(v);
+    expect(Array.from(buf)).toEqual([128, 255, 0, 1, 127]);
+  });
+
+  test("handles Int8Array view (non-zero byteOffset)", () => {
+    const u8 = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const view = new Int8Array(u8.buffer, 2, 4);
+    const buf = int8ArrayToBuffer(view);
+    expect(Array.from(buf)).toEqual([2, 3, 4, 5]);
+  });
+
+  test("round-trip: Buffer -> Int8Array -> Buffer (bytes preserved)", () => {
+    const samples = [
+      Buffer.from([]),
+      Buffer.from([0, 1, 2, 3, 4, 5]),
+      Buffer.from([128, 255, 0, 1, 127]),
+    ];
+    for (const src of samples) {
+      const i8 = bufferToInt8Array(src);
+      const dst = int8ArrayToBuffer(i8);
+      expect(dst.equals(src)).toBe(true);
+    }
+  });
+
+  test("round-trip: Int8Array -> Buffer -> Int8Array (values preserved)", () => {
+    const samples = [new Int8Array([]), new Int8Array([1, -2, 3, 4, 127, -128, 0, -1])];
+    for (const src of samples) {
+      const buf = int8ArrayToBuffer(src);
+      const dst = bufferToInt8Array(buf);
+      expect(int8eq(dst, src)).toBe(true);
+    }
+  });
+});
 
 describe("int8ToBase64", () => {
   test("encodes known bytes", () => {
