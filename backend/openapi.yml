@@ -2334,6 +2334,45 @@ paths:
         "404":
           $ref: "#/components/responses/Error404"
 
+  /ai-posts/recommendations/by-tags:
+    get:
+      summary: Recommend posts by tags
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: tags
+          in: query
+          required: true
+          description: Tag filters. Repeat "tags" query param for multiple tags.
+          style: form
+          explode: true
+          schema:
+            type: array
+            items: { type: string }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+        - name: order
+          in: query
+          schema: { type: string, enum: [desc, asc], default: desc }
+      responses:
+        "200":
+          description: Ranked post ids
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { type: string }
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
   /media/{userId}/images/presigned:
     post:
       summary: Get presigned POST for image upload

@@ -259,3 +259,12 @@ export function formatDateInTz(ms: number, tz: string): string {
     day: "2-digit",
   }).format(new Date(ms));
 }
+
+export function int8ToBase64(v: Int8Array): string {
+  return Buffer.from(v.buffer, v.byteOffset, v.byteLength).toString("base64");
+}
+
+export function base64ToInt8(v: string): Int8Array {
+  const buf = Buffer.from(v, "base64");
+  return new Int8Array(buf.buffer, buf.byteOffset, buf.byteLength);
+}

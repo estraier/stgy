@@ -15,17 +15,7 @@ import type {
   UpdateAiPostSummaryInput,
   UpdateAiPostSummaryPacket,
 } from "../models/aiPost";
-import { normalizeOneLiner, parseBoolean } from "../utils/format";
-
-function int8ToBase64(v: Int8Array | null): string | null {
-  if (!v) return null;
-  return Buffer.from(v).toString("base64");
-}
-
-function base64ToInt8(v: string): Int8Array {
-  const buf = Buffer.from(v, "base64");
-  return new Int8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-}
+import { normalizeOneLiner, parseBoolean, int8ToBase64, base64ToInt8  } from "../utils/format";
 
 function toPacket(s: AiPostSummary): AiPostSummaryPacket {
   return {

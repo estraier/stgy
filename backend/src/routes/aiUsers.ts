@@ -7,21 +7,17 @@ import { UsersService } from "../services/users";
 import { AuthService } from "../services/auth";
 import { DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
+import { int8ToBase64, base64ToInt8 } from "../utils/format";
 import type { ChatRequest } from "../models/aiUser";
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null;
 }
+
 function isChatMessageLike(x: unknown): x is { role: string; content: string } {
   return isRecord(x) && typeof x["role"] === "string" && typeof x["content"] === "string";
 }
-function int8ToBase64(v: Int8Array): string {
-  return Buffer.from(v.buffer, v.byteOffset, v.byteLength).toString("base64");
-}
-function base64ToInt8(v: string): Int8Array {
-  const buf = Buffer.from(v, "base64");
-  return new Int8Array(buf.buffer, buf.byteOffset, buf.byteLength);
-}
+
 function parseTagsInput(raw: unknown, maxCount: number): string[] {
   if (!Array.isArray(raw)) return [];
   const tags: string[] = [];
@@ -37,6 +33,7 @@ function parseTagsInput(raw: unknown, maxCount: number): string[] {
   }
   return tags;
 }
+
 function buildInterestFeaturesInput(interest: string, tags: string[]): string {
   const s = interest.trim();
   const t = tags

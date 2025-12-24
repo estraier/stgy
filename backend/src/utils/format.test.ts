@@ -19,6 +19,8 @@ import {
   snakeToCamel,
   escapeForLike,
   formatDateInTz,
+  int8ToBase64,
+  base64ToInt8,
 } from "./format";
 
 describe("generatePasswordHash, checkPasswordHash", () => {
@@ -463,5 +465,48 @@ describe("formatDateInTz", () => {
   it("uses the given timezone (Asia/Tokyo) and crosses into the next local day", () => {
     const ms = Date.UTC(2025, 8, 28, 16, 0, 0);
     expect(formatDateInTz(ms, "Asia/Tokyo")).toBe("2025-09-29");
+  });
+});
+
+const int8eq = (a: Int8Array, b: Int8Array) => {
+  if (a.length !== b.length) return false;
+  for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
+  return true;
+};
+
+describe("int8ToBase64", () => {
+  test("encodes known bytes", () => {
+    const v = new Int8Array([-128, -1, 0, 1, 127]);
+    expect(int8ToBase64(v)).toBe("gP8AAX8=");
+  });
+
+  test("encodes Int8Array view with non-zero byteOffset", () => {
+    const u8 = new Uint8Array([0, 1, 2, 3, 4, 5, 6, 7, 8, 9]);
+    const view = new Int8Array(u8.buffer, 2, 4);
+    expect(int8ToBase64(view)).toBe("AgMEBQ==");
+  });
+
+  test("encodes empty array to empty string", () => {
+    expect(int8ToBase64(new Int8Array([]))).toBe("");
+  });
+});
+
+describe("base64ToInt8", () => {
+  test("decodes known base64", () => {
+    const v = base64ToInt8("gP8AAX8=");
+    expect(Array.from(v)).toEqual([-128, -1, 0, 1, 127]);
+  });
+
+  test("decodes empty string to empty Int8Array", () => {
+    const v = base64ToInt8("");
+    expect(v).toBeInstanceOf(Int8Array);
+    expect(v.length).toBe(0);
+  });
+
+  test("round-trip: int8ToBase64 -> base64ToInt8", () => {
+    const src = new Int8Array([1, -2, 3, 4, 127, -128, 0, -1]);
+    const b64 = int8ToBase64(src);
+    const dst = base64ToInt8(b64);
+    expect(int8eq(dst, src)).toBe(true);
   });
 });
