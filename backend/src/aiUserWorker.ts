@@ -747,6 +747,58 @@ async function fetchOwnRecentPosts(
   return result;
 }
 
+async function fetchRecommendedPosts(
+  sessionCookie: string,
+  interest: AiUserInterest,
+): Promise<string[]> {
+  console.log(interest);
+
+  const tags = parseTagsField(interest.tags, Config.AI_TAG_MAX_COUNT);
+  if (tags.length === 0) return [];
+
+  const params = new URLSearchParams();
+  for (const tag of tags) params.append("tags", tag);
+  params.set("offset", "0");
+  params.set("limit", String(Math.min(100, Config.AI_USER_FETCH_POST_LIMIT)));
+  params.set("order", "desc");
+
+  const selfUserId = typeof interest.userId === "string" ? interest.userId.trim() : "";
+  if (selfUserId !== "") params.set("selfUserId", selfUserId);
+
+  const feat = interest.features;
+  if (feat && feat.byteLength > 0) {
+    const buf = Buffer.from(feat.buffer, feat.byteOffset, feat.byteLength);
+    const encoded = buf.toString("base64").trim();
+    if (encoded !== "") params.set("features", encoded);
+  }
+
+  try {
+    const res = await apiRequest(
+      sessionCookie,
+      `/ai-posts/recommendations?${params.toString()}`,
+      { method: "GET" },
+    );
+    const parsed = JSON.parse(res.body) as unknown;
+    if (!Array.isArray(parsed)) return [];
+
+    const out: string[] = [];
+    const seen = new Set<string>();
+    for (const item of parsed) {
+      if (typeof item !== "string") continue;
+      const id = item.trim();
+      if (id === "" || seen.has(id)) continue;
+      seen.add(id);
+      out.push(id);
+      if (out.length >= Config.AI_USER_FETCH_POST_LIMIT) break;
+    }
+    return out;
+  } catch (e) {
+    if (e instanceof UnauthorizedError) throw e;
+    logger.error(`failed to fetch recommended posts userId=${selfUserId}: ${truncateForLog(e, 50)}`);
+    return [];
+  }
+}
+
 async function fetchFollowerRecentRandomPostIds(
   sessionCookie: string,
   userId: string,
@@ -866,6 +918,12 @@ async function fetchPostsToRead(
         if (r.userId === userId) continue;
         candidates.push({ postId: r.postId, weight: 0.6 });
       }
+    }
+  }
+  if (interest) {
+    const recommendedPostIds = await fetchRecommendedPosts(sessionCookie, interest);
+    for (const postId of recommendedPostIds) {
+      candidates.push({ postId, weight: 0.8 });
     }
   }
   try {
