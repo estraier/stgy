@@ -190,6 +190,9 @@ export class AiUsersService {
       model: model_name,
       messages: req.messages,
       ...(useFlex ? { service_tier: "flex" as const } : {}),
+      ...(req.responseFormat === "json"
+        ? { response_format: { type: "json_object" as const } }
+        : {}),
     });
     for (const useFlex of [true, false] as const) {
       if (disableFlex && useFlex) continue;

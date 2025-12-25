@@ -91,13 +91,11 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     if (!Config.OPENAI_API_KEY) {
       return res.status(501).json({ error: "ai features are disabled" });
     }
-
     const bodyRaw = req.body as unknown;
     if (!isRecord(bodyRaw)) {
       return res.status(400).json({ error: "invalid body" });
     }
     const body = bodyRaw as Record<string, unknown>;
-
     let modelToUse: string;
     if (loginUser.isAdmin) {
       const modelRaw = typeof body["model"] === "string" ? body["model"] : "";
@@ -118,12 +116,11 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       }
       modelToUse = loginUser.aiModel;
     }
-
+    let responseFormat: "text" | "json" = body["responseFormat"] === "json" ? "json" : "text";
     const messagesRaw = body["messages"];
     if (!Array.isArray(messagesRaw) || messagesRaw.length === 0) {
       return res.status(400).json({ error: "messages must be a non-empty array" });
     }
-
     const allowedRoles = new Set(["system", "user", "assistant"]);
     for (let i = 0; i < messagesRaw.length; i++) {
       const m = messagesRaw[i] as unknown;
@@ -134,10 +131,9 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
         return res.status(400).json({ error: `invalid messages[${i}].role` });
       }
     }
-
     try {
       const messages = messagesRaw as ChatRequest["messages"];
-      const resp = await aiUsersService.chat({ model: modelToUse, messages });
+      const resp = await aiUsersService.chat({ model: modelToUse, messages, responseFormat });
       res.json(resp);
     } catch {
       res.status(500).json({ error: "internal_error" });

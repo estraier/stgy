@@ -773,11 +773,9 @@ async function fetchRecommendedPosts(
   }
 
   try {
-    const res = await apiRequest(
-      sessionCookie,
-      `/ai-posts/recommendations?${params.toString()}`,
-      { method: "GET" },
-    );
+    const res = await apiRequest(sessionCookie, `/ai-posts/recommendations?${params.toString()}`, {
+      method: "GET",
+    });
     const parsed = JSON.parse(res.body) as unknown;
     if (!Array.isArray(parsed)) return [];
 
@@ -794,7 +792,9 @@ async function fetchRecommendedPosts(
     return out;
   } catch (e) {
     if (e instanceof UnauthorizedError) throw e;
-    logger.error(`failed to fetch recommended posts userId=${selfUserId}: ${truncateForLog(e, 50)}`);
+    logger.error(
+      `failed to fetch recommended posts userId=${selfUserId}: ${truncateForLog(e, 50)}`,
+    );
     return [];
   }
 }
@@ -1100,7 +1100,10 @@ async function replyToPost(
     .replaceAll("{{TAG_CHARS}}", String(tagChars))
     .replaceAll("{{TAG_NUM}}", String(tagNum))
     .replaceAll("{{LOCALE}}", localeText);
-  const chatReq: ChatRequest = { messages: [{ role: "user", content: prompt }] };
+  const chatReq: ChatRequest = {
+    messages: [{ role: "user", content: prompt }],
+    responseFormat: "json",
+  };
   const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
     method: "POST",
     body: chatReq,
@@ -1225,6 +1228,7 @@ async function createPostImpression(
 
   const chatReq: ChatRequest = {
     messages: [{ role: "user", content: prompt }],
+    responseFormat: "json",
   };
   const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
     method: "POST",
@@ -1399,7 +1403,10 @@ async function createPeerImpression(
 
   //console.log(prompt);
 
-  const chatReq: ChatRequest = { messages: [{ role: "user", content: prompt }] };
+  const chatReq: ChatRequest = {
+    messages: [{ role: "user", content: prompt }],
+    responseFormat: "json",
+  };
   const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
     method: "POST",
     body: chatReq,
@@ -1590,6 +1597,7 @@ async function createInterest(
 
   const chatReq: ChatRequest = {
     messages: [{ role: "user", content: prompt }],
+    responseFormat: "json",
   };
   const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
     method: "POST",
@@ -1734,7 +1742,10 @@ async function createNewPost(
 
   //console.log(prompt);
 
-  const chatReq: ChatRequest = { messages: [{ role: "user", content: prompt }] };
+  const chatReq: ChatRequest = {
+    messages: [{ role: "user", content: prompt }],
+    responseFormat: "json",
+  };
   const chatRes = await apiRequest(userSessionCookie, "/ai-users/chat", {
     method: "POST",
     body: chatReq,

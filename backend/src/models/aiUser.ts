@@ -27,6 +27,7 @@ export type ChatMessage = {
 export type ChatRequest = {
   model?: string;
   messages: ChatMessage[];
+  responseFormat?: "text" | "json";
 };
 
 export type ChatResponse = {
