@@ -41,6 +41,14 @@ export type UpdateAiPostSummaryPacket = {
   tags?: string[];
 };
 
-export type RecommendPostsByTagsInput = {
+export type RecommendPostsInput = {
   tags: string[];
+  features?: Int8Array;
+  selfUserId?: string;
+} & AiPostPagination;
+
+export type RecommendPostsInputPacket = {
+  tags: string[];
+  features?: string | null;
+  selfUserId?: string;
 } & AiPostPagination;

@@ -1,12 +1,14 @@
+import { jest } from "@jest/globals";
 import { AiPostsService } from "./aiPosts";
 import type { Pool } from "pg";
-import {
+import type {
   ListAiPostSummariesInput,
-  RecommendPostsByTagsInput,
+  RecommendPostsInput,
   UpdateAiPostSummaryInput,
 } from "../models/aiPost";
 import crypto from "crypto";
 import { decToHex, hexToDec } from "../utils/format";
+import { decodeFeatures, cosineSimilarity } from "../utils/vectorSpace";
 
 jest.mock("../utils/servers", () => {
   const pgQuery = jest.fn((pool: unknown, sql: string, params?: unknown[]) =>
@@ -50,7 +52,13 @@ type MockPostTagRow = {
 type MockPostRow = {
   postId: string;
   replyTo: string | null;
+  userId: string;
   publishedAt: string | null;
+};
+
+type MockFollowRow = {
+  followerId: string;
+  followeeId: string;
 };
 
 class MockPgClient {
@@ -58,12 +66,25 @@ class MockPgClient {
   tags: MockAiPostTagRow[] = [];
   postTags: MockPostTagRow[] = [];
   posts: MockPostRow[] = [];
+  follows: MockFollowRow[] = [];
 
   async query(sql: string, params?: unknown[]) {
     sql = normalizeSql(sql);
 
     if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
       return { rows: [], rowCount: 0 };
+    }
+
+    if (
+      sql.startsWith("SELECT followee_id") &&
+      sql.includes("FROM user_follows") &&
+      sql.includes("WHERE follower_id = $1")
+    ) {
+      const followerId = params ? String(params[0]) : "";
+      const rows = this.follows
+        .filter((f) => f.followerId === followerId)
+        .map((f) => ({ followee_id: f.followeeId }));
+      return { rows };
     }
 
     if (
@@ -252,7 +273,7 @@ class MockPgClient {
       const tagArray = (params?.[0] as string[]) ?? [];
       const limitPerTag = 100;
 
-      const rows: { post_id: string; tag: string; is_root: boolean }[] = [];
+      const rows: { post_id: string; tag: string; is_root: boolean; user_id: string }[] = [];
 
       const postIndex = new Map<string, MockPostRow>();
       for (const p of this.posts) postIndex.set(p.postId, p);
@@ -274,7 +295,7 @@ class MockPgClient {
         for (const postId of fromPostTags) {
           const p = postIndex.get(postId);
           if (!p) continue;
-          rows.push({ post_id: postId, tag, is_root: p.replyTo === null });
+          rows.push({ post_id: postId, tag, is_root: p.replyTo === null, user_id: p.userId });
         }
 
         const fromAiPostTags = this.tags
@@ -286,11 +307,29 @@ class MockPgClient {
         for (const postId of fromAiPostTags) {
           const p = postIndex.get(postId);
           if (!p) continue;
-          rows.push({ post_id: postId, tag, is_root: p.replyTo === null });
+          rows.push({ post_id: postId, tag, is_root: p.replyTo === null, user_id: p.userId });
         }
       }
 
       return { rows };
+    }
+
+    if (sql.includes("FROM ai_post_summaries") && sql.includes("WHERE post_id = ANY(")) {
+      const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
+      if (arrParam) {
+        const ids = arrParam.map((x) => String(x));
+        const rows = ids
+          .map((id) => {
+            const s = this.summaries.find((r) => r.postId === id);
+            if (!s) return null;
+            return {
+              post_id: s.postId,
+              features: s.features,
+            };
+          })
+          .filter((x): x is NonNullable<typeof x> => x !== null);
+        return { rows };
+      }
     }
 
     return { rows: [] };
@@ -659,27 +698,85 @@ describe("AiPostsService updateAiPost", () => {
   });
 });
 
-describe("AiPostsService RecommendPostsByTags", () => {
+describe("AiPostsService RecommendPosts", () => {
   let pgClient: MockPgClient;
   let service: AiPostsService;
 
   const dec = (n: number) => String(n);
   const hex = (n: number) => toHexStrFromDec(dec(n));
 
+  const mkSummary = (postIdDec: string, features: number[] | null) => {
+    pgClient.summaries.push({
+      postId: postIdDec,
+      summary: "s",
+      features: features ? Buffer.from(new Int8Array(features)) : null,
+      updatedAt: "2025-01-01T00:00:00Z",
+    });
+  };
+
   beforeEach(() => {
     pgClient = new MockPgClient();
     service = new AiPostsService(pgClient as unknown as Pool);
 
+    const otherUserDec = dec(900);
+    const selfUserHex = toHexStrFromDec(dec(777));
+    const selfUserDec = toDecStr(selfUserHex);
+
     pgClient.posts.push(
-      { postId: dec(121), replyTo: null, publishedAt: "2025-10-10T00:00:01Z" },
-      { postId: dec(122), replyTo: null, publishedAt: "2025-10-10T00:00:02Z" },
-      { postId: dec(123), replyTo: dec(122), publishedAt: "2025-10-10T00:00:03Z" },
-      { postId: dec(124), replyTo: dec(121), publishedAt: "2025-10-10T00:00:04Z" },
-      { postId: dec(125), replyTo: null, publishedAt: "2025-10-10T00:00:05Z" },
-      { postId: dec(126), replyTo: dec(122), publishedAt: "2025-10-10T00:00:06Z" },
-      { postId: dec(127), replyTo: null, publishedAt: "2025-10-10T00:00:07Z" },
-      { postId: dec(128), replyTo: null, publishedAt: "2025-10-10T00:00:08Z" },
-      { postId: dec(129), replyTo: null, publishedAt: "2025-10-10T00:00:09Z" },
+      {
+        postId: dec(121),
+        replyTo: null,
+        userId: otherUserDec,
+        publishedAt: "2025-10-10T00:00:01Z",
+      },
+      {
+        postId: dec(122),
+        replyTo: null,
+        userId: otherUserDec,
+        publishedAt: "2025-10-10T00:00:02Z",
+      },
+      {
+        postId: dec(123),
+        replyTo: dec(122),
+        userId: selfUserDec,
+        publishedAt: "2025-10-10T00:00:03Z",
+      },
+      {
+        postId: dec(124),
+        replyTo: dec(121),
+        userId: otherUserDec,
+        publishedAt: "2025-10-10T00:00:04Z",
+      },
+      {
+        postId: dec(125),
+        replyTo: null,
+        userId: otherUserDec,
+        publishedAt: "2025-10-10T00:00:05Z",
+      },
+      {
+        postId: dec(126),
+        replyTo: dec(122),
+        userId: otherUserDec,
+        publishedAt: "2025-10-10T00:00:06Z",
+      },
+      {
+        postId: dec(127),
+        replyTo: null,
+        userId: otherUserDec,
+        publishedAt: "2025-10-10T00:00:07Z",
+      },
+      {
+        postId: dec(128),
+        replyTo: null,
+        userId: otherUserDec,
+        publishedAt: "2025-10-10T00:00:08Z",
+      },
+      {
+        postId: dec(129),
+        replyTo: null,
+        userId: otherUserDec,
+        publishedAt: "2025-10-10T00:00:09Z",
+      },
     );
 
     pgClient.postTags.push(
@@ -703,42 +800,175 @@ describe("AiPostsService RecommendPostsByTags", () => {
       { postId: dec(123), name: "game" },
       { postId: dec(124), name: "game" },
     );
+
+    mkSummary(dec(121), [10, 0, 0]);
+    mkSummary(dec(122), [1, 9, 0]);
+    mkSummary(dec(123), [0, 10, 0]);
+    mkSummary(dec(124), [8, 6, 0]);
+    mkSummary(dec(125), [7, 2, 0]);
+    mkSummary(dec(127), [6, 8, 0]);
+
+    (pgClient as any).__selfUserHex = selfUserHex;
   });
 
   test("returns empty when tags empty", async () => {
-    const input: RecommendPostsByTagsInput = { tags: [], limit: 10, order: "desc" };
-    const result = await service.RecommendPostsByTags(input);
+    const input: RecommendPostsInput = { tags: [], limit: 10, order: "desc" };
+    const result = await service.RecommendPosts(input);
     expect(result).toEqual([]);
   });
 
-  test("returns ranked post ids (desc) according to algorithm", async () => {
-    const input: RecommendPostsByTagsInput = {
+  test("filters out ids that do not exist in ai_post_summaries (universe selection)", async () => {
+    const input: RecommendPostsInput = {
       tags: ["tech", "eco", "game"],
       limit: 100,
       order: "desc",
     };
-    const result = await service.RecommendPostsByTags(input);
-    expect(result).toEqual([hex(121), hex(123), hex(124), hex(127), hex(125), hex(122), hex(129)]);
+    const result = await service.RecommendPosts(input);
+    expect(result).toEqual([hex(121), hex(123), hex(124), hex(127), hex(125), hex(122)]);
   });
 
-  test("supports order asc", async () => {
-    const input: RecommendPostsByTagsInput = {
+  test("filters out selfUserId after fetching matched rows (no SQL WHERE)", async () => {
+    const selfUserHex = (pgClient as any).__selfUserHex as string;
+
+    const input: RecommendPostsInput = {
       tags: ["tech", "eco", "game"],
+      selfUserId: selfUserHex,
       limit: 100,
-      order: "asc",
+      order: "desc",
     };
-    const result = await service.RecommendPostsByTags(input);
-    expect(result).toEqual([hex(129), hex(122), hex(125), hex(127), hex(124), hex(123), hex(121)]);
+    const result = await service.RecommendPosts(input);
+
+    expect(result).toEqual([hex(121), hex(124), hex(122), hex(127), hex(125)]);
+    expect(result.includes(hex(123))).toBe(false);
+    expect(result.includes(hex(129))).toBe(false);
   });
 
-  test("applies offset and limit after ranking", async () => {
-    const input: RecommendPostsByTagsInput = {
+  test("when features is given, sorts universe by cosine similarity (then applies order/offset/limit)", async () => {
+    pgClient.summaries.push({
+      postId: dec(129),
+      summary: "s",
+      features: Buffer.from(new Int8Array([2, 0, 10])),
+      updatedAt: "2025-01-01T00:00:00Z",
+    });
+
+    const q = new Int8Array([10, 0, 0]);
+
+    const input: RecommendPostsInput = {
       tags: ["tech", "eco", "game"],
+      features: q,
+      limit: 100,
+      order: "desc",
+    };
+
+    const result = await service.RecommendPosts(input);
+
+    const universeDecIds = [121, 123, 124, 127, 125, 122, 129].map(dec);
+
+    const qDecoded = decodeFeatures(q);
+    const scored = universeDecIds.map((postIdDec) => {
+      const s = pgClient.summaries.find((x) => x.postId === postIdDec);
+      if (!s?.features) throw new Error("test setup error: missing features");
+      const v = new Int8Array(s.features.buffer, s.features.byteOffset, s.features.byteLength);
+      const sim = cosineSimilarity(qDecoded, decodeFeatures(v));
+      return { postIdDec, sim };
+    });
+
+    scored.sort((a, b) => {
+      if (a.sim !== b.sim) return b.sim - a.sim;
+      const aa = BigInt(a.postIdDec);
+      const bb = BigInt(b.postIdDec);
+      if (aa === bb) return 0;
+      return aa > bb ? -1 : 1;
+    });
+
+    const expected = scored.map((x) => toHexStrFromDec(x.postIdDec));
+    expect(result).toEqual(expected);
+  });
+
+  test("applies order asc and offset/limit after final sorting (features case)", async () => {
+    pgClient.summaries.push({
+      postId: dec(129),
+      summary: "s",
+      features: Buffer.from(new Int8Array([2, 0, 10])),
+      updatedAt: "2025-01-01T00:00:00Z",
+    });
+
+    const q = new Int8Array([10, 0, 0]);
+
+    const input: RecommendPostsInput = {
+      tags: ["tech", "eco", "game"],
+      features: q,
+      order: "asc",
       offset: 1,
       limit: 3,
-      order: "desc",
     };
-    const result = await service.RecommendPostsByTags(input);
-    expect(result).toEqual([hex(123), hex(124), hex(127)]);
+
+    const result = await service.RecommendPosts(input);
+
+    const universeDecIds = [121, 123, 124, 127, 125, 122, 129].map(dec);
+    const qDecoded = decodeFeatures(q);
+    const scored = universeDecIds.map((postIdDec) => {
+      const s = pgClient.summaries.find((x) => x.postId === postIdDec);
+      if (!s?.features) throw new Error("test setup error: missing features");
+      const v = new Int8Array(s.features.buffer, s.features.byteOffset, s.features.byteLength);
+      const sim = cosineSimilarity(qDecoded, decodeFeatures(v));
+      return { postIdDec, sim };
+    });
+
+    scored.sort((a, b) => {
+      if (a.sim !== b.sim) return b.sim - a.sim;
+      const aa = BigInt(a.postIdDec);
+      const bb = BigInt(b.postIdDec);
+      if (aa === bb) return 0;
+      return aa > bb ? -1 : 1;
+    });
+
+    const descIds = scored.map((x) => toHexStrFromDec(x.postIdDec));
+    const ascIds = [...descIds].reverse();
+    const expected = ascIds.slice(1, 1 + 3);
+
+    expect(result).toEqual(expected);
+  });
+
+  test("applies socialScore when selfUserId is given", async () => {
+    const localPg = new MockPgClient();
+    const localService = new AiPostsService(localPg as unknown as Pool);
+
+    const selfUserHex = toHexStrFromDec(dec(777));
+    const selfUserDec = toDecStr(selfUserHex);
+
+    localPg.follows.push({ followerId: selfUserDec, followeeId: dec(900) });
+
+    localPg.posts.push(
+      { postId: dec(200), replyTo: null, userId: dec(901), publishedAt: "2025-10-10T00:00:01Z" },
+      { postId: dec(199), replyTo: null, userId: dec(900), publishedAt: "2025-10-10T00:00:02Z" },
+    );
+
+    localPg.postTags.push({ postId: dec(200), name: "t" }, { postId: dec(199), name: "u" });
+
+    localPg.summaries.push(
+      {
+        postId: dec(200),
+        summary: "s",
+        features: Buffer.from(new Int8Array([1, 1, 1])),
+        updatedAt: "2025-01-01T00:00:00Z",
+      },
+      {
+        postId: dec(199),
+        summary: "s",
+        features: Buffer.from(new Int8Array([1, 1, 1])),
+        updatedAt: "2025-01-01T00:00:00Z",
+      },
+    );
+
+    const input: RecommendPostsInput = {
+      tags: ["t", "u"],
+      selfUserId: selfUserHex,
+      order: "desc",
+      limit: 10,
+    };
+
+    const result = await localService.RecommendPosts(input);
+    expect(result).toEqual([toHexStrFromDec(dec(199)), toHexStrFromDec(dec(200))]);
   });
 });

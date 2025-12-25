@@ -7,10 +7,11 @@ import {
   bufferToInt8Array,
   int8ArrayToBuffer,
 } from "../utils/format";
+import { decodeFeatures, cosineSimilarity } from "../utils/vectorSpace";
 import {
   AiPostSummary,
   ListAiPostSummariesInput,
-  RecommendPostsByTagsInput,
+  RecommendPostsInput,
   UpdateAiPostSummaryInput,
 } from "../models/aiPost";
 
@@ -22,21 +23,42 @@ type AiPostSummaryDbRow = {
   tags: string[];
 };
 
-type RecommendByTagsDbRow = {
+type RecommendDbRow = {
   post_id: string;
   tag: string;
   is_root: boolean;
+  user_id: string;
 };
 
 type RecommendRecord = {
   postId: bigint;
   tag: string;
   isRoot: boolean;
+  userId: string;
 };
 
 type ScoredPost = {
   postId: bigint;
   score: number;
+};
+
+type PostFeaturesRow = {
+  post_id: string;
+  features: Buffer | null;
+};
+
+type Candidate = {
+  postId: bigint;
+  features: Int8Array | null;
+};
+
+type CandidateSim = {
+  postId: bigint;
+  sim: number;
+};
+
+type FolloweeRow = {
+  followee_id: string;
 };
 
 const compareBigIntDesc = (a: bigint, b: bigint): number => (a === b ? 0 : a > b ? -1 : 1);
@@ -233,13 +255,28 @@ export class AiPostsService {
     return this.getAiPostSummary(input.postId);
   }
 
-  async RecommendPostsByTags(input: RecommendPostsByTagsInput): Promise<string[]> {
+  async RecommendPosts(input: RecommendPostsInput): Promise<string[]> {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "asc" : "desc";
-
+    const selfUserIdDec =
+      typeof input.selfUserId === "string" && input.selfUserId.trim() !== ""
+        ? hexToDec(input.selfUserId)
+        : null;
     if (input.tags.length === 0) return [];
-
+    let followeeIds: Set<string> | null = null;
+    if (selfUserIdDec) {
+      const fr = await pgQuery<FolloweeRow>(
+        this.pgPool,
+        `
+        SELECT followee_id
+        FROM user_follows
+        WHERE follower_id = $1
+        `,
+        [selfUserIdDec],
+      );
+      followeeIds = new Set(fr.rows.map((r) => String(r.followee_id)));
+    }
     const res = await pgQuery(
       this.pgPool,
       `
@@ -256,9 +293,7 @@ export class AiPostsService {
           ORDER BY post_id DESC
           LIMIT 100
         ) pt ON true
-
         UNION ALL
-
         SELECT qt.tag, apt.post_id
         FROM query_tags qt
         JOIN LATERAL (
@@ -272,25 +307,27 @@ export class AiPostsService {
       SELECT
         mtp.post_id,
         mtp.tag,
-        (p.reply_to IS NULL) AS is_root
+        (p.reply_to IS NULL) AS is_root,
+        p.owned_by AS user_id
       FROM matched_tag_posts mtp
       JOIN posts p ON p.id = mtp.post_id
       `,
       [input.tags],
     );
-
-    const records: RecommendRecord[] = [];
+    let records: RecommendRecord[] = [];
     for (const r0 of res.rows as unknown[]) {
-      const r = r0 as unknown as RecommendByTagsDbRow;
+      const r = r0 as unknown as RecommendDbRow;
       records.push({
         postId: BigInt(r.post_id),
         tag: r.tag,
         isRoot: r.is_root,
+        userId: String(r.user_id),
       });
     }
-
+    if (selfUserIdDec) {
+      records = records.filter((r) => r.userId !== selfUserIdDec);
+    }
     if (records.length === 0) return [];
-
     const sortedRecords = [...records].sort((a, b) => {
       const c1 = compareBigIntDesc(a.postId, b.postId);
       if (c1 !== 0) return c1;
@@ -298,61 +335,98 @@ export class AiPostsService {
       if (a.isRoot === b.isRoot) return 0;
       return a.isRoot ? -1 : 1;
     });
-
     let tagRankScore = sortedRecords.length * 2;
     const tagScores = new Map<string, number>();
     for (const r of sortedRecords) {
       tagScores.set(r.tag, (tagScores.get(r.tag) ?? 0) + tagRankScore);
       tagRankScore -= 1;
     }
-
     let totalTagScore = 0;
     for (const v of tagScores.values()) totalTagScore += v;
     if (totalTagScore === 0) return [];
-
     const tagIdfScores = new Map<string, number>();
     for (const [tag, score] of tagScores.entries()) {
       tagIdfScores.set(tag, -Math.log(score / totalTagScore));
     }
-
     const postIdSet = new Set<bigint>();
     for (const r of records) postIdSet.add(r.postId);
-
     const sortedPostIds = Array.from(postIdSet).sort(compareBigIntDesc);
-
     let postRankScore = sortedPostIds.length * 3;
     const postRankScores = new Map<bigint, number>();
     for (const postId of sortedPostIds) {
       postRankScores.set(postId, postRankScore);
       postRankScore -= 1;
     }
-
     const postFinalScores = new Map<bigint, number>();
     for (const r of records) {
       const rankScore = postRankScores.get(r.postId);
       const idfScore = tagIdfScores.get(r.tag);
       if (rankScore === undefined || idfScore === undefined) continue;
       const rootScore = r.isRoot ? 1.0 : 0.5;
-      const add = rankScore * idfScore * rootScore;
+      const socialScore = followeeIds && followeeIds.has(r.userId) ? 1.0 : 0.5;
+      const add = rankScore * idfScore * rootScore * socialScore;
       postFinalScores.set(r.postId, (postFinalScores.get(r.postId) ?? 0) + add);
     }
-
     const scored: ScoredPost[] = Array.from(postFinalScores.entries()).map(([postId, score]) => ({
       postId,
       score,
     }));
-
     scored.sort((a, b) => {
       if (a.score !== b.score) return b.score - a.score;
       return compareBigIntDesc(a.postId, b.postId);
     });
-
-    const ordered = order === "asc" ? [...scored].reverse() : scored;
-    const sliced = ordered.slice(offset, offset + limit);
-
+    const universe: Candidate[] = [];
+    for (let i = 0; i < scored.length && universe.length < 100; i += 20) {
+      const chunk = scored.slice(i, i + 20);
+      const ids = chunk.map((c) => c.postId.toString());
+      const r = await pgQuery<PostFeaturesRow>(
+        this.pgPool,
+        `
+        SELECT post_id, features
+        FROM ai_post_summaries
+        WHERE post_id = ANY($1::bigint[])
+        `,
+        [ids],
+      );
+      const byId = new Map<string, PostFeaturesRow>();
+      for (const row of r.rows) byId.set(String(row.post_id), row);
+      for (const c of chunk) {
+        const row = byId.get(c.postId.toString());
+        if (!row) continue;
+        universe.push({
+          postId: c.postId,
+          features: row.features ? bufferToInt8Array(row.features) : null,
+        });
+        if (universe.length >= 100) break;
+      }
+    }
+    if (universe.length === 0) return [];
+    let finalIds: bigint[] = universe.map((c) => c.postId);
+    if (input.features) {
+      try {
+        const qDecoded = decodeFeatures(input.features);
+        const sims: CandidateSim[] = [];
+        for (const c of universe) {
+          if (!c.features) {
+            sims.push({ postId: c.postId, sim: Number.NEGATIVE_INFINITY });
+            continue;
+          }
+          const vDecoded = decodeFeatures(c.features);
+          const sim = cosineSimilarity(qDecoded, vDecoded);
+          sims.push({ postId: c.postId, sim });
+        }
+        sims.sort((a, b) => {
+          if (a.sim !== b.sim) return b.sim - a.sim;
+          return compareBigIntDesc(a.postId, b.postId);
+        });
+        finalIds = sims.map((x) => x.postId);
+      } catch {}
+    }
+    const orderedIds = order === "asc" ? [...finalIds].reverse() : finalIds;
+    const sliced = orderedIds.slice(offset, offset + limit);
     const out: string[] = [];
-    for (const s of sliced) {
-      out.push(decToHex(s.postId.toString()));
+    for (const postId of sliced) {
+      out.push(decToHex(postId.toString()));
     }
     return out;
   }

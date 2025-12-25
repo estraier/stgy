@@ -11,7 +11,7 @@ import { EventLogService } from "../services/eventLog";
 import type {
   AiPostSummary,
   AiPostSummaryPacket,
-  RecommendPostsByTagsInput,
+  RecommendPostsInput,
   UpdateAiPostSummaryInput,
   UpdateAiPostSummaryPacket,
 } from "../models/aiPost";
@@ -98,7 +98,7 @@ export default function createAiPostsRouter(
     }
   });
 
-  router.get("/recommendations/by-tags", async (req, res) => {
+  router.get("/recommendations", async (req, res) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
@@ -113,14 +113,46 @@ export default function createAiPostsRouter(
     if (tags.length === 0) {
       return res.status(400).json({ error: "tags is required" });
     }
+    let selfUserId: string | undefined;
+    if (typeof req.query.selfUserId === "string") {
+      const v = req.query.selfUserId.trim();
+      if (v !== "") selfUserId = v;
+    } else if (Array.isArray(req.query.selfUserId)) {
+      const v0 = req.query.selfUserId.find((x): x is string => typeof x === "string");
+      const v = (v0 ?? "").trim();
+      if (v !== "") selfUserId = v;
+    }
+    let features: Int8Array | undefined;
+    if (typeof req.query.features === "string") {
+      const v = req.query.features.trim();
+      if (v !== "") {
+        try {
+          features = base64ToInt8(v);
+        } catch {
+          return res.status(400).json({ error: "features must be base64 string if specified" });
+        }
+      }
+    } else if (Array.isArray(req.query.features)) {
+      const v0 = req.query.features.find((x): x is string => typeof x === "string");
+      const v = (v0 ?? "").trim();
+      if (v !== "") {
+        try {
+          features = base64ToInt8(v);
+        } catch {
+          return res.status(400).json({ error: "features must be base64 string if specified" });
+        }
+      }
+    }
     try {
       const watch = timerThrottleService.startWatch(loginUser);
-      const result = await aiPostsService.RecommendPostsByTags({
+      const result = await aiPostsService.RecommendPosts({
         tags,
+        features,
+        selfUserId,
         offset,
         limit,
         order,
-      } satisfies RecommendPostsByTagsInput);
+      } satisfies RecommendPostsInput);
       watch.done();
       res.json(result);
     } catch (e) {

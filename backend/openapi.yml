@@ -2334,7 +2334,7 @@ paths:
         "404":
           $ref: "#/components/responses/Error404"
 
-  /ai-posts/recommendations/by-tags:
+  /ai-posts/recommendations:
     get:
       summary: Recommend posts by tags
       security:
