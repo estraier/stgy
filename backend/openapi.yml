@@ -2336,7 +2336,7 @@ paths:
 
   /ai-posts/recommendations:
     get:
-      summary: Recommend posts by tags
+      summary: Recommend posts
       security:
         - sessionCookie: []
       parameters:
@@ -2349,6 +2349,19 @@ paths:
           schema:
             type: array
             items: { type: string }
+        - name: selfUserId
+          in: query
+          required: false
+          description: Self user id (16-char uppercase hex). If specified, posts by self may be excluded and ranking may consider social graph.
+          schema:
+            type: string
+        - name: features
+          in: query
+          required: false
+          description: Base64-encoded Int8Array features vector used for similarity-based re-ranking.
+          schema:
+            type: string
+            format: byte
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
