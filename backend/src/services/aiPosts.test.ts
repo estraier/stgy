@@ -824,7 +824,7 @@ describe("AiPostsService RecommendPosts", () => {
       order: "desc",
     };
     const result = await service.RecommendPosts(input);
-    expect(result).toEqual([hex(121), hex(123), hex(124), hex(127), hex(125), hex(122)]);
+    expect(result).toEqual([hex(121), hex(123), hex(124), hex(122), hex(127), hex(125)]);
   });
 
   test("filters out selfUserId after fetching matched rows (no SQL WHERE)", async () => {

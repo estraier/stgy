@@ -328,17 +328,24 @@ export class AiPostsService {
       records = records.filter((r) => r.userId !== selfUserIdDec);
     }
     if (records.length === 0) return [];
-    const sortedRecords = [...records].sort((a, b) => {
-      const c1 = compareBigIntDesc(a.postId, b.postId);
-      if (c1 !== 0) return c1;
-      if (a.tag !== b.tag) return a.tag > b.tag ? -1 : 1;
-      if (a.isRoot === b.isRoot) return 0;
-      return a.isRoot ? -1 : 1;
-    });
-    let tagRankScore = sortedRecords.length * 2;
+    const tagsByPostId = new Map<bigint, string[]>();
+    for (const r of records) {
+      const prev = tagsByPostId.get(r.postId);
+      if (prev) {
+        prev.push(r.tag);
+      } else {
+        tagsByPostId.set(r.postId, [r.tag]);
+      }
+    }
+    const sortedTagPosts = Array.from(tagsByPostId.entries()).sort((a, b) =>
+      compareBigIntDesc(a[0], b[0]),
+    );
+    let tagRankScore = sortedTagPosts.length;
     const tagScores = new Map<string, number>();
-    for (const r of sortedRecords) {
-      tagScores.set(r.tag, (tagScores.get(r.tag) ?? 0) + tagRankScore);
+    for (const [, tags] of sortedTagPosts) {
+      for (const tag of tags) {
+        tagScores.set(tag, (tagScores.get(tag) ?? 0) + tagRankScore);
+      }
       tagRankScore -= 1;
     }
     let totalTagScore = 0;
@@ -348,9 +355,7 @@ export class AiPostsService {
     for (const [tag, score] of tagScores.entries()) {
       tagIdfScores.set(tag, -Math.log(score / totalTagScore));
     }
-    const postIdSet = new Set<bigint>();
-    for (const r of records) postIdSet.add(r.postId);
-    const sortedPostIds = Array.from(postIdSet).sort(compareBigIntDesc);
+    const sortedPostIds = Array.from(tagsByPostId.keys()).sort(compareBigIntDesc);
     let postRankScore = sortedPostIds.length * 3;
     const postRankScores = new Map<bigint, number>();
     for (const postId of sortedPostIds) {
