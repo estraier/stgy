@@ -37,13 +37,9 @@ function parseTagsQueryParam(v: unknown): string[] {
     }
   }
   const expanded = raw.flatMap((s) => s.split(","));
-  return Array.from(
-    new Set(
-      expanded
-        .map((t) => normalizeOneLiner(t.toLowerCase()))
-        .filter((t): t is string => typeof t === "string" && t.trim() !== ""),
-    ),
-  );
+  return expanded
+    .map((t) => normalizeOneLiner(t.toLowerCase()))
+    .filter((t): t is string => typeof t === "string" && t.trim() !== "");
 }
 
 export default function createAiPostsRouter(
