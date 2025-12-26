@@ -45,10 +45,12 @@ export type RecommendPostsInput = {
   tags: string[];
   features?: Int8Array;
   selfUserId?: string;
+  dedupWeight?: number;
 } & AiPostPagination;
 
 export type RecommendPostsInputPacket = {
   tags: string[];
   features?: string | null;
   selfUserId?: string;
+  dedupWeight?: number;
 } & AiPostPagination;

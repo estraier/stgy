@@ -7,7 +7,7 @@ import {
   bufferToInt8Array,
   int8ArrayToBuffer,
 } from "../utils/format";
-import { decodeFeatures, cosineSimilarity } from "../utils/vectorSpace";
+import { decodeFeatures, cosineSimilarity, sigmoidalContrast } from "../utils/vectorSpace";
 import {
   AiPostSummary,
   ListAiPostSummariesInput,
@@ -442,7 +442,9 @@ export class AiPostsService {
             continue;
           }
           const vDecoded = decodeFeatures(c.features);
-          const sim = cosineSimilarity(qDecoded, vDecoded);
+          const simRaw = cosineSimilarity(qDecoded, vDecoded);
+          const sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
+          console.log(simRaw, sim);
           sims.push({ postId: c.postId, sim });
         }
         sims.sort((a, b) => {

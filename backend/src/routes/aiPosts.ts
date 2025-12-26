@@ -143,12 +143,37 @@ export default function createAiPostsRouter(
         }
       }
     }
+    let dedupWeight: number | undefined;
+    if (typeof req.query.dedupWeight === "string") {
+      const v = req.query.dedupWeight.trim();
+      if (v !== "") {
+        const n = Number(v);
+        if (!Number.isFinite(n)) {
+          return res.status(400).json({ error: "dedupWeight must be number if specified" });
+        }
+        dedupWeight = n;
+      }
+
+      console.log(dedupWeight);
+
+    } else if (Array.isArray(req.query.dedupWeight)) {
+      const v0 = req.query.dedupWeight.find((x): x is string => typeof x === "string");
+      const v = (v0 ?? "").trim();
+      if (v !== "") {
+        const n = Number(v);
+        if (!Number.isFinite(n)) {
+          return res.status(400).json({ error: "dedupWeight must be number if specified" });
+        }
+        dedupWeight = n;
+      }
+    }
     try {
       const watch = timerThrottleService.startWatch(loginUser);
       const result = await aiPostsService.RecommendPosts({
         tags,
         features,
         selfUserId,
+        dedupWeight,
         offset,
         limit,
         order,

@@ -378,7 +378,7 @@ def test_ai_posts():
   p3 = res.json()
   p3_id = p3["id"]
   reco_url = f"{BASE_URL}/ai-posts/recommendations"
-  res = requests.get(reco_url, params=[("tags", tag_a), ("tags", tag_b), ("limit", "10"), ("order", "desc")], headers=headers, cookies=cookies)
+  res = requests.get(reco_url, params=[("tags", tag_a), ("tags", tag_b), ("limit", "10"), ("order", "desc"), ("dedupWeight", 0.5)], headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   ranked = res.json()
   assert ranked == [p3_id, p1_id, p2_id]
