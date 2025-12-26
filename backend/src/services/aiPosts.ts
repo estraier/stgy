@@ -264,6 +264,15 @@ export class AiPostsService {
         ? hexToDec(input.selfUserId)
         : null;
     if (input.tags.length === 0) return [];
+    const paramTagCounts = new Map<string, number>();
+    for (const t of input.tags) {
+      if (typeof t !== "string") continue;
+      const tag = t.trim();
+      if (!tag) continue;
+      paramTagCounts.set(tag, (paramTagCounts.get(tag) ?? 0) + 1);
+    }
+    const queryTags = Array.from(paramTagCounts.keys());
+    if (queryTags.length === 0) return [];
     let followeeIds: Set<string> | null = null;
     if (selfUserIdDec) {
       const fr = await pgQuery<FolloweeRow>(
@@ -312,7 +321,7 @@ export class AiPostsService {
       FROM matched_tag_posts mtp
       JOIN posts p ON p.id = mtp.post_id
       `,
-      [input.tags],
+      [queryTags],
     );
     let records: RecommendRecord[] = [];
     for (const r0 of res.rows as unknown[]) {
@@ -329,12 +338,16 @@ export class AiPostsService {
     }
     if (records.length === 0) return [];
     const tagsByPostId = new Map<bigint, string[]>();
+    const metaByPostId = new Map<bigint, { isRoot: boolean; userId: string }>();
     for (const r of records) {
       const prev = tagsByPostId.get(r.postId);
       if (prev) {
         prev.push(r.tag);
       } else {
         tagsByPostId.set(r.postId, [r.tag]);
+      }
+      if (!metaByPostId.has(r.postId)) {
+        metaByPostId.set(r.postId, { isRoot: r.isRoot, userId: r.userId });
       }
     }
     const sortedTagPosts = Array.from(tagsByPostId.entries()).sort((a, b) =>
@@ -353,7 +366,8 @@ export class AiPostsService {
     if (totalTagScore === 0) return [];
     const tagIdfScores = new Map<string, number>();
     for (const [tag, score] of tagScores.entries()) {
-      tagIdfScores.set(tag, -Math.log(score / totalTagScore));
+      if (score <= 0) continue;
+      tagIdfScores.set(tag, Math.log(totalTagScore / score));
     }
     const sortedPostIds = Array.from(tagsByPostId.keys()).sort(compareBigIntDesc);
     let postRankScore = sortedPostIds.length * 3;
@@ -363,14 +377,25 @@ export class AiPostsService {
       postRankScore -= 1;
     }
     const postFinalScores = new Map<bigint, number>();
-    for (const r of records) {
-      const rankScore = postRankScores.get(r.postId);
-      const idfScore = tagIdfScores.get(r.tag);
-      if (rankScore === undefined || idfScore === undefined) continue;
-      const rootScore = r.isRoot ? 1.0 : 0.5;
-      const socialScore = followeeIds && followeeIds.has(r.userId) ? 1.0 : 0.5;
-      const add = rankScore * idfScore * rootScore * socialScore;
-      postFinalScores.set(r.postId, (postFinalScores.get(r.postId) ?? 0) + add);
+    for (const [postId, tags] of tagsByPostId.entries()) {
+      const rankScore = postRankScores.get(postId);
+      const meta = metaByPostId.get(postId);
+      if (rankScore === undefined || !meta) continue;
+      const rootScore = meta.isRoot ? 1.0 : 0.5;
+      const socialScore = followeeIds && followeeIds.has(meta.userId) ? 1.0 : 0.5;
+      const tagTableCounts = new Map<string, number>();
+      for (const tag of tags) {
+        tagTableCounts.set(tag, (tagTableCounts.get(tag) ?? 0) + 1);
+      }
+      for (const [tag, tableCount] of tagTableCounts.entries()) {
+        const idfScore = tagIdfScores.get(tag);
+        const paramCount = paramTagCounts.get(tag) ?? 0;
+        const tfArg = tableCount + paramCount;
+        if (idfScore === undefined || tfArg <= 0) continue;
+        const tfScore = Math.log(tfArg);
+        const add = rankScore * tfScore * idfScore * rootScore * socialScore;
+        postFinalScores.set(postId, (postFinalScores.get(postId) ?? 0) + add);
+      }
     }
     const scored: ScoredPost[] = Array.from(postFinalScores.entries()).map(([postId, score]) => ({
       postId,
