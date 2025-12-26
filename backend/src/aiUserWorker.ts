@@ -976,7 +976,7 @@ async function fetchPostsToRead(
       const sim = cosineSimilarity(coreFeatures, features);
       if (!Number.isFinite(sim)) continue;
       similarityByPostId.set(postId, sim);
-      const simScore = sigmoidalContrast(sim + 1, 5, 0.75);
+      const simScore = sigmoidalContrast((sim + 1) / 2, 5, 0.75);
       boostedScoresByPost.set(postId, (baseScore + 0.2) * simScore);
     }
     topPostIds = [...boostedScoresByPost.entries()]
