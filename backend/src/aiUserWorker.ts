@@ -761,6 +761,7 @@ async function fetchRecommendedPosts(
   params.set("offset", "0");
   params.set("limit", String(Math.min(100, Config.AI_USER_FETCH_POST_LIMIT)));
   params.set("order", "desc");
+  params.set("dedupWeight", "0.3");
 
   const selfUserId = typeof interest.userId === "string" ? interest.userId.trim() : "";
   if (selfUserId !== "") params.set("selfUserId", selfUserId);
@@ -771,7 +772,6 @@ async function fetchRecommendedPosts(
     const encoded = buf.toString("base64").trim();
     if (encoded !== "") params.set("features", encoded);
   }
-
   try {
     const res = await apiRequest(sessionCookie, `/ai-posts/recommendations?${params.toString()}`, {
       method: "GET",

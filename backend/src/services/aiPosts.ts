@@ -7,7 +7,12 @@ import {
   bufferToInt8Array,
   int8ArrayToBuffer,
 } from "../utils/format";
-import { decodeFeatures, cosineSimilarity, sigmoidalContrast } from "../utils/vectorSpace";
+import {
+  decodeFeatures,
+  cosineSimilarity,
+  sigmoidalContrast,
+  normalizeL2,
+} from "../utils/vectorSpace";
 import {
   AiPostSummary,
   ListAiPostSummariesInput,
@@ -50,11 +55,6 @@ type PostFeaturesRow = {
 type Candidate = {
   postId: bigint;
   features: Int8Array | null;
-};
-
-type CandidateSim = {
-  postId: bigint;
-  sim: number;
 };
 
 type FolloweeRow = {
@@ -263,6 +263,12 @@ export class AiPostsService {
       typeof input.selfUserId === "string" && input.selfUserId.trim() !== ""
         ? hexToDec(input.selfUserId)
         : null;
+    const dedupWeight =
+      typeof input.dedupWeight === "number" &&
+      Number.isFinite(input.dedupWeight) &&
+      input.dedupWeight > 0
+        ? input.dedupWeight
+        : 0;
     if (input.tags.length === 0) return [];
     const paramTagCounts = new Map<string, number>();
     for (const t of input.tags) {
@@ -432,27 +438,74 @@ export class AiPostsService {
     }
     if (universe.length === 0) return [];
     let finalIds: bigint[] = universe.map((c) => c.postId);
-    if (input.features) {
-      try {
-        const qDecoded = decodeFeatures(input.features);
-        const sims: CandidateSim[] = [];
-        for (const c of universe) {
-          if (!c.features) {
-            sims.push({ postId: c.postId, sim: Number.NEGATIVE_INFINITY });
-            continue;
-          }
-          const vDecoded = decodeFeatures(c.features);
-          const simRaw = cosineSimilarity(qDecoded, vDecoded);
-          const sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
-          console.log(simRaw, sim);
-          sims.push({ postId: c.postId, sim });
+    const needVectors = !!input.features || dedupWeight > 0;
+    if (needVectors) {
+      let qVec: number[] | null = null;
+      if (input.features) {
+        try {
+          qVec = normalizeL2(decodeFeatures(input.features));
+        } catch {
+          qVec = null;
         }
-        sims.sort((a, b) => {
-          if (a.sim !== b.sim) return b.sim - a.sim;
+      }
+      const candidates: {
+        postId: bigint;
+        vec: number[] | null;
+        baseScore: number;
+        adjScore: number;
+      }[] = [];
+      for (const c of universe) {
+        let vec: number[] | null = null;
+        if (c.features) {
+          try {
+            vec = normalizeL2(decodeFeatures(c.features));
+          } catch {
+            vec = null;
+          }
+        }
+        let baseScore = postFinalScores.get(c.postId) ?? 0;
+        if (qVec) {
+          if (!vec || vec.length !== qVec.length) {
+            baseScore = Number.NEGATIVE_INFINITY;
+          } else {
+            const simRaw = cosineSimilarity(qVec, vec);
+            const sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
+            baseScore = Number.isFinite(sim) ? sim : Number.NEGATIVE_INFINITY;
+          }
+        }
+        candidates.push({ postId: c.postId, vec, baseScore, adjScore: baseScore });
+      }
+      candidates.sort((a, b) => {
+        if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
+        return compareBigIntDesc(a.postId, b.postId);
+      });
+      if (dedupWeight > 0) {
+        let sumVec: number[] | null = null;
+        for (let i = 0; i < candidates.length; i++) {
+          const c = candidates[i];
+          let adj = c.baseScore;
+          if (i > 0 && sumVec && c.vec && sumVec.length === c.vec.length) {
+            const simDupRaw = cosineSimilarity(sumVec, c.vec);
+            const simDup = sigmoidalContrast((simDupRaw + 1) / 2, 5, 0.75);
+            const penalty = Number.isFinite(simDup) ? simDup * dedupWeight : dedupWeight;
+            adj = adj - penalty;
+          }
+          c.adjScore = adj;
+          if (c.vec) {
+            if (!sumVec) {
+              sumVec = c.vec.slice();
+            } else if (sumVec.length === c.vec.length) {
+              for (let j = 0; j < sumVec.length; j++) sumVec[j] += c.vec[j];
+            }
+          }
+        }
+        candidates.sort((a, b) => {
+          if (a.adjScore !== b.adjScore) return b.adjScore - a.adjScore;
+          if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
           return compareBigIntDesc(a.postId, b.postId);
         });
-        finalIds = sims.map((x) => x.postId);
-      } catch {}
+      }
+      finalIds = candidates.map((x) => x.postId);
     }
     const orderedIds = order === "asc" ? [...finalIds].reverse() : finalIds;
     const sliced = orderedIds.slice(offset, offset + limit);
