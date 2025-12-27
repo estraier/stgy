@@ -750,11 +750,8 @@ async function fetchRecommendedPosts(
   sessionCookie: string,
   interest: AiUserInterest,
 ): Promise<string[]> {
-  console.log(interest);
-
   const tags = parseTagsField(interest.tags, Config.AI_TAG_MAX_COUNT);
   if (tags.length === 0) return [];
-
   const params = new URLSearchParams();
   for (const tag of tags) params.append("tags", tag);
   params.set("offset", "0");
@@ -2026,6 +2023,7 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
     for (let i = 0; i < sortedPostItems.length; i++) {
       const item = sortedPostItems[i];
       const post = item.post;
+      if (post.ownedBy === user.id) continue;
       const decision = decisionByPostId.get(post.id);
       const shouldLike = decision ? decision.shouldLike : true;
       const shouldReply = decision ? decision.shouldReply : true;

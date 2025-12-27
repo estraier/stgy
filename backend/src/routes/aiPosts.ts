@@ -149,8 +149,6 @@ export default function createAiPostsRouter(
         }
         dedupWeight = n;
       }
-
-      console.log(dedupWeight);
     } else if (Array.isArray(req.query.dedupWeight)) {
       const v0 = req.query.dedupWeight.find((x): x is string => typeof x === "string");
       const v = (v0 ?? "").trim();
