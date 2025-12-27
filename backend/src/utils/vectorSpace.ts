@@ -138,3 +138,115 @@ export function sigmoidalContrast(x: number, gain: number, mid: number): number 
   const y = (naiveSigmoid(x, gain, mid) - minVal) / diff;
   return Math.max(0, Math.min(1, y));
 }
+
+export type KMeansOptions = {
+  seed?: number;
+  maxIterations?: number;
+  normalize?: boolean;
+};
+
+export function clusterVectorsByKMeans(
+  vectors: ArrayLike<number>[],
+  numClusters: number,
+  options?: KMeansOptions,
+): number[] {
+  const mulberry32 = (seed: number): (() => number) => {
+    let a = seed >>> 0;
+    return () => {
+      a |= 0;
+      a = (a + 0x6d2b79f5) | 0;
+      let t = Math.imul(a ^ (a >>> 15), 1 | a);
+      t ^= t + Math.imul(t ^ (t >>> 7), 61 | t);
+      return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+    };
+  };
+  const l2Norm = (v: ArrayLike<number>): number => {
+    let s = 0;
+    for (let i = 0; i < v.length; i++) {
+      const x = Number(v[i]);
+      s += x * x;
+    }
+    return Math.sqrt(s);
+  };
+  const toFloat32 = (v: ArrayLike<number>, normalize: boolean): Float32Array => {
+    const out = new Float32Array(v.length);
+    for (let i = 0; i < v.length; i++) out[i] = Number(v[i]);
+    if (!normalize) return out;
+    const n = l2Norm(out);
+    if (!Number.isFinite(n) || n <= 0) throw new Error("invalid vector");
+    if (Math.abs(n - 1) < 1e-3) return out;
+    for (let i = 0; i < out.length; i++) out[i] /= n;
+    return out;
+  };
+  const euclideanDistanceSquared = (a: ArrayLike<number>, b: ArrayLike<number>): number => {
+    let sum = 0;
+    for (let i = 0; i < a.length; i++) {
+      const diff = Number(a[i]) - Number(b[i]);
+      sum += diff * diff;
+    }
+    return sum;
+  };
+  const shuffledIndices = (n: number, rnd: () => number): number[] => {
+    const idx = Array.from({ length: n }, (_, i) => i);
+    for (let i = n - 1; i > 0; i--) {
+      const j = Math.floor(rnd() * (i + 1));
+      const tmp = idx[i];
+      idx[i] = idx[j];
+      idx[j] = tmp;
+    }
+    return idx;
+  };
+  if (!Array.isArray(vectors) || vectors.length === 0) throw new Error("empty vectors");
+  if (!Number.isInteger(numClusters) || numClusters <= 0) throw new Error("invalid numClusters");
+  const numVectors = vectors.length;
+  if (numVectors < numClusters) throw new Error("insufficient elements");
+  const dimensions = vectors[0].length;
+  if (!Number.isInteger(dimensions) || dimensions <= 0) throw new Error("invalid dimensions");
+  for (let i = 1; i < vectors.length; i++) {
+    if (vectors[i].length !== dimensions) throw new Error("inconsistent dimensions");
+  }
+  const normalize = options?.normalize ?? true;
+  const xs = vectors.map((v) => toFloat32(v, normalize));
+  const rnd = options?.seed === undefined ? Math.random : mulberry32(options.seed);
+  const pick = shuffledIndices(numVectors, rnd).slice(0, numClusters);
+  let centroids = pick.map((i) => new Float32Array(xs[i]));
+  const assignments = new Array<number>(numVectors).fill(-1);
+  let changed = true;
+  let iterations = 0;
+  const maxIterations = options?.maxIterations ?? 100;
+  while (changed && iterations < maxIterations) {
+    changed = false;
+    iterations++;
+    for (let i = 0; i < numVectors; i++) {
+      let minDist = Infinity;
+      let closest = -1;
+      for (let j = 0; j < numClusters; j++) {
+        const dist = euclideanDistanceSquared(xs[i], centroids[j]);
+        if (dist < minDist) {
+          minDist = dist;
+          closest = j;
+        }
+      }
+      if (assignments[i] !== closest) {
+        assignments[i] = closest;
+        changed = true;
+      }
+    }
+    if (changed) {
+      const newCentroids = Array.from({ length: numClusters }, () => new Float32Array(dimensions));
+      const counts = new Array<number>(numClusters).fill(0);
+      for (let i = 0; i < numVectors; i++) {
+        const c = assignments[i];
+        for (let d = 0; d < dimensions; d++) newCentroids[c][d] += xs[i][d];
+        counts[c]++;
+      }
+      for (let j = 0; j < numClusters; j++) {
+        if (counts[j] > 0) {
+          for (let d = 0; d < dimensions; d++) newCentroids[j][d] /= counts[j];
+          centroids[j] = newCentroids[j];
+        }
+      }
+    }
+  }
+  return assignments;
+}

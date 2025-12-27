@@ -1,3 +1,4 @@
+import { jest } from "@jest/globals";
 import {
   encodeFeatures,
   decodeFeatures,
@@ -6,6 +7,7 @@ import {
   addVectors,
   naiveSigmoid,
   sigmoidalContrast,
+  clusterVectorsByKMeans,
 } from "./vectorSpace";
 
 describe("encodeFeatures / decodeFeatures", () => {
@@ -204,5 +206,113 @@ describe("sigmoidalContrast", () => {
       expect(y).toBeGreaterThanOrEqual(0);
       expect(y).toBeLessThanOrEqual(1);
     }
+  });
+});
+
+describe("clusterVectorsByKMeans (ArrayLike + seed)", () => {
+  function expectTwoClusters(a: number[], idxA: number[], idxB: number[]) {
+    const ca = a[idxA[0]];
+    for (const i of idxA) expect(a[i]).toBe(ca);
+    const cb = a[idxB[0]];
+    for (const i of idxB) expect(a[i]).toBe(cb);
+    expect(ca).not.toBe(cb);
+  }
+
+  test("throws on empty vectors", () => {
+    expect(() => clusterVectorsByKMeans([], 1, { seed: 1 })).toThrow("empty vectors");
+  });
+
+  test("throws on invalid numClusters", () => {
+    expect(() => clusterVectorsByKMeans([[1, 0]], 0, { seed: 1 })).toThrow("invalid numClusters");
+  });
+
+  test("throws when insufficient elements", () => {
+    expect(() => clusterVectorsByKMeans([[1, 0]], 2, { seed: 1 })).toThrow("insufficient elements");
+  });
+
+  test("throws on inconsistent dimensions", () => {
+    expect(() => clusterVectorsByKMeans([[1, 0], [1]], 1, { seed: 1 })).toThrow(
+      "inconsistent dimensions",
+    );
+  });
+
+  test("throws on invalid vector when normalize=true (zero norm)", () => {
+    expect(() =>
+      clusterVectorsByKMeans(
+        [
+          [0, 0],
+          [1, 0],
+        ],
+        1,
+        { seed: 1, normalize: true },
+      ),
+    ).toThrow("invalid vector");
+  });
+
+  test("does not throw on zero vector when normalize=false", () => {
+    const a = clusterVectorsByKMeans(
+      [
+        [0, 0],
+        [1, 0],
+      ],
+      1,
+      { seed: 1, normalize: false },
+    );
+    expect(a).toEqual([0, 0]);
+  });
+
+  test("deterministic with same seed", () => {
+    const vs = [
+      [10, 0],
+      [9, 0.2],
+      [0, 10],
+      [0.2, 9],
+    ];
+    const a1 = clusterVectorsByKMeans(vs, 2, { seed: 123 });
+    const a2 = clusterVectorsByKMeans(vs, 2, { seed: 123 });
+    expect(a1).toEqual(a2);
+  });
+
+  test("clusters two obvious groups (labels may swap)", () => {
+    const vs = [
+      [10, 0],
+      [9, 0.2],
+      [0, 10],
+      [0.2, 9],
+    ];
+    const a = clusterVectorsByKMeans(vs, 2, { seed: 123 });
+    expect(a).toHaveLength(4);
+    expectTwoClusters(a, [0, 1], [2, 3]);
+  });
+
+  test("normalize=true makes per-vector scaling invariant (with same seed)", () => {
+    const vs1 = [
+      [10, 0],
+      [9, 0.2],
+      [0, 10],
+      [0.2, 9],
+    ];
+    const vs2 = [
+      [1000, 0],
+      [0.9, 0.02],
+      [0, 500],
+      [2, 90],
+    ];
+    const a1 = clusterVectorsByKMeans(vs1, 2, { seed: 123, normalize: true });
+    const a2 = clusterVectorsByKMeans(vs2, 2, { seed: 123, normalize: true });
+    expect(a1).toEqual(a2);
+    expectTwoClusters(a2, [0, 1], [2, 3]);
+  });
+
+  test("maxIterations option is accepted", () => {
+    const vs = [
+      [10, 0],
+      [9, 0.2],
+      [0, 10],
+      [0.2, 9],
+    ];
+    const a = clusterVectorsByKMeans(vs, 2, { seed: 123, maxIterations: 1 });
+    expect(a).toHaveLength(4);
+    for (const x of a) expect([0, 1]).toContain(x);
   });
 });
