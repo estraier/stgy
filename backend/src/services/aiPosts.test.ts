@@ -8,7 +8,16 @@ import type {
 } from "../models/aiPost";
 import crypto from "crypto";
 import { decToHex, hexToDec } from "../utils/format";
-import { decodeFeatures, cosineSimilarity } from "../utils/vectorSpace";
+import { decodeFeatures, cosineSimilarity, sigmoidalContrast, normalizeL2 } from "../utils/vectorSpace";
+
+jest.mock("../config", () => {
+  return {
+    Config: {
+      AI_POST_RECOMMEND_TAG_CANDIDATES: 100,
+      AI_POST_RECOMMEND_VEC_CANDIDATES: 100,
+    },
+  };
+});
 
 jest.mock("../utils/servers", () => {
   const pgQuery = jest.fn((pool: unknown, sql: string, params?: unknown[]) =>
@@ -271,7 +280,10 @@ class MockPgClient {
       sql.includes("JOIN posts p ON p.id = mtp.post_id")
     ) {
       const tagArray = (params?.[0] as string[]) ?? [];
-      const limitPerTag = 100;
+      const limitPerTag =
+        typeof params?.[1] === "number" && Number.isFinite(params?.[1] as number)
+          ? (params?.[1] as number)
+          : 100;
 
       const rows: { post_id: string; tag: string; is_root: boolean; user_id: string }[] = [];
 
@@ -704,6 +716,7 @@ describe("AiPostsService RecommendPosts", () => {
 
   const dec = (n: number) => String(n);
   const hex = (n: number) => toHexStrFromDec(dec(n));
+  const seed = (name: string, count = 1) => ({ name, count });
 
   const mkSummary = (postIdDec: string, features: number[] | null) => {
     pgClient.summaries.push({
@@ -819,7 +832,7 @@ describe("AiPostsService RecommendPosts", () => {
 
   test("filters out ids that do not exist in ai_post_summaries (universe selection)", async () => {
     const input: RecommendPostsInput = {
-      tags: ["tech", "eco", "game"],
+      tags: [seed("tech"), seed("eco"), seed("game")],
       limit: 100,
       order: "desc",
     };
@@ -831,7 +844,7 @@ describe("AiPostsService RecommendPosts", () => {
     const selfUserHex = (pgClient as any).__selfUserHex as string;
 
     const input: RecommendPostsInput = {
-      tags: ["tech", "eco", "game"],
+      tags: [seed("tech"), seed("eco"), seed("game")],
       selfUserId: selfUserHex,
       limit: 100,
       order: "desc",
@@ -854,7 +867,7 @@ describe("AiPostsService RecommendPosts", () => {
     const q = new Int8Array([10, 0, 0]);
 
     const input: RecommendPostsInput = {
-      tags: ["tech", "eco", "game"],
+      tags: [seed("tech"), seed("eco"), seed("game")],
       features: q,
       limit: 100,
       order: "desc",
@@ -864,12 +877,13 @@ describe("AiPostsService RecommendPosts", () => {
 
     const universeDecIds = [121, 123, 124, 127, 125, 122, 129].map(dec);
 
-    const qDecoded = decodeFeatures(q);
+    const qDecoded = normalizeL2(decodeFeatures(q));
     const scored = universeDecIds.map((postIdDec) => {
       const s = pgClient.summaries.find((x) => x.postId === postIdDec);
       if (!s?.features) throw new Error("test setup error: missing features");
       const v = new Int8Array(s.features.buffer, s.features.byteOffset, s.features.byteLength);
-      const sim = cosineSimilarity(qDecoded, decodeFeatures(v));
+      const simRaw = cosineSimilarity(qDecoded, normalizeL2(decodeFeatures(v)));
+      const sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
       return { postIdDec, sim };
     });
 
@@ -896,7 +910,7 @@ describe("AiPostsService RecommendPosts", () => {
     const q = new Int8Array([10, 0, 0]);
 
     const input: RecommendPostsInput = {
-      tags: ["tech", "eco", "game"],
+      tags: [seed("tech"), seed("eco"), seed("game")],
       features: q,
       order: "asc",
       offset: 1,
@@ -906,12 +920,13 @@ describe("AiPostsService RecommendPosts", () => {
     const result = await service.RecommendPosts(input);
 
     const universeDecIds = [121, 123, 124, 127, 125, 122, 129].map(dec);
-    const qDecoded = decodeFeatures(q);
+    const qDecoded = normalizeL2(decodeFeatures(q));
     const scored = universeDecIds.map((postIdDec) => {
       const s = pgClient.summaries.find((x) => x.postId === postIdDec);
       if (!s?.features) throw new Error("test setup error: missing features");
       const v = new Int8Array(s.features.buffer, s.features.byteOffset, s.features.byteLength);
-      const sim = cosineSimilarity(qDecoded, decodeFeatures(v));
+      const simRaw = cosineSimilarity(qDecoded, normalizeL2(decodeFeatures(v)));
+      const sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
       return { postIdDec, sim };
     });
 
@@ -962,7 +977,7 @@ describe("AiPostsService RecommendPosts", () => {
     );
 
     const input: RecommendPostsInput = {
-      tags: ["t", "u"],
+      tags: [seed("t"), seed("u")],
       selfUserId: selfUserHex,
       order: "desc",
       limit: 10,

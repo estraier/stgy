@@ -27,21 +27,6 @@ function toPacket(s: AiPostSummary): AiPostSummaryPacket {
   };
 }
 
-function parseTagsQueryParam(v: unknown): string[] {
-  const raw: string[] = [];
-  if (typeof v === "string") {
-    raw.push(v);
-  } else if (Array.isArray(v)) {
-    for (const e of v) {
-      if (typeof e === "string") raw.push(e);
-    }
-  }
-  const expanded = raw.flatMap((s) => s.split(","));
-  return expanded
-    .map((t) => normalizeOneLiner(t.toLowerCase()))
-    .filter((t): t is string => typeof t === "string" && t.trim() !== "");
-}
-
 export default function createAiPostsRouter(
   pgPool: Pool,
   redis: Redis,
@@ -94,43 +79,71 @@ export default function createAiPostsRouter(
     }
   });
 
-  router.get("/recommendations", async (req, res) => {
+  router.post("/recommendations", async (req, res) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
-    const { offset, limit, order } = AuthHelpers.getPageParams(
-      req,
-      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
-      ["desc", "asc"] as const,
-    );
-    const tags = parseTagsQueryParam(req.query.tags);
+    const b = (req.body && typeof req.body === "object" ? req.body : null) as
+      | Record<string, unknown>
+      | null;
+    if (!b) {
+      return res.status(400).json({ error: "invalid body" });
+    }
+    const limitMax = loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT;
+    let offset = 0;
+    if (typeof b.offset === "number" && Number.isFinite(b.offset) && b.offset >= 0) {
+      offset = Math.floor(b.offset);
+    }
+    let limit = 100;
+    if (typeof b.limit === "number" && Number.isFinite(b.limit) && b.limit >= 0) {
+      limit = Math.floor(b.limit);
+    }
+    if (limit > limitMax) limit = limitMax;
+    let order: "desc" | "asc" = "desc";
+    if (typeof b.order === "string" && b.order.toLowerCase() === "asc") order = "asc";
+    const tagsRaw = b.tags;
+    if (!Array.isArray(tagsRaw) || tagsRaw.length === 0) {
+      return res.status(400).json({ error: "tags is required" });
+    }
+    const tagCounts = new Map<string, number>();
+    for (let i = 0; i < tagsRaw.length; i++) {
+      const t0 = tagsRaw[i] as unknown;
+      const t = (t0 && typeof t0 === "object" ? (t0 as Record<string, unknown>) : null) as
+        | Record<string, unknown>
+        | null;
+      if (!t) {
+        return res.status(400).json({ error: `invalid tags[${i}]` });
+      }
+      const nameRaw = typeof t.name === "string" ? t.name : "";
+      const name = normalizeOneLiner(nameRaw.toLowerCase());
+      if (typeof name !== "string" || name.trim() === "") {
+        return res.status(400).json({ error: `invalid tags[${i}].name` });
+      }
+      const count = t.count;
+      if (
+        typeof count !== "number" ||
+        !Number.isFinite(count) ||
+        !Number.isInteger(count) ||
+        count <= 0
+      ) {
+        return res.status(400).json({ error: `invalid tags[${i}].count` });
+      }
+      tagCounts.set(name, (tagCounts.get(name) ?? 0) + count);
+    }
+    const tags = Array.from(tagCounts.entries()).map(([name, count]) => ({ name, count }));
     if (tags.length === 0) {
       return res.status(400).json({ error: "tags is required" });
     }
     let selfUserId: string | undefined;
-    if (typeof req.query.selfUserId === "string") {
-      const v = req.query.selfUserId.trim();
-      if (v !== "") selfUserId = v;
-    } else if (Array.isArray(req.query.selfUserId)) {
-      const v0 = req.query.selfUserId.find((x): x is string => typeof x === "string");
-      const v = (v0 ?? "").trim();
+    if (typeof b.selfUserId === "string") {
+      const v = b.selfUserId.trim();
       if (v !== "") selfUserId = v;
     }
     let features: Int8Array | undefined;
-    if (typeof req.query.features === "string") {
-      const v = req.query.features.trim();
-      if (v !== "") {
-        try {
-          features = base64ToInt8(v);
-        } catch {
-          return res.status(400).json({ error: "features must be base64 string if specified" });
-        }
-      }
-    } else if (Array.isArray(req.query.features)) {
-      const v0 = req.query.features.find((x): x is string => typeof x === "string");
-      const v = (v0 ?? "").trim();
+    if (typeof b.features === "string") {
+      const v = b.features.trim();
       if (v !== "") {
         try {
           features = base64ToInt8(v);
@@ -140,25 +153,11 @@ export default function createAiPostsRouter(
       }
     }
     let dedupWeight: number | undefined;
-    if (typeof req.query.dedupWeight === "string") {
-      const v = req.query.dedupWeight.trim();
-      if (v !== "") {
-        const n = Number(v);
-        if (!Number.isFinite(n)) {
-          return res.status(400).json({ error: "dedupWeight must be number if specified" });
-        }
-        dedupWeight = n;
+    if (typeof b.dedupWeight === "number") {
+      if (!Number.isFinite(b.dedupWeight)) {
+        return res.status(400).json({ error: "dedupWeight must be number if specified" });
       }
-    } else if (Array.isArray(req.query.dedupWeight)) {
-      const v0 = req.query.dedupWeight.find((x): x is string => typeof x === "string");
-      const v = (v0 ?? "").trim();
-      if (v !== "") {
-        const n = Number(v);
-        if (!Number.isFinite(n)) {
-          return res.status(400).json({ error: "dedupWeight must be number if specified" });
-        }
-        dedupWeight = n;
-      }
+      dedupWeight = b.dedupWeight;
     }
     try {
       const watch = timerThrottleService.startWatch(loginUser);

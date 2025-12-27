@@ -2335,47 +2335,50 @@ paths:
           $ref: "#/components/responses/Error404"
 
   /ai-posts/recommendations:
-    get:
+    post:
       summary: Recommend posts
       security:
         - sessionCookie: []
-      parameters:
-        - name: tags
-          in: query
-          required: true
-          description: Tag filters. Repeat "tags" query param for multiple tags.
-          style: form
-          explode: true
-          schema:
-            type: array
-            items: { type: string }
-        - name: selfUserId
-          in: query
-          required: false
-          schema:
-            type: string
-        - name: features
-          in: query
-          required: false
-          description: Base64-encoded Int8Array features vector used for similarity-based re-ranking.
-          schema:
-            type: string
-            format: byte
-        - name: dedupWeight
-          in: query
-          required: false
-          schema:
-            type: number
-            format: float
-        - name: offset
-          in: query
-          schema: { type: integer, default: 0 }
-        - name: limit
-          in: query
-          schema: { type: integer, default: 100 }
-        - name: order
-          in: query
-          schema: { type: string, enum: [desc, asc], default: desc }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [tags]
+              properties:
+                tags:
+                  type: array
+                  description: Tag filters with weights.
+                  items:
+                    type: object
+                    required: [name, count]
+                    properties:
+                      name:
+                        type: string
+                      count:
+                        type: integer
+                        minimum: 1
+                selfUserId:
+                  type: string
+                features:
+                  type: string
+                  format: byte
+                  nullable: true
+                  description: Base64-encoded Int8Array features vector used for similarity-based re-ranking.
+                dedupWeight:
+                  type: number
+                  format: float
+                offset:
+                  type: integer
+                  default: 0
+                limit:
+                  type: integer
+                  default: 100
+                order:
+                  type: string
+                  enum: [desc, asc]
+                  default: desc
       responses:
         "200":
           description: Ranked post ids

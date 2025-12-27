@@ -41,15 +41,20 @@ export type UpdateAiPostSummaryPacket = {
   tags?: string[];
 };
 
+export type SearchSeedTag = {
+  name: string;
+  count: number;
+};
+
 export type RecommendPostsInput = {
-  tags: string[];
+  tags: SearchSeedTag[];
   features?: Int8Array;
   selfUserId?: string;
   dedupWeight?: number;
 } & AiPostPagination;
 
 export type RecommendPostsInputPacket = {
-  tags: string[];
+  tags: SearchSeedTag[];
   features?: string | null;
   selfUserId?: string;
   dedupWeight?: number;

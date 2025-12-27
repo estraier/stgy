@@ -273,10 +273,11 @@ export class AiPostsService {
     if (input.tags.length === 0) return [];
     const paramTagCounts = new Map<string, number>();
     for (const t of input.tags) {
-      if (typeof t !== "string") continue;
-      const tag = t.trim();
+      const tag = typeof t.name === "string" ? t.name.trim() : "";
       if (!tag) continue;
-      paramTagCounts.set(tag, (paramTagCounts.get(tag) ?? 0) + 1);
+      const count = typeof t.count === "number" && Number.isFinite(t.count) ? t.count : 0;
+      if (count <= 0) continue;
+      paramTagCounts.set(tag, (paramTagCounts.get(tag) ?? 0) + count);
     }
     const queryTags = Array.from(paramTagCounts.keys());
     if (queryTags.length === 0) return [];

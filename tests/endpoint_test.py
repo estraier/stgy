@@ -378,15 +378,15 @@ def test_ai_posts():
   p3 = res.json()
   p3_id = p3["id"]
   reco_url = f"{BASE_URL}/ai-posts/recommendations"
-  res = requests.get(reco_url, params=[("tags", tag_a), ("tags", tag_b), ("limit", "10"), ("order", "desc"), ("dedupWeight", 0.5)], headers=headers, cookies=cookies)
+  res = requests.post(reco_url, json={"tags": [{"name": tag_a, "count": 1}, {"name": tag_b, "count": 1}], "limit": 10, "order": "desc", "dedupWeight": 0.5}, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   ranked = res.json()
   assert ranked == [p3_id, p1_id, p2_id]
-  res = requests.get(reco_url, params=[("tags", tag_a), ("tags", tag_b), ("limit", "10"), ("order", "asc")], headers=headers, cookies=cookies)
+  res = requests.post(reco_url, json={"tags": [{"name": tag_a, "count": 1}, {"name": tag_b, "count": 1}], "limit": 10, "order": "asc"}, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   ranked2 = res.json()
   assert ranked2 == [p2_id, p1_id, p3_id]
-  res = requests.get(reco_url, params=[("tags", tag_a), ("tags", tag_b), ("offset", "1"), ("limit", "1"), ("order", "desc")], headers=headers, cookies=cookies)
+  res = requests.post(reco_url, json={"tags": [{"name": tag_a, "count": 1}, {"name": tag_b, "count": 1}], "offset": 1, "limit": 1, "order": "desc"}, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   ranked3 = res.json()
   assert ranked3 == [p1_id]

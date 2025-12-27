@@ -750,31 +750,46 @@ async function fetchRecommendedPosts(
   sessionCookie: string,
   interest: AiUserInterest,
 ): Promise<string[]> {
-  const tags = parseTagsField(interest.tags, Config.AI_TAG_MAX_COUNT);
+  const tags0 = parseTagsField(interest.tags, Config.AI_TAG_MAX_COUNT);
+  if (tags0.length === 0) return [];
+  const tagCounts = new Map<string, number>();
+  for (const t of tags0) {
+    const tag = typeof t === "string" ? t.trim() : "";
+    if (tag === "") continue;
+    tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
+  }
+  const tags = Array.from(tagCounts.entries()).map(([name, count]) => ({ name, count }));
   if (tags.length === 0) return [];
-  const params = new URLSearchParams();
-  for (const tag of tags) params.append("tags", tag);
-  params.set("offset", "0");
-  params.set("limit", String(Math.min(100, Config.AI_USER_FETCH_POST_LIMIT)));
-  params.set("order", "desc");
-  params.set("dedupWeight", "0.3");
-
+  const body: {
+    tags: { name: string; count: number }[];
+    offset: number;
+    limit: number;
+    order: "desc";
+    dedupWeight: number;
+    selfUserId?: string;
+    features?: string;
+  } = {
+    tags,
+    offset: 0,
+    limit: Math.min(100, Config.AI_USER_FETCH_POST_LIMIT),
+    order: "desc",
+    dedupWeight: 0.3,
+  };
   const selfUserId = typeof interest.userId === "string" ? interest.userId.trim() : "";
-  if (selfUserId !== "") params.set("selfUserId", selfUserId);
-
+  if (selfUserId !== "") body.selfUserId = selfUserId;
   const feat = interest.features;
   if (feat && feat.byteLength > 0) {
     const buf = Buffer.from(feat.buffer, feat.byteOffset, feat.byteLength);
     const encoded = buf.toString("base64").trim();
-    if (encoded !== "") params.set("features", encoded);
+    if (encoded !== "") body.features = encoded;
   }
   try {
-    const res = await apiRequest(sessionCookie, `/ai-posts/recommendations?${params.toString()}`, {
-      method: "GET",
+    const res = await apiRequest(sessionCookie, `/ai-posts/recommendations`, {
+      method: "POST",
+      body,
     });
     const parsed = JSON.parse(res.body) as unknown;
     if (!Array.isArray(parsed)) return [];
-
     const out: string[] = [];
     const seen = new Set<string>();
     for (const item of parsed) {
