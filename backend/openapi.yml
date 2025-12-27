@@ -2352,7 +2352,6 @@ paths:
         - name: selfUserId
           in: query
           required: false
-          description: Self user id (16-char uppercase hex). If specified, posts by self may be excluded and ranking may consider social graph.
           schema:
             type: string
         - name: features
@@ -2362,6 +2361,12 @@ paths:
           schema:
             type: string
             format: byte
+        - name: dedupWeight
+          in: query
+          required: false
+          schema:
+            type: number
+            format: float
         - name: offset
           in: query
           schema: { type: integer, default: 0 }
