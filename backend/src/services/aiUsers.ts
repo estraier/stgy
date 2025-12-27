@@ -1,9 +1,9 @@
+import { Config } from "../config";
 import { Pool } from "pg";
 import { pgQuery } from "../utils/servers";
 import Redis from "ioredis";
 import { decToHex, hexToDec, bufferToInt8Array, int8ArrayToBuffer } from "../utils/format";
 import OpenAI from "openai";
-import { Config } from "../config";
 import { encodeFeatures } from "../utils/vectorSpace";
 import type {
   AiUser,

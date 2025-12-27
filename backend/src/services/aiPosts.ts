@@ -1,3 +1,4 @@
+import { Config } from "../config";
 import { Pool } from "pg";
 import { pgQuery } from "../utils/servers";
 import {
@@ -306,7 +307,7 @@ export class AiPostsService {
           FROM post_tags
           WHERE name = qt.tag
           ORDER BY post_id DESC
-          LIMIT 100
+          LIMIT $2
         ) pt ON true
         UNION ALL
         SELECT qt.tag, apt.post_id
@@ -316,7 +317,7 @@ export class AiPostsService {
           FROM ai_post_tags
           WHERE name = qt.tag
           ORDER BY post_id DESC
-          LIMIT 100
+          LIMIT $2
         ) apt ON true
       )
       SELECT
@@ -327,7 +328,7 @@ export class AiPostsService {
       FROM matched_tag_posts mtp
       JOIN posts p ON p.id = mtp.post_id
       `,
-      [queryTags],
+      [queryTags, Config.AI_POST_RECOMMEND_TAG_CANDIDATES],
     );
     let records: RecommendRecord[] = [];
     for (const r0 of res.rows as unknown[]) {
@@ -412,7 +413,11 @@ export class AiPostsService {
       return compareBigIntDesc(a.postId, b.postId);
     });
     const universe: Candidate[] = [];
-    for (let i = 0; i < scored.length && universe.length < 100; i += 20) {
+    for (
+      let i = 0;
+      i < scored.length && universe.length < Config.AI_POST_RECOMMEND_VEC_CANDIDATES;
+      i += 20
+    ) {
       const chunk = scored.slice(i, i + 20);
       const ids = chunk.map((c) => c.postId.toString());
       const r = await pgQuery<PostFeaturesRow>(
@@ -433,7 +438,7 @@ export class AiPostsService {
           postId: c.postId,
           features: row.features ? bufferToInt8Array(row.features) : null,
         });
-        if (universe.length >= 100) break;
+        if (universe.length >= Config.AI_POST_RECOMMEND_VEC_CANDIDATES) break;
       }
     }
     if (universe.length === 0) return [];

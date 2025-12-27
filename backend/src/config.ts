@@ -100,6 +100,14 @@ export class Config {
   static readonly AI_RPC_TIMEOUT_MS = envNum("STGY_AI_RPC_TIMEOUT_MS", 600 * 1000);
   static readonly AI_TAG_MAX_COUNT = envNum("STGY_AI_TAG_MAX_COUNT", 5);
   static readonly AI_TAG_MAX_LENGTH = envNum("STGY_AI_TAG_MAX_LENGTH", 40);
+  static readonly AI_POST_RECOMMEND_TAG_CANDIDATES = envNum(
+    "STGY_AI_POST_RECOMMEND_TAG_CANDIDATES",
+    100,
+  );
+  static readonly AI_POST_RECOMMEND_VEC_CANDIDATES = envNum(
+    "STGY_AI_POST_RECOMMEND_VEC_CANDIDATES",
+    100,
+  );
   static readonly AI_SUMMARY_MODEL = envStr("STGY_AI_SUMMARY_MODEL", "basic");
   static readonly AI_SUMMARY_POST_LOOKBACK_MS = envNum(
     "STGY_AI_SUMMARY_POST_LOOKBACK_MS",
