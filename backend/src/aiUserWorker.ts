@@ -626,7 +626,7 @@ async function fetchLatestPosts(sessionCookie: string): Promise<Post[]> {
 async function fetchPeerLatestPosts(sessionCookie: string, peerId: string): Promise<PostDetail[]> {
   const params = new URLSearchParams();
   params.set("offset", "0");
-  params.set("limit", String(Math.min(5, Config.AI_USER_READ_PEER_POST_LIMIT)));
+  params.set("limit", String(Config.AI_USER_READ_PEER_POST_LIMIT));
   params.set("order", "desc");
   params.set("ownedBy", peerId);
   const res = await apiRequest(sessionCookie, `/posts?${params.toString()}`, { method: "GET" });
@@ -635,8 +635,7 @@ async function fetchPeerLatestPosts(sessionCookie: string, peerId: string): Prom
   const list = parsed as Post[];
   const ids = list
     .map((p) => p.id)
-    .filter((id): id is string => typeof id === "string" && id.trim() !== "")
-    .slice(0, Math.min(5, Config.AI_USER_READ_POST_LIMIT));
+    .filter((id): id is string => typeof id === "string" && id.trim() !== "");
   const result: PostDetail[] = [];
   for (const id of ids) {
     try {
@@ -1471,7 +1470,7 @@ async function createInterest(
   const peerImps = await fetchOwnPeerImpressions(
     userSessionCookie,
     profile.id,
-    Config.AI_USER_READ_INTEREST_LIMIT,
+    Config.AI_USER_READ_OWN_POST_LIMIT,
   );
   const users: {
     userId: string;
@@ -1514,7 +1513,7 @@ async function createInterest(
   const postImps = await fetchOwnPostImpressions(
     userSessionCookie,
     profile.id,
-    Config.AI_USER_READ_INTEREST_LIMIT,
+    Config.AI_USER_READ_OWN_POST_LIMIT,
   );
   const posts: {
     locale: string;
@@ -1675,7 +1674,7 @@ async function createNewPost(
   const ownPosts = await fetchOwnRecentPosts(
     userSessionCookie,
     profile.id,
-    Config.AI_USER_READ_NEW_POST_LIMIT,
+    Config.AI_USER_READ_OWN_POST_LIMIT,
   );
   const seedPosts = ownPosts.slice(0, Math.min(5, Config.AI_USER_READ_POST_LIMIT));
   if (seedPosts.length > 0) {
