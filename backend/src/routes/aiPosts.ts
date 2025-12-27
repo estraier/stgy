@@ -12,6 +12,7 @@ import type {
   AiPostSummary,
   AiPostSummaryPacket,
   RecommendPostsInput,
+  SearchSeed,
   UpdateAiPostSummaryInput,
   UpdateAiPostSummaryPacket,
 } from "../models/aiPost";
@@ -24,6 +25,18 @@ function toPacket(s: AiPostSummary): AiPostSummaryPacket {
     summary: s.summary,
     features: s.features ? int8ToBase64(s.features) : null,
     tags: s.tags,
+  };
+}
+
+type SearchSeedPacket = {
+  tags: { name: string; count: number }[];
+  features: string;
+};
+
+function toSeedPacket(seed: SearchSeed): SearchSeedPacket {
+  return {
+    tags: seed.tags.map((t) => ({ name: t.name, count: t.count })),
+    features: int8ToBase64(seed.features),
   };
 }
 
@@ -79,15 +92,40 @@ export default function createAiPostsRouter(
     }
   });
 
+  router.get("/search-seed", async (req, res) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const userIdParam =
+      typeof req.query.userId === "string" && req.query.userId.trim() !== ""
+        ? req.query.userId.trim()
+        : undefined;
+    if (userIdParam && !loginUser.isAdmin) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    const targetUserId = loginUser.isAdmin && userIdParam ? userIdParam : loginUser.id;
+    try {
+      const watch = timerThrottleService.startWatch(loginUser);
+      const seed = await aiPostsService.BuildSearchSeedForUser(targetUserId);
+      watch.done();
+      res.json(toSeedPacket(seed));
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "invalid request" });
+    }
+  });
+
   router.post("/recommendations", async (req, res) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
-    const b = (req.body && typeof req.body === "object" ? req.body : null) as
-      | Record<string, unknown>
-      | null;
+    const b = (req.body && typeof req.body === "object" ? req.body : null) as Record<
+      string,
+      unknown
+    > | null;
     if (!b) {
       return res.status(400).json({ error: "invalid body" });
     }
@@ -110,9 +148,10 @@ export default function createAiPostsRouter(
     const tagCounts = new Map<string, number>();
     for (let i = 0; i < tagsRaw.length; i++) {
       const t0 = tagsRaw[i] as unknown;
-      const t = (t0 && typeof t0 === "object" ? (t0 as Record<string, unknown>) : null) as
-        | Record<string, unknown>
-        | null;
+      const t = (t0 && typeof t0 === "object" ? (t0 as Record<string, unknown>) : null) as Record<
+        string,
+        unknown
+      > | null;
       if (!t) {
         return res.status(400).json({ error: `invalid tags[${i}]` });
       }

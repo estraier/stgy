@@ -347,6 +347,19 @@ def test_ai_posts():
   assert got["summary"] == dummy_summary
   assert got["features"] == feats_b64
   assert b64_to_int8_list(got["features"]) == feats
+  res = requests.get(f"{BASE_URL}/ai-posts/search-seed", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  seed = res.json()
+  print("[ai_posts] search-seed:", seed)
+  assert isinstance(seed, dict)
+  assert "tags" in seed
+  assert "features" in seed
+  assert isinstance(seed["tags"], list)
+  assert isinstance(seed["features"], str)
+  assert seed["features"].strip() != ""
+  decoded_seed = b64_to_int8_list(seed["features"])
+  assert isinstance(decoded_seed, list)
+  assert len(decoded_seed) > 0
   res = requests.head(f"{BASE_URL}/ai-posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[ai_posts] head: exists OK")

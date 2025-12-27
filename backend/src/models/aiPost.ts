@@ -46,6 +46,16 @@ export type SearchSeedTag = {
   count: number;
 };
 
+export type SearchSeed = {
+  tags: SearchSeedTag[];
+  features: Int8Array;
+};
+
+export type SearchSeedPacket = {
+  tags: SearchSeedTag[];
+  features: string;
+};
+
 export type RecommendPostsInput = {
   tags: SearchSeedTag[];
   features?: Int8Array;

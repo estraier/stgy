@@ -8,7 +8,13 @@ import type {
 } from "../models/aiPost";
 import crypto from "crypto";
 import { decToHex, hexToDec } from "../utils/format";
-import { decodeFeatures, cosineSimilarity, sigmoidalContrast, normalizeL2 } from "../utils/vectorSpace";
+import {
+  decodeFeatures,
+  encodeFeatures,
+  cosineSimilarity,
+  sigmoidalContrast,
+  normalizeL2,
+} from "../utils/vectorSpace";
 
 jest.mock("../config", () => {
   return {
@@ -70,18 +76,146 @@ type MockFollowRow = {
   followeeId: string;
 };
 
+type MockPostLikeRow = {
+  postId: string;
+  likedBy: string;
+  createdAt: string;
+};
+
 class MockPgClient {
   summaries: MockAiPostSummaryRow[] = [];
   tags: MockAiPostTagRow[] = [];
   postTags: MockPostTagRow[] = [];
   posts: MockPostRow[] = [];
   follows: MockFollowRow[] = [];
+  likes: MockPostLikeRow[] = [];
 
   async query(sql: string, params?: unknown[]) {
     sql = normalizeSql(sql);
 
     if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
       return { rows: [], rowCount: 0 };
+    }
+
+    if (
+      sql.includes("WITH") &&
+      sql.includes("self_posts AS") &&
+      sql.includes("self_likes AS") &&
+      sql.includes("followee_posts AS") &&
+      sql.includes("followee_likes AS") &&
+      sql.includes("seed_posts AS") &&
+      sql.includes("SELECT post_id, weight") &&
+      sql.includes("FROM seed_posts")
+    ) {
+      const userId = params ? String(params[0]) : "";
+      const selfPostLimit = typeof params?.[1] === "number" ? (params?.[1] as number) : 10;
+      const selfLikeLimit = typeof params?.[2] === "number" ? (params?.[2] as number) : 10;
+      const topFolloweeLimit = typeof params?.[3] === "number" ? (params?.[3] as number) : 10;
+      const followeePostLimit = typeof params?.[4] === "number" ? (params?.[4] as number) : 2;
+      const followeeLikeLimit = typeof params?.[5] === "number" ? (params?.[5] as number) : 10;
+
+      const sortPostIdDesc = (a: string, b: string) => {
+        const aa = BigInt(a);
+        const bb = BigInt(b);
+        if (aa === bb) return 0;
+        return aa > bb ? -1 : 1;
+      };
+
+      const selfPosts = this.posts
+        .filter((p) => p.userId === userId)
+        .map((p) => p.postId)
+        .sort(sortPostIdDesc)
+        .slice(0, Math.max(0, selfPostLimit));
+
+      const selfLikes = this.likes
+        .filter((l) => l.likedBy === userId)
+        .slice()
+        .sort((a, b) => (a.createdAt === b.createdAt ? 0 : a.createdAt < b.createdAt ? 1 : -1))
+        .map((l) => l.postId)
+        .slice(0, Math.max(0, selfLikeLimit));
+
+      const followees = this.follows
+        .filter((f) => f.followerId === userId)
+        .map((f) => f.followeeId);
+
+      const lastPostByFollowee = new Map<string, string>();
+      for (const fid of followees) {
+        const ids = this.posts
+          .filter((p) => p.userId === fid)
+          .map((p) => p.postId)
+          .sort(sortPostIdDesc);
+        if (ids.length > 0) lastPostByFollowee.set(fid, ids[0]);
+      }
+
+      const topFollowees = Array.from(lastPostByFollowee.entries())
+        .sort((a, b) => sortPostIdDesc(a[1], b[1]))
+        .map(([fid]) => fid)
+        .slice(0, Math.max(0, topFolloweeLimit));
+
+      const followeePosts: string[] = [];
+      for (const fid of topFollowees) {
+        const ids = this.posts
+          .filter((p) => p.userId === fid)
+          .map((p) => p.postId)
+          .sort(sortPostIdDesc)
+          .slice(0, Math.max(0, followeePostLimit));
+        followeePosts.push(...ids);
+      }
+
+      const followeeLikes: string[] = [];
+      for (const fid of topFollowees) {
+        const ids = this.likes
+          .filter((l) => l.likedBy === fid)
+          .slice()
+          .sort((a, b) => (a.createdAt === b.createdAt ? 0 : a.createdAt < b.createdAt ? 1 : -1))
+          .map((l) => l.postId)
+          .slice(0, Math.max(0, followeeLikeLimit));
+        followeeLikes.push(...ids);
+      }
+
+      const rows: { post_id: string; weight: number }[] = [];
+      for (const id of selfPosts) rows.push({ post_id: id, weight: 1.0 });
+      for (const id of selfLikes) rows.push({ post_id: id, weight: 0.7 });
+      for (const id of followeePosts) rows.push({ post_id: id, weight: 0.5 });
+      for (const id of followeeLikes) rows.push({ post_id: id, weight: 0.3 });
+
+      return { rows };
+    }
+
+    if (
+      sql.includes("WITH seed_posts(post_id, weight) AS") &&
+      sql.includes("JOIN ai_post_tags apt ON apt.post_id = sp.post_id") &&
+      sql.includes("SELECT sp.weight, apt.name")
+    ) {
+      const postIds = (params?.[0] as unknown[] | undefined)?.map((x) => String(x)) ?? [];
+      const weights = (params?.[1] as unknown[] | undefined)?.map((x) => Number(x)) ?? [];
+      const rows: { weight: number; name: string }[] = [];
+      for (let i = 0; i < postIds.length && i < weights.length; i++) {
+        const postId = postIds[i];
+        const w = weights[i];
+        for (const t of this.tags.filter((x) => x.postId === postId)) {
+          rows.push({ weight: w, name: t.name });
+        }
+      }
+      return { rows };
+    }
+
+    if (
+      sql.includes("WITH seed_posts(post_id, weight) AS") &&
+      sql.includes("JOIN ai_post_summaries aps ON aps.post_id = sp.post_id") &&
+      sql.includes("WHERE aps.features IS NOT NULL") &&
+      sql.includes("SELECT sp.weight, aps.features")
+    ) {
+      const postIds = (params?.[0] as unknown[] | undefined)?.map((x) => String(x)) ?? [];
+      const weights = (params?.[1] as unknown[] | undefined)?.map((x) => Number(x)) ?? [];
+      const rows: { weight: number; features: Buffer }[] = [];
+      for (let i = 0; i < postIds.length && i < weights.length; i++) {
+        const postId = postIds[i];
+        const w = weights[i];
+        const s = this.summaries.find((x) => x.postId === postId);
+        if (s?.features) rows.push({ weight: w, features: s.features });
+      }
+      return { rows };
     }
 
     if (
@@ -985,5 +1119,139 @@ describe("AiPostsService RecommendPosts", () => {
 
     const result = await localService.RecommendPosts(input);
     expect(result).toEqual([toHexStrFromDec(dec(199)), toHexStrFromDec(dec(200))]);
+  });
+});
+
+describe("AiPostsService BuildSearchSeedForUser", () => {
+  let pgClient: MockPgClient;
+  let service: AiPostsService;
+
+  const dec = (n: number) => String(n);
+  const hex = (n: number) => toHexStrFromDec(dec(n));
+
+  const mkDense = (seed: number): Int8Array => {
+    const a = new Int8Array(512);
+    for (let i = 0; i < a.length; i++) a[i] = ((i + seed) % 11) + 1;
+    return a;
+  };
+
+  const addSummary = (postIdDec: string, seed: number) => {
+    const a = mkDense(seed);
+    pgClient.summaries.push({
+      postId: postIdDec,
+      summary: "s",
+      features: Buffer.from(a),
+      updatedAt: "2025-01-01T00:00:00Z",
+    });
+    return a;
+  };
+
+  beforeEach(() => {
+    pgClient = new MockPgClient();
+    service = new AiPostsService(pgClient as unknown as Pool);
+  });
+
+  test("throws when no seed posts", async () => {
+    await expect(service.BuildSearchSeedForUser(hex(777))).rejects.toThrow("no seed posts");
+  });
+
+  test("builds tags and features from self/likes/followees", async () => {
+    const selfUserHex = hex(777);
+    const selfUserDec = toDecStr(selfUserHex);
+    const followeeA = dec(800);
+    const followeeB = dec(801);
+    const otherOwner = dec(900);
+
+    pgClient.follows.push(
+      { followerId: selfUserDec, followeeId: followeeA },
+      { followerId: selfUserDec, followeeId: followeeB },
+    );
+
+    const selfP1 = dec(1001);
+    const selfP2 = dec(1000);
+    const selfLiked = dec(2000);
+    const faPost = dec(3000);
+    const fbPost = dec(3001);
+    const flaLiked = dec(4000);
+    const flbLiked = dec(4001);
+
+    pgClient.posts.push(
+      { postId: selfP1, replyTo: null, userId: selfUserDec, publishedAt: "2025-01-01T00:00:01Z" },
+      { postId: selfP2, replyTo: null, userId: selfUserDec, publishedAt: "2025-01-01T00:00:02Z" },
+      { postId: selfLiked, replyTo: null, userId: otherOwner, publishedAt: "2025-01-01T00:00:03Z" },
+      { postId: faPost, replyTo: null, userId: followeeA, publishedAt: "2025-01-01T00:00:04Z" },
+      { postId: fbPost, replyTo: null, userId: followeeB, publishedAt: "2025-01-01T00:00:05Z" },
+      { postId: flaLiked, replyTo: null, userId: otherOwner, publishedAt: "2025-01-01T00:00:06Z" },
+      { postId: flbLiked, replyTo: null, userId: otherOwner, publishedAt: "2025-01-01T00:00:07Z" },
+    );
+
+    pgClient.likes.push(
+      { postId: selfLiked, likedBy: selfUserDec, createdAt: "2025-01-01T00:00:10Z" },
+      { postId: flaLiked, likedBy: followeeA, createdAt: "2025-01-01T00:00:20Z" },
+      { postId: flbLiked, likedBy: followeeB, createdAt: "2025-01-01T00:00:30Z" },
+    );
+
+    pgClient.tags.push(
+      { postId: selfP1, name: "common" },
+      { postId: selfP1, name: "self" },
+      { postId: selfP2, name: "common" },
+      { postId: selfLiked, name: "common" },
+      { postId: selfLiked, name: "liked" },
+      { postId: faPost, name: "common" },
+      { postId: faPost, name: "fa" },
+      { postId: fbPost, name: "common" },
+      { postId: fbPost, name: "fb" },
+      { postId: flaLiked, name: "common" },
+      { postId: flaLiked, name: "fla" },
+      { postId: flbLiked, name: "common" },
+      { postId: flbLiked, name: "flb" },
+    );
+
+    const fSelfP1 = addSummary(selfP1, 1);
+    const fSelfP2 = addSummary(selfP2, 2);
+    const fSelfLiked = addSummary(selfLiked, 3);
+    const fFaPost = addSummary(faPost, 4);
+    const fFbPost = addSummary(fbPost, 5);
+    const fFlaLiked = addSummary(flaLiked, 6);
+    const fFlbLiked = addSummary(flbLiked, 7);
+
+    const result = await service.BuildSearchSeedForUser(selfUserHex);
+
+    expect(result.tags).toEqual([
+      { name: "common", count: 14 },
+      { name: "self", count: 3 },
+      { name: "liked", count: 2 },
+      { name: "fa", count: 2 },
+      { name: "fb", count: 2 },
+      { name: "fla", count: 1 },
+      { name: "flb", count: 1 },
+    ]);
+
+    expect(result.features).toBeInstanceOf(Int8Array);
+    expect(result.features.length).toBe(512);
+
+    const seedPosts: { feat: Int8Array; w: number }[] = [
+      { feat: fSelfP1, w: 1.0 },
+      { feat: fSelfP2, w: 1.0 },
+      { feat: fSelfLiked, w: 0.7 },
+      { feat: fFaPost, w: 0.5 },
+      { feat: fFbPost, w: 0.5 },
+      { feat: fFlaLiked, w: 0.3 },
+      { feat: fFlbLiked, w: 0.3 },
+    ];
+
+    let sumVec: number[] | null = null;
+    for (const s of seedPosts) {
+      const v = normalizeL2(decodeFeatures(s.feat));
+      if (!sumVec) {
+        sumVec = v.map((x) => x * s.w);
+      } else {
+        for (let i = 0; i < sumVec.length; i++) sumVec[i] += v[i] * s.w;
+      }
+    }
+    if (!sumVec) throw new Error("test setup error");
+
+    const expected = encodeFeatures(normalizeL2(sumVec));
+    expect(int8eq(result.features, expected)).toBe(true);
   });
 });

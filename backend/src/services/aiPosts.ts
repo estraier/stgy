@@ -10,6 +10,7 @@ import {
 } from "../utils/format";
 import {
   decodeFeatures,
+  encodeFeatures,
   cosineSimilarity,
   sigmoidalContrast,
   normalizeL2,
@@ -19,6 +20,8 @@ import {
   ListAiPostSummariesInput,
   RecommendPostsInput,
   UpdateAiPostSummaryInput,
+  SearchSeedTag,
+  SearchSeed,
 } from "../models/aiPost";
 
 type AiPostSummaryDbRow = {
@@ -254,6 +257,278 @@ export class AiPostsService {
       throw e;
     }
     return this.getAiPostSummary(input.postId);
+  }
+
+  async BuildSearchSeedForUser(userId: string): Promise<SearchSeed> {
+    const SELF_POST_LIMIT = 10;
+    const SELF_LIKE_LIMIT = 10;
+    const TOP_FOLLOWEE_LIMIT = 10;
+    const FOLLOWEE_POST_LIMIT_PER_USER = 2;
+    const FOLLOWEE_LIKE_LIMIT_PER_USER = 10;
+    const ADOPT_TAG_LIMIT = 10;
+    const userIdDec = hexToDec(userId);
+    const seedRes = await pgQuery(
+      this.pgPool,
+      `
+      WITH
+      self_posts AS (
+        SELECT p.id AS post_id, 1.0::float8 AS weight
+        FROM posts p
+        WHERE p.owned_by = $1
+        ORDER BY p.id DESC
+        LIMIT $2
+      ),
+      self_likes AS (
+        SELECT pl.post_id, 0.7::float8 AS weight
+        FROM post_likes pl
+        WHERE pl.liked_by = $1
+        ORDER BY pl.created_at DESC
+        LIMIT $3
+      ),
+      followees AS (
+        SELECT uf.followee_id
+        FROM user_follows uf
+        WHERE uf.follower_id = $1
+      ),
+      active_followees AS (
+        SELECT DISTINCT ON (p2.owned_by) p2.owned_by, p2.id AS last_id
+        FROM posts p2
+        WHERE p2.owned_by IN (SELECT followee_id FROM followees)
+        ORDER BY p2.owned_by, p2.id DESC
+      ),
+      top_followees AS (
+        SELECT owned_by AS followee_id
+        FROM active_followees
+        ORDER BY last_id DESC
+        LIMIT $4
+      ),
+      followee_posts AS (
+        SELECT pid.id AS post_id, 0.5::float8 AS weight
+        FROM top_followees tf
+        JOIN LATERAL (
+          SELECT p2.id
+          FROM posts p2
+          WHERE p2.owned_by = tf.followee_id
+          ORDER BY p2.id DESC
+          LIMIT $5
+        ) AS pid ON TRUE
+      ),
+      followee_likes AS (
+        SELECT lid.post_id, 0.3::float8 AS weight
+        FROM top_followees tf
+        JOIN LATERAL (
+          SELECT pl2.post_id
+          FROM post_likes pl2
+          WHERE pl2.liked_by = tf.followee_id
+          ORDER BY pl2.created_at DESC
+          LIMIT $6
+        ) AS lid ON TRUE
+      ),
+      seed_posts AS (
+        SELECT * FROM self_posts
+        UNION ALL SELECT * FROM self_likes
+        UNION ALL SELECT * FROM followee_posts
+        UNION ALL SELECT * FROM followee_likes
+      )
+      SELECT post_id, weight
+      FROM seed_posts
+      `,
+      [
+        userIdDec,
+        SELF_POST_LIMIT,
+        SELF_LIKE_LIMIT,
+        TOP_FOLLOWEE_LIMIT,
+        FOLLOWEE_POST_LIMIT_PER_USER,
+        FOLLOWEE_LIKE_LIMIT_PER_USER,
+      ],
+    );
+    if (seedRes.rows.length === 0) {
+      throw new Error("no seed posts");
+    }
+    const seedPostIds: string[] = [];
+    const seedWeights: number[] = [];
+    const weightByPostId = new Map<string, number>();
+    for (const r0 of seedRes.rows as unknown[]) {
+      const rr = r0 as Record<string, unknown>;
+      const postIdRaw = rr.post_id ?? rr.postId ?? rr.postID ?? rr.id;
+      const weightRaw = rr.weight ?? rr.w;
+      const postId =
+        typeof postIdRaw === "string" ||
+        typeof postIdRaw === "number" ||
+        typeof postIdRaw === "bigint"
+          ? String(postIdRaw)
+          : "";
+      if (postId.trim() === "") continue;
+      const w =
+        typeof weightRaw === "number"
+          ? weightRaw
+          : typeof weightRaw === "string"
+            ? Number(weightRaw)
+            : typeof weightRaw === "bigint"
+              ? Number(weightRaw)
+              : Number.NaN;
+      if (!Number.isFinite(w) || w <= 0) continue;
+      seedPostIds.push(postId);
+      seedWeights.push(w);
+      weightByPostId.set(postId, (weightByPostId.get(postId) ?? 0) + w);
+    }
+    if (seedPostIds.length === 0) {
+      throw new Error("no seed posts");
+    }
+    let tagRows: unknown[] = [];
+    const tagRes = await pgQuery(
+      this.pgPool,
+      `
+      WITH seed_posts(post_id, weight) AS (
+        SELECT * FROM unnest($1::bigint[], $2::float8[])
+      )
+      SELECT sp.weight, apt.name
+      FROM seed_posts sp
+      JOIN ai_post_tags apt ON apt.post_id = sp.post_id
+      `,
+      [seedPostIds, seedWeights],
+    );
+    tagRows = tagRes.rows as unknown[];
+    if (tagRows.length === 0) {
+      const tagRes2 = await pgQuery(
+        this.pgPool,
+        `
+        SELECT apt.post_id, apt.name
+        FROM ai_post_tags apt
+        WHERE apt.post_id = ANY($1::bigint[])
+        `,
+        [Array.from(weightByPostId.keys())],
+      );
+      tagRows = tagRes2.rows as unknown[];
+    }
+    const tagScores = new Map<string, number>();
+    for (const r0 of tagRows) {
+      const rr = r0 as Record<string, unknown>;
+      const nameRaw = rr.name;
+      const name = typeof nameRaw === "string" ? nameRaw.trim() : "";
+      if (!name) continue;
+      let w = 0;
+      if (rr.weight !== undefined) {
+        const ww =
+          typeof rr.weight === "number"
+            ? rr.weight
+            : typeof rr.weight === "string"
+              ? Number(rr.weight)
+              : typeof rr.weight === "bigint"
+                ? Number(rr.weight)
+                : Number.NaN;
+        w = Number.isFinite(ww) ? ww : 0;
+      } else {
+        const postIdRaw = rr.post_id ?? rr.postId ?? rr.postID ?? rr.id;
+        const postId =
+          typeof postIdRaw === "string" ||
+          typeof postIdRaw === "number" ||
+          typeof postIdRaw === "bigint"
+            ? String(postIdRaw)
+            : "";
+        w = weightByPostId.get(postId) ?? 0;
+      }
+      if (!Number.isFinite(w) || w <= 0) continue;
+      tagScores.set(name, (tagScores.get(name) ?? 0) + w);
+    }
+    const topTags = Array.from(tagScores.entries())
+      .sort((a, b) => {
+        if (a[1] !== b[1]) return b[1] - a[1];
+        return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+      })
+      .slice(0, ADOPT_TAG_LIMIT);
+    let tagsOut: SearchSeedTag[] = [];
+    if (topTags.length > 0) {
+      const minScore = topTags[topTags.length - 1][1];
+      if (Number.isFinite(minScore) && minScore > 0) {
+        tagsOut = topTags.map(([name, score]) => {
+          const scaled = score / minScore;
+          const cnt = Math.max(1, Math.round(scaled));
+          return { name, count: cnt };
+        });
+      } else {
+        tagsOut = topTags.map(([name]) => ({ name, count: 1 }));
+      }
+    }
+    let featRows: unknown[] = [];
+    const featRes = await pgQuery(
+      this.pgPool,
+      `
+      WITH seed_posts(post_id, weight) AS (
+        SELECT * FROM unnest($1::bigint[], $2::float8[])
+      )
+      SELECT sp.weight, aps.features
+      FROM seed_posts sp
+      JOIN ai_post_summaries aps ON aps.post_id = sp.post_id
+      WHERE aps.features IS NOT NULL
+      `,
+      [seedPostIds, seedWeights],
+    );
+    featRows = featRes.rows as unknown[];
+    if (featRows.length === 0) {
+      const featRes2 = await pgQuery(
+        this.pgPool,
+        `
+        SELECT aps.post_id, aps.features
+        FROM ai_post_summaries aps
+        WHERE aps.post_id = ANY($1::bigint[])
+          AND aps.features IS NOT NULL
+        `,
+        [Array.from(weightByPostId.keys())],
+      );
+      featRows = featRes2.rows as unknown[];
+    }
+    let sumVec: number[] | null = null;
+    for (const r0 of featRows) {
+      const rr = r0 as Record<string, unknown>;
+      let w = 0;
+      if (rr.weight !== undefined) {
+        const ww =
+          typeof rr.weight === "number"
+            ? rr.weight
+            : typeof rr.weight === "string"
+              ? Number(rr.weight)
+              : typeof rr.weight === "bigint"
+                ? Number(rr.weight)
+                : Number.NaN;
+        w = Number.isFinite(ww) ? ww : 0;
+      } else {
+        const postIdRaw = rr.post_id ?? rr.postId ?? rr.postID ?? rr.id;
+        const postId =
+          typeof postIdRaw === "string" ||
+          typeof postIdRaw === "number" ||
+          typeof postIdRaw === "bigint"
+            ? String(postIdRaw)
+            : "";
+        w = weightByPostId.get(postId) ?? 0;
+      }
+      if (!Number.isFinite(w) || w <= 0) continue;
+      let buf: Buffer | null = null;
+      const f = rr.features;
+      if (Buffer.isBuffer(f)) buf = f;
+      else if (f instanceof Uint8Array) buf = Buffer.from(f);
+      else buf = null;
+      if (!buf) continue;
+      const features = bufferToInt8Array(buf);
+      let v: number[] | null = null;
+      try {
+        v = normalizeL2(decodeFeatures(features));
+      } catch {
+        v = null;
+      }
+      if (!v || v.length === 0) continue;
+
+      if (!sumVec) {
+        sumVec = v.map((x) => x * w);
+      } else if (sumVec.length === v.length) {
+        for (let i = 0; i < sumVec.length; i++) sumVec[i] += v[i] * w;
+      }
+    }
+    if (!sumVec || sumVec.length === 0) {
+      throw new Error("no seed features");
+    }
+    const outFeatures = encodeFeatures(sumVec);
+    return { tags: tagsOut, features: outFeatures };
   }
 
   async RecommendPosts(input: RecommendPostsInput): Promise<string[]> {

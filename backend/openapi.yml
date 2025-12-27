@@ -416,6 +416,26 @@ components:
           items: { type: string }
       additionalProperties: false
 
+    SearchSeedTag:
+      type: object
+      properties:
+        name: { type: string }
+        count: { type: integer, minimum: 1 }
+      required: [name, count]
+
+    SearchSeed:
+      type: object
+      properties:
+        tags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchSeedTag"
+        features:
+          type: string
+          format: byte
+          description: Base64 encoded Int8Array
+      required: [tags, features]
+
     StorageObjectMetadata:
       type: object
       properties:
@@ -2333,6 +2353,31 @@ paths:
           $ref: "#/components/responses/Error403"
         "404":
           $ref: "#/components/responses/Error404"
+
+  /ai-posts/search-seed:
+    get:
+      summary: Build search seed for current user (tags + features)
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: query
+          required: false
+          schema: { type: string }
+          description: Admin only. Target user id (hex). If omitted, uses current user.
+      responses:
+        "200":
+          description: Search seed (tags + features)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SearchSeed"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
 
   /ai-posts/recommendations:
     post:
