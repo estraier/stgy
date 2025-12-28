@@ -1,4 +1,3 @@
-import { jest } from "@jest/globals";
 import {
   encodeFeatures,
   decodeFeatures,
@@ -14,6 +13,21 @@ describe("encodeFeatures / decodeFeatures", () => {
   test("encodeFeatures: basic quantization (gamma=0.7, dim=3)", () => {
     const enc = encodeFeatures([1, 0, -1], 3, 0.95);
     expect(Array.from(enc)).toEqual([127, 0, -127]);
+  });
+
+  test("encodeFeatures: zero vector stays zero (dim=3)", () => {
+    const enc = encodeFeatures([0, 0, 0], 3, 0.95);
+    expect(Array.from(enc)).toEqual([0, 0, 0]);
+  });
+
+  test("encodeFeatures: empty input becomes zero vector (dim=3)", () => {
+    const enc = encodeFeatures([], 3, 0.95);
+    expect(Array.from(enc)).toEqual([0, 0, 0]);
+  });
+
+  test("decodeFeatures: all-zero encoded decodes to zeros", () => {
+    const dec = decodeFeatures(new Int8Array([0, 0, 0]));
+    expect(dec).toEqual([0, 0, 0]);
   });
 
   test("encodeFeatures: range is [-127,127] (never emits -128)", () => {
@@ -190,7 +204,6 @@ describe("sigmoidalContrast", () => {
     const mid = 0.4;
     const xs = [0, 0.1, 0.25, 0.4, 0.6, 0.9, 1];
     const ys = xs.map((x) => sigmoidalContrast(x, gain, mid));
-
     for (let i = 1; i < ys.length; i++) {
       expect(ys[i]).toBeGreaterThanOrEqual(ys[i - 1]);
     }

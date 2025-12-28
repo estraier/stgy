@@ -434,7 +434,41 @@ components:
           type: string
           format: byte
           description: Base64 encoded Int8Array
-      required: [tags, features]
+        weight:
+          type: number
+          format: double
+      required: [tags, features, weight]
+
+    RecommendPostsRequest:
+      type: object
+      required: [tags]
+      properties:
+        tags:
+          type: array
+          description: Tag filters with weights.
+          items:
+            $ref: "#/components/schemas/SearchSeedTag"
+        selfUserId:
+          type: string
+        features:
+          type: string
+          format: byte
+          nullable: true
+          description: Base64-encoded Int8Array features vector used for similarity-based re-ranking.
+        dedupWeight:
+          type: number
+          format: float
+        offset:
+          type: integer
+          default: 0
+        limit:
+          type: integer
+          default: 100
+        order:
+          type: string
+          enum: [desc, asc]
+          default: desc
+      additionalProperties: false
 
     StorageObjectMetadata:
       type: object
@@ -2356,7 +2390,7 @@ paths:
 
   /ai-posts/search-seed:
     get:
-      summary: Build search seed for current user (tags + features)
+      summary: Build search seeds for current user (tags + features)
       security:
         - sessionCookie: []
       parameters:
@@ -2365,13 +2399,23 @@ paths:
           required: false
           schema: { type: string }
           description: Admin only. Target user id (hex). If omitted, uses current user.
+        - name: numClusters
+          in: query
+          required: false
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Number of clusters/seeds to build (upper-bounded server-side).
       responses:
         "200":
-          description: Search seed (tags + features)
+          description: Search seeds (tags + features + weight)
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/SearchSeed"
+                type: array
+                items:
+                  $ref: "#/components/schemas/SearchSeed"
         "400":
           $ref: "#/components/responses/Error400"
         "401":
@@ -2389,41 +2433,7 @@ paths:
         content:
           application/json:
             schema:
-              type: object
-              required: [tags]
-              properties:
-                tags:
-                  type: array
-                  description: Tag filters with weights.
-                  items:
-                    type: object
-                    required: [name, count]
-                    properties:
-                      name:
-                        type: string
-                      count:
-                        type: integer
-                        minimum: 1
-                selfUserId:
-                  type: string
-                features:
-                  type: string
-                  format: byte
-                  nullable: true
-                  description: Base64-encoded Int8Array features vector used for similarity-based re-ranking.
-                dedupWeight:
-                  type: number
-                  format: float
-                offset:
-                  type: integer
-                  default: 0
-                limit:
-                  type: integer
-                  default: 100
-                order:
-                  type: string
-                  enum: [desc, asc]
-                  default: desc
+              $ref: "#/components/schemas/RecommendPostsRequest"
       responses:
         "200":
           description: Ranked post ids

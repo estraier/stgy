@@ -118,10 +118,6 @@ export class Config {
     "STGY_AI_SUMMARY_POST_SKIP_LATEST_MS",
     600 * 1000,
   );
-  static readonly AI_SUMMARY_FAMILY_SLEEP_MS = envNum(
-    "STGY_AI_SUMMARY_FAMILY_SLEEP_MS",
-    12 * 3600 * 1000,
-  );
   static readonly AI_SUMMARY_BATCH_SIZE = envNum("STGY_AI_SUMMARY_BATCH_SIZE", 1000);
   static readonly AI_SUMMARY_CONCURRENCY = envNum("STGY_AI_SUMMARY_CONCURRENCY", 1);
   static readonly AI_SUMMARY_IDLE_SLEEP_MS = envNum("STGY_AI_SUMMARY_IDLE_SLEEP_MS", 10 * 1000);

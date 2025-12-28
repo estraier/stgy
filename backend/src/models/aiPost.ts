@@ -49,11 +49,13 @@ export type SearchSeedTag = {
 export type SearchSeed = {
   tags: SearchSeedTag[];
   features: Int8Array;
+  weight: number;
 };
 
 export type SearchSeedPacket = {
   tags: SearchSeedTag[];
   features: string;
+  weight: number;
 };
 
 export type RecommendPostsInput = {

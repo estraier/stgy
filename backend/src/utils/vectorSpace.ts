@@ -10,7 +10,7 @@ function computePercentile(values: number[], percentile: number): number {
   const copy = values.slice().sort((a, b) => a - b);
   const idx = Math.floor((copy.length - 1) * percentile);
   const v = copy[idx];
-  if (!Number.isFinite(v) || v <= 0) {
+  if (!Number.isFinite(v) || v < 0) {
     throw new Error(`computePercentile: invalid scale=${v}`);
   }
   return v;
@@ -30,8 +30,17 @@ export function encodeFeatures(input: number[], dim = 512, percentile = 0.95): I
     data[i] = v;
   }
   const mags = new Array<number>(d);
-  for (let i = 0; i < d; i++) mags[i] = Math.abs(data[i]);
-  const scale = computePercentile(mags, percentile);
+  let maxMag = 0;
+  for (let i = 0; i < d; i++) {
+    const m = Math.abs(data[i]);
+    mags[i] = m;
+    if (m > maxMag) maxMag = m;
+  }
+  let scale = computePercentile(mags, percentile);
+  if (scale === 0) {
+    if (maxMag === 0) return new Int8Array(d);
+    scale = maxMag;
+  }
   const out = new Int8Array(d);
   for (let i = 0; i < d; i++) {
     const v = data[i];

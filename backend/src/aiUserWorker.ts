@@ -510,7 +510,6 @@ async function fetchOwnPeerImpressions(
     if (typeof updatedAt !== "string") continue;
     if (typeof payload !== "string") continue;
     out.push({ userId: uid, peerId, updatedAt, payload });
-    if (out.length >= 3) break;
   }
   return out;
 }
@@ -552,7 +551,6 @@ async function fetchOwnPostImpressions(
     if (typeof updatedAt !== "string") continue;
     if (typeof payload !== "string") continue;
     out.push({ userId: uid, peerId, postId, updatedAt, payload });
-    if (out.length >= 3) break;
   }
   return out;
 }
@@ -976,23 +974,43 @@ async function fetchPostsToRead(
   let topPostIds: string[] = [];
   const similarityByPostId = new Map<string, number>();
   if (interest) {
-    const coreFeatures = decodeFeatures(interest.features);
-    const boostedScoresByPost = new Map<string, number>();
-    for (const postId of candPostIds) {
-      const baseScore = scoresByPost.get(postId) ?? 0;
-      if (baseScore <= 0) continue;
-      const postSummary = await fetchPostSummary(sessionCookie, postId);
-      if (!postSummary.features) continue;
-      const features = decodeFeatures(postSummary.features);
-      const sim = cosineSimilarity(coreFeatures, features);
-      if (!Number.isFinite(sim)) continue;
-      similarityByPostId.set(postId, sim);
-      const simScore = sigmoidalContrast((sim + 1) / 2, 5, 0.75);
-      boostedScoresByPost.set(postId, (baseScore + 0.2) * simScore);
+    let coreFeatures: number[] | null = null;
+    try {
+      coreFeatures = decodeFeatures(interest.features);
+    } catch (e) {
+      logger.error(`failed to decode interest features userId=${userId}: ${e}`);
+      coreFeatures = null;
     }
-    topPostIds = [...boostedScoresByPost.entries()]
-      .sort((a, b) => b[1] - a[1])
-      .map(([postId]) => postId);
+    if (coreFeatures) {
+      const boostedScoresByPost = new Map<string, number>();
+      for (const postId of candPostIds) {
+        const baseScore = scoresByPost.get(postId) ?? 0;
+        if (baseScore <= 0) continue;
+        const postSummary = await fetchPostSummary(sessionCookie, postId);
+        if (!postSummary.features) continue;
+        let features: number[];
+        try {
+          features = decodeFeatures(postSummary.features);
+        } catch {
+          continue;
+        }
+        const sim = cosineSimilarity(coreFeatures, features);
+        if (!Number.isFinite(sim)) continue;
+        similarityByPostId.set(postId, sim);
+        const simScore = sigmoidalContrast((sim + 1) / 2, 5, 0.75);
+        boostedScoresByPost.set(postId, (baseScore + 0.2) * simScore);
+      }
+      topPostIds = [...boostedScoresByPost.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([postId]) => postId);
+    } else {
+      for (const postId of candPostIds) {
+        const hasSummary = await checkPostSummary(sessionCookie, postId);
+        if (!hasSummary) continue;
+        similarityByPostId.set(postId, 0);
+        topPostIds.push(postId);
+      }
+    }
   } else {
     for (const postId of candPostIds) {
       const hasSummary = await checkPostSummary(sessionCookie, postId);
@@ -1235,8 +1253,6 @@ async function createPostImpression(
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
 
-  //console.log(prompt);
-
   const chatReq: ChatRequest = {
     messages: [{ role: "user", content: prompt }],
     responseFormat: "json",
@@ -1250,9 +1266,6 @@ async function createPostImpression(
   if (content.trim() === "") {
     throw new Error(`ai-users/chat returned empty content userId=${profile.id} postId=${post.id}`);
   }
-
-  //console.log(content);
-
   const parsed = evaluateChatResponseAsJson<unknown>(content);
   if (!isRecord(parsed)) {
     throw new Error(
@@ -1412,8 +1425,6 @@ async function createPeerImpression(
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
 
-  //console.log(prompt);
-
   const chatReq: ChatRequest = {
     messages: [{ role: "user", content: prompt }],
     responseFormat: "json",
@@ -1427,9 +1438,6 @@ async function createPeerImpression(
   if (content.trim() === "") {
     throw new Error(`ai-users/chat returned empty content userId=${profile.id} peerId=${peer.id}`);
   }
-
-  //console.log(content);
-
   const parsed = evaluateChatResponseAsJson<unknown>(content);
   if (!isRecord(parsed)) {
     throw new Error(
@@ -1604,8 +1612,6 @@ async function createInterest(
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
 
-  //console.log(prompt);
-
   const chatReq: ChatRequest = {
     messages: [{ role: "user", content: prompt }],
     responseFormat: "json",
@@ -1619,9 +1625,6 @@ async function createInterest(
   if (content.trim() === "") {
     throw new Error(`ai-users/chat returned empty content userId=${profile.id}`);
   }
-
-  //console.log(content);
-
   const parsed = evaluateChatResponseAsJson<unknown>(content);
   if (!isRecord(parsed)) {
     throw new Error(`AI output JSON is not an object userId=${profile.id}`);
@@ -1751,8 +1754,6 @@ async function createNewPost(
     .replaceAll("{{TAG_NUM}}", String(Config.AI_USER_NEW_POST_TAGS))
     .replaceAll("{{LOCALE}}", localeText);
 
-  //console.log(prompt);
-
   const chatReq: ChatRequest = {
     messages: [{ role: "user", content: prompt }],
     responseFormat: "json",
@@ -1766,9 +1767,6 @@ async function createNewPost(
   if (raw.trim() === "") {
     throw new Error(`ai-users/chat returned empty content userId=${profile.id}`);
   }
-
-  //console.log(raw);
-
   const parsed = evaluateChatResponseAsJson<unknown>(raw);
   if (!isRecord(parsed)) {
     throw new Error(
@@ -1807,7 +1805,15 @@ async function organizeFollowees(
   interest: AiUserInterest,
   peerIds: string[],
 ): Promise<void> {
-  const interestVec = decodeFeatures(interest.features);
+  let interestVec: number[];
+  try {
+    interestVec = decodeFeatures(interest.features);
+  } catch (e) {
+    logger.error(
+      `failed to decode interest features for followee organize userId=${profile.id}: ${e}`,
+    );
+    return;
+  }
   type FolloweeAnalysis = {
     userId: string;
     similarity: number;
@@ -2136,7 +2142,7 @@ async function processLoop(): Promise<void> {
       if (users.length < Config.AI_USER_BATCH_SIZE) break;
     }
     if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
-    await sleep(Config.AI_SUMMARY_FAMILY_SLEEP_MS);
+    await sleep(Config.AI_USER_LOOP_SLEEP_MS);
   }
 }
 

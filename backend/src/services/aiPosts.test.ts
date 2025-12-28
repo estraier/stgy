@@ -201,6 +201,20 @@ class MockPgClient {
     }
 
     if (
+      sql.includes("SELECT post_id, name") &&
+      sql.includes("FROM ai_post_tags") &&
+      sql.includes("WHERE post_id = ANY(")
+    ) {
+      const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
+      const ids = arrParam ? arrParam.map((x) => String(x)) : [];
+      const idSet = new Set(ids);
+      const rows = this.tags
+        .filter((t) => idSet.has(String(t.postId)))
+        .map((t) => ({ post_id: t.postId, name: t.name }));
+      return { rows };
+    }
+
+    if (
       sql.includes("WITH seed_posts(post_id, weight) AS") &&
       sql.includes("JOIN ai_post_summaries aps ON aps.post_id = sp.post_id") &&
       sql.includes("WHERE aps.features IS NOT NULL") &&
@@ -464,10 +478,12 @@ class MockPgClient {
       const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
       if (arrParam) {
         const ids = arrParam.map((x) => String(x));
+        const requireNotNull = sql.includes("features IS NOT NULL");
         const rows = ids
           .map((id) => {
             const s = this.summaries.find((r) => r.postId === id);
             if (!s) return null;
+            if (requireNotNull && !s.features) return null;
             return {
               post_id: s.postId,
               features: s.features,
@@ -1152,7 +1168,36 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
   });
 
   test("throws when no seed posts", async () => {
-    await expect(service.BuildSearchSeedForUser(hex(777))).rejects.toThrow("no seed posts");
+    await expect(service.BuildSearchSeedForUser(hex(777), 3)).rejects.toThrow("no seed posts");
+  });
+
+  test("does not throw when seed posts exist but all features are null", async () => {
+    const selfUserHex = hex(777);
+    const selfUserDec = toDecStr(selfUserHex);
+    const p = dec(5000);
+
+    pgClient.posts.push({
+      postId: p,
+      replyTo: null,
+      userId: selfUserDec,
+      publishedAt: "2025-01-01T00:00:01Z",
+    });
+
+    pgClient.summaries.push({
+      postId: p,
+      summary: "s",
+      features: null,
+      updatedAt: "2025-01-01T00:00:00Z",
+    });
+
+    pgClient.tags.push({ postId: p, name: "t" });
+
+    const seeds = await service.BuildSearchSeedForUser(selfUserHex, 3);
+    expect(seeds.length).toBe(1);
+    expect(seeds[0].tags).toEqual([{ name: "t", count: 1 }]);
+    expect(seeds[0].features).toBeInstanceOf(Int8Array);
+    expect(seeds[0].features.length).toBe(512);
+    expect(seeds[0].weight).toBeCloseTo(1.0 * Math.log(1 + 1), 10);
   });
 
   test("builds tags and features from self/likes/followees", async () => {
@@ -1215,7 +1260,11 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     const fFlaLiked = addSummary(flaLiked, 6);
     const fFlbLiked = addSummary(flbLiked, 7);
 
-    const result = await service.BuildSearchSeedForUser(selfUserHex);
+    const seeds = await service.BuildSearchSeedForUser(selfUserHex, 1);
+    expect(Array.isArray(seeds)).toBe(true);
+    expect(seeds.length).toBe(1);
+
+    const result = seeds[0];
 
     expect(result.tags).toEqual([
       { name: "common", count: 14 },
@@ -1230,14 +1279,16 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     expect(result.features).toBeInstanceOf(Int8Array);
     expect(result.features.length).toBe(512);
 
+    const occ = Math.log(2);
+
     const seedPosts: { feat: Int8Array; w: number }[] = [
-      { feat: fSelfP1, w: 1.0 },
-      { feat: fSelfP2, w: 1.0 },
-      { feat: fSelfLiked, w: 0.7 },
-      { feat: fFaPost, w: 0.5 },
-      { feat: fFbPost, w: 0.5 },
-      { feat: fFlaLiked, w: 0.3 },
-      { feat: fFlbLiked, w: 0.3 },
+      { feat: fSelfP1, w: 1.0 * occ },
+      { feat: fSelfP2, w: 1.0 * occ },
+      { feat: fSelfLiked, w: 0.7 * occ },
+      { feat: fFaPost, w: 0.5 * occ },
+      { feat: fFbPost, w: 0.5 * occ },
+      { feat: fFlaLiked, w: 0.3 * occ },
+      { feat: fFlbLiked, w: 0.3 * occ },
     ];
 
     let sumVec: number[] | null = null;
@@ -1253,5 +1304,43 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
 
     const expected = encodeFeatures(normalizeL2(sumVec));
     expect(int8eq(result.features, expected)).toBe(true);
+
+    const expectedWeight = (1.0 + 1.0 + 0.7 + 0.5 + 0.5 + 0.3 + 0.3) * occ;
+    expect(typeof result.weight).toBe("number");
+    expect(result.weight).toBeCloseTo(expectedWeight, 10);
+  });
+
+  test("occurrenceWeight: duplicated seed post increases cluster weight, and clusters shrink when posts<numClusters", async () => {
+    const selfUserHex = hex(777);
+    const selfUserDec = toDecStr(selfUserHex);
+
+    const p = dec(5000);
+
+    pgClient.posts.push({
+      postId: p,
+      replyTo: null,
+      userId: selfUserDec,
+      publishedAt: "2025-01-01T00:00:01Z",
+    });
+
+    pgClient.likes.push({ postId: p, likedBy: selfUserDec, createdAt: "2025-01-01T00:00:10Z" });
+
+    pgClient.tags.push({ postId: p, name: "dup" });
+    const feat = addSummary(p, 42);
+
+    const seeds = await service.BuildSearchSeedForUser(selfUserHex, 3);
+    expect(seeds.length).toBe(1);
+
+    const s0 = seeds[0];
+    expect(s0.tags).toEqual([{ name: "dup", count: 1 }]);
+    expect(s0.features).toBeInstanceOf(Int8Array);
+    expect(s0.features.length).toBe(512);
+
+    const expectedWeight = (1.0 + 0.7) * Math.log(1 + 2);
+    expect(s0.weight).toBeCloseTo(expectedWeight, 10);
+
+    const v = normalizeL2(decodeFeatures(feat));
+    const expectedFeatures = encodeFeatures(normalizeL2(v));
+    expect(int8eq(s0.features, expectedFeatures)).toBe(true);
   });
 });

@@ -330,9 +330,10 @@ def test_ai_posts():
   assert "features" in detail
   assert detail["features"] is None or isinstance(detail["features"], str)
   dummy_summary = "dummy summary for ai-posts test"
-  feats = [1, -2, 3, 4]
+  feats = [((i * 17 + 3) % 256) for i in range(512)]
+  feats = [x - 256 if x >= 128 else x for x in feats]
   feats_b64 = int8_list_to_b64(feats)
-  res = requests.put(f"{BASE_URL}/ai-posts/{post_id}", json={"summary": dummy_summary, "features": feats_b64}, headers=headers, cookies=cookies)
+  res = requests.put(f"{BASE_URL}/ai-posts/{post_id}", json={"summary": dummy_summary, "features": feats_b64, "tags": ["ai-posts", "summary-test"]}, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   updated = res.json()
   print("[ai_posts] updated:", updated)
@@ -351,13 +352,16 @@ def test_ai_posts():
   assert res.status_code == 200, res.text
   seed = res.json()
   print("[ai_posts] search-seed:", seed)
-  assert isinstance(seed, dict)
-  assert "tags" in seed
-  assert "features" in seed
-  assert isinstance(seed["tags"], list)
-  assert isinstance(seed["features"], str)
-  assert seed["features"].strip() != ""
-  decoded_seed = b64_to_int8_list(seed["features"])
+  assert isinstance(seed, list)
+  assert len(seed) > 0
+  seed0 = seed[0]
+  assert isinstance(seed0, dict)
+  assert "tags" in seed0
+  assert "features" in seed0
+  assert isinstance(seed0["tags"], list)
+  assert isinstance(seed0["features"], str)
+  assert seed0["features"].strip() != ""
+  decoded_seed = b64_to_int8_list(seed0["features"])
   assert isinstance(decoded_seed, list)
   assert len(decoded_seed) > 0
   res = requests.head(f"{BASE_URL}/ai-posts/{post_id}", headers=headers, cookies=cookies)
