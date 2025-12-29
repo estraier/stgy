@@ -114,6 +114,10 @@ export class Config {
     process.env.NEXT_PUBLIC_PUB_SIDE_RECENT_POSTS_SIZE,
     5,
   );
+  static readonly AI_SUMMARY_POST_SKIP_LATEST_MS = normNum(
+    process.env.NEXT_PUBLIC_AI_SUMMARY_POST_SKIP_LATEST_MS,
+    600 * 1000,
+  );
 }
 
 export function normStr(

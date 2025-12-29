@@ -1,5 +1,6 @@
 "use client";
 
+import { Config } from "@/config";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRef, useMemo, useEffect, useState, useCallback } from "react";
 import PrismHighlighter from "@/components/PrismHighlighter";
@@ -15,6 +16,7 @@ import {
 } from "@/utils/article";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import { updatePost, getPost } from "@/api/posts";
+import { getAiPostSummary as getPostSummary } from "@/api/aiPost";
 
 type PostCardProps = {
   post: Post | PostDetail;
@@ -113,6 +115,14 @@ export default function PostCard({
     }
   }
 
+  function absoluteUrl(path: string): string {
+    if (typeof window !== "undefined" && window.location) {
+      const base = window.location.origin.replace(/\/+$/, "");
+      return `${base}${path.startsWith("/") ? "" : "/"}${path}`;
+    }
+    return path.startsWith("/") ? path : `/${path}`;
+  }
+
   async function copyHtmlRich(html: string, plainFallback?: string) {
     try {
       if (
@@ -204,8 +214,8 @@ export default function PostCard({
         : convertHtmlMathInline(makeHtmlFromJsonSnippet(post.snippet, idPrefix));
 
     const doc =
-      '<!doctype html><html><head><meta charset="utf-8">' +
-      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
+      "<!doctype html><html><head><meta charset=\"utf-8\">" +
+      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
       "<title>Content HTML</title></head><body>" +
       html +
       "</body></html>";
@@ -321,6 +331,18 @@ export default function PostCard({
   const menuRef = useRef<HTMLDivElement | null>(null);
   const copyMenuRef = useRef<HTMLDivElement | null>(null);
 
+  const [aiSummaryOpen, setAiSummaryOpen] = useState(false);
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
+  const [aiSummaryText, setAiSummaryText] = useState<string | null>(null);
+  const [aiSummaryTags, setAiSummaryTags] = useState<string[]>([]);
+
+  useEffect(() => {
+    setAiSummaryOpen(false);
+    setAiSummaryLoading(false);
+    setAiSummaryText(null);
+    setAiSummaryTags([]);
+  }, [post.id]);
+
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
       const t = e.target as Node;
@@ -341,6 +363,20 @@ export default function PostCard({
   const isOnSelfDetailPage = pathname === `/posts/${post.id}`;
   const isAlreadyEditMode = isOnSelfDetailPage && searchParams.get("mode") === "edit";
 
+  const skipLatestMs =
+    typeof Config.AI_SUMMARY_POST_SKIP_LATEST_MS === "number"
+      ? Config.AI_SUMMARY_POST_SKIP_LATEST_MS
+      : 0;
+  const cutoffMs = Date.now() - skipLatestMs;
+  const createdAtMs = new Date(post.createdAt).getTime();
+  const updatedAtMs = post.updatedAt ? new Date(post.updatedAt).getTime() : null;
+
+  const isTooNewForSummary =
+    (!Number.isNaN(createdAtMs) && createdAtMs > cutoffMs) ||
+    (updatedAtMs !== null && !Number.isNaN(updatedAtMs) && updatedAtMs > cutoffMs);
+
+  const canShowAiSummaryMenu = !isTooNewForSummary;
+
   const copyMenu = (
     <div
       ref={copyMenuRef}
@@ -349,6 +385,25 @@ export default function PostCard({
       }`}
       onClick={(e) => e.stopPropagation()}
     >
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={async () => {
+          const url = absoluteUrl(`/posts/${post.id}`);
+          await copyToClipboard(url);
+          setCopyMenuOpen(false);
+        }}
+      >
+        Copy link to this post
+      </button>
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={async () => {
+          await copyToClipboard(`[post](/posts/${post.id})`);
+          setCopyMenuOpen(false);
+        }}
+      >
+        Copy mention Markdown
+      </button>
       <button
         className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
         onClick={handleCopyMarkdown}
@@ -384,24 +439,40 @@ export default function PostCard({
       }`}
       onClick={(e) => e.stopPropagation()}
     >
-      <button
-        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
-        onClick={async () => {
-          await copyToClipboard(`/posts/${post.id}`);
-          setMenuOpen(false);
-        }}
-      >
-        Copy link to this post
-      </button>
-      <button
-        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
-        onClick={async () => {
-          await copyToClipboard(`[post](/posts/${post.id})`);
-          setMenuOpen(false);
-        }}
-      >
-        Copy mention Markdown
-      </button>
+      {canShowAiSummaryMenu && (
+        <button
+          className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+          onClick={async () => {
+            setMenuOpen(false);
+            setAiSummaryOpen(true);
+            setAiSummaryLoading(true);
+            setAiSummaryText(null);
+            setAiSummaryTags([]);
+            try {
+              const s = await getPostSummary(post.id);
+              const txt =
+                s && typeof (s as { summary?: unknown }).summary === "string"
+                  ? ((s as { summary: string }).summary ?? "").trim()
+                  : "";
+              const tags =
+                s && Array.isArray((s as { tags?: unknown }).tags)
+                  ? ((s as { tags: string[] }).tags ?? []).filter((t) => typeof t === "string")
+                  : [];
+              setAiSummaryText(txt.length > 0 ? txt : null);
+              setAiSummaryTags(tags);
+            } catch (e) {
+              console.error(e);
+              setAiSummaryText(null);
+              setAiSummaryTags([]);
+            } finally {
+              setAiSummaryLoading(false);
+            }
+          }}
+        >
+          View AI Summary
+        </button>
+      )}
+
       {canConfigurePublication && (
         <button
           className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
@@ -416,13 +487,13 @@ export default function PostCard({
             } else {
               router.push(href);
             }
-
             setMenuOpen(false);
           }}
         >
           Edit this post
         </button>
       )}
+
       {canConfigurePublication && (
         <button
           className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
@@ -436,6 +507,38 @@ export default function PostCard({
       )}
     </div>
   );
+
+  const aiSummarySection = aiSummaryOpen ? (
+    <div className="mt-3 border rounded bg-white shadow-sm">
+      <div className="px-3 py-2 border-b bg-gray-50 rounded-t">
+        <div className="text-sm font-semibold text-gray-800">AI Summary</div>
+      </div>
+      <div className="px-3 py-2 text-sm text-gray-800 whitespace-pre-wrap">
+        {aiSummaryLoading ? (
+          <span className="text-gray-500">Loading...</span>
+        ) : aiSummaryText ? (
+          aiSummaryText
+        ) : (
+          <span className="text-gray-500">No summary yet.</span>
+        )}
+        {!aiSummaryLoading && aiSummaryTags.length > 0 && (
+          <div className="mt-2 text-xs text-gray-600 whitespace-normal">
+            {aiSummaryTags.map((tag) => (
+              <a
+                key={tag}
+                lang={postLang}
+                href={`/posts?q=${encodeURIComponent("#" + tag)}&includingReplies=1`}
+                className="inline-block bg-gray-100 rounded px-2 py-0.5 mr-1 text-blue-700 hover:bg-[#e0eafa]"
+                onClick={(e) => e.stopPropagation()}
+              >
+                #{tag}
+              </a>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  ) : null;
 
   return (
     <article
@@ -639,6 +742,8 @@ export default function PostCard({
           </div>
         )}
       </div>
+
+      {aiSummarySection}
 
       {isReplying && children}
 
