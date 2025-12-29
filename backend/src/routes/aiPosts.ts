@@ -1,6 +1,5 @@
 import { Config } from "../config";
 import { Router } from "express";
-import type { Request, Response } from "express";
 import { Pool } from "pg";
 import Redis from "ioredis";
 import { AiPostsService } from "../services/aiPosts";
@@ -23,6 +22,15 @@ import type {
 } from "../models/aiPost";
 import { normalizeOneLiner, parseBoolean, int8ToBase64, base64ToInt8 } from "../utils/format";
 
+const SEED_NUM_CLUSTERS = 4;
+const SEED_CACHE_TTL_SEC = 12 * 60 * 60;
+
+const RECOMMEND_DEDUP_WEIGHT = 0.3;
+const RECOMMEND_FIXED_OFFSET = 0;
+const RECOMMEND_FIXED_LIMIT = 100;
+const RECOMMEND_FIXED_ORDER = "desc";
+const RECOMMEND_CACHE_TTL_SEC = 60 * 60;
+
 function toPacket(s: AiPostSummary): AiPostSummaryPacket {
   return {
     postId: s.postId,
@@ -41,8 +49,36 @@ function toSeedPacket(seed: SearchSeed): SearchSeedPacket {
   };
 }
 
-function limitMaxOf(isAdmin: boolean): number {
-  return isAdmin ? 65535 : Config.MAX_PAGE_LIMIT;
+function fromSeedPacket(p: SearchSeedPacket): SearchSeed | null {
+  if (!p || typeof p !== "object") return null;
+  if (!Array.isArray(p.tags)) return null;
+  if (typeof p.features !== "string" || p.features.trim() === "") return null;
+  if (typeof p.weight !== "number" || !Number.isFinite(p.weight)) return null;
+
+  const tags: SearchSeedTag[] = [];
+  for (const t of p.tags as unknown[]) {
+    if (!t || typeof t !== "object") return null;
+    const r = t as Record<string, unknown>;
+    if (typeof r.name !== "string") return null;
+    if (
+      typeof r.count !== "number" ||
+      !Number.isFinite(r.count) ||
+      !Number.isInteger(r.count) ||
+      r.count <= 0
+    ) {
+      return null;
+    }
+    tags.push({ name: r.name, count: r.count });
+  }
+
+  let features: Int8Array;
+  try {
+    features = base64ToInt8(p.features);
+  } catch {
+    return null;
+  }
+
+  return { tags, features, weight: p.weight };
 }
 
 function parsePaginationFromBody(
@@ -104,8 +140,74 @@ function normalizeTagsFromBody(tagsRaw: unknown): SearchSeedTag[] | { error: str
   return tags;
 }
 
-type ThrottleUser = Parameters<DailyTimerThrottleService["startWatch"]>[0];
-type LoginUser = ThrottleUser & { id: string; isAdmin: boolean };
+function selectSeedsByWeight(seeds: SearchSeed[]): SearchSeed[] {
+  const sorted = [...seeds].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+  if (sorted.length <= 2) return sorted;
+  return sorted.slice(0, sorted.length - 1);
+}
+
+function mergeTagsFromSeeds(seeds: SearchSeed[]): SearchSeedTag[] {
+  const m = new Map<string, number>();
+  for (const s of seeds) {
+    for (const t of s.tags ?? []) {
+      const name = normalizeOneLiner(String(t.name ?? "").toLowerCase());
+      if (typeof name !== "string" || name.trim() === "") continue;
+      const c = typeof t.count === "number" && Number.isFinite(t.count) ? Math.floor(t.count) : 0;
+      if (c <= 0) continue;
+      m.set(name, (m.get(name) ?? 0) + c);
+    }
+  }
+  return Array.from(m.entries()).map(([name, count]) => ({ name, count }));
+}
+
+function mergeFeaturesFromSeeds(seeds: SearchSeed[]): Int8Array | undefined {
+  const valid = seeds.filter((s) => s && s.features instanceof Int8Array && s.features.length > 0);
+  if (valid.length === 0) return undefined;
+
+  const len = valid[0].features.length;
+  if (valid.some((s) => s.features.length !== len)) return valid[0].features;
+
+  const sum = new Float64Array(len);
+  let wsum = 0;
+
+  for (const s of valid) {
+    const w =
+      typeof s.weight === "number" && Number.isFinite(s.weight) && s.weight > 0 ? s.weight : 1;
+    wsum += w;
+    const f = s.features;
+    for (let i = 0; i < len; i++) sum[i] += w * f[i];
+  }
+
+  if (!Number.isFinite(wsum) || wsum <= 0) return valid[0].features;
+
+  const out = new Int8Array(len);
+  for (let i = 0; i < len; i++) {
+    let v = Math.round(sum[i] / wsum);
+    if (v > 127) v = 127;
+    if (v < -128) v = -128;
+    out[i] = v;
+  }
+  return out;
+}
+
+function seedCacheKey(userId: string): string {
+  return `ai-posts:recommendations:posts:for-user:seed:v1:${userId}`;
+}
+
+function recommendCacheKey(userId: string): string {
+  return `ai-posts:recommendations:posts:for-user:ids:v1:${userId}`;
+}
+
+function parseJsonArray<T = unknown>(raw: string | null): T[] | null {
+  if (!raw) return null;
+  try {
+    const v = JSON.parse(raw) as unknown;
+    if (!Array.isArray(v)) return null;
+    return v as T[];
+  } catch {
+    return null;
+  }
+}
 
 export default function createAiPostsRouter(
   pgPool: Pool,
@@ -124,30 +226,18 @@ export default function createAiPostsRouter(
   );
   const authHelpers = new AuthHelpers(authService, usersService);
 
-  const requireLoginAndThrottle = async (
-    req: Request,
-    res: Response,
-  ): Promise<LoginUser | null> => {
-    const u = (await authHelpers.requireLogin(req, res)) as unknown;
-    if (!u) return null;
-
-    const loginUser = u as LoginUser;
-
-    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
-      res.status(403).json({ error: "too often operations" });
-      return null;
-    }
-    return loginUser;
-  };
-
   router.get("/", async (req, res) => {
-    const loginUser = await requireLoginAndThrottle(req, res);
+    const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
 
-    const { offset, limit, order } = AuthHelpers.getPageParams(req, limitMaxOf(loginUser.isAdmin), [
-      "desc",
-      "asc",
-    ] as const);
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
 
     let nullOnly: boolean | undefined;
     if (typeof req.query.nullOnly === "string") {
@@ -168,16 +258,18 @@ export default function createAiPostsRouter(
         newerThan,
       });
       watch.done();
-      const packets: AiPostSummaryPacket[] = result.map((r) => toPacket(r));
-      res.json(packets);
+      res.json(result.map((r) => toPacket(r)));
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "invalid request" });
     }
   });
 
   router.get("/search-seed", async (req, res) => {
-    const loginUser = await requireLoginAndThrottle(req, res);
+    const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
 
     const userIdParam =
       typeof req.query.userId === "string" && req.query.userId.trim() !== ""
@@ -204,16 +296,18 @@ export default function createAiPostsRouter(
       const watch = timerThrottleService.startWatch(loginUser);
       const seeds = await aiPostsService.BuildSearchSeedForUser(targetUserId, numClusters);
       watch.done();
-      const packets: SearchSeedPacket[] = seeds.map((s) => toSeedPacket(s));
-      res.json(packets);
+      res.json(seeds.map((s) => toSeedPacket(s)));
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "invalid request" });
     }
   });
 
   router.post("/recommendations", async (req, res) => {
-    const loginUser = await requireLoginAndThrottle(req, res);
+    const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
 
     const b = (req.body && typeof req.body === "object" ? req.body : null) as Record<
       string,
@@ -223,7 +317,10 @@ export default function createAiPostsRouter(
       return res.status(400).json({ error: "invalid body" });
     }
 
-    const { offset, limit, order } = parsePaginationFromBody(b, limitMaxOf(loginUser.isAdmin));
+    const { offset, limit, order } = parsePaginationFromBody(
+      b,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+    );
 
     const tagsParsed = normalizeTagsFromBody(b.tags);
     if (!Array.isArray(tagsParsed)) {
@@ -280,8 +377,11 @@ export default function createAiPostsRouter(
   });
 
   router.post("/recommendations/posts", async (req, res) => {
-    const loginUser = await requireLoginAndThrottle(req, res);
+    const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
 
     const b = (req.body && typeof req.body === "object" ? req.body : null) as Record<
       string,
@@ -291,7 +391,10 @@ export default function createAiPostsRouter(
       return res.status(400).json({ error: "invalid body" });
     }
 
-    const { offset, limit, order } = parsePaginationFromBody(b, limitMaxOf(loginUser.isAdmin));
+    const { offset, limit, order } = parsePaginationFromBody(
+      b,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+    );
 
     const tagsParsed = normalizeTagsFromBody(b.tags);
     if (!Array.isArray(tagsParsed)) {
@@ -348,9 +451,103 @@ export default function createAiPostsRouter(
     }
   });
 
-  router.head("/:id", async (req, res) => {
-    const loginUser = await requireLoginAndThrottle(req, res);
+  router.get("/recommendations/posts/for-user", async (req, res) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+
+    const userIdParam =
+      typeof req.query.userId === "string" && req.query.userId.trim() !== ""
+        ? req.query.userId.trim()
+        : undefined;
+    if (userIdParam && !loginUser.isAdmin) {
+      return res.status(403).json({ error: "forbidden" });
+    }
+    const targetUserId = loginUser.isAdmin && userIdParam ? userIdParam : loginUser.id;
+
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
+
+    const seedKey = seedCacheKey(targetUserId);
+    const recKey = recommendCacheKey(targetUserId);
+
+    try {
+      const watch = timerThrottleService.startWatch(loginUser);
+
+      let seeds: SearchSeed[] | null = null;
+
+      const cachedSeedsRaw = await redis.get(seedKey);
+      const cachedSeedPackets = parseJsonArray<SearchSeedPacket>(cachedSeedsRaw);
+      if (cachedSeedPackets && cachedSeedPackets.length > 0) {
+        const parsed: SearchSeed[] = [];
+        for (const p of cachedSeedPackets) {
+          const s = fromSeedPacket(p);
+          if (s) parsed.push(s);
+        }
+        if (parsed.length > 0) seeds = parsed;
+      }
+
+      if (!seeds) {
+        const rawSeeds = await aiPostsService.BuildSearchSeedForUser(
+          targetUserId,
+          SEED_NUM_CLUSTERS,
+        );
+        const selected = selectSeedsByWeight(rawSeeds);
+        const packets = selected.map((s) => toSeedPacket(s));
+        await redis.set(seedKey, JSON.stringify(packets), "EX", SEED_CACHE_TTL_SEC);
+        seeds = selected;
+      }
+
+      let ids: string[] | null = null;
+
+      const cachedIdsRaw = await redis.get(recKey);
+      const cachedIds = parseJsonArray<unknown>(cachedIdsRaw);
+      if (cachedIds && cachedIds.length > 0) {
+        const onlyStrings = cachedIds.filter((x): x is string => typeof x === "string");
+        if (onlyStrings.length > 0) ids = onlyStrings;
+      }
+
+      if (!ids) {
+        const tags = mergeTagsFromSeeds(seeds);
+        const features = mergeFeaturesFromSeeds(seeds);
+
+        const outIds = await aiPostsService.RecommendPosts({
+          tags,
+          features,
+          selfUserId: targetUserId,
+          dedupWeight: RECOMMEND_DEDUP_WEIGHT,
+          offset: RECOMMEND_FIXED_OFFSET,
+          limit: RECOMMEND_FIXED_LIMIT,
+          order: RECOMMEND_FIXED_ORDER,
+        } satisfies RecommendPostsInput);
+
+        await redis.set(recKey, JSON.stringify(outIds), "EX", RECOMMEND_CACHE_TTL_SEC);
+        ids = outIds;
+      }
+
+      const orderedIds = order === "asc" ? [...ids].reverse() : ids;
+      const subsetIds = orderedIds.slice(offset, offset + limit);
+
+      const posts = await postsService.listPostsByIds(subsetIds, targetUserId);
+
+      watch.done();
+      res.json(posts);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "invalid request" });
+    }
+  });
+
+  router.head("/:id", async (req, res) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
 
     const watch = timerThrottleService.startWatch(loginUser);
     const exists = await aiPostsService.checkAiPostSummary(req.params.id);
@@ -360,24 +557,29 @@ export default function createAiPostsRouter(
   });
 
   router.get("/:id", async (req, res) => {
-    const loginUser = await requireLoginAndThrottle(req, res);
+    const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
 
     try {
       const watch = timerThrottleService.startWatch(loginUser);
       const summary = await aiPostsService.getAiPostSummary(req.params.id);
       watch.done();
       if (!summary) return res.status(404).json({ error: "not found" });
-      const packet: AiPostSummaryPacket = toPacket(summary);
-      res.json(packet);
+      res.json(toPacket(summary));
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "invalid request" });
     }
   });
 
   router.put("/:id", async (req, res) => {
-    const loginUser = await requireLoginAndThrottle(req, res);
+    const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
 
     if (!loginUser.isAdmin) {
       return res.status(403).json({ error: "forbidden" });
@@ -445,8 +647,7 @@ export default function createAiPostsRouter(
       const updated = await aiPostsService.updateAiPost(input);
       watch.done();
       if (!updated) return res.status(404).json({ error: "not found" });
-      const out: AiPostSummaryPacket = toPacket(updated);
-      res.json(out);
+      res.json(toPacket(updated));
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "update error" });
     }
