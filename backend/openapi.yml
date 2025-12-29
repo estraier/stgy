@@ -2449,6 +2449,37 @@ paths:
         "403":
           $ref: "#/components/responses/Error403"
 
+  /ai-posts/recommendations/posts:
+    post:
+      summary: Recommend posts (expanded)
+      description: |
+        Same as /ai-posts/recommendations, but returns Post objects in ranked order.
+        If selfUserId is provided, it is also used as focusUserId when building each Post
+        (e.g. isLikedByFocusUser / isRepliedByFocusUser).
+      security:
+        - sessionCookie: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RecommendPostsRequest"
+      responses:
+        "200":
+          description: Ranked posts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Post"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
   /media/{userId}/images/presigned:
     post:
       summary: Get presigned POST for image upload
