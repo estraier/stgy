@@ -203,6 +203,56 @@ class MockPgClientMain {
     }
 
     if (
+      sql.includes("WITH req AS (") &&
+      sql.includes("WITH ORDINALITY") &&
+      sql.includes("JOIN posts p ON p.id = r.id") &&
+      sql.includes("ORDER BY r.ord")
+    ) {
+      const includeBlocking = this.selectsBlockingFlag(sql);
+      const focusUserId = includeBlocking && params && params.length >= 2 ? params[0] : undefined;
+      const ids = (includeBlocking ? params?.[1] : params?.[0]) as unknown[];
+      const idList = Array.isArray(ids) ? ids.map((v) => String(v)) : [];
+      const rows = idList
+        .map((id) => {
+          const p = this.data.find((x) => x.id === id);
+          if (!p) return null;
+          const replyToPost = this.data.find((pp) => pp.id === p.replyTo);
+          const reply_to_owner_nickname = replyToPost
+            ? (this.users.find((u) => u.id === replyToPost.ownedBy)?.nickname ?? null)
+            : null;
+          const reply_to_owner_id = replyToPost ? replyToPost.ownedBy : null;
+          const owner = this.users.find((u) => u.id === p.ownedBy);
+          const base: any = {
+            id: p.id,
+            owned_by: p.ownedBy,
+            reply_to: p.replyTo,
+            published_at: p.publishedAt,
+            updated_at: p.updatedAt,
+            snippet: "",
+            locale: p.locale,
+            allow_likes: p.allowLikes,
+            allow_replies: p.allowReplies,
+            created_at: p.createdAt,
+            owner_nickname: owner?.nickname ?? "",
+            owner_locale: owner?.locale ?? null,
+            reply_to_owner_id,
+            reply_to_owner_nickname,
+            count_replies: this.countRepliesFor(p.id),
+            count_likes: this.countLikesFor(p.id),
+            tags: this.tags
+              .filter((t) => t.postId === p.id)
+              .map((t) => t.name)
+              .sort(),
+          };
+          if (includeBlocking && focusUserId)
+            base.is_blocking_focus_user = this.computeIsBlocking(p.ownedBy, focusUserId);
+          return base;
+        })
+        .filter((x) => x !== null);
+      return { rows };
+    }
+
+    if (
       sql.includes("WITH cur AS (") &&
       sql.includes("(SELECT id FROM older) AS older_post_id") &&
       sql.includes("(SELECT id FROM newer) AS newer_post_id") &&
@@ -723,6 +773,66 @@ describe("posts service", () => {
     expect(posts[0].replyToOwnerId).toBeNull();
     expect(posts[0].tags).toContain("tag1");
     expect(posts[0].countLikes).toBeGreaterThanOrEqual(1);
+  });
+
+  test("listPostsByIds: keeps input order and ignores missing", async () => {
+    const p2 = {
+      id: hex16(),
+      content: "p2",
+      ownedBy: user2Hex,
+      replyTo: null,
+      allowLikes: true,
+      allowReplies: true,
+      createdAt: new Date().toISOString(),
+      publishedAt: null,
+      updatedAt: null,
+      locale: "en-US",
+    };
+    pgClient.data.push({
+      ...p2,
+      id: toDecStr(p2.id),
+      ownedBy: toDecStr(p2.ownedBy),
+      replyTo: p2.replyTo ? toDecStr(p2.replyTo) : null,
+    });
+    pgClient.tags.push({ postId: toDecStr(p2.id), name: "tag2" });
+    const miss = hex16();
+    const got = await postsService.listPostsByIds([p2.id, miss, postSample.id]);
+    expect(got.map((p) => p.id)).toEqual([p2.id, postSample.id]);
+    expect(got[0].ownerNickname).toBe("Bob");
+    expect(got[0].ownerLocale).toBe("en-US");
+    expect(got[0].tags).toContain("tag2");
+    expect(got[1].ownerNickname).toBe("Alice");
+    expect(got[1].tags).toContain("tag1");
+  });
+
+  test("listPostsByIds: queries in 100-sized batches", async () => {
+    const ids: string[] = [];
+    for (let i = 0; i < 205; i++) {
+      const id = hex16();
+      ids.push(id);
+      pgClient.data.push({
+        id: toDecStr(id),
+        ownedBy: toDecStr(user1Hex),
+        replyTo: null,
+        allowLikes: true,
+        allowReplies: true,
+        createdAt: new Date().toISOString(),
+        publishedAt: null,
+        updatedAt: null,
+        content: `c${i}`,
+        locale: "ja-JP",
+      });
+    }
+    const spy = jest.spyOn(pgClient, "query");
+    const got = await postsService.listPostsByIds(ids);
+    const batchCalls = spy.mock.calls.filter((c) =>
+      normalizeSql(String(c[0])).includes("WITH req AS ("),
+    );
+    expect(batchCalls.length).toBe(3);
+    expect(got.length).toBe(205);
+    expect(got[0].id).toBe(ids[0]);
+    expect(got[204].id).toBe(ids[204]);
+    spy.mockRestore();
   });
 
   test("createPost (then getPost for content) with locale null", async () => {

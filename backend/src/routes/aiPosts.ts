@@ -9,6 +9,7 @@ import { UsersService } from "../services/users";
 import { DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
 import { EventLogService } from "../services/eventLog";
+import { PostsService } from "../services/posts";
 import type {
   AiPostPagination,
   AiPostSummary,
@@ -115,6 +116,7 @@ export default function createAiPostsRouter(
   const aiPostsService = new AiPostsService(pgPool);
   const usersService = new UsersService(pgPool, redis, eventLogService);
   const authService = new AuthService(pgPool, redis);
+  const postsService = new PostsService(pgPool, redis, eventLogService);
   const timerThrottleService = new DailyTimerThrottleService(
     redis,
     "db",
@@ -138,15 +140,6 @@ export default function createAiPostsRouter(
     return loginUser;
   };
 
-  const withWatch = async <T>(loginUser: LoginUser, fn: () => Promise<T>): Promise<T> => {
-    const watch = timerThrottleService.startWatch(loginUser);
-    try {
-      return await fn();
-    } finally {
-      watch.done();
-    }
-  };
-
   router.get("/", async (req, res) => {
     const loginUser = await requireLoginAndThrottle(req, res);
     if (!loginUser) return;
@@ -166,15 +159,15 @@ export default function createAiPostsRouter(
         : undefined;
 
     try {
-      const result = await withWatch(loginUser, () =>
-        aiPostsService.listAiPostsSummaries({
-          offset,
-          limit,
-          order,
-          nullOnly,
-          newerThan,
-        }),
-      );
+      const watch = timerThrottleService.startWatch(loginUser);
+      const result = await aiPostsService.listAiPostsSummaries({
+        offset,
+        limit,
+        order,
+        nullOnly,
+        newerThan,
+      });
+      watch.done();
       const packets: AiPostSummaryPacket[] = result.map((r) => toPacket(r));
       res.json(packets);
     } catch (e) {
@@ -208,9 +201,9 @@ export default function createAiPostsRouter(
     const numClusters = Math.min(loginUser.isAdmin ? 100 : 10, nParsed);
 
     try {
-      const seeds = await withWatch(loginUser, () =>
-        aiPostsService.BuildSearchSeedForUser(targetUserId, numClusters),
-      );
+      const watch = timerThrottleService.startWatch(loginUser);
+      const seeds = await aiPostsService.BuildSearchSeedForUser(targetUserId, numClusters);
+      watch.done();
       const packets: SearchSeedPacket[] = seeds.map((s) => toSeedPacket(s));
       res.json(packets);
     } catch (e) {
@@ -269,18 +262,87 @@ export default function createAiPostsRouter(
     }
 
     try {
-      const result = await withWatch(loginUser, () =>
-        aiPostsService.RecommendPosts({
-          tags,
-          features,
-          selfUserId,
-          dedupWeight,
-          offset,
-          limit,
-          order,
-        } satisfies RecommendPostsInput),
-      );
+      const watch = timerThrottleService.startWatch(loginUser);
+      const result = await aiPostsService.RecommendPosts({
+        tags,
+        features,
+        selfUserId,
+        dedupWeight,
+        offset,
+        limit,
+        order,
+      } satisfies RecommendPostsInput);
+      watch.done();
       res.json(result);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "invalid request" });
+    }
+  });
+
+  router.post("/recommendations/posts", async (req, res) => {
+    const loginUser = await requireLoginAndThrottle(req, res);
+    if (!loginUser) return;
+
+    const b = (req.body && typeof req.body === "object" ? req.body : null) as Record<
+      string,
+      unknown
+    > | null;
+    if (!b) {
+      return res.status(400).json({ error: "invalid body" });
+    }
+
+    const { offset, limit, order } = parsePaginationFromBody(b, limitMaxOf(loginUser.isAdmin));
+
+    const tagsParsed = normalizeTagsFromBody(b.tags);
+    if (!Array.isArray(tagsParsed)) {
+      return res.status(400).json({ error: tagsParsed.error });
+    }
+    const tags = tagsParsed;
+
+    let selfUserId: string | undefined;
+    if (typeof b.selfUserId === "string") {
+      const v = b.selfUserId.trim();
+      if (v !== "") selfUserId = v;
+    }
+
+    let features: Int8Array | undefined;
+    if (typeof b.features === "string") {
+      const v = b.features.trim();
+      if (v !== "") {
+        try {
+          features = base64ToInt8(v);
+        } catch {
+          return res.status(400).json({ error: "features must be base64 string if specified" });
+        }
+      }
+    } else if (b.features !== undefined && b.features !== null) {
+      return res.status(400).json({ error: "features must be base64 string or null if specified" });
+    }
+
+    let dedupWeight: number | undefined;
+    if (typeof b.dedupWeight === "number") {
+      if (!Number.isFinite(b.dedupWeight)) {
+        return res.status(400).json({ error: "dedupWeight must be number if specified" });
+      }
+      dedupWeight = b.dedupWeight;
+    } else if (b.dedupWeight !== undefined) {
+      return res.status(400).json({ error: "dedupWeight must be number if specified" });
+    }
+
+    try {
+      const watch = timerThrottleService.startWatch(loginUser);
+      const ids = await aiPostsService.RecommendPosts({
+        tags,
+        features,
+        selfUserId,
+        dedupWeight,
+        offset,
+        limit,
+        order,
+      } satisfies RecommendPostsInput);
+      const posts = await postsService.listPostsByIds(ids, selfUserId);
+      watch.done();
+      res.json(posts);
     } catch (e) {
       res.status(400).json({ error: (e as Error).message || "invalid request" });
     }
@@ -290,9 +352,9 @@ export default function createAiPostsRouter(
     const loginUser = await requireLoginAndThrottle(req, res);
     if (!loginUser) return;
 
-    const exists = await withWatch(loginUser, () =>
-      aiPostsService.checkAiPostSummary(req.params.id),
-    );
+    const watch = timerThrottleService.startWatch(loginUser);
+    const exists = await aiPostsService.checkAiPostSummary(req.params.id);
+    watch.done();
     if (!exists) return res.sendStatus(404);
     return res.sendStatus(200);
   });
@@ -302,9 +364,9 @@ export default function createAiPostsRouter(
     if (!loginUser) return;
 
     try {
-      const summary = await withWatch(loginUser, () =>
-        aiPostsService.getAiPostSummary(req.params.id),
-      );
+      const watch = timerThrottleService.startWatch(loginUser);
+      const summary = await aiPostsService.getAiPostSummary(req.params.id);
+      watch.done();
       if (!summary) return res.status(404).json({ error: "not found" });
       const packet: AiPostSummaryPacket = toPacket(summary);
       res.json(packet);
@@ -379,7 +441,9 @@ export default function createAiPostsRouter(
     };
 
     try {
-      const updated = await withWatch(loginUser, () => aiPostsService.updateAiPost(input));
+      const watch = timerThrottleService.startWatch(loginUser);
+      const updated = await aiPostsService.updateAiPost(input);
+      watch.done();
       if (!updated) return res.status(404).json({ error: "not found" });
       const out: AiPostSummaryPacket = toPacket(updated);
       res.json(out);

@@ -75,6 +75,22 @@ export type PubPostDetail = PostDetail & {
   newerPostId: string | null;
 };
 
+export type AiPostSummary = {
+  postId: string;
+  updatedAt: string;
+  summary: string | null;
+  features: Int8Array | null;
+  tags: string[];
+};
+
+export type AiPostSummaryPacket = {
+  postId: string;
+  updatedAt: string;
+  summary: string | null;
+  features: string | null;
+  tags: string[];
+};
+
 export type StorageObjectMetadata = {
   bucket: string;
   key: string;

@@ -292,6 +292,99 @@ export class PostsService {
     return out;
   }
 
+  async listPostsByIds(ids: string[], focusUserId?: string): Promise<Post[]> {
+    if (!Array.isArray(ids) || ids.length === 0) return [];
+    const out: Post[] = [];
+    for (let i = 0; i < ids.length; i += 100) {
+      const chunk = ids
+        .slice(i, i + 100)
+        .filter((v) => typeof v === "string" && /^[0-9a-fA-F]{16}$/.test(v));
+      if (chunk.length === 0) continue;
+      const hasFocus = typeof focusUserId === "string" && focusUserId.trim() !== "";
+      const params: unknown[] = [];
+      const idsParamIdx = hasFocus ? 2 : 1;
+      if (hasFocus) params.push(hexToDec(focusUserId));
+      params.push(hexArrayToDec(chunk));
+      let sql = `
+        WITH req AS (
+          SELECT id, ord
+          FROM unnest($${idsParamIdx}::bigint[]) WITH ORDINALITY AS t(id, ord)
+        )
+        SELECT
+          p.id,
+          p.owned_by,
+          p.reply_to,
+          p.published_at,
+          p.updated_at,
+          p.snippet,
+          p.locale,
+          p.allow_likes,
+          p.allow_replies,
+          id_to_timestamp(p.id) AS created_at,
+          u.nickname AS owner_nickname,
+          u.locale AS owner_locale,
+          pp.owned_by AS reply_to_owner_id,
+          pu.nickname AS reply_to_owner_nickname,
+          COALESCE(pc.reply_count,0) AS count_replies,
+          COALESCE(pc.like_count,0) AS count_likes,
+          ARRAY(SELECT pt2.name FROM post_tags pt2 WHERE pt2.post_id = p.id ORDER BY pt2.name) AS tags
+      `;
+      if (hasFocus) {
+        sql += `,
+          CASE
+            WHEN p.owned_by = $1 THEN FALSE
+            ELSE (
+              EXISTS (SELECT 1 FROM user_blocks b WHERE b.blocker_id = p.owned_by AND b.blockee_id = $1)
+              OR (u.block_strangers = TRUE AND NOT EXISTS (SELECT 1 FROM user_follows f WHERE f.follower_id = p.owned_by AND f.followee_id = $1))
+            )
+          END AS is_blocking_focus_user
+        `;
+      }
+      sql += `
+        FROM req r
+        JOIN posts p ON p.id = r.id
+        JOIN users u ON p.owned_by = u.id
+        LEFT JOIN posts pp ON p.reply_to = pp.id
+        LEFT JOIN users pu ON pp.owned_by = pu.id
+        LEFT JOIN post_counts pc ON pc.post_id = p.id
+        ORDER BY r.ord
+      `;
+      const res = await pgQuery(this.pgPool, sql, params);
+      const rows = res.rows.map((r) => {
+        r.id = decToHex(r.id);
+        r.owned_by = decToHex(r.owned_by);
+        r.reply_to = r.reply_to == null ? null : decToHex(r.reply_to);
+        r.reply_to_owner_id = r.reply_to_owner_id == null ? null : decToHex(r.reply_to_owner_id);
+        return r;
+      });
+      out.push(...snakeToCamel<Post[]>(rows));
+    }
+    if (!focusUserId || out.length === 0) return out;
+    const postIds = out.map((p) => p.id);
+    const likedPostIds = new Set<string>();
+    const repliedPostIds = new Set<string>();
+    for (let i = 0; i < postIds.length; i += 1000) {
+      const chunk = postIds.slice(i, i + 1000);
+      const likeRes = await pgQuery(
+        this.pgPool,
+        `SELECT post_id FROM post_likes WHERE post_id = ANY($1) AND liked_by = $2`,
+        [hexArrayToDec(chunk), hexToDec(focusUserId)],
+      );
+      for (const r of likeRes.rows) likedPostIds.add(decToHex(r.post_id));
+      const replyRes = await pgQuery(
+        this.pgPool,
+        `SELECT reply_to FROM posts WHERE reply_to = ANY($1) AND owned_by = $2`,
+        [hexArrayToDec(chunk), hexToDec(focusUserId)],
+      );
+      for (const r of replyRes.rows) repliedPostIds.add(decToHex(r.reply_to));
+    }
+    for (const d of out) {
+      d.isLikedByFocusUser = likedPostIds.has(d.id);
+      d.isRepliedByFocusUser = repliedPostIds.has(d.id);
+    }
+    return out;
+  }
+
   async createPost(input: CreatePostInput): Promise<PostDetail> {
     if (typeof input.content !== "string" || input.content.trim() === "")
       throw new Error("content is required");
@@ -388,7 +481,6 @@ export class PostsService {
               for (const mentionedUserId of uniqueSorted) {
                 const decId = hexToDec(mentionedUserId);
                 if (!allowedFollowerIds.has(String(decId))) continue;
-
                 this.eventLogService.recordMention({
                   userId: input.ownedBy,
                   postId: id,
@@ -424,7 +516,6 @@ export class PostsService {
       const columns: string[] = [];
       const values: unknown[] = [];
       let idx = 1;
-
       if (input.ownedBy !== undefined) {
         if (typeof input.ownedBy !== "string" || input.ownedBy.trim() === "")
           throw new Error("ownedBy is required");

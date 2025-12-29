@@ -395,18 +395,34 @@ def test_ai_posts():
   p3 = res.json()
   p3_id = p3["id"]
   reco_url = f"{BASE_URL}/ai-posts/recommendations"
+  reco_posts_url = f"{BASE_URL}/ai-posts/recommendations/posts"
   res = requests.post(reco_url, json={"tags": [{"name": tag_a, "count": 1}, {"name": tag_b, "count": 1}], "limit": 10, "order": "desc", "dedupWeight": 0.5}, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   ranked = res.json()
   assert ranked == [p3_id, p1_id, p2_id]
+  res = requests.post(reco_posts_url, json={"tags": [{"name": tag_a, "count": 1}, {"name": tag_b, "count": 1}], "limit": 10, "order": "desc", "dedupWeight": 0.5}, headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  posts_ranked = res.json()
+  assert isinstance(posts_ranked, list)
+  assert [p["id"] for p in posts_ranked] == ranked
   res = requests.post(reco_url, json={"tags": [{"name": tag_a, "count": 1}, {"name": tag_b, "count": 1}], "limit": 10, "order": "asc"}, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   ranked2 = res.json()
   assert ranked2 == [p2_id, p1_id, p3_id]
+  res = requests.post(reco_posts_url, json={"tags": [{"name": tag_a, "count": 1}, {"name": tag_b, "count": 1}], "limit": 10, "order": "asc"}, headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  posts_ranked2 = res.json()
+  assert isinstance(posts_ranked2, list)
+  assert [p["id"] for p in posts_ranked2] == ranked2
   res = requests.post(reco_url, json={"tags": [{"name": tag_a, "count": 1}, {"name": tag_b, "count": 1}], "offset": 1, "limit": 1, "order": "desc"}, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   ranked3 = res.json()
   assert ranked3 == [p1_id]
+  res = requests.post(reco_posts_url, json={"tags": [{"name": tag_a, "count": 1}, {"name": tag_b, "count": 1}], "offset": 1, "limit": 1, "order": "desc"}, headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  posts_ranked3 = res.json()
+  assert isinstance(posts_ranked3, list)
+  assert [p["id"] for p in posts_ranked3] == ranked3
   res = requests.delete(f"{BASE_URL}/posts/{p3_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   res = requests.delete(f"{BASE_URL}/posts/{p2_id}", headers=headers, cookies=cookies)
