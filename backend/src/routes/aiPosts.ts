@@ -22,15 +22,6 @@ import type {
 } from "../models/aiPost";
 import { normalizeOneLiner, parseBoolean, int8ToBase64, base64ToInt8 } from "../utils/format";
 
-const SEED_NUM_CLUSTERS = 4;
-const SEED_CACHE_TTL_SEC = 12 * 60 * 60;
-
-const RECOMMEND_DEDUP_WEIGHT = 0.3;
-const RECOMMEND_FIXED_OFFSET = 0;
-const RECOMMEND_FIXED_LIMIT = 100;
-const RECOMMEND_FIXED_ORDER = "desc";
-const RECOMMEND_CACHE_TTL_SEC = 60 * 60;
-
 function toPacket(s: AiPostSummary): AiPostSummaryPacket {
   return {
     postId: s.postId,
@@ -188,14 +179,6 @@ function mergeFeaturesFromSeeds(seeds: SearchSeed[]): Int8Array | undefined {
     out[i] = v;
   }
   return out;
-}
-
-function seedCacheKey(userId: string): string {
-  return `ai-posts:recommendations:posts:for-user:seed:v1:${userId}`;
-}
-
-function recommendCacheKey(userId: string): string {
-  return `ai-posts:recommendations:posts:for-user:ids:v1:${userId}`;
 }
 
 function parseJsonArray<T = unknown>(raw: string | null): T[] | null {
@@ -466,16 +449,13 @@ export default function createAiPostsRouter(
       return res.status(403).json({ error: "forbidden" });
     }
     const targetUserId = loginUser.isAdmin && userIdParam ? userIdParam : loginUser.id;
-
     const { offset, limit, order } = AuthHelpers.getPageParams(
       req,
       loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
       ["desc", "asc"] as const,
     );
-
-    const seedKey = seedCacheKey(targetUserId);
-    const recKey = recommendCacheKey(targetUserId);
-
+    const seedKey = `recommend-user-seeds:${targetUserId}`;
+    const recKey = `recommend-user-posts:${targetUserId}`;
     try {
       const watch = timerThrottleService.startWatch(loginUser);
 
@@ -495,11 +475,11 @@ export default function createAiPostsRouter(
       if (!seeds) {
         const rawSeeds = await aiPostsService.BuildSearchSeedForUser(
           targetUserId,
-          SEED_NUM_CLUSTERS,
+          Config.AI_POST_SEED_NUM_CLUSTERS,
         );
         const selected = selectSeedsByWeight(rawSeeds);
         const packets = selected.map((s) => toSeedPacket(s));
-        await redis.set(seedKey, JSON.stringify(packets), "EX", SEED_CACHE_TTL_SEC);
+        await redis.set(seedKey, JSON.stringify(packets), "EX", Config.AI_POST_SEED_TTL_SEC);
         seeds = selected;
       }
 
@@ -515,24 +495,21 @@ export default function createAiPostsRouter(
       if (!ids) {
         const tags = mergeTagsFromSeeds(seeds);
         const features = mergeFeaturesFromSeeds(seeds);
-
         const outIds = await aiPostsService.RecommendPosts({
           tags,
           features,
           selfUserId: targetUserId,
-          dedupWeight: RECOMMEND_DEDUP_WEIGHT,
-          offset: RECOMMEND_FIXED_OFFSET,
-          limit: RECOMMEND_FIXED_LIMIT,
-          order: RECOMMEND_FIXED_ORDER,
+          dedupWeight: 0.3,
+          offset: 0,
+          limit: 100,
+          order: "desc",
         } satisfies RecommendPostsInput);
-
-        await redis.set(recKey, JSON.stringify(outIds), "EX", RECOMMEND_CACHE_TTL_SEC);
+        await redis.set(recKey, JSON.stringify(outIds), "EX", Config.AI_POST_RECOMMEND_TTL_SEC);
         ids = outIds;
       }
 
       const orderedIds = order === "asc" ? [...ids].reverse() : ids;
       const subsetIds = orderedIds.slice(offset, offset + limit);
-
       const posts = await postsService.listPostsByIds(subsetIds, targetUserId);
 
       watch.done();

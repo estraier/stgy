@@ -919,7 +919,7 @@ export class AiPostsService {
 
           if (i > 0 && sumVec && c.vec && sumVec.length === c.vec.length) {
             const simDupRaw = cosineSimilarity(sumVec, c.vec);
-            const simDup = sigmoidalContrast((simDupRaw + 1) / 2, 5, 0.85);
+            const simDup = sigmoidalContrast((simDupRaw + 1) / 2, 5, 0.9);
             const penalty = Number.isFinite(simDup) ? simDup * dedupWeight : dedupWeight;
             adj = adj - penalty;
           }
