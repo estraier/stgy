@@ -331,6 +331,16 @@ export default function createAiPostsRouter(
       return res.status(400).json({ error: "features must be base64 string or null if specified" });
     }
 
+    let rerankByLikesAlpha: number | undefined;
+    if (typeof b.rerankByLikesAlpha === "number") {
+      if (!Number.isFinite(b.rerankByLikesAlpha)) {
+        return res.status(400).json({ error: "rerankByLikesAlpha must be number if specified" });
+      }
+      rerankByLikesAlpha = b.rerankByLikesAlpha;
+    } else if (b.rerankByLikesAlpha !== undefined) {
+      return res.status(400).json({ error: "rerankByLikesAlpha must be number if specified" });
+    }
+
     let dedupWeight: number | undefined;
     if (typeof b.dedupWeight === "number") {
       if (!Number.isFinite(b.dedupWeight)) {
@@ -347,6 +357,7 @@ export default function createAiPostsRouter(
         tags,
         features,
         selfUserId,
+        rerankByLikesAlpha,
         dedupWeight,
         offset,
         limit,
@@ -405,6 +416,16 @@ export default function createAiPostsRouter(
       return res.status(400).json({ error: "features must be base64 string or null if specified" });
     }
 
+    let rerankByLikesAlpha: number | undefined;
+    if (typeof b.rerankByLikesAlpha === "number") {
+      if (!Number.isFinite(b.rerankByLikesAlpha)) {
+        return res.status(400).json({ error: "rerankByLikesAlpha must be number if specified" });
+      }
+      rerankByLikesAlpha = b.rerankByLikesAlpha;
+    } else if (b.rerankByLikesAlpha !== undefined) {
+      return res.status(400).json({ error: "rerankByLikesAlpha must be number if specified" });
+    }
+
     let dedupWeight: number | undefined;
     if (typeof b.dedupWeight === "number") {
       if (!Number.isFinite(b.dedupWeight)) {
@@ -421,6 +442,7 @@ export default function createAiPostsRouter(
         tags,
         features,
         selfUserId,
+        rerankByLikesAlpha,
         dedupWeight,
         offset,
         limit,
@@ -499,6 +521,7 @@ export default function createAiPostsRouter(
           tags,
           features,
           selfUserId: targetUserId,
+          rerankByLikesAlpha: 5,
           dedupWeight: 0.3,
           offset: 0,
           limit: 100,

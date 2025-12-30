@@ -59,6 +59,11 @@ type PostFeaturesRow = {
   features: Buffer | null;
 };
 
+type PostLikesCountRow = {
+  post_id: string;
+  count_likes: number;
+};
+
 type Candidate = {
   postId: bigint;
   features: Int8Array | null;
@@ -649,8 +654,20 @@ export class AiPostsService {
       typeof input.selfUserId === "string" && input.selfUserId.trim() !== ""
         ? hexToDec(input.selfUserId)
         : null;
+
     const dedupWeight =
-      typeof input.dedupWeight === "number" && input.dedupWeight > 0 ? input.dedupWeight : 0;
+      typeof input.dedupWeight === "number" &&
+      Number.isFinite(input.dedupWeight) &&
+      input.dedupWeight > 0
+        ? input.dedupWeight
+        : 0;
+
+    const rerankByLikesAlpha =
+      typeof input.rerankByLikesAlpha === "number" &&
+      Number.isFinite(input.rerankByLikesAlpha) &&
+      input.rerankByLikesAlpha > 0
+        ? input.rerankByLikesAlpha
+        : 0;
 
     if (input.tags.length === 0) return [];
 
@@ -862,8 +879,8 @@ export class AiPostsService {
 
     let finalIds: bigint[] = universe.map((c) => c.postId);
 
-    const needVectors = !!input.features || dedupWeight > 0;
-    if (needVectors) {
+    const needWork = !!input.features || dedupWeight > 0 || rerankByLikesAlpha > 0;
+    if (needWork) {
       let qVec: number[] | null = null;
       if (input.features) {
         try {
@@ -873,16 +890,19 @@ export class AiPostsService {
         }
       }
 
+      const needVecDecode = !!qVec || dedupWeight > 0;
+
       const candidates: {
         postId: bigint;
         vec: number[] | null;
         baseScore: number;
         adjScore: number;
+        likeScore?: number;
       }[] = [];
 
       for (const c of universe) {
         let vec: number[] | null = null;
-        if (c.features) {
+        if (needVecDecode && c.features) {
           try {
             vec = normalizeL2(decodeFeatures(c.features));
           } catch {
@@ -909,6 +929,37 @@ export class AiPostsService {
         if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
         return compareBigIntDesc(a.postId, b.postId);
       });
+
+      if (rerankByLikesAlpha > 0) {
+        const ids = candidates.map((c) => c.postId.toString());
+        const likeRes = await pgQuery<PostLikesCountRow>(
+          this.pgPool,
+          `
+          SELECT post_id, COUNT(*)::int AS count_likes
+          FROM post_likes
+          WHERE post_id = ANY($1::bigint[])
+          GROUP BY post_id
+          `,
+          [ids],
+        );
+
+        const likesById = new Map<string, number>();
+        for (const r of likeRes.rows) likesById.set(r.post_id, r.count_likes);
+
+        for (let i = 0; i < candidates.length; i++) {
+          const c = candidates[i];
+          const likes = likesById.get(c.postId.toString()) ?? 0;
+          c.likeScore = Math.log(rerankByLikesAlpha + likes) - i;
+        }
+
+        candidates.sort((a, b) => {
+          const as = a.likeScore ?? Number.NEGATIVE_INFINITY;
+          const bs = b.likeScore ?? Number.NEGATIVE_INFINITY;
+          if (as !== bs) return bs - as;
+          if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
+          return compareBigIntDesc(a.postId, b.postId);
+        });
+      }
 
       if (dedupWeight > 0) {
         let sumVec: number[] | null = null;

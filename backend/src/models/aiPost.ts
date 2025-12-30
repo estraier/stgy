@@ -62,6 +62,7 @@ export type RecommendPostsInput = {
   tags: SearchSeedTag[];
   features?: Int8Array;
   selfUserId?: string;
+  rerankByLikesAlpha?: number;
   dedupWeight?: number;
 } & AiPostPagination;
 
@@ -69,5 +70,6 @@ export type RecommendPostsInputPacket = {
   tags: SearchSeedTag[];
   features?: string | null;
   selfUserId?: string;
+  rerankByLikesAlpha?: number;
   dedupWeight?: number;
 } & AiPostPagination;

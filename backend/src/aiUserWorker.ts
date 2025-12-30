@@ -31,7 +31,12 @@ import type {
   ChatResponse,
   GenerateFeaturesRequest,
 } from "./models/aiUser";
-import type { AiPostSummary, AiPostSummaryPacket } from "./models/aiPost";
+import type {
+  AiPostSummary,
+  AiPostSummaryPacket,
+  RecommendPostsInputPacket,
+  SearchSeedTag,
+} from "./models/aiPost";
 import type { UserLite, UserDetail } from "./models/user";
 import type { Post, PostDetail } from "./models/post";
 import type { Notification, NotificationPostRecord } from "./models/notification";
@@ -756,21 +761,17 @@ async function fetchRecommendedPosts(
     if (tag === "") continue;
     tagCounts.set(tag, (tagCounts.get(tag) ?? 0) + 1);
   }
-  const tags = Array.from(tagCounts.entries()).map(([name, count]) => ({ name, count }));
+  const tags: SearchSeedTag[] = Array.from(tagCounts.entries()).map(([name, count]) => ({
+    name,
+    count,
+  }));
   if (tags.length === 0) return [];
-  const body: {
-    tags: { name: string; count: number }[];
-    offset: number;
-    limit: number;
-    order: "desc";
-    dedupWeight: number;
-    selfUserId?: string;
-    features?: string;
-  } = {
+  const body: RecommendPostsInputPacket = {
     tags,
     offset: 0,
     limit: Math.min(100, Config.AI_USER_FETCH_POST_LIMIT),
     order: "desc",
+    rerankByLikesAlpha: 5,
     dedupWeight: 0.3,
   };
   const selfUserId = typeof interest.userId === "string" ? interest.userId.trim() : "";

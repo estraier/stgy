@@ -101,7 +101,6 @@ export class Config {
   static readonly AI_TAG_MAX_COUNT = envNum("STGY_AI_TAG_MAX_COUNT", 5);
   static readonly AI_TAG_MAX_LENGTH = envNum("STGY_AI_TAG_MAX_LENGTH", 40);
 
-
   static readonly AI_POST_SEED_NUM_CLUSTERS = envNum("STGY_AI_POST_SEED_NUM_CLUSTERS", 4);
   static readonly AI_POST_SEED_TTL_SEC = envNum("STGY_AI_POST_SEED_TTL_SEC", 12 * 3600);
   static readonly AI_POST_RECOMMEND_TTL_SEC = envNum("STGY_AI_POST_RECOMMEND_TTL_SEC", 2 * 3600);
