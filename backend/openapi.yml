@@ -455,6 +455,9 @@ components:
           format: byte
           nullable: true
           description: Base64-encoded Int8Array features vector used for similarity-based re-ranking.
+        rerankByLikesAlpha:
+          type: number
+          format: float
         dedupWeight:
           type: number
           format: float
