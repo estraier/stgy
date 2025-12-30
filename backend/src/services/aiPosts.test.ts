@@ -15,6 +15,7 @@ import {
   sigmoidalContrast,
   normalizeL2,
 } from "../utils/vectorSpace";
+import { Config } from "../config";
 
 jest.mock("../config", () => {
   return {
@@ -46,6 +47,8 @@ function int8eq(a: Int8Array | null | undefined, b: Int8Array): boolean {
   for (let i = 0; i < a.length; i++) if (a[i] !== b[i]) return false;
   return true;
 }
+
+const compareBigIntDesc = (a: bigint, b: bigint): number => (a === b ? 0 : a > b ? -1 : 1);
 
 type MockAiPostSummaryRow = {
   postId: string;
@@ -95,6 +98,132 @@ class MockPgClient {
 
     if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") {
       return { rows: [], rowCount: 0 };
+    }
+
+    if (
+      sql.includes("WITH raw AS") &&
+      sql.includes("COUNT(DISTINCT src)::int AS table_count") &&
+      sql.includes("FROM post_tags") &&
+      sql.includes("FROM ai_post_tags") &&
+      sql.includes("SELECT post_id, name, table_count") &&
+      sql.includes("FROM agg")
+    ) {
+      const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
+      const ids = arrParam ? arrParam.map((x) => String(x)) : [];
+      const idSet = new Set(ids);
+
+      const byPostId = new Map<string, Map<string, { post: boolean; ai: boolean }>>();
+
+      for (const r of this.postTags) {
+        if (!idSet.has(String(r.postId))) continue;
+        const pid = String(r.postId);
+        let m = byPostId.get(pid);
+        if (!m) {
+          m = new Map();
+          byPostId.set(pid, m);
+        }
+        const name = String(r.name);
+        const v = m.get(name) ?? { post: false, ai: false };
+        v.post = true;
+        m.set(name, v);
+      }
+
+      for (const r of this.tags) {
+        if (!idSet.has(String(r.postId))) continue;
+        const pid = String(r.postId);
+        let m = byPostId.get(pid);
+        if (!m) {
+          m = new Map();
+          byPostId.set(pid, m);
+        }
+        const name = String(r.name);
+        const v = m.get(name) ?? { post: false, ai: false };
+        v.ai = true;
+        m.set(name, v);
+      }
+
+      const rows: { post_id: string; name: string; table_count: number }[] = [];
+      for (const [pid, tagMap] of byPostId.entries()) {
+        for (const [name, src] of tagMap.entries()) {
+          const table_count = (src.post ? 1 : 0) + (src.ai ? 1 : 0);
+          if (table_count > 0) rows.push({ post_id: pid, name, table_count });
+        }
+      }
+
+      rows.sort((a, b) => {
+        const aa = BigInt(a.post_id);
+        const bb = BigInt(b.post_id);
+        if (aa !== bb) return aa < bb ? -1 : 1;
+        return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
+      });
+
+      return { rows };
+    }
+
+    if (
+      sql.includes("WITH query_tags(tag) AS") &&
+      sql.includes("raw AS") &&
+      sql.includes("COUNT(DISTINCT src)::int AS table_count") &&
+      sql.includes("FROM agg a") &&
+      sql.includes("JOIN posts p ON p.id = a.post_id")
+    ) {
+      const tagArray = (params?.[0] as string[]) ?? [];
+      const limitPerTag =
+        typeof params?.[1] === "number" && Number.isFinite(params?.[1] as number)
+          ? (params?.[1] as number)
+          : 100;
+
+      const postIndex = new Map<string, MockPostRow>();
+      for (const p of this.posts) postIndex.set(String(p.postId), p);
+
+      const sortPostIdDesc = (a: string, b: string) => {
+        const aa = BigInt(a);
+        const bb = BigInt(b);
+        if (aa === bb) return 0;
+        return aa > bb ? -1 : 1;
+      };
+
+      const rows: {
+        post_id: string;
+        tag: string;
+        table_count: number;
+        is_root: boolean;
+        user_id: string;
+      }[] = [];
+
+      for (const tag of tagArray) {
+        const fromPost = this.postTags
+          .filter((r) => r.name === tag)
+          .map((r) => String(r.postId))
+          .sort(sortPostIdDesc)
+          .slice(0, limitPerTag);
+
+        const fromAi = this.tags
+          .filter((r) => r.name === tag)
+          .map((r) => String(r.postId))
+          .sort(sortPostIdDesc)
+          .slice(0, limitPerTag);
+
+        const postSet = new Set(fromPost);
+        const aiSet = new Set(fromAi);
+        const union = Array.from(new Set([...fromPost, ...fromAi]));
+
+        for (const postId of union) {
+          const p = postIndex.get(postId);
+          if (!p) continue;
+          const table_count = (postSet.has(postId) ? 1 : 0) + (aiSet.has(postId) ? 1 : 0);
+          if (table_count <= 0) continue;
+          rows.push({
+            post_id: postId,
+            tag,
+            table_count,
+            is_root: p.replyTo === null,
+            user_id: p.userId,
+          });
+        }
+      }
+
+      return { rows };
     }
 
     if (
@@ -179,56 +308,6 @@ class MockPgClient {
       for (const id of followeePosts) rows.push({ post_id: id, weight: 0.5 });
       for (const id of followeeLikes) rows.push({ post_id: id, weight: 0.3 });
 
-      return { rows };
-    }
-
-    if (
-      sql.includes("WITH seed_posts(post_id, weight) AS") &&
-      sql.includes("JOIN ai_post_tags apt ON apt.post_id = sp.post_id") &&
-      sql.includes("SELECT sp.weight, apt.name")
-    ) {
-      const postIds = (params?.[0] as unknown[] | undefined)?.map((x) => String(x)) ?? [];
-      const weights = (params?.[1] as unknown[] | undefined)?.map((x) => Number(x)) ?? [];
-      const rows: { weight: number; name: string }[] = [];
-      for (let i = 0; i < postIds.length && i < weights.length; i++) {
-        const postId = postIds[i];
-        const w = weights[i];
-        for (const t of this.tags.filter((x) => x.postId === postId)) {
-          rows.push({ weight: w, name: t.name });
-        }
-      }
-      return { rows };
-    }
-
-    if (
-      sql.includes("SELECT post_id, name") &&
-      sql.includes("FROM ai_post_tags") &&
-      sql.includes("WHERE post_id = ANY(")
-    ) {
-      const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
-      const ids = arrParam ? arrParam.map((x) => String(x)) : [];
-      const idSet = new Set(ids);
-      const rows = this.tags
-        .filter((t) => idSet.has(String(t.postId)))
-        .map((t) => ({ post_id: t.postId, name: t.name }));
-      return { rows };
-    }
-
-    if (
-      sql.includes("WITH seed_posts(post_id, weight) AS") &&
-      sql.includes("JOIN ai_post_summaries aps ON aps.post_id = sp.post_id") &&
-      sql.includes("WHERE aps.features IS NOT NULL") &&
-      sql.includes("SELECT sp.weight, aps.features")
-    ) {
-      const postIds = (params?.[0] as unknown[] | undefined)?.map((x) => String(x)) ?? [];
-      const weights = (params?.[1] as unknown[] | undefined)?.map((x) => Number(x)) ?? [];
-      const rows: { weight: number; features: Buffer }[] = [];
-      for (let i = 0; i < postIds.length && i < weights.length; i++) {
-        const postId = postIds[i];
-        const w = weights[i];
-        const s = this.summaries.find((x) => x.postId === postId);
-        if (s?.features) rows.push({ weight: w, features: s.features });
-      }
       return { rows };
     }
 
@@ -418,62 +497,6 @@ class MockPgClient {
       return { rowCount: tagArray.length, rows: [] };
     }
 
-    if (
-      sql.startsWith(
-        "WITH query_tags(tag) AS ( SELECT unnest($1::text[]) ), matched_tag_posts AS (",
-      ) &&
-      sql.includes("FROM post_tags") &&
-      sql.includes("FROM ai_post_tags") &&
-      sql.includes("FROM matched_tag_posts mtp") &&
-      sql.includes("JOIN posts p ON p.id = mtp.post_id")
-    ) {
-      const tagArray = (params?.[0] as string[]) ?? [];
-      const limitPerTag =
-        typeof params?.[1] === "number" && Number.isFinite(params?.[1] as number)
-          ? (params?.[1] as number)
-          : 100;
-
-      const rows: { post_id: string; tag: string; is_root: boolean; user_id: string }[] = [];
-
-      const postIndex = new Map<string, MockPostRow>();
-      for (const p of this.posts) postIndex.set(p.postId, p);
-
-      const sortPostIdDesc = (a: string, b: string) => {
-        const aa = BigInt(a);
-        const bb = BigInt(b);
-        if (aa === bb) return 0;
-        return aa > bb ? -1 : 1;
-      };
-
-      for (const tag of tagArray) {
-        const fromPostTags = this.postTags
-          .filter((r) => r.name === tag)
-          .map((r) => r.postId)
-          .sort(sortPostIdDesc)
-          .slice(0, limitPerTag);
-
-        for (const postId of fromPostTags) {
-          const p = postIndex.get(postId);
-          if (!p) continue;
-          rows.push({ post_id: postId, tag, is_root: p.replyTo === null, user_id: p.userId });
-        }
-
-        const fromAiPostTags = this.tags
-          .filter((r) => r.name === tag)
-          .map((r) => r.postId)
-          .sort(sortPostIdDesc)
-          .slice(0, limitPerTag);
-
-        for (const postId of fromAiPostTags) {
-          const p = postIndex.get(postId);
-          if (!p) continue;
-          rows.push({ post_id: postId, tag, is_root: p.replyTo === null, user_id: p.userId });
-        }
-      }
-
-      return { rows };
-    }
-
     if (sql.includes("FROM ai_post_summaries") && sql.includes("WHERE post_id = ANY(")) {
       const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
       if (arrParam) {
@@ -496,6 +519,271 @@ class MockPgClient {
 
     return { rows: [] };
   }
+}
+
+function computeExpectedRecommend(pg: MockPgClient, input: RecommendPostsInput): string[] {
+  const offset = input.offset ?? 0;
+  const limit = input.limit ?? 100;
+  const order = (input.order ?? "desc").toLowerCase() === "asc" ? "asc" : "desc";
+  const selfUserIdDec =
+    typeof input.selfUserId === "string" && input.selfUserId.trim() !== ""
+      ? toDecStr(input.selfUserId)
+      : null;
+  const dedupWeight =
+    typeof input.dedupWeight === "number" && input.dedupWeight > 0 ? input.dedupWeight : 0;
+
+  if (input.tags.length === 0) return [];
+
+  const paramTagCounts = new Map<string, number>();
+  for (const t of input.tags) {
+    const tag = typeof t.name === "string" ? t.name.trim() : "";
+    if (!tag) continue;
+    const count = typeof t.count === "number" ? t.count : 0;
+    if (!(count > 0)) continue;
+    paramTagCounts.set(tag, (paramTagCounts.get(tag) ?? 0) + count);
+  }
+
+  const queryTags = Array.from(paramTagCounts.keys());
+  if (queryTags.length === 0) return [];
+
+  let followeeIds: Set<string> | null = null;
+  if (selfUserIdDec) {
+    followeeIds = new Set(
+      pg.follows.filter((f) => f.followerId === selfUserIdDec).map((f) => f.followeeId),
+    );
+  }
+
+  const postIndex = new Map<string, MockPostRow>();
+  for (const p of pg.posts) postIndex.set(String(p.postId), p);
+
+  const sortPostIdDescStr = (a: string, b: string) => {
+    const aa = BigInt(a);
+    const bb = BigInt(b);
+    if (aa === bb) return 0;
+    return aa > bb ? -1 : 1;
+  };
+
+  const tagTableCountsByPostId = new Map<bigint, Map<string, number>>();
+  const metaByPostId = new Map<bigint, { isRoot: boolean; userId: string }>();
+
+  for (const tag of queryTags) {
+    const fromPost = pg.postTags
+      .filter((r) => r.name === tag)
+      .map((r) => String(r.postId))
+      .sort(sortPostIdDescStr)
+      .slice(0, Config.AI_POST_RECOMMEND_TAG_CANDIDATES);
+
+    const fromAi = pg.tags
+      .filter((r) => r.name === tag)
+      .map((r) => String(r.postId))
+      .sort(sortPostIdDescStr)
+      .slice(0, Config.AI_POST_RECOMMEND_TAG_CANDIDATES);
+
+    const postSet = new Set(fromPost);
+    const aiSet = new Set(fromAi);
+    const union = Array.from(new Set([...fromPost, ...fromAi]));
+
+    for (const postIdStr of union) {
+      const p = postIndex.get(postIdStr);
+      if (!p) continue;
+      if (selfUserIdDec && p.userId === selfUserIdDec) continue;
+
+      const tableCount = (postSet.has(postIdStr) ? 1 : 0) + (aiSet.has(postIdStr) ? 1 : 0);
+      if (tableCount <= 0) continue;
+
+      const postId = BigInt(postIdStr);
+      let m = tagTableCountsByPostId.get(postId);
+      if (!m) {
+        m = new Map();
+        tagTableCountsByPostId.set(postId, m);
+      }
+      m.set(tag, tableCount);
+
+      if (!metaByPostId.has(postId)) {
+        metaByPostId.set(postId, { isRoot: p.replyTo === null, userId: p.userId });
+      }
+    }
+  }
+
+  if (tagTableCountsByPostId.size === 0) return [];
+
+  const sortedTagPosts = Array.from(tagTableCountsByPostId.entries()).sort((a, b) =>
+    compareBigIntDesc(a[0], b[0]),
+  );
+
+  let tagRankScore = sortedTagPosts.length;
+  const tagScores = new Map<string, number>();
+
+  for (const [, tagMap] of sortedTagPosts) {
+    for (const [tag, tableCount] of tagMap.entries()) {
+      const tableScore = Math.log(1 + tableCount);
+      tagScores.set(tag, (tagScores.get(tag) ?? 0) + tagRankScore * tableScore);
+    }
+    tagRankScore -= 1;
+  }
+
+  let totalTagScore = 0;
+  for (const v of tagScores.values()) totalTagScore += v;
+  if (totalTagScore === 0) return [];
+
+  const tagIdfScores = new Map<string, number>();
+  for (const [tag, score] of tagScores.entries()) {
+    if (!(score > 0)) continue;
+    tagIdfScores.set(tag, Math.log(totalTagScore / score));
+  }
+
+  const sortedPostIds = Array.from(tagTableCountsByPostId.keys()).sort(compareBigIntDesc);
+
+  let postRankScore = sortedPostIds.length * 3;
+  const postRankScores = new Map<bigint, number>();
+  for (const postId of sortedPostIds) {
+    postRankScores.set(postId, postRankScore);
+    postRankScore -= 1;
+  }
+
+  const postFinalScores = new Map<bigint, number>();
+  for (const [postId, tagMap] of tagTableCountsByPostId.entries()) {
+    const rankScore = postRankScores.get(postId);
+    const meta = metaByPostId.get(postId);
+    if (rankScore === undefined || !meta) continue;
+
+    const rootScore = meta.isRoot ? 1.0 : 0.5;
+    const socialScore = followeeIds && followeeIds.has(meta.userId) ? 1.0 : 0.5;
+
+    for (const [tag, tableCount] of tagMap.entries()) {
+      const idfScore = tagIdfScores.get(tag);
+      const paramCount = paramTagCounts.get(tag) ?? 0;
+      const tfArg = tableCount + paramCount;
+      if (idfScore === undefined || !(tfArg > 0)) continue;
+
+      const tfScore = Math.log(tfArg);
+      const add = rankScore * tfScore * idfScore * rootScore * socialScore;
+      postFinalScores.set(postId, (postFinalScores.get(postId) ?? 0) + add);
+    }
+  }
+
+  const scored = Array.from(postFinalScores.entries()).map(([postId, score]) => ({
+    postId,
+    score,
+  }));
+
+  scored.sort((a, b) => {
+    if (a.score !== b.score) return b.score - a.score;
+    return compareBigIntDesc(a.postId, b.postId);
+  });
+
+  const summariesById = new Map<string, MockAiPostSummaryRow>();
+  for (const s of pg.summaries) summariesById.set(String(s.postId), s);
+
+  const universe: { postId: bigint; features: Int8Array | null }[] = [];
+  for (
+    let i = 0;
+    i < scored.length && universe.length < Config.AI_POST_RECOMMEND_VEC_CANDIDATES;
+    i += 20
+  ) {
+    const chunk = scored.slice(i, i + 20);
+    for (const c of chunk) {
+      const s = summariesById.get(c.postId.toString());
+      if (!s) continue;
+      universe.push({
+        postId: c.postId,
+        features: s.features
+          ? new Int8Array(s.features.buffer, s.features.byteOffset, s.features.byteLength)
+          : null,
+      });
+      if (universe.length >= Config.AI_POST_RECOMMEND_VEC_CANDIDATES) break;
+    }
+  }
+
+  if (universe.length === 0) return [];
+
+  let finalIds: bigint[] = universe.map((c) => c.postId);
+
+  const needVectors = !!input.features || dedupWeight > 0;
+  if (needVectors) {
+    let qVec: number[] | null = null;
+    if (input.features) {
+      try {
+        qVec = normalizeL2(decodeFeatures(input.features));
+      } catch {
+        qVec = null;
+      }
+    }
+
+    const candidates: {
+      postId: bigint;
+      vec: number[] | null;
+      baseScore: number;
+      adjScore: number;
+    }[] = [];
+    for (const c of universe) {
+      let vec: number[] | null = null;
+      if (c.features) {
+        try {
+          vec = normalizeL2(decodeFeatures(c.features));
+        } catch {
+          vec = null;
+        }
+      }
+
+      let baseScore = postFinalScores.get(c.postId) ?? 0;
+
+      if (qVec) {
+        if (!vec || vec.length !== qVec.length) {
+          baseScore = Number.NEGATIVE_INFINITY;
+        } else {
+          const simRaw = cosineSimilarity(qVec, vec);
+          const sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
+          baseScore = Number.isFinite(sim) ? sim : Number.NEGATIVE_INFINITY;
+        }
+      }
+
+      candidates.push({ postId: c.postId, vec, baseScore, adjScore: baseScore });
+    }
+
+    candidates.sort((a, b) => {
+      if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
+      return compareBigIntDesc(a.postId, b.postId);
+    });
+
+    if (dedupWeight > 0) {
+      let sumVec: number[] | null = null;
+
+      for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i];
+        let adj = c.baseScore;
+
+        if (i > 0 && sumVec && c.vec && sumVec.length === c.vec.length) {
+          const simDupRaw = cosineSimilarity(sumVec, c.vec);
+          const simDup = sigmoidalContrast((simDupRaw + 1) / 2, 5, 0.85);
+          const penalty = Number.isFinite(simDup) ? simDup * dedupWeight : dedupWeight;
+          adj = adj - penalty;
+        }
+
+        c.adjScore = adj;
+
+        if (c.vec) {
+          if (!sumVec) {
+            sumVec = c.vec.slice();
+          } else if (sumVec.length === c.vec.length) {
+            for (let j = 0; j < sumVec.length; j++) sumVec[j] += c.vec[j];
+          }
+        }
+      }
+
+      candidates.sort((a, b) => {
+        if (a.adjScore !== b.adjScore) return b.adjScore - a.adjScore;
+        if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
+        return compareBigIntDesc(a.postId, b.postId);
+      });
+    }
+
+    finalIds = candidates.map((x) => x.postId);
+  }
+
+  const orderedIds = order === "asc" ? [...finalIds].reverse() : finalIds;
+  const sliced = orderedIds.slice(offset, offset + limit);
+  return sliced.map((id) => decToHex(id.toString()));
 }
 
 describe("AiPostsService checkAiPostSummary", () => {
@@ -987,7 +1275,9 @@ describe("AiPostsService RecommendPosts", () => {
       order: "desc",
     };
     const result = await service.RecommendPosts(input);
-    expect(result).toEqual([hex(121), hex(123), hex(124), hex(122), hex(127), hex(125)]);
+    const expected = computeExpectedRecommend(pgClient, input);
+    expect(result).toEqual(expected);
+    expect(result.includes(hex(129))).toBe(false);
   });
 
   test("filters out selfUserId after fetching matched rows (no SQL WHERE)", async () => {
@@ -1000,8 +1290,8 @@ describe("AiPostsService RecommendPosts", () => {
       order: "desc",
     };
     const result = await service.RecommendPosts(input);
-
-    expect(result).toEqual([hex(121), hex(124), hex(122), hex(127), hex(125)]);
+    const expected = computeExpectedRecommend(pgClient, input);
+    expect(result).toEqual(expected);
     expect(result.includes(hex(123))).toBe(false);
     expect(result.includes(hex(129))).toBe(false);
   });
@@ -1024,28 +1314,7 @@ describe("AiPostsService RecommendPosts", () => {
     };
 
     const result = await service.RecommendPosts(input);
-
-    const universeDecIds = [121, 123, 124, 127, 125, 122, 129].map(dec);
-
-    const qDecoded = normalizeL2(decodeFeatures(q));
-    const scored = universeDecIds.map((postIdDec) => {
-      const s = pgClient.summaries.find((x) => x.postId === postIdDec);
-      if (!s?.features) throw new Error("test setup error: missing features");
-      const v = new Int8Array(s.features.buffer, s.features.byteOffset, s.features.byteLength);
-      const simRaw = cosineSimilarity(qDecoded, normalizeL2(decodeFeatures(v)));
-      const sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
-      return { postIdDec, sim };
-    });
-
-    scored.sort((a, b) => {
-      if (a.sim !== b.sim) return b.sim - a.sim;
-      const aa = BigInt(a.postIdDec);
-      const bb = BigInt(b.postIdDec);
-      if (aa === bb) return 0;
-      return aa > bb ? -1 : 1;
-    });
-
-    const expected = scored.map((x) => toHexStrFromDec(x.postIdDec));
+    const expected = computeExpectedRecommend(pgClient, input);
     expect(result).toEqual(expected);
   });
 
@@ -1068,30 +1337,7 @@ describe("AiPostsService RecommendPosts", () => {
     };
 
     const result = await service.RecommendPosts(input);
-
-    const universeDecIds = [121, 123, 124, 127, 125, 122, 129].map(dec);
-    const qDecoded = normalizeL2(decodeFeatures(q));
-    const scored = universeDecIds.map((postIdDec) => {
-      const s = pgClient.summaries.find((x) => x.postId === postIdDec);
-      if (!s?.features) throw new Error("test setup error: missing features");
-      const v = new Int8Array(s.features.buffer, s.features.byteOffset, s.features.byteLength);
-      const simRaw = cosineSimilarity(qDecoded, normalizeL2(decodeFeatures(v)));
-      const sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
-      return { postIdDec, sim };
-    });
-
-    scored.sort((a, b) => {
-      if (a.sim !== b.sim) return b.sim - a.sim;
-      const aa = BigInt(a.postIdDec);
-      const bb = BigInt(b.postIdDec);
-      if (aa === bb) return 0;
-      return aa > bb ? -1 : 1;
-    });
-
-    const descIds = scored.map((x) => toHexStrFromDec(x.postIdDec));
-    const ascIds = [...descIds].reverse();
-    const expected = ascIds.slice(1, 1 + 3);
-
+    const expected = computeExpectedRecommend(pgClient, input);
     expect(result).toEqual(expected);
   });
 
@@ -1134,7 +1380,8 @@ describe("AiPostsService RecommendPosts", () => {
     };
 
     const result = await localService.RecommendPosts(input);
-    expect(result).toEqual([toHexStrFromDec(dec(199)), toHexStrFromDec(dec(200))]);
+    const expected = computeExpectedRecommend(localPg, input);
+    expect(result).toEqual(expected);
   });
 });
 
@@ -1197,7 +1444,7 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     expect(seeds[0].tags).toEqual([{ name: "t", count: 1 }]);
     expect(seeds[0].features).toBeInstanceOf(Int8Array);
     expect(seeds[0].features.length).toBe(512);
-    expect(seeds[0].weight).toBeCloseTo(1.0 * Math.log(1 + 1), 10);
+    expect(seeds[0].weight).toBeCloseTo(1, 10);
   });
 
   test("builds tags and features from self/likes/followees", async () => {
@@ -1264,48 +1511,78 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     expect(Array.isArray(seeds)).toBe(true);
     expect(seeds.length).toBe(1);
 
-    const result = seeds[0];
-
-    expect(result.tags).toEqual([
-      { name: "common", count: 14 },
-      { name: "self", count: 3 },
-      { name: "liked", count: 2 },
-      { name: "fa", count: 2 },
-      { name: "fb", count: 2 },
-      { name: "fla", count: 1 },
-      { name: "flb", count: 1 },
-    ]);
-
-    expect(result.features).toBeInstanceOf(Int8Array);
-    expect(result.features.length).toBe(512);
-
-    const occ = Math.log(2);
-
-    const seedPosts: { feat: Int8Array; w: number }[] = [
-      { feat: fSelfP1, w: 1.0 * occ },
-      { feat: fSelfP2, w: 1.0 * occ },
-      { feat: fSelfLiked, w: 0.7 * occ },
-      { feat: fFaPost, w: 0.5 * occ },
-      { feat: fFbPost, w: 0.5 * occ },
-      { feat: fFlaLiked, w: 0.3 * occ },
-      { feat: fFlbLiked, w: 0.3 * occ },
+    const baseWeights: { postId: string; w: number; feat: Int8Array }[] = [
+      { postId: selfP1, w: 1.0, feat: fSelfP1 },
+      { postId: selfP2, w: 1.0, feat: fSelfP2 },
+      { postId: selfLiked, w: 0.7, feat: fSelfLiked },
+      { postId: faPost, w: 0.5, feat: fFaPost },
+      { postId: fbPost, w: 0.5, feat: fFbPost },
+      { postId: flaLiked, w: 0.3, feat: fFlaLiked },
+      { postId: flbLiked, w: 0.3, feat: fFlbLiked },
     ];
 
-    let sumVec: number[] | null = null;
-    for (const s of seedPosts) {
-      const v = normalizeL2(decodeFeatures(s.feat));
-      if (!sumVec) {
-        sumVec = v.map((x) => x * s.w);
-      } else {
-        for (let i = 0; i < sumVec.length; i++) sumVec[i] += v[i] * s.w;
+    const total = baseWeights.reduce((acc, x) => acc + x.w, 0);
+    const gamma = 0.7;
+
+    const effectiveByPost = new Map<string, number>();
+    for (const x of baseWeights) {
+      const p = x.w / total;
+      effectiveByPost.set(x.postId, Math.pow(p, gamma));
+    }
+
+    const tagScores = new Map<string, number>();
+    for (const x of baseWeights) {
+      const ew = effectiveByPost.get(x.postId) ?? 0;
+      if (!(ew > 0)) continue;
+      const tags = pgClient.tags.filter((t) => t.postId === x.postId).map((t) => t.name);
+      for (const name of tags) {
+        tagScores.set(name, (tagScores.get(name) ?? 0) + ew * Math.log(2));
       }
+    }
+
+    const sortedTags = Array.from(tagScores.entries())
+      .sort((a, b) => {
+        if (a[1] !== b[1]) return b[1] - a[1];
+        return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
+      })
+      .slice(0, 10);
+
+    let expectedTags: { name: string; count: number }[] = [];
+    if (sortedTags.length > 0) {
+      const minScore = sortedTags[sortedTags.length - 1][1];
+      if (minScore > 0) {
+        expectedTags = sortedTags.map(([name, score]) => {
+          const scaled = score / minScore;
+          const cnt = Math.max(1, Math.round(scaled));
+          return { name, count: cnt };
+        });
+      } else {
+        expectedTags = sortedTags.map(([name]) => ({ name, count: 1 }));
+      }
+    }
+
+    const expectedWeight = baseWeights.reduce(
+      (acc, x) => acc + (effectiveByPost.get(x.postId) ?? 0),
+      0,
+    );
+
+    let sumVec: number[] | null = null;
+    for (const x of baseWeights) {
+      const ew = effectiveByPost.get(x.postId) ?? 0;
+      if (!(ew > 0)) continue;
+      const v = normalizeL2(decodeFeatures(x.feat));
+      if (!sumVec) sumVec = v.map((z) => z * ew);
+      else for (let i = 0; i < sumVec.length; i++) sumVec[i] += v[i] * ew;
     }
     if (!sumVec) throw new Error("test setup error");
 
-    const expected = encodeFeatures(normalizeL2(sumVec));
-    expect(int8eq(result.features, expected)).toBe(true);
+    const expectedFeatures = encodeFeatures(normalizeL2(sumVec));
 
-    const expectedWeight = (1.0 + 1.0 + 0.7 + 0.5 + 0.5 + 0.3 + 0.3) * occ;
+    const result = seeds[0];
+    expect(result.tags).toEqual(expectedTags);
+    expect(result.features).toBeInstanceOf(Int8Array);
+    expect(result.features.length).toBe(512);
+    expect(int8eq(result.features, expectedFeatures)).toBe(true);
     expect(typeof result.weight).toBe("number");
     expect(result.weight).toBeCloseTo(expectedWeight, 10);
   });
@@ -1336,8 +1613,7 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     expect(s0.features).toBeInstanceOf(Int8Array);
     expect(s0.features.length).toBe(512);
 
-    const expectedWeight = (1.0 + 0.7) * Math.log(1 + 2);
-    expect(s0.weight).toBeCloseTo(expectedWeight, 10);
+    expect(s0.weight).toBeCloseTo(1, 10);
 
     const v = normalizeL2(decodeFeatures(feat));
     const expectedFeatures = encodeFeatures(normalizeL2(v));

@@ -159,7 +159,7 @@ export function clusterVectorsByKMeans(
   numClusters: number,
   options?: KMeansOptions,
 ): number[] {
-  const mulberry32 = (seed: number): (() => number) => {
+  const mulberry32 = (seed: number) => {
     let a = seed >>> 0;
     return () => {
       a |= 0;
@@ -187,10 +187,10 @@ export function clusterVectorsByKMeans(
     for (let i = 0; i < out.length; i++) out[i] /= n;
     return out;
   };
-  const euclideanDistanceSquared = (a: ArrayLike<number>, b: ArrayLike<number>): number => {
+  const euclideanDistanceSquared = (a: Float32Array, b: Float32Array): number => {
     let sum = 0;
     for (let i = 0; i < a.length; i++) {
-      const diff = Number(a[i]) - Number(b[i]);
+      const diff = a[i] - b[i];
       sum += diff * diff;
     }
     return sum;
@@ -219,7 +219,9 @@ export function clusterVectorsByKMeans(
   const rnd = options?.seed === undefined ? Math.random : mulberry32(options.seed);
   const pick = shuffledIndices(numVectors, rnd).slice(0, numClusters);
   let centroids = pick.map((i) => new Float32Array(xs[i]));
-  const assignments = new Array<number>(numVectors).fill(-1);
+  const nextCentroids = Array.from({ length: numClusters }, () => new Float32Array(dimensions));
+  const counts = new Uint32Array(numClusters);
+  const assignments = new Int32Array(numVectors).fill(-1);
   let changed = true;
   let iterations = 0;
   const maxIterations = options?.maxIterations ?? 100;
@@ -229,8 +231,9 @@ export function clusterVectorsByKMeans(
     for (let i = 0; i < numVectors; i++) {
       let minDist = Infinity;
       let closest = -1;
+      const x = xs[i];
       for (let j = 0; j < numClusters; j++) {
-        const dist = euclideanDistanceSquared(xs[i], centroids[j]);
+        const dist = euclideanDistanceSquared(x, centroids[j]);
         if (dist < minDist) {
           minDist = dist;
           closest = j;
@@ -242,20 +245,30 @@ export function clusterVectorsByKMeans(
       }
     }
     if (changed) {
-      const newCentroids = Array.from({ length: numClusters }, () => new Float32Array(dimensions));
-      const counts = new Array<number>(numClusters).fill(0);
+      for (let j = 0; j < numClusters; j++) {
+        nextCentroids[j].fill(0);
+        counts[j] = 0;
+      }
       for (let i = 0; i < numVectors; i++) {
         const c = assignments[i];
-        for (let d = 0; d < dimensions; d++) newCentroids[c][d] += xs[i][d];
+        const x = xs[i];
+        const target = nextCentroids[c];
+        for (let d = 0; d < dimensions; d++) {
+          target[d] += x[d];
+        }
         counts[c]++;
       }
       for (let j = 0; j < numClusters; j++) {
         if (counts[j] > 0) {
-          for (let d = 0; d < dimensions; d++) newCentroids[j][d] /= counts[j];
-          centroids[j] = newCentroids[j];
+          const target = centroids[j];
+          const source = nextCentroids[j];
+          const count = counts[j];
+          for (let d = 0; d < dimensions; d++) {
+            target[d] = source[d] / count;
+          }
         }
       }
     }
   }
-  return assignments;
+  return Array.from(assignments);
 }
