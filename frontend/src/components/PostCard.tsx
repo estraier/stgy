@@ -214,8 +214,8 @@ export default function PostCard({
         : convertHtmlMathInline(makeHtmlFromJsonSnippet(post.snippet, idPrefix));
 
     const doc =
-      "<!doctype html><html><head><meta charset=\"utf-8\">" +
-      "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\">" +
+      '<!doctype html><html><head><meta charset="utf-8">' +
+      '<meta name="viewport" content="width=device-width,initial-scale=1">' +
       "<title>Content HTML</title></head><body>" +
       html +
       "</body></html>";

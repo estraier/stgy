@@ -546,6 +546,85 @@ export default function createAiPostsRouter(
     }
   });
 
+  router.get("/recommendations/posts/for-post/:postId", async (req, res) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+
+    const targetPostId = req.params.postId.trim();
+    if (targetPostId === "") {
+      return res.status(400).json({ error: "postId is required" });
+    }
+
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
+
+    const recKey = `recommend-post-posts:${loginUser.id}:${targetPostId}`;
+
+    try {
+      const watch = timerThrottleService.startWatch(loginUser);
+
+      let ids: string[] | null = null;
+
+      const cachedIdsRaw = await redis.get(recKey);
+      const cachedIds = parseJsonArray<unknown>(cachedIdsRaw);
+      if (cachedIds && cachedIds.length > 0) {
+        const onlyStrings = cachedIds.filter((x): x is string => typeof x === "string");
+        if (onlyStrings.length > 0) ids = onlyStrings;
+      }
+
+      if (!ids) {
+        const summary = await aiPostsService.getAiPostSummary(targetPostId);
+        if (!summary) {
+          watch.done();
+          return res.status(404).json({ error: "not found" });
+        }
+
+        const tags: SearchSeedTag[] = Array.from(
+          new Set(
+            (summary.tags ?? [])
+              .filter((t): t is string => typeof t === "string")
+              .map((t) => normalizeOneLiner(t.toLowerCase()))
+              .filter((t): t is string => typeof t === "string" && t.trim() !== ""),
+          ),
+        ).map((name) => ({ name, count: 1 }));
+
+        if (tags.length === 0) {
+          await redis.set(recKey, JSON.stringify([]), "EX", Config.AI_POST_RECOMMEND_TTL_SEC);
+          ids = [];
+        } else {
+          const outIds = await aiPostsService.RecommendPosts({
+            tags,
+            features: summary.features ?? undefined,
+            selfUserId: loginUser.id,
+            rerankByLikesAlpha: 4,
+            dedupWeight: 0.3,
+            offset: 0,
+            limit: 100,
+            order: "desc",
+          } satisfies RecommendPostsInput);
+
+          await redis.set(recKey, JSON.stringify(outIds), "EX", Config.AI_POST_RECOMMEND_TTL_SEC);
+          ids = outIds;
+        }
+      }
+
+      const orderedIds = order === "asc" ? [...ids].reverse() : ids;
+      const subsetIds = orderedIds.slice(offset, offset + limit);
+      const posts = await postsService.listPostsByIds(subsetIds, loginUser.id);
+
+      watch.done();
+      res.json(posts);
+    } catch (e) {
+      res.status(400).json({ error: (e as Error).message || "invalid request" });
+    }
+  });
+
   router.head("/:id", async (req, res) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;

@@ -92,10 +92,12 @@ export async function getAiPostSummary(postId: string): Promise<AiPostSummary> {
   return toAiPostSummary(pkt);
 }
 
-export async function BuildSearchSeedForUser(params: {
-  userId?: string;
-  numClusters?: number;
-} = {}): Promise<SearchSeed[]> {
+export async function BuildSearchSeedForUser(
+  params: {
+    userId?: string;
+    numClusters?: number;
+  } = {},
+): Promise<SearchSeed[]> {
   const search = new URLSearchParams();
   if (params.userId) search.append("userId", params.userId);
   if (params.numClusters !== undefined) search.append("numClusters", String(params.numClusters));

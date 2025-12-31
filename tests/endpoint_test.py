@@ -367,6 +367,25 @@ def test_ai_posts():
   res = requests.head(f"{BASE_URL}/ai-posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[ai_posts] head: exists OK")
+  reco_for_user_posts_url = f"{BASE_URL}/ai-posts/recommendations/posts/for-user/{post['ownedBy']}"
+  res = requests.get(f"{reco_for_user_posts_url}?limit=10&order=desc", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  reco_for_user_posts = res.json()
+  assert isinstance(reco_for_user_posts, list)
+  if len(reco_for_user_posts) > 0:
+    assert isinstance(reco_for_user_posts[0], dict)
+    assert "id" in reco_for_user_posts[0]
+    assert "ownedBy" in reco_for_user_posts[0]
+  reco_for_post_posts_url = f"{BASE_URL}/ai-posts/recommendations/posts/for-post/{post_id}"
+  res = requests.get(f"{reco_for_post_posts_url}?limit=10&order=desc", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  reco_for_post_posts = res.json()
+  assert isinstance(reco_for_post_posts, list)
+  if len(reco_for_post_posts) > 0:
+    assert isinstance(reco_for_post_posts[0], dict)
+    assert "id" in reco_for_post_posts[0]
+    assert "ownedBy" in reco_for_post_posts[0]
+  print("[ai_posts] recommendations/posts (for-user / for-post) OK")
   res = requests.get(f"{BASE_URL}/ai-posts?limit=10&order=desc", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   summaries2 = res.json()

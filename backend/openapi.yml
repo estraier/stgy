@@ -2483,6 +2483,82 @@ paths:
         "403":
           $ref: "#/components/responses/Error403"
 
+  /ai-posts/recommendations/posts/for-user/{userId}:
+    get:
+      summary: Recommend posts for user (expanded)
+      description: |
+        Builds search seeds for the specified user (server-side caching) and returns ranked Post objects.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+        - name: order
+          in: query
+          schema: { type: string, enum: [desc, asc], default: desc }
+      responses:
+        "200":
+          description: Ranked posts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Post"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /ai-posts/recommendations/posts/for-post/{postId}:
+    get:
+      summary: Recommend posts for a post (expanded)
+      description: |
+        Uses the specified post's AI tags/features as the search seed and returns ranked Post objects.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: postId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+        - name: order
+          in: query
+          schema: { type: string, enum: [desc, asc], default: desc }
+      responses:
+        "200":
+          description: Ranked posts
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Post"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+        "404":
+          $ref: "#/components/responses/Error404"
+
   /media/{userId}/images/presigned:
     post:
       summary: Get presigned POST for image upload
