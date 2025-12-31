@@ -785,9 +785,8 @@ export class AiPostsService {
     const tagScores = new Map<string, number>();
 
     for (const [, tagMap] of sortedTagPosts) {
-      for (const [tag, tableCount] of tagMap.entries()) {
-        const tableScore = Math.log(1 + tableCount);
-        tagScores.set(tag, (tagScores.get(tag) ?? 0) + tagRankScore * tableScore);
+      for (const [tag] of tagMap.entries()) {
+        tagScores.set(tag, (tagScores.get(tag) ?? 0) + tagRankScore);
       }
       tagRankScore -= 1;
     }
@@ -816,16 +815,18 @@ export class AiPostsService {
       const rankScore = postRankScores.get(postId);
       const meta = metaByPostId.get(postId);
       if (rankScore === undefined || !meta) continue;
-
       const rootScore = meta.isRoot ? 1.0 : 0.5;
-      const socialScore = followeeIds && followeeIds.has(meta.userId) ? 1.0 : 0.5;
-
+      const socialScore =
+        selfUserIdDec && meta.userId === selfUserIdDec
+          ? 1.0
+          : followeeIds && followeeIds.has(meta.userId)
+            ? 0.9
+            : 0.8;
       for (const [tag, tableCount] of tagMap.entries()) {
         const idfScore = tagIdfScores.get(tag);
         const paramCount = paramTagCounts.get(tag) ?? 0;
         const tfArg = tableCount + paramCount;
         if (idfScore === undefined || !(tfArg > 0)) continue;
-
         const tfScore = Math.log(tfArg);
         const add = rankScore * tfScore * idfScore * rootScore * socialScore;
         postFinalScores.set(postId, (postFinalScores.get(postId) ?? 0) + add);
@@ -951,7 +952,7 @@ export class AiPostsService {
         for (let i = 0; i < candidates.length; i++) {
           const c = candidates[i];
           const likes = likesById.get(c.postId.toString()) ?? 0;
-          c.likeScore = Math.log(rerankByLikesAlpha + likes) - i;
+          c.likeScore = Math.log2(rerankByLikesAlpha + likes) - i;
         }
 
         candidates.sort((a, b) => {
