@@ -982,6 +982,7 @@ def test_notifications():
     cookies=admin_cookies,
   )
   assert res.status_code == 201, res.text
+  first_reply_id = res.json()["id"]
   res = requests.post(
     f"{BASE_URL}/posts",
     json={"content": "second reply", "replyTo": post_id, "tags": ["r"]},
@@ -989,6 +990,7 @@ def test_notifications():
     cookies=admin_cookies,
   )
   assert res.status_code == 201, res.text
+  second_reply_id = res.json()["id"]
   print("[notifications] two replies done")
   time.sleep(0.1)
   res = requests.get(f"{BASE_URL}/notifications/feed", cookies=user_cookies)
@@ -1059,6 +1061,7 @@ def test_notifications():
     cookies=admin_cookies,
   )
   assert res.status_code == 201, res.text
+  third_reply_id = res.json()["id"]
   time.sleep(0.1)
   res = requests.get(
     f"{BASE_URL}/notifications/feed",
@@ -1072,6 +1075,12 @@ def test_notifications():
   assert reply_slot in by_slot4, f"missing {reply_slot} after new reply"
   assert by_slot4[reply_slot].get("countPosts") == 3, f"expected 3 replies, got {by_slot4[reply_slot].get('countPosts')}"
   print("[notifications] newerThan=latest -> 200 after new notification OK")
+  res = requests.delete(f"{BASE_URL}/posts/{third_reply_id}", headers=headers, cookies=admin_cookies)
+  assert res.status_code == 200, res.text
+  res = requests.delete(f"{BASE_URL}/posts/{second_reply_id}", headers=headers, cookies=admin_cookies)
+  assert res.status_code == 200, res.text
+  res = requests.delete(f"{BASE_URL}/posts/{first_reply_id}", headers=headers, cookies=admin_cookies)
+  assert res.status_code == 200, res.text
   res = requests.delete(f"{BASE_URL}/users/{new_user_id}", headers=headers, cookies=admin_cookies)
   assert res.status_code == 200, res.text
   print("[notifications] cleanup user deleted")
