@@ -601,7 +601,9 @@ export class AiPostsService {
 
     let clusters: SeedMaterial[][] = [];
 
-    if (materials.length < numClusters) {
+    if (actualClusters <= 1) {
+      clusters = [materials];
+    } else if (materials.length < numClusters) {
       const sorted = materials
         .slice()
         .sort((a, b) =>

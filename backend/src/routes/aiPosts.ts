@@ -47,7 +47,7 @@ function fromSeedPacket(p: SearchSeedPacket): SearchSeed | null {
   if (typeof p.weight !== "number" || !Number.isFinite(p.weight)) return null;
 
   const tags: SearchSeedTag[] = [];
-  for (const t of p.tags as unknown[]) {
+  for (const t of p.tags) {
     if (!t || typeof t !== "object") return null;
     const r = t as Record<string, unknown>;
     if (typeof r.name !== "string") return null;
@@ -132,53 +132,9 @@ function normalizeTagsFromBody(tagsRaw: unknown): SearchSeedTag[] | { error: str
 }
 
 function selectSeedsByWeight(seeds: SearchSeed[]): SearchSeed[] {
-  const sorted = [...seeds].sort((a, b) => (b.weight ?? 0) - (a.weight ?? 0));
+  const sorted = [...seeds].sort((a, b) => b.weight - a.weight);
   if (sorted.length <= 2) return sorted;
   return sorted.slice(0, sorted.length - 1);
-}
-
-function mergeTagsFromSeeds(seeds: SearchSeed[]): SearchSeedTag[] {
-  const m = new Map<string, number>();
-  for (const s of seeds) {
-    for (const t of s.tags ?? []) {
-      const name = normalizeOneLiner(String(t.name ?? "").toLowerCase());
-      if (typeof name !== "string" || name.trim() === "") continue;
-      const c = typeof t.count === "number" && Number.isFinite(t.count) ? Math.floor(t.count) : 0;
-      if (c <= 0) continue;
-      m.set(name, (m.get(name) ?? 0) + c);
-    }
-  }
-  return Array.from(m.entries()).map(([name, count]) => ({ name, count }));
-}
-
-function mergeFeaturesFromSeeds(seeds: SearchSeed[]): Int8Array | undefined {
-  const valid = seeds.filter((s) => s && s.features instanceof Int8Array && s.features.length > 0);
-  if (valid.length === 0) return undefined;
-
-  const len = valid[0].features.length;
-  if (valid.some((s) => s.features.length !== len)) return valid[0].features;
-
-  const sum = new Float64Array(len);
-  let wsum = 0;
-
-  for (const s of valid) {
-    const w =
-      typeof s.weight === "number" && Number.isFinite(s.weight) && s.weight > 0 ? s.weight : 1;
-    wsum += w;
-    const f = s.features;
-    for (let i = 0; i < len; i++) sum[i] += w * f[i];
-  }
-
-  if (!Number.isFinite(wsum) || wsum <= 0) return valid[0].features;
-
-  const out = new Int8Array(len);
-  for (let i = 0; i < len; i++) {
-    let v = Math.round(sum[i] / wsum);
-    if (v > 127) v = 127;
-    if (v < -128) v = -128;
-    out[i] = v;
-  }
-  return out;
 }
 
 function parseJsonArray<T = unknown>(raw: string | null): T[] | null {
@@ -456,32 +412,34 @@ export default function createAiPostsRouter(
     }
   });
 
-  router.get("/recommendations/posts/for-user", async (req, res) => {
+  router.get("/recommendations/posts/for-user/:userId", async (req, res) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
     }
 
-    const userIdParam =
-      typeof req.query.userId === "string" && req.query.userId.trim() !== ""
-        ? req.query.userId.trim()
-        : undefined;
-    if (userIdParam && !loginUser.isAdmin) {
+    const targetUserId = req.params.userId.trim();
+    if (targetUserId === "") {
+      return res.status(400).json({ error: "userId is required" });
+    }
+    if (!loginUser.isAdmin && targetUserId !== loginUser.id) {
       return res.status(403).json({ error: "forbidden" });
     }
-    const targetUserId = loginUser.isAdmin && userIdParam ? userIdParam : loginUser.id;
+
     const { offset, limit, order } = AuthHelpers.getPageParams(
       req,
       loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
       ["desc", "asc"] as const,
     );
+
     const seedKey = `recommend-user-seeds:${targetUserId}`;
     const recKey = `recommend-user-posts:${targetUserId}`;
+
     try {
       const watch = timerThrottleService.startWatch(loginUser);
 
-      let seeds: SearchSeed[] | null = null;
+      let seedPool: SearchSeed[] | null = null;
 
       const cachedSeedsRaw = await redis.get(seedKey);
       const cachedSeedPackets = parseJsonArray<SearchSeedPacket>(cachedSeedsRaw);
@@ -491,18 +449,18 @@ export default function createAiPostsRouter(
           const s = fromSeedPacket(p);
           if (s) parsed.push(s);
         }
-        if (parsed.length > 0) seeds = parsed;
+        if (parsed.length > 0) seedPool = parsed;
       }
 
-      if (!seeds) {
-        const rawSeeds = await aiPostsService.BuildSearchSeedForUser(
-          targetUserId,
-          Config.AI_POST_SEED_NUM_CLUSTERS,
+      if (!seedPool) {
+        const rawSeeds = await aiPostsService.BuildSearchSeedForUser(targetUserId, 4);
+        await redis.set(
+          seedKey,
+          JSON.stringify(rawSeeds.map((s) => toSeedPacket(s))),
+          "EX",
+          Config.AI_POST_SEED_TTL_SEC,
         );
-        const selected = selectSeedsByWeight(rawSeeds);
-        const packets = selected.map((s) => toSeedPacket(s));
-        await redis.set(seedKey, JSON.stringify(packets), "EX", Config.AI_POST_SEED_TTL_SEC);
-        seeds = selected;
+        seedPool = rawSeeds;
       }
 
       let ids: string[] | null = null;
@@ -515,20 +473,66 @@ export default function createAiPostsRouter(
       }
 
       if (!ids) {
-        const tags = mergeTagsFromSeeds(seeds);
-        const features = mergeFeaturesFromSeeds(seeds);
-        const outIds = await aiPostsService.RecommendPosts({
-          tags,
-          features,
-          selfUserId: targetUserId,
-          rerankByLikesAlpha: 5,
-          dedupWeight: 0.3,
-          offset: 0,
-          limit: 100,
-          order: "desc",
-        } satisfies RecommendPostsInput);
-        await redis.set(recKey, JSON.stringify(outIds), "EX", Config.AI_POST_RECOMMEND_TTL_SEC);
-        ids = outIds;
+        const seeds = selectSeedsByWeight(seedPool);
+        if (seeds.length === 0) {
+          await redis.set(recKey, JSON.stringify([]), "EX", Config.AI_POST_RECOMMEND_TTL_SEC);
+          ids = [];
+        } else {
+          const maxWeight = seeds.reduce((m, s) => (s.weight > m ? s.weight : m), 0);
+
+          type PerSeed = { ids: string[]; w: number };
+          const perSeedResults: PerSeed[] = [];
+
+          for (const seed of seeds) {
+            const w = maxWeight > 0 ? seed.weight / maxWeight : 1;
+
+            const outIds = await aiPostsService.RecommendPosts({
+              tags: seed.tags,
+              features: seed.features,
+              selfUserId: targetUserId,
+              rerankByLikesAlpha: 4,
+              dedupWeight: 0.3,
+              offset: 0,
+              limit: 100,
+              order: "desc",
+            } satisfies RecommendPostsInput);
+
+            perSeedResults.push({ ids: outIds, w });
+          }
+
+          type Scored = { id: string; score: number; w: number };
+          const merged: Scored[] = [];
+
+          for (const r of perSeedResults) {
+            const list = r.ids;
+            const n = list.length;
+            const denom = n - 1;
+            for (let i = 0; i < n; i++) {
+              const exp = denom <= 0 ? 0 : i / denom;
+              const base = r.w / 2;
+              const score = Math.pow(base, exp);
+              merged.push({ id: list[i], score, w: r.w });
+            }
+          }
+
+          merged.sort((a, b) => {
+            if (b.score !== a.score) return b.score - a.score;
+            if (b.w !== a.w) return b.w - a.w;
+            if (a.id === b.id) return 0;
+            return a.id < b.id ? 1 : -1;
+          });
+
+          const out: string[] = [];
+          const seen = new Set<string>();
+          for (const m of merged) {
+            if (seen.has(m.id)) continue;
+            seen.add(m.id);
+            out.push(m.id);
+          }
+
+          await redis.set(recKey, JSON.stringify(out), "EX", Config.AI_POST_RECOMMEND_TTL_SEC);
+          ids = out;
+        }
       }
 
       const orderedIds = order === "asc" ? [...ids].reverse() : ids;
