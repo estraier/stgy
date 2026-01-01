@@ -173,6 +173,57 @@ export default function PostCard({
     } catch {}
   }
 
+  const [menuOpen, setMenuOpen] = useState(false);
+  const [copyMenuOpen, setCopyMenuOpen] = useState(false);
+  const menuRef = useRef<HTMLDivElement | null>(null);
+  const copyMenuRef = useRef<HTMLDivElement | null>(null);
+
+  const [aiSummaryOpen, setAiSummaryOpen] = useState(false);
+  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
+  const [aiSummaryText, setAiSummaryText] = useState<string | null>(null);
+  const [aiSummaryTags, setAiSummaryTags] = useState<string[]>([]);
+
+  useEffect(() => {
+    setAiSummaryOpen(false);
+    setAiSummaryLoading(false);
+    setAiSummaryText(null);
+    setAiSummaryTags([]);
+  }, [post.id]);
+
+  useEffect(() => {
+    function onDocMouseDown(e: MouseEvent) {
+      const t = e.target as Node;
+      if (menuOpen && menuRef.current && !menuRef.current.contains(t)) {
+        setMenuOpen(false);
+      }
+      if (copyMenuOpen && copyMenuRef.current && !copyMenuRef.current.contains(t)) {
+        setCopyMenuOpen(false);
+      }
+    }
+    document.addEventListener("mousedown", onDocMouseDown);
+    return () => document.removeEventListener("mousedown", onDocMouseDown);
+  }, [menuOpen, copyMenuOpen]);
+
+  const isOwner = focusUserId && focusUserId === post.ownedBy;
+  const canConfigurePublication = Boolean(isOwner || focusUserIsAdmin);
+
+  const isOnSelfDetailPage = pathname === `/posts/${post.id}`;
+  const isAlreadyEditMode = isOnSelfDetailPage && searchParams.get("mode") === "edit";
+
+  const skipLatestMs =
+    typeof Config.AI_SUMMARY_POST_SKIP_LATEST_MS === "number"
+      ? Config.AI_SUMMARY_POST_SKIP_LATEST_MS
+      : 0;
+  const cutoffMs = Date.now() - skipLatestMs;
+  const createdAtMs = new Date(post.createdAt).getTime();
+  const updatedAtMs = post.updatedAt ? new Date(post.updatedAt).getTime() : null;
+
+  const isTooNewForSummary =
+    (!Number.isNaN(createdAtMs) && createdAtMs > cutoffMs) ||
+    (updatedAtMs !== null && !Number.isNaN(updatedAtMs) && updatedAtMs > cutoffMs);
+
+  const canShowAiSummaryMenu = !isTooNewForSummary;
+
   const handleCopyMarkdown = useCallback(async () => {
     const content = await ensureContent();
     if (content !== null) {
@@ -204,7 +255,7 @@ export default function PostCard({
       await copyHtmlRich(html);
     }
     setCopyMenuOpen(false);
-  }, [ensureContent, idPrefix, post.snippet]);
+  }, [ensureContent, idPrefix, post.snippet, bodyHtml]);
 
   const handleViewHtml = useCallback(async () => {
     const content = await ensureContent();
@@ -326,57 +377,6 @@ export default function PostCard({
     effectivePublishedAt.trim() !== "" &&
     new Date(effectivePublishedAt).getTime() <= Date.now();
 
-  const [menuOpen, setMenuOpen] = useState(false);
-  const [copyMenuOpen, setCopyMenuOpen] = useState(false);
-  const menuRef = useRef<HTMLDivElement | null>(null);
-  const copyMenuRef = useRef<HTMLDivElement | null>(null);
-
-  const [aiSummaryOpen, setAiSummaryOpen] = useState(false);
-  const [aiSummaryLoading, setAiSummaryLoading] = useState(false);
-  const [aiSummaryText, setAiSummaryText] = useState<string | null>(null);
-  const [aiSummaryTags, setAiSummaryTags] = useState<string[]>([]);
-
-  useEffect(() => {
-    setAiSummaryOpen(false);
-    setAiSummaryLoading(false);
-    setAiSummaryText(null);
-    setAiSummaryTags([]);
-  }, [post.id]);
-
-  useEffect(() => {
-    function onDocMouseDown(e: MouseEvent) {
-      const t = e.target as Node;
-      if (menuOpen && menuRef.current && !menuRef.current.contains(t)) {
-        setMenuOpen(false);
-      }
-      if (copyMenuOpen && copyMenuRef.current && !copyMenuRef.current.contains(t)) {
-        setCopyMenuOpen(false);
-      }
-    }
-    document.addEventListener("mousedown", onDocMouseDown);
-    return () => document.removeEventListener("mousedown", onDocMouseDown);
-  }, [menuOpen, copyMenuOpen]);
-
-  const isOwner = focusUserId && focusUserId === post.ownedBy;
-  const canConfigurePublication = Boolean(isOwner || focusUserIsAdmin);
-
-  const isOnSelfDetailPage = pathname === `/posts/${post.id}`;
-  const isAlreadyEditMode = isOnSelfDetailPage && searchParams.get("mode") === "edit";
-
-  const skipLatestMs =
-    typeof Config.AI_SUMMARY_POST_SKIP_LATEST_MS === "number"
-      ? Config.AI_SUMMARY_POST_SKIP_LATEST_MS
-      : 0;
-  const cutoffMs = Date.now() - skipLatestMs;
-  const createdAtMs = new Date(post.createdAt).getTime();
-  const updatedAtMs = post.updatedAt ? new Date(post.updatedAt).getTime() : null;
-
-  const isTooNewForSummary =
-    (!Number.isNaN(createdAtMs) && createdAtMs > cutoffMs) ||
-    (updatedAtMs !== null && !Number.isNaN(updatedAtMs) && updatedAtMs > cutoffMs);
-
-  const canShowAiSummaryMenu = !isTooNewForSummary;
-
   const copyMenu = (
     <div
       ref={copyMenuRef}
@@ -385,25 +385,6 @@ export default function PostCard({
       }`}
       onClick={(e) => e.stopPropagation()}
     >
-      <button
-        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
-        onClick={async () => {
-          const url = absoluteUrl(`/posts/${post.id}`);
-          await copyToClipboard(url);
-          setCopyMenuOpen(false);
-        }}
-      >
-        Copy link to this post
-      </button>
-      <button
-        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
-        onClick={async () => {
-          await copyToClipboard(`[post](/posts/${post.id})`);
-          setCopyMenuOpen(false);
-        }}
-      >
-        Copy mention Markdown
-      </button>
       <button
         className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
         onClick={handleCopyMarkdown}
@@ -439,38 +420,71 @@ export default function PostCard({
       }`}
       onClick={(e) => e.stopPropagation()}
     >
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={async () => {
+          const url = absoluteUrl(`/posts/${post.id}`);
+          await copyToClipboard(url);
+          setMenuOpen(false);
+        }}
+      >
+        Copy link to this post
+      </button>
+
+      <button
+        className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+        onClick={async () => {
+          await copyToClipboard(`[post](/posts/${post.id})`);
+          setMenuOpen(false);
+        }}
+      >
+        Copy mention Markdown
+      </button>
+
       {canShowAiSummaryMenu && (
-        <button
-          className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
-          onClick={async () => {
-            setMenuOpen(false);
-            setAiSummaryOpen(true);
-            setAiSummaryLoading(true);
-            setAiSummaryText(null);
-            setAiSummaryTags([]);
-            try {
-              const s = await getPostSummary(post.id);
-              const txt =
-                s && typeof (s as { summary?: unknown }).summary === "string"
-                  ? ((s as { summary: string }).summary ?? "").trim()
-                  : "";
-              const tags =
-                s && Array.isArray((s as { tags?: unknown }).tags)
-                  ? ((s as { tags: string[] }).tags ?? []).filter((t) => typeof t === "string")
-                  : [];
-              setAiSummaryText(txt.length > 0 ? txt : null);
-              setAiSummaryTags(tags);
-            } catch (e) {
-              console.error(e);
+        <>
+          <button
+            className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+            onClick={async () => {
+              setMenuOpen(false);
+              setAiSummaryOpen(true);
+              setAiSummaryLoading(true);
               setAiSummaryText(null);
               setAiSummaryTags([]);
-            } finally {
-              setAiSummaryLoading(false);
-            }
-          }}
-        >
-          View AI Summary
-        </button>
+              try {
+                const s = await getPostSummary(post.id);
+                const txt =
+                  s && typeof (s as { summary?: unknown }).summary === "string"
+                    ? ((s as { summary: string }).summary ?? "").trim()
+                    : "";
+                const tags =
+                  s && Array.isArray((s as { tags?: unknown }).tags)
+                    ? ((s as { tags: string[] }).tags ?? []).filter((t) => typeof t === "string")
+                    : [];
+                setAiSummaryText(txt.length > 0 ? txt : null);
+                setAiSummaryTags(tags);
+              } catch (e) {
+                console.error(e);
+                setAiSummaryText(null);
+                setAiSummaryTags([]);
+              } finally {
+                setAiSummaryLoading(false);
+              }
+            }}
+          >
+            View AI Summary
+          </button>
+
+          <button
+            className="w-full text-left px-3 py-2 text-sm text-gray-700 hover:bg-gray-100 rounded"
+            onClick={() => {
+              setMenuOpen(false);
+              router.push(`/posts?q=${encodeURIComponent("~" + post.id)}`);
+            }}
+          >
+            Search for similar posts
+          </button>
+        </>
       )}
 
       {canConfigurePublication && (
