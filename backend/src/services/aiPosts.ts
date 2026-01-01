@@ -140,10 +140,8 @@ export class AiPostsService {
       [hexToDec(id)],
     );
     if (res.rows.length === 0) return null;
-
     const row0 = res.rows[0] as unknown as AiPostSummaryDbRow;
     const row: AiPostSummaryDbRow = { ...row0, post_id: decToHex(row0.post_id) };
-
     const tmp = snakeToCamel<{
       postId: string;
       updatedAt: string;
@@ -151,7 +149,6 @@ export class AiPostsService {
       features: Buffer | null;
       tags: string[];
     }>(row as unknown);
-
     return {
       postId: tmp.postId,
       updatedAt: tmp.updatedAt,
@@ -167,7 +164,6 @@ export class AiPostsService {
     const orderDir = (options?.order ?? "asc").toLowerCase() === "desc" ? "DESC" : "ASC";
     const nullOnly = options?.nullOnly;
     const newerThan = options?.newerThan;
-
     let sql = `
       SELECT
         aps.post_id,
@@ -185,7 +181,6 @@ export class AiPostsService {
     const where: string[] = [];
     const params: unknown[] = [];
     let idx = 1;
-
     if (nullOnly) {
       where.push("aps.summary IS NULL");
     }
@@ -198,14 +193,11 @@ export class AiPostsService {
     }
     sql += ` ORDER BY aps.post_id ${orderDir} OFFSET $${idx++} LIMIT $${idx++}`;
     params.push(offset, limit);
-
     const res = await pgQuery(this.pgPool, sql, params);
-
     const out: AiPostSummary[] = [];
     for (const r0 of res.rows as unknown[]) {
       const r = r0 as unknown as AiPostSummaryDbRow;
       const row: AiPostSummaryDbRow = { ...r, post_id: decToHex(r.post_id) };
-
       const tmp = snakeToCamel<{
         postId: string;
         updatedAt: string;
@@ -213,7 +205,6 @@ export class AiPostsService {
         features: Buffer | null;
         tags: string[];
       }>(row as unknown);
-
       out.push({
         postId: tmp.postId,
         updatedAt: tmp.updatedAt,
@@ -229,7 +220,6 @@ export class AiPostsService {
     await pgQuery(this.pgPool, "BEGIN");
     try {
       const postId = hexToDec(input.postId);
-
       if (input.summary !== undefined && input.features !== undefined) {
         const featuresBytea = input.features === null ? null : int8ArrayToBuffer(input.features);
         await pgQuery(
@@ -266,7 +256,6 @@ export class AiPostsService {
           [postId, featuresBytea],
         );
       }
-
       if (input.tags !== undefined) {
         await pgQuery(this.pgPool, `DELETE FROM ai_post_tags WHERE post_id = $1`, [postId]);
         if (input.tags.length > 0) {
@@ -281,7 +270,6 @@ export class AiPostsService {
           );
         }
       }
-
       await pgQuery(this.pgPool, "COMMIT");
     } catch (e) {
       await pgQuery(this.pgPool, "ROLLBACK");
@@ -294,19 +282,15 @@ export class AiPostsService {
     if (!Number.isInteger(numClusters) || numClusters <= 0) {
       throw new Error("invalid numClusters");
     }
-
     const SELF_POST_LIMIT = 10;
     const SELF_LIKE_LIMIT = 20;
     const TOP_FOLLOWEE_LIMIT = 20;
     const FOLLOWEE_POST_LIMIT_PER_USER = 5;
     const FOLLOWEE_LIKE_LIMIT_PER_USER = 5;
     const ADOPT_TAG_LIMIT = 10;
-
     const WEIGHT_GAMMA = 0.7;
     const FEATURE_DIM = 512;
-
     const userIdDec = hexToDec(userId);
-
     const seedRes = await pgQuery<SeedPostRow>(
       this.pgPool,
       `
@@ -382,35 +366,29 @@ export class AiPostsService {
         FOLLOWEE_LIKE_LIMIT_PER_USER,
       ],
     );
-
     if (seedRes.rows.length === 0) {
       throw new Error("no seed posts");
     }
-
     const baseWeightByPostId = new Map<string, number>();
     for (const r of seedRes.rows) {
       const postIdStr = r.post_id;
       if (postIdStr.trim() === "") continue;
       baseWeightByPostId.set(postIdStr, (baseWeightByPostId.get(postIdStr) ?? 0) + r.weight);
     }
-
     const uniquePostIds = Array.from(baseWeightByPostId.keys());
     if (uniquePostIds.length === 0) {
       throw new Error("no seed posts");
     }
-
     let totalBaseWeight = 0;
     for (const w of baseWeightByPostId.values()) totalBaseWeight += w;
     if (!(totalBaseWeight > 0)) {
       throw new Error("no seed posts");
     }
-
     const effectiveWeightByPostId = new Map<string, number>();
     for (const [postIdStr, w] of baseWeightByPostId.entries()) {
       const p = w / totalBaseWeight;
       effectiveWeightByPostId.set(postIdStr, Math.pow(p, WEIGHT_GAMMA));
     }
-
     const loadTagsByPostId = async (
       postIds: string[],
     ): Promise<Map<string, { name: string; tableCount: number }[]>> => {
@@ -437,13 +415,11 @@ export class AiPostsService {
         `,
         [postIds],
       );
-
       const out = new Map<string, { name: string; tableCount: number }[]>();
       for (const r of tagRes.rows) {
         const postIdStr = r.post_id;
         const name = r.name.trim();
         if (!name) continue;
-
         const tableCount = r.table_count;
         const prev = out.get(postIdStr);
         const v = { name, tableCount };
@@ -452,7 +428,6 @@ export class AiPostsService {
       }
       return out;
     };
-
     const featRes = await pgQuery<SeedPostFeaturesRow>(
       this.pgPool,
       `
@@ -463,14 +438,12 @@ export class AiPostsService {
       `,
       [uniquePostIds],
     );
-
     const materials: SeedMaterial[] = [];
     for (const row of featRes.rows) {
       const postIdStr = row.post_id;
       const effectiveWeight = effectiveWeightByPostId.get(postIdStr) ?? 0;
       if (!(effectiveWeight > 0)) continue;
       if (!row.features) continue;
-
       let vec: number[] | null = null;
       try {
         vec = normalizeL2(decodeFeatures(bufferToInt8Array(row.features)));
@@ -478,7 +451,6 @@ export class AiPostsService {
         vec = null;
       }
       if (!vec || vec.length === 0) continue;
-
       materials.push({
         postId: BigInt(postIdStr),
         postIdStr,
@@ -486,33 +458,26 @@ export class AiPostsService {
         vec,
       });
     }
-
     if (materials.length === 0) {
       const tagsByPostId = await loadTagsByPostId(uniquePostIds);
-
       let weightSum = 0;
       const tagScores = new Map<string, number>();
-
       for (const postIdStr of uniquePostIds) {
         const postWeight = effectiveWeightByPostId.get(postIdStr) ?? 0;
         if (!(postWeight > 0)) continue;
-
         weightSum += postWeight;
-
         const tags = tagsByPostId.get(postIdStr) ?? [];
         for (const t of tags) {
           const tableScore = Math.log(1 + t.tableCount);
           tagScores.set(t.name, (tagScores.get(t.name) ?? 0) + postWeight * tableScore);
         }
       }
-
       const topTags = Array.from(tagScores.entries())
         .sort((a, b) => {
           if (a[1] !== b[1]) return b[1] - a[1];
           return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
         })
         .slice(0, ADOPT_TAG_LIMIT);
-
       let tagsOut: SearchSeedTag[] = [];
       if (topTags.length > 0) {
         const minScore = topTags[topTags.length - 1][1];
@@ -526,57 +491,46 @@ export class AiPostsService {
           tagsOut = topTags.map(([name]) => ({ name, count: 1 }));
         }
       }
-
       const s = userId.startsWith("0x") ? userId.slice(2) : userId;
       const tail = s.length > 8 ? s.slice(-8) : s;
-      const n = parseInt(tail, 16);
-      const idx = Number.isFinite(n) ? ((n % FEATURE_DIM) + FEATURE_DIM) % FEATURE_DIM : 0;
-
+      const n = parseInt(tail, 16) || 0;
+      const idx = ((n % FEATURE_DIM) + FEATURE_DIM) % FEATURE_DIM;
       const features = new Int8Array(FEATURE_DIM);
       features[idx] = 1;
-
       return [{ tags: tagsOut, features, weight: weightSum }];
     }
-
     const tagsByPostId = await loadTagsByPostId(materials.map((m) => m.postIdStr));
     const actualClusters = Math.min(numClusters, materials.length);
-
     const seedFromUserId = (id: string): number => {
       const s = id.startsWith("0x") ? id.slice(2) : id;
       const tail = s.length > 8 ? s.slice(-8) : s;
-      const n = parseInt(tail, 16);
-      return Number.isFinite(n) ? n : 0;
+      const n = parseInt(tail, 16) || 0;
+      return n;
     };
-
     const buildSeedFromCluster = (items: SeedMaterial[]): SearchSeed => {
       let weightSum = 0;
       const tagScores = new Map<string, number>();
       let sumVec: number[] | null = null;
-
       for (const m of items) {
         const postWeight = m.effectiveWeight;
         weightSum += postWeight;
-
         const tags = tagsByPostId.get(m.postIdStr) ?? [];
         for (const t of tags) {
           const tableScore = Math.log(1 + t.tableCount);
           tagScores.set(t.name, (tagScores.get(t.name) ?? 0) + postWeight * tableScore);
         }
-
         if (!sumVec) {
           sumVec = m.vec.map((x) => x * postWeight);
         } else {
           for (let i = 0; i < sumVec.length; i++) sumVec[i] += m.vec[i] * postWeight;
         }
       }
-
       const topTags = Array.from(tagScores.entries())
         .sort((a, b) => {
           if (a[1] !== b[1]) return b[1] - a[1];
           return a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0;
         })
         .slice(0, ADOPT_TAG_LIMIT);
-
       let tagsOut: SearchSeedTag[] = [];
       if (topTags.length > 0) {
         const minScore = topTags[topTags.length - 1][1];
@@ -596,9 +550,7 @@ export class AiPostsService {
       const outFeatures = encodeFeatures(normalizeL2(sumVec));
       return { tags: tagsOut, features: outFeatures, weight: weightSum };
     };
-
     let clusters: SeedMaterial[][] = [];
-
     if (actualClusters <= 1) {
       clusters = [materials];
     } else if (materials.length < numClusters) {
@@ -616,7 +568,6 @@ export class AiPostsService {
         seed: seedFromUserId(userId),
         normalize: false,
       });
-
       const tmp = new Map<number, SeedMaterial[]>();
       for (let i = 0; i < assignments.length; i++) {
         const c = assignments[i];
@@ -624,25 +575,21 @@ export class AiPostsService {
         if (arr) arr.push(materials[i]);
         else tmp.set(c, [materials[i]]);
       }
-
       clusters = Array.from(tmp.entries())
         .sort((a, b) => a[0] - b[0])
         .map(([, v]) => v);
     }
-
     const seeds: SearchSeed[] = [];
     for (const items of clusters) {
       if (items.length === 0) continue;
       seeds.push(buildSeedFromCluster(items));
     }
-
     seeds.sort((a, b) => {
       if (a.weight !== b.weight) return b.weight - a.weight;
       const at = a.tags[0]?.name ?? "";
       const bt = b.tags[0]?.name ?? "";
       return at < bt ? -1 : at > bt ? 1 : 0;
     });
-
     return seeds;
   }
 
@@ -654,37 +601,29 @@ export class AiPostsService {
       typeof input.selfUserId === "string" && input.selfUserId.trim() !== ""
         ? hexToDec(input.selfUserId)
         : null;
-
     const dedupWeight =
       typeof input.dedupWeight === "number" &&
       Number.isFinite(input.dedupWeight) &&
       input.dedupWeight > 0
         ? input.dedupWeight
         : 0;
-
     const rerankByLikesAlpha =
       typeof input.rerankByLikesAlpha === "number" &&
       Number.isFinite(input.rerankByLikesAlpha) &&
       input.rerankByLikesAlpha > 0
         ? input.rerankByLikesAlpha
         : 0;
-
     if (input.tags.length === 0) return [];
-
     const paramTagCounts = new Map<string, number>();
     for (const t of input.tags) {
       const tag = typeof t.name === "string" ? t.name.trim() : "";
       if (!tag) continue;
-
       const count = typeof t.count === "number" ? t.count : 0;
       if (!(count > 0)) continue;
-
       paramTagCounts.set(tag, (paramTagCounts.get(tag) ?? 0) + count);
     }
-
     const queryTags = Array.from(paramTagCounts.keys());
     if (queryTags.length === 0) return [];
-
     let followeeIds: Set<string> | null = null;
     if (selfUserIdDec) {
       const fr = await pgQuery<FolloweeRow>(
@@ -698,7 +637,6 @@ export class AiPostsService {
       );
       followeeIds = new Set(fr.rows.map((r) => r.followee_id));
     }
-
     const res = await pgQuery(
       this.pgPool,
       `
@@ -741,7 +679,6 @@ export class AiPostsService {
       `,
       [queryTags, Config.AI_POST_RECOMMEND_TAG_CANDIDATES],
     );
-
     let records: RecommendRecord[] = [];
     for (const r0 of res.rows as unknown[]) {
       const r = r0 as unknown as RecommendDbRow;
@@ -753,15 +690,12 @@ export class AiPostsService {
         userId: r.user_id,
       });
     }
-
     if (selfUserIdDec) {
       records = records.filter((r) => r.userId !== selfUserIdDec);
     }
     if (records.length === 0) return [];
-
     const tagTableCountsByPostId = new Map<bigint, Map<string, number>>();
     const metaByPostId = new Map<bigint, { isRoot: boolean; userId: string }>();
-
     for (const r of records) {
       let m = tagTableCountsByPostId.get(r.postId);
       if (!m) {
@@ -769,45 +703,36 @@ export class AiPostsService {
         tagTableCountsByPostId.set(r.postId, m);
       }
       m.set(r.tag, r.tableCount);
-
       if (!metaByPostId.has(r.postId)) {
         metaByPostId.set(r.postId, { isRoot: r.isRoot, userId: r.userId });
       }
     }
-
     const sortedTagPosts = Array.from(tagTableCountsByPostId.entries()).sort((a, b) =>
       compareBigIntDesc(a[0], b[0]),
     );
-
     let tagRankScore = sortedTagPosts.length;
     const tagScores = new Map<string, number>();
-
     for (const [, tagMap] of sortedTagPosts) {
       for (const [tag] of tagMap.entries()) {
         tagScores.set(tag, (tagScores.get(tag) ?? 0) + tagRankScore);
       }
       tagRankScore -= 1;
     }
-
     let totalTagScore = 0;
     for (const v of tagScores.values()) totalTagScore += v;
     if (totalTagScore === 0) return [];
-
     const tagIdfScores = new Map<string, number>();
     for (const [tag, score] of tagScores.entries()) {
       if (!(score > 0)) continue;
       tagIdfScores.set(tag, Math.log(totalTagScore / score));
     }
-
     const sortedPostIds = Array.from(tagTableCountsByPostId.keys()).sort(compareBigIntDesc);
-
     let postRankScore = sortedPostIds.length * 3;
     const postRankScores = new Map<bigint, number>();
     for (const postId of sortedPostIds) {
       postRankScores.set(postId, postRankScore);
       postRankScore -= 1;
     }
-
     const postFinalScores = new Map<bigint, number>();
     for (const [postId, tagMap] of tagTableCountsByPostId.entries()) {
       const rankScore = postRankScores.get(postId);
@@ -830,17 +755,14 @@ export class AiPostsService {
         postFinalScores.set(postId, (postFinalScores.get(postId) ?? 0) + add);
       }
     }
-
     const scored: ScoredPost[] = Array.from(postFinalScores.entries()).map(([postId, score]) => ({
       postId,
       score,
     }));
-
     scored.sort((a, b) => {
       if (a.score !== b.score) return b.score - a.score;
       return compareBigIntDesc(a.postId, b.postId);
     });
-
     const universe: Candidate[] = [];
     for (
       let i = 0;
@@ -849,7 +771,6 @@ export class AiPostsService {
     ) {
       const chunk = scored.slice(i, i + 20);
       const ids = chunk.map((c) => c.postId.toString());
-
       const r = await pgQuery<PostFeaturesRow>(
         this.pgPool,
         `
@@ -859,27 +780,20 @@ export class AiPostsService {
         `,
         [ids],
       );
-
       const byId = new Map<string, PostFeaturesRow>();
       for (const row of r.rows) byId.set(row.post_id, row);
-
       for (const c of chunk) {
         const row = byId.get(c.postId.toString());
         if (!row) continue;
-
         universe.push({
           postId: c.postId,
           features: row.features ? bufferToInt8Array(row.features) : null,
         });
-
         if (universe.length >= Config.AI_POST_RECOMMEND_VEC_CANDIDATES) break;
       }
     }
-
     if (universe.length === 0) return [];
-
     let finalIds: bigint[] = universe.map((c) => c.postId);
-
     const needWork = !!input.features || dedupWeight > 0 || rerankByLikesAlpha > 0;
     if (needWork) {
       let qVec: number[] | null = null;
@@ -890,9 +804,7 @@ export class AiPostsService {
           qVec = null;
         }
       }
-
       const needVecDecode = !!qVec || dedupWeight > 0;
-
       const candidates: {
         postId: bigint;
         vec: number[] | null;
@@ -900,7 +812,6 @@ export class AiPostsService {
         adjScore: number;
         likeScore?: number;
       }[] = [];
-
       for (const c of universe) {
         let vec: number[] | null = null;
         if (needVecDecode && c.features) {
@@ -910,27 +821,22 @@ export class AiPostsService {
             vec = null;
           }
         }
-
         let baseScore = postFinalScores.get(c.postId) ?? 0;
-
         if (qVec) {
           if (!vec || vec.length !== qVec.length) {
             baseScore = Number.NEGATIVE_INFINITY;
           } else {
             const simRaw = cosineSimilarity(qVec, vec);
             const sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
-            baseScore = Number.isFinite(sim) ? sim : Number.NEGATIVE_INFINITY;
+            baseScore = sim;
           }
         }
-
         candidates.push({ postId: c.postId, vec, baseScore, adjScore: baseScore });
       }
-
       candidates.sort((a, b) => {
         if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
         return compareBigIntDesc(a.postId, b.postId);
       });
-
       if (rerankByLikesAlpha > 0) {
         const ids = candidates.map((c) => c.postId.toString());
         const likeRes = await pgQuery<PostLikesCountRow>(
@@ -943,16 +849,13 @@ export class AiPostsService {
           `,
           [ids],
         );
-
         const likesById = new Map<string, number>();
         for (const r of likeRes.rows) likesById.set(r.post_id, r.count_likes);
-
         for (let i = 0; i < candidates.length; i++) {
           const c = candidates[i];
           const likes = likesById.get(c.postId.toString()) ?? 0;
           c.likeScore = Math.log(rerankByLikesAlpha + likes) - i;
         }
-
         candidates.sort((a, b) => {
           const as = a.likeScore ?? Number.NEGATIVE_INFINITY;
           const bs = b.likeScore ?? Number.NEGATIVE_INFINITY;
@@ -961,23 +864,18 @@ export class AiPostsService {
           return compareBigIntDesc(a.postId, b.postId);
         });
       }
-
       if (dedupWeight > 0) {
         let sumVec: number[] | null = null;
-
         for (let i = 0; i < candidates.length; i++) {
           const c = candidates[i];
           let adj = c.baseScore;
-
           if (i > 0 && sumVec && c.vec && sumVec.length === c.vec.length) {
             const simDupRaw = cosineSimilarity(sumVec, c.vec);
             const simDup = sigmoidalContrast((simDupRaw + 1) / 2, 5, 0.9);
-            const penalty = Number.isFinite(simDup) ? simDup * dedupWeight : dedupWeight;
+            const penalty = simDup * dedupWeight;
             adj = adj - penalty;
           }
-
           c.adjScore = adj;
-
           if (c.vec) {
             if (!sumVec) {
               sumVec = c.vec.slice();
@@ -986,20 +884,16 @@ export class AiPostsService {
             }
           }
         }
-
         candidates.sort((a, b) => {
           if (a.adjScore !== b.adjScore) return b.adjScore - a.adjScore;
           if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
           return compareBigIntDesc(a.postId, b.postId);
         });
       }
-
       finalIds = candidates.map((x) => x.postId);
     }
-
     const orderedIds = order === "asc" ? [...finalIds].reverse() : finalIds;
     const sliced = orderedIds.slice(offset, offset + limit);
-
     const out: string[] = [];
     for (const postId of sliced) {
       out.push(decToHex(postId.toString()));
