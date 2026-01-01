@@ -1792,7 +1792,10 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
       top.length === 0
         ? []
         : minScore > 0
-          ? top.map(([name, score]) => ({ name, count: Math.max(1, Math.round(score / minScore)) }))
+          ? top.map(([name, score]) => ({
+              name,
+              count: Math.max(1, Math.round((score / minScore) * 10) / 10),
+            }))
           : top.map(([name]) => ({ name, count: 1 }));
 
     let sumVec: number[] | null = null;

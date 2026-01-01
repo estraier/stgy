@@ -950,7 +950,7 @@ export class AiPostsService {
         for (let i = 0; i < candidates.length; i++) {
           const c = candidates[i];
           const likes = likesById.get(c.postId.toString()) ?? 0;
-          c.likeScore = Math.log2(rerankByLikesAlpha + likes) - i;
+          c.likeScore = Math.log(rerankByLikesAlpha + likes) - i;
         }
 
         candidates.sort((a, b) => {

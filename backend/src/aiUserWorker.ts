@@ -772,7 +772,7 @@ async function fetchRecommendedPosts(
     limit: Math.min(100, Config.AI_USER_FETCH_POST_LIMIT),
     order: "desc",
     rerankByLikesAlpha: 5,
-    dedupWeight: 0.3,
+    dedupWeight: 0.2,
   };
   const selfUserId = typeof interest.userId === "string" ? interest.userId.trim() : "";
   if (selfUserId !== "") body.selfUserId = selfUserId;
