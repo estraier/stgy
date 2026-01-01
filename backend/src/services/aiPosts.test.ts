@@ -124,6 +124,11 @@ class MockPgClient {
       const followeePostLimit = typeof params?.[4] === "number" ? (params?.[4] as number) : 2;
       const followeeLikeLimit = typeof params?.[5] === "number" ? (params?.[5] as number) : 10;
 
+      const wSelfPost = typeof params?.[6] === "number" ? (params?.[6] as number) : 1.0;
+      const wSelfLike = typeof params?.[7] === "number" ? (params?.[7] as number) : 0.7;
+      const wFolloweePost = typeof params?.[8] === "number" ? (params?.[8] as number) : 0.5;
+      const wFolloweeLike = typeof params?.[9] === "number" ? (params?.[9] as number) : 0.3;
+
       const sortPostIdDesc = (a: string, b: string) => {
         const aa = BigInt(a);
         const bb = BigInt(b);
@@ -184,10 +189,10 @@ class MockPgClient {
       }
 
       const rows: { post_id: string; weight: number }[] = [];
-      for (const id of selfPosts) rows.push({ post_id: id, weight: 1.0 });
-      for (const id of selfLikes) rows.push({ post_id: id, weight: 0.7 });
-      for (const id of followeePosts) rows.push({ post_id: id, weight: 0.5 });
-      for (const id of followeeLikes) rows.push({ post_id: id, weight: 0.3 });
+      for (const id of selfPosts) rows.push({ post_id: id, weight: wSelfPost });
+      for (const id of selfLikes) rows.push({ post_id: id, weight: wSelfLike });
+      for (const id of followeePosts) rows.push({ post_id: id, weight: wFolloweePost });
+      for (const id of followeeLikes) rows.push({ post_id: id, weight: wFolloweeLike });
 
       return { rows };
     }
@@ -241,6 +246,25 @@ class MockPgClient {
         return a.name < b.name ? -1 : a.name > b.name ? 1 : 0;
       });
 
+      return { rows };
+    }
+
+    if (
+      sql.startsWith("SELECT id, owned_by") &&
+      sql.includes("FROM posts") &&
+      sql.includes("WHERE id = ANY($1::bigint[])")
+    ) {
+      const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
+      const ids = arrParam ? arrParam.map((x) => String(x)) : [];
+      const postIndex = new Map<string, MockPostRow>();
+      for (const p of this.posts) postIndex.set(p.postId, p);
+      const rows = ids
+        .map((id) => {
+          const p = postIndex.get(id);
+          if (!p) return null;
+          return { id, owned_by: p.userId };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
       return { rows };
     }
 
@@ -608,14 +632,15 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
       ? toDecStr(input.selfUserId)
       : null;
 
-  const rerankByLikesAlpha =
-    typeof (input as any).rerankByLikesAlpha === "number" &&
-    Number.isFinite((input as any).rerankByLikesAlpha)
-      ? ((input as any).rerankByLikesAlpha as number)
-      : undefined;
-
   const dedupWeight =
     typeof input.dedupWeight === "number" && input.dedupWeight > 0 ? input.dedupWeight : 0;
+
+  const rerankByLikesAlpha =
+    typeof input.rerankByLikesAlpha === "number" &&
+    Number.isFinite(input.rerankByLikesAlpha) &&
+    input.rerankByLikesAlpha > 0
+      ? input.rerankByLikesAlpha
+      : 0;
 
   if (!Array.isArray(input.tags) || input.tags.length === 0) return [];
 
@@ -689,7 +714,6 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
     tableCount: number;
     isRoot: boolean;
     userId: string;
-    countLikes: number;
   };
 
   const records: RecordLike[] = [];
@@ -699,21 +723,18 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
     if (!p) continue;
     const userId = p.userId;
     if (selfUserIdDec && userId === selfUserIdDec) continue;
-    const likes =
-      typeof p.countLikes === "number" && Number.isFinite(p.countLikes) ? p.countLikes : 0;
     records.push({
       postId: BigInt(postIdStr),
       tag,
       tableCount: srcs.size,
       isRoot: p.replyTo === null,
       userId,
-      countLikes: likes,
     });
   }
   if (records.length === 0) return [];
 
   const tagTableCountsByPostId = new Map<bigint, Map<string, number>>();
-  const metaByPostId = new Map<bigint, { isRoot: boolean; userId: string; countLikes: number }>();
+  const metaByPostId = new Map<bigint, { isRoot: boolean; userId: string }>();
 
   for (const r of records) {
     let m = tagTableCountsByPostId.get(r.postId);
@@ -723,7 +744,7 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
     }
     m.set(r.tag, r.tableCount);
     if (!metaByPostId.has(r.postId)) {
-      metaByPostId.set(r.postId, { isRoot: r.isRoot, userId: r.userId, countLikes: r.countLikes });
+      metaByPostId.set(r.postId, { isRoot: r.isRoot, userId: r.userId });
     }
   }
 
@@ -736,9 +757,8 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
   let tagRankScore = sortedTagPosts.length;
   const tagScores = new Map<string, number>();
   for (const [, tagMap] of sortedTagPosts) {
-    for (const [tag, tableCount] of tagMap.entries()) {
-      const tableScore = Math.log(1 + tableCount);
-      tagScores.set(tag, (tagScores.get(tag) ?? 0) + tagRankScore * tableScore);
+    for (const [tag] of tagMap.entries()) {
+      tagScores.set(tag, (tagScores.get(tag) ?? 0) + tagRankScore);
     }
     tagRankScore -= 1;
   }
@@ -769,7 +789,12 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
     if (rankScore === undefined || !meta) continue;
 
     const rootScore = meta.isRoot ? 1.0 : 0.5;
-    const socialScore = followeeIds && followeeIds.has(meta.userId) ? 1.0 : 0.5;
+    const socialScore =
+      selfUserIdDec && meta.userId === selfUserIdDec
+        ? 1.0
+        : followeeIds && followeeIds.has(meta.userId)
+          ? 0.9
+          : 0.8;
 
     for (const [tag, tableCount] of tagMap.entries()) {
       const idfScore = tagIdfScores.get(tag);
@@ -807,12 +832,44 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
       if (universe.length >= 100) break;
     }
   }
+
+  const seedPostIds = Array.isArray(input.seedPostIds)
+    ? input.seedPostIds.map((x) => x.trim()).filter((x) => x.length > 0)
+    : [];
+
+  if (seedPostIds.length > 0) {
+    const existing = new Set<string>(universe.map((c) => c.postId.toString()));
+    const needFetch: string[] = [];
+    for (const hid of seedPostIds) {
+      let dec: string | null = null;
+      try {
+        dec = toDecStr(hid);
+      } catch {
+        dec = null;
+      }
+      if (!dec) continue;
+      if (existing.has(dec)) continue;
+      needFetch.push(dec);
+      existing.add(dec);
+    }
+    if (needFetch.length > 0) {
+      for (const id of needFetch) {
+        const s = pgClient.summaries.find((x) => x.postId === id);
+        if (!s || !s.features) continue;
+        universe.push({
+          postId: BigInt(id),
+          features: new Int8Array(s.features.buffer, s.features.byteOffset, s.features.byteLength),
+        });
+      }
+    }
+  }
+
   if (universe.length === 0) return [];
 
   let finalIds: bigint[] = universe.map((c) => c.postId);
 
-  const needVectors = !!input.features || dedupWeight > 0;
-  if (needVectors) {
+  const needWork = !!input.features || dedupWeight > 0 || rerankByLikesAlpha > 0;
+  if (needWork) {
     let qVec: number[] | null = null;
     if (input.features) {
       try {
@@ -821,6 +878,8 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
         qVec = null;
       }
     }
+
+    const needVecDecode = !!qVec || dedupWeight > 0;
 
     const candidates: {
       postId: bigint;
@@ -832,7 +891,7 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
 
     for (const c of universe) {
       let vec: number[] | null = null;
-      if (c.features) {
+      if (needVecDecode && c.features) {
         try {
           vec = normalizeL2(decodeFeatures(c.features));
         } catch {
@@ -847,8 +906,7 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
           baseScore = Number.NEGATIVE_INFINITY;
         } else {
           const simRaw = cosineSimilarity(qVec, vec);
-          const sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
-          baseScore = Number.isFinite(sim) ? sim : Number.NEGATIVE_INFINITY;
+          baseScore = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
         }
       }
 
@@ -860,19 +918,19 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
       return compareBigIntDesc(a.postId, b.postId);
     });
 
-    if (typeof rerankByLikesAlpha === "number" && rerankByLikesAlpha > 0) {
+    if (rerankByLikesAlpha > 0) {
       for (let i = 0; i < candidates.length; i++) {
         const c = candidates[i];
-        const meta = metaByPostId.get(c.postId);
-        const likes = meta ? meta.countLikes : 0;
-        const R = i + 1;
-        c.likeScore = Math.log(rerankByLikesAlpha + likes) - R;
+        const p = postIndex.get(c.postId.toString());
+        const likes =
+          p && typeof p.countLikes === "number" && Number.isFinite(p.countLikes) ? p.countLikes : 0;
+        c.likeScore = Math.log(rerankByLikesAlpha + likes) - i;
       }
 
       candidates.sort((a, b) => {
-        const al = typeof a.likeScore === "number" ? a.likeScore : Number.NEGATIVE_INFINITY;
-        const bl = typeof b.likeScore === "number" ? b.likeScore : Number.NEGATIVE_INFINITY;
-        if (al !== bl) return bl - al;
+        const as = a.likeScore ?? Number.NEGATIVE_INFINITY;
+        const bs = b.likeScore ?? Number.NEGATIVE_INFINITY;
+        if (as !== bs) return bs - as;
         if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
         return compareBigIntDesc(a.postId, b.postId);
       });
@@ -888,7 +946,7 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
         if (i > 0 && sumVec && c.vec && sumVec.length === c.vec.length) {
           const simDupRaw = cosineSimilarity(sumVec, c.vec);
           const simDup = sigmoidalContrast((simDupRaw + 1) / 2, 5, 0.9);
-          const penalty = Number.isFinite(simDup) ? simDup * dedupWeight : dedupWeight;
+          const penalty = simDup * dedupWeight;
           adj = adj - penalty;
         }
 
@@ -1426,6 +1484,22 @@ describe("AiPostsService RecommendPosts", () => {
     expect(result.includes(hex(128))).toBe(false);
   });
 
+  test("includes seed postIds into universe when provided (features not null)", async () => {
+    mkSummary(dec(128), [0, 0, 10]);
+
+    const input: RecommendPostsInput = {
+      tags: [seed("tech"), seed("eco"), seed("game")],
+      limit: 200,
+      order: "desc",
+      seedPostIds: [hex(128)],
+    };
+
+    const result = await service.RecommendPosts(input);
+    const expected = computeExpectedRecommendIds(pgClient, input);
+    expect(result).toEqual(expected);
+    expect(result.includes(hex(128))).toBe(true);
+  });
+
   test("filters out selfUserId after fetching matched rows (no SQL WHERE)", async () => {
     const selfUserHex = (pgClient as any).__selfUserHex as string;
 
@@ -1506,7 +1580,7 @@ describe("AiPostsService RecommendPosts", () => {
       rerankByLikesAlpha: 10,
       limit: 100,
       order: "desc",
-    } as any;
+    };
 
     const result = await service.RecommendPosts(input);
     const expected = computeExpectedRecommendIds(pgClient, input);
@@ -1632,6 +1706,7 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     expect(seeds[0].features).toBeInstanceOf(Int8Array);
     expect(seeds[0].features.length).toBe(512);
     expect(seeds[0].weight).toBeCloseTo(1, 10);
+    expect(seeds[0].postIds).toEqual([]);
 
     const s = selfUserHex.startsWith("0x") ? selfUserHex.slice(2) : selfUserHex;
     const tail = s.length > 8 ? s.slice(-8) : s;
@@ -1810,6 +1885,22 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     if (!sumVec) throw new Error("test setup error");
 
     const expectedFeatures = encodeFeatures(normalizeL2(sumVec));
+
+    const expectedPostIds = eff
+      .filter((x) => {
+        const p = pgClient.posts.find((pp) => pp.postId === x.id);
+        return !!p && p.userId !== selfUserDec;
+      })
+      .slice()
+      .sort((a, b) => {
+        if (a.ew !== b.ew) return b.ew - a.ew;
+        const aa = BigInt(a.id);
+        const bb = BigInt(b.id);
+        return aa === bb ? 0 : aa > bb ? -1 : 1;
+      })
+      .slice(0, 10)
+      .map((x) => toHexStrFromDec(x.id));
+
     const result = seeds[0];
 
     expect(result.tags).toEqual(expectedTags);
@@ -1817,6 +1908,7 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     expect(result.features.length).toBe(512);
     expect(int8eq(result.features, expectedFeatures)).toBe(true);
     expect(result.weight).toBeCloseTo(expectedWeight, 10);
+    expect(result.postIds).toEqual(expectedPostIds);
   });
 
   test("occurrenceWeight: duplicated seed post increases cluster weight, and clusters shrink when posts<numClusters", async () => {
@@ -1846,6 +1938,7 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     expect(s0.features).toBeInstanceOf(Int8Array);
     expect(s0.features.length).toBe(512);
     expect(s0.weight).toBeCloseTo(1, 10);
+    expect(s0.postIds).toEqual([]);
 
     const v = normalizeL2(decodeFeatures(feat));
     const expectedFeatures = encodeFeatures(normalizeL2(v));

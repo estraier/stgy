@@ -37,6 +37,7 @@ function toSeedPacket(seed: SearchSeed): SearchSeedPacket {
     tags: seed.tags.map((t) => ({ name: t.name, count: t.count })),
     features: int8ToBase64(seed.features),
     weight: seed.weight,
+    postIds: seed.postIds,
   };
 }
 
@@ -45,18 +46,14 @@ function fromSeedPacket(p: SearchSeedPacket): SearchSeed | null {
   if (!Array.isArray(p.tags)) return null;
   if (typeof p.features !== "string" || p.features.trim() === "") return null;
   if (typeof p.weight !== "number" || !Number.isFinite(p.weight)) return null;
+  if (!Array.isArray(p.postIds)) return null;
 
   const tags: SearchSeedTag[] = [];
   for (const t of p.tags) {
     if (!t || typeof t !== "object") return null;
     const r = t as Record<string, unknown>;
     if (typeof r.name !== "string") return null;
-    if (
-      typeof r.count !== "number" ||
-      !Number.isFinite(r.count) ||
-      !Number.isInteger(r.count) ||
-      r.count <= 0
-    ) {
+    if (typeof r.count !== "number" || !Number.isFinite(r.count) || r.count <= 0) {
       return null;
     }
     tags.push({ name: r.name, count: r.count });
@@ -69,7 +66,12 @@ function fromSeedPacket(p: SearchSeedPacket): SearchSeed | null {
     return null;
   }
 
-  return { tags, features, weight: p.weight };
+  const postIds = p.postIds
+    .filter((x): x is string => typeof x === "string")
+    .map((s) => s.trim())
+    .filter((s) => s !== "");
+
+  return { tags, features, weight: p.weight, postIds };
 }
 
 function parsePaginationFromBody(
@@ -114,12 +116,7 @@ function normalizeTagsFromBody(tagsRaw: unknown): SearchSeedTag[] | { error: str
     if (typeof name !== "string" || name.trim() === "") return { error: `invalid tags[${i}].name` };
 
     const count = t.count;
-    if (
-      typeof count !== "number" ||
-      !Number.isFinite(count) ||
-      !Number.isInteger(count) ||
-      count <= 0
-    ) {
+    if (typeof count !== "number" || !Number.isFinite(count) || count <= 0) {
       return { error: `invalid tags[${i}].count` };
     }
 
@@ -287,6 +284,22 @@ export default function createAiPostsRouter(
       return res.status(400).json({ error: "features must be base64 string or null if specified" });
     }
 
+    let seedPostIds: string[] | undefined;
+    if (b.seedPostIds !== undefined) {
+      if (!Array.isArray(b.seedPostIds)) {
+        return res.status(400).json({ error: "seedPostIds must be array if specified" });
+      }
+      seedPostIds = Array.from(
+        new Set(
+          (b.seedPostIds as unknown[])
+            .filter((x): x is string => typeof x === "string")
+            .map((s) => s.trim())
+            .filter((s) => s !== ""),
+        ),
+      );
+      if (seedPostIds.length === 0) seedPostIds = undefined;
+    }
+
     let rerankByLikesAlpha: number | undefined;
     if (typeof b.rerankByLikesAlpha === "number") {
       if (!Number.isFinite(b.rerankByLikesAlpha)) {
@@ -312,6 +325,7 @@ export default function createAiPostsRouter(
       const result = await aiPostsService.RecommendPosts({
         tags,
         features,
+        seedPostIds,
         selfUserId,
         rerankByLikesAlpha,
         dedupWeight,
@@ -372,6 +386,22 @@ export default function createAiPostsRouter(
       return res.status(400).json({ error: "features must be base64 string or null if specified" });
     }
 
+    let seedPostIds: string[] | undefined;
+    if (b.seedPostIds !== undefined) {
+      if (!Array.isArray(b.seedPostIds)) {
+        return res.status(400).json({ error: "seedPostIds must be array if specified" });
+      }
+      seedPostIds = Array.from(
+        new Set(
+          (b.seedPostIds as unknown[])
+            .filter((x): x is string => typeof x === "string")
+            .map((s) => s.trim())
+            .filter((s) => s !== ""),
+        ),
+      );
+      if (seedPostIds.length === 0) seedPostIds = undefined;
+    }
+
     let rerankByLikesAlpha: number | undefined;
     if (typeof b.rerankByLikesAlpha === "number") {
       if (!Number.isFinite(b.rerankByLikesAlpha)) {
@@ -397,6 +427,7 @@ export default function createAiPostsRouter(
       const ids = await aiPostsService.RecommendPosts({
         tags,
         features,
+        seedPostIds,
         selfUserId,
         rerankByLikesAlpha,
         dedupWeight,
@@ -489,6 +520,7 @@ export default function createAiPostsRouter(
             const outIds = await aiPostsService.RecommendPosts({
               tags: seed.tags,
               features: seed.features,
+              seedPostIds: seed.postIds,
               selfUserId: targetUserId,
               rerankByLikesAlpha: 5,
               dedupWeight: 0.2,
@@ -601,6 +633,7 @@ export default function createAiPostsRouter(
           const outIds = await aiPostsService.RecommendPosts({
             tags,
             features: summary.features ?? undefined,
+            seedPostIds: [targetPostId],
             selfUserId: loginUser.id,
             rerankByLikesAlpha: 5,
             dedupWeight: 0.2,

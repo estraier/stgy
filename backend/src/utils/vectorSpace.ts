@@ -16,7 +16,7 @@ function computePercentile(values: number[], percentile: number): number {
   return v;
 }
 
-export function encodeFeatures(input: number[], dim = 512, percentile = 0.95): Int8Array {
+export function encodeFeatures(input: number[], dim = 512, percentile = 0.97): Int8Array {
   if (!Number.isInteger(dim) || dim <= 0) {
     throw new Error(`encodeFeatures: invalid dim=${dim}`);
   }

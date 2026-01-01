@@ -50,17 +50,20 @@ export type SearchSeed = {
   tags: SearchSeedTag[];
   features: Int8Array;
   weight: number;
+  postIds: string[];
 };
 
 export type SearchSeedPacket = {
   tags: SearchSeedTag[];
   features: string;
   weight: number;
+  postIds: string[];
 };
 
 export type RecommendPostsInput = {
   tags: SearchSeedTag[];
   features?: Int8Array;
+  seedPostIds?: string[];
   selfUserId?: string;
   rerankByLikesAlpha?: number;
   dedupWeight?: number;
@@ -69,6 +72,7 @@ export type RecommendPostsInput = {
 export type RecommendPostsInputPacket = {
   tags: SearchSeedTag[];
   features?: string | null;
+  seedPostIds?: string[];
   selfUserId?: string;
   rerankByLikesAlpha?: number;
   dedupWeight?: number;
