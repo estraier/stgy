@@ -519,7 +519,7 @@ export class AiPostsService {
         if (minScore > 0) {
           tagsOut = topTags.map(([name, score]) => {
             const scaled = score / minScore;
-            const cnt = Math.max(1, Math.round(scaled));
+            const cnt = Math.max(1, Math.round(scaled * 10) / 10);
             return { name, count: cnt };
           });
         } else {
@@ -583,18 +583,16 @@ export class AiPostsService {
         if (minScore > 0) {
           tagsOut = topTags.map(([name, score]) => {
             const scaled = score / minScore;
-            const cnt = Math.max(1, Math.round(scaled));
+            const cnt = Math.max(1, Math.round(scaled * 10) / 10);
             return { name, count: cnt };
           });
         } else {
           tagsOut = topTags.map(([name]) => ({ name, count: 1 }));
         }
       }
-
       if (!sumVec || sumVec.length === 0) {
         throw new Error("no seed features");
       }
-
       const outFeatures = encodeFeatures(normalizeL2(sumVec));
       return { tags: tagsOut, features: outFeatures, weight: weightSum };
     };
