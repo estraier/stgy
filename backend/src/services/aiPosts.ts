@@ -827,8 +827,7 @@ export class AiPostsService {
             baseScore = Number.NEGATIVE_INFINITY;
           } else {
             const simRaw = cosineSimilarity(qVec, vec);
-            const sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
-            baseScore = sim;
+            baseScore = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
           }
         }
         candidates.push({ postId: c.postId, vec, baseScore, adjScore: baseScore });
