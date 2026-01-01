@@ -290,20 +290,24 @@ export class AiPostsService {
     const ADOPT_TAG_LIMIT = 10;
     const WEIGHT_GAMMA = 0.7;
     const FEATURE_DIM = 512;
+    const WEIGHT_SELF_POST = 1.0;
+    const WEIGHT_SELF_LIKE = 0.7;
+    const WEIGHT_FOLLOWEE_POST = 0.5;
+    const WEIGHT_FOLLOWEE_LIKE = 0.3;
     const userIdDec = hexToDec(userId);
     const seedRes = await pgQuery<SeedPostRow>(
       this.pgPool,
       `
       WITH
       self_posts AS (
-        SELECT p.id AS post_id, 1.0::float8 AS weight
+        SELECT p.id AS post_id, $7::float8 AS weight
         FROM posts p
         WHERE p.owned_by = $1
         ORDER BY p.id DESC
         LIMIT $2
       ),
       self_likes AS (
-        SELECT pl.post_id, 0.7::float8 AS weight
+        SELECT pl.post_id, $8::float8 AS weight
         FROM post_likes pl
         WHERE pl.liked_by = $1
         ORDER BY pl.created_at DESC
@@ -327,7 +331,7 @@ export class AiPostsService {
         LIMIT $4
       ),
       followee_posts AS (
-        SELECT pid.id AS post_id, 0.5::float8 AS weight
+        SELECT pid.id AS post_id, $9::float8 AS weight
         FROM top_followees tf
         JOIN LATERAL (
           SELECT p2.id
@@ -338,7 +342,7 @@ export class AiPostsService {
         ) AS pid ON TRUE
       ),
       followee_likes AS (
-        SELECT lid.post_id, 0.3::float8 AS weight
+        SELECT lid.post_id, $10::float8 AS weight
         FROM top_followees tf
         JOIN LATERAL (
           SELECT pl2.post_id
@@ -364,6 +368,10 @@ export class AiPostsService {
         TOP_FOLLOWEE_LIMIT,
         FOLLOWEE_POST_LIMIT_PER_USER,
         FOLLOWEE_LIKE_LIMIT_PER_USER,
+        WEIGHT_SELF_POST,
+        WEIGHT_SELF_LIKE,
+        WEIGHT_FOLLOWEE_POST,
+        WEIGHT_FOLLOWEE_LIKE,
       ],
     );
     if (seedRes.rows.length === 0) {
