@@ -255,7 +255,7 @@ export default function PostCard({
       await copyHtmlRich(html);
     }
     setCopyMenuOpen(false);
-  }, [ensureContent, idPrefix, post.snippet, bodyHtml]);
+  }, [ensureContent, idPrefix, post.snippet]);
 
   const handleViewHtml = useCallback(async () => {
     const content = await ensureContent();

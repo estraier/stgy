@@ -9,25 +9,40 @@ import type {
 } from "./models";
 import { apiFetch, extractError } from "./client";
 
+type NodeBuffer = Uint8Array & { toString(encoding: "base64"): string };
+type NodeBufferCtor = {
+  from(data: string, encoding: "base64"): NodeBuffer;
+  from(data: Uint8Array): NodeBuffer;
+};
+
+function getNodeBufferCtor(): NodeBufferCtor | undefined {
+  const g = globalThis as unknown as { Buffer?: unknown };
+  const Buf = g.Buffer;
+  if (!Buf) return undefined;
+
+  const from = (Buf as { from?: unknown }).from;
+  if (typeof from !== "function") return undefined;
+
+  return Buf as unknown as NodeBufferCtor;
+}
+
 function decodeBase64ToUint8(b64: string): Uint8Array {
-  const Buf = (globalThis as any).Buffer as any | undefined;
-  if (Buf) return Uint8Array.from(Buf.from(b64, "base64"));
+  const Buf = getNodeBufferCtor();
+  if (Buf) return Buf.from(b64, "base64");
 
-  const atobFn = (globalThis as any).atob as ((s: string) => string) | undefined;
-  if (!atobFn) throw new Error("atob is not available");
+  if (typeof globalThis.atob !== "function") throw new Error("atob is not available");
 
-  const bin = atobFn(b64);
+  const bin = globalThis.atob(b64);
   const u8 = new Uint8Array(bin.length);
   for (let i = 0; i < bin.length; i++) u8[i] = bin.charCodeAt(i);
   return u8;
 }
 
 function encodeUint8ToBase64(u8: Uint8Array): string {
-  const Buf = (globalThis as any).Buffer as any | undefined;
+  const Buf = getNodeBufferCtor();
   if (Buf) return Buf.from(u8).toString("base64");
 
-  const btoaFn = (globalThis as any).btoa as ((s: string) => string) | undefined;
-  if (!btoaFn) throw new Error("btoa is not available");
+  if (typeof globalThis.btoa !== "function") throw new Error("btoa is not available");
 
   const CHUNK = 0x8000;
   let bin = "";
@@ -37,7 +52,7 @@ function encodeUint8ToBase64(u8: Uint8Array): string {
     for (let j = 0; j < sub.length; j++) part += String.fromCharCode(sub[j]);
     bin += part;
   }
-  return btoaFn(bin);
+  return globalThis.btoa(bin);
 }
 
 function base64ToInt8(b64: string): Int8Array {
@@ -68,6 +83,7 @@ function toSearchSeed(pkt: SearchSeedPacket): SearchSeed {
     tags: pkt.tags,
     features: base64ToInt8(pkt.features),
     weight: pkt.weight,
+    postIds: pkt.postIds,
   };
 }
 
