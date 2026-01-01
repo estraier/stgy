@@ -10,6 +10,7 @@ import {
   addLike,
   removeLike,
 } from "@/api/posts";
+import { RecommendPostsForUser } from "@/api/aiPost";
 import { listUsers } from "@/api/users";
 import type { Post } from "@/api/models";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
@@ -58,11 +59,12 @@ export default function PageBody() {
       tab: (sp.get("tab") as "following" | "liked" | "all") || "following",
       includingReplies: sp.get("includingReplies") === "1",
       oldestFirst: sp.get("oldestFirst") === "1",
+      everyPost: sp.get("everyPost") === "1",
       page: Math.max(Number(sp.get("page")) || 1, 1),
       qParam: sp.get("q") ?? "",
     };
   }
-  const { tab, includingReplies, oldestFirst, page, qParam } = getQueryParams();
+  const { tab, includingReplies, oldestFirst, everyPost, page, qParam } = getQueryParams();
 
   const searchQueryObj: PostSearchQuery = useMemo(
     () => (qParam ? (parsePostSearchQuery(qParam) as PostSearchQuery) : {}),
@@ -113,7 +115,7 @@ export default function PageBody() {
   const setQuery = useCallback(
     (updates: Record<string, string | number | undefined>) => {
       const sp = new URLSearchParams(searchParams);
-      for (const key of ["tab", "includingReplies", "oldestFirst", "page", "q"]) {
+      for (const key of ["tab", "includingReplies", "oldestFirst", "everyPost", "page", "q"]) {
         if (Object.prototype.hasOwnProperty.call(updates, key)) {
           if (updates[key] !== undefined && updates[key] !== null && updates[key] !== "") {
             sp.set(key, String(updates[key]));
@@ -135,6 +137,9 @@ export default function PageBody() {
     setError(null);
 
     const usePage = page;
+    const baseOrder: "asc" | "desc" = oldestFirst ? "asc" : "desc";
+    const order: "asc" | "desc" = !isSearchMode && effectiveTab === "all" ? "desc" : baseOrder;
+
     const params: {
       offset: number;
       limit: number;
@@ -147,9 +152,10 @@ export default function PageBody() {
     } = {
       offset: (usePage - 1) * Config.POSTS_PAGE_SIZE,
       limit: Config.POSTS_PAGE_SIZE + 1,
-      order: oldestFirst ? "asc" : "desc",
+      order,
       focusUserId: userId,
     };
+
     let fetcher: Promise<Post[]>;
     let effectiveOwnedBy = searchQueryObj.ownedBy;
 
@@ -192,10 +198,24 @@ export default function PageBody() {
         includeReplies: includingReplies,
       });
     } else {
-      fetcher = listPosts({
-        ...params,
-        ...(includingReplies ? {} : { replyTo: "" }),
-      });
+      fetcher = (async () => {
+        if (everyPost) {
+          return listPosts({
+            ...params,
+            replyTo: "",
+          });
+        }
+
+        const recParams = { offset: params.offset, limit: params.limit, order: params.order };
+        try {
+          const rec = await RecommendPostsForUser(userId!, recParams);
+          if (rec.length > 0) return rec;
+        } catch {}
+        return listPosts({
+          ...params,
+          replyTo: "",
+        });
+      })();
     }
 
     const data = await fetcher.catch((err: unknown) => {
@@ -206,6 +226,7 @@ export default function PageBody() {
       }
       return [];
     });
+
     setHasNext(data.length > Config.POSTS_PAGE_SIZE);
     setPosts(
       data.slice(0, Config.POSTS_PAGE_SIZE).map((post) => ({
@@ -215,6 +236,7 @@ export default function PageBody() {
       })),
     );
     setLoading(false);
+
     const tabParamMissing = !hasTabParam;
     if (tabParamMissing && tab === "following" && data.length === 0 && !isSearchMode) {
       setQuery({
@@ -222,12 +244,14 @@ export default function PageBody() {
         page: 1,
         includingReplies: undefined,
         oldestFirst: undefined,
+        everyPost: undefined,
       });
     }
   }, [
     status.state,
     page,
     oldestFirst,
+    everyPost,
     userId,
     searchQueryObj,
     isSearchMode,
@@ -332,6 +356,7 @@ export default function PageBody() {
         tab: "following",
         includingReplies: undefined,
         oldestFirst: undefined,
+        everyPost: undefined,
         page: 1,
         q: undefined,
       });
@@ -425,6 +450,9 @@ export default function PageBody() {
 
   if (status.state !== "authenticated") return null;
 
+  const showEveryPost = !isSearchMode && effectiveTab === "all";
+  const showLegacyOptions = isSearchMode || effectiveTab !== "all";
+
   return (
     <main className="max-w-3xl mx-auto mt-4 p-1 sm:p-4" onClick={clearError}>
       <PostForm
@@ -450,39 +478,60 @@ export default function PageBody() {
                 q: undefined,
                 includingReplies: undefined,
                 oldestFirst: undefined,
+                everyPost: undefined,
               })
             }
           >
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
-        <label className="flex pl-2 items-center gap-1 text-sm ml-4 text-gray-700 cursor-pointer max-md:pl-0">
-          <input
-            type="checkbox"
-            checked={includingReplies}
-            onChange={(e) =>
-              setQuery({ includingReplies: e.target.checked ? "1" : undefined, page: 1 })
-            }
-            className="cursor-pointer"
-          />
-          <span className="hidden md:inline">Including replies</span>
-          <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
-            Replies
-          </span>
-        </label>
-        <label className="flex pl-2 items-center gap-1 text-sm text-gray-700 cursor-pointer max-md:pl-0">
-          <input
-            type="checkbox"
-            checked={oldestFirst}
-            onChange={(e) => setQuery({ oldestFirst: e.target.checked ? "1" : undefined, page: 1 })}
-            className="cursor-pointer"
-          />
-          <span className="hidden md:inline">Oldest first</span>
-          <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
-            Oldest
-          </span>
-        </label>
+
+        {showLegacyOptions && (
+          <>
+            <label className="flex pl-2 items-center gap-1 text-sm ml-4 text-gray-700 cursor-pointer max-md:pl-0">
+              <input
+                type="checkbox"
+                checked={includingReplies}
+                onChange={(e) =>
+                  setQuery({ includingReplies: e.target.checked ? "1" : undefined, page: 1 })
+                }
+                className="cursor-pointer"
+              />
+              <span className="hidden md:inline">Including replies</span>
+              <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
+                Replies
+              </span>
+            </label>
+            <label className="flex pl-2 items-center gap-1 text-sm text-gray-700 cursor-pointer max-md:pl-0">
+              <input
+                type="checkbox"
+                checked={oldestFirst}
+                onChange={(e) =>
+                  setQuery({ oldestFirst: e.target.checked ? "1" : undefined, page: 1 })
+                }
+                className="cursor-pointer"
+              />
+              <span className="hidden md:inline">Oldest first</span>
+              <span className="md:hidden scale-x-80 -ml-1" aria-hidden>
+                Oldest
+              </span>
+            </label>
+          </>
+        )}
+
+        {showEveryPost && (
+          <label className="flex pl-2 items-center gap-1 text-sm ml-4 text-gray-700 cursor-pointer max-md:pl-0">
+            <input
+              type="checkbox"
+              checked={everyPost}
+              onChange={(e) => setQuery({ everyPost: e.target.checked ? "1" : undefined, page: 1 })}
+              className="cursor-pointer"
+            />
+            <span>Every post</span>
+          </label>
+        )}
       </div>
+
       {isSearchMode && (
         <div className="mb-2 text-sm text-gray-500">
           Posts matching{" "}
@@ -491,6 +540,7 @@ export default function PageBody() {
           </span>
         </div>
       )}
+
       <div>
         {loading && <div className="text-gray-500">Loading…</div>}
         <ul className="space-y-4">

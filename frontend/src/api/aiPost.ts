@@ -132,3 +132,37 @@ export async function RecommendPosts(
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
+
+export async function RecommendPostsForUser(
+  userId: string,
+  params: { offset?: number; limit?: number; order?: "asc" | "desc" } = {},
+): Promise<Post[]> {
+  const search = new URLSearchParams();
+  if (params.offset !== undefined) search.append("offset", String(params.offset));
+  if (params.limit !== undefined) search.append("limit", String(params.limit));
+  if (params.order) search.append("order", params.order);
+  const q = search.toString();
+  const res = await apiFetch(
+    `/ai-posts/recommendations/posts/for-user/${userId}${q ? `?${q}` : ""}`,
+    { method: "GET" },
+  );
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function RecommendPostsForPost(
+  postId: string,
+  params: { offset?: number; limit?: number; order?: "asc" | "desc" } = {},
+): Promise<Post[]> {
+  const search = new URLSearchParams();
+  if (params.offset !== undefined) search.append("offset", String(params.offset));
+  if (params.limit !== undefined) search.append("limit", String(params.limit));
+  if (params.order) search.append("order", params.order);
+  const q = search.toString();
+  const res = await apiFetch(
+    `/ai-posts/recommendations/posts/for-post/${postId}${q ? `?${q}` : ""}`,
+    { method: "GET" },
+  );
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
