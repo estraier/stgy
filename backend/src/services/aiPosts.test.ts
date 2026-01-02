@@ -924,7 +924,8 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
         const p = postIndex.get(c.postId.toString());
         const likes =
           p && typeof p.countLikes === "number" && Number.isFinite(p.countLikes) ? p.countLikes : 0;
-        c.likeScore = Math.log(rerankByLikesAlpha + likes) - i;
+        const isRoot = p ? p.replyTo === null : (metaByPostId.get(c.postId)?.isRoot ?? true);
+        c.likeScore = Math.log(rerankByLikesAlpha + likes) / Math.log(5) - i - (isRoot ? 0 : 2);
       }
 
       candidates.sort((a, b) => {
