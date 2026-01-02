@@ -437,7 +437,11 @@ components:
         weight:
           type: number
           format: double
-      required: [tags, features, weight]
+        postIds:
+          type: array
+          items: { type: string }
+          description: Seed post ids (hex). Used to inject the seed post(s) into recommendation candidates.
+      required: [tags, features, weight, postIds]
 
     RecommendPostsRequest:
       type: object
@@ -448,6 +452,10 @@ components:
           description: Tag filters with weights.
           items:
             $ref: "#/components/schemas/SearchSeedTag"
+        seedPostIds:
+          type: array
+          items: { type: string }
+          description: Optional seed post ids (hex). When provided, backend may include these posts in vector candidates.
         selfUserId:
           type: string
         features:
