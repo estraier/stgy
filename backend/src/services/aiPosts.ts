@@ -284,8 +284,8 @@ export class AiPostsService {
     const FEATURE_DIM = 512;
     const WEIGHT_SELF_POST = 1.0;
     const WEIGHT_SELF_LIKE = 0.7;
-    const WEIGHT_FOLLOWEE_POST = 0.5;
-    const WEIGHT_FOLLOWEE_LIKE = 0.3;
+    const WEIGHT_FOLLOWEE_POST = 0.3;
+    const WEIGHT_FOLLOWEE_LIKE = 0.2;
     if (!Number.isInteger(numClusters) || numClusters <= 0) throw new Error("invalid numClusters");
     const userIdDec = hexToDec(userId);
     const seedRes = await pgQuery<SeedPostRow>(
