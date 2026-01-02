@@ -167,15 +167,52 @@ async function fetchPostDetail(sessionCookie: string, postId: string): Promise<P
 
 function parseTagsField(raw: unknown, maxCount: number): string[] {
   if (!Array.isArray(raw)) return [];
-  const tags: string[] = [];
+  const baseTags: string[] = [];
   for (const t of raw) {
     if (typeof t !== "string") continue;
-    const trimmed = t.trim().slice(0, 20);
+    const trimmed = t.trim();
     if (!trimmed) continue;
-    tags.push(trimmed);
-    if (tags.length >= maxCount) break;
+    baseTags.push(trimmed);
   }
-  return tags;
+  const baseSet = new Set<string>();
+  for (const tag of baseTags) {
+    if (/^\d+:/.test(tag)) {
+      const normalized = tag.replace(/^\d+:\s*/, "").trim();
+      if (normalized) baseSet.add(normalized);
+    } else {
+      baseSet.add(tag);
+    }
+  }
+  const adopted: string[] = [];
+  for (const tag of baseTags) {
+    if (/^\d+:/.test(tag)) {
+      const withoutPrefix = tag.replace(/^\d+:\s*/, "").trim();
+      const segments = withoutPrefix
+        .split(/(?:．|\. )/)
+        .map((s) => s.trim())
+        .filter((s) => s.length > 0);
+      if (segments.length === 0) continue;
+      const matched = segments.filter((s) => baseSet.has(s));
+      if (matched.length > 0) {
+        adopted.push(...matched);
+      } else {
+        adopted.push(...segments);
+      }
+      continue;
+    }
+    adopted.push(tag);
+  }
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const t of adopted) {
+    const v = t.trim();
+    if (!v) continue;
+    const lower = t.toLowerCase();
+    if (seen.has(lower)) continue;
+    seen.add(lower);
+    unique.push(v);
+  }
+  return unique.slice(0, maxCount);
 }
 
 async function generateFeatures(
@@ -290,7 +327,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
 
-  //console.log(prompt);
+  console.log(prompt);
 
   const chatReq: ChatRequest = {
     model: Config.AI_SUMMARY_MODEL,
@@ -306,7 +343,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     throw new Error(`ai-users/chat returned empty content for postId=${postId}`);
   }
 
-  //console.log(aiContent);
+  console.log(aiContent);
 
   const parsed = evaluateChatResponseAsJson<{ summary?: unknown; tags?: unknown }>(aiContent);
   if (!isRecord(parsed)) {
@@ -327,6 +364,9 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     Config.AI_SUMMARY_SUMMARY_LENGTH,
   );
   const featuresInput = buildFeaturesInput(summary, tags, postSnippet);
+
+  console.log(featuresInput);
+
   const features = await generateFeatures(sessionCookie, {
     model: Config.AI_SUMMARY_MODEL,
     input: featuresInput,

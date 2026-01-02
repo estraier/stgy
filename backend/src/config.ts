@@ -121,7 +121,8 @@ export class Config {
   );
   static readonly AI_SUMMARY_POST_SKIP_LATEST_MS = envNum(
     "STGY_AI_SUMMARY_POST_SKIP_LATEST_MS",
-    600 * 1000,
+    //600 * 1000,
+    60 * 1000,
   );
   static readonly AI_SUMMARY_BATCH_SIZE = envNum("STGY_AI_SUMMARY_BATCH_SIZE", 1000);
   static readonly AI_SUMMARY_CONCURRENCY = envNum("STGY_AI_SUMMARY_CONCURRENCY", 1);

@@ -5,15 +5,23 @@ You are an AI agent tasked with summarizing the contents of posts published on s
 You are about to read a social media post.
 Summarize the post and assign tags that represent it.
 Output must be in JSON format.
+
 - Put the summary text in the "summary" field.
   - Do not add any preface or explanation such as "This post is…". Summarize the content directly.
   - If only the beginning of the content is shown, you do not need to mention that it is an excerpt.
+
 - Put tags that represent the post in the "tags" field.
   - Use at least one tag from the Nippon Decimal Classification (NDC).
-    - Examples: General Works, Philosophy, History, Social Sciences, Natural Sciences, Technology, Engineering, Industry and Commerce, The Arts, Fine Arts, Language, Literature
-    - For compound categories like "Technology. Engineering", choose an appropriate single term such as "Engineering" depending on the content.
-    - If more suitable narrower categories exist, use them (e.g., Psychology, Information Processing, African History).
-  - For the remaining tags, freely write suitable search keywords (e.g., Akuma, Shibuya, Ramen).
+    - Write NDC tags as: 3-digit classification code, then a colon, then the official label name.
+      - Examples: 000:General Works, 100:Philosophy, 200:History, 300:Social Sciences, 400:Natural Sciences, 500:Technology, 500:Engineering, 600:Industry, 700:The Arts, 700:Fine Arts, 800:Language, 900:Literature
+      - Some official labels are compound labels such as "Technology. Engineering" where terms are separated by a period. In that case, pick one of them.
+        - Examples: 500:Engineering, 700:Fine Arts
+    - If more suitable narrower categories exist, use them.
+      - Examples: 140:Psychology, 007:Information Science, 240:History of Africa, 326:Criminal Law
+    - Do not use subdivisions with decimals such as "007.11:...". Instead, use a free-text tag such as "Cybernetics" in the free-text tags below.
+  - For the remaining tags, freely write suitable search keywords as free-text tags.
+    - Examples: Akuma, Shibuya, Ramen, Cybernetics
+
 - Output only the JSON data; omit any formatting, backchanneling, or explanatory text.
   - Follow the JSON specification strictly, pay attention to commas and escaping, and ensure validation will pass reliably.
 
@@ -33,8 +41,8 @@ Notes:
 
 Example output:
 {
-  "summary": "... (summary sentences in {{MAX_CHARS}} characters) ...",
-  "tags": ["Organic Chemistry", "Chemical Structure", "Molecular Formula", "Certification Exam"]
+  "summary": "... (summary sentences in approximately {{MAX_CHARS}} characters) ...",
+  "tags": ["440:Astronomy", "Planetarium", "Quasar", "Summer constellations", "Certification exam"]
 }
 
 Provide the task output below in JSON format.
