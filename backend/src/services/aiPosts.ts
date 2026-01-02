@@ -279,7 +279,7 @@ export class AiPostsService {
     const FOLLOWEE_POST_LIMIT_PER_USER = 5;
     const FOLLOWEE_LIKE_LIMIT_PER_USER = 5;
     const ADOPT_TAG_LIMIT = 10;
-    const CLUSTER_POSTIDS_LIMIT = 10;
+    const CLUSTER_POSTIDS_LIMIT = 50;
     const WEIGHT_GAMMA = 0.7;
     const FEATURE_DIM = 512;
     const WEIGHT_SELF_POST = 1.0;
