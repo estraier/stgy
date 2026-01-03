@@ -22,6 +22,8 @@ import type {
 } from "../models/aiPost";
 import { normalizeOneLiner, parseBoolean, int8ToBase64, base64ToInt8 } from "../utils/format";
 
+const NUM_RELATED_POSTS = 5;
+
 function toPacket(s: AiPostSummary): AiPostSummaryPacket {
   return {
     postId: s.postId,
@@ -617,19 +619,74 @@ export default function createAiPostsRouter(
           return res.status(404).json({ error: "not found" });
         }
 
-        const tags: SearchSeedTag[] = Array.from(
-          new Set(
-            (summary.tags ?? [])
-              .filter((t): t is string => typeof t === "string")
-              .map((t) => normalizeOneLiner(t.toLowerCase()))
-              .filter((t): t is string => typeof t === "string" && t.trim() !== ""),
-          ),
-        ).map((name) => ({ name, count: 1 }));
+        const targetPostLite = await postsService.getPostLite(targetPostId);
+        if (!targetPostLite) {
+          watch.done();
+          return res.status(404).json({ error: "not found" });
+        }
 
-        if (tags.length === 0) {
+        const normalizeTag = (raw: unknown): string | null => {
+          if (typeof raw !== "string") return null;
+          const name = normalizeOneLiner(raw.toLowerCase());
+          if (typeof name !== "string" || name.trim() === "") return null;
+          return name;
+        };
+
+        const addTagsToMap = (m: Map<string, number>, tagsRaw: unknown, add: number) => {
+          if (!Array.isArray(tagsRaw)) return;
+          const seen = new Set<string>();
+          for (const t of tagsRaw) {
+            const name = normalizeTag(t);
+            if (!name) continue;
+            if (seen.has(name)) continue;
+            seen.add(name);
+            m.set(name, (m.get(name) ?? 0) + add);
+          }
+        };
+
+        const targetWeights = new Map<string, number>();
+        addTagsToMap(targetWeights, targetPostLite.tags, 1);
+        addTagsToMap(targetWeights, summary.tags, 1);
+
+        if (targetWeights.size === 0) {
           await redis.set(recKey, JSON.stringify([]), "EX", Config.AI_POST_RECOMMEND_TTL_SEC);
           ids = [];
         } else {
+          const authorId = targetPostLite.ownedBy;
+          const relatedCounts = new Map<string, number>();
+          const recentPosts = await postsService.listPosts(
+            { ownedBy: authorId, offset: 0, limit: Math.max(0, NUM_RELATED_POSTS + 1), order: "desc" },
+            loginUser.id,
+          );
+          let used = 0;
+          for (const p of recentPosts) {
+            if (p.id === targetPostId) continue;
+            addTagsToMap(relatedCounts, p.tags, 0.98 ** used);
+            try {
+              const s = await aiPostsService.getAiPostSummary(p.id);
+              if (s) addTagsToMap(relatedCounts, s.tags, 0.98 ** used);
+            } catch {}
+            used++;
+            if (used >= NUM_RELATED_POSTS) break;
+          }
+          if (relatedCounts.size > 0) {
+            const sorted = Array.from(relatedCounts.entries()).sort((a, b) => {
+              if (b[1] !== a[1]) return b[1] - a[1];
+              if (a[0] === b[0]) return 0;
+              return a[0] < b[0] ? -1 : 1;
+            });
+            const top = sorted.slice(0, 10);
+            const maxCount = top.length > 0 ? top[0][1] : 0;
+            const denom = maxCount > 0 ? maxCount : 1;
+            for (const [name, count] of top) {
+              const w = count / denom;
+              targetWeights.set(name, (targetWeights.get(name) ?? 0) + w);
+            }
+          }
+          const tags: SearchSeedTag[] = Array.from(targetWeights.entries()).map(([name, count]) => ({
+            name,
+            count,
+          }));
           const outIds = await aiPostsService.RecommendPosts({
             tags,
             features: summary.features ?? undefined,
@@ -641,16 +698,13 @@ export default function createAiPostsRouter(
             limit: 100,
             order: "desc",
           } satisfies RecommendPostsInput);
-
           await redis.set(recKey, JSON.stringify(outIds), "EX", Config.AI_POST_RECOMMEND_TTL_SEC);
           ids = outIds;
         }
       }
-
       const orderedIds = order === "asc" ? [...ids].reverse() : ids;
       const subsetIds = orderedIds.slice(offset, offset + limit);
       const posts = await postsService.listPostsByIds(subsetIds, loginUser.id);
-
       watch.done();
       res.json(posts);
     } catch (e) {
