@@ -183,12 +183,17 @@ export default function PostCard({
   const [aiSummaryText, setAiSummaryText] = useState<string | null>(null);
   const [aiSummaryTags, setAiSummaryTags] = useState<string[]>([]);
 
+  const urlKey = useMemo(() => {
+    const qs = searchParams.toString();
+    return qs ? `${pathname}?${qs}` : pathname;
+  }, [pathname, searchParams]);
+
   useEffect(() => {
     setAiSummaryOpen(false);
     setAiSummaryLoading(false);
     setAiSummaryText(null);
     setAiSummaryTags([]);
-  }, [post.id]);
+  }, [post.id, urlKey]);
 
   useEffect(() => {
     function onDocMouseDown(e: MouseEvent) {
