@@ -16,4 +16,5 @@ WORKDIR /app
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/backend/dist ./dist
+COPY --from=builder /app/backend/src/prompts ./dist/prompts
 COPY --from=builder /app/backend/package.json ./backend/package.json

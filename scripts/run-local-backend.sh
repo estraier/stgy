@@ -48,7 +48,7 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
   exit 1
 fi
 
-export STGY_BACKEND_API_BASE_URL="http://localhost:3001"
+export STGY_BACKEND_API_BASE_URL=http://localhost:3001
 export STGY_FRONTEND_HOST=localhost
 export STGY_BACKEND_HOST=localhost
 export STGY_DATABASE_HOST=localhost
