@@ -72,17 +72,8 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
     res.json(users);
   });
 
-  router.get("/:id", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
-    if (!loginUser) return;
-    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
-      return res.status(403).json({ error: "too often operations" });
-    }
-    const watch = timerThrottleService.startWatch(loginUser);
-    const user = await aiUsersService.getAiUser(req.params.id);
-    watch.done();
-    if (!user) return res.status(404).json({ error: "not found" });
-    res.json(user);
+  router.head("/chat", async (req: Request, res: Response) => {
+    return res.sendStatus(Config.OPENAI_API_KEY ? 200 : 501);
   });
 
   router.post("/chat", async (req: Request, res: Response) => {
@@ -188,6 +179,19 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       }
       res.status(500).json({ error: "internal_error" });
     }
+  });
+
+  router.get("/:id", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const watch = timerThrottleService.startWatch(loginUser);
+    const user = await aiUsersService.getAiUser(req.params.id);
+    watch.done();
+    if (!user) return res.status(404).json({ error: "not found" });
+    res.json(user);
   });
 
   router.get("/:id/interests", async (req: Request, res: Response) => {

@@ -164,6 +164,21 @@ function httpRequest(
   });
 }
 
+async function waitForChatReady(): Promise<boolean> {
+  while (!shuttingDown) {
+    try {
+      const res = await httpRequest("/ai-users/chat", { method: "HEAD" });
+      if (res.statusCode === 200) return true;
+      if (res.statusCode === 501) return false;
+      logger.info(`waiting server... status=${res.statusCode}`);
+    } catch (e) {
+      logger.info(`waiting server... error=${truncateForLog(e, 50)}`);
+    }
+    await sleep(3000);
+  }
+  return false;
+}
+
 async function apiRequest(
   sessionCookie: string,
   path: string,
@@ -2212,10 +2227,12 @@ async function main(): Promise<void> {
   };
   process.on("SIGINT", onSig);
   process.on("SIGTERM", onSig);
-  if (Config.OPENAI_API_KEY) {
+
+  const enabled = await waitForChatReady();
+  if (enabled) {
     await processLoop();
   } else {
-    logger.info("OPENAI_API_KEY is not set so do nothing.");
+    logger.info("AI features are disabled on server so do nothing.");
     await idleLoop();
   }
 }

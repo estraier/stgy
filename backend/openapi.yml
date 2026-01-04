@@ -1918,6 +1918,15 @@ paths:
           $ref: "#/components/responses/Error404"
 
   /ai-users/chat:
+    head:
+      summary: Check AI chat availability
+      security: []
+      responses:
+        "200":
+          description: AI chat is enabled
+        "501":
+          description: AI chat is disabled (OPENAI_API_KEY is not set)
+
     post:
       summary: Chat with AI model
       security:

@@ -124,6 +124,30 @@ async function apiRequest(
   return res;
 }
 
+async function waitForAiChatAvailability(): Promise<"enabled" | "disabled"> {
+  const path = "/ai-users/chat";
+  const intervalMs = 3000;
+  while (!shuttingDown) {
+    try {
+      const res = await httpRequest(path, { method: "HEAD" });
+      if (res.statusCode === 200) {
+        logger.info(`ai chat is enabled on server`);
+        return "enabled";
+      }
+      if (res.statusCode === 501) {
+        logger.info(`ai chat is disabled on server`);
+        return "disabled";
+      }
+      logger.info(`waiting server... status=${res.statusCode}`);
+    } catch (e) {
+      const msg = (e as Error)?.message ?? String(e);
+      logger.info(`waiting server... error=${truncateForLog(msg, 80)}`);
+    }
+    await sleep(intervalMs);
+  }
+  throw new Error("shutting down while waiting for server");
+}
+
 async function loginAsAdmin(): Promise<string> {
   if (!authService) throw new Error("authService is not initialized");
   const res = await authService.loginAsAdmin();
@@ -456,10 +480,11 @@ async function main(): Promise<void> {
   };
   process.on("SIGINT", onSig);
   process.on("SIGTERM", onSig);
-  if (Config.OPENAI_API_KEY) {
+  const avail = await waitForAiChatAvailability();
+  if (avail === "enabled") {
     await processLoop();
   } else {
-    logger.info("OPENAI_API_KEY is not set so do nothing.");
+    logger.info("AI is disabled on server so do nothing.");
     await idleLoop();
   }
 }
