@@ -655,7 +655,12 @@ export default function createAiPostsRouter(
           const authorId = targetPostLite.ownedBy;
           const relatedCounts = new Map<string, number>();
           const recentPosts = await postsService.listPosts(
-            { ownedBy: authorId, offset: 0, limit: Math.max(0, NUM_RELATED_POSTS + 1), order: "desc" },
+            {
+              ownedBy: authorId,
+              offset: 0,
+              limit: Math.max(0, NUM_RELATED_POSTS + 1),
+              order: "desc",
+            },
             loginUser.id,
           );
           let used = 0;
@@ -683,10 +688,12 @@ export default function createAiPostsRouter(
               targetWeights.set(name, (targetWeights.get(name) ?? 0) + w);
             }
           }
-          const tags: SearchSeedTag[] = Array.from(targetWeights.entries()).map(([name, count]) => ({
-            name,
-            count,
-          }));
+          const tags: SearchSeedTag[] = Array.from(targetWeights.entries()).map(
+            ([name, count]) => ({
+              name,
+              count,
+            }),
+          );
           const outIds = await aiPostsService.RecommendPosts({
             tags,
             features: summary.features ?? undefined,

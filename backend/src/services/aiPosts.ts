@@ -279,7 +279,6 @@ export class AiPostsService {
     const FOLLOWEE_POST_LIMIT_PER_USER = 5;
     const FOLLOWEE_LIKE_LIMIT_PER_USER = 5;
     const ADOPT_TAG_LIMIT = 10;
-    const CLUSTER_POSTIDS_LIMIT = 50;
     const WEIGHT_GAMMA = 0.7;
     const FEATURE_DIM = 512;
     const WEIGHT_SELF_POST = 1.0;
@@ -507,7 +506,7 @@ export class AiPostsService {
           return x.w > 0 && owner && owner !== userIdDec;
         })
         .sort((a, b) => (a.w !== b.w ? b.w - a.w : compareBigIntDesc(BigInt(a.pid), BigInt(b.pid))))
-        .slice(0, CLUSTER_POSTIDS_LIMIT)
+        .slice(0, Config.AI_POST_SEED_CLUSTER_POSTIDS_LIMIT)
         .map((x) => decToHex(x.pid));
       return [{ tags: tagsOut, features, weight: weightSum, postIds }];
     }
@@ -563,7 +562,7 @@ export class AiPostsService {
             ? b.effectiveWeight - a.effectiveWeight
             : compareBigIntDesc(a.postId, b.postId),
         )
-        .slice(0, CLUSTER_POSTIDS_LIMIT)
+        .slice(0, Config.AI_POST_SEED_CLUSTER_POSTIDS_LIMIT)
         .map((m) => decToHex(m.postIdStr));
       return { tags: tagsOut, features: outFeatures, weight: weightSum, postIds };
     };

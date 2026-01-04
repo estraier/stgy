@@ -18,6 +18,7 @@ import {
 jest.mock("../config", () => {
   return {
     Config: {
+      AI_POST_SEED_CLUSTER_POSTIDS_LIMIT: 100,
       AI_POST_RECOMMEND_TAG_CANDIDATES: 100,
       AI_POST_RECOMMEND_VEC_CANDIDATES: 100,
     },
@@ -1828,10 +1829,10 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
       { id: selfP1, w: 1.0, feat: fSelfP1 },
       { id: selfP2, w: 1.0, feat: fSelfP2 },
       { id: selfLiked, w: 0.7, feat: fSelfLiked },
-      { id: faPost, w: 0.5, feat: fFaPost },
-      { id: fbPost, w: 0.5, feat: fFbPost },
-      { id: flaLiked, w: 0.3, feat: fFlaLiked },
-      { id: flbLiked, w: 0.3, feat: fFlbLiked },
+      { id: faPost, w: 0.3, feat: fFaPost },
+      { id: fbPost, w: 0.3, feat: fFbPost },
+      { id: flaLiked, w: 0.2, feat: fFlaLiked },
+      { id: flbLiked, w: 0.2, feat: fFlbLiked },
     ];
 
     const total = baseWeights.reduce((s, x) => s + x.w, 0);
