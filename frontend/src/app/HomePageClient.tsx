@@ -8,6 +8,8 @@ import type { SessionInfo } from "@/api/models";
 
 type Phase = "checking" | "guest" | "redirecting";
 
+const WELCOME_ONCE_KEY = "stgy:welcome_redirected_once";
+
 export default function HomePageClient() {
   const [phase, setPhase] = useState<Phase>("checking");
 
@@ -27,7 +29,22 @@ export default function HomePageClient() {
           const now = Date.now();
           const regTs = Date.parse(s.userCreatedAt || "");
           const isNewbie = Number.isFinite(regTs) && now - regTs <= 12 * 60 * 60 * 1000;
-          const target = isNewbie ? Config.WELCOME_PAGE_PATH : "/posts";
+
+          let shouldWelcome = isNewbie;
+          if (shouldWelcome) {
+            try {
+              const seen = localStorage.getItem(WELCOME_ONCE_KEY) === "1";
+              if (seen) {
+                shouldWelcome = false;
+              } else {
+                try {
+                  localStorage.setItem(WELCOME_ONCE_KEY, "1");
+                } catch {}
+              }
+            } catch {}
+          }
+
+          const target = shouldWelcome ? Config.WELCOME_PAGE_PATH : "/posts";
 
           setPhase("redirecting");
 
