@@ -91,37 +91,6 @@ export type AiPostSummaryPacket = {
   tags: string[];
 };
 
-export type SearchSeedTag = {
-  name: string;
-  count: number;
-};
-
-export type SearchSeed = {
-  tags: SearchSeedTag[];
-  features: Int8Array;
-  weight: number;
-};
-
-export type SearchSeedPacket = {
-  tags: SearchSeedTag[];
-  features: string;
-  weight: number;
-};
-
-export type RecommendPostsInput = {
-  tags: SearchSeedTag[];
-  features?: Int8Array;
-  selfUserId?: string;
-  dedupWeight?: number;
-} & AiPostPagination;
-
-export type RecommendPostsInputPacket = {
-  tags: SearchSeedTag[];
-  features?: string | null;
-  selfUserId?: string;
-  dedupWeight?: number;
-} & AiPostPagination;
-
 export type StorageObjectMetadata = {
   bucket: string;
   key: string;
