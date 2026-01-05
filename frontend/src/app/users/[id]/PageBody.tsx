@@ -1,7 +1,7 @@
 "use client";
 
 import { Config } from "@/config";
-import { useEffect, useState, useCallback } from "react";
+import { useEffect, useState, useCallback, useRef } from "react";
 import { getUser, listFollowers, listFollowees } from "@/api/users";
 import { listPosts, addLike, removeLike, createPost } from "@/api/posts";
 import type { User, UserDetail, Post } from "@/api/models";
@@ -39,8 +39,21 @@ export default function PageBody() {
   const [error, setError] = useState<string | null>(null);
   const [editing, setEditing] = useState(false);
 
+  const tabsRef = useRef<HTMLDivElement | null>(null);
+
+  const scrollTabsToViewportTop10 = useCallback(() => {
+    const el = tabsRef.current;
+    if (!el) return;
+    const absoluteTop = window.scrollY + el.getBoundingClientRect().top;
+    const desiredTop = Math.max(0, absoluteTop - window.innerHeight * 0.1);
+    window.scrollTo({ top: desiredTop });
+  }, []);
+
   const setQuery = useCallback(
-    (updates: Partial<{ tab: string; page: number; oldestFirst: string | undefined }>) => {
+    (
+      updates: Partial<{ tab: string; page: number; oldestFirst: string | undefined }>,
+      opts?: { scroll?: boolean },
+    ) => {
       const sp = new URLSearchParams(searchParams);
       for (const key of ["tab", "page", "oldestFirst"]) {
         const v = updates[key as keyof typeof updates];
@@ -50,7 +63,12 @@ export default function PageBody() {
           sp.delete(key);
         }
       }
-      router.push(`${pathname}?${sp.toString()}`);
+      const url = `${pathname}?${sp.toString()}`;
+      if (opts && opts.scroll === false) {
+        router.push(url, { scroll: false });
+      } else {
+        router.push(url);
+      }
     },
     [router, pathname, searchParams],
   );
@@ -349,6 +367,7 @@ export default function PageBody() {
       setReplySubmitting(false);
     }
   }
+
   function clearReplyError() {
     if (replyError) setReplyError(null);
   }
@@ -378,17 +397,19 @@ export default function PageBody() {
   }
 
   function handleTabChange(nextTab: (typeof TAB_VALUES)[number]) {
-    setQuery({ tab: nextTab, page: 1, oldestFirst: undefined });
+    setQuery({ tab: nextTab, page: 1, oldestFirst: undefined }, { scroll: false });
     setReplyTo(null);
     setReplyBody("");
     setReplyError(null);
+    requestAnimationFrame(() => requestAnimationFrame(scrollTabsToViewportTop10));
   }
 
   function handleOldestFirstToggle(checked: boolean) {
-    setQuery({ oldestFirst: checked ? "1" : undefined, tab, page: 1 });
+    setQuery({ oldestFirst: checked ? "1" : undefined, tab, page: 1 }, { scroll: false });
     setReplyTo(null);
     setReplyBody("");
     setReplyError(null);
+    requestAnimationFrame(() => requestAnimationFrame(scrollTabsToViewportTop10));
   }
 
   return (
@@ -420,7 +441,7 @@ export default function PageBody() {
         </div>
       )}
 
-      <div className="flex gap-1 mt-6 mb-2">
+      <div ref={tabsRef} className="flex gap-1 mt-6 mb-2">
         {TAB_VALUES.map((t) => (
           <button
             key={t}
@@ -512,24 +533,24 @@ export default function PageBody() {
                 {followers.length === 0 && (
                   <li className="text-gray-400 text-center">No followers found.</li>
                 )}
-                {followers.map((user, idx) => (
+                {followers.map((u, idx) => (
                   <li
-                    key={user.id}
-                    id={`user-${user.id}`}
+                    key={u.id}
+                    id={`user-${u.id}`}
                     onMouseDown={() => {
                       try {
                         const st = (window.history.state as Record<string, unknown>) || {};
                         window.history.replaceState(
-                          { ...st, [RESTORE_USER_ID_KEY]: user.id, [RESTORE_USER_PAGE_KEY]: page },
+                          { ...st, [RESTORE_USER_ID_KEY]: u.id, [RESTORE_USER_PAGE_KEY]: page },
                           "",
                         );
                       } catch {}
                     }}
                   >
                     <UserCard
-                      user={user}
+                      user={u}
                       focusUserId={userId}
-                      onClick={() => router.push(`/users/${user.id}`)}
+                      onClick={() => router.push(`/users/${u.id}`)}
                       idPrefix={`f${idx + 1}-h`}
                     />
                   </li>
@@ -541,24 +562,24 @@ export default function PageBody() {
                 {followees.length === 0 && (
                   <li className="text-gray-400 text-center">No followees found.</li>
                 )}
-                {followees.map((user, idx) => (
+                {followees.map((u, idx) => (
                   <li
-                    key={user.id}
-                    id={`user-${user.id}`}
+                    key={u.id}
+                    id={`user-${u.id}`}
                     onMouseDown={() => {
                       try {
                         const st = (window.history.state as Record<string, unknown>) || {};
                         window.history.replaceState(
-                          { ...st, [RESTORE_USER_ID_KEY]: user.id, [RESTORE_USER_PAGE_KEY]: page },
+                          { ...st, [RESTORE_USER_ID_KEY]: u.id, [RESTORE_USER_PAGE_KEY]: page },
                           "",
                         );
                       } catch {}
                     }}
                   >
                     <UserCard
-                      user={user}
+                      user={u}
                       focusUserId={userId}
-                      onClick={() => router.push(`/users/${user.id}`)}
+                      onClick={() => router.push(`/users/${u.id}`)}
                       idPrefix={`f${idx + 1}-h`}
                     />
                   </li>
