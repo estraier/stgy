@@ -667,7 +667,7 @@ export default function PostCard({
             <div className="relative">
               <button
                 type="button"
-                className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-200 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100"
+                className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-300 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100"
                 aria-haspopup="menu"
                 aria-expanded={copyMenuOpen}
                 onClick={(e) => {
@@ -688,7 +688,7 @@ export default function PostCard({
             <div className="relative">
               <button
                 type="button"
-                className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-200 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100"
+                className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-300 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100"
                 aria-haspopup="menu"
                 aria-expanded={menuOpen}
                 onClick={(e) => {

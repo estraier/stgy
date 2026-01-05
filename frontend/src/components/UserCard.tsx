@@ -232,7 +232,7 @@ export default function UserCard({
 
   return (
     <article
-      className={`p-2 pt-3 sm:p-4 sm:pt-4 border rounded shadow-sm bg-white ${clickable ? "cursor-pointer" : ""} ${className}`}
+      className={`relative p-2 pt-3 sm:p-4 sm:pt-4 border rounded shadow-sm bg-white ${clickable ? "cursor-pointer" : ""} ${className}`}
       onClick={clickable ? handleCardClick : undefined}
       tabIndex={clickable ? 0 : -1}
       role={clickable ? "button" : undefined}
@@ -277,7 +277,6 @@ export default function UserCard({
             />
           </button>
         )}
-
         <span
           lang={userLang}
           className={`-mt-1 truncate max-w-[24ex] text-slate-900 ${truncated ? "text-base" : "text-xl px-2"}`}
@@ -334,25 +333,7 @@ export default function UserCard({
             blockee
           </span>
         )}
-        <div className="ml-auto relative flex items-center gap-1">
-          <button
-            type="button"
-            className="px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-200 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100 max-md:scale-x-80 max-md:ml-0 max-md:-mr-2"
-            aria-haspopup="menu"
-            aria-expanded={menuOpen}
-            onClick={(e) => {
-              e.stopPropagation();
-              setMenuOpen((v) => !v);
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setMenuOpen(false);
-            }}
-          >
-            ⋯
-          </button>
-          {menu}
-          {followButton}
-        </div>
+        <div className="ml-auto flex items-center gap-1">{followButton}</div>
       </div>
 
       {!truncated && avatarExpanded && user.avatar && (
@@ -421,12 +402,33 @@ export default function UserCard({
         </div>
       )}
       {"countFollowers" in user && (
-        <div className="text-xs text-gray-500 mt-2">
+        <div className="text-xs text-gray-500 mt-1">
           <span className="gap-1">followers: {user.countFollowers}</span>
           <span className="ml-2">followees: {user.countFollowees}</span>
           <span className="ml-2">posts: {user.countPosts}</span>
         </div>
       )}
+
+      <div className="absolute right-2 bottom-2 z-20">
+        <div className="relative flex items-center gap-1">
+          <button
+            type="button"
+            className="mr-1 px-2 py-1 rounded-xl text-xs text-gray-700 border border-gray-300 bg-gray-50 hover:bg-gray-100 opacity-80 hover:opacity-100 max-md:scale-x-80 max-md:ml-0 max-md:-mr-2"
+            aria-haspopup="menu"
+            aria-expanded={menuOpen}
+            onClick={(e) => {
+              e.stopPropagation();
+              setMenuOpen((v) => !v);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Escape") setMenuOpen(false);
+            }}
+          >
+            ⋯
+          </button>
+          {menu}
+        </div>
+      </div>
     </article>
   );
 }
