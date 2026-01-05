@@ -302,6 +302,16 @@ export default function createAiPostsRouter(
       if (seedPostIds.length === 0) seedPostIds = undefined;
     }
 
+    let ownerDecay: number | undefined;
+    if (typeof b.ownerDecay === "number") {
+      if (!Number.isFinite(b.ownerDecay)) {
+        return res.status(400).json({ error: "ownerDecay must be number if specified" });
+      }
+      ownerDecay = b.ownerDecay;
+    } else if (b.ownerDecay !== undefined) {
+      return res.status(400).json({ error: "ownerDecay must be number if specified" });
+    }
+
     let rerankByLikesAlpha: number | undefined;
     if (typeof b.rerankByLikesAlpha === "number") {
       if (!Number.isFinite(b.rerankByLikesAlpha)) {
@@ -329,6 +339,7 @@ export default function createAiPostsRouter(
         features,
         seedPostIds,
         selfUserId,
+        ownerDecay,
         rerankByLikesAlpha,
         dedupWeight,
         offset,
@@ -404,6 +415,16 @@ export default function createAiPostsRouter(
       if (seedPostIds.length === 0) seedPostIds = undefined;
     }
 
+    let ownerDecay: number | undefined;
+    if (typeof b.ownerDecay === "number") {
+      if (!Number.isFinite(b.ownerDecay)) {
+        return res.status(400).json({ error: "ownerDecay must be number if specified" });
+      }
+      ownerDecay = b.ownerDecay;
+    } else if (b.ownerDecay !== undefined) {
+      return res.status(400).json({ error: "ownerDecay must be number if specified" });
+    }
+
     let rerankByLikesAlpha: number | undefined;
     if (typeof b.rerankByLikesAlpha === "number") {
       if (!Number.isFinite(b.rerankByLikesAlpha)) {
@@ -431,6 +452,7 @@ export default function createAiPostsRouter(
         features,
         seedPostIds,
         selfUserId,
+        ownerDecay,
         rerankByLikesAlpha,
         dedupWeight,
         offset,
@@ -524,6 +546,7 @@ export default function createAiPostsRouter(
               features: seed.features,
               seedPostIds: seed.postIds,
               selfUserId: targetUserId,
+              ownerDecay: 0.95,
               rerankByLikesAlpha: 5,
               dedupWeight: 0.2,
               offset: 0,
@@ -699,6 +722,7 @@ export default function createAiPostsRouter(
             features: summary.features ?? undefined,
             seedPostIds: [targetPostId],
             selfUserId: loginUser.id,
+            ownerDecay: 0.95,
             rerankByLikesAlpha: 5,
             dedupWeight: 0.2,
             offset: 0,

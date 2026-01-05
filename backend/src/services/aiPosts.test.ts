@@ -251,6 +251,44 @@ class MockPgClient {
     }
 
     if (
+      sql.startsWith("SELECT id::text AS post_id, reply_to, owned_by") &&
+      sql.includes("FROM posts") &&
+      sql.includes("WHERE id = ANY($1::bigint[])")
+    ) {
+      const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
+      const ids = arrParam ? arrParam.map((x) => String(x)) : [];
+      const postIndex = new Map<string, MockPostRow>();
+      for (const p of this.posts) postIndex.set(p.postId, p);
+      const rows = ids
+        .map((id) => {
+          const p = postIndex.get(id);
+          if (!p) return null;
+          return { post_id: id, reply_to: p.replyTo, owned_by: p.userId };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+      return { rows };
+    }
+
+    if (
+      sql.startsWith("SELECT id::text AS post_id, owned_by") &&
+      sql.includes("FROM posts") &&
+      sql.includes("WHERE id = ANY($1::bigint[])")
+    ) {
+      const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
+      const ids = arrParam ? arrParam.map((x) => String(x)) : [];
+      const postIndex = new Map<string, MockPostRow>();
+      for (const p of this.posts) postIndex.set(p.postId, p);
+      const rows = ids
+        .map((id) => {
+          const p = postIndex.get(id);
+          if (!p) return null;
+          return { post_id: id, owned_by: p.userId };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
+      return { rows };
+    }
+
+    if (
       sql.startsWith("SELECT id, owned_by") &&
       sql.includes("FROM posts") &&
       sql.includes("WHERE id = ANY($1::bigint[])")
@@ -643,6 +681,14 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
       ? input.rerankByLikesAlpha
       : 0;
 
+  const ownerDecay =
+    input.ownerDecay !== undefined &&
+    typeof input.ownerDecay === "number" &&
+    Number.isFinite(input.ownerDecay)
+      ? Math.max(0, Math.min(1, input.ownerDecay))
+      : null;
+  const needOwnerDecay = ownerDecay !== null && ownerDecay !== 1;
+
   if (!Array.isArray(input.tags) || input.tags.length === 0) return [];
 
   const paramTagCounts = new Map<string, number>();
@@ -869,7 +915,7 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
 
   let finalIds: bigint[] = universe.map((c) => c.postId);
 
-  const needWork = !!input.features || dedupWeight > 0 || rerankByLikesAlpha > 0;
+  const needWork = !!input.features || dedupWeight > 0 || rerankByLikesAlpha > 0 || needOwnerDecay;
   if (needWork) {
     let qVec: number[] | null = null;
     if (input.features) {
@@ -926,7 +972,7 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
         const likes =
           p && typeof p.countLikes === "number" && Number.isFinite(p.countLikes) ? p.countLikes : 0;
         const isRoot = p ? p.replyTo === null : (metaByPostId.get(c.postId)?.isRoot ?? true);
-        c.likeScore = Math.log(rerankByLikesAlpha + likes) / Math.log(5) - i - (isRoot ? 0 : 2);
+        c.likeScore = Math.log(rerankByLikesAlpha + likes) / Math.log(3) - i - (isRoot ? 0 : 2);
       }
 
       candidates.sort((a, b) => {
@@ -936,6 +982,59 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
         if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
         return compareBigIntDesc(a.postId, b.postId);
       });
+    }
+
+    if (needOwnerDecay) {
+      const decay = ownerDecay as number;
+
+      const ownersById = new Map<string, string>();
+      for (const [pid, meta] of metaByPostId.entries()) {
+        if (typeof meta.userId === "string" && meta.userId.trim() !== "")
+          ownersById.set(pid.toString(), meta.userId);
+      }
+
+      for (const c of candidates) {
+        const pid = c.postId.toString();
+        if (!ownersById.has(pid)) {
+          const p = postIndex.get(pid);
+          if (p && typeof p.userId === "string" && p.userId.trim() !== "")
+            ownersById.set(pid, p.userId);
+        }
+      }
+
+      const seenByOwner = new Map<string, number>();
+      for (const c of candidates) {
+        const owner = ownersById.get(c.postId.toString()) ?? "";
+        if (!owner) continue;
+        const seen = seenByOwner.get(owner) ?? 0;
+        const factor = Math.pow(decay, seen);
+
+        if (Number.isFinite(c.baseScore)) c.baseScore *= factor;
+        else if (!Number.isFinite(c.baseScore)) c.baseScore = Number.NEGATIVE_INFINITY;
+        c.adjScore = c.baseScore;
+
+        if (c.likeScore !== undefined) {
+          if (Number.isFinite(c.likeScore)) c.likeScore *= factor;
+          else if (!Number.isFinite(c.likeScore)) c.likeScore = Number.NEGATIVE_INFINITY;
+        }
+
+        seenByOwner.set(owner, seen + 1);
+      }
+
+      if (rerankByLikesAlpha > 0) {
+        candidates.sort((a, b) => {
+          const as = a.likeScore ?? Number.NEGATIVE_INFINITY;
+          const bs = b.likeScore ?? Number.NEGATIVE_INFINITY;
+          if (as !== bs) return bs - as;
+          if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
+          return compareBigIntDesc(a.postId, b.postId);
+        });
+      } else {
+        candidates.sort((a, b) => {
+          if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
+          return compareBigIntDesc(a.postId, b.postId);
+        });
+      }
     }
 
     if (dedupWeight > 0) {
@@ -1589,6 +1688,65 @@ describe("AiPostsService RecommendPosts", () => {
 
     expect(result).toEqual(expected);
     expect(result[0]).toBe(hex(125));
+  });
+
+  test("applies ownerDecay before dedupWeight", async () => {
+    const localPg = new MockPgClient();
+    const localService = new AiPostsService(localPg as unknown as Pool);
+
+    localPg.posts.push(
+      { postId: dec(200), replyTo: null, userId: dec(900), publishedAt: "2025-01-01T00:00:01Z" },
+      { postId: dec(199), replyTo: null, userId: dec(900), publishedAt: "2025-01-01T00:00:02Z" },
+      { postId: dec(198), replyTo: null, userId: dec(901), publishedAt: "2025-01-01T00:00:03Z" },
+      { postId: dec(197), replyTo: null, userId: dec(900), publishedAt: "2025-01-01T00:00:04Z" },
+    );
+
+    localPg.postTags.push(
+      { postId: dec(200), name: "t" },
+      { postId: dec(199), name: "t" },
+      { postId: dec(198), name: "t" },
+      { postId: dec(197), name: "t" },
+    );
+
+    localPg.summaries.push(
+      {
+        postId: dec(200),
+        summary: "s",
+        features: Buffer.from(new Int8Array([10, 0, 0])),
+        updatedAt: "2025-01-01T00:00:00Z",
+      },
+      {
+        postId: dec(199),
+        summary: "s",
+        features: Buffer.from(new Int8Array([10, 0, 0])),
+        updatedAt: "2025-01-01T00:00:00Z",
+      },
+      {
+        postId: dec(198),
+        summary: "s",
+        features: Buffer.from(new Int8Array([10, 0, 0])),
+        updatedAt: "2025-01-01T00:00:00Z",
+      },
+      {
+        postId: dec(197),
+        summary: "s",
+        features: Buffer.from(new Int8Array([10, 0, 0])),
+        updatedAt: "2025-01-01T00:00:00Z",
+      },
+    );
+
+    const input: RecommendPostsInput = {
+      tags: [seed("t")],
+      features: new Int8Array([10, 0, 0]),
+      ownerDecay: 0.8,
+      order: "desc",
+      limit: 10,
+    };
+
+    const result = await localService.RecommendPosts(input);
+    const expected = computeExpectedRecommendIds(localPg, input);
+    expect(result).toEqual(expected);
+    expect(result[1]).toBe(hex(198));
   });
 
   test("applies socialScore when selfUserId is given", async () => {

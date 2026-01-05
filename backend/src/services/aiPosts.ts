@@ -621,6 +621,13 @@ export class AiPostsService {
       input.rerankByLikesAlpha > 0
         ? input.rerankByLikesAlpha
         : 0;
+    const ownerDecay =
+      input.ownerDecay !== undefined &&
+      typeof input.ownerDecay === "number" &&
+      Number.isFinite(input.ownerDecay)
+        ? Math.max(0, Math.min(1, input.ownerDecay))
+        : null;
+    const needOwnerDecay = ownerDecay !== null && ownerDecay !== 1;
     if (!Array.isArray(input.tags) || input.tags.length === 0) return [];
     const paramTagCounts = this.buildParamTagCounts(input.tags);
     const queryTags = Array.from(paramTagCounts.keys());
@@ -642,39 +649,39 @@ export class AiPostsService {
       this.pgPool,
       `
       WITH query_tags(tag) AS (
-        SELECT unnest($1::text[])
+      SELECT unnest($1::text[])
       ),
       raw AS (
-        SELECT qt.tag, x.post_id, x.src
-        FROM query_tags qt
-        JOIN LATERAL (
-          (SELECT post_id, 'post'::text AS src
-           FROM post_tags
-           WHERE name = qt.tag
-           ORDER BY post_id DESC
-           LIMIT $2)
-          UNION ALL
-          (SELECT post_id, 'ai'::text AS src
-           FROM ai_post_tags
-           WHERE name = qt.tag
-           ORDER BY post_id DESC
-           LIMIT $2)
-        ) x ON true
+      SELECT qt.tag, x.post_id, x.src
+      FROM query_tags qt
+      JOIN LATERAL (
+      (SELECT post_id, 'post'::text AS src
+      FROM post_tags
+      WHERE name = qt.tag
+      ORDER BY post_id DESC
+      LIMIT $2)
+      UNION ALL
+      (SELECT post_id, 'ai'::text AS src
+      FROM ai_post_tags
+      WHERE name = qt.tag
+      ORDER BY post_id DESC
+      LIMIT $2)
+      ) x ON true
       ),
       agg AS (
-        SELECT
-          tag,
-          post_id,
-          COUNT(DISTINCT src)::int AS table_count
-        FROM raw
-        GROUP BY tag, post_id
+      SELECT
+      tag,
+      post_id,
+      COUNT(DISTINCT src)::int AS table_count
+      FROM raw
+      GROUP BY tag, post_id
       )
       SELECT
-        a.post_id,
-        a.tag,
-        a.table_count,
-        (p.reply_to IS NULL) AS is_root,
-        p.owned_by AS user_id
+      a.post_id,
+      a.tag,
+      a.table_count,
+      (p.reply_to IS NULL) AS is_root,
+      p.owned_by AS user_id
       FROM agg a
       JOIN posts p ON p.id = a.post_id
       `,
@@ -796,7 +803,7 @@ export class AiPostsService {
           SELECT post_id, features
           FROM ai_post_summaries
           WHERE post_id = ANY($1::bigint[])
-            AND features IS NOT NULL
+          AND features IS NOT NULL
           `,
           [needFetch],
         );
@@ -808,7 +815,8 @@ export class AiPostsService {
     }
     if (universe.length === 0) return [];
     let finalIds: bigint[] = universe.map((c) => c.postId);
-    const needWork = !!input.features || dedupWeight > 0 || rerankByLikesAlpha > 0;
+    const needWork =
+      !!input.features || dedupWeight > 0 || rerankByLikesAlpha > 0 || needOwnerDecay;
     if (needWork) {
       let qVec: number[] | null = null;
       if (input.features) {
@@ -825,6 +833,7 @@ export class AiPostsService {
         baseScore: number;
         adjScore: number;
         likeScore?: number;
+        ownerFactor?: number;
       }[] = [];
       for (const c of universe) {
         let vec: number[] | null = null;
@@ -850,8 +859,53 @@ export class AiPostsService {
           ? b.baseScore - a.baseScore
           : compareBigIntDesc(a.postId, b.postId),
       );
+      if (needOwnerDecay) {
+        const decay = ownerDecay as number;
+        const ownersById = new Map<string, string>();
+        for (const [pid, meta] of metaByPostId.entries())
+          if (isNonEmptyString(meta.userId)) ownersById.set(pid.toString(), meta.userId);
+        const missing: string[] = [];
+        for (const c of candidates) {
+          const pid = c.postId.toString();
+          if (!ownersById.has(pid)) missing.push(pid);
+        }
+        if (missing.length > 0) {
+          type PostOwnerRow2 = { post_id: string; owned_by: string };
+          const ownRes = await pgQuery<PostOwnerRow2>(
+            this.pgPool,
+            `
+            SELECT id::text AS post_id, owned_by
+            FROM posts
+            WHERE id = ANY($1::bigint[])
+            `,
+            [missing],
+          );
+          for (const r of ownRes.rows)
+            if (isNonEmptyString(r.owned_by)) ownersById.set(r.post_id, r.owned_by);
+        }
+        const seenByOwner = new Map<string, number>();
+        for (const c of candidates) {
+          const owner = ownersById.get(c.postId.toString()) ?? "";
+          if (!owner) continue;
+          const seen = seenByOwner.get(owner) ?? 0;
+          const factor = Math.pow(decay, seen);
+          c.ownerFactor = factor;
+          if (factor === 0) {
+            if (c.baseScore !== Number.NEGATIVE_INFINITY) c.baseScore = 0;
+          } else {
+            c.baseScore *= factor;
+          }
+          c.adjScore = c.baseScore;
+          seenByOwner.set(owner, seen + 1);
+        }
+        candidates.sort((a, b) =>
+          a.baseScore !== b.baseScore
+            ? b.baseScore - a.baseScore
+            : compareBigIntDesc(a.postId, b.postId),
+        );
+      }
       if (rerankByLikesAlpha > 0) {
-        type PostReplyRow = { post_id: string; reply_to: string | null };
+        type PostMetaRow = { post_id: string; reply_to: string | null; owned_by: string };
         const ids = candidates.map((c) => c.postId.toString());
         const likeRes = await pgQuery<PostLikesCountRow>(
           this.pgPool,
@@ -863,10 +917,10 @@ export class AiPostsService {
           `,
           [ids],
         );
-        const replyRes = await pgQuery<PostReplyRow>(
+        const metaRes = await pgQuery<PostMetaRow>(
           this.pgPool,
           `
-          SELECT id::text AS post_id, reply_to
+          SELECT id::text AS post_id, reply_to, owned_by
           FROM posts
           WHERE id = ANY($1::bigint[])
           `,
@@ -875,16 +929,18 @@ export class AiPostsService {
         const likesById = new Map<string, number>();
         for (const r of likeRes.rows) likesById.set(r.post_id, r.count_likes);
         const isRootById = new Map<string, boolean>();
-        for (const r of replyRes.rows) isRootById.set(r.post_id, r.reply_to === null);
+        for (const r of metaRes.rows) isRootById.set(r.post_id, r.reply_to === null);
         for (let i = 0; i < candidates.length; i++) {
           const c = candidates[i];
           const pid = c.postId.toString();
           const likes = likesById.get(pid) ?? 0;
           const isRoot = isRootById.get(pid) ?? metaByPostId.get(c.postId)?.isRoot ?? true;
-          c.likeScore =
+          let likeScore =
             Math.log(rerankByLikesAlpha + likes) / Math.log(RANK_UP_BY_LIKES_LOG_BASE) -
             i -
             (isRoot ? 0 : RANK_DOWN_BY_REPLY);
+          if (needOwnerDecay && c.ownerFactor !== undefined) likeScore *= c.ownerFactor;
+          c.likeScore = likeScore;
         }
         candidates.sort((a, b) => {
           const as = a.likeScore ?? Number.NEGATIVE_INFINITY;

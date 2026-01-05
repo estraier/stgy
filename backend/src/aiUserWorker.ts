@@ -823,6 +823,7 @@ async function fetchRecommendedPosts(
     offset: 0,
     limit: Math.min(100, Config.AI_USER_FETCH_POST_LIMIT),
     order: "desc",
+    ownerDecay: 0.95,
     rerankByLikesAlpha: 5,
     dedupWeight: 0.2,
   };
