@@ -275,9 +275,9 @@ export class AiPostsService {
   async BuildSearchSeedForUser(userId: string, numClusters: number): Promise<SearchSeed[]> {
     const SELF_POST_LIMIT = 10;
     const SELF_LIKE_LIMIT = 20;
-    const TOP_FOLLOWEE_LIMIT = 20;
+    const TOP_FOLLOWEE_LIMIT = 25;
     const FOLLOWEE_POST_LIMIT_PER_USER = 5;
-    const FOLLOWEE_LIKE_LIMIT_PER_USER = 5;
+    const FOLLOWEE_LIKE_LIMIT_PER_USER = 10;
     const ADOPT_TAG_LIMIT = 10;
     const WEIGHT_GAMMA = 0.7;
     const FEATURE_DIM = 512;
