@@ -147,7 +147,7 @@ Macの開発環境においては、以下のコマンドでDockerホストVNの
 - colima restart
   - Colimaを再起動する
 
-リポジトリルートにて、開発環境の設定が書いてあるenv-dev.txtを.envとしてコピーする。これは忘れがちなので注意。
+リポジトリルートにて、開発環境の設定が書いてあるenv-dev.txtを.envとしてコピーする。これは忘れがちなので注意。その上で.envの内容を編集する。AI機能を有効化するならSTGY_OPENAI_API_KEYを設定し、メール認証を簡略化するならSTGY_TEST_SIGNUP_CODEを設定する。
 
 ```:small
 cp env.dev.txt .env
@@ -209,6 +209,7 @@ Docker関係のコマンドを利用目的別に整理する。
 - ./scripts/run-local-backend.sh
   - backendサービスと各種ワーカをローカルホストで起動する。
   - --startオプションをつけると、ビルド結果を実行する。
+  - --openai-api-keyオプションでOpenAIのAPIキーを上書きできる。
   - 止める時はCtrl-Cで落とす。
 - ./scripts/run-local-backend.sh
   - frontendサービスをローカルホストで起動する。
@@ -470,7 +471,7 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
 
 ## デモ環境Docker完結方式でのサービスの起動と終了
 
-リポジトリルートにて、デモ環境Docker完結方式の設定が書いてあるenv-vps.txtを.envとしてコピーする。これは忘れがちなので注意。.envの内容を編集し、必要ならドメイン名やパスワードなどの値を変更する。MinIOのパスワード（STGY_MINIO_ROOT_PASSWORDとSTGY_STORAGE_S3_SECRET_ACCESS_KEYの両方）だけは、必ず初期値から変更すること。そうしないと外部から操作されてしまう。
+リポジトリルートにて、デモ環境Docker完結方式の設定が書いてあるenv-vps.txtを.envとしてコピーする。これは忘れがちなので注意。その上で、.envの内容を編集する。必要ならドメイン名やパスワードなどの値を変更する。MinIOのパスワード（STGY_MINIO_ROOT_PASSWORDとSTGY_STORAGE_S3_SECRET_ACCESS_KEYの両方）だけは、必ず初期値から変更すること。そうしないと外部から操作されてしまう。AI機能を有効化するならSTGY_OPENAI_API_KEYを設定する。
 
 ```:small
 cp env.vps.txt .env
