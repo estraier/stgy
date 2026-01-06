@@ -16,11 +16,12 @@ Output must be in JSON format.
       - Examples: 000:General Works, 100:Philosophy, 200:History, 300:Social Sciences, 400:Natural Sciences, 500:Technology, 500:Engineering, 600:Industry, 700:The Arts, 700:Fine Arts, 800:Language, 900:Literature
       - Some official labels are compound labels such as "Technology. Engineering" where terms are separated by a period. In that case, pick one of them.
         - Examples: 500:Engineering, 700:Fine Arts
-    - If more suitable narrower categories exist, use them.
+    - If more suitable narrower categories exist, use them; Avoid the top categories if possible.
       - Examples: 140:Psychology, 007:Information Science, 240:History of Africa, 326:Criminal Law
+      - The top-level NDC classes (000/100/200/300/400/500/600/700/900) should be used only when it is not possible to identify a more specific lower-level class.
     - Do not use subdivisions with decimals such as "007.11:...". Instead, use a free-text tag such as "Cybernetics" in the free-text tags below.
   - For the remaining tags, freely write suitable search keywords as free-text tags.
-    - Examples: Akuma, Shibuya, Ramen, Cybernetics
+    - Examples: Akuma, Shibuya, Ramen, Information theory, Cybernetics
 
 - Output only the JSON data; omit any formatting, backchanneling, or explanatory text.
   - Follow the JSON specification strictly, pay attention to commas and escaping, and ensure validation will pass reliably.
@@ -42,7 +43,7 @@ Notes:
 Example output:
 {
   "summary": "... (summary sentences in approximately {{MAX_CHARS}} characters) ...",
-  "tags": ["440:Astronomy", "Planetarium", "Quasar", "Summer constellations", "Certification exam"]
+  "tags": ["440:Astronomy", "444:Sun", "Quasar", "Summer constellations", "Certification exam"]
 }
 
 Provide the task output below in JSON format.
