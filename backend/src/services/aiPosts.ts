@@ -366,7 +366,7 @@ export class AiPostsService {
         WEIGHT_FOLLOWEE_LIKE,
       ],
     );
-    if (seedRes.rows.length === 0) throw new Error("no seed posts");
+    if (seedRes.rows.length === 0) return [];
     const baseWeightByPostId = new Map<string, number>();
     for (const r of seedRes.rows) {
       const pid = r.post_id;
@@ -374,10 +374,10 @@ export class AiPostsService {
       baseWeightByPostId.set(pid, (baseWeightByPostId.get(pid) ?? 0) + r.weight);
     }
     const uniquePostIds = Array.from(baseWeightByPostId.keys());
-    if (uniquePostIds.length === 0) throw new Error("no seed posts");
+    if (uniquePostIds.length === 0) return [];
     let totalBaseWeight = 0;
     for (const w of baseWeightByPostId.values()) totalBaseWeight += w;
-    if (!(totalBaseWeight > 0)) throw new Error("no seed posts");
+    if (!(totalBaseWeight > 0)) return [];
     const effectiveWeightByPostId = new Map<string, number>();
     for (const [pid, w] of baseWeightByPostId.entries()) {
       const p = w / totalBaseWeight;
@@ -518,7 +518,7 @@ export class AiPostsService {
       const tail = s.length > 8 ? s.slice(-8) : s;
       return parseInt(tail, 16) || 0;
     };
-    const buildSeedFromCluster = (items: SeedMaterial[]): SearchSeed => {
+    const buildSeedFromCluster = (items: SeedMaterial[]): SearchSeed | null => {
       let weightSum = 0;
       const tagScores = new Map<string, number>();
       let sumVec: number[] | null = null;
@@ -549,7 +549,7 @@ export class AiPostsService {
               }
               return topTags.map(([name]) => ({ name, count: 1 }));
             })();
-      if (!sumVec || sumVec.length === 0) throw new Error("no seed features");
+      if (!sumVec || sumVec.length === 0) return null;
       const outFeatures = encodeFeatures(normalizeL2(sumVec));
       const postIds = items
         .filter((m) => {
@@ -594,7 +594,11 @@ export class AiPostsService {
         .sort((a, b) => a[0] - b[0])
         .map(([, v]) => v);
     }
-    const seeds = clusters.filter((c) => c.length > 0).map((c) => buildSeedFromCluster(c));
+    const seeds = clusters
+      .filter((c) => c.length > 0)
+      .map((c) => buildSeedFromCluster(c))
+      .filter((s): s is SearchSeed => s !== null);
+    if (seeds.length === 0) return [];
     seeds.sort((a, b) => {
       if (a.weight !== b.weight) return b.weight - a.weight;
       return (a.tags[0]?.name ?? "").localeCompare(b.tags[0]?.name ?? "");

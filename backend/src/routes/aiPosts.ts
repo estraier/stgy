@@ -493,9 +493,7 @@ export default function createAiPostsRouter(
 
     try {
       const watch = timerThrottleService.startWatch(loginUser);
-
       let seedPool: SearchSeed[] | null = null;
-
       const cachedSeedsRaw = await redis.get(seedKey);
       const cachedSeedPackets = parseJsonArray<SearchSeedPacket>(cachedSeedsRaw);
       if (cachedSeedPackets && cachedSeedPackets.length > 0) {
@@ -506,20 +504,18 @@ export default function createAiPostsRouter(
         }
         if (parsed.length > 0) seedPool = parsed;
       }
-
       if (!seedPool) {
         const rawSeeds = await aiPostsService.BuildSearchSeedForUser(targetUserId, 4);
         await redis.set(
           seedKey,
           JSON.stringify(rawSeeds.map((s) => toSeedPacket(s))),
           "EX",
-          Config.AI_POST_SEED_TTL_SEC,
+          rawSeeds.length > 0 ? Config.AI_POST_SEED_TTL_SEC : 60,
         );
         seedPool = rawSeeds;
       }
 
       let ids: string[] | null = null;
-
       const cachedIdsRaw = await redis.get(recKey);
       const cachedIds = parseJsonArray<unknown>(cachedIdsRaw);
       if (cachedIds && cachedIds.length > 0) {
@@ -530,7 +526,7 @@ export default function createAiPostsRouter(
       if (!ids) {
         const seeds = selectSeedsByWeight(seedPool);
         if (seeds.length === 0) {
-          await redis.set(recKey, JSON.stringify([]), "EX", Config.AI_POST_RECOMMEND_TTL_SEC);
+          await redis.set(recKey, JSON.stringify([]), "EX", 180);
           ids = [];
         } else {
           const maxWeight = seeds.reduce((m, s) => (s.weight > m ? s.weight : m), 0);
@@ -672,7 +668,7 @@ export default function createAiPostsRouter(
         addTagsToMap(targetWeights, summary.tags, 1);
 
         if (targetWeights.size === 0) {
-          await redis.set(recKey, JSON.stringify([]), "EX", Config.AI_POST_RECOMMEND_TTL_SEC);
+          await redis.set(recKey, JSON.stringify([]), "EX", 180);
           ids = [];
         } else {
           const authorId = targetPostLite.ownedBy;

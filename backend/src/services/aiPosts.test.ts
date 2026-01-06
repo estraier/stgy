@@ -1834,8 +1834,9 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     service = new AiPostsService(pgClient as unknown as Pool);
   });
 
-  test("throws when no seed posts", async () => {
-    await expect(service.BuildSearchSeedForUser(hex(777), 3)).rejects.toThrow("no seed posts");
+  test("returns an empty array when no seed posts", async () => {
+    const seeds = await service.BuildSearchSeedForUser(hex(777), 3);
+    expect(seeds).toEqual([]);
   });
 
   test("does not throw when seed posts exist but all features are null", async () => {
