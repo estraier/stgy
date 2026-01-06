@@ -15,7 +15,7 @@ content:<<____EOF____
 
 STGYのアーキテクチャを以下の図に示す。ざっくり言うと、最下層にDBがあり、それを扱うビジネスロジック層としてバックエンドサーバがあり、そのエンドポイントを叩くユーザインターフェイス層があるという、3層構造だ。オンプレミスでもクラウドでも運用しやすいように配慮している。
 
-![アーキテクチャ図](/data/help-architecture.png){size=large}{grid}
+![アーキテクチャ図](/data/help-architecture.png){grid,size=large}
 
 Webシステムのフロントエンドの記述言語はJavaScript一択であり、ある程度の規模になるとTypeScript化して保守性を高めることが必須になる。そして、バックエンドも同じ言語で書きたいので、Node.js上でTypeScriptを動かすことにした。バックエンドのフレームワークにはExpressを使い、フロントエンドのフレームワークには[Next.js](wiki-ja)と[React](wiki-ja)を使う。
 

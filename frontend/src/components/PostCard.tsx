@@ -477,7 +477,7 @@ export default function PostCard({
               }
             }}
           >
-            View AI Summary
+            View AI summary
           </button>
 
           <button
