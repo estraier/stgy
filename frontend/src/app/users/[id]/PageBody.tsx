@@ -282,43 +282,35 @@ export default function PageBody() {
   }, [pendingRestore, page, listLoading, oldestFirst, tab, setQuery]);
 
   async function handleLike(post: Post) {
-    const oldCountLikes = post.countLikes ?? 0;
+    const postId = post.id;
+    const prevLiked = !!post.isLikedByFocusUser;
+    const prevCountLikes = Number(post.countLikes ?? 0);
     setPosts((prev) =>
       prev.map((p) =>
-        p.id === post.id
+        p.id === postId
           ? {
               ...p,
-              isLikedByFocusUser: !p.isLikedByFocusUser,
-              countLikes: Number(p.countLikes ?? 0) + (p.isLikedByFocusUser ? -1 : 1),
+              isLikedByFocusUser: !prevLiked,
+              countLikes: Number(p.countLikes ?? 0) + (prevLiked ? -1 : 1),
             }
           : p,
       ),
     );
     try {
-      if (post.isLikedByFocusUser) {
-        await removeLike(post.id);
+      if (prevLiked) {
+        await removeLike(postId);
       } else {
-        await addLike(post.id);
+        await addLike(postId);
       }
-      setTimeout(() => {
-        listPosts({
-          ownedBy: user?.id,
-          offset: (page - 1) * Config.POSTS_PAGE_SIZE,
-          limit: Config.POSTS_PAGE_SIZE + 1,
-          order: oldestFirst ? "asc" : "desc",
-          focusUserId: userId,
-          replyTo: tab === "posts" ? null : tab === "replies" ? "*" : undefined,
-        }).then((data) => setPosts(data.slice(0, Config.POSTS_PAGE_SIZE)));
-      }, 100);
     } catch {
       setPosts((prev) =>
         prev.map((p) =>
-          p.id === post.id
+          p.id === postId
             ? {
                 ...p,
                 allowLikes: false,
-                countLikes: oldCountLikes,
-                isLikedByFocusUser: false,
+                countLikes: prevCountLikes,
+                isLikedByFocusUser: prevLiked,
               }
             : p,
         ),

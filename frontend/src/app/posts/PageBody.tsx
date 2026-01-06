@@ -66,7 +66,6 @@ export default function PageBody() {
   }
   const { tab, includingReplies, oldestFirst, everyPost, page, qParam } = getQueryParams();
 
-  // Similar search mode: q=~[0-9A-Z]{16}
   const similarPostId = useMemo(() => {
     const m = qParam.match(/^~([0-9A-Z]{16})$/);
     return m ? m[1] : null;
@@ -435,34 +434,35 @@ export default function PageBody() {
   }
 
   async function handleLike(post: Post) {
-    const oldCountLikes = post.countLikes ?? 0;
+    const postId = post.id;
+    const prevLiked = !!post.isLikedByFocusUser;
+    const prevCountLikes = Number(post.countLikes ?? 0);
     setPosts((prev) =>
       prev.map((p) =>
-        p.id === post.id
+        p.id === postId
           ? {
               ...p,
-              isLikedByFocusUser: !p.isLikedByFocusUser,
-              countLikes: Number(p.countLikes ?? 0) + (p.isLikedByFocusUser ? -1 : 1),
+              isLikedByFocusUser: !prevLiked,
+              countLikes: Number(p.countLikes ?? 0) + (prevLiked ? -1 : 1),
             }
           : p,
       ),
     );
     try {
-      if (post.isLikedByFocusUser) {
-        await removeLike(post.id);
+      if (prevLiked) {
+        await removeLike(postId);
       } else {
-        await addLike(post.id);
+        await addLike(postId);
       }
-      setTimeout(() => fetchPostsRef.current && fetchPostsRef.current(), 100);
     } catch {
       setPosts((prev) =>
         prev.map((p) =>
-          p.id === post.id
+          p.id === postId
             ? {
                 ...p,
                 allowLikes: false,
-                countLikes: oldCountLikes,
-                isLikedByFocusUser: false,
+                countLikes: prevCountLikes,
+                isLikedByFocusUser: prevLiked,
               }
             : p,
         ),
@@ -585,7 +585,7 @@ export default function PageBody() {
               <PostCard
                 post={post}
                 avatarVersion={post.ownedBy === userId ? (userUpdatedAt ?? undefined) : undefined}
-                onLike={() => handleLike(post)}
+                onLike={handleLike}
                 onReply={() => {
                   setReplyTo(post.id);
                   setReplyBody("");
