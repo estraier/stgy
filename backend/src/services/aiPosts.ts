@@ -607,23 +607,33 @@ export class AiPostsService {
   }
 
   async RecommendPosts(input: RecommendPostsInput): Promise<string[]> {
-    const RANK_UP_BY_LIKES_LOG_BASE = 3;
-    const RANK_DOWN_BY_REPLY = 2;
     const offset = clampPositiveInt(input.offset, 0);
     const limit = clampPositiveInt(input.limit, 100);
     const order = normalizeOrder(input.order, "desc");
     const selfUserIdDec = isNonEmptyString(input.selfUserId) ? hexToDec(input.selfUserId) : null;
-    const demotionByDuplication =
-      typeof input.demotionByDuplication === "number" &&
-      Number.isFinite(input.demotionByDuplication) &&
-      input.demotionByDuplication > 0
-        ? input.demotionByDuplication
-        : 0;
     const promotionByLikesAlpha =
       typeof input.promotionByLikesAlpha === "number" &&
       Number.isFinite(input.promotionByLikesAlpha) &&
       input.promotionByLikesAlpha > 0
         ? input.promotionByLikesAlpha
+        : 0;
+    const promotionForSeedPosts =
+      typeof input.promotionForSeedPosts === "number" &&
+      Number.isFinite(input.promotionForSeedPosts) &&
+      input.promotionForSeedPosts > 0
+        ? input.promotionForSeedPosts
+        : 0;
+    const demotionForReplies =
+      typeof input.demotionForReplies === "number" &&
+      Number.isFinite(input.demotionForReplies) &&
+      input.demotionForReplies > 0
+        ? input.demotionForReplies
+        : 0;
+    const demotionForDuplication =
+      typeof input.demotionForDuplication === "number" &&
+      Number.isFinite(input.demotionForDuplication) &&
+      input.demotionForDuplication > 0
+        ? input.demotionForDuplication
         : 0;
     const ownerDecay =
       input.ownerDecay !== undefined &&
@@ -636,15 +646,28 @@ export class AiPostsService {
     const paramTagCounts = this.buildParamTagCounts(input.tags);
     const queryTags = Array.from(paramTagCounts.keys());
     if (queryTags.length === 0) return [];
+    const seedPostIdsHex = Array.isArray(input.seedPostIds)
+      ? input.seedPostIds.filter(isNonEmptyString).map((s) => s.trim())
+      : [];
+    const seedPostIdsDecOrdered: string[] = [];
+    const seedIndexByDec = new Map<string, number>();
+    for (const hid of seedPostIdsHex) {
+      const dec = safeHexToDec(hid);
+      if (!dec) continue;
+      if (seedIndexByDec.has(dec)) continue;
+      seedIndexByDec.set(dec, seedPostIdsDecOrdered.length);
+      seedPostIdsDecOrdered.push(dec);
+    }
+    const seedN = seedPostIdsDecOrdered.length;
     let followeeIds: Set<string> | null = null;
     if (selfUserIdDec) {
       const fr = await pgQuery<FolloweeRow>(
         this.pgPool,
         `
-        SELECT followee_id
-        FROM user_follows
-        WHERE follower_id = $1
-        `,
+      SELECT followee_id
+      FROM user_follows
+      WHERE follower_id = $1
+    `,
         [selfUserIdDec],
       );
       followeeIds = new Set(fr.rows.map((r) => r.followee_id));
@@ -653,42 +676,34 @@ export class AiPostsService {
       this.pgPool,
       `
       WITH query_tags(tag) AS (
-      SELECT unnest($1::text[])
+        SELECT unnest($1::text[])
       ),
       raw AS (
-      SELECT qt.tag, x.post_id, x.src
-      FROM query_tags qt
-      JOIN LATERAL (
-      (SELECT post_id, 'post'::text AS src
-      FROM post_tags
-      WHERE name = qt.tag
-      ORDER BY post_id DESC
-      LIMIT $2)
-      UNION ALL
-      (SELECT post_id, 'ai'::text AS src
-      FROM ai_post_tags
-      WHERE name = qt.tag
-      ORDER BY post_id DESC
-      LIMIT $2)
-      ) x ON true
+        SELECT qt.tag, x.post_id, x.src
+        FROM query_tags qt
+        JOIN LATERAL (
+          (SELECT post_id, 'post'::text AS src
+           FROM post_tags
+           WHERE name = qt.tag
+           ORDER BY post_id DESC
+           LIMIT $2)
+          UNION ALL
+          (SELECT post_id, 'ai'::text AS src
+           FROM ai_post_tags
+           WHERE name = qt.tag
+           ORDER BY post_id DESC
+           LIMIT $2)
+        ) x ON true
       ),
       agg AS (
-      SELECT
-      tag,
-      post_id,
-      COUNT(DISTINCT src)::int AS table_count
-      FROM raw
-      GROUP BY tag, post_id
+        SELECT tag, post_id, COUNT(DISTINCT src)::int AS table_count
+        FROM raw
+        GROUP BY tag, post_id
       )
-      SELECT
-      a.post_id,
-      a.tag,
-      a.table_count,
-      (p.reply_to IS NULL) AS is_root,
-      p.owned_by AS user_id
+      SELECT a.post_id, a.tag, a.table_count, (p.reply_to IS NULL) AS is_root, p.owned_by AS user_id
       FROM agg a
       JOIN posts p ON p.id = a.post_id
-      `,
+    `,
       [queryTags, Config.AI_POST_RECOMMEND_TAG_CANDIDATES],
     );
     let records: RecommendRecord[] = res.rows.map((r) => ({
@@ -772,7 +787,7 @@ export class AiPostsService {
         SELECT post_id, features
         FROM ai_post_summaries
         WHERE post_id = ANY($1::bigint[])
-        `,
+      `,
         [ids],
       );
       const byId = new Map<string, PostFeaturesRow>();
@@ -787,13 +802,10 @@ export class AiPostsService {
         if (universe.length >= Config.AI_POST_RECOMMEND_VEC_CANDIDATES) break;
       }
     }
-    const seedPostIds = Array.isArray(input.seedPostIds)
-      ? input.seedPostIds.filter(isNonEmptyString).map((s) => s.trim())
-      : [];
-    if (seedPostIds.length > 0) {
+    if (seedPostIdsHex.length > 0) {
       const existing = new Set<string>(universe.map((c) => c.postId.toString()));
       const needFetch: string[] = [];
-      for (const hid of seedPostIds) {
+      for (const hid of seedPostIdsHex) {
         const dec = safeHexToDec(hid);
         if (!dec) continue;
         if (existing.has(dec)) continue;
@@ -807,8 +819,8 @@ export class AiPostsService {
           SELECT post_id, features
           FROM ai_post_summaries
           WHERE post_id = ANY($1::bigint[])
-          AND features IS NOT NULL
-          `,
+            AND features IS NOT NULL
+        `,
           [needFetch],
         );
         for (const row of r.rows) {
@@ -818,173 +830,174 @@ export class AiPostsService {
       }
     }
     if (universe.length === 0) return [];
-    let finalIds: bigint[] = universe.map((c) => c.postId);
-    const needWork =
-      !!input.features || demotionByDuplication > 0 || promotionByLikesAlpha > 0 || needOwnerDecay;
-    if (needWork) {
-      let qVec: number[] | null = null;
-      if (input.features) {
+    let qVec: number[] | null = null;
+    if (input.features) {
+      try {
+        qVec = normalizeL2(decodeFeatures(input.features));
+      } catch {
+        qVec = null;
+      }
+    }
+    const needVecDecode = !!qVec || demotionForDuplication > 0;
+    const candidates: {
+      postId: bigint;
+      vec: number[] | null;
+      baseScore: number;
+      socialRank: number;
+      dedupedRank?: number;
+    }[] = [];
+    for (const c of universe) {
+      let vec: number[] | null = null;
+      if (needVecDecode && c.features) {
         try {
-          qVec = normalizeL2(decodeFeatures(input.features));
+          vec = normalizeL2(decodeFeatures(c.features));
         } catch {
-          qVec = null;
+          vec = null;
         }
       }
-      const needVecDecode = !!qVec || demotionByDuplication > 0;
-      const candidates: {
-        postId: bigint;
-        vec: number[] | null;
-        baseScore: number;
-        adjScore: number;
-        likeScore?: number;
-        ownerFactor?: number;
-        dedupedRank?: number;
-      }[] = [];
-      for (const c of universe) {
-        let vec: number[] | null = null;
-        if (needVecDecode && c.features) {
-          try {
-            vec = normalizeL2(decodeFeatures(c.features));
-          } catch {
-            vec = null;
-          }
+      let baseScore = postFinalScores.get(c.postId) ?? 0;
+      if (qVec) {
+        if (!vec || vec.length !== qVec.length) baseScore = Number.NEGATIVE_INFINITY;
+        else {
+          const simRaw = cosineSimilarity(qVec, vec);
+          baseScore = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
         }
-        let baseScore = postFinalScores.get(c.postId) ?? 0;
-        if (qVec) {
-          if (!vec || vec.length !== qVec.length) baseScore = Number.NEGATIVE_INFINITY;
-          else {
-            const simRaw = cosineSimilarity(qVec, vec);
-            baseScore = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
-          }
+      }
+      candidates.push({ postId: c.postId, vec, baseScore, socialRank: 0 });
+    }
+    candidates.sort((a, b) =>
+      a.baseScore !== b.baseScore
+        ? b.baseScore - a.baseScore
+        : compareBigIntDesc(a.postId, b.postId),
+    );
+    if (needOwnerDecay) {
+      const decay = ownerDecay as number;
+      const ownersById = new Map<string, string>();
+      for (const [pid, meta] of metaByPostId.entries())
+        if (isNonEmptyString(meta.userId)) ownersById.set(pid.toString(), meta.userId);
+      const missing: string[] = [];
+      for (const c of candidates) {
+        const pid = c.postId.toString();
+        if (!ownersById.has(pid)) missing.push(pid);
+      }
+      if (missing.length > 0) {
+        type PostOwnerRow2 = { post_id: string; owned_by: string };
+        const ownRes = await pgQuery<PostOwnerRow2>(
+          this.pgPool,
+          `
+            SELECT id::text AS post_id, owned_by
+            FROM posts
+            WHERE id = ANY($1::bigint[])
+          `,
+          [missing],
+        );
+        for (const r of ownRes.rows)
+          if (isNonEmptyString(r.owned_by)) ownersById.set(r.post_id, r.owned_by);
+      }
+      const seenByOwner = new Map<string, number>();
+      for (const c of candidates) {
+        const owner = ownersById.get(c.postId.toString()) ?? "";
+        if (!owner) continue;
+        const seen = seenByOwner.get(owner) ?? 0;
+        const factor = Math.pow(decay, seen);
+        if (factor === 0) {
+          if (c.baseScore !== Number.NEGATIVE_INFINITY) c.baseScore = 0;
+        } else {
+          c.baseScore *= factor;
         }
-        candidates.push({ postId: c.postId, vec, baseScore, adjScore: baseScore });
+        seenByOwner.set(owner, seen + 1);
       }
       candidates.sort((a, b) =>
         a.baseScore !== b.baseScore
           ? b.baseScore - a.baseScore
           : compareBigIntDesc(a.postId, b.postId),
       );
-      if (needOwnerDecay) {
-        const decay = ownerDecay as number;
-        const ownersById = new Map<string, string>();
-        for (const [pid, meta] of metaByPostId.entries())
-          if (isNonEmptyString(meta.userId)) ownersById.set(pid.toString(), meta.userId);
-        const missing: string[] = [];
-        for (const c of candidates) {
-          const pid = c.postId.toString();
-          if (!ownersById.has(pid)) missing.push(pid);
-        }
-        if (missing.length > 0) {
-          type PostOwnerRow2 = { post_id: string; owned_by: string };
-          const ownRes = await pgQuery<PostOwnerRow2>(
-            this.pgPool,
-            `
-            SELECT id::text AS post_id, owned_by
-            FROM posts
-            WHERE id = ANY($1::bigint[])
-            `,
-            [missing],
-          );
-          for (const r of ownRes.rows)
-            if (isNonEmptyString(r.owned_by)) ownersById.set(r.post_id, r.owned_by);
-        }
-        const seenByOwner = new Map<string, number>();
-        for (const c of candidates) {
-          const owner = ownersById.get(c.postId.toString()) ?? "";
-          if (!owner) continue;
-          const seen = seenByOwner.get(owner) ?? 0;
-          const factor = Math.pow(decay, seen);
-          c.ownerFactor = factor;
-          if (factor === 0) {
-            if (c.baseScore !== Number.NEGATIVE_INFINITY) c.baseScore = 0;
-          } else {
-            c.baseScore *= factor;
-          }
-          c.adjScore = c.baseScore;
-          seenByOwner.set(owner, seen + 1);
-        }
-        candidates.sort((a, b) =>
-          a.baseScore !== b.baseScore
-            ? b.baseScore - a.baseScore
-            : compareBigIntDesc(a.postId, b.postId),
-        );
-      }
-      if (promotionByLikesAlpha > 0) {
-        type PostMetaRow = { post_id: string; reply_to: string | null; owned_by: string };
-        const ids = candidates.map((c) => c.postId.toString());
-        const likeRes = await pgQuery<PostLikesCountRow>(
-          this.pgPool,
-          `
-          SELECT post_id, COUNT(*)::int AS count_likes
-          FROM post_likes
-          WHERE post_id = ANY($1::bigint[])
-          GROUP BY post_id
-          `,
-          [ids],
-        );
-        const metaRes = await pgQuery<PostMetaRow>(
-          this.pgPool,
-          `
-          SELECT id::text AS post_id, reply_to, owned_by
-          FROM posts
-          WHERE id = ANY($1::bigint[])
-          `,
-          [ids],
-        );
-        const likesById = new Map<string, number>();
-        for (const r of likeRes.rows) likesById.set(r.post_id, r.count_likes);
-        const isRootById = new Map<string, boolean>();
-        for (const r of metaRes.rows) isRootById.set(r.post_id, r.reply_to === null);
-        for (let i = 0; i < candidates.length; i++) {
-          const c = candidates[i];
-          const pid = c.postId.toString();
-          const likes = likesById.get(pid) ?? 0;
-          const isRoot = isRootById.get(pid) ?? metaByPostId.get(c.postId)?.isRoot ?? true;
-          let likeScore =
-            Math.log(promotionByLikesAlpha + likes) / Math.log(RANK_UP_BY_LIKES_LOG_BASE) -
-            i -
-            (isRoot ? 0 : RANK_DOWN_BY_REPLY);
-          if (needOwnerDecay && c.ownerFactor !== undefined) likeScore *= c.ownerFactor;
-          c.likeScore = likeScore;
-        }
-        candidates.sort((a, b) => {
-          const as = a.likeScore ?? Number.NEGATIVE_INFINITY;
-          const bs = b.likeScore ?? Number.NEGATIVE_INFINITY;
-          if (as !== bs) return bs - as;
-          if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
-          return compareBigIntDesc(a.postId, b.postId);
-        });
-      }
-      if (demotionByDuplication > 0) {
-        const DEDUP_MIN_SIMILALITY = 0.8;
-        let sumVec: number[] | null = null;
-        for (let i = 0; i < candidates.length; i++) {
-          const c = candidates[i];
-          let sim = 0;
-          if (i > 0 && sumVec && c.vec && sumVec.length === c.vec.length) {
-            const simRaw = cosineSimilarity(sumVec, c.vec);
-            sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
-          }
-          const rankDownWeight =
-            sim > DEDUP_MIN_SIMILALITY
-              ? (sim - DEDUP_MIN_SIMILALITY) / (1 - DEDUP_MIN_SIMILALITY)
-              : 0;
-          c.dedupedRank = i + rankDownWeight * demotionByDuplication;
-          if (c.vec) {
-            if (!sumVec) sumVec = c.vec.slice();
-            else if (sumVec.length === c.vec.length)
-              for (let j = 0; j < sumVec.length; j++) sumVec[j] += c.vec[j];
-          }
-        }
-        candidates.sort((a, b) => {
-          const ar = a.dedupedRank ?? Number.POSITIVE_INFINITY;
-          const br = b.dedupedRank ?? Number.POSITIVE_INFINITY;
-          if (ar !== br) return ar - br;
-          return compareBigIntDesc(a.postId, b.postId);
-        });
-      }
-      finalIds = candidates.map((c) => c.postId);
     }
+    const likesById = new Map<string, number>();
+    if (promotionByLikesAlpha > 0) {
+      const ids = candidates.map((c) => c.postId.toString());
+      const likeRes = await pgQuery<PostLikesCountRow>(
+        this.pgPool,
+        `
+        SELECT post_id, COUNT(*)::int AS count_likes
+        FROM post_likes
+        WHERE post_id = ANY($1::bigint[])
+        GROUP BY post_id
+      `,
+        [ids],
+      );
+      for (const r of likeRes.rows) likesById.set(r.post_id, r.count_likes);
+    }
+    const isRootById = new Map<string, boolean>();
+    if (demotionForReplies > 0) {
+      type PostReplyRow = { post_id: string; reply_to: string | null };
+      const ids = candidates.map((c) => c.postId.toString());
+      const metaRes = await pgQuery<PostReplyRow>(
+        this.pgPool,
+        `
+        SELECT id::text AS post_id, reply_to
+        FROM posts
+        WHERE id = ANY($1::bigint[])
+      `,
+        [ids],
+      );
+      for (const r of metaRes.rows) isRootById.set(r.post_id, r.reply_to === null);
+    }
+    for (let i = 0; i < candidates.length; i++) {
+      const RANK_UP_BY_LIKES_LOG_BASE = 3;
+      const c = candidates[i];
+      const pid = c.postId.toString();
+      let rank = i;
+      if (promotionByLikesAlpha > 0) {
+        const likes = likesById.get(pid) ?? 0;
+        rank -= Math.log(promotionByLikesAlpha + likes) / Math.log(RANK_UP_BY_LIKES_LOG_BASE);
+      }
+      if (demotionForReplies > 0) {
+        const isRoot = isRootById.get(pid) ?? metaByPostId.get(c.postId)?.isRoot ?? true;
+        if (!isRoot) rank += demotionForReplies;
+      }
+      if (promotionForSeedPosts > 0 && seedN > 0) {
+        const idx = seedIndexByDec.get(pid);
+        if (idx !== undefined) rank -= (promotionForSeedPosts * (seedN - idx)) / seedN;
+      }
+      c.socialRank = rank;
+    }
+    candidates.sort((a, b) =>
+      a.socialRank !== b.socialRank
+        ? a.socialRank - b.socialRank
+        : a.baseScore !== b.baseScore
+          ? b.baseScore - a.baseScore
+          : compareBigIntDesc(a.postId, b.postId),
+    );
+    if (demotionForDuplication > 0) {
+      const DEDUP_MIN_SIMILALITY = 0.8;
+      let sumVec: number[] | null = null;
+      for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i];
+        let sim = 0;
+        if (i > 0 && sumVec && c.vec && sumVec.length === c.vec.length) {
+          const simRaw = cosineSimilarity(sumVec, c.vec);
+          sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
+        }
+        const w =
+          sim > DEDUP_MIN_SIMILALITY
+            ? (sim - DEDUP_MIN_SIMILALITY) / (1 - DEDUP_MIN_SIMILALITY)
+            : 0;
+        c.dedupedRank = i + w * demotionForDuplication;
+        if (c.vec) {
+          if (!sumVec) sumVec = c.vec.slice();
+          else if (sumVec.length === c.vec.length)
+            for (let j = 0; j < sumVec.length; j++) sumVec[j] += c.vec[j];
+        }
+      }
+      candidates.sort((a, b) => {
+        const ar = a.dedupedRank ?? Number.POSITIVE_INFINITY;
+        const br = b.dedupedRank ?? Number.POSITIVE_INFINITY;
+        if (ar !== br) return ar - br;
+        return compareBigIntDesc(a.postId, b.postId);
+      });
+    }
+    const finalIds = candidates.map((c) => c.postId);
     const ordered = order === "asc" ? [...finalIds].reverse() : finalIds;
     return ordered.slice(offset, offset + limit).map((pid) => decToHex(pid.toString()));
   }

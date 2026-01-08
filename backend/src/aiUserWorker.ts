@@ -825,7 +825,9 @@ async function fetchRecommendedPosts(
     order: "desc",
     ownerDecay: 0.95,
     promotionByLikesAlpha: 5,
-    demotionByDuplication: 5,
+    promotionForSeedPosts: 2,
+    demotionForReplies: 2,
+    demotionForDuplication: 5,
   };
   const selfUserId = typeof interest.userId === "string" ? interest.userId.trim() : "";
   if (selfUserId !== "") body.selfUserId = selfUserId;

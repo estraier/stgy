@@ -322,14 +322,36 @@ export default function createAiPostsRouter(
       return res.status(400).json({ error: "promotionByLikesAlpha must be number if specified" });
     }
 
-    let demotionByDuplication: number | undefined;
-    if (typeof b.demotionByDuplication === "number") {
-      if (!Number.isFinite(b.demotionByDuplication)) {
-        return res.status(400).json({ error: "demotionByDuplication must be number if specified" });
+    let promotionForSeedPosts: number | undefined;
+    if (typeof b.promotionForSeedPosts === "number") {
+      if (!Number.isFinite(b.promotionForSeedPosts)) {
+        return res.status(400).json({ error: "promotionForSeedPosts must be number if specified" });
       }
-      demotionByDuplication = b.demotionByDuplication;
-    } else if (b.demotionByDuplication !== undefined) {
-      return res.status(400).json({ error: "demotionByDuplication must be number if specified" });
+      promotionForSeedPosts = b.promotionForSeedPosts;
+    } else if (b.promotionForSeedPosts !== undefined) {
+      return res.status(400).json({ error: "promotionForSeedPosts must be number if specified" });
+    }
+
+    let demotionForReplies: number | undefined;
+    if (typeof b.demotionForReplies === "number") {
+      if (!Number.isFinite(b.demotionForReplies)) {
+        return res.status(400).json({ error: "demotionForReplies must be number if specified" });
+      }
+      demotionForReplies = b.demotionForReplies;
+    } else if (b.demotionForReplies !== undefined) {
+      return res.status(400).json({ error: "demotionForReplies must be number if specified" });
+    }
+
+    let demotionForDuplication: number | undefined;
+    if (typeof b.demotionForDuplication === "number") {
+      if (!Number.isFinite(b.demotionForDuplication)) {
+        return res
+          .status(400)
+          .json({ error: "demotionForDuplication must be number if specified" });
+      }
+      demotionForDuplication = b.demotionForDuplication;
+    } else if (b.demotionForDuplication !== undefined) {
+      return res.status(400).json({ error: "demotionForDuplication must be number if specified" });
     }
 
     try {
@@ -341,7 +363,9 @@ export default function createAiPostsRouter(
         selfUserId,
         ownerDecay,
         promotionByLikesAlpha,
-        demotionByDuplication,
+        promotionForSeedPosts,
+        demotionForReplies,
+        demotionForDuplication,
         offset,
         limit,
         order,
@@ -435,14 +459,36 @@ export default function createAiPostsRouter(
       return res.status(400).json({ error: "promotionByLikesAlpha must be number if specified" });
     }
 
-    let demotionByDuplication: number | undefined;
-    if (typeof b.demotionByDuplication === "number") {
-      if (!Number.isFinite(b.demotionByDuplication)) {
-        return res.status(400).json({ error: "demotionByDuplication must be number if specified" });
+    let promotionForSeedPosts: number | undefined;
+    if (typeof b.promotionForSeedPosts === "number") {
+      if (!Number.isFinite(b.promotionForSeedPosts)) {
+        return res.status(400).json({ error: "promotionForSeedPosts must be number if specified" });
       }
-      demotionByDuplication = b.demotionByDuplication;
-    } else if (b.demotionByDuplication !== undefined) {
-      return res.status(400).json({ error: "demotionByDuplication must be number if specified" });
+      promotionForSeedPosts = b.promotionForSeedPosts;
+    } else if (b.promotionForSeedPosts !== undefined) {
+      return res.status(400).json({ error: "promotionForSeedPosts must be number if specified" });
+    }
+
+    let demotionForReplies: number | undefined;
+    if (typeof b.demotionForReplies === "number") {
+      if (!Number.isFinite(b.demotionForReplies)) {
+        return res.status(400).json({ error: "demotionForReplies must be number if specified" });
+      }
+      demotionForReplies = b.demotionForReplies;
+    } else if (b.demotionForReplies !== undefined) {
+      return res.status(400).json({ error: "demotionForReplies must be number if specified" });
+    }
+
+    let demotionForDuplication: number | undefined;
+    if (typeof b.demotionForDuplication === "number") {
+      if (!Number.isFinite(b.demotionForDuplication)) {
+        return res
+          .status(400)
+          .json({ error: "demotionForDuplication must be number if specified" });
+      }
+      demotionForDuplication = b.demotionForDuplication;
+    } else if (b.demotionForDuplication !== undefined) {
+      return res.status(400).json({ error: "demotionForDuplication must be number if specified" });
     }
 
     try {
@@ -454,7 +500,9 @@ export default function createAiPostsRouter(
         selfUserId,
         ownerDecay,
         promotionByLikesAlpha,
-        demotionByDuplication,
+        promotionForSeedPosts,
+        demotionForReplies,
+        demotionForDuplication,
         offset,
         limit,
         order,
@@ -544,7 +592,9 @@ export default function createAiPostsRouter(
               selfUserId: targetUserId,
               ownerDecay: 0.95,
               promotionByLikesAlpha: 5,
-              demotionByDuplication: 5,
+              promotionForSeedPosts: 2,
+              demotionForReplies: 2,
+              demotionForDuplication: 5,
               offset: 0,
               limit: 100,
               order: "desc",
@@ -720,7 +770,9 @@ export default function createAiPostsRouter(
             selfUserId: loginUser.id,
             ownerDecay: 0.95,
             promotionByLikesAlpha: 5,
-            demotionByDuplication: 5,
+            promotionForSeedPosts: 2,
+            demotionForReplies: 2,
+            demotionForDuplication: 5,
             offset: 0,
             limit: 100,
             order: "desc",
