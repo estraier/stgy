@@ -66,8 +66,8 @@ export type RecommendPostsInput = {
   seedPostIds?: string[];
   selfUserId?: string;
   ownerDecay?: number;
-  rerankByLikesAlpha?: number;
-  dedupWeight?: number;
+  promotionByLikesAlpha?: number;
+  demotionByDuplication?: number;
 } & AiPostPagination;
 
 export type RecommendPostsInputPacket = {
@@ -76,6 +76,6 @@ export type RecommendPostsInputPacket = {
   seedPostIds?: string[];
   selfUserId?: string;
   ownerDecay?: number;
-  rerankByLikesAlpha?: number;
-  dedupWeight?: number;
+  promotionByLikesAlpha?: number;
+  demotionByDuplication?: number;
 } & AiPostPagination;

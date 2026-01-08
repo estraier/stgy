@@ -613,17 +613,17 @@ export class AiPostsService {
     const limit = clampPositiveInt(input.limit, 100);
     const order = normalizeOrder(input.order, "desc");
     const selfUserIdDec = isNonEmptyString(input.selfUserId) ? hexToDec(input.selfUserId) : null;
-    const dedupWeight =
-      typeof input.dedupWeight === "number" &&
-      Number.isFinite(input.dedupWeight) &&
-      input.dedupWeight > 0
-        ? input.dedupWeight
+    const demotionByDuplication =
+      typeof input.demotionByDuplication === "number" &&
+      Number.isFinite(input.demotionByDuplication) &&
+      input.demotionByDuplication > 0
+        ? input.demotionByDuplication
         : 0;
-    const rerankByLikesAlpha =
-      typeof input.rerankByLikesAlpha === "number" &&
-      Number.isFinite(input.rerankByLikesAlpha) &&
-      input.rerankByLikesAlpha > 0
-        ? input.rerankByLikesAlpha
+    const promotionByLikesAlpha =
+      typeof input.promotionByLikesAlpha === "number" &&
+      Number.isFinite(input.promotionByLikesAlpha) &&
+      input.promotionByLikesAlpha > 0
+        ? input.promotionByLikesAlpha
         : 0;
     const ownerDecay =
       input.ownerDecay !== undefined &&
@@ -820,7 +820,7 @@ export class AiPostsService {
     if (universe.length === 0) return [];
     let finalIds: bigint[] = universe.map((c) => c.postId);
     const needWork =
-      !!input.features || dedupWeight > 0 || rerankByLikesAlpha > 0 || needOwnerDecay;
+      !!input.features || demotionByDuplication > 0 || promotionByLikesAlpha > 0 || needOwnerDecay;
     if (needWork) {
       let qVec: number[] | null = null;
       if (input.features) {
@@ -830,7 +830,7 @@ export class AiPostsService {
           qVec = null;
         }
       }
-      const needVecDecode = !!qVec || dedupWeight > 0;
+      const needVecDecode = !!qVec || demotionByDuplication > 0;
       const candidates: {
         postId: bigint;
         vec: number[] | null;
@@ -838,6 +838,7 @@ export class AiPostsService {
         adjScore: number;
         likeScore?: number;
         ownerFactor?: number;
+        dedupedRank?: number;
       }[] = [];
       for (const c of universe) {
         let vec: number[] | null = null;
@@ -908,7 +909,7 @@ export class AiPostsService {
             : compareBigIntDesc(a.postId, b.postId),
         );
       }
-      if (rerankByLikesAlpha > 0) {
+      if (promotionByLikesAlpha > 0) {
         type PostMetaRow = { post_id: string; reply_to: string | null; owned_by: string };
         const ids = candidates.map((c) => c.postId.toString());
         const likeRes = await pgQuery<PostLikesCountRow>(
@@ -940,7 +941,7 @@ export class AiPostsService {
           const likes = likesById.get(pid) ?? 0;
           const isRoot = isRootById.get(pid) ?? metaByPostId.get(c.postId)?.isRoot ?? true;
           let likeScore =
-            Math.log(rerankByLikesAlpha + likes) / Math.log(RANK_UP_BY_LIKES_LOG_BASE) -
+            Math.log(promotionByLikesAlpha + likes) / Math.log(RANK_UP_BY_LIKES_LOG_BASE) -
             i -
             (isRoot ? 0 : RANK_DOWN_BY_REPLY);
           if (needOwnerDecay && c.ownerFactor !== undefined) likeScore *= c.ownerFactor;
@@ -954,17 +955,21 @@ export class AiPostsService {
           return compareBigIntDesc(a.postId, b.postId);
         });
       }
-      if (dedupWeight > 0) {
+      if (demotionByDuplication > 0) {
+        const DEDUP_MIN_SIMILALITY = 0.8;
         let sumVec: number[] | null = null;
         for (let i = 0; i < candidates.length; i++) {
           const c = candidates[i];
-          let adj = c.baseScore;
+          let sim = 0;
           if (i > 0 && sumVec && c.vec && sumVec.length === c.vec.length) {
-            const simDupRaw = cosineSimilarity(sumVec, c.vec);
-            const simDup = sigmoidalContrast((simDupRaw + 1) / 2, 5, 0.9);
-            adj = adj - simDup * dedupWeight;
+            const simRaw = cosineSimilarity(sumVec, c.vec);
+            sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
           }
-          c.adjScore = adj;
+          const rankDownWeight =
+            sim > DEDUP_MIN_SIMILALITY
+              ? (sim - DEDUP_MIN_SIMILALITY) / (1 - DEDUP_MIN_SIMILALITY)
+              : 0;
+          c.dedupedRank = i + rankDownWeight * demotionByDuplication;
           if (c.vec) {
             if (!sumVec) sumVec = c.vec.slice();
             else if (sumVec.length === c.vec.length)
@@ -972,8 +977,9 @@ export class AiPostsService {
           }
         }
         candidates.sort((a, b) => {
-          if (a.adjScore !== b.adjScore) return b.adjScore - a.adjScore;
-          if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
+          const ar = a.dedupedRank ?? Number.POSITIVE_INFINITY;
+          const br = b.dedupedRank ?? Number.POSITIVE_INFINITY;
+          if (ar !== br) return ar - br;
           return compareBigIntDesc(a.postId, b.postId);
         });
       }

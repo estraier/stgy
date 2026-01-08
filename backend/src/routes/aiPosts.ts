@@ -312,24 +312,24 @@ export default function createAiPostsRouter(
       return res.status(400).json({ error: "ownerDecay must be number if specified" });
     }
 
-    let rerankByLikesAlpha: number | undefined;
-    if (typeof b.rerankByLikesAlpha === "number") {
-      if (!Number.isFinite(b.rerankByLikesAlpha)) {
-        return res.status(400).json({ error: "rerankByLikesAlpha must be number if specified" });
+    let promotionByLikesAlpha: number | undefined;
+    if (typeof b.promotionByLikesAlpha === "number") {
+      if (!Number.isFinite(b.promotionByLikesAlpha)) {
+        return res.status(400).json({ error: "promotionByLikesAlpha must be number if specified" });
       }
-      rerankByLikesAlpha = b.rerankByLikesAlpha;
-    } else if (b.rerankByLikesAlpha !== undefined) {
-      return res.status(400).json({ error: "rerankByLikesAlpha must be number if specified" });
+      promotionByLikesAlpha = b.promotionByLikesAlpha;
+    } else if (b.promotionByLikesAlpha !== undefined) {
+      return res.status(400).json({ error: "promotionByLikesAlpha must be number if specified" });
     }
 
-    let dedupWeight: number | undefined;
-    if (typeof b.dedupWeight === "number") {
-      if (!Number.isFinite(b.dedupWeight)) {
-        return res.status(400).json({ error: "dedupWeight must be number if specified" });
+    let demotionByDuplication: number | undefined;
+    if (typeof b.demotionByDuplication === "number") {
+      if (!Number.isFinite(b.demotionByDuplication)) {
+        return res.status(400).json({ error: "demotionByDuplication must be number if specified" });
       }
-      dedupWeight = b.dedupWeight;
-    } else if (b.dedupWeight !== undefined) {
-      return res.status(400).json({ error: "dedupWeight must be number if specified" });
+      demotionByDuplication = b.demotionByDuplication;
+    } else if (b.demotionByDuplication !== undefined) {
+      return res.status(400).json({ error: "demotionByDuplication must be number if specified" });
     }
 
     try {
@@ -340,8 +340,8 @@ export default function createAiPostsRouter(
         seedPostIds,
         selfUserId,
         ownerDecay,
-        rerankByLikesAlpha,
-        dedupWeight,
+        promotionByLikesAlpha,
+        demotionByDuplication,
         offset,
         limit,
         order,
@@ -425,24 +425,24 @@ export default function createAiPostsRouter(
       return res.status(400).json({ error: "ownerDecay must be number if specified" });
     }
 
-    let rerankByLikesAlpha: number | undefined;
-    if (typeof b.rerankByLikesAlpha === "number") {
-      if (!Number.isFinite(b.rerankByLikesAlpha)) {
-        return res.status(400).json({ error: "rerankByLikesAlpha must be number if specified" });
+    let promotionByLikesAlpha: number | undefined;
+    if (typeof b.promotionByLikesAlpha === "number") {
+      if (!Number.isFinite(b.promotionByLikesAlpha)) {
+        return res.status(400).json({ error: "promotionByLikesAlpha must be number if specified" });
       }
-      rerankByLikesAlpha = b.rerankByLikesAlpha;
-    } else if (b.rerankByLikesAlpha !== undefined) {
-      return res.status(400).json({ error: "rerankByLikesAlpha must be number if specified" });
+      promotionByLikesAlpha = b.promotionByLikesAlpha;
+    } else if (b.promotionByLikesAlpha !== undefined) {
+      return res.status(400).json({ error: "promotionByLikesAlpha must be number if specified" });
     }
 
-    let dedupWeight: number | undefined;
-    if (typeof b.dedupWeight === "number") {
-      if (!Number.isFinite(b.dedupWeight)) {
-        return res.status(400).json({ error: "dedupWeight must be number if specified" });
+    let demotionByDuplication: number | undefined;
+    if (typeof b.demotionByDuplication === "number") {
+      if (!Number.isFinite(b.demotionByDuplication)) {
+        return res.status(400).json({ error: "demotionByDuplication must be number if specified" });
       }
-      dedupWeight = b.dedupWeight;
-    } else if (b.dedupWeight !== undefined) {
-      return res.status(400).json({ error: "dedupWeight must be number if specified" });
+      demotionByDuplication = b.demotionByDuplication;
+    } else if (b.demotionByDuplication !== undefined) {
+      return res.status(400).json({ error: "demotionByDuplication must be number if specified" });
     }
 
     try {
@@ -453,8 +453,8 @@ export default function createAiPostsRouter(
         seedPostIds,
         selfUserId,
         ownerDecay,
-        rerankByLikesAlpha,
-        dedupWeight,
+        promotionByLikesAlpha,
+        demotionByDuplication,
         offset,
         limit,
         order,
@@ -543,8 +543,8 @@ export default function createAiPostsRouter(
               seedPostIds: seed.postIds,
               selfUserId: targetUserId,
               ownerDecay: 0.95,
-              rerankByLikesAlpha: 5,
-              dedupWeight: 0.2,
+              promotionByLikesAlpha: 5,
+              demotionByDuplication: 5,
               offset: 0,
               limit: 100,
               order: "desc",
@@ -719,8 +719,8 @@ export default function createAiPostsRouter(
             seedPostIds: [targetPostId],
             selfUserId: loginUser.id,
             ownerDecay: 0.95,
-            rerankByLikesAlpha: 5,
-            dedupWeight: 0.2,
+            promotionByLikesAlpha: 5,
+            demotionByDuplication: 5,
             offset: 0,
             limit: 100,
             order: "desc",

@@ -671,14 +671,16 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
       ? toDecStr(input.selfUserId)
       : null;
 
-  const dedupWeight =
-    typeof input.dedupWeight === "number" && input.dedupWeight > 0 ? input.dedupWeight : 0;
+  const demotionByDuplication =
+    typeof input.demotionByDuplication === "number" && input.demotionByDuplication > 0
+      ? input.demotionByDuplication
+      : 0;
 
-  const rerankByLikesAlpha =
-    typeof input.rerankByLikesAlpha === "number" &&
-    Number.isFinite(input.rerankByLikesAlpha) &&
-    input.rerankByLikesAlpha > 0
-      ? input.rerankByLikesAlpha
+  const promotionByLikesAlpha =
+    typeof input.promotionByLikesAlpha === "number" &&
+    Number.isFinite(input.promotionByLikesAlpha) &&
+    input.promotionByLikesAlpha > 0
+      ? input.promotionByLikesAlpha
       : 0;
 
   const ownerDecay =
@@ -915,7 +917,8 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
 
   let finalIds: bigint[] = universe.map((c) => c.postId);
 
-  const needWork = !!input.features || dedupWeight > 0 || rerankByLikesAlpha > 0 || needOwnerDecay;
+  const needWork =
+    !!input.features || demotionByDuplication > 0 || promotionByLikesAlpha > 0 || needOwnerDecay;
   if (needWork) {
     let qVec: number[] | null = null;
     if (input.features) {
@@ -926,7 +929,7 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
       }
     }
 
-    const needVecDecode = !!qVec || dedupWeight > 0;
+    const needVecDecode = !!qVec || demotionByDuplication > 0;
 
     const candidates: {
       postId: bigint;
@@ -934,6 +937,8 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
       baseScore: number;
       adjScore: number;
       likeScore?: number;
+      ownerFactor?: number;
+      dedupedRank?: number;
     }[] = [];
 
     for (const c of universe) {
@@ -965,25 +970,6 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
       return compareBigIntDesc(a.postId, b.postId);
     });
 
-    if (rerankByLikesAlpha > 0) {
-      for (let i = 0; i < candidates.length; i++) {
-        const c = candidates[i];
-        const p = postIndex.get(c.postId.toString());
-        const likes =
-          p && typeof p.countLikes === "number" && Number.isFinite(p.countLikes) ? p.countLikes : 0;
-        const isRoot = p ? p.replyTo === null : (metaByPostId.get(c.postId)?.isRoot ?? true);
-        c.likeScore = Math.log(rerankByLikesAlpha + likes) / Math.log(3) - i - (isRoot ? 0 : 2);
-      }
-
-      candidates.sort((a, b) => {
-        const as = a.likeScore ?? Number.NEGATIVE_INFINITY;
-        const bs = b.likeScore ?? Number.NEGATIVE_INFINITY;
-        if (as !== bs) return bs - as;
-        if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
-        return compareBigIntDesc(a.postId, b.postId);
-      });
-    }
-
     if (needOwnerDecay) {
       const decay = ownerDecay as number;
 
@@ -1008,50 +994,66 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
         if (!owner) continue;
         const seen = seenByOwner.get(owner) ?? 0;
         const factor = Math.pow(decay, seen);
+        c.ownerFactor = factor;
 
-        if (Number.isFinite(c.baseScore)) c.baseScore *= factor;
-        else if (!Number.isFinite(c.baseScore)) c.baseScore = Number.NEGATIVE_INFINITY;
-        c.adjScore = c.baseScore;
-
-        if (c.likeScore !== undefined) {
-          if (Number.isFinite(c.likeScore)) c.likeScore *= factor;
-          else if (!Number.isFinite(c.likeScore)) c.likeScore = Number.NEGATIVE_INFINITY;
+        if (factor === 0) {
+          if (c.baseScore !== Number.NEGATIVE_INFINITY) c.baseScore = 0;
+        } else {
+          c.baseScore *= factor;
         }
+        c.adjScore = c.baseScore;
 
         seenByOwner.set(owner, seen + 1);
       }
 
-      if (rerankByLikesAlpha > 0) {
-        candidates.sort((a, b) => {
-          const as = a.likeScore ?? Number.NEGATIVE_INFINITY;
-          const bs = b.likeScore ?? Number.NEGATIVE_INFINITY;
-          if (as !== bs) return bs - as;
-          if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
-          return compareBigIntDesc(a.postId, b.postId);
-        });
-      } else {
-        candidates.sort((a, b) => {
-          if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
-          return compareBigIntDesc(a.postId, b.postId);
-        });
-      }
+      candidates.sort((a, b) => {
+        if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
+        return compareBigIntDesc(a.postId, b.postId);
+      });
     }
 
-    if (dedupWeight > 0) {
+    if (promotionByLikesAlpha > 0) {
+      for (let i = 0; i < candidates.length; i++) {
+        const c = candidates[i];
+        const p = postIndex.get(c.postId.toString());
+        const likes =
+          p && typeof p.countLikes === "number" && Number.isFinite(p.countLikes) ? p.countLikes : 0;
+        const isRoot = p ? p.replyTo === null : (metaByPostId.get(c.postId)?.isRoot ?? true);
+        let likeScore =
+          Math.log(promotionByLikesAlpha + likes) / Math.log(3) - i - (isRoot ? 0 : 2);
+        if (needOwnerDecay && c.ownerFactor !== undefined) likeScore *= c.ownerFactor;
+        c.likeScore = likeScore;
+      }
+
+      candidates.sort((a, b) => {
+        const as = a.likeScore ?? Number.NEGATIVE_INFINITY;
+        const bs = b.likeScore ?? Number.NEGATIVE_INFINITY;
+        if (as !== bs) return bs - as;
+        if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
+        return compareBigIntDesc(a.postId, b.postId);
+      });
+    }
+
+    if (demotionByDuplication > 0) {
+      const DEDUP_MIN_SIMILALITY = 0.8;
+
       let sumVec: number[] | null = null;
 
       for (let i = 0; i < candidates.length; i++) {
         const c = candidates[i];
-        let adj = c.baseScore;
+        let sim = 0;
 
         if (i > 0 && sumVec && c.vec && sumVec.length === c.vec.length) {
-          const simDupRaw = cosineSimilarity(sumVec, c.vec);
-          const simDup = sigmoidalContrast((simDupRaw + 1) / 2, 5, 0.9);
-          const penalty = simDup * dedupWeight;
-          adj = adj - penalty;
+          const simRaw = cosineSimilarity(sumVec, c.vec);
+          sim = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
         }
 
-        c.adjScore = adj;
+        const rankDownWeight =
+          sim > DEDUP_MIN_SIMILALITY
+            ? (sim - DEDUP_MIN_SIMILALITY) / (1 - DEDUP_MIN_SIMILALITY)
+            : 0;
+
+        c.dedupedRank = i + rankDownWeight * demotionByDuplication;
 
         if (c.vec) {
           if (!sumVec) {
@@ -1063,8 +1065,9 @@ function computeExpectedRecommendIds(pgClient: MockPgClient, input: RecommendPos
       }
 
       candidates.sort((a, b) => {
-        if (a.adjScore !== b.adjScore) return b.adjScore - a.adjScore;
-        if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
+        const ar = a.dedupedRank ?? Number.POSITIVE_INFINITY;
+        const br = b.dedupedRank ?? Number.POSITIVE_INFINITY;
+        if (ar !== br) return ar - br;
         return compareBigIntDesc(a.postId, b.postId);
       });
     }
@@ -1662,7 +1665,7 @@ describe("AiPostsService RecommendPosts", () => {
     expect(result).toEqual(expected);
   });
 
-  test("applies rerankByLikesAlpha after similarity ranking", async () => {
+  test("applies promotionByLikesAlpha after similarity ranking", async () => {
     pgClient.summaries.push({
       postId: dec(129),
       summary: "s",
@@ -1678,7 +1681,7 @@ describe("AiPostsService RecommendPosts", () => {
     const input: RecommendPostsInput = {
       tags: [seed("tech"), seed("eco"), seed("game")],
       features: q,
-      rerankByLikesAlpha: 10,
+      promotionByLikesAlpha: 10,
       limit: 100,
       order: "desc",
     };
@@ -1690,7 +1693,38 @@ describe("AiPostsService RecommendPosts", () => {
     expect(result[0]).toBe(hex(125));
   });
 
-  test("applies ownerDecay before dedupWeight", async () => {
+  test("applies demotionByDuplication by shifting rank when similarity is high", async () => {
+    const q = new Int8Array([10, 0, 0]);
+
+    const baseInput: RecommendPostsInput = {
+      tags: [seed("tech"), seed("eco"), seed("game")],
+      features: q,
+      limit: 100,
+      order: "desc",
+    };
+
+    const base = await service.RecommendPosts(baseInput);
+    const baseExpected = computeExpectedRecommendIds(pgClient, baseInput);
+    expect(base).toEqual(baseExpected);
+
+    const dedupInput: RecommendPostsInput = {
+      ...baseInput,
+      demotionByDuplication: 20,
+    };
+
+    const result = await service.RecommendPosts(dedupInput);
+    const expected = computeExpectedRecommendIds(pgClient, dedupInput);
+    expect(result).toEqual(expected);
+
+    const id = hex(125);
+    const baseIdx = base.indexOf(id);
+    const dedupIdx = result.indexOf(id);
+    expect(baseIdx).toBeGreaterThanOrEqual(0);
+    expect(dedupIdx).toBeGreaterThanOrEqual(0);
+    expect(dedupIdx).toBeGreaterThan(baseIdx);
+  });
+
+  test("applies ownerDecay before demotionByDuplication", async () => {
     const localPg = new MockPgClient();
     const localService = new AiPostsService(localPg as unknown as Pool);
 

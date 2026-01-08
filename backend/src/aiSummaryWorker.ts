@@ -351,7 +351,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
 
-  console.log(prompt);
+  //console.log(prompt);
 
   const chatReq: ChatRequest = {
     model: Config.AI_SUMMARY_MODEL,
@@ -367,7 +367,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     throw new Error(`ai-users/chat returned empty content for postId=${postId}`);
   }
 
-  console.log(aiContent);
+  //console.log(aiContent);
 
   const parsed = evaluateChatResponseAsJson<{ summary?: unknown; tags?: unknown }>(aiContent);
   if (!isRecord(parsed)) {
@@ -389,7 +389,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   );
   const featuresInput = buildFeaturesInput(summary, tags, postSnippet);
 
-  console.log(featuresInput);
+  //console.log(featuresInput);
 
   const features = await generateFeatures(sessionCookie, {
     model: Config.AI_SUMMARY_MODEL,
