@@ -278,16 +278,16 @@ export class AiPostsService {
     const TOP_FOLLOWEE_LIMIT = 25;
     const FOLLOWEE_POST_LIMIT_PER_USER = 5;
     const FOLLOWEE_LIKE_LIMIT_PER_USER = 10;
-    const ADOPT_TAG_LIMIT = 10;
-    const EXTRA_TAG_LIMIT = 30;
+    const EXTRA_TAG_NUM_RATIO = 2;
     const WEIGHT_GAMMA = 0.7;
-    const FEATURE_DIM = 512;
     const WEIGHT_SELF_POST = 1.0;
     const WEIGHT_SELF_LIKE = 0.7;
     const WEIGHT_FOLLOWEE_POST = 0.3;
     const WEIGHT_FOLLOWEE_LIKE = 0.2;
     if (!Number.isInteger(numClusters) || numClusters <= 0) throw new Error("invalid numClusters");
     const userIdDec = hexToDec(userId);
+    const round3 = (x: number) => Math.round(x * 1000) / 1000;
+    const floor3 = (x: number) => Math.floor(x * 1000) / 1000;
     const seedRes = await pgQuery<SeedPostRow>(
       this.pgPool,
       `
@@ -398,23 +398,21 @@ export class AiPostsService {
     ): { tags: SearchSeedTag[]; extraTags: SearchSeedTag[] } => {
       const ranked = Array.from(tagScores.entries())
         .sort((a, b) => (a[1] !== b[1] ? b[1] - a[1] : a[0].localeCompare(b[0])))
-        .slice(0, EXTRA_TAG_LIMIT);
+        .slice(0, Config.AI_POST_SEED_NUM_TAGS * (EXTRA_TAG_NUM_RATIO + 1));
       if (ranked.length === 0) return { tags: [], extraTags: [] };
-      const top = ranked.slice(0, Math.min(ADOPT_TAG_LIMIT, ranked.length));
+      const top = ranked.slice(0, Math.min(Config.AI_POST_SEED_NUM_TAGS, ranked.length));
       const pivot = top.length > 0 ? top[top.length - 1][1] : 0;
       if (!(pivot > 0)) return { tags: top.map(([name]) => ({ name, count: 1 })), extraTags: [] };
-      const round2 = (x: number) => Math.round(x * 1000) / 1000;
-      const floor2 = (x: number) => Math.floor(x * 1000) / 1000;
       const tags = top.map(([name, score]) => ({
         name,
-        count: Math.max(1, round2(score / pivot)),
+        count: Math.max(1, round3(score / pivot)),
       }));
       const extraTags: SearchSeedTag[] = [];
-      for (let i = ADOPT_TAG_LIMIT; i < ranked.length; i++) {
+      for (let i = Config.AI_POST_SEED_NUM_TAGS; i < ranked.length; i++) {
         const [name, score] = ranked[i];
         const raw = score / pivot;
         if (!(raw < 1)) continue;
-        let cnt = floor2(raw);
+        let cnt = floor3(raw);
         if (cnt >= 1) cnt = 0.99;
         if (!(cnt > 0)) continue;
         extraTags.push({ name, count: cnt });
@@ -500,45 +498,12 @@ export class AiPostsService {
       if (!vec || vec.length === 0) continue;
       materials.push({ postId: BigInt(pid), postIdStr: pid, effectiveWeight: ew, vec });
     }
-    if (materials.length === 0) {
-      const tagsByPostId = await loadTagsByPostId(uniquePostIds);
-      const ownersByPostId = await loadOwnersByPostId(uniquePostIds);
-      let weightSum = 0;
-      const tagScores = new Map<string, number>();
-      for (const pid of uniquePostIds) {
-        const w = effectiveWeightByPostId.get(pid) ?? 0;
-        if (!(w > 0)) continue;
-        weightSum += w;
-        const tags = tagsByPostId.get(pid) ?? [];
-        for (const t of tags) {
-          const tableScore = Math.log(1 + t.tableCount);
-          tagScores.set(t.name, (tagScores.get(t.name) ?? 0) + w * tableScore);
-        }
-      }
-      const { tags: tagsOut, extraTags: extraTagsOut } = buildTagsAndExtraTags(tagScores);
-      const s = userId.startsWith("0x") ? userId.slice(2) : userId;
-      const tail = s.length > 8 ? s.slice(-8) : s;
-      const n = parseInt(tail, 16) || 0;
-      const idx = ((n % FEATURE_DIM) + FEATURE_DIM) % FEATURE_DIM;
-      const features = new Int8Array(FEATURE_DIM);
-      features[idx] = 1;
-      const postIds = uniquePostIds
-        .map((pid) => ({ pid, w: effectiveWeightByPostId.get(pid) ?? 0 }))
-        .filter((x) => {
-          const owner = ownersByPostId.get(x.pid);
-          return x.w > 0 && owner && owner !== userIdDec;
-        })
-        .sort((a, b) => (a.w !== b.w ? b.w - a.w : compareBigIntDesc(BigInt(a.pid), BigInt(b.pid))))
-        .slice(0, Config.AI_POST_SEED_CLUSTER_POSTIDS_LIMIT)
-        .map((x) => decToHex(x.pid));
-      return [{ tags: tagsOut, extraTags: extraTagsOut, features, weight: weightSum, postIds }];
-    }
+    if (materials.length === 0) return [];
     const tagsByPostId = await loadTagsByPostId(materials.map((m) => m.postIdStr));
     const ownersByPostId = await loadOwnersByPostId(materials.map((m) => m.postIdStr));
     const actualClusters = Math.min(numClusters, materials.length);
     const seedFromUserId = (id: string): number => {
-      const s = id.startsWith("0x") ? id.slice(2) : id;
-      const tail = s.length > 8 ? s.slice(-8) : s;
+      const tail = id.length > 8 ? id.slice(-8) : id;
       return parseInt(tail, 16) || 0;
     };
     const buildSeedFromCluster = (items: SeedMaterial[]): SearchSeed | null => {
@@ -572,6 +537,7 @@ export class AiPostsService {
         )
         .slice(0, Config.AI_POST_SEED_CLUSTER_POSTIDS_LIMIT)
         .map((m) => decToHex(m.postIdStr));
+      weightSum = round3(weightSum);
       return {
         tags: tagsOut,
         extraTags: extraTagsOut,

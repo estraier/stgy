@@ -106,6 +106,7 @@ export class Config {
     "STGY_AI_POST_SEED_CLUSTER_POSTIDS_LIMIT",
     100,
   );
+  static readonly AI_POST_SEED_NUM_TAGS = envNum("STGY_AI_POST_SEED_NUM_TAGS", 10);
   static readonly AI_POST_RECOMMEND_TTL_SEC = envNum("STGY_AI_POST_RECOMMEND_TTL_SEC", 1 * 3600);
   static readonly AI_POST_RECOMMEND_TAG_CANDIDATES = envNum(
     "STGY_AI_POST_RECOMMEND_TAG_CANDIDATES",

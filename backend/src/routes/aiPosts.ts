@@ -564,11 +564,11 @@ export default function createAiPostsRouter(
         }
         if (parsed.length > 0) seedPool = parsed;
       }
-
-      seedPool = null;
-
       if (!seedPool) {
-        const rawSeeds = await aiPostsService.BuildSearchSeedForUser(targetUserId, 4);
+        const rawSeeds = await aiPostsService.BuildSearchSeedForUser(
+          targetUserId,
+          Config.AI_POST_SEED_NUM_CLUSTERS,
+        );
         await redis.set(
           seedKey,
           JSON.stringify(rawSeeds.map((s) => toSeedPacket(s))),
@@ -577,9 +577,6 @@ export default function createAiPostsRouter(
         );
         seedPool = rawSeeds;
       }
-
-      console.log(JSON.stringify(seedPool, null, 2));
-
       let ids: string[] | null = null;
       const cachedIdsRaw = await redis.get(recKey);
       const cachedIds = parseJsonArray<unknown>(cachedIdsRaw);

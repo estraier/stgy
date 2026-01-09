@@ -13,6 +13,7 @@ jest.mock("../config", () => {
   return {
     Config: {
       AI_POST_SEED_CLUSTER_POSTIDS_LIMIT: 100,
+      AI_POST_SEED_NUM_TAGS: 10,
       AI_POST_RECOMMEND_TAG_CANDIDATES: 100,
       AI_POST_RECOMMEND_VEC_CANDIDATES: 100,
     },
@@ -1137,7 +1138,7 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     expect(seeds).toEqual([]);
   });
 
-  test("does not throw when seed posts exist but all features are null", async () => {
+  test("returns an empty array when seed posts exist but all features are null", async () => {
     const selfUserHex = hex(777);
     const selfUserDec = toDecStr(selfUserHex);
     const p = dec(5000);
@@ -1158,13 +1159,7 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     pgClient.tags.push({ postId: p, name: "t" });
 
     const seeds = await service.BuildSearchSeedForUser(selfUserHex, 3);
-    expect(seeds.length).toBe(1);
-    expect(seeds[0].tags).toEqual([{ name: "t", count: 1 }]);
-    expect(seeds[0].extraTags).toEqual([]);
-    expect(seeds[0].features).toBeInstanceOf(Int8Array);
-    expect(seeds[0].features.length).toBe(512);
-    expect(seeds[0].weight).toBeCloseTo(1, 10);
-    expect(seeds[0].postIds).toEqual([]);
+    expect(seeds).toEqual([]);
   });
 
   test("builds tags/extraTags/features/postIds from self/likes/followees (numClusters=1)", async () => {
@@ -1344,7 +1339,7 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
       else for (let i = 0; i < sumVec.length; i++) sumVec[i] += v[i] * ew;
     }
 
-    expect(s0.weight).toBeCloseTo(weightSum, 10);
+    expect(s0.weight).toBeCloseTo(weightSum, 3);
 
     if (!sumVec) throw new Error("test setup");
     const expectedFeatures = encodeFeatures(normalizeL2(sumVec));

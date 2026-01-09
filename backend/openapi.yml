@@ -430,6 +430,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SearchSeedTag"
+        extraTags:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchSeedTag"
         features:
           type: string
           format: byte
