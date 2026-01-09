@@ -48,6 +48,7 @@ export type SearchSeedTag = {
 
 export type SearchSeed = {
   tags: SearchSeedTag[];
+  extraTags: SearchSeedTag[];
   features: Int8Array;
   weight: number;
   postIds: string[];
@@ -55,6 +56,7 @@ export type SearchSeed = {
 
 export type SearchSeedPacket = {
   tags: SearchSeedTag[];
+  extraTags: SearchSeedTag[];
   features: string;
   weight: number;
   postIds: string[];

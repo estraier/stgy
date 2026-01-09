@@ -37,6 +37,7 @@ function toPacket(s: AiPostSummary): AiPostSummaryPacket {
 function toSeedPacket(seed: SearchSeed): SearchSeedPacket {
   return {
     tags: seed.tags.map((t) => ({ name: t.name, count: t.count })),
+    extraTags: seed.extraTags.map((t) => ({ name: t.name, count: t.count })),
     features: int8ToBase64(seed.features),
     weight: seed.weight,
     postIds: seed.postIds,
@@ -50,16 +51,27 @@ function fromSeedPacket(p: SearchSeedPacket): SearchSeed | null {
   if (typeof p.weight !== "number" || !Number.isFinite(p.weight)) return null;
   if (!Array.isArray(p.postIds)) return null;
 
-  const tags: SearchSeedTag[] = [];
-  for (const t of p.tags) {
-    if (!t || typeof t !== "object") return null;
-    const r = t as Record<string, unknown>;
-    if (typeof r.name !== "string") return null;
-    if (typeof r.count !== "number" || !Number.isFinite(r.count) || r.count <= 0) {
-      return null;
+  const extraTagsRaw: unknown = (p as unknown as Record<string, unknown>).extraTags;
+  if (extraTagsRaw !== undefined && !Array.isArray(extraTagsRaw)) return null;
+
+  const parseTagList = (raw: unknown[]): SearchSeedTag[] | null => {
+    const out: SearchSeedTag[] = [];
+    for (let i = 0; i < raw.length; i++) {
+      const t = raw[i] as unknown;
+      if (!t || typeof t !== "object") return null;
+      const r = t as Record<string, unknown>;
+      if (typeof r.name !== "string") return null;
+      if (typeof r.count !== "number" || !Number.isFinite(r.count) || r.count <= 0) return null;
+      out.push({ name: r.name, count: r.count });
     }
-    tags.push({ name: r.name, count: r.count });
-  }
+    return out;
+  };
+
+  const tags = parseTagList(p.tags);
+  if (!tags) return null;
+
+  const extraTags = extraTagsRaw === undefined ? [] : parseTagList(extraTagsRaw as unknown[]);
+  if (!extraTags) return null;
 
   let features: Int8Array;
   try {
@@ -73,7 +85,7 @@ function fromSeedPacket(p: SearchSeedPacket): SearchSeed | null {
     .map((s) => s.trim())
     .filter((s) => s !== "");
 
-  return { tags, features, weight: p.weight, postIds };
+  return { tags, extraTags, features, weight: p.weight, postIds };
 }
 
 function parsePaginationFromBody(

@@ -279,6 +279,7 @@ export class AiPostsService {
     const FOLLOWEE_POST_LIMIT_PER_USER = 5;
     const FOLLOWEE_LIKE_LIMIT_PER_USER = 10;
     const ADOPT_TAG_LIMIT = 10;
+    const EXTRA_TAG_LIMIT = 30;
     const WEIGHT_GAMMA = 0.7;
     const FEATURE_DIM = 512;
     const WEIGHT_SELF_POST = 1.0;
@@ -383,6 +384,34 @@ export class AiPostsService {
       const p = w / totalBaseWeight;
       effectiveWeightByPostId.set(pid, Math.pow(p, WEIGHT_GAMMA));
     }
+    const buildTagsAndExtraTags = (
+      tagScores: Map<string, number>,
+    ): { tags: SearchSeedTag[]; extraTags: SearchSeedTag[] } => {
+      const ranked = Array.from(tagScores.entries())
+        .sort((a, b) => (a[1] !== b[1] ? b[1] - a[1] : a[0].localeCompare(b[0])))
+        .slice(0, EXTRA_TAG_LIMIT);
+      if (ranked.length === 0) return { tags: [], extraTags: [] };
+      const top = ranked.slice(0, Math.min(ADOPT_TAG_LIMIT, ranked.length));
+      const pivot = top.length > 0 ? top[top.length - 1][1] : 0;
+      if (!(pivot > 0)) return { tags: top.map(([name]) => ({ name, count: 1 })), extraTags: [] };
+      const round2 = (x: number) => Math.round(x * 100) / 100;
+      const floor2 = (x: number) => Math.floor(x * 100) / 100;
+      const tags = top.map(([name, score]) => ({
+        name,
+        count: Math.max(1, round2(score / pivot)),
+      }));
+      const extraTags: SearchSeedTag[] = [];
+      for (let i = ADOPT_TAG_LIMIT; i < ranked.length; i++) {
+        const [name, score] = ranked[i];
+        const raw = score / pivot;
+        if (!(raw < 1)) continue;
+        let cnt = floor2(raw);
+        if (cnt >= 1) cnt = 0.99;
+        if (!(cnt > 0)) continue;
+        extraTags.push({ name, count: cnt });
+      }
+      return { tags, extraTags };
+    };
     const loadTagsByPostId = async (
       postIds: string[],
     ): Promise<Map<string, { name: string; tableCount: number }[]>> => {
@@ -477,22 +506,7 @@ export class AiPostsService {
           tagScores.set(t.name, (tagScores.get(t.name) ?? 0) + w * tableScore);
         }
       }
-      const topTags = Array.from(tagScores.entries())
-        .sort((a, b) => (a[1] !== b[1] ? b[1] - a[1] : a[0].localeCompare(b[0])))
-        .slice(0, ADOPT_TAG_LIMIT);
-      const tagsOut: SearchSeedTag[] =
-        topTags.length === 0
-          ? []
-          : (() => {
-              const minScore = topTags[topTags.length - 1][1];
-              if (minScore > 0) {
-                return topTags.map(([name, score]) => ({
-                  name,
-                  count: Math.max(1, Math.round((score / minScore) * 10) / 10),
-                }));
-              }
-              return topTags.map(([name]) => ({ name, count: 1 }));
-            })();
+      const { tags: tagsOut, extraTags: extraTagsOut } = buildTagsAndExtraTags(tagScores);
       const s = userId.startsWith("0x") ? userId.slice(2) : userId;
       const tail = s.length > 8 ? s.slice(-8) : s;
       const n = parseInt(tail, 16) || 0;
@@ -508,7 +522,7 @@ export class AiPostsService {
         .sort((a, b) => (a.w !== b.w ? b.w - a.w : compareBigIntDesc(BigInt(a.pid), BigInt(b.pid))))
         .slice(0, Config.AI_POST_SEED_CLUSTER_POSTIDS_LIMIT)
         .map((x) => decToHex(x.pid));
-      return [{ tags: tagsOut, features, weight: weightSum, postIds }];
+      return [{ tags: tagsOut, extraTags: extraTagsOut, features, weight: weightSum, postIds }];
     }
     const tagsByPostId = await loadTagsByPostId(materials.map((m) => m.postIdStr));
     const ownersByPostId = await loadOwnersByPostId(materials.map((m) => m.postIdStr));
@@ -533,22 +547,7 @@ export class AiPostsService {
         if (!sumVec) sumVec = m.vec.map((x) => x * w);
         else for (let i = 0; i < sumVec.length; i++) sumVec[i] += m.vec[i] * w;
       }
-      const topTags = Array.from(tagScores.entries())
-        .sort((a, b) => (a[1] !== b[1] ? b[1] - a[1] : a[0].localeCompare(b[0])))
-        .slice(0, ADOPT_TAG_LIMIT);
-      const tagsOut: SearchSeedTag[] =
-        topTags.length === 0
-          ? []
-          : (() => {
-              const minScore = topTags[topTags.length - 1][1];
-              if (minScore > 0) {
-                return topTags.map(([name, score]) => ({
-                  name,
-                  count: Math.max(1, Math.round((score / minScore) * 10) / 10),
-                }));
-              }
-              return topTags.map(([name]) => ({ name, count: 1 }));
-            })();
+      const { tags: tagsOut, extraTags: extraTagsOut } = buildTagsAndExtraTags(tagScores);
       if (!sumVec || sumVec.length === 0) return null;
       const outFeatures = encodeFeatures(normalizeL2(sumVec));
       const postIds = items
@@ -564,7 +563,13 @@ export class AiPostsService {
         )
         .slice(0, Config.AI_POST_SEED_CLUSTER_POSTIDS_LIMIT)
         .map((m) => decToHex(m.postIdStr));
-      return { tags: tagsOut, features: outFeatures, weight: weightSum, postIds };
+      return {
+        tags: tagsOut,
+        extraTags: extraTagsOut,
+        features: outFeatures,
+        weight: weightSum,
+        postIds,
+      };
     };
     let clusters: SeedMaterial[][] = [];
     if (actualClusters <= 1) clusters = [materials];
@@ -601,7 +606,10 @@ export class AiPostsService {
     if (seeds.length === 0) return [];
     seeds.sort((a, b) => {
       if (a.weight !== b.weight) return b.weight - a.weight;
-      return (a.tags[0]?.name ?? "").localeCompare(b.tags[0]?.name ?? "");
+      const an = a.tags[0]?.name ?? "";
+      const bn = b.tags[0]?.name ?? "";
+      if (an.length !== bn.length) return an.length - bn.length;
+      return an.localeCompare(bn);
     });
     return seeds;
   }
