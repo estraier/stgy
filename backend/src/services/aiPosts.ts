@@ -371,26 +371,27 @@ export class AiPostsService {
     const baseWeightByPostId = new Map<string, number>();
     for (const r of seedRes.rows) {
       const pid = r.post_id;
-      if (!isNonEmptyString(pid)) continue;
       baseWeightByPostId.set(pid, (baseWeightByPostId.get(pid) ?? 0) + r.weight);
     }
     const uniquePostIds = Array.from(baseWeightByPostId.keys());
-    if (uniquePostIds.length === 0) return [];
-    let totalBaseWeight = 0;
-    for (const w of baseWeightByPostId.values()) totalBaseWeight += w;
-    if (!(totalBaseWeight > 0)) return [];
-    const effectiveWeightByPostId = new Map<string, number>();
     const sortedPids = uniquePostIds
       .slice()
       .sort((a, b) => compareBigIntDesc(BigInt(a), BigInt(b)));
-    const n = baseWeightByPostId.size;
-    const decay = Math.pow(0.8, 1 / n);
+    const adjustedWeightByPostId = new Map<string, number>();
+    const decay = Math.pow(0.8, 1 / sortedPids.length);
     let postSeqWeight = 1.0;
     for (const pid of sortedPids) {
       const w = baseWeightByPostId.get(pid) ?? 0;
-      const p = (w / totalBaseWeight) * postSeqWeight;
-      effectiveWeightByPostId.set(pid, Math.pow(p, WEIGHT_GAMMA));
+      adjustedWeightByPostId.set(pid, w * postSeqWeight);
       postSeqWeight *= decay;
+    }
+    let totalBaseWeight = 0;
+    for (const w of adjustedWeightByPostId.values()) totalBaseWeight += w;
+    const effectiveWeightByPostId = new Map<string, number>();
+    for (const pid of sortedPids) {
+      const w = adjustedWeightByPostId.get(pid) ?? 0;
+      const p = w / totalBaseWeight;
+      effectiveWeightByPostId.set(pid, Math.pow(p, WEIGHT_GAMMA));
     }
     const buildTagsAndExtraTags = (
       tagScores: Map<string, number>,

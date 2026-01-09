@@ -1303,7 +1303,6 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
       { id: flaLiked, w: 0.2, feat: fFlaLiked },
     ];
 
-    const total = baseWeightsOrdered.reduce((sum, x) => sum + x.w, 0);
     const gamma = 0.7;
 
     const baseById = new Map<string, { w: number; feat: Int8Array }>();
@@ -1314,15 +1313,24 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     );
     const nUnique = idsDesc.length;
     const decay = Math.pow(0.8, 1 / nUnique);
-    let postSeqWeight = 1.0;
 
-    const ewById = new Map<string, number>();
+    const adjustedById = new Map<string, number>();
+    let postSeqWeight = 1.0;
     for (const pid of idsDesc) {
       const x = baseById.get(pid);
       if (!x) continue;
-      const p = (x.w / total) * postSeqWeight;
-      ewById.set(pid, Math.pow(p, gamma));
+      adjustedById.set(pid, x.w * postSeqWeight);
       postSeqWeight *= decay;
+    }
+
+    let totalAdjusted = 0;
+    for (const w of adjustedById.values()) totalAdjusted += w;
+
+    const ewById = new Map<string, number>();
+    for (const pid of idsDesc) {
+      const aw = adjustedById.get(pid) ?? 0;
+      const p = aw / totalAdjusted;
+      ewById.set(pid, Math.pow(p, gamma));
     }
 
     let sumVec: number[] | null = null;
