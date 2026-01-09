@@ -177,7 +177,7 @@ def test_ai_users():
   assert res.status_code == 404, res.text
   interest_text = "I am currently interested in integration tests"
   interest_tags = ["integration", "tests"]
-  feats = [((i * 17 + 3) % 256) for i in range(256)]
+  feats = [((i * 17 + 3) % 255 - 127) for i in range(256)]
   feats_i8 = [x - 256 if x >= 128 else x for x in feats]
   feats_b64 = int8_list_to_b64(feats_i8)
   interest_body = {"interest": interest_text, "tags": interest_tags, "features": feats_b64}
@@ -330,10 +330,9 @@ def test_ai_posts():
   assert "features" in detail
   assert detail["features"] is None or isinstance(detail["features"], str)
   dummy_summary = "dummy summary for ai-posts test"
-  feats = [((i * 17 + 3) % 256) for i in range(512)]
-  feats = [x - 256 if x >= 128 else x for x in feats]
+  feats = [((i * 17 + 3) % 255 - 127) for i in range(512)]
   feats_b64 = int8_list_to_b64(feats)
-  res = requests.put(f"{BASE_URL}/ai-posts/{post_id}", json={"summary": dummy_summary, "features": feats_b64, "tags": ["ai-posts", "summary-test"]}, headers=headers, cookies=cookies)
+  res = requests.put(f"{BASE_URL}/ai-posts/{post_id}", json={"summary": dummy_summary, "features": feats_b64, "tags": ["ai-posts", "summary-test"], "keywords": ["hop", "step"]}, headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   updated = res.json()
   print("[ai_posts] updated:", updated)

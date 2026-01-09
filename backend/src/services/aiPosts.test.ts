@@ -6,7 +6,7 @@ import type {
   RecommendPostsInput,
   UpdateAiPostSummaryInput,
 } from "../models/aiPost";
-import { decToHex, hexToDec } from "../utils/format";
+import { decToHex, hexToDec, serializeHashStringList } from "../utils/format";
 import { decodeFeatures, encodeFeatures, normalizeL2 } from "../utils/vectorSpace";
 
 jest.mock("../config", () => {
@@ -87,6 +87,7 @@ class MockPgClient {
   posts: MockPostRow[] = [];
   follows: MockFollowRow[] = [];
   likes: MockPostLikeRow[] = [];
+  keywordHashes: { postId: string; hashes: Buffer }[] = [];
 
   async query(sql: string, params?: unknown[]) {
     sql = normalizeSql(sql);
@@ -233,6 +234,26 @@ class MockPgClient {
       const before = this.tags.length;
       this.tags = this.tags.filter((t) => t.postId !== postId);
       return { rowCount: before - this.tags.length, rows: [] };
+    }
+
+    if (sql.startsWith("DELETE FROM ai_post_keyword_hashes WHERE post_id = $1")) {
+      const postId = params ? String(params[0]) : "";
+      const before = this.keywordHashes.length;
+      this.keywordHashes = this.keywordHashes.filter((r) => r.postId !== postId);
+      return { rowCount: before - this.keywordHashes.length, rows: [] };
+    }
+
+    if (
+      sql.startsWith("INSERT INTO ai_post_keyword_hashes (post_id, hashes)") &&
+      sql.includes("ON CONFLICT (post_id) DO UPDATE") &&
+      sql.includes("SET hashes = EXCLUDED.hashes")
+    ) {
+      const postId = params ? String(params[0]) : "";
+      const hashes = (params?.[1] as Buffer) ?? Buffer.from([]);
+      const existing = this.keywordHashes.find((r) => r.postId === postId);
+      if (existing) existing.hashes = hashes;
+      else this.keywordHashes.push({ postId, hashes });
+      return { rowCount: 1, rows: [] };
     }
 
     if (
@@ -825,6 +846,27 @@ describe("AiPostsService updateAiPost", () => {
     expect(result?.tags).toEqual([]);
     expect(pgClient.tags.filter((t) => t.postId === postIdDec).length).toBe(0);
   });
+
+  test("writes keyword hashes when keywords are provided", async () => {
+    const input: UpdateAiPostSummaryInput = { postId: postIdHex, keywords: ["k1", "k2"] };
+    const result = await service.updateAiPost(input);
+    expect(result).not.toBeNull();
+    const row = pgClient.keywordHashes.find((r) => r.postId === postIdDec);
+    expect(row).toBeTruthy();
+    const expected = Buffer.from(serializeHashStringList(["k1", "k2"]));
+    expect(row?.hashes.equals(expected)).toBe(true);
+  });
+
+  test("empty keywords deletes ai_post_keyword_hashes row", async () => {
+    pgClient.keywordHashes.push({
+      postId: postIdDec,
+      hashes: Buffer.from(serializeHashStringList(["x"])),
+    });
+    const input: UpdateAiPostSummaryInput = { postId: postIdHex, keywords: [] };
+    const result = await service.updateAiPost(input);
+    expect(result).not.toBeNull();
+    expect(pgClient.keywordHashes.find((r) => r.postId === postIdDec)).toBeUndefined();
+  });
 });
 
 describe("AiPostsService RecommendPosts", () => {
@@ -1000,7 +1042,9 @@ describe("AiPostsService RecommendPosts", () => {
       limit: 200,
       order: "desc",
     };
-    const result = await service.RecommendPosts(input);
+    const result = (await service.BuildSearchSeedForUser)
+      ? await service.RecommendPosts(input)
+      : [];
     expect(result.length).toBeGreaterThan(0);
     expect(result[0]).toBe(hex(121));
   });
@@ -1138,7 +1182,7 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     expect(seeds).toEqual([]);
   });
 
-  test("returns an empty array when seed posts exist but all features are null", async () => {
+  test("does not throw when seed posts exist but all features are null", async () => {
     const selfUserHex = hex(777);
     const selfUserDec = toDecStr(selfUserHex);
     const p = dec(5000);

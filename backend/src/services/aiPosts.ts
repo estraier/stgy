@@ -1,7 +1,13 @@
 import { Config } from "../config";
 import { Pool } from "pg";
 import { pgQuery } from "../utils/servers";
-import { hexToDec, decToHex, bufferToInt8Array, int8ArrayToBuffer } from "../utils/format";
+import {
+  hexToDec,
+  decToHex,
+  bufferToInt8Array,
+  int8ArrayToBuffer,
+  serializeHashStringList,
+} from "../utils/format";
 import {
   decodeFeatures,
   encodeFeatures,
@@ -261,6 +267,29 @@ export class AiPostsService {
             FROM unnest($2::text[]) AS t
             `,
             [postIdDec, input.tags],
+          );
+        }
+      }
+      if (input.keywords !== undefined) {
+        if (input.keywords.length === 0) {
+          await pgQuery(this.pgPool, `DELETE FROM ai_post_keyword_hashes WHERE post_id = $1`, [
+            postIdDec,
+          ]);
+        } else {
+          const hashes = Buffer.from(serializeHashStringList(input.keywords));
+
+          console.log(input.keywords);
+          console.log(hashes);
+
+          await pgQuery(
+            this.pgPool,
+            `
+            INSERT INTO ai_post_keyword_hashes (post_id, hashes)
+            VALUES ($1, $2)
+            ON CONFLICT (post_id) DO UPDATE
+              SET hashes = EXCLUDED.hashes
+            `,
+            [postIdDec, hashes],
           );
         }
       }

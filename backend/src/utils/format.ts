@@ -276,3 +276,38 @@ export function bufferToInt8Array(v: Buffer): Int8Array {
 export function int8ArrayToBuffer(v: Int8Array): Buffer {
   return Buffer.from(v.buffer, v.byteOffset, v.byteLength);
 }
+
+export function hashString(str: string): number {
+  const FNV_OFFSET_BASIS = 2166136261;
+  const FNV_PRIME = 16777619;
+  const bytes = new TextEncoder().encode(str);
+  let hash = FNV_OFFSET_BASIS;
+  for (let i = 0; i < bytes.length; i++) {
+    hash ^= bytes[i];
+    hash = Math.imul(hash, FNV_PRIME);
+  }
+  return hash >>> 0;
+}
+
+export function serializeHashStringList(inputs: string[]): Uint8Array {
+  const buffer = new ArrayBuffer(inputs.length * 4);
+  const view = new DataView(buffer);
+  inputs.forEach((str, index) => {
+    const hash = hashString(str);
+    view.setUint32(index * 4, hash, false);
+  });
+  return new Uint8Array(buffer);
+}
+
+export function deserializeHashList(data: Uint8Array): number[] {
+  if (data.length % 4 !== 0) {
+    throw new Error("Invalid data length: Must be a multiple of 4 bytes.");
+  }
+  const result: number[] = [];
+  const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
+  for (let i = 0; i < data.length; i += 4) {
+    const hash = view.getUint32(i, false);
+    result.push(hash);
+  }
+  return result;
+}

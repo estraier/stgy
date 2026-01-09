@@ -898,11 +898,26 @@ export default function createAiPostsRouter(
       );
     }
 
+    if ("keywords" in b) {
+      if (!Array.isArray(b.keywords)) {
+        return res.status(400).json({ error: "keywords must be array if specified" });
+      }
+      pkt.keywords = Array.from(
+        new Set(
+          (b.keywords as unknown[])
+            .filter((t): t is string => typeof t === "string")
+            .map((t) => normalizeOneLiner(t.toLowerCase()))
+            .filter((t): t is string => typeof t === "string" && t.trim() !== ""),
+        ),
+      );
+    }
+
     const input: UpdateAiPostSummaryInput = {
       postId: pkt.postId,
       summary: pkt.summary,
       features,
       tags: pkt.tags,
+      keywords: pkt.keywords,
     };
 
     try {

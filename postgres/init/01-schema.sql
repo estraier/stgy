@@ -142,13 +142,10 @@ CREATE TABLE ai_post_tags (
 );
 CREATE INDEX idx_ai_post_tags_name_post_id ON ai_post_tags(name, post_id);
 
-CREATE TABLE ai_actions (
-  user_id BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,
-  done_at TIMESTAMPTZ NOT NULL,
-  action VARCHAR(65535) NOT NULL
+CREATE TABLE ai_post_keyword_hashes (
+  post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
+  hashes BYTEA NOT NULL
 );
-CREATE INDEX idx_ai_actions_user_id_done_at ON ai_actions(user_id, done_at);
-CREATE INDEX idx_ai_actions_done_at ON ai_actions(done_at);
 
 CREATE TABLE ai_interests (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

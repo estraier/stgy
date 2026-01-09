@@ -9,7 +9,6 @@ Output must be in JSON format.
 - Put the summary text in the "summary" field.
   - Do not add any preface or explanation such as "This post is…". Summarize the content directly.
   - If only the beginning of the content is shown, you do not need to mention that it is an excerpt.
-
 - Put tags that represent the post in the "tags" field.
   - Use at least one tag from the Nippon Decimal Classification (NDC).
     - Write NDC tags as: 3-digit classification code, then a colon, then the official label name.
@@ -22,7 +21,8 @@ Output must be in JSON format.
     - Do not use subdivisions with decimals such as "007.11:...". Instead, use a free-text tag such as "Cybernetics" in the free-text tags below.
   - For the remaining tags, freely write suitable search keywords as free-text tags.
     - Examples: Akuma, Shibuya, Ramen, Information theory, Cybernetics
-
+- Put keywords from the post as free-form text in the "keywords" field.
+  - Choose the most important terms that appear in the body text, excluding words already used in the tags.
 - Output only the JSON data; omit any formatting, backchanneling, or explanatory text.
   - Follow the JSON specification strictly, pay attention to commas and escaping, and ensure validation will pass reliably.
 
@@ -38,12 +38,14 @@ You have just viewed the post represented by the following JSON data.
 Notes:
 - Write the summary in plain text (no decorative characters) in approximately {{MAX_CHARS}} characters.
 - The number of tags must be between 2 and {{TAG_NUM}} (inclusive). Each tag must be within {{TAG_CHARS}} characters.
+- The number of keywords must be 10 or less. If there's no proper keyword, set an empty array.
 - The language (locale) of the output summary, the NDC tags, and the other tags must be {{LOCALE}}.
 
 Example output:
 {
   "summary": "... (summary sentences in approximately {{MAX_CHARS}} characters) ...",
-  "tags": ["440:Astronomy", "444:Sun", "Quasar", "Summer constellations", "Certification exam"]
+  "tags": ["440:Astronomy", "444:Sun", "Quasar", "Summer constellations", "Certification exam"],
+  "keywords": ["planetarium", "solar flare", "sunspot", "prominence", "Summer Triangle", "redshift"]
 }
 
 Provide the task output below in JSON format.

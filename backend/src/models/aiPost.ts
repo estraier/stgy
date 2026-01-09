@@ -32,6 +32,7 @@ export type UpdateAiPostSummaryInput = {
   summary?: string | null;
   features?: Int8Array | null;
   tags?: string[];
+  keywords?: string[];
 };
 
 export type UpdateAiPostSummaryPacket = {
@@ -39,6 +40,7 @@ export type UpdateAiPostSummaryPacket = {
   summary?: string | null;
   features?: string | null;
   tags?: string[];
+  keywords?: string[];
 };
 
 export type SearchSeedTag = {

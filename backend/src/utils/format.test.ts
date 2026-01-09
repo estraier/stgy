@@ -23,6 +23,9 @@ import {
   base64ToInt8,
   bufferToInt8Array,
   int8ArrayToBuffer,
+  hashString,
+  serializeHashStringList,
+  deserializeHashList,
 } from "./format";
 
 describe("generatePasswordHash, checkPasswordHash", () => {
@@ -562,5 +565,61 @@ describe("base64ToInt8", () => {
     const b64 = int8ToBase64(src);
     const dst = base64ToInt8(b64);
     expect(int8eq(dst, src)).toBe(true);
+  });
+});
+
+describe("Hash Utils", () => {
+  describe("hashString", () => {
+    it("should return correct FNV-1a 32-bit hash values", () => {
+      expect(hashString("apple")).toBe(280767167);
+      expect(hashString("orange")).toBe(1169454059);
+      expect(hashString("")).toBe(2166136261);
+    });
+
+    it("should return different hashes for different strings", () => {
+      expect(hashString("abc")).not.toBe(hashString("abd"));
+    });
+
+    it("should always return a value within unsigned 32-bit integer range", () => {
+      const result = hashString("long_test_string_to_check_range");
+      expect(result).toBeGreaterThanOrEqual(0);
+      expect(result).toBeLessThanOrEqual(4294967295);
+    });
+  });
+
+  describe("serialization and deserialization", () => {
+    it("should maintain integrity through serialize and deserialize process", () => {
+      const inputs = ["typescript", "jest", "hash", "fnv1a"];
+      const expectedHashes = inputs.map(hashString);
+
+      const serialized = serializeHashStringList(inputs);
+      expect(serialized.length).toBe(inputs.length * 4);
+
+      const deserialized = deserializeHashList(serialized);
+      expect(deserialized).toEqual(expectedHashes);
+    });
+
+    it("should handle empty arrays correctly", () => {
+      const serialized = serializeHashStringList([]);
+      expect(serialized.length).toBe(0);
+
+      const deserialized = deserializeHashList(serialized);
+      expect(deserialized).toEqual([]);
+    });
+
+    it("should correctly read Big Endian byte order", () => {
+      const data = new Uint8Array([0, 0, 0, 1, 0, 0, 1, 0]);
+      const result = deserializeHashList(data);
+      expect(result).toEqual([1, 256]);
+    });
+  });
+
+  describe("validation", () => {
+    it("should throw an error if the byte length is not a multiple of 4", () => {
+      const invalidData = new Uint8Array([1, 2, 3]);
+      expect(() => {
+        deserializeHashList(invalidData);
+      }).toThrow("Invalid data length: Must be a multiple of 4 bytes.");
+    });
   });
 });
