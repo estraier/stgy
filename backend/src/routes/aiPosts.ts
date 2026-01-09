@@ -564,6 +564,9 @@ export default function createAiPostsRouter(
         }
         if (parsed.length > 0) seedPool = parsed;
       }
+
+      seedPool = null;
+
       if (!seedPool) {
         const rawSeeds = await aiPostsService.BuildSearchSeedForUser(targetUserId, 4);
         await redis.set(
@@ -574,6 +577,8 @@ export default function createAiPostsRouter(
         );
         seedPool = rawSeeds;
       }
+
+      console.log(JSON.stringify(seedPool, null, 2));
 
       let ids: string[] | null = null;
       const cachedIdsRaw = await redis.get(recKey);

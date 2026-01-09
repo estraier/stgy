@@ -1293,24 +1293,43 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     );
     for (const id of s0.postIds) expect(expectedOwnerFiltered.has(id)).toBe(true);
 
-    const baseWeights: { id: string; w: number; feat: Int8Array }[] = [
+    const baseWeightsOrdered: { id: string; w: number; feat: Int8Array }[] = [
       { id: selfP1, w: 1.0, feat: fSelfP1 },
       { id: selfP2, w: 1.0, feat: fSelfP2 },
       { id: selfLiked, w: 0.7, feat: fSelfLiked },
-      { id: faPost, w: 0.3, feat: fFaPost },
       { id: fbPost, w: 0.3, feat: fFbPost },
-      { id: flaLiked, w: 0.2, feat: fFlaLiked },
+      { id: faPost, w: 0.3, feat: fFaPost },
       { id: flbLiked, w: 0.2, feat: fFlbLiked },
+      { id: flaLiked, w: 0.2, feat: fFlaLiked },
     ];
 
-    const total = baseWeights.reduce((sum, x) => sum + x.w, 0);
+    const total = baseWeightsOrdered.reduce((sum, x) => sum + x.w, 0);
     const gamma = 0.7;
+
+    const baseById = new Map<string, { w: number; feat: Int8Array }>();
+    for (const x of baseWeightsOrdered) baseById.set(x.id, { w: x.w, feat: x.feat });
+
+    const idsDesc = Array.from(baseById.keys()).sort((a, b) =>
+      compareBigIntDesc(BigInt(a), BigInt(b)),
+    );
+    const nUnique = idsDesc.length;
+    const decay = Math.pow(0.8, 1 / nUnique);
+    let postSeqWeight = 1.0;
+
+    const ewById = new Map<string, number>();
+    for (const pid of idsDesc) {
+      const x = baseById.get(pid);
+      if (!x) continue;
+      const p = (x.w / total) * postSeqWeight;
+      ewById.set(pid, Math.pow(p, gamma));
+      postSeqWeight *= decay;
+    }
 
     let sumVec: number[] | null = null;
     let weightSum = 0;
 
-    for (const x of baseWeights) {
-      const ew = Math.pow(x.w / total, gamma);
+    for (const x of baseWeightsOrdered) {
+      const ew = ewById.get(x.id) ?? 0;
       weightSum += ew;
       const v = normalizeL2(decodeFeatures(x.feat));
       if (!sumVec) sumVec = v.map((z) => z * ew);
