@@ -617,17 +617,17 @@ async function fetchPostSummary(sessionCookie: string, postId: string): Promise<
   const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
   if (res.statusCode === 401) throw new UnauthorizedError(`401 from ${path}`);
   if (res.statusCode === 404)
-    return { postId, updatedAt: "", summary: null, features: null, tags: [] };
+    return { postId, updatedAt: "", summary: null, features: null, tags: [], keywordHashes: [] };
   if (res.statusCode < 200 || res.statusCode >= 300) {
     logger.error(
       `failed to fetch post summary postId=${postId}: ${res.statusCode} ${truncateForLog(res.body, 50)}`,
     );
-    return { postId, updatedAt: "", summary: null, features: null, tags: [] };
+    return { postId, updatedAt: "", summary: null, features: null, tags: [], keywordHashes: [] };
   }
   try {
     const parsed = JSON.parse(res.body) as unknown;
     if (!isRecord(parsed))
-      return { postId, updatedAt: "", summary: null, features: null, tags: [] };
+      return { postId, updatedAt: "", summary: null, features: null, tags: [], keywordHashes: [] };
     const pkt = parsed as AiPostSummaryPacket;
     const pid = typeof pkt.postId === "string" && pkt.postId.trim() !== "" ? pkt.postId : postId;
     const updatedAt = typeof pkt.updatedAt === "string" ? pkt.updatedAt : "";
@@ -644,10 +644,13 @@ async function fetchPostSummary(sessionCookie: string, postId: string): Promise<
     const tags = Array.isArray(pkt.tags)
       ? pkt.tags.filter((t): t is string => typeof t === "string")
       : [];
-    return { postId: pid, updatedAt, summary, features, tags };
+    const keywordHashes = Array.isArray(pkt.keywordHashes)
+      ? pkt.keywordHashes.filter((t): t is number => typeof t === "number")
+      : [];
+    return { postId: pid, updatedAt, summary, features, tags, keywordHashes };
   } catch (e) {
     logger.error(`failed to parse post summary postId=${postId}: ${e}`);
-    return { postId, updatedAt: "", summary: null, features: null, tags: [] };
+    return { postId, updatedAt: "", summary: null, features: null, tags: [], keywordHashes: [] };
   }
 }
 

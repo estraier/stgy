@@ -45,7 +45,7 @@ Example output:
 {
   "summary": "... (summary sentences in approximately {{MAX_CHARS}} characters) ...",
   "tags": ["440:Astronomy", "444:Sun", "Quasar", "Summer constellations", "Certification exam"],
-  "keywords": ["planetarium", "solar flare", "sunspot", "prominence", "Summer Triangle", "redshift"]
+  "keywords": ["planetarium", "sun", "solar flare", "sunspot", "prominence", "Summer Triangle", "redshift"]
 }
 
 Provide the task output below in JSON format.

@@ -400,7 +400,10 @@ components:
         tags:
           type: array
           items: { type: string }
-      required: [postId, updatedAt, summary, features, tags]
+        keywordHashes:
+          type: array
+          items: { type: number }
+      required: [postId, updatedAt, summary, features, tags, keywordHashes]
 
     UpdateAiPostSummaryRequest:
       type: object
@@ -414,14 +417,24 @@ components:
         tags:
           type: array
           items: { type: string }
+        keywords:
+          type: array
+          items: { type: string }
       additionalProperties: false
 
     SearchSeedTag:
       type: object
       properties:
         name: { type: string }
-        count: { type: integer, minimum: 1 }
+        count: { type: number }
       required: [name, count]
+
+    SearchSeedKeywordHash:
+      type: object
+      properties:
+        hash: { type: integer }
+        count: { type: number }
+      required: [hash, count]
 
     SearchSeed:
       type: object
@@ -434,6 +447,10 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/SearchSeedTag"
+        keywordHashes:
+          type: array
+          items:
+            $ref: "#/components/schemas/SearchSeedKeywordHash"
         features:
           type: string
           format: byte
@@ -445,7 +462,7 @@ components:
           type: array
           items: { type: string }
           description: Seed post ids (hex). Used to inject the seed post(s) into recommendation candidates.
-      required: [tags, features, weight, postIds]
+      required: [tags, extraTags, keywordHashes, features, weight, postIds]
 
     RecommendPostsRequest:
       type: object

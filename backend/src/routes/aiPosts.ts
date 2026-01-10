@@ -17,6 +17,7 @@ import type {
   SearchSeed,
   SearchSeedPacket,
   SearchSeedTag,
+  SearchSeedKeywordHash,
   UpdateAiPostSummaryInput,
   UpdateAiPostSummaryPacket,
 } from "../models/aiPost";
@@ -30,7 +31,8 @@ function toPacket(s: AiPostSummary): AiPostSummaryPacket {
     updatedAt: s.updatedAt,
     summary: s.summary,
     features: s.features ? int8ToBase64(s.features) : null,
-    tags: s.tags,
+    tags: s.tags ?? [],
+    keywordHashes: s.keywordHashes ?? [],
   };
 }
 
@@ -38,6 +40,7 @@ function toSeedPacket(seed: SearchSeed): SearchSeedPacket {
   return {
     tags: seed.tags.map((t) => ({ name: t.name, count: t.count })),
     extraTags: seed.extraTags.map((t) => ({ name: t.name, count: t.count })),
+    keywordHashes: (seed.keywordHashes ?? []).map((k) => ({ hash: k.hash, count: k.count })),
     features: int8ToBase64(seed.features),
     weight: seed.weight,
     postIds: seed.postIds,
@@ -54,6 +57,9 @@ function fromSeedPacket(p: SearchSeedPacket): SearchSeed | null {
   const extraTagsRaw: unknown = (p as unknown as Record<string, unknown>).extraTags;
   if (extraTagsRaw !== undefined && !Array.isArray(extraTagsRaw)) return null;
 
+  const keywordHashesRaw: unknown = (p as unknown as Record<string, unknown>).keywordHashes;
+  if (keywordHashesRaw !== undefined && !Array.isArray(keywordHashesRaw)) return null;
+
   const parseTagList = (raw: unknown[]): SearchSeedTag[] | null => {
     const out: SearchSeedTag[] = [];
     for (let i = 0; i < raw.length; i++) {
@@ -67,11 +73,28 @@ function fromSeedPacket(p: SearchSeedPacket): SearchSeed | null {
     return out;
   };
 
+  const parseKeywordHashes = (raw: unknown[]): SearchSeedKeywordHash[] | null => {
+    const out: SearchSeedKeywordHash[] = [];
+    for (let i = 0; i < raw.length; i++) {
+      const t = raw[i] as unknown;
+      if (!t || typeof t !== "object") return null;
+      const r = t as Record<string, unknown>;
+      if (typeof r.hash !== "number" || !Number.isFinite(r.hash)) return null;
+      if (typeof r.count !== "number" || !Number.isFinite(r.count) || r.count <= 0) return null;
+      out.push({ hash: r.hash, count: r.count });
+    }
+    return out;
+  };
+
   const tags = parseTagList(p.tags);
   if (!tags) return null;
 
   const extraTags = extraTagsRaw === undefined ? [] : parseTagList(extraTagsRaw as unknown[]);
   if (!extraTags) return null;
+
+  const keywordHashes =
+    keywordHashesRaw === undefined ? [] : parseKeywordHashes(keywordHashesRaw as unknown[]);
+  if (!keywordHashes) return null;
 
   let features: Int8Array;
   try {
@@ -85,7 +108,7 @@ function fromSeedPacket(p: SearchSeedPacket): SearchSeed | null {
     .map((s) => s.trim())
     .filter((s) => s !== "");
 
-  return { tags, extraTags, features, weight: p.weight, postIds };
+  return { tags, extraTags, keywordHashes, features, weight: p.weight, postIds };
 }
 
 function parsePaginationFromBody(

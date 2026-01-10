@@ -17,6 +17,7 @@ export type AiPostSummary = {
   summary: string | null;
   features: Int8Array | null;
   tags: string[];
+  keywordHashes: number[];
 };
 
 export type AiPostSummaryPacket = {
@@ -25,6 +26,7 @@ export type AiPostSummaryPacket = {
   summary: string | null;
   features: string | null;
   tags: string[];
+  keywordHashes: number[];
 };
 
 export type UpdateAiPostSummaryInput = {
@@ -48,9 +50,15 @@ export type SearchSeedTag = {
   count: number;
 };
 
+export type SearchSeedKeywordHash = {
+  hash: number;
+  count: number;
+};
+
 export type SearchSeed = {
   tags: SearchSeedTag[];
   extraTags: SearchSeedTag[];
+  keywordHashes: SearchSeedKeywordHash[];
   features: Int8Array;
   weight: number;
   postIds: string[];
@@ -59,6 +67,7 @@ export type SearchSeed = {
 export type SearchSeedPacket = {
   tags: SearchSeedTag[];
   extraTags: SearchSeedTag[];
+  keywordHashes: SearchSeedKeywordHash[];
   features: string;
   weight: number;
   postIds: string[];

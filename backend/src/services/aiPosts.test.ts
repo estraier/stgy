@@ -6,7 +6,7 @@ import type {
   RecommendPostsInput,
   UpdateAiPostSummaryInput,
 } from "../models/aiPost";
-import { decToHex, hexToDec, serializeHashStringList } from "../utils/format";
+import { decToHex, hexToDec, serializeHashStringList, deserializeHashList } from "../utils/format";
 import { decodeFeatures, encodeFeatures, normalizeL2 } from "../utils/vectorSpace";
 
 jest.mock("../config", () => {
@@ -118,6 +118,7 @@ class MockPgClient {
         .filter((t) => t.postId === postId)
         .map((t) => t.name)
         .sort((a, b) => a.localeCompare(b));
+      const kh = this.keywordHashes.find((r) => r.postId === postId);
       return {
         rows: [
           {
@@ -126,6 +127,7 @@ class MockPgClient {
             summary: s.summary,
             features: s.features,
             tags,
+            keyword_hashes: kh ? kh.hashes : null,
           },
         ],
       };
@@ -160,16 +162,20 @@ class MockPgClient {
       });
 
       const sliced = list.slice(offset, offset + limit);
-      const rows = sliced.map((s) => ({
-        post_id: s.postId,
-        updated_at: s.updatedAt,
-        summary: s.summary,
-        features: s.features,
-        tags: this.tags
-          .filter((t) => t.postId === s.postId)
-          .map((t) => t.name)
-          .sort((a, b) => a.localeCompare(b)),
-      }));
+      const rows = sliced.map((s) => {
+        const kh = this.keywordHashes.find((r) => r.postId === s.postId);
+        return {
+          post_id: s.postId,
+          updated_at: s.updatedAt,
+          summary: s.summary,
+          features: s.features,
+          tags: this.tags
+            .filter((t) => t.postId === s.postId)
+            .map((t) => t.name)
+            .sort((a, b) => a.localeCompare(b)),
+          keyword_hashes: kh ? kh.hashes : null,
+        };
+      });
       return { rows };
     }
 
@@ -632,6 +638,16 @@ describe("AiPostsService getAiPostSummary", () => {
     expect(result?.tags).toEqual(["tagA", "tagB"]);
     expect(result?.features).toBeInstanceOf(Int8Array);
     expect(int8eq(result?.features, new Int8Array([1, -2, 3, 4]))).toBe(true);
+    expect(result?.keywordHashes).toEqual([]);
+  });
+
+  test("returns keywordHashes when present", async () => {
+    const buf = Buffer.from(serializeHashStringList(["k1", "k2"]));
+    pgClient.keywordHashes.push({ postId: postIdDec, hashes: buf });
+
+    const result = await service.getAiPostSummary(postIdHex);
+    expect(result).not.toBeNull();
+    expect(result?.keywordHashes).toEqual(deserializeHashList(buf));
   });
 });
 
@@ -680,6 +696,11 @@ describe("AiPostsService listAiPostsSummaries", () => {
       { postId: post2Dec, name: "t2" },
       { postId: post3Dec, name: "t3" },
     );
+
+    pgClient.keywordHashes.push({
+      postId: post2Dec,
+      hashes: Buffer.from(serializeHashStringList(["k1", "k2"])),
+    });
   });
 
   test("lists summaries with default pagination", async () => {
@@ -695,14 +716,19 @@ describe("AiPostsService listAiPostsSummaries", () => {
     const r2 = result.find((r) => r.postId === post2Hex);
     expect(r2?.updatedAt).toBe("2025-01-01T00:00:00Z");
     expect(int8eq(r2?.features, new Int8Array([9, 8, -7]))).toBe(true);
+    expect(r2?.keywordHashes).toEqual(
+      deserializeHashList(Buffer.from(serializeHashStringList(["k1", "k2"]))),
+    );
 
     const r1 = result.find((r) => r.postId === post1Hex);
     expect(r1?.updatedAt).toBe("2024-01-01T00:00:00Z");
     expect(int8eq(r1?.features, new Int8Array([1, 2, 3]))).toBe(true);
+    expect(r1?.keywordHashes).toEqual([]);
 
     const r3 = result.find((r) => r.postId === post3Hex);
     expect(r3?.updatedAt).toBe("2025-06-01T00:00:00Z");
     expect(r3?.features).toBeNull();
+    expect(r3?.keywordHashes).toEqual([]);
   });
 
   test("supports offset and limit", async () => {
@@ -851,10 +877,12 @@ describe("AiPostsService updateAiPost", () => {
     const input: UpdateAiPostSummaryInput = { postId: postIdHex, keywords: ["k1", "k2"] };
     const result = await service.updateAiPost(input);
     expect(result).not.toBeNull();
+
     const row = pgClient.keywordHashes.find((r) => r.postId === postIdDec);
     expect(row).toBeTruthy();
-    const expected = Buffer.from(serializeHashStringList(["k1", "k2"]));
-    expect(row?.hashes.equals(expected)).toBe(true);
+    const expectedBuf = Buffer.from(serializeHashStringList(["k1", "k2"]));
+    expect(row?.hashes.equals(expectedBuf)).toBe(true);
+    expect(result?.keywordHashes).toEqual(deserializeHashList(expectedBuf));
   });
 
   test("empty keywords deletes ai_post_keyword_hashes row", async () => {
@@ -866,6 +894,7 @@ describe("AiPostsService updateAiPost", () => {
     const result = await service.updateAiPost(input);
     expect(result).not.toBeNull();
     expect(pgClient.keywordHashes.find((r) => r.postId === postIdDec)).toBeUndefined();
+    expect(result?.keywordHashes).toEqual([]);
   });
 });
 

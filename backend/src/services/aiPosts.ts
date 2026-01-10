@@ -7,6 +7,7 @@ import {
   bufferToInt8Array,
   int8ArrayToBuffer,
   serializeHashStringList,
+  deserializeHashList,
 } from "../utils/format";
 import {
   decodeFeatures,
@@ -31,6 +32,7 @@ type AiPostSummaryDbRow = {
   summary: string | null;
   features: Buffer | null;
   tags: string[];
+  keyword_hashes: Buffer | null;
 };
 
 type RecommendDbRow = {
@@ -123,6 +125,7 @@ export class AiPostsService {
       summary: row.summary,
       features: row.features ? bufferToInt8Array(row.features) : null,
       tags: Array.isArray(row.tags) ? row.tags : [],
+      keywordHashes: row.keyword_hashes ? deserializeHashList(row.keyword_hashes) : [],
     };
   }
 
@@ -165,8 +168,11 @@ export class AiPostsService {
           FROM ai_post_tags apt
           WHERE apt.post_id = aps.post_id
           ORDER BY apt.name
-        ) AS tags
+        ) AS tags,
+        akh.hashes AS keyword_hashes
       FROM ai_post_summaries aps
+      LEFT JOIN ai_post_keyword_hashes akh
+        ON akh.post_id = aps.post_id
       WHERE aps.post_id = $1
       `,
       [hexToDec(id)],
@@ -200,8 +206,11 @@ export class AiPostsService {
           FROM ai_post_tags apt
           WHERE apt.post_id = aps.post_id
           ORDER BY apt.name
-        ) AS tags
+        ) AS tags,
+        akh.hashes AS keyword_hashes
       FROM ai_post_summaries aps
+      LEFT JOIN ai_post_keyword_hashes akh
+        ON akh.post_id = aps.post_id
       ${whereSql}
       ORDER BY aps.post_id ${orderDir}
       OFFSET $${idx++}
@@ -277,10 +286,6 @@ export class AiPostsService {
           ]);
         } else {
           const hashes = Buffer.from(serializeHashStringList(input.keywords));
-
-          console.log(input.keywords);
-          console.log(hashes);
-
           await pgQuery(
             this.pgPool,
             `
@@ -570,6 +575,7 @@ export class AiPostsService {
       return {
         tags: tagsOut,
         extraTags: extraTagsOut,
+        keywordHashes: [],
         features: outFeatures,
         weight: weightSum,
         postIds,
