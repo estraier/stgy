@@ -137,6 +137,7 @@ export class Config {
     10000,
   );
   static readonly AI_SUMMARY_SUMMARY_LENGTH = envNum("STGY_AI_SUMMARY_SUMMARY_LENGTH", 1000);
+  static readonly AI_SUMMARY_MAX_KEYWORDS = envNum("STGY_AI_SUMMARY_MAX_KEYWORDS", 20);
   static readonly AI_USER_BATCH_SIZE = envNum("STGY_AI_USER_BATCH_SIZE", 1);
   static readonly AI_USER_CONCURRENCY = envNum("STGY_AI_USER_CONCURRENCY", 1);
   static readonly AI_USER_IDLE_SLEEP_MS = envNum("STGY_AI_USER_IDLE_SLEEP_MS", 10 * 1000);

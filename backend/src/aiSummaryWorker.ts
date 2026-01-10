@@ -7,6 +7,7 @@ import type { ChatRequest, GenerateFeaturesRequest } from "./models/aiUser";
 import { AuthService } from "./services/auth";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 import { makeTextFromMarkdown } from "./utils/snippet";
+import { normalizeOneLiner } from "./utils/format";
 import { countPseudoTokens, sliceByPseudoTokens } from "stgy-markdown";
 import type { Pool } from "pg";
 import type Redis from "ioredis";
@@ -239,6 +240,35 @@ function parseTagsField(raw: unknown, maxCount: number): string[] {
   return unique.slice(0, maxCount);
 }
 
+function normalizeTerm(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const v = normalizeOneLiner(raw.toLowerCase());
+  if (typeof v !== "string") return null;
+  const s = v.trim();
+  return s === "" ? null : s;
+}
+
+function parseKeywordsField(raw: unknown, maxCount: number, tags: string[]): string[] {
+  if (!Array.isArray(raw)) return [];
+  const tagSet = new Set<string>();
+  for (const t of tags) {
+    const v = normalizeTerm(t);
+    if (v) tagSet.add(v);
+  }
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const t of raw) {
+    const v = normalizeTerm(t);
+    if (!v) continue;
+    if (tagSet.has(v)) continue;
+    if (seen.has(v)) continue;
+    seen.add(v);
+    unique.push(v);
+    if (unique.length >= maxCount) break;
+  }
+  return unique;
+}
+
 async function generateFeatures(
   sessionCookie: string,
   req: GenerateFeaturesRequest,
@@ -278,7 +308,12 @@ function buildFeaturesInput(summary: string, tags: string[], postSnippet: string
   return lines.join("\n");
 }
 
-type UpdateAiPostSummaryPutBody = { summary: string; tags: string[]; features: string };
+type UpdateAiPostSummaryPutBody = {
+  summary: string;
+  tags: string[];
+  keywords: string[];
+  features: string;
+};
 
 async function postSummaryResult(
   sessionCookie: string,
@@ -369,25 +404,40 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
 
   console.log(aiContent);
 
-  const parsed = evaluateChatResponseAsJson<{ summary?: unknown; tags?: unknown }>(aiContent);
+  const parsed = evaluateChatResponseAsJson<{
+    summary?: unknown;
+    tags?: unknown;
+    keywords?: unknown;
+  }>(aiContent);
   if (!isRecord(parsed)) {
     throw new Error(`AI output is not an object: postId=${postId}`);
   }
   const summaryRaw = parsed["summary"];
   const tagsRaw = parsed["tags"];
+  const keywordsRaw = parsed["keywords"];
   if (typeof summaryRaw !== "string") {
     throw new Error(`AI output missing summary string: postId=${postId}`);
   }
   const summary = truncateText(summaryRaw, Config.AI_SUMMARY_SUMMARY_TEXT_LIMIT);
   const tags = parseTagsField(tagsRaw, Config.AI_TAG_MAX_COUNT);
+  const aiKeywords = parseKeywordsField(keywordsRaw, 10, tags);
+  const postTags = Array.isArray(post.tags)
+    ? (post.tags as unknown[])
+        .map((t) => normalizeTerm(t))
+        .filter((t): t is string => typeof t === "string" && t !== "")
+    : [];
+  const keywords = [...postTags, ...tags, ...aiKeywords].splice(0, Config.AI_SUMMARY_MAX_KEYWORDS);
+
+  console.log("KEYWORDS", keywords);
+
   logger.info(
-    `parsed result postId=${postId} summary=${truncateForLog(summary, 50)} tags=${tags.join(",")}`,
+    `parsed result postId=${postId} summary=${truncateForLog(summary, 50)} tags=${tags.join(",")} keywords=${aiKeywords.join(",")}`,
   );
   const postSnippet = truncateText(
     makeTextFromMarkdown(post.content).replaceAll(/ +/g, " ").replaceAll(/\n+/g, "\n").trim(),
     Config.AI_SUMMARY_SUMMARY_LENGTH,
   );
-  const featuresInput = buildFeaturesInput(summary, tags, postSnippet);
+  const featuresInput = buildFeaturesInput(summary, keywords, postSnippet);
 
   console.log(featuresInput);
 
@@ -395,10 +445,11 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     model: Config.AI_SUMMARY_MODEL,
     input: featuresInput,
   });
-  const pkt: UpdateAiPostSummaryPacket = { postId, summary, tags, features };
+  const pkt: UpdateAiPostSummaryPacket = { postId, summary, tags, keywords, features };
   await postSummaryResult(sessionCookie, postId, {
     summary: pkt.summary ?? "",
     tags: pkt.tags ?? [],
+    keywords: pkt.keywords ?? [],
     features: pkt.features ?? "",
   });
   logger.info(`summary saved postId=${postId}`);
