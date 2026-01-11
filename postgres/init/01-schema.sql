@@ -131,6 +131,7 @@ CREATE TABLE ai_post_summaries (
   post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
   updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   summary VARCHAR(65535),
+  hashes BYTEA,
   features BYTEA
 );
 CREATE INDEX idx_ai_post_summaries_empty ON ai_post_summaries (post_id) WHERE summary IS NULL;
@@ -141,11 +142,6 @@ CREATE TABLE ai_post_tags (
   PRIMARY KEY (post_id, name)
 );
 CREATE INDEX idx_ai_post_tags_name_post_id ON ai_post_tags(name, post_id);
-
-CREATE TABLE ai_post_keyword_hashes (
-  post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
-  hashes BYTEA NOT NULL
-);
 
 CREATE TABLE ai_interests (
   user_id BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,

@@ -33,11 +33,10 @@ type AiPostSummaryDbRow = {
   summary: string | null;
   features: Buffer | null;
   tags: string[];
-  keyword_hashes: Buffer | null;
+  hashes: Buffer | null;
 };
 
 const compareBigIntDesc = (a: bigint, b: bigint): number => (a === b ? 0 : a > b ? -1 : 1);
-
 const isNonEmptyString = (v: unknown): v is string => typeof v === "string" && v.trim().length > 0;
 
 const safeHexToDec = (hex: string): string | null => {
@@ -68,7 +67,7 @@ export class AiPostsService {
       summary: row.summary,
       features: row.features ? bufferToInt8Array(row.features) : null,
       tags: Array.isArray(row.tags) ? row.tags : [],
-      keywordHashes: row.keyword_hashes ? deserializeHashList(row.keyword_hashes) : [],
+      keywordHashes: row.hashes ? deserializeHashList(row.hashes) : [],
     };
   }
 
@@ -112,10 +111,8 @@ export class AiPostsService {
           WHERE apt.post_id = aps.post_id
           ORDER BY apt.name
         ) AS tags,
-        akh.hashes AS keyword_hashes
+        aps.hashes
       FROM ai_post_summaries aps
-      LEFT JOIN ai_post_keyword_hashes akh
-        ON akh.post_id = aps.post_id
       WHERE aps.post_id = $1
       `,
       [hexToDec(id)],
@@ -150,10 +147,8 @@ export class AiPostsService {
           WHERE apt.post_id = aps.post_id
           ORDER BY apt.name
         ) AS tags,
-        akh.hashes AS keyword_hashes
+        aps.hashes
       FROM ai_post_summaries aps
-      LEFT JOIN ai_post_keyword_hashes akh
-        ON akh.post_id = aps.post_id
       ${whereSql}
       ORDER BY aps.post_id ${orderDir}
       OFFSET $${idx++}
@@ -168,44 +163,58 @@ export class AiPostsService {
     const postIdDec = hexToDec(input.postId);
     await pgQuery(this.pgPool, "BEGIN");
     try {
-      if (input.summary !== undefined && input.features !== undefined) {
-        const featuresBytea = input.features === null ? null : int8ArrayToBuffer(input.features);
+      const summaryProvided = input.summary !== undefined;
+      const featuresProvided = input.features !== undefined;
+      const keywordsProvided = input.keywords !== undefined;
+      if (summaryProvided || featuresProvided || keywordsProvided) {
+        const featuresBytea =
+          input.features === undefined
+            ? undefined
+            : input.features === null
+              ? null
+              : int8ArrayToBuffer(input.features);
+        const hashesBytea = !keywordsProvided
+          ? undefined
+          : input.keywords!.length === 0
+            ? null
+            : Buffer.from(serializeHashStringList(input.keywords!));
+        const cols: string[] = ["post_id"];
+        const vals: string[] = ["$1"];
+        const updates: string[] = ["updated_at = now()"];
+        const params: unknown[] = [postIdDec];
+        let p = 2;
+        if (summaryProvided) {
+          cols.push("summary");
+          vals.push(`$${p}`);
+          params.push(input.summary);
+          updates.push("summary = EXCLUDED.summary");
+          p++;
+        }
+        if (keywordsProvided) {
+          cols.push("hashes");
+          vals.push(`$${p}`);
+          params.push(hashesBytea);
+          updates.push("hashes = EXCLUDED.hashes");
+          p++;
+        }
+        if (featuresProvided) {
+          cols.push("features");
+          vals.push(`$${p}`);
+          params.push(featuresBytea);
+          updates.push("features = EXCLUDED.features");
+          p++;
+        }
+        cols.push("updated_at");
+        vals.push("now()");
         await pgQuery(
           this.pgPool,
           `
-          INSERT INTO ai_post_summaries (post_id, summary, features, updated_at)
-          VALUES ($1, $2, $3, now())
+          INSERT INTO ai_post_summaries (${cols.join(", ")})
+          VALUES (${vals.join(", ")})
           ON CONFLICT (post_id) DO UPDATE
-            SET summary = EXCLUDED.summary,
-                features = EXCLUDED.features,
-                updated_at = now()
+            SET ${updates.join(", ")}
           `,
-          [postIdDec, input.summary, featuresBytea],
-        );
-      } else if (input.summary !== undefined) {
-        await pgQuery(
-          this.pgPool,
-          `
-          INSERT INTO ai_post_summaries (post_id, summary, updated_at)
-          VALUES ($1, $2, now())
-          ON CONFLICT (post_id) DO UPDATE
-            SET summary = EXCLUDED.summary,
-                updated_at = now()
-          `,
-          [postIdDec, input.summary],
-        );
-      } else if (input.features !== undefined) {
-        const featuresBytea = input.features === null ? null : int8ArrayToBuffer(input.features);
-        await pgQuery(
-          this.pgPool,
-          `
-          INSERT INTO ai_post_summaries (post_id, features, updated_at)
-          VALUES ($1, $2, now())
-          ON CONFLICT (post_id) DO UPDATE
-            SET features = EXCLUDED.features,
-                updated_at = now()
-          `,
-          [postIdDec, featuresBytea],
+          params,
         );
       }
       if (input.tags !== undefined) {
@@ -222,25 +231,6 @@ export class AiPostsService {
           );
         }
       }
-      if (input.keywords !== undefined) {
-        if (input.keywords.length === 0) {
-          await pgQuery(this.pgPool, `DELETE FROM ai_post_keyword_hashes WHERE post_id = $1`, [
-            postIdDec,
-          ]);
-        } else {
-          const hashes = Buffer.from(serializeHashStringList(input.keywords));
-          await pgQuery(
-            this.pgPool,
-            `
-            INSERT INTO ai_post_keyword_hashes (post_id, hashes)
-            VALUES ($1, $2)
-            ON CONFLICT (post_id) DO UPDATE
-              SET hashes = EXCLUDED.hashes
-            `,
-            [postIdDec, hashes],
-          );
-        }
-      }
       await pgQuery(this.pgPool, "COMMIT");
     } catch (e) {
       await pgQuery(this.pgPool, "ROLLBACK");
@@ -250,19 +240,9 @@ export class AiPostsService {
   }
 
   async BuildSearchSeedForUser(userId: string, numClusters: number): Promise<SearchSeed[]> {
-    type SeedPostRow = {
-      post_id: string;
-      weight: number;
-    };
-    type SeedPostFeaturesRow = {
-      post_id: string;
-      features: Buffer | null;
-    };
-    type SeedTagRow = {
-      post_id: string;
-      name: string;
-      table_count: number;
-    };
+    type SeedPostRow = { post_id: string; weight: number };
+    type SeedPostFeaturesRow = { post_id: string; features: Buffer | null };
+    type SeedTagRow = { post_id: string; name: string; table_count: number };
     type SeedMaterial = {
       postId: bigint;
       postIdStr: string;
@@ -408,7 +388,7 @@ export class AiPostsService {
         const [name, score] = ranked[i];
         const raw = score / pivot;
         if (!(raw < 1)) continue;
-        let cnt = Math.min(floor3(raw), 0.999);
+        const cnt = Math.min(floor3(raw), 0.999);
         if (!(cnt > 0)) continue;
         extraTags.push({ name, count: cnt });
       }
@@ -494,7 +474,7 @@ export class AiPostsService {
         this.pgPool,
         `
         SELECT post_id, hashes
-        FROM ai_post_keyword_hashes
+        FROM ai_post_summaries
         WHERE post_id = ANY($1::bigint[])
           AND hashes IS NOT NULL
         `,
@@ -836,11 +816,8 @@ export class AiPostsService {
     for (const v of tagScores.values()) totalTagScore += v;
     if (totalTagScore === 0) return [];
     const tagIdfScores = new Map<string, number>();
-    for (const [tag, score] of tagScores.entries()) {
-      if (score > 0) {
-        tagIdfScores.set(tag, Math.log((totalTagScore + 1) / (score + 1)) + 0.5);
-      }
-    }
+    for (const [tag, score] of tagScores.entries())
+      if (score > 0) tagIdfScores.set(tag, Math.log((totalTagScore + 1) / (score + 1)) + 0.5);
     const tagHashIdfScores = new Map<number, number>();
     let idfSum = 0;
     let idfCount = 0;
@@ -861,10 +838,10 @@ export class AiPostsService {
         this.pgPool,
         `
           SELECT post_id, hashes
-          FROM ai_post_keyword_hashes
+          FROM ai_post_summaries
           WHERE post_id = ANY($1::bigint[])
             AND hashes IS NOT NULL
-          `,
+        `,
         [postIdsForKeywords],
       );
       for (const row of khRes.rows) {

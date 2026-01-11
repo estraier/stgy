@@ -113,16 +113,19 @@ $$
 INSERT INTO ai_post_summaries (
   post_id,
   summary,
+  hashes,
   features
 )
 VALUES
 (
   0x2000000000001,
   NULL,
+  NULL,
   NULL
 ),
 (
   0x2000000000002,
+  NULL,
   NULL,
   NULL
 );

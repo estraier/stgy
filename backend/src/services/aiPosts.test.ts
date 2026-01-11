@@ -56,6 +56,7 @@ function int8eq(a: Int8Array | null | undefined, b: Int8Array): boolean {
 type MockAiPostSummaryRow = {
   postId: string;
   summary: string | null;
+  hashes: Buffer | null; // <-- NEW: integrated into ai_post_summaries
   features: Buffer | null;
   updatedAt: string;
 };
@@ -88,7 +89,6 @@ class MockPgClient {
   posts: MockPostRow[] = [];
   follows: MockFollowRow[] = [];
   likes: MockPostLikeRow[] = [];
-  keywordHashes: { postId: string; hashes: Buffer }[] = [];
 
   async query(sql: string, params?: unknown[]) {
     sql = normalizeSql(sql);
@@ -107,6 +107,7 @@ class MockPgClient {
       return { rows: exists ? [{ ok: 1 }] : [] };
     }
 
+    // getAiPostSummary
     if (
       sql.startsWith("SELECT aps.post_id, aps.updated_at, aps.summary, aps.features") &&
       sql.includes("FROM ai_post_summaries aps") &&
@@ -119,7 +120,6 @@ class MockPgClient {
         .filter((t) => t.postId === postId)
         .map((t) => t.name)
         .sort((a, b) => a.localeCompare(b));
-      const kh = this.keywordHashes.find((r) => r.postId === postId);
       return {
         rows: [
           {
@@ -128,12 +128,15 @@ class MockPgClient {
             summary: s.summary,
             features: s.features,
             tags,
-            keyword_hashes: kh ? kh.hashes : null,
+            // service側が `aps.hashes` でも `... AS keyword_hashes` でも動くよう両方返す
+            hashes: s.hashes,
+            keyword_hashes: s.hashes,
           },
         ],
       };
     }
 
+    // listAiPostsSummaries
     if (
       sql.startsWith("SELECT aps.post_id, aps.updated_at, aps.summary, aps.features") &&
       sql.includes("FROM ai_post_summaries aps") &&
@@ -164,7 +167,6 @@ class MockPgClient {
 
       const sliced = list.slice(offset, offset + limit);
       const rows = sliced.map((s) => {
-        const kh = this.keywordHashes.find((r) => r.postId === s.postId);
         return {
           post_id: s.postId,
           updated_at: s.updatedAt,
@@ -174,65 +176,60 @@ class MockPgClient {
             .filter((t) => t.postId === s.postId)
             .map((t) => t.name)
             .sort((a, b) => a.localeCompare(b)),
-          keyword_hashes: kh ? kh.hashes : null,
+          hashes: s.hashes,
+          keyword_hashes: s.hashes,
         };
       });
       return { rows };
     }
 
+    // updateAiPost: consolidated upsert (dynamic columns)
     if (
-      sql.startsWith(
-        "INSERT INTO ai_post_summaries (post_id, summary, features, updated_at) VALUES ($1, $2, $3, now()) ON CONFLICT (post_id) DO UPDATE SET summary = EXCLUDED.summary, features = EXCLUDED.features, updated_at = now()",
-      )
+      sql.startsWith("INSERT INTO ai_post_summaries (") &&
+      sql.includes("ON CONFLICT (post_id) DO UPDATE")
     ) {
       const postId = params ? String(params[0]) : "";
-      const summary = (params?.[1] as string | null) ?? null;
-      const features = (params?.[2] as Buffer | null) ?? null;
       const now = new Date().toISOString();
-      const existing = this.summaries.find((s) => s.postId === postId);
-      if (existing) {
-        existing.summary = summary;
-        existing.features = features;
-        existing.updatedAt = now;
-      } else {
-        this.summaries.push({ postId, summary, features, updatedAt: now });
-      }
-      return { rowCount: 1, rows: [] };
-    }
 
-    if (
-      sql.startsWith(
-        "INSERT INTO ai_post_summaries (post_id, summary, updated_at) VALUES ($1, $2, now()) ON CONFLICT (post_id) DO UPDATE SET summary = EXCLUDED.summary, updated_at = now()",
-      )
-    ) {
-      const postId = params ? String(params[0]) : "";
-      const summary = (params?.[1] as string | null) ?? null;
-      const now = new Date().toISOString();
-      const existing = this.summaries.find((s) => s.postId === postId);
-      if (existing) {
-        existing.summary = summary;
-        existing.updatedAt = now;
-      } else {
-        this.summaries.push({ postId, summary, features: null, updatedAt: now });
+      let existing = this.summaries.find((s) => s.postId === postId);
+      if (!existing) {
+        existing = { postId, summary: null, hashes: null, features: null, updatedAt: now };
+        this.summaries.push(existing);
       }
-      return { rowCount: 1, rows: [] };
-    }
 
-    if (
-      sql.startsWith(
-        "INSERT INTO ai_post_summaries (post_id, features, updated_at) VALUES ($1, $2, now()) ON CONFLICT (post_id) DO UPDATE SET features = EXCLUDED.features, updated_at = now()",
-      )
-    ) {
-      const postId = params ? String(params[0]) : "";
-      const features = (params?.[1] as Buffer | null) ?? null;
-      const now = new Date().toISOString();
-      const existing = this.summaries.find((s) => s.postId === postId);
-      if (existing) {
-        existing.features = features;
-        existing.updatedAt = now;
-      } else {
-        this.summaries.push({ postId, summary: null, features, updatedAt: now });
+      const m = sql.match(
+        /^INSERT INTO ai_post_summaries \((.*?)\) VALUES \((.*?)\) ON CONFLICT \(post_id\) DO UPDATE/i,
+      );
+      const cols = m
+        ? m[1]
+            .split(",")
+            .map((x) => x.trim())
+            .filter(Boolean)
+        : [];
+
+      let p = 1; // params[0] is post_id
+      for (const c of cols) {
+        if (c === "post_id" || c === "updated_at") continue;
+        if (c === "summary") {
+          existing.summary = (params?.[p] as string | null) ?? null;
+          p++;
+          continue;
+        }
+        if (c === "hashes") {
+          existing.hashes = (params?.[p] as Buffer | null) ?? null;
+          p++;
+          continue;
+        }
+        if (c === "features") {
+          existing.features = (params?.[p] as Buffer | null) ?? null;
+          p++;
+          continue;
+        }
+        // unknown col: still consume a param just in case
+        p++;
       }
+
+      existing.updatedAt = now;
       return { rowCount: 1, rows: [] };
     }
 
@@ -241,26 +238,6 @@ class MockPgClient {
       const before = this.tags.length;
       this.tags = this.tags.filter((t) => t.postId !== postId);
       return { rowCount: before - this.tags.length, rows: [] };
-    }
-
-    if (sql.startsWith("DELETE FROM ai_post_keyword_hashes WHERE post_id = $1")) {
-      const postId = params ? String(params[0]) : "";
-      const before = this.keywordHashes.length;
-      this.keywordHashes = this.keywordHashes.filter((r) => r.postId !== postId);
-      return { rowCount: before - this.keywordHashes.length, rows: [] };
-    }
-
-    if (
-      sql.startsWith("INSERT INTO ai_post_keyword_hashes (post_id, hashes)") &&
-      sql.includes("ON CONFLICT (post_id) DO UPDATE") &&
-      sql.includes("SET hashes = EXCLUDED.hashes")
-    ) {
-      const postId = params ? String(params[0]) : "";
-      const hashes = (params?.[1] as Buffer) ?? Buffer.from([]);
-      const existing = this.keywordHashes.find((r) => r.postId === postId);
-      if (existing) existing.hashes = hashes;
-      else this.keywordHashes.push({ postId, hashes });
-      return { rowCount: 1, rows: [] };
     }
 
     if (
@@ -273,6 +250,7 @@ class MockPgClient {
       return { rowCount: tagArray.length, rows: [] };
     }
 
+    // BuildSearchSeedForUser seed_posts query (unchanged)
     if (
       sql.includes("WITH") &&
       sql.includes("self_posts AS") &&
@@ -357,6 +335,7 @@ class MockPgClient {
       return { rows };
     }
 
+    // BuildSearchSeedForUser loadTagsByPostId query (unchanged)
     if (
       sql.includes("WITH raw AS (") &&
       sql.includes("FROM post_tags") &&
@@ -482,6 +461,7 @@ class MockPgClient {
       return { rows };
     }
 
+    // RecommendPosts tag candidate query (unchanged)
     if (
       sql.includes("WITH query_tags(tag) AS") &&
       sql.includes("raw AS") &&
@@ -548,18 +528,21 @@ class MockPgClient {
       return { rows };
     }
 
+    // NEW: keyword hashes are now inside ai_post_summaries.hashes
     if (
       sql.startsWith("SELECT post_id, hashes") &&
-      sql.includes("FROM ai_post_keyword_hashes") &&
+      sql.includes("FROM ai_post_summaries") &&
       sql.includes("WHERE post_id = ANY($1::bigint[])")
     ) {
       const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
       const ids = arrParam ? arrParam.map((x) => String(x)) : [];
+      const requireNotNull = sql.includes("hashes IS NOT NULL");
       const rows = ids
         .map((id) => {
-          const r = this.keywordHashes.find((x) => x.postId === id);
-          if (!r) return null;
-          return { post_id: id, hashes: r.hashes };
+          const s = this.summaries.find((r) => r.postId === id);
+          if (!s) return null;
+          if (requireNotNull && !s.hashes) return null;
+          return { post_id: id, hashes: s.hashes };
         })
         .filter((x): x is NonNullable<typeof x> => x !== null);
       return { rows };
@@ -602,6 +585,7 @@ describe("AiPostsService checkAiPostSummary", () => {
     pgClient.summaries.push({
       postId: postIdDec,
       summary: "initial summary",
+      hashes: null,
       features: Buffer.from(new Int8Array([1, -2, 3, 4])),
       updatedAt: "2024-01-01T00:00:00Z",
     });
@@ -634,6 +618,7 @@ describe("AiPostsService getAiPostSummary", () => {
     pgClient.summaries.push({
       postId: postIdDec,
       summary: "initial summary",
+      hashes: null,
       features: Buffer.from(new Int8Array([1, -2, 3, 4])),
       updatedAt: "2024-01-01T00:00:00Z",
     });
@@ -661,7 +646,8 @@ describe("AiPostsService getAiPostSummary", () => {
 
   test("returns keywordHashes when present", async () => {
     const buf = Buffer.from(serializeHashStringList(["k1", "k2"]));
-    pgClient.keywordHashes.push({ postId: postIdDec, hashes: buf });
+    const s = pgClient.summaries.find((x) => x.postId === postIdDec);
+    if (s) s.hashes = buf;
 
     const result = await service.getAiPostSummary(postIdHex);
     expect(result).not.toBeNull();
@@ -692,18 +678,21 @@ describe("AiPostsService listAiPostsSummaries", () => {
       {
         postId: post1Dec,
         summary: null,
+        hashes: null,
         features: Buffer.from(new Int8Array([1, 2, 3])),
         updatedAt: "2024-01-01T00:00:00Z",
       },
       {
         postId: post2Dec,
         summary: "has summary",
+        hashes: Buffer.from(serializeHashStringList(["k1", "k2"])),
         features: Buffer.from(new Int8Array([9, 8, -7])),
         updatedAt: "2025-01-01T00:00:00Z",
       },
       {
         postId: post3Dec,
         summary: null,
+        hashes: null,
         features: null,
         updatedAt: "2025-06-01T00:00:00Z",
       },
@@ -714,11 +703,6 @@ describe("AiPostsService listAiPostsSummaries", () => {
       { postId: post2Dec, name: "t2" },
       { postId: post3Dec, name: "t3" },
     );
-
-    pgClient.keywordHashes.push({
-      postId: post2Dec,
-      hashes: Buffer.from(serializeHashStringList(["k1", "k2"])),
-    });
   });
 
   test("lists summaries with default pagination", async () => {
@@ -790,6 +774,7 @@ describe("AiPostsService updateAiPost", () => {
     pgClient.summaries.push({
       postId: postIdDec,
       summary: "original summary",
+      hashes: null,
       features: Buffer.from(new Int8Array([1, 2, 3])),
       updatedAt: "2024-01-01T00:00:00Z",
     });
@@ -896,22 +881,23 @@ describe("AiPostsService updateAiPost", () => {
     const result = await service.updateAiPost(input);
     expect(result).not.toBeNull();
 
-    const row = pgClient.keywordHashes.find((r) => r.postId === postIdDec);
+    const row = pgClient.summaries.find((r) => r.postId === postIdDec);
     expect(row).toBeTruthy();
     const expectedBuf = Buffer.from(serializeHashStringList(["k1", "k2"]));
-    expect(row?.hashes.equals(expectedBuf)).toBe(true);
+    expect(row?.hashes?.equals(expectedBuf)).toBe(true);
     expect(result?.keywordHashes).toEqual(deserializeHashList(expectedBuf));
   });
 
-  test("empty keywords deletes ai_post_keyword_hashes row", async () => {
-    pgClient.keywordHashes.push({
-      postId: postIdDec,
-      hashes: Buffer.from(serializeHashStringList(["x"])),
-    });
+  test("empty keywords sets hashes to null (and output becomes empty list)", async () => {
+    const s = pgClient.summaries.find((r) => r.postId === postIdDec);
+    if (s) s.hashes = Buffer.from(serializeHashStringList(["x"]));
+
     const input: UpdateAiPostSummaryInput = { postId: postIdHex, keywords: [] };
     const result = await service.updateAiPost(input);
     expect(result).not.toBeNull();
-    expect(pgClient.keywordHashes.find((r) => r.postId === postIdDec)).toBeUndefined();
+
+    const row = pgClient.summaries.find((r) => r.postId === postIdDec);
+    expect(row?.hashes).toBeNull();
     expect(result?.keywordHashes).toEqual([]);
   });
 });
@@ -928,6 +914,7 @@ describe("AiPostsService RecommendPosts", () => {
     pgClient.summaries.push({
       postId: postIdDec,
       summary: "s",
+      hashes: null,
       features: features ? Buffer.from(new Int8Array(features)) : null,
       updatedAt: "2025-01-01T00:00:00Z",
     });
@@ -1170,18 +1157,21 @@ describe("AiPostsService RecommendPosts", () => {
       {
         postId: dec(200),
         summary: "s",
+        hashes: null,
         features: Buffer.from(new Int8Array([10, 0, 0])),
         updatedAt: "2025-01-01T00:00:00Z",
       },
       {
         postId: dec(199),
         summary: "s",
+        hashes: null,
         features: Buffer.from(new Int8Array([10, 0, 0])),
         updatedAt: "2025-01-01T00:00:00Z",
       },
       {
         postId: dec(198),
         summary: "s",
+        hashes: null,
         features: Buffer.from(new Int8Array([10, 0, 0])),
         updatedAt: "2025-01-01T00:00:00Z",
       },
@@ -1220,6 +1210,7 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     pgClient.summaries.push({
       postId: postIdDec,
       summary: "s",
+      hashes: null,
       features: Buffer.from(a),
       updatedAt: "2025-01-01T00:00:00Z",
     });
@@ -1251,6 +1242,7 @@ describe("AiPostsService BuildSearchSeedForUser", () => {
     pgClient.summaries.push({
       postId: p,
       summary: "s",
+      hashes: null,
       features: null,
       updatedAt: "2025-01-01T00:00:00Z",
     });
