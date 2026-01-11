@@ -211,7 +211,7 @@ Docker関係のコマンドを利用目的別に整理する。
   - --startオプションをつけると、ビルド結果を実行する。
   - --openai-api-keyオプションでOpenAIのAPIキーを上書きできる。
   - 止める時はCtrl-Cで落とす。
-- ./scripts/run-local-backend.sh
+- ./scripts/run-local-frontend.sh
   - frontendサービスをローカルホストで起動する。
   - --startオプションをつけると、ビルド結果を実行する。
   - 止める時はCtrl-Cで落とす。
@@ -303,7 +303,7 @@ prodユーザでログインして、環境設定を行う。
 
 - SSHの鍵設定:
   - .ssh/id_rsaと.ssh/id_rsa.pubと.ssh/authorized_keysを既存環境からコピー。
-  - パーミッション設定: chmod 600 .ssh ; chmod 755 .ssh/*
+  - パーミッション設定: chmod 700 .ssh ; chmod 600 .ssh/*
 - 最低限の環境設定
   - .bash_profileと.bashrcを既存環境からコピー
 - 任意のエディタの設定。Emacsの場合は以下
@@ -439,7 +439,7 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
   - DBサーバをpostgres:5432として認識し、Dockerサブネットで通信。
-    - STGY_DATABASE_HOST=db
+    - STGY_DATABASE_HOST=postgres
     - STGY_DATABASE_PORT=5432
 
 - DBサーバ（PostgreSQL）
@@ -447,7 +447,7 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_DATABASE_PORT=5432
 
 - S3サーバ（MinIO）
-  - Dockerサブネットでminio:9000をlistenし、オブジェクトストレージを管理。表にはhttps://s3-stgy.jpとして露出。
+  - Dockerサブネットでminio:9000をlistenし、オブジェクトストレージを管理。表にはhttps://s3.stgy.jpとして露出。
     - STGY_MINIO_PORT=9000
   - Dockerサブネットでminio:9001をlistenし、コンソール画面を表示。表にはhttps://s3-console.stgy.jpとして露出。
     - STGY_MINIO_CONSOLE_PORT=9001
@@ -1074,9 +1074,9 @@ redis-cli -a stgystgy PING
 
 ## STGYのバックエンドとフロントエンド
 
-STGYのバックエンドとフロントエンドも実サービスとして稼働させられる。Gitのリポジトリ内でビルドして、/home/prod/stgy-backendおよび/home/prod/stgy-frontendの配下にデプロイして、そこにあるJavaScriptコードをNode.jsで実行する起動スクリプトをsystemd経由で実行する。
+STGYのバックエンドとフロントエンドもネイティブサービスとして稼働させられる。Gitのリポジトリ内でビルドして、/home/prod/stgy-backendおよび/home/prod/stgy-frontendの配下にデプロイして、そこにあるJavaScriptコードをNode.jsで実行する起動スクリプトをsystemd経由で実行する。
 
-バックエンドサーバをデプロイするには、prodユーザが、stgyリポジトリの中で、以下のコマンドを実行する。stgy.jpで全て実サービスを使った場合の環境設定がスクリプト内に書いてある。
+バックエンドサーバをデプロイするには、prodユーザが、stgyリポジトリの中で、以下のコマンドを実行する。stgy.jpで全てネイティブサービスを使った場合の環境設定がスクリプト内に書いてある。
 
 ```:small
 ./scripts/deploy-backend.sh
@@ -1116,7 +1116,7 @@ sudo systemctl enable --now stgy-backend
 systemctl status stgy-backend
 ```
 
-フロントエンドサーバをデプロイするには、prodユーザが、stgyリポジトリの中で、以下のコマンドを実行する。stgy.jpで全て実サービスを使った場合の環境設定がスクリプト内に書いてある。
+フロントエンドサーバをデプロイするには、prodユーザが、stgyリポジトリの中で、以下のコマンドを実行する。stgy.jpで全てネイティブサービスを使った場合の環境設定がスクリプト内に書いてある。
 
 ```:small
 ./scripts/deploy-frontend.sh
@@ -1166,7 +1166,7 @@ systemctl status stgy-frontend
 
 deploy-backend.shとdeploy-frontend.shが環境設定を内包するself-containedな実装になっているのは重要である。デプロイした時の環境設定で常にサービスが安定稼働するべきだからだ。デプロイ後に外部から環境変数を変化させて挙動を変えてはならない。二つのスクリプトはCI/CDへの布石である。STGYはOSS製品として頒布するので特定のデプロイ方式を前提としないが、少なくともGitHub Actionsでデプロイしやすいようには設計している。実際、GitHub Actionsのワークフローでリポジトリ内のスクリプトを実行するだけで、CDは達成できる。パスワード等はリポジトリのシークレットからパラメータ注入する。CIに関しては、単にテスト環境でnpm testを呼ぶワークフローを仕掛ければ良い。そこで呼ばれるテストが統合テストと呼ぶに足るものであるかどうかが品質を左右することになる。
 
-## 実サービス運用での初期化
+## ネイティブサービス運用での初期化
 
 リポジトリ直下で以下のコマンドを実行すると、データを初期化できる。データベースとオブジェクトストレージとキャッシュの全てを問答無用で初期化するので注意すること。
 
@@ -1181,7 +1181,7 @@ redis-cli -a stgystgy FLUSHALL
 
 その後、PostgreSQLの手順にあるスキーマ初期と、MinIOの手順にあるバケット初期設定と、STGYサービスの手順にある初期データの投入を行うこと。
 
-実サービスの全てを無効化するには、以下のコマンドを実行する。Docker運用に戻したい場合は、一旦全ての実サービスを停止する必要がある。
+ネイティブサービスの全てを無効化するには、以下のコマンドを実行する。Docker運用に戻したい場合は、一旦全てのネイティブサービスを停止する必要がある。
 
 ```:small
 sudo systemctl disable --now stgy-frontend
@@ -1193,7 +1193,7 @@ sudo systemctl disable --now postgresql
 sudo systemctl disable --now caddy
 ```
 
-実サービスの全てを有効化するには、以下のコマンドを実行する。
+ネイティブサービスの全てを有効化するには、以下のコマンドを実行する。
 
 ```:small
 sudo systemctl enable --now caddy
@@ -1205,11 +1205,58 @@ sudo systemctl enable --now stgy-backend
 sudo systemctl enable --now stgy-frontend
 ```
 
+## バックアップ
+
+Docker運用とネイティブサービス運用のどちらでも、データベースとオブジェクトストレージのデータを定期的にバックアップすることが望ましい。バックアップのタスク自体をDocker運用するかネイティブ運用するかもまた独立して選択できる。Docker運用のサーバのデータをネイティブのタスクでバックアップすることも、ネイティブ運用のサーバのデータをDockerのタスクでバックアップすることも可能である。
+
+### ネイティブ運用
+
+バックアップタスクをネイティブで運用する場合について述べる。前提として、以下のパッケージをインストールしておく。
+
+```:smqll
+sudo apt install postgresql-client rclone ca-certificates util-linux jq zstd
+```
+
+バックアップデータの置き場所を作成する。
+
+```:small
+sudo mkdir -p /var/backups/stgy
+sudo chown -R prod:prod /var/backups/stgy
+```
+
+手動でバックアップを取るには、prodユーザでログインして、以下のコマンドを実行する。
+
+```:small
+cd stgy
+./scripts/backup-full-site.sh backup
+```
+
+すると、/var/backups/stgyの下に、full-site-2026-02-11 のような日付の名前を持つディレクトリが作られ、そこにデータベースとオブジェクトストレージのデータがダンプされる。中身は以下のものがある。既存のディレクトリがある場合には二重には実行されないので、同日にもう一度実行したい場合、手動で該当ディレクトリを消すこと。
+
+- db : stgy.dumpに全データが入る。
+- objects : バケット毎にサブディレクトリが作られる。
+
+バックアップデータを使ってサーバ側のデータを復元するには、以下のコマンドを実行する。引数には復元対象のディレクトリ名を指定する。現在のデータは消えることに注意すること。
+
+```:small
+./scripts/backup-full-site.sh restore full-site-2026-02-11
+```
+
+古い世代のバックアップデータを消すには、以下のコマンドを実行する。デフォルトでは最新7世代を保持し、それより古いものを削除する。--retain-generations 3 などとして、保持する世代数を指定できる。
+
+```:small
+./scripts/backup-full-site.sh prune
+```
+
+### Docker運用
+
+(後で書く)
+
 ## まとめ
 
 STGYは、リバースプロクシにCaddy、データベースにPostgreSQL、オブジェクトストレージにMinIO、キャッシュにRedis、メール送信にMailpitとPostfixを用い、Node.jsのバックエンドとフロントエンドがそれらを操るアーキテクチャである。開発時にはMac上でDockerを用いて依存サービスを稼働させた上で、バックエンドとフロントエンドをローカルホストで動かす。
 
-デモ運用は、VPSのUbuntu Linuxサーバ1台で行う。Docker運用と実サービス運用の双方が可能である。短期間のデモであればDocker運用が楽だ。長期的に運用し、かつ他のサービスを同一ホストに同居させるなら、実サービス運用をした方が良い。実サービス運用の場合、systemdを使って多くのサービスを管理する。また、バックエンドとフロントエンドのデプロイ用のスクリプトも用意してあるので、Dockerほどではないが、それほど手間を書けずに導入できるようになっている。
+デモ運用は、VPSのUbuntu Linuxサーバ1台で行う。Docker運用とネイティブサービス運用の双方が可能である。短期間のデモであればDocker運用が楽だ。長期的に運用し、かつ他のサービスを同一ホストに同居させるなら、ネイティブサービス運用をした方が良い。ネイティブサービス運用の場合、systemdを使って多くのサービスを管理する。また、バックエンドとフロントエンドのデプロイ用のスクリプトも用意してあるので、Dockerほどではないが、それほど手間を書けずに導入できるようになっている。
 
 Next: [STGYのデータベース](/posts/0002000000000013)
 ____EOF____
