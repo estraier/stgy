@@ -442,6 +442,26 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_DATABASE_HOST=postgres
     - STGY_DATABASE_PORT=5432
 
+- AI要約ワーカ（Node.jsのCLI）
+  - バックエンドをhttp://backend:3001として認識し、Dockerサブネットで通信。
+    - STGY_BACKEND_API_BASE_URL=http://backend:3001
+  - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
+    - STGY_REDIS_HOST=redis
+    - STGY_REDIS_PORT=6379
+  - DBサーバをpostgres:5432として認識し、Dockerサブネットで通信。
+    - STGY_DATABASE_HOST=postgres
+    - STGY_DATABASE_PORT=5432
+
+- AIユーザワーカ（Node.jsのCLI）
+  - バックエンドをhttp://backend:3001として認識し、Dockerサブネットで通信。
+    - STGY_BACKEND_API_BASE_URL=http://backend:3001
+  - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
+    - STGY_REDIS_HOST=redis
+    - STGY_REDIS_PORT=6379
+  - DBサーバをpostgres:5432として認識し、Dockerサブネットで通信。
+    - STGY_DATABASE_HOST=postgres
+    - STGY_DATABASE_PORT=5432
+
 - DBサーバ（PostgreSQL）
   - Dockerサブネットでpostgres:5432をlistenし、DBを管理。
     - STGY_DATABASE_PORT=5432
@@ -1082,7 +1102,7 @@ STGYのバックエンドとフロントエンドもネイティブサービス�
 ./scripts/deploy-backend.sh
 ```
 
-デプロイ用スクリプトを実行すると、/home/prod/stgy-backend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。mailWorkerとmediaWorkerとnotificationWorkerも同時に起動される。それを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-backend.serviceとして書く。
+デプロイ用スクリプトを実行すると、/home/prod/stgy-backend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。mailWorkerとmediaWorkerとnotificationWorkerとaiSummaryWorkerとaiUserWorkerも同時に起動される。それを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-backend.serviceとして書く。
 
 ```:small
 [Unit]
