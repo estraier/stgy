@@ -14,6 +14,7 @@ jest.mock("../config", () => {
     Config: {
       AI_POST_SEED_CLUSTER_POSTIDS_LIMIT: 100,
       AI_POST_SEED_NUM_TAGS: 10,
+      AI_POST_SEED_NUM_KEYWORD_HASHES: 100,
       AI_POST_RECOMMEND_TAG_CANDIDATES: 100,
       AI_POST_RECOMMEND_VEC_CANDIDATES: 100,
     },
@@ -405,6 +406,20 @@ class MockPgClient {
         return a.name.localeCompare(b.name);
       });
 
+      return { rows };
+    }
+
+    if (
+      sql.startsWith("SELECT post_id, hashes") &&
+      sql.includes("FROM ai_post_keyword_hashes") &&
+      sql.includes("WHERE post_id = ANY($1::bigint[])")
+    ) {
+      const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
+      const ids = arrParam ? arrParam.map((x) => String(x)) : [];
+      const idSet = new Set(ids);
+      const rows = this.keywordHashes
+        .filter((r) => idSet.has(String(r.postId)))
+        .map((r) => ({ post_id: String(r.postId), hashes: r.hashes }));
       return { rows };
     }
 

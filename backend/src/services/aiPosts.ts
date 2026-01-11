@@ -8,6 +8,7 @@ import {
   int8ArrayToBuffer,
   serializeHashStringList,
   deserializeHashList,
+  hashString,
 } from "../utils/format";
 import {
   decodeFeatures,
@@ -33,64 +34,6 @@ type AiPostSummaryDbRow = {
   features: Buffer | null;
   tags: string[];
   keyword_hashes: Buffer | null;
-};
-
-type RecommendDbRow = {
-  post_id: string;
-  tag: string;
-  table_count: number;
-  is_root: boolean;
-  user_id: string;
-};
-
-type RecommendRecord = {
-  postId: bigint;
-  tag: string;
-  tableCount: number;
-  isRoot: boolean;
-  userId: string;
-};
-
-type PostFeaturesRow = {
-  post_id: string;
-  features: Buffer | null;
-};
-
-type PostLikesCountRow = {
-  post_id: string;
-  count_likes: number;
-};
-
-type FolloweeRow = {
-  followee_id: string;
-};
-
-type SeedPostRow = {
-  post_id: string;
-  weight: number;
-};
-
-type SeedPostFeaturesRow = {
-  post_id: string;
-  features: Buffer | null;
-};
-
-type SeedTagRow = {
-  post_id: string;
-  name: string;
-  table_count: number;
-};
-
-type Candidate = {
-  postId: bigint;
-  features: Int8Array | null;
-};
-
-type SeedMaterial = {
-  postId: bigint;
-  postIdStr: string;
-  effectiveWeight: number;
-  vec: number[];
 };
 
 const compareBigIntDesc = (a: bigint, b: bigint): number => (a === b ? 0 : a > b ? -1 : 1);
@@ -307,6 +250,25 @@ export class AiPostsService {
   }
 
   async BuildSearchSeedForUser(userId: string, numClusters: number): Promise<SearchSeed[]> {
+    type SeedPostRow = {
+      post_id: string;
+      weight: number;
+    };
+    type SeedPostFeaturesRow = {
+      post_id: string;
+      features: Buffer | null;
+    };
+    type SeedTagRow = {
+      post_id: string;
+      name: string;
+      table_count: number;
+    };
+    type SeedMaterial = {
+      postId: bigint;
+      postIdStr: string;
+      effectiveWeight: number;
+      vec: number[];
+    };
     const SELF_POST_LIMIT = 10;
     const SELF_LIKE_LIMIT = 20;
     const TOP_FOLLOWEE_LIMIT = 25;
@@ -446,12 +408,44 @@ export class AiPostsService {
         const [name, score] = ranked[i];
         const raw = score / pivot;
         if (!(raw < 1)) continue;
-        let cnt = floor3(raw);
-        if (cnt >= 1) cnt = 0.99;
+        let cnt = Math.min(floor3(raw), 0.999);
         if (!(cnt > 0)) continue;
         extraTags.push({ name, count: cnt });
       }
       return { tags, extraTags };
+    };
+    const buildKeywordHashes = (
+      keywordScores: Map<number, number>,
+    ): { hash: number; count: number }[] => {
+      const rankedAll = Array.from(keywordScores.entries()).sort((a, b) =>
+        a[1] !== b[1] ? b[1] - a[1] : a[0] - b[0],
+      );
+      if (rankedAll.length === 0) return [];
+      const topN = Math.min(
+        Config.AI_POST_SEED_NUM_TAGS,
+        rankedAll.length,
+        Config.AI_POST_SEED_NUM_KEYWORD_HASHES,
+      );
+      const top = rankedAll.slice(0, topN);
+      const pivot = top[top.length - 1]?.[1] ?? 0;
+      if (!(pivot > 0)) return top.map(([hash]) => ({ hash, count: 1 }));
+      const out: { hash: number; count: number }[] = top.map(([hash, score]) => ({
+        hash,
+        count: Math.max(1, round3(score / pivot)),
+      }));
+      for (
+        let i = topN;
+        i < rankedAll.length && out.length < Config.AI_POST_SEED_NUM_KEYWORD_HASHES;
+        i++
+      ) {
+        const [hash, score] = rankedAll[i];
+        const raw = score / pivot;
+        if (!(raw < 1)) continue;
+        const cnt = Math.min(floor3(raw), 0.999);
+        if (!(cnt > 0)) continue;
+        out.push({ hash, count: cnt });
+      }
+      return out;
     };
     const loadTagsByPostId = async (
       postIds: string[],
@@ -488,6 +482,45 @@ export class AiPostsService {
         const prev = out.get(pid);
         if (prev) prev.push(v);
         else out.set(pid, [v]);
+      }
+      return out;
+    };
+    type SeedKeywordHashesRow = { post_id: string; hashes: Buffer | null };
+    const loadKeywordHashesByPostId = async (
+      postIds: string[],
+    ): Promise<Map<string, { hash: number; count: number }[]>> => {
+      if (postIds.length === 0) return new Map();
+      const r = await pgQuery<SeedKeywordHashesRow>(
+        this.pgPool,
+        `
+        SELECT post_id, hashes
+        FROM ai_post_keyword_hashes
+        WHERE post_id = ANY($1::bigint[])
+          AND hashes IS NOT NULL
+        `,
+        [postIds],
+      );
+      const out = new Map<string, { hash: number; count: number }[]>();
+      for (const row of r.rows) {
+        if (!row.hashes) continue;
+        let list: { hash: number; count: number }[] = [];
+        try {
+          const v = deserializeHashList(row.hashes);
+          if (Array.isArray(v)) {
+            const counts = new Map<number, number>();
+            for (const x of v) {
+              if (typeof x !== "number" || !Number.isFinite(x)) continue;
+              const h = x >>> 0;
+              counts.set(h, (counts.get(h) ?? 0) + 1);
+            }
+            list = Array.from(counts.entries())
+              .map(([hash, count]) => ({ hash, count }))
+              .filter((x) => x.count > 0);
+          }
+        } catch {
+          list = [];
+        }
+        if (list.length > 0) out.set(row.post_id, list);
       }
       return out;
     };
@@ -533,8 +566,10 @@ export class AiPostsService {
       materials.push({ postId: BigInt(pid), postIdStr: pid, effectiveWeight: ew, vec });
     }
     if (materials.length === 0) return [];
-    const tagsByPostId = await loadTagsByPostId(materials.map((m) => m.postIdStr));
-    const ownersByPostId = await loadOwnersByPostId(materials.map((m) => m.postIdStr));
+    const matPostIds = materials.map((m) => m.postIdStr);
+    const tagsByPostId = await loadTagsByPostId(matPostIds);
+    const keywordHashesByPostId = await loadKeywordHashesByPostId(matPostIds);
+    const ownersByPostId = await loadOwnersByPostId(matPostIds);
     const actualClusters = Math.min(numClusters, materials.length);
     const seedFromUserId = (id: string): number => {
       const tail = id.length > 8 ? id.slice(-8) : id;
@@ -543,6 +578,7 @@ export class AiPostsService {
     const buildSeedFromCluster = (items: SeedMaterial[]): SearchSeed | null => {
       let weightSum = 0;
       const tagScores = new Map<string, number>();
+      const keywordScores = new Map<number, number>();
       let sumVec: number[] | null = null;
       for (const m of items) {
         const w = m.effectiveWeight;
@@ -552,10 +588,16 @@ export class AiPostsService {
           const tableScore = Math.log(1 + t.tableCount);
           tagScores.set(t.name, (tagScores.get(t.name) ?? 0) + w * tableScore);
         }
+        const hashes = keywordHashesByPostId.get(m.postIdStr) ?? [];
+        for (const h of hashes) {
+          const tableScore = Math.log(1 + h.count);
+          keywordScores.set(h.hash, (keywordScores.get(h.hash) ?? 0) + w * tableScore);
+        }
         if (!sumVec) sumVec = m.vec.map((x) => x * w);
         else for (let i = 0; i < sumVec.length; i++) sumVec[i] += m.vec[i] * w;
       }
       const { tags: tagsOut, extraTags: extraTagsOut } = buildTagsAndExtraTags(tagScores);
+      const keywordHashesOut = buildKeywordHashes(keywordScores);
       if (!sumVec || sumVec.length === 0) return null;
       const outFeatures = encodeFeatures(normalizeL2(sumVec));
       const postIds = items
@@ -575,7 +617,7 @@ export class AiPostsService {
       return {
         tags: tagsOut,
         extraTags: extraTagsOut,
-        keywordHashes: [],
+        keywordHashes: keywordHashesOut,
         features: outFeatures,
         weight: weightSum,
         postIds,
@@ -625,6 +667,25 @@ export class AiPostsService {
   }
 
   async RecommendPosts(input: RecommendPostsInput): Promise<string[]> {
+    type RecommendFolloweeRow = { followee_id: string };
+    type RecommendDbRowLocal = {
+      post_id: string;
+      tag: string;
+      table_count: number;
+      is_root: boolean;
+      user_id: string;
+    };
+    type RecommendRecordLocal = {
+      postId: bigint;
+      tag: string;
+      tableCount: number;
+      isRoot: boolean;
+      userId: string;
+    };
+    type RecommendCandidateLocal = { postId: bigint; features: Int8Array | null };
+    type RecommendPostFeaturesRowLocal = { post_id: string; features: Buffer | null };
+    type RecommendPostLikesCountRowLocal = { post_id: string; count_likes: number };
+    type RecommendPostKeywordHashesRowLocal = { post_id: string; hashes: Buffer | null };
     const offset = clampPositiveInt(input.offset, 0);
     const limit = clampPositiveInt(input.limit, 100);
     const order = normalizeOrder(input.order, "desc");
@@ -664,6 +725,11 @@ export class AiPostsService {
     const paramTagCounts = this.buildParamTagCounts(input.tags);
     const queryTags = Array.from(paramTagCounts.keys());
     if (queryTags.length === 0) return [];
+    const paramKeywordCounts = new Map<number, number>();
+    for (const [tag, cnt] of paramTagCounts.entries()) {
+      const h = hashString(tag) >>> 0;
+      paramKeywordCounts.set(h, (paramKeywordCounts.get(h) ?? 0) + cnt);
+    }
     const seedPostIdsHex = Array.isArray(input.seedPostIds)
       ? input.seedPostIds.filter(isNonEmptyString).map((s) => s.trim())
       : [];
@@ -679,7 +745,7 @@ export class AiPostsService {
     const seedN = seedPostIdsDecOrdered.length;
     let followeeIds: Set<string> | null = null;
     if (selfUserIdDec) {
-      const fr = await pgQuery<FolloweeRow>(
+      const fr = await pgQuery<RecommendFolloweeRow>(
         this.pgPool,
         `
       SELECT followee_id
@@ -690,7 +756,7 @@ export class AiPostsService {
       );
       followeeIds = new Set(fr.rows.map((r) => r.followee_id));
     }
-    const res = await pgQuery<RecommendDbRow>(
+    const res = await pgQuery<RecommendDbRowLocal>(
       this.pgPool,
       `
       WITH query_tags(tag) AS (
@@ -724,7 +790,7 @@ export class AiPostsService {
     `,
       [queryTags, Config.AI_POST_RECOMMEND_TAG_CANDIDATES],
     );
-    let records: RecommendRecord[] = res.rows.map((r) => ({
+    let records: RecommendRecordLocal[] = res.rows.map((r) => ({
       postId: BigInt(r.post_id),
       tag: r.tag,
       tableCount: r.table_count,
@@ -761,7 +827,53 @@ export class AiPostsService {
     const tagIdfScores = new Map<string, number>();
     for (const [tag, score] of tagScores.entries())
       if (score > 0) tagIdfScores.set(tag, Math.log(totalTagScore / score));
+    const tagHashIdfScores = new Map<number, number>();
+    let idfSum = 0;
+    let idfCount = 0;
+    for (const [tag, idf] of tagIdfScores.entries()) {
+      const h = hashString(tag) >>> 0;
+      const prev = tagHashIdfScores.get(h);
+      if (prev === undefined || idf > prev) tagHashIdfScores.set(h, idf);
+      idfSum += idf;
+      idfCount += 1;
+    }
+    const avgIdfScore = idfCount > 0 ? idfSum / idfCount : 0;
+    const fallbackIdfScore = avgIdfScore / 2;
     const sortedPostIds = Array.from(tagTableCountsByPostId.keys()).sort(compareBigIntDesc);
+    const keywordCountsByPostId = new Map<bigint, Map<number, number>>();
+    const postIdsForKeywords = sortedPostIds.map((pid) => pid.toString());
+    if (postIdsForKeywords.length > 0) {
+      const khRes = await pgQuery<RecommendPostKeywordHashesRowLocal>(
+        this.pgPool,
+        `
+        SELECT post_id, hashes
+        FROM ai_post_keyword_hashes
+        WHERE post_id = ANY($1::bigint[])
+          AND hashes IS NOT NULL
+        `,
+        [postIdsForKeywords],
+      );
+      for (const row of khRes.rows) {
+        if (!row.hashes) continue;
+        const hashes: number[] = [];
+        try {
+          const v = deserializeHashList(row.hashes);
+          if (Array.isArray(v))
+            for (const x of v)
+              if (typeof x === "number" && Number.isFinite(x)) hashes.push(x >>> 0);
+        } catch {
+          continue;
+        }
+        if (hashes.length === 0) continue;
+        const pid = BigInt(row.post_id);
+        let m = keywordCountsByPostId.get(pid);
+        if (!m) {
+          m = new Map<number, number>();
+          keywordCountsByPostId.set(pid, m);
+        }
+        for (const h of hashes) m.set(h, (m.get(h) ?? 0) + 1);
+      }
+    }
     let postRankScore = sortedPostIds.length * 3;
     const postRankScores = new Map<bigint, number>();
     for (const postId of sortedPostIds) {
@@ -785,13 +897,26 @@ export class AiPostsService {
         const add = rankScore * tfScore * idfScore * rootScore * socialScore;
         postFinalScores.set(postId, (postFinalScores.get(postId) ?? 0) + add);
       }
+      const keywordMap = keywordCountsByPostId.get(postId);
+      if (keywordMap) {
+        for (const [hash, tableCount] of keywordMap.entries()) {
+          const paramCount = paramKeywordCounts.get(hash) ?? 0;
+          if (!(paramCount > 0)) continue;
+          const idfScore = tagHashIdfScores.get(hash) ?? fallbackIdfScore;
+          const tfArg = tableCount + paramCount;
+          if (!(tfArg > 0)) continue;
+          const tfScore = Math.log(tfArg);
+          const add = rankScore * tfScore * idfScore * rootScore * socialScore;
+          postFinalScores.set(postId, (postFinalScores.get(postId) ?? 0) + add);
+        }
+      }
     }
     const scored = Array.from(postFinalScores.entries())
       .map(([postId, score]) => ({ postId, score }))
       .sort((a, b) =>
         a.score !== b.score ? b.score - a.score : compareBigIntDesc(a.postId, b.postId),
       );
-    const universe: Candidate[] = [];
+    const universe: RecommendCandidateLocal[] = [];
     for (
       let i = 0;
       i < scored.length && universe.length < Config.AI_POST_RECOMMEND_VEC_CANDIDATES;
@@ -799,7 +924,7 @@ export class AiPostsService {
     ) {
       const chunk = scored.slice(i, i + 20);
       const ids = chunk.map((c) => c.postId.toString());
-      const r = await pgQuery<PostFeaturesRow>(
+      const r = await pgQuery<RecommendPostFeaturesRowLocal>(
         this.pgPool,
         `
         SELECT post_id, features
@@ -808,7 +933,7 @@ export class AiPostsService {
       `,
         [ids],
       );
-      const byId = new Map<string, PostFeaturesRow>();
+      const byId = new Map<string, RecommendPostFeaturesRowLocal>();
       for (const row of r.rows) byId.set(row.post_id, row);
       for (const c of chunk) {
         const row = byId.get(c.postId.toString());
@@ -831,7 +956,7 @@ export class AiPostsService {
         needFetch.push(dec);
       }
       if (needFetch.length > 0) {
-        const r = await pgQuery<PostFeaturesRow>(
+        const r = await pgQuery<RecommendPostFeaturesRowLocal>(
           this.pgPool,
           `
           SELECT post_id, features
@@ -934,7 +1059,7 @@ export class AiPostsService {
     const likesById = new Map<string, number>();
     if (promotionByLikesAlpha > 0) {
       const ids = candidates.map((c) => c.postId.toString());
-      const likeRes = await pgQuery<PostLikesCountRow>(
+      const likeRes = await pgQuery<RecommendPostLikesCountRowLocal>(
         this.pgPool,
         `
         SELECT post_id, COUNT(*)::int AS count_likes
