@@ -410,20 +410,6 @@ class MockPgClient {
     }
 
     if (
-      sql.startsWith("SELECT post_id, hashes") &&
-      sql.includes("FROM ai_post_keyword_hashes") &&
-      sql.includes("WHERE post_id = ANY($1::bigint[])")
-    ) {
-      const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
-      const ids = arrParam ? arrParam.map((x) => String(x)) : [];
-      const idSet = new Set(ids);
-      const rows = this.keywordHashes
-        .filter((r) => idSet.has(String(r.postId)))
-        .map((r) => ({ post_id: String(r.postId), hashes: r.hashes }));
-      return { rows };
-    }
-
-    if (
       sql.startsWith("SELECT id, owned_by") &&
       sql.includes("FROM posts") &&
       sql.includes("WHERE id = ANY($1::bigint[])")
@@ -559,6 +545,23 @@ class MockPgClient {
         });
       }
 
+      return { rows };
+    }
+
+    if (
+      sql.startsWith("SELECT post_id, hashes") &&
+      sql.includes("FROM ai_post_keyword_hashes") &&
+      sql.includes("WHERE post_id = ANY($1::bigint[])")
+    ) {
+      const arrParam = (params ?? []).find((p) => Array.isArray(p)) as unknown[] | undefined;
+      const ids = arrParam ? arrParam.map((x) => String(x)) : [];
+      const rows = ids
+        .map((id) => {
+          const r = this.keywordHashes.find((x) => x.postId === id);
+          if (!r) return null;
+          return { post_id: id, hashes: r.hashes };
+        })
+        .filter((x): x is NonNullable<typeof x> => x !== null);
       return { rows };
     }
 
@@ -1037,7 +1040,7 @@ describe("AiPostsService RecommendPosts", () => {
   });
 
   test("returns empty when tags empty", async () => {
-    const input: RecommendPostsInput = { tags: [], limit: 10, order: "desc" };
+    const input: RecommendPostsInput = { tags: [], keywordHashes: [], limit: 10, order: "desc" };
     const result = await service.RecommendPosts(input);
     expect(result).toEqual([]);
   });
@@ -1045,6 +1048,7 @@ describe("AiPostsService RecommendPosts", () => {
   test("does not include posts missing ai_post_summaries features/row", async () => {
     const input: RecommendPostsInput = {
       tags: [seed("tech"), seed("eco"), seed("game")],
+      keywordHashes: [],
       limit: 200,
       order: "desc",
     };
@@ -1058,6 +1062,7 @@ describe("AiPostsService RecommendPosts", () => {
     mkSummary(dec(128), [0, 0, 10]);
     const input: RecommendPostsInput = {
       tags: [seed("tech"), seed("eco"), seed("game")],
+      keywordHashes: [],
       limit: 200,
       order: "desc",
       seedPostIds: [hex(128)],
@@ -1070,6 +1075,7 @@ describe("AiPostsService RecommendPosts", () => {
     const selfUserHex = (pgClient as any).__selfUserHex as string;
     const input: RecommendPostsInput = {
       tags: [seed("tech"), seed("eco"), seed("game")],
+      keywordHashes: [],
       selfUserId: selfUserHex,
       limit: 200,
       order: "desc",
@@ -1082,6 +1088,7 @@ describe("AiPostsService RecommendPosts", () => {
     const q = new Int8Array([10, 0, 0]);
     const input: RecommendPostsInput = {
       tags: [seed("tech"), seed("eco"), seed("game")],
+      keywordHashes: [],
       features: q,
       limit: 200,
       order: "desc",
@@ -1096,6 +1103,7 @@ describe("AiPostsService RecommendPosts", () => {
   test("promotionByLikesAlpha improves rank for liked post (relative)", async () => {
     const baseInput: RecommendPostsInput = {
       tags: [seed("tech"), seed("eco"), seed("game")],
+      keywordHashes: [],
       limit: 200,
       order: "desc",
     };
@@ -1121,6 +1129,7 @@ describe("AiPostsService RecommendPosts", () => {
     const q = new Int8Array([10, 0, 0]);
     const baseInput: RecommendPostsInput = {
       tags: [seed("tech"), seed("eco"), seed("game")],
+      keywordHashes: [],
       features: q,
       limit: 200,
       order: "desc",
@@ -1180,6 +1189,7 @@ describe("AiPostsService RecommendPosts", () => {
 
     const input: RecommendPostsInput = {
       tags: [seed("t")],
+      keywordHashes: [],
       features: new Int8Array([10, 0, 0]),
       ownerDecay: 0.1,
       order: "desc",

@@ -686,6 +686,25 @@ export class AiPostsService {
     type RecommendPostFeaturesRowLocal = { post_id: string; features: Buffer | null };
     type RecommendPostLikesCountRowLocal = { post_id: string; count_likes: number };
     type RecommendPostKeywordHashesRowLocal = { post_id: string; hashes: Buffer | null };
+    const buildParamKeywordHashCounts = (keywordHashes: unknown): Map<number, number> => {
+      const m = new Map<number, number>();
+      if (!Array.isArray(keywordHashes)) return m;
+      for (const kh of keywordHashes) {
+        const hash =
+          typeof (kh as { hash?: unknown })?.hash === "number" &&
+          Number.isFinite((kh as { hash: number }).hash)
+            ? (kh as { hash: number }).hash >>> 0
+            : null;
+        const count =
+          typeof (kh as { count?: unknown })?.count === "number" &&
+          Number.isFinite((kh as { count: number }).count)
+            ? (kh as { count: number }).count
+            : 0;
+        if (hash === null || !(count > 0)) continue;
+        m.set(hash, (m.get(hash) ?? 0) + count);
+      }
+      return m;
+    };
     const offset = clampPositiveInt(input.offset, 0);
     const limit = clampPositiveInt(input.limit, 100);
     const order = normalizeOrder(input.order, "desc");
@@ -725,11 +744,7 @@ export class AiPostsService {
     const paramTagCounts = this.buildParamTagCounts(input.tags);
     const queryTags = Array.from(paramTagCounts.keys());
     if (queryTags.length === 0) return [];
-    const paramKeywordCounts = new Map<number, number>();
-    for (const [tag, cnt] of paramTagCounts.entries()) {
-      const h = hashString(tag) >>> 0;
-      paramKeywordCounts.set(h, (paramKeywordCounts.get(h) ?? 0) + cnt);
-    }
+    const paramKeywordCounts = buildParamKeywordHashCounts(input.keywordHashes);
     const seedPostIdsHex = Array.isArray(input.seedPostIds)
       ? input.seedPostIds.filter(isNonEmptyString).map((s) => s.trim())
       : [];
@@ -747,11 +762,7 @@ export class AiPostsService {
     if (selfUserIdDec) {
       const fr = await pgQuery<RecommendFolloweeRow>(
         this.pgPool,
-        `
-      SELECT followee_id
-      FROM user_follows
-      WHERE follower_id = $1
-    `,
+        `SELECT followee_id FROM user_follows WHERE follower_id = $1`,
         [selfUserIdDec],
       );
       followeeIds = new Set(fr.rows.map((r) => r.followee_id));
@@ -759,35 +770,35 @@ export class AiPostsService {
     const res = await pgQuery<RecommendDbRowLocal>(
       this.pgPool,
       `
-      WITH query_tags(tag) AS (
-        SELECT unnest($1::text[])
-      ),
-      raw AS (
-        SELECT qt.tag, x.post_id, x.src
-        FROM query_tags qt
-        JOIN LATERAL (
-          (SELECT post_id, 'post'::text AS src
-           FROM post_tags
-           WHERE name = qt.tag
-           ORDER BY post_id DESC
-           LIMIT $2)
-          UNION ALL
-          (SELECT post_id, 'ai'::text AS src
-           FROM ai_post_tags
-           WHERE name = qt.tag
-           ORDER BY post_id DESC
-           LIMIT $2)
-        ) x ON true
-      ),
-      agg AS (
-        SELECT tag, post_id, COUNT(DISTINCT src)::int AS table_count
-        FROM raw
-        GROUP BY tag, post_id
-      )
-      SELECT a.post_id, a.tag, a.table_count, (p.reply_to IS NULL) AS is_root, p.owned_by AS user_id
-      FROM agg a
-      JOIN posts p ON p.id = a.post_id
-    `,
+        WITH query_tags(tag) AS (
+          SELECT unnest($1::text[])
+        ),
+        raw AS (
+          SELECT qt.tag, x.post_id, x.src
+          FROM query_tags qt
+          JOIN LATERAL (
+            (SELECT post_id, 'post'::text AS src
+             FROM post_tags
+             WHERE name = qt.tag
+             ORDER BY post_id DESC
+             LIMIT $2)
+            UNION ALL
+            (SELECT post_id, 'ai'::text AS src
+             FROM ai_post_tags
+             WHERE name = qt.tag
+             ORDER BY post_id DESC
+             LIMIT $2)
+          ) x ON true
+        ),
+        agg AS (
+          SELECT tag, post_id, COUNT(DISTINCT src)::int AS table_count
+          FROM raw
+          GROUP BY tag, post_id
+        )
+        SELECT a.post_id, a.tag, a.table_count, (p.reply_to IS NULL) AS is_root, p.owned_by AS user_id
+        FROM agg a
+        JOIN posts p ON p.id = a.post_id
+      `,
       [queryTags, Config.AI_POST_RECOMMEND_TAG_CANDIDATES],
     );
     let records: RecommendRecordLocal[] = res.rows.map((r) => ({
@@ -825,13 +836,16 @@ export class AiPostsService {
     for (const v of tagScores.values()) totalTagScore += v;
     if (totalTagScore === 0) return [];
     const tagIdfScores = new Map<string, number>();
-    for (const [tag, score] of tagScores.entries())
-      if (score > 0) tagIdfScores.set(tag, Math.log(totalTagScore / score));
+    for (const [tag, score] of tagScores.entries()) {
+      if (score > 0) {
+        tagIdfScores.set(tag, Math.log((totalTagScore + 1) / (score + 1)) + 0.5);
+      }
+    }
     const tagHashIdfScores = new Map<number, number>();
     let idfSum = 0;
     let idfCount = 0;
     for (const [tag, idf] of tagIdfScores.entries()) {
-      const h = hashString(tag) >>> 0;
+      const h = hashString(tag);
       const prev = tagHashIdfScores.get(h);
       if (prev === undefined || idf > prev) tagHashIdfScores.set(h, idf);
       idfSum += idf;
@@ -846,11 +860,11 @@ export class AiPostsService {
       const khRes = await pgQuery<RecommendPostKeywordHashesRowLocal>(
         this.pgPool,
         `
-        SELECT post_id, hashes
-        FROM ai_post_keyword_hashes
-        WHERE post_id = ANY($1::bigint[])
-          AND hashes IS NOT NULL
-        `,
+          SELECT post_id, hashes
+          FROM ai_post_keyword_hashes
+          WHERE post_id = ANY($1::bigint[])
+            AND hashes IS NOT NULL
+          `,
         [postIdsForKeywords],
       );
       for (const row of khRes.rows) {
@@ -888,28 +902,29 @@ export class AiPostsService {
       const rootScore = meta.isRoot ? 1.0 : 0.5;
       const socialScore =
         selfUserIdDec && followeeIds ? (followeeIds.has(meta.userId) ? 0.9 : 0.8) : 0.8;
+      let tagScore = 0;
       for (const [tag, tableCount] of tagMap.entries()) {
         const idfScore = tagIdfScores.get(tag);
         const paramCount = paramTagCounts.get(tag) ?? 0;
         const tfArg = tableCount + paramCount;
-        if (idfScore === undefined || !(tfArg > 0)) continue;
-        const tfScore = Math.log(tfArg);
-        const add = rankScore * tfScore * idfScore * rootScore * socialScore;
-        postFinalScores.set(postId, (postFinalScores.get(postId) ?? 0) + add);
+        if (idfScore === undefined || tfArg <= 0) continue;
+        tagScore += Math.log(tfArg) * idfScore;
       }
+      let keywordScore = 0;
       const keywordMap = keywordCountsByPostId.get(postId);
       if (keywordMap) {
         for (const [hash, tableCount] of keywordMap.entries()) {
           const paramCount = paramKeywordCounts.get(hash) ?? 0;
-          if (!(paramCount > 0)) continue;
+          if (paramCount <= 0) continue;
           const idfScore = tagHashIdfScores.get(hash) ?? fallbackIdfScore;
           const tfArg = tableCount + paramCount;
-          if (!(tfArg > 0)) continue;
-          const tfScore = Math.log(tfArg);
-          const add = rankScore * tfScore * idfScore * rootScore * socialScore;
-          postFinalScores.set(postId, (postFinalScores.get(postId) ?? 0) + add);
+          if (tfArg <= 0) continue;
+          keywordScore += Math.log(tfArg) * idfScore;
         }
       }
+      const combined = tagScore + keywordScore;
+      const postFinalScore = combined * rankScore * rootScore * socialScore;
+      postFinalScores.set(postId, postFinalScore);
     }
     const scored = Array.from(postFinalScores.entries())
       .map(([postId, score]) => ({ postId, score }))
@@ -927,10 +942,10 @@ export class AiPostsService {
       const r = await pgQuery<RecommendPostFeaturesRowLocal>(
         this.pgPool,
         `
-        SELECT post_id, features
-        FROM ai_post_summaries
-        WHERE post_id = ANY($1::bigint[])
-      `,
+          SELECT post_id, features
+          FROM ai_post_summaries
+          WHERE post_id = ANY($1::bigint[])
+        `,
         [ids],
       );
       const byId = new Map<string, RecommendPostFeaturesRowLocal>();
@@ -959,11 +974,11 @@ export class AiPostsService {
         const r = await pgQuery<RecommendPostFeaturesRowLocal>(
           this.pgPool,
           `
-          SELECT post_id, features
-          FROM ai_post_summaries
-          WHERE post_id = ANY($1::bigint[])
-            AND features IS NOT NULL
-        `,
+            SELECT post_id, features
+            FROM ai_post_summaries
+            WHERE post_id = ANY($1::bigint[])
+              AND features IS NOT NULL
+          `,
           [needFetch],
         );
         for (const row of r.rows) {
@@ -1028,10 +1043,10 @@ export class AiPostsService {
         const ownRes = await pgQuery<PostOwnerRow2>(
           this.pgPool,
           `
-            SELECT id::text AS post_id, owned_by
-            FROM posts
-            WHERE id = ANY($1::bigint[])
-          `,
+              SELECT id::text AS post_id, owned_by
+              FROM posts
+              WHERE id = ANY($1::bigint[])
+            `,
           [missing],
         );
         for (const r of ownRes.rows)
@@ -1062,11 +1077,11 @@ export class AiPostsService {
       const likeRes = await pgQuery<RecommendPostLikesCountRowLocal>(
         this.pgPool,
         `
-        SELECT post_id, COUNT(*)::int AS count_likes
-        FROM post_likes
-        WHERE post_id = ANY($1::bigint[])
-        GROUP BY post_id
-      `,
+          SELECT post_id, COUNT(*)::int AS count_likes
+          FROM post_likes
+          WHERE post_id = ANY($1::bigint[])
+          GROUP BY post_id
+        `,
         [ids],
       );
       for (const r of likeRes.rows) likesById.set(r.post_id, r.count_likes);
@@ -1078,10 +1093,10 @@ export class AiPostsService {
       const metaRes = await pgQuery<PostReplyRow>(
         this.pgPool,
         `
-        SELECT id::text AS post_id, reply_to
-        FROM posts
-        WHERE id = ANY($1::bigint[])
-      `,
+          SELECT id::text AS post_id, reply_to
+          FROM posts
+          WHERE id = ANY($1::bigint[])
+        `,
         [ids],
       );
       for (const r of metaRes.rows) isRootById.set(r.post_id, r.reply_to === null);

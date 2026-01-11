@@ -75,6 +75,7 @@ export type SearchSeedPacket = {
 
 export type RecommendPostsInput = {
   tags: SearchSeedTag[];
+  keywordHashes: SearchSeedKeywordHash[];
   features?: Int8Array;
   seedPostIds?: string[];
   selfUserId?: string;
@@ -87,6 +88,7 @@ export type RecommendPostsInput = {
 
 export type RecommendPostsInputPacket = {
   tags: SearchSeedTag[];
+  keywordHashes: SearchSeedKeywordHash[];
   features?: string | null;
   seedPostIds?: string[];
   selfUserId?: string;

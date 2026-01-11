@@ -36,6 +36,7 @@ import type {
   AiPostSummaryPacket,
   RecommendPostsInputPacket,
   SearchSeedTag,
+  SearchSeedKeywordHash,
 } from "./models/aiPost";
 import type { UserLite, UserDetail } from "./models/user";
 import type { Post, PostDetail } from "./models/post";
@@ -820,9 +821,11 @@ async function fetchRecommendedPosts(
     name,
     count,
   }));
+  const keywordHashes: SearchSeedKeywordHash[] = [];
   if (tags.length === 0) return [];
   const body: RecommendPostsInputPacket = {
     tags,
+    keywordHashes,
     offset: 0,
     limit: Math.min(100, Config.AI_USER_FETCH_POST_LIMIT),
     order: "desc",
