@@ -932,12 +932,13 @@ export class AiPostsService {
         a.score !== b.score ? b.score - a.score : compareBigIntDesc(a.postId, b.postId),
       );
     const universe: RecommendCandidateLocal[] = [];
+    const FETCH_VECTOR_CHUNK_SIZE = 100;
     for (
       let i = 0;
       i < scored.length && universe.length < Config.AI_POST_RECOMMEND_VEC_CANDIDATES;
-      i += 20
+      i += FETCH_VECTOR_CHUNK_SIZE
     ) {
-      const chunk = scored.slice(i, i + 20);
+      const chunk = scored.slice(i, i + FETCH_VECTOR_CHUNK_SIZE);
       const ids = chunk.map((c) => c.postId.toString());
       const r = await pgQuery<RecommendPostFeaturesRowLocal>(
         this.pgPool,
