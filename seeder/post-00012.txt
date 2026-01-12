@@ -1227,36 +1227,36 @@ sudo systemctl enable --now stgy-frontend
 
 ## バックアップ
 
-Docker運用とネイティブサービス運用のどちらでも、データベースとオブジェクトストレージのデータを定期的にバックアップすることが望ましい。バックアップのタスク自体をDocker運用するかネイティブ運用するかもまた独立して選択できる。Docker運用のサーバのデータをネイティブのタスクでバックアップすることも、ネイティブ運用のサーバのデータをDockerのタスクでバックアップすることも可能である。
+実運用中は、データベースとオブジェクトストレージのデータを定期的にバックアップすることが望ましい。Docker運用とネイティブサービス運用のどちらでも、同じ手順でバックアップの作成ができる。
 
-### ネイティブ運用
-
-バックアップタスクをネイティブで運用する場合について述べる。前提として、以下のパッケージをインストールしておく。
+バックアップのタスクを実行する環境は、本番稼働環境のネットワーク上にあるLinuxサーバならば何でも良いが、PostgreSQLとMinIOのクライアントが必要になるので、VPSサーバ以外で動かす場合には両者のクライアントパッケージを入れること。それに加えて、以下のパッケージをインストールしておく。
 
 ```:smqll
-sudo apt install postgresql-client rclone ca-certificates util-linux jq zstd
+sudo apt install ca-certificates rsync
 ```
 
-バックアップデータの置き場所を作成する。
+バックアップデータの置き場所を作成しておく。
 
 ```:small
-sudo mkdir -p /var/backups/stgy
-sudo chown -R prod:prod /var/backups/stgy
+sudo mkdir -p /var/backups/stgy /var/log/stgy
+sudo chown -R prod:prod /var/backups/stgy /var/log/stgy
 ```
 
-手動でバックアップを取るには、prodユーザでログインして、以下のコマンドを実行する。
+手動でバックアップを取るには、prodユーザでログインして、以下のコマンドを実行する。デーベースサーバとオブジェクトサーバの情報は.envファイルから取得する。ホスト名の解決ができない場合にはlocalhostを使うので、.env内の各種ホスト名はDocker運用の設定のままでも、ネイティブサービス運用のものでも、変更なしで動作させられる。
 
 ```:small
 cd stgy
 ./scripts/backup-full-site.sh backup
 ```
 
-すると、/var/backups/stgyの下に、full-site-2026-02-11 のような日付の名前を持つディレクトリが作られ、そこにデータベースとオブジェクトストレージのデータがダンプされる。中身は以下のものがある。既存のディレクトリがある場合には二重には実行されないので、同日にもう一度実行したい場合、手動で該当ディレクトリを消すこと。
+実行すると、/var/backups/stgyの下に、full-site-2026-02-11 のような日付の名前を持つディレクトリが作られ、そこにデータベースとオブジェクトストレージのデータがダンプされる。中身は以下のものがある。既存のディレクトリがある場合には二重には実行されないので、同日にもう一度実行したい場合、手動で該当ディレクトリを消すこと。
 
 - db : stgy.dumpに全データが入る。
 - objects : バケット毎にサブディレクトリが作られる。
 
-バックアップデータを使ってサーバ側のデータを復元するには、以下のコマンドを実行する。引数には復元対象のディレクトリ名を指定する。現在のデータは消えることに注意すること。
+データベースのデータはpg_dumpで圧縮したものを保存しているので、空間効率はかなり高い。オブジェクトデータは、既に圧縮されている画像形式なのでそれ以上の圧縮はしない。ただし、世代間で重複するファイルはハードリンクとして保存して実態を共有することで、何世代分持っていてもデータ容量が1世代と大差ないようになっている。
+
+バックアップデータを使ってサーバ側のデータを復元するには、以下のコマンドを実行する。引数には復元対象のディレクトリ名を指定する。データベース上の現在のデータは消えることに注意すること。
 
 ```:small
 ./scripts/backup-full-site.sh restore full-site-2026-02-11
@@ -1268,9 +1268,17 @@ cd stgy
 ./scripts/backup-full-site.sh prune
 ```
 
-### Docker運用
+VPS上でcronでバックアップを自動実行するには、prodユーザでログインしてcrontab -eで以下の設定を書けば良い。夜中2時にバックアップコマンドが動き、続いて3時に古いデータを消す。
 
-(後で書く)
+```:small
+SHELL=/bin/bash
+PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+15 2 * * * cd /home/prod/stgy && /usr/bin/flock -n /tmp/stgy-backup.lock ./scripts/backup-full-site.sh backup >> /var/log/stgy/backup-full-site.log 2>&1
+15 3 * * * cd /home/prod/stgy && /usr/bin/flock -n /tmp/stgy-backup.lock ./scripts/backup-full-site.sh prune >> /var/log/stgy/backup-full-site.log 2>&1
+```
+
+同一サーバにバックアップデータを置いているとハードウェア障害の際に困るので、rsync等で最新バックアップを別ホストやリモートストレージに退避するのも良い考えだ。退避先にて、月1回、年1回といった区切りのデータは、長期保存の対象にすると良いだろう。
 
 ## まとめ
 

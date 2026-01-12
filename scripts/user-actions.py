@@ -85,7 +85,7 @@ def parse_csv_ids(v):
 
 def main():
   if len(sys.argv) < 2:
-    print("usage: user_actions.py <files...>")
+    print("usage: user-actions.py <files...>")
     sys.exit(1)
 
   files = sorted(sys.argv[1:])

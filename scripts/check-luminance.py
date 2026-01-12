@@ -49,7 +49,7 @@ def main():
     print(f"Contrast: {contrast:.3f}")
 
   else:
-    raise ValueError("usage: check_luminance.py RRGGBB [#RRGGBB]")
+    raise ValueError("usage: check-luminance.py RRGGBB [#RRGGBB]")
 
 
 if __name__ == "__main__":
