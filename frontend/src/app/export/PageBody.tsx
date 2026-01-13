@@ -3,8 +3,10 @@
 import { useEffect, useMemo, useState } from "react";
 import { getSessionInfo } from "@/api/auth";
 import { getUser } from "@/api/users";
-import type { UserDetail } from "@/api/models";
+import { listPosts, getPost } from "@/api/posts";
+import type { UserDetail, Post, PostDetail } from "@/api/models";
 import { makeArticleHtmlFromMarkdown } from "@/utils/article";
+import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import { buildZipStore } from "@/utils/zip";
 import { Config } from "@/config";
 
@@ -48,7 +50,7 @@ function escapeRegExp(s: string): string {
   return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-function rewriteImageObjectUrlsToRelative(text: string, userId: string): string {
+function rewriteImageObjectUrlsToRelative(text: string, userId: string, baseDir: string): string {
   const uid = escapeRegExp(userId);
 
   // Match only:
@@ -61,7 +63,7 @@ function rewriteImageObjectUrlsToRelative(text: string, userId: string): string 
 
   return String(text || "").replace(re, (_m, rev6: string, hex16: string, ext: string) => {
     const filename = `${rev6}${hex16}.${ext}`;
-    return `./images/${filename}`;
+    return `${baseDir}/${filename}`;
   });
 }
 
@@ -73,8 +75,8 @@ function rewriteProfileIntroductionAndSnippet(profile: UserDetail, userId: strin
 
   const snippet = typeof profile.snippet === "string" ? profile.snippet : "[]";
 
-  const rewrittenIntro = intro !== null ? rewriteImageObjectUrlsToRelative(intro, userId) : null;
-  const rewrittenSnippet = rewriteImageObjectUrlsToRelative(snippet, userId);
+  const rewrittenIntro = intro !== null ? rewriteImageObjectUrlsToRelative(intro, userId, "./images") : null;
+  const rewrittenSnippet = rewriteImageObjectUrlsToRelative(snippet, userId, "./images");
 
   const next: UserDetail = {
     ...profile,
@@ -86,6 +88,18 @@ function rewriteProfileIntroductionAndSnippet(profile: UserDetail, userId: strin
   }
 
   return next;
+}
+
+function rewritePostContentAndSnippet<T extends Post | PostDetail>(post: T, userId: string): T {
+  const next = { ...(post as unknown as Record<string, unknown>) } as Record<string, unknown>;
+
+  if ("content" in next && typeof next.content === "string") {
+    next.content = rewriteImageObjectUrlsToRelative(next.content, userId, "../images");
+  }
+  if (typeof next.snippet === "string") {
+    next.snippet = rewriteImageObjectUrlsToRelative(next.snippet, userId, "../images");
+  }
+  return next as unknown as T;
 }
 
 function getPublicUrlFromStoragePath(storagePath: string, version?: string | null): string | null {
@@ -117,9 +131,13 @@ function renderProfileHtml(profile: UserDetail): string {
   const nickname = profile.nickname ? String(profile.nickname) : "User";
   const userId = profile.id ? String(profile.id) : "";
 
-  const hasIntro = typeof (profile as unknown as { introduction?: unknown }).introduction === "string";
-  const introMd = hasIntro ? String((profile as unknown as { introduction: string }).introduction) : "";
-  const bodyHtml = hasIntro ? makeArticleHtmlFromMarkdown(introMd, false, undefined, false) : "";
+  const hasIntro =
+    typeof (profile as unknown as { introduction?: unknown }).introduction === "string";
+  const introMd = hasIntro
+    ? String((profile as unknown as { introduction: string }).introduction)
+    : "";
+  const bodyHtml = hasIntro ? makeArticleHtmlFromMarkdown(introMd, false, userId, false) : "";
+
   const timezone = profile.timezone ? String(profile.timezone) : "";
   const isAdmin = typeof profile.isAdmin === "boolean" ? profile.isAdmin : false;
   const blockStrangers =
@@ -240,6 +258,193 @@ function renderProfileHtml(profile: UserDetail): string {
 `;
 }
 
+function renderPostHtml(post: Post | PostDetail, focusUserId: string): string {
+  const postId = typeof post.id === "string" ? post.id : "";
+  const postLang =
+    (typeof (post as { locale?: unknown }).locale === "string" && (post as { locale: string }).locale) ||
+    (typeof (post as { ownerLocale?: unknown }).ownerLocale === "string" &&
+      (post as { ownerLocale: string }).ownerLocale) ||
+    "en";
+
+  const ownerNickname =
+    (typeof (post as { ownerNickname?: unknown }).ownerNickname === "string" &&
+      (post as { ownerNickname: string }).ownerNickname) ||
+    "User";
+
+  const createdAt = typeof post.createdAt === "string" ? post.createdAt : "";
+  const updatedAt =
+    typeof (post as { updatedAt?: unknown }).updatedAt === "string"
+      ? (post as { updatedAt: string }).updatedAt
+      : "";
+  const publishedAt =
+    typeof (post as { publishedAt?: unknown }).publishedAt === "string"
+      ? (post as { publishedAt: string }).publishedAt
+      : "";
+
+  const tags =
+    Array.isArray((post as { tags?: unknown }).tags) &&
+    (post as { tags: unknown[] }).tags.every((t) => typeof t === "string")
+      ? ((post as { tags: string[] }).tags as string[])
+      : [];
+  const hasContent = "content" in post && typeof (post as PostDetail).content === "string";
+  const bodyHtml = convertHtmlMathInline(
+    hasContent
+      ? makeArticleHtmlFromMarkdown((post as PostDetail).content, false, postId, false) : ""
+  );
+
+  const tagHtml =
+    tags.length > 0
+      ? `<div class="tags">${tags
+          .map((t) => `<span class="tag">#${escapeHtml(t)}</span>`)
+          .join("")}</div>`
+      : "";
+
+  return `<!doctype html>
+<html lang="${escapeHtml(postLang)}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Post ${escapeHtml(postId)} - STGY</title>
+  <style>
+    :root { color-scheme: light; }
+    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"; background: #fff; color: #111827; }
+    main { max-width: 860px; margin: 48px auto; padding: 16px; }
+    h1 { font-size: 22px; margin: 0 0 6px; }
+    h2 { font-size: 14px; margin: 18px 0 8px; color: #374151; }
+    .muted { color: #6b7280; font-size: 13px; margin: 0 0 14px; }
+    .card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
+    table { width: 100%; border-collapse: collapse; }
+    th, td { text-align: left; padding: 6px 0; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
+    th { width: 180px; color: #6b7280; font-weight: 600; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.95em; }
+    .tags { margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
+    .tag { display: inline-block; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 9999px; padding: 2px 8px; font-size: 12px; color: #1d4ed8; }
+    .markdown-body { line-height: 1.7; word-break: break-word; margin-top: 14px; }
+    .markdown-body p { margin: 0.6em 0; }
+    .markdown-body h1, .markdown-body h2, .markdown-body h3 { margin: 1.0em 0 0.4em; }
+    .markdown-body pre { padding: 12px; background: #0b1020; color: #e5e7eb; border-radius: 10px; overflow: auto; }
+    .markdown-body pre code { color: inherit; }
+    .markdown-body code { background: #f3f4f6; padding: 0.1em 0.3em; border-radius: 6px; }
+    .markdown-body pre code { background: transparent; padding: 0; }
+    .markdown-body blockquote { margin: 0.8em 0; padding-left: 12px; border-left: 3px solid #e5e7eb; color: #374151; }
+    .markdown-body ul { margin: 0.6em 0; padding-left: 1.2em; }
+    .markdown-body a { color: #2563eb; text-decoration: underline; }
+    figure.image-block { margin: 0.8em 0; }
+    figure.image-block img { max-width: 100%; height: auto; border-radius: 10px; border: 1px solid #e5e7eb; }
+    figure.image-block figcaption { color: #6b7280; font-size: 0.9em; margin-top: 6px; }
+    .image-grid { display: grid; gap: 8px; }
+  </style>
+</head>
+<body>
+  <main>
+    <div class="card">
+      <h1>${escapeHtml(ownerNickname)}</h1>
+      <p class="muted">Post ID: <code>${escapeHtml(postId)}</code> / Owner: <code>${escapeHtml(
+        focusUserId,
+      )}</code></p>
+
+      ${tagHtml}
+
+      <h2>Content</h2>
+      <div class="markdown-body">
+        ${bodyHtml}
+      </div>
+
+      <h2>Meta</h2>
+      <table>
+        ${createdAt ? `<tr><th>Created at</th><td>${escapeHtml(createdAt)}</td></tr>` : ""}
+        ${updatedAt ? `<tr><th>Updated at</th><td>${escapeHtml(updatedAt)}</td></tr>` : ""}
+        ${publishedAt ? `<tr><th>Published at</th><td>${escapeHtml(publishedAt)}</td></tr>` : ""}
+      </table>
+    </div>
+  </main>
+</body>
+</html>
+`;
+}
+
+function normalizePostListResponse(res: unknown): unknown[] {
+  if (Array.isArray(res)) return res;
+
+  if (res && typeof res === "object") {
+    const o = res as Record<string, unknown>;
+    const candidates = [o.posts, o.items, o.results, o.data];
+    for (const c of candidates) {
+      if (Array.isArray(c)) return c;
+    }
+  }
+  return [];
+}
+
+function isPostLike(x: unknown): x is Post {
+  if (!x || typeof x !== "object") return false;
+  const o = x as Record<string, unknown>;
+  return typeof o.id === "string" && typeof o.ownedBy === "string" && typeof o.createdAt === "string";
+}
+
+async function fetchAllMyPosts(userId: string): Promise<Post[]> {
+  const out: Post[] = [];
+  const limit = 200;
+
+  for (let offset = 0; offset < 200_000; offset += limit) {
+    // We intentionally pass a plain object (unknown) to avoid relying on exact input typing.
+    // If the backend/client supports ownedBy filtering, it will reduce results;
+    // otherwise we still filter client-side by ownedBy.
+    const input: Record<string, unknown> = {
+      offset,
+      limit,
+      includingReplies: 1,
+      order: "desc",
+      ownedBy: userId,
+    };
+
+    const fn = listPosts as unknown as (...args: unknown[]) => Promise<unknown>;
+    const res = await fn(input, userId);
+
+    const raw = normalizePostListResponse(res);
+    if (raw.length === 0) break;
+
+    for (const item of raw) {
+      if (isPostLike(item) && item.ownedBy === userId) {
+        out.push(item);
+      }
+    }
+
+    if (raw.length < limit) break;
+  }
+
+  // De-dup by id (just in case)
+  const seen = new Set<string>();
+  const dedup: Post[] = [];
+  for (const p of out) {
+    if (!seen.has(p.id)) {
+      seen.add(p.id);
+      dedup.push(p);
+    }
+  }
+  return dedup;
+}
+
+async function mapWithConcurrency<T, R>(
+  items: readonly T[],
+  concurrency: number,
+  fn: (item: T, index: number) => Promise<R>,
+): Promise<R[]> {
+  const out: R[] = new Array(items.length);
+  let i = 0;
+
+  const workers = new Array(Math.max(1, concurrency)).fill(0).map(async () => {
+    for (;;) {
+      const idx = i++;
+      if (idx >= items.length) return;
+      out[idx] = await fn(items[idx], idx);
+    }
+  });
+
+  await Promise.all(workers);
+  return out;
+}
+
 export default function PageBody() {
   const [userId, setUserId] = useState<string | null>(null);
   const [profile, setProfile] = useState<UserDetail | null>(null);
@@ -307,9 +512,8 @@ export default function PageBody() {
       const enc = new TextEncoder();
       const base = `${exportRootDir}/`;
 
-      // Only rewrite introduction/snippet by regex (no object listing, no downloads)
+      // Profile (rewrite intro/snippet by regex only)
       const exportProfile = rewriteProfileIntroductionAndSnippet(profile, userId);
-
       const profileJson = JSON.stringify(exportProfile, null, 2);
       const profileHtml = renderProfileHtml(exportProfile);
 
@@ -318,6 +522,7 @@ export default function PageBody() {
         { name: `${base}profile.html`, data: enc.encode(profileHtml) },
       ];
 
+      // Avatar (binary) - unchanged behavior
       const hasAvatar = typeof profile.avatar === "string" && profile.avatar.trim() !== "";
       if (hasAvatar) {
         const version =
@@ -328,6 +533,38 @@ export default function PageBody() {
         if (!url) throw new Error("Avatar path is invalid.");
         const avatarBytes = await fetchBytes(url);
         files.push({ name: `${base}avatar.webp`, data: avatarBytes });
+      }
+
+      // Posts (JSON + HTML)
+      const posts = await fetchAllMyPosts(userId);
+
+      const postFiles = await mapWithConcurrency(posts, 4, async (p) => {
+        // Try to fetch full content for HTML/JSON.
+        let detail: PostDetail | null = null;
+        try {
+          const fn = getPost as unknown as (...args: unknown[]) => Promise<unknown>;
+          const got = await fn(p.id, userId);
+          if (got && typeof got === "object") {
+            detail = got as PostDetail;
+          }
+        } catch {
+          detail = null;
+        }
+
+        const src = (detail ?? p) as Post | PostDetail;
+        const rewritten = rewritePostContentAndSnippet(src, userId);
+
+        const postJson = JSON.stringify(rewritten, null, 2);
+        const postHtml = renderPostHtml(rewritten, userId);
+
+        return [
+          { name: `${base}posts/${p.id}.json`, data: enc.encode(postJson) },
+          { name: `${base}posts/${p.id}.html`, data: enc.encode(postHtml) },
+        ] as const;
+      });
+
+      for (const pair of postFiles) {
+        files.push(pair[0], pair[1]);
       }
 
       const zipBytes = buildZipStore(files, new Date());
