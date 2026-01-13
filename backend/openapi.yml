@@ -1382,6 +1382,42 @@ paths:
         "400":
           $ref: "#/components/responses/Error400"
 
+  /users/{id}/blockees:
+    get:
+      summary: List blockees
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+        - name: order
+          in: query
+          schema: { type: string, enum: [asc, desc], default: desc }
+        - name: focusUserId
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: Blockees list
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
   /users/friends/by-nickname-prefix:
     get:
       summary: List friends by nickname prefix
