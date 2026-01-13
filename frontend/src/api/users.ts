@@ -51,6 +51,12 @@ export async function listFriendsByNicknamePrefix(
   return res.json();
 }
 
+export async function getUserLite(id: string): Promise<User> {
+  const res = await apiFetch(`/users/${id}/lite`, { method: "GET" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
 export async function getUser(id: string, focusUserId?: string): Promise<UserDetail> {
   const search = new URLSearchParams();
   if (focusUserId) search.append("focusUserId", focusUserId);
@@ -228,6 +234,26 @@ export async function addBlock(id: string): Promise<{ result: string }> {
 
 export async function removeBlock(id: string): Promise<{ result: string }> {
   const res = await apiFetch(`/users/${id}/block`, { method: "DELETE" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function listBlockees(
+  id: string,
+  params: {
+    offset?: number;
+    limit?: number;
+    order?: "asc" | "desc";
+    focusUserId?: string;
+  } = {},
+): Promise<User[]> {
+  const search = new URLSearchParams();
+  if (params.offset !== undefined) search.append("offset", String(params.offset));
+  if (params.limit !== undefined) search.append("limit", String(params.limit));
+  if (params.order) search.append("order", params.order);
+  if (params.focusUserId) search.append("focusUserId", params.focusUserId);
+  const q = search.toString();
+  const res = await apiFetch(`/users/${id}/blockees${q ? `?${q}` : ""}`, { method: "GET" });
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }

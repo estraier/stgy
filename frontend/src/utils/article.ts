@@ -23,9 +23,12 @@ export function makeArticleHtmlFromMarkdown(
   mdText: string,
   usePosAttrs = false,
   idPrefix?: string,
+  doRewrite = true,
 ) {
   let nodes = parseMarkdown(mdText);
-  nodes = rewriteMediaUrls(nodes, false);
+  if (doRewrite) {
+    nodes = rewriteMediaUrls(nodes, false);
+  }
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
   return mdRenderHtml(nodes, usePosAttrs, idPrefix);
 }
