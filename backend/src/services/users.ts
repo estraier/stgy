@@ -11,6 +11,7 @@ import {
   ListFolloweesInput,
   ListFollowersInput,
   FollowUserPair,
+  ListBlockeesInput,
   BlockUserPair,
   ListFriendsByNicknamePrefixInput,
   PubConfig,
@@ -1003,6 +1004,104 @@ export class UsersService {
       [hexToDec(input.followerId), hexToDec(input.followeeId)],
     );
     return (r.rowCount ?? 0) > 0;
+  }
+
+  async listBlockees(input: ListBlockeesInput, focusUserId?: string): Promise<User[]> {
+    const offset = input.offset ?? 0;
+    const limit = input.limit ?? 100;
+    const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+
+    const sql = `
+      SELECT
+        u.id,
+        u.updated_at,
+        u.snippet,
+        u.nickname,
+        u.avatar,
+        u.ai_model,
+        u.is_admin,
+        u.block_strangers,
+        id_to_timestamp(u.id) AS created_at,
+        COALESCE(uc.follower_count, 0) AS count_followers,
+        COALESCE(uc.followee_count, 0) AS count_followees,
+        COALESCE(uc.post_count, 0) AS count_posts
+      FROM user_blocks b
+      JOIN users u ON b.blockee_id = u.id
+      LEFT JOIN user_counts uc ON uc.user_id = u.id
+      WHERE b.blocker_id = $1
+      ORDER BY b.created_at ${order}, b.blockee_id ${order}
+      OFFSET $2 LIMIT $3
+    `.trim();
+
+    const res = await pgQuery(this.pgPool, sql, [hexToDec(input.blockerId), offset, limit]);
+    const users = res.rows.map((row: Record<string, unknown>) => {
+      row.id = decToHex(row.id as string);
+      return snakeToCamel<User>(row);
+    });
+
+    if (users.length === 0) return [];
+
+    if (focusUserId) {
+      const ids = users.map((u) => u.id);
+
+      const fwRes = await pgQuery<{ followee_id: string }>(
+        this.pgPool,
+        `
+          SELECT followee_id
+          FROM user_follows
+          WHERE follower_id = $1
+            AND followee_id = ANY($2)
+        `,
+        [hexToDec(focusUserId), hexArrayToDec(ids)],
+      );
+      const followedSet = new Set(fwRes.rows.map((r) => decToHex(r.followee_id) as string));
+
+      const fgRes = await pgQuery<{ follower_id: string }>(
+        this.pgPool,
+        `
+          SELECT follower_id
+          FROM user_follows
+          WHERE follower_id = ANY($1)
+            AND followee_id = $2
+        `,
+        [hexArrayToDec(ids), hexToDec(focusUserId)],
+      );
+      const followingSet = new Set(fgRes.rows.map((r) => decToHex(r.follower_id) as string));
+
+      const blByRes = await pgQuery<{ blockee_id: string }>(
+        this.pgPool,
+        `
+          SELECT blockee_id
+          FROM user_blocks
+          WHERE blocker_id = $1
+            AND blockee_id = ANY($2)
+        `,
+        [hexToDec(focusUserId), hexArrayToDec(ids)],
+      );
+      const blockedByFocusSet = new Set(blByRes.rows.map((r) => decToHex(r.blockee_id) as string));
+
+      const blToRes = await pgQuery<{ blocker_id: string }>(
+        this.pgPool,
+        `
+          SELECT blocker_id
+          FROM user_blocks
+          WHERE blocker_id = ANY($1)
+            AND blockee_id = $2
+        `,
+        [hexArrayToDec(ids), hexToDec(focusUserId)],
+      );
+      const blockingFocusSet = new Set(blToRes.rows.map((r) => decToHex(r.blocker_id) as string));
+
+      for (const u of users) {
+        if (u.id === focusUserId) continue;
+        u.isFollowedByFocusUser = followedSet.has(u.id);
+        u.isFollowingFocusUser = followingSet.has(u.id);
+        u.isBlockedByFocusUser = blockedByFocusSet.has(u.id);
+        u.isBlockingFocusUser = blockingFocusSet.has(u.id);
+      }
+    }
+
+    return users;
   }
 
   async addBlock(input: BlockUserPair): Promise<void> {

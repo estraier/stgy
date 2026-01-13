@@ -507,6 +507,18 @@ def test_users():
   res = requests.post(f"{BASE_URL}/users/{admin_id}/block", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   print(f"[users] user1 blocked admin: {admin_id}")
+  res = requests.get(
+    f"{BASE_URL}/users/{user1_id}/blockees?limit=2000&focusUserId={user1_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  blockees = res.json()
+  print("[users] user1 blockees:", blockees)
+  assert any(u["id"] == admin_id for u in blockees)
+  admin_in_blockees = next(u for u in blockees if u["id"] == admin_id)
+  assert admin_in_blockees["isBlockedByFocusUser"] is True
+  assert admin_in_blockees["isBlockingFocusUser"] is False
   res = requests.get(f"{BASE_URL}/users/{user1_id}/followees?limit=2000", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   followees = res.json()
@@ -541,6 +553,15 @@ def test_users():
   res = requests.delete(f"{BASE_URL}/users/{admin_id}/block", headers=headers, cookies=user1_cookies)
   assert res.status_code == 200, res.text
   print(f"[users] user1 unblocked admin: {admin_id}")
+  res = requests.get(
+    f"{BASE_URL}/users/{user1_id}/blockees?limit=2000&focusUserId={user1_id}",
+    headers=headers,
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  blockees2 = res.json()
+  print("[users] user1 blockees after unblock:", blockees2)
+  assert all(u["id"] != admin_id for u in blockees2)
   res = requests.get(f"{BASE_URL}/users/{user1_id}/followees?limit=2000", headers=headers, cookies=user1_cookies)
   assert all(u["id"] != admin_id for u in res.json())
   res = requests.get(f"{BASE_URL}/users/{admin_id}/followers?limit=2000", headers=headers, cookies=cookies)
@@ -728,7 +749,6 @@ def test_posts():
   assert res.status_code == 200, res.text
   pub_list = res.json()
   assert any(p.get("id") == post_id for p in pub_list)
-
   res = requests.delete(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[posts] deleted")

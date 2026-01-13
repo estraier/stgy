@@ -72,6 +72,12 @@ const SQL_UPSERT_PUBCONFIG =
 const SQL_SELECT_PUBCONFIG =
   "SELECT upc.site_name, upc.subtitle, upc.author, upc.introduction, upc.design_theme, upc.show_service_header, upc.show_site_name, upc.show_pagenation, upc.show_side_profile, upc.show_side_recent, u.locale FROM user_pub_configs upc LEFT JOIN users u ON u.id = upc.user_id WHERE upc.user_id = $1 LIMIT 1";
 
+const SQL_LIST_BLOCKEES_DESC =
+  "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_blocks b JOIN users u ON b.blockee_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE b.blocker_id = $1 ORDER BY b.created_at DESC, b.blockee_id DESC OFFSET $2 LIMIT $3";
+
+const SQL_LIST_BLOCKEES_ASC =
+  "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_blocks b JOIN users u ON b.blockee_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE b.blocker_id = $1 ORDER BY b.created_at ASC, b.blockee_id ASC OFFSET $2 LIMIT $3";
+
 class MockPgClient {
   users: MockUser[];
   details: Record<string, DetailRow>;
@@ -347,6 +353,21 @@ class MockPgClient {
         .slice(offset, offset + limit)
         .map((u) => this.rowFromUser(u, false));
       return { rows: list };
+    }
+
+    if (n === SQL_LIST_BLOCKEES_DESC || n === SQL_LIST_BLOCKEES_ASC) {
+      const blockerId = decToHex(params[0]);
+      const offset = params[1] || 0;
+      const limit = params[2] || 100;
+      let list = this.blocks
+        .filter((b) => b.blockerId === blockerId)
+        .map((b) => this.users.find((u) => u.id === b.blockeeId))
+        .filter((u): u is MockUser => !!u);
+
+      if (n === SQL_LIST_BLOCKEES_DESC) list = list.slice().reverse();
+
+      const rows = list.slice(offset, offset + limit).map((u) => this.rowFromUser(u, false));
+      return { rows };
     }
 
     if (n.includes("FROM users u") && !n.includes("WHERE u.id = $1") && !n.startsWith("WITH")) {
@@ -1184,6 +1205,32 @@ describe("UsersService", () => {
     expect(res.some((u) => u.id === CAROL)).toBe(true);
     expect(res.every((u) => typeof u.countFollowers === "number")).toBe(true);
     expect(res.every((u) => typeof u.countPosts === "number")).toBe(true);
+  });
+
+  test("listBlockees (with focusUserId)", async () => {
+    await service.addBlock({ blockerId: BOB, blockeeId: CAROL });
+    await service.addBlock({ blockerId: BOB, blockeeId: ALICE });
+
+    const res = await service.listBlockees({ blockerId: BOB }, BOB);
+    expect(res.length).toBe(2);
+
+    const ids = new Set(res.map((u) => u.id));
+    expect(ids.has(ALICE)).toBe(true);
+    expect(ids.has(CAROL)).toBe(true);
+
+    const alice = res.find((u) => u.id === ALICE)!;
+    expect(alice.isBlockedByFocusUser).toBe(true);
+    expect(alice.isBlockingFocusUser).toBe(false);
+    expect(alice.isFollowedByFocusUser).toBe(true);
+    expect(alice.isFollowingFocusUser).toBe(true);
+    expect((alice as any).email).toBeUndefined();
+
+    const carol = res.find((u) => u.id === CAROL)!;
+    expect(carol.isBlockedByFocusUser).toBe(true);
+    expect(carol.isBlockingFocusUser).toBe(false);
+    expect(carol.isFollowedByFocusUser).toBe(false);
+    expect(carol.isFollowingFocusUser).toBe(false);
+    expect((carol as any).email).toBeUndefined();
   });
 
   test("addFollow/removeFollow", async () => {

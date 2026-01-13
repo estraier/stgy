@@ -574,6 +574,28 @@ export default function createUsersRouter(
     }
   });
 
+  router.get("/:id/blockees", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const blockerId = req.params.id;
+    const { offset, limit, order } = AuthHelpers.getPageParams(
+      req,
+      loginUser.isAdmin ? 65535 : Config.MAX_PAGE_LIMIT,
+      ["desc", "asc"] as const,
+    );
+    const focusUserId =
+      typeof req.query.focusUserId === "string" && req.query.focusUserId.trim() !== ""
+        ? req.query.focusUserId.trim()
+        : undefined;
+    const watch = timerThrottleService.startWatch(loginUser);
+    let users = await usersService.listBlockees({ blockerId, offset, limit, order }, focusUserId);
+    watch.done();
+    res.json(users);
+  });
+
   router.get("/:id/pub-config", async (req: Request, res: Response) => {
     try {
       const cfg = await usersService.getPubConfig(req.params.id);

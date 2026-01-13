@@ -93,6 +93,10 @@ export type FollowUserPair = {
   followeeId: string;
 };
 
+export type ListBlockeesInput = {
+  blockerId: string;
+} & UserPagination;
+
 export type BlockUserPair = {
   blockerId: string;
   blockeeId: string;
