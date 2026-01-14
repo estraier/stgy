@@ -2,10 +2,10 @@
 
 import { useEffect, useMemo, useState, type FormEvent } from "react";
 import { getSessionInfo } from "@/api/auth";
-import { getUser, listFollowees, listBlockees } from "@/api/users";
-import { listPosts, listPostsLikedByUser, getPost } from "@/api/posts";
+import { getPubConfig, getUser, listBlockees, listFollowees } from "@/api/users";
+import { getPost, listPosts, listPostsLikedByUser } from "@/api/posts";
 import { listImages } from "@/api/media";
-import type { MediaObject, UserDetail, Post, PostDetail, User } from "@/api/models";
+import type { MediaObject, Post, PostDetail, PubConfig, User, UserDetail } from "@/api/models";
 import { makeArticleHtmlFromMarkdown } from "@/utils/article";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import { buildZipStore } from "@/utils/zip";
@@ -75,7 +75,8 @@ function rewriteProfileIntroductionAndSnippet(profile: UserDetail, userId: strin
 
   const snippet = typeof profile.snippet === "string" ? profile.snippet : "[]";
 
-  const rewrittenIntro = intro !== null ? rewriteImageObjectUrlsToRelative(intro, userId, "./images") : null;
+  const rewrittenIntro =
+    intro !== null ? rewriteImageObjectUrlsToRelative(intro, userId, "./images") : null;
   const rewrittenSnippet = rewriteImageObjectUrlsToRelative(snippet, userId, "./images");
 
   const next: UserDetail = {
@@ -112,7 +113,8 @@ function getPublicUrlFromStoragePath(storagePath: string, version?: string | nul
 
   const base = String(Config.STORAGE_S3_PUBLIC_URL_PREFIX || "").replace("{bucket}", bucket);
   const prefix = base.replace(/\/+$/, "");
-  const suffix = version && String(version).trim() !== "" ? `?v=${encodeURIComponent(String(version))}` : "";
+  const suffix =
+    version && String(version).trim() !== "" ? `?v=${encodeURIComponent(String(version))}` : "";
   return `${prefix}/${key}${suffix}`;
 }
 
@@ -130,8 +132,11 @@ function renderProfileHtml(profile: UserDetail): string {
   const nickname = profile.nickname ? String(profile.nickname) : "User";
   const userId = profile.id ? String(profile.id) : "";
 
-  const hasIntro = typeof (profile as unknown as { introduction?: unknown }).introduction === "string";
-  const introMd = hasIntro ? String((profile as unknown as { introduction: string }).introduction) : "";
+  const hasIntro =
+    typeof (profile as unknown as { introduction?: unknown }).introduction === "string";
+  const introMd = hasIntro
+    ? String((profile as unknown as { introduction: string }).introduction)
+    : "";
   const bodyHtml = hasIntro ? makeArticleHtmlFromMarkdown(introMd, false, userId, false) : "";
 
   const timezone = profile.timezone ? String(profile.timezone) : "";
@@ -196,7 +201,7 @@ function renderProfileHtml(profile: UserDetail): string {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>${escapeHtml(nickname)} - STGY Profile</title>
-  <link rel="stylesheet" href="./export.css" />
+  <link rel="stylesheet" href="./style.css" />
 </head>
 <body class="stgy-export stgy-export-profile">
   <main>
@@ -229,7 +234,8 @@ function renderProfileHtml(profile: UserDetail): string {
 function renderPostHtml(post: Post | PostDetail): string {
   const postId = typeof post.id === "string" ? post.id : "";
   const postLang =
-    (typeof (post as { locale?: unknown }).locale === "string" && (post as { locale: string }).locale) ||
+    (typeof (post as { locale?: unknown }).locale === "string" &&
+      (post as { locale: string }).locale) ||
     (typeof (post as { ownerLocale?: unknown }).ownerLocale === "string" &&
       (post as { ownerLocale: string }).ownerLocale) ||
     "en";
@@ -241,24 +247,31 @@ function renderPostHtml(post: Post | PostDetail): string {
 
   const createdAt = typeof post.createdAt === "string" ? post.createdAt : "";
   const updatedAt =
-    typeof (post as { updatedAt?: unknown }).updatedAt === "string" ? (post as { updatedAt: string }).updatedAt : "";
+    typeof (post as { updatedAt?: unknown }).updatedAt === "string"
+      ? (post as { updatedAt: string }).updatedAt
+      : "";
   const publishedAt =
     typeof (post as { publishedAt?: unknown }).publishedAt === "string"
       ? (post as { publishedAt: string }).publishedAt
       : "";
 
   const tags =
-    Array.isArray((post as { tags?: unknown }).tags) && (post as { tags: unknown[] }).tags.every((t) => typeof t === "string")
+    Array.isArray((post as { tags?: unknown }).tags) &&
+    (post as { tags: unknown[] }).tags.every((t) => typeof t === "string")
       ? (post as { tags: string[] }).tags
       : [];
 
   const hasContent = "content" in post && typeof (post as PostDetail).content === "string";
   const bodyHtml = convertHtmlMathInline(
-    hasContent ? makeArticleHtmlFromMarkdown((post as PostDetail).content, false, postId, false) : "",
+    hasContent
+      ? makeArticleHtmlFromMarkdown((post as PostDetail).content, false, postId, false)
+      : "",
   );
 
   const tagHtml =
-    tags.length > 0 ? `<div class="tags">${tags.map((t) => `<span class="tag">#${escapeHtml(t)}</span>`).join("")}</div>` : "";
+    tags.length > 0
+      ? `<div class="tags">${tags.map((t) => `<span class="tag">#${escapeHtml(t)}</span>`).join("")}</div>`
+      : "";
 
   const countLikesMaybe = (post as { countLikes?: unknown }).countLikes;
   const countLikes = typeof countLikesMaybe === "number" ? countLikesMaybe : null;
@@ -272,7 +285,7 @@ function renderPostHtml(post: Post | PostDetail): string {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Post ${escapeHtml(postId)} - STGY</title>
-  <link rel="stylesheet" href="../export.css" />
+  <link rel="stylesheet" href="../style.css" />
 </head>
 <body class="stgy-export stgy-export-post">
   <main>
@@ -315,7 +328,10 @@ async function fetchAllMyPosts(userId: string): Promise<Post[]> {
       ownedBy: userId,
     };
 
-    const fn = listPosts as unknown as (input: Record<string, unknown>, focusUserId: string) => Promise<Post[]>;
+    const fn = listPosts as unknown as (
+      input: Record<string, unknown>,
+      focusUserId: string,
+    ) => Promise<Post[]>;
     const res = await fn(input, userId);
 
     if (res.length === 0) break;
@@ -432,7 +448,9 @@ async function fetchAllUsersByPager(
   return dedup;
 }
 
-async function fetchAllLikedPosts(userId: string): Promise<Array<{ id: string; ownedBy: string; ownerNickname: string }>> {
+async function fetchAllLikedPosts(
+  userId: string,
+): Promise<Array<{ id: string; ownedBy: string; ownerNickname: string }>> {
   const limit = 200;
   const out: Array<{ id: string; ownedBy: string; ownerNickname: string }> = [];
 
@@ -451,7 +469,9 @@ async function fetchAllLikedPosts(userId: string): Promise<Array<{ id: string; o
       const id = typeof p.id === "string" ? p.id : null;
       const ownedBy = typeof p.ownedBy === "string" ? p.ownedBy : null;
       const ownerNickname =
-        typeof (p as { ownerNickname?: unknown }).ownerNickname === "string" ? (p as { ownerNickname: string }).ownerNickname : null;
+        typeof (p as { ownerNickname?: unknown }).ownerNickname === "string"
+          ? (p as { ownerNickname: string }).ownerNickname
+          : null;
 
       if (id && ownedBy && ownerNickname) {
         out.push({ id, ownedBy, ownerNickname });
@@ -543,11 +563,24 @@ export default function PageBody() {
       const profileHtml = renderProfileHtml(exportProfile);
 
       const files: Array<{ name: string; data: Uint8Array }> = [
-        { name: `${base}export.css`, data: enc.encode(HTML_STYLES_CSS) },
+        { name: `${base}style.css`, data: enc.encode(HTML_STYLES_CSS) },
         { name: `${base}profile.json`, data: enc.encode(profileJson) },
         { name: `${base}profile.html`, data: enc.encode(profileHtml) },
       ];
-
+      {
+        let pubCfg: PubConfig | null = null;
+        try {
+          pubCfg = await getPubConfig(userId);
+        } catch {
+          pubCfg = null;
+        }
+        if (pubCfg) {
+          files.push({
+            name: `${base}pub-config.json`,
+            data: enc.encode(JSON.stringify(pubCfg, null, 2)),
+          });
+        }
+      }
       const hasAvatar = typeof profile.avatar === "string" && profile.avatar.trim() !== "";
       if (hasAvatar) {
         const version =
@@ -561,18 +594,28 @@ export default function PageBody() {
       }
 
       const [followees, blockees, likes] = await Promise.all([
-        fetchAllUsersByPager((offset, limit) => listFollowees(userId, { offset, limit, order: "asc" })),
-        fetchAllUsersByPager((offset, limit) => listBlockees(userId, { offset, limit, order: "asc" })),
+        fetchAllUsersByPager((offset, limit) =>
+          listFollowees(userId, { offset, limit, order: "asc" }),
+        ),
+        fetchAllUsersByPager((offset, limit) =>
+          listBlockees(userId, { offset, limit, order: "asc" }),
+        ),
         fetchAllLikedPosts(userId),
       ]);
 
       const relations: RelationsJson = { followees, blockees, likes };
-      files.push({ name: `${base}relations.json`, data: enc.encode(JSON.stringify(relations, null, 2)) });
+      files.push({
+        name: `${base}relations.json`,
+        data: enc.encode(JSON.stringify(relations, null, 2)),
+      });
 
       const posts = await fetchAllMyPosts(userId);
 
       const postFiles = await mapWithConcurrency(posts, 4, async (p) => {
-        const fn = getPost as unknown as (postId: string, focusUserId: string) => Promise<PostDetail>;
+        const fn = getPost as unknown as (
+          postId: string,
+          focusUserId: string,
+        ) => Promise<PostDetail>;
         const detail = await fn(p.id, userId);
         const src = (detail ?? p) as Post | PostDetail;
         const rewritten = rewritePostContentAndSnippet(src, userId);
@@ -598,15 +641,20 @@ export default function PageBody() {
         if (!masterByFilename.has(filename)) masterByFilename.set(filename, it);
       }
 
-      const imageFiles = await mapWithConcurrency(Array.from(masterByFilename.entries()), 6, async ([filename, it]) => {
-        const bytes = await fetchBytes(it.publicUrl, `image ${filename}`);
-        return { name: `${base}images/${filename}`, data: bytes };
-      });
+      const imageFiles = await mapWithConcurrency(
+        Array.from(masterByFilename.entries()),
+        6,
+        async ([filename, it]) => {
+          const bytes = await fetchBytes(it.publicUrl, `image ${filename}`);
+          return { name: `${base}images/${filename}`, data: bytes };
+        },
+      );
 
       for (const f of imageFiles) files.push(f);
 
       const zipBytes = buildZipStore(files, new Date());
-      const blob = new Blob([zipBytes], { type: "application/zip" });
+      const zipView = new Uint8Array(zipBytes);
+      const blob = new Blob([zipView], { type: "application/zip" });
       downloadBlob(blob, exportFileName);
 
       setDone(true);
@@ -619,52 +667,66 @@ export default function PageBody() {
   }
 
   return (
-    <main className="max-w-lg mx-auto mt-12 p-4 bg-white shadow border rounded">
+    <main className="max-w-2xl mx-auto mt-12 p-4 bg-white shadow border rounded">
       <h1 className="text-2xl font-bold mb-6">Exporting all data</h1>
 
       <form onSubmit={handleExport} className="flex flex-col gap-6">
         <section className="text-sm text-gray-700 leading-relaxed">
           <p>
-            You can download all of your STGY data in one ZIP archive here. Click the button at the bottom of this page
-            to start downloading. The archive includes the following files:
+            You can download all of your STGY data in one ZIP archive here. Click the button at the
+            bottom of this page to start downloading. The archive includes the following files:
           </p>
 
-          <ul className="list-disc pl-6 mt-3 space-y-1 text-gray-700">
+          <ul className="list-disc pl-6 mt-3 space-y-1 text-sm text-gray-700">
             <li>
-              <code>./export.css</code> : Stylesheet for exported HTML
+              <code className="font-bold">./profile.json</code> : User profile in JSON
             </li>
             <li>
-              <code>./profile.json</code> : User profile in JSON
+              <code className="font-bold">./profile.html</code> : User profile in HTML
             </li>
             <li>
-              <code>./profile.html</code> : User profile in HTML
+              <code className="font-bold">./pub-config.json</code> : Publication configuration in
+              JSON
             </li>
             <li>
-              <code>./avatar.webp</code> : Avatar image (binary)
+              <code className="font-bold">./avatar.webp</code> : Avatar image (binary)
             </li>
             <li>
-              <code>./posts/&lt;postId&gt;.json</code> : Post data in JSON
+              <code className="font-bold">
+                ./posts/<var>&#123;postId&#125;</var>.json
+              </code>{" "}
+              : Post data in JSON
             </li>
             <li>
-              <code>./posts/&lt;postId&gt;.html</code> : Post data in HTML
+              <code className="font-bold">
+                ./posts/<var>&#123;postId&#125;</var>.html
+              </code>{" "}
+              : Post data in HTML
             </li>
             <li>
-              <code>./images/&lt;objectId&gt;.&lt;jpg|png|webp|...&gt;</code> : Image binaries (master only)
+              <code className="font-bold">
+                ./images/<var>&#123;objectId&#125;</var>.<var>&#123;jpg|png|webp|...&#125;</var>
+              </code>{" "}
+              : Image binaries
             </li>
             <li>
-              <code>./relations.json</code> : Follow/block/like relations in JSON
+              <code className="font-bold">./relations.json</code> : Follow/block/like relations in
+              JSON
+            </li>
+            <li>
+              <code className="font-bold">./style.css</code> : Stylesheet for exported HTML
             </li>
           </ul>
 
           <p className="mt-3">
-            The JSON and HTML versions of the profile/posts contain the same information. JSON is useful for migrating
-            your data to other services, while HTML is convenient for using the exported data as a website or CMS
-            content.
+            The JSON and HTML versions of the profile/posts contain the same information. JSON is
+            useful for migrating your data to other services, while HTML is convenient for using the
+            exported data as a website or CMS content.
           </p>
 
           <p className="mt-3">
-            Creating and downloading the archive may take a while. After you click the button, keep this browser window
-            open until the download finishes.
+            Creating and downloading the archive may take a while. After you click the button, keep
+            this browser window open until the download finishes.
           </p>
         </section>
 

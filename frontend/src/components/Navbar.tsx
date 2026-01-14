@@ -178,6 +178,13 @@ export default function Navbar() {
               Pub Settings
             </Link>
             <Link
+              href="/export"
+              className="block w-full px-4 py-2 text-left hover:bg-gray-100"
+              onClick={() => setMenuOpen(false)}
+            >
+              Export data
+            </Link>
+            <Link
               href={Config.HELP_PAGE_PATH}
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
               onClick={() => setMenuOpen(false)}

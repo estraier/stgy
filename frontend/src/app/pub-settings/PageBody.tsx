@@ -87,7 +87,7 @@ export default function PageBody() {
   const themeSelectValue = themeHasMatch ? cfg.designTheme : themeOptions[0];
 
   return (
-    <main className="max-w-lg mx-auto mt-12 p-4 bg-white shadow border rounded">
+    <main className="max-w-2xl mx-auto mt-12 p-4 bg-white shadow border rounded">
       <h1 className="text-2xl font-bold mb-6">Publication Settings</h1>
 
       <form onSubmit={handleSave} className="flex flex-col gap-6">
