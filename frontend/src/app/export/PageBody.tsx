@@ -10,6 +10,7 @@ import { makeArticleHtmlFromMarkdown } from "@/utils/article";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import { buildZipStore } from "@/utils/zip";
 import { Config } from "@/config";
+import { HTML_STYLES_CSS } from "./exportStyles";
 
 const IMAGES_PAGE_SIZE = Config.IMAGES_PAGE_SIZE || 30;
 
@@ -67,9 +68,10 @@ function rewriteImageObjectUrlsToRelative(text: string, userId: string, baseDir:
 }
 
 function rewriteProfileIntroductionAndSnippet(profile: UserDetail, userId: string): UserDetail {
-  const intro = typeof (profile as unknown as { introduction?: unknown }).introduction === "string"
-    ? String((profile as unknown as { introduction: string }).introduction)
-    : null;
+  const intro =
+    typeof (profile as unknown as { introduction?: unknown }).introduction === "string"
+      ? String((profile as unknown as { introduction: string }).introduction)
+      : null;
 
   const snippet = typeof profile.snippet === "string" ? profile.snippet : "[]";
 
@@ -194,43 +196,15 @@ function renderProfileHtml(profile: UserDetail): string {
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>${escapeHtml(nickname)} - STGY Profile</title>
-  <style>
-    :root { color-scheme: light; }
-    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"; background: #fff; color: #111827; }
-    main { max-width: 720px; margin: 48px auto; padding: 16px; }
-    h1 { font-size: 28px; margin: 0 0 8px; }
-    h2 { font-size: 16px; margin: 20px 0 8px; color: #374151; }
-    .muted { color: #6b7280; font-size: 14px; margin: 0 0 16px; }
-    .card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
-    .row { display: flex; gap: 16px; align-items: center; }
-    .avatar { width: 72px; height: 72px; border-radius: 9999px; object-fit: cover; border: 1px solid #e5e7eb; }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 6px 0; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
-    th { width: 180px; color: #6b7280; font-weight: 600; }
-    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.95em; }
-    .markdown-body { line-height: 1.7; word-break: break-word; }
-    .markdown-body p { margin: 0.6em 0; }
-    .markdown-body h1, .markdown-body h2, .markdown-body h3 { margin: 1.0em 0 0.4em; }
-    .markdown-body pre { padding: 12px; background: #0b1020; color: #e5e7eb; border-radius: 10px; overflow: auto; }
-    .markdown-body pre code { color: inherit; }
-    .markdown-body code { background: #f3f4f6; padding: 0.1em 0.3em; border-radius: 6px; }
-    .markdown-body pre code { background: transparent; padding: 0; }
-    .markdown-body blockquote { margin: 0.8em 0; padding-left: 12px; border-left: 3px solid #e5e7eb; color: #374151; }
-    .markdown-body ul { margin: 0.6em 0; padding-left: 1.2em; }
-    .markdown-body a { color: #2563eb; text-decoration: underline; }
-    figure.image-block { margin: 0.8em 0; }
-    figure.image-block img { max-width: 100%; height: auto; border-radius: 10px; border: 1px solid #e5e7eb; }
-    figure.image-block figcaption { color: #6b7280; font-size: 0.9em; margin-top: 6px; }
-    .image-grid { display: grid; gap: 8px; }
-  </style>
+  <link rel="stylesheet" href="./export.css" />
 </head>
-<body>
+<body class="stgy-export stgy-export-profile">
   <main>
     <div class="card">
       ${headerHtml}
 
       <h2>Profile</h2>
-      <div class="markdown-body">
+      <div class="markdown-body user-introduction">
         ${bodyHtml}
       </div>
 
@@ -260,14 +234,17 @@ function renderPostHtml(post: Post | PostDetail, focusUserId: string): string {
     "en";
 
   const ownerNickname =
-    (typeof (post as { ownerNickname?: unknown }).ownerNickname === "string" && (post as { ownerNickname: string }).ownerNickname) ||
+    (typeof (post as { ownerNickname?: unknown }).ownerNickname === "string" &&
+      (post as { ownerNickname: string }).ownerNickname) ||
     "User";
 
   const createdAt = typeof post.createdAt === "string" ? post.createdAt : "";
   const updatedAt =
     typeof (post as { updatedAt?: unknown }).updatedAt === "string" ? (post as { updatedAt: string }).updatedAt : "";
   const publishedAt =
-    typeof (post as { publishedAt?: unknown }).publishedAt === "string" ? (post as { publishedAt: string }).publishedAt : "";
+    typeof (post as { publishedAt?: unknown }).publishedAt === "string"
+      ? (post as { publishedAt: string }).publishedAt
+      : "";
 
   const tags =
     Array.isArray((post as { tags?: unknown }).tags) && (post as { tags: unknown[] }).tags.every((t) => typeof t === "string")
@@ -284,47 +261,33 @@ function renderPostHtml(post: Post | PostDetail, focusUserId: string): string {
       ? `<div class="tags">${tags.map((t) => `<span class="tag">#${escapeHtml(t)}</span>`).join("")}</div>`
       : "";
 
+  const countLikes =
+    typeof (post as { countLikes?: unknown }).countLikes === "number"
+      ? (post as { countLikes: number }).countLikes
+      : null;
+
+  const countReplies =
+    typeof (post as { countReplies?: unknown }).countReplies === "number"
+      ? (post as { countReplies: number }).countReplies
+      : typeof (post as { countReply?: unknown }).countReply === "number"
+      ? (post as { countReply: number }).countReply
+      : typeof (post as { countComments?: unknown }).countComments === "number"
+      ? (post as { countComments: number }).countComments
+      : null;
+
   return `<!doctype html>
 <html lang="${escapeHtml(postLang)}">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Post ${escapeHtml(postId)} - STGY</title>
-  <style>
-    :root { color-scheme: light; }
-    body { margin: 0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji"; background: #fff; color: #111827; }
-    main { max-width: 860px; margin: 48px auto; padding: 16px; }
-    h1 { font-size: 22px; margin: 0 0 6px; }
-    h2 { font-size: 14px; margin: 18px 0 8px; color: #374151; }
-    .muted { color: #6b7280; font-size: 13px; margin: 0 0 14px; }
-    .card { border: 1px solid #e5e7eb; border-radius: 10px; padding: 16px; box-shadow: 0 1px 2px rgba(0,0,0,.05); }
-    table { width: 100%; border-collapse: collapse; }
-    th, td { text-align: left; padding: 6px 0; border-bottom: 1px solid #f3f4f6; vertical-align: top; }
-    th { width: 180px; color: #6b7280; font-weight: 600; }
-    code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 0.95em; }
-    .tags { margin: 8px 0 0; display: flex; flex-wrap: wrap; gap: 6px; }
-    .tag { display: inline-block; background: #f3f4f6; border: 1px solid #e5e7eb; border-radius: 9999px; padding: 2px 8px; font-size: 12px; color: #1d4ed8; }
-    .markdown-body { line-height: 1.7; word-break: break-word; margin-top: 14px; }
-    .markdown-body p { margin: 0.6em 0; }
-    .markdown-body h1, .markdown-body h2, .markdown-body h3 { margin: 1.0em 0 0.4em; }
-    .markdown-body pre { padding: 12px; background: #0b1020; color: #e5e7eb; border-radius: 10px; overflow: auto; }
-    .markdown-body pre code { color: inherit; }
-    .markdown-body code { background: #f3f4f6; padding: 0.1em 0.3em; border-radius: 6px; }
-    .markdown-body pre code { background: transparent; padding: 0; }
-    .markdown-body blockquote { margin: 0.8em 0; padding-left: 12px; border-left: 3px solid #e5e7eb; color: #374151; }
-    .markdown-body ul { margin: 0.6em 0; padding-left: 1.2em; }
-    .markdown-body a { color: #2563eb; text-decoration: underline; }
-    figure.image-block { margin: 0.8em 0; }
-    figure.image-block img { max-width: 100%; height: auto; border-radius: 10px; border: 1px solid #e5e7eb; }
-    figure.image-block figcaption { color: #6b7280; font-size: 0.9em; margin-top: 6px; }
-    .image-grid { display: grid; gap: 8px; }
-  </style>
+  <link rel="stylesheet" href="../export.css" />
 </head>
-<body>
+<body class="stgy-export stgy-export-post">
   <main>
     <div class="card">
       <h1>${escapeHtml(ownerNickname)}</h1>
-      <p class="muted">Post ID: <code>${escapeHtml(postId)}</code> / Owner: <code>${escapeHtml(focusUserId)}</code></p>
+      <p class="muted">Post ID: <code>${escapeHtml(postId)}</code></p>
 
       ${tagHtml}
 
@@ -338,6 +301,8 @@ function renderPostHtml(post: Post | PostDetail, focusUserId: string): string {
         ${createdAt ? `<tr><th>Created at</th><td>${escapeHtml(createdAt)}</td></tr>` : ""}
         ${updatedAt ? `<tr><th>Updated at</th><td>${escapeHtml(updatedAt)}</td></tr>` : ""}
         ${publishedAt ? `<tr><th>Published at</th><td>${escapeHtml(publishedAt)}</td></tr>` : ""}
+        ${countLikes !== null ? `<tr><th>Likes</th><td>${countLikes}</td></tr>` : ""}
+        ${countReplies !== null ? `<tr><th>Replies</th><td>${countReplies}</td></tr>` : ""}
       </table>
     </div>
   </main>
@@ -514,6 +479,7 @@ export default function PageBody() {
       const profileHtml = renderProfileHtml(exportProfile);
 
       const files: Array<{ name: string; data: Uint8Array }> = [
+        { name: `${base}export.css`, data: enc.encode(HTML_STYLES_CSS) },
         { name: `${base}profile.json`, data: enc.encode(profileJson) },
         { name: `${base}profile.html`, data: enc.encode(profileHtml) },
       ];
@@ -591,6 +557,9 @@ export default function PageBody() {
           </p>
 
           <ul className="list-disc pl-6 mt-3 space-y-1 text-gray-700">
+            <li>
+              <code>./export.css</code> : Stylesheet for exported HTML
+            </li>
             <li>
               <code>./profile.json</code> : User profile in JSON
             </li>
