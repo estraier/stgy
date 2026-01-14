@@ -75,7 +75,8 @@ function rewriteProfileIntroductionAndSnippet(profile: UserDetail, userId: strin
 
   const snippet = typeof profile.snippet === "string" ? profile.snippet : "[]";
 
-  const rewrittenIntro = intro !== null ? rewriteImageObjectUrlsToRelative(intro, userId, "./images") : null;
+  const rewrittenIntro =
+    intro !== null ? rewriteImageObjectUrlsToRelative(intro, userId, "./images") : null;
   const rewrittenSnippet = rewriteImageObjectUrlsToRelative(snippet, userId, "./images");
 
   const next: UserDetail = {
@@ -112,7 +113,8 @@ function getPublicUrlFromStoragePath(storagePath: string, version?: string | nul
 
   const base = String(Config.STORAGE_S3_PUBLIC_URL_PREFIX || "").replace("{bucket}", bucket);
   const prefix = base.replace(/\/+$/, "");
-  const suffix = version && String(version).trim() !== "" ? `?v=${encodeURIComponent(String(version))}` : "";
+  const suffix =
+    version && String(version).trim() !== "" ? `?v=${encodeURIComponent(String(version))}` : "";
   return `${prefix}/${key}${suffix}`;
 }
 
@@ -130,8 +132,11 @@ function renderProfileHtml(profile: UserDetail): string {
   const nickname = profile.nickname ? String(profile.nickname) : "User";
   const userId = profile.id ? String(profile.id) : "";
 
-  const hasIntro = typeof (profile as unknown as { introduction?: unknown }).introduction === "string";
-  const introMd = hasIntro ? String((profile as unknown as { introduction: string }).introduction) : "";
+  const hasIntro =
+    typeof (profile as unknown as { introduction?: unknown }).introduction === "string";
+  const introMd = hasIntro
+    ? String((profile as unknown as { introduction: string }).introduction)
+    : "";
   const bodyHtml = hasIntro ? makeArticleHtmlFromMarkdown(introMd, false, userId, false) : "";
 
   const timezone = profile.timezone ? String(profile.timezone) : "";
@@ -229,8 +234,10 @@ function renderProfileHtml(profile: UserDetail): string {
 function renderPostHtml(post: Post | PostDetail, focusUserId: string): string {
   const postId = typeof post.id === "string" ? post.id : "";
   const postLang =
-    (typeof (post as { locale?: unknown }).locale === "string" && (post as { locale: string }).locale) ||
-    (typeof (post as { ownerLocale?: unknown }).ownerLocale === "string" && (post as { ownerLocale: string }).ownerLocale) ||
+    (typeof (post as { locale?: unknown }).locale === "string" &&
+      (post as { locale: string }).locale) ||
+    (typeof (post as { ownerLocale?: unknown }).ownerLocale === "string" &&
+      (post as { ownerLocale: string }).ownerLocale) ||
     "en";
 
   const ownerNickname =
@@ -240,20 +247,25 @@ function renderPostHtml(post: Post | PostDetail, focusUserId: string): string {
 
   const createdAt = typeof post.createdAt === "string" ? post.createdAt : "";
   const updatedAt =
-    typeof (post as { updatedAt?: unknown }).updatedAt === "string" ? (post as { updatedAt: string }).updatedAt : "";
+    typeof (post as { updatedAt?: unknown }).updatedAt === "string"
+      ? (post as { updatedAt: string }).updatedAt
+      : "";
   const publishedAt =
     typeof (post as { publishedAt?: unknown }).publishedAt === "string"
       ? (post as { publishedAt: string }).publishedAt
       : "";
 
   const tags =
-    Array.isArray((post as { tags?: unknown }).tags) && (post as { tags: unknown[] }).tags.every((t) => typeof t === "string")
+    Array.isArray((post as { tags?: unknown }).tags) &&
+    (post as { tags: unknown[] }).tags.every((t) => typeof t === "string")
       ? (post as { tags: string[] }).tags
       : [];
 
   const hasContent = "content" in post && typeof (post as PostDetail).content === "string";
   const bodyHtml = convertHtmlMathInline(
-    hasContent ? makeArticleHtmlFromMarkdown((post as PostDetail).content, false, postId, false) : "",
+    hasContent
+      ? makeArticleHtmlFromMarkdown((post as PostDetail).content, false, postId, false)
+      : "",
   );
 
   const tagHtml =
@@ -270,10 +282,10 @@ function renderPostHtml(post: Post | PostDetail, focusUserId: string): string {
     typeof (post as { countReplies?: unknown }).countReplies === "number"
       ? (post as { countReplies: number }).countReplies
       : typeof (post as { countReply?: unknown }).countReply === "number"
-      ? (post as { countReply: number }).countReply
-      : typeof (post as { countComments?: unknown }).countComments === "number"
-      ? (post as { countComments: number }).countComments
-      : null;
+        ? (post as { countReply: number }).countReply
+        : typeof (post as { countComments?: unknown }).countComments === "number"
+          ? (post as { countComments: number }).countComments
+          : null;
 
   return `<!doctype html>
 <html lang="${escapeHtml(postLang)}">
@@ -324,7 +336,10 @@ async function fetchAllMyPosts(userId: string): Promise<Post[]> {
       ownedBy: userId,
     };
 
-    const fn = listPosts as unknown as (input: Record<string, unknown>, focusUserId: string) => Promise<Post[]>;
+    const fn = listPosts as unknown as (
+      input: Record<string, unknown>,
+      focusUserId: string,
+    ) => Promise<Post[]>;
     const res = await fn(input, userId);
 
     if (res.length === 0) break;
@@ -499,7 +514,10 @@ export default function PageBody() {
       const posts = await fetchAllMyPosts(userId);
 
       const postFiles = await mapWithConcurrency(posts, 4, async (p) => {
-        const fn = getPost as unknown as (postId: string, focusUserId: string) => Promise<PostDetail>;
+        const fn = getPost as unknown as (
+          postId: string,
+          focusUserId: string,
+        ) => Promise<PostDetail>;
         const detail = await fn(p.id, userId);
         const src = (detail ?? p) as Post | PostDetail;
         const rewritten = rewritePostContentAndSnippet(src, userId);
@@ -525,10 +543,14 @@ export default function PageBody() {
         if (!masterByFilename.has(filename)) masterByFilename.set(filename, it);
       }
 
-      const imageFiles = await mapWithConcurrency(Array.from(masterByFilename.entries()), 6, async ([filename, it]) => {
-        const bytes = await fetchBytes(it.publicUrl, `image ${filename}`);
-        return { name: `${base}images/${filename}`, data: bytes };
-      });
+      const imageFiles = await mapWithConcurrency(
+        Array.from(masterByFilename.entries()),
+        6,
+        async ([filename, it]) => {
+          const bytes = await fetchBytes(it.publicUrl, `image ${filename}`);
+          return { name: `${base}images/${filename}`, data: bytes };
+        },
+      );
 
       for (const f of imageFiles) files.push(f);
 
@@ -552,8 +574,8 @@ export default function PageBody() {
       <form onSubmit={handleExport} className="flex flex-col gap-6">
         <section className="text-sm text-gray-700 leading-relaxed">
           <p>
-            You can download all of your STGY data in one ZIP archive here. Click the button at the bottom of this page
-            to start downloading. The archive includes the following files:
+            You can download all of your STGY data in one ZIP archive here. Click the button at the
+            bottom of this page to start downloading. The archive includes the following files:
           </p>
 
           <ul className="list-disc pl-6 mt-3 space-y-1 text-gray-700">
@@ -576,7 +598,8 @@ export default function PageBody() {
               <code>./posts/&lt;postId&gt;.html</code> : Post data in HTML
             </li>
             <li>
-              <code>./images/&lt;objectId&gt;.&lt;jpg|png|webp|...&gt;</code> : Image binaries (master only)
+              <code>./images/&lt;objectId&gt;.&lt;jpg|png|webp|...&gt;</code> : Image binaries
+              (master only)
             </li>
             <li>
               <code>./relations.json</code> : Follow/block/like relations in JSON
@@ -584,14 +607,14 @@ export default function PageBody() {
           </ul>
 
           <p className="mt-3">
-            The JSON and HTML versions of the profile/posts contain the same information. JSON is useful for migrating
-            your data to other services, while HTML is convenient for using the exported data as a website or CMS
-            content.
+            The JSON and HTML versions of the profile/posts contain the same information. JSON is
+            useful for migrating your data to other services, while HTML is convenient for using the
+            exported data as a website or CMS content.
           </p>
 
           <p className="mt-3">
-            Creating and downloading the archive may take a while. After you click the button, keep this browser window
-            open until the download finishes.
+            Creating and downloading the archive may take a while. After you click the button, keep
+            this browser window open until the download finishes.
           </p>
         </section>
 
