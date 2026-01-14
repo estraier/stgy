@@ -4,11 +4,14 @@ import { useEffect, useMemo, useState } from "react";
 import { getSessionInfo } from "@/api/auth";
 import { getUser } from "@/api/users";
 import { listPosts, getPost } from "@/api/posts";
-import type { UserDetail, Post, PostDetail } from "@/api/models";
+import { listImages } from "@/api/media";
+import type { MediaObject, UserDetail, Post, PostDetail } from "@/api/models";
 import { makeArticleHtmlFromMarkdown } from "@/utils/article";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import { buildZipStore } from "@/utils/zip";
 import { Config } from "@/config";
+
+const IMAGES_PAGE_SIZE = Config.IMAGES_PAGE_SIZE || 30;
 
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
@@ -52,10 +55,6 @@ function escapeRegExp(s: string): string {
 
 function rewriteImageObjectUrlsToRelative(text: string, userId: string, baseDir: string): string {
   const uid = escapeRegExp(userId);
-
-  // Match only:
-  // /images/{userId}/(masters|thumbs|master|thumb)/\d{6}/[0-9a-f]{16}\.[A-Za-z0-9]{1,5}
-  // Optionally allow ?... or #... (we drop them by design for local filenames)
   const re = new RegExp(
     String.raw`\/images\/${uid}\/(?:masters|thumbs|master|thumb)\/(\d{6})\/([0-9a-f]{16})\.([A-Za-z0-9]{1,5})(?:[?#][^)\s"'<>]*)?`,
     "g",
@@ -68,10 +67,9 @@ function rewriteImageObjectUrlsToRelative(text: string, userId: string, baseDir:
 }
 
 function rewriteProfileIntroductionAndSnippet(profile: UserDetail, userId: string): UserDetail {
-  const intro =
-    typeof (profile as unknown as { introduction?: unknown }).introduction === "string"
-      ? String((profile as unknown as { introduction: string }).introduction)
-      : null;
+  const intro = typeof (profile as unknown as { introduction?: unknown }).introduction === "string"
+    ? String((profile as unknown as { introduction: string }).introduction)
+    : null;
 
   const snippet = typeof profile.snippet === "string" ? profile.snippet : "[]";
 
@@ -112,15 +110,14 @@ function getPublicUrlFromStoragePath(storagePath: string, version?: string | nul
 
   const base = String(Config.STORAGE_S3_PUBLIC_URL_PREFIX || "").replace("{bucket}", bucket);
   const prefix = base.replace(/\/+$/, "");
-  const suffix =
-    version && String(version).trim() !== "" ? `?v=${encodeURIComponent(String(version))}` : "";
+  const suffix = version && String(version).trim() !== "" ? `?v=${encodeURIComponent(String(version))}` : "";
   return `${prefix}/${key}${suffix}`;
 }
 
-async function fetchBytes(url: string): Promise<Uint8Array> {
-  const resp = await fetch(url, { method: "GET" });
+async function fetchBytes(url: string, label: string): Promise<Uint8Array> {
+  const resp = await fetch(url, { method: "GET", credentials: "include" });
   if (!resp.ok) {
-    throw new Error(`Failed to download avatar: ${resp.status} ${resp.statusText}`);
+    throw new Error(`Failed to download ${label}: ${resp.status} ${resp.statusText}`);
   }
   const ab = await resp.arrayBuffer();
   return new Uint8Array(ab);
@@ -131,11 +128,8 @@ function renderProfileHtml(profile: UserDetail): string {
   const nickname = profile.nickname ? String(profile.nickname) : "User";
   const userId = profile.id ? String(profile.id) : "";
 
-  const hasIntro =
-    typeof (profile as unknown as { introduction?: unknown }).introduction === "string";
-  const introMd = hasIntro
-    ? String((profile as unknown as { introduction: string }).introduction)
-    : "";
+  const hasIntro = typeof (profile as unknown as { introduction?: unknown }).introduction === "string";
+  const introMd = hasIntro ? String((profile as unknown as { introduction: string }).introduction) : "";
   const bodyHtml = hasIntro ? makeArticleHtmlFromMarkdown(introMd, false, userId, false) : "";
 
   const timezone = profile.timezone ? String(profile.timezone) : "";
@@ -262,41 +256,32 @@ function renderPostHtml(post: Post | PostDetail, focusUserId: string): string {
   const postId = typeof post.id === "string" ? post.id : "";
   const postLang =
     (typeof (post as { locale?: unknown }).locale === "string" && (post as { locale: string }).locale) ||
-    (typeof (post as { ownerLocale?: unknown }).ownerLocale === "string" &&
-      (post as { ownerLocale: string }).ownerLocale) ||
+    (typeof (post as { ownerLocale?: unknown }).ownerLocale === "string" && (post as { ownerLocale: string }).ownerLocale) ||
     "en";
 
   const ownerNickname =
-    (typeof (post as { ownerNickname?: unknown }).ownerNickname === "string" &&
-      (post as { ownerNickname: string }).ownerNickname) ||
+    (typeof (post as { ownerNickname?: unknown }).ownerNickname === "string" && (post as { ownerNickname: string }).ownerNickname) ||
     "User";
 
   const createdAt = typeof post.createdAt === "string" ? post.createdAt : "";
   const updatedAt =
-    typeof (post as { updatedAt?: unknown }).updatedAt === "string"
-      ? (post as { updatedAt: string }).updatedAt
-      : "";
+    typeof (post as { updatedAt?: unknown }).updatedAt === "string" ? (post as { updatedAt: string }).updatedAt : "";
   const publishedAt =
-    typeof (post as { publishedAt?: unknown }).publishedAt === "string"
-      ? (post as { publishedAt: string }).publishedAt
-      : "";
+    typeof (post as { publishedAt?: unknown }).publishedAt === "string" ? (post as { publishedAt: string }).publishedAt : "";
 
   const tags =
-    Array.isArray((post as { tags?: unknown }).tags) &&
-    (post as { tags: unknown[] }).tags.every((t) => typeof t === "string")
-      ? ((post as { tags: string[] }).tags as string[])
+    Array.isArray((post as { tags?: unknown }).tags) && (post as { tags: unknown[] }).tags.every((t) => typeof t === "string")
+      ? (post as { tags: string[] }).tags
       : [];
+
   const hasContent = "content" in post && typeof (post as PostDetail).content === "string";
   const bodyHtml = convertHtmlMathInline(
-    hasContent
-      ? makeArticleHtmlFromMarkdown((post as PostDetail).content, false, postId, false) : ""
+    hasContent ? makeArticleHtmlFromMarkdown((post as PostDetail).content, false, postId, false) : "",
   );
 
   const tagHtml =
     tags.length > 0
-      ? `<div class="tags">${tags
-          .map((t) => `<span class="tag">#${escapeHtml(t)}</span>`)
-          .join("")}</div>`
+      ? `<div class="tags">${tags.map((t) => `<span class="tag">#${escapeHtml(t)}</span>`).join("")}</div>`
       : "";
 
   return `<!doctype html>
@@ -339,9 +324,7 @@ function renderPostHtml(post: Post | PostDetail, focusUserId: string): string {
   <main>
     <div class="card">
       <h1>${escapeHtml(ownerNickname)}</h1>
-      <p class="muted">Post ID: <code>${escapeHtml(postId)}</code> / Owner: <code>${escapeHtml(
-        focusUserId,
-      )}</code></p>
+      <p class="muted">Post ID: <code>${escapeHtml(postId)}</code> / Owner: <code>${escapeHtml(focusUserId)}</code></p>
 
       ${tagHtml}
 
@@ -363,33 +346,11 @@ function renderPostHtml(post: Post | PostDetail, focusUserId: string): string {
 `;
 }
 
-function normalizePostListResponse(res: unknown): unknown[] {
-  if (Array.isArray(res)) return res;
-
-  if (res && typeof res === "object") {
-    const o = res as Record<string, unknown>;
-    const candidates = [o.posts, o.items, o.results, o.data];
-    for (const c of candidates) {
-      if (Array.isArray(c)) return c;
-    }
-  }
-  return [];
-}
-
-function isPostLike(x: unknown): x is Post {
-  if (!x || typeof x !== "object") return false;
-  const o = x as Record<string, unknown>;
-  return typeof o.id === "string" && typeof o.ownedBy === "string" && typeof o.createdAt === "string";
-}
-
 async function fetchAllMyPosts(userId: string): Promise<Post[]> {
   const out: Post[] = [];
   const limit = 200;
 
   for (let offset = 0; offset < 200_000; offset += limit) {
-    // We intentionally pass a plain object (unknown) to avoid relying on exact input typing.
-    // If the backend/client supports ownedBy filtering, it will reduce results;
-    // otherwise we still filter client-side by ownedBy.
     const input: Record<string, unknown> = {
       offset,
       limit,
@@ -398,22 +359,18 @@ async function fetchAllMyPosts(userId: string): Promise<Post[]> {
       ownedBy: userId,
     };
 
-    const fn = listPosts as unknown as (...args: unknown[]) => Promise<unknown>;
+    const fn = listPosts as unknown as (input: Record<string, unknown>, focusUserId: string) => Promise<Post[]>;
     const res = await fn(input, userId);
 
-    const raw = normalizePostListResponse(res);
-    if (raw.length === 0) break;
+    if (res.length === 0) break;
 
-    for (const item of raw) {
-      if (isPostLike(item) && item.ownedBy === userId) {
-        out.push(item);
-      }
+    for (const item of res) {
+      if (item.ownedBy === userId) out.push(item);
     }
 
-    if (raw.length < limit) break;
+    if (res.length < limit) break;
   }
 
-  // De-dup by id (just in case)
   const seen = new Set<string>();
   const dedup: Post[] = [];
   for (const p of out) {
@@ -443,6 +400,46 @@ async function mapWithConcurrency<T, R>(
 
   await Promise.all(workers);
   return out;
+}
+
+function isMasterKey(key: string, userId: string): boolean {
+  return key.startsWith(`${userId}/masters/`) || key.startsWith(`${userId}/master/`);
+}
+
+function imageFilenameFromKey(key: string, userId: string): string {
+  const parts = String(key || "").split("/");
+  if (parts.length !== 4) throw new Error(`Invalid image key: ${key}`);
+  if (parts[0] !== userId) throw new Error(`Invalid image key: ${key}`);
+  if (parts[1] !== "masters" && parts[1] !== "master") throw new Error(`Invalid image key: ${key}`);
+  const rev6 = parts[2];
+  if (!/^\d{6}$/.test(rev6)) throw new Error(`Invalid image key: ${key}`);
+  const name = parts[3];
+  const m = /^([0-9a-f]{16})\.([A-Za-z0-9]{1,5})$/i.exec(name);
+  if (!m) throw new Error(`Invalid image key: ${key}`);
+  const hex16 = m[1].toLowerCase();
+  const ext = m[2];
+  return `${rev6}${hex16}.${ext}`;
+}
+
+async function fetchAllMyImages(userId: string): Promise<MediaObject[]> {
+  const out: MediaObject[] = [];
+  for (let page = 1; page < 100000; page++) {
+    const offset = (page - 1) * IMAGES_PAGE_SIZE;
+    const data = await listImages(userId, { offset, limit: IMAGES_PAGE_SIZE + 1 });
+    const hasNext = data.length > IMAGES_PAGE_SIZE;
+    out.push(...data.slice(0, IMAGES_PAGE_SIZE));
+    if (!hasNext) break;
+  }
+
+  const seen = new Set<string>();
+  const dedup: MediaObject[] = [];
+  for (const it of out) {
+    if (!seen.has(it.key)) {
+      seen.add(it.key);
+      dedup.push(it);
+    }
+  }
+  return dedup;
 }
 
 export default function PageBody() {
@@ -512,7 +509,6 @@ export default function PageBody() {
       const enc = new TextEncoder();
       const base = `${exportRootDir}/`;
 
-      // Profile (rewrite intro/snippet by regex only)
       const exportProfile = rewriteProfileIntroductionAndSnippet(profile, userId);
       const profileJson = JSON.stringify(exportProfile, null, 2);
       const profileHtml = renderProfileHtml(exportProfile);
@@ -522,7 +518,6 @@ export default function PageBody() {
         { name: `${base}profile.html`, data: enc.encode(profileHtml) },
       ];
 
-      // Avatar (binary) - unchanged behavior
       const hasAvatar = typeof profile.avatar === "string" && profile.avatar.trim() !== "";
       if (hasAvatar) {
         const version =
@@ -531,29 +526,17 @@ export default function PageBody() {
             : null;
         const url = getPublicUrlFromStoragePath(String(profile.avatar), version);
         if (!url) throw new Error("Avatar path is invalid.");
-        const avatarBytes = await fetchBytes(url);
+        const avatarBytes = await fetchBytes(url, "avatar");
         files.push({ name: `${base}avatar.webp`, data: avatarBytes });
       }
 
-      // Posts (JSON + HTML)
       const posts = await fetchAllMyPosts(userId);
 
       const postFiles = await mapWithConcurrency(posts, 4, async (p) => {
-        // Try to fetch full content for HTML/JSON.
-        let detail: PostDetail | null = null;
-        try {
-          const fn = getPost as unknown as (...args: unknown[]) => Promise<unknown>;
-          const got = await fn(p.id, userId);
-          if (got && typeof got === "object") {
-            detail = got as PostDetail;
-          }
-        } catch {
-          detail = null;
-        }
-
+        const fn = getPost as unknown as (postId: string, focusUserId: string) => Promise<PostDetail>;
+        const detail = await fn(p.id, userId);
         const src = (detail ?? p) as Post | PostDetail;
         const rewritten = rewritePostContentAndSnippet(src, userId);
-
         const postJson = JSON.stringify(rewritten, null, 2);
         const postHtml = renderPostHtml(rewritten, userId);
 
@@ -566,6 +549,22 @@ export default function PageBody() {
       for (const pair of postFiles) {
         files.push(pair[0], pair[1]);
       }
+
+      const images = await fetchAllMyImages(userId);
+      const masters = images.filter((it) => isMasterKey(it.key, userId));
+
+      const masterByFilename = new Map<string, MediaObject>();
+      for (const it of masters) {
+        const filename = imageFilenameFromKey(it.key, userId);
+        if (!masterByFilename.has(filename)) masterByFilename.set(filename, it);
+      }
+
+      const imageFiles = await mapWithConcurrency(Array.from(masterByFilename.entries()), 6, async ([filename, it]) => {
+        const bytes = await fetchBytes(it.publicUrl, `image ${filename}`);
+        return { name: `${base}images/${filename}`, data: bytes };
+      });
+
+      for (const f of imageFiles) files.push(f);
 
       const zipBytes = buildZipStore(files, new Date());
       const blob = new Blob([zipBytes], { type: "application/zip" });
@@ -587,8 +586,8 @@ export default function PageBody() {
       <form onSubmit={handleExport} className="flex flex-col gap-6">
         <section className="text-sm text-gray-700 leading-relaxed">
           <p>
-            You can download all of your STGY data in one ZIP archive here. Click the button at the
-            bottom of this page to start downloading. The archive includes the following files:
+            You can download all of your STGY data in one ZIP archive here. Click the button at the bottom of this page
+            to start downloading. The archive includes the following files:
           </p>
 
           <ul className="list-disc pl-6 mt-3 space-y-1 text-gray-700">
@@ -608,7 +607,7 @@ export default function PageBody() {
               <code>./posts/&lt;postId&gt;.html</code> : Post data in HTML
             </li>
             <li>
-              <code>./images/&lt;objectId&gt;.&lt;jpg|png|webp|...&gt;</code> : Image binaries
+              <code>./images/&lt;objectId&gt;.&lt;jpg|png|webp|...&gt;</code> : Image binaries (master only)
             </li>
             <li>
               <code>./relations.json</code> : Follow/block/like relations in JSON
@@ -616,14 +615,14 @@ export default function PageBody() {
           </ul>
 
           <p className="mt-3">
-            The JSON and HTML versions of the profile/posts contain the same information. JSON is
-            useful for migrating your data to other services, while HTML is convenient for using the
-            exported data as a website or CMS content.
+            The JSON and HTML versions of the profile/posts contain the same information. JSON is useful for migrating
+            your data to other services, while HTML is convenient for using the exported data as a website or CMS
+            content.
           </p>
 
           <p className="mt-3">
-            Creating and downloading the archive may take a while. After you click the button, keep
-            this browser window open until the download finishes.
+            Creating and downloading the archive may take a while. After you click the button, keep this browser window
+            open until the download finishes.
           </p>
         </section>
 
