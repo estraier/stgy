@@ -280,10 +280,10 @@ def main(argv: list[str]) -> int:
     try:
       raw = parse_kv_file(path)
       if raw["password"] == "*" and insecure:
-        nick = str(raw.get("nickname", "")).strip()
-        if not nick:
-          raise ValueError("nickname is required to derive insecure password")
-        raw["password"] = nick.lower()
+        email = str(raw.get("email", "")).strip()
+        if not email:
+          raise ValueError("email is required to derive insecure password")
+        raw["password"] = email.split("@")[0].lower()
       payload = normalize_payload(raw)
       action, uid = upsert_user(sess, payload)
       if has_pub_config(payload):
