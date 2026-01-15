@@ -3,44 +3,24 @@ export type ZipInputFile = {
   data: Uint8Array;
 };
 
-type ZipEntry = {
-  name: string;
-  crc32: number;
-  size: number;
-  time: number;
-  date: number;
-  offset: number;
-};
-
-function toDosTimeDate(d: Date): { time: number; date: number } {
-  const year = d.getFullYear();
-  const month = d.getMonth() + 1;
-  const day = d.getDate();
-  const hours = d.getHours();
-  const minutes = d.getMinutes();
-  const seconds = d.getSeconds();
-
-  const dosTime = (hours << 11) | (minutes << 5) | (Math.floor(seconds / 2) & 0x1f);
-  const dosDate = ((Math.max(1980, year) - 1980) << 9) | (month << 5) | day;
-  return { time: dosTime & 0xffff, date: dosDate & 0xffff };
+export interface IZipWriter {
+  addFile(name: string, data: Uint8Array, now: Date): Promise<void>;
+  finalize(): Promise<void>;
 }
 
-function makeCrc32Table(): Uint32Array {
-  const table = new Uint32Array(256);
-  for (let i = 0; i < 256; i++) {
-    let c = i;
-    for (let k = 0; k < 8; k++) {
-      c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
-    }
-    table[i] = c >>> 0;
-  }
-  return table;
+export interface WritableFileStreamMinimal {
+  write(data: Uint8Array): Promise<void>;
+  close(): Promise<void>;
 }
 
-const CRC32_TABLE = makeCrc32Table();
+const CRC32_TABLE = new Uint32Array(256).map((_, i) => {
+  let c = i;
+  for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1;
+  return c >>> 0;
+});
 
-function crc32(bytes: Uint8Array): number {
-  let c = 0xffffffff;
+function crc32(bytes: Uint8Array, currentCrc = 0xffffffff): number {
+  let c = currentCrc;
   for (let i = 0; i < bytes.length; i++) {
     c = CRC32_TABLE[(c ^ bytes[i]) & 0xff] ^ (c >>> 8);
   }
@@ -74,92 +54,133 @@ function concat(parts: Uint8Array[]): Uint8Array {
   return out;
 }
 
-export function buildZipStore(files: ZipInputFile[], now: Date): Uint8Array {
-  const enc = new TextEncoder();
-  const { time, date } = toDosTimeDate(now);
+function toDosTimeDate(d: Date): { time: number; date: number } {
+  const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (Math.floor(d.getSeconds() / 2) & 0x1f);
+  const date = ((Math.max(1980, d.getFullYear()) - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  return { time: time & 0xffff, date: date & 0xffff };
+}
 
-  const entries: ZipEntry[] = [];
-  const outParts: Uint8Array[] = [];
-  let offset = 0;
+export class ZipStreamWriter implements IZipWriter {
+  private writer: WritableFileStreamMinimal;
+  private entries: Array<{ name: string; crc: number; size: number; time: number; date: number; offset: number }> = [];
+  private currentOffset = 0;
 
-  for (const f of files) {
-    const nameBytes = enc.encode(f.name);
-    const data = f.data;
+  constructor(writer: WritableFileStreamMinimal) {
+    this.writer = writer;
+  }
+
+  private async write(data: Uint8Array) {
+    await this.writer.write(data);
+    this.currentOffset += data.length;
+  }
+
+  async addFile(name: string, data: Uint8Array, now: Date) {
+    const enc = new TextEncoder();
+    const nameBytes = enc.encode(name);
+    const { time, date } = toDosTimeDate(now);
     const c = crc32(data);
-    const size = data.length >>> 0;
+    const size = data.length;
 
-    const local = concat([
-      u32le(0x04034b50),
-      u16le(20),
-      u16le(0x0800),
-      u16le(0),
-      u16le(time),
-      u16le(date),
-      u32le(c),
-      u32le(size),
-      u32le(size),
-      u16le(nameBytes.length),
-      u16le(0),
-      nameBytes,
+    const localHeader = concat([
+      u32le(0x04034b50), u16le(20), u16le(0x0800), u16le(0),
+      u16le(time), u16le(date), u32le(c), u32le(size), u32le(size),
+      u16le(nameBytes.length), u16le(0), nameBytes
     ]);
 
-    outParts.push(local);
-    outParts.push(data);
+    const offset = this.currentOffset;
+    await this.write(localHeader);
+    await this.write(data);
 
-    entries.push({
-      name: f.name,
-      crc32: c,
-      size,
-      time,
-      date,
-      offset,
-    });
-
-    offset += local.length + data.length;
+    this.entries.push({ name, crc: c, size, time, date, offset });
   }
 
-  const centralStart = offset;
-  const centralParts: Uint8Array[] = [];
+  async finalize() {
+    const centralStart = this.currentOffset;
+    const enc = new TextEncoder();
 
-  for (const e of entries) {
-    const nameBytes = enc.encode(e.name);
-    centralParts.push(
-      concat([
-        u32le(0x02014b50),
-        u16le(20),
-        u16le(20),
-        u16le(0x0800),
-        u16le(0),
-        u16le(e.time),
-        u16le(e.date),
-        u32le(e.crc32),
-        u32le(e.size),
-        u32le(e.size),
-        u16le(nameBytes.length),
-        u16le(0),
-        u16le(0),
-        u16le(0),
-        u16le(0),
-        u32le(0),
-        u32le(e.offset),
-        nameBytes,
-      ]),
-    );
+    for (const e of this.entries) {
+      const nameBytes = enc.encode(e.name);
+      await this.write(concat([
+        u32le(0x02014b50), u16le(20), u16le(20), u16le(0x0800), u16le(0),
+        u16le(e.time), u16le(e.date), u32le(e.crc), u32le(e.size), u32le(e.size),
+        u16le(nameBytes.length), u16le(0), u16le(0), u16le(0), u16le(0),
+        u32le(0), u32le(e.offset), nameBytes
+      ]));
+    }
+
+    const centralSize = this.currentOffset - centralStart;
+    await this.write(concat([
+      u32le(0x06054b50), u16le(0), u16le(0),
+      u16le(this.entries.length), u16le(this.entries.length),
+      u32le(centralSize), u32le(centralStart), u16le(0)
+    ]));
+
+    await this.writer.close();
+  }
+}
+
+export class InMemoryZipWriter implements IZipWriter {
+  private files: ZipInputFile[] = [];
+  private fileName: string;
+
+  constructor(fileName: string) {
+    this.fileName = fileName;
   }
 
-  const centralDir = concat(centralParts);
-  const centralSize = centralDir.length;
+  async addFile(name: string, data: Uint8Array, _now: Date) {
+    this.files.push({ name, data });
+  }
 
-  const end = concat([
-    u32le(0x06054b50),
-    u16le(0),
-    u16le(0),
-    u16le(entries.length),
-    u16le(entries.length),
-    u32le(centralSize),
-    u32le(centralStart),
-    u16le(0),
-  ]);
+  async finalize() {
+    const now = new Date();
+    const { time, date } = toDosTimeDate(now);
+    const enc = new TextEncoder();
 
-  return concat([...outParts, centralDir, end]);
+    const entries: Array<{ name: string; crc: number; size: number; time: number; date: number; offset: number }> = [];
+    const outParts: Uint8Array[] = [];
+    let offset = 0;
+
+    for (const f of this.files) {
+      const nameBytes = enc.encode(f.name);
+      const c = crc32(f.data);
+      const size = f.data.length;
+      const local = concat([
+        u32le(0x04034b50), u16le(20), u16le(0x0800), u16le(0),
+        u16le(time), u16le(date), u32le(c), u32le(size), u32le(size),
+        u16le(nameBytes.length), u16le(0), nameBytes
+      ]);
+      outParts.push(local, f.data);
+      entries.push({ name: f.name, crc: c, size, time, date, offset });
+      offset += local.length + f.data.length;
+    }
+
+    const centralStart = offset;
+    const centralParts: Uint8Array[] = [];
+    for (const e of entries) {
+      const nameBytes = enc.encode(e.name);
+      centralParts.push(concat([
+        u32le(0x02014b50), u16le(20), u16le(20), u16le(0x0800), u16le(0),
+        u16le(e.time), u16le(e.date), u32le(e.crc), u32le(e.size), u32le(e.size),
+        u16le(nameBytes.length), u16le(0), u16le(0), u16le(0), u16le(0),
+        u32le(0), u32le(e.offset), nameBytes
+      ]));
+    }
+    const centralDir = concat(centralParts);
+    const end = concat([
+      u32le(0x06054b50), u16le(0), u16le(0),
+      u16le(entries.length), u16le(entries.length),
+      u32le(centralDir.length), u32le(centralStart), u16le(0)
+    ]);
+
+    const zipBytes = concat([...outParts, centralDir, end]);
+    const blob = new Blob([zipBytes], { type: "application/zip" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = this.fileName;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(url), 1000);
+  }
 }
