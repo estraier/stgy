@@ -28,8 +28,8 @@ body.stgy-export main {
   padding: 16px;
 }
 
-body.stgy-export.stgy-export-profile main { max-width: 720px; }
-body.stgy-export.stgy-export-post main { max-width: 860px; }
+body.stgy-export.stgy-export-profile main { max-width: 780px; }
+body.stgy-export.stgy-export-post main { max-width: 780px; }
 
 body.stgy-export .card {
   background: #fff;

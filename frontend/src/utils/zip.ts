@@ -55,14 +55,23 @@ function concat(parts: Uint8Array[]): Uint8Array {
 }
 
 function toDosTimeDate(d: Date): { time: number; date: number } {
-  const time = (d.getHours() << 11) | (d.getMinutes() << 5) | (Math.floor(d.getSeconds() / 2) & 0x1f);
-  const date = ((Math.max(1980, d.getFullYear()) - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
+  const time =
+    (d.getHours() << 11) | (d.getMinutes() << 5) | (Math.floor(d.getSeconds() / 2) & 0x1f);
+  const date =
+    ((Math.max(1980, d.getFullYear()) - 1980) << 9) | ((d.getMonth() + 1) << 5) | d.getDate();
   return { time: time & 0xffff, date: date & 0xffff };
 }
 
 export class ZipStreamWriter implements IZipWriter {
   private writer: WritableFileStreamMinimal;
-  private entries: Array<{ name: string; crc: number; size: number; time: number; date: number; offset: number }> = [];
+  private entries: Array<{
+    name: string;
+    crc: number;
+    size: number;
+    time: number;
+    date: number;
+    offset: number;
+  }> = [];
   private currentOffset = 0;
 
   constructor(writer: WritableFileStreamMinimal) {
@@ -82,9 +91,18 @@ export class ZipStreamWriter implements IZipWriter {
     const size = data.length;
 
     const localHeader = concat([
-      u32le(0x04034b50), u16le(20), u16le(0x0800), u16le(0),
-      u16le(time), u16le(date), u32le(c), u32le(size), u32le(size),
-      u16le(nameBytes.length), u16le(0), nameBytes
+      u32le(0x04034b50),
+      u16le(20),
+      u16le(0x0800),
+      u16le(0),
+      u16le(time),
+      u16le(date),
+      u32le(c),
+      u32le(size),
+      u32le(size),
+      u16le(nameBytes.length),
+      u16le(0),
+      nameBytes,
     ]);
 
     const offset = this.currentOffset;
@@ -100,20 +118,43 @@ export class ZipStreamWriter implements IZipWriter {
 
     for (const e of this.entries) {
       const nameBytes = enc.encode(e.name);
-      await this.write(concat([
-        u32le(0x02014b50), u16le(20), u16le(20), u16le(0x0800), u16le(0),
-        u16le(e.time), u16le(e.date), u32le(e.crc), u32le(e.size), u32le(e.size),
-        u16le(nameBytes.length), u16le(0), u16le(0), u16le(0), u16le(0),
-        u32le(0), u32le(e.offset), nameBytes
-      ]));
+      await this.write(
+        concat([
+          u32le(0x02014b50),
+          u16le(20),
+          u16le(20),
+          u16le(0x0800),
+          u16le(0),
+          u16le(e.time),
+          u16le(e.date),
+          u32le(e.crc),
+          u32le(e.size),
+          u32le(e.size),
+          u16le(nameBytes.length),
+          u16le(0),
+          u16le(0),
+          u16le(0),
+          u16le(0),
+          u32le(0),
+          u32le(e.offset),
+          nameBytes,
+        ]),
+      );
     }
 
-    const centralSize = this.currentOffset - centralStart;
-    await this.write(concat([
-      u32le(0x06054b50), u16le(0), u16le(0),
-      u16le(this.entries.length), u16le(this.entries.length),
-      u32le(centralSize), u32le(centralStart), u16le(0)
-    ]));
+    const centralDirLength = this.currentOffset - centralStart;
+    await this.write(
+      concat([
+        u32le(0x06054b50),
+        u16le(0),
+        u16le(0),
+        u16le(this.entries.length),
+        u16le(this.entries.length),
+        u32le(centralDirLength),
+        u32le(centralStart),
+        u16le(0),
+      ]),
+    );
 
     await this.writer.close();
   }
@@ -136,7 +177,14 @@ export class InMemoryZipWriter implements IZipWriter {
     const { time, date } = toDosTimeDate(now);
     const enc = new TextEncoder();
 
-    const entries: Array<{ name: string; crc: number; size: number; time: number; date: number; offset: number }> = [];
+    const entries: Array<{
+      name: string;
+      crc: number;
+      size: number;
+      time: number;
+      date: number;
+      offset: number;
+    }> = [];
     const outParts: Uint8Array[] = [];
     let offset = 0;
 
@@ -145,9 +193,18 @@ export class InMemoryZipWriter implements IZipWriter {
       const c = crc32(f.data);
       const size = f.data.length;
       const local = concat([
-        u32le(0x04034b50), u16le(20), u16le(0x0800), u16le(0),
-        u16le(time), u16le(date), u32le(c), u32le(size), u32le(size),
-        u16le(nameBytes.length), u16le(0), nameBytes
+        u32le(0x04034b50),
+        u16le(20),
+        u16le(0x0800),
+        u16le(0),
+        u16le(time),
+        u16le(date),
+        u32le(c),
+        u32le(size),
+        u32le(size),
+        u16le(nameBytes.length),
+        u16le(0),
+        nameBytes,
       ]);
       outParts.push(local, f.data);
       entries.push({ name: f.name, crc: c, size, time, date, offset });
@@ -158,22 +215,43 @@ export class InMemoryZipWriter implements IZipWriter {
     const centralParts: Uint8Array[] = [];
     for (const e of entries) {
       const nameBytes = enc.encode(e.name);
-      centralParts.push(concat([
-        u32le(0x02014b50), u16le(20), u16le(20), u16le(0x0800), u16le(0),
-        u16le(e.time), u16le(e.date), u32le(e.crc), u32le(e.size), u32le(e.size),
-        u16le(nameBytes.length), u16le(0), u16le(0), u16le(0), u16le(0),
-        u32le(0), u32le(e.offset), nameBytes
-      ]));
+      centralParts.push(
+        concat([
+          u32le(0x02014b50),
+          u16le(20),
+          u16le(20),
+          u16le(0x0800),
+          u16le(0),
+          u16le(e.time),
+          u16le(e.date),
+          u32le(e.crc),
+          u32le(e.size),
+          u32le(e.size),
+          u16le(nameBytes.length),
+          u16le(0),
+          u16le(0),
+          u16le(0),
+          u16le(0),
+          u32le(0),
+          u32le(e.offset),
+          nameBytes,
+        ]),
+      );
     }
     const centralDir = concat(centralParts);
     const end = concat([
-      u32le(0x06054b50), u16le(0), u16le(0),
-      u16le(entries.length), u16le(entries.length),
-      u32le(centralDir.length), u32le(centralStart), u16le(0)
+      u32le(0x06054b50),
+      u16le(0),
+      u16le(0),
+      u16le(entries.length),
+      u16le(entries.length),
+      u32le(centralDir.length),
+      u32le(centralStart),
+      u16le(0),
     ]);
 
     const zipBytes = concat([...outParts, centralDir, end]);
-    const blob = new Blob([zipBytes], { type: "application/zip" });
+    const blob = new Blob([zipBytes as BufferSource], { type: "application/zip" });
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
