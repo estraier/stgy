@@ -6,7 +6,8 @@ import { getPubConfig, getUser, listBlockees, listFollowees } from "@/api/users"
 import { getPost, listPosts, listPostsLikedByUser } from "@/api/posts";
 import { listImages } from "@/api/media";
 import type { MediaObject, Post, PostDetail, PubConfig, User, UserDetail } from "@/api/models";
-import { makeArticleHtmlFromMarkdown } from "@/utils/article";
+import { makeArticleHtmlFromMarkdown, makePubAttributesFromJsonSnippet } from "@/utils/article";
+import { sliceByPseudoTokens } from "stgy-markdown";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import {
   ZipStreamWriter,
@@ -46,6 +47,18 @@ function formatTimestampYYYYMMDDhhmmss(d: Date): string {
   const mi = pad2(d.getMinutes());
   const ss = pad2(d.getSeconds());
   return `${yyyy}${mm}${dd}${hh}${mi}${ss}`;
+}
+
+function formatJapaneseTimestamp(dateStr: string): string {
+  const d = new Date(dateStr);
+  if (Number.isNaN(d.getTime())) return "";
+  const y = d.getFullYear();
+  const m = pad2(d.getMonth() + 1);
+  const dd = pad2(d.getDate());
+  const hh = pad2(d.getHours());
+  const mi = pad2(d.getMinutes());
+  const ss = pad2(d.getSeconds());
+  return `${y}/${m}/${dd} ${hh}:${mi}:${ss}`;
 }
 
 function escapeHtml(s: string): string {
@@ -113,7 +126,7 @@ async function fetchBytes(url: string, label: string): Promise<Uint8Array> {
 }
 
 function renderProfileHtml(profile: UserDetail): string {
-  const locale = profile.locale;
+  const locale = String(profile.locale || "en");
   const nickname = profile.nickname || "User";
   const userId = profile.id;
   const bodyHtml = profile.introduction
@@ -121,7 +134,7 @@ function renderProfileHtml(profile: UserDetail): string {
     : "";
   const isAdmin = profile.isAdmin;
   const blockStrangers = profile.blockStrangers;
-  const countsRowHtml = `<h2>Counts</h2>
+  const countsRowHtml = `<h2 class="page-label">Counts</h2>
        <table>
          <tr><th>Followers</th><td>${profile.countFollowers}</td></tr>
          <tr><th>Followees</th><td>${profile.countFollowees}</td></tr>
@@ -153,14 +166,14 @@ function renderProfileHtml(profile: UserDetail): string {
     <div class="card">
       ${headerHtml}
 
-      <h2>Profile</h2>
+      <h2 class="page-label">Profile</h2>
       <div class="markdown-body user-introduction">
         ${bodyHtml}
       </div>
 
       ${countsRowHtml}
 
-      <h2>Settings</h2>
+      <h2 class="page-label">Settings</h2>
       <table>
         <tr><th>Locale</th><td>${escapeHtml(locale)}</td></tr>
         <tr><th>Timezone</th><td>${escapeHtml(profile.timezone)}</td></tr>
@@ -203,12 +216,12 @@ function renderPostHtml(post: Post | PostDetail): string {
 
       ${tagHtml}
 
-      <h2>Content</h2>
+      <h2 class="page-label">Content</h2>
       <div class="markdown-body">
         ${bodyHtml}
       </div>
 
-      <h2>Meta</h2>
+      <h2 class="page-label">Meta</h2>
       <table>
         <tr><th>Created at</th><td>${escapeHtml(post.createdAt)}</td></tr>
         ${post.updatedAt ? `<tr><th>Updated at</th><td>${escapeHtml(post.updatedAt)}</td></tr>` : ""}
@@ -221,6 +234,56 @@ function renderPostHtml(post: Post | PostDetail): string {
 </body>
 </html>
 `;
+}
+
+function renderIndexHtml(posts: Post[], profile: UserDetail): string {
+  const nickname = profile.nickname || "User";
+  const sortedPosts = [...posts].sort((a, b) => a.id.localeCompare(b.id));
+
+  const listItems = sortedPosts
+    .map((p) => {
+      const ts = formatJapaneseTimestamp(p.createdAt);
+      const attrs = makePubAttributesFromJsonSnippet(p.snippet);
+      const titleHtml = attrs.title
+        ? `<h2>${escapeHtml(sliceByPseudoTokens(attrs.title, 0, 50))}</h2>`
+        : "";
+      const authorHtml = attrs.metadata.author
+        ? ` <span class="author">${escapeHtml(sliceByPseudoTokens(attrs.metadata.author, 0, 50))}</span>`
+        : "";
+      const bodyHtml = attrs.desc
+        ? ` <span class="body">${escapeHtml(sliceByPseudoTokens(attrs.desc, 0, 100))}</span>`
+        : "";
+      return `<li class="posts">
+        <a href="./posts/${escapeHtml(p.id)}.html">${escapeHtml(p.id)}.html</a>
+        <span class="muted">(${escapeHtml(ts)})</span><br />
+        <span class="snippet">${titleHtml}${authorHtml}${bodyHtml}</span>
+      </li>`;
+    })
+    .join("\n");
+
+  return `<!doctype html>
+<html lang="${escapeHtml(profile.locale)}">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>Index - ${escapeHtml(nickname)}</title>
+  <link rel="stylesheet" href="./style.css" />
+</head>
+<body class="stgy-export">
+  <main>
+    <div class="card">
+      <h1>Data Index</h1>
+      <ul class="list-meta">
+        <li><a href="./profile.html">profile.html</a> <span class="muted">(${escapeHtml(profile.nickname)})</span></li>
+      </ul>
+      <hr />
+      <ul class="list-posts">
+        ${listItems}
+      </ul>
+    </div>
+  </main>
+</body>
+</html>`;
 }
 
 async function fetchAllMyPosts(userId: string): Promise<Post[]> {
@@ -355,14 +418,11 @@ export default function PageBody() {
       canceled = true;
     };
   }, []);
-
   const exportFileName = useMemo(() => {
     const ts = formatTimestampYYYYMMDDhhmmss(new Date());
     return `stgy-export-${userId ?? "unknown"}-${ts}.zip`;
   }, [userId]);
-
   const exportRootDir = useMemo(() => exportFileName.replace(/\.zip$/i, ""), [exportFileName]);
-
   async function handleExport(e: FormEvent) {
     e.preventDefault();
     if (loading || exporting || !userId || !profile) return;
@@ -383,7 +443,6 @@ export default function PageBody() {
       const enc = new TextEncoder();
       const now = new Date();
       const base = `${exportRootDir}/`;
-
       const exportProfile = rewriteProfileIntroductionAndSnippet(profile, userId);
       await zipWriter.addFile(`${base}style.css`, enc.encode(HTML_STYLES_CSS), now);
       await zipWriter.addFile(
@@ -396,7 +455,6 @@ export default function PageBody() {
         enc.encode(renderProfileHtml(exportProfile)),
         now,
       );
-
       try {
         const pubCfg: PubConfig | null = await getPubConfig(userId);
         if (pubCfg)
@@ -406,13 +464,11 @@ export default function PageBody() {
             now,
           );
       } catch {}
-
       if (profile.avatar) {
         const url = getPublicUrlFromStoragePath(profile.avatar, profile.updatedAt);
         if (url)
           await zipWriter.addFile(`${base}avatar.webp`, await fetchBytes(url, "avatar"), now);
       }
-
       const [followees, blockees, likes] = await Promise.all([
         fetchAllUsersByPager((o, l) =>
           listFollowees(userId, { offset: o, limit: l, order: "asc" }),
@@ -425,7 +481,6 @@ export default function PageBody() {
         enc.encode(JSON.stringify({ followees, blockees, likes }, null, 2)),
         now,
       );
-
       const posts = await fetchAllMyPosts(userId);
       for (const p of posts) {
         const detail = await getPost(p.id, userId);
@@ -442,6 +497,12 @@ export default function PageBody() {
         );
       }
 
+      await zipWriter.addFile(
+        `${base}index.html`,
+        enc.encode(renderIndexHtml(posts, profile)),
+        now,
+      );
+
       const images = await fetchAllMyImages(userId);
       const masterByFilename = new Map<string, MediaObject>();
       images
@@ -457,7 +518,6 @@ export default function PageBody() {
           now,
         );
       }
-
       await zipWriter.finalize();
       setDone(true);
       setTimeout(() => setDone(false), 2000);
@@ -467,7 +527,6 @@ export default function PageBody() {
       setExporting(false);
     }
   }
-
   return (
     <main className="max-w-2xl mx-auto mt-12 p-4 bg-white shadow border rounded">
       <h1 className="text-2xl font-bold mb-6">Exporting all data</h1>
@@ -512,6 +571,9 @@ export default function PageBody() {
             <li>
               <code className="font-bold">./relations.json</code> : Follow/block/like relations in
               JSON
+            </li>
+            <li>
+              <code className="font-bold">./index.html</code> : Index for all HTML contents.
             </li>
             <li>
               <code className="font-bold">./style.css</code> : Stylesheet for exported HTML

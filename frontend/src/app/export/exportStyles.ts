@@ -28,8 +28,7 @@ body.stgy-export main {
   padding: 16px;
 }
 
-body.stgy-export.stgy-export-profile main { max-width: 780px; }
-body.stgy-export.stgy-export-post main { max-width: 780px; }
+body.stgy-export main { max-width: 780px; }
 
 body.stgy-export .card {
   background: #fff;
@@ -61,6 +60,26 @@ body.stgy-export h1 {
   font-size: 28px;
   margin: 0 0 8px;
   letter-spacing: 0.01em;
+}
+
+body.stgy-export .list-meta,
+body.stgy-export .list-posts {
+  padding-left: 0.8em;
+}
+body.stgy-export .snippet {
+  display: block;
+  white-space: nowrap;
+  width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+body.stgy-export .snippet h2 {
+  font-size: 100%;
+  display: inline;
+}
+body.stgy-export .snippet .author {
+  color: #333333;
+  font-size: 95%;
 }
 
 body.stgy-export.stgy-export-post h1 {
@@ -593,13 +612,4 @@ body.stgy-export .markdown-body code[class*="language-"],
 body.stgy-export .markdown-body pre[class*="language-"] {
   text-shadow: none !important;
 }
-
-/* =========================
- * Prism theme (optional)
- * =========================
- * globals.css は @import "prismjs/themes/prism.css"; なので、
- * エクスポートHTMLも同じ色にしたい場合は、node_modules の prism.css の中身を
- * ここに貼り付けてください（ZIP内自己完結のため）。
- */
-/* PRISM_THEME_PLACEHOLDER */
 `;
