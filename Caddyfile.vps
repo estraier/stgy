@@ -1,6 +1,11 @@
 https://stgy.jp {
   encode zstd gzip
 
+  @deny_backend_metrics path /backend/metrics*
+  handle @deny_backend_metrics {
+    respond 404
+  }
+
   redir /backend /backend/
   handle_path /backend/* {
     reverse_proxy http://backend:3001 {

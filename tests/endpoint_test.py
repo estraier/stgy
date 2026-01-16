@@ -44,6 +44,19 @@ def logout(session_id):
   res.raise_for_status()
   print("[logout] OK")
 
+def test_root():
+  res = requests.get(f"{BASE_URL}/health")
+  assert res.status_code == 200, res.text
+  print("[root] health OK")
+  assert res.json() == {"result": "ok"}
+  res = requests.get(f"{BASE_URL}/metrics")
+  assert res.status_code == 200, res.text
+  text = res.text
+  assert "# HELP" in text
+  assert "process_cpu_seconds_total" in text
+  print("[root] metrics OK")
+  print("[test_root] OK")
+
 def test_auth():
   session_id = login()
   sess = get_session(session_id)

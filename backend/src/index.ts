@@ -1,8 +1,10 @@
 import { Config } from "./config";
 import { createLogger } from "./utils/logger";
 import express, { ErrorRequestHandler } from "express";
+import type { Request } from "express";
 import cookieParser from "cookie-parser";
 import cors from "cors";
+import promBundle from "express-prom-bundle";
 import { EventLogService } from "./services/eventLog";
 import { makeStorageService } from "./services/storageFactory";
 import createRootRouter from "./routes/root";
@@ -19,6 +21,15 @@ import { getSampleAddr, connectPgWithRetry, connectRedisWithRetry } from "./util
 
 const logger = createLogger({ file: "index" });
 
+function normalizePath(req: Request): string {
+  const routePath = req.route?.path;
+  const base = req.baseUrl ?? "";
+  if (typeof routePath === "string") {
+    return `${base}${routePath}`;
+  }
+  return `${base}${req.path}`;
+}
+
 async function main() {
   Object.entries(Config).forEach(([key, value]) => {
     if (key.endsWith("_PASSWORD") || key.endsWith("_API_KEY")) {
@@ -33,8 +44,6 @@ async function main() {
   const app = express();
   app.use(express.json({ limit: 1048576 }));
   app.use(cookieParser());
-  const storageService = makeStorageService(Config.STORAGE_DRIVER);
-  const eventLogService = new EventLogService(pgPool, redis);
 
   app.use(
     cors({
@@ -42,9 +51,25 @@ async function main() {
       credentials: true,
     }),
   );
+
   if (Config.TRUST_PROXY_HOPS > 0) {
     app.set("trust proxy", Config.TRUST_PROXY_HOPS);
   }
+
+  const metricsMiddleware = promBundle({
+    includeMethod: true,
+    includePath: true,
+    normalizePath,
+    buckets: [0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8, 0.9, 1, 2, 4, 8, 16, 32],
+    promClient: {
+      collectDefaultMetrics: {},
+    },
+  });
+  app.use(metricsMiddleware);
+
+  const storageService = makeStorageService(Config.STORAGE_DRIVER);
+  const eventLogService = new EventLogService(pgPool, redis);
+
   app.use("/", createRootRouter());
   app.use("/auth", createAuthRouter(pgPool, redis));
   app.use("/signup", createSignupRouter(pgPool, redis));

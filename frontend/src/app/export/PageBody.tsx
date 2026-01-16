@@ -35,6 +35,45 @@ declare global {
 
 const IMAGES_PAGE_SIZE = Config.IMAGES_PAGE_SIZE || 30;
 
+const POST_BASE_SLEEP_MS = 200;
+const IMAGE_BASE_SLEEP_MS = 500;
+const PER_MB_SLEEP_MS = 100;
+const ONE_MB = 1024 * 1024;
+
+const TOO_OFTEN_WAIT_MS = 600_000;
+const TOO_OFTEN_MAX_RETRY = 10;
+
+function sleep(ms: number): Promise<void> {
+  const n = Math.max(0, ms | 0);
+  return new Promise((r) => setTimeout(r, n));
+}
+
+function sleepForTransferBytes(bytes: number, baseMs: number): Promise<void> {
+  const b = Math.max(0, bytes | 0);
+  const mb = Math.ceil(b / ONE_MB);
+  const ms = Math.max(0, baseMs | 0) + mb * PER_MB_SLEEP_MS;
+  return sleep(ms);
+}
+
+function isTooOftenError(err: unknown): boolean {
+  const msg = err instanceof Error ? err.message : String(err);
+  return msg.includes("too often operations");
+}
+
+async function withTooOftenRetry<T>(fn: () => Promise<T>): Promise<T> {
+  let lastErr: unknown;
+  for (let i = 0; i < TOO_OFTEN_MAX_RETRY; i++) {
+    try {
+      return await fn();
+    } catch (e: unknown) {
+      lastErr = e;
+      if (!isTooOftenError(e) || i === TOO_OFTEN_MAX_RETRY - 1) throw e;
+      await sleep(TOO_OFTEN_WAIT_MS);
+    }
+  }
+  throw lastErr instanceof Error ? lastErr : new Error(String(lastErr));
+}
+
 function pad2(n: number): string {
   return String(n).padStart(2, "0");
 }
@@ -122,7 +161,9 @@ function getPublicUrlFromStoragePath(storagePath: string, version?: string | nul
 async function fetchBytes(url: string, label: string): Promise<Uint8Array> {
   const resp = await fetch(url, { method: "GET", credentials: "include" });
   if (!resp.ok) throw new Error(`Failed to download ${label}: ${resp.status}`);
-  return new Uint8Array(await resp.arrayBuffer());
+  const bytes = new Uint8Array(await resp.arrayBuffer());
+  await sleepForTransferBytes(bytes.length, IMAGE_BASE_SLEEP_MS);
+  return bytes;
 }
 
 function renderProfileHtml(profile: UserDetail): string {
@@ -289,13 +330,15 @@ function renderIndexHtml(posts: Post[], profile: UserDetail): string {
 async function fetchAllMyPosts(userId: string): Promise<Post[]> {
   const out: Post[] = [];
   for (let offset = 0; offset < 200_000; offset += 200) {
-    const res = await listPosts({
-      offset,
-      limit: 200,
-      order: "desc",
-      ownedBy: userId,
-      focusUserId: userId,
-    });
+    const res = await withTooOftenRetry(() =>
+      listPosts({
+        offset,
+        limit: 200,
+        order: "desc",
+        ownedBy: userId,
+        focusUserId: userId,
+      }),
+    );
     if (res.length === 0) break;
     out.push(...res.filter((p) => p.ownedBy === userId));
     if (res.length < 200) break;
@@ -311,10 +354,12 @@ async function fetchAllMyPosts(userId: string): Promise<Post[]> {
 async function fetchAllMyImages(userId: string): Promise<MediaObject[]> {
   const out: MediaObject[] = [];
   for (let page = 1; page < 100000; page++) {
-    const data = await listImages(userId, {
-      offset: (page - 1) * IMAGES_PAGE_SIZE,
-      limit: IMAGES_PAGE_SIZE + 1,
-    });
+    const data = await withTooOftenRetry(() =>
+      listImages(userId, {
+        offset: (page - 1) * IMAGES_PAGE_SIZE,
+        limit: IMAGES_PAGE_SIZE + 1,
+      }),
+    );
     out.push(...data.slice(0, IMAGES_PAGE_SIZE));
     if (data.length <= IMAGES_PAGE_SIZE) break;
   }
@@ -345,7 +390,7 @@ async function fetchAllUsersByPager(
 ): Promise<Array<{ id: string; nickname: string }>> {
   const out: Array<{ id: string; nickname: string }> = [];
   for (let offset = 0; offset < 200_000; offset += 200) {
-    const res = await fetchPage(offset, 201);
+    const res = await withTooOftenRetry(() => fetchPage(offset, 201));
     res
       .slice(0, 200)
       .forEach((u) => u.id && u.nickname && out.push({ id: u.id, nickname: u.nickname }));
@@ -364,14 +409,16 @@ async function fetchAllLikedPosts(
 ): Promise<Array<{ id: string; ownedBy: string; ownerNickname: string }>> {
   const out: Array<{ id: string; ownedBy: string; ownerNickname: string }> = [];
   for (let offset = 0; offset < 200_000; offset += 200) {
-    const data = await listPostsLikedByUser({
-      userId,
-      offset,
-      limit: 201,
-      order: "desc",
-      focusUserId: userId,
-      includeReplies: true,
-    });
+    const data = await withTooOftenRetry(() =>
+      listPostsLikedByUser({
+        userId,
+        offset,
+        limit: 201,
+        order: "desc",
+        focusUserId: userId,
+        includeReplies: true,
+      }),
+    );
     data.slice(0, 200).forEach((p) => {
       if (p.id && p.ownedBy && p.ownerNickname)
         out.push({ id: p.id, ownedBy: p.ownedBy, ownerNickname: p.ownerNickname });
@@ -393,6 +440,7 @@ export default function PageBody() {
   const [exporting, setExporting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
+
   useEffect(() => {
     let canceled = false;
     getSessionInfo()
@@ -400,7 +448,7 @@ export default function PageBody() {
         if (canceled) return;
         setUserId(session.userId);
         try {
-          const u = await getUser(session.userId, session.userId);
+          const u = await withTooOftenRetry(() => getUser(session.userId, session.userId));
           if (!canceled) setProfile(u);
         } catch (e: unknown) {
           if (!canceled) setError(e instanceof Error ? e.message : String(e));
@@ -418,18 +466,24 @@ export default function PageBody() {
       canceled = true;
     };
   }, []);
+
   const exportFileName = useMemo(() => {
     const ts = formatTimestampYYYYMMDDhhmmss(new Date());
     return `stgy-export-${userId ?? "unknown"}-${ts}.zip`;
   }, [userId]);
+
   const exportRootDir = useMemo(() => exportFileName.replace(/\.zip$/i, ""), [exportFileName]);
+
   async function handleExport(e: FormEvent) {
     e.preventDefault();
     if (loading || exporting || !userId || !profile) return;
+
     setError(null);
     setDone(false);
+
     try {
       let zipWriter: IZipWriter;
+
       if (window.showSaveFilePicker) {
         const handle = await window.showSaveFilePicker({
           suggestedName: exportFileName,
@@ -439,11 +493,15 @@ export default function PageBody() {
       } else {
         zipWriter = new InMemoryZipWriter(exportFileName);
       }
+
       setExporting(true);
+
       const enc = new TextEncoder();
       const now = new Date();
       const base = `${exportRootDir}/`;
+
       const exportProfile = rewriteProfileIntroductionAndSnippet(profile, userId);
+
       await zipWriter.addFile(`${base}style.css`, enc.encode(HTML_STYLES_CSS), now);
       await zipWriter.addFile(
         `${base}profile.json`,
@@ -455,46 +513,52 @@ export default function PageBody() {
         enc.encode(renderProfileHtml(exportProfile)),
         now,
       );
+
       try {
-        const pubCfg: PubConfig | null = await getPubConfig(userId);
-        if (pubCfg)
-          await zipWriter.addFile(
-            `${base}pub-config.json`,
-            enc.encode(JSON.stringify(pubCfg, null, 2)),
-            now,
-          );
+        const pubCfg: PubConfig = await withTooOftenRetry(() => getPubConfig(userId));
+        await zipWriter.addFile(
+          `${base}pub-config.json`,
+          enc.encode(JSON.stringify(pubCfg, null, 2)),
+          now,
+        );
       } catch {}
+
       if (profile.avatar) {
         const url = getPublicUrlFromStoragePath(profile.avatar, profile.updatedAt);
-        if (url)
+        if (url) {
           await zipWriter.addFile(`${base}avatar.webp`, await fetchBytes(url, "avatar"), now);
+        }
       }
+
       const [followees, blockees, likes] = await Promise.all([
         fetchAllUsersByPager((o, l) =>
-          listFollowees(userId, { offset: o, limit: l, order: "asc" }),
+          withTooOftenRetry(() => listFollowees(userId, { offset: o, limit: l, order: "asc" })),
         ),
-        fetchAllUsersByPager((o, l) => listBlockees(userId, { offset: o, limit: l, order: "asc" })),
+        fetchAllUsersByPager((o, l) =>
+          withTooOftenRetry(() => listBlockees(userId, { offset: o, limit: l, order: "asc" })),
+        ),
         fetchAllLikedPosts(userId),
       ]);
+
       await zipWriter.addFile(
         `${base}relations.json`,
         enc.encode(JSON.stringify({ followees, blockees, likes }, null, 2)),
         now,
       );
+
       const posts = await fetchAllMyPosts(userId);
+
       for (const p of posts) {
-        const detail = await getPost(p.id, userId);
+        const detail = await withTooOftenRetry(() => getPost(p.id, userId));
         const rewritten = rewritePostContentAndSnippet(detail ?? p, userId);
-        await zipWriter.addFile(
-          `${base}posts/${p.id}.json`,
-          enc.encode(JSON.stringify(rewritten, null, 2)),
-          now,
-        );
-        await zipWriter.addFile(
-          `${base}posts/${p.id}.html`,
-          enc.encode(renderPostHtml(rewritten)),
-          now,
-        );
+
+        const jsonBytes = enc.encode(JSON.stringify(rewritten, null, 2));
+        await zipWriter.addFile(`${base}posts/${p.id}.json`, jsonBytes, now);
+
+        const htmlBytes = enc.encode(renderPostHtml(rewritten));
+        await zipWriter.addFile(`${base}posts/${p.id}.html`, htmlBytes, now);
+
+        await sleepForTransferBytes(jsonBytes.length + htmlBytes.length, POST_BASE_SLEEP_MS);
       }
 
       await zipWriter.addFile(
@@ -505,12 +569,14 @@ export default function PageBody() {
 
       const images = await fetchAllMyImages(userId);
       const masterByFilename = new Map<string, MediaObject>();
+
       images
         .filter((it) => isMasterKey(it.key, userId))
         .forEach((it) => {
           const fname = imageFilenameFromKey(it.key, userId);
           if (!masterByFilename.has(fname)) masterByFilename.set(fname, it);
         });
+
       for (const [filename, it] of masterByFilename.entries()) {
         await zipWriter.addFile(
           `${base}images/${filename}`,
@@ -518,7 +584,9 @@ export default function PageBody() {
           now,
         );
       }
+
       await zipWriter.finalize();
+
       setDone(true);
       setTimeout(() => setDone(false), 2000);
     } catch (err: unknown) {
@@ -527,6 +595,7 @@ export default function PageBody() {
       setExporting(false);
     }
   }
+
   return (
     <main className="max-w-2xl mx-auto mt-12 p-4 bg-white shadow border rounded">
       <h1 className="text-2xl font-bold mb-6">Exporting all data</h1>
