@@ -122,14 +122,19 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
     }
   });
 
-  router.get(/^\/([^/]+)\/images\/(.*)$/, async (req: Request, res: Response) => {
+  router.get("/:userId/images/*rest", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
-    const params = req.params as unknown as string[];
-    const pathUserId = params[0] || "";
+    const pathUserId = req.params.userId;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    const rest = params[1] || "";
+    const restParam = (req.params as unknown as { rest?: unknown }).rest;
+    const rest =
+      typeof restParam === "string"
+        ? restParam
+        : Array.isArray(restParam)
+        ? restParam.map((x) => String(x)).join("/")
+        : "";
     try {
       const watch = timerThrottleService.startWatch(loginUser);
       const { meta, bytes } = await mediaService.getImageBytes(pathUserId, rest);
@@ -144,14 +149,19 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
     }
   });
 
-  router.delete(/^\/([^/]+)\/images\/(.*)$/, async (req: Request, res: Response) => {
+  router.delete("/:userId/images/*rest", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
-    const params = req.params as unknown as string[];
-    const pathUserId = params[0] || "";
+    const pathUserId = req.params.userId;
     if (!(loginUser.isAdmin || loginUser.id === pathUserId))
       return res.status(403).json({ error: "forbidden" });
-    const rest = params[1] || "";
+    const restParam = (req.params as unknown as { rest?: unknown }).rest;
+    const rest =
+      typeof restParam === "string"
+        ? restParam
+        : Array.isArray(restParam)
+        ? restParam.map((x) => String(x)).join("/")
+        : "";
     try {
       const watch = timerThrottleService.startWatch(loginUser);
       await mediaService.deleteImage(pathUserId, rest);

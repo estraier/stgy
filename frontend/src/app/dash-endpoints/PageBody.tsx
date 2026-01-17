@@ -554,7 +554,7 @@ export default function PageBody() {
 
                     return (
                       <details key={ep.endpointKey} className="border-b last:border-b-0 group">
-                        <summary className="list-none [&::-webkit-details-marker]:hidden cursor-pointer select-none">
+                        <summary className="list-none [&::-webkit-details-marker]:hidden cursor-pointer">
                           <div className="flex items-center px-3 py-2">
                             <span className="mr-2 text-xs font-mono text-gray-500 transition-transform group-open:rotate-90">
                               ▶
@@ -576,7 +576,6 @@ export default function PageBody() {
 
                         <div className="px-3 pb-3 pt-1 text-sm">
                           <div className="mt-2">
-                            <div className="text-xs text-gray-700 mb-1">Status codes</div>
                             <div className="flex flex-wrap gap-2">
                               {statusPairs.length === 0 ? (
                                 <span className="text-gray-500">-</span>
@@ -595,34 +594,53 @@ export default function PageBody() {
                           </div>
 
                           <div className="mt-4">
-                            <div className="text-xs text-gray-700 mb-2">
-                              Histogram (bucket deltas)
-                            </div>
                             <div className="flex flex-col gap-1">
                               {bucketBars.length === 0 ? (
                                 <div className="text-gray-500 text-xs">-</div>
                               ) : (
-                                bucketBars.map((b) => {
-                                  const w =
-                                    maxDelta > 0 ? Math.round((b.delta / maxDelta) * 100) : 0;
-                                  const label = histLabelForLe(b.le, prevFiniteForInf);
-                                  return (
-                                    <div key={b.le} className="flex items-center gap-2">
-                                      <div className="w-28 text-xs font-mono text-gray-700">
-                                        {label}
-                                      </div>
-                                      <div className="flex-1 h-3 border rounded bg-white overflow-hidden">
-                                        <div
-                                          className="h-full bg-gray-800"
-                                          style={{ width: `${w}%` }}
-                                        />
-                                      </div>
-                                      <div className="w-16 text-right text-xs font-mono text-gray-700">
-                                        {Math.round(b.delta)}
+                                <>
+                                  <div className="flex items-center gap-2">
+                                    <div className="w-28 text-xs font-mono text-gray-500">bucket</div>
+                                    <div className="flex-1" />
+                                    <div className="w-44 text-right text-xs font-mono text-gray-500">
+                                      <div className="grid grid-cols-2 gap-2 justify-items-end">
+                                        <span>freq</span>
+                                        <span>cum (%)</span>
                                       </div>
                                     </div>
-                                  );
-                                })
+                                  </div>
+                                  {bucketBars.map((b) => {
+                                    const w =
+                                      maxDelta > 0 ? Math.round((b.delta / maxDelta) * 100) : 0;
+                                    const label = histLabelForLe(b.le, prevFiniteForInf);
+                                    const pct =
+                                      ep.totalCount > 0 && Number.isFinite(ep.totalCount)
+                                        ? (b.cumulative / ep.totalCount) * 100
+                                        : Number.NaN;
+                                    const pctText = Number.isFinite(pct) ? `${pct.toFixed(1)}%` : "-";
+                                    return (
+                                      <div key={b.le} className="flex items-center gap-2">
+                                        <div className="w-28 text-xs font-mono text-gray-700">
+                                          {label}
+                                        </div>
+                                        <div className="flex-1 h-3 border rounded bg-white overflow-hidden">
+                                          <div
+                                            className="h-full bg-gray-800"
+                                            style={{ width: `${w}%` }}
+                                          />
+                                        </div>
+                                        <div className="w-44 text-right text-xs font-mono text-gray-700">
+                                          <div className="grid grid-cols-2 gap-2 justify-items-end">
+                                            <span>{Math.round(b.delta)}</span>
+                                            <span>
+                                              {Math.round(b.cumulative)} ({pctText})
+                                            </span>
+                                          </div>
+                                        </div>
+                                      </div>
+                                    );
+                                  })}
+                                </>
                               )}
                             </div>
                           </div>
