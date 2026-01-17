@@ -406,6 +406,7 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
 - バックエンド（Node.js + Express）
   - Dockerサブネットでbackend:3001をlistenし、サービスAPIのエンドポイントを担う。表にはhttps://stgy.jp/backendとして露出。
     - STGY_BACKEND_PORT=3001
+    - STGY_BACKEND_API_PRIVATE_URL_LIST=http://backend:3001
   - フロントエンドをhttps://stgy.jpとして認識し、1ホップまでのプロクシ応答のX-Forwarded-Forを信じる。
     - STGY_FRONTEND_ORIGIN=https://stgy.jp
   - S3サーバのエンドポイントをhttp://minio:9000として認識し、Dockerサブネットで通信。
