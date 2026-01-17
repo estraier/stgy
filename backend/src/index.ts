@@ -70,7 +70,7 @@ async function main() {
   const storageService = makeStorageService(Config.STORAGE_DRIVER);
   const eventLogService = new EventLogService(pgPool, redis);
 
-  app.use("/", createRootRouter());
+  app.use("/", createRootRouter(pgPool, redis));
   app.use("/auth", createAuthRouter(pgPool, redis));
   app.use("/signup", createSignupRouter(pgPool, redis));
   app.use("/ai-models", createAIModelsRouter(pgPool, redis));

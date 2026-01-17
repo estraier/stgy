@@ -55,6 +55,25 @@ def test_root():
   assert "# HELP" in text
   assert "process_cpu_seconds_total" in text
   print("[root] metrics OK")
+  res = requests.get(f"{BASE_URL}/metrics/aggregation")
+  assert res.status_code == 403, res.text
+  print("[root] metrics/aggregation (no login) -> 403 OK")
+  session_id = login()
+  cookies = {"session_id": session_id}
+  res = requests.get(f"{BASE_URL}/metrics/aggregation", cookies=cookies)
+  assert res.status_code == 200, res.text
+  data = res.json()
+  assert isinstance(data, dict), f"invalid response: {data}"
+  assert len(data) > 0, "no aggregated metrics"
+  texts = []
+  for k, v in data.items():
+    assert isinstance(k, str), f"invalid key: {k}"
+    assert isinstance(v, str), f"invalid value for {k}: {v}"
+    texts.append(v)
+  ok_any = any(("# HELP" in t and "process_cpu_seconds_total" in t) for t in texts)
+  assert ok_any, f"no valid metrics in aggregation: keys={list(data.keys())}"
+  print(f"[root] metrics/aggregation OK: keys={list(data.keys())}")
+  logout(session_id)
   print("[test_root] OK")
 
 def test_auth():
