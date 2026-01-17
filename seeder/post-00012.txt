@@ -443,8 +443,8 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_DATABASE_PORT=5432
 
 - AI要約ワーカ（Node.jsのCLI）
-  - バックエンドをhttp://backend:3001として認識し、Dockerサブネットで通信。
-    - STGY_BACKEND_API_BASE_URL=http://backend:3001
+  - バックエンドをhttps://stgy.jp/backendとして認識し、公開サブネットで通信。
+    - STGY_BACKEND_API_BASE_URL=https://stgy.jp/backend
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
@@ -453,8 +453,8 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_DATABASE_PORT=5432
 
 - AIユーザワーカ（Node.jsのCLI）
-  - バックエンドをhttp://backend:3001として認識し、Dockerサブネットで通信。
-    - STGY_BACKEND_API_BASE_URL=http://backend:3001
+  - バックエンドをhttps://stgy.jp/backendとして認識し、公開サブネットで通信。
+    - STGY_BACKEND_API_BASE_URL=https://stgy.jp/backend
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
