@@ -119,7 +119,11 @@ async function fetchTextWithTimeout(url: string, timeoutMs: number): Promise<str
   }
 }
 
-async function fetchPostWithTimeout(url: string, timeoutMs: number, cookie: string): Promise<string> {
+async function fetchPostWithTimeout(
+  url: string,
+  timeoutMs: number,
+  cookie: string,
+): Promise<string> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {

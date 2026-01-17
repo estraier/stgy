@@ -600,7 +600,9 @@ export default function PageBody() {
                               ) : (
                                 <>
                                   <div className="flex items-center gap-2">
-                                    <div className="w-28 text-xs font-mono text-gray-500">bucket</div>
+                                    <div className="w-28 text-xs font-mono text-gray-500">
+                                      bucket
+                                    </div>
                                     <div className="flex-1" />
                                     <div className="w-44 text-right text-xs font-mono text-gray-500">
                                       <div className="grid grid-cols-2 gap-2 justify-items-end">
@@ -617,7 +619,9 @@ export default function PageBody() {
                                       ep.totalCount > 0 && Number.isFinite(ep.totalCount)
                                         ? (b.cumulative / ep.totalCount) * 100
                                         : Number.NaN;
-                                    const pctText = Number.isFinite(pct) ? `${pct.toFixed(1)}%` : "-";
+                                    const pctText = Number.isFinite(pct)
+                                      ? `${pct.toFixed(1)}%`
+                                      : "-";
                                     return (
                                       <div key={b.le} className="flex items-center gap-2">
                                         <div className="w-28 text-xs font-mono text-gray-700">

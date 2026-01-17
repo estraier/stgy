@@ -133,8 +133,8 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
       typeof restParam === "string"
         ? restParam
         : Array.isArray(restParam)
-        ? restParam.map((x) => String(x)).join("/")
-        : "";
+          ? restParam.map((x) => String(x)).join("/")
+          : "";
     try {
       const watch = timerThrottleService.startWatch(loginUser);
       const { meta, bytes } = await mediaService.getImageBytes(pathUserId, rest);
@@ -160,8 +160,8 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
       typeof restParam === "string"
         ? restParam
         : Array.isArray(restParam)
-        ? restParam.map((x) => String(x)).join("/")
-        : "";
+          ? restParam.map((x) => String(x)).join("/")
+          : "";
     try {
       const watch = timerThrottleService.startWatch(loginUser);
       await mediaService.deleteImage(pathUserId, rest);
