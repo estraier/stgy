@@ -41,6 +41,35 @@ export default function createRootRouter(pgPool: Pool, redis: Redis) {
     res.json(results);
   });
 
+  router.post("/metrics/aggregation/clear", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser || !loginUser.isAdmin) {
+      return res.status(403).json({ error: "admin only" });
+    }
+
+    res.once("finish", () => {
+      register.resetMetrics();
+    });
+
+    const targets = Config.BACKEND_API_PRIVATE_URL_LIST;
+    const results: Record<string, string> = {};
+    const cookie = typeof req.headers.cookie === "string" ? req.headers.cookie : "";
+
+    await Promise.all(
+      targets.map(async (baseUrl) => {
+        try {
+          const clearUrl = buildMetricsClearUrl(baseUrl);
+          await fetchPostWithTimeout(clearUrl, 3000, cookie);
+          results[baseUrl] = "ok";
+        } catch (e) {
+          results[baseUrl] = `ERROR: ${e instanceof Error ? e.message : String(e)}`;
+        }
+      }),
+    );
+
+    res.status(200).json(results);
+  });
+
   router.post("/metrics/clear", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.getCurrentUser(req);
     if (!loginUser || !loginUser.isAdmin) {
@@ -66,11 +95,37 @@ function buildMetricsUrl(baseUrl: string): string {
   return u.toString();
 }
 
+function buildMetricsClearUrl(baseUrl: string): string {
+  const u = new URL(baseUrl);
+  const basePath = u.pathname.endsWith("/") ? u.pathname : `${u.pathname}/`;
+  u.pathname = `${basePath}metrics/clear`;
+  u.search = "";
+  u.hash = "";
+  return u.toString();
+}
+
 async function fetchTextWithTimeout(url: string, timeoutMs: number): Promise<string> {
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
   try {
     const resp = await fetch(url, { method: "GET", signal: controller.signal });
+    const text = await resp.text();
+    if (!resp.ok) {
+      throw new Error(`HTTP ${resp.status} ${resp.statusText}\n${text}`);
+    }
+    return text;
+  } finally {
+    clearTimeout(timeoutId);
+  }
+}
+
+async function fetchPostWithTimeout(url: string, timeoutMs: number, cookie: string): Promise<string> {
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const headers: Record<string, string> = {};
+    if (cookie) headers["cookie"] = cookie;
+    const resp = await fetch(url, { method: "POST", signal: controller.signal, headers });
     const text = await resp.text();
     if (!resp.ok) {
       throw new Error(`HTTP ${resp.status} ${resp.statusText}\n${text}`);

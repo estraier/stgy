@@ -13,8 +13,8 @@ export async function getMetricsAggregation(): Promise<MetricsAggregation> {
   return res.json();
 }
 
-export async function clearMetrics(): Promise<{ result: string }> {
-  const res = await apiFetch("/metrics/clear", { method: "POST" });
+export async function clearMetricsAggregation(): Promise<boolean> {
+  const res = await apiFetch("/metrics/aggregation/clear", { method: "POST" });
   if (!res.ok) throw new Error(await extractError(res));
-  return res.json();
+  return res.ok;
 }

@@ -77,6 +77,9 @@ def test_root():
   assert res.status_code == 200, res.text
   assert res.json() == {"result": "ok"}
   print("[root] clear metrics OK")
+  res = requests.post(f"{BASE_URL}/metrics/aggregation/clear", cookies=cookies)
+  assert res.status_code == 200, res.text
+  print("[root] aggregation clear metrics OK")
   logout(session_id)
   print("[test_root] OK")
 

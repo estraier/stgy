@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { getSessionInfo } from "@/api/auth";
-import { clearMetrics, getMetricsAggregation } from "@/api/root";
+import { clearMetricsAggregation, getMetricsAggregation } from "@/api/root";
 import type { SessionInfo } from "@/api/models";
 import type { MetricsAggregation } from "@/api/root";
 
@@ -421,7 +421,7 @@ export default function PageBody() {
     setError(null);
     setClearing(true);
     try {
-      await clearMetrics();
+      await clearMetricsAggregation();
       const agg = await getMetricsAggregation();
       setMetrics(agg);
     } catch (e) {

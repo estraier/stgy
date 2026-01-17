@@ -705,6 +705,22 @@ paths:
             application/json:
               schema:
                 type: object
+                additionalProperties: { type: string }
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /metrics/aggregation/clear:
+    post:
+      summary: (Admin only) Clear metrics of all backend nodes
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
                 properties:
                   result: { type: string }
                 required: [result]

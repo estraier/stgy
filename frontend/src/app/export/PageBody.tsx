@@ -232,6 +232,7 @@ function renderProfileHtml(profile: UserDetail): string {
 
 function renderPostHtml(post: Post | PostDetail): string {
   const postId = post.id;
+  const postDate = post.createdAt;
   const postLang = post.ownerLocale || post.locale || "en";
   const ownerNickname = post.ownerNickname;
   const bodyHtml = convertHtmlMathInline(
@@ -252,12 +253,12 @@ function renderPostHtml(post: Post | PostDetail): string {
 <body class="stgy-export stgy-export-post">
   <main>
     <div class="card">
-      <h1>${escapeHtml(ownerNickname)}</h1>
-      <p class="muted">Post ID: <code>${escapeHtml(postId)}</code></p>
-
+      <div class="post-meta">
+        <span class="post-attr">ID: ${escapeHtml(postId)}</span>
+        <span class="post-attr">author: ${escapeHtml(ownerNickname)}</span>
+        <span class="post-attr">date: ${escapeHtml(postDate)}</span>
+      </div>
       ${tagHtml}
-
-      <h2 class="page-label">Content</h2>
       <div class="markdown-body">
         ${bodyHtml}
       </div>

@@ -37,7 +37,14 @@ body.stgy-export .card {
   padding: 18px;
   box-shadow: 0 2px 10px rgba(0,0,0,.06);
 }
-
+body.stgy-export .post-meta {
+  font-size: 90%;
+  color: #888;
+  margin-bottom: 0.3em;
+}
+body.stgy-export .post-attr {
+  padding-right: 0.5em;
+}
 body.stgy-export .row {
   display: flex;
   gap: 16px;
