@@ -11,9 +11,8 @@ import { normalizeOneLiner } from "./utils/format";
 import { countPseudoTokens, sliceByPseudoTokens } from "stgy-markdown";
 import type { Pool } from "pg";
 import type Redis from "ioredis";
-import http from "http";
-import https from "https";
 import { URLSearchParams } from "url";
+import { apiRequest, httpRequest, UnauthorizedError } from "./utils/client";
 
 const logger = createLogger({ file: "aiSummaryWorker" });
 
@@ -23,19 +22,6 @@ let authService: AuthService | null = null;
 
 let shuttingDown = false;
 const inflight = new Set<Promise<void>>();
-
-type HttpResult = {
-  statusCode: number;
-  headers: http.IncomingHttpHeaders;
-  body: string;
-};
-
-class UnauthorizedError extends Error {
-  constructor(message = "unauthorized") {
-    super(message);
-    this.name = "UnauthorizedError";
-  }
-}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null;
@@ -61,68 +47,6 @@ function truncateText(text: string, max: number): string {
     return text;
   }
   return sliceByPseudoTokens(text, 0, max) + "…";
-}
-
-function httpRequest(
-  path: string,
-  options: { method?: string; headers?: Record<string, string>; body?: string } = {},
-): Promise<HttpResult> {
-  const method = options.method ?? "GET";
-  const headers = options.headers ?? {};
-  const body = options.body ?? "";
-  const url = new URL(path, Config.BACKEND_API_BASE_URL);
-  const isHttps = url.protocol === "https:";
-  const client = isHttps ? https : http;
-  return new Promise((resolve, reject) => {
-    const req = client.request(
-      {
-        protocol: url.protocol,
-        hostname: url.hostname,
-        port: url.port || undefined,
-        path: url.pathname + url.search,
-        method,
-        headers,
-      },
-      (res) => {
-        const chunks: Buffer[] = [];
-        res.on("data", (chunk) => {
-          chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
-        });
-        res.on("end", () => {
-          const bodyStr = Buffer.concat(chunks).toString("utf8");
-          resolve({ statusCode: res.statusCode ?? 0, headers: res.headers, body: bodyStr });
-        });
-      },
-    );
-    req.on("error", reject);
-    if (body.length > 0) req.write(body);
-    req.end();
-  });
-}
-
-async function apiRequest(
-  sessionCookie: string,
-  path: string,
-  options: { method?: string; body?: unknown } = {},
-): Promise<HttpResult> {
-  const method = options.method ?? "GET";
-  let bodyStr = "";
-  const headers: Record<string, string> = { Cookie: sessionCookie };
-  if (options.body !== undefined) {
-    bodyStr = JSON.stringify(options.body);
-    headers["Content-Type"] = "application/json";
-    headers["Content-Length"] = Buffer.byteLength(bodyStr).toString();
-  }
-  const res = await httpRequest(path, { method, headers, body: bodyStr });
-  if (res.statusCode === 401) {
-    throw new UnauthorizedError(`401 from ${path}`);
-  }
-  if (res.statusCode < 200 || res.statusCode >= 300) {
-    throw new Error(
-      `request failed: ${res.statusCode} ${method} ${path} ${truncateForLog(res.body, 50)}`,
-    );
-  }
-  return res;
 }
 
 async function waitForAiChatAvailability(): Promise<"enabled" | "disabled"> {
@@ -386,8 +310,6 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     .replaceAll("{{TAG_NUM}}", String(Config.AI_TAG_MAX_COUNT))
     .replaceAll("{{LOCALE}}", localeText);
 
-  //console.log(prompt);
-
   const chatReq: ChatRequest = {
     model: Config.AI_SUMMARY_MODEL,
     messages: [{ role: "user", content: prompt }],
@@ -401,8 +323,6 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
   if (aiContent.trim() === "") {
     throw new Error(`ai-users/chat returned empty content for postId=${postId}`);
   }
-
-  //console.log(aiContent);
 
   const parsed = evaluateChatResponseAsJson<{
     summary?: unknown;
@@ -435,8 +355,6 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
     Config.AI_SUMMARY_SUMMARY_LENGTH,
   );
   const featuresInput = buildFeaturesInput(summary, keywords, postSnippet);
-
-  //console.log(featuresInput);
 
   const features = await generateFeatures(sessionCookie, {
     model: Config.AI_SUMMARY_MODEL,

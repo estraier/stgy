@@ -128,6 +128,15 @@ function isNewerThanDays(datetime: string, days: number): boolean {
   return ms > cutoff;
 }
 
+function buildBackendUrl(path: string): URL {
+  if (/^https?:\/\//.test(path)) return new URL(path);
+  const base = Config.BACKEND_API_BASE_URL.endsWith("/")
+    ? Config.BACKEND_API_BASE_URL
+    : `${Config.BACKEND_API_BASE_URL}/`;
+  const rel = path.startsWith("/") ? path.slice(1) : path;
+  return new URL(rel, base);
+}
+
 function httpRequest(
   path: string,
   options: { method?: string; headers?: Record<string, string>; body?: string } = {},
@@ -135,7 +144,7 @@ function httpRequest(
   const method = options.method ?? "GET";
   const headers = options.headers ?? {};
   const body = options.body ?? "";
-  const url = new URL(path, Config.BACKEND_API_BASE_URL);
+  const url = buildBackendUrl(path);
   const isHttps = url.protocol === "https:";
   const client = isHttps ? https : http;
   return new Promise((resolve, reject) => {
@@ -772,9 +781,9 @@ async function checkPostImpression(
 }
 
 async function fetchPostById(sessionCookie: string, postId: string): Promise<PostDetail> {
-  const url = new URL(`/posts/${encodeURIComponent(postId)}`, Config.BACKEND_API_BASE_URL);
-  const path = url.pathname + url.search;
-  const res = await apiRequest(sessionCookie, path, { method: "GET" });
+  const res = await apiRequest(sessionCookie, `/posts/${encodeURIComponent(postId)}`, {
+    method: "GET",
+  });
   return JSON.parse(res.body) as PostDetail;
 }
 
