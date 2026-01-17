@@ -54,7 +54,7 @@ def test_root():
   text = res.text
   assert "# HELP" in text
   assert "process_cpu_seconds_total" in text
-  print("[root] metrics OK")
+  print("[root] get metrics OK")
   res = requests.get(f"{BASE_URL}/metrics/aggregation")
   assert res.status_code == 403, res.text
   print("[root] metrics/aggregation (no login) -> 403 OK")
@@ -73,6 +73,10 @@ def test_root():
   ok_any = any(("# HELP" in t and "process_cpu_seconds_total" in t) for t in texts)
   assert ok_any, f"no valid metrics in aggregation: keys={list(data.keys())}"
   print(f"[root] metrics/aggregation OK: keys={list(data.keys())}")
+  res = requests.post(f"{BASE_URL}/metrics/clear", cookies=cookies)
+  assert res.status_code == 200, res.text
+  assert res.json() == {"result": "ok"}
+  print("[root] clear metrics OK")
   logout(session_id)
   print("[test_root] OK")
 

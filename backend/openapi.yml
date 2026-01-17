@@ -664,6 +664,53 @@ paths:
                   result: { type: string }
                 required: [result]
 
+  /metrics:
+    get:
+      summary: Get Prometheus metrics
+      security: []
+      responses:
+        "200":
+          description: Prometheus metrics text
+          content:
+            text/plain:
+              schema:
+                type: string
+
+  /metrics/aggregation:
+    get:
+      summary: (Admin only) Aggregate Prometheus metrics from backend nodes
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Map of baseUrl -> metrics text (or error string)
+          content:
+            application/json:
+              schema:
+                type: object
+                additionalProperties:
+                  type: string
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /metrics/clear:
+    post:
+      summary: (Admin only) Clear metrics (reset counters/gauges)
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+                required: [result]
+        "403":
+          $ref: "#/components/responses/Error403"
+
   /auth:
     post:
       summary: Log in

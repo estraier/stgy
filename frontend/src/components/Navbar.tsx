@@ -13,6 +13,7 @@ export default function Navbar() {
   const [loggedIn, setLoggedIn] = useState<boolean | null>(null);
   const [nickname, setNickname] = useState<string>("");
   const [userId, setUserId] = useState<string>("");
+  const [isAdmin, setIsAdmin] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const [searchValue, setSearchValue] = useState("");
   const router = useRouter();
@@ -27,6 +28,7 @@ export default function Navbar() {
           setLoggedIn(true);
           setNickname(user.userNickname || "");
           setUserId(user.userId || "");
+          setIsAdmin(!!user.userIsAdmin);
         }
       })
       .catch(() => {
@@ -34,6 +36,7 @@ export default function Navbar() {
           setLoggedIn(false);
           setNickname("");
           setUserId("");
+          setIsAdmin(false);
         }
       });
     return () => {
@@ -184,6 +187,15 @@ export default function Navbar() {
             >
               Export data
             </Link>
+            {isAdmin && (
+              <Link
+                href="/dash-endpoints"
+                className="block w-full px-4 py-2 text-left hover:bg-gray-100"
+                onClick={() => setMenuOpen(false)}
+              >
+                @ Endpoints
+              </Link>
+            )}
             <Link
               href={Config.HELP_PAGE_PATH}
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
@@ -199,6 +211,7 @@ export default function Navbar() {
                 setLoggedIn(false);
                 setNickname("");
                 setUserId("");
+                setIsAdmin(false);
                 window.location.href = "/";
               }}
             >

@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import type { Pool } from "pg";
 import type Redis from "ioredis";
+import { register } from "prom-client";
 import { Config } from "../config";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
@@ -38,6 +39,19 @@ export default function createRootRouter(pgPool: Pool, redis: Redis) {
     );
 
     res.json(results);
+  });
+
+  router.post("/metrics/clear", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser || !loginUser.isAdmin) {
+      return res.status(403).json({ error: "admin only" });
+    }
+
+    res.once("finish", () => {
+      register.resetMetrics();
+    });
+
+    res.status(200).json({ result: "ok" });
   });
 
   return router;
