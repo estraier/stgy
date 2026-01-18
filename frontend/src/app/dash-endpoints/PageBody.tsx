@@ -614,15 +614,15 @@ export default function PageBody() {
                 </div>
               )}
 
-              <section className="border overflow-x-auto">
-                <div className="grid grid-cols-12 gap-2 px-3 py-2 border-b bg-gray-50 min-w-max">
-                  <div className="col-span-6">
+              <section className="border overflow-hidden">
+                <div className="grid grid-cols-12 gap-2 px-3 py-2 border-b bg-gray-50 min-w-0">
+                  <div className="col-span-6 min-w-0">
                     <button type="button" className={thBtnBase} onClick={() => toggleSort("name")}>
                       <span>name</span>
                       <span className="font-mono">{sortMark("name")}</span>
                     </button>
                   </div>
-                  <div className="col-span-2">
+                  <div className="col-span-2 min-w-0">
                     <button
                       type="button"
                       className={thBtnRight}
@@ -632,13 +632,13 @@ export default function PageBody() {
                       <span className="font-mono">{sortMark("calls")}</span>
                     </button>
                   </div>
-                  <div className="col-span-2">
+                  <div className="col-span-2 min-w-0">
                     <button type="button" className={thBtnRight} onClick={() => toggleSort("time")}>
                       <span>total time</span>
                       <span className="font-mono">{sortMark("time")}</span>
                     </button>
                   </div>
-                  <div className="col-span-2">
+                  <div className="col-span-2 min-w-0">
                     <button type="button" className={thBtnRight} onClick={() => toggleSort("mean")}>
                       <span>mean time</span>
                       <span className="font-mono">{sortMark("mean")}</span>
@@ -646,7 +646,7 @@ export default function PageBody() {
                   </div>
                 </div>
 
-                <div className="flex flex-col min-w-max">
+                <div className="flex flex-col min-w-0">
                   {sortedEndpoints.map((ep) => {
                     const statusPairs = Object.entries(ep.statusCounts).sort((a, b) => {
                       const r = compareNumber(b[1], a[1]);
@@ -668,13 +668,15 @@ export default function PageBody() {
                     return (
                       <details key={ep.endpointKey} className="border-b last:border-b-0 group">
                         <summary className="list-none [&::-webkit-details-marker]:hidden cursor-pointer">
-                          <div className="flex items-center px-3 py-2">
+                          <div className="flex items-center px-3 py-2 min-w-0">
                             <span className="mr-2 text-xs font-mono text-gray-500 transition-transform group-open:rotate-90 whitespace-nowrap">
                               ▶
                             </span>
-                            <div className="grid grid-cols-12 gap-2 flex-1 items-center text-sm min-w-max">
-                              <div className="col-span-6 font-mono whitespace-nowrap">
-                                {ep.endpointKey}
+                            <div className="grid grid-cols-12 gap-2 flex-1 items-center text-sm min-w-0">
+                              <div className="col-span-6 font-mono min-w-0" title={ep.endpointKey}>
+                                <span className="block truncate group-open:whitespace-normal group-open:break-words">
+                                  {ep.endpointKey}
+                                </span>
                               </div>
                               <div className="col-span-2 text-right font-mono whitespace-nowrap">
                                 {Math.round(ep.totalCount)}
@@ -716,15 +718,15 @@ export default function PageBody() {
                                 <div className="text-gray-500 text-xs whitespace-nowrap">-</div>
                               ) : (
                                 <>
-                                  <div className="flex items-center gap-2">
-                                    <div className="w-28 text-xs font-mono text-gray-500 whitespace-nowrap">
+                                  <div className="flex items-center gap-2 min-w-0">
+                                    <div className="w-20 sm:w-28 text-[10px] font-mono text-gray-500 whitespace-nowrap">
                                       bucket
                                     </div>
-                                    <div className="flex-1" />
-                                    <div className="w-44 text-right text-xs font-mono text-gray-500 whitespace-nowrap">
+                                    <div className="flex-1 min-w-0" />
+                                    <div className="w-28 sm:w-44 text-right text-[10px] font-mono text-gray-500 whitespace-nowrap">
                                       <div className="grid grid-cols-2 gap-2 justify-items-end whitespace-nowrap">
-                                        <span className="whitespace-nowrap">freq</span>
-                                        <span className="whitespace-nowrap">cum (%)</span>
+                                        <span className="whitespace-nowrap">frequency</span>
+                                        <span className="whitespace-nowrap">cumrative</span>
                                       </div>
                                     </div>
                                   </div>
@@ -740,17 +742,17 @@ export default function PageBody() {
                                       ? `${pct.toFixed(1)}%`
                                       : "-";
                                     return (
-                                      <div key={b.le} className="flex items-center gap-2">
-                                        <div className="w-28 text-xs font-mono text-gray-700 whitespace-nowrap">
+                                      <div key={b.le} className="flex items-center gap-2 min-w-0">
+                                        <div className="w-20 sm:w-28 text-xs font-mono text-gray-700 whitespace-nowrap">
                                           {label}
                                         </div>
-                                        <div className="flex-1 h-3 border rounded bg-white overflow-hidden">
+                                        <div className="flex-1 h-3 border rounded bg-white overflow-hidden min-w-0">
                                           <div
                                             className="h-full bg-gray-800"
                                             style={{ width: `${w}%` }}
                                           />
                                         </div>
-                                        <div className="w-44 text-right text-xs font-mono text-gray-700 whitespace-nowrap">
+                                        <div className="w-28 sm:w-44 text-right text-xs font-mono text-gray-700 whitespace-nowrap">
                                           <div className="grid grid-cols-2 gap-2 justify-items-end whitespace-nowrap">
                                             <span className="whitespace-nowrap">
                                               {Math.round(b.delta)}
@@ -776,8 +778,8 @@ export default function PageBody() {
 
               <h2 className="text-xl font-bold mt-8 mb-3 whitespace-nowrap">Node stats</h2>
 
-              <div className="border rounded overflow-x-auto">
-                <table className="min-w-max w-full text-sm">
+              <div className="border rounded overflow-hidden">
+                <table className="w-full table-fixed text-sm">
                   <thead className="bg-gray-50 border-b">
                     <tr>
                       <th className="text-left px-3 py-2 text-xs text-gray-700 whitespace-nowrap">
@@ -804,11 +806,13 @@ export default function PageBody() {
                     {nodeStatsRows.map((r) => (
                       <tr key={r.node} className="border-b last:border-b-0">
                         <td
-                          className={`px-3 py-2 font-mono whitespace-nowrap ${
+                          className={`px-3 py-2 font-mono min-w-0 ${
                             r.isError ? "text-red-700" : ""
                           }`}
                         >
-                          {r.node}
+                          <span className="block truncate" title={r.node}>
+                            {r.node}
+                          </span>
                         </td>
                         <td className="px-3 py-2 font-mono whitespace-nowrap">
                           {formatDurationDHMS(r.uptimeSec)}
