@@ -5,13 +5,15 @@ import { getSessionInfo } from "@/api/auth";
 import type { SessionInfo, QueryStats } from "@/api/models";
 import {
   checkDbStatsEnabled,
-  enableDbStats,
-  disableDbStats,
   clearDbStats,
+  disableDbStats,
+  enableDbStats,
   listSlowQueries,
 } from "@/api/dbStats";
 
 type Order = "asc" | "desc";
+
+const PAGE_SIZE = 100;
 
 function formatTimeMs(ms: number | null): string {
   if (ms === null || !Number.isFinite(ms) || ms < 0) return "-";
@@ -36,15 +38,15 @@ export default function PageBody() {
   const [enabled, setEnabled] = useState<boolean | null>(null);
   const [order, setOrder] = useState<Order>("desc");
 
-  const pageSize = 100;
   const [page, setPage] = useState(0);
   const [rows, setRows] = useState<QueryStats[]>([]);
+  const [hasNext, setHasNext] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   const canPrev = page > 0;
-  const canNext = rows.length === pageSize;
+  const canNext = hasNext;
 
-  const pageOffset = page * pageSize;
+  const pageOffset = page * PAGE_SIZE;
 
   function normalizeEnabledHeader(v: boolean | null): string {
     if (v === null) return "-";
@@ -59,29 +61,40 @@ export default function PageBody() {
     return `page ${p} (${range})`;
   }, [page, pageOffset, rows.length]);
 
-  const refreshEnabledAndMaybeList = useCallback(async (p: number, o: Order) => {
-    setError(null);
-    const en = await checkDbStatsEnabled();
-    setEnabled(en);
-
-    if (!en) {
-      setRows([]);
-      setLoadingList(false);
-      return;
-    }
-
-    setLoadingList(true);
-    try {
-      const xs = await listSlowQueries({
-        offset: p * pageSize,
-        limit: pageSize,
-        order: o,
-      });
-      setRows(xs);
-    } finally {
-      setLoadingList(false);
-    }
+  const fetchListPage = useCallback(async (p: number, o: Order) => {
+    const xs = await listSlowQueries({
+      offset: p * PAGE_SIZE,
+      limit: PAGE_SIZE + 1,
+      order: o,
+    });
+    const next = xs.length > PAGE_SIZE;
+    setHasNext(next);
+    setRows(next ? xs.slice(0, PAGE_SIZE) : xs);
   }, []);
+
+  const refreshEnabledAndMaybeList = useCallback(
+    async (p: number, o: Order) => {
+      setError(null);
+
+      const en = await checkDbStatsEnabled();
+      setEnabled(en);
+
+      if (!en) {
+        setRows([]);
+        setHasNext(false);
+        setLoadingList(false);
+        return;
+      }
+
+      setLoadingList(true);
+      try {
+        await fetchListPage(p, o);
+      } finally {
+        setLoadingList(false);
+      }
+    },
+    [fetchListPage],
+  );
 
   useEffect(() => {
     let canceled = false;
@@ -184,16 +197,12 @@ export default function PageBody() {
   async function goPrev() {
     if (!canPrev || busy) return;
     const next = page - 1;
+
     setPage(next);
     setError(null);
     setLoadingList(true);
     try {
-      const xs = await listSlowQueries({
-        offset: next * pageSize,
-        limit: pageSize,
-        order,
-      });
-      setRows(xs);
+      await fetchListPage(next, order);
     } catch (e) {
       setError(e ? String(e) : "Failed to load page.");
     } finally {
@@ -204,16 +213,12 @@ export default function PageBody() {
   async function goNext() {
     if (!canNext || busy) return;
     const next = page + 1;
+
     setPage(next);
     setError(null);
     setLoadingList(true);
     try {
-      const xs = await listSlowQueries({
-        offset: next * pageSize,
-        limit: pageSize,
-        order,
-      });
-      setRows(xs);
+      await fetchListPage(next, order);
     } catch (e) {
       setError(e ? String(e) : "Failed to load page.");
     } finally {
@@ -224,13 +229,13 @@ export default function PageBody() {
   async function toggleOrder() {
     if (busy) return;
     const next: Order = order === "desc" ? "asc" : "desc";
+
     setOrder(next);
     setPage(0);
     setError(null);
     setLoadingList(true);
     try {
-      const xs = await listSlowQueries({ offset: 0, limit: pageSize, order: next });
-      setRows(xs);
+      await fetchListPage(0, next);
     } catch (e) {
       setError(e ? String(e) : "Failed to load slow queries.");
     } finally {
@@ -238,10 +243,13 @@ export default function PageBody() {
     }
   }
 
-  const tabBtnBase = "px-3 py-1 rounded border text-sm select-none whitespace-nowrap";
-  const btnPrimary = "bg-gray-900 text-white border-gray-900";
-  const btnNeutral = "bg-white text-gray-800 border-gray-300";
-  const btnDanger = "bg-white text-red-700 border-red-300";
+  const btnBase =
+    "px-3 py-1 rounded border text-sm select-none whitespace-nowrap transition-colors cursor-pointer " +
+    "disabled:opacity-40 disabled:cursor-not-allowed disabled:bg-gray-100 disabled:text-gray-400 disabled:border-gray-200 " +
+    "disabled:hover:bg-gray-100";
+  const btnPrimary = "bg-gray-900 text-white border-gray-900 hover:bg-gray-800";
+  const btnNeutral = "bg-white text-gray-800 border-gray-300 hover:bg-gray-50";
+  const btnDanger = "bg-white text-red-700 border-red-300 hover:bg-red-50";
 
   return (
     <main className="max-w-3xl mx-auto mt-12 p-4 bg-white shadow border rounded">
@@ -256,9 +264,10 @@ export default function PageBody() {
         <div className="flex items-center gap-2">
           <button
             type="button"
-            className={`${tabBtnBase} ${btnNeutral}`}
+            className={`${btnBase} ${btnNeutral}`}
             onClick={onRefresh}
             disabled={loading || busy || !session || !session.userIsAdmin}
+            title="Refresh status and current page"
           >
             {busy ? "Working..." : "Refresh"}
           </button>
@@ -267,17 +276,19 @@ export default function PageBody() {
             <>
               <button
                 type="button"
-                className={`${tabBtnBase} ${btnDanger}`}
+                className={`${btnBase} ${btnDanger}`}
                 onClick={onClear}
                 disabled={loading || busy || !session || !session.userIsAdmin}
+                title="Clear pg_stat_statements"
               >
                 Clear
               </button>
               <button
                 type="button"
-                className={`${tabBtnBase} ${btnNeutral}`}
+                className={`${btnBase} ${btnNeutral}`}
                 onClick={onDisable}
                 disabled={loading || busy || !session || !session.userIsAdmin}
+                title="Disable pg_stat_statements tracking"
               >
                 Disable
               </button>
@@ -285,9 +296,10 @@ export default function PageBody() {
           ) : (
             <button
               type="button"
-              className={`${tabBtnBase} ${btnPrimary}`}
+              className={`${btnBase} ${btnPrimary}`}
               onClick={onEnable}
               disabled={loading || busy || !session || !session.userIsAdmin}
+              title="Enable pg_stat_statements tracking"
             >
               Enable
             </button>
@@ -328,9 +340,10 @@ export default function PageBody() {
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    className={`${tabBtnBase} ${btnNeutral}`}
+                    className={`${btnBase} ${btnNeutral}`}
                     onClick={toggleOrder}
                     disabled={busy || loadingList}
+                    title="Toggle sort order"
                   >
                     Order: {order}
                   </button>
@@ -338,17 +351,19 @@ export default function PageBody() {
                   <div className="flex items-center gap-2">
                     <button
                       type="button"
-                      className={`${tabBtnBase} ${btnNeutral}`}
+                      className={`${btnBase} ${btnNeutral}`}
                       onClick={goPrev}
                       disabled={busy || loadingList || !canPrev}
+                      title="Previous page"
                     >
                       Prev
                     </button>
                     <button
                       type="button"
-                      className={`${tabBtnBase} ${btnNeutral}`}
+                      className={`${btnBase} ${btnNeutral}`}
                       onClick={goNext}
                       disabled={busy || loadingList || !canNext}
+                      title="Next page"
                     >
                       Next
                     </button>
@@ -436,23 +451,25 @@ export default function PageBody() {
 
               <div className="mt-3 flex items-center justify-between gap-2">
                 <div className="text-xs text-gray-600 font-mono">
-                  offset={pageOffset} limit={pageSize}
+                  offset={pageOffset} limit={PAGE_SIZE}
                 </div>
 
                 <div className="flex items-center gap-2">
                   <button
                     type="button"
-                    className={`${tabBtnBase} ${btnNeutral}`}
+                    className={`${btnBase} ${btnNeutral}`}
                     onClick={goPrev}
                     disabled={busy || loadingList || !canPrev}
+                    title="Previous page"
                   >
                     Prev
                   </button>
                   <button
                     type="button"
-                    className={`${tabBtnBase} ${btnNeutral}`}
+                    className={`${btnBase} ${btnNeutral}`}
                     onClick={goNext}
                     disabled={busy || loadingList || !canNext}
+                    title="Next page"
                   >
                     Next
                   </button>
