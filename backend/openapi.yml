@@ -48,6 +48,17 @@ components:
           loggedInAt,
         ]
 
+    QueryStats:
+      type: object
+      properties:
+        query: { type: string }
+        calls: { type: integer }
+        totalExecTime:
+          type: number
+          format: double
+          description: Total execution time (ms)
+      required: [query, calls, totalExecTime]
+
     User:
       type: object
       properties:
@@ -866,6 +877,117 @@ paths:
                 properties:
                   userId: { type: string }
                 required: [userId]
+        "400":
+          $ref: "#/components/responses/Error400"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /db-stats:
+    head:
+      summary: (Admin only) Check DB stats availability (pg_stat_statements)
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Enabled
+          headers:
+            x-db-stats-enabled:
+              description: "1 if enabled, 0 if disabled"
+              schema: { type: string, enum: ["1"] }
+        "204":
+          description: Disabled
+          headers:
+            x-db-stats-enabled:
+              description: "1 if enabled, 0 if disabled"
+              schema: { type: string, enum: ["0"] }
+        "403":
+          description: Forbidden (admin only)
+
+  /db-stats/enable:
+    post:
+      summary: (Admin only) Enable DB stats (pg_stat_statements.track = top)
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Enabled (or already enabled)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DbStatsToggleResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /db-stats/disable:
+    post:
+      summary: (Admin only) Disable DB stats (pg_stat_statements.track = none)
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Disabled (or already disabled)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DbStatsToggleResponse"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /db-stats/slow-queries:
+    get:
+      summary: (Admin only) List slow queries from pg_stat_statements
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            minimum: 0
+            default: 0
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 10000
+            default: 50
+        - name: order
+          in: query
+          schema:
+            type: string
+            enum: [asc, desc]
+            default: desc
+      responses:
+        "200":
+          description: Slow query rows (may be empty)
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/QueryStats"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /db-stats/clear:
+    post:
+      summary: (Admin only) Clear DB stats (reset pg_stat_statements)
+      security:
+        - sessionCookie: []
+      responses:
+        "200":
+          description: Cleared
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DbStatsClearResponse"
         "400":
           $ref: "#/components/responses/Error400"
         "403":
