@@ -553,6 +553,9 @@ export default function PageBody() {
   const thBtnRight =
     "w-full text-right text-xs text-gray-700 select-none inline-flex items-center justify-end gap-1 whitespace-nowrap";
 
+  const epGridCols = "grid-cols-[minmax(0,1fr)_5.5rem_7rem_7rem]";
+  const epArrowSlot = "w-4 mr-2 shrink-0";
+
   return (
     <main className="max-w-3xl mx-auto mt-12 p-4 bg-white shadow border rounded">
       <div className="flex items-center justify-between gap-3 mb-6">
@@ -615,34 +618,37 @@ export default function PageBody() {
               )}
 
               <section className="border overflow-hidden">
-                <div className="grid grid-cols-12 gap-2 px-3 py-2 border-b bg-gray-50 min-w-0">
-                  <div className="col-span-6 min-w-0">
-                    <button type="button" className={thBtnBase} onClick={() => toggleSort("name")}>
-                      <span>name</span>
-                      <span className="font-mono">{sortMark("name")}</span>
-                    </button>
-                  </div>
-                  <div className="col-span-2 min-w-0">
-                    <button
-                      type="button"
-                      className={thBtnRight}
-                      onClick={() => toggleSort("calls")}
-                    >
-                      <span>calls</span>
-                      <span className="font-mono">{sortMark("calls")}</span>
-                    </button>
-                  </div>
-                  <div className="col-span-2 min-w-0">
-                    <button type="button" className={thBtnRight} onClick={() => toggleSort("time")}>
-                      <span>total time</span>
-                      <span className="font-mono">{sortMark("time")}</span>
-                    </button>
-                  </div>
-                  <div className="col-span-2 min-w-0">
-                    <button type="button" className={thBtnRight} onClick={() => toggleSort("mean")}>
-                      <span>mean time</span>
-                      <span className="font-mono">{sortMark("mean")}</span>
-                    </button>
+                <div className="flex items-center px-3 py-2 border-b bg-gray-50 min-w-0">
+                  <div className={epArrowSlot} />
+                  <div className={`grid ${epGridCols} gap-2 flex-1 items-center min-w-0`}>
+                    <div className="min-w-0">
+                      <button type="button" className={thBtnBase} onClick={() => toggleSort("name")}>
+                        <span>name</span>
+                        <span className="font-mono">{sortMark("name")}</span>
+                      </button>
+                    </div>
+                    <div>
+                      <button
+                        type="button"
+                        className={thBtnRight}
+                        onClick={() => toggleSort("calls")}
+                      >
+                        <span>calls</span>
+                        <span className="font-mono">{sortMark("calls")}</span>
+                      </button>
+                    </div>
+                    <div>
+                      <button type="button" className={thBtnRight} onClick={() => toggleSort("time")}>
+                        <span>total time</span>
+                        <span className="font-mono">{sortMark("time")}</span>
+                      </button>
+                    </div>
+                    <div>
+                      <button type="button" className={thBtnRight} onClick={() => toggleSort("mean")}>
+                        <span>mean time</span>
+                        <span className="font-mono">{sortMark("mean")}</span>
+                      </button>
+                    </div>
                   </div>
                 </div>
 
@@ -669,23 +675,27 @@ export default function PageBody() {
                       <details key={ep.endpointKey} className="border-b last:border-b-0 group">
                         <summary className="list-none [&::-webkit-details-marker]:hidden cursor-pointer">
                           <div className="flex items-center px-3 py-2 min-w-0">
-                            <span className="mr-2 text-xs font-mono text-gray-500 transition-transform group-open:rotate-90 whitespace-nowrap">
+                            <span className={`${epArrowSlot} text-xs font-mono text-gray-500 transition-transform group-open:rotate-90`}>
                               ▶
                             </span>
-                            <div className="grid grid-cols-12 gap-2 flex-1 items-center text-sm min-w-0">
-                              <div className="col-span-6 font-mono min-w-0" title={ep.endpointKey}>
+
+                            <div className={`grid ${epGridCols} gap-2 flex-1 items-center text-sm min-w-0`}>
+                              <div className="font-mono min-w-0" title={ep.endpointKey}>
                                 <span className="block truncate group-open:whitespace-normal group-open:break-words">
                                   {ep.endpointKey}
                                 </span>
                               </div>
-                              <div className="col-span-2 text-right font-mono whitespace-nowrap">
-                                {Math.round(ep.totalCount)}
+
+                              <div className="text-right font-mono min-w-0">
+                                <span className="block truncate">{Math.round(ep.totalCount)}</span>
                               </div>
-                              <div className="col-span-2 text-right font-mono whitespace-nowrap">
-                                {formatSec(ep.totalSumSec)}
+
+                              <div className="text-right font-mono min-w-0">
+                                <span className="block truncate">{formatSec(ep.totalSumSec)}</span>
                               </div>
-                              <div className="col-span-2 text-right font-mono whitespace-nowrap">
-                                {formatMs(ep.meanSec)}
+
+                              <div className="text-right font-mono min-w-0">
+                                <span className="block truncate">{formatMs(ep.meanSec)}</span>
                               </div>
                             </div>
                           </div>
@@ -703,9 +713,7 @@ export default function PageBody() {
                                     className="inline-flex items-center gap-1 border rounded px-2 py-0.5 text-xs whitespace-nowrap"
                                   >
                                     <span className="font-mono whitespace-nowrap">{sc}:</span>
-                                    <span className="font-mono whitespace-nowrap">
-                                      {Math.round(c)}
-                                    </span>
+                                    <span className="font-mono whitespace-nowrap">{Math.round(c)}</span>
                                   </span>
                                 ))
                               )}
@@ -730,35 +738,35 @@ export default function PageBody() {
                                       </div>
                                     </div>
                                   </div>
+
                                   {bucketBars.map((b) => {
-                                    const w =
-                                      maxDelta > 0 ? Math.round((b.delta / maxDelta) * 100) : 0;
+                                    const w = maxDelta > 0 ? Math.round((b.delta / maxDelta) * 100) : 0;
                                     const label = histLabelForLe(b.le, prevFiniteForInf);
                                     const pct =
                                       ep.totalCount > 0 && Number.isFinite(ep.totalCount)
                                         ? (b.cumulative / ep.totalCount) * 100
                                         : Number.NaN;
-                                    const pctText = Number.isFinite(pct)
-                                      ? `${pct.toFixed(1)}%`
-                                      : "-";
+                                    const pctText = Number.isFinite(pct) ? `${pct.toFixed(1)}%` : "-";
+
                                     return (
                                       <div key={b.le} className="flex items-center gap-2 min-w-0">
                                         <div className="w-20 sm:w-28 text-xs font-mono text-gray-700 whitespace-nowrap">
                                           {label}
                                         </div>
+
                                         <div className="flex-1 h-3 border rounded bg-white overflow-hidden min-w-0">
-                                          <div
-                                            className="h-full bg-gray-800"
-                                            style={{ width: `${w}%` }}
-                                          />
+                                          <div className="h-full bg-gray-800" style={{ width: `${w}%` }} />
                                         </div>
+
                                         <div className="w-28 sm:w-44 text-right text-xs font-mono text-gray-700 whitespace-nowrap">
                                           <div className="grid grid-cols-2 gap-2 justify-items-end whitespace-nowrap">
+                                            <span className="whitespace-nowrap">{Math.round(b.delta)}</span>
                                             <span className="whitespace-nowrap">
-                                              {Math.round(b.delta)}
-                                            </span>
-                                            <span className="whitespace-nowrap">
-                                              {Math.round(b.cumulative)} ({pctText})
+                                              {Math.round(b.cumulative)} (
+                                              <span className="inline-block w-[6ch] text-right font-mono">
+                                                {pctText}
+                                              </span>
+                                              )
                                             </span>
                                           </div>
                                         </div>
@@ -780,6 +788,14 @@ export default function PageBody() {
 
               <div className="border rounded overflow-hidden">
                 <table className="w-full table-fixed text-sm">
+                  <colgroup>
+                    <col className="w-[40%]" />
+                    <col className="w-[18%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[10%]" />
+                    <col className="w-[11%]" />
+                    <col className="w-[11%]" />
+                  </colgroup>
                   <thead className="bg-gray-50 border-b">
                     <tr>
                       <th className="text-left px-3 py-2 text-xs text-gray-700 whitespace-nowrap">
@@ -814,20 +830,25 @@ export default function PageBody() {
                             {r.node}
                           </span>
                         </td>
-                        <td className="px-3 py-2 font-mono whitespace-nowrap">
-                          {formatDurationDHMS(r.uptimeSec)}
+
+                        <td className="px-3 py-2 font-mono min-w-0">
+                          <span className="block truncate">{formatDurationDHMS(r.uptimeSec)}</span>
                         </td>
-                        <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
-                          {formatCpuRate(r.cpuRate)}
+
+                        <td className="px-3 py-2 text-right font-mono min-w-0">
+                          <span className="block truncate">{formatCpuRate(r.cpuRate)}</span>
                         </td>
-                        <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
-                          {formatBytesCompact(r.rssBytes)}
+
+                        <td className="px-3 py-2 text-right font-mono min-w-0">
+                          <span className="block truncate">{formatBytesCompact(r.rssBytes)}</span>
                         </td>
-                        <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
-                          {formatLagSec(r.lagMeanSec)}
+
+                        <td className="px-3 py-2 text-right font-mono min-w-0">
+                          <span className="block truncate">{formatLagSec(r.lagMeanSec)}</span>
                         </td>
-                        <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
-                          {formatLagSec(r.lagP99Sec)}
+
+                        <td className="px-3 py-2 text-right font-mono min-w-0">
+                          <span className="block truncate">{formatLagSec(r.lagP99Sec)}</span>
                         </td>
                       </tr>
                     ))}
