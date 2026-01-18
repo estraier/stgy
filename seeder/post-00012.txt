@@ -916,6 +916,8 @@ maintenance_work_mem = '256MB'
 checkpoint_completion_target = 0.9
 wal_compression = on
 max_connections = 100
+
+shared_preload_libraries = 'pg_stat_statements'
 ```
 
 /etc/postgresql/16/main/pg_hba.confを編集して、ホストベース認証の設定をする。ローカルとDockerブリッジ（172.23.0.*）からの接続のみを受け付け、全てにパスワード認証を要求する。元の内容は全て消してよい。

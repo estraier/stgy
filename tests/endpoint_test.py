@@ -104,6 +104,161 @@ def test_auth():
   logout(session_id)
   print("[test_auth] OK")
 
+def test_signup():
+  print("[signup] start")
+  admin_session_id = login()
+  res = requests.get(f"{BASE_URL}/auth", cookies={"session_id": admin_session_id})
+  res.raise_for_status()
+  session = res.json()
+  print(f"[session] {session}")
+  admin_id = session["userId"]
+  email = f"signup_test+{int(time.time())}@stgy.xyz"
+  password = "signup_pw1"
+  res = requests.post(
+    f"{BASE_URL}/signup/start",
+    json={"email": email, "password": password}
+  )
+  assert res.status_code == 201, res.text
+  signup_start = res.json()
+  assert "signupId" in signup_start
+  signup_id = signup_start["signupId"]
+  print(f"[signup] got signup_id: {signup_id}")
+  res = requests.post(
+    f"{BASE_URL}/signup/verify",
+    json={"signupId": signup_id, "verificationCode": TEST_SIGNUP_CODE}
+  )
+  assert res.status_code == 201, res.text
+  res = res.json()
+  print("[signup] created:", res)
+  user_id = res["userId"]
+  res = requests.post(
+    f"{BASE_URL}/auth",
+    json={"email": email, "password": password}
+  )
+  assert res.status_code == 200, res.text
+  session_id = res.cookies.get("session_id")
+  assert session_id
+  print("[signup] login ok, session_id:", session_id)
+  res = requests.get(f"{BASE_URL}/users?limit=2000", cookies={"session_id": session_id})
+  assert res.status_code == 200
+  users = res.json()
+  assert any(u["id"] == admin_id for u in users)
+  print("[signup] list check ok")
+  res = requests.get(f"{BASE_URL}/users?limit=2000", cookies={"session_id": session_id})
+  assert res.status_code == 200
+  users = res.json()
+  assert any(u["id"] == admin_id for u in users)
+  print("[signup] list check ok")
+  res = requests.get(f"{BASE_URL}/users/{admin_id}", cookies={"session_id": session_id})
+  assert res.status_code == 200
+  user = res.json()
+  print(f"[signup] get admin {user}")
+  assert user["id"] == admin_id
+  assert "@stgy." in user["email"]
+  res = requests.get(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
+  assert res.status_code == 200
+  user = res.json()
+  print(f"[signup] get new user {user}")
+  assert user["id"] == user_id
+  assert user["email"] == email
+  new_email = email.replace("@", "-new@")
+  res = requests.post(f"{BASE_URL}/users/{user_id}/email/start",
+                      cookies={"session_id": session_id}, json={"email": new_email})
+  assert res.status_code == 201, res.text
+  data = res.json()
+  update_email_id = data["updateEmailId"]
+  print(f"[signup] update email started: {update_email_id}")
+  res = requests.post(f"{BASE_URL}/users/{user_id}/email/verify",
+                      cookies={"session_id": session_id},
+                      json={
+                        "updateEmailId": update_email_id,
+                        "verificationCode": TEST_SIGNUP_CODE,
+                      })
+  assert res.status_code == 200, res.text
+  print("[signup] update email OK")
+  res = requests.get(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
+  assert res.status_code == 200
+  user = res.json()
+  print(f"[signup] get new user {user}")
+  assert user["id"] == user_id
+  assert user["email"] == new_email
+  res = requests.post(f"{BASE_URL}/users/password/reset/start",
+                      json={"email": new_email})
+  assert res.status_code == 201, res.text
+  data = res.json()
+  print(data)
+  assert data["webCode"] == TEST_SIGNUP_CODE
+  reset_password_id = data["resetPasswordId"]
+  print(f"[signup] reset password started: {reset_password_id}")
+  res = requests.post(f"{BASE_URL}/users/password/reset/verify",
+                      json={"email": new_email, "resetPasswordId": reset_password_id,
+                            "webCode": TEST_SIGNUP_CODE, "mailCode": TEST_SIGNUP_CODE,
+                            "newPassword": "signup_pw2"})
+  assert res.status_code == 200, res.text
+  res = requests.get(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
+  assert res.status_code == 200
+  res = requests.post(
+    f"{BASE_URL}/auth",
+    json={"email": new_email, "password": "signup_pw2"}
+  )
+  assert res.status_code == 200, res.text
+  new_session_id = res.cookies.get("session_id")
+  print("[signup] login ok, session_id:", new_session_id)
+  res = requests.delete(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
+  assert res.status_code == 200, res.text
+  print("[signup] user deleted")
+  print("[test_signup] OK")
+
+def test_db_stats():
+  print("[db_stats] admin login")
+  session_id = login()
+  cookies = {"session_id": session_id}
+  headers = {"Content-Type": "application/json"}
+  def head_enabled() -> bool:
+    res = requests.head(f"{BASE_URL}/db-stats", headers=headers, cookies=cookies)
+    assert res.status_code in (200, 204), f"unexpected status: {res.status_code} {res.text}"
+    v = res.headers.get("x-db-stats-enabled", "")
+    return v == "1"
+  initial_enabled = head_enabled()
+  print(f"[db_stats] initial enabled = {initial_enabled}")
+  res = requests.post(f"{BASE_URL}/db-stats/disable", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  data = res.json()
+  assert data.get("result") == "ok", f"invalid response: {data}"
+  assert data.get("enabled") in (True, False), f"invalid response: {data}"
+  enabled_after_disable = head_enabled()
+  assert enabled_after_disable is False, f"expected disabled, got enabled={enabled_after_disable}"
+  print("[db_stats] disable -> check OK")
+  res = requests.post(f"{BASE_URL}/db-stats/enable", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  data = res.json()
+  assert data.get("result") == "ok", f"invalid response: {data}"
+  assert data.get("enabled") in (True, False), f"invalid response: {data}"
+  enabled_after_enable = head_enabled()
+  assert enabled_after_enable is True, f"expected enabled, got enabled={enabled_after_enable}"
+  print("[db_stats] enable -> check OK")
+  res = requests.get(f"{BASE_URL}/db-stats/slow-queries?limit=10&offset=0&order=desc", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  rows = res.json()
+  assert isinstance(rows, list), f"invalid response: {rows}"
+  if len(rows) > 0:
+    r0 = rows[0]
+    assert isinstance(r0, dict), f"invalid row: {r0}"
+    assert isinstance(r0.get("query"), str), f"invalid row: {r0}"
+    assert isinstance(r0.get("calls"), (int, float)), f"invalid row: {r0}"
+    assert isinstance(r0.get("totalExecTime"), (int, float)), f"invalid row: {r0}"
+  print(f"[db_stats] slow-queries OK: count={len(rows)}")
+  res = requests.post(f"{BASE_URL}/db-stats/clear", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  assert res.json() == {"result": "ok"}
+  print("[db_stats] clear OK")
+  if initial_enabled is False:
+    res = requests.post(f"{BASE_URL}/db-stats/disable", headers=headers, cookies=cookies)
+    assert res.status_code == 200, res.text
+    print("[db_stats] restored initial state: disabled")
+  logout(session_id)
+  print("[test_db_stats] OK")
+
 def test_ai_models():
   print("[ai_models] admin login")
   session_id = login()
@@ -796,111 +951,6 @@ def test_posts():
   assert res.status_code == 404
   logout(session_id)
   print("[test_posts] OK")
-
-def test_signup():
-  print("[signup] start")
-  admin_session_id = login()
-  res = requests.get(f"{BASE_URL}/auth", cookies={"session_id": admin_session_id})
-  res.raise_for_status()
-  session = res.json()
-  print(f"[session] {session}")
-  admin_id = session["userId"]
-  email = f"signup_test+{int(time.time())}@stgy.xyz"
-  password = "signup_pw1"
-  res = requests.post(
-    f"{BASE_URL}/signup/start",
-    json={"email": email, "password": password}
-  )
-  assert res.status_code == 201, res.text
-  signup_start = res.json()
-  assert "signupId" in signup_start
-  signup_id = signup_start["signupId"]
-  print(f"[signup] got signup_id: {signup_id}")
-  res = requests.post(
-    f"{BASE_URL}/signup/verify",
-    json={"signupId": signup_id, "verificationCode": TEST_SIGNUP_CODE}
-  )
-  assert res.status_code == 201, res.text
-  res = res.json()
-  print("[signup] created:", res)
-  user_id = res["userId"]
-  res = requests.post(
-    f"{BASE_URL}/auth",
-    json={"email": email, "password": password}
-  )
-  assert res.status_code == 200, res.text
-  session_id = res.cookies.get("session_id")
-  assert session_id
-  print("[signup] login ok, session_id:", session_id)
-  res = requests.get(f"{BASE_URL}/users?limit=2000", cookies={"session_id": session_id})
-  assert res.status_code == 200
-  users = res.json()
-  assert any(u["id"] == admin_id for u in users)
-  print("[signup] list check ok")
-  res = requests.get(f"{BASE_URL}/users?limit=2000", cookies={"session_id": session_id})
-  assert res.status_code == 200
-  users = res.json()
-  assert any(u["id"] == admin_id for u in users)
-  print("[signup] list check ok")
-  res = requests.get(f"{BASE_URL}/users/{admin_id}", cookies={"session_id": session_id})
-  assert res.status_code == 200
-  user = res.json()
-  print(f"[signup] get admin {user}")
-  assert user["id"] == admin_id
-  assert "@stgy." in user["email"]
-  res = requests.get(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
-  assert res.status_code == 200
-  user = res.json()
-  print(f"[signup] get new user {user}")
-  assert user["id"] == user_id
-  assert user["email"] == email
-  new_email = email.replace("@", "-new@")
-  res = requests.post(f"{BASE_URL}/users/{user_id}/email/start",
-                      cookies={"session_id": session_id}, json={"email": new_email})
-  assert res.status_code == 201, res.text
-  data = res.json()
-  update_email_id = data["updateEmailId"]
-  print(f"[signup] update email started: {update_email_id}")
-  res = requests.post(f"{BASE_URL}/users/{user_id}/email/verify",
-                      cookies={"session_id": session_id},
-                      json={
-                        "updateEmailId": update_email_id,
-                        "verificationCode": TEST_SIGNUP_CODE,
-                      })
-  assert res.status_code == 200, res.text
-  print("[signup] update email OK")
-  res = requests.get(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
-  assert res.status_code == 200
-  user = res.json()
-  print(f"[signup] get new user {user}")
-  assert user["id"] == user_id
-  assert user["email"] == new_email
-  res = requests.post(f"{BASE_URL}/users/password/reset/start",
-                      json={"email": new_email})
-  assert res.status_code == 201, res.text
-  data = res.json()
-  print(data)
-  assert data["webCode"] == TEST_SIGNUP_CODE
-  reset_password_id = data["resetPasswordId"]
-  print(f"[signup] reset password started: {reset_password_id}")
-  res = requests.post(f"{BASE_URL}/users/password/reset/verify",
-                      json={"email": new_email, "resetPasswordId": reset_password_id,
-                            "webCode": TEST_SIGNUP_CODE, "mailCode": TEST_SIGNUP_CODE,
-                            "newPassword": "signup_pw2"})
-  assert res.status_code == 200, res.text
-  res = requests.get(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
-  assert res.status_code == 200
-  res = requests.post(
-    f"{BASE_URL}/auth",
-    json={"email": new_email, "password": "signup_pw2"}
-  )
-  assert res.status_code == 200, res.text
-  new_session_id = res.cookies.get("session_id")
-  print("[signup] login ok, session_id:", new_session_id)
-  res = requests.delete(f"{BASE_URL}/users/{user_id}", cookies={"session_id": admin_session_id})
-  assert res.status_code == 200, res.text
-  print("[signup] user deleted")
-  print("[test_signup] OK")
 
 def test_media():
   print("[media] admin login")

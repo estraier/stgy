@@ -1,7 +1,12 @@
 CREATE EXTENSION IF NOT EXISTS pageinspect;
+CREATE EXTENSION IF NOT EXISTS pg_stat_statements;
 SELECT current_database() AS db \gset
 ALTER DATABASE :"db" SET default_toast_compression = 'lz4';
 ALTER SYSTEM SET timezone = 'UTC';
+ALTER SYSTEM SET pg_stat_statements.track = 'none';
+ALTER SYSTEM SET pg_stat_statements.track_utility = off;
+ALTER SYSTEM SET pg_stat_statements.save = off;
+SELECT pg_reload_conf();
 
 CREATE TABLE ai_models (
   label VARCHAR(50) PRIMARY KEY,

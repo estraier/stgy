@@ -22,6 +22,7 @@ services:
       POSTGRES_PASSWORD: ${STGY_DATABASE_PASSWORD:?}
       POSTGRES_DB: ${STGY_DATABASE_NAME:?}
       POSTGRES_INITDB_ARGS: "--encoding=UTF8 --locale=C --lc-collate=C --lc-ctype=en_US.UTF-8"
+    command: ["postgres", "-c", "shared_preload_libraries=pg_stat_statements"]
     ports:
       - "127.0.0.1:${STGY_DATABASE_PORT:-5432}:5432"
     volumes:

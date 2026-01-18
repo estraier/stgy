@@ -8,6 +8,7 @@ import promBundle from "express-prom-bundle";
 import { EventLogService } from "./services/eventLog";
 import { makeStorageService } from "./services/storageFactory";
 import createRootRouter from "./routes/root";
+import createDbStatsRouter from "./routes/dbStats";
 import createAuthRouter from "./routes/auth";
 import createAIModelsRouter from "./routes/aiModels";
 import createAIUsersRouter from "./routes/aiUsers";
@@ -25,7 +26,10 @@ function normalizePath(req: Request): string {
   const routePath = req.route?.path;
   const base = req.baseUrl ?? "";
   if (typeof routePath === "string") {
-    return `${base}${routePath}`;
+    const safeRoutePath = routePath.includes("*")
+      ? routePath.replace(/\*/g, ":wildcard")
+      : routePath;
+    return `${base}${safeRoutePath}`;
   }
   return `${base}${req.path}`;
 }
@@ -76,6 +80,7 @@ async function main() {
   app.use("/", createRootRouter(pgPool, redis));
   app.use("/auth", createAuthRouter(pgPool, redis));
   app.use("/signup", createSignupRouter(pgPool, redis));
+  app.use("/db-stats", createDbStatsRouter(pgPool, redis));
   app.use("/ai-models", createAIModelsRouter(pgPool, redis));
   app.use("/ai-users", createAIUsersRouter(pgPool, redis));
   app.use("/ai-posts", createAIPostsRouter(pgPool, redis, eventLogService));
