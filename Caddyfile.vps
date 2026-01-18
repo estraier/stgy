@@ -1,7 +1,7 @@
 https://stgy.jp {
   encode zstd gzip
 
-  @deny_backend_metrics path /backend/metrics*
+  @deny_backend_metrics path /backend/metrics /backend/metrics/
   handle @deny_backend_metrics {
     respond 404
   }
