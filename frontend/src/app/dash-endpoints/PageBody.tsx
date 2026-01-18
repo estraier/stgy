@@ -41,6 +41,16 @@ type BucketBar = {
   delta: number;
 };
 
+type NodeStatsRow = {
+  node: string;
+  isError: boolean;
+  uptimeSec: number | null;
+  cpuRate: number | null;
+  rssBytes: number | null;
+  lagMeanSec: number | null;
+  lagP99Sec: number | null;
+};
+
 function parsePromLine(
   line: string,
 ): { name: string; labels: Record<string, string>; value: number } | null {
@@ -319,6 +329,62 @@ function histLabelForLe(le: string, prevFiniteLeSec: number | null): string {
   return `<= ${formatMs(n)}`;
 }
 
+function extractScalarMetric(text: string, metricName: string): number | null {
+  let any: number | null = null;
+  const lines = text.split(/\r?\n/);
+  for (const raw of lines) {
+    const parsed = parsePromLine(raw);
+    if (!parsed) continue;
+    if (parsed.name !== metricName) continue;
+    const hasLabels = Object.keys(parsed.labels).length > 0;
+    if (!hasLabels) return parsed.value;
+    if (any === null) any = parsed.value;
+  }
+  return any;
+}
+
+function formatNodeName(key: string): string {
+  try {
+    const u = new URL(key);
+    if (u.host) return u.host;
+  } catch {
+    return key;
+  }
+  return key;
+}
+
+function formatDurationDHMS(totalSec: number | null): string {
+  if (totalSec === null || !Number.isFinite(totalSec) || totalSec < 0) return "-";
+  const s = Math.floor(totalSec);
+  const days = Math.floor(s / 86400);
+  const h = Math.floor((s % 86400) / 3600);
+  const m = Math.floor((s % 3600) / 60);
+  const ss = s % 60;
+  const hh = String(h).padStart(2, "0");
+  const mm = String(m).padStart(2, "0");
+  const sss = String(ss).padStart(2, "0");
+  if (days > 0) return `${days}d ${hh}:${mm}:${sss}`;
+  return `${hh}:${mm}:${sss}`;
+}
+
+function formatBytesCompact(bytes: number | null): string {
+  if (bytes === null || !Number.isFinite(bytes) || bytes < 0) return "-";
+  const mb = bytes / (1024 * 1024);
+  if (mb < 1024) return `${Math.round(mb)}MB`;
+  const gb = mb / 1024;
+  return `${gb.toFixed(1)}GB`;
+}
+
+function formatCpuRate(rate: number | null): string {
+  if (rate === null || !Number.isFinite(rate) || rate < 0) return "-";
+  return rate.toFixed(3);
+}
+
+function formatLagSec(sec: number | null): string {
+  if (sec === null || !Number.isFinite(sec) || sec < 0) return "-";
+  return sec.toFixed(3);
+}
+
 export default function PageBody() {
   const [tab, setTab] = useState<TabKey>("summary");
   const [sortKey, setSortKey] = useState<SortKey>("time");
@@ -329,6 +395,8 @@ export default function PageBody() {
   const [clearing, setClearing] = useState(false);
   const [metrics, setMetrics] = useState<MetricsAggregation | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  const [pageNowSec] = useState(() => Date.now() / 1000);
 
   useEffect(() => {
     let canceled = false;
@@ -399,6 +467,51 @@ export default function PageBody() {
     return xs;
   }, [summary.endpoints, sortKey, sortDir]);
 
+  const nodeStatsRows = useMemo((): NodeStatsRow[] => {
+    return nodes.map((n) => {
+      const node = formatNodeName(n.key);
+      if (n.kind === "error") {
+        return {
+          node,
+          isError: true,
+          uptimeSec: null,
+          cpuRate: null,
+          rssBytes: null,
+          lagMeanSec: null,
+          lagP99Sec: null,
+        };
+      }
+
+      const startTime = extractScalarMetric(n.text, "process_start_time_seconds");
+      const cpuTotal = extractScalarMetric(n.text, "process_cpu_seconds_total");
+      const rssBytes = extractScalarMetric(n.text, "process_resident_memory_bytes");
+      const lagMean = extractScalarMetric(n.text, "nodejs_eventloop_lag_mean_seconds");
+      const lagP99 = extractScalarMetric(n.text, "nodejs_eventloop_lag_p99_seconds");
+
+      const uptimeSec =
+        startTime !== null && Number.isFinite(startTime) ? pageNowSec - startTime : null;
+
+      const cpuRate =
+        uptimeSec !== null &&
+        uptimeSec > 0 &&
+        cpuTotal !== null &&
+        Number.isFinite(cpuTotal) &&
+        cpuTotal >= 0
+          ? cpuTotal / uptimeSec
+          : null;
+
+      return {
+        node,
+        isError: false,
+        uptimeSec,
+        cpuRate,
+        rssBytes,
+        lagMeanSec: lagMean,
+        lagP99Sec: lagP99,
+      };
+    });
+  }, [nodes, pageNowSec]);
+
   function toggleSort(k: SortKey) {
     if (sortKey === k) {
       setSortDir((d) => (d === "asc" ? "desc" : "asc"));
@@ -431,14 +544,14 @@ export default function PageBody() {
     }
   }
 
-  const tabBtnBase = "px-3 py-1 rounded border text-sm select-none";
+  const tabBtnBase = "px-3 py-1 rounded border text-sm select-none whitespace-nowrap";
   const tabBtnOn = "bg-gray-900 text-white border-gray-900";
   const tabBtnOff = "bg-white text-gray-800 border-gray-300";
 
   const thBtnBase =
-    "w-full text-left text-xs text-gray-700 select-none inline-flex items-center gap-1";
+    "w-full text-left text-xs text-gray-700 select-none inline-flex items-center gap-1 whitespace-nowrap";
   const thBtnRight =
-    "w-full text-right text-xs text-gray-700 select-none inline-flex items-center justify-end gap-1";
+    "w-full text-right text-xs text-gray-700 select-none inline-flex items-center justify-end gap-1 whitespace-nowrap";
 
   return (
     <main className="max-w-3xl mx-auto mt-12 p-4 bg-white shadow border rounded">
@@ -501,8 +614,8 @@ export default function PageBody() {
                 </div>
               )}
 
-              <section className="border">
-                <div className="grid grid-cols-12 gap-2 px-3 py-2 border-b bg-gray-50">
+              <section className="border overflow-x-auto">
+                <div className="grid grid-cols-12 gap-2 px-3 py-2 border-b bg-gray-50 min-w-max">
                   <div className="col-span-6">
                     <button type="button" className={thBtnBase} onClick={() => toggleSort("name")}>
                       <span>name</span>
@@ -533,7 +646,7 @@ export default function PageBody() {
                   </div>
                 </div>
 
-                <div className="flex flex-col">
+                <div className="flex flex-col min-w-max">
                   {sortedEndpoints.map((ep) => {
                     const statusPairs = Object.entries(ep.statusCounts).sort((a, b) => {
                       const r = compareNumber(b[1], a[1]);
@@ -556,18 +669,20 @@ export default function PageBody() {
                       <details key={ep.endpointKey} className="border-b last:border-b-0 group">
                         <summary className="list-none [&::-webkit-details-marker]:hidden cursor-pointer">
                           <div className="flex items-center px-3 py-2">
-                            <span className="mr-2 text-xs font-mono text-gray-500 transition-transform group-open:rotate-90">
+                            <span className="mr-2 text-xs font-mono text-gray-500 transition-transform group-open:rotate-90 whitespace-nowrap">
                               ▶
                             </span>
-                            <div className="grid grid-cols-12 gap-2 flex-1 items-center text-sm">
-                              <div className="col-span-6 font-mono break-all">{ep.endpointKey}</div>
-                              <div className="col-span-2 text-right font-mono">
+                            <div className="grid grid-cols-12 gap-2 flex-1 items-center text-sm min-w-max">
+                              <div className="col-span-6 font-mono whitespace-nowrap">
+                                {ep.endpointKey}
+                              </div>
+                              <div className="col-span-2 text-right font-mono whitespace-nowrap">
                                 {Math.round(ep.totalCount)}
                               </div>
-                              <div className="col-span-2 text-right font-mono">
+                              <div className="col-span-2 text-right font-mono whitespace-nowrap">
                                 {formatSec(ep.totalSumSec)}
                               </div>
-                              <div className="col-span-2 text-right font-mono">
+                              <div className="col-span-2 text-right font-mono whitespace-nowrap">
                                 {formatMs(ep.meanSec)}
                               </div>
                             </div>
@@ -578,15 +693,17 @@ export default function PageBody() {
                           <div className="mt-2">
                             <div className="flex flex-wrap gap-2">
                               {statusPairs.length === 0 ? (
-                                <span className="text-gray-500">-</span>
+                                <span className="text-gray-500 whitespace-nowrap">-</span>
                               ) : (
                                 statusPairs.map(([sc, c]) => (
                                   <span
                                     key={sc}
-                                    className="inline-flex items-center gap-1 border rounded px-2 py-0.5 text-xs"
+                                    className="inline-flex items-center gap-1 border rounded px-2 py-0.5 text-xs whitespace-nowrap"
                                   >
-                                    <span className="font-mono">{sc}:</span>
-                                    <span className="font-mono">{Math.round(c)}</span>
+                                    <span className="font-mono whitespace-nowrap">{sc}:</span>
+                                    <span className="font-mono whitespace-nowrap">
+                                      {Math.round(c)}
+                                    </span>
                                   </span>
                                 ))
                               )}
@@ -596,18 +713,18 @@ export default function PageBody() {
                           <div className="mt-4">
                             <div className="flex flex-col gap-1">
                               {bucketBars.length === 0 ? (
-                                <div className="text-gray-500 text-xs">-</div>
+                                <div className="text-gray-500 text-xs whitespace-nowrap">-</div>
                               ) : (
                                 <>
                                   <div className="flex items-center gap-2">
-                                    <div className="w-28 text-xs font-mono text-gray-500">
+                                    <div className="w-28 text-xs font-mono text-gray-500 whitespace-nowrap">
                                       bucket
                                     </div>
                                     <div className="flex-1" />
-                                    <div className="w-44 text-right text-xs font-mono text-gray-500">
-                                      <div className="grid grid-cols-2 gap-2 justify-items-end">
-                                        <span>freq</span>
-                                        <span>cum (%)</span>
+                                    <div className="w-44 text-right text-xs font-mono text-gray-500 whitespace-nowrap">
+                                      <div className="grid grid-cols-2 gap-2 justify-items-end whitespace-nowrap">
+                                        <span className="whitespace-nowrap">freq</span>
+                                        <span className="whitespace-nowrap">cum (%)</span>
                                       </div>
                                     </div>
                                   </div>
@@ -624,7 +741,7 @@ export default function PageBody() {
                                       : "-";
                                     return (
                                       <div key={b.le} className="flex items-center gap-2">
-                                        <div className="w-28 text-xs font-mono text-gray-700">
+                                        <div className="w-28 text-xs font-mono text-gray-700 whitespace-nowrap">
                                           {label}
                                         </div>
                                         <div className="flex-1 h-3 border rounded bg-white overflow-hidden">
@@ -633,10 +750,12 @@ export default function PageBody() {
                                             style={{ width: `${w}%` }}
                                           />
                                         </div>
-                                        <div className="w-44 text-right text-xs font-mono text-gray-700">
-                                          <div className="grid grid-cols-2 gap-2 justify-items-end">
-                                            <span>{Math.round(b.delta)}</span>
-                                            <span>
+                                        <div className="w-44 text-right text-xs font-mono text-gray-700 whitespace-nowrap">
+                                          <div className="grid grid-cols-2 gap-2 justify-items-end whitespace-nowrap">
+                                            <span className="whitespace-nowrap">
+                                              {Math.round(b.delta)}
+                                            </span>
+                                            <span className="whitespace-nowrap">
                                               {Math.round(b.cumulative)} ({pctText})
                                             </span>
                                           </div>
@@ -654,6 +773,63 @@ export default function PageBody() {
                   })}
                 </div>
               </section>
+
+              <h2 className="text-xl font-bold mt-8 mb-3 whitespace-nowrap">Node stats</h2>
+
+              <div className="border rounded overflow-x-auto">
+                <table className="min-w-max w-full text-sm">
+                  <thead className="bg-gray-50 border-b">
+                    <tr>
+                      <th className="text-left px-3 py-2 text-xs text-gray-700 whitespace-nowrap">
+                        Node
+                      </th>
+                      <th className="text-left px-3 py-2 text-xs text-gray-700 whitespace-nowrap">
+                        Uptime
+                      </th>
+                      <th className="text-right px-3 py-2 text-xs text-gray-700 whitespace-nowrap">
+                        CPU rate
+                      </th>
+                      <th className="text-right px-3 py-2 text-xs text-gray-700 whitespace-nowrap">
+                        RSS
+                      </th>
+                      <th className="text-right px-3 py-2 text-xs text-gray-700 whitespace-nowrap">
+                        Lag mean
+                      </th>
+                      <th className="text-right px-3 py-2 text-xs text-gray-700 whitespace-nowrap">
+                        Lag P99
+                      </th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {nodeStatsRows.map((r) => (
+                      <tr key={r.node} className="border-b last:border-b-0">
+                        <td
+                          className={`px-3 py-2 font-mono whitespace-nowrap ${
+                            r.isError ? "text-red-700" : ""
+                          }`}
+                        >
+                          {r.node}
+                        </td>
+                        <td className="px-3 py-2 font-mono whitespace-nowrap">
+                          {formatDurationDHMS(r.uptimeSec)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
+                          {formatCpuRate(r.cpuRate)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
+                          {formatBytesCompact(r.rssBytes)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
+                          {formatLagSec(r.lagMeanSec)}
+                        </td>
+                        <td className="px-3 py-2 text-right font-mono whitespace-nowrap">
+                          {formatLagSec(r.lagP99Sec)}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </>
           )}
 
