@@ -10,6 +10,12 @@ export type SessionInfo = {
   loggedInAt: string;
 };
 
+export type QueryStats = {
+  query: string;
+  calls: number;
+  totalExecTime: number;
+};
+
 export type AIModel = {
   label: string;
   service: string;

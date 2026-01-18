@@ -196,6 +196,15 @@ export default function Navbar() {
                 @ Endpoints
               </Link>
             )}
+            {isAdmin && (
+              <Link
+                href="/dash-database"
+                className="block w-full px-4 py-2 text-left hover:bg-gray-100"
+                onClick={() => setMenuOpen(false)}
+              >
+                @ Database
+              </Link>
+            )}
             <Link
               href={Config.HELP_PAGE_PATH}
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"

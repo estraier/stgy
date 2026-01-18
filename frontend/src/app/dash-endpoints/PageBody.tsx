@@ -622,7 +622,11 @@ export default function PageBody() {
                   <div className={epArrowSlot} />
                   <div className={`grid ${epGridCols} gap-2 flex-1 items-center min-w-0`}>
                     <div className="min-w-0">
-                      <button type="button" className={thBtnBase} onClick={() => toggleSort("name")}>
+                      <button
+                        type="button"
+                        className={thBtnBase}
+                        onClick={() => toggleSort("name")}
+                      >
                         <span>name</span>
                         <span className="font-mono">{sortMark("name")}</span>
                       </button>
@@ -638,13 +642,21 @@ export default function PageBody() {
                       </button>
                     </div>
                     <div>
-                      <button type="button" className={thBtnRight} onClick={() => toggleSort("time")}>
+                      <button
+                        type="button"
+                        className={thBtnRight}
+                        onClick={() => toggleSort("time")}
+                      >
                         <span>total time</span>
                         <span className="font-mono">{sortMark("time")}</span>
                       </button>
                     </div>
                     <div>
-                      <button type="button" className={thBtnRight} onClick={() => toggleSort("mean")}>
+                      <button
+                        type="button"
+                        className={thBtnRight}
+                        onClick={() => toggleSort("mean")}
+                      >
                         <span>mean time</span>
                         <span className="font-mono">{sortMark("mean")}</span>
                       </button>
@@ -675,11 +687,15 @@ export default function PageBody() {
                       <details key={ep.endpointKey} className="border-b last:border-b-0 group">
                         <summary className="list-none [&::-webkit-details-marker]:hidden cursor-pointer">
                           <div className="flex items-center px-3 py-2 min-w-0">
-                            <span className={`${epArrowSlot} text-xs font-mono text-gray-500 transition-transform group-open:rotate-90`}>
+                            <span
+                              className={`${epArrowSlot} text-xs font-mono text-gray-500 transition-transform group-open:rotate-90`}
+                            >
                               ▶
                             </span>
 
-                            <div className={`grid ${epGridCols} gap-2 flex-1 items-center text-sm min-w-0`}>
+                            <div
+                              className={`grid ${epGridCols} gap-2 flex-1 items-center text-sm min-w-0`}
+                            >
                               <div className="font-mono min-w-0" title={ep.endpointKey}>
                                 <span className="block truncate group-open:whitespace-normal group-open:break-words">
                                   {ep.endpointKey}
@@ -713,7 +729,9 @@ export default function PageBody() {
                                     className="inline-flex items-center gap-1 border rounded px-2 py-0.5 text-xs whitespace-nowrap"
                                   >
                                     <span className="font-mono whitespace-nowrap">{sc}:</span>
-                                    <span className="font-mono whitespace-nowrap">{Math.round(c)}</span>
+                                    <span className="font-mono whitespace-nowrap">
+                                      {Math.round(c)}
+                                    </span>
                                   </span>
                                 ))
                               )}
@@ -740,13 +758,16 @@ export default function PageBody() {
                                   </div>
 
                                   {bucketBars.map((b) => {
-                                    const w = maxDelta > 0 ? Math.round((b.delta / maxDelta) * 100) : 0;
+                                    const w =
+                                      maxDelta > 0 ? Math.round((b.delta / maxDelta) * 100) : 0;
                                     const label = histLabelForLe(b.le, prevFiniteForInf);
                                     const pct =
                                       ep.totalCount > 0 && Number.isFinite(ep.totalCount)
                                         ? (b.cumulative / ep.totalCount) * 100
                                         : Number.NaN;
-                                    const pctText = Number.isFinite(pct) ? `${pct.toFixed(1)}%` : "-";
+                                    const pctText = Number.isFinite(pct)
+                                      ? `${pct.toFixed(1)}%`
+                                      : "-";
 
                                     return (
                                       <div key={b.le} className="flex items-center gap-2 min-w-0">
@@ -755,12 +776,17 @@ export default function PageBody() {
                                         </div>
 
                                         <div className="flex-1 h-3 border rounded bg-white overflow-hidden min-w-0">
-                                          <div className="h-full bg-gray-800" style={{ width: `${w}%` }} />
+                                          <div
+                                            className="h-full bg-gray-800"
+                                            style={{ width: `${w}%` }}
+                                          />
                                         </div>
 
                                         <div className="w-28 sm:w-44 text-right text-xs font-mono text-gray-700 whitespace-nowrap">
                                           <div className="grid grid-cols-2 gap-2 justify-items-end whitespace-nowrap">
-                                            <span className="whitespace-nowrap">{Math.round(b.delta)}</span>
+                                            <span className="whitespace-nowrap">
+                                              {Math.round(b.delta)}
+                                            </span>
                                             <span className="whitespace-nowrap">
                                               {Math.round(b.cumulative)} (
                                               <span className="inline-block w-[6ch] text-right font-mono">
