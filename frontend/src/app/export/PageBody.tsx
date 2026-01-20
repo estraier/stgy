@@ -618,7 +618,7 @@ export default function PageBody() {
               JSON
             </li>
             <li>
-              <code className="font-bold">./avatar.webp</code> : Avatar image (binary)
+              <code className="font-bold">./avatar.webp</code> : Avatar image binary
             </li>
             <li>
               <code className="font-bold">
@@ -636,7 +636,7 @@ export default function PageBody() {
               <code className="font-bold">
                 ./images/<var>&#123;objectId&#125;</var>.<var>&#123;ext&#125;</var>
               </code>{" "}
-              : Image binaries
+              : Posted image binaries
             </li>
             <li>
               <code className="font-bold">./relations.json</code> : Follow/block/like relations in
@@ -666,7 +666,7 @@ export default function PageBody() {
         )}
         {done && (
           <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-2 rounded -mt-2">
-            Download started
+            Download finished
           </div>
         )}
         <div className="flex items-center gap-3">
