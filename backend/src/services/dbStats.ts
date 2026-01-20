@@ -94,18 +94,38 @@ export class DbStatsService {
       throw new Error("transaction statements are not allowed for EXPLAIN");
     }
 
+    const stmtName = makePrepareName();
     const client = await this.pgPool.connect();
     try {
       await client.query("BEGIN");
       try {
         await client.query("SET LOCAL statement_timeout = '3000ms'");
+        await client.query("SET LOCAL plan_cache_mode = force_generic_plan");
+        await client.query(`PREPARE ${stmtName} AS ${explainQuery}`);
+        const nres = await client.query<{ n: number | string }>(
+          `
+            SELECT COUNT(*)::int AS n
+            FROM pg_prepared_statements ps,
+                 unnest(ps.parameter_types) p
+            WHERE ps.name = $1
+          `,
+          [stmtName],
+        );
 
+        const n0 = nres.rows[0]?.n;
+        const n = typeof n0 === "number" ? n0 : Number.parseInt(String(n0 ?? "0"), 10);
+        const argc = Number.isFinite(n) && n > 0 ? n : 0;
+
+        const args = argc > 0 ? `(${new Array(argc).fill("NULL").join(", ")})` : "";
         const res = await client.query<Record<string, unknown>>(
-          `EXPLAIN (FORMAT TEXT) ${explainQuery}`,
+          `EXPLAIN (FORMAT TEXT) EXECUTE ${stmtName}${args}`,
         );
 
         return res.rows.map((row) => extractExplainLine(row)).filter((s) => s.trim().length > 0);
       } finally {
+        try {
+          await client.query(`DEALLOCATE ${stmtName}`);
+        } catch {}
         await client.query("ROLLBACK");
       }
     } finally {
@@ -180,7 +200,6 @@ function toSignedBigintDecId(hexId: string): string {
 function normalizeQueryForExplain(query: string): string {
   let q = query.trim();
   if (q.endsWith(";")) q = q.slice(0, -1).trim();
-  q = q.replace(/\$(\d+)\b/g, "NULL");
   return q;
 }
 
@@ -201,4 +220,10 @@ function extractExplainLine(row: Record<string, unknown>): string {
   if (typeof first === "string") return first;
   if (first === null || first === undefined) return "";
   return String(first);
+}
+
+function makePrepareName(): string {
+  const a = Date.now().toString(16);
+  const b = Math.floor(Math.random() * 0xffffffff).toString(16);
+  return `stgy_explain_${a}_${b}`;
 }

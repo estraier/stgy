@@ -385,10 +385,8 @@ export default function PageBody() {
                               </span>
 
                               <div className="grid grid-cols-12 gap-2 flex-1 items-center text-sm min-w-0">
-                                <div className="col-span-7 font-mono min-w-0" title={r.query}>
-                                  <span className="block truncate group-open:whitespace-normal group-open:break-words">
-                                    {r.query}
-                                  </span>
+                                <div className="col-span-7 font-mono min-w-0">
+                                  <span className="block truncate">{r.query}</span>
                                 </div>
                                 <div className="col-span-1 text-right font-mono whitespace-nowrap">
                                   {calls}
@@ -404,7 +402,7 @@ export default function PageBody() {
                           </summary>
 
                           <div className="px-3 pb-3 pt-1 text-sm">
-                            <pre className="p-3 bg-gray-50 border rounded overflow-auto text-xs leading-relaxed whitespace-pre-wrap break-words">
+                            <pre className="p-3 bg-gray-50 border rounded overflow-auto text-xs leading-relaxed whitespace-pre">
                               {r.query}
                             </pre>
 
