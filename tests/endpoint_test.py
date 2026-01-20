@@ -237,17 +237,35 @@ def test_db_stats():
   enabled_after_enable = head_enabled()
   assert enabled_after_enable is True, f"expected enabled, got enabled={enabled_after_enable}"
   print("[db_stats] enable -> check OK")
-  res = requests.get(f"{BASE_URL}/db-stats/slow-queries?limit=10&offset=0&order=desc", headers=headers, cookies=cookies)
+  res = requests.get(
+    f"{BASE_URL}/db-stats/slow-queries?limit=10&offset=0&order=desc",
+    headers=headers,
+    cookies=cookies,
+  )
   assert res.status_code == 200, res.text
   rows = res.json()
   assert isinstance(rows, list), f"invalid response: {rows}"
+  explain_tested = False
   if len(rows) > 0:
     r0 = rows[0]
     assert isinstance(r0, dict), f"invalid row: {r0}"
+    assert isinstance(r0.get("id"), str), f"invalid row: {r0}"
     assert isinstance(r0.get("query"), str), f"invalid row: {r0}"
     assert isinstance(r0.get("calls"), (int, float)), f"invalid row: {r0}"
     assert isinstance(r0.get("totalExecTime"), (int, float)), f"invalid row: {r0}"
-  print(f"[db_stats] slow-queries OK: count={len(rows)}")
+    qid = r0["id"]
+    res = requests.get(
+      f"{BASE_URL}/db-stats/slow-queries/{qid}/explain",
+      headers=headers,
+      cookies=cookies,
+    )
+    assert res.status_code == 200, res.text
+    lines = res.json()
+    assert isinstance(lines, list), f"invalid response: {lines}"
+    for line in lines:
+      assert isinstance(line, str), f"invalid response: {lines}"
+    explain_tested = True
+  print(f"[db_stats] slow-queries OK: count={len(rows)} explain={explain_tested}")
   res = requests.post(f"{BASE_URL}/db-stats/clear", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   assert res.json() == {"result": "ok"}

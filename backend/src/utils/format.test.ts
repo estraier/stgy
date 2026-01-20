@@ -118,31 +118,122 @@ describe("bytesToHex, hexToBytes", () => {
 });
 
 describe("hexToDec, decToHex, hexArrayToDec", () => {
-  it("hexToDec converts hex (with/without 0x, any case) to decimal string", () => {
+  const TWO64 = 1n << 64n;
+  const U64_MAX = TWO64 - 1n;
+  const I64_MIN = -(1n << 63n);
+
+  function normalizeToUint64Dec(v: unknown): string {
+    const s = String(v).trim();
+    let n = BigInt(s);
+    if (n < 0n) {
+      if (n < I64_MIN) throw new Error("below int64");
+      n = n + TWO64;
+    }
+    if (n < 0n || n > U64_MAX) throw new Error("exceeds u64");
+    return n.toString(10);
+  }
+
+  it("hexToDec converts 64-bit hex (with/without 0x, any case) to unsigned decimal string", () => {
+    expect(hexToDec("0")).toBe("0");
+    expect(hexToDec("1")).toBe("1");
+    expect(hexToDec("a")).toBe("10");
+    expect(hexToDec("0xA")).toBe("10");
     expect(hexToDec("00000000000000A1")).toBe("161");
     expect(hexToDec("00000000000000b0")).toBe("176");
     expect(hexToDec("0x00000000000000c0")).toBe("192");
     expect(hexToDec("7FFFFFFFFFFFFFFF")).toBe("9223372036854775807");
+    expect(hexToDec("8000000000000000")).toBe("9223372036854775808");
+    expect(hexToDec("FFFFFFFFFFFFFFFF")).toBe("18446744073709551615");
   });
 
-  it("decToHex converts decimal-like input to 16-char uppercase hex", () => {
-    expect(decToHex("161")).toBe("00000000000000A1");
+  it("hexToDec rejects invalid inputs", () => {
+    expect(() => hexToDec("")).toThrow("invalid hex string");
+    expect(() => hexToDec("0x")).toThrow("invalid hex string");
+    expect(() => hexToDec("G")).toThrow("invalid hex string");
+    expect(() => hexToDec("-1")).toThrow("invalid hex string");
+    expect(() => hexToDec("00000000000000000")).toThrow("invalid hex string");
+    expect(() => hexToDec("0x00000000000000000")).toThrow("invalid hex string");
+  });
+
+  it("decToHex converts decimal-like input to 16-char uppercase hex (wrap negatives as uint64)", () => {
+    expect(decToHex("0")).toBe("0000000000000000");
+    expect(decToHex(0)).toBe("0000000000000000");
+    expect(decToHex(" 161 ")).toBe("00000000000000A1");
     expect(decToHex(176)).toBe("00000000000000B0");
     expect(decToHex(192)).toBe("00000000000000C0");
     expect(decToHex("9223372036854775807")).toBe("7FFFFFFFFFFFFFFF");
+    expect(decToHex("9223372036854775808")).toBe("8000000000000000");
+    expect(decToHex("18446744073709551615")).toBe("FFFFFFFFFFFFFFFF");
+    expect(decToHex("-9223372036854775808")).toBe("8000000000000000");
+    expect(decToHex("-1")).toBe("FFFFFFFFFFFFFFFF");
   });
 
-  it("round-trips: decToHex(hexToDec(x)) === normalized hex", () => {
-    const hexes = ["00000000000000a1", "00000000000000B0", "7fffffffffffffff"];
-    const norm = ["00000000000000A1", "00000000000000B0", "7FFFFFFFFFFFFFFF"];
+  it("decToHex rejects out-of-range and invalid decimal inputs", () => {
+    expect(() => decToHex(null)).toThrow("invalid decimal value");
+    expect(() => decToHex(undefined)).toThrow("invalid decimal value");
+    expect(() => decToHex("")).toThrow("invalid decimal value");
+    expect(() => decToHex("abc")).toThrow("invalid decimal value");
+
+    expect(() => decToHex("18446744073709551616")).toThrow("value exceeds 64-bit range");
+    expect(() => decToHex("-9223372036854775809")).toThrow("value below int64 range");
+  });
+
+  it("round-trips (normalized): hexToDec(decToHex(x)) === uint64-normalized decimal", () => {
+    const values = [
+      "0",
+      "1",
+      "10",
+      "161",
+      "9223372036854775807",
+      "9223372036854775808",
+      "18446744073709551615",
+      "-1",
+      "-2",
+      "-9223372036854775808",
+    ];
+    values.forEach((v) => {
+      expect(hexToDec(decToHex(v))).toBe(normalizeToUint64Dec(v));
+    });
+  });
+
+  it("round-trips: decToHex(hexToDec(x)) === normalized 16-digit uppercase hex", () => {
+    const hexes = [
+      "0",
+      "00000000000000a1",
+      "00000000000000B0",
+      "7fffffffffffffff",
+      "8000000000000000",
+      "ffffffffffffffff",
+      "0x0000000000000001",
+      "0xFFFFFFFFFFFFFFFF",
+    ];
+    const norm = [
+      "0000000000000000",
+      "00000000000000A1",
+      "00000000000000B0",
+      "7FFFFFFFFFFFFFFF",
+      "8000000000000000",
+      "FFFFFFFFFFFFFFFF",
+      "0000000000000001",
+      "FFFFFFFFFFFFFFFF",
+    ];
     hexes.forEach((h, i) => {
       expect(decToHex(hexToDec(h))).toBe(norm[i]);
     });
   });
 
-  it("hexArrayToDec maps an array of hex strings to decimal strings", () => {
+  it("hexArrayToDec maps an array of hex strings to unsigned decimal strings", () => {
     const arr = ["00000000000000A1", "00000000000000B0", "0x00000000000000C0"];
     expect(hexArrayToDec(arr)).toEqual(["161", "176", "192"]);
+  });
+
+  it("hexArrayToDec supports values with sign bit set as uint64", () => {
+    const arr = ["7FFFFFFFFFFFFFFF", "8000000000000000", "FFFFFFFFFFFFFFFF"];
+    expect(hexArrayToDec(arr)).toEqual([
+      "9223372036854775807",
+      "9223372036854775808",
+      "18446744073709551615",
+    ]);
   });
 });
 

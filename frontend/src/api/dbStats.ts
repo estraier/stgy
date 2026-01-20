@@ -1,5 +1,5 @@
 import { apiFetch, extractError } from "./client";
-import type { QueryStats } from "./models";
+import type { ExplainPlan, QueryStats } from "./models";
 
 export type ListSlowQueriesInput = {
   offset?: number;
@@ -56,6 +56,14 @@ export async function clearDbStats(): Promise<boolean> {
 
 export async function listSlowQueries(input: ListSlowQueriesInput = {}): Promise<QueryStats[]> {
   const res = await apiFetch(`/db-stats/slow-queries${buildSlowQueriesQuery(input)}`, {
+    method: "GET",
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
+export async function explainSlowQuery(id: string): Promise<ExplainPlan> {
+  const res = await apiFetch(`/db-stats/slow-queries/${encodeURIComponent(id)}/explain`, {
     method: "GET",
   });
   if (!res.ok) throw new Error(await extractError(res));

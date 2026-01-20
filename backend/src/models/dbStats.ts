@@ -1,4 +1,5 @@
 export type QueryStats = {
+  id: string;
   query: string;
   calls: number;
   totalExecTime: number;

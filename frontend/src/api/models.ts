@@ -11,15 +11,19 @@ export type SessionInfo = {
 };
 
 export type QueryStats = {
+  id: string;
   query: string;
   calls: number;
   totalExecTime: number;
 };
 
+export type ExplainPlan = string[];
+
 export type AIModel = {
   label: string;
   service: string;
-  name: string;
+  chatModel: string;
+  featureModel: string;
 };
 
 export type User = {

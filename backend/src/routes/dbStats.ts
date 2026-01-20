@@ -92,6 +92,21 @@ export default function createDbStatsRouter(pgPool: Pool, redis: Redis) {
     }
   });
 
+  router.get("/slow-queries/:id/explain", async (req: Request, res: Response) => {
+    const loginUser = await authHelpers.getCurrentUser(req);
+    if (!loginUser || !loginUser.isAdmin) {
+      return res.status(403).json({ error: "admin only" });
+    }
+
+    const id = req.params.id;
+    try {
+      const lines = await dbStatsService.explainSlowQuery(id);
+      res.status(200).json(lines);
+    } catch (e) {
+      res.status(400).json({ error: e instanceof Error ? e.message : String(e) });
+    }
+  });
+
   return router;
 }
 

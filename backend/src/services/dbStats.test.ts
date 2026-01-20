@@ -1,19 +1,59 @@
 import { DbStatsService } from "./dbStats";
+import { decToHex } from "../utils/format";
 
 jest.mock("../utils/servers", () => ({
   pgQuery: jest.fn(async (pool: any, text: string, params?: any[]) => pool.query(text, params)),
 }));
 
+type MockStatementRow = {
+  id: string;
+  query: string;
+  calls: number;
+  total_exec_time: number;
+};
+
+class MockPgClient {
+  private pool: MockPgPool;
+  released: boolean;
+
+  constructor(pool: MockPgPool) {
+    this.pool = pool;
+    this.released = false;
+  }
+
+  async query(sql: string, params?: any[]) {
+    return this.pool.clientQuery(sql, params);
+  }
+
+  release() {
+    this.released = true;
+  }
+}
+
+function normalizeDecToU64Hex(dec: string): string | null {
+  const s = String(dec ?? "").trim();
+  if (!/^-?\d+$/.test(s)) return null;
+  try {
+    let n = BigInt(s);
+    const two64 = 1n << 64n;
+    n = ((n % two64) + two64) % two64;
+    return n.toString(16).toUpperCase().padStart(16, "0").slice(-16);
+  } catch {
+    return null;
+  }
+}
+
 class MockPgPool {
   extEnabled: boolean;
   settings: Record<string, string>;
-  statements: Array<{ query: string; calls: number; total_exec_time: number }>;
+  statements: MockStatementRow[];
   resetCalls: number;
+  connectCalls: number;
 
   constructor(opts?: {
     extEnabled?: boolean;
     settings?: Record<string, string>;
-    statements?: Array<{ query: string; calls: number; total_exec_time: number }>;
+    statements?: MockStatementRow[];
   }) {
     this.extEnabled = opts?.extEnabled ?? true;
     this.settings = {
@@ -22,6 +62,32 @@ class MockPgPool {
     };
     this.statements = opts?.statements ?? [];
     this.resetCalls = 0;
+    this.connectCalls = 0;
+  }
+
+  async connect() {
+    this.connectCalls += 1;
+    return new MockPgClient(this);
+  }
+
+  async clientQuery(sql: string, params?: any[]) {
+    const s = sql.trim();
+
+    if (/^BEGIN\b/i.test(s)) return { rows: [], rowCount: 0 };
+    if (/^ROLLBACK\b/i.test(s)) return { rows: [], rowCount: 0 };
+    if (/^SET\s+LOCAL\b/i.test(s)) return { rows: [], rowCount: 0 };
+
+    if (/^EXPLAIN\s*\(FORMAT\s+TEXT\)\s+/i.test(s)) {
+      return {
+        rows: [
+          { "QUERY PLAN": "Seq Scan on dummy  (cost=0.00..1.00 rows=1 width=4)" },
+          { "QUERY PLAN": "  Filter: (id IS NOT NULL)" },
+        ],
+        rowCount: 2,
+      };
+    }
+
+    return this.query(sql, params);
   }
 
   async query(sql: string, params?: any[]) {
@@ -62,7 +128,22 @@ class MockPgPool {
       return { rows: [{ ok: true }], rowCount: 1 };
     }
 
-    if (sql.includes("FROM pg_stat_statements") && sql.includes("ORDER BY total_exec_time")) {
+    if (sql.includes("FROM pg_stat_statements") && sql.includes("WHERE queryid = $1::bigint")) {
+      const qid = params?.[0];
+      const id = typeof qid === "string" ? qid : String(qid);
+      const needleHex = normalizeDecToU64Hex(id);
+      if (!needleHex) return { rows: [], rowCount: 0 };
+      const hit = this.statements.find((x) => normalizeDecToU64Hex(x.id) === needleHex);
+      if (!hit) return { rows: [], rowCount: 0 };
+      return { rows: [{ query: hit.query }], rowCount: 1 };
+    }
+
+    if (
+      sql.includes("FROM pg_stat_statements") &&
+      sql.includes("ORDER BY total_exec_time") &&
+      sql.includes("OFFSET") &&
+      sql.includes("LIMIT")
+    ) {
       const offset = Number(params?.[0] ?? 0);
       const limit = Number(params?.[1] ?? 50);
       const dir = sql.toUpperCase().includes("ORDER BY TOTAL_EXEC_TIME ASC") ? "ASC" : "DESC";
@@ -75,7 +156,15 @@ class MockPgPool {
       });
 
       const sliced = xs.slice(offset, offset + limit);
-      return { rows: sliced, rowCount: sliced.length };
+      return {
+        rows: sliced.map((r) => ({
+          id: r.id,
+          query: r.query,
+          calls: r.calls,
+          total_exec_time: r.total_exec_time,
+        })),
+        rowCount: sliced.length,
+      };
     }
 
     return { rows: [], rowCount: 0 };
@@ -85,10 +174,15 @@ class MockPgPool {
 class MockRedis {}
 
 describe("DbStatsService", () => {
-  const sampleStatements = [
-    { query: "SELECT * FROM posts WHERE id = $1", calls: 10, total_exec_time: 12.5 },
-    { query: "SELECT * FROM users WHERE id = $1", calls: 100, total_exec_time: 3.2 },
-    { query: "UPDATE posts SET updated_at = now() WHERE id = $1", calls: 5, total_exec_time: 20.0 },
+  const sampleStatements: MockStatementRow[] = [
+    { id: "101", query: "SELECT * FROM posts WHERE id = $1", calls: 10, total_exec_time: 12.5 },
+    { id: "-1", query: "SELECT * FROM users WHERE id = $1", calls: 100, total_exec_time: 3.2 },
+    {
+      id: "103",
+      query: "UPDATE posts SET updated_at = now() WHERE id = $1",
+      calls: 5,
+      total_exec_time: 20.0,
+    },
   ];
 
   let pgPool: MockPgPool;
@@ -159,18 +253,25 @@ describe("DbStatsService", () => {
     expect(xs).toEqual([]);
   });
 
-  it("listSlowQueries should sort by totalExecTime desc by default", async () => {
+  it("listSlowQueries should include id (hex) and sort by totalExecTime desc by default", async () => {
     const xs = await service.listSlowQueries();
     expect(xs).toHaveLength(3);
+
+    expect(xs[0].id).toBe(decToHex("103"));
     expect(xs[0].query).toContain("UPDATE posts");
     expect(xs[0].totalExecTime).toBeCloseTo(20.0);
+
+    expect(xs[1].id).toBe(decToHex("101"));
     expect(xs[1].query).toContain("SELECT * FROM posts");
+
+    expect(xs[2].id).toBe(decToHex("-1"));
     expect(xs[2].query).toContain("SELECT * FROM users");
   });
 
   it("listSlowQueries should support asc order, offset, limit", async () => {
     const xs = await service.listSlowQueries({ order: "asc", offset: 1, limit: 1 });
     expect(xs).toHaveLength(1);
+    expect(xs[0].id).toBe(decToHex("101"));
     expect(xs[0].query).toContain("SELECT * FROM posts");
     expect(xs[0].calls).toBe(10);
     expect(xs[0].totalExecTime).toBeCloseTo(12.5);
@@ -193,5 +294,35 @@ describe("DbStatsService", () => {
     const xs = await service.listSlowQueries({ offset: -100, limit: 1 });
     expect(xs).toHaveLength(1);
     expect(xs[0].query).toContain("UPDATE posts");
+  });
+
+  it("explainSlowQuery should return empty when extension is missing", async () => {
+    pgPool = new MockPgPool({ extEnabled: false, statements: [...sampleStatements] });
+    service = new DbStatsService(pgPool as any, new MockRedis() as any);
+
+    const lines = await service.explainSlowQuery(decToHex("101"));
+    expect(lines).toEqual([]);
+  });
+
+  it("explainSlowQuery should return explain lines for existing id (hex)", async () => {
+    const lines = await service.explainSlowQuery(decToHex("101"));
+    expect(pgPool.connectCalls).toBe(1);
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines[0]).toContain("Seq Scan");
+  });
+
+  it("explainSlowQuery should work for sign-bit-set queryid (hex)", async () => {
+    const lines = await service.explainSlowQuery(decToHex("-1"));
+    expect(lines.length).toBeGreaterThan(0);
+    expect(lines[0]).toContain("Seq Scan");
+  });
+
+  it("explainSlowQuery should return empty when id not found", async () => {
+    const lines = await service.explainSlowQuery("0000000000009999");
+    expect(lines).toEqual([]);
+  });
+
+  it("explainSlowQuery should reject non-hex id", async () => {
+    await expect(service.explainSlowQuery("xyz")).rejects.toThrow("bad query id");
   });
 });

@@ -1,6 +1,7 @@
 import type Redis from "ioredis";
-import { Pool } from "pg";
+import type { Pool } from "pg";
 import { pgQuery } from "../utils/servers";
+import { decToHex } from "../utils/format";
 import type { ListSlowQueriesInput, QueryStats } from "../models/dbStats";
 
 export class DbStatsService {
@@ -43,13 +44,14 @@ export class DbStatsService {
     const dir = normalizeOrder(input?.order ?? "desc");
 
     const res = await pgQuery<{
+      id: string;
       query: string;
       calls: string | number;
       total_exec_time: string | number;
     }>(
       this.pgPool,
       `
-        SELECT query, calls, total_exec_time
+        SELECT queryid::text AS id, query, calls, total_exec_time
         FROM pg_stat_statements
         ORDER BY total_exec_time ${dir}
         OFFSET $1
@@ -59,10 +61,56 @@ export class DbStatsService {
     );
 
     return res.rows.map((row) => ({
+      id: toUint64HexId(row.id),
       query: row.query,
       calls: toNum(row.calls),
       totalExecTime: toNum(row.total_exec_time),
     }));
+  }
+
+  async explainSlowQuery(id: string): Promise<string[]> {
+    const hasExt = await this.hasPgStatStatementsExtension();
+    if (!hasExt) return [];
+
+    const qidHex = normalizeQueryId(id);
+    const signedQueryId = toSignedBigintDecId(qidHex);
+
+    const qres = await pgQuery<{ query: string }>(
+      this.pgPool,
+      `
+        SELECT query
+        FROM pg_stat_statements
+        WHERE queryid = $1::bigint
+        LIMIT 1
+      `,
+      [signedQueryId],
+    );
+
+    const rawQuery = qres.rows[0]?.query;
+    if (typeof rawQuery !== "string" || rawQuery.trim().length === 0) return [];
+
+    const explainQuery = normalizeQueryForExplain(rawQuery);
+    if (!isExplainableQuery(explainQuery)) {
+      throw new Error("transaction statements are not allowed for EXPLAIN");
+    }
+
+    const client = await this.pgPool.connect();
+    try {
+      await client.query("BEGIN");
+      try {
+        await client.query("SET LOCAL statement_timeout = '3000ms'");
+
+        const res = await client.query<Record<string, unknown>>(
+          `EXPLAIN (FORMAT TEXT) ${explainQuery}`,
+        );
+
+        return res.rows.map((row) => extractExplainLine(row)).filter((s) => s.trim().length > 0);
+      } finally {
+        await client.query("ROLLBACK");
+      }
+    } finally {
+      client.release();
+    }
   }
 
   private async setTrack(track: "top" | "none"): Promise<void> {
@@ -108,4 +156,49 @@ function toNum(v: string | number): number {
   if (typeof v === "number") return Number.isFinite(v) ? v : 0;
   const n = Number(v);
   return Number.isFinite(n) ? n : 0;
+}
+
+function normalizeQueryId(id: string): string {
+  const s = (id ?? "").trim();
+  const m = /^(?:0x)?([0-9a-fA-F]{1,16})$/.exec(s);
+  if (!m) throw new Error("bad query id");
+  return m[1].toUpperCase().padStart(16, "0");
+}
+
+function toUint64HexId(signedDec: string): string {
+  return decToHex(signedDec);
+}
+
+function toSignedBigintDecId(hexId: string): string {
+  const u = BigInt("0x" + hexId);
+  const two63 = 1n << 63n;
+  const two64 = 1n << 64n;
+  const s = u >= two63 ? u - two64 : u;
+  return s.toString();
+}
+
+function normalizeQueryForExplain(query: string): string {
+  let q = query.trim();
+  if (q.endsWith(";")) q = q.slice(0, -1).trim();
+  q = q.replace(/\$(\d+)\b/g, "NULL");
+  return q;
+}
+
+function isExplainableQuery(query: string): boolean {
+  const q = query.trim();
+  if (q.length === 0) return false;
+  if (q.includes(";")) return false;
+  const forbidden =
+    /^(?:begin|start\s+transaction|commit|end|rollback|abort|savepoint|release\s+savepoint|set\s+transaction|prepare\s+transaction|commit\s+prepared|rollback\s+prepared)\b/i;
+  if (forbidden.test(q)) return false;
+  return true;
+}
+
+function extractExplainLine(row: Record<string, unknown>): string {
+  const v = row["QUERY PLAN"] ?? row["query plan"];
+  if (typeof v === "string") return v;
+  const first = Object.values(row)[0];
+  if (typeof first === "string") return first;
+  if (first === null || first === undefined) return "";
+  return String(first);
 }

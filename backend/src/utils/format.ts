@@ -102,7 +102,7 @@ export function hexToDec(hex: string): string {
     throw new Error("invalid hex string");
   }
   const normalized = s.replace(/^0x/i, "");
-  return BigInt("0x" + normalized).toString();
+  return BigInt("0x" + normalized).toString(10);
 }
 
 export function hexArrayToDec(arr: string[]): string[] {
@@ -111,10 +111,24 @@ export function hexArrayToDec(arr: string[]): string[] {
 
 export function decToHex(dec: unknown): string {
   if (dec === null || dec === undefined) throw new Error("invalid decimal value");
-  const n = BigInt(String(dec));
-  if (n < 0) throw new Error("negative id is not allowed");
-  const hex = n.toString(16).toUpperCase();
-  if (hex.length > 16) throw new Error("value exceeds 64-bit range");
+  const t = String(dec).trim();
+  if (t.length === 0) throw new Error("invalid decimal value");
+  let n: bigint;
+  try {
+    n = BigInt(t);
+  } catch {
+    throw new Error("invalid decimal value");
+  }
+  const TWO64 = 1n << 64n;
+  const U64_MAX = TWO64 - 1n;
+  const I64_MIN = -(1n << 63n);
+  let u = n;
+  if (u < 0n) {
+    if (u < I64_MIN) throw new Error("value below int64 range");
+    u = u + TWO64;
+  }
+  if (u < 0n || u > U64_MAX) throw new Error("value exceeds 64-bit range");
+  const hex = u.toString(16).toUpperCase();
   return hex.padStart(16, "0");
 }
 

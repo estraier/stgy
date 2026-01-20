@@ -51,13 +51,32 @@ components:
     QueryStats:
       type: object
       properties:
+        id: { type: string }
         query: { type: string }
         calls: { type: integer }
         totalExecTime:
           type: number
           format: double
           description: Total execution time (ms)
-      required: [query, calls, totalExecTime]
+      required: [id, query, calls, totalExecTime]
+
+    DbStatsToggleResponse:
+      type: object
+      properties:
+        result: { type: string }
+        enabled: { type: boolean }
+      required: [result, enabled]
+
+    DbStatsClearResponse:
+      type: object
+      properties:
+        result: { type: string }
+      required: [result]
+
+    ExplainPlan:
+      type: array
+      items:
+        type: string
 
     User:
       type: object
@@ -971,6 +990,28 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/QueryStats"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /db-stats/slow-queries/{id}/explain:
+    get:
+      summary: (Admin only) Explain a slow query by id (FORMAT TEXT)
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: EXPLAIN (FORMAT TEXT) output lines
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExplainPlan"
         "400":
           $ref: "#/components/responses/Error400"
         "403":
