@@ -5,6 +5,8 @@ set -euo pipefail
 CFG_NODE_ENV=production
 CFG_FRONTEND_ORIGIN=https://stgy.jp
 CFG_BACKEND_PORT=3001
+CFG_BACKEND_API_BASE_URL=http://127.0.0.1:3001
+CFG_BACKEND_API_PRIVATE_URL_LIST=http://127.0.0.1:3001
 
 # PostgreSQL (native service on the host)
 CFG_DB_HOST=127.0.0.1
@@ -36,6 +38,7 @@ CFG_SMTP_PASS=
 # Misc
 CFG_MAIL_FROM=noreply@stgy.jp
 CFG_ID_WORKER=0
+CFG_OPENAI_API_KEY="${STGY_OPENAI_API_KEY:-}"
 CFG_TEST_SIGNUP_CODE=
 # =======================================================================
 
@@ -63,7 +66,7 @@ rsync -a --delete node_modules/           "$TARGET/node_modules/"
 rsync -a --delete packages/               "$TARGET/packages/"
 
 # Sanity check for entrypoints
-for f in index.js mailWorker.js mediaWorker.js notificationWorker.js ; do
+for f in index.js mailWorker.js mediaWorker.js notificationWorker.js aiSummaryWorker.js aiUserWorker.js ; do
   if [[ ! -f "$TARGET/dist/$f" ]]; then
     echo "[error] Missing '$TARGET/dist/$f' (did the backend build produce it?)"
     exit 1
@@ -85,6 +88,8 @@ mkdir -p "$RUN_DIR" "$LOG_DIR"
 export NODE_ENV='__CFG_NODE_ENV__'
 export STGY_FRONTEND_ORIGIN='__CFG_FRONTEND_ORIGIN__'
 export STGY_BACKEND_PORT='__CFG_BACKEND_PORT__'
+export STGY_BACKEND_API_BASE_URL='__CFG_BACKEND_API_BASE_URL__'
+export STGY_BACKEND_API_PRIVATE_URL_LIST='__CFG_BACKEND_API_PRIVATE_URL_LIST__'
 export PORT="${STGY_BACKEND_PORT}"
 
 export STGY_DATABASE_HOST='__CFG_DB_HOST__'
@@ -113,6 +118,7 @@ export STGY_SMTP_PASSWORD='__CFG_SMTP_PASS__'
 
 export STGY_MAIL_SENDER_ADDRESS='__CFG_MAIL_FROM__'
 export STGY_ID_ISSUE_WORKER_ID='__CFG_ID_WORKER__'
+export STGY_OPENAI_API_KEY='__CFG_OPENAI_API_KEY__'
 export STGY_TEST_SIGNUP_CODE='__CFG_TEST_SIGNUP_CODE__'
 # ===========================================================
 
@@ -190,10 +196,14 @@ start_all() {
   start_one "mailworker" "dist/mailWorker.js"
   start_one "mediaworker" "dist/mediaWorker.js"
   start_one "notificationworker" "dist/notificationWorker.js"
+  start_one "aisummaryworker" "dist/aiSummaryWorker.js"
+  start_one "aiuserworker" "dist/aiUserWorker.js"
 }
 
 stop_all() {
   # stop in reverse order to minimize dependency errors
+  stop_one "aiuserworker"
+  stop_one "aisummaryworker"
   stop_one "notificationworker"
   stop_one "mediaworker"
   stop_one "mailworker"
@@ -205,6 +215,8 @@ status_all() {
   status_one "mailworker"
   status_one "mediaworker"
   status_one "notificationworker"
+  status_one "aisummaryworker"
+  status_one "aiuserworker"
 }
 
 # If launched without args: run in foreground & supervise children.
@@ -217,7 +229,9 @@ case "${1:-start}" in
       if ! pgrep -F "$(pidfile backend)" >/dev/null 2>&1 || \
          ! pgrep -F "$(pidfile mailworker)" >/dev/null 2>&1 || \
          ! pgrep -F "$(pidfile mediaworker)" >/dev/null 2>&1 || \
-         ! pgrep -F "$(pidfile notificationworker)" >/dev/null 2>&1; then
+         ! pgrep -F "$(pidfile notificationworker)" >/dev/null 2>&1 || \
+         ! pgrep -F "$(pidfile aisummaryworker)" >/dev/null 2>&1 || \
+         ! pgrep -F "$(pidfile aiuserworker)" >/dev/null 2>&1; then
         echo "[supervisor] a child process exited; stopping the others..."
         stop_all
         # non-zero exit if backend died
@@ -248,6 +262,8 @@ sed -i \
   -e "s#__CFG_NODE_ENV__#${CFG_NODE_ENV}#g" \
   -e "s#__CFG_FRONTEND_ORIGIN__#${CFG_FRONTEND_ORIGIN}#g" \
   -e "s#__CFG_BACKEND_PORT__#${CFG_BACKEND_PORT}#g" \
+  -e "s#__CFG_BACKEND_API_BASE_URL__#${CFG_BACKEND_API_BASE_URL}#g" \
+  -e "s#__CFG_BACKEND_API_PRIVATE_URL_LIST__#${CFG_BACKEND_API_PRIVATE_URL_LIST}#g" \
   -e "s#__CFG_DB_HOST__#${CFG_DB_HOST}#g" \
   -e "s#__CFG_DB_PORT__#${CFG_DB_PORT}#g" \
   -e "s#__CFG_DB_USER__#${CFG_DB_USER}#g" \
@@ -269,6 +285,7 @@ sed -i \
   -e "s#__CFG_SMTP_PASS__#${CFG_SMTP_PASS}#g" \
   -e "s#__CFG_MAIL_FROM__#${CFG_MAIL_FROM}#g" \
   -e "s#__CFG_ID_WORKER__#${CFG_ID_WORKER}#g" \
+  -e "s#__CFG_OPENAI_API_KEY__#${CFG_OPENAI_API_KEY}#g" \
   -e "s#__CFG_TEST_SIGNUP_CODE__#${CFG_TEST_SIGNUP_CODE}#g" \
   "$TARGET/start.sh"
 
@@ -284,6 +301,6 @@ if [[ "$(id -un)" != "$OWNER" ]] || [[ "$(id -gn)" != "$GROUP" ]]; then
 fi
 
 echo "[backend] Deployment completed: $TARGET"
-echo "          To run in foreground (recommended for systemd): $TARGET/start.sh"
-echo "          To stop:                                         $TARGET/start.sh stop"
-echo "          Logs: $TARGET/logs/*.log"
+echo "  To run in foreground (recommended for systemd): $TARGET/start.sh"
+echo "  To stop:                                         $TARGET/start.sh stop"
+echo "  Logs: $TARGET/logs/*.log"
