@@ -1,12 +1,14 @@
 {
   "compilerOptions": {
-    "target": "es2021",
+    "target": "ES2022",
     "module": "commonjs",
     "rootDir": "./src",
     "outDir": "./dist",
     "strict": true,
     "esModuleInterop": true,
-    "skipLibCheck": true
+    "skipLibCheck": true,
+    "forceConsistentCasingInFileNames": true
   },
-  "exclude": ["**/*.test.ts", "**/*.spec.ts", "**/__tests__/**", "jest.config.ts"]
+  "include": ["src/**/*"],
+  "exclude": ["**/*.test.ts", "**/*.spec.ts", "**/__tests__/**", "jest.config.js"]
 }
