@@ -4,59 +4,56 @@ import sqlite3 from "sqlite3";
 import { Database } from "../utils/database";
 import { Tokenizer } from "../utils/tokenizer";
 
-export interface TimeTieredTextSearchConfig {
+export type SearchConfig = {
   baseDir: string;
-  namespace: string;
+  namePrefix: string;
   bucketDurationSeconds: number;
   autoCommitUpdateCount: number;
   autoCommitAfterLastUpdateSeconds: number;
   autoCommitAfterLastCommitSeconds: number;
   recordPositions: boolean;
-  locale: string;
+  // locale は廃止 (ドキュメントごとに指定)
   readConnectionCount: number;
-}
+  maxQueryTokenCount: number;
+  maxDocumentTokenCount: number;
+};
 
-export interface TimeTieredTextSearchFileInfo {
+export type SearchFileInfo = {
   filename: string;
   fileSize: number;
   countDocuments: number;
   startTimestamp: number;
-}
+};
 
-interface BatchTask {
+type BatchTask = {
   id: number;
   doc_id: string;
   body: string | null;
+  locale: string | null;
   created_at: string;
-}
+};
 
 class SearchShard {
   public readonly filepath: string;
   public readonly startTimestamp: number;
 
-  // 読み書き両用接続（メイン）
   private db: Database | null = null;
-
-  // ★変更: 読み取り専用接続群（最新インデックス用・配列化）
   private readDbs: Database[] = [];
-  // ★追加: ラウンドロビン用のインデックス
   private currentReadIndex: number = 0;
 
-  private config: TimeTieredTextSearchConfig;
+  private config: SearchConfig;
   private tokenizer: Tokenizer;
 
-  // バッチ制御用
   private pendingCount: number = 0;
   private batchTimer: NodeJS.Timeout | null = null;
   private isProcessingBatch: boolean = false;
 
-  // 負荷検知用
   private lastQueryEndTime: number = 0;
 
   constructor(
     filepath: string,
     startTimestamp: number,
-    config: TimeTieredTextSearchConfig,
+    config: SearchConfig,
     tokenizer: Tokenizer,
   ) {
     this.filepath = filepath;
@@ -69,19 +66,11 @@ class SearchShard {
     if (this.db) return;
     this.db = await Database.open(this.filepath);
 
-    // 1. WALモードを有効化
     await this.db.exec("PRAGMA journal_mode = WAL;");
-
-    // 2. 同期モードをNORMALに
     await this.db.exec("PRAGMA synchronous = NORMAL;");
-
-    // 3. キャッシュサイズを100KBに制限
     await this.db.exec("PRAGMA cache_size = -100;");
-
-    // 4. mmapを無効化
     await this.db.exec("PRAGMA mmap_size = 0;");
 
-    // 5. IDマッピング用テーブル作成
     await this.db.exec(`
       CREATE TABLE IF NOT EXISTS id_tuples (
         internal_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -89,11 +78,7 @@ class SearchShard {
       );
     `);
 
-    // 6. FTS5仮想テーブル作成
-    // ★修正: config.recordPositions に応じて detail モードを切り替え
-    // trueなら 'full' (フレーズ検索可能)、falseなら 'none' (軽量化)
     const detailMode = this.config.recordPositions ? "full" : "none";
-
     await this.db.exec(`
       CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(
         tokens,
@@ -102,36 +87,31 @@ class SearchShard {
       );
     `);
 
-    // 7. バッチ処理用タスクテーブル作成
     await this.db.exec(`
       CREATE TABLE IF NOT EXISTS batch_tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         doc_id TEXT NOT NULL,
         body TEXT,
+        locale TEXT,
         created_at DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW'))
       );
     `);
 
-    // 8. リカバリ処理
     await this.recover();
   }
 
   async close(): Promise<void> {
-    // 1. タイマー停止
     if (this.batchTimer) {
       clearTimeout(this.batchTimer);
       this.batchTimer = null;
     }
 
-    // 2. 残タスク処理
     if (this.pendingCount > 0) {
       await this.processBatch();
     }
 
-    // 3. 読み取り専用接続群を閉じる
     await this.disableReadOnly();
 
-    // 4. メイン接続を閉じる
     if (this.db) {
       await this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
       await this.db.close();
@@ -139,25 +119,16 @@ class SearchShard {
     }
   }
 
-  /**
-   * 最新インデックスの場合に呼び出される。
-   * 設定数分の読み取り専用接続を開設する。
-   */
   async enableReadOnly(): Promise<void> {
     if (this.readDbs.length > 0) return;
     if (!this.db) await this.open();
 
-    // ★修正: config.readConnectionCount 分だけループして接続
     for (let i = 0; i < this.config.readConnectionCount; i++) {
       const conn = await Database.open(this.filepath, sqlite3.OPEN_READONLY);
       this.readDbs.push(conn);
     }
   }
 
-  /**
-   * 最新でなくなった場合に呼び出される。
-   * 全ての読み取り専用接続を閉じる。
-   */
   async disableReadOnly(): Promise<void> {
     if (this.readDbs.length === 0) return;
 
@@ -168,22 +139,26 @@ class SearchShard {
     this.currentReadIndex = 0;
   }
 
-  async addDocument(docId: string, bodyText: string): Promise<void> {
+  async addDocument(docId: string, bodyText: string, locale: string): Promise<void> {
     if (!this.db) await this.open();
-    await this.db!.run("INSERT INTO batch_tasks (doc_id, body) VALUES (?, ?)", [docId, bodyText]);
+    await this.db!.run("INSERT INTO batch_tasks (doc_id, body, locale) VALUES (?, ?, ?)", [
+      docId,
+      bodyText,
+      locale,
+    ]);
     this.onTaskAdded();
   }
 
   async removeDocument(docId: string): Promise<void> {
     if (!this.db) await this.open();
-    await this.db!.run("INSERT INTO batch_tasks (doc_id, body) VALUES (?, ?)", [docId, null]);
+    await this.db!.run("INSERT INTO batch_tasks (doc_id, body, locale) VALUES (?, ?, ?)", [
+      docId,
+      null,
+      null,
+    ]);
     this.onTaskAdded();
   }
 
-  /**
-   * 検索処理
-   * ラウンドロビンで接続を選択
-   */
   async search(tokens: string[], limit: number): Promise<string[]> {
     if (!this.db) await this.open();
 
@@ -192,23 +167,15 @@ class SearchShard {
 
     let targetDb = this.db!;
 
-    // 読み取り専用接続群が存在する場合
     if (this.readDbs.length > 0) {
       const now = Date.now();
-      // バッチ処理中 または アクセス殺到中
       if (this.isProcessingBatch || now - this.lastQueryEndTime < 100) {
-        // ラウンドロビンで接続を選択
         targetDb = this.readDbs[this.currentReadIndex];
-        // 次のインデックスへ
         this.currentReadIndex = (this.currentReadIndex + 1) % this.readDbs.length;
       }
     }
 
     try {
-      // 修正: エイリアス 'd' を廃止し、テーブル名 'docs' を直接使用
-      // docs MATCH ? -> テーブル全体に対する検索（detail=none対応）
-      // docs.rowid -> FTSテーブルの行ID
-      // rank -> FTS5のスコア計算用カラム（ORDER BY rankで使える）
       const rows = await targetDb.all<{ external_id: string }>(
         `SELECT t.external_id
          FROM docs
@@ -224,7 +191,7 @@ class SearchShard {
     }
   }
 
-  async getFileInfo(): Promise<TimeTieredTextSearchFileInfo> {
+  async getFileInfo(): Promise<SearchFileInfo> {
     const stats = await fs.stat(this.filepath);
     let count = 0;
     if (this.db) {
@@ -288,11 +255,21 @@ class SearchShard {
           }
 
           if (task.body === null) {
+            // 削除処理
             await this.db.run("DELETE FROM docs WHERE rowid = ?", [internalId]);
             await this.db.run("DELETE FROM id_tuples WHERE internal_id = ?", [internalId]);
           } else {
+            // 追加・更新処理
             await this.db.run("DELETE FROM docs WHERE rowid = ?", [internalId]);
-            const tokens = this.tokenizer.tokenize(task.body, this.config.locale);
+
+            const locale = task.locale || "en";
+            let tokens = this.tokenizer.tokenize(task.body, locale);
+
+            // ドキュメントの最大トークン数制限
+            if (tokens.length > this.config.maxDocumentTokenCount) {
+              tokens = tokens.slice(0, this.config.maxDocumentTokenCount);
+            }
+
             const tokenizedBody = tokens.join(" ");
             await this.db.run("INSERT INTO docs (rowid, tokens) VALUES (?, ?)", [
               internalId,
@@ -325,14 +302,14 @@ class SearchShard {
   }
 }
 
-export class TimeTieredTextSearchService {
-  private config: TimeTieredTextSearchConfig;
+export class SearchService {
+  private config: SearchConfig;
   private shards: Map<number, SearchShard>;
   private tokenizer: Tokenizer | null = null;
   private isOpen: boolean = false;
   private latestShardTimestamp: number = 0;
 
-  constructor(config: TimeTieredTextSearchConfig) {
+  constructor(config: SearchConfig) {
     this.config = config;
     this.shards = new Map();
   }
@@ -347,9 +324,10 @@ export class TimeTieredTextSearchService {
     let maxTimestamp = 0;
 
     for (const file of files) {
-      if (file.startsWith(this.config.namespace) && file.endsWith(".db")) {
-        const prefixLength = this.config.namespace.length + 1;
-        const suffixLength = 3;
+      if (file.startsWith(this.config.namePrefix) && file.endsWith(".db")) {
+        // ファイル形式: {namePrefix}-{timestamp}.db
+        const prefixLength = this.config.namePrefix.length + 1; // +1 for '-'
+        const suffixLength = 3; // '.db'
         const timestampStr = file.substring(prefixLength, file.length - suffixLength);
         const timestamp = parseInt(timestampStr, 10);
 
@@ -370,7 +348,6 @@ export class TimeTieredTextSearchService {
 
     if (this.shards.size > 0) {
       this.latestShardTimestamp = maxTimestamp;
-      // ★修正: ここでは引数不要
       await this.shards.get(maxTimestamp)?.enableReadOnly();
     }
   }
@@ -386,11 +363,16 @@ export class TimeTieredTextSearchService {
     this.latestShardTimestamp = 0;
   }
 
-  async addDocument(docId: string, timestamp: number, bodyText: string): Promise<void> {
+  async addDocument(
+    docId: string,
+    timestamp: number,
+    bodyText: string,
+    locale: string,
+  ): Promise<void> {
     if (!this.isOpen || !this.tokenizer) throw new Error("Service not open");
 
     const shard = await this.getShard(timestamp);
-    await shard.addDocument(docId, bodyText);
+    await shard.addDocument(docId, bodyText, locale);
   }
 
   async removeDocument(docId: string, timestamp: number): Promise<void> {
@@ -403,7 +385,13 @@ export class TimeTieredTextSearchService {
   async search(query: string, locale = "en", limit = 100, timeoutInMs = 1000): Promise<string[]> {
     if (!this.isOpen || !this.tokenizer) throw new Error("Service not open");
 
-    const queryTokens = this.tokenizer.tokenize(query, locale);
+    let queryTokens = this.tokenizer.tokenize(query, locale);
+
+    // クエリの最大トークン数制限
+    if (queryTokens.length > this.config.maxQueryTokenCount) {
+      queryTokens = queryTokens.slice(0, this.config.maxQueryTokenCount);
+    }
+
     if (queryTokens.length === 0) return [];
 
     const sortedShards = Array.from(this.shards.values()).sort(
@@ -426,10 +414,10 @@ export class TimeTieredTextSearchService {
     return Array.from(results).slice(0, limit);
   }
 
-  async listFiles(): Promise<TimeTieredTextSearchFileInfo[]> {
+  async listFiles(): Promise<SearchFileInfo[]> {
     if (!this.isOpen) throw new Error("Service not open");
 
-    const infos: TimeTieredTextSearchFileInfo[] = [];
+    const infos: SearchFileInfo[] = [];
     for (const shard of this.shards.values()) {
       infos.push(await shard.getFileInfo());
     }
@@ -474,7 +462,7 @@ export class TimeTieredTextSearchService {
     if (!this.shards.has(startTimestamp)) {
       if (!this.tokenizer) throw new Error("Tokenizer not initialized");
 
-      const filename = `${this.config.namespace}-${startTimestamp}.db`;
+      const filename = `${this.config.namePrefix}-${startTimestamp}.db`;
       const filepath = path.join(this.config.baseDir, filename);
       const shard = new SearchShard(filepath, startTimestamp, this.config, this.tokenizer);
       await shard.open();
