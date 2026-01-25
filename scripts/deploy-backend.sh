@@ -4,9 +4,9 @@ set -euo pipefail
 # ====== Embedded "production" config (baked into start.sh) ======
 CFG_NODE_ENV=production
 CFG_FRONTEND_ORIGIN=https://stgy.jp
-CFG_BACKEND_PORT=3001
-CFG_BACKEND_API_BASE_URL=http://127.0.0.1:3001
-CFG_BACKEND_API_PRIVATE_URL_LIST=http://127.0.0.1:3001
+CFG_BACKEND_PORT=3100
+CFG_BACKEND_API_BASE_URL=http://127.0.0.1:3100
+CFG_BACKEND_API_PRIVATE_URL_LIST=http://127.0.0.1:3100
 
 # PostgreSQL (native service on the host)
 CFG_DB_HOST=127.0.0.1

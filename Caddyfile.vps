@@ -8,7 +8,7 @@ https://stgy.jp {
 
   redir /backend /backend/
   handle_path /backend/* {
-    reverse_proxy http://backend:3001 {
+    reverse_proxy http://backend:3100 {
       lb_policy first
       health_uri /health
       header_up Host {http.request.host}

@@ -7,7 +7,7 @@ set -a
 set +a
 
 CMD="dev"
-PORT="${STGY_BACKEND_PORT:-3001}"
+PORT="${STGY_BACKEND_PORT:-3100}"
 OVERRIDING_OPENAI_API_KEY="-"
 
 declare -a PASS_ARGS=()
@@ -51,8 +51,8 @@ fi
 export STGY_FRONTEND_HOST=localhost
 export STGY_FRONTEND_CANONICAL_URL=http://localhost:8080
 export STGY_FRONTEND_ORIGIN=http://localhost:3000,http://localhost:8080
-export STGY_BACKEND_API_BASE_URL=http://localhost:3001
-export STGY_BACKEND_API_PRIVATE_URL_LIST=http://localhost:3001
+export STGY_BACKEND_API_BASE_URL=http://localhost:3100
+export STGY_BACKEND_API_PRIVATE_URL_LIST=http://localhost:3100
 export STGY_DATABASE_HOST=localhost
 export STGY_STORAGE_S3_ENDPOINT=http://localhost:9000
 export STGY_REDIS_HOST=localhost

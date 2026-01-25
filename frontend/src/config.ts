@@ -5,7 +5,7 @@ export class Config {
   );
   static readonly BACKEND_API_BASE_URL = normStr(
     process.env.NEXT_PUBLIC_BACKEND_API_BASE_URL,
-    "http://localhost:3001",
+    "http://localhost:3100",
   );
   static readonly STORAGE_S3_BUCKET_PREFIX = normStr(
     process.env.NEXT_PUBLIC_STORAGE_S3_BUCKET_PREFIX,

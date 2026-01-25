@@ -2,12 +2,12 @@ export class Config {
   static readonly FRONTEND_ORIGIN = envStrCsv("STGY_FRONTEND_ORIGIN", ["http://localhost:3000"]);
   static readonly BACKEND_API_BASE_URL = envStr(
     "STGY_BACKEND_API_BASE_URL",
-    "http://localhost:3001",
+    "http://localhost:3100",
   );
   static readonly BACKEND_API_PRIVATE_URL_LIST = envStrCsv("STGY_BACKEND_API_PRIVATE_URL_LIST", [
-    "http://localhost:3001",
+    "http://localhost:3100",
   ]);
-  static readonly BACKEND_PORT = envNum("STGY_BACKEND_PORT", 3001);
+  static readonly BACKEND_PORT = envNum("STGY_BACKEND_PORT", 3100);
   static readonly DATABASE_HOST = envStr("STGY_DATABASE_HOST", "localhost");
   static readonly DATABASE_PORT = envNum("STGY_DATABASE_PORT", 5432);
   static readonly DATABASE_USER = envStr("STGY_DATABASE_USER", "admin");

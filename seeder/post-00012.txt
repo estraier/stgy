@@ -383,7 +383,7 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
 - リバースプロクシ（Caddy）
   - Node.jsのサービスはHTTPしか喋れないので、SSL化するのに必要。
     - 全ての設定はCaddyfileに書く。
-  - https://stgy.jp/backend をDockerサブネットの http://backend:3001 であるバックエンドサーバに中継する。
+  - https://stgy.jp/backend をDockerサブネットの http://backend:3100 であるバックエンドサーバに中継する。
   - https://stgy.jp のそれ以外をDockerサブネットの http://frontend:3000 であるフロントエンドサーバに中継する。
   - https://s3.stgy.jp をDockerサブネットの http://minio:9000 であるS3サーバに中継する。
   - https://mail.stgy.jp をDockerサブネットの http://mailpit:8025 であるメールサーバに中継する。
@@ -404,9 +404,9 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX=https://s3.stgy.jp/{bucket}/
 
 - バックエンド（Node.js + Express）
-  - Dockerサブネットでbackend:3001をlistenし、サービスAPIのエンドポイントを担う。表にはhttps://stgy.jp/backendとして露出。
-    - STGY_BACKEND_PORT=3001
-    - STGY_BACKEND_API_PRIVATE_URL_LIST=http://backend:3001
+  - Dockerサブネットでbackend:3100をlistenし、サービスAPIのエンドポイントを担う。表にはhttps://stgy.jp/backendとして露出。
+    - STGY_BACKEND_PORT=3100
+    - STGY_BACKEND_API_PRIVATE_URL_LIST=http://backend:3100
   - フロントエンドをhttps://stgy.jpとして認識し、1ホップまでのプロクシ応答のX-Forwarded-Forを信じる。
     - STGY_FRONTEND_ORIGIN=https://stgy.jp
   - S3サーバのエンドポイントをhttp://minio:9000として認識し、Dockerサブネットで通信。
@@ -660,7 +660,7 @@ https://stgy.jp {
 
   redir /backend /backend/
   handle_path /backend/* {
-    reverse_proxy http://127.0.0.1:3001 {
+    reverse_proxy http://127.0.0.1:3100 {
       lb_policy first
       health_uri /health
       header_up Host {http.request.host}
