@@ -374,6 +374,13 @@ export class SearchService {
     this.latestShardTimestamp = 0;
   }
 
+  getTokenizer(): Tokenizer {
+    if (!this.isOpen || !this.tokenizer) {
+      throw new Error("Service not open");
+    }
+    return this.tokenizer;
+  }
+
   private rebuildSortedCache(): void {
     this.sortedShards = Array.from(this.shards.values()).sort(
       (a, b) => b.startTimestamp - a.startTimestamp,

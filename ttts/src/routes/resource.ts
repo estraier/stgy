@@ -15,6 +15,30 @@ export default function createResourceRouter(instance: ResourceInstance) {
   const { searchService, inputQueueService } = instance;
 
   /**
+   * トークナイズ確認エンドポイント
+   */
+  router.get("/tokenize", (req: Request, res: Response) => {
+    try {
+      const text = req.query.text as string;
+      if (!text) {
+        return res.status(400).json({ error: "text is required" });
+      }
+
+      const locale = (req.query.locale as string) || "en";
+      const tokenizer = searchService.getTokenizer();
+
+      // 文書登録時と同様に、ロケール推定を行ってからトークナイズ
+      const guessedLocale = tokenizer.guessLocale(text, locale);
+      const tokens = tokenizer.tokenize(text, guessedLocale);
+
+      res.json(tokens);
+    } catch (e) {
+      logger.error(`Tokenize error: ${e}`);
+      res.status(500).json({ error: "tokenize failed" });
+    }
+  });
+
+  /**
    * 全文検索エンドポイント
    */
   router.get("/search", async (req: Request, res: Response) => {

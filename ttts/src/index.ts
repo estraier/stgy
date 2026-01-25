@@ -1,5 +1,5 @@
 import { Config } from "./config";
-import { logger, createLogger } from "./utils/logger";
+import { createLogger } from "./utils/logger";
 import { SearchService } from "./services/search";
 import { InputQueueService } from "./services/inputQueue";
 import { UpdateWorker } from "./updateWorker";
@@ -7,7 +7,7 @@ import express, { ErrorRequestHandler } from "express";
 import createRootRouter from "./routes/root";
 import createResourceRouter from "./routes/resource";
 
-const fileLogger = createLogger({ file: "index" });
+const logger = createLogger({ file: "index" });
 
 /**
  * リソースごとの主要コンポーネントを保持する型
@@ -18,8 +18,13 @@ type ResourceInstance = {
   worker: UpdateWorker;
 };
 
+function printMemoryUsage() {
+  logger.info(`[system] Memory usage: ${Math.round(process.memoryUsage().rss / 1024 / 1024)} MB`);
+}
+
 async function main() {
-  fileLogger.info("Starting Search Server...");
+  logger.info("Starting Search Server...");
+  printMemoryUsage();
 
   // 1. 設定内容のロギング (パスワード等の秘匿情報をマスク)
   Object.entries(Config).forEach(([key, value]) => {
@@ -27,7 +32,7 @@ async function main() {
     if (typeof value === "string" && (key.endsWith("_PASSWORD") || key.endsWith("_API_KEY"))) {
       displayValue = "*".repeat(value.length);
     }
-    fileLogger.info(`[config] ${key}: ${JSON.stringify(displayValue)}`);
+    logger.info(`[config] ${key}: ${JSON.stringify(displayValue)}`);
   });
 
   // 2. リソース (posts, users等) の初期化
@@ -35,7 +40,7 @@ async function main() {
 
   for (const resConfig of Config.resources) {
     const { namePrefix } = resConfig.search;
-    fileLogger.info(`Initializing resource: ${namePrefix}`);
+    logger.info(`Initializing resource: ${namePrefix}`);
 
     try {
       const searchService = new SearchService(resConfig.search);
@@ -56,9 +61,9 @@ async function main() {
         worker,
       });
 
-      fileLogger.info(`Resource [${namePrefix}] is now ready.`);
+      logger.info(`Resource [${namePrefix}] is now ready.`);
     } catch (e) {
-      fileLogger.error(`Failed to initialize resource [${namePrefix}]: ${e}`);
+      logger.error(`Failed to initialize resource [${namePrefix}]: ${e}`);
       throw e; // 起動に失敗した場合は致命的エラーとして停止させる
     }
   }
@@ -76,12 +81,12 @@ async function main() {
   // 各ネームプレフィックスに対して個別のルーターを生成して紐付け
   for (const [name, inst] of instances.entries()) {
     app.use(`/${name}`, createResourceRouter(inst));
-    fileLogger.info(`Routing established for: /${name}`);
+    logger.info(`Routing established for: /${name}`);
   }
 
   // エラーハンドラー
   const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
-    fileLogger.error(`[API ERROR] ${err}`);
+    logger.error(`[API ERROR] ${err}`);
     if (res.headersSent) return next(err);
     const status = (err as { statusCode?: number }).statusCode || 500;
     res.status(status).json({
@@ -93,7 +98,8 @@ async function main() {
   // サーバーの待受開始
   const port = (Config as any).BACKEND_PORT || 3000;
   const server = app.listen(port, "0.0.0.0", () => {
-    fileLogger.info(`Search Server running on http://0.0.0.0:${port}`);
+    logger.info(`Search Server running on http://0.0.0.0:${port}`);
+    printMemoryUsage();
   });
 
   // 4. グレースフルシャットダウン制御
@@ -101,37 +107,38 @@ async function main() {
   async function shutdown(signal: string) {
     if (shuttingDown) return;
     shuttingDown = true;
-    fileLogger.info(`[shutdown] Received ${signal}. Closing all resources...`);
+    logger.info(`[shutdown] Received ${signal}. Closing all resources...`);
 
     // 新規接続を受け付けないようにHTTPサーバーを閉じる
     server.close(async (err) => {
       if (err) {
-        fileLogger.error(`[shutdown] HTTP server close error: ${err}`);
+        logger.error(`[shutdown] HTTP server close error: ${err}`);
       }
 
       // 逆順でサービスを停止 (Worker -> SearchService -> InputQueueService)
       for (const [name, inst] of instances.entries()) {
         try {
-          fileLogger.info(`[shutdown] Stopping worker for [${name}]...`);
+          logger.info(`[shutdown] Stopping worker for [${name}]...`);
           await inst.worker.stop();
 
-          fileLogger.info(`[shutdown] Closing SearchService for [${name}]...`);
+          logger.info(`[shutdown] Closing SearchService for [${name}]...`);
           await inst.searchService.close();
 
-          fileLogger.info(`[shutdown] Closing InputQueueService for [${name}]...`);
+          logger.info(`[shutdown] Closing InputQueueService for [${name}]...`);
           await inst.inputQueueService.close();
         } catch (e) {
-          fileLogger.error(`[shutdown] Error during closing [${name}]: ${e}`);
+          logger.error(`[shutdown] Error during closing [${name}]: ${e}`);
         }
       }
 
-      fileLogger.info("[shutdown] Cleanup complete. Goodbye.");
+      printMemoryUsage();
+      logger.info("[shutdown] Cleanup complete. Goodbye.");
       process.exit(0);
     });
 
     // 10秒待っても終わらない場合は強制終了
     setTimeout(() => {
-      fileLogger.warn("[shutdown] Shutdown timed out, force exiting.");
+      logger.warn("[shutdown] Shutdown timed out, force exiting.");
       process.exit(1);
     }, 10000).unref();
   }
@@ -143,6 +150,6 @@ async function main() {
 
 // メインルーチンの実行
 main().catch((e) => {
-  fileLogger.error(`Fatal error during startup: ${e}`);
+  logger.error(`Fatal error during startup: ${e}`);
   process.exit(1);
 });

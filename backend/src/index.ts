@@ -34,7 +34,14 @@ function normalizePath(req: Request): string {
   return `${base}${req.path}`;
 }
 
+function printMemoryUsage() {
+  logger.info(`[system] Memory usage: ${Math.round(process.memoryUsage().rss / 1024 / 1024)} MB`);
+}
+
 async function main() {
+  logger.info("Starting Backend Server...");
+  printMemoryUsage();
+
   Object.entries(Config).forEach(([key, value]) => {
     if (key.endsWith("_PASSWORD") || key.endsWith("_API_KEY")) {
       value = "*".repeat(value.length);
@@ -102,6 +109,7 @@ async function main() {
   const server = app.listen(Config.BACKEND_PORT, "0.0.0.0", () => {
     const addr = getSampleAddr();
     logger.info(`Server running on http://${addr}:${Config.BACKEND_PORT}`);
+    printMemoryUsage();
   });
 
   let shuttingDown = false;
@@ -132,6 +140,7 @@ async function main() {
           }
         })
         .finally(() => {
+          printMemoryUsage();
           logger.info("[shutdown] Done. Bye.");
           process.exit(0);
         });

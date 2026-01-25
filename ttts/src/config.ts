@@ -8,14 +8,14 @@ export type ResourceConfig = {
 };
 
 // ベースとなるデータディレクトリ（環境変数などから取得できるようにすると運用しやすいです）
-const BASE_INDEX_DIR = path.join(process.cwd(), "search-index");
+const DEFAULT_BASE_DIR = path.join(process.cwd(), "search-index");
 
 export class Config {
   static readonly resources: ResourceConfig[] = [
     {
       // "posts" リソースの設定
       search: {
-        baseDir: BASE_INDEX_DIR,
+        baseDir: envStr("TTTS_BASE_DIR", DEFAULT_BASE_DIR),
         namePrefix: "posts",
         bucketDurationSeconds: 1000000, // 約11.5日ごとにファイルを分割
         autoCommitUpdateCount: 3000, // 3000件ごとにコミット
@@ -27,14 +27,15 @@ export class Config {
         maxQueryTokenCount: 4, // 検索クエリは最大4トークンまで
       },
       inputQueue: {
-        baseDir: BASE_INDEX_DIR,
+        baseDir: envStr("TTTS_BASE_DIR", DEFAULT_BASE_DIR),
         namePrefix: "posts",
       },
     },
     // 必要に応じて "users" など他のリソースも同様に追加可能
   ];
 
-  static readonly LOG_FORMAT = envStr("STGY_LOG_FORMAT", "");
+  static readonly LOG_FORMAT = envStr("TTTS_LOG_FORMAT", "");
+  static readonly ENABLE_KUROMOJI = envBool("TTTS_ENABLE_KUROMOJI", false);
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {
