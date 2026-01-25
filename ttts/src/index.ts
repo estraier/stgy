@@ -96,7 +96,7 @@ async function main() {
   app.use(errorHandler);
 
   // サーバーの待受開始
-  const port = (Config as any).BACKEND_PORT || 3000;
+  const port = Config.SERVER_PORT;
   const server = app.listen(port, "0.0.0.0", () => {
     logger.info(`Search Server running on http://0.0.0.0:${port}`);
     printMemoryUsage();

@@ -33,7 +33,7 @@ export class Config {
     },
     // 必要に応じて "users" など他のリソースも同様に追加可能
   ];
-
+  static readonly SERVER_PORT = envNum("TTTS_SERVER_PORT", 3020);
   static readonly LOG_FORMAT = envStr("TTTS_LOG_FORMAT", "");
   static readonly ENABLE_KUROMOJI = envBool("TTTS_ENABLE_KUROMOJI", false);
 }
