@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { SearchService, SearchConfig } from "./searchService";
+import { SearchService, SearchConfig } from "./search";
 
 // テスト用のディレクトリパス
 const TEST_DIR = path.join(__dirname, "../../test_index_data");

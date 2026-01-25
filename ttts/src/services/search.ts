@@ -12,7 +12,6 @@ export type SearchConfig = {
   autoCommitAfterLastUpdateSeconds: number;
   autoCommitAfterLastCommitSeconds: number;
   recordPositions: boolean;
-  // locale は廃止 (ドキュメントごとに指定)
   readConnectionCount: number;
   maxQueryTokenCount: number;
   maxDocumentTokenCount: number;
@@ -255,22 +254,33 @@ class SearchShard {
           }
 
           if (task.body === null) {
-            // 削除処理
             await this.db.run("DELETE FROM docs WHERE rowid = ?", [internalId]);
             await this.db.run("DELETE FROM id_tuples WHERE internal_id = ?", [internalId]);
           } else {
-            // 追加・更新処理
             await this.db.run("DELETE FROM docs WHERE rowid = ?", [internalId]);
 
-            const locale = task.locale || "en";
-            let tokens = this.tokenizer.tokenize(task.body, locale);
+            // 仕様: 文書は改行で分割し、行ごとにロケール判定とトークナイズを行う
+            const lines = task.body.split(/\r?\n/);
+            const allTokens: string[] = [];
+            const defaultLocale = task.locale || "en";
 
-            // ドキュメントの最大トークン数制限
-            if (tokens.length > this.config.maxDocumentTokenCount) {
-              tokens = tokens.slice(0, this.config.maxDocumentTokenCount);
+            for (const line of lines) {
+              const trimmedLine = line.trim();
+              if (!trimmedLine) continue;
+
+              const guessedLocale = this.tokenizer.guessLocale(trimmedLine, defaultLocale);
+              const lineTokens = this.tokenizer.tokenize(trimmedLine, guessedLocale);
+              allTokens.push(...lineTokens);
+
+              if (allTokens.length >= this.config.maxDocumentTokenCount) break;
             }
 
-            const tokenizedBody = tokens.join(" ");
+            const finalTokens =
+              allTokens.length > this.config.maxDocumentTokenCount
+                ? allTokens.slice(0, this.config.maxDocumentTokenCount)
+                : allTokens;
+
+            const tokenizedBody = finalTokens.join(" ");
             await this.db.run("INSERT INTO docs (rowid, tokens) VALUES (?, ?)", [
               internalId,
               tokenizedBody,
@@ -283,7 +293,6 @@ class SearchShard {
 
       await this.db.run("DELETE FROM batch_tasks");
       await this.db.exec("COMMIT");
-
       this.pendingCount = 0;
     } catch (e) {
       console.error("Batch processing failed:", e);
@@ -305,6 +314,7 @@ class SearchShard {
 export class SearchService {
   private config: SearchConfig;
   private shards: Map<number, SearchShard>;
+  private sortedShards: SearchShard[] = [];
   private tokenizer: Tokenizer | null = null;
   private isOpen: boolean = false;
   private latestShardTimestamp: number = 0;
@@ -325,9 +335,8 @@ export class SearchService {
 
     for (const file of files) {
       if (file.startsWith(this.config.namePrefix) && file.endsWith(".db")) {
-        // ファイル形式: {namePrefix}-{timestamp}.db
-        const prefixLength = this.config.namePrefix.length + 1; // +1 for '-'
-        const suffixLength = 3; // '.db'
+        const prefixLength = this.config.namePrefix.length + 1;
+        const suffixLength = 3;
         const timestampStr = file.substring(prefixLength, file.length - suffixLength);
         const timestamp = parseInt(timestampStr, 10);
 
@@ -344,6 +353,7 @@ export class SearchService {
       }
     }
 
+    this.rebuildSortedCache();
     this.isOpen = true;
 
     if (this.shards.size > 0) {
@@ -358,9 +368,16 @@ export class SearchService {
       await shard.close();
     }
     this.shards.clear();
+    this.sortedShards = [];
     this.tokenizer = null;
     this.isOpen = false;
     this.latestShardTimestamp = 0;
+  }
+
+  private rebuildSortedCache(): void {
+    this.sortedShards = Array.from(this.shards.values()).sort(
+      (a, b) => b.startTimestamp - a.startTimestamp,
+    );
   }
 
   async addDocument(
@@ -385,23 +402,19 @@ export class SearchService {
   async search(query: string, locale = "en", limit = 100, timeoutInMs = 1000): Promise<string[]> {
     if (!this.isOpen || !this.tokenizer) throw new Error("Service not open");
 
-    let queryTokens = this.tokenizer.tokenize(query, locale);
+    // 仕様: クエリは文字列全体をロケール判定し、トークナイズする
+    const guessedLocale = this.tokenizer.guessLocale(query, locale);
+    let queryTokens = this.tokenizer.tokenize(query, guessedLocale);
 
-    // クエリの最大トークン数制限
     if (queryTokens.length > this.config.maxQueryTokenCount) {
       queryTokens = queryTokens.slice(0, this.config.maxQueryTokenCount);
     }
-
     if (queryTokens.length === 0) return [];
-
-    const sortedShards = Array.from(this.shards.values()).sort(
-      (a, b) => b.startTimestamp - a.startTimestamp,
-    );
 
     const results = new Set<string>();
     const startTime = Date.now();
 
-    for (const shard of sortedShards) {
+    for (const shard of this.sortedShards) {
       if (Date.now() - startTime > timeoutInMs) break;
       if (results.size >= limit) break;
 
@@ -418,10 +431,10 @@ export class SearchService {
     if (!this.isOpen) throw new Error("Service not open");
 
     const infos: SearchFileInfo[] = [];
-    for (const shard of this.shards.values()) {
+    for (const shard of this.sortedShards) {
       infos.push(await shard.getFileInfo());
     }
-    return infos.sort((a, b) => b.startTimestamp - a.startTimestamp);
+    return infos;
   }
 
   async removeFile(timestamp: number): Promise<void> {
@@ -435,14 +448,13 @@ export class SearchService {
       await fs.unlink(shard.filepath);
       this.shards.delete(startTimestamp);
 
+      this.rebuildSortedCache();
+
       if (startTimestamp === this.latestShardTimestamp) {
-        let nextLatest = 0;
-        for (const ts of this.shards.keys()) {
-          if (ts > nextLatest) nextLatest = ts;
-        }
-        if (nextLatest > 0) {
-          this.latestShardTimestamp = nextLatest;
-          await this.shards.get(nextLatest)?.enableReadOnly();
+        const nextLatestShard = this.sortedShards[0];
+        if (nextLatestShard) {
+          this.latestShardTimestamp = nextLatestShard.startTimestamp;
+          await nextLatestShard.enableReadOnly();
         } else {
           this.latestShardTimestamp = 0;
         }
@@ -467,6 +479,8 @@ export class SearchService {
       const shard = new SearchShard(filepath, startTimestamp, this.config, this.tokenizer);
       await shard.open();
       this.shards.set(startTimestamp, shard);
+
+      this.rebuildSortedCache();
 
       if (startTimestamp > this.latestShardTimestamp) {
         if (this.latestShardTimestamp > 0) {
