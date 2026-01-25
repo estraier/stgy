@@ -8,14 +8,14 @@ export type ResourceConfig = {
 };
 
 // ベースとなるデータディレクトリ（環境変数などから取得できるようにすると運用しやすいです）
-const DEFAULT_BASE_DIR = path.join(process.cwd(), "search-index");
+const DEFAULT_INDEX_DIR = path.join(process.cwd(), "ttts-index");
 
 export class Config {
   static readonly resources: ResourceConfig[] = [
     {
       // "posts" リソースの設定
       search: {
-        baseDir: envStr("TTTS_BASE_DIR", DEFAULT_BASE_DIR),
+        baseDir: envStr("STGY_TTTS_INDEX_DIR", DEFAULT_INDEX_DIR),
         namePrefix: "posts",
         bucketDurationSeconds: 1000000, // 約11.5日ごとにファイルを分割
         autoCommitUpdateCount: 3000, // 3000件ごとにコミット
@@ -27,15 +27,15 @@ export class Config {
         maxQueryTokenCount: 4, // 検索クエリは最大4トークンまで
       },
       inputQueue: {
-        baseDir: envStr("TTTS_BASE_DIR", DEFAULT_BASE_DIR),
+        baseDir: envStr("STGY_TTTS_INDEX_DIR", DEFAULT_INDEX_DIR),
         namePrefix: "posts",
       },
     },
     // 必要に応じて "users" など他のリソースも同様に追加可能
   ];
-  static readonly SERVER_PORT = envNum("TTTS_SERVER_PORT", 3020);
-  static readonly LOG_FORMAT = envStr("TTTS_LOG_FORMAT", "");
-  static readonly ENABLE_KUROMOJI = envBool("TTTS_ENABLE_KUROMOJI", false);
+  static readonly TTTS_PORT = envNum("STGY_TTTS_PORT", 3200);
+  static readonly LOG_FORMAT = envStr("STGY_TTTS_LOG_FORMAT", "");
+  static readonly ENABLE_KUROMOJI = envBool("STGY_TTTS_ENABLE_KUROMOJI", false);
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {

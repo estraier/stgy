@@ -53,6 +53,7 @@ export STGY_FRONTEND_CANONICAL_URL=http://localhost:8080
 export STGY_FRONTEND_ORIGIN=http://localhost:3000,http://localhost:8080
 export STGY_BACKEND_API_BASE_URL=http://localhost:3100
 export STGY_BACKEND_API_PRIVATE_URL_LIST=http://localhost:3100
+export STGY_TTTS_HOST=localhost
 export STGY_DATABASE_HOST=localhost
 export STGY_STORAGE_S3_ENDPOINT=http://localhost:9000
 export STGY_REDIS_HOST=localhost
@@ -77,7 +78,7 @@ echo "[run-local-backend] running workers"
 (sleep 3 ; npm run backend:ai-summary-worker) &
 (sleep 3 ; npm run backend:ai-user-worker) &
 
-echo "[run-local-backend] port=${STGY_BACKEND_PORT}  cmd=${CMD}"
+echo "[run-local-backend] port=${STGY_BACKEND_PORT} cmd=${CMD}"
 echo "[run-local-backend] npm run ${CMD} -- ${PASS_ARGS[*]-}"
 
 if ((${#PASS_ARGS[@]})); then

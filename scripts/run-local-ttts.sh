@@ -7,7 +7,7 @@ set -a
 set +a
 
 CMD="dev"
-PORT="${STGY_FRONTEND_PORT:-3000}"
+PORT="${TTTS_SERVER_PORT:-3200}"
 
 declare -a PASS_ARGS=()
 
@@ -38,15 +38,14 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
   exit 1
 fi
 
-export NEXT_PUBLIC_FRONTEND_CANONICAL_URL=http://localhost:8080
-export NEXT_PUBLIC_BACKEND_API_BASE_URL=http://localhost:8080/backend
-export NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX=http://s3.localhost:8080/{bucket}/
+export STGY_TTTS_PORT="$PORT"
+export STGY_TTTS_LOG_FORMAT="simple"
 
-echo "[run-local-frontend] port=${STGY_FRONTEND_PORT} cmd=${CMD}"
-echo "[run-local-frontend] npm run ${CMD} -- ${PASS_ARGS[*]-}"
+echo "[run-local-ttts] port=${STGY_TTTS_PORT} cmd=${CMD}"
+echo "[run-local-ttts] npm run ${CMD} -- ${PASS_ARGS[*]-}"
 
 if ((${#PASS_ARGS[@]})); then
-  npm run "frontend:${CMD}" -- "${PASS_ARGS[@]}"
+  npm run "ttts:${CMD}" -- "${PASS_ARGS[@]}"
 else
-  npm run "frontend:${CMD}"
+  npm run "ttts:${CMD}"
 fi
