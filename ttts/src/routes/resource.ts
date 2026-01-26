@@ -15,6 +15,44 @@ export default function createResourceRouter(instance: ResourceInstance) {
   const { searchService, inputQueueService } = instance;
 
   /**
+   * シャード（インデックスファイル）一覧取得
+   * リカバリが必要な不健全シャードの検知に使用
+   */
+  router.get("/shards", async (_req: Request, res: Response) => {
+    try {
+      const files = await searchService.listFiles();
+      res.json(files);
+    } catch (e) {
+      logger.error(`List files error: ${e}`);
+      res.status(500).json({ error: "failed to list shards" });
+    }
+  });
+
+  /**
+   * 特定のシャードを物理削除
+   */
+  router.delete("/shards/:timestamp", async (req: Request, res: Response) => {
+    try {
+      // paramsから文字列として取得し、型を確定させる
+      const { timestamp: tsParam } = req.params;
+
+      // 文字列であることを保証（配列なら最初の要素を取るなどのガードも可だが、通常は string）
+      const timestampStr = Array.isArray(tsParam) ? tsParam[0] : tsParam;
+      const timestamp = parseInt(timestampStr, 10);
+
+      if (isNaN(timestamp)) {
+        return res.status(400).json({ error: "invalid timestamp" });
+      }
+
+      await searchService.removeFile(timestamp);
+      res.json({ result: "deleted" });
+    } catch (e) {
+      logger.error(`Remove shard error: ${e}`);
+      res.status(500).json({ error: "failed to remove shard" });
+    }
+  });
+
+  /**
    * トークナイズ確認エンドポイント
    */
   router.get("/tokenize", (req: Request, res: Response) => {
@@ -27,7 +65,6 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const locale = (req.query.locale as string) || "en";
       const tokenizer = searchService.getTokenizer();
 
-      // 文書登録時と同様に、ロケール推定を行ってからトークナイズ
       const guessedLocale = tokenizer.guessLocale(text, locale);
       const tokens = tokenizer.tokenize(text, guessedLocale);
 
@@ -66,7 +103,6 @@ export default function createResourceRouter(instance: ResourceInstance) {
    */
   router.put("/:docId", async (req: Request, res: Response) => {
     try {
-      // 明示的に string として扱う
       const docId = req.params.docId as string;
       const { text, timestamp, locale } = req.body;
 
@@ -88,7 +124,6 @@ export default function createResourceRouter(instance: ResourceInstance) {
    */
   router.delete("/:docId", async (req: Request, res: Response) => {
     try {
-      // 明示的に string として扱う
       const docId = req.params.docId as string;
       const { timestamp } = req.body;
 

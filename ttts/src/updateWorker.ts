@@ -85,26 +85,21 @@ export class UpdateWorker {
 
     const task = tasks[0];
 
-    try {
-      if (task.bodyText === null) {
-        // 削除タスク
-        await this.searchService.removeDocument(task.doc_id, task.timestamp);
-      } else {
-        // 追加・更新タスク
-        await this.searchService.addDocument(
-          task.doc_id,
-          task.timestamp,
-          task.bodyText,
-          task.locale || "en",
-        );
-      }
-
-      // 転送成功後に削除
-      await this.inputQueueService.deleteTasks([task.id]);
-      return true;
-    } catch (error) {
-      // ここでエラーを投げるとrun()側でキャッチされ、インターバルを置いてリトライされる
-      throw error;
+    if (task.bodyText === null) {
+      // 削除タスク
+      await this.searchService.removeDocument(task.doc_id, task.timestamp);
+    } else {
+      // 追加・更新タスク
+      await this.searchService.addDocument(
+        task.doc_id,
+        task.timestamp,
+        task.bodyText,
+        task.locale || "en",
+      );
     }
+
+    // 転送成功後に削除
+    await this.inputQueueService.deleteTasks([task.id]);
+    return true;
   }
 }
