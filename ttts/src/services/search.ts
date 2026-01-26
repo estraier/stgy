@@ -22,7 +22,7 @@ export type SearchFileInfo = {
   fileSize: number;
   countDocuments: number;
   startTimestamp: number;
-  endTimestamp: number; // exclusive
+  endTimestamp: number;
   isHealthy: boolean;
 };
 
@@ -49,6 +49,7 @@ class SearchShard {
   private pendingCount: number = 0;
   private batchTimer: NodeJS.Timeout | null = null;
   private isProcessingBatch: boolean = false;
+  private isClosing: boolean = false;
 
   private lastQueryEndTime: number = 0;
 
@@ -65,10 +66,9 @@ class SearchShard {
   }
 
   async open(): Promise<void> {
-    if (this.db) return;
+    if (this.db || this.isClosing) return;
     try {
       this.db = await Database.open(this.filepath);
-
       await this.db.exec("PRAGMA journal_mode = WAL;");
       await this.db.exec("PRAGMA synchronous = NORMAL;");
       await this.db.exec("PRAGMA cache_size = -100;");
@@ -90,9 +90,9 @@ class SearchShard {
         );
       `);
 
-      try {
-        await this.db.exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('pgsz', 8192);");
-      } catch {}
+      await this.db
+        .exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('pgsz', 8192);")
+        .catch(() => {});
 
       await this.db.exec(`
         CREATE TABLE IF NOT EXISTS batch_tasks (
@@ -117,26 +117,40 @@ class SearchShard {
   }
 
   async close(): Promise<void> {
+    this.isClosing = true;
     if (this.batchTimer) {
       clearTimeout(this.batchTimer);
       this.batchTimer = null;
     }
 
-    if (this.pendingCount > 0) {
-      await this.processBatch();
+    while (this.isProcessingBatch) {
+      await new Promise((resolve) => setTimeout(resolve, 50));
     }
 
+    await this.flush();
     await this.disableReadOnly();
 
     if (this.db) {
-      await this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+      await this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);").catch(() => {});
       await this.db.close();
       this.db = null;
     }
+    this.isClosing = false;
+  }
+
+  async flush(): Promise<void> {
+    if (this.batchTimer) {
+      clearTimeout(this.batchTimer);
+      this.batchTimer = null;
+    }
+    while (this.isProcessingBatch) {
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    await this.processBatch();
   }
 
   async enableReadOnly(): Promise<void> {
-    if (this.readDbs.length > 0 || !this._isHealthy) return;
+    if (this.readDbs.length > 0 || !this._isHealthy || this.isClosing) return;
     if (!this.db) await this.open();
     if (!this.db) return;
 
@@ -144,15 +158,13 @@ class SearchShard {
       try {
         const conn = await Database.open(this.filepath, sqlite3.OPEN_READONLY);
         this.readDbs.push(conn);
-      } catch {
-        console.error(`Failed to open read-only connection for ${this.filepath}`);
+      } catch (e) {
+        console.error(`Failed to open read-only connection for ${this.filepath}`, e);
       }
     }
   }
 
   async disableReadOnly(): Promise<void> {
-    if (this.readDbs.length === 0) return;
-
     for (const conn of this.readDbs) {
       await conn.close().catch(() => {});
     }
@@ -161,7 +173,7 @@ class SearchShard {
   }
 
   async addDocument(docId: string, bodyText: string, locale: string): Promise<void> {
-    if (!this._isHealthy) return;
+    if (!this._isHealthy || this.isClosing) return;
     if (!this.db) await this.open();
     if (!this.db) return;
 
@@ -174,7 +186,7 @@ class SearchShard {
   }
 
   async removeDocument(docId: string): Promise<void> {
-    if (!this._isHealthy) return;
+    if (!this._isHealthy || this.isClosing) return;
     if (!this.db) await this.open();
     if (!this.db) return;
 
@@ -187,19 +199,16 @@ class SearchShard {
   }
 
   async search(tokens: string[], limit: number): Promise<string[]> {
-    if (!this._isHealthy) return [];
-    if (!this.db) await this.open();
-    if (!this.db) return [];
+    if (!this._isHealthy || !this.db) return [];
 
     const query = tokens.map((t) => `"${t}"`).join(" AND ");
     if (!query) return [];
 
     let targetDb = this.db;
-
     if (this.readDbs.length > 0) {
       const now = Date.now();
       if (this.isProcessingBatch || now - this.lastQueryEndTime < 100) {
-        targetDb = this.readDbs[this.currentReadIndex];
+        targetDb = this.readDbs[this.currentReadIndex] || this.db;
         this.currentReadIndex = (this.currentReadIndex + 1) % this.readDbs.length;
       }
     }
@@ -236,8 +245,7 @@ class SearchShard {
         if (!this.db) await this.open();
         if (this.db) {
           const row = await this.db.get<{ c: number }>("SELECT count(*) as c FROM id_tuples");
-          if (row === undefined) throw new Error("Corrupted");
-          count = row.c;
+          count = row?.c || 0;
         } else {
           currentHealthy = false;
         }
@@ -259,17 +267,17 @@ class SearchShard {
   private onTaskAdded() {
     this.pendingCount++;
     if (this.pendingCount >= this.config.autoCommitUpdateCount) {
-      this.processBatch();
+      this.processBatch().catch(() => {});
       return;
     }
-    if (!this.batchTimer) {
+    if (!this.batchTimer && !this.isClosing) {
       const delay = Math.min(
         this.config.autoCommitAfterLastUpdateSeconds * 1000,
         this.config.autoCommitAfterLastCommitSeconds * 1000,
       );
       this.batchTimer = setTimeout(() => {
         this.batchTimer = null;
-        this.processBatch();
+        this.processBatch().catch(() => {});
       }, delay);
     }
   }
@@ -280,7 +288,8 @@ class SearchShard {
 
     try {
       const tasks = await this.db.all<BatchTask>("SELECT * FROM batch_tasks ORDER BY id ASC");
-      if (tasks.length === 0) {
+      const taskCount = tasks.length;
+      if (taskCount === 0) {
         this.pendingCount = 0;
         return;
       }
@@ -309,55 +318,43 @@ class SearchShard {
             await this.db.run("DELETE FROM id_tuples WHERE internal_id = ?", [internalId]);
           } else {
             await this.db.run("DELETE FROM docs WHERE rowid = ?", [internalId]);
-
-            const lines = task.body.split(/\r?\n/);
-            const allTokens: string[] = [];
-            const defaultLocale = task.locale || "en";
-
-            for (const line of lines) {
-              const trimmedLine = line.trim();
-              if (!trimmedLine) continue;
-
-              const guessedLocale = this.tokenizer.guessLocale(trimmedLine, defaultLocale);
-              const lineTokens = this.tokenizer.tokenize(trimmedLine, guessedLocale);
-              allTokens.push(...lineTokens);
-
-              if (allTokens.length >= this.config.maxDocumentTokenCount) break;
-            }
-
-            const finalTokens =
-              allTokens.length > this.config.maxDocumentTokenCount
-                ? allTokens.slice(0, this.config.maxDocumentTokenCount)
-                : allTokens;
-
-            const tokenizedBody = finalTokens.join(" ");
+            const tokens = this.tokenizer
+              .tokenize(task.body, task.locale || "en")
+              .slice(0, this.config.maxDocumentTokenCount);
             await this.db.run("INSERT INTO docs (rowid, tokens) VALUES (?, ?)", [
               internalId,
-              tokenizedBody,
+              tokens.join(" "),
             ]);
           }
         } catch (e) {
-          console.error(`Failed to process task ${task.id}:`, e);
+          console.error(`Task execution error for ${task.doc_id}:`, e);
         }
       }
 
-      await this.db.run("DELETE FROM batch_tasks");
+      await this.db.run(
+        "DELETE FROM batch_tasks WHERE id IN (" + tasks.map((t) => t.id).join(",") + ")",
+      );
       await this.db.exec("COMMIT");
-      this.pendingCount = 0;
+      this.pendingCount = Math.max(0, this.pendingCount - taskCount);
     } catch (e) {
       console.error("Batch processing failed:", e);
       if (this.db) await this.db.exec("ROLLBACK").catch(() => {});
     } finally {
       this.isProcessingBatch = false;
+      if (this.pendingCount >= this.config.autoCommitUpdateCount && !this.isClosing) {
+        setImmediate(() => this.processBatch().catch(() => {}));
+      }
     }
   }
 
   private async recover() {
     if (!this.db || !this._isHealthy) return;
-    const row = await this.db.get<{ c: number }>("SELECT count(*) as c FROM batch_tasks");
+    const row = await this.db
+      .get<{ c: number }>("SELECT count(*) as c FROM batch_tasks")
+      .catch(() => null);
     if (row && row.c > 0) {
       this.pendingCount = row.c;
-      await this.processBatch();
+      await this.processBatch().catch(() => {});
     }
   }
 }
@@ -387,19 +384,14 @@ export class SearchService {
     for (const file of files) {
       if (file.startsWith(this.config.namePrefix) && file.endsWith(".db")) {
         const prefixLength = this.config.namePrefix.length + 1;
-        const suffixLength = 3;
-        const timestampStr = file.substring(prefixLength, file.length - suffixLength);
-        const timestamp = parseInt(timestampStr, 10);
+        const ts = parseInt(file.substring(prefixLength, file.length - 3), 10);
 
-        if (!isNaN(timestamp)) {
+        if (!isNaN(ts)) {
           const filepath = path.join(this.config.baseDir, file);
-          const shard = new SearchShard(filepath, timestamp, this.config, this.tokenizer);
-          await shard.open(); // 個別シャードの失敗は内部でハンドルされる
-          this.shards.set(timestamp, shard);
-
-          if (timestamp > maxTimestamp) {
-            maxTimestamp = timestamp;
-          }
+          const shard = new SearchShard(filepath, ts, this.config, this.tokenizer);
+          await shard.open();
+          this.shards.set(ts, shard);
+          if (ts > maxTimestamp) maxTimestamp = ts;
         }
       }
     }
@@ -414,14 +406,17 @@ export class SearchService {
 
   async close(): Promise<void> {
     if (!this.isOpen) return;
-    for (const shard of this.shards.values()) {
-      await shard.close();
-    }
+    await Promise.all(Array.from(this.shards.values()).map((s) => s.close()));
     this.shards.clear();
     this.sortedShards = [];
     this.tokenizer = null;
     this.isOpen = false;
     this.latestShardTimestamp = 0;
+  }
+
+  async flushAll(): Promise<void> {
+    if (!this.isOpen) return;
+    await Promise.all(Array.from(this.shards.values()).map((s) => s.flush()));
   }
 
   getTokenizer(): Tokenizer {
@@ -432,6 +427,7 @@ export class SearchService {
   }
 
   private rebuildSortedCache(): void {
+    // 常に Map の実体から配列を生成し、不整合（二重カウントなど）を排除
     this.sortedShards = Array.from(this.shards.values()).sort(
       (a, b) => b.startTimestamp - a.startTimestamp,
     );
@@ -443,10 +439,14 @@ export class SearchService {
 
     if (this.latestShardTimestamp > 0 && this.latestShardTimestamp !== timestamp) {
       const oldShard = this.shards.get(this.latestShardTimestamp);
-      if (oldShard && oldShard.db) {
-        await oldShard.db.exec("PRAGMA cache_size = -100;");
-        await oldShard.db.exec("PRAGMA mmap_size = 0;");
-        await oldShard.db.exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 4);");
+      if (oldShard) {
+        if (oldShard.db) {
+          await oldShard.db.exec("PRAGMA cache_size = -100;");
+          await oldShard.db.exec("PRAGMA mmap_size = 0;");
+          await oldShard.db
+            .exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 4);")
+            .catch(() => {});
+        }
         await oldShard.disableReadOnly();
       }
     }
@@ -456,7 +456,9 @@ export class SearchService {
     if (shard.db) {
       await shard.db.exec("PRAGMA cache_size = -20000;");
       await shard.db.exec("PRAGMA mmap_size = 268435456;");
-      await shard.db.exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 8);");
+      await shard.db
+        .exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 8);")
+        .catch(() => {});
       await shard.enableReadOnly();
     }
   }
@@ -483,13 +485,8 @@ export class SearchService {
   async search(query: string, locale = "en", limit = 100, timeoutInMs = 1000): Promise<string[]> {
     if (!this.isOpen || !this.tokenizer) throw new Error("Service not open");
 
-    const guessedLocale = this.tokenizer.guessLocale(query, locale);
-    let queryTokens = this.tokenizer.tokenize(query, guessedLocale);
-
-    if (queryTokens.length > this.config.maxQueryTokenCount) {
-      queryTokens = queryTokens.slice(0, this.config.maxQueryTokenCount);
-    }
-    if (queryTokens.length === 0) return [];
+    const tokens = this.tokenizer.tokenize(query, locale).slice(0, this.config.maxQueryTokenCount);
+    if (tokens.length === 0) return [];
 
     const results = new Set<string>();
     const startTime = Date.now();
@@ -498,7 +495,7 @@ export class SearchService {
       if (Date.now() - startTime > timeoutInMs) break;
       if (results.size >= limit) break;
 
-      const shardResults = await shard.search(queryTokens, limit - results.size);
+      const shardResults = await shard.search(tokens, limit - results.size);
       for (const id of shardResults) {
         results.add(id);
       }
@@ -509,12 +506,9 @@ export class SearchService {
 
   async listFiles(): Promise<SearchFileInfo[]> {
     if (!this.isOpen) throw new Error("Service not open");
-
-    const infos: SearchFileInfo[] = [];
-    for (const shard of this.sortedShards) {
-      infos.push(await shard.getFileInfo());
-    }
-    return infos;
+    // 返却前にキャッシュを再同期
+    this.rebuildSortedCache();
+    return Promise.all(this.sortedShards.map((s) => s.getFileInfo()));
   }
 
   async removeFile(timestamp: number): Promise<void> {
