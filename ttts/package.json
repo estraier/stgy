@@ -14,7 +14,7 @@
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .ts",
-    "clean": "rm -rf node_modules dist"
+    "clean": "rm -rf node_modules dist ttts-index"
   },
   "dependencies": {
     "commander": "^14.0.2",
