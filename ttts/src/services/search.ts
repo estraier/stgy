@@ -41,7 +41,7 @@ class SearchShard {
 
   private readDbs: Database[] = [];
   private currentReadIndex: number = 0;
-  private _isHealthy: boolean = true;
+  private operational: boolean = true;
 
   private config: SearchConfig;
   private tokenizer: Tokenizer;
@@ -66,7 +66,7 @@ class SearchShard {
   }
 
   async reserveIds(externalIds: string[]): Promise<void> {
-    if (!this._isHealthy || this.isClosing) return;
+    if (!this.operational || this.isClosing) return;
     if (!this.db) await this.open();
     if (!this.db) return;
 
@@ -121,10 +121,10 @@ class SearchShard {
         );
       `);
 
-      this._isHealthy = true;
+      this.operational = true;
       await this.recover();
     } catch (e) {
-      this._isHealthy = false;
+      this.operational = false;
       console.error(`Failed to open shard ${this.filepath}:`, e);
       if (this.db) {
         await this.db.close().catch(() => {});
@@ -167,7 +167,7 @@ class SearchShard {
   }
 
   async optimize(): Promise<void> {
-    if (!this.db || !this._isHealthy) return;
+    if (!this.db || !this.operational) return;
     try {
       await this.flush();
       await this.db.exec("INSERT INTO docs(docs) VALUES('optimize');");
@@ -179,7 +179,7 @@ class SearchShard {
   }
 
   async enableReadOnly(): Promise<void> {
-    if (this.readDbs.length > 0 || !this._isHealthy || this.isClosing) return;
+    if (this.readDbs.length > 0 || !this.operational || this.isClosing) return;
     if (!this.db) await this.open();
     if (!this.db) return;
 
@@ -202,7 +202,7 @@ class SearchShard {
   }
 
   async addDocument(docId: string, bodyText: string, locale: string): Promise<void> {
-    if (!this._isHealthy || this.isClosing) return;
+    if (!this.operational || this.isClosing) return;
     if (!this.db) await this.open();
     if (!this.db) return;
 
@@ -215,7 +215,7 @@ class SearchShard {
   }
 
   async removeDocument(docId: string): Promise<void> {
-    if (!this._isHealthy || this.isClosing) return;
+    if (!this.operational || this.isClosing) return;
     if (!this.db) await this.open();
     if (!this.db) return;
 
@@ -228,7 +228,7 @@ class SearchShard {
   }
 
   async search(tokens: string[], limit: number): Promise<string[]> {
-    if (!this._isHealthy || !this.db) return [];
+    if (!this.operational || !this.db) return [];
 
     const query = tokens.map((t) => `"${t}"`).join(" AND ");
     if (!query) return [];
@@ -264,7 +264,7 @@ class SearchShard {
   async getFileInfo(): Promise<SearchFileInfo> {
     let count = 0;
     let fileSize = 0;
-    let currentHealthy = this._isHealthy;
+    let currentHealthy = this.operational;
 
     try {
       const stats = await fs.stat(this.filepath);
@@ -312,7 +312,7 @@ class SearchShard {
   }
 
   private async processBatch() {
-    if (this.isProcessingBatch || !this.db || !this._isHealthy) return;
+    if (this.isProcessingBatch || !this.db || !this.operational) return;
     this.isProcessingBatch = true;
 
     try {
@@ -377,7 +377,7 @@ class SearchShard {
   }
 
   private async recover() {
-    if (!this.db || !this._isHealthy) return;
+    if (!this.db || !this.operational) return;
     const row = await this.db
       .get<{ c: number }>("SELECT count(*) as c FROM batch_tasks")
       .catch(() => null);

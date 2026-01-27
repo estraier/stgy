@@ -13,9 +13,19 @@ describe("Tokenizer", () => {
       expect(tokenizer.guessLocale(text, "en")).toBe("ja");
     });
 
-    test("returns ja if katakana is present", () => {
+    test("returns ja if katakana and han are present", () => {
       const text = "ラーメン食べたい";
-      expect(tokenizer.guessLocale(text, "zh")).toBe("ja");
+      expect(tokenizer.guessLocale(text, "en")).toBe("ja");
+    });
+
+    test("returns zh if katakana and han are present and input locale is zh", () => {
+      const text = "ラーメン食べたい";
+      expect(tokenizer.guessLocale(text, "zh-TW")).toBe("zh");
+    });
+
+    test("returns ja if kanas are present and input locale is zh", () => {
+      const text = "ラーメンたべたい";
+      expect(tokenizer.guessLocale(text, "zh-TW")).toBe("ja");
     });
 
     test("returns ko if hangul is present", () => {

@@ -40,21 +40,24 @@ export class Tokenizer {
   public guessLocale(text: string, preferableLocale: string = "en"): string {
     const normalized = this.normalize(text);
     if (!normalized) return preferableLocale;
-
     const hasKana = /[\p{Script=Hiragana}\p{Script=Katakana}]/u.test(normalized);
-    const hasHangul = /\p{Script=Hangul}/u.test(normalized);
     const hasHan = /\p{Script=Han}/u.test(normalized);
-
-    if (hasKana) return "ja";
-    if (hasHangul) return "ko";
-
-    if (hasHan) {
-      if (preferableLocale.startsWith("zh")) {
-        return "zh";
-      }
+    const hasHangul = /\p{Script=Hangul}/u.test(normalized);
+    if (hasKana && preferableLocale.startsWith("ja")) {
       return "ja";
     }
-
+    if (hasHan && preferableLocale.startsWith("zh")) {
+      return "zh";
+    }
+    if (hasHangul && preferableLocale.startsWith("ko")) {
+      return "ko";
+    }
+    if (hasKana || hasHan) {
+      return "ja";
+    }
+    if (hasHangul) {
+      return "ko";
+    }
     return preferableLocale;
   }
 
