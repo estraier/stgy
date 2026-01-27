@@ -404,8 +404,13 @@ export class SearchService {
   async reserve(items: { id: string; timestamp: number }[]): Promise<void> {
     if (!this.isOpen) throw new Error("Service not open");
 
+    const sortedItems = [...items].sort((a, b) => {
+      if (a.timestamp !== b.timestamp) return a.timestamp - b.timestamp;
+      return a.id.localeCompare(b.id);
+    });
+
     const groups = new Map<number, string[]>();
-    for (const item of items) {
+    for (const item of sortedItems) {
       const ts = this.getBucketTimestamp(item.timestamp);
       const list = groups.get(ts) || [];
       list.push(item.id);
