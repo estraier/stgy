@@ -1,8 +1,3 @@
-// このコメントは消さない。
-// このコードの中では絶対にanyを使わない。
-// AIはコード内にコメントを書かない。人間は書いても良い。
-// AIがコードを書き換える際には、絶対にデグレさせてはいけない。既存の機能を許可なく削ることは許容できない。
-
 import { Config } from "./config";
 import { createLogger } from "./utils/logger";
 import { readPrompt, evaluateChatResponseAsJson } from "./utils/prompt";

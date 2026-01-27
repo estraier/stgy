@@ -53,7 +53,7 @@ async function main() {
   const redis = await connectRedisWithRetry();
 
   const app = express();
-  app.use(express.json({ limit: 1048576 }));
+  app.use(express.json({ limit: Config.INPUT_BODY_LIMIT }));
   app.use(cookieParser());
 
   app.use(

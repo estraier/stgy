@@ -5,9 +5,24 @@ import path from "path";
 
 const program = new Command();
 
-/**
- * 提示されたガンマ分布による単語生成
- */
+interface PrepareOptions {
+  documents: string;
+  words: string;
+  vocab: string;
+  gamma: string;
+  iteration: string;
+  autoCommit?: string;
+  baseDir?: string;
+  duration?: string;
+  recordPositions: string;
+}
+
+interface SearchOptions {
+  query?: string;
+  limit: string;
+  times: string;
+}
+
 function generateDocument(wordCount: number, vocabSize: number, gamma: number): string {
   const words: string[] = [];
   for (let i = 0; i < wordCount; i++) {
@@ -19,18 +34,12 @@ function generateDocument(wordCount: number, vocabSize: number, gamma: number): 
   return words.join(" ");
 }
 
-/**
- * メモリ使用量の表示
- */
-function logMemoryUsage(label: string) {
+function logMemoryUsage(label: string): void {
   const used = process.memoryUsage().heapUsed / 1024 / 1024;
   console.log(`[Memory] ${label}: ${used.toFixed(2)} MB`);
 }
 
-/**
- * PREPARE: 大量ドキュメントのインデックス作成
- */
-async function runPrepare(opts: any) {
+async function runPrepare(opts: PrepareOptions): Promise<void> {
   const baseSearchConfig = Config.resources[0].search;
   const config: SearchConfig = {
     ...baseSearchConfig,
@@ -88,7 +97,6 @@ async function runPrepare(opts: any) {
       await service.addDocument(docId, currentSimulatedTime, body, "en");
     }
 
-    // Auto-commit 待機
     while (true) {
       const files = await service.listFiles();
       const latest = files.find((f) => f.startTimestamp === bucketTs);
@@ -129,17 +137,13 @@ async function runPrepare(opts: any) {
   process.exit(0);
 }
 
-/**
- * SEARCH: 検索性能のベンチマーク
- */
-async function runSearch(opts: any) {
+async function runSearch(opts: SearchOptions): Promise<void> {
   const baseSearchConfig = Config.resources[0].search;
   const service = new SearchService(baseSearchConfig);
   await service.open();
 
   const query = opts.query || "w0";
   const times = parseInt(opts.times, 10);
-  // limit 0 なら 100万件（実質全件）を指定
   const limit = parseInt(opts.limit, 10) === 0 ? 1000000 : parseInt(opts.limit, 10);
 
   console.log(`=== Search Benchmark: "${query}" ===`);
@@ -191,13 +195,13 @@ program
   .option("--base-dir <path>", "Directory path")
   .option("--duration <number>", "Bucket duration seconds")
   .option("--record-positions <string>", "Record positions", "false")
-  .action(runPrepare);
+  .action((opts: PrepareOptions) => runPrepare(opts));
 
 program
   .command("search")
   .option("--query <string>", "Search query", "w0")
   .option("--limit <number>", "Limit per search (0 for unlimited)", "100")
   .option("--times <number>", "Number of trials", "10")
-  .action(runSearch);
+  .action((opts: SearchOptions) => runSearch(opts));
 
 program.parse(process.argv);

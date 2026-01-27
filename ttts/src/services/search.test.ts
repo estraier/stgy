@@ -8,7 +8,7 @@ const TEST_CONFIG: SearchConfig = {
   baseDir: TEST_DIR,
   namePrefix: "test-posts",
   bucketDurationSeconds: 1000,
-  autoCommitUpdateCount: 10, // flushAllのテストのため、あえて1より大きい値に設定
+  autoCommitUpdateCount: 10,
   autoCommitAfterLastUpdateSeconds: 0.1,
   autoCommitAfterLastCommitSeconds: 0.1,
   recordPositions: false,
@@ -16,8 +16,6 @@ const TEST_CONFIG: SearchConfig = {
   maxQueryTokenCount: 10,
   maxDocumentTokenCount: 100,
 };
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 describe("SearchService", () => {
   let service: SearchService;
@@ -44,13 +42,43 @@ describe("SearchService", () => {
     await service.close();
   });
 
+  test("should reserve IDs and maintain order when documents are added later", async () => {
+    const timestamp = 1000000;
+
+    await service.reserve([
+      { id: "doc-1", timestamp },
+      { id: "doc-2", timestamp },
+      { id: "doc-3", timestamp },
+    ]);
+
+    await service.addDocument("doc-3", timestamp, "common keyword", "en");
+    await service.addDocument("doc-1", timestamp, "common keyword", "en");
+    await service.addDocument("doc-2", timestamp, "common keyword", "en");
+
+    await service.flushAll();
+
+    const results = await service.search("common keyword");
+    expect(results).toEqual(["doc-3", "doc-2", "doc-1"]);
+  });
+
+  test("should handle duplicate reservations gracefully", async () => {
+    const timestamp = 1000000;
+    await service.reserve([{ id: "doc-1", timestamp }]);
+    await service.reserve([{ id: "doc-1", timestamp }]);
+
+    await service.addDocument("doc-1", timestamp, "test content", "en");
+    await service.flushAll();
+
+    const results = await service.search("test");
+    expect(results).toContain("doc-1");
+  });
+
   test("should create index files and search documents using flushAll", async () => {
     const docId = "doc-1";
     const timestamp = 1000000;
     const body = "This is a test document for search.";
 
     await service.addDocument(docId, timestamp, body, "en");
-    // sleepの代わりにflushAllを使用して即座に反映させる
     await service.flushAll();
 
     const files = await service.listFiles();
@@ -85,7 +113,7 @@ describe("SearchService", () => {
     await service.flushAll();
 
     const results = await service.search("common");
-    expect(results[0]).toBe(doc2.id); // 新しいシャード(2000000)が優先
+    expect(results[0]).toBe(doc2.id);
     expect(results[1]).toBe(doc1.id);
   });
 
@@ -97,7 +125,6 @@ describe("SearchService", () => {
     await service.flushAll();
     expect(await service.search("searchable")).toContain(docId);
 
-    // 削除の実行
     await service.removeDocument(docId, timestamp);
     await service.flushAll();
 
@@ -119,7 +146,6 @@ describe("SearchService", () => {
     let files = await service.listFiles();
     expect(files.length).toBe(2);
 
-    // シャードの削除
     await service.removeFile(ts2);
 
     files = await service.listFiles();
@@ -184,9 +210,7 @@ describe("SearchService", () => {
     await service.addDocument("doc1", 1000000, "slow search", "en");
     await service.flushAll();
 
-    // タイムアウトを極端に短く設定 (0ms)
     const results = await service.search("slow", "en", 100, 0);
-    // タイムアウトした場合は空または一部の結果が返る
     expect(Array.isArray(results)).toBe(true);
   });
 });

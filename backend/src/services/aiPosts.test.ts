@@ -56,7 +56,7 @@ function int8eq(a: Int8Array | null | undefined, b: Int8Array): boolean {
 type MockAiPostSummaryRow = {
   postId: string;
   summary: string | null;
-  hashes: Buffer | null; // <-- NEW: integrated into ai_post_summaries
+  hashes: Buffer | null;
   features: Buffer | null;
   updatedAt: string;
 };
@@ -107,7 +107,6 @@ class MockPgClient {
       return { rows: exists ? [{ ok: 1 }] : [] };
     }
 
-    // getAiPostSummary
     if (
       sql.startsWith("SELECT aps.post_id, aps.updated_at, aps.summary, aps.features") &&
       sql.includes("FROM ai_post_summaries aps") &&
@@ -128,7 +127,6 @@ class MockPgClient {
             summary: s.summary,
             features: s.features,
             tags,
-            // service側が `aps.hashes` でも `... AS keyword_hashes` でも動くよう両方返す
             hashes: s.hashes,
             keyword_hashes: s.hashes,
           },
@@ -136,7 +134,6 @@ class MockPgClient {
       };
     }
 
-    // listAiPostsSummaries
     if (
       sql.startsWith("SELECT aps.post_id, aps.updated_at, aps.summary, aps.features") &&
       sql.includes("FROM ai_post_summaries aps") &&
@@ -183,7 +180,6 @@ class MockPgClient {
       return { rows };
     }
 
-    // updateAiPost: consolidated upsert (dynamic columns)
     if (
       sql.startsWith("INSERT INTO ai_post_summaries (") &&
       sql.includes("ON CONFLICT (post_id) DO UPDATE")
@@ -207,7 +203,7 @@ class MockPgClient {
             .filter(Boolean)
         : [];
 
-      let p = 1; // params[0] is post_id
+      let p = 1;
       for (const c of cols) {
         if (c === "post_id" || c === "updated_at") continue;
         if (c === "summary") {
@@ -225,7 +221,6 @@ class MockPgClient {
           p++;
           continue;
         }
-        // unknown col: still consume a param just in case
         p++;
       }
 
@@ -250,7 +245,6 @@ class MockPgClient {
       return { rowCount: tagArray.length, rows: [] };
     }
 
-    // BuildSearchSeedForUser seed_posts query (unchanged)
     if (
       sql.includes("WITH") &&
       sql.includes("self_posts AS") &&
@@ -335,7 +329,6 @@ class MockPgClient {
       return { rows };
     }
 
-    // BuildSearchSeedForUser loadTagsByPostId query (unchanged)
     if (
       sql.includes("WITH raw AS (") &&
       sql.includes("FROM post_tags") &&
@@ -461,7 +454,6 @@ class MockPgClient {
       return { rows };
     }
 
-    // RecommendPosts tag candidate query (unchanged)
     if (
       sql.includes("WITH query_tags(tag) AS") &&
       sql.includes("raw AS") &&
@@ -528,7 +520,6 @@ class MockPgClient {
       return { rows };
     }
 
-    // NEW: keyword hashes are now inside ai_post_summaries.hashes
     if (
       sql.startsWith("SELECT post_id, hashes") &&
       sql.includes("FROM ai_post_summaries") &&

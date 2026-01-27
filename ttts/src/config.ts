@@ -7,32 +7,49 @@ export type ResourceConfig = {
   inputQueue: InputQueueConfig;
 };
 
-// ベースとなるデータディレクトリ（環境変数などから取得できるようにすると運用しやすいです）
 const DEFAULT_INDEX_DIR = path.join(process.cwd(), "ttts-index");
+const COMMON_INDEX_DIR = envStr("STGY_TTTS_INDEX_DIR", DEFAULT_INDEX_DIR);
 
 export class Config {
   static readonly resources: ResourceConfig[] = [
     {
-      // "posts" リソースの設定
       search: {
-        baseDir: envStr("STGY_TTTS_INDEX_DIR", DEFAULT_INDEX_DIR),
+        baseDir: COMMON_INDEX_DIR,
         namePrefix: "posts",
-        bucketDurationSeconds: 1000000, // 約11.5日ごとにファイルを分割
-        autoCommitUpdateCount: 3000, // 3000件ごとにコミット
-        autoCommitAfterLastUpdateSeconds: 300, // 最終更新から5分でコミット
-        autoCommitAfterLastCommitSeconds: 1800, // 最終コミットから30分で強制コミット
-        recordPositions: false, // detail=none で軽量化
-        readConnectionCount: 3, // 最新インデックスに3つの読み取り専用接続
-        maxDocumentTokenCount: 10000, // 1文書あたり最大1万トークン
-        maxQueryTokenCount: 4, // 検索クエリは最大4トークンまで
+        bucketDurationSeconds: 1000000,
+        autoCommitUpdateCount: 3000,
+        autoCommitAfterLastUpdateSeconds: 300,
+        autoCommitAfterLastCommitSeconds: 1800,
+        recordPositions: false,
+        readConnectionCount: 3,
+        maxDocumentTokenCount: 10000,
+        maxQueryTokenCount: 5,
       },
       inputQueue: {
-        baseDir: envStr("STGY_TTTS_INDEX_DIR", DEFAULT_INDEX_DIR),
+        baseDir: COMMON_INDEX_DIR,
         namePrefix: "posts",
       },
     },
-    // 必要に応じて "users" など他のリソースも同様に追加可能
+    {
+      search: {
+        baseDir: COMMON_INDEX_DIR,
+        namePrefix: "users",
+        bucketDurationSeconds: 10000000,
+        autoCommitUpdateCount: 3000,
+        autoCommitAfterLastUpdateSeconds: 300,
+        autoCommitAfterLastCommitSeconds: 1800,
+        recordPositions: false,
+        readConnectionCount: 3,
+        maxDocumentTokenCount: 10000,
+        maxQueryTokenCount: 5,
+      },
+      inputQueue: {
+        baseDir: COMMON_INDEX_DIR,
+        namePrefix: "users",
+      },
+    },
   ];
+  static readonly INPUT_BODY_LIMIT = envNum("STGY_TTTS_INPUT_BODY_LIMIT", 2 * 1024 * 1024);
   static readonly TTTS_PORT = envNum("STGY_TTTS_PORT", 3200);
   static readonly LOG_FORMAT = envStr("STGY_TTTS_LOG_FORMAT", "");
   static readonly ENABLE_KUROMOJI = envBool("STGY_TTTS_ENABLE_KUROMOJI", false);

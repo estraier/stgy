@@ -65,14 +65,29 @@ class SearchShard {
     this.tokenizer = tokenizer;
   }
 
+  async reserveIds(externalIds: string[]): Promise<void> {
+    if (!this._isHealthy || this.isClosing) return;
+    if (!this.db) await this.open();
+    if (!this.db) return;
+
+    try {
+      await this.db.exec("BEGIN TRANSACTION;");
+      for (const id of externalIds) {
+        await this.db.run("INSERT OR IGNORE INTO id_tuples (external_id) VALUES (?)", [id]);
+      }
+      await this.db.exec("COMMIT;");
+    } catch (e) {
+      if (this.db) await this.db.exec("ROLLBACK;").catch(() => {});
+      throw e;
+    }
+  }
+
   async open(): Promise<void> {
     if (this.db || this.isClosing) return;
     try {
       this.db = await Database.open(this.filepath);
       await this.db.exec("PRAGMA journal_mode = WAL;");
       await this.db.exec("PRAGMA synchronous = NORMAL;");
-
-      // デフォルトは最小限 (100ページ * 8KB = 約0.8MB)
       await this.db.exec("PRAGMA cache_size = 100;");
       await this.db.exec("PRAGMA mmap_size = 0;");
 
@@ -92,7 +107,6 @@ class SearchShard {
         );
       `);
 
-      // ページサイズを8KBに設定
       await this.db
         .exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('pgsz', 8192);")
         .catch(() => {});
@@ -152,17 +166,11 @@ class SearchShard {
     await this.processBatch();
   }
 
-  /**
-   * インデックスを最適化し、全セグメントを1つに統合する。
-   * これにより検索速度の向上とファイルサイズの削減が行われる。
-   */
   async optimize(): Promise<void> {
     if (!this.db || !this._isHealthy) return;
     try {
       await this.flush();
-      // FTS5の最適化コマンド
       await this.db.exec("INSERT INTO docs(docs) VALUES('optimize');");
-      // 未使用領域の解放とWALの反映
       await this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
       await this.db.exec("VACUUM;");
     } catch (e) {
@@ -393,6 +401,23 @@ export class SearchService {
     this.shards = new Map();
   }
 
+  async reserve(items: { id: string; timestamp: number }[]): Promise<void> {
+    if (!this.isOpen) throw new Error("Service not open");
+
+    const groups = new Map<number, string[]>();
+    for (const item of items) {
+      const ts = this.getBucketTimestamp(item.timestamp);
+      const list = groups.get(ts) || [];
+      list.push(item.id);
+      groups.set(ts, list);
+    }
+
+    for (const [ts, ids] of groups) {
+      const shard = await this.getShard(ts);
+      await shard.reserveIds(ids);
+    }
+  }
+
   async open(): Promise<void> {
     if (this.isOpen) return;
 
@@ -453,25 +478,19 @@ export class SearchService {
     );
   }
 
-  /**
-   * 最新のインデックスを昇格させ、古いインデックスを最適化・アーカイブ化する。
-   */
   private async promoteToLatest(timestamp: number): Promise<void> {
     const shard = this.shards.get(timestamp);
     if (!shard) return;
 
-    // 前回の最新シャードをアーカイブ設定（省メモリ・省サイズ）に変更
     if (this.latestShardTimestamp > 0 && this.latestShardTimestamp !== timestamp) {
       const oldShard = this.shards.get(this.latestShardTimestamp);
       if (oldShard && oldShard.db) {
-        // キャッシュを最小限に (100ページ = 約0.8MB)
         await oldShard.db.exec("PRAGMA cache_size = 100;");
         await oldShard.db.exec("PRAGMA mmap_size = 0;");
-        // マージを積極的に行う設定 (automerge=2)
-        await oldShard.db.exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 2);").catch(() => {});
+        await oldShard.db
+          .exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 2);")
+          .catch(() => {});
         await oldShard.disableReadOnly();
-
-        // 非同期で最適化とVACUUMを実行
         oldShard.optimize().catch((e) => console.error("Auto-optimization failed:", e));
       }
     }
@@ -479,12 +498,11 @@ export class SearchService {
     this.latestShardTimestamp = timestamp;
 
     if (shard.db) {
-      // 最新シャードのキャッシュを 24MB (3000ページ * 8KB) に設定
       await shard.db.exec("PRAGMA cache_size = 3000;");
-      // mmapも 256MB 割り当て
       await shard.db.exec("PRAGMA mmap_size = 268435456;");
-      // 書き込み速度優先 (マージを溜める automerge=8)
-      await shard.db.exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 8);").catch(() => {});
+      await shard.db
+        .exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 8);")
+        .catch(() => {});
       await shard.enableReadOnly();
     }
   }
