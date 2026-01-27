@@ -71,7 +71,9 @@ class SearchShard {
       this.db = await Database.open(this.filepath);
       await this.db.exec("PRAGMA journal_mode = WAL;");
       await this.db.exec("PRAGMA synchronous = NORMAL;");
-      await this.db.exec("PRAGMA cache_size = -100;");
+
+      // デフォルトは最小限 (100ページ * 8KB = 約0.8MB)
+      await this.db.exec("PRAGMA cache_size = 100;");
       await this.db.exec("PRAGMA mmap_size = 0;");
 
       await this.db.exec(`
@@ -90,6 +92,7 @@ class SearchShard {
         );
       `);
 
+      // ページサイズを8KBに設定
       await this.db
         .exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('pgsz', 8192);")
         .catch(() => {});
@@ -147,6 +150,24 @@ class SearchShard {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     await this.processBatch();
+  }
+
+  /**
+   * インデックスを最適化し、全セグメントを1つに統合する。
+   * これにより検索速度の向上とファイルサイズの削減が行われる。
+   */
+  async optimize(): Promise<void> {
+    if (!this.db || !this._isHealthy) return;
+    try {
+      await this.flush();
+      // FTS5の最適化コマンド
+      await this.db.exec("INSERT INTO docs(docs) VALUES('optimize');");
+      // 未使用領域の解放とWALの反映
+      await this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+      await this.db.exec("VACUUM;");
+    } catch (e) {
+      console.error(`Optimize failed on ${this.filepath}:`, e);
+    }
   }
 
   async enableReadOnly(): Promise<void> {
@@ -427,38 +448,43 @@ export class SearchService {
   }
 
   private rebuildSortedCache(): void {
-    // 常に Map の実体から配列を生成し、不整合（二重カウントなど）を排除
     this.sortedShards = Array.from(this.shards.values()).sort(
       (a, b) => b.startTimestamp - a.startTimestamp,
     );
   }
 
+  /**
+   * 最新のインデックスを昇格させ、古いインデックスを最適化・アーカイブ化する。
+   */
   private async promoteToLatest(timestamp: number): Promise<void> {
     const shard = this.shards.get(timestamp);
     if (!shard) return;
 
+    // 前回の最新シャードをアーカイブ設定（省メモリ・省サイズ）に変更
     if (this.latestShardTimestamp > 0 && this.latestShardTimestamp !== timestamp) {
       const oldShard = this.shards.get(this.latestShardTimestamp);
-      if (oldShard) {
-        if (oldShard.db) {
-          await oldShard.db.exec("PRAGMA cache_size = -100;");
-          await oldShard.db.exec("PRAGMA mmap_size = 0;");
-          await oldShard.db
-            .exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 4);")
-            .catch(() => {});
-        }
+      if (oldShard && oldShard.db) {
+        // キャッシュを最小限に (100ページ = 約0.8MB)
+        await oldShard.db.exec("PRAGMA cache_size = 100;");
+        await oldShard.db.exec("PRAGMA mmap_size = 0;");
+        // マージを積極的に行う設定 (automerge=2)
+        await oldShard.db.exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 2);").catch(() => {});
         await oldShard.disableReadOnly();
+
+        // 非同期で最適化とVACUUMを実行
+        oldShard.optimize().catch((e) => console.error("Auto-optimization failed:", e));
       }
     }
 
     this.latestShardTimestamp = timestamp;
 
     if (shard.db) {
-      await shard.db.exec("PRAGMA cache_size = -20000;");
+      // 最新シャードのキャッシュを 24MB (3000ページ * 8KB) に設定
+      await shard.db.exec("PRAGMA cache_size = 3000;");
+      // mmapも 256MB 割り当て
       await shard.db.exec("PRAGMA mmap_size = 268435456;");
-      await shard.db
-        .exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 8);")
-        .catch(() => {});
+      // 書き込み速度優先 (マージを溜める automerge=8)
+      await shard.db.exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 8);").catch(() => {});
       await shard.enableReadOnly();
     }
   }
@@ -506,7 +532,6 @@ export class SearchService {
 
   async listFiles(): Promise<SearchFileInfo[]> {
     if (!this.isOpen) throw new Error("Service not open");
-    // 返却前にキャッシュを再同期
     this.rebuildSortedCache();
     return Promise.all(this.sortedShards.map((s) => s.getFileInfo()));
   }
