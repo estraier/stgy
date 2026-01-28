@@ -42,9 +42,10 @@ export default function createResourceRouter(instance: ResourceInstance) {
     }
   });
 
-  router.get("/shards", async (_req: Request, res: Response) => {
+  router.get("/shards", async (req: Request, res: Response) => {
     try {
-      const files = await searchService.listFiles();
+      const detailed = req.query.detailed === "true";
+      const files = await searchService.listFiles(detailed);
       res.json(files);
     } catch (e) {
       logger.error(`List files error: ${e}`);

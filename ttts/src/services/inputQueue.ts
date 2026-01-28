@@ -1,5 +1,6 @@
 import path from "path";
 import { Database } from "../utils/database";
+import { Logger } from "pino";
 
 export type InputQueueConfig = {
   baseDir: string;
@@ -20,9 +21,11 @@ export class InputQueueService {
   private db: Database | null = null;
   private dbPath: string;
   private reservationMode: boolean = false;
+  private logger: Logger;
 
-  constructor(config: InputQueueConfig) {
+  constructor(config: InputQueueConfig, logger: Logger) {
     this.config = config;
+    this.logger = logger;
     this.dbPath = path.join(this.config.baseDir, `${this.config.namePrefix}-input_tasks.db`);
   }
 

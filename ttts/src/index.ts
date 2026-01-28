@@ -38,8 +38,12 @@ async function main() {
     logger.info(`Initializing resource: ${namePrefix}`);
 
     try {
-      const searchService = new SearchService(resConfig.search);
-      const inputQueueService = new InputQueueService(resConfig.inputQueue);
+      const searchLogger = createLogger({ file: "search", resource: namePrefix });
+      const searchService = new SearchService(resConfig.search, searchLogger);
+
+      const queueLogger = createLogger({ file: "inputQueue", resource: namePrefix });
+      const inputQueueService = new InputQueueService(resConfig.inputQueue, queueLogger);
+
       const worker = new UpdateWorker(searchService, inputQueueService);
 
       await searchService.open();

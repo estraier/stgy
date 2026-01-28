@@ -1,8 +1,10 @@
 import fs from "fs/promises";
 import path from "path";
+import pino from "pino";
 import { InputQueueService, InputQueueConfig } from "./inputQueue";
 
 const TEST_DIR = path.join(__dirname, "../../test_queue_data");
+const logger = pino({ level: "silent" });
 
 const TEST_CONFIG: InputQueueConfig = {
   baseDir: TEST_DIR,
@@ -27,7 +29,7 @@ describe("InputQueueService", () => {
       await fs.unlink(path.join(TEST_DIR, file));
     }
 
-    queue = new InputQueueService(TEST_CONFIG);
+    queue = new InputQueueService(TEST_CONFIG, logger);
     await queue.open();
   });
 
@@ -93,7 +95,7 @@ describe("InputQueueService", () => {
     const files = await fs.readdir(TEST_DIR);
     expect(files).toContain(`${TEST_CONFIG.namePrefix}-input_tasks.db`);
 
-    const newQueue = new InputQueueService(TEST_CONFIG);
+    const newQueue = new InputQueueService(TEST_CONFIG, logger);
     await newQueue.open();
 
     try {

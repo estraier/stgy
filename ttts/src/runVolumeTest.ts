@@ -1,9 +1,11 @@
 import { Command } from "commander";
 import { SearchService, SearchConfig } from "./services/search";
 import { Config } from "./config";
+import { createLogger } from "./utils/logger";
 import path from "path";
 
 const program = new Command();
+const logger = createLogger({ file: "volume-test" });
 
 interface PrepareOptions {
   documents: string;
@@ -15,6 +17,7 @@ interface PrepareOptions {
   baseDir?: string;
   duration?: string;
   recordPositions: string;
+  recordContents: string;
 }
 
 interface SearchOptions {
@@ -51,13 +54,14 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
       ? parseInt(opts.autoCommit, 10)
       : baseSearchConfig.autoCommitUpdateCount,
     recordPositions: opts.recordPositions === "true",
+    recordContents: opts.recordContents !== "false",
   };
 
-  const service = new SearchService(config);
+  const service = new SearchService(config, logger);
   await service.open();
 
   console.log("Cleaning up existing index files...");
-  const existingFiles = await service.listFiles();
+  const existingFiles = await service.listFiles(false);
   for (const file of existingFiles) {
     await service.removeFile(file.startTimestamp);
   }
@@ -74,6 +78,7 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
   console.log(
     `Vocab Size    : ${vocabSize}, Gamma: ${gamma}, Auto-Commit: ${config.autoCommitUpdateCount}`,
   );
+  console.log(`Positions     : ${config.recordPositions}, Contents: ${config.recordContents}`);
   logMemoryUsage("At Start");
 
   const startTimeAll = Date.now();
@@ -86,7 +91,7 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
     const bucketTs =
       Math.floor(currentSimulatedTime / config.bucketDurationSeconds) *
       config.bucketDurationSeconds;
-    const initialFiles = await service.listFiles();
+    const initialFiles = await service.listFiles(false);
     const initialShard = initialFiles.find((f) => f.startTimestamp === bucketTs);
     const initialCount = initialShard ? initialShard.countDocuments : 0;
 
@@ -102,7 +107,7 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
     console.log("Done.");
 
     while (true) {
-      const files = await service.listFiles();
+      const files = await service.listFiles(false);
       const latest = files.find((f) => f.startTimestamp === bucketTs);
       const currentCount = latest ? latest.countDocuments : 0;
       const incrementalCount = currentCount - initialCount;
@@ -116,11 +121,24 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
     }
 
     console.log(`Iteration ${iter} took ${((Date.now() - iterStartTime) / 1000).toFixed(2)}s`);
-    const filesAfter = await service.listFiles();
+
+    const filesAfter = await service.listFiles(true);
     const currentShard = filesAfter.find((f) => f.startTimestamp === bucketTs);
     if (currentShard) {
+      const idxMB = (currentShard.indexSize / 1024 / 1024).toFixed(2);
+      const cntMB = (currentShard.contentSize / 1024 / 1024).toFixed(2);
+      const fileMB = (currentShard.fileSize / 1024 / 1024).toFixed(2);
+
+      const idxRatio =
+        currentShard.fileSize > 0
+          ? ((currentShard.indexSize / currentShard.fileSize) * 100).toFixed(1)
+          : "0.0";
+
       console.log(
-        `Latest Shard Info: File: ${currentShard.filename}, Docs: ${currentShard.countDocuments}, Size: ${(currentShard.fileSize / 1024).toFixed(1)} KB`,
+        `Latest Shard Info: Docs: ${currentShard.countDocuments}` +
+          `\n    - Total File : ${fileMB} MB` +
+          `\n    - Index (RAM): ${idxMB} MB (${idxRatio}%)` +
+          `\n    - Content    : ${cntMB} MB`,
       );
     }
     logMemoryUsage(`After Iteration ${iter}`);
@@ -128,14 +146,19 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
   }
 
   const totalElapsed = (Date.now() - startTimeAll) / 1000;
-  const finalFiles = await service.listFiles();
+  const finalFiles = await service.listFiles(true);
+
   const totalSize = finalFiles.reduce((acc, f) => acc + f.fileSize, 0);
+  const totalIndex = finalFiles.reduce((acc, f) => acc + f.indexSize, 0);
+  const totalContent = finalFiles.reduce((acc, f) => acc + f.contentSize, 0);
   const totalDocs = finalFiles.reduce((acc, f) => acc + f.countDocuments, 0);
 
   console.log("\n=== Final Results ===");
-  console.log(
-    `Total Time: ${totalElapsed.toFixed(2)}s, Docs: ${totalDocs}, Size: ${(totalSize / 1024 / 1024).toFixed(2)} MB`,
-  );
+  console.log(`Total Time : ${totalElapsed.toFixed(2)}s`);
+  console.log(`Total Docs : ${totalDocs}`);
+  console.log(`Total File : ${(totalSize / 1024 / 1024).toFixed(2)} MB`);
+  console.log(`Total Index: ${(totalIndex / 1024 / 1024).toFixed(2)} MB (Active RAM target)`);
+  console.log(`Total Body : ${(totalContent / 1024 / 1024).toFixed(2)} MB`);
 
   await service.close();
   process.exit(0);
@@ -143,7 +166,7 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 
 async function runSearch(opts: SearchOptions): Promise<void> {
   const baseSearchConfig = Config.resources[0].search;
-  const service = new SearchService(baseSearchConfig);
+  const service = new SearchService(baseSearchConfig, logger);
   await service.open();
 
   const query = opts.query || "w0";
@@ -153,7 +176,7 @@ async function runSearch(opts: SearchOptions): Promise<void> {
   console.log(`=== Search Benchmark: "${query}" ===`);
   console.log(`Limit: ${opts.limit === "0" ? "Unlimited (Count mode)" : limit}, Trials: ${times}`);
 
-  const files = await service.listFiles();
+  const files = await service.listFiles(false);
   console.log(`Searching across ${files.length} shards...`);
 
   const results: number[] = [];
@@ -199,6 +222,7 @@ program
   .option("--base-dir <path>", "Directory path")
   .option("--duration <number>", "Bucket duration seconds")
   .option("--record-positions <string>", "Record positions", "false")
+  .option("--record-contents <string>", "Record contents", "true")
   .action((opts: PrepareOptions) => runPrepare(opts));
 
 program

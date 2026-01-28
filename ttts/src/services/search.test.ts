@@ -1,8 +1,10 @@
 import fs from "fs/promises";
 import path from "path";
+import pino from "pino";
 import { SearchService, SearchConfig } from "./search";
 
 const TEST_DIR = path.join(__dirname, "../../test_index_data");
+const logger = pino({ level: "silent" });
 
 const TEST_CONFIG: SearchConfig = {
   baseDir: TEST_DIR,
@@ -12,6 +14,7 @@ const TEST_CONFIG: SearchConfig = {
   autoCommitAfterLastUpdateSeconds: 0.1,
   autoCommitAfterLastCommitSeconds: 0.1,
   recordPositions: false,
+  recordContents: true,
   readConnectionCount: 2,
   maxQueryTokenCount: 10,
   maxDocumentTokenCount: 100,
@@ -30,11 +33,21 @@ describe("SearchService", () => {
   });
 
   beforeEach(async () => {
+    if (service) {
+      try {
+        const files = await service.listFiles();
+        for (const file of files) {
+          await service.removeFile(file.startTimestamp);
+        }
+      } catch {}
+    }
+
     const files = await fs.readdir(TEST_DIR).catch(() => []);
     for (const file of files) {
       await fs.unlink(path.join(TEST_DIR, file)).catch(() => {});
     }
-    service = new SearchService(TEST_CONFIG);
+
+    service = new SearchService(TEST_CONFIG, logger);
     await service.open();
   });
 
@@ -81,13 +94,18 @@ describe("SearchService", () => {
     await service.addDocument(docId, timestamp, body, "en");
     await service.flushAll();
 
-    const files = await service.listFiles();
+    const files = await service.listFiles(true);
     expect(files.length).toBe(1);
 
     const file = files[0];
     expect(file.filename).toContain(TEST_CONFIG.namePrefix);
     expect(file.countDocuments).toBe(1);
     expect(file.isHealthy).toBe(true);
+
+    expect(typeof file.indexSize).toBe("number");
+    expect(typeof file.contentSize).toBe("number");
+    expect(file.indexSize).toBeGreaterThanOrEqual(0);
+    expect(file.contentSize).toBeGreaterThan(0);
 
     const results = await service.search("test search");
     expect(results).toContain(docId);
@@ -117,7 +135,7 @@ describe("SearchService", () => {
     expect(results[1]).toBe(doc1.id);
   });
 
-  test("should remove document correctly", async () => {
+  test("should remove document correctly (recordContents: true)", async () => {
     const docId = "delete-me";
     const timestamp = 1000000;
 
@@ -166,10 +184,8 @@ describe("SearchService", () => {
     const shardFile = path.join(TEST_DIR, `${TEST_CONFIG.namePrefix}-${timestamp}.db`);
     await fs.writeFile(shardFile, "NOT A SQLITE FILE ANYMORE");
 
-    service = new SearchService(TEST_CONFIG);
-    const spy = jest.spyOn(console, "error").mockImplementation(() => {});
+    service = new SearchService(TEST_CONFIG, logger);
     await service.open();
-    spy.mockRestore();
 
     const files = await service.listFiles();
     const file = files.find((f) => f.startTimestamp === timestamp);
@@ -184,7 +200,7 @@ describe("SearchService", () => {
     await service.flushAll();
     await service.close();
 
-    const newService = new SearchService(TEST_CONFIG);
+    const newService = new SearchService(TEST_CONFIG, logger);
     await newService.open();
     try {
       const results = await newService.search("Persistent");
@@ -212,5 +228,68 @@ describe("SearchService", () => {
 
     const results = await service.search("slow", "en", 100, 0);
     expect(Array.isArray(results)).toBe(true);
+  });
+
+  describe("Contentless Mode (recordContents: false)", () => {
+    let contentlessService: SearchService;
+
+    beforeEach(async () => {
+      await service.close();
+
+      const contentlessConfig: SearchConfig = {
+        ...TEST_CONFIG,
+        recordContents: false,
+      };
+
+      contentlessService = new SearchService(contentlessConfig, logger);
+      await contentlessService.open();
+    });
+
+    afterEach(async () => {
+      await contentlessService.close();
+    });
+
+    test("should throw error when trying to remove a document", async () => {
+      const docId = "cl-doc-1";
+      const timestamp = 1000000;
+
+      await contentlessService.addDocument(docId, timestamp, "text", "en");
+      await contentlessService.flushAll();
+
+      await expect(contentlessService.removeDocument(docId, timestamp)).rejects.toThrow(
+        /contentless mode/,
+      );
+    });
+
+    test("should throw error when trying to update (add duplicate ID) a document", async () => {
+      const docId = "cl-doc-2";
+      const timestamp = 1000000;
+
+      await contentlessService.addDocument(docId, timestamp, "original text", "en");
+      await contentlessService.flushAll();
+
+      await contentlessService.addDocument(docId, timestamp, "updated text", "en");
+      await contentlessService.flushAll();
+
+      const results = await contentlessService.search("updated");
+      expect(results).not.toContain(docId);
+
+      const originalResults = await contentlessService.search("original");
+      expect(originalResults).toContain(docId);
+    });
+
+    test("should create significantly smaller files (contentSize should be 0)", async () => {
+      const docId = "size-check";
+      const timestamp = 1000000;
+      const body = "long text ".repeat(100);
+
+      await contentlessService.addDocument(docId, timestamp, body, "en");
+      await contentlessService.flushAll();
+
+      const files = await contentlessService.listFiles(true);
+      expect(files.length).toBe(1);
+
+      expect(files[0].contentSize).toBe(0);
+    });
   });
 });
