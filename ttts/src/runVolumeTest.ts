@@ -16,7 +16,6 @@ interface PrepareOptions {
   iteration: string;
   autoCommit?: string;
   baseDir?: string;
-  duration?: string;
   recordPositions: string;
   recordContents: string;
 }
@@ -45,15 +44,15 @@ function logMemoryUsage(label: string): void {
 
 async function runPrepare(opts: PrepareOptions): Promise<void> {
   const baseSearchConfig = Config.resources[0].search;
+
+  const flushInterval = opts.autoCommit
+    ? parseInt(opts.autoCommit, 10)
+    : baseSearchConfig.autoCommitUpdateCount;
+
   const config: SearchConfig = {
     ...baseSearchConfig,
     baseDir: opts.baseDir ? path.resolve(opts.baseDir) : baseSearchConfig.baseDir,
-    bucketDurationSeconds: opts.duration
-      ? parseInt(opts.duration, 10)
-      : baseSearchConfig.bucketDurationSeconds,
-    autoCommitUpdateCount: opts.autoCommit
-      ? parseInt(opts.autoCommit, 10)
-      : baseSearchConfig.autoCommitUpdateCount,
+    autoCommitUpdateCount: Number.MAX_SAFE_INTEGER,
     recordPositions: opts.recordPositions === "true",
     recordContents: opts.recordContents !== "false",
   };
@@ -76,9 +75,7 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 
   console.log("=== Volume Test Prepare Start ===");
   console.log(`Base Directory: ${config.baseDir}`);
-  console.log(
-    `Vocab Size    : ${vocabSize}, Gamma: ${gamma}, Auto-Commit: ${config.autoCommitUpdateCount}`,
-  );
+  console.log(`Vocab Size    : ${vocabSize}, Gamma: ${gamma}, Flush Interval: ${flushInterval}`);
   console.log(`Positions     : ${config.recordPositions}, Contents: ${config.recordContents}`);
   logMemoryUsage("At Start");
 
@@ -93,36 +90,24 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
     const bucketTs =
       Math.floor(currentSimulatedTime / config.bucketDurationSeconds) *
       config.bucketDurationSeconds;
-    const initialFiles = await service.listFiles(false);
-    const initialShard = initialFiles.find((f) => f.startTimestamp === bucketTs);
-    const initialCount = initialShard ? initialShard.countDocuments : 0;
 
     for (let i = 0; i < docCountPerIter; i++) {
       const docId = `iter${iter}-doc${i}`;
       const body = generateDocument(wordCount, vocabSize, gamma);
       totalGeneratedSize += Buffer.byteLength(body);
 
-      if (i === 0) console.log(`Sample: ${body.substring(0, 100)}...`);
+      if (i === 0) console.log(`\n  Sample: ${body.substring(0, 100)}...`);
+
       await service.addDocument(docId, currentSimulatedTime, body, "en");
-    }
 
-    process.stdout.write("  Flushing buffer to disk... ");
-    await service.flushAll();
-    console.log("Done.");
-
-    while (true) {
-      const files = await service.listFiles(false);
-      const latest = files.find((f) => f.startTimestamp === bucketTs);
-      const currentCount = latest ? latest.countDocuments : 0;
-      const incrementalCount = currentCount - initialCount;
-
-      if (incrementalCount >= docCountPerIter) {
-        process.stdout.write(`\r  Indexing... [${incrementalCount}/${docCountPerIter}] Done.\n`);
-        break;
+      if ((i + 1) % flushInterval === 0) {
+        await service.flushAll();
+        process.stdout.write(`\r  Progress: [${i + 1}/${docCountPerIter}] Flushed.`);
       }
-      process.stdout.write(`\r  Indexing... [${incrementalCount}/${docCountPerIter}] `);
-      await new Promise((resolve) => setTimeout(resolve, 200));
     }
+
+    await service.flushAll();
+    process.stdout.write(`\r  Progress: [${docCountPerIter}/${docCountPerIter}] Done.   \n`);
 
     console.log(`Iteration ${iter} took ${((Date.now() - iterStartTime) / 1000).toFixed(2)}s`);
 
@@ -144,21 +129,19 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
       );
     }
     logMemoryUsage(`After Iteration ${iter}`);
+
     currentSimulatedTime += config.bucketDurationSeconds;
   }
 
   const totalElapsed = (Date.now() - startTimeAll) / 1000;
 
-  // 最後に詳細情報を取得しておく（クローズ前）
   const finalFiles = await service.listFiles(true);
   const totalDocs = finalFiles.reduce((acc, f) => acc + f.countDocuments, 0);
   const totalIndex = finalFiles.reduce((acc, f) => acc + f.indexSize, 0);
   const totalContent = finalFiles.reduce((acc, f) => acc + f.contentSize, 0);
 
-  // サービスをクローズ（ここでチェックポイントが走り、WALが統合・削除されるはず）
   await service.close();
 
-  // ディスク上の実際のサイズを集計
   let finalDiskUsage = 0;
   const dirFiles = await fs.readdir(config.baseDir);
   for (const file of dirFiles) {
@@ -240,9 +223,8 @@ program
   .option("--vocab <number>", "Vocabulary size", "10000")
   .option("--gamma <number>", "Gamma", "0.3")
   .option("--iteration <number>", "Iterations", "2")
-  .option("--auto-commit <number>", "Auto commit count")
+  .option("--auto-commit <number>", "Flush interval (docs)", "3000")
   .option("--base-dir <path>", "Directory path")
-  .option("--duration <number>", "Bucket duration seconds")
   .option("--record-positions <string>", "Record positions", "false")
   .option("--record-contents <string>", "Record contents", "true")
   .action((opts: PrepareOptions) => runPrepare(opts));
