@@ -102,10 +102,16 @@ describe("SearchService", () => {
     expect(file.countDocuments).toBe(1);
     expect(file.isHealthy).toBe(true);
 
+    // 新しい SearchFileInfo 構造のチェック
+    expect(typeof file.totalDatabaseSize).toBe("number");
     expect(typeof file.indexSize).toBe("number");
     expect(typeof file.contentSize).toBe("number");
+    expect(typeof file.fileSize).toBe("number");
+    expect(typeof file.walSize).toBe("number");
+
     expect(file.indexSize).toBeGreaterThanOrEqual(0);
     expect(file.contentSize).toBeGreaterThan(0);
+    expect(file.fileSize).toBeGreaterThan(0);
 
     const results = await service.search("test search");
     expect(results).toContain(docId);

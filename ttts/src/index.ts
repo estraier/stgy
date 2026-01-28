@@ -44,7 +44,8 @@ async function main() {
       const queueLogger = createLogger({ file: "inputQueue", resource: namePrefix });
       const inputQueueService = new InputQueueService(resConfig.inputQueue, queueLogger);
 
-      const worker = new UpdateWorker(searchService, inputQueueService);
+      const workerLogger = createLogger({ file: "worker", resource: namePrefix });
+      const worker = new UpdateWorker(searchService, inputQueueService, workerLogger);
 
       await searchService.open();
       await inputQueueService.open();

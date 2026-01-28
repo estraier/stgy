@@ -3,6 +3,7 @@ import { SearchService, SearchConfig } from "./services/search";
 import { Config } from "./config";
 import { createLogger } from "./utils/logger";
 import path from "path";
+import fs from "fs/promises";
 
 const program = new Command();
 const logger = createLogger({ file: "volume-test" });
@@ -83,6 +84,7 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 
   const startTimeAll = Date.now();
   let currentSimulatedTime = Math.floor(Date.now() / 1000);
+  let totalGeneratedSize = 0;
 
   for (let iter = 1; iter <= iterations; iter++) {
     console.log(`\n--- Iteration ${iter}/${iterations} ---`);
@@ -98,6 +100,8 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
     for (let i = 0; i < docCountPerIter; i++) {
       const docId = `iter${iter}-doc${i}`;
       const body = generateDocument(wordCount, vocabSize, gamma);
+      totalGeneratedSize += Buffer.byteLength(body);
+
       if (i === 0) console.log(`Sample: ${body.substring(0, 100)}...`);
       await service.addDocument(docId, currentSimulatedTime, body, "en");
     }
@@ -125,20 +129,18 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
     const filesAfter = await service.listFiles(true);
     const currentShard = filesAfter.find((f) => f.startTimestamp === bucketTs);
     if (currentShard) {
-      const idxMB = (currentShard.indexSize / 1024 / 1024).toFixed(2);
-      const cntMB = (currentShard.contentSize / 1024 / 1024).toFixed(2);
       const fileMB = (currentShard.fileSize / 1024 / 1024).toFixed(2);
-
-      const idxRatio =
-        currentShard.fileSize > 0
-          ? ((currentShard.indexSize / currentShard.fileSize) * 100).toFixed(1)
-          : "0.0";
+      const walMB = (currentShard.walSize / 1024 / 1024).toFixed(2);
+      const totalDbMB = (currentShard.totalDatabaseSize / 1024 / 1024).toFixed(2);
+      const indexMB = (currentShard.indexSize / 1024 / 1024).toFixed(2);
+      const cntMB = (currentShard.contentSize / 1024 / 1024).toFixed(2);
 
       console.log(
         `Latest Shard Info: Docs: ${currentShard.countDocuments}` +
-          `\n    - Total File : ${fileMB} MB` +
-          `\n    - Index (RAM): ${idxMB} MB (${idxRatio}%)` +
-          `\n    - Content    : ${cntMB} MB`,
+          `\n    - Physical File: ${fileMB} MB (WAL: ${walMB} MB)` +
+          `\n    - Logical DB   : ${totalDbMB} MB` +
+          `\n    - Index (FTS)  : ${indexMB} MB` +
+          `\n    - Content      : ${cntMB} MB`,
       );
     }
     logMemoryUsage(`After Iteration ${iter}`);
@@ -146,21 +148,41 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
   }
 
   const totalElapsed = (Date.now() - startTimeAll) / 1000;
-  const finalFiles = await service.listFiles(true);
 
-  const totalSize = finalFiles.reduce((acc, f) => acc + f.fileSize, 0);
+  // 最後に詳細情報を取得しておく（クローズ前）
+  const finalFiles = await service.listFiles(true);
+  const totalDocs = finalFiles.reduce((acc, f) => acc + f.countDocuments, 0);
   const totalIndex = finalFiles.reduce((acc, f) => acc + f.indexSize, 0);
   const totalContent = finalFiles.reduce((acc, f) => acc + f.contentSize, 0);
-  const totalDocs = finalFiles.reduce((acc, f) => acc + f.countDocuments, 0);
+
+  // サービスをクローズ（ここでチェックポイントが走り、WALが統合・削除されるはず）
+  await service.close();
+
+  // ディスク上の実際のサイズを集計
+  let finalDiskUsage = 0;
+  const dirFiles = await fs.readdir(config.baseDir);
+  for (const file of dirFiles) {
+    if (
+      file.startsWith(config.namePrefix) &&
+      (file.endsWith(".db") || file.endsWith("-wal") || file.endsWith("-shm"))
+    ) {
+      const stats = await fs.stat(path.join(config.baseDir, file));
+      finalDiskUsage += stats.size;
+    }
+  }
 
   console.log("\n=== Final Results ===");
   console.log(`Total Time : ${totalElapsed.toFixed(2)}s`);
   console.log(`Total Docs : ${totalDocs}`);
-  console.log(`Total File : ${(totalSize / 1024 / 1024).toFixed(2)} MB`);
-  console.log(`Total Index: ${(totalIndex / 1024 / 1024).toFixed(2)} MB (Active RAM target)`);
-  console.log(`Total Body : ${(totalContent / 1024 / 1024).toFixed(2)} MB`);
+  console.log(
+    `Total Text : ${(totalGeneratedSize / 1024 / 1024).toFixed(2)} MB (Generated raw text)`,
+  );
+  console.log(`Total Index: ${(totalIndex / 1024 / 1024).toFixed(2)} MB (Logical)`);
+  console.log(`Total Body : ${(totalContent / 1024 / 1024).toFixed(2)} MB (Logical)`);
+  console.log(
+    `Final Disk : ${(finalDiskUsage / 1024 / 1024).toFixed(2)} MB (Physical after close)`,
+  );
 
-  await service.close();
   process.exit(0);
 }
 

@@ -5,6 +5,17 @@ import { Database } from "../utils/database";
 import { Tokenizer } from "../utils/tokenizer";
 import { Logger } from "pino";
 
+const CONFIG_DB_PAGE_SIZE_BYTES = 8192;
+const CONFIG_WAL_MAX_SIZE_BYTES = 67108864;
+
+const CONFIG_LATEST_CACHE_SIZE_BYTES = 25165824;
+const CONFIG_LATEST_MMAP_SIZE_BYTES = 268435456;
+const CONFIG_LATEST_AUTOMERGE_LEVEL = 8;
+
+const CONFIG_ARCHIVE_CACHE_SIZE_BYTES = 409600;
+const CONFIG_ARCHIVE_MMAP_SIZE_BYTES = 0;
+const CONFIG_ARCHIVE_AUTOMERGE_LEVEL = 2;
+
 export type SearchConfig = {
   baseDir: string;
   namePrefix: string;
@@ -22,6 +33,8 @@ export type SearchConfig = {
 export type SearchFileInfo = {
   filename: string;
   fileSize: number;
+  walSize: number;
+  totalDatabaseSize: number;
   indexSize: number;
   contentSize: number;
   countDocuments: number;
@@ -95,10 +108,14 @@ class SearchShard {
     if (this.db || this.isClosing) return;
     try {
       this.db = await Database.open(this.filepath);
+
+      const cacheSizeKb = Math.floor(CONFIG_ARCHIVE_CACHE_SIZE_BYTES / 1024) * -1;
+
       await this.db.exec("PRAGMA journal_mode = WAL;");
       await this.db.exec("PRAGMA synchronous = NORMAL;");
-      await this.db.exec("PRAGMA cache_size = 100;");
-      await this.db.exec("PRAGMA mmap_size = 0;");
+      await this.db.exec(`PRAGMA cache_size = ${cacheSizeKb};`);
+      await this.db.exec(`PRAGMA mmap_size = ${CONFIG_ARCHIVE_MMAP_SIZE_BYTES};`);
+      await this.db.exec(`PRAGMA journal_size_limit = ${CONFIG_WAL_MAX_SIZE_BYTES};`);
 
       await this.db.exec(`
         CREATE TABLE IF NOT EXISTS id_tuples (
@@ -120,7 +137,9 @@ class SearchShard {
       `);
 
       await this.db
-        .exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('pgsz', 8192);")
+        .exec(
+          `INSERT OR REPLACE INTO docs_config(k, v) VALUES('pgsz', ${CONFIG_DB_PAGE_SIZE_BYTES});`,
+        )
         .catch(() => {});
 
       await this.db.exec(`
@@ -176,6 +195,9 @@ class SearchShard {
       await new Promise((resolve) => setTimeout(resolve, 10));
     }
     await this.processBatch();
+    if (this.db && this.operational) {
+      await this.db.exec("PRAGMA wal_checkpoint(PASSIVE);").catch(() => {});
+    }
   }
 
   async optimize(): Promise<void> {
@@ -283,19 +305,18 @@ class SearchShard {
   async getFileInfo(detailed: boolean): Promise<SearchFileInfo> {
     let count = 0;
     let fileSize = 0;
+    let walSize = 0;
+    let totalDatabaseSize = 0;
     let indexSize = 0;
     let contentSize = 0;
     let currentHealthy = this.operational;
 
     try {
       const stats = await fs.stat(this.filepath);
-      fileSize += stats.size;
+      fileSize = stats.size;
 
       const walStats = await fs.stat(this.filepath + "-wal").catch(() => ({ size: 0 }));
-      fileSize += walStats.size;
-
-      const shmStats = await fs.stat(this.filepath + "-shm").catch(() => ({ size: 0 }));
-      fileSize += shmStats.size;
+      walSize = walStats.size;
 
       if (currentHealthy) {
         if (!this.db) await this.open();
@@ -304,15 +325,23 @@ class SearchShard {
           count = row?.c || 0;
 
           if (detailed) {
-            const idxRow = await this.db.get<{ s: number }>(
-              "SELECT SUM(LENGTH(block)) as s FROM docs_data",
-            );
-            indexSize = idxRow?.s || 0;
+            const psRow = await this.db.get<{ page_size: number }>("PRAGMA page_size");
+            const pcRow = await this.db.get<{ page_count: number }>("PRAGMA page_count");
+            totalDatabaseSize = (psRow?.page_size || 0) * (pcRow?.page_count || 0);
 
-            const cntRow = await this.db.get<{ s: number }>(
-              "SELECT SUM(LENGTH(c0)) as s FROM docs_content",
-            );
-            contentSize = cntRow?.s || 0;
+            const idxRow = await this.db.get<{ c: number }>("SELECT count(*) as c FROM docs_data");
+            indexSize = (idxRow?.c || 0) * CONFIG_DB_PAGE_SIZE_BYTES;
+
+            if (this.config.recordContents) {
+              try {
+                const cntRow = await this.db.get<{ s: number }>(
+                  "SELECT SUM(LENGTH(c0)) as s FROM docs_content",
+                );
+                contentSize = cntRow?.s || 0;
+              } catch {
+                contentSize = 0;
+              }
+            }
           }
         } else {
           currentHealthy = false;
@@ -325,6 +354,8 @@ class SearchShard {
     return {
       filename: path.basename(this.filepath),
       fileSize,
+      walSize,
+      totalDatabaseSize,
       indexSize,
       contentSize,
       countDocuments: count,
@@ -369,7 +400,7 @@ class SearchShard {
       for (const task of tasks) {
         try {
           let internalId: number | undefined;
-          const row = await this.db.get<{ internal_id: number }>(
+          let row = await this.db.get<{ internal_id: number }>(
             "SELECT internal_id FROM id_tuples WHERE external_id = ?",
             [task.doc_id],
           );
@@ -383,9 +414,21 @@ class SearchShard {
             internalId = row.internal_id;
           } else {
             if (task.body === null) continue;
-            await this.db.run("INSERT INTO id_tuples (external_id) VALUES (?)", [task.doc_id]);
-            const lastRow = await this.db.get<{ id: number }>("SELECT last_insert_rowid() as id");
-            internalId = lastRow!.id;
+
+            await this.db.run("INSERT OR IGNORE INTO id_tuples (external_id) VALUES (?)", [
+              task.doc_id,
+            ]);
+
+            row = await this.db.get<{ internal_id: number }>(
+              "SELECT internal_id FROM id_tuples WHERE external_id = ?",
+              [task.doc_id],
+            );
+
+            if (!row) {
+              this.logger.error(`Failed to resolve internal_id for ${task.doc_id}`);
+              continue;
+            }
+            internalId = row.internal_id;
           }
 
           if (task.body === null) {
@@ -551,10 +594,13 @@ export class SearchService {
     if (this.latestShardTimestamp > 0 && this.latestShardTimestamp !== timestamp) {
       const oldShard = this.shards.get(this.latestShardTimestamp);
       if (oldShard && oldShard.db) {
-        await oldShard.db.exec("PRAGMA cache_size = 100;");
-        await oldShard.db.exec("PRAGMA mmap_size = 0;");
+        const cacheSizeKb = Math.floor(CONFIG_ARCHIVE_CACHE_SIZE_BYTES / 1024) * -1;
+        await oldShard.db.exec(`PRAGMA cache_size = ${cacheSizeKb};`);
+        await oldShard.db.exec(`PRAGMA mmap_size = ${CONFIG_ARCHIVE_MMAP_SIZE_BYTES};`);
         await oldShard.db
-          .exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 2);")
+          .exec(
+            `INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', ${CONFIG_ARCHIVE_AUTOMERGE_LEVEL});`,
+          )
           .catch(() => {});
         await oldShard.disableReadOnly();
         oldShard.optimize().catch((e) => this.logger.error(`Auto-optimization failed: ${e}`));
@@ -564,10 +610,13 @@ export class SearchService {
     this.latestShardTimestamp = timestamp;
 
     if (shard.db) {
-      await shard.db.exec("PRAGMA cache_size = 3000;");
-      await shard.db.exec("PRAGMA mmap_size = 268435456;");
+      const cacheSizeKb = Math.floor(CONFIG_LATEST_CACHE_SIZE_BYTES / 1024) * -1;
+      await shard.db.exec(`PRAGMA cache_size = ${cacheSizeKb};`);
+      await shard.db.exec(`PRAGMA mmap_size = ${CONFIG_LATEST_MMAP_SIZE_BYTES};`);
       await shard.db
-        .exec("INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', 8);")
+        .exec(
+          `INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', ${CONFIG_LATEST_AUTOMERGE_LEVEL});`,
+        )
         .catch(() => {});
       await shard.enableReadOnly();
     }

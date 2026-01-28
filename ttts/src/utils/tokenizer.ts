@@ -17,7 +17,8 @@ export class Tokenizer {
 
   private initKuromoji(): Promise<void> {
     return new Promise((resolve, reject) => {
-      const dicPath = path.resolve(process.cwd(), "node_modules/kuromoji/dict");
+      const kuromojiEntry = require.resolve("kuromoji");
+      const dicPath = path.join(path.dirname(kuromojiEntry), "../dict") + path.sep;
       kuromoji.builder({ dicPath }).build((err, tokenizer) => {
         if (err) {
           reject(err);
