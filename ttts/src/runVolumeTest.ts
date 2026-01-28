@@ -97,6 +97,10 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
       await service.addDocument(docId, currentSimulatedTime, body, "en");
     }
 
+    process.stdout.write("  Flushing buffer to disk... ");
+    await service.flushAll();
+    console.log("Done.");
+
     while (true) {
       const files = await service.listFiles();
       const latest = files.find((f) => f.startTimestamp === bucketTs);
@@ -175,9 +179,9 @@ async function runSearch(opts: SearchOptions): Promise<void> {
       : results[0];
 
   console.log(`------------------------------`);
-  console.log(`Total Hits       : ${lastHitCount}`);
+  console.log(`Total Hits        : ${lastHitCount}`);
   console.log(`Warm Cache (Avg) : ${avgWarm.toFixed(3)}ms`);
-  console.log(`Throughput       : ${(1000 / avgWarm).toFixed(1)} QPS`);
+  console.log(`Throughput        : ${(1000 / avgWarm).toFixed(1)} QPS`);
 
   await service.close();
   process.exit(0);
