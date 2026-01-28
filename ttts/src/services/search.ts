@@ -347,9 +347,19 @@ class SearchShard {
             await this.db.run("DELETE FROM id_tuples WHERE internal_id = ?", [internalId]);
           } else {
             await this.db.run("DELETE FROM docs WHERE rowid = ?", [internalId]);
-            const tokens = this.tokenizer
-              .tokenize(task.body, task.locale || "en")
-              .slice(0, this.config.maxDocumentTokenCount);
+            const rawTokens = this.tokenizer.tokenize(task.body, task.locale || "en");
+            let tokens;
+            if (this.config.recordPositions) {
+              tokens = rawTokens.slice(0, this.config.maxDocumentTokenCount);
+            } else {
+              const uniqueSet = new Set();
+              const max = this.config.maxDocumentTokenCount;
+              for (const token of rawTokens) {
+                uniqueSet.add(token);
+                if (uniqueSet.size >= max) break;
+              }
+              tokens = Array.from(uniqueSet).sort();
+            }
             await this.db.run("INSERT INTO docs (rowid, tokens) VALUES (?, ?)", [
               internalId,
               tokens.join(" "),
