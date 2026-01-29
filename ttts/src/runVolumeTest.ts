@@ -223,7 +223,7 @@ program
   .option("--vocab <number>", "Vocabulary size", "10000")
   .option("--gamma <number>", "Gamma", "0.3")
   .option("--iteration <number>", "Iterations", "2")
-  .option("--auto-commit <number>", "Flush interval (docs)", "3000")
+  .option("--auto-commit <number>", "Flush interval (docs)", "10000")
   .option("--base-dir <path>", "Directory path")
   .option("--record-positions <string>", "Record positions", "false")
   .option("--record-contents <string>", "Record contents", "true")
