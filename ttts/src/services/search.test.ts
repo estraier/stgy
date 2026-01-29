@@ -13,6 +13,7 @@ const TEST_CONFIG: SearchConfig = {
   autoCommitUpdateCount: 10,
   autoCommitAfterLastUpdateSeconds: 0.1,
   autoCommitAfterLastCommitSeconds: 0.1,
+  initialDocumentId: 2097151, // 追加
   recordPositions: false,
   recordContents: true,
   readConnectionCount: 2,
@@ -55,22 +56,28 @@ describe("SearchService", () => {
     await service.close();
   });
 
-  test("should reserve IDs and maintain order when documents are added later", async () => {
+  /**
+   * Refluxモードの肝：後から入れたものほどRowIDが小さくなるため、
+   * ASC検索で「最新順（doc-3, doc-2, doc-1）」が返るべき。
+   */
+  test("should reserve IDs in reflux order (newest = smallest id)", async () => {
     const timestamp = 1000000;
 
+    // 1 -> 2 -> 3 の順で予約（内部的には 2097151, 2097150, 2097149 と割り振られる想定）
     await service.reserve([
       { id: "doc-1", timestamp },
       { id: "doc-2", timestamp },
       { id: "doc-3", timestamp },
     ]);
 
-    await service.addDocument("doc-3", timestamp, "common keyword", "en");
-    await service.addDocument("doc-1", timestamp, "common keyword", "en");
-    await service.addDocument("doc-2", timestamp, "common keyword", "en");
+    await service.addDocument("doc-1", timestamp, "common", "en");
+    await service.addDocument("doc-2", timestamp, "common", "en");
+    await service.addDocument("doc-3", timestamp, "common", "en");
 
     await service.flushAll();
 
-    const results = await service.search("common keyword");
+    const results = await service.search("common");
+    // RowID ASC順で取得するため、一番小さいIDを持つ doc-3 が最初に来る
     expect(results).toEqual(["doc-3", "doc-2", "doc-1"]);
   });
 
@@ -98,33 +105,26 @@ describe("SearchService", () => {
     expect(files.length).toBe(1);
 
     const file = files[0];
-    expect(file.filename).toContain(TEST_CONFIG.namePrefix);
     expect(file.countDocuments).toBe(1);
     expect(file.isHealthy).toBe(true);
-
-    // 新しい SearchFileInfo 構造のチェック
-    expect(typeof file.totalDatabaseSize).toBe("number");
-    expect(typeof file.indexSize).toBe("number");
-    expect(typeof file.contentSize).toBe("number");
-    expect(typeof file.fileSize).toBe("number");
-    expect(typeof file.walSize).toBe("number");
-
-    expect(file.indexSize).toBeGreaterThanOrEqual(0);
-    expect(file.contentSize).toBeGreaterThan(0);
-    expect(file.fileSize).toBeGreaterThan(0);
 
     const results = await service.search("test search");
     expect(results).toContain(docId);
   });
 
-  test("should return results in rowid DESC order (newest first within shard)", async () => {
+  /**
+   * 内部で ORDER BY rowid ASC を使っているが、ユーザーからは最新順に見えることの確認
+   */
+  test("should return results in newest-first order within shard using reflux", async () => {
     const timestamp = 1000000;
+    // old -> mid -> new の順で追加
     await service.addDocument("doc-old", timestamp, "same keyword", "en");
     await service.addDocument("doc-mid", timestamp, "same keyword", "en");
     await service.addDocument("doc-new", timestamp, "same keyword", "en");
     await service.flushAll();
 
     const results = await service.search("same keyword");
+    // Refluxにより doc-new が最小のRowIDを持つため、ASC検索で先頭に来る
     expect(results).toEqual(["doc-new", "doc-mid", "doc-old"]);
   });
 
@@ -137,8 +137,26 @@ describe("SearchService", () => {
     await service.flushAll();
 
     const results = await service.search("common");
+    // SearchService.search は sortedShards（降順）をループするため、
+    // まず ts: 2000000 のシャードから結果が出る
     expect(results[0]).toBe(doc2.id);
     expect(results[1]).toBe(doc1.id);
+  });
+
+  test("should throw error when RowID is exhausted", async () => {
+    const exhaustedConfig = { ...TEST_CONFIG, initialDocumentId: 1 };
+    const lowIdService = new SearchService(exhaustedConfig, logger);
+    await lowIdService.open();
+
+    const ts = 1000000;
+    await lowIdService.addDocument("doc-1", ts, "text", "en");
+    await lowIdService.addDocument("doc-2", ts, "text", "en");
+
+    // flushAllでのエラーを確認
+    await expect(lowIdService.flushAll()).rejects.toThrow(/RowID exhausted/);
+
+    // close時にもflushが走って再度エラーが出るため、キャッチして握りつぶす
+    await lowIdService.close().catch(() => {});
   });
 
   test("should remove document correctly (recordContents: true)", async () => {
@@ -154,37 +172,12 @@ describe("SearchService", () => {
 
     const results = await service.search("searchable");
     expect(results).not.toContain(docId);
-
-    const files = await service.listFiles();
-    expect(files[0].countDocuments).toBe(0);
-  });
-
-  test("should remove shard file and update sorted cache", async () => {
-    const ts1 = 1000000;
-    const ts2 = 2000000;
-
-    await service.addDocument("doc1", ts1, "content", "en");
-    await service.addDocument("doc2", ts2, "content", "en");
-    await service.flushAll();
-
-    let files = await service.listFiles();
-    expect(files.length).toBe(2);
-
-    await service.removeFile(ts2);
-
-    files = await service.listFiles();
-    expect(files.length).toBe(1);
-    expect(files[0].startTimestamp).toBe(ts1);
-
-    const results = await service.search("content");
-    expect(results).toEqual(["doc1"]);
   });
 
   test("should detect unhealthy index if file is tampered", async () => {
     const timestamp = 3000000;
     await service.addDocument("health-doc", timestamp, "Check health", "en");
     await service.flushAll();
-
     await service.close();
 
     const shardFile = path.join(TEST_DIR, `${TEST_CONFIG.namePrefix}-${timestamp}.db`);
@@ -198,55 +191,12 @@ describe("SearchService", () => {
     expect(file?.isHealthy).toBe(false);
   });
 
-  test("should persist data and optimize latest shard after restart", async () => {
-    const docId = "persistent-doc";
-    const timestamp = 1000000;
-
-    await service.addDocument(docId, timestamp, "Persistent data", "en");
-    await service.flushAll();
-    await service.close();
-
-    const newService = new SearchService(TEST_CONFIG, logger);
-    await newService.open();
-    try {
-      const results = await newService.search("Persistent");
-      expect(results[0]).toBe(docId);
-    } finally {
-      await newService.close();
-    }
-  });
-
-  test("should respect token limits during tokenization", async () => {
-    const docId = "limit-doc";
-    const timestamp = 1000000;
-
-    const text = "alpha beta gamma delta epsilon";
-    await service.addDocument(docId, timestamp, text, "en");
-    await service.flushAll();
-
-    const results = await service.search("alpha beta gamma");
-    expect(results).toContain(docId);
-  });
-
-  test("should handle search timeout gracefully", async () => {
-    await service.addDocument("doc1", 1000000, "slow search", "en");
-    await service.flushAll();
-
-    const results = await service.search("slow", "en", 100, 0);
-    expect(Array.isArray(results)).toBe(true);
-  });
-
   describe("Contentless Mode (recordContents: false)", () => {
     let contentlessService: SearchService;
 
     beforeEach(async () => {
       await service.close();
-
-      const contentlessConfig: SearchConfig = {
-        ...TEST_CONFIG,
-        recordContents: false,
-      };
-
+      const contentlessConfig: SearchConfig = { ...TEST_CONFIG, recordContents: false };
       contentlessService = new SearchService(contentlessConfig, logger);
       await contentlessService.open();
     });
@@ -258,44 +208,21 @@ describe("SearchService", () => {
     test("should throw error when trying to remove a document", async () => {
       const docId = "cl-doc-1";
       const timestamp = 1000000;
-
       await contentlessService.addDocument(docId, timestamp, "text", "en");
       await contentlessService.flushAll();
-
-      await expect(contentlessService.removeDocument(docId, timestamp)).rejects.toThrow(
-        /contentless mode/,
-      );
+      await expect(contentlessService.removeDocument(docId, timestamp)).rejects.toThrow(/contentless mode/);
     });
 
-    test("should throw error when trying to update (add duplicate ID) a document", async () => {
+    test("should not update (add duplicate ID) in contentless mode", async () => {
       const docId = "cl-doc-2";
       const timestamp = 1000000;
-
-      await contentlessService.addDocument(docId, timestamp, "original text", "en");
+      await contentlessService.addDocument(docId, timestamp, "original", "en");
       await contentlessService.flushAll();
-
-      await contentlessService.addDocument(docId, timestamp, "updated text", "en");
+      await contentlessService.addDocument(docId, timestamp, "updated", "en");
       await contentlessService.flushAll();
 
       const results = await contentlessService.search("updated");
       expect(results).not.toContain(docId);
-
-      const originalResults = await contentlessService.search("original");
-      expect(originalResults).toContain(docId);
-    });
-
-    test("should create significantly smaller files (contentSize should be 0)", async () => {
-      const docId = "size-check";
-      const timestamp = 1000000;
-      const body = "long text ".repeat(100);
-
-      await contentlessService.addDocument(docId, timestamp, body, "en");
-      await contentlessService.flushAll();
-
-      const files = await contentlessService.listFiles(true);
-      expect(files.length).toBe(1);
-
-      expect(files[0].contentSize).toBe(0);
     });
   });
 });

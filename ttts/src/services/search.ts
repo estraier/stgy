@@ -23,6 +23,7 @@ export type SearchConfig = {
   autoCommitUpdateCount: number;
   autoCommitAfterLastUpdateSeconds: number;
   autoCommitAfterLastCommitSeconds: number;
+  initialDocumentId: number;
   recordPositions: boolean;
   recordContents: boolean;
   readConnectionCount: number;
@@ -94,8 +95,27 @@ class SearchShard {
 
     try {
       await this.db.exec("BEGIN TRANSACTION;");
+
+      const minRow = await this.db.get<{ min_id: number | null }>(
+        "SELECT MIN(internal_id) as min_id FROM id_tuples"
+      );
+      let nextId = (minRow?.min_id !== null && minRow?.min_id !== undefined)
+        ? minRow.min_id - 1
+        : this.config.initialDocumentId;
+
       for (const id of externalIds) {
-        await this.db.run("INSERT OR IGNORE INTO id_tuples (external_id) VALUES (?)", [id]);
+        const existing = await this.db.get<{ internal_id: number }>(
+          "SELECT internal_id FROM id_tuples WHERE external_id = ?",
+          [id]
+        );
+        if (!existing) {
+          if (nextId <= 0) throw new Error("RowID exhausted during reservation");
+          await this.db.run("INSERT INTO id_tuples (internal_id, external_id) VALUES (?, ?)", [
+            nextId,
+            id,
+          ]);
+          nextId--;
+        }
       }
       await this.db.exec("COMMIT;");
     } catch (e) {
@@ -119,7 +139,7 @@ class SearchShard {
 
       await this.db.exec(`
         CREATE TABLE IF NOT EXISTS id_tuples (
-          internal_id INTEGER PRIMARY KEY AUTOINCREMENT,
+          internal_id INTEGER PRIMARY KEY,
           external_id TEXT UNIQUE
         );
       `);
@@ -289,7 +309,7 @@ class SearchShard {
          FROM docs
          JOIN id_tuples t ON docs.rowid = t.internal_id
          WHERE docs MATCH ?
-         ORDER BY docs.rowid DESC
+         ORDER BY docs.rowid ASC
          LIMIT ?`,
         [query, limit],
       );
@@ -397,6 +417,13 @@ class SearchShard {
 
       await this.db.exec("BEGIN TRANSACTION");
 
+      const minRow = await this.db.get<{ min_id: number | null }>(
+        "SELECT MIN(internal_id) as min_id FROM id_tuples"
+      );
+      let nextInternalId = (minRow?.min_id !== null && minRow?.min_id !== undefined)
+        ? minRow.min_id - 1
+        : this.config.initialDocumentId;
+
       for (const task of tasks) {
         try {
           let internalId: number | undefined;
@@ -407,28 +434,22 @@ class SearchShard {
 
           if (row) {
             if (!this.config.recordContents) {
-              throw new Error(
-                `Duplicate document ID ${task.doc_id} detected in contentless mode. Updates are not allowed.`,
-              );
+              throw new Error(`Duplicate document ID ${task.doc_id} detected in contentless mode.`);
             }
             internalId = row.internal_id;
           } else {
             if (task.body === null) continue;
 
-            await this.db.run("INSERT OR IGNORE INTO id_tuples (external_id) VALUES (?)", [
+            if (nextInternalId <= 0) {
+              throw new Error(`RowID exhausted in shard ${this.filepath}.`);
+            }
+
+            await this.db.run("INSERT INTO id_tuples (internal_id, external_id) VALUES (?, ?)", [
+              nextInternalId,
               task.doc_id,
             ]);
-
-            row = await this.db.get<{ internal_id: number }>(
-              "SELECT internal_id FROM id_tuples WHERE external_id = ?",
-              [task.doc_id],
-            );
-
-            if (!row) {
-              this.logger.error(`Failed to resolve internal_id for ${task.doc_id}`);
-              continue;
-            }
-            internalId = row.internal_id;
+            internalId = nextInternalId;
+            nextInternalId--;
           }
 
           if (task.body === null) {
@@ -444,7 +465,7 @@ class SearchShard {
             if (this.config.recordPositions) {
               tokens = rawTokens.slice(0, this.config.maxDocumentTokenCount);
             } else {
-              const uniqueSet = new Set();
+              const uniqueSet = new Set<string>();
               const max = this.config.maxDocumentTokenCount;
               for (const token of rawTokens) {
                 uniqueSet.add(token);
@@ -457,8 +478,9 @@ class SearchShard {
               tokens.join(" "),
             ]);
           }
-        } catch (e) {
+        } catch (e: any) {
           this.logger.error(`Task execution error for ${task.doc_id}: ${e}`);
+          if (e.message.includes("RowID exhausted")) throw e;
         }
       }
 
@@ -470,6 +492,7 @@ class SearchShard {
     } catch (e) {
       this.logger.error(`Batch processing failed: ${e}`);
       if (this.db) await this.db.exec("ROLLBACK").catch(() => {});
+      throw e;
     } finally {
       this.isProcessingBatch = false;
       if (this.pendingCount >= this.config.autoCommitUpdateCount && !this.isClosing) {
