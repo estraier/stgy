@@ -183,6 +183,15 @@ CREATE TABLE ai_post_impressions (
 CREATE INDEX idx_ai_post_impressions_post_id_user_id_updated_at ON ai_post_impressions(post_id, user_id, updated_at);
 CREATE INDEX idx_ai_post_impressions_user_id_updated_at ON ai_post_impressions(user_id, updated_at);
 
+CREATE TABLE search_indexing_tasks (
+  id BIGINT PRIMARY KEY,
+  name_prefix VARCHAR(50) NOT NULL,
+  doc_id VARCHAR(100) NOT NULL,
+  doc_timestamp BIGINT NOT NULL,
+  body_text TEXT,
+  locale VARCHAR(10)
+);
+
 CREATE TABLE event_logs (
   partition_id SMALLINT NOT NULL,
   event_id BIGINT NOT NULL,

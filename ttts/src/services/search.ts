@@ -88,15 +88,16 @@ class SearchShard {
     try {
       await this.db.exec("BEGIN TRANSACTION;");
       const minRow = await this.db.get<{ min_id: number | null }>(
-        "SELECT MIN(internal_id) as min_id FROM id_tuples"
+        "SELECT MIN(internal_id) as min_id FROM id_tuples",
       );
-      let nextId = (minRow?.min_id !== null && minRow?.min_id !== undefined)
-        ? minRow.min_id - 1
-        : this.config.initialDocumentId;
+      let nextId =
+        minRow?.min_id !== null && minRow?.min_id !== undefined
+          ? minRow.min_id - 1
+          : this.config.initialDocumentId;
       for (const id of externalIds) {
         const existing = await this.db.get<{ internal_id: number }>(
           "SELECT internal_id FROM id_tuples WHERE external_id = ?",
-          [id]
+          [id],
         );
         if (!existing) {
           if (nextId <= 0) throw new Error("RowID exhausted during reservation");
@@ -140,9 +141,11 @@ class SearchShard {
           ${contentOption}
         );
       `);
-      await this.db.exec(
+      await this.db
+        .exec(
           `INSERT OR REPLACE INTO docs_config(k, v) VALUES('pgsz', ${CONFIG_DB_PAGE_SIZE_BYTES});`,
-        ).catch(() => {});
+        )
+        .catch(() => {});
       await this.db.exec(`
         CREATE TABLE IF NOT EXISTS batch_tasks (
           id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -218,7 +221,11 @@ class SearchShard {
     this.isProcessingBatch = true;
     try {
       await this.db.exec("BEGIN TRANSACTION;");
-      const allDocs = await this.db.all<{ internal_id: number; external_id: string; tokens: string }>(`
+      const allDocs = await this.db.all<{
+        internal_id: number;
+        external_id: string;
+        tokens: string;
+      }>(`
         SELECT t.internal_id, t.external_id, d.tokens
         FROM id_tuples t
         JOIN docs d ON t.internal_id = d.rowid
@@ -233,7 +240,10 @@ class SearchShard {
       let nextId = newInitialId;
       for (const doc of allDocs) {
         if (nextId <= 0) throw new Error("New initial ID is too small.");
-        await this.db.run("INSERT INTO id_tuples (internal_id, external_id) VALUES (?, ?)", [nextId, doc.external_id]);
+        await this.db.run("INSERT INTO id_tuples (internal_id, external_id) VALUES (?, ?)", [
+          nextId,
+          doc.external_id,
+        ]);
         await this.db.run("INSERT INTO docs (rowid, tokens) VALUES (?, ?)", [nextId, doc.tokens]);
         nextId--;
       }
@@ -277,17 +287,26 @@ class SearchShard {
     if (!this.operational) throw new Error("Shard is not operational");
     if (!this.db) await this.open();
     if (!this.db) throw new Error("Database not initialized");
-    await this.db.run("INSERT INTO batch_tasks (doc_id, body, locale) VALUES (?, ?, ?)", [docId, bodyText, locale]);
+    await this.db.run("INSERT INTO batch_tasks (doc_id, body, locale) VALUES (?, ?, ?)", [
+      docId,
+      bodyText,
+      locale,
+    ]);
     this.onTaskAdded();
   }
 
   async removeDocument(docId: string): Promise<void> {
-    if (!this.config.recordContents) throw new Error("Cannot remove documents in contentless mode.");
+    if (!this.config.recordContents)
+      throw new Error("Cannot remove documents in contentless mode.");
     if (this.isClosing) throw new Error("Shard is closing");
     if (!this.operational) throw new Error("Shard is not operational");
     if (!this.db) await this.open();
     if (!this.db) throw new Error("Database not initialized");
-    await this.db.run("INSERT INTO batch_tasks (doc_id, body, locale) VALUES (?, ?, ?)", [docId, null, null]);
+    await this.db.run("INSERT INTO batch_tasks (doc_id, body, locale) VALUES (?, ?, ?)", [
+      docId,
+      null,
+      null,
+    ]);
     this.onTaskAdded();
   }
 
@@ -318,7 +337,12 @@ class SearchShard {
   }
 
   async getFileInfo(detailed: boolean): Promise<SearchFileInfo> {
-    let count = 0, fileSize = 0, walSize = 0, totalDatabaseSize = 0, indexSize = 0, contentSize = 0;
+    let count = 0,
+      fileSize = 0,
+      walSize = 0,
+      totalDatabaseSize = 0,
+      indexSize = 0,
+      contentSize = 0;
     let currentHealthy = this.operational;
     try {
       const stats = await fs.stat(this.filepath);
@@ -338,17 +362,29 @@ class SearchShard {
             indexSize = (idxRow?.c || 0) * CONFIG_DB_PAGE_SIZE_BYTES;
             if (this.config.recordContents) {
               try {
-                const cntRow = await this.db.get<{ s: number }>("SELECT SUM(LENGTH(c0)) as s FROM docs_content");
+                const cntRow = await this.db.get<{ s: number }>(
+                  "SELECT SUM(LENGTH(c0)) as s FROM docs_content",
+                );
                 contentSize = cntRow?.s || 0;
-              } catch { contentSize = 0; }
+              } catch {
+                contentSize = 0;
+              }
             }
           }
-        } else { currentHealthy = false; }
+        } else {
+          currentHealthy = false;
+        }
       }
-    } catch { currentHealthy = false; }
+    } catch {
+      currentHealthy = false;
+    }
     return {
       filename: path.basename(this.filepath),
-      fileSize, walSize, totalDatabaseSize, indexSize, contentSize,
+      fileSize,
+      walSize,
+      totalDatabaseSize,
+      indexSize,
+      contentSize,
       countDocuments: count,
       startTimestamp: this.startTimestamp,
       endTimestamp: this.startTimestamp + this.config.bucketDurationSeconds,
@@ -363,7 +399,10 @@ class SearchShard {
       return;
     }
     if (!this.batchTimer && !this.isClosing) {
-      const delay = Math.min(this.config.autoCommitAfterLastUpdateSeconds * 1000, this.config.autoCommitAfterLastCommitSeconds * 1000);
+      const delay = Math.min(
+        this.config.autoCommitAfterLastUpdateSeconds * 1000,
+        this.config.autoCommitAfterLastCommitSeconds * 1000,
+      );
       this.batchTimer = setTimeout(() => {
         this.batchTimer = null;
         this.processBatch().catch(() => {});
@@ -382,19 +421,31 @@ class SearchShard {
         return;
       }
       await this.db.exec("BEGIN TRANSACTION");
-      const minRow = await this.db.get<{ min_id: number | null }>("SELECT MIN(internal_id) as min_id FROM id_tuples");
-      let nextInternalId = (minRow?.min_id !== null && minRow?.min_id !== undefined) ? minRow.min_id - 1 : this.config.initialDocumentId;
+      const minRow = await this.db.get<{ min_id: number | null }>(
+        "SELECT MIN(internal_id) as min_id FROM id_tuples",
+      );
+      let nextInternalId =
+        minRow?.min_id !== null && minRow?.min_id !== undefined
+          ? minRow.min_id - 1
+          : this.config.initialDocumentId;
       for (const task of tasks) {
         try {
           let internalId: number | undefined;
-          let row = await this.db.get<{ internal_id: number }>("SELECT internal_id FROM id_tuples WHERE external_id = ?", [task.doc_id]);
+          let row = await this.db.get<{ internal_id: number }>(
+            "SELECT internal_id FROM id_tuples WHERE external_id = ?",
+            [task.doc_id],
+          );
           if (row) {
-            if (!this.config.recordContents) throw new Error(`Duplicate document ID ${task.doc_id} in contentless mode.`);
+            if (!this.config.recordContents)
+              throw new Error(`Duplicate document ID ${task.doc_id} in contentless mode.`);
             internalId = row.internal_id;
           } else {
             if (task.body === null) continue;
             if (nextInternalId <= 0) throw new Error(`RowID exhausted in shard ${this.filepath}.`);
-            await this.db.run("INSERT INTO id_tuples (internal_id, external_id) VALUES (?, ?)", [nextInternalId, task.doc_id]);
+            await this.db.run("INSERT INTO id_tuples (internal_id, external_id) VALUES (?, ?)", [
+              nextInternalId,
+              task.doc_id,
+            ]);
             internalId = nextInternalId;
             nextInternalId--;
           }
@@ -416,7 +467,10 @@ class SearchShard {
               }
               tokens = Array.from(uniqueSet).sort();
             }
-            await this.db.run("INSERT INTO docs (rowid, tokens) VALUES (?, ?)", [internalId, tokens.join(" ")]);
+            await this.db.run("INSERT INTO docs (rowid, tokens) VALUES (?, ?)", [
+              internalId,
+              tokens.join(" "),
+            ]);
           }
         } catch (e) {
           if (e instanceof Error) {
@@ -427,7 +481,9 @@ class SearchShard {
           }
         }
       }
-      await this.db.run("DELETE FROM batch_tasks WHERE id IN (" + tasks.map((t) => t.id).join(",") + ")");
+      await this.db.run(
+        "DELETE FROM batch_tasks WHERE id IN (" + tasks.map((t) => t.id).join(",") + ")",
+      );
       await this.db.exec("COMMIT");
       this.pendingCount = Math.max(0, this.pendingCount - taskCount);
     } catch (e) {
@@ -443,7 +499,9 @@ class SearchShard {
 
   private async recover() {
     if (!this.db || !this.operational) return;
-    const row = await this.db.get<{ c: number }>("SELECT count(*) as c FROM batch_tasks").catch(() => null);
+    const row = await this.db
+      .get<{ c: number }>("SELECT count(*) as c FROM batch_tasks")
+      .catch(() => null);
     if (row && row.c > 0) {
       this.pendingCount = row.c;
       await this.processBatch().catch(() => {});
@@ -530,7 +588,9 @@ export class SearchService {
   }
 
   private rebuildSortedCache(): void {
-    this.sortedShards = Array.from(this.shards.values()).sort((a, b) => b.startTimestamp - a.startTimestamp);
+    this.sortedShards = Array.from(this.shards.values()).sort(
+      (a, b) => b.startTimestamp - a.startTimestamp,
+    );
   }
 
   private async promoteToLatest(timestamp: number): Promise<void> {
@@ -542,7 +602,11 @@ export class SearchService {
         const cacheSizeKb = Math.floor(CONFIG_ARCHIVE_CACHE_SIZE_BYTES / 1024) * -1;
         await oldShard.db.exec(`PRAGMA cache_size = ${cacheSizeKb};`);
         await oldShard.db.exec(`PRAGMA mmap_size = ${CONFIG_ARCHIVE_MMAP_SIZE_BYTES};`);
-        await oldShard.db.exec(`INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', ${CONFIG_ARCHIVE_AUTOMERGE_LEVEL});`).catch(() => {});
+        await oldShard.db
+          .exec(
+            `INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', ${CONFIG_ARCHIVE_AUTOMERGE_LEVEL});`,
+          )
+          .catch(() => {});
         await oldShard.disableReadOnly();
         oldShard.optimize().catch((e) => this.logger.error(`Auto-optimization failed: ${e}`));
       }
@@ -552,12 +616,21 @@ export class SearchService {
       const cacheSizeKb = Math.floor(CONFIG_LATEST_CACHE_SIZE_BYTES / 1024) * -1;
       await shard.db.exec(`PRAGMA cache_size = ${cacheSizeKb};`);
       await shard.db.exec(`PRAGMA mmap_size = ${CONFIG_LATEST_MMAP_SIZE_BYTES};`);
-      await shard.db.exec(`INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', ${CONFIG_LATEST_AUTOMERGE_LEVEL});`).catch(() => {});
+      await shard.db
+        .exec(
+          `INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', ${CONFIG_LATEST_AUTOMERGE_LEVEL});`,
+        )
+        .catch(() => {});
       await shard.enableReadOnly();
     }
   }
 
-  async addDocument(docId: string, timestamp: number, bodyText: string, locale: string): Promise<void> {
+  async addDocument(
+    docId: string,
+    timestamp: number,
+    bodyText: string,
+    locale: string,
+  ): Promise<void> {
     if (!this.isOpen || !this.tokenizer) throw new Error("Service not open");
     const shard = await this.getShard(timestamp);
     await shard.addDocument(docId, bodyText, locale);
@@ -569,19 +642,29 @@ export class SearchService {
     await shard.removeDocument(docId);
   }
 
-  async search(query: string, locale = "en", limit = 100, timeoutInMs = 1000): Promise<string[]> {
+  async search(
+    query: string,
+    locale = "en",
+    limit = 100,
+    offset = 0,
+    timeoutInMs = 1000,
+  ): Promise<string[]> {
     if (!this.isOpen || !this.tokenizer) throw new Error("Service not open");
     const tokens = this.tokenizer.tokenize(query, locale).slice(0, this.config.maxQueryTokenCount);
     if (tokens.length === 0) return [];
     const results = new Set<string>();
     const startTime = Date.now();
+    const needed = limit + offset;
     for (const shard of this.sortedShards) {
       if (Date.now() - startTime > timeoutInMs) break;
-      if (results.size >= limit) break;
-      const shardResults = await shard.search(tokens, limit - results.size);
-      for (const id of shardResults) results.add(id);
+      if (results.size >= needed) break;
+
+      const shardResults = await shard.search(tokens, needed - results.size);
+      for (const id of shardResults) {
+        results.add(id);
+      }
     }
-    return Array.from(results).slice(0, limit);
+    return Array.from(results).slice(offset, offset + limit);
   }
 
   async listFiles(detailed: boolean = false): Promise<SearchFileInfo[]> {
@@ -608,7 +691,9 @@ export class SearchService {
   }
 
   private getBucketTimestamp(timestamp: number): number {
-    return Math.floor(timestamp / this.config.bucketDurationSeconds) * this.config.bucketDurationSeconds;
+    return (
+      Math.floor(timestamp / this.config.bucketDurationSeconds) * this.config.bucketDurationSeconds
+    );
   }
 
   private async getShard(timestamp: number): Promise<SearchShard> {
@@ -617,7 +702,13 @@ export class SearchService {
       if (!this.tokenizer) throw new Error("Tokenizer not initialized");
       const filename = `${this.config.namePrefix}-${startTimestamp}.db`;
       const filepath = path.join(this.config.baseDir, filename);
-      const shard = new SearchShard(filepath, startTimestamp, this.config, this.tokenizer, this.logger);
+      const shard = new SearchShard(
+        filepath,
+        startTimestamp,
+        this.config,
+        this.tokenizer,
+        this.logger,
+      );
       await shard.open();
       this.shards.set(startTimestamp, shard);
       this.rebuildSortedCache();

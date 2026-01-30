@@ -104,8 +104,9 @@ export default function createResourceRouter(instance: ResourceInstance) {
       }
       const locale = (req.query.locale as string) || "en";
       const limit = parseInt(req.query.limit as string, 10) || 100;
+      const offset = parseInt(req.query.offset as string, 10) || 0;
       const timeout = parseInt(req.query.timeout as string, 10) || 1000;
-      const results = await searchService.search(query, locale, limit, timeout);
+      const results = await searchService.search(query, locale, limit, offset, timeout);
       res.json(results);
     } catch (e) {
       logger.error(`Search error: ${e}`);

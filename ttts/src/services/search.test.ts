@@ -195,6 +195,26 @@ describe("SearchService", () => {
     expect(file?.isHealthy).toBe(false);
   });
 
+  test("should support pagination (offset and limit)", async () => {
+    const timestamp = 1000000;
+    await service.addDocument("doc-1", timestamp, "paging", "en");
+    await service.addDocument("doc-2", timestamp, "paging", "en");
+    await service.addDocument("doc-3", timestamp, "paging", "en");
+    await service.addDocument("doc-4", timestamp, "paging", "en");
+    await service.addDocument("doc-5", timestamp, "paging", "en");
+    await service.flushAll();
+    const all = await service.search("paging", "en", 100, 0);
+    expect(all).toEqual(["doc-5", "doc-4", "doc-3", "doc-2", "doc-1"]);
+    const page1 = await service.search("paging", "en", 2, 0);
+    expect(page1).toEqual(["doc-5", "doc-4"]);
+    const page2 = await service.search("paging", "en", 2, 2);
+    expect(page2).toEqual(["doc-3", "doc-2"]);
+    const page3 = await service.search("paging", "en", 2, 4);
+    expect(page3).toEqual(["doc-1"]);
+    const empty = await service.search("paging", "en", 2, 10);
+    expect(empty).toEqual([]);
+  });
+
   describe("Contentless Mode (recordContents: false)", () => {
     let contentlessService: SearchService;
 
