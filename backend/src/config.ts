@@ -8,6 +8,8 @@ export class Config {
     "http://localhost:3100",
   ]);
   static readonly BACKEND_PORT = envNum("STGY_BACKEND_PORT", 3100);
+  static readonly SEARCH_HOST = envStr("STGY_SEARCH_HOST", "localhost");
+  static readonly SEARCH_PORT = envNum("STGY_SEARCH_PORT", 3200);
   static readonly DATABASE_HOST = envStr("STGY_DATABASE_HOST", "localhost");
   static readonly DATABASE_PORT = envNum("STGY_DATABASE_PORT", 5432);
   static readonly DATABASE_USER = envStr("STGY_DATABASE_USER", "admin");

@@ -7,7 +7,7 @@ set -a
 set +a
 
 CMD="dev"
-PORT="${TTTS_SERVER_PORT:-3200}"
+PORT="${SEARCH_SERVER_PORT:-3200}"
 
 declare -a PASS_ARGS=()
 
@@ -38,10 +38,10 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
   exit 1
 fi
 
-export STGY_TTTS_PORT="$PORT"
-export STGY_TTTS_LOG_FORMAT="simple"
+export STGY_SEARCH_PORT="$PORT"
+export STGY_SEARCH_LOG_FORMAT="simple"
 
-echo "[run-local-ttts] port=${STGY_TTTS_PORT} cmd=${CMD}"
+echo "[run-local-ttts] port=${STGY_SEARCH_PORT} cmd=${CMD}"
 echo "[run-local-ttts] npm run ${CMD} -- ${PASS_ARGS[*]-}"
 
 if ((${#PASS_ARGS[@]})); then

@@ -7,8 +7,8 @@ export type ResourceConfig = {
   inputQueue: InputQueueConfig;
 };
 
-const DEFAULT_INDEX_DIR = path.join(process.cwd(), "ttts-index");
-const COMMON_INDEX_DIR = envStr("STGY_TTTS_INDEX_DIR", DEFAULT_INDEX_DIR);
+const DEFAULT_INDEX_DIR = path.join(process.cwd(), "search-index");
+const COMMON_INDEX_DIR = envStr("STGY_SEARCH_INDEX_DIR", DEFAULT_INDEX_DIR);
 
 export class Config {
   static readonly resources: ResourceConfig[] = [
@@ -53,10 +53,10 @@ export class Config {
       },
     },
   ];
-  static readonly INPUT_BODY_LIMIT = envNum("STGY_TTTS_INPUT_BODY_LIMIT", 2 * 1024 * 1024);
-  static readonly TTTS_PORT = envNum("STGY_TTTS_PORT", 3200);
-  static readonly LOG_FORMAT = envStr("STGY_TTTS_LOG_FORMAT", "");
-  static readonly ENABLE_KUROMOJI = envBool("STGY_TTTS_ENABLE_KUROMOJI", false);
+  static readonly INPUT_BODY_LIMIT = envNum("STGY_SEARCH_INPUT_BODY_LIMIT", 2 * 1024 * 1024);
+  static readonly SERVER_PORT = envNum("STGY_SEARCH_PORT", 3200);
+  static readonly LOG_FORMAT = envStr("STGY_SEARCH_LOG_FORMAT", "");
+  static readonly ENABLE_KUROMOJI = envBool("STGY_SEARCH_ENABLE_KUROMOJI", false);
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {
