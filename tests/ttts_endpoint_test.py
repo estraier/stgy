@@ -54,6 +54,68 @@ def test_posts():
   print(f"[posts] delete doc accepted")
   print("[test_posts] OK")
 
+def test_tokenize():
+  resource = "posts"
+  base_url = f"{BASE_URL}/{resource}"
+  text = "Hello Search World"
+  res = requests.get(f"{base_url}/tokenize", params={"text": text, "locale": "en"})
+  assert res.status_code == 200, res.text
+  tokens = res.json()
+  assert isinstance(tokens, list)
+  assert "hello" in tokens
+  assert "world" in tokens
+  print(f"[tokenize] tokens: {tokens}")
+  print("[test_tokenize] OK")
+
+def test_reservation():
+  resource = "posts"
+  base_url = f"{BASE_URL}/{resource}"
+  res = requests.get(f"{base_url}/reservation-mode")
+  assert res.status_code == 200
+  assert res.json()["enabled"] is False
+  res = requests.put(f"{base_url}/reservation-mode")
+  assert res.status_code == 200
+  assert res.json()["enabled"] is True
+  print("[reservation] enabled mode")
+  reserve_payload = [{"id": "res-1", "timestamp": int(time.time())}]
+  res = requests.post(f"{base_url}/reserve", json=reserve_payload)
+  assert res.status_code == 200
+  assert res.json()["result"] == "reserved"
+  print("[reservation] IDs reserved")
+  res = requests.delete(f"{base_url}/reservation-mode")
+  assert res.status_code == 200
+  assert res.json()["enabled"] is False
+  print("[reservation] disabled mode")
+  print("[test_reservation] OK")
+
+def test_shards():
+  resource = "posts"
+  base_url = f"{BASE_URL}/{resource}"
+  past_ts = 100
+  shard_test_id = "shard-test-doc"
+  requests.put(f"{base_url}/{shard_test_id}", json={"text": "test", "timestamp": past_ts})
+  found_shard = None
+  for i in range(20):
+    time.sleep(1)
+    requests.post(f"{base_url}/flush")
+    res = requests.get(f"{base_url}/shards", params={"detailed": "true"})
+    assert res.status_code == 200
+    shards = res.json()
+    target = next((s for s in shards if s["startTimestamp"] == 0), None)
+    if target:
+      found_shard = target
+      break
+  assert found_shard is not None, "Shard for timestamp 0 not found within 20s"
+  print(f"[shards] found target shard: {found_shard['filename']}")
+  res = requests.delete(f"{base_url}/shards/{past_ts}")
+  assert res.status_code == 200
+  print(f"[shards] deleted shard for timestamp {past_ts}")
+  res = requests.get(f"{base_url}/shards")
+  shards = res.json()
+  target = next((s for s in shards if s["startTimestamp"] == 0), None)
+  assert target is None, "Shard should be deleted"
+  print("[test_shards] OK")
+
 def main():
   test_funcs = {name: fn for name, fn in globals().items() if name.startswith("test_") and callable(fn)}
   if len(sys.argv) < 2:
