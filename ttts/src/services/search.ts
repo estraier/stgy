@@ -647,7 +647,7 @@ export class SearchService {
     locale = "en",
     limit = 100,
     offset = 0,
-    timeoutInMs = 1000,
+    timeout = 1,
   ): Promise<string[]> {
     if (!this.isOpen || !this.tokenizer) throw new Error("Service not open");
     const tokens = this.tokenizer.tokenize(query, locale).slice(0, this.config.maxQueryTokenCount);
@@ -655,8 +655,10 @@ export class SearchService {
     const results = new Set<string>();
     const startTime = Date.now();
     const needed = limit + offset;
+    const timeoutMs = timeout * 1000;
+
     for (const shard of this.sortedShards) {
-      if (Date.now() - startTime > timeoutInMs) break;
+      if (Date.now() - startTime > timeoutMs) break;
       if (results.size >= needed) break;
 
       const shardResults = await shard.search(tokens, needed - results.size);
@@ -687,6 +689,14 @@ export class SearchService {
         if (nextLatestShard) await this.promoteToLatest(nextLatestShard.startTimestamp);
         else this.latestShardTimestamp = 0;
       }
+    }
+  }
+
+  async removeAllFiles(): Promise<void> {
+    if (!this.isOpen) throw new Error("Service not open");
+    const timestamps = Array.from(this.shards.keys());
+    for (const ts of timestamps) {
+      await this.removeFile(ts);
     }
   }
 
