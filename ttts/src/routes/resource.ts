@@ -69,6 +69,16 @@ export default function createResourceRouter(instance: ResourceInstance) {
     }
   });
 
+  router.post("/flush", async (_req: Request, res: Response) => {
+    try {
+      await searchService.flushAll();
+      res.json({ result: "flushed" });
+    } catch (e) {
+      logger.error(`Flush error: ${e}`);
+      res.status(500).json({ error: "failed to flush" });
+    }
+  });
+
   router.get("/tokenize", (req: Request, res: Response) => {
     try {
       const text = req.query.text as string;

@@ -3,6 +3,7 @@
 import requests
 import os
 import sys
+import time
 
 APP_HOST = os.environ.get("STGY_APP_HOST", "localhost")
 APP_PORT = int(os.environ.get("STGY_APP_PORT", 3200))
@@ -14,21 +15,59 @@ def test_root():
   assert res.status_code == 200, res.text
   assert res.json() == {"result": "ok"}
   print(f"[root] health OK")
+  res = requests.get(f"{BASE_URL}/metrics")
+  assert res.status_code == 200, res.text
+  assert "# HELP" in res.text
+  print("[root] get metrics OK")
+  print("[test_root] OK")
+
+def test_posts():
+  resource = "posts"
+  doc_id = f"test-{int(time.time())}"
+  base_url = f"{BASE_URL}/{resource}"
+  target_ts = int(time.time())
+  put_payload = {
+    "text": f"the quick brown fox jumps over the lazy dog {doc_id}",
+    "timestamp": target_ts,
+    "locale": "en"
+  }
+  res = requests.put(f"{base_url}/{doc_id}", json=put_payload)
+  assert res.status_code == 202, res.text
+  print(f"[posts] put doc accepted: {doc_id}")
+  found = False
+  for i in range(20):
+    time.sleep(1)
+    requests.post(f"{base_url}/flush")
+    res = requests.get(f"{base_url}/search", params={"query": doc_id, "locale": "en"})
+    assert res.status_code == 200, res.text
+    results = res.json()
+    if i % 5 == 0:
+      print(f"[posts] wait={i+1} results_count={len(results)}")
+    if doc_id in results:
+      found = True
+      break
+  assert found, f"doc {doc_id} not found within 20s. Check UpdateWorker logs."
+  print("[posts] search doc OK")
+  del_payload = {"timestamp": target_ts}
+  res = requests.delete(f"{base_url}/{doc_id}", json=del_payload)
+  assert res.status_code == 202, res.text
+  print(f"[posts] delete doc accepted")
+  print("[test_posts] OK")
 
 def main():
   test_funcs = {name: fn for name, fn in globals().items() if name.startswith("test_") and callable(fn)}
-
   if len(sys.argv) < 2:
-    for name, fn in test_funcs.items():
+    for name in sorted(test_funcs.keys()):
       print(f"[run] {name}")
-      fn()
+      test_funcs[name]()
   else:
     for scenario in sys.argv[1:]:
       func_name = scenario if scenario.startswith("test_") else f"test_{scenario}"
-      if func_name not in test_funcs:
+      if func_name in test_funcs:
+        test_funcs[func_name]()
+      else:
         print(f"Unknown scenario: {scenario}")
         sys.exit(1)
-      test_funcs[func_name]()
 
 if __name__ == "__main__":
   main()

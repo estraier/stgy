@@ -3,7 +3,8 @@ import { createLogger } from "./utils/logger";
 import { SearchService } from "./services/search";
 import { InputQueueService } from "./services/inputQueue";
 import { UpdateWorker } from "./updateWorker";
-import express, { ErrorRequestHandler } from "express";
+import express, { ErrorRequestHandler, Request } from "express";
+import promBundle from "express-prom-bundle";
 import createRootRouter from "./routes/root";
 import createResourceRouter from "./routes/resource";
 
@@ -14,6 +15,18 @@ type ResourceInstance = {
   inputQueueService: InputQueueService;
   worker: UpdateWorker;
 };
+
+function normalizePath(req: Request): string {
+  const routePath = req.route?.path;
+  const base = req.baseUrl ?? "";
+  if (typeof routePath === "string") {
+    const safeRoutePath = routePath.includes("*")
+      ? routePath.replace(/\*/g, ":wildcard")
+      : routePath;
+    return `${base}${safeRoutePath}`;
+  }
+  return `${base}${req.path}`;
+}
 
 function printMemoryUsage() {
   logger.info(`[system] Memory usage: ${Math.round(process.memoryUsage().rss / 1024 / 1024)} MB`);
@@ -66,6 +79,20 @@ async function main() {
   }
 
   const app = express();
+
+  const metricsMiddleware = promBundle({
+    includeMethod: true,
+    includePath: true,
+    normalizePath,
+    buckets: [
+      0.01, 0.02, 0.03, 0.04, 0.05, 0.06, 0.07, 0.08, 0.09, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6, 0.7, 0.8,
+      0.9, 1, 2, 4, 8, 16, 32,
+    ],
+    promClient: {
+      collectDefaultMetrics: {},
+    },
+  });
+  app.use(metricsMiddleware);
 
   app.use(express.json({ limit: Config.INPUT_BODY_LIMIT }));
 
