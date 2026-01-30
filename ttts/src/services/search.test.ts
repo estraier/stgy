@@ -13,7 +13,7 @@ const TEST_CONFIG: SearchConfig = {
   autoCommitUpdateCount: 10,
   autoCommitAfterLastUpdateSeconds: 0.1,
   autoCommitAfterLastCommitSeconds: 0.1,
-  initialDocumentId: 2097151, // 追加
+  initialDocumentId: 2097151,
   recordPositions: false,
   recordContents: true,
   readConnectionCount: 2,
@@ -56,14 +56,9 @@ describe("SearchService", () => {
     await service.close();
   });
 
-  /**
-   * Refluxモードの肝：後から入れたものほどRowIDが小さくなるため、
-   * ASC検索で「最新順（doc-3, doc-2, doc-1）」が返るべき。
-   */
   test("should reserve IDs in reflux order (newest = smallest id)", async () => {
     const timestamp = 1000000;
 
-    // 1 -> 2 -> 3 の順で予約（内部的には 2097151, 2097150, 2097149 と割り振られる想定）
     await service.reserve([
       { id: "doc-1", timestamp },
       { id: "doc-2", timestamp },
@@ -77,7 +72,6 @@ describe("SearchService", () => {
     await service.flushAll();
 
     const results = await service.search("common");
-    // RowID ASC順で取得するため、一番小さいIDを持つ doc-3 が最初に来る
     expect(results).toEqual(["doc-3", "doc-2", "doc-1"]);
   });
 
@@ -112,19 +106,14 @@ describe("SearchService", () => {
     expect(results).toContain(docId);
   });
 
-  /**
-   * 内部で ORDER BY rowid ASC を使っているが、ユーザーからは最新順に見えることの確認
-   */
   test("should return results in newest-first order within shard using reflux", async () => {
     const timestamp = 1000000;
-    // old -> mid -> new の順で追加
     await service.addDocument("doc-old", timestamp, "same keyword", "en");
     await service.addDocument("doc-mid", timestamp, "same keyword", "en");
     await service.addDocument("doc-new", timestamp, "same keyword", "en");
     await service.flushAll();
 
     const results = await service.search("same keyword");
-    // Refluxにより doc-new が最小のRowIDを持つため、ASC検索で先頭に来る
     expect(results).toEqual(["doc-new", "doc-mid", "doc-old"]);
   });
 
@@ -137,8 +126,6 @@ describe("SearchService", () => {
     await service.flushAll();
 
     const results = await service.search("common");
-    // SearchService.search は sortedShards（降順）をループするため、
-    // まず ts: 2000000 のシャードから結果が出る
     expect(results[0]).toBe(doc2.id);
     expect(results[1]).toBe(doc1.id);
   });
@@ -152,11 +139,28 @@ describe("SearchService", () => {
     await lowIdService.addDocument("doc-1", ts, "text", "en");
     await lowIdService.addDocument("doc-2", ts, "text", "en");
 
-    // flushAllでのエラーを確認
     await expect(lowIdService.flushAll()).rejects.toThrow(/RowID exhausted/);
-
-    // close時にもflushが走って再度エラーが出るため、キャッチして握りつぶす
     await lowIdService.close().catch(() => {});
+  });
+
+  test("should reconstruct shard with new initial ID", async () => {
+    const timestamp = 1000000;
+    await service.addDocument("doc-1", timestamp, "reconstruction test", "en");
+    await service.addDocument("doc-2", timestamp, "reconstruction test", "en");
+    await service.flushAll();
+
+    const initialResults = await service.search("reconstruction");
+    expect(initialResults).toEqual(["doc-2", "doc-1"]);
+
+    const shard = (service as any).shards.get(timestamp);
+    const newInitialId = 268435455;
+    await shard.reconstruct(newInitialId);
+
+    const postResults = await service.search("reconstruction");
+    expect(postResults).toEqual(["doc-2", "doc-1"]);
+
+    const row = await shard.db.get("SELECT rowid FROM docs WHERE rowid = ?", [newInitialId]);
+    expect(row.rowid).toBe(newInitialId);
   });
 
   test("should remove document correctly (recordContents: true)", async () => {
@@ -210,7 +214,9 @@ describe("SearchService", () => {
       const timestamp = 1000000;
       await contentlessService.addDocument(docId, timestamp, "text", "en");
       await contentlessService.flushAll();
-      await expect(contentlessService.removeDocument(docId, timestamp)).rejects.toThrow(/contentless mode/);
+      await expect(contentlessService.removeDocument(docId, timestamp)).rejects.toThrow(
+        /contentless mode/,
+      );
     });
 
     test("should not update (add duplicate ID) in contentless mode", async () => {
