@@ -10,22 +10,68 @@ type ResourceInstance = {
   inputQueueService: InputQueueService;
 };
 
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 export default function createResourceRouter(instance: ResourceInstance) {
   const router = Router();
   const { searchService, inputQueueService } = instance;
 
   router.get("/reservation-mode", (_req: Request, res: Response) => {
-    res.json({ enabled: inputQueueService.getReservationMode() });
+    // 修正: getReservationMode -> isReservationMode
+    res.json({ enabled: inputQueueService.isReservationMode() });
   });
 
   router.put("/reservation-mode", (_req: Request, res: Response) => {
-    inputQueueService.setReservationMode(true);
-    res.json({ enabled: true });
+    if (inputQueueService.tryEnterReservationMode()) {
+      res.json({ enabled: true });
+    } else {
+      res.status(409).json({ error: "Reservation mode is already enabled" });
+    }
   });
 
   router.delete("/reservation-mode", (_req: Request, res: Response) => {
-    inputQueueService.setReservationMode(false);
+    inputQueueService.exitReservationMode();
     res.json({ enabled: false });
+  });
+
+  router.get("/reconstruction-mode", (_req: Request, res: Response) => {
+    res.json({ enabled: inputQueueService.isReconstructionMode() });
+  });
+
+  router.post("/reconstruct", async (req: Request, res: Response) => {
+    if (!inputQueueService.tryEnterReconstructionMode()) {
+      return res.status(409).json({
+        error: "Reconstruction is already in progress.",
+      });
+    }
+
+    try {
+      const { timestamp, newInitialId, useExternalId } = req.body;
+
+      if (typeof timestamp !== "number" || typeof newInitialId !== "number") {
+        return res.status(400).json({ error: "timestamp and newInitialId are required numbers" });
+      }
+
+      logger.info(`[Reconstruct Flow] Initiating safe reconstruction for shard ts=${timestamp}...`);
+
+      logger.info("[Reconstruct Flow] Waiting for workers to settle...");
+      await sleep(1000);
+
+      logger.info("[Reconstruct Flow] Flushing all shards...");
+      await searchService.flushAll();
+
+      logger.info("[Reconstruct Flow] Starting reconstruction...");
+      await searchService.reconstructShard(timestamp, newInitialId, !!useExternalId);
+
+      logger.info("[Reconstruct Flow] Reconstruction successful.");
+      res.json({ result: "reconstructed", timestamp });
+    } catch (e) {
+      logger.error(`[Reconstruct Flow] Error: ${e}`);
+      res.status(500).json({ error: "failed to reconstruct shard", details: String(e) });
+    } finally {
+      inputQueueService.exitReconstructionMode();
+      logger.info("[Reconstruct Flow] Reconstruction mode disabled. Workers resumed.");
+    }
   });
 
   router.post("/reserve", async (req: Request, res: Response) => {

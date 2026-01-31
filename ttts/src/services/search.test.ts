@@ -154,13 +154,30 @@ describe("SearchService", () => {
 
     const shard = (service as any).shards.get(timestamp);
     const newInitialId = 268435455;
-    await shard.reconstruct(newInitialId);
+    await shard.reconstruct(newInitialId, false);
 
     const postResults = await service.search("reconstruction");
     expect(postResults).toEqual(["doc-2", "doc-1"]);
 
     const row = await shard.db.get("SELECT rowid FROM docs WHERE rowid = ?", [newInitialId]);
     expect(row.rowid).toBe(newInitialId);
+  });
+
+  test("should reconstruct shard sorting by external ID if requested", async () => {
+    const timestamp = 1000000;
+    await service.addDocument("doc-B", timestamp, "sort test", "en");
+    await service.addDocument("doc-A", timestamp, "sort test", "en");
+    await service.flushAll();
+
+    const initialResults = await service.search("sort");
+    expect(initialResults).toEqual(["doc-A", "doc-B"]);
+
+    const shard = (service as any).shards.get(timestamp);
+    const newInitialId = 268435455;
+
+    await shard.reconstruct(newInitialId, true);
+    const postResults = await service.search("sort");
+    expect(postResults).toEqual(["doc-B", "doc-A"]);
   });
 
   test("should remove document correctly (recordContents: true)", async () => {

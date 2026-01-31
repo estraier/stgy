@@ -22,6 +22,7 @@ export class InputQueueService {
   private db: Database | null = null;
   private dbPath: string;
   private reservationMode: boolean = false;
+  private reconstructionMode: boolean = false;
   private logger: Logger;
 
   constructor(config: InputQueueConfig, logger: Logger) {
@@ -59,12 +60,42 @@ export class InputQueueService {
     this.db = null;
   }
 
-  setReservationMode(enabled: boolean): void {
-    this.reservationMode = enabled;
+  tryEnterReservationMode(): boolean {
+    if (this.reservationMode) {
+      return false;
+    }
+    this.reservationMode = true;
+    this.logger.info("Entered reservation mode (Input blocked)");
+    return true;
   }
 
-  getReservationMode(): boolean {
+  exitReservationMode(): void {
+    if (!this.reservationMode) return;
+    this.reservationMode = false;
+    this.logger.info("Exited reservation mode (Input resumed)");
+  }
+
+  isReservationMode(): boolean {
     return this.reservationMode;
+  }
+
+  tryEnterReconstructionMode(): boolean {
+    if (this.reconstructionMode) {
+      return false;
+    }
+    this.reconstructionMode = true;
+    this.logger.info("Entered reconstruction mode (Input blocked)");
+    return true;
+  }
+
+  exitReconstructionMode(): void {
+    if (!this.reconstructionMode) return;
+    this.reconstructionMode = false;
+    this.logger.info("Exited reconstruction mode (Input resumed)");
+  }
+
+  isReconstructionMode(): boolean {
+    return this.reconstructionMode;
   }
 
   async enqueue(
@@ -82,7 +113,7 @@ export class InputQueueService {
   }
 
   async dequeue(limit: number = 100): Promise<InputTask[]> {
-    if (this.reservationMode) {
+    if (this.reservationMode || this.reconstructionMode) {
       return [];
     }
     if (!this.db) await this.open();

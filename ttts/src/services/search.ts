@@ -226,48 +226,122 @@ class SearchShard {
     }
   }
 
-  async reconstruct(newInitialId: number): Promise<void> {
+  async reconstruct(newInitialId: number, useExternalId: boolean): Promise<void> {
     if (this.isProcessingBatch || this.isClosing) {
       throw new Error("Cannot reconstruct while shard is busy or closing.");
     }
     if (!this.db || !this.operational) await this.open();
     if (!this.db) throw new Error("Database not available.");
+
     this.isProcessingBatch = true;
+    const tempFilepath = `${this.filepath}.rebuild`;
+    let tempDb: Database | null = null;
+
     try {
-      await this.db.exec("BEGIN TRANSACTION;");
-      const allDocs = await this.db.all<{
-        internal_id: number;
-        external_id: string;
-        tokens: string;
-      }>(`
-        SELECT t.internal_id, t.external_id, d.tokens
-        FROM id_tuples t
-        JOIN docs d ON t.internal_id = d.rowid
-        ORDER BY t.internal_id DESC
+      await fs.unlink(tempFilepath).catch(() => {});
+      await fs.unlink(`${tempFilepath}-wal`).catch(() => {});
+      await fs.unlink(`${tempFilepath}-shm`).catch(() => {});
+
+      tempDb = await Database.open(tempFilepath);
+      await tempDb.exec("PRAGMA journal_mode = WAL;");
+      await tempDb.exec("PRAGMA synchronous = NORMAL;");
+
+      await tempDb.exec(`
+        CREATE TABLE IF NOT EXISTS id_tuples (
+          internal_id INTEGER PRIMARY KEY,
+          external_id TEXT UNIQUE
+        );
       `);
-      if (allDocs.length === 0) {
-        await this.db.exec("COMMIT;");
-        return;
-      }
-      await this.db.exec("DELETE FROM docs;");
-      await this.db.exec("DELETE FROM id_tuples;");
+      await tempDb.exec(`
+        CREATE TABLE IF NOT EXISTS extra_attrs (
+          external_id TEXT PRIMARY KEY,
+          attrs TEXT
+        );
+      `);
+      const detailMode = this.config.recordPositions ? "full" : "none";
+      const contentOption = this.config.recordContents ? "" : "content='',";
+      await tempDb.exec(`
+        CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(
+          tokens,
+          tokenize = "unicode61 categories 'L* N* Co M* P* S*' remove_diacritics 0",
+          detail = '${detailMode}',
+          ${contentOption}
+        );
+      `);
+      await tempDb.exec(
+        `CREATE TABLE IF NOT EXISTS batch_tasks (id INTEGER PRIMARY KEY, doc_id TEXT)`,
+      );
+
+      const BATCH_SIZE = 1000;
       let nextId = newInitialId;
-      for (const doc of allDocs) {
-        if (nextId <= 0) throw new Error("New initial ID is too small.");
-        await this.db.run("INSERT INTO id_tuples (internal_id, external_id) VALUES (?, ?)", [
-          nextId,
-          doc.external_id,
-        ]);
-        await this.db.run("INSERT INTO docs (rowid, tokens) VALUES (?, ?)", [nextId, doc.tokens]);
-        nextId--;
+      const orderByClause = useExternalId
+        ? "ORDER BY t.external_id ASC"
+        : "ORDER BY t.internal_id DESC";
+
+      let offset = 0;
+      while (true) {
+        const rows = await this.db.all<{
+          external_id: string;
+          tokens: string;
+          attrs: string | null;
+        }>(
+          `
+          SELECT t.external_id, d.tokens, ea.attrs
+          FROM id_tuples t
+          JOIN docs d ON t.internal_id = d.rowid
+          LEFT JOIN extra_attrs ea ON t.external_id = ea.external_id
+          ${orderByClause}
+          LIMIT ? OFFSET ?
+        `,
+          [BATCH_SIZE, offset],
+        );
+
+        if (rows.length === 0) break;
+
+        await tempDb.exec("BEGIN TRANSACTION;");
+        for (const row of rows) {
+          if (nextId <= 0) throw new Error("RowID exhausted during reconstruction.");
+
+          await tempDb.run("INSERT INTO id_tuples (internal_id, external_id) VALUES (?, ?)", [
+            nextId,
+            row.external_id,
+          ]);
+          await tempDb.run("INSERT INTO docs (rowid, tokens) VALUES (?, ?)", [nextId, row.tokens]);
+          if (row.attrs) {
+            await tempDb.run("INSERT INTO extra_attrs (external_id, attrs) VALUES (?, ?)", [
+              row.external_id,
+              row.attrs,
+            ]);
+          }
+          nextId--;
+        }
+        await tempDb.exec("COMMIT;");
+        offset += rows.length;
       }
-      await this.db.exec("INSERT INTO docs(docs) VALUES('optimize');");
-      await this.db.exec("COMMIT;");
-      setImmediate(async () => {
-        if (this.db) await this.db.exec("VACUUM;").catch(() => {});
-      });
+
+      await tempDb.exec("INSERT INTO docs(docs) VALUES('optimize');");
+      await tempDb.exec("VACUUM;");
+      await tempDb.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+      await tempDb.close();
+      tempDb = null;
+
+      await this.disableReadOnly();
+      await this.db.close();
+      this.db = null;
+
+      await fs.rename(tempFilepath, this.filepath);
+      await fs.rename(`${tempFilepath}-wal`, `${this.filepath}-wal`).catch(() => {});
+      await fs.rename(`${tempFilepath}-shm`, `${this.filepath}-shm`).catch(() => {});
+
+      await this.open();
     } catch (e) {
-      if (this.db) await this.db.exec("ROLLBACK;").catch(() => {});
+      if (tempDb) await tempDb.close().catch(() => {});
+      await fs.unlink(tempFilepath).catch(() => {});
+      await fs.unlink(`${tempFilepath}-wal`).catch(() => {});
+      await fs.unlink(`${tempFilepath}-shm`).catch(() => {});
+      if (!this.db) {
+        await this.open().catch(() => {});
+      }
       throw e;
     } finally {
       this.isProcessingBatch = false;
@@ -590,6 +664,7 @@ export class SearchService {
   private isOpen: boolean = false;
   private latestShardTimestamp: number = 0;
   private logger: Logger;
+  private reconstructLock: boolean = false;
 
   constructor(config: SearchConfig, logger: Logger) {
     this.config = config;
@@ -653,6 +728,22 @@ export class SearchService {
   async flushAll(): Promise<void> {
     if (!this.isOpen) return;
     await Promise.all(Array.from(this.shards.values()).map((s) => s.flush()));
+  }
+
+  async reconstructShard(
+    timestamp: number,
+    newInitialId: number,
+    useExternalId: boolean,
+  ): Promise<void> {
+    if (!this.isOpen) throw new Error("Service not open");
+    if (this.reconstructLock) throw new Error("Reconstruction already in progress");
+    this.reconstructLock = true;
+    try {
+      const shard = await this.getShard(timestamp);
+      await shard.reconstruct(newInitialId, useExternalId);
+    } finally {
+      this.reconstructLock = false;
+    }
   }
 
   getTokenizer(): Tokenizer {

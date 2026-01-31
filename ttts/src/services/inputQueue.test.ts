@@ -58,8 +58,10 @@ describe("InputQueueService", () => {
 
   test("should handle reservation mode correctly", async () => {
     await queue.enqueue("normal-doc", 1000, "normal", "ja", null);
-    queue.setReservationMode(true);
-    expect(queue.getReservationMode()).toBe(true);
+
+    expect(queue.tryEnterReservationMode()).toBe(true);
+    expect(queue.isReservationMode()).toBe(true);
+    expect(queue.tryEnterReservationMode()).toBe(false);
 
     await queue.enqueue("reserved-doc", 1001, "reserved", "en", null);
     expect(await queue.count()).toBe(2);
@@ -67,13 +69,31 @@ describe("InputQueueService", () => {
     const tasksDuringMode = await queue.dequeue(10);
     expect(tasksDuringMode).toHaveLength(0);
 
-    queue.setReservationMode(false);
-    expect(queue.getReservationMode()).toBe(false);
+    queue.exitReservationMode();
+    expect(queue.isReservationMode()).toBe(false);
 
     const tasksAfterMode = await queue.dequeue(10);
     expect(tasksAfterMode).toHaveLength(2);
     expect(tasksAfterMode[0].doc_id).toBe("normal-doc");
     expect(tasksAfterMode[1].doc_id).toBe("reserved-doc");
+  });
+
+  test("should handle reconstruction mode correctly", async () => {
+    await queue.enqueue("doc-rec", 1000, "body", "en", null);
+
+    expect(queue.tryEnterReconstructionMode()).toBe(true);
+    expect(queue.isReconstructionMode()).toBe(true);
+    expect(queue.tryEnterReconstructionMode()).toBe(false);
+
+    const tasksDuringMode = await queue.dequeue(10);
+    expect(tasksDuringMode).toHaveLength(0);
+
+    queue.exitReconstructionMode();
+    expect(queue.isReconstructionMode()).toBe(false);
+
+    const tasksAfterMode = await queue.dequeue(10);
+    expect(tasksAfterMode).toHaveLength(1);
+    expect(tasksAfterMode[0].doc_id).toBe("doc-rec");
   });
 
   test("should delete processed tasks", async () => {
