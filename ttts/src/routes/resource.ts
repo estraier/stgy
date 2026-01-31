@@ -17,7 +17,6 @@ export default function createResourceRouter(instance: ResourceInstance) {
   const { searchService, inputQueueService } = instance;
 
   router.get("/reservation-mode", (_req: Request, res: Response) => {
-    // 修正: getReservationMode -> isReservationMode
     res.json({ enabled: inputQueueService.isReservationMode() });
   });
 

@@ -225,6 +225,12 @@ paths:
   /{resource}/reservation-mode:
     get:
       summary: Get current reservation mode status
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -236,6 +242,12 @@ paths:
                     type: boolean
     put:
       summary: Enable reservation mode
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -245,8 +257,16 @@ paths:
                 properties:
                   enabled:
                     type: boolean
+        "409":
+          description: Already enabled
     delete:
       summary: Disable reservation mode
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -257,9 +277,85 @@ paths:
                   enabled:
                     type: boolean
 
+  /{resource}/reconstruction-mode:
+    get:
+      summary: Get current reconstruction mode status
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+
+  /{resource}/reconstruct:
+    post:
+      summary: Safe reconstruction of a specific shard
+      description: |
+        Stops workers, flushes data, creates a new shard file from existing data with new IDs, swaps files, and resumes workers.
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - timestamp
+                - newInitialId
+              properties:
+                timestamp:
+                  type: integer
+                  description: Timestamp belonging to the bucket (shard) to reconstruct
+                newInitialId:
+                  type: integer
+                  description: The starting (maximum) internal ID for the reconstructed shard
+                useExternalId:
+                  type: boolean
+                  default: false
+                  description: If true, sort by external ID (asc) instead of internal ID (desc) before assigning new IDs.
+      responses:
+        "200":
+          description: Reconstruction successful
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                    example: reconstructed
+                  timestamp:
+                    type: integer
+        "400":
+          description: Invalid parameters
+        "409":
+          description: Reconstruction already in progress
+        "500":
+          description: Internal server error during reconstruction
+
   /{resource}/reserve:
     post:
       summary: Reserve document IDs
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       requestBody:
         required: true
         content:
@@ -289,6 +385,11 @@ paths:
     get:
       summary: List shards
       parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
         - name: detailed
           in: query
           schema:
@@ -331,6 +432,12 @@ paths:
   /{resource}/flush:
     post:
       summary: Flush internal search service
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
       responses:
         "200":
           content:
@@ -345,6 +452,11 @@ paths:
     get:
       summary: Tokenize text
       parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
         - name: text
           in: query
           required: true
