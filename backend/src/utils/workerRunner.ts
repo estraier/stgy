@@ -11,10 +11,7 @@ export class WorkerLifecycle {
     this.active = false;
   }
 
-  setupStandaloneShutdown(
-    logger: Logger,
-    cleanup?: () => Promise<void> | void
-  ): void {
+  setupStandaloneShutdown(logger: Logger, cleanup?: () => Promise<void> | void): void {
     const onSignal = async (signal: string) => {
       if (!this.active) return;
       this.active = false;
@@ -41,7 +38,7 @@ export function runIfMain(
   fn: () => Promise<void>,
   logger: Logger,
   lifecycle: WorkerLifecycle,
-  cleanup?: () => Promise<void> | void
+  cleanup?: () => Promise<void> | void,
 ) {
   if (require.main === currentModule) {
     lifecycle.setupStandaloneShutdown(logger, cleanup);

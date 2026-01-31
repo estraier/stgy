@@ -16,10 +16,18 @@ import { EventLogService } from "./services/eventLog";
 import { NotificationsService } from "./services/notifications";
 import { UsersService } from "./services/users";
 import { hexToDec, decToHex, formatDateInTz } from "./utils/format";
+import Redis from "ioredis";
+import { WorkerLifecycle, runIfMain } from "./utils/workerRunner";
 
 const logger = createLogger({ file: "notificationWorker" });
-let purgeScore = 0;
+export const lifecycle = new WorkerLifecycle();
 const CONSUMER = "notification";
+let purgeScore = 0;
+
+let lockPool: Pool | null = null;
+let lockClient: PoolClient | null = null;
+let globalPgPool: Pool | null = null;
+let globalRedisSub: Redis | null = null;
 
 async function acquireSingletonLock(): Promise<{ pool: Pool; client: PoolClient }> {
   const pool = await connectPgWithRetry();
@@ -32,7 +40,7 @@ async function acquireSingletonLock(): Promise<{ pool: Pool; client: PoolClient 
     logger.warn("[notificationworker] another instance is running; exiting");
     client.release();
     await pool.end();
-    process.exit(0);
+    throw new Error("Singleton lock acquisition failed");
   }
   return { pool, client };
 }
@@ -221,7 +229,11 @@ async function upsertFollow(
   const current = parseFollowPayload(sel.rows[0].payload);
   const existing = current.records.find((r) => r.userId === entry.userId);
   const userNickname = existing ? existing.userNickname : await getUserNickname(db, entry.userId);
-  const rec: NotificationUserRecord = { userId: entry.userId, userNickname, ts: entry.ts };
+  const rec: NotificationUserRecord = {
+    userId: entry.userId,
+    userNickname: userNickname,
+    ts: entry.ts,
+  };
   const isNewUser = !existing;
   const nextRecords = dedupeFollow([...current.records, rec], cap);
   const nextPayload: FollowPayload = {
@@ -553,17 +565,19 @@ async function processPartition(
   let processed = 0;
 
   for (const row of batch) {
+    if (!lifecycle.isActive) break;
+
     const eid = BigInt(row.event_id);
     const client = await pgPool.connect();
     try {
       await client.query("BEGIN");
       const payload = row.payload;
       const recipient = await resolveRecipientUserId(client, payload);
+
       if (!recipient || isSelfInteraction(payload, recipient)) {
         await eventLogService.saveCursor(client, CONSUMER, partitionId, eid);
         await client.query("COMMIT");
         processed++;
-        client.release();
         continue;
       }
 
@@ -615,6 +629,7 @@ async function drain(
   usersService: UsersService,
 ): Promise<void> {
   for (;;) {
+    if (!lifecycle.isActive) break;
     const n = await processPartition(eventLogService, usersService, pgPool, partitionId);
     if (n === 0) break;
     purgeScore += n;
@@ -634,18 +649,20 @@ async function drain(
   }
 }
 
-async function runWorker(workerIndex: number): Promise<void> {
+async function runWorker(
+  workerIndex: number,
+  pgPool: Pool,
+  redisSub: Redis,
+  eventLogService: EventLogService,
+  notificationsService: NotificationsService,
+  usersService: UsersService,
+): Promise<void> {
   logger.info(`stgy notification worker ${workerIndex} started`);
-  const pgPool = await connectPgWithRetry(60_000);
-  const sub = await connectRedisWithRetry();
-  const eventLogService = new EventLogService(pgPool, sub);
-  const notificationsService = new NotificationsService(pgPool);
-  const usersServce = new UsersService(pgPool, sub);
 
   const parts = assignedPartitions(workerIndex);
   for (const p of parts) {
     try {
-      await drain(eventLogService, pgPool, p, notificationsService, usersServce);
+      await drain(eventLogService, pgPool, p, notificationsService, usersService);
     } catch (e) {
       logger.error(`[notificationworker] drain error: ${e}`);
     }
@@ -655,9 +672,10 @@ async function runWorker(workerIndex: number): Promise<void> {
   const inFlight = new Set<number>();
   const pending = new Set<number>();
 
-  await sub.subscribe(channel);
+  await redisSub.subscribe(channel);
 
-  sub.on("message", async (_chan, msg) => {
+  redisSub.on("message", async (chan, msg) => {
+    if (chan !== channel) return;
     const p = Number.parseInt(String(msg), 10);
     if (!Number.isInteger(p)) return;
     if (!parts.includes(p)) return;
@@ -669,7 +687,8 @@ async function runWorker(workerIndex: number): Promise<void> {
     (async () => {
       try {
         for (;;) {
-          await drain(eventLogService, pgPool, p, notificationsService, usersServce);
+          if (!lifecycle.isActive) break;
+          await drain(eventLogService, pgPool, p, notificationsService, usersService);
           if (!pending.delete(p)) break;
         }
       } catch {
@@ -678,33 +697,60 @@ async function runWorker(workerIndex: number): Promise<void> {
       }
     })();
   });
-
-  process.on("SIGINT", async () => {
-    try {
-      await sub.unsubscribe(channel);
-      sub.disconnect();
-      await pgPool.end();
-    } finally {
-      process.exit(0);
-    }
-  });
 }
 
-async function main(): Promise<void> {
-  const { pool: lockPool, client: lockClient } = await acquireSingletonLock();
+export async function startNotificationWorker() {
+  logger.info("STGY notification worker starting");
+
+  const { pool, client } = await acquireSingletonLock();
+  lockPool = pool;
+  lockClient = client;
+
+  globalPgPool = await connectPgWithRetry(60_000);
+  globalRedisSub = await connectRedisWithRetry();
+
+  const eventLogService = new EventLogService(globalPgPool, globalRedisSub);
+  const notificationsService = new NotificationsService(globalPgPool);
+  const usersService = new UsersService(globalPgPool, globalRedisSub);
+
   const runners: Promise<void>[] = [];
   for (let i = 0; i < Config.NOTIFICATION_WORKERS; i++) {
-    runners.push(runWorker(i));
+    runners.push(
+      runWorker(
+        i,
+        globalPgPool,
+        globalRedisSub,
+        eventLogService,
+        notificationsService,
+        usersService,
+      ),
+    );
   }
+
   await Promise.all(runners);
-  try {
-    lockClient.release();
-  } finally {
-    await lockPool.end();
-  }
+  logger.info("STGY notification worker initial drain complete, listening for events.");
 }
 
-main().catch((e) => {
-  logger.error(`[notificationworker] Fatal error: ${e}`);
-  process.exit(1);
-});
+const originalStop = lifecycle.stop.bind(lifecycle);
+lifecycle.stop = async () => {
+  originalStop();
+  logger.info("Stopping notification worker...");
+  if (globalRedisSub) {
+    await globalRedisSub.quit().catch(() => {});
+    globalRedisSub = null;
+  }
+  if (globalPgPool) {
+    await globalPgPool.end().catch(() => {});
+    globalPgPool = null;
+  }
+  if (lockClient) {
+    lockClient.release();
+    lockClient = null;
+  }
+  if (lockPool) {
+    await lockPool.end().catch(() => {});
+    lockPool = null;
+  }
+};
+
+runIfMain(module, startNotificationWorker, logger, lifecycle);

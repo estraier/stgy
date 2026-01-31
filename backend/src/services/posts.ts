@@ -15,6 +15,7 @@ import {
 } from "../models/post";
 import { User } from "../models/user";
 import { IdIssueService } from "./idIssue";
+import { SearchService } from "./search";
 import { EventLogService } from "./eventLog";
 import {
   validateLocale,
@@ -33,12 +34,14 @@ export class PostsService {
   private pgPool: Pool;
   private redis: Redis;
   private idIssueService: IdIssueService;
+  private searchService: SearchService;
   private eventLogService?: EventLogService;
 
   constructor(pgPool: Pool, redis: Redis, eventLogService?: EventLogService) {
     this.pgPool = pgPool;
     this.redis = redis;
     this.idIssueService = new IdIssueService(Config.ID_ISSUE_WORKER_ID);
+    this.searchService = new SearchService(pgPool, "posts");
     this.eventLogService = eventLogService;
   }
 

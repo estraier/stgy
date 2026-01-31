@@ -1,6 +1,5 @@
 import { SearchService } from "./search";
 import { Document, SearchInput } from "../models/search";
-import { IdIssueService } from "./idIssue";
 import { pgQuery } from "../utils/servers";
 
 const mockFetch = jest.fn();
@@ -27,7 +26,6 @@ describe("SearchService", () => {
 
   let service: SearchService;
   let mockPool: any;
-  let mockIdService: any;
 
   beforeEach(() => {
     mockFetch.mockReset();
@@ -35,10 +33,9 @@ describe("SearchService", () => {
     mockIssueBigint.mockReset();
 
     mockPool = { _isMockPool: true };
-    mockIdService = new IdIssueService(0);
     mockIssueBigint.mockResolvedValue(BigInt("1000000000000000"));
 
-    service = new SearchService(mockPool, mockIdService, resourceName);
+    service = new SearchService(mockPool, resourceName);
   });
 
   describe("Execution: addDocument / removeDocument / search", () => {
@@ -106,7 +103,11 @@ describe("SearchService", () => {
 
       expect(mockIssueBigint).toHaveBeenCalled();
       expect(pgQuery).toHaveBeenCalledTimes(1);
-      const [pool, sql, params] = (pgQuery as jest.Mock).mock.calls[0];
+
+      const calls = (pgQuery as jest.Mock).mock.calls[0];
+      const sql = calls[1];
+      const params = calls[2];
+
       expect(sql).toContain("INSERT INTO search_indexing_tasks");
       expect(params).toEqual([BigInt("1000000000000000"), resourceName, "d1", "text", "en", 100]);
     });
@@ -115,7 +116,9 @@ describe("SearchService", () => {
       await service.enqueueRemoveDocument("d1", 100);
 
       expect(pgQuery).toHaveBeenCalledTimes(1);
-      const [pool, sql, params] = (pgQuery as jest.Mock).mock.calls[0];
+      const calls = (pgQuery as jest.Mock).mock.calls[0];
+      const params = calls[2];
+
       expect(params[3]).toBeNull();
     });
   });
@@ -142,7 +145,11 @@ describe("SearchService", () => {
       expect(tasks).toHaveLength(1);
       expect(tasks[0].resourceId).toBe("d1");
       expect(pgQuery).toHaveBeenCalledTimes(1);
-      const [pool, sql, params] = (pgQuery as jest.Mock).mock.calls[0];
+
+      const calls = (pgQuery as jest.Mock).mock.calls[0];
+      const sql = calls[1];
+      const params = calls[2];
+
       expect(sql).toContain("SELECT");
       expect(sql).toContain("ORDER BY id ASC");
       expect(params).toEqual([resourceName, 10]);
@@ -153,7 +160,11 @@ describe("SearchService", () => {
       await service.deleteTasks(["1", "2"]);
 
       expect(pgQuery).toHaveBeenCalledTimes(1);
-      const [pool, sql, params] = (pgQuery as jest.Mock).mock.calls[0];
+
+      const calls = (pgQuery as jest.Mock).mock.calls[0];
+      const sql = calls[1];
+      const params = calls[2];
+
       expect(sql).toContain("DELETE FROM search_indexing_tasks");
       expect(sql).toContain("IN ($1,$2)");
       expect(params).toEqual(["1", "2"]);

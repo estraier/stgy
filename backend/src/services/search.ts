@@ -19,9 +19,9 @@ export class SearchService {
   private readonly resourceName: string;
   private readonly searchBaseUrl: string;
 
-  constructor(pgPool: Pool, idIssueService: IdIssueService, resourceName: string) {
+  constructor(pgPool: Pool, resourceName: string) {
     this.pgPool = pgPool;
-    this.idIssueService = idIssueService;
+    this.idIssueService = new IdIssueService(Config.ID_ISSUE_WORKER_ID);
     this.resourceName = resourceName;
     this.searchBaseUrl = `${Config.SEARCH_API_BASE_URL}/${resourceName}`;
   }
