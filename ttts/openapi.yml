@@ -1,0 +1,379 @@
+openapi: 3.0.0
+info:
+  title: STGY Search Server API
+  version: 1.0.0
+  description: |
+    TTTS (Search Server) API specification.
+    Base paths are prefixed by resource names (e.g., `/posts`, `/users`).
+
+servers:
+  - url: http://localhost:3200
+    description: Local Search Server
+
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        '200':
+          description: OK
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                    example: ok
+
+  /{resource}/search:
+    get:
+      summary: Search documents
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+          example: posts
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: locale
+          in: query
+          schema:
+            type: string
+            default: en
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 100
+        - name: offset
+          in: query
+          schema:
+            type: integer
+            default: 0
+        - name: timeout
+          in: query
+          description: Timeout in seconds
+          schema:
+            type: integer
+            default: 1
+      responses:
+        '200':
+          description: List of document IDs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+  /{resource}/search-fetch:
+    get:
+      summary: Search and fetch full documents
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: query
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: locale
+          in: query
+          schema:
+            type: string
+        - name: limit
+          in: query
+          schema:
+            type: integer
+        - name: offset
+          in: query
+          schema:
+            type: integer
+        - name: timeout
+          in: query
+          schema:
+            type: integer
+        - name: omitBodyText
+          in: query
+          schema:
+            type: boolean
+            default: false
+        - name: omitAttrs
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: Ordered list of documents
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: '#/components/schemas/FetchedDocument'
+
+  /{resource}/{docId}:
+    get:
+      summary: Fetch a single document
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: omitBodyText
+          in: query
+          schema:
+            type: boolean
+        - name: omitAttrs
+          in: query
+          schema:
+            type: boolean
+      responses:
+        '200':
+          description: Document found
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FetchedDocument'
+        '404':
+          description: Document not found
+
+    put:
+      summary: Enqueue document update/addition
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - text
+                - timestamp
+              properties:
+                text:
+                  type: string
+                timestamp:
+                  type: integer
+                  description: Unix timestamp
+                locale:
+                  type: string
+                  default: en
+                attrs:
+                  type: string
+                  nullable: true
+      responses:
+        '202':
+          description: Accepted for processing
+        '400':
+          description: Invalid input
+
+    delete:
+      summary: Enqueue document deletion
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: docId
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - timestamp
+              properties:
+                timestamp:
+                  type: integer
+      responses:
+        '202':
+          description: Accepted for processing
+
+  /{resource}/reservation-mode:
+    get:
+      summary: Get current reservation mode status
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+    put:
+      summary: Enable reservation mode
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+    delete:
+      summary: Disable reservation mode
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  enabled:
+                    type: boolean
+
+  /{resource}/reserve:
+    post:
+      summary: Reserve document IDs
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: array
+              items:
+                type: object
+                properties:
+                  id:
+                    type: string
+                  timestamp:
+                    type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                  count:
+                    type: integer
+
+  /{resource}/shards:
+    get:
+      summary: List shards
+      parameters:
+        - name: detailed
+          in: query
+          schema:
+            type: boolean
+            default: false
+      responses:
+        '200':
+          description: List of shard info
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: object
+
+  /{resource}/shards/{timestamp}:
+    delete:
+      summary: Remove a specific shard by timestamp
+      parameters:
+        - name: resource
+          in: path
+          required: true
+          schema:
+            type: string
+        - name: timestamp
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+
+  /{resource}/flush:
+    post:
+      summary: Flush internal search service
+      responses:
+        '200':
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+
+  /{resource}/tokenize:
+    get:
+      summary: Tokenize text
+      parameters:
+        - name: text
+          in: query
+          required: true
+          schema:
+            type: string
+        - name: locale
+          in: query
+          schema:
+            type: string
+      responses:
+        '200':
+          description: List of tokens
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  type: string
+
+components:
+  schemas:
+    FetchedDocument:
+      type: object
+      properties:
+        id:
+          type: string
+        bodyText:
+          type: string
+          nullable: true
+        attrs:
+          type: string
+          nullable: true
