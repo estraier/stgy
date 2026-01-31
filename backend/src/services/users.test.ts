@@ -3,6 +3,20 @@ import { hexToDec, decToHex } from "../utils/format";
 import crypto from "crypto";
 import { jest } from "@jest/globals";
 
+const mockEnqueueAddDocument = jest.fn();
+const mockEnqueueRemoveDocument = jest.fn();
+
+jest.mock("./search", () => {
+  return {
+    SearchService: jest.fn().mockImplementation(() => {
+      return {
+        enqueueAddDocument: mockEnqueueAddDocument,
+        enqueueRemoveDocument: mockEnqueueRemoveDocument,
+      };
+    }),
+  };
+});
+
 jest.mock("../utils/format", () => {
   const actual = jest.requireActual("../utils/format") as Record<string, unknown>;
   return Object.assign({}, actual, {
@@ -979,6 +993,8 @@ describe("UsersService", () => {
     pg = new MockPgClient();
     redis = new MockRedis();
     service = new UsersService(pg as any, redis as any);
+    mockEnqueueAddDocument.mockReset();
+    mockEnqueueRemoveDocument.mockReset();
   });
 
   test("countUsers (all/nickname/query)", async () => {
@@ -1061,6 +1077,12 @@ describe("UsersService", () => {
     expect(pg.passwords[user.id]).toBe(md5("danpass"));
     expect(pg.details[user.id]?.introduction).toBe("introD");
     expect(pg.details[user.id]?.aiPersonality).toBe("D");
+
+    expect(mockEnqueueAddDocument).toHaveBeenCalledTimes(1);
+    const callArgs = mockEnqueueAddDocument.mock.calls[0][0] as any;
+    expect(callArgs.id).toBe(user.id);
+    expect(callArgs.bodyText).toContain("Dan");
+    expect(callArgs.bodyText).toContain("introD");
   });
 
   test("updateUser (including details) and verify email via detail", async () => {
@@ -1085,6 +1107,12 @@ describe("UsersService", () => {
     expect(detail?.timezone).toBe("Asia/Tokyo");
     expect(detail?.introduction).toBe("introX");
     expect(detail?.aiPersonality).toBe("X");
+
+    expect(mockEnqueueAddDocument).toHaveBeenCalledTimes(1);
+    const callArgs = mockEnqueueAddDocument.mock.calls[0][0] as any;
+    expect(callArgs.id).toBe(ALICE);
+    expect(callArgs.bodyText).toContain("Alice2");
+    expect(callArgs.bodyText).toContain("introX");
   });
 
   test("startUpdateEmail stores verification info in Redis and queues mail", async () => {
@@ -1187,6 +1215,9 @@ describe("UsersService", () => {
     await service.deleteUser(id);
     expect(pg.users.find((u) => u.id === id)).toBeUndefined();
     await expect(service.deleteUser("00000000000000DD")).rejects.toThrow(/User not found/i);
+
+    expect(mockEnqueueRemoveDocument).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueRemoveDocument.mock.calls[0][0]).toBe(id);
   });
 
   test("listFollowees (with focusUserId)", async () => {

@@ -79,7 +79,7 @@
     "log:ttts": "docker compose logs ttts",
     "log:backend": "docker compose logs backend",
     "log:frontend": "docker compose logs frontend",
-    "reset-data": "./scripts/reset-data.sh && ./scripts/reset-minio-data.sh && ./scripts/edit-users.py --insecure-password seeder/user-0*.txt && ./scripts/edit-posts.py seeder/post-0*.txt && ./scripts/user-actions.py seeder/action-*.txt && ./scripts/edit-posts.py seeder/post-x0*.txt",
+    "reset-data": "./scripts/reset-data.sh && ./scripts/reset-minio-data.sh && ./scripts/reset-ttts-data.sh && ./scripts/edit-users.py --insecure-password seeder/user-0*.txt && ./scripts/edit-posts.py seeder/post-0*.txt && ./scripts/user-actions.py seeder/action-*.txt && ./scripts/edit-posts.py seeder/post-x0*.txt",
     "reset-data-test": "npm run reset-data && ./scripts/make-volume-test.py",
     "reset-cache": "./scripts/reset-cache.sh",
     "endpoint-test": "./tests/endpoint-test.py",
@@ -89,6 +89,6 @@
     "vps:docker:reset": "docker compose -f docker-compose.yml -f docker-compose.vps.yml down --rmi all --remove-orphans && DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -f docker-compose.yml -f docker-compose.vps.yml build --no-cache && docker compose -f docker-compose.yml -f docker-compose.vps.yml create",
     "vps:docker:start": "docker compose -f docker-compose.yml -f docker-compose.vps.yml start",
     "vps:docker:stop": "docker compose -f docker-compose.yml -f docker-compose.vps.yml stop",
-    "vps:reset-data": "./scripts/reset-data.sh && ./scripts/reset-minio-data.sh && ./scripts/edit-users.py seeder/user-0*.txt && ./scripts/edit-posts.py seeder/post-0*.txt && ./scripts/user-actions.py seeder/action-*.txt && ./scripts/edit-posts.py seeder/post-x0*.txt"
+    "vps:reset-data": "./scripts/reset-data.sh && ./scripts/reset-minio-data.sh && ./scripts/reset-ttts-data.sh && ./scripts/edit-users.py seeder/user-0*.txt && ./scripts/edit-posts.py seeder/post-0*.txt && ./scripts/user-actions.py seeder/action-*.txt && ./scripts/edit-posts.py seeder/post-x0*.txt"
   }
 }

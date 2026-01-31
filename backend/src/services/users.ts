@@ -31,7 +31,7 @@ import {
   snakeToCamel,
   escapeForLike,
 } from "../utils/format";
-import { makeSnippetJsonFromMarkdown } from "../utils/snippet";
+import { makeSnippetJsonFromMarkdown, makeTextFromMarkdown } from "../utils/snippet";
 import { Pool } from "pg";
 import Redis from "ioredis";
 import { v4 as uuidv4 } from "uuid";
@@ -469,6 +469,17 @@ export class UsersService {
         [hexToDec(id)],
       );
 
+      const bodyText = input.nickname + "\n" + makeTextFromMarkdown(input.introduction);
+      const timestamp = Math.floor(
+        IdIssueService.bigIntToDate(BigInt(hexToDec(id))).getTime() / 1000,
+      );
+      await this.searchService.enqueueAddDocument({
+        id,
+        bodyText,
+        locale: input.locale,
+        timestamp,
+      });
+
       await pgQuery(this.pgPool, "COMMIT");
 
       const row = res.rows[0] as Record<string, unknown>;
@@ -586,9 +597,59 @@ export class UsersService {
         [hexToDec(input.id)],
       );
 
+      if (!res.rows[0]) {
+        await pgQuery(this.pgPool, "ROLLBACK");
+        return null;
+      }
+
+      if (
+        input.nickname !== undefined ||
+        input.introduction !== undefined ||
+        input.locale !== undefined
+      ) {
+        let targetNickname = input.nickname;
+        let targetIntroduction = input.introduction;
+        let targetLocale = input.locale;
+
+        if (
+          targetNickname === undefined ||
+          targetIntroduction === undefined ||
+          targetLocale === undefined
+        ) {
+          const currentRes = await pgQuery(
+            this.pgPool,
+            `
+              SELECT u.nickname, u.locale, d.introduction
+              FROM users u
+              LEFT JOIN user_details d ON u.id = d.user_id
+              WHERE u.id = $1
+            `,
+            [hexToDec(input.id)],
+          );
+          if (currentRes.rows[0]) {
+            if (targetNickname === undefined) targetNickname = currentRes.rows[0].nickname;
+            if (targetLocale === undefined) targetLocale = currentRes.rows[0].locale;
+            if (targetIntroduction === undefined)
+              targetIntroduction = currentRes.rows[0].introduction;
+          }
+        }
+
+        const bodyText =
+          (targetNickname ?? "") + "\n" + makeTextFromMarkdown(targetIntroduction ?? "");
+        const timestamp = Math.floor(
+          IdIssueService.bigIntToDate(BigInt(hexToDec(input.id))).getTime() / 1000,
+        );
+
+        await this.searchService.enqueueAddDocument({
+          id: input.id,
+          bodyText,
+          locale: targetLocale ?? Config.DEFAULT_LOCALE,
+          timestamp,
+        });
+      }
+
       await pgQuery(this.pgPool, "COMMIT");
 
-      if (!res.rows[0]) return null;
       const row = res.rows[0] as Record<string, unknown>;
       row.id = decToHex(row.id as string);
       return snakeToCamel<User>(row);
@@ -750,15 +811,28 @@ export class UsersService {
   }
 
   async deleteUser(id: string): Promise<void> {
-    const res = await pgQuery(
-      this.pgPool,
-      `
-        DELETE FROM users
-        WHERE id = $1
-      `,
-      [hexToDec(id)],
-    );
-    if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
+    await pgQuery(this.pgPool, "BEGIN");
+    try {
+      const res = await pgQuery(
+        this.pgPool,
+        `
+          DELETE FROM users
+          WHERE id = $1
+        `,
+        [hexToDec(id)],
+      );
+      if ((res.rowCount ?? 0) === 0) throw new Error("User not found");
+
+      const timestamp = Math.floor(
+        IdIssueService.bigIntToDate(BigInt(hexToDec(id))).getTime() / 1000,
+      );
+      await this.searchService.enqueueRemoveDocument(id, timestamp);
+
+      await pgQuery(this.pgPool, "COMMIT");
+    } catch (e) {
+      await pgQuery(this.pgPool, "ROLLBACK");
+      throw e;
+    }
   }
 
   async listFollowees(input: ListFolloweesInput, focusUserId?: string): Promise<User[]> {
@@ -987,7 +1061,7 @@ export class UsersService {
       `
         DELETE FROM user_follows
         WHERE follower_id = $1
-          AND followee_id = $2
+        AND followee_id = $2
       `,
       [hexToDec(input.followerId), hexToDec(input.followeeId)],
     );
@@ -1128,7 +1202,7 @@ export class UsersService {
       `
         DELETE FROM user_blocks
         WHERE blocker_id = $1
-          AND blockee_id = $2
+        AND blockee_id = $2
       `,
       [hexToDec(input.blockerId), hexToDec(input.blockeeId)],
     );

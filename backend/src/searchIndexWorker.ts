@@ -2,7 +2,6 @@ import { createLogger } from "./utils/logger";
 import { connectPgWithRetry } from "./utils/servers";
 import { WorkerLifecycle, runIfMain } from "./utils/workerRunner";
 import { SearchService, SearchIndexTask } from "./services/search";
-import { IdIssueService } from "./services/idIssue";
 
 const logger = createLogger({ file: "searchIndexWorker" });
 export const lifecycle = new WorkerLifecycle();
@@ -42,20 +41,12 @@ async function processSearchTasks(searchService: SearchService) {
 }
 
 async function handleTask(service: SearchService, task: SearchIndexTask) {
-  if (task.bodyText === null) {
-    const ts = parseInt(task.timestamp, 10);
-    await service.removeDocument(task.resourceId, isNaN(ts) ? 0 : ts);
-  } else {
-    let seconds = 0;
-    try {
-      const idBigInt = BigInt(task.resourceId);
-      const date = IdIssueService.bigIntToDate(idBigInt);
-      seconds = Math.floor(date.getTime() / 1000);
-    } catch {
-      const ts = parseInt(task.timestamp, 10);
-      seconds = isNaN(ts) ? 0 : ts;
-    }
+  const ts = parseInt(task.timestamp, 10);
+  const seconds = isNaN(ts) ? 0 : ts;
 
+  if (task.bodyText === null) {
+    await service.removeDocument(task.resourceId, seconds);
+  } else {
     await service.addDocument({
       id: task.resourceId,
       bodyText: task.bodyText,
