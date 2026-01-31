@@ -75,6 +75,7 @@ echo "[run-local-backend] running workers"
 (sleep 3 ; npm run backend:mail-worker) &
 (sleep 3 ; npm run backend:media-worker) &
 (sleep 3 ; npm run backend:notification-worker) &
+(sleep 3 ; npm run backend:search-index-worker) &
 (sleep 3 ; npm run backend:ai-summary-worker) &
 (sleep 3 ; npm run backend:ai-user-worker) &
 

@@ -109,6 +109,7 @@ describe("SearchService", () => {
       const params = calls[2];
 
       expect(sql).toContain("INSERT INTO search_indexing_tasks");
+      expect(sql).toContain("name_prefix"); // 修正後のカラム名
       expect(params).toEqual([BigInt("1000000000000000"), resourceName, "d1", "text", "en", 100]);
     });
 
@@ -128,11 +129,11 @@ describe("SearchService", () => {
       const mockRows = [
         {
           id: "1",
-          resource_type: resourceName,
-          resource_id: "d1",
+          name_prefix: resourceName, // 修正後のカラム名
+          doc_id: "d1", // 修正後のカラム名
           body_text: "text",
           locale: "en",
-          timestamp: "100",
+          doc_timestamp: "100", // 修正後のカラム名
         },
       ];
       (pgQuery as jest.Mock).mockResolvedValue({

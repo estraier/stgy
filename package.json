@@ -43,6 +43,7 @@
     "backend:mail-worker": "npm run mail-worker --workspace backend",
     "backend:media-worker": "npm run media-worker --workspace backend",
     "backend:notification-worker": "npm run notification-worker --workspace backend",
+    "backend:search-index-worker": "npm run search-index-worker --workspace backend",
     "backend:ai-summary-worker": "npm run ai-summary-worker --workspace backend",
     "backend:ai-user-worker": "npm run ai-user-worker --workspace backend",
     "backend:database-util": "npm run database-util --workspace backend",

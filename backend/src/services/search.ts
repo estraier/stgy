@@ -88,7 +88,7 @@ export class SearchService {
     const taskId = await this.idIssueService.issueBigint();
     const sql = `
       INSERT INTO search_indexing_tasks
-      (id, resource_type, resource_id, body_text, locale, timestamp)
+      (id, name_prefix, doc_id, body_text, locale, doc_timestamp)
       VALUES ($1, $2, $3, $4, $5, $6)
     `;
     const params = [taskId, this.resourceName, doc.id, doc.bodyText, doc.locale, doc.timestamp];
@@ -99,7 +99,7 @@ export class SearchService {
     const taskId = await this.idIssueService.issueBigint();
     const sql = `
       INSERT INTO search_indexing_tasks
-      (id, resource_type, resource_id, body_text, locale, timestamp)
+      (id, name_prefix, doc_id, body_text, locale, doc_timestamp)
       VALUES ($1, $2, $3, $4, $5, $6)
     `;
     const params = [taskId, this.resourceName, id, null, null, timestamp];
@@ -108,28 +108,28 @@ export class SearchService {
 
   async fetchTasks(limit: number): Promise<SearchIndexTask[]> {
     const sql = `
-      SELECT id, resource_type, resource_id, body_text, locale, timestamp
+      SELECT id, name_prefix, doc_id, body_text, locale, doc_timestamp
       FROM search_indexing_tasks
-      WHERE resource_type = $1
+      WHERE name_prefix = $1
       ORDER BY id ASC
       LIMIT $2
     `;
     const res = await pgQuery<{
       id: string;
-      resource_type: string;
-      resource_id: string;
+      name_prefix: string;
+      doc_id: string;
       body_text: string | null;
       locale: string | null;
-      timestamp: string;
+      doc_timestamp: string;
     }>(this.pgPool, sql, [this.resourceName, limit]);
 
     return res.rows.map((row) => ({
       id: row.id,
-      resourceType: row.resource_type,
-      resourceId: row.resource_id,
+      resourceType: row.name_prefix,
+      resourceId: row.doc_id,
       bodyText: row.body_text,
       locale: row.locale,
-      timestamp: row.timestamp,
+      timestamp: row.doc_timestamp,
     }));
   }
 
