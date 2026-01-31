@@ -16,7 +16,7 @@ export class Config {
       search: {
         baseDir: COMMON_INDEX_DIR,
         namePrefix: "posts",
-        bucketDurationSeconds: 1000000,
+        bucketDurationSeconds: 3000000,
         autoCommitUpdateCount: 10000,
         autoCommitAfterLastUpdateSeconds: 300,
         autoCommitAfterLastCommitSeconds: 1800,
@@ -36,7 +36,7 @@ export class Config {
       search: {
         baseDir: COMMON_INDEX_DIR,
         namePrefix: "users",
-        bucketDurationSeconds: 10000000,
+        bucketDurationSeconds: 30000000,
         autoCommitUpdateCount: 10000,
         autoCommitAfterLastUpdateSeconds: 300,
         autoCommitAfterLastCommitSeconds: 1800,
