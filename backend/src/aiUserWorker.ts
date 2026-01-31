@@ -36,14 +36,15 @@ import type {
 import type { UserLite, UserDetail } from "./models/user";
 import type { Post, PostDetail } from "./models/post";
 import type { Notification, NotificationPostRecord } from "./models/notification";
+import { WorkerLifecycle, runIfMain } from "./utils/workerRunner";
 
 const logger = createLogger({ file: "aiUserWorker" });
+export const lifecycle = new WorkerLifecycle();
 
 let pgPool: Pool | null = null;
 let redis: Redis | null = null;
 let authService: AuthService | null = null;
 
-let shuttingDown = false;
 const inflight = new Set<Promise<void>>();
 
 type HttpResult = {
@@ -170,7 +171,7 @@ function httpRequest(
 }
 
 async function waitForChatReady(): Promise<boolean> {
-  while (!shuttingDown) {
+  while (lifecycle.isActive) {
     try {
       const res = await httpRequest("/ai-users/chat", { method: "HEAD" });
       if (res.statusCode === 200) return true;
@@ -2155,7 +2156,7 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
 }
 
 async function processLoop(): Promise<void> {
-  while (!shuttingDown) {
+  while (lifecycle.isActive) {
     let adminSessionCookie: string;
     try {
       adminSessionCookie = await loginAsAdmin();
@@ -2166,7 +2167,7 @@ async function processLoop(): Promise<void> {
     }
     let needRelogin = false;
     let offset = 0;
-    while (!shuttingDown) {
+    while (lifecycle.isActive) {
       let users: AiUser[] = [];
       try {
         users = await fetchNextUsers(adminSessionCookie, offset, Config.AI_USER_BATCH_SIZE);
@@ -2181,7 +2182,7 @@ async function processLoop(): Promise<void> {
       }
       if (users.length === 0) break;
       let index = 0;
-      while (index < users.length && !shuttingDown) {
+      while (index < users.length && lifecycle.isActive) {
         if (inflight.size >= Config.AI_USER_CONCURRENCY) {
           await Promise.race(inflight);
           continue;
@@ -2213,33 +2214,22 @@ async function processLoop(): Promise<void> {
 }
 
 async function idleLoop(): Promise<void> {
-  while (!shuttingDown) await sleep(Config.AI_USER_IDLE_SLEEP_MS);
+  while (lifecycle.isActive) await sleep(Config.AI_USER_IDLE_SLEEP_MS);
 }
 
-async function shutdown(): Promise<void> {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  try {
-    if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
-    const tasks: Promise<unknown>[] = [];
-    if (pgPool) tasks.push(pgPool.end());
-    if (redis) tasks.push(redis.quit());
-    if (tasks.length > 0) await Promise.allSettled(tasks);
-  } finally {
-    process.exit(0);
-  }
+async function cleanup() {
+  if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
+  const tasks: Promise<unknown>[] = [];
+  if (pgPool) tasks.push(pgPool.end());
+  if (redis) tasks.push(redis.quit());
+  if (tasks.length > 0) await Promise.allSettled(tasks);
 }
 
-async function main(): Promise<void> {
+export async function startAiUserWorker() {
   logger.info(`STGY AI user worker started (concurrency=${Config.AI_USER_CONCURRENCY})`);
   pgPool = await connectPgWithRetry();
   redis = await connectRedisWithRetry();
   authService = new AuthService(pgPool, redis);
-  const onSig = () => {
-    shutdown().catch(() => process.exit(1));
-  };
-  process.on("SIGINT", onSig);
-  process.on("SIGTERM", onSig);
 
   const enabled = await waitForChatReady();
   if (enabled) {
@@ -2250,7 +2240,4 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e) => {
-  logger.error(`Fatal error: ${e}`);
-  process.exit(1);
-});
+runIfMain(module, startAiUserWorker, logger, lifecycle, cleanup);

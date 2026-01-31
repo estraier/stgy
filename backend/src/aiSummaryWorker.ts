@@ -13,14 +13,15 @@ import type { Pool } from "pg";
 import type Redis from "ioredis";
 import { URLSearchParams } from "url";
 import { apiRequest, httpRequest, UnauthorizedError } from "./utils/client";
+import { WorkerLifecycle, runIfMain } from "./utils/workerRunner";
 
 const logger = createLogger({ file: "aiSummaryWorker" });
+export const lifecycle = new WorkerLifecycle();
 
 let pgPool: Pool | null = null;
 let redis: Redis | null = null;
 let authService: AuthService | null = null;
 
-let shuttingDown = false;
 const inflight = new Set<Promise<void>>();
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -52,7 +53,7 @@ function truncateText(text: string, max: number): string {
 async function waitForAiChatAvailability(): Promise<"enabled" | "disabled"> {
   const path = "/ai-users/chat";
   const intervalMs = 3000;
-  while (!shuttingDown) {
+  while (lifecycle.isActive) {
     try {
       const res = await httpRequest(path, { method: "HEAD" });
       if (res.statusCode === 200) {
@@ -371,7 +372,7 @@ async function summarizePost(sessionCookie: string, postId: string): Promise<voi
 }
 
 async function processLoop(): Promise<void> {
-  while (!shuttingDown) {
+  while (lifecycle.isActive) {
     let sessionCookie: string;
     try {
       sessionCookie = await loginAsAdmin();
@@ -393,7 +394,7 @@ async function processLoop(): Promise<void> {
       continue;
     }
     let index = 0;
-    while (index < summaries.length && !shuttingDown) {
+    while (index < summaries.length && lifecycle.isActive) {
       if (inflight.size >= Config.AI_SUMMARY_CONCURRENCY) {
         await Promise.race(inflight);
         continue;
@@ -419,33 +420,23 @@ async function processLoop(): Promise<void> {
 }
 
 async function idleLoop(): Promise<void> {
-  while (!shuttingDown) await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
+  while (lifecycle.isActive) await sleep(Config.AI_SUMMARY_IDLE_SLEEP_MS);
 }
 
-async function shutdown(): Promise<void> {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  try {
-    if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
-    const tasks: Promise<unknown>[] = [];
-    if (pgPool) tasks.push(pgPool.end());
-    if (redis) tasks.push(redis.quit());
-    if (tasks.length > 0) await Promise.allSettled(tasks);
-  } finally {
-    process.exit(0);
-  }
+async function cleanup() {
+  if (inflight.size > 0) await Promise.allSettled(Array.from(inflight));
+  const tasks: Promise<unknown>[] = [];
+  if (pgPool) tasks.push(pgPool.end());
+  if (redis) tasks.push(redis.quit());
+  if (tasks.length > 0) await Promise.allSettled(tasks);
 }
 
-async function main(): Promise<void> {
+export async function startAiSummaryWorker() {
   logger.info(`STGY AI summary worker started (concurrency=${Config.AI_SUMMARY_CONCURRENCY})`);
   pgPool = await connectPgWithRetry();
   redis = await connectRedisWithRetry();
   authService = new AuthService(pgPool, redis);
-  const onSig = () => {
-    shutdown().catch(() => process.exit(1));
-  };
-  process.on("SIGINT", onSig);
-  process.on("SIGTERM", onSig);
+
   const avail = await waitForAiChatAvailability();
   if (avail === "enabled") {
     await processLoop();
@@ -455,7 +446,4 @@ async function main(): Promise<void> {
   }
 }
 
-main().catch((e) => {
-  logger.error(`Fatal error: ${e}`);
-  process.exit(1);
-});
+runIfMain(module, startAiSummaryWorker, logger, lifecycle, cleanup);

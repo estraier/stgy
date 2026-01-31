@@ -1,10 +1,12 @@
 import { createLogger } from "./utils/logger";
 import { SendMailService } from "./services/sendMail";
 import { connectRedisWithRetry } from "./utils/servers";
+import { WorkerLifecycle, runIfMain } from "./utils/workerRunner";
 import type Redis from "ioredis";
 import type { Transporter } from "nodemailer";
 
 const logger = createLogger({ file: "mailWorker" });
+export const lifecycle = new WorkerLifecycle();
 
 type MailTask =
   | { type: "signup"; email: string; verificationCode: string }
@@ -71,9 +73,12 @@ async function processQueue(
   sendMailService: SendMailService,
   mailTransporter: Transporter,
 ) {
-  while (true) {
+  while (lifecycle.isActive) {
     try {
-      const res = await redis.brpop(queue, 10);
+      const res = await redis.brpop(queue, 5);
+
+      if (!lifecycle.isActive) break;
+
       if (!res) continue;
       const payload = res[1];
       let msg: unknown;
@@ -89,21 +94,29 @@ async function processQueue(
         logger.error(`invalid task object in ${queue}: ${payload}`);
       }
     } catch (e) {
+      if (!lifecycle.isActive) break;
       logger.error(`error processing ${queue}: ${e}`);
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
   }
 }
 
-async function main() {
+export async function startMailWorker() {
   logger.info("STGY mail worker started");
   const redis = await connectRedisWithRetry();
   const sendMailService = new SendMailService(redis);
   const mailTransporter: Transporter = SendMailService.createTransport();
-  await processQueue(MAIL_QUEUE, redis, sendMailService, mailTransporter);
+
+  try {
+    await processQueue(MAIL_QUEUE, redis, sendMailService, mailTransporter);
+  } finally {
+    logger.info("Stopping mail worker, disconnecting redis...");
+    try {
+      redis.disconnect();
+    } catch (e) {
+      logger.error(`Redis disconnect error: ${e}`);
+    }
+  }
 }
 
-main().catch((e) => {
-  logger.error(`Fatal error: ${e}`);
-  process.exit(1);
-});
+runIfMain(module, startMailWorker, logger, lifecycle);

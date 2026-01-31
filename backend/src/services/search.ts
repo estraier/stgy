@@ -23,7 +23,7 @@ export class SearchService {
     this.pgPool = pgPool;
     this.idIssueService = idIssueService;
     this.resourceName = resourceName;
-    this.searchBaseUrl = `http://${Config.SEARCH_HOST}:${Config.SEARCH_PORT}/${resourceName}`;
+    this.searchBaseUrl = `${Config.SEARCH_API_BASE_URL}/${resourceName}`;
   }
 
   async addDocument(doc: Document): Promise<void> {

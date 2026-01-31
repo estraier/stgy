@@ -4,15 +4,18 @@ import sharp from "sharp";
 import { makeStorageService } from "./services/storageFactory";
 import type { StorageService } from "./services/storage";
 import { connectRedisWithRetry } from "./utils/servers";
+import { WorkerLifecycle, runIfMain } from "./utils/workerRunner";
 import type Redis from "ioredis";
 
 const logger = createLogger({ file: "mediaWorker" });
+export const lifecycle = new WorkerLifecycle();
 
 type ThumbQueueTask =
   | { type: "image"; bucket: string; originalKey: string }
   | { type: "icon"; bucket: string; originalKey: string };
 
 const QUEUE = "media-thumb-queue";
+const inflight = new Set<Promise<void>>();
 
 function stripExt(file: string): string {
   return file.replace(/\.[^.]+$/, "");
@@ -100,17 +103,18 @@ async function handleTask(storage: StorageService, task: ThumbQueueTask) {
   }
 }
 
-let shuttingDown = false;
-const inflight = new Set<Promise<void>>();
-
 async function processQueue(queue: string, redis: Redis, storage: StorageService) {
-  while (!shuttingDown) {
+  while (lifecycle.isActive) {
     try {
       if (inflight.size >= Config.MEDIA_WORKER_CONCURRENCY) {
         await Promise.race(inflight);
         continue;
       }
+
       const res = await redis.brpop(queue, 5);
+
+      if (!lifecycle.isActive) break;
+
       if (!res) continue;
       const payload = res[1];
       const p = (async () => {
@@ -128,37 +132,33 @@ async function processQueue(queue: string, redis: Redis, storage: StorageService
       inflight.add(p);
       p.finally(() => inflight.delete(p));
     } catch (e) {
-      if (shuttingDown) break;
+      if (!lifecycle.isActive) break;
       logger.error(`error processing ${queue}: ${e}`);
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
   }
-}
 
-async function shutdown(redis: Redis) {
-  if (shuttingDown) return;
-  shuttingDown = true;
-  try {
-    redis.disconnect();
-  } catch {}
-  try {
+  if (inflight.size > 0) {
+    logger.info(`Waiting for ${inflight.size} inflight tasks...`);
     await Promise.allSettled(Array.from(inflight));
-  } finally {
-    process.exit(0);
   }
 }
 
-async function main() {
+export async function startMediaWorker() {
   logger.info(`STGY media worker started (concurrency=${Config.MEDIA_WORKER_CONCURRENCY})`);
   const redis = await connectRedisWithRetry();
   const storage: StorageService = makeStorageService(Config.STORAGE_DRIVER);
-  const onSig = () => shutdown(redis);
-  process.on("SIGINT", onSig);
-  process.on("SIGTERM", onSig);
-  await processQueue(QUEUE, redis, storage);
+
+  try {
+    await processQueue(QUEUE, redis, storage);
+  } finally {
+    logger.info("Stopping media worker, disconnecting redis...");
+    try {
+      redis.disconnect();
+    } catch (e) {
+      logger.error(`Redis disconnect error: ${e}`);
+    }
+  }
 }
 
-main().catch((e) => {
-  logger.error(`Fatal error: ${e}`);
-  process.exit(1);
-});
+runIfMain(module, startMediaWorker, logger, lifecycle);
