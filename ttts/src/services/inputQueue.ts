@@ -13,6 +13,7 @@ export type InputTask = {
   timestamp: number;
   bodyText: string | null;
   locale: string | null;
+  attrs: string | null;
   created_at: string;
 };
 
@@ -45,6 +46,7 @@ export class InputQueueService {
         timestamp INTEGER NOT NULL,
         bodyText TEXT,
         locale TEXT,
+        attrs TEXT,
         created_at DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW'))
       );
     `);
@@ -70,11 +72,12 @@ export class InputQueueService {
     timestamp: number,
     bodyText: string | null,
     locale: string | null,
+    attrs: string | null,
   ): Promise<void> {
     if (!this.db) await this.open();
     await this.db!.run(
-      "INSERT INTO input_tasks (doc_id, timestamp, bodyText, locale) VALUES (?, ?, ?, ?)",
-      [docId, timestamp, bodyText, locale],
+      "INSERT INTO input_tasks (doc_id, timestamp, bodyText, locale, attrs) VALUES (?, ?, ?, ?, ?)",
+      [docId, timestamp, bodyText, locale, attrs],
     );
   }
 
@@ -82,7 +85,6 @@ export class InputQueueService {
     if (this.reservationMode) {
       return [];
     }
-
     if (!this.db) await this.open();
     return this.db!.all<InputTask>("SELECT * FROM input_tasks ORDER BY id ASC LIMIT ?", [limit]);
   }

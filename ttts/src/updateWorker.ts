@@ -79,6 +79,7 @@ export class UpdateWorker {
             task.timestamp,
             task.bodyText,
             task.locale || "en",
+            task.attrs,
           );
         }
         processedIds.push(task.id);

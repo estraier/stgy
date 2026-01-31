@@ -114,14 +114,63 @@ export default function createResourceRouter(instance: ResourceInstance) {
     }
   });
 
+  router.get("/search-fetch", async (req: Request, res: Response) => {
+    try {
+      const query = req.query.query as string;
+      if (!query) {
+        return res.status(400).json({ error: "query is required" });
+      }
+      const locale = (req.query.locale as string) || "en";
+      const limit = parseInt(req.query.limit as string, 10) || 100;
+      const offset = parseInt(req.query.offset as string, 10) || 0;
+      const timeout = parseInt(req.query.timeout as string, 10) || 1;
+      const omitBodyText = req.query.omitBodyText === "true";
+      const omitAttrs = req.query.omitAttrs === "true";
+
+      const ids = await searchService.search(query, locale, limit, offset, timeout);
+
+      if (ids.length === 0) {
+        return res.json([]);
+      }
+
+      const docs = await searchService.fetchDocuments(ids, omitBodyText, omitAttrs);
+
+      const docMap = new Map(docs.map((d) => [d.id, d]));
+      const orderedDocs = ids.map((id) => docMap.get(id)).filter((d) => d !== undefined);
+
+      res.json(orderedDocs);
+    } catch (e) {
+      logger.error(`Search-fetch error: ${e}`);
+      res.status(500).json({ error: "search-fetch failed" });
+    }
+  });
+
+  router.get("/:docId", async (req: Request, res: Response) => {
+    try {
+      const docId = req.params.docId as string;
+      const omitBodyText = req.query.omitBodyText === "true";
+      const omitAttrs = req.query.omitAttrs === "true";
+
+      const docs = await searchService.fetchDocuments([docId], omitBodyText, omitAttrs);
+
+      if (docs.length === 0) {
+        return res.status(404).json({ error: "document not found" });
+      }
+      res.json(docs[0]);
+    } catch (e) {
+      logger.error(`Fetch document error: ${e}`);
+      res.status(500).json({ error: "failed to fetch document" });
+    }
+  });
+
   router.put("/:docId", async (req: Request, res: Response) => {
     try {
       const docId = req.params.docId as string;
-      const { text, timestamp, locale } = req.body;
+      const { text, timestamp, locale, attrs } = req.body;
       if (!text || typeof timestamp !== "number") {
         return res.status(400).json({ error: "text and timestamp are required" });
       }
-      await inputQueueService.enqueue(docId, timestamp, text, locale || "en");
+      await inputQueueService.enqueue(docId, timestamp, text, locale || "en", attrs || null);
       res.status(202).json({ result: "accepted" });
     } catch (e) {
       logger.error(`Enqueue error (put): ${e}`);
@@ -136,7 +185,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
       if (typeof timestamp !== "number") {
         return res.status(400).json({ error: "timestamp is required" });
       }
-      await inputQueueService.enqueue(docId, timestamp, null, null);
+      await inputQueueService.enqueue(docId, timestamp, null, null, null);
       res.status(202).json({ result: "accepted" });
     } catch (e) {
       logger.error(`Enqueue error (delete): ${e}`);

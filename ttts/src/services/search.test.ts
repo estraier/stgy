@@ -215,6 +215,69 @@ describe("SearchService", () => {
     expect(empty).toEqual([]);
   });
 
+  test("should store attributes and retrieve them via fetchDocuments", async () => {
+    const timestamp = 1000000;
+    const docId = "doc-with-attrs";
+    const body = "content body";
+    const attrs = JSON.stringify({ tag: "news", source: "external" });
+
+    await service.addDocument(docId, timestamp, body, "en", attrs);
+    await service.flushAll();
+
+    const searchResults = await service.search("content");
+    expect(searchResults).toContain(docId);
+
+    const fetchedDocs = await service.fetchDocuments([docId]);
+    expect(fetchedDocs).toHaveLength(1);
+    expect(fetchedDocs[0].id).toBe(docId);
+    expect(fetchedDocs[0].bodyText).toBe("body content");
+    expect(fetchedDocs[0].attrs).toBe(attrs);
+  });
+
+  test("should respect omit flags in fetchDocuments", async () => {
+    const timestamp = 1000000;
+    const docId = "doc-omitted";
+    const attrs = "some attributes";
+
+    await service.addDocument(docId, timestamp, "full body", "en", attrs);
+    await service.flushAll();
+
+    const docsBoth = await service.fetchDocuments([docId], true, true);
+    expect(docsBoth[0].bodyText).toBeNull();
+    expect(docsBoth[0].attrs).toBeNull();
+
+    const docsBodyOmit = await service.fetchDocuments([docId], true, false);
+    expect(docsBodyOmit[0].bodyText).toBeNull();
+    expect(docsBodyOmit[0].attrs).toBe(attrs);
+
+    const docsAttrsOmit = await service.fetchDocuments([docId], false, true);
+    expect(docsAttrsOmit[0].bodyText).toBe("body full");
+    expect(docsAttrsOmit[0].attrs).toBeNull();
+  });
+
+  test("should fetch documents across multiple shards", async () => {
+    const doc1 = { id: "old-doc", ts: 1000000, body: "b1", attrs: "a1" };
+    const doc2 = { id: "new-doc", ts: 2000000, body: "b2", attrs: "a2" };
+
+    await service.addDocument(doc1.id, doc1.ts, doc1.body, "en", doc1.attrs);
+    await service.addDocument(doc2.id, doc2.ts, doc2.body, "en", doc2.attrs);
+    await service.flushAll();
+
+    const docs = await service.fetchDocuments([doc1.id, doc2.id]);
+    expect(docs).toHaveLength(2);
+
+    const fetched1 = docs.find((d) => d.id === doc1.id);
+    const fetched2 = docs.find((d) => d.id === doc2.id);
+
+    expect(fetched1).toBeDefined();
+    expect(fetched1?.bodyText).toBe(doc1.body);
+    expect(fetched1?.attrs).toBe(doc1.attrs);
+
+    expect(fetched2).toBeDefined();
+    expect(fetched2?.bodyText).toBe(doc2.body);
+    expect(fetched2?.attrs).toBe(doc2.attrs);
+  });
+
   describe("Contentless Mode (recordContents: false)", () => {
     let contentlessService: SearchService;
 

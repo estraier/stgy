@@ -42,11 +42,18 @@ export type SearchFileInfo = {
   isHealthy: boolean;
 };
 
+export type FetchedDocument = {
+  id: string;
+  bodyText: string | null;
+  attrs: string | null;
+};
+
 type BatchTask = {
   id: number;
   doc_id: string;
   body: string | null;
   locale: string | null;
+  attrs: string | null;
   created_at: string;
 };
 
@@ -131,6 +138,12 @@ class SearchShard {
           external_id TEXT UNIQUE
         );
       `);
+      await this.db.exec(`
+        CREATE TABLE IF NOT EXISTS extra_attrs (
+          external_id TEXT PRIMARY KEY,
+          attrs TEXT
+        );
+      `);
       const detailMode = this.config.recordPositions ? "full" : "none";
       const contentOption = this.config.recordContents ? "" : "content='',";
       await this.db.exec(`
@@ -152,6 +165,7 @@ class SearchShard {
           doc_id TEXT NOT NULL,
           body TEXT,
           locale TEXT,
+          attrs TEXT,
           created_at DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW'))
         );
       `);
@@ -282,15 +296,21 @@ class SearchShard {
     this.currentReadIndex = 0;
   }
 
-  async addDocument(docId: string, bodyText: string, locale: string): Promise<void> {
+  async addDocument(
+    docId: string,
+    bodyText: string,
+    locale: string,
+    attrs: string | null,
+  ): Promise<void> {
     if (this.isClosing) throw new Error("Shard is closing");
     if (!this.operational) throw new Error("Shard is not operational");
     if (!this.db) await this.open();
     if (!this.db) throw new Error("Database not initialized");
-    await this.db.run("INSERT INTO batch_tasks (doc_id, body, locale) VALUES (?, ?, ?)", [
+    await this.db.run("INSERT INTO batch_tasks (doc_id, body, locale, attrs) VALUES (?, ?, ?, ?)", [
       docId,
       bodyText,
       locale,
+      attrs,
     ]);
     this.onTaskAdded();
   }
@@ -302,8 +322,9 @@ class SearchShard {
     if (!this.operational) throw new Error("Shard is not operational");
     if (!this.db) await this.open();
     if (!this.db) throw new Error("Database not initialized");
-    await this.db.run("INSERT INTO batch_tasks (doc_id, body, locale) VALUES (?, ?, ?)", [
+    await this.db.run("INSERT INTO batch_tasks (doc_id, body, locale, attrs) VALUES (?, ?, ?, ?)", [
       docId,
+      null,
       null,
       null,
     ]);
@@ -330,6 +351,51 @@ class SearchShard {
       return rows.map((r) => r.external_id);
     } catch (e) {
       this.logger.error(`Search failed: ${e}`);
+      throw e;
+    } finally {
+      this.lastQueryEndTime = Date.now();
+    }
+  }
+
+  async fetchDocuments(
+    ids: string[],
+    omitBodyText: boolean,
+    omitAttrs: boolean,
+  ): Promise<FetchedDocument[]> {
+    if (!this.operational || !this.db) return [];
+    if (ids.length === 0) return [];
+    let targetDb = this.db;
+    if (this.readDbs.length > 0) {
+      const now = Date.now();
+      if (this.isProcessingBatch || now - this.lastQueryEndTime < 100) {
+        targetDb = this.readDbs[this.currentReadIndex] || this.db;
+        this.currentReadIndex = (this.currentReadIndex + 1) % this.readDbs.length;
+      }
+    }
+
+    try {
+      const placeholders = ids.map(() => "?").join(",");
+      let selectClause = "SELECT t.external_id as id";
+      let joinClause = "FROM id_tuples t";
+
+      if (!omitBodyText) {
+        selectClause += ", d.tokens as bodyText";
+        joinClause += " JOIN docs d ON t.internal_id = d.rowid";
+      } else {
+        selectClause += ", NULL as bodyText";
+      }
+
+      if (!omitAttrs) {
+        selectClause += ", ea.attrs";
+        joinClause += " LEFT JOIN extra_attrs ea ON t.external_id = ea.external_id";
+      } else {
+        selectClause += ", NULL as attrs";
+      }
+
+      const sql = `${selectClause} ${joinClause} WHERE t.external_id IN (${placeholders})`;
+      return await targetDb.all<FetchedDocument>(sql, ids);
+    } catch (e) {
+      this.logger.error(`Fetch documents failed: ${e}`);
       throw e;
     } finally {
       this.lastQueryEndTime = Date.now();
@@ -452,6 +518,7 @@ class SearchShard {
           if (task.body === null) {
             await this.db.run("DELETE FROM docs WHERE rowid = ?", [internalId]);
             await this.db.run("DELETE FROM id_tuples WHERE internal_id = ?", [internalId]);
+            await this.db.run("DELETE FROM extra_attrs WHERE external_id = ?", [task.doc_id]);
           } else {
             if (row) await this.db.run("DELETE FROM docs WHERE rowid = ?", [internalId]);
             const rawTokens = this.tokenizer.tokenize(task.body, task.locale || "en");
@@ -471,6 +538,12 @@ class SearchShard {
               internalId,
               tokens.join(" "),
             ]);
+            if (task.attrs !== null) {
+              await this.db.run(
+                "INSERT OR REPLACE INTO extra_attrs (external_id, attrs) VALUES (?, ?)",
+                [task.doc_id, task.attrs],
+              );
+            }
           }
         } catch (e) {
           if (e instanceof Error) {
@@ -630,10 +703,11 @@ export class SearchService {
     timestamp: number,
     bodyText: string,
     locale: string,
+    attrs: string | null = null,
   ): Promise<void> {
     if (!this.isOpen || !this.tokenizer) throw new Error("Service not open");
     const shard = await this.getShard(timestamp);
-    await shard.addDocument(docId, bodyText, locale);
+    await shard.addDocument(docId, bodyText, locale, attrs);
   }
 
   async removeDocument(docId: string, timestamp: number): Promise<void> {
@@ -667,6 +741,30 @@ export class SearchService {
       }
     }
     return Array.from(results).slice(offset, offset + limit);
+  }
+
+  async fetchDocuments(
+    ids: string[],
+    omitBodyText = false,
+    omitAttrs = false,
+  ): Promise<FetchedDocument[]> {
+    if (!this.isOpen) throw new Error("Service not open");
+    if (ids.length === 0) return [];
+
+    const results: FetchedDocument[] = [];
+    const idsToFind = new Set(ids);
+
+    for (const shard of this.sortedShards) {
+      if (idsToFind.size === 0) break;
+      const batchIds = Array.from(idsToFind);
+      const docs = await shard.fetchDocuments(batchIds, omitBodyText, omitAttrs);
+
+      for (const doc of docs) {
+        results.push(doc);
+        idsToFind.delete(doc.id);
+      }
+    }
+    return results;
   }
 
   async listFiles(detailed: boolean = false): Promise<SearchFileInfo[]> {
