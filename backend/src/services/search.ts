@@ -34,11 +34,15 @@ export class SearchService {
       locale: doc.locale,
     };
 
+    console.log("ADD", body);
+
     const res = await fetch(url, {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
+
+    console.log("ADD-RES", res);
 
     if (!res.ok) {
       const errorText = await res.text().catch(() => "Unknown error");

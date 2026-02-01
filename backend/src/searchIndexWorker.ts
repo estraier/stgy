@@ -1,3 +1,4 @@
+import { Config } from "./config";
 import { createLogger } from "./utils/logger";
 import { connectPgWithRetry } from "./utils/servers";
 import { WorkerLifecycle, runIfMain } from "./utils/workerRunner";
@@ -5,6 +6,10 @@ import { SearchService, SearchIndexTask } from "./services/search";
 
 const logger = createLogger({ file: "searchIndexWorker" });
 export const lifecycle = new WorkerLifecycle();
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 async function processSearchTasks(searchService: SearchService) {
   while (lifecycle.isActive) {
@@ -26,6 +31,7 @@ async function processSearchTasks(searchService: SearchService) {
         } catch (e) {
           logger.error(`Failed to process search task ${task.id}: ${e}`);
         }
+        await sleep(Config.SEARCH_INDEX_TASK_SLEEP_MS);
       }
 
       if (processedIds.length > 0) {
@@ -37,6 +43,8 @@ async function processSearchTasks(searchService: SearchService) {
       logger.error(`Error in search index worker loop: ${e}`);
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
+
+    await sleep(Config.SEARCH_INDEX_LOOP_SLEEP_MS);
   }
 }
 

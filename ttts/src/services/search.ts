@@ -13,6 +13,7 @@ const CONFIG_LATEST_AUTOMERGE_LEVEL = 8;
 const CONFIG_ARCHIVE_CACHE_SIZE_BYTES = 409600;
 const CONFIG_ARCHIVE_MMAP_SIZE_BYTES = 0;
 const CONFIG_ARCHIVE_AUTOMERGE_LEVEL = 2;
+const CONFIG_BUSY_THRESHOLD_MS = 100;
 
 export type SearchConfig = {
   baseDir: string;
@@ -70,6 +71,7 @@ class SearchShard {
   private pendingCount: number = 0;
   private batchTimer: NodeJS.Timeout | null = null;
   private isProcessingBatch: boolean = false;
+  private isCommitting: boolean = false;
   private isClosing: boolean = false;
   private lastQueryEndTime: number = 0;
 
@@ -412,7 +414,7 @@ class SearchShard {
     let targetDb = this.db;
     if (this.readDbs.length > 0) {
       const now = Date.now();
-      if (this.isProcessingBatch || now - this.lastQueryEndTime < 100) {
+      if (this.isCommitting || now - this.lastQueryEndTime < CONFIG_BUSY_THRESHOLD_MS) {
         targetDb = this.readDbs[this.currentReadIndex] || this.db;
         this.currentReadIndex = (this.currentReadIndex + 1) % this.readDbs.length;
       }
@@ -441,7 +443,7 @@ class SearchShard {
     let targetDb = this.db;
     if (this.readDbs.length > 0) {
       const now = Date.now();
-      if (this.isProcessingBatch || now - this.lastQueryEndTime < 100) {
+      if (this.isCommitting || now - this.lastQueryEndTime < CONFIG_BUSY_THRESHOLD_MS) {
         targetDb = this.readDbs[this.currentReadIndex] || this.db;
         this.currentReadIndex = (this.currentReadIndex + 1) % this.readDbs.length;
       }
@@ -576,18 +578,11 @@ class SearchShard {
             [task.doc_id],
           );
           if (row) {
-            if (!this.config.recordContents)
-              throw new Error(`Duplicate document ID ${task.doc_id} in contentless mode.`);
             internalId = row.internal_id;
           } else {
             if (task.body === null) continue;
             if (nextInternalId <= 0) throw new Error(`RowID exhausted in shard ${this.filepath}.`);
-            await this.db.run("INSERT INTO id_tuples (internal_id, external_id) VALUES (?, ?)", [
-              nextInternalId,
-              task.doc_id,
-            ]);
             internalId = nextInternalId;
-            nextInternalId--;
           }
           if (task.body === null) {
             await this.db.run("DELETE FROM docs WHERE rowid = ?", [internalId]);
@@ -612,6 +607,13 @@ class SearchShard {
               internalId,
               tokens.join(" "),
             ]);
+            if (!row) {
+              await this.db.run("INSERT INTO id_tuples (internal_id, external_id) VALUES (?, ?)", [
+                internalId,
+                task.doc_id,
+              ]);
+              nextInternalId--;
+            }
             if (task.attrs !== null) {
               await this.db.run(
                 "INSERT OR REPLACE INTO extra_attrs (external_id, attrs) VALUES (?, ?)",
@@ -631,10 +633,22 @@ class SearchShard {
       await this.db.run(
         "DELETE FROM batch_tasks WHERE id IN (" + tasks.map((t) => t.id).join(",") + ")",
       );
-      await this.db.exec("COMMIT");
+      this.isCommitting = true;
+      try {
+        await this.db.exec("COMMIT");
+      } finally {
+        this.isCommitting = false;
+      }
       this.pendingCount = Math.max(0, this.pendingCount - taskCount);
     } catch (e) {
-      if (this.db) await this.db.exec("ROLLBACK").catch(() => {});
+      if (this.db) {
+        this.isCommitting = true;
+        try {
+          await this.db.exec("ROLLBACK").catch(() => {});
+        } finally {
+          this.isCommitting = false;
+        }
+      }
       throw e;
     } finally {
       this.isProcessingBatch = false;
