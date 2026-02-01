@@ -8,6 +8,18 @@ import fs from "fs/promises";
 const program = new Command();
 const logger = createLogger({ file: "volume-test" });
 
+class VolumeTestSearchService extends SearchService {
+  public async addDocumentDirect(
+    docId: string,
+    timestamp: number,
+    bodyText: string,
+    locale: string,
+    attrs: string | null = null
+  ) {
+    return this.addDocument(docId, timestamp, bodyText, locale, attrs);
+  }
+}
+
 interface PrepareOptions {
   documents: string;
   words: string;
@@ -43,7 +55,7 @@ function logMemoryUsage(label: string): void {
 }
 
 async function runPrepare(opts: PrepareOptions): Promise<void> {
-  const baseSearchConfig = Config.resources[0].search;
+  const baseSearchConfig = Config.resources[0];
 
   const flushInterval = opts.autoCommit
     ? parseInt(opts.autoCommit, 10)
@@ -57,14 +69,17 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
     recordContents: opts.recordContents !== "false",
   };
 
-  const service = new SearchService(config, logger);
-  await service.open();
+  const service = new VolumeTestSearchService(config, logger);
+
+  await service.open({ startWorker: false });
 
   console.log("Cleaning up existing index files...");
-  const existingFiles = await service.listFiles(false);
+  await service.startMaintenanceMode();
+  const existingFiles = await service.listIndexFiles(false);
   for (const file of existingFiles) {
-    await service.removeFile(file.startTimestamp);
+    await service.removeIndexFile(file.startTimestamp);
   }
+  await service.endMaintenanceMode();
   console.log(`Cleaned up ${existingFiles.length} files.`);
 
   const iterations = parseInt(opts.iteration, 10);
@@ -96,22 +111,22 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
       const body = generateDocument(wordCount, vocabSize, gamma);
       totalGeneratedSize += Buffer.byteLength(body);
 
-      if (i === 0) console.log(`\n  Sample: ${body.substring(0, 100)}...`);
+      if (i === 0) console.log(`  Sample: ${body.substring(0, 100)}...`);
 
-      await service.addDocument(docId, currentSimulatedTime, body, "en");
+      await service.addDocumentDirect(docId, currentSimulatedTime, body, "en");
 
       if ((i + 1) % flushInterval === 0) {
-        await service.flushAll();
+        await service.synchronize();
         process.stdout.write(`\r  Progress: [${i + 1}/${docCountPerIter}] Flushed.`);
       }
     }
 
-    await service.flushAll();
+    await service.synchronize();
     process.stdout.write(`\r  Progress: [${docCountPerIter}/${docCountPerIter}] Done.   \n`);
 
     console.log(`Iteration ${iter} took ${((Date.now() - iterStartTime) / 1000).toFixed(2)}s`);
 
-    const filesAfter = await service.listFiles(true);
+    const filesAfter = await service.listIndexFiles(true);
     const currentShard = filesAfter.find((f) => f.startTimestamp === bucketTs);
     if (currentShard) {
       const fileMB = (currentShard.fileSize / 1024 / 1024).toFixed(2);
@@ -135,7 +150,7 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 
   const totalElapsed = (Date.now() - startTimeAll) / 1000;
 
-  const finalFiles = await service.listFiles(true);
+  const finalFiles = await service.listIndexFiles(true);
   const totalDocs = finalFiles.reduce((acc, f) => acc + f.countDocuments, 0);
   const totalIndex = finalFiles.reduce((acc, f) => acc + f.indexSize, 0);
   const totalContent = finalFiles.reduce((acc, f) => acc + f.contentSize, 0);
@@ -170,7 +185,7 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 }
 
 async function runSearch(opts: SearchOptions): Promise<void> {
-  const baseSearchConfig = Config.resources[0].search;
+  const baseSearchConfig = Config.resources[0];
   const service = new SearchService(baseSearchConfig, logger);
   await service.open();
 
@@ -181,7 +196,7 @@ async function runSearch(opts: SearchOptions): Promise<void> {
   console.log(`=== Search Benchmark: "${query}" ===`);
   console.log(`Limit: ${opts.limit === "0" ? "Unlimited (Count mode)" : limit}, Trials: ${times}`);
 
-  const files = await service.listFiles(false);
+  const files = await service.listIndexFiles(false);
   console.log(`Searching across ${files.length} shards...`);
 
   const results: number[] = [];

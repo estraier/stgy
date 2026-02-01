@@ -4,7 +4,7 @@ describe("Tokenizer", () => {
   let tokenizer: Tokenizer;
 
   beforeAll(async () => {
-    tokenizer = await Tokenizer.create();
+    tokenizer = await Tokenizer.getInstance();
   });
 
   describe("guessLocale", () => {

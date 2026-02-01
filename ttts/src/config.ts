@@ -1,56 +1,36 @@
 import { SearchConfig } from "./services/search";
-import { InputQueueConfig } from "./services/inputQueue";
 import path from "path";
-
-export type ResourceConfig = {
-  search: SearchConfig;
-  inputQueue: InputQueueConfig;
-};
 
 const DEFAULT_INDEX_DIR = path.join(process.cwd(), "search-index");
 const COMMON_INDEX_DIR = envStr("STGY_SEARCH_INDEX_DIR", DEFAULT_INDEX_DIR);
 
 export class Config {
-  static readonly resources: ResourceConfig[] = [
+  static readonly resources: SearchConfig[] = [
     {
-      search: {
-        baseDir: COMMON_INDEX_DIR,
-        namePrefix: "posts",
-        bucketDurationSeconds: 3000000,
-        autoCommitUpdateCount: 10000,
-        autoCommitAfterLastUpdateSeconds: 300,
-        autoCommitAfterLastCommitSeconds: 1800,
-        initialDocumentId: 2097151,
-        recordPositions: false,
-        recordContents: true,
-        readConnectionCount: 3,
-        maxDocumentTokenCount: 10000,
-        maxQueryTokenCount: 5,
-      },
-      inputQueue: {
-        baseDir: COMMON_INDEX_DIR,
-        namePrefix: "posts",
-      },
+      baseDir: COMMON_INDEX_DIR,
+      namePrefix: "posts",
+      bucketDurationSeconds: 3000000,
+      autoCommitUpdateCount: 10000,
+      autoCommitDurationSeconds: 60,
+      initialDocumentId: 2097151,
+      recordPositions: false,
+      recordContents: true,
+      readConnectionCounts: [2, 2, 1, 1],
+      maxDocumentTokenCount: 10000,
+      maxQueryTokenCount: 5,
     },
     {
-      search: {
-        baseDir: COMMON_INDEX_DIR,
-        namePrefix: "users",
-        bucketDurationSeconds: 30000000,
-        autoCommitUpdateCount: 10000,
-        autoCommitAfterLastUpdateSeconds: 300,
-        autoCommitAfterLastCommitSeconds: 1800,
-        initialDocumentId: 2097151,
-        recordPositions: false,
-        recordContents: true,
-        readConnectionCount: 3,
-        maxDocumentTokenCount: 10000,
-        maxQueryTokenCount: 5,
-      },
-      inputQueue: {
-        baseDir: COMMON_INDEX_DIR,
-        namePrefix: "users",
-      },
+      baseDir: COMMON_INDEX_DIR,
+      namePrefix: "users",
+      bucketDurationSeconds: 30000000,
+      autoCommitUpdateCount: 10000,
+      autoCommitDurationSeconds: 60,
+      initialDocumentId: 2097151,
+      recordPositions: false,
+      recordContents: true,
+      readConnectionCounts: [2, 2, 1, 1],
+      maxDocumentTokenCount: 10000,
+      maxQueryTokenCount: 5,
     },
   ];
   static readonly INPUT_BODY_LIMIT = envNum("STGY_SEARCH_INPUT_BODY_LIMIT", 2 * 1024 * 1024);

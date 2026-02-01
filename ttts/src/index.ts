@@ -1,8 +1,6 @@
 import { Config } from "./config";
 import { createLogger } from "./utils/logger";
 import { SearchService } from "./services/search";
-import { InputQueueService } from "./services/inputQueue";
-import { UpdateWorker } from "./updateWorker";
 import express, { ErrorRequestHandler, Request } from "express";
 import promBundle from "express-prom-bundle";
 import createRootRouter from "./routes/root";
@@ -12,8 +10,6 @@ const logger = createLogger({ file: "index" });
 
 type ResourceInstance = {
   searchService: SearchService;
-  inputQueueService: InputQueueService;
-  worker: UpdateWorker;
 };
 
 function normalizePath(req: Request): string {
@@ -36,39 +32,20 @@ async function main() {
   logger.info("Starting Search Server...");
   printMemoryUsage();
 
-  Object.entries(Config).forEach(([key, value]) => {
-    let displayValue = value;
-    if (typeof value === "string" && (key.endsWith("_PASSWORD") || key.endsWith("_API_KEY"))) {
-      displayValue = "*".repeat(value.length);
-    }
-    logger.info(`[config] ${key}: ${JSON.stringify(displayValue)}`);
-  });
-
   const instances = new Map<string, ResourceInstance>();
 
   for (const resConfig of Config.resources) {
-    const { namePrefix } = resConfig.search;
+    const { namePrefix } = resConfig;
     logger.info(`Initializing resource: ${namePrefix}`);
 
     try {
       const searchLogger = createLogger({ file: "search", resource: namePrefix });
-      const searchService = new SearchService(resConfig.search, searchLogger);
-
-      const queueLogger = createLogger({ file: "inputQueue", resource: namePrefix });
-      const inputQueueService = new InputQueueService(resConfig.inputQueue, queueLogger);
-
-      const workerLogger = createLogger({ file: "worker", resource: namePrefix });
-      const worker = new UpdateWorker(searchService, inputQueueService, workerLogger);
+      const searchService = new SearchService(resConfig, searchLogger);
 
       await searchService.open();
-      await inputQueueService.open();
-
-      worker.start();
 
       instances.set(namePrefix, {
         searchService,
-        inputQueueService,
-        worker,
       });
 
       logger.info(`Resource [${namePrefix}] is now ready.`);
@@ -132,14 +109,8 @@ async function main() {
 
       for (const [name, inst] of instances.entries()) {
         try {
-          logger.info(`[shutdown] Stopping worker for [${name}]...`);
-          await inst.worker.stop();
-
           logger.info(`[shutdown] Closing SearchService for [${name}]...`);
           await inst.searchService.close();
-
-          logger.info(`[shutdown] Closing InputQueueService for [${name}]...`);
-          await inst.inputQueueService.close();
         } catch (e) {
           logger.error(`[shutdown] Error during closing [${name}]: ${e}`);
         }
