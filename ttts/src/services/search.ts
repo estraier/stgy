@@ -184,22 +184,24 @@ class SearchShard {
   }
 
   async close(): Promise<void> {
+    if (this.isClosing) return;
     this.isClosing = true;
     if (this.batchTimer) {
       clearTimeout(this.batchTimer);
       this.batchTimer = null;
     }
-    while (this.isProcessingBatch) {
-      await new Promise((resolve) => setTimeout(resolve, 50));
-    }
     await this.flush();
     await this.disableReadOnly();
     if (this.db) {
-      await this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);").catch(() => {});
-      await this.db.close();
-      this.db = null;
+      try {
+        await this.db.exec("PRAGMA wal_checkpoint(TRUNCATE);");
+        await this.db.close();
+      } catch (e) {
+        this.logger.error(`Error closing database: ${e}`);
+      } finally {
+        this.db = null;
+      }
     }
-    this.isClosing = false;
   }
 
   async flush(): Promise<void> {
@@ -535,12 +537,13 @@ class SearchShard {
   }
 
   private onTaskAdded() {
+    if (this.isClosing) return;
     this.pendingCount++;
     if (this.pendingCount >= this.config.autoCommitUpdateCount) {
       this.processBatch().catch(() => {});
       return;
     }
-    if (!this.batchTimer && !this.isClosing) {
+    if (!this.batchTimer) {
       const delay = Math.min(
         this.config.autoCommitAfterLastUpdateSeconds * 1000,
         this.config.autoCommitAfterLastCommitSeconds * 1000,
@@ -652,7 +655,7 @@ class SearchShard {
       throw e;
     } finally {
       this.isProcessingBatch = false;
-      if (this.pendingCount >= this.config.autoCommitUpdateCount && !this.isClosing) {
+      if (!this.isClosing && this.pendingCount >= this.config.autoCommitUpdateCount) {
         setImmediate(() => this.processBatch().catch(() => {}));
       }
     }
