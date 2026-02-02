@@ -14,8 +14,7 @@ export class IndexFileManager {
 
   public getBucketTimestamp(timestamp: number): number {
     return (
-      Math.floor(timestamp / this.config.bucketDurationSeconds) *
-      this.config.bucketDurationSeconds
+      Math.floor(timestamp / this.config.bucketDurationSeconds) * this.config.bucketDurationSeconds
     );
   }
 
@@ -30,10 +29,7 @@ export class IndexFileManager {
     try {
       const files = await fs.readdir(this.config.baseDir);
       for (const file of files) {
-        if (
-          file.startsWith(this.config.namePrefix) &&
-          file.endsWith(".db")
-        ) {
+        if (file.startsWith(this.config.namePrefix) && file.endsWith(".db")) {
           const prefixLength = this.config.namePrefix.length + 1;
           const tsStr = file.substring(prefixLength, file.length - 3);
           const ts = parseInt(tsStr, 10);
@@ -71,7 +67,7 @@ export class IndexFileManager {
   private async getFileInfo(
     filepath: string,
     startTimestamp: number,
-    detailed: boolean
+    detailed: boolean,
   ): Promise<IndexFileInfo> {
     let fileSize = 0;
     let walSize = 0;
@@ -89,9 +85,7 @@ export class IndexFileManager {
 
       const db = await Database.open(filepath);
       try {
-        const row = await db.get<{ c: number }>(
-          "SELECT count(*) as c FROM id_tuples"
-        );
+        const row = await db.get<{ c: number }>("SELECT count(*) as c FROM id_tuples");
         countDocuments = row?.c || 0;
         isHealthy = true;
 
@@ -100,15 +94,13 @@ export class IndexFileManager {
           const pcRow = await db.get<{ page_count: number }>("PRAGMA page_count");
           totalDatabaseSize = (psRow?.page_size || 0) * (pcRow?.page_count || 0);
 
-          const idxRow = await db.get<{ c: number }>(
-            "SELECT count(*) as c FROM docs_data"
-          );
+          const idxRow = await db.get<{ c: number }>("SELECT count(*) as c FROM docs_data");
           indexSize = (idxRow?.c || 0) * CONFIG_DB_PAGE_SIZE_BYTES;
 
           if (this.config.recordContents) {
             try {
               const cntRow = await db.get<{ s: number }>(
-                "SELECT SUM(LENGTH(c0)) as s FROM docs_content"
+                "SELECT SUM(LENGTH(c0)) as s FROM docs_content",
               );
               contentSize = cntRow?.s || 0;
             } catch {

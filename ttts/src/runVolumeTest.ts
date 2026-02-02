@@ -14,9 +14,16 @@ class VolumeTestSearchService extends SearchService {
     timestamp: number,
     bodyText: string,
     locale: string,
-    attrs: string | null = null
+    attrs: string | null = null,
   ) {
     return this.addDocument(docId, timestamp, bodyText, locale, attrs);
+  }
+
+  public async optimizeAll() {
+    const files = await this.listIndexFiles();
+    for (const file of files) {
+      await this.optimizeShard(file.startTimestamp);
+    }
   }
 }
 
@@ -150,6 +157,9 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 
   const totalElapsed = (Date.now() - startTimeAll) / 1000;
 
+  console.log("\nOptimizing all shards...");
+  await service.optimizeAll();
+
   const finalFiles = await service.listIndexFiles(true);
   const totalDocs = finalFiles.reduce((acc, f) => acc + f.countDocuments, 0);
   const totalIndex = finalFiles.reduce((acc, f) => acc + f.indexSize, 0);
@@ -248,7 +258,7 @@ program
   .command("search")
   .option("--query <string>", "Search query", "w0")
   .option("--limit <number>", "Limit per search (0 for unlimited)", "100")
-  .option("--times <number>", "Number of trials", "10")
+  .option("--times <number>", "Number of trials", "100")
   .action((opts: SearchOptions) => runSearch(opts));
 
 program.parse(process.argv);

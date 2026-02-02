@@ -93,8 +93,8 @@ describe("IndexFileManager", () => {
     const files = await manager.listIndexFiles();
     expect(files.length).toBe(2);
 
-    const valid = files.find(f => f.startTimestamp === 1000);
-    const invalid = files.find(f => f.startTimestamp === 2000);
+    const valid = files.find((f) => f.startTimestamp === 1000);
+    const invalid = files.find((f) => f.startTimestamp === 2000);
 
     expect(valid?.isHealthy).toBe(true);
     expect(invalid?.isHealthy).toBe(false);
@@ -105,13 +105,22 @@ describe("IndexFileManager", () => {
     const filepath = manager.getFilePath(1000);
     await fs.writeFile(filepath + "-wal", "dummy wal data");
 
-    const walExistsBefore = await fs.stat(filepath + "-wal").then(() => true).catch(() => false);
+    const walExistsBefore = await fs
+      .stat(filepath + "-wal")
+      .then(() => true)
+      .catch(() => false);
     expect(walExistsBefore).toBe(true);
 
     await manager.removeIndexFile(1000);
 
-    const dbExists = await fs.stat(filepath).then(() => true).catch(() => false);
-    const walExists = await fs.stat(filepath + "-wal").then(() => true).catch(() => false);
+    const dbExists = await fs
+      .stat(filepath)
+      .then(() => true)
+      .catch(() => false);
+    const walExists = await fs
+      .stat(filepath + "-wal")
+      .then(() => true)
+      .catch(() => false);
 
     expect(dbExists).toBe(false);
     expect(walExists).toBe(false);

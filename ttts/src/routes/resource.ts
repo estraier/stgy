@@ -37,7 +37,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
 
   router.post("/reconstruct", async (req: Request, res: Response) => {
     if (!(await searchService.checkMaintenanceMode())) {
-        return res.status(409).json({ error: "Maintenance mode required" });
+      return res.status(409).json({ error: "Maintenance mode required" });
     }
 
     try {
@@ -58,7 +58,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
 
   router.post("/reserve", async (req: Request, res: Response) => {
     if (!(await searchService.checkMaintenanceMode())) {
-        return res.status(409).json({ error: "Maintenance mode required" });
+      return res.status(409).json({ error: "Maintenance mode required" });
     }
 
     try {
@@ -76,7 +76,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
 
   router.delete("/shards/:timestamp", async (req: Request, res: Response) => {
     if (!(await searchService.checkMaintenanceMode())) {
-        return res.status(409).json({ error: "Maintenance mode required" });
+      return res.status(409).json({ error: "Maintenance mode required" });
     }
 
     try {
@@ -93,18 +93,18 @@ export default function createResourceRouter(instance: ResourceInstance) {
     }
   });
 
-   router.delete("/shards", async (req: Request, res: Response) => {
+  router.delete("/shards", async (req: Request, res: Response) => {
     if (!(await searchService.checkMaintenanceMode())) {
-        return res.status(409).json({ error: "Maintenance mode required" });
+      return res.status(409).json({ error: "Maintenance mode required" });
     }
     try {
-        await searchService.removeAllIndexFiles();
-        res.json({ result: "all deleted" });
-    } catch(e: any) {
-        logger.error(`Remove all shards error: ${e}`);
-        res.status(500).json({ error: e.message || String(e) });
+      await searchService.removeAllIndexFiles();
+      res.json({ result: "all deleted" });
+    } catch (e: any) {
+      logger.error(`Remove all shards error: ${e}`);
+      res.status(500).json({ error: e.message || String(e) });
     }
-   });
+  });
 
   router.get("/shards", async (req: Request, res: Response) => {
     try {

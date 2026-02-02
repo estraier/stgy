@@ -54,12 +54,12 @@ export class TaskQueue {
     timestamp: number,
     bodyText: string | null,
     locale: string | null,
-    attrs: string | null
+    attrs: string | null,
   ): Promise<void> {
     if (!this.db) throw new Error("TaskQueue not open");
     await this.db.run(
       `INSERT INTO input_tasks (doc_id, timestamp, body_text, locale, attrs) VALUES (?, ?, ?, ?, ?)`,
-      [docId, timestamp, bodyText, locale, attrs]
+      [docId, timestamp, bodyText, locale, attrs],
     );
   }
 
@@ -68,9 +68,7 @@ export class TaskQueue {
 
     await this.db.exec("BEGIN IMMEDIATE");
     try {
-      const task = await this.db.get<any>(
-        "SELECT * FROM input_tasks ORDER BY id ASC LIMIT 1"
-      );
+      const task = await this.db.get<any>("SELECT * FROM input_tasks ORDER BY id ASC LIMIT 1");
 
       if (!task) {
         await this.db.exec("ROLLBACK");
@@ -80,7 +78,15 @@ export class TaskQueue {
       await this.db.run(
         `INSERT INTO batch_tasks (id, doc_id, timestamp, body_text, locale, attrs, created_at)
          VALUES (?, ?, ?, ?, ?, ?, ?)`,
-        [task.id, task.doc_id, task.timestamp, task.body_text, task.locale, task.attrs, task.created_at]
+        [
+          task.id,
+          task.doc_id,
+          task.timestamp,
+          task.body_text,
+          task.locale,
+          task.attrs,
+          task.created_at,
+        ],
       );
 
       await this.db.run("DELETE FROM input_tasks WHERE id = ?", [task.id]);
@@ -109,7 +115,7 @@ export class TaskQueue {
   async getPendingBatchTasks(): Promise<IndexTask[]> {
     if (!this.db) throw new Error("TaskQueue not open");
     const rows = await this.db.all<any>("SELECT * FROM batch_tasks ORDER BY id ASC");
-    return rows.map(r => ({
+    return rows.map((r) => ({
       id: r.id,
       docId: r.doc_id,
       timestamp: r.timestamp,

@@ -29,7 +29,7 @@ const CONFIG: SearchConfig = {
 const waitForCondition = async (
   check: () => Promise<boolean>,
   timeoutMs: number = 2000,
-  intervalMs: number = 20
+  intervalMs: number = 20,
 ): Promise<void> => {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -53,9 +53,8 @@ describe("SearchService", () => {
   beforeEach(async () => {
     try {
       const files = await fs.readdir(TEST_DIR);
-      await Promise.all(files.map(file => fs.unlink(path.join(TEST_DIR, file)).catch(() => {})));
-    } catch {
-    }
+      await Promise.all(files.map((file) => fs.unlink(path.join(TEST_DIR, file)).catch(() => {})));
+    } catch {}
 
     service = new SearchService(CONFIG, mockLogger);
     await service.open();
@@ -129,7 +128,7 @@ describe("SearchService", () => {
     const files = await service.listIndexFiles();
     expect(files.length).toBe(2);
 
-    const timestamps = files.map(f => f.startTimestamp).sort();
+    const timestamps = files.map((f) => f.startTimestamp).sort();
     expect(timestamps).toEqual([1000, 1100]);
   });
 
@@ -139,7 +138,7 @@ describe("SearchService", () => {
 
     await service.enqueueTask("doc1", 1000, "waiting", "en", null);
 
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 100));
 
     let results = await service.search("waiting");
     expect(results).toEqual([]);
@@ -181,6 +180,20 @@ describe("SearchService", () => {
     expect(results).toContain("doc1");
   });
 
+  test("Management: optimizeShard optimizes the index", async () => {
+    await service.enqueueTask("doc1", 1000, "optimize me", "en", null);
+
+    await waitForCondition(async () => {
+      const res = await service.search("optimize");
+      return res.includes("doc1");
+    });
+
+    await service.optimizeShard(1000);
+
+    const results = await service.search("optimize");
+    expect(results).toContain("doc1");
+  });
+
   test("Management: removeIndexFile physically deletes file", async () => {
     await service.enqueueTask("doc1", 1000, "content", "en", null);
 
@@ -197,7 +210,9 @@ describe("SearchService", () => {
     expect(files.length).toBe(0);
 
     const fsFiles = await fs.readdir(TEST_DIR);
-    const indexFiles = fsFiles.filter(f => f.startsWith("test_search-") && f.endsWith(".db") && !f.includes("common"));
+    const indexFiles = fsFiles.filter(
+      (f) => f.startsWith("test_search-") && f.endsWith(".db") && !f.includes("common"),
+    );
     expect(indexFiles.length).toBe(0);
   });
 });
