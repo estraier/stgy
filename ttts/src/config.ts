@@ -45,9 +45,9 @@ export class Config {
       maxQueryTokenCount: 5,
     },
   ];
-  static readonly INPUT_BODY_LIMIT = envNum("STGY_SEARCH_INPUT_BODY_LIMIT", 2 * 1024 * 1024);
   static readonly SERVER_PORT = envNum("STGY_SEARCH_PORT", 3200);
   static readonly LOG_FORMAT = envStr("STGY_SEARCH_LOG_FORMAT", "");
+  static readonly INPUT_BODY_LIMIT = envNum("STGY_SEARCH_INPUT_BODY_LIMIT", 2 * 1024 * 1024);
   static readonly ENABLE_KUROMOJI = envBool("STGY_SEARCH_ENABLE_KUROMOJI", false);
 }
 
