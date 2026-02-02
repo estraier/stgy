@@ -21,7 +21,10 @@ const CONFIG: SearchConfig = {
   initialDocumentId: 1000,
   recordPositions: false,
   recordContents: true,
-  readConnectionCounts: [1],
+  readConnectionCounts: [1, 0],
+  mmapSizes: [268435456, 0],
+  cacheSizes: [25165824, 409600],
+  automergeLevels: [8, 2],
   maxQueryTokenCount: 10,
   maxDocumentTokenCount: 100,
 };

@@ -2,6 +2,16 @@ import path from "path";
 import { Database } from "../utils/database";
 import { IndexTask, SearchConfig } from "./search";
 
+type TaskRow = {
+  id: number;
+  doc_id: string;
+  timestamp: number;
+  body_text: string | null;
+  locale: string | null;
+  attrs: string | null;
+  created_at: string;
+};
+
 export class TaskQueue {
   private db: Database | null = null;
   private readonly dbPath: string;
@@ -68,7 +78,7 @@ export class TaskQueue {
 
     await this.db.exec("BEGIN IMMEDIATE");
     try {
-      const task = await this.db.get<any>("SELECT * FROM input_tasks ORDER BY id ASC LIMIT 1");
+      const task = await this.db.get<TaskRow>("SELECT * FROM input_tasks ORDER BY id ASC LIMIT 1");
 
       if (!task) {
         await this.db.exec("ROLLBACK");
@@ -114,7 +124,7 @@ export class TaskQueue {
 
   async getPendingBatchTasks(): Promise<IndexTask[]> {
     if (!this.db) throw new Error("TaskQueue not open");
-    const rows = await this.db.all<any>("SELECT * FROM batch_tasks ORDER BY id ASC");
+    const rows = await this.db.all<TaskRow>("SELECT * FROM batch_tasks ORDER BY id ASC");
     return rows.map((r) => ({
       id: r.id,
       docId: r.doc_id,

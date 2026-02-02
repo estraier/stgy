@@ -1,4 +1,3 @@
-import path from "path";
 import fs from "fs/promises";
 import sqlite3 from "sqlite3";
 import { Database } from "../utils/database";
@@ -153,7 +152,7 @@ export class SearchService {
 
   async removeAllIndexFiles(): Promise<void> {
     await this.ensureMaintenanceMode();
-    for (const [ts, shard] of this.shards) {
+    for (const [, shard] of this.shards) {
       await this.closeShard(shard);
     }
     this.shards.clear();
@@ -434,9 +433,9 @@ export class SearchService {
 
         const rows = await targetDb.all<{ external_id: string }>(
           `SELECT t.external_id FROM docs
-           JOIN id_tuples t ON docs.rowid = t.internal_id
-           WHERE docs MATCH ?
-           ORDER BY docs.rowid ASC LIMIT ?`,
+            JOIN id_tuples t ON docs.rowid = t.internal_id
+            WHERE docs MATCH ?
+            ORDER BY docs.rowid ASC LIMIT ?`,
           [ftsQuery, remaining],
         );
 

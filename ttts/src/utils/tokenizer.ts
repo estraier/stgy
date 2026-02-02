@@ -28,7 +28,7 @@ export class Tokenizer {
       try {
         const kuromojiEntry = require.resolve("kuromoji");
         dicPath = path.join(path.dirname(kuromojiEntry), "../dict") + path.sep;
-      } catch (e) {
+      } catch {
         dicPath = "node_modules/kuromoji/dict/";
       }
 

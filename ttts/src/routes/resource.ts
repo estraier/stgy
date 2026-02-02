@@ -13,9 +13,6 @@ export default function createResourceRouter(instance: ResourceInstance) {
   const router = Router();
   const { searchService } = instance;
 
-  // ---------------------------------------------------------
-  // Maintenance Mode API
-  // ---------------------------------------------------------
   router.get("/maintenance", async (_req: Request, res: Response) => {
     const enabled = await searchService.checkMaintenanceMode();
     res.json({ enabled });
@@ -30,10 +27,6 @@ export default function createResourceRouter(instance: ResourceInstance) {
     await searchService.endMaintenanceMode();
     res.json({ enabled: false });
   });
-
-  // ---------------------------------------------------------
-  // Management API (Maintenance Mode Required)
-  // ---------------------------------------------------------
 
   router.post("/reconstruct", async (req: Request, res: Response) => {
     if (!(await searchService.checkMaintenanceMode())) {
@@ -50,9 +43,10 @@ export default function createResourceRouter(instance: ResourceInstance) {
       await searchService.reconstructIndexFile(timestamp, newInitialId, !!useExternalId);
 
       res.json({ result: "reconstructed", timestamp });
-    } catch (e: any) {
+    } catch (e) {
       logger.error(`[Reconstruct] Error: ${e}`);
-      res.status(500).json({ error: e.message || String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
     }
   });
 
@@ -68,9 +62,10 @@ export default function createResourceRouter(instance: ResourceInstance) {
       }
       await searchService.reserveIds(items);
       res.json({ result: "reserved", count: items.length });
-    } catch (e: any) {
+    } catch (e) {
       logger.error(`Reserve error: ${e}`);
-      res.status(500).json({ error: e.message || String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
     }
   });
 
@@ -87,9 +82,10 @@ export default function createResourceRouter(instance: ResourceInstance) {
       }
       await searchService.removeIndexFile(timestamp);
       res.json({ result: "deleted" });
-    } catch (e: any) {
+    } catch (e) {
       logger.error(`Remove shard error: ${e}`);
-      res.status(500).json({ error: e.message || String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
     }
   });
 
@@ -100,9 +96,10 @@ export default function createResourceRouter(instance: ResourceInstance) {
     try {
       await searchService.removeAllIndexFiles();
       res.json({ result: "all deleted" });
-    } catch (e: any) {
+    } catch (e) {
       logger.error(`Remove all shards error: ${e}`);
-      res.status(500).json({ error: e.message || String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
     }
   });
 
@@ -111,9 +108,10 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const detailed = req.query.detailed === "true";
       const files = await searchService.listIndexFiles(detailed);
       res.json(files);
-    } catch (e: any) {
+    } catch (e) {
       logger.error(`List files error: ${e}`);
-      res.status(500).json({ error: e.message || String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
     }
   });
 
@@ -121,15 +119,12 @@ export default function createResourceRouter(instance: ResourceInstance) {
     try {
       await searchService.synchronize();
       res.json({ result: "flushed" });
-    } catch (e: any) {
+    } catch (e) {
       logger.error(`Flush error: ${e}`);
-      res.status(500).json({ error: e.message || String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
     }
   });
-
-  // ---------------------------------------------------------
-  // Utility API
-  // ---------------------------------------------------------
 
   router.get("/tokenize", async (req: Request, res: Response) => {
     try {
@@ -143,15 +138,12 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const guessedLocale = tokenizer.guessLocale(text, locale);
       const tokens = tokenizer.tokenize(text, guessedLocale);
       res.json(tokens);
-    } catch (e: any) {
+    } catch (e) {
       logger.error(`Tokenize error: ${e}`);
-      res.status(500).json({ error: e.message || String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
     }
   });
-
-  // ---------------------------------------------------------
-  // Search API
-  // ---------------------------------------------------------
 
   router.get("/search", async (req: Request, res: Response) => {
     try {
@@ -166,9 +158,10 @@ export default function createResourceRouter(instance: ResourceInstance) {
 
       const results = await searchService.search(query, locale, limit, offset, timeout);
       res.json(results);
-    } catch (e: any) {
+    } catch (e) {
       logger.error(`Search error: ${e}`);
-      res.status(500).json({ error: e.message || String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
     }
   });
 
@@ -197,15 +190,12 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const orderedDocs = ids.map((id) => docMap.get(id)).filter((d) => d !== undefined);
 
       res.json(orderedDocs);
-    } catch (e: any) {
+    } catch (e) {
       logger.error(`Search-fetch error: ${e}`);
-      res.status(500).json({ error: e.message || String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
     }
   });
-
-  // ---------------------------------------------------------
-  // Document Update API (Enqueue)
-  // ---------------------------------------------------------
 
   router.get("/:docId", async (req: Request, res: Response) => {
     try {
@@ -218,9 +208,10 @@ export default function createResourceRouter(instance: ResourceInstance) {
         return res.status(404).json({ error: "document not found" });
       }
       res.json(docs[0]);
-    } catch (e: any) {
+    } catch (e) {
       logger.error(`Fetch document error: ${e}`);
-      res.status(500).json({ error: e.message || String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
     }
   });
 
@@ -235,9 +226,10 @@ export default function createResourceRouter(instance: ResourceInstance) {
       await searchService.enqueueTask(docId, timestamp, text, locale || "en", attrs || null);
 
       res.status(202).json({ result: "accepted" });
-    } catch (e: any) {
+    } catch (e) {
       logger.error(`Enqueue error (put): ${e}`);
-      res.status(500).json({ error: e.message || String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
     }
   });
 
@@ -252,9 +244,10 @@ export default function createResourceRouter(instance: ResourceInstance) {
       await searchService.enqueueTask(docId, timestamp, null, null, null);
 
       res.status(202).json({ result: "accepted" });
-    } catch (e: any) {
+    } catch (e) {
       logger.error(`Enqueue error (delete): ${e}`);
-      res.status(500).json({ error: e.message || String(e) });
+      const message = e instanceof Error ? e.message : String(e);
+      res.status(500).json({ error: message });
     }
   });
 
