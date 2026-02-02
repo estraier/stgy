@@ -41,7 +41,6 @@ export class IndexFileManager {
         }
       }
     } catch {
-      // ignore
     }
     return infos.sort((a, b) => b.startTimestamp - a.startTimestamp);
   }
