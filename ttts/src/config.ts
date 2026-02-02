@@ -5,15 +5,19 @@ const DEFAULT_INDEX_DIR = path.join(process.cwd(), "search-index");
 const COMMON_INDEX_DIR = envStr("STGY_SEARCH_INDEX_DIR", DEFAULT_INDEX_DIR);
 
 export class Config {
+  static readonly SERVER_PORT = envNum("STGY_SEARCH_PORT", 3200);
+  static readonly LOG_FORMAT = envStr("STGY_SEARCH_LOG_FORMAT", "");
+  static readonly INPUT_BODY_LIMIT = envNum("STGY_SEARCH_INPUT_BODY_LIMIT", 2 * 1024 * 1024);
+  static readonly ENABLE_KUROMOJI = envBool("STGY_SEARCH_ENABLE_KUROMOJI", false);
   static readonly resources: SearchConfig[] = [
     {
       baseDir: COMMON_INDEX_DIR,
-      namePrefix: "posts",
-      bucketDurationSeconds: 3000000,
+      namePrefix: "users",
+      bucketDurationSeconds: envNum("STGY_SEARCH_USERS_BUCKET_DURATION", 30000000),
       autoCommitUpdateCount: 10000,
       autoCommitDurationSeconds: 60,
       commitCheckIntervalSeconds: 300,
-      updateWorkerBusySleepSeconds: 0.1,
+      updateWorkerBusySleepSeconds: 0.05,
       updateWorkerIdleSleepSeconds: 2.0,
       initialDocumentId: 2097151,
       recordPositions: false,
@@ -27,12 +31,12 @@ export class Config {
     },
     {
       baseDir: COMMON_INDEX_DIR,
-      namePrefix: "users",
-      bucketDurationSeconds: 30000000,
+      namePrefix: "posts",
+      bucketDurationSeconds: envNum("STGY_SEARCH_POSTS_BUCKET_DURATION", 3000000),
       autoCommitUpdateCount: 10000,
       autoCommitDurationSeconds: 60,
       commitCheckIntervalSeconds: 300,
-      updateWorkerBusySleepSeconds: 0.1,
+      updateWorkerBusySleepSeconds: 0.05,
       updateWorkerIdleSleepSeconds: 2.0,
       initialDocumentId: 2097151,
       recordPositions: false,
@@ -45,10 +49,6 @@ export class Config {
       maxQueryTokenCount: 5,
     },
   ];
-  static readonly SERVER_PORT = envNum("STGY_SEARCH_PORT", 3200);
-  static readonly LOG_FORMAT = envStr("STGY_SEARCH_LOG_FORMAT", "");
-  static readonly INPUT_BODY_LIMIT = envNum("STGY_SEARCH_INPUT_BODY_LIMIT", 2 * 1024 * 1024);
-  static readonly ENABLE_KUROMOJI = envBool("STGY_SEARCH_ENABLE_KUROMOJI", false);
 }
 
 export function envStr(name: string, def?: string, treatEmptyAsUndefined = false): string {
