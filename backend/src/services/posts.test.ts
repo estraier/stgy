@@ -16,6 +16,13 @@ jest.mock("../utils/servers", () => {
   return { pgQuery };
 });
 
+jest.mock("./search", () => ({
+  SearchService: jest.fn().mockImplementation(() => ({
+    enqueueAddDocument: jest.fn().mockResolvedValue(undefined),
+    enqueueRemoveDocument: jest.fn().mockResolvedValue(undefined),
+  })),
+}));
+
 function normalizeSql(sql: string) {
   return sql.replace(/\s+/g, " ").trim();
 }
@@ -73,6 +80,18 @@ class MockPgClientMain {
     sql = normalizeSql(sql);
 
     if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
+
+    if (sql.startsWith("SELECT locale FROM users WHERE id = $1")) {
+      const id = params![0];
+      const user = this.users.find((u) => u.id === id);
+      return { rows: user ? [{ locale: user.locale }] : [] };
+    }
+
+    if (sql.includes("SELECT p.locale, pd.content FROM posts p JOIN post_details pd")) {
+      const id = params![0];
+      const post = this.data.find((p) => p.id === id);
+      return { rows: post ? [{ locale: post.locale, content: post.content }] : [] };
+    }
 
     if (sql.startsWith("SELECT allow_likes FROM posts WHERE id = $1")) {
       const id = params![0];
@@ -133,6 +152,18 @@ class MockPgClientMain {
       const [postId, content] = params!;
       const p = this.data.find((x) => x.id === postId);
       if (p) p.content = content;
+      return { rowCount: 1, rows: [] };
+    }
+
+    if (sql.startsWith("INSERT INTO ai_post_summaries")) {
+      return { rowCount: 1, rows: [] };
+    }
+
+    if (sql.startsWith("UPDATE ai_post_summaries")) {
+      return { rowCount: 1, rows: [] };
+    }
+
+    if (sql.startsWith("DELETE FROM ai_post_tags")) {
       return { rowCount: 1, rows: [] };
     }
 

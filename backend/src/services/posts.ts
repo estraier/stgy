@@ -25,7 +25,11 @@ import {
   decToHex,
   hexArrayToDec,
 } from "../utils/format";
-import { makeSnippetJsonFromMarkdown, getMentionsFromMarkdown } from "../utils/snippet";
+import {
+  makeSnippetJsonFromMarkdown,
+  getMentionsFromMarkdown,
+  makeTextFromMarkdown,
+} from "../utils/snippet";
 import { Pool } from "pg";
 import Redis from "ioredis";
 import { pgQuery } from "../utils/servers";
@@ -456,6 +460,20 @@ export class PostsService {
           [hexToDec(id), isRoot, input.tags],
         );
       }
+      const userRes = await pgQuery(this.pgPool, `SELECT locale FROM users WHERE id = $1`, [
+        hexToDec(input.ownedBy),
+      ]);
+      const searchLocale = input.locale ?? userRes.rows[0]?.locale ?? Config.DEFAULT_LOCALE;
+      const bodyText = makeTextFromMarkdown(input.content);
+      const timestamp = Math.floor(
+        IdIssueService.bigIntToDate(BigInt(hexToDec(id))).getTime() / 1000,
+      );
+      await this.searchService.enqueueAddDocument({
+        id,
+        bodyText,
+        locale: searchLocale,
+        timestamp,
+      });
       await pgQuery(this.pgPool, "COMMIT");
       if (this.eventLogService) {
         if (input.replyTo) {
@@ -565,7 +583,11 @@ export class PostsService {
       values.push(hexToDec(input.id));
       if (columns.length > 0) {
         const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id`;
-        await pgQuery(this.pgPool, sql, values);
+        const res = await pgQuery(this.pgPool, sql, values);
+        if (res.rows.length === 0) {
+          await pgQuery(this.pgPool, "ROLLBACK");
+          return null;
+        }
       }
       if (input.replyTo !== undefined && input.tags === undefined) {
         const isRoot = input.replyTo == null;
@@ -603,6 +625,24 @@ export class PostsService {
       await pgQuery(this.pgPool, `DELETE FROM ai_post_tags WHERE post_id = $1`, [
         hexToDec(input.id),
       ]);
+      const currentRes = await pgQuery(
+        this.pgPool,
+        `SELECT p.locale, pd.content FROM posts p JOIN post_details pd ON p.id = pd.post_id WHERE p.id = $1`,
+        [hexToDec(input.id)],
+      );
+      if (currentRes.rows.length > 0) {
+        const targetContent = input.content ?? currentRes.rows[0].content;
+        const targetLocale = input.locale ?? currentRes.rows[0].locale;
+        const timestamp = Math.floor(
+          IdIssueService.bigIntToDate(BigInt(hexToDec(input.id))).getTime() / 1000,
+        );
+        await this.searchService.enqueueAddDocument({
+          id: input.id,
+          bodyText: makeTextFromMarkdown(targetContent),
+          locale: targetLocale,
+          timestamp,
+        });
+      }
       await pgQuery(this.pgPool, "COMMIT");
       return this.getPost(input.id);
     } catch (e) {
@@ -612,8 +652,18 @@ export class PostsService {
   }
 
   async deletePost(id: string): Promise<void> {
-    const res = await pgQuery(this.pgPool, `DELETE FROM posts WHERE id = $1`, [hexToDec(id)]);
-    if ((res.rowCount ?? 0) === 0) throw new Error("Post not found");
+    const decId = hexToDec(id);
+    const timestamp = Math.floor(IdIssueService.bigIntToDate(BigInt(decId)).getTime() / 1000);
+    await pgQuery(this.pgPool, "BEGIN");
+    try {
+      const res = await pgQuery(this.pgPool, `DELETE FROM posts WHERE id = $1`, [decId]);
+      if ((res.rowCount ?? 0) === 0) throw new Error("Post not found");
+      await this.searchService.enqueueRemoveDocument(id, timestamp);
+      await pgQuery(this.pgPool, "COMMIT");
+    } catch (e) {
+      await pgQuery(this.pgPool, "ROLLBACK");
+      throw e;
+    }
   }
 
   async addLike(postId: string, userId: string): Promise<void> {

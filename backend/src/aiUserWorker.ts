@@ -1976,9 +1976,6 @@ async function organizeFollowees(
       logger.info(`Failed to compute similarity for followee analyze userId=${userId}: ${e}`);
       return null;
     }
-
-    console.log("USER", userId, similarity, latestPostAt);
-
     return { userId, similarity, latestPostAt };
   };
   const uniqueCandidateIds = Array.from(new Set(peerIds))
@@ -2115,9 +2112,6 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
       const decision = decisionByPostId.get(post.id);
       const shouldLike = decision ? decision.shouldLike : true;
       const shouldReply = decision ? decision.shouldReply : true;
-
-      console.log("SIM", post.id, item.similarity, decision);
-
       if (
         shouldLike &&
         i < Config.AI_USER_LIKE_LIMIT &&
