@@ -88,20 +88,25 @@ describe("SearchService", () => {
 
   test("Update", async () => {
     await service.enqueueTask("doc1", 1000, "hello", "en", null);
-    await waitForCondition(async () => (await service.search("hello")).length > 0);
+    await waitForCondition(async () => (await service.search("hello")).includes("doc1"));
     await service.enqueueTask("doc1", 1000, "moon", "en", null);
     await waitForCondition(
-      async () =>
-        (await service.search("hello")).length === 0 &&
-        (await service.search("moon")).includes("doc1"),
+      async () => {
+        const oldResults = await service.search("hello");
+        const newResults = await service.search("moon");
+        return !oldResults.includes("doc1") && newResults.includes("doc1");
+      }
     );
   });
 
   test("Delete", async () => {
     await service.enqueueTask("doc1", 1000, "hello", "en", null);
-    await waitForCondition(async () => (await service.search("hello")).length > 0);
+    await waitForCondition(async () => (await service.search("hello")).includes("doc1"));
     await service.enqueueTask("doc1", 1000, null, null, null);
-    await waitForCondition(async () => (await service.search("hello")).length === 0);
+    await waitForCondition(async () => {
+      const results = await service.search("hello");
+      return !results.includes("doc1");
+    });
   });
 
   test("Sharding", async () => {
@@ -109,7 +114,7 @@ describe("SearchService", () => {
     await service.enqueueTask("docB", 1150, "banana", "en", null);
     await waitForCondition(
       async () =>
-        (await service.search("apple")).length > 0 && (await service.search("banana")).length > 0,
+        (await service.search("apple")).includes("docA") && (await service.search("banana")).includes("docB"),
     );
     expect((await service.listIndexFiles()).length).toBe(2);
   });
@@ -119,7 +124,7 @@ describe("SearchService", () => {
     await new Promise((r) => setTimeout(r, 200));
     await service.enqueueTask("doc1", 1000, "waiting", "en", null);
     await new Promise((r) => setTimeout(r, 300));
-    expect(await service.search("waiting")).toEqual([]);
+    expect(await service.search("waiting")).not.toContain("doc1");
     await service.endMaintenanceMode();
     await waitForCondition(async () => (await service.search("waiting")).includes("doc1"));
   });
@@ -134,7 +139,7 @@ describe("SearchService", () => {
 
   test("Management: reconstructIndexFile", async () => {
     await service.enqueueTask("doc1", 1000, "data", "en", null);
-    await waitForCondition(async () => (await service.search("data")).length > 0);
+    await waitForCondition(async () => (await service.search("data")).includes("doc1"));
     await service.startMaintenanceMode();
     await service.reconstructIndexFile(1000);
     await service.endMaintenanceMode();
@@ -143,7 +148,7 @@ describe("SearchService", () => {
 
   test("Management: optimizeShard", async () => {
     await service.enqueueTask("doc1", 1000, "data", "en", null);
-    await waitForCondition(async () => (await service.search("data")).length > 0);
+    await waitForCondition(async () => (await service.search("data")).includes("doc1"));
     await service.optimizeShard(1000);
     expect(await service.search("data")).toContain("doc1");
   });

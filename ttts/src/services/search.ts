@@ -5,6 +5,7 @@ import { Tokenizer } from "../utils/tokenizer";
 import { Logger } from "pino";
 import { TaskQueue } from "./taskQueue";
 import { IndexFileManager } from "./indexFileManager";
+import { makeFtsQuery } from "../utils/format";
 
 const DB_PAGE_SIZE_BYTES = 8192;
 const WAL_MAX_SIZE_BYTES = 67108864;
@@ -248,9 +249,8 @@ export class SearchService {
     timeout = 1,
   ): Promise<string[]> {
     if (!this.isOpen) throw new Error("Service not open");
-    const tokens = await this.makeIndexableTokens(query, locale, this.config.maxQueryTokenCount);
-    if (tokens.length === 0) return [];
-    const ftsQuery = tokens.map((t) => `"${t}"`).join(" AND ");
+    const ftsQuery = await makeFtsQuery(query, locale, this.config.maxQueryTokenCount);
+    if (!ftsQuery) return [];
     const sortedTs = Array.from(this.shards.keys()).sort((a, b) => b - a);
     const results: string[] = [];
     const needed = limit + offset;
@@ -391,7 +391,9 @@ export class SearchService {
             "SELECT MIN(internal_id) as min_id FROM id_tuples",
           )
         )?.min_id ?? this.config.initialDocumentId) - 1;
-    const tokens = (await this.makeIndexableTokens(bodyText, locale, this.config.maxDocumentTokenCount)).join(" ");
+    const tokens = (
+      await this.makeIndexableTokens(bodyText, locale, this.config.maxDocumentTokenCount)
+    ).join(" ");
     await shard.writer.run("INSERT OR REPLACE INTO docs (rowid, tokens) VALUES (?, ?)", [
       internalId,
       tokens,
@@ -422,9 +424,16 @@ export class SearchService {
     }
   }
 
-  private async makeIndexableTokens(text: string, locale: string, maxCount: number): Promise<string[]> {
+  private async makeIndexableTokens(
+    text: string,
+    locale: string,
+    maxCount: number,
+  ): Promise<string[]> {
     const tokenizer = await Tokenizer.getInstance();
-    const rawTokens = tokenizer.tokenize(text, locale).map(t => t.trim()).filter(t => t.length > 0);
+    const rawTokens = tokenizer
+      .tokenize(text, locale)
+      .map((t) => t.trim())
+      .filter((t) => t.length > 0);
     if (this.config.recordPositions) {
       return rawTokens.slice(0, maxCount);
     } else {
