@@ -248,8 +248,7 @@ export class SearchService {
     timeout = 1,
   ): Promise<string[]> {
     if (!this.isOpen) throw new Error("Service not open");
-    const tokenizer = await Tokenizer.getInstance();
-    const tokens = tokenizer.tokenize(query, locale).slice(0, this.config.maxQueryTokenCount);
+    const tokens = await this.makeIndexableTokens(query, locale, this.config.maxQueryTokenCount);
     if (tokens.length === 0) return [];
     const ftsQuery = tokens.map((t) => `"${t}"`).join(" AND ");
     const sortedTs = Array.from(this.shards.keys()).sort((a, b) => b - a);
@@ -392,10 +391,7 @@ export class SearchService {
             "SELECT MIN(internal_id) as min_id FROM id_tuples",
           )
         )?.min_id ?? this.config.initialDocumentId) - 1;
-    const tokens = (await Tokenizer.getInstance())
-      .tokenize(bodyText, locale)
-      .slice(0, this.config.maxDocumentTokenCount)
-      .join(" ");
+    const tokens = (await this.makeIndexableTokens(bodyText, locale, this.config.maxDocumentTokenCount)).join(" ");
     await shard.writer.run("INSERT OR REPLACE INTO docs (rowid, tokens) VALUES (?, ?)", [
       internalId,
       tokens,
@@ -423,6 +419,21 @@ export class SearchService {
       await shard.writer.run("DELETE FROM docs WHERE rowid = ?", [existing.internal_id]);
       await shard.writer.run("DELETE FROM id_tuples WHERE internal_id = ?", [existing.internal_id]);
       await shard.writer.run("DELETE FROM extra_attrs WHERE external_id = ?", [docId]);
+    }
+  }
+
+  private async makeIndexableTokens(text: string, locale: string, maxCount: number): Promise<string[]> {
+    const tokenizer = await Tokenizer.getInstance();
+    const rawTokens = tokenizer.tokenize(text, locale).map(t => t.trim()).filter(t => t.length > 0);
+    if (this.config.recordPositions) {
+      return rawTokens.slice(0, maxCount);
+    } else {
+      const uniqueSet = new Set<string>();
+      for (const token of rawTokens) {
+        uniqueSet.add(token);
+        if (uniqueSet.size >= maxCount) break;
+      }
+      return Array.from(uniqueSet).sort();
     }
   }
 

@@ -657,7 +657,7 @@ async function runWorker(
   notificationsService: NotificationsService,
   usersService: UsersService,
 ): Promise<void> {
-  logger.info(`stgy notification worker ${workerIndex} started`);
+  logger.info(`STGY notification worker ${workerIndex} started`);
 
   const parts = assignedPartitions(workerIndex);
   for (const p of parts) {

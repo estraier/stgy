@@ -43,18 +43,22 @@ const waitForCondition = async (check: () => Promise<boolean>, timeout = 3000) =
 
 describe("SearchService", () => {
   let service: SearchService;
+
   beforeAll(async () => {
     await fs.mkdir(TEST_DIR, { recursive: true });
   });
+
   afterAll(async () => {
     await fs.rm(TEST_DIR, { recursive: true, force: true });
   });
+
   beforeEach(async () => {
     const files = await fs.readdir(TEST_DIR).catch(() => []);
     for (const f of files) await fs.unlink(path.join(TEST_DIR, f)).catch(() => {});
     service = new SearchService(CONFIG, mockLogger);
     await service.open();
   });
+
   afterEach(async () => {
     if (service) await service.close();
   });
@@ -62,6 +66,13 @@ describe("SearchService", () => {
   test("Basic Flow", async () => {
     await service.enqueueTask("doc1", 1000, "hello world", "en", null);
     await waitForCondition(async () => (await service.search("hello")).includes("doc1"));
+  });
+
+  test("Token Normalization and Deduplication", async () => {
+    await service.enqueueTask("doc1", 1000, "  apple   apple banana  ", "en", null);
+    await waitForCondition(async () => (await service.search("apple")).includes("doc1"));
+    const results = await service.fetchDocuments(["doc1"]);
+    expect(results[0].bodyText).toBe("apple banana");
   });
 
   test("Startup Recovery", async () => {
