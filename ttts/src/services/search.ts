@@ -15,6 +15,9 @@ export type SearchConfig = {
   bucketDurationSeconds: number;
   autoCommitUpdateCount: number;
   autoCommitDurationSeconds: number;
+  commitCheckIntervalSeconds: number;
+  updateWorkerBusySleepSeconds: number;
+  updateWorkerIdleSleepSeconds: number;
   initialDocumentId: number;
   recordPositions: boolean;
   recordContents: boolean;
@@ -76,6 +79,7 @@ export class SearchService {
 
   private shards: Map<number, ShardConnection> = new Map();
   private latestShardTimestamp: number = 0;
+  private lastAutoCommitCheckTime: number = 0;
 
   constructor(config: SearchConfig, logger: Logger) {
     this.config = config;
@@ -88,7 +92,6 @@ export class SearchService {
     if (this.isOpen) return;
 
     await fs.mkdir(this.config.baseDir, { recursive: true });
-
     await this.taskQueue.open();
 
     const files = await this.fileManager.listIndexFiles();
@@ -240,7 +243,6 @@ export class SearchService {
       }
 
       await tempDb.exec("COMMIT");
-
       await tempDb.exec("INSERT INTO docs(docs) VALUES('optimize')");
       await tempDb.exec("VACUUM");
       await tempDb.close();
@@ -625,7 +627,7 @@ export class SearchService {
     const pendingTasks = await this.taskQueue.getPendingBatchTasks();
     for (const task of pendingTasks) {
       await this.processTask(task);
-      await this.deleteTask(task.id);
+      await this.taskQueue.complete(task.id);
     }
     await this.synchronize();
 
@@ -639,18 +641,20 @@ export class SearchService {
         const task = await this.fetchTask();
         if (task) {
           await this.processTask(task);
-          await this.deleteTask(task.id);
-
-          await this.checkAutoCommit();
-
-          await this.sleep(0);
+          await this.taskQueue.complete(task.id);
+          await this.sleep(this.config.updateWorkerBusySleepSeconds * 1000);
         } else {
-          await this.synchronize();
-          await this.sleep(50);
+          await this.sleep(this.config.updateWorkerIdleSleepSeconds * 1000);
+        }
+
+        const now = Date.now();
+        if (now - this.lastAutoCommitCheckTime >= this.config.commitCheckIntervalSeconds * 1000) {
+          await this.checkAutoCommit();
+          this.lastAutoCommitCheckTime = now;
         }
       } catch (e) {
         this.logger.error(`Worker error: ${e}`);
-        await this.sleep(50);
+        await this.sleep(this.config.updateWorkerIdleSleepSeconds * 1000);
       }
     }
   }
@@ -710,7 +714,7 @@ export class SearchService {
     const writer = await Database.open(filepath);
 
     const generation = (this.latestShardTimestamp - bucketTs) / this.config.bucketDurationSeconds;
-    const genIndex = Math.max(0, generation);
+    const genIndex = Math.max(0, Math.floor(generation));
     const mmap = this.getValueByGeneration(this.config.mmapSizes, genIndex);
     const cache = this.getValueByGeneration(this.config.cacheSizes, genIndex);
     const automerge = this.getValueByGeneration(this.config.automergeLevels, genIndex);
@@ -718,22 +722,9 @@ export class SearchService {
     await this.setupPragmas(writer, mmap, cache, automerge, true);
     await this.setupSchema(writer);
 
-    const readers: Database[] = [];
-    const readerCount = this.getValueByGeneration(this.config.readConnectionCounts, genIndex);
-
-    for (let i = 0; i < readerCount; i++) {
-      try {
-        const reader = await Database.open(filepath, sqlite3.OPEN_READONLY);
-        await this.setupPragmas(reader, mmap, cache, automerge, false);
-        readers.push(reader);
-      } catch (e) {
-        this.logger.error(`Failed to open reader for ${bucketTs}: ${e}`);
-      }
-    }
-
     const shard: ShardConnection = {
       writer,
-      readers,
+      readers: [],
       currentReaderIndex: 0,
       pendingTxCount: 0,
       lastTxStartTime: 0,

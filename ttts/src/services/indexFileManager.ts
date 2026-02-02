@@ -40,8 +40,7 @@ export class IndexFileManager {
           }
         }
       }
-    } catch {
-    }
+    } catch {}
     return infos.sort((a, b) => b.startTimestamp - a.startTimestamp);
   }
 
