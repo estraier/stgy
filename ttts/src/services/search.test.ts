@@ -90,13 +90,11 @@ describe("SearchService", () => {
     await service.enqueueTask("doc1", 1000, "hello", "en", null);
     await waitForCondition(async () => (await service.search("hello")).includes("doc1"));
     await service.enqueueTask("doc1", 1000, "moon", "en", null);
-    await waitForCondition(
-      async () => {
-        const oldResults = await service.search("hello");
-        const newResults = await service.search("moon");
-        return !oldResults.includes("doc1") && newResults.includes("doc1");
-      }
-    );
+    await waitForCondition(async () => {
+      const oldResults = await service.search("hello");
+      const newResults = await service.search("moon");
+      return !oldResults.includes("doc1") && newResults.includes("doc1");
+    });
   });
 
   test("Delete", async () => {
@@ -114,7 +112,8 @@ describe("SearchService", () => {
     await service.enqueueTask("docB", 1150, "banana", "en", null);
     await waitForCondition(
       async () =>
-        (await service.search("apple")).includes("docA") && (await service.search("banana")).includes("docB"),
+        (await service.search("apple")).includes("docA") &&
+        (await service.search("banana")).includes("docB"),
     );
     expect((await service.listIndexFiles()).length).toBe(2);
   });

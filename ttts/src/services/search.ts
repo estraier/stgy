@@ -249,7 +249,12 @@ export class SearchService {
     timeout = 1,
   ): Promise<string[]> {
     if (!this.isOpen) throw new Error("Service not open");
-    const ftsQuery = await makeFtsQuery(query, locale, this.config.maxQueryTokenCount);
+    const ftsQuery = await makeFtsQuery(
+      query,
+      locale,
+      this.config.maxQueryTokenCount,
+      this.config.recordPositions,
+    );
     if (!ftsQuery) return [];
     const sortedTs = Array.from(this.shards.keys()).sort((a, b) => b - a);
     const results: string[] = [];
