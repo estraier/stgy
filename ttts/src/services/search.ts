@@ -5,7 +5,7 @@ import { Tokenizer } from "../utils/tokenizer";
 import { Logger } from "pino";
 import { TaskQueue } from "./taskQueue";
 import { IndexFileManager } from "./indexFileManager";
-import { makeFtsQuery } from "../utils/format";
+import { makeFtsQuery } from "../utils/query";
 
 const DB_PAGE_SIZE_BYTES = 8192;
 const WAL_MAX_SIZE_BYTES = 67108864;
@@ -234,6 +234,9 @@ export class SearchService {
           await shard.writer.exec("COMMIT");
           shard.pendingTxCount = 0;
           shard.lastTxStartTime = 0;
+          for (const r of shard.readers) {
+            await r.exec("BEGIN; ROLLBACK;").catch(() => {});
+          }
         } finally {
           shard.isCommitting = false;
         }
@@ -249,7 +252,7 @@ export class SearchService {
     timeout = 1,
   ): Promise<string[]> {
     if (!this.isOpen) throw new Error("Service not open");
-    const ftsQuery = await makeFtsQuery(
+    const { ftsQuery, filteringPhrases } = await makeFtsQuery(
       query,
       locale,
       this.config.maxQueryTokenCount,
@@ -264,10 +267,19 @@ export class SearchService {
       if (Date.now() - start > timeout * 1000 || results.length >= needed) break;
       const shard = await this.getShard(ts);
       const db = this.selectReader(shard);
-      const rows = await db.all<{ external_id: string }>(
-        `SELECT t.external_id FROM docs JOIN id_tuples t ON docs.rowid = t.internal_id WHERE docs MATCH ? ORDER BY docs.rowid ASC LIMIT ?`,
-        [ftsQuery, needed - results.length],
-      );
+
+      let sql = `SELECT t.external_id FROM docs JOIN id_tuples t ON docs.rowid = t.internal_id WHERE docs MATCH ?`;
+      const params: (string | number)[] = [ftsQuery];
+
+      for (const phrase of filteringPhrases) {
+        sql += ` AND docs.tokens LIKE ?`;
+        params.push(`%${phrase}%`);
+      }
+
+      sql += ` ORDER BY docs.rowid ASC LIMIT ?`;
+      params.push(needed - results.length);
+
+      const rows = await db.all<{ external_id: string }>(sql, params);
       rows.forEach((r) => results.push(r.external_id));
     }
     return results.slice(offset, needed);
@@ -435,20 +447,11 @@ export class SearchService {
     maxCount: number,
   ): Promise<string[]> {
     const tokenizer = await Tokenizer.getInstance();
-    const rawTokens = tokenizer
+    return tokenizer
       .tokenize(text, locale)
       .map((t) => t.trim())
-      .filter((t) => t.length > 0);
-    if (this.config.recordPositions) {
-      return rawTokens.slice(0, maxCount);
-    } else {
-      const uniqueSet = new Set<string>();
-      for (const token of rawTokens) {
-        uniqueSet.add(token);
-        if (uniqueSet.size >= maxCount) break;
-      }
-      return Array.from(uniqueSet).sort();
-    }
+      .filter((t) => t.length > 0)
+      .slice(0, maxCount);
   }
 
   private async getShard(timestamp: number): Promise<ShardConnection> {
@@ -521,8 +524,9 @@ export class SearchService {
       `CREATE TABLE IF NOT EXISTS extra_attrs (external_id TEXT PRIMARY KEY, attrs TEXT);`,
     );
     const content = this.config.recordContents ? "" : "content='',";
+    const detail = this.config.recordPositions ? "full" : "none";
     await db.exec(
-      `CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(tokens, tokenize = "unicode61", detail = '${this.config.recordPositions ? "full" : "none"}', ${content});`,
+      `CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(tokens, tokenize = "unicode61", detail = '${detail}', ${content});`,
     );
     await db
       .exec(`INSERT OR REPLACE INTO docs_config(k, v) VALUES('pgsz', ${DB_PAGE_SIZE_BYTES});`)

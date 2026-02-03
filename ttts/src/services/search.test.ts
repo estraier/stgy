@@ -11,7 +11,8 @@ const mockLogger = {
   child: () => mockLogger,
 } as unknown as Logger;
 
-const TEST_DIR = "./test_data_search_service";
+// 他のテスト（indexFileManagerなど）と干渉しないよう、このクラス専用のディレクトリ名にする
+const TEST_DIR = "./test_data_search_service_main";
 const CONFIG: SearchConfig = {
   baseDir: TEST_DIR,
   namePrefix: "test_search",
@@ -49,7 +50,9 @@ describe("SearchService", () => {
   });
 
   afterAll(async () => {
-    await fs.rm(TEST_DIR, { recursive: true, force: true });
+    // 確実にリソースを解放するため少し待ってから削除
+    await new Promise(r => setTimeout(r, 100));
+    await fs.rm(TEST_DIR, { recursive: true, force: true }).catch(() => {});
   });
 
   beforeEach(async () => {
@@ -64,56 +67,56 @@ describe("SearchService", () => {
   });
 
   test("Basic Flow", async () => {
-    await service.enqueueTask("doc1", 1000, "hello world", "en", null);
-    await waitForCondition(async () => (await service.search("hello")).includes("doc1"));
+    await service.enqueueTask("doc_basic", 1000, "hello world", "en", null);
+    await waitForCondition(async () => (await service.search("hello")).includes("doc_basic"));
   });
 
-  test("Token Normalization and Deduplication", async () => {
-    await service.enqueueTask("doc1", 1000, "  apple   apple banana  ", "en", null);
-    await waitForCondition(async () => (await service.search("apple")).includes("doc1"));
-    const results = await service.fetchDocuments(["doc1"]);
-    expect(results[0].bodyText).toBe("apple banana");
+  test("Token Normalization", async () => {
+    await service.enqueueTask("doc_norm", 1000, "  apple    apple banana  ", "en", null);
+    await waitForCondition(async () => (await service.search("apple")).includes("doc_norm"));
+    const results = await service.fetchDocuments(["doc_norm"]);
+    expect(results[0].bodyText).toBe("apple apple banana");
   });
 
   test("Startup Recovery", async () => {
     await service.close();
     const manual = new SearchService(CONFIG, mockLogger);
     await manual.open({ startWorker: false });
-    await manual.enqueueTask("recovery1", 1000, "recovery test", "en", null);
+    await manual.enqueueTask("doc_recovery", 1000, "recovery test", "en", null);
     await manual.close();
     service = new SearchService(CONFIG, mockLogger);
     await service.open();
-    expect(await service.search("recovery")).toContain("recovery1");
+    expect(await service.search("recovery")).toContain("doc_recovery");
   });
 
   test("Update", async () => {
-    await service.enqueueTask("doc1", 1000, "hello", "en", null);
-    await waitForCondition(async () => (await service.search("hello")).includes("doc1"));
-    await service.enqueueTask("doc1", 1000, "moon", "en", null);
+    await service.enqueueTask("doc_update", 1000, "hello", "en", null);
+    await waitForCondition(async () => (await service.search("hello")).includes("doc_update"));
+    await service.enqueueTask("doc_update", 1000, "moon", "en", null);
     await waitForCondition(async () => {
       const oldResults = await service.search("hello");
       const newResults = await service.search("moon");
-      return !oldResults.includes("doc1") && newResults.includes("doc1");
+      return !oldResults.includes("doc_update") && newResults.includes("doc_update");
     });
   });
 
   test("Delete", async () => {
-    await service.enqueueTask("doc1", 1000, "hello", "en", null);
-    await waitForCondition(async () => (await service.search("hello")).includes("doc1"));
-    await service.enqueueTask("doc1", 1000, null, null, null);
+    await service.enqueueTask("doc_delete", 1000, "hello", "en", null);
+    await waitForCondition(async () => (await service.search("hello")).includes("doc_delete"));
+    await service.enqueueTask("doc_delete", 1000, null, null, null);
     await waitForCondition(async () => {
       const results = await service.search("hello");
-      return !results.includes("doc1");
+      return !results.includes("doc_delete");
     });
   });
 
   test("Sharding", async () => {
-    await service.enqueueTask("docA", 1000, "apple", "en", null);
-    await service.enqueueTask("docB", 1150, "banana", "en", null);
+    await service.enqueueTask("doc_shard_A", 1000, "apple", "en", null);
+    await service.enqueueTask("doc_shard_B", 1150, "banana", "en", null);
     await waitForCondition(
       async () =>
-        (await service.search("apple")).includes("docA") &&
-        (await service.search("banana")).includes("docB"),
+        (await service.search("apple")).includes("doc_shard_A") &&
+        (await service.search("banana")).includes("doc_shard_B"),
     );
     expect((await service.listIndexFiles()).length).toBe(2);
   });
@@ -121,39 +124,39 @@ describe("SearchService", () => {
   test("Maintenance Mode: pauses worker", async () => {
     await service.startMaintenanceMode();
     await new Promise((r) => setTimeout(r, 200));
-    await service.enqueueTask("doc1", 1000, "waiting", "en", null);
+    await service.enqueueTask("doc_maint", 1000, "waiting", "en", null);
     await new Promise((r) => setTimeout(r, 300));
-    expect(await service.search("waiting")).not.toContain("doc1");
+    expect(await service.search("waiting")).not.toContain("doc_maint");
     await service.endMaintenanceMode();
-    await waitForCondition(async () => (await service.search("waiting")).includes("doc1"));
+    await waitForCondition(async () => (await service.search("waiting")).includes("doc_maint"));
   });
 
   test("Management: reserveIds", async () => {
     await service.startMaintenanceMode();
-    await service.reserveIds([{ id: "res", timestamp: 1000 }]);
+    await service.reserveIds([{ id: "doc_res", timestamp: 1000 }]);
     await service.endMaintenanceMode();
-    await service.enqueueTask("res", 1000, "content", "en", null);
-    await waitForCondition(async () => (await service.search("content")).includes("res"));
+    await service.enqueueTask("doc_res", 1000, "content", "en", null);
+    await waitForCondition(async () => (await service.search("content")).includes("doc_res"));
   });
 
   test("Management: reconstructIndexFile", async () => {
-    await service.enqueueTask("doc1", 1000, "data", "en", null);
-    await waitForCondition(async () => (await service.search("data")).includes("doc1"));
+    await service.enqueueTask("doc_reconstruct", 1000, "data", "en", null);
+    await waitForCondition(async () => (await service.search("data")).includes("doc_reconstruct"));
     await service.startMaintenanceMode();
     await service.reconstructIndexFile(1000);
     await service.endMaintenanceMode();
-    expect(await service.search("data")).toContain("doc1");
+    expect(await service.search("data")).toContain("doc_reconstruct");
   });
 
   test("Management: optimizeShard", async () => {
-    await service.enqueueTask("doc1", 1000, "data", "en", null);
-    await waitForCondition(async () => (await service.search("data")).includes("doc1"));
+    await service.enqueueTask("doc_optimize", 1000, "data", "en", null);
+    await waitForCondition(async () => (await service.search("data")).includes("doc_optimize"));
     await service.optimizeShard(1000);
-    expect(await service.search("data")).toContain("doc1");
+    expect(await service.search("data")).toContain("doc_optimize");
   });
 
   test("Management: removeIndexFile physically deletes file", async () => {
-    await service.enqueueTask("doc1", 1000, "data", "en", null);
+    await service.enqueueTask("doc_remove", 1000, "data", "en", null);
     await waitForCondition(async () => (await service.listIndexFiles()).length === 1);
     await service.startMaintenanceMode();
     await service.removeIndexFile(1000);
@@ -164,5 +167,29 @@ describe("SearchService", () => {
       (f) => f.startsWith("test_search-") && f.endsWith(".db") && !f.includes("common"),
     );
     expect(indexFiles.length).toBe(0);
+  });
+
+  test("Pseudo-Phrase Search (recordPositions: false)", async () => {
+    await service.enqueueTask("doc_pseudo", 1000, "alpha beta gamma", "en", null);
+    await waitForCondition(async () => (await service.search("alpha")).includes("doc_pseudo"));
+    const hitsAnd = await service.search("alpha gamma");
+    expect(hitsAnd).toContain("doc_pseudo");
+    const hitsPhraseMiss = await service.search('"alpha gamma"');
+    expect(hitsPhraseMiss).not.toContain("doc_pseudo");
+    const hitsPhraseHit = await service.search('"alpha beta"');
+    expect(hitsPhraseHit).toContain("doc_pseudo");
+  });
+
+  test("Native Phrase Search (recordPositions: true)", async () => {
+    await service.close();
+    const configFull = { ...CONFIG, recordPositions: true };
+    service = new SearchService(configFull, mockLogger);
+    await service.open();
+    await service.enqueueTask("doc_native", 2000, "alpha beta gamma", "en", null);
+    await waitForCondition(async () => (await service.search("alpha")).includes("doc_native"));
+    const hitsPhraseMiss = await service.search('"alpha gamma"');
+    expect(hitsPhraseMiss).not.toContain("doc_native");
+    const hitsPhraseHit = await service.search('"alpha beta"');
+    expect(hitsPhraseHit).toContain("doc_native");
   });
 });
