@@ -16,6 +16,11 @@ describe("makeFtsQuery", () => {
     expect(result).toBe("hop AND step AND hot dog");
   });
 
+  test("normalizes symbols and letters", async () => {
+    const result = await makeFtsQuery("a* AND (b% OR C's)", "en", 10, false);
+    expect(result).toBe("a AND and AND b AND or AND c's");
+  });
+
   test("tokenizes Japanese compound words into AND query", async () => {
     const result = await makeFtsQuery("電子ピアノ", "ja", 10, false);
     expect(result).toBe("電子 AND ピアノ");
