@@ -51,7 +51,7 @@ describe("SearchService", () => {
 
   afterAll(async () => {
     // 確実にリソースを解放するため少し待ってから削除
-    await new Promise(r => setTimeout(r, 100));
+    await new Promise((r) => setTimeout(r, 100));
     await fs.rm(TEST_DIR, { recursive: true, force: true }).catch(() => {});
   });
 

@@ -271,9 +271,11 @@ export class SearchService {
       let sql = `SELECT t.external_id FROM docs JOIN id_tuples t ON docs.rowid = t.internal_id WHERE docs MATCH ?`;
       const params: (string | number)[] = [ftsQuery];
 
-      for (const phrase of filteringPhrases) {
-        sql += ` AND docs.tokens LIKE ?`;
-        params.push(`%${phrase}%`);
+      if (this.config.recordContents) {
+        for (const phrase of filteringPhrases) {
+          sql += ` AND docs.tokens LIKE ?`;
+          params.push(`%${phrase}%`);
+        }
       }
 
       sql += ` ORDER BY docs.rowid ASC LIMIT ?`;
