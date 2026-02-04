@@ -195,7 +195,7 @@ describe("SearchService (Actor Model)", () => {
   test("Maintenance Mode: pauses worker", async () => {
     await service.startMaintenanceMode();
 
-    const taskId = await service.enqueueTask({
+    await service.enqueueTask({
       type: "ADD",
       payload: { docId: "doc_maint", timestamp: 1000, bodyText: "waiting", locale: "en" },
     });

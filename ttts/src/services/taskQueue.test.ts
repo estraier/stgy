@@ -5,7 +5,6 @@ import { SearchConfig } from "./search";
 
 const TEST_DIR = "./test_data_task_queue";
 
-// TaskQueueが必要とする最小限のConfigモック
 const MOCK_CONFIG = {
   baseDir: TEST_DIR,
   namePrefix: "test_queue",
@@ -19,13 +18,11 @@ describe("TaskQueue", () => {
   });
 
   afterAll(async () => {
-    // クリーンアップ
-    await new Promise((r) => setTimeout(r, 100)); // SQLiteのロック解放待ち
+    await new Promise((r) => setTimeout(r, 100));
     await fs.rm(TEST_DIR, { recursive: true, force: true }).catch(() => {});
   });
 
   beforeEach(async () => {
-    // テスト毎にDBファイルを削除して初期化
     const dbPath = path.join(TEST_DIR, "test_queue-common.db");
     await fs.unlink(dbPath).catch(() => {});
     await fs.unlink(`${dbPath}-wal`).catch(() => {});
@@ -59,15 +56,12 @@ describe("TaskQueue", () => {
     };
     const id = await queue.enqueue(task);
 
-    // 1回目
     const fetched1 = await queue.fetchFirst();
     expect(fetched1).not.toBeNull();
     expect(fetched1?.id).toBe(id);
     expect(fetched1?.type).toBe("ADD");
-    // ペイロードが正しくオブジェクトとして復元されているか
     expect((fetched1?.payload as TaskAdd["payload"]).docId).toBe("doc1");
 
-    // 2回目（消えていないことの確認）
     const fetched2 = await queue.fetchFirst();
     expect(fetched2).toEqual(fetched1);
   });
@@ -83,23 +77,18 @@ describe("TaskQueue", () => {
     expect(item).not.toBeNull();
     if (!item) return;
 
-    // 1. Batchへ移動
     await queue.moveToBatch(item);
 
-    // Inputからは消えているはず
     const nextInput = await queue.fetchFirst();
     expect(nextInput).toBeNull();
 
-    // Batchには存在しているはず
     const pending = await queue.getPendingBatchTasks();
     expect(pending).toHaveLength(1);
     expect(pending[0].id).toBe(item.id);
     expect((pending[0].payload as TaskAdd["payload"]).bodyText).toBe("data");
 
-    // 2. Batchから削除（完了）
     await queue.removeFromBatch(item.id);
 
-    // 完全に消えたはず
     const finalPending = await queue.getPendingBatchTasks();
     expect(finalPending).toHaveLength(0);
   });
@@ -112,24 +101,21 @@ describe("TaskQueue", () => {
     expect(item).not.toBeNull();
     if (!item) return;
 
-    // inputから直接削除
     await queue.removeFromInput(item.id);
 
-    // Inputから消えている
     const nextInput = await queue.fetchFirst();
     expect(nextInput).toBeNull();
 
-    // Batchにも入っていない（Control Taskなので）
     const pending = await queue.getPendingBatchTasks();
     expect(pending).toHaveLength(0);
   });
 
   test("FIFO ordering is preserved", async () => {
-    await queue.enqueue({ type: "SYNC", payload: {} }); // id: 1
+    await queue.enqueue({ type: "SYNC", payload: {} });
     await queue.enqueue({
       type: "ADD",
       payload: { docId: "2", timestamp: 0, bodyText: "", locale: "" },
-    }); // id: 2
+    });
 
     const first = await queue.fetchFirst();
     expect(first?.id).toBe(1);
@@ -143,7 +129,6 @@ describe("TaskQueue", () => {
   });
 
   test("getPendingBatchTasks handles recovery scenario", async () => {
-    // 疑似的にクラッシュ後の状態を作るため、手動で batch に入れるフローを再現
     const task1: TaskAdd = {
       type: "ADD",
       payload: { docId: "rec1", timestamp: 100, bodyText: "recover me", locale: "en" },
@@ -159,20 +144,14 @@ describe("TaskQueue", () => {
     const item1 = await queue.fetchFirst();
     await queue.moveToBatch(item1!);
 
-    // ここで item2 はまだ input にある状態
-
-    // 再起動したつもりで pending を取得
     const pending = await queue.getPendingBatchTasks();
 
-    // batch に移動済みの task1 だけが返るはず
     expect(pending).toHaveLength(1);
     expect(pending[0].id).toBe(item1!.id);
     expect((pending[0].payload as TaskAdd["payload"]).docId).toBe("rec1");
 
-    // input には task2 が残っているはず
     const remainingInput = await queue.fetchFirst();
     expect(remainingInput).not.toBeNull();
-    // @ts-ignore
-    expect(remainingInput.payload.docId).toBe("rec2");
+    expect((remainingInput?.payload as TaskAdd["payload"]).docId).toBe("rec2");
   });
 });
