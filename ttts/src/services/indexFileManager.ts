@@ -1,31 +1,42 @@
 import fs from "fs/promises";
 import path from "path";
 import { Database } from "../utils/database";
-import { SearchConfig, IndexFileInfo } from "./search";
+import { SearchConfig } from "./search";
+
+export type IndexFileInfo = {
+  filename: string;
+  fileSize: number;
+  walSize: number;
+
+  pageSize: number;
+  totalPageCount: number;
+
+  countDocuments: number;
+  startTimestamp: number;
+  endTimestamp: number;
+  isHealthy: boolean;
+
+  idTuplesPayloadSize: number;
+
+  ftsIndexPayloadSize: number;
+  ftsIndexBlockCount: number;
+
+  ftsContentPayloadSize: number;
+};
 
 export class IndexFileManager {
   constructor(private config: SearchConfig) {}
 
-  /**
-   * タイムスタンプをバケット（シャード）の開始時刻に丸める。
-   * 例: duration=100, ts=150 -> 100
-   */
   getBucketTimestamp(timestamp: number): number {
     return (
       Math.floor(timestamp / this.config.bucketDurationSeconds) * this.config.bucketDurationSeconds
     );
   }
 
-  /**
-   * バケットのタイムスタンプからファイルパスを生成する。
-   */
   getFilePath(bucketTimestamp: number): string {
     return path.join(this.config.baseDir, `${this.config.namePrefix}-${bucketTimestamp}.db`);
   }
 
-  /**
-   * ディレクトリ内のインデックスファイルを列挙し、新しい順にソートして返す。
-   */
   async listIndexFiles(detailed: boolean = false): Promise<IndexFileInfo[]> {
     let files: string[];
     try {
@@ -56,23 +67,25 @@ export class IndexFileManager {
         filename: file,
         fileSize: stats.size,
         walSize: 0,
-        totalDatabaseSize: stats.size,
-        indexSize: 0,
-        contentSize: 0,
+
+        pageSize: 0,
+        totalPageCount: 0,
+
         countDocuments: 0,
         startTimestamp,
         endTimestamp,
         isHealthy: true,
+
+        idTuplesPayloadSize: 0,
+        ftsIndexPayloadSize: 0,
+        ftsIndexBlockCount: 0,
+        ftsContentPayloadSize: 0,
       };
 
-      // WALファイルのサイズ確認
       try {
         const walStats = await fs.stat(`${filePath}-wal`);
         info.walSize = walStats.size;
-        info.totalDatabaseSize += walStats.size;
-      } catch {
-        // WALがない場合は0のまま
-      }
+      } catch {}
 
       if (detailed) {
         await this.fillDetailedInfo(filePath, info);
@@ -81,21 +94,14 @@ export class IndexFileManager {
       indexFiles.push(info);
     }
 
-    // 新しい順（降順）にソート
     return indexFiles.sort((a, b) => b.startTimestamp - a.startTimestamp);
   }
 
-  /**
-   * 特定のシャード（ファイルセット）を物理削除する。
-   */
   async removeIndexFile(bucketTimestamp: number): Promise<void> {
     const filePath = this.getFilePath(bucketTimestamp);
     await this.deleteFileSet(filePath);
   }
 
-  /**
-   * 全てのインデックスファイルを削除する。
-   */
   async removeAllIndexFiles(): Promise<void> {
     const files = await this.listIndexFiles(false);
     for (const file of files) {
@@ -103,53 +109,61 @@ export class IndexFileManager {
     }
   }
 
-  /**
-   * 詳細情報をDBを開いて取得する
-   */
   private async fillDetailedInfo(filePath: string, info: IndexFileInfo): Promise<void> {
     let db: Database | null = null;
     try {
-      // 読み取り専用で開く
       db = await Database.open(filePath);
 
-      // 1. ドキュメント数
-      const countRow = await db.get<{ c: number }>("SELECT count(*) as c FROM id_tuples");
-      info.countDocuments = countRow?.c ?? 0;
+      const pageInfo = await db.get<{ pgsz: number; pgc: number }>(`
+        SELECT
+          (SELECT page_size FROM pragma_page_size) as pgsz,
+          (SELECT page_count FROM pragma_page_count) as pgc
+      `);
+      info.pageSize = pageInfo?.pgsz ?? 4096;
+      info.totalPageCount = pageInfo?.pgc ?? 0;
 
-      // 2. インデックスサイズ (FTS5 shadow tables)
-      // docs_data: 転置インデックス本体 (BLOB) - 必須
-      // docs_docsize: 文書サイズ情報 (Varint) - detail!=noneなら存在
-      // docs_idx: セグメント情報 - サイズ計算が複雑なため今回は除外 (データ量は微々たるもの)
+      const idStats = await db.get<{ c: number; s: number }>(`
+        SELECT
+          count(*) as c,
+          COALESCE(SUM(length(external_id) + 8), 0) as s
+        FROM id_tuples
+      `);
+      info.countDocuments = idStats?.c ?? 0;
+      info.idTuplesPayloadSize = idStats?.s ?? 0;
+
       try {
-        const indexSizeRow = await db.get<{ size: number }>(`
+        const dataStats = await db.get<{ size: number; blocks: number }>(`
           SELECT
-            (SELECT COALESCE(SUM(length(block)), 0) FROM docs_data) +
-            (SELECT COALESCE(SUM(length(sz)), 0) FROM docs_docsize) as size
+            COALESCE(SUM(length(block)), 0) as size,
+            count(*) as blocks
+          FROM docs_data
         `);
-        info.indexSize = indexSizeRow?.size ?? 0;
-      } catch (e) {
-        // detail=noneの場合 docs_docsize がない等の理由で失敗する可能性があるため
-        // その場合は docs_data だけでも試みる
+        let totalIndexSize = dataStats?.size ?? 0;
+        let totalBlocks = dataStats?.blocks ?? 0;
+
         try {
-          const minimalSize = await db.get<{ size: number }>(`
-            SELECT (SELECT COALESCE(SUM(length(block)), 0) FROM docs_data) as size
+          const docsizeStats = await db.get<{ size: number }>(`
+            SELECT COALESCE(SUM(length(sz)), 0) as size FROM docs_docsize
           `);
-          info.indexSize = minimalSize?.size ?? 0;
-        } catch {
-          info.indexSize = 0;
-        }
+          totalIndexSize += docsizeStats?.size ?? 0;
+        } catch {}
+
+        info.ftsIndexPayloadSize = totalIndexSize;
+        info.ftsIndexBlockCount = totalBlocks;
+      } catch {
+        info.ftsIndexPayloadSize = 0;
+        info.ftsIndexBlockCount = 0;
       }
 
-      // 3. コンテンツサイズ (FTS5 shadow table: docs_content)
       try {
-        const contentSizeRow = await db.get<{ size: number }>(`
+        const contentStats = await db.get<{ size: number }>(`
           SELECT COALESCE(SUM(length(c0)), 0) as size FROM docs_content
         `);
-        info.contentSize = contentSizeRow?.size ?? 0;
-      } catch (e) {
-        info.contentSize = 0;
+        info.ftsContentPayloadSize = contentStats?.size ?? 0;
+      } catch {
+        info.ftsContentPayloadSize = 0;
       }
-    } catch (e) {
+    } catch {
       info.isHealthy = false;
     } finally {
       if (db) await db.close();

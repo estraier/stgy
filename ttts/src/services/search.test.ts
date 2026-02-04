@@ -4,10 +4,9 @@ import { SearchService, SearchConfig } from "./search";
 import { Logger } from "pino";
 import { SearchTask } from "./taskQueue";
 
-// モックロガー
 const mockLogger = {
   info: jest.fn(),
-  error: (obj: any, msg?: string) => console.error(msg, obj), // エラーは表示させる
+  error: (obj: any, msg?: string) => console.error(msg, obj),
   debug: jest.fn(),
   warn: jest.fn(),
   child: () => mockLogger,
@@ -19,7 +18,7 @@ const CONFIG: SearchConfig = {
   baseDir: TEST_DIR,
   namePrefix: "test_search",
   bucketDurationSeconds: 100,
-  autoCommitUpdateCount: 1000, // 自動コミットはさせない（制御しやすくするため）
+  autoCommitUpdateCount: 1000,
   autoCommitDurationSeconds: 60,
   commitCheckIntervalSeconds: 0.1,
   updateWorkerBusySleepSeconds: 0.001,
@@ -59,14 +58,12 @@ describe("SearchService (Actor Model)", () => {
     if (service) await service.close();
   });
 
-  // ヘルパー: タスクを投入し、必要ならSYNCして完了まで待つ
   const runTask = async (task: SearchTask, sync = true) => {
     const taskId = await service.enqueueTask(task);
 
-    // データ更新系のタスクで、かつ即座に反映させたい場合はSYNCも投げる
     if (sync && (task.type === "ADD" || task.type === "REMOVE" || task.type === "RESERVE")) {
       const syncId = await service.enqueueTask({ type: "SYNC", payload: {} });
-      await service.waitTask(syncId); // SYNCの完了を待てば、前のタスクも完了かつコミット済み
+      await service.waitTask(syncId);
     } else {
       await service.waitTask(taskId);
     }
@@ -120,7 +117,6 @@ describe("SearchService (Actor Model)", () => {
   });
 
   test("Sharding: Multiple files created", async () => {
-    // Bucket duration is 100s
     await runTask({
       type: "ADD",
       payload: { docId: "shard_A", timestamp: 100, bodyText: "apple", locale: "en" },
@@ -140,7 +136,7 @@ describe("SearchService (Actor Model)", () => {
   });
 
   test("Management: SYNC (Barrier)", async () => {
-    await runTask({ type: "SYNC", payload: {} }, false); // SYNC自体には追撃SYNC不要
+    await runTask({ type: "SYNC", payload: {} }, false);
   });
 
   test("Management: OPTIMIZE", async () => {
@@ -155,7 +151,7 @@ describe("SearchService (Actor Model)", () => {
         payload: { targetTimestamp: 1000 },
       },
       false,
-    ); // OPTIMIZEは内部でコミット相当の処理をするのでSYNC不要
+    );
 
     expect(await service.search("optimize")).toContain("doc_opt");
   });
@@ -199,31 +195,24 @@ describe("SearchService (Actor Model)", () => {
   test("Maintenance Mode: pauses worker", async () => {
     await service.startMaintenanceMode();
 
-    // タスクを積む（SYNCは投げない、Workerが止まっているのでSYNCも詰まるから）
     const taskId = await service.enqueueTask({
       type: "ADD",
       payload: { docId: "doc_maint", timestamp: 1000, bodyText: "waiting", locale: "en" },
     });
 
-    // 少し待ってみる
     await new Promise((r) => setTimeout(r, 200));
 
-    // まだ処理されていないので検索できない
     expect(await service.search("waiting")).not.toContain("doc_maint");
 
-    // メンテナンス解除
     await service.endMaintenanceMode();
 
-    // 追撃SYNCを投げて、それが終わるのを待つことで、前のタスクの完了も保証する
     const syncId = await service.enqueueTask({ type: "SYNC", payload: {} });
     await service.waitTask(syncId);
 
-    // 検索できるはず
     expect(await service.search("waiting")).toContain("doc_maint");
   });
 
   test("Recovery: Data persists across restart", async () => {
-    // 1. 追加してSYNC（永続化）
     await runTask({
       type: "ADD",
       payload: { docId: "doc_persist", timestamp: 1000, bodyText: "I will survive", locale: "en" },
@@ -231,7 +220,6 @@ describe("SearchService (Actor Model)", () => {
 
     await service.close();
 
-    // 2. 新しいインスタンスで開く
     service = new SearchService(CONFIG, mockLogger);
     await service.open();
 

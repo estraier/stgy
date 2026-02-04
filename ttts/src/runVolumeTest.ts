@@ -8,7 +8,6 @@ import fs from "fs/promises";
 const program = new Command();
 const logger = createLogger({ file: "volume-test" });
 
-// Protectedメソッドを公開するための継承クラス
 class VolumeTestSearchService extends SearchService {
   public async addDocumentDirect(
     docId: string,
@@ -35,7 +34,6 @@ class VolumeTestSearchService extends SearchService {
   }
 
   public async removeIndexFileDirect(timestamp: number) {
-    // 内部状態（Shards Map）のクリーンアップと物理削除を行う
     await this.removeIndexFile(timestamp);
   }
 }
@@ -91,24 +89,20 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 
   const service = new VolumeTestSearchService(config, logger);
 
-  // Workerを起動せずにオープン（全シャードがメモリにロードされる）
   await service.open({ startWorker: false });
 
   console.log("Cleaning up existing index files...");
 
-  // 既存ファイルを1つずつ丁寧に削除（DB接続を閉じてからファイル削除）
   const existingFiles = await service.listIndexFiles(false);
   for (const file of existingFiles) {
     await service.removeIndexFileDirect(file.startTimestamp);
   }
   console.log(`Cleaned up ${existingFiles.length} files.`);
 
-  // 念のためディレクトリ自体のクリーンアップと再作成（ゴミファイル除去）
   await service.close();
   await fs.rm(config.baseDir, { recursive: true, force: true }).catch(() => {});
   await fs.mkdir(config.baseDir, { recursive: true });
 
-  // 再オープン
   await service.open({ startWorker: false });
 
   const iterations = parseInt(opts.iteration, 10);
@@ -160,16 +154,28 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
     if (currentShard) {
       const fileMB = (currentShard.fileSize / 1024 / 1024).toFixed(2);
       const walMB = (currentShard.walSize / 1024 / 1024).toFixed(2);
-      const totalDbMB = (currentShard.totalDatabaseSize / 1024 / 1024).toFixed(2);
-      const indexMB = (currentShard.indexSize / 1024 / 1024).toFixed(2);
-      const cntMB = (currentShard.contentSize / 1024 / 1024).toFixed(2);
+      const logicalDBMB = (
+        (currentShard.totalPageCount * currentShard.pageSize) /
+        1024 /
+        1024
+      ).toFixed(2);
+
+      const idMapMB = (currentShard.idTuplesPayloadSize / 1024 / 1024).toFixed(2);
+
+      const indexMB = (currentShard.ftsIndexPayloadSize / 1024 / 1024).toFixed(2);
+      const blocks = currentShard.ftsIndexBlockCount;
+      const pageSize = currentShard.pageSize;
+      const indexCacheMB = ((blocks * pageSize) / 1024 / 1024).toFixed(2);
+
+      const cntMB = (currentShard.ftsContentPayloadSize / 1024 / 1024).toFixed(2);
 
       console.log(
         `Latest Shard Info: Docs: ${currentShard.countDocuments}` +
           `\n    - Physical File: ${fileMB} MB (WAL: ${walMB} MB)` +
-          `\n    - Logical DB   : ${totalDbMB} MB` +
-          `\n    - Index (FTS)  : ${indexMB} MB` +
-          `\n    - Content      : ${cntMB} MB`,
+          `\n    - Logical DB   : ${logicalDBMB} MB` +
+          `\n    - ID Map       : ${idMapMB} MB (Payload)` +
+          `\n    - Index (FTS)  : ${indexMB} MB (Payload) | ${blocks} Blocks * ${pageSize} = ${indexCacheMB} MB (Est. Cache)` +
+          `\n    - Content      : ${cntMB} MB (Payload)`,
       );
     }
     logMemoryUsage(`After Iteration ${iter}`);
@@ -184,8 +190,16 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 
   const finalFiles = await service.listIndexFiles(true);
   const totalDocs = finalFiles.reduce((acc, f) => acc + f.countDocuments, 0);
-  const totalIndex = finalFiles.reduce((acc, f) => acc + f.indexSize, 0);
-  const totalContent = finalFiles.reduce((acc, f) => acc + f.contentSize, 0);
+
+  const totalIndexPayload = finalFiles.reduce((acc, f) => acc + f.ftsIndexPayloadSize, 0);
+  const totalIndexBlocks = finalFiles.reduce((acc, f) => acc + f.ftsIndexBlockCount, 0);
+  // 厳密にはファイルごとにPageSizeが違う可能性もあるため、ファイルごとに計算して合計する
+  const totalIndexCacheBytes = finalFiles.reduce(
+    (acc, f) => acc + f.ftsIndexBlockCount * f.pageSize,
+    0,
+  );
+
+  const totalContent = finalFiles.reduce((acc, f) => acc + f.ftsContentPayloadSize, 0);
 
   await service.close();
 
@@ -207,8 +221,10 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
   console.log(
     `Total Text : ${(totalGeneratedSize / 1024 / 1024).toFixed(2)} MB (Generated raw text)`,
   );
-  console.log(`Total Index: ${(totalIndex / 1024 / 1024).toFixed(2)} MB (Logical)`);
-  console.log(`Total Body : ${(totalContent / 1024 / 1024).toFixed(2)} MB (Logical)`);
+  console.log(
+    `Total Index: ${(totalIndexPayload / 1024 / 1024).toFixed(2)} MB (Payload) | ${totalIndexBlocks} Blocks = ${(totalIndexCacheBytes / 1024 / 1024).toFixed(2)} MB (Est. Cache)`,
+  );
+  console.log(`Total Body : ${(totalContent / 1024 / 1024).toFixed(2)} MB (Payload)`);
   console.log(
     `Final Disk : ${(finalDiskUsage / 1024 / 1024).toFixed(2)} MB (Physical after close)`,
   );

@@ -15,10 +15,11 @@ import {
   TaskOptimize,
   TaskDropShard,
 } from "./taskQueue";
-import { IndexFileManager } from "./indexFileManager";
+import { IndexFileManager, IndexFileInfo } from "./indexFileManager";
 import { makeFtsQuery } from "../utils/query";
 
 const DB_PAGE_SIZE_BYTES = 8192;
+const FTS_BLOCK_SIZE_BYTES = 8000;
 const WAL_MAX_SIZE_BYTES = 67108864;
 const BUSY_TIMEOUT_MS = 5000;
 
@@ -52,19 +53,6 @@ export type SearchConfig = {
   automergeLevels: number[];
   maxQueryTokenCount: number;
   maxDocumentTokenCount: number;
-};
-
-export type IndexFileInfo = {
-  filename: string;
-  fileSize: number;
-  walSize: number;
-  totalDatabaseSize: number;
-  indexSize: number;
-  contentSize: number;
-  countDocuments: number;
-  startTimestamp: number;
-  endTimestamp: number;
-  isHealthy: boolean;
 };
 
 type ReaderConnection = {
@@ -169,8 +157,6 @@ export class SearchService {
     this.isOpen = false;
     this.isClosing = false;
   }
-
-  // --- Public API ---
 
   async startMaintenanceMode(): Promise<void> {
     this.maintenanceMode = true;
@@ -287,8 +273,6 @@ export class SearchService {
     return results;
   }
 
-  // --- Worker ---
-
   private async workerLoop(): Promise<void> {
     while (this.workerRunning) {
       if (this.maintenanceMode) {
@@ -365,8 +349,6 @@ export class SearchService {
       await this.removeIndexFile(p.targetTimestamp);
     }
   }
-
-  // --- Protected Methods (For testing/extension) ---
 
   protected async addDocument(
     docId: string,
@@ -506,6 +488,8 @@ export class SearchService {
       await fs.unlink(tempPath);
     } catch {}
     const tempDb = await Database.open(tempPath);
+    await tempDb.exec(`PRAGMA page_size = ${DB_PAGE_SIZE_BYTES};`);
+
     await this.setupSchema(tempDb, shard.recordPositions, shard.recordContents);
 
     const orderBy = useExternalId ? "t.external_id ASC" : "t.internal_id DESC";
@@ -546,8 +530,6 @@ export class SearchService {
     await this.updateShardConfigs();
   }
 
-  // --- Internal Utilities ---
-
   private notifyTaskResult(taskId: number, error?: Error) {
     this.notifier.emit(String(taskId), error);
   }
@@ -586,13 +568,16 @@ export class SearchService {
 
     const promise = (async () => {
       const writer = await Database.open(this.fileManager.getFilePath(ts));
+      await writer.exec(`PRAGMA page_size = ${DB_PAGE_SIZE_BYTES};`);
       await this.setupStaticPragmas(writer);
 
       const meta = await writer
         .get<{
           record_positions: number;
           record_contents: number;
-        }>("SELECT (SELECT v FROM fts_meta WHERE k = 'record_positions') as record_positions, (SELECT v FROM fts_meta WHERE k = 'record_contents') as record_contents")
+        }>(
+          "SELECT (SELECT v FROM fts_meta WHERE k = 'record_positions') as record_positions, (SELECT v FROM fts_meta WHERE k = 'record_contents') as record_contents",
+        )
         .catch(() => null);
 
       let rp: boolean, rc: boolean;
@@ -729,9 +714,7 @@ export class SearchService {
     );
     if (isWriter) {
       await db.exec(`PRAGMA journal_size_limit = ${WAL_MAX_SIZE_BYTES};`);
-      await db
-        .exec(`INSERT OR REPLACE INTO docs_config(k, v) VALUES('automerge', ${merge});`)
-        .catch(() => {});
+      await db.exec(`INSERT INTO docs(docs, rank) VALUES('automerge', ${merge});`).catch(() => {});
     }
   }
 
@@ -745,13 +728,16 @@ export class SearchService {
         `INSERT OR IGNORE INTO fts_meta (k, v) VALUES ('record_positions', ?), ('record_contents', ?);`,
         [rp ? 1 : 0, rc ? 1 : 0],
       );
-      await db.exec(`CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(tokens, tokenize = "unicode61", detail = '${rp ? "full" : "none"}', ${rc ? "" : "content='',"});
-                     INSERT OR REPLACE INTO docs_config(k, v) VALUES('pgsz', ${DB_PAGE_SIZE_BYTES});`);
+      await db.exec(
+        `CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(tokens, tokenize = "unicode61", detail = '${rp ? "full" : "none"}', ${rc ? "" : "content='',"});`,
+      );
       await db.exec("COMMIT");
     } catch (e) {
       await db.exec("ROLLBACK");
       throw e;
     }
+
+    await db.exec(`INSERT INTO docs(docs, rank) VALUES('pgsz', ${FTS_BLOCK_SIZE_BYTES});`);
   }
 
   private getValueByGeneration<T>(arr: T[], gen: number): T {
