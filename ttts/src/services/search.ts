@@ -59,6 +59,8 @@ type ShardConnection = {
   pendingTxCount: number;
   lastTxStartTime: number;
   isCommitting: boolean;
+  recordPositions: boolean;
+  recordContents: boolean;
 };
 
 export type OpenOptions = {
@@ -179,7 +181,8 @@ export class SearchService {
     const tempFilepath = `${oldFilepath}.rebuild`;
     await this.deleteFileSet(tempFilepath, false);
     const tempDb = await Database.open(tempFilepath);
-    await this.setupSchema(tempDb);
+    await this.setupSchema(tempDb, this.config.recordPositions, this.config.recordContents);
+
     const orderBy = useExternalId ? "t.external_id ASC" : "t.internal_id DESC";
     let currentNewId = newInitialId;
     let offset = 0;
@@ -252,26 +255,30 @@ export class SearchService {
     timeout = 1,
   ): Promise<string[]> {
     if (!this.isOpen) throw new Error("Service not open");
-    const { ftsQuery, filteringPhrases } = await makeFtsQuery(
-      query,
-      locale,
-      this.config.maxQueryTokenCount,
-      this.config.recordPositions,
-    );
-    if (!ftsQuery) return [];
+
     const sortedTs = Array.from(this.shards.keys()).sort((a, b) => b - a);
     const results: string[] = [];
     const needed = limit + offset;
     const start = Date.now();
+    const ftsQueryCache = new Map<boolean, { ftsQuery: string; filteringPhrases: string[] }>();
+
     for (const ts of sortedTs) {
       if (Date.now() - start > timeout * 1000 || results.length >= needed) break;
       const shard = await this.getShard(ts);
-      const db = this.selectReader(shard);
+      if (!ftsQueryCache.has(shard.recordPositions)) {
+        ftsQueryCache.set(
+          shard.recordPositions,
+          await makeFtsQuery(query, locale, this.config.maxQueryTokenCount, shard.recordPositions),
+        );
+      }
+      const { ftsQuery, filteringPhrases } = ftsQueryCache.get(shard.recordPositions)!;
+      if (!ftsQuery) continue;
 
+      const db = this.selectReader(shard);
       let sql = `SELECT t.external_id FROM docs JOIN id_tuples t ON docs.rowid = t.internal_id WHERE docs MATCH ?`;
       const params: (string | number)[] = [ftsQuery];
 
-      if (this.config.recordContents) {
+      if (shard.recordContents) {
         for (const phrase of filteringPhrases) {
           sql += ` AND docs.tokens LIKE ?`;
           params.push(`%${phrase}%`);
@@ -462,7 +469,24 @@ export class SearchService {
     if (shard) return shard;
     const writer = await Database.open(this.fileManager.getFilePath(ts));
     await this.setupStaticPragmas(writer);
-    await this.setupSchema(writer);
+
+    const meta = await writer
+      .get<{
+        record_positions: number;
+        record_contents: number;
+      }>("SELECT (SELECT v FROM fts_meta WHERE k = 'record_positions') as record_positions, (SELECT v FROM fts_meta WHERE k = 'record_contents') as record_contents")
+      .catch(() => null);
+
+    let rp: boolean, rc: boolean;
+    if (meta && meta.record_positions !== null) {
+      rp = !!meta.record_positions;
+      rc = !!meta.record_contents;
+    } else {
+      rp = this.config.recordPositions;
+      rc = this.config.recordContents;
+      await this.setupSchema(writer, rp, rc);
+    }
+
     shard = {
       writer,
       readers: [],
@@ -470,6 +494,8 @@ export class SearchService {
       pendingTxCount: 0,
       lastTxStartTime: 0,
       isCommitting: false,
+      recordPositions: rp,
+      recordContents: rc,
     };
     this.shards.set(ts, shard);
     return shard;
@@ -518,21 +544,34 @@ export class SearchService {
     }
   }
 
-  private async setupSchema(db: Database) {
-    await db.exec(
-      `CREATE TABLE IF NOT EXISTS id_tuples (internal_id INTEGER PRIMARY KEY, external_id TEXT UNIQUE);`,
-    );
-    await db.exec(
-      `CREATE TABLE IF NOT EXISTS extra_attrs (external_id TEXT PRIMARY KEY, attrs TEXT);`,
-    );
-    const content = this.config.recordContents ? "" : "content='',";
-    const detail = this.config.recordPositions ? "full" : "none";
-    await db.exec(
-      `CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(tokens, tokenize = "unicode61", detail = '${detail}', ${content});`,
-    );
-    await db
-      .exec(`INSERT OR REPLACE INTO docs_config(k, v) VALUES('pgsz', ${DB_PAGE_SIZE_BYTES});`)
-      .catch(() => {});
+  private async setupSchema(db: Database, recordPositions: boolean, recordContents: boolean) {
+    await db.exec("BEGIN");
+    try {
+      await db.exec(
+        `CREATE TABLE IF NOT EXISTS id_tuples (internal_id INTEGER PRIMARY KEY, external_id TEXT UNIQUE);`,
+      );
+      await db.exec(
+        `CREATE TABLE IF NOT EXISTS extra_attrs (external_id TEXT PRIMARY KEY, attrs TEXT);`,
+      );
+      await db.exec(`CREATE TABLE IF NOT EXISTS fts_meta (k TEXT PRIMARY KEY, v INTEGER);`);
+      await db.run(
+        `INSERT OR IGNORE INTO fts_meta (k, v) VALUES ('record_positions', ?), ('record_contents', ?);`,
+        [recordPositions ? 1 : 0, recordContents ? 1 : 0],
+      );
+
+      const content = recordContents ? "" : "content='',";
+      const detail = recordPositions ? "full" : "none";
+      await db.exec(
+        `CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(tokens, tokenize = "unicode61", detail = '${detail}', ${content});`,
+      );
+      await db
+        .exec(`INSERT OR REPLACE INTO docs_config(k, v) VALUES('pgsz', ${DB_PAGE_SIZE_BYTES});`)
+        .catch(() => {});
+      await db.exec("COMMIT");
+    } catch (e) {
+      await db.exec("ROLLBACK");
+      throw e;
+    }
   }
 
   private selectReader(shard: ShardConnection) {

@@ -11,7 +11,6 @@ const mockLogger = {
   child: () => mockLogger,
 } as unknown as Logger;
 
-// 他のテスト（indexFileManagerなど）と干渉しないよう、このクラス専用のディレクトリ名にする
 const TEST_DIR = "./test_data_search_service_main";
 const CONFIG: SearchConfig = {
   baseDir: TEST_DIR,
@@ -50,7 +49,6 @@ describe("SearchService", () => {
   });
 
   afterAll(async () => {
-    // 確実にリソースを解放するため少し待ってから削除
     await new Promise((r) => setTimeout(r, 100));
     await fs.rm(TEST_DIR, { recursive: true, force: true }).catch(() => {});
   });
