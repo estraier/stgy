@@ -8,6 +8,7 @@ import fs from "fs/promises";
 const program = new Command();
 const logger = createLogger({ file: "volume-test" });
 
+// Protectedメソッドを公開するための継承クラス
 class VolumeTestSearchService extends SearchService {
   public async addDocumentDirect(
     docId: string,
@@ -16,7 +17,10 @@ class VolumeTestSearchService extends SearchService {
     locale: string,
     attrs: string | null = null,
   ) {
-    return this.addDocument(docId, timestamp, bodyText, locale, attrs);
+    if (this.workerRunning) {
+      throw new Error("Worker must be stopped to use direct access!");
+    }
+    await this.addDocument(docId, timestamp, bodyText, locale, attrs);
   }
 
   public async optimizeAll() {
@@ -24,6 +28,15 @@ class VolumeTestSearchService extends SearchService {
     for (const file of files) {
       await this.optimizeShard(file.startTimestamp);
     }
+  }
+
+  public async synchronizeAll() {
+    await this.synchronizeAllShards();
+  }
+
+  public async removeIndexFileDirect(timestamp: number) {
+    // 内部状態（Shards Map）のクリーンアップと物理削除を行う
+    await this.removeIndexFile(timestamp);
   }
 }
 
@@ -78,16 +91,25 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 
   const service = new VolumeTestSearchService(config, logger);
 
+  // Workerを起動せずにオープン（全シャードがメモリにロードされる）
   await service.open({ startWorker: false });
 
   console.log("Cleaning up existing index files...");
-  await service.startMaintenanceMode();
+
+  // 既存ファイルを1つずつ丁寧に削除（DB接続を閉じてからファイル削除）
   const existingFiles = await service.listIndexFiles(false);
   for (const file of existingFiles) {
-    await service.removeIndexFile(file.startTimestamp);
+    await service.removeIndexFileDirect(file.startTimestamp);
   }
-  await service.endMaintenanceMode();
   console.log(`Cleaned up ${existingFiles.length} files.`);
+
+  // 念のためディレクトリ自体のクリーンアップと再作成（ゴミファイル除去）
+  await service.close();
+  await fs.rm(config.baseDir, { recursive: true, force: true }).catch(() => {});
+  await fs.mkdir(config.baseDir, { recursive: true });
+
+  // 再オープン
+  await service.open({ startWorker: false });
 
   const iterations = parseInt(opts.iteration, 10);
   const docCountPerIter = parseInt(opts.documents, 10);
@@ -123,12 +145,12 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
       await service.addDocumentDirect(docId, currentSimulatedTime, body, "en");
 
       if ((i + 1) % flushInterval === 0) {
-        await service.synchronize();
+        await service.synchronizeAll();
         process.stdout.write(`\r  Progress: [${i + 1}/${docCountPerIter}] Flushed.`);
       }
     }
 
-    await service.synchronize();
+    await service.synchronizeAll();
     process.stdout.write(`\r  Progress: [${docCountPerIter}/${docCountPerIter}] Done.   \n`);
 
     console.log(`Iteration ${iter} took ${((Date.now() - iterStartTime) / 1000).toFixed(2)}s`);
@@ -197,7 +219,7 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 async function runSearch(opts: SearchOptions): Promise<void> {
   const baseSearchConfig = Config.resources[0];
   const service = new SearchService(baseSearchConfig, logger);
-  await service.open();
+  await service.open({ startWorker: false });
 
   const query = opts.query || "w0";
   const times = parseInt(opts.times, 10);

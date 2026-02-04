@@ -17,9 +17,15 @@ describe("Database", () => {
     ).resolves.not.toThrow();
   });
 
-  test("run should insert data", async () => {
+  test("run should insert data and return lastID", async () => {
     await db.exec("CREATE TABLE test (id INTEGER PRIMARY KEY, name TEXT)");
-    await expect(db.run("INSERT INTO test (name) VALUES (?)", ["Alice"])).resolves.not.toThrow();
+    const result = await db.run("INSERT INTO test (name) VALUES (?)", ["Alice"]);
+
+    expect(result.changes).toBe(1);
+    expect(result.lastID).toBe(1);
+
+    const result2 = await db.run("INSERT INTO test (name) VALUES (?)", ["Bob"]);
+    expect(result2.lastID).toBe(2);
   });
 
   test("get should return a single row", async () => {
