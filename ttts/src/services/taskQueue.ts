@@ -35,7 +35,7 @@ export type ManagementTask =
 export type SearchTask = DocumentTask | ManagementTask;
 
 export type TaskItem<T extends SearchTask = SearchTask> = T & {
-  id: string; // 文字列型に変更
+  id: string;
   createdAt: string;
 };
 
@@ -50,7 +50,7 @@ abstract class BaseTaskQueue<T extends SearchTask> {
   protected db: Database | null = null;
   protected readonly dbPath: string;
   protected abstract readonly tableName: string;
-  protected abstract readonly prefix: string; // キュー識別子
+  protected abstract readonly prefix: string;
 
   constructor(config: SearchConfig) {
     this.dbPath = path.join(config.baseDir, `${config.namePrefix}-common.db`);

@@ -4,9 +4,11 @@ import { Config } from "./config";
 import { createLogger } from "./utils/logger";
 import path from "path";
 import fs from "fs/promises";
+import pino from "pino";
 
 const program = new Command();
 const logger = createLogger({ file: "volume-test" });
+const silentLogger = pino({ level: "silent" });
 
 class VolumeTestSearchService extends SearchService {
   public async addDocumentDirect(
@@ -54,6 +56,7 @@ interface SearchOptions {
   query?: string;
   limit: string;
   times: string;
+  baseDir?: string;
 }
 
 function generateDocument(wordCount: number, vocabSize: number, gamma: number): string {
@@ -87,7 +90,7 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
     recordContents: opts.recordContents !== "false",
   };
 
-  const service = new VolumeTestSearchService(config, logger);
+  const service = new VolumeTestSearchService(config, silentLogger);
 
   await service.open({ startWorker: false });
 
@@ -193,7 +196,6 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 
   const totalIndexPayload = finalFiles.reduce((acc, f) => acc + f.ftsIndexPayloadSize, 0);
   const totalIndexBlocks = finalFiles.reduce((acc, f) => acc + f.ftsIndexBlockCount, 0);
-  // 厳密にはファイルごとにPageSizeが違う可能性もあるため、ファイルごとに計算して合計する
   const totalIndexCacheBytes = finalFiles.reduce(
     (acc, f) => acc + f.ftsIndexBlockCount * f.pageSize,
     0,
@@ -234,7 +236,12 @@ async function runPrepare(opts: PrepareOptions): Promise<void> {
 
 async function runSearch(opts: SearchOptions): Promise<void> {
   const baseSearchConfig = Config.resources[0];
-  const service = new SearchService(baseSearchConfig, logger);
+  const config: SearchConfig = {
+    ...baseSearchConfig,
+    baseDir: opts.baseDir ? path.resolve(opts.baseDir) : baseSearchConfig.baseDir,
+  };
+
+  const service = new SearchService(config, silentLogger);
   await service.open({ startWorker: false });
 
   const query = opts.query || "w0";
@@ -242,6 +249,7 @@ async function runSearch(opts: SearchOptions): Promise<void> {
   const limit = parseInt(opts.limit, 10) === 0 ? 1000000 : parseInt(opts.limit, 10);
 
   console.log(`=== Search Benchmark: "${query}" ===`);
+  console.log(`Base Directory: ${config.baseDir}`);
   console.log(`Limit: ${opts.limit === "0" ? "Unlimited (Count mode)" : limit}, Trials: ${times}`);
 
   const files = await service.listIndexFiles(false);
@@ -297,6 +305,7 @@ program
   .option("--query <string>", "Search query", "w0")
   .option("--limit <number>", "Limit per search (0 for unlimited)", "100")
   .option("--times <number>", "Number of trials", "100")
+  .option("--base-dir <path>", "Directory path")
   .action((opts: SearchOptions) => runSearch(opts));
 
 program.parse(process.argv);
