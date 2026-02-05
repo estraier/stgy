@@ -154,4 +154,19 @@ describe("TaskQueue", () => {
     expect(remainingInput).not.toBeNull();
     expect((remainingInput?.payload as TaskAdd["payload"]).docId).toBe("rec2");
   });
+
+  test("isPending returns true while in queue and false after removal", async () => {
+    const id = await queue.enqueue({ type: "SYNC", payload: {} });
+
+    expect(await queue.isPending(id)).toBe(true);
+
+    const task = await queue.fetchFirst();
+    await queue.moveToBatch(task!);
+
+    expect(await queue.isPending(id)).toBe(true);
+
+    await queue.removeFromBatch(id);
+
+    expect(await queue.isPending(id)).toBe(false);
+  });
 });

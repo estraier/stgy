@@ -2,9 +2,6 @@ import path from "path";
 import { Database } from "../utils/database";
 import { SearchConfig } from "./search";
 
-// --- 1. タスクの型定義 (Schema) ---
-
-// ドキュメント追加・更新
 export type TaskAdd = {
   type: "ADD";
   payload: {
@@ -16,7 +13,6 @@ export type TaskAdd = {
   };
 };
 
-// ドキュメント削除
 export type TaskRemove = {
   type: "REMOVE";
   payload: {
@@ -25,13 +21,11 @@ export type TaskRemove = {
   };
 };
 
-// 同期バリア (Control)
 export type TaskSync = {
   type: "SYNC";
-  payload: Record<string, never>; // Empty object
+  payload: Record<string, never>;
 };
 
-// インデックス最適化 (Control)
 export type TaskOptimize = {
   type: "OPTIMIZE";
   payload: {
@@ -39,7 +33,6 @@ export type TaskOptimize = {
   };
 };
 
-// インデックス再構築 (Control)
 export type TaskReconstruct = {
   type: "RECONSTRUCT";
   payload: {
@@ -49,9 +42,6 @@ export type TaskReconstruct = {
   };
 };
 
-// ID予約 (Control/Data - Batch処理対象としうるが、今回は都度処理想定)
-// ※ 設計書に基づき、RESERVEもデータ整合性に関わるためData扱いにするか、
-//    あるいは管理操作として都度やるかはワーカの実装次第だが、ここでは型だけ定義。
 export type TaskReserve = {
   type: "RESERVE";
   payload: {
@@ -60,7 +50,6 @@ export type TaskReserve = {
   };
 };
 
-// ファイル物理削除 (Control)
 export type TaskDropShard = {
   type: "DROP_SHARD";
   payload: {
@@ -68,7 +57,6 @@ export type TaskDropShard = {
   };
 };
 
-// 統合タスク型 (アプリケーションが扱う型)
 export type SearchTask =
   | TaskAdd
   | TaskRemove
@@ -78,21 +66,17 @@ export type SearchTask =
   | TaskReserve
   | TaskDropShard;
 
-// DB格納用の中間型 (ID付き、Payloadはパース済み)
 export type TaskItem = SearchTask & {
   id: number;
   createdAt: string;
 };
 
-// DBの行データ型 (Payloadは文字列)
 type TaskRow = {
   id: number;
   type: SearchTask["type"];
   payload: string;
   created_at: string;
 };
-
-// --- 2. TaskQueue クラス実装 ---
 
 export class TaskQueue {
   private db: Database | null = null;
@@ -108,7 +92,6 @@ export class TaskQueue {
     await this.db.exec("PRAGMA journal_mode = WAL;");
     await this.db.exec("PRAGMA synchronous = NORMAL;");
 
-    // input_tasks: 新規タスクの受け皿
     await this.db.exec(`
       CREATE TABLE IF NOT EXISTS input_tasks (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -118,8 +101,6 @@ export class TaskQueue {
       );
     `);
 
-    // batch_tasks: 処理中（仕掛かり）タスクの保管場所
-    // データの整合性が重要なタスクのみがここに移動される
     await this.db.exec(`
       CREATE TABLE IF NOT EXISTS batch_tasks (
         id INTEGER PRIMARY KEY,
@@ -138,10 +119,6 @@ export class TaskQueue {
     }
   }
 
-  /**
-   * タスクを追加する。
-   * @returns 発行されたタスクID
-   */
   async enqueue(task: SearchTask): Promise<number> {
     if (!this.db) throw new Error("TaskQueue not open");
     const result = await this.db.run(`INSERT INTO input_tasks (type, payload) VALUES (?, ?)`, [
@@ -151,10 +128,6 @@ export class TaskQueue {
     return result.lastID;
   }
 
-  /**
-   * 未処理タスクの先頭を覗き見る（削除はしない）。
-   * ワーカはこのメソッドでタスクを確認し、種類に応じて処理フローを分岐する。
-   */
   async fetchFirst(): Promise<TaskItem | null> {
     if (!this.db) throw new Error("TaskQueue not open");
     const row = await this.db.get<TaskRow>("SELECT * FROM input_tasks ORDER BY id ASC LIMIT 1");
@@ -162,21 +135,14 @@ export class TaskQueue {
     return this.parseRow(row);
   }
 
-  /**
-   * Data Task用: input_tasks から削除し、batch_tasks へ移動する（アトミック操作）。
-   * 処理中のクラッシュに備えて永続化する。
-   */
   async moveToBatch(task: TaskItem): Promise<void> {
     if (!this.db) throw new Error("TaskQueue not open");
     await this.db.exec("BEGIN IMMEDIATE");
     try {
-      // 念のため存在確認をしてから移動（並行性はワーカ1つなので本来競合しないが安全のため）
       const exists = await this.db.get<{ id: number }>("SELECT id FROM input_tasks WHERE id = ?", [
         task.id,
       ]);
-      if (!exists) {
-        throw new Error(`Task ${task.id} not found in input_tasks`);
-      }
+      if (!exists) throw new Error(`Task ${task.id} not found in input_tasks`);
 
       await this.db.run(
         `INSERT INTO batch_tasks (id, type, payload, created_at) VALUES (?, ?, ?, ?)`,
@@ -190,39 +156,35 @@ export class TaskQueue {
     }
   }
 
-  /**
-   * Control Task用: input_tasks から物理削除する。
-   * 永続化の必要がないタスクの完了処理、または処理開始前の取り出しに使用。
-   */
   async removeFromInput(id: number): Promise<void> {
     if (!this.db) throw new Error("TaskQueue not open");
     await this.db.run("DELETE FROM input_tasks WHERE id = ?", [id]);
   }
 
-  /**
-   * Data Task完了用: batch_tasks から物理削除する。
-   */
   async removeFromBatch(id: number): Promise<void> {
     if (!this.db) throw new Error("TaskQueue not open");
     await this.db.run("DELETE FROM batch_tasks WHERE id = ?", [id]);
   }
 
-  /**
-   * クラッシュ復旧用: batch_tasks に残っている（処理途中で終わった）タスクを取得する。
-   */
   async getPendingBatchTasks(): Promise<TaskItem[]> {
     if (!this.db) throw new Error("TaskQueue not open");
     const rows = await this.db.all<TaskRow>("SELECT * FROM batch_tasks ORDER BY id ASC");
     return rows.map((r) => this.parseRow(r));
   }
 
-  /**
-   * Inputタスクの残数を取得（メトリクス用）
-   */
   async countInputTasks(): Promise<number> {
     if (!this.db) return 0;
     const row = await this.db.get<{ c: number }>("SELECT count(*) as c FROM input_tasks");
     return row?.c || 0;
+  }
+
+  async isPending(id: number): Promise<boolean> {
+    if (!this.db) return false;
+    const row = await this.db.get<{ count: number }>(
+      "SELECT (SELECT COUNT(*) FROM input_tasks WHERE id = ?) + (SELECT COUNT(*) FROM batch_tasks WHERE id = ?) as count",
+      [id, id]
+    );
+    return (row?.count ?? 0) > 0;
   }
 
   private parseRow(row: TaskRow): TaskItem {
