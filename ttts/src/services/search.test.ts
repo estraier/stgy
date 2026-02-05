@@ -200,13 +200,12 @@ describe("SearchService (Actor Model)", () => {
         payload: {
           documents: [
             { id: "res_1", timestamp: 1000 },
-            { id: "res_2", timestamp: 2000 }, // 別シャードの可能性あり（設定による）
+            { id: "res_2", timestamp: 2000 },
           ],
         },
       },
       false,
     );
-    // RESERVE は検索結果には影響しないため、エラーなく完了することを確認する程度
   });
 
   test("Maintenance Mode: pauses worker", async () => {

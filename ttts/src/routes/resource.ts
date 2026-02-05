@@ -12,7 +12,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
   const logger = searchService.getLogger();
 
   const handleWait = async (req: Request, taskId: string) => {
-    const v = req.query.wait || req.body.wait;
+    const v = req.query.wait || (req.body && req.body.wait);
     const waitSec = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : null;
     if (waitSec !== null && waitSec > 0) {
       await searchService.waitTask(taskId, waitSec * 1000);
@@ -51,7 +51,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
 
   router.post("/reconstruct", async (req: Request, res: Response) => {
     try {
-      const { timestamp, newInitialId, useExternalId } = req.body;
+      const { timestamp, newInitialId, useExternalId } = req.body || {};
       if (typeof timestamp !== "number")
         return res.status(400).json({ error: "timestamp is required" });
       const taskId = await searchService.enqueueTask({
@@ -70,11 +70,10 @@ export default function createResourceRouter(instance: ResourceInstance) {
     if (!(await searchService.checkMaintenanceMode()))
       return res.status(409).json({ error: "Maintenance mode required" });
     try {
-      const { documents } = req.body;
+      const { documents } = req.body || {};
       if (!Array.isArray(documents))
         return res.status(400).json({ error: "documents array is required" });
 
-      // バリデーション: 各要素が { id, timestamp } を持っているか
       for (const doc of documents) {
         if (!doc.id || typeof doc.timestamp !== "number") {
           return res.status(400).json({ error: "Each document must have id and timestamp" });
@@ -133,7 +132,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
 
   router.post("/optimize", async (req: Request, res: Response) => {
     try {
-      const { timestamp } = req.body;
+      const { timestamp } = req.body || {};
       if (typeof timestamp !== "number")
         return res.status(400).json({ error: "timestamp is required" });
       const taskId = await searchService.enqueueTask({
@@ -218,7 +217,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
   router.put("/:docId", async (req: Request, res: Response) => {
     try {
       const docId = req.params.docId;
-      const { text, timestamp, locale, attrs } = req.body;
+      const { text, timestamp, locale, attrs } = req.body || {};
       if (!text || typeof timestamp !== "number")
         return res.status(400).json({ error: "text and timestamp are required" });
       const taskId = await searchService.enqueueTask({
@@ -236,7 +235,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
   router.delete("/:docId", async (req: Request, res: Response) => {
     try {
       const docId = req.params.docId;
-      const { timestamp } = req.body;
+      const { timestamp } = req.body || {};
       if (typeof timestamp !== "number")
         return res.status(400).json({ error: "timestamp is required" });
       const taskId = await searchService.enqueueTask({

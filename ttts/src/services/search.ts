@@ -627,7 +627,9 @@ export class SearchService {
         .get<{
           record_positions: number;
           record_contents: number;
-        }>("SELECT (SELECT v FROM fts_meta WHERE k = 'record_positions') as record_positions, (SELECT v FROM fts_meta WHERE k = 'record_contents') as record_contents")
+        }>(
+          "SELECT (SELECT v FROM fts_meta WHERE k = 'record_positions') as record_positions, (SELECT v FROM fts_meta WHERE k = 'record_contents') as record_contents",
+        )
         .catch(() => null);
       let rp =
         meta?.record_positions !== undefined
