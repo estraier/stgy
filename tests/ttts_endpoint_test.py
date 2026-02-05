@@ -83,14 +83,21 @@ def test_reservation():
   resource = "posts"
   base_url = f"{BASE_URL}/{resource}"
   requests.post(f"{base_url}/maintenance")
+
+  target_ts = int(time.time())
   reserve_payload = {
-    "timestamp": int(time.time()),
-    "ids": ["res-1", "res-2"],
+    "documents": [
+        {"id": "res-1", "timestamp": target_ts},
+        {"id": "res-2", "timestamp": target_ts}
+    ],
     "wait": 5
   }
   res = requests.post(f"{base_url}/reserve", json=reserve_payload)
   assert res.status_code == 200
-  assert res.json()["result"] == "enqueued"
+  result = res.json()
+  assert result["result"] == "enqueued"
+  assert result["count"] == 2
+
   requests.delete(f"{base_url}/maintenance")
 
 def test_reconstruction():

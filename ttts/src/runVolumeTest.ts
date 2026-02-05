@@ -1,13 +1,11 @@
 import { Command } from "commander";
 import { SearchService, SearchConfig } from "./services/search";
 import { Config } from "./config";
-import { createLogger } from "./utils/logger";
 import path from "path";
 import fs from "fs/promises";
 import pino from "pino";
 
 const program = new Command();
-const logger = createLogger({ file: "volume-test" });
 const silentLogger = pino({ level: "silent" });
 
 class VolumeTestSearchService extends SearchService {

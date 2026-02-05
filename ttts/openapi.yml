@@ -151,17 +151,22 @@ paths:
         content:
           application/json:
             schema:
-              type: array
-              items:
-                type: object
-                required:
-                  - id
-                  - timestamp
-                properties:
-                  id:
-                    type: string
-                  timestamp:
-                    type: integer
+              type: object
+              required:
+                - documents
+              properties:
+                documents:
+                  type: array
+                  items:
+                    type: object
+                    required:
+                      - id
+                      - timestamp
+                    properties:
+                      id:
+                        type: string
+                      timestamp:
+                        type: integer
       responses:
         "200":
           description: Reservation successful
@@ -506,6 +511,39 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Error"
+
+  /{resource}/optimize:
+    parameters:
+      - $ref: "#/components/parameters/ResourcePath"
+    post:
+      tags:
+        - Management
+      summary: Optimize index file
+      description: Runs VACUUM and optimize on the shard.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - timestamp
+              properties:
+                timestamp:
+                  type: integer
+      responses:
+        "200":
+          description: Optimization task enqueued
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                    example: enqueued
+                  taskId:
+                    type: string
 
 components:
   parameters:

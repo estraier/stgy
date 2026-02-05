@@ -22,7 +22,12 @@ export type TaskReconstruct = {
   type: "RECONSTRUCT";
   payload: { targetTimestamp: number; newInitialId?: number; useExternalId?: boolean };
 };
-export type TaskReserve = { type: "RESERVE"; payload: { targetTimestamp: number; ids: string[] } };
+export type TaskReserve = {
+  type: "RESERVE";
+  payload: {
+    documents: { id: string; timestamp: number }[];
+  };
+};
 export type TaskDropShard = { type: "DROP_SHARD"; payload: { targetTimestamp: number } };
 
 export type DocumentTask = TaskAdd | TaskRemove;
@@ -160,10 +165,11 @@ export class DocumentTaskQueue extends BaseTaskQueue<DocumentTask> {
         [numericId],
       );
       if (!exists) throw new Error(`Task ${task.id} not found`);
-      await this.db.run(
-        `INSERT INTO batch_tasks (id, type, payload) VALUES (?, ?, ?)`,
-        [numericId, task.type, JSON.stringify(task.payload)],
-      );
+      await this.db.run(`INSERT INTO batch_tasks (id, type, payload) VALUES (?, ?, ?)`, [
+        numericId,
+        task.type,
+        JSON.stringify(task.payload),
+      ]);
       await this.db.run(`DELETE FROM ${this.tableName} WHERE id = ?`, [numericId]);
       await this.db.exec("COMMIT");
     } catch (e) {

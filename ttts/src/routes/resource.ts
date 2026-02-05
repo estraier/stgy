@@ -70,15 +70,23 @@ export default function createResourceRouter(instance: ResourceInstance) {
     if (!(await searchService.checkMaintenanceMode()))
       return res.status(409).json({ error: "Maintenance mode required" });
     try {
-      const { timestamp, ids } = req.body;
-      if (!Array.isArray(ids) || typeof timestamp !== "number")
-        return res.status(400).json({ error: "timestamp and array of ids are required" });
+      const { documents } = req.body;
+      if (!Array.isArray(documents))
+        return res.status(400).json({ error: "documents array is required" });
+
+      // バリデーション: 各要素が { id, timestamp } を持っているか
+      for (const doc of documents) {
+        if (!doc.id || typeof doc.timestamp !== "number") {
+          return res.status(400).json({ error: "Each document must have id and timestamp" });
+        }
+      }
+
       const taskId = await searchService.enqueueTask({
         type: "RESERVE",
-        payload: { targetTimestamp: timestamp, ids },
+        payload: { documents },
       });
       await handleWait(req, taskId);
-      res.json({ result: "enqueued", taskId, count: ids.length });
+      res.json({ result: "enqueued", taskId, count: documents.length });
     } catch (e) {
       logger.error(e);
       res.status(500).json({ error: String(e) });
