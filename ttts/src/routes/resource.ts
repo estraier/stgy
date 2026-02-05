@@ -9,43 +9,51 @@ type ResourceInstance = {
 export default function createResourceRouter(instance: ResourceInstance) {
   const router = Router();
   const { searchService } = instance;
+  const logger = searchService.getLogger();
 
-  const handleWait = async (req: Request, taskId: number) => {
-    const waitSec = req.query.wait
-      ? parseFloat(req.query.wait as string)
-      : typeof req.body.wait === "number"
-        ? req.body.wait
-        : null;
-
+  const handleWait = async (req: Request, taskId: string) => {
+    const v = req.query.wait || req.body.wait;
+    const waitSec = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : null;
     if (waitSec !== null && waitSec > 0) {
       await searchService.waitTask(taskId, waitSec * 1000);
     }
   };
 
   router.get("/maintenance", async (_req: Request, res: Response) => {
-    const enabled = await searchService.checkMaintenanceMode();
-    res.json({ enabled });
+    try {
+      const enabled = await searchService.checkMaintenanceMode();
+      res.json({ enabled });
+    } catch (e) {
+      logger.error(e);
+      res.status(500).json({ error: String(e) });
+    }
   });
 
   router.post("/maintenance", async (_req: Request, res: Response) => {
-    await searchService.startMaintenanceMode();
-    res.json({ enabled: true });
+    try {
+      await searchService.startMaintenanceMode();
+      res.json({ enabled: true });
+    } catch (e) {
+      logger.error(e);
+      res.status(500).json({ error: String(e) });
+    }
   });
 
   router.delete("/maintenance", async (_req: Request, res: Response) => {
-    await searchService.endMaintenanceMode();
-    res.json({ enabled: false });
+    try {
+      await searchService.endMaintenanceMode();
+      res.json({ enabled: false });
+    } catch (e) {
+      logger.error(e);
+      res.status(500).json({ error: String(e) });
+    }
   });
 
   router.post("/reconstruct", async (req: Request, res: Response) => {
-    if (!(await searchService.checkMaintenanceMode())) {
-      return res.status(409).json({ error: "Maintenance mode required" });
-    }
     try {
       const { timestamp, newInitialId, useExternalId } = req.body;
-      if (typeof timestamp !== "number") {
+      if (typeof timestamp !== "number")
         return res.status(400).json({ error: "timestamp is required" });
-      }
       const taskId = await searchService.enqueueTask({
         type: "RECONSTRUCT",
         payload: { targetTimestamp: timestamp, newInitialId, useExternalId: !!useExternalId },
@@ -53,19 +61,18 @@ export default function createResourceRouter(instance: ResourceInstance) {
       await handleWait(req, taskId);
       res.json({ result: "enqueued", taskId });
     } catch (e) {
+      logger.error(e);
       res.status(500).json({ error: String(e) });
     }
   });
 
   router.post("/reserve", async (req: Request, res: Response) => {
-    if (!(await searchService.checkMaintenanceMode())) {
+    if (!(await searchService.checkMaintenanceMode()))
       return res.status(409).json({ error: "Maintenance mode required" });
-    }
     try {
       const { timestamp, ids } = req.body;
-      if (!Array.isArray(ids) || typeof timestamp !== "number") {
+      if (!Array.isArray(ids) || typeof timestamp !== "number")
         return res.status(400).json({ error: "timestamp and array of ids are required" });
-      }
       const taskId = await searchService.enqueueTask({
         type: "RESERVE",
         payload: { targetTimestamp: timestamp, ids },
@@ -73,14 +80,12 @@ export default function createResourceRouter(instance: ResourceInstance) {
       await handleWait(req, taskId);
       res.json({ result: "enqueued", taskId, count: ids.length });
     } catch (e) {
+      logger.error(e);
       res.status(500).json({ error: String(e) });
     }
   });
 
   router.delete("/shards/:timestamp", async (req: Request, res: Response) => {
-    if (!(await searchService.checkMaintenanceMode())) {
-      return res.status(409).json({ error: "Maintenance mode required" });
-    }
     try {
       const timestamp = parseInt(req.params.timestamp, 10);
       if (isNaN(timestamp)) return res.status(400).json({ error: "invalid timestamp" });
@@ -91,6 +96,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
       await handleWait(req, taskId);
       res.json({ result: "enqueued", taskId });
     } catch (e) {
+      logger.error(e);
       res.status(500).json({ error: String(e) });
     }
   });
@@ -101,6 +107,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const files = await searchService.listIndexFiles(detailed);
       res.json(files);
     } catch (e) {
+      logger.error(e);
       res.status(500).json({ error: String(e) });
     }
   });
@@ -111,6 +118,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
       await handleWait(req, taskId);
       res.json({ result: "flushed", taskId });
     } catch (e) {
+      logger.error(e);
       res.status(500).json({ error: String(e) });
     }
   });
@@ -127,6 +135,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
       await handleWait(req, taskId);
       res.json({ result: "enqueued", taskId });
     } catch (e) {
+      logger.error(e);
       res.status(500).json({ error: String(e) });
     }
   });
@@ -141,6 +150,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const tokens = tokenizer.tokenize(text, guessedLocale);
       res.json(tokens);
     } catch (e) {
+      logger.error(e);
       res.status(500).json({ error: String(e) });
     }
   });
@@ -156,6 +166,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const results = await searchService.search(query, locale, limit, offset, timeout);
       res.json(results);
     } catch (e) {
+      logger.error(e);
       res.status(500).json({ error: String(e) });
     }
   });
@@ -170,15 +181,14 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const timeout = parseInt(req.query.timeout as string, 10) || 1;
       const omitBodyText = req.query.omitBodyText === "true";
       const omitAttrs = req.query.omitAttrs === "true";
-
       const ids = await searchService.search(query, locale, limit, offset, timeout);
       if (ids.length === 0) return res.json([]);
-
       const docs = await searchService.fetchDocuments(ids, omitBodyText, omitAttrs);
       const docMap = new Map(docs.map((d) => [d.id, d]));
       const orderedDocs = ids.map((id) => docMap.get(id)).filter((d) => d !== undefined);
       res.json(orderedDocs);
     } catch (e) {
+      logger.error(e);
       res.status(500).json({ error: String(e) });
     }
   });
@@ -192,6 +202,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
       if (docs.length === 0) return res.status(404).json({ error: "document not found" });
       res.json(docs[0]);
     } catch (e) {
+      logger.error(e);
       res.status(500).json({ error: String(e) });
     }
   });
@@ -200,9 +211,8 @@ export default function createResourceRouter(instance: ResourceInstance) {
     try {
       const docId = req.params.docId;
       const { text, timestamp, locale, attrs } = req.body;
-      if (!text || typeof timestamp !== "number") {
+      if (!text || typeof timestamp !== "number")
         return res.status(400).json({ error: "text and timestamp are required" });
-      }
       const taskId = await searchService.enqueueTask({
         type: "ADD",
         payload: { docId, timestamp, bodyText: text, locale: locale || "en", attrs: attrs || null },
@@ -210,6 +220,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
       await handleWait(req, taskId);
       res.status(202).json({ result: "accepted", taskId });
     } catch (e) {
+      logger.error(e);
       res.status(500).json({ error: String(e) });
     }
   });
@@ -218,9 +229,8 @@ export default function createResourceRouter(instance: ResourceInstance) {
     try {
       const docId = req.params.docId;
       const { timestamp } = req.body;
-      if (typeof timestamp !== "number") {
+      if (typeof timestamp !== "number")
         return res.status(400).json({ error: "timestamp is required" });
-      }
       const taskId = await searchService.enqueueTask({
         type: "REMOVE",
         payload: { docId, timestamp },
@@ -228,6 +238,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
       await handleWait(req, taskId);
       res.status(202).json({ result: "accepted", taskId });
     } catch (e) {
+      logger.error(e);
       res.status(500).json({ error: String(e) });
     }
   });

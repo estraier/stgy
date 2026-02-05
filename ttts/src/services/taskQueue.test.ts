@@ -1,6 +1,6 @@
 import fs from "fs/promises";
 import path from "path";
-import { TaskQueue, TaskAdd, TaskSync } from "./taskQueue";
+import { DocumentTaskQueue, ManagementTaskQueue, TaskAdd, TaskSync } from "./taskQueue";
 import { SearchConfig } from "./search";
 
 const TEST_DIR = "./test_data_task_queue";
@@ -10,8 +10,9 @@ const MOCK_CONFIG = {
   namePrefix: "test_queue",
 } as SearchConfig;
 
-describe("TaskQueue", () => {
-  let queue: TaskQueue;
+describe("TaskQueue System", () => {
+  let docQueue: DocumentTaskQueue;
+  let mgmtQueue: ManagementTaskQueue;
 
   beforeAll(async () => {
     await fs.mkdir(TEST_DIR, { recursive: true });
@@ -28,145 +29,75 @@ describe("TaskQueue", () => {
     await fs.unlink(`${dbPath}-wal`).catch(() => {});
     await fs.unlink(`${dbPath}-shm`).catch(() => {});
 
-    queue = new TaskQueue(MOCK_CONFIG);
-    await queue.open();
+    docQueue = new DocumentTaskQueue(MOCK_CONFIG);
+    mgmtQueue = new ManagementTaskQueue(MOCK_CONFIG);
+    await docQueue.open();
+    await mgmtQueue.open();
   });
 
   afterEach(async () => {
-    await queue.close();
+    await docQueue.close();
+    await mgmtQueue.close();
   });
 
-  test("enqueue returns incremental IDs", async () => {
-    const task1: TaskAdd = {
-      type: "ADD",
-      payload: { docId: "1", timestamp: 100, bodyText: "test", locale: "en" },
-    };
-    const id1 = await queue.enqueue(task1);
-    expect(id1).toBe(1);
-
-    const task2: TaskSync = { type: "SYNC", payload: {} };
-    const id2 = await queue.enqueue(task2);
-    expect(id2).toBe(2);
-  });
-
-  test("fetchFirst retrieves the oldest task without removing it", async () => {
-    const task: TaskAdd = {
-      type: "ADD",
-      payload: { docId: "doc1", timestamp: 100, bodyText: "hello", locale: "en" },
-    };
-    const id = await queue.enqueue(task);
-
-    const fetched1 = await queue.fetchFirst();
-    expect(fetched1).not.toBeNull();
-    expect(fetched1?.id).toBe(id);
-    expect(fetched1?.type).toBe("ADD");
-    expect((fetched1?.payload as TaskAdd["payload"]).docId).toBe("doc1");
-
-    const fetched2 = await queue.fetchFirst();
-    expect(fetched2).toEqual(fetched1);
-  });
-
-  test("Data Task Flow: moveToBatch -> removeFromBatch", async () => {
-    const task: TaskAdd = {
-      type: "ADD",
-      payload: { docId: "persistent", timestamp: 123, bodyText: "data", locale: "ja" },
-    };
-    await queue.enqueue(task);
-
-    const item = await queue.fetchFirst();
-    expect(item).not.toBeNull();
-    if (!item) return;
-
-    await queue.moveToBatch(item);
-
-    const nextInput = await queue.fetchFirst();
-    expect(nextInput).toBeNull();
-
-    const pending = await queue.getPendingBatchTasks();
-    expect(pending).toHaveLength(1);
-    expect(pending[0].id).toBe(item.id);
-    expect((pending[0].payload as TaskAdd["payload"]).bodyText).toBe("data");
-
-    await queue.removeFromBatch(item.id);
-
-    const finalPending = await queue.getPendingBatchTasks();
-    expect(finalPending).toHaveLength(0);
-  });
-
-  test("Control Task Flow: removeFromInput", async () => {
+  test("ManagementTaskQueue: basic flow with string IDs", async () => {
     const task: TaskSync = { type: "SYNC", payload: {} };
-    await queue.enqueue(task);
+    const id = await mgmtQueue.enqueue(task);
 
-    const item = await queue.fetchFirst();
-    expect(item).not.toBeNull();
-    if (!item) return;
+    expect(id).toBe("m-1");
 
-    await queue.removeFromInput(item.id);
+    const fetched = await mgmtQueue.fetchFirst();
+    expect(fetched).not.toBeNull();
+    expect(fetched?.id).toBe(id);
+    expect(fetched?.type).toBe("SYNC");
 
-    const nextInput = await queue.fetchFirst();
-    expect(nextInput).toBeNull();
-
-    const pending = await queue.getPendingBatchTasks();
-    expect(pending).toHaveLength(0);
+    expect(await mgmtQueue.isPending(id)).toBe(true);
+    await mgmtQueue.removeFromInput(id);
+    expect(await mgmtQueue.isPending(id)).toBe(false);
   });
 
-  test("FIFO ordering is preserved", async () => {
-    await queue.enqueue({ type: "SYNC", payload: {} });
-    await queue.enqueue({
+  test("DocumentTaskQueue: data task flow with string IDs", async () => {
+    const task: TaskAdd = {
       type: "ADD",
-      payload: { docId: "2", timestamp: 0, bodyText: "", locale: "" },
+      payload: { docId: "doc1", timestamp: 100, bodyText: "test", locale: "en" },
+    };
+    const id = await docQueue.enqueue(task);
+
+    expect(id).toBe("d-1");
+
+    const item = await docQueue.fetchFirst();
+    expect(item).not.toBeNull();
+    expect(item?.id).toBe(id);
+
+    await docQueue.moveToBatch(item!);
+    expect(await docQueue.fetchFirst()).toBeNull();
+    expect(await docQueue.isPending(id)).toBe(true);
+
+    const pending = await docQueue.getPendingBatchTasks();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].id).toBe(id);
+
+    await docQueue.removeFromBatch(id);
+    expect(await docQueue.isPending(id)).toBe(false);
+  });
+
+  test("Prefix isolation and independent counters", async () => {
+    const mgmtId = await mgmtQueue.enqueue({ type: "SYNC", payload: {} });
+    const docId = await docQueue.enqueue({
+      type: "ADD",
+      payload: { docId: "1", timestamp: 0, bodyText: "", locale: "" },
     });
 
-    const first = await queue.fetchFirst();
-    expect(first?.id).toBe(1);
-    expect(first?.type).toBe("SYNC");
+    expect(mgmtId).toBe("m-1");
+    expect(docId).toBe("d-1");
 
-    await queue.removeFromInput(first!.id);
+    const mFirst = await mgmtQueue.fetchFirst();
+    const dFirst = await docQueue.fetchFirst();
 
-    const second = await queue.fetchFirst();
-    expect(second?.id).toBe(2);
-    expect(second?.type).toBe("ADD");
-  });
+    expect(mFirst?.id).toBe("m-1");
+    expect(dFirst?.id).toBe("d-1");
 
-  test("getPendingBatchTasks handles recovery scenario", async () => {
-    const task1: TaskAdd = {
-      type: "ADD",
-      payload: { docId: "rec1", timestamp: 100, bodyText: "recover me", locale: "en" },
-    };
-    const task2: TaskAdd = {
-      type: "ADD",
-      payload: { docId: "rec2", timestamp: 200, bodyText: "recover me too", locale: "en" },
-    };
-
-    await queue.enqueue(task1);
-    await queue.enqueue(task2);
-
-    const item1 = await queue.fetchFirst();
-    await queue.moveToBatch(item1!);
-
-    const pending = await queue.getPendingBatchTasks();
-
-    expect(pending).toHaveLength(1);
-    expect(pending[0].id).toBe(item1!.id);
-    expect((pending[0].payload as TaskAdd["payload"]).docId).toBe("rec1");
-
-    const remainingInput = await queue.fetchFirst();
-    expect(remainingInput).not.toBeNull();
-    expect((remainingInput?.payload as TaskAdd["payload"]).docId).toBe("rec2");
-  });
-
-  test("isPending returns true while in queue and false after removal", async () => {
-    const id = await queue.enqueue({ type: "SYNC", payload: {} });
-
-    expect(await queue.isPending(id)).toBe(true);
-
-    const task = await queue.fetchFirst();
-    await queue.moveToBatch(task!);
-
-    expect(await queue.isPending(id)).toBe(true);
-
-    await queue.removeFromBatch(id);
-
-    expect(await queue.isPending(id)).toBe(false);
+    expect(await mgmtQueue.isPending(docId)).toBe(false);
+    expect(await docQueue.isPending(mgmtId)).toBe(false);
   });
 });

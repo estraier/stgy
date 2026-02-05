@@ -60,22 +60,22 @@ describe("SearchService (Actor Model)", () => {
 
   const runTask = async (task: SearchTask, sync = true) => {
     const taskId = await service.enqueueTask(task);
+    await service.waitTask(taskId);
 
     if (sync && (task.type === "ADD" || task.type === "REMOVE" || task.type === "RESERVE")) {
       const syncId = await service.enqueueTask({ type: "SYNC", payload: {} });
       await service.waitTask(syncId);
-    } else {
-      await service.waitTask(taskId);
     }
 
     return taskId;
   };
 
   test("Basic Flow: Add and Search", async () => {
-    await runTask({
+    const taskId = await runTask({
       type: "ADD",
       payload: { docId: "doc_1", timestamp: 1000, bodyText: "hello world", locale: "en" },
     });
+    expect(taskId).toMatch(/^d-/);
 
     const results = await service.search("hello");
     expect(results).toContain("doc_1");
@@ -136,7 +136,8 @@ describe("SearchService (Actor Model)", () => {
   });
 
   test("Management: SYNC (Barrier)", async () => {
-    await runTask({ type: "SYNC", payload: {} }, false);
+    const taskId = await runTask({ type: "SYNC", payload: {} }, false);
+    expect(taskId).toMatch(/^m-/);
   });
 
   test("Management: OPTIMIZE", async () => {
@@ -195,7 +196,7 @@ describe("SearchService (Actor Model)", () => {
   test("Maintenance Mode: pauses worker", async () => {
     await service.startMaintenanceMode();
 
-    await service.enqueueTask({
+    const taskId = await service.enqueueTask({
       type: "ADD",
       payload: { docId: "doc_maint", timestamp: 1000, bodyText: "waiting", locale: "en" },
     });
@@ -206,6 +207,7 @@ describe("SearchService (Actor Model)", () => {
 
     await service.endMaintenanceMode();
 
+    await service.waitTask(taskId);
     const syncId = await service.enqueueTask({ type: "SYNC", payload: {} });
     await service.waitTask(syncId);
 
