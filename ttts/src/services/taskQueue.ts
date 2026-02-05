@@ -36,14 +36,12 @@ export type SearchTask = DocumentTask | ManagementTask;
 
 export type TaskItem<T extends SearchTask = SearchTask> = T & {
   id: string;
-  createdAt: string;
 };
 
 type TaskRow = {
   id: number;
   type: string;
   payload: string;
-  created_at: string;
 };
 
 abstract class BaseTaskQueue<T extends SearchTask> {
@@ -66,8 +64,7 @@ abstract class BaseTaskQueue<T extends SearchTask> {
       CREATE TABLE IF NOT EXISTS ${this.tableName} (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         type TEXT NOT NULL,
-        payload TEXT NOT NULL,
-        created_at DATETIME DEFAULT (STRFTIME('%Y-%m-%d %H:%M:%f', 'NOW'))
+        payload TEXT NOT NULL
       );
     `);
     await this.initSchema();
@@ -89,7 +86,7 @@ abstract class BaseTaskQueue<T extends SearchTask> {
       `INSERT INTO ${this.tableName} (type, payload) VALUES (?, ?)`,
       [task.type, JSON.stringify(task.payload)],
     );
-    return `${this.prefix}-${result.lastID}`; // プレフィックス付きで返す
+    return `${this.prefix}-${result.lastID}`;
   }
 
   async fetchFirst(): Promise<TaskItem<T> | null> {
@@ -120,7 +117,6 @@ abstract class BaseTaskQueue<T extends SearchTask> {
       id: `${this.prefix}-${row.id}`,
       type: row.type,
       payload: JSON.parse(row.payload),
-      createdAt: row.created_at,
     } as unknown as TaskItem<T>;
   }
 }
@@ -149,8 +145,7 @@ export class DocumentTaskQueue extends BaseTaskQueue<DocumentTask> {
       CREATE TABLE IF NOT EXISTS batch_tasks (
         id INTEGER PRIMARY KEY,
         type TEXT NOT NULL,
-        payload TEXT NOT NULL,
-        created_at DATETIME
+        payload TEXT NOT NULL
       );
     `);
   }
@@ -166,8 +161,8 @@ export class DocumentTaskQueue extends BaseTaskQueue<DocumentTask> {
       );
       if (!exists) throw new Error(`Task ${task.id} not found`);
       await this.db.run(
-        `INSERT INTO batch_tasks (id, type, payload, created_at) VALUES (?, ?, ?, ?)`,
-        [numericId, task.type, JSON.stringify(task.payload), task.createdAt],
+        `INSERT INTO batch_tasks (id, type, payload) VALUES (?, ?, ?)`,
+        [numericId, task.type, JSON.stringify(task.payload)],
       );
       await this.db.run(`DELETE FROM ${this.tableName} WHERE id = ?`, [numericId]);
       await this.db.exec("COMMIT");
