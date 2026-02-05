@@ -113,6 +113,7 @@ export class SearchService {
   private shardOpeningPromises: Map<number, Promise<ShardConnection>> = new Map();
   private latestShardTimestamp: number = 0;
   private serviceLock = new AsyncRWLock();
+  private lastCommitCheckTime: number = 0;
 
   constructor(config: SearchConfig, logger: Logger) {
     this.config = config;
@@ -311,50 +312,74 @@ export class SearchService {
   }
 
   private async workerLoop(): Promise<void> {
+    this.lastCommitCheckTime = Date.now();
     while (this.workerRunning) {
       try {
+        let taskProcessed = false;
         const mgmtTask = await this.mgmtQueue.fetchFirst();
         if (mgmtTask) {
+          const isStructural = mgmtTask.type === "RECONSTRUCT" || mgmtTask.type === "DROP_SHARD";
+          const release = isStructural
+            ? await this.serviceLock.acquireWrite()
+            : await this.serviceLock.acquireRead();
           try {
             await this.processControlTask(mgmtTask);
+            if (isStructural) {
+              await this.updateShardConfigsInternal();
+            }
           } catch (e) {
             this.logger.error(
               { err: e, taskId: mgmtTask.id, type: mgmtTask.type },
               "Worker mgmt task failed",
             );
           } finally {
+            release();
             await this.mgmtQueue.removeFromInput(mgmtTask.id);
           }
-          continue;
-        }
-        if (this.maintenanceMode) {
-          await this.sleep(100);
-          continue;
+          taskProcessed = true;
+        } else if (!this.maintenanceMode) {
+          const docTask = await this.docQueue.fetchFirst();
+          if (docTask) {
+            const bucketTs = this.fileManager.getBucketTimestamp(docTask.payload.timestamp);
+            const isStructural = bucketTs > this.latestShardTimestamp;
+            const release = isStructural
+              ? await this.serviceLock.acquireWrite()
+              : await this.serviceLock.acquireRead();
+            try {
+              if (isStructural) {
+                this.latestShardTimestamp = bucketTs;
+                await this.getShard(bucketTs);
+                await this.updateShardConfigsInternal();
+              }
+              await this.docQueue.moveToBatch(docTask);
+              await this.processDataTask(docTask);
+            } catch (e) {
+              this.logger.error({ err: e, taskId: docTask.id }, "Worker doc task failed");
+            } finally {
+              release();
+              await this.docQueue.removeFromBatch(docTask.id);
+            }
+            taskProcessed = true;
+          }
         }
 
-        const docTask = await this.docQueue.fetchFirst();
-        if (docTask) {
-          await this.docQueue.moveToBatch(docTask);
-          const releaseRead = await this.serviceLock.acquireRead();
-          try {
-            await this.processDataTask(docTask);
-          } catch (e) {
-            this.logger.error({ err: e, taskId: docTask.id }, "Worker doc task failed");
-          } finally {
-            releaseRead();
-            await this.docQueue.removeFromBatch(docTask.id);
+        const now = Date.now();
+        if (now - this.lastCommitCheckTime >= this.config.commitCheckIntervalSeconds * 1000) {
+          this.lastCommitCheckTime = now;
+          if (!this.maintenanceMode && !this.isClosing) {
+            const releaseRead = await this.serviceLock.acquireRead();
+            try {
+              await this.checkAutoCommit();
+            } finally {
+              releaseRead();
+            }
           }
-          await this.sleep(this.config.updateWorkerBusySleepSeconds * 1000);
-          continue;
         }
-        await this.sleep(this.config.updateWorkerIdleSleepSeconds * 1000);
-        if (!this.maintenanceMode && !this.isClosing) {
-          const releaseRead = await this.serviceLock.acquireRead();
-          try {
-            await this.checkAutoCommit();
-          } finally {
-            releaseRead();
-          }
+
+        if (taskProcessed) {
+          await this.sleep(this.config.updateWorkerBusySleepSeconds * 1000);
+        } else {
+          await this.sleep(this.config.updateWorkerIdleSleepSeconds * 1000);
         }
       } catch (err) {
         if (!this.isClosing) this.logger.error({ err }, "Worker loop error");
@@ -379,44 +404,19 @@ export class SearchService {
 
   private async processControlTask(task: TaskItem<ManagementTask>) {
     if (task.type === "SYNC") {
-      const rel = await this.serviceLock.acquireRead();
-      try {
-        await this.synchronizeAllShards();
-      } finally {
-        rel();
-      }
+      await this.synchronizeAllShards();
     } else if (task.type === "OPTIMIZE") {
-      const rel = await this.serviceLock.acquireRead();
-      try {
-        await this.optimizeShard(task.payload.targetTimestamp);
-      } finally {
-        rel();
-      }
+      await this.optimizeShard(task.payload.targetTimestamp);
     } else if (task.type === "RESERVE") {
-      const rel = await this.serviceLock.acquireRead();
-      try {
-        await this.reserveIds(task.payload.documents);
-      } finally {
-        rel();
-      }
+      await this.reserveIds(task.payload.documents);
     } else if (task.type === "RECONSTRUCT") {
-      const rel = await this.serviceLock.acquireWrite();
-      try {
-        await this.reconstructIndexFile(
-          task.payload.targetTimestamp,
-          task.payload.newInitialId,
-          task.payload.useExternalId,
-        );
-      } finally {
-        rel();
-      }
+      await this.reconstructIndexFile(
+        task.payload.targetTimestamp,
+        task.payload.newInitialId,
+        task.payload.useExternalId,
+      );
     } else if (task.type === "DROP_SHARD") {
-      const rel = await this.serviceLock.acquireWrite();
-      try {
-        await this.removeIndexFile(task.payload.targetTimestamp);
-      } finally {
-        rel();
-      }
+      await this.removeIndexFile(task.payload.targetTimestamp);
     }
   }
 
@@ -428,10 +428,6 @@ export class SearchService {
     attrs: string | null,
   ) {
     const bucketTs = this.fileManager.getBucketTimestamp(timestamp);
-    if (bucketTs > this.latestShardTimestamp) {
-      this.latestShardTimestamp = bucketTs;
-      await this.getShard(bucketTs);
-    }
     const shard = await this.getShard(bucketTs);
     if (shard.pendingTxCount === 0) {
       await shard.writer.exec("BEGIN");
@@ -599,9 +595,10 @@ export class SearchService {
   }
 
   private async checkAutoCommit() {
+    const now = Date.now();
     for (const shard of this.shards.values()) {
       if (shard.pendingTxCount > 0) {
-        const elapsed = Date.now() - shard.lastTxStartTime;
+        const elapsed = now - shard.lastTxStartTime;
         if (
           shard.pendingTxCount >= this.config.autoCommitUpdateCount ||
           elapsed >= this.config.autoCommitDurationSeconds * 1000
@@ -666,32 +663,42 @@ export class SearchService {
     return r.db;
   }
 
-  private async updateShardConfigs() {
+  public async updateShardConfigs() {
     const releaseWrite = await this.serviceLock.acquireWrite();
     try {
-      const tss = Array.from(this.shards.keys()).sort((a, b) => b - a);
-      for (let i = 0; i < tss.length; i++) {
-        const ts = tss[i],
-          shard = this.shards.get(ts)!;
-        const count = this.getValueByGeneration(this.config.readConnectionCounts, i),
-          mmap = this.getValueByGeneration(this.config.mmapSizes, i),
-          cache = this.getValueByGeneration(this.config.cacheSizes, i),
-          merge = this.getValueByGeneration(this.config.automergeLevels, i);
-        while (shard.readers.length < count) {
-          const r = await Database.open(this.fileManager.getFilePath(ts), sqlite3.OPEN_READONLY);
-          await this.setupStaticPragmas(r);
-          shard.readers.push({ db: r });
-        }
-        while (shard.readers.length > count) {
-          const r = shard.readers.pop();
-          if (r) await r.db.close();
-        }
-        await this.applyDynamicConfig(shard.writer, mmap, cache, merge, true);
-        for (const r of shard.readers)
-          await this.applyDynamicConfig(r.db, mmap, cache, merge, false);
-      }
+      await this.updateShardConfigsInternal();
     } finally {
       releaseWrite();
+    }
+  }
+
+  private async updateShardConfigsInternal() {
+    const files = await this.fileManager.listIndexFiles();
+    for (const f of files) {
+      if (!this.shards.has(f.startTimestamp)) {
+        await this.getShard(f.startTimestamp);
+      }
+    }
+
+    const tss = Array.from(this.shards.keys()).sort((a, b) => b - a);
+    for (let i = 0; i < tss.length; i++) {
+      const ts = tss[i],
+        shard = this.shards.get(ts)!;
+      const count = this.getValueByGeneration(this.config.readConnectionCounts, i),
+        mmap = this.getValueByGeneration(this.config.mmapSizes, i),
+        cache = this.getValueByGeneration(this.config.cacheSizes, i),
+        merge = this.getValueByGeneration(this.config.automergeLevels, i);
+      while (shard.readers.length < count) {
+        const r = await Database.open(this.fileManager.getFilePath(ts), sqlite3.OPEN_READONLY);
+        await this.setupStaticPragmas(r);
+        shard.readers.push({ db: r });
+      }
+      while (shard.readers.length > count) {
+        const r = shard.readers.pop();
+        if (r) await r.db.close();
+      }
+      await this.applyDynamicConfig(shard.writer, mmap, cache, merge, true);
+      for (const r of shard.readers) await this.applyDynamicConfig(r.db, mmap, cache, merge, false);
     }
   }
 

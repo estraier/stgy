@@ -19,7 +19,7 @@ const CONFIG: SearchConfig = {
   namePrefix: "test_search",
   bucketDurationSeconds: 100,
   autoCommitUpdateCount: 1000,
-  autoCommitDurationSeconds: 60,
+  autoCommitDurationSeconds: 0.3,
   commitCheckIntervalSeconds: 0.1,
   updateWorkerBusySleepSeconds: 0.001,
   updateWorkerIdleSleepSeconds: 0.01,
@@ -79,6 +79,32 @@ describe("SearchService (Actor Model)", () => {
 
     const results = await service.search("hello");
     expect(results).toContain("doc_1");
+  });
+
+  test("Auto-commit: should commit transaction after duration expires", async () => {
+    await runTask(
+      {
+        type: "ADD",
+        payload: { docId: "warmup", timestamp: 1000, bodyText: "warmup", locale: "en" },
+      },
+      true,
+    );
+
+    await runTask(
+      {
+        type: "ADD",
+        payload: { docId: "auto_1", timestamp: 1000, bodyText: "automatic commit", locale: "en" },
+      },
+      false,
+    );
+
+    const immediateRes = await service.search("automatic");
+    expect(immediateRes).not.toContain("auto_1");
+
+    await new Promise((r) => setTimeout(r, 800));
+
+    const lateRes = await service.search("automatic");
+    expect(lateRes).toContain("auto_1");
   });
 
   test("Update: Overwrite existing document", async () => {
