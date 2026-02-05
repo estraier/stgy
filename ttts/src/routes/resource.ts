@@ -11,8 +11,14 @@ export default function createResourceRouter(instance: ResourceInstance) {
   const { searchService } = instance;
 
   const handleWait = async (req: Request, taskId: number) => {
-    if (req.query.wait === "true" || req.body.wait === true) {
-      await searchService.waitTask(taskId);
+    const waitSec = req.query.wait
+      ? parseFloat(req.query.wait as string)
+      : typeof req.body.wait === "number"
+        ? req.body.wait
+        : null;
+
+    if (waitSec !== null && waitSec > 0) {
+      await searchService.waitTask(taskId, waitSec * 1000);
     }
   };
 
