@@ -114,6 +114,7 @@ export class SearchService {
   private latestShardTimestamp: number = 0;
   private serviceLock = new AsyncRWLock();
   private lastCommitCheckTime: number = 0;
+  private lastLatestCommitCheckTime: number = 0;
 
   constructor(config: SearchConfig, logger: Logger) {
     this.config = config;
@@ -313,6 +314,8 @@ export class SearchService {
 
   private async workerLoop(): Promise<void> {
     this.lastCommitCheckTime = Date.now();
+    this.lastLatestCommitCheckTime = Date.now();
+
     while (this.workerRunning) {
       try {
         let taskProcessed = false;
@@ -364,12 +367,26 @@ export class SearchService {
         }
 
         const now = Date.now();
+        if (
+          now - this.lastLatestCommitCheckTime >=
+          (this.config.autoCommitDurationSeconds * 1000) / 2
+        ) {
+          this.lastLatestCommitCheckTime = now;
+          if (!this.maintenanceMode && !this.isClosing) {
+            const releaseRead = await this.serviceLock.acquireRead();
+            try {
+              await this.checkLatestAutoCommit();
+            } finally {
+              releaseRead();
+            }
+          }
+        }
         if (now - this.lastCommitCheckTime >= this.config.commitCheckIntervalSeconds * 1000) {
           this.lastCommitCheckTime = now;
           if (!this.maintenanceMode && !this.isClosing) {
             const releaseRead = await this.serviceLock.acquireRead();
             try {
-              await this.checkAutoCommit();
+              await this.checkAllAutoCommit();
             } finally {
               releaseRead();
             }
@@ -594,20 +611,33 @@ export class SearchService {
     await this.getShard(bucketTs);
   }
 
-  private async checkAutoCommit() {
+  private async commitShardIfNeeded(shard: ShardConnection, now: number) {
+    if (shard.pendingTxCount > 0) {
+      const elapsed = now - shard.lastTxStartTime;
+      if (
+        shard.pendingTxCount >= this.config.autoCommitUpdateCount ||
+        elapsed >= this.config.autoCommitDurationSeconds * 1000
+      ) {
+        await shard.writer.exec("COMMIT");
+        shard.pendingTxCount = 0;
+        shard.lastTxStartTime = 0;
+      }
+    }
+  }
+
+  private async checkLatestAutoCommit() {
+    if (this.latestShardTimestamp === 0) return;
+    const now = Date.now();
+    const shard = this.shards.get(this.latestShardTimestamp);
+    if (shard) {
+      await this.commitShardIfNeeded(shard, now);
+    }
+  }
+
+  private async checkAllAutoCommit() {
     const now = Date.now();
     for (const shard of this.shards.values()) {
-      if (shard.pendingTxCount > 0) {
-        const elapsed = now - shard.lastTxStartTime;
-        if (
-          shard.pendingTxCount >= this.config.autoCommitUpdateCount ||
-          elapsed >= this.config.autoCommitDurationSeconds * 1000
-        ) {
-          await shard.writer.exec("COMMIT");
-          shard.pendingTxCount = 0;
-          shard.lastTxStartTime = 0;
-        }
-      }
+      await this.commitShardIfNeeded(shard, now);
     }
   }
 
