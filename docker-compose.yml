@@ -69,6 +69,19 @@ services:
       timeout: 3s
       retries: 20
 
+  ttts:
+    <<: *host_gw
+    networks: [stgy_net]
+    build:
+      dockerfile: ttts/Dockerfile
+    ports:
+      - "127.0.0.1:${STGY_SEARCH_PORT:-3200}:${STGY_SEARCH_PORT:-3200}"
+    environment:
+      STGY_SEARCH_PORT: ${STGY_SEARCH_PORT:-3200}
+    volumes:
+      - ttts_data:/app/data
+    restart: unless-stopped
+
   mailpit:
     <<: *host_gw
     networks: [stgy_net]
@@ -168,6 +181,28 @@ services:
     command: ["node", "dist/notificationWorker.js"]
     restart: unless-stopped
 
+  searchindexworker:
+    <<: *host_gw
+    networks: [stgy_net]
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      STGY_DATABASE_HOST: ${STGY_DATABASE_HOST:?}
+      STGY_DATABASE_PORT: ${STGY_DATABASE_PORT:-5432}
+      STGY_DATABASE_USER: ${STGY_DATABASE_USER:?}
+      STGY_DATABASE_PASSWORD: ${STGY_DATABASE_PASSWORD:?}
+      STGY_DATABASE_NAME: ${STGY_DATABASE_NAME:?}
+      STGY_REDIS_HOST: ${STGY_REDIS_HOST:?}
+      STGY_REDIS_PORT: ${STGY_REDIS_PORT:-6379}
+      STGY_REDIS_PASSWORD: ${STGY_REDIS_PASSWORD:?}
+      STGY_SEARCH_API_BASE_URL: ${STGY_SEARCH_API_BASE_URL:?}
+    command: ["node", "dist/searchIndexWorker.js"]
+    restart: unless-stopped
+
   aisummaryworker:
     <<: *host_gw
     networks: [stgy_net]
@@ -246,6 +281,7 @@ services:
       STGY_REDIS_HOST: ${STGY_REDIS_HOST:?}
       STGY_REDIS_PORT: ${STGY_REDIS_PORT:-6379}
       STGY_REDIS_PASSWORD: ${STGY_REDIS_PASSWORD:?}
+      STGY_SEARCH_API_BASE_URL: ${STGY_SEARCH_API_BASE_URL:?}
       STGY_MAIL_SENDER_ADDRESS: ${STGY_MAIL_SENDER_ADDRESS:?}
       STGY_ID_ISSUE_WORKER_ID: ${STGY_ID_ISSUE_WORKER_ID:?}
       STGY_OPENAI_API_KEY: ${STGY_OPENAI_API_KEY}
@@ -280,5 +316,6 @@ services:
 volumes:
   postgres_data:
   minio_data:
+  ttts_data:
   caddy_data:
   caddy_config:

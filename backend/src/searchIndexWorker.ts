@@ -24,12 +24,12 @@ async function processSearchTasks(searchService: SearchService) {
       const processedIds: string[] = [];
       for (const task of tasks) {
         if (!lifecycle.isActive) break;
-
         try {
           await handleTask(searchService, task);
           processedIds.push(task.id);
         } catch (e) {
           logger.error(`Failed to process search task ${task.id}: ${e}`);
+          await sleep(Config.SEARCH_INDEX_LOOP_SLEEP_MS);
         }
         await sleep(Config.SEARCH_INDEX_TASK_SLEEP_MS);
       }
