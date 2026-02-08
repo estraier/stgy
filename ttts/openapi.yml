@@ -1,38 +1,23 @@
 openapi: 3.0.3
 info:
-  title: TTTS Search Server API
+  title: TTTS Search Service
   description: |
-    High-performance SQLite-based search server.
-
-    **Resources available based on config:**
-    - `posts`
-    - `users`
+    TTTS (Time-series Text Tiling Search) API.
+    Provides full-text search capabilities with time-series sharding logic.
+    Resources (e.g., 'users', 'posts') are configured dynamically.
   version: 1.0.0
 servers:
   - url: http://localhost:3200
-    description: Default Local Server
-
-tags:
-  - name: System
-    description: Global system endpoints
-  - name: Maintenance
-    description: Resource maintenance mode controls
-  - name: Management
-    description: Index management (Requires Maintenance Mode)
-  - name: Search
-    description: Search and retrieval operations
-  - name: Documents
-    description: Document ingestion and updates
+    description: Local server
 
 paths:
   /health:
     get:
-      tags:
-        - System
       summary: Health check
+      description: Returns the health status of the service.
       responses:
-        "200":
-          description: Server is healthy
+        '200':
+          description: Service is healthy
           content:
             application/json:
               schema:
@@ -42,66 +27,73 @@ paths:
                     type: string
                     example: ok
 
-  /metrics:
-    get:
-      tags:
-        - System
-      summary: Prometheus Metrics
-      description: Exposed by express-prom-bundle
-      responses:
-        "200":
-          description: Metrics text data
-          content:
-            text/plain:
-              schema:
-                type: string
-
   /{resource}/maintenance:
     parameters:
-      - $ref: "#/components/parameters/ResourcePath"
+      - $ref: '#/components/parameters/ResourcePath'
     get:
-      tags:
-        - Maintenance
-      summary: Check maintenance mode status
+      summary: Check maintenance mode
+      tags: [Management]
       responses:
-        "200":
-          description: Current status
+        '200':
+          description: Current maintenance status
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MaintenanceStatus"
+                $ref: '#/components/schemas/MaintenanceStatus'
     post:
-      tags:
-        - Maintenance
       summary: Enable maintenance mode
-      description: Blocks writer tasks and allows management operations.
+      tags: [Management]
       responses:
-        "200":
+        '200':
           description: Maintenance mode enabled
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MaintenanceStatus"
+                $ref: '#/components/schemas/MaintenanceStatus'
     delete:
-      tags:
-        - Maintenance
       summary: Disable maintenance mode
+      tags: [Management]
       responses:
-        "200":
+        '200':
           description: Maintenance mode disabled
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/MaintenanceStatus"
+                $ref: '#/components/schemas/MaintenanceStatus'
 
-  /{resource}/reconstruct:
+  /{resource}/flush:
     parameters:
-      - $ref: "#/components/parameters/ResourcePath"
+      - $ref: '#/components/parameters/ResourcePath'
     post:
-      tags:
-        - Management
-      summary: Reconstruct index file
-      description: Requires Maintenance Mode. Rebuilds the SQLite database for a specific timestamp bucket to optimize storage.
+      summary: Flush pending tasks (SYNC)
+      tags: [Management]
+      parameters:
+        - $ref: '#/components/parameters/WaitQuery'
+      requestBody:
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                wait:
+                  type: number
+                  description: Wait time in seconds
+      responses:
+        '200':
+          description: Flush task enqueued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
+
+  /{resource}/optimize:
+    parameters:
+      - $ref: '#/components/parameters/ResourcePath'
+    post:
+      summary: Optimize a specific shard
+      tags: [Management]
+      parameters:
+        - $ref: '#/components/parameters/WaitQuery'
       requestBody:
         required: true
         content:
@@ -112,40 +104,59 @@ paths:
                 - timestamp
               properties:
                 timestamp:
-                  type: integer
-                  description: The target bucket timestamp
-                newInitialId:
-                  type: integer
-                  default: 268435455
-                useExternalId:
-                  type: boolean
-                  default: false
+                  type: number
+                  description: Target timestamp to identify the shard bucket
+                wait:
+                  type: number
       responses:
-        "200":
-          description: Reconstruct successful
+        '200':
+          description: Optimization task enqueued
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  result:
-                    type: string
-                    example: reconstructed
-                  timestamp:
-                    type: integer
-        "409":
-          $ref: "#/components/responses/MaintenanceRequired"
-        "500":
-          $ref: "#/components/responses/ServerError"
+                $ref: '#/components/schemas/TaskResponse'
+
+  /{resource}/reconstruct:
+    parameters:
+      - $ref: '#/components/parameters/ResourcePath'
+    post:
+      summary: Reconstruct a shard index
+      tags: [Management]
+      parameters:
+        - $ref: '#/components/parameters/WaitQuery'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - timestamp
+              properties:
+                timestamp:
+                  type: number
+                newInitialId:
+                  type: number
+                useExternalId:
+                  type: boolean
+                wait:
+                  type: number
+      responses:
+        '200':
+          description: Reconstruction task enqueued
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TaskResponse'
 
   /{resource}/reserve:
     parameters:
-      - $ref: "#/components/parameters/ResourcePath"
+      - $ref: '#/components/parameters/ResourcePath'
     post:
-      tags:
-        - Management
-      summary: Reserve Document IDs
-      description: Requires Maintenance Mode. Pre-allocates internal IDs for external IDs to ensure ordering or existence.
+      summary: Reserve document IDs (Requires Maintenance Mode)
+      tags: [Management]
+      parameters:
+        - $ref: '#/components/parameters/WaitQuery'
       requestBody:
         required: true
         content:
@@ -166,119 +177,72 @@ paths:
                       id:
                         type: string
                       timestamp:
-                        type: integer
+                        type: number
+                wait:
+                  type: number
       responses:
-        "200":
-          description: Reservation successful
+        '200':
+          description: Reservation task enqueued
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  result:
-                    type: string
-                    example: reserved
-                  count:
-                    type: integer
-        "409":
-          $ref: "#/components/responses/MaintenanceRequired"
+                allOf:
+                  - $ref: '#/components/schemas/TaskResponse'
+                  - type: object
+                    properties:
+                      count:
+                        type: number
+        '409':
+          description: Maintenance mode required
 
   /{resource}/shards:
     parameters:
-      - $ref: "#/components/parameters/ResourcePath"
+      - $ref: '#/components/parameters/ResourcePath'
     get:
-      tags:
-        - Management
       summary: List index files (shards)
+      tags: [Management]
       parameters:
         - name: detailed
           in: query
           schema:
             type: boolean
-          description: Return detailed stats including file sizes and document counts
       responses:
-        "200":
-          description: List of shards
+        '200':
+          description: List of index files
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/IndexFileInfo"
-    delete:
-      tags:
-        - Management
-      summary: Delete ALL shards
-      description: Requires Maintenance Mode. Wipes all data for this resource.
-      responses:
-        "200":
-          description: All shards deleted
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  result:
-                    type: string
-                    example: all deleted
-        "409":
-          $ref: "#/components/responses/MaintenanceRequired"
+                  $ref: '#/components/schemas/IndexFileInfo'
 
   /{resource}/shards/{timestamp}:
     parameters:
-      - $ref: "#/components/parameters/ResourcePath"
+      - $ref: '#/components/parameters/ResourcePath'
       - name: timestamp
         in: path
         required: true
         schema:
-          type: integer
-        description: The timestamp of the shard to delete
+          type: number
     delete:
-      tags:
-        - Management
-      summary: Delete a specific shard
-      description: Requires Maintenance Mode.
+      summary: Drop a specific shard
+      tags: [Management]
+      parameters:
+        - $ref: '#/components/parameters/WaitQuery'
       responses:
-        "200":
-          description: Shard deleted
+        '200':
+          description: Drop task enqueued
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  result:
-                    type: string
-                    example: deleted
-        "409":
-          $ref: "#/components/responses/MaintenanceRequired"
-
-  /{resource}/flush:
-    parameters:
-      - $ref: "#/components/parameters/ResourcePath"
-    post:
-      tags:
-        - Management
-      summary: Flush/Synchronize WAL
-      description: Forces a WAL checkpoint (commit) on all open database connections.
-      responses:
-        "200":
-          description: Flushed
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  result:
-                    type: string
-                    example: flushed
+                $ref: '#/components/schemas/TaskResponse'
 
   /{resource}/tokenize:
     parameters:
-      - $ref: "#/components/parameters/ResourcePath"
+      - $ref: '#/components/parameters/ResourcePath'
     get:
-      tags:
-        - Search
-      summary: Test Tokenizer
+      summary: Tokenize text
+      tags: [Search]
       parameters:
         - name: text
           in: query
@@ -291,7 +255,7 @@ paths:
             type: string
             default: en
       responses:
-        "200":
+        '200':
           description: List of tokens
           content:
             application/json:
@@ -302,16 +266,14 @@ paths:
 
   /{resource}/search:
     parameters:
-      - $ref: "#/components/parameters/ResourcePath"
+      - $ref: '#/components/parameters/ResourcePath'
     get:
-      tags:
-        - Search
-      summary: Search and return IDs
+      summary: Execute full-text search
+      tags: [Search]
       parameters:
         - name: query
           in: query
           required: true
-          description: Search query string
           schema:
             type: string
         - name: locale
@@ -334,10 +296,9 @@ paths:
           schema:
             type: integer
             default: 1
-            description: Search timeout in seconds
       responses:
-        "200":
-          description: Array of Document IDs
+        '200':
+          description: List of matching document IDs
           content:
             application/json:
               schema:
@@ -347,11 +308,10 @@ paths:
 
   /{resource}/search-fetch:
     parameters:
-      - $ref: "#/components/parameters/ResourcePath"
+      - $ref: '#/components/parameters/ResourcePath'
     get:
-      tags:
-        - Search
-      summary: Search and return full Documents
+      summary: Search and fetch document details
+      tags: [Search]
       parameters:
         - name: query
           in: query
@@ -382,64 +342,55 @@ paths:
           in: query
           schema:
             type: boolean
-            default: false
         - name: omitAttrs
           in: query
           schema:
             type: boolean
-            default: false
       responses:
-        "200":
-          description: Array of Document objects
+        '200':
+          description: List of documents
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Document"
+                  $ref: '#/components/schemas/Document'
 
   /{resource}/{docId}:
     parameters:
-      - $ref: "#/components/parameters/ResourcePath"
+      - $ref: '#/components/parameters/ResourcePath'
       - name: docId
         in: path
         required: true
         schema:
           type: string
     get:
-      tags:
-        - Documents
       summary: Fetch a single document
+      tags: [Document]
       parameters:
         - name: omitBodyText
           in: query
           schema:
             type: boolean
-            default: false
         - name: omitAttrs
           in: query
           schema:
             type: boolean
-            default: false
       responses:
-        "200":
-          description: Document found
+        '200':
+          description: Document details
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/Document"
-        "404":
+                $ref: '#/components/schemas/Document'
+        '404':
           description: Document not found
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
 
     put:
-      tags:
-        - Documents
-      summary: Enqueue Document Upsert
-      description: Adds a document update task to the queue (async).
+      summary: Add or update a document
+      tags: [Document]
+      parameters:
+        - $ref: '#/components/parameters/WaitQuery'
       requestBody:
         required: true
         content:
@@ -453,36 +404,28 @@ paths:
                 text:
                   type: string
                 timestamp:
-                  type: integer
+                  type: number
                 locale:
                   type: string
                   default: en
                 attrs:
                   type: string
                   description: JSON string of extra attributes
+                wait:
+                  type: number
       responses:
-        "202":
-          description: Accepted
+        '202':
+          description: Task accepted
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  result:
-                    type: string
-                    example: accepted
-        "400":
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
+                $ref: '#/components/schemas/TaskResponse'
 
     delete:
-      tags:
-        - Documents
-      summary: Enqueue Document Deletion
-      description: Adds a document deletion task to the queue (async).
+      summary: Remove a document
+      tags: [Document]
+      parameters:
+        - $ref: '#/components/parameters/WaitQuery'
       requestBody:
         required: true
         content:
@@ -493,57 +436,16 @@ paths:
                 - timestamp
               properties:
                 timestamp:
-                  type: integer
+                  type: number
+                wait:
+                  type: number
       responses:
-        "202":
-          description: Accepted
+        '202':
+          description: Task accepted
           content:
             application/json:
               schema:
-                type: object
-                properties:
-                  result:
-                    type: string
-                    example: accepted
-        "400":
-          description: Invalid input
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Error"
-
-  /{resource}/optimize:
-    parameters:
-      - $ref: "#/components/parameters/ResourcePath"
-    post:
-      tags:
-        - Management
-      summary: Optimize index file
-      description: Runs VACUUM and optimize on the shard.
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required:
-                - timestamp
-              properties:
-                timestamp:
-                  type: integer
-      responses:
-        "200":
-          description: Optimization task enqueued
-          content:
-            application/json:
-              schema:
-                type: object
-                properties:
-                  result:
-                    type: string
-                    example: enqueued
-                  taskId:
-                    type: string
+                $ref: '#/components/schemas/TaskResponse'
 
 components:
   parameters:
@@ -551,25 +453,31 @@ components:
       name: resource
       in: path
       required: true
-      description: The resource namespace (e.g., posts, users)
+      description: Name of the resource (e.g., users, posts)
       schema:
         type: string
-        enum:
-          - posts
-          - users
+    WaitQuery:
+      name: wait
+      in: query
+      description: Wait for task completion (seconds)
+      schema:
+        type: number
 
   schemas:
-    Error:
-      type: object
-      properties:
-        error:
-          type: string
-
     MaintenanceStatus:
       type: object
       properties:
         enabled:
           type: boolean
+
+    TaskResponse:
+      type: object
+      properties:
+        result:
+          type: string
+          example: enqueued
+        taskId:
+          type: string
 
     Document:
       type: object
@@ -582,46 +490,18 @@ components:
         attrs:
           type: string
           nullable: true
-          description: Serialized JSON string of attributes
+          description: JSON string
 
     IndexFileInfo:
       type: object
       properties:
-        filename:
+        path:
           type: string
-        fileSize:
-          type: integer
-        walSize:
-          type: integer
-        totalDatabaseSize:
-          type: integer
-        indexSize:
-          type: integer
-        contentSize:
-          type: integer
-        countDocuments:
-          type: integer
+        name:
+          type: string
         startTimestamp:
-          type: integer
-        endTimestamp:
-          type: integer
-        isHealthy:
-          type: boolean
-
-  responses:
-    MaintenanceRequired:
-      description: Maintenance mode is required for this operation
-      content:
-        application/json:
-          schema:
-            type: object
-            properties:
-              error:
-                type: string
-                example: Maintenance mode required
-    ServerError:
-      description: Internal Server Error
-      content:
-        application/json:
-          schema:
-            $ref: "#/components/schemas/Error"
+          type: number
+        size:
+          type: number
+        walSize:
+          type: number

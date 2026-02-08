@@ -11,6 +11,7 @@
     "start": "node dist/index.js",
     "check": "tsc --noEmit",
     "dev": "nodemon --exec ts-node src/index.ts",
+    "one-worker": "ts-node src/oneWorker.ts",
     "mail-worker": "ts-node src/mailWorker.ts",
     "media-worker": "ts-node src/mediaWorker.ts",
     "notification-worker": "ts-node src/notificationWorker.ts",

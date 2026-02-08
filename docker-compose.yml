@@ -113,39 +113,29 @@ services:
       - caddy_config:/config
     restart: unless-stopped
 
-  mailworker:
+  worker:
     <<: *host_gw
     networks: [stgy_net]
     build:
       context: .
       dockerfile: backend/Dockerfile
     depends_on:
-      redis:
+      postgres:
         condition: service_healthy
-      mailpit:
-        condition: service_started
-    environment:
-      STGY_REDIS_HOST: ${STGY_REDIS_HOST:?}
-      STGY_REDIS_PORT: ${STGY_REDIS_PORT:-6379}
-      STGY_REDIS_PASSWORD: ${STGY_REDIS_PASSWORD:?}
-      STGY_SMTP_HOST: ${STGY_SMTP_HOST:?}
-      STGY_SMTP_PORT: ${STGY_SMTP_PORT:-587}
-      STGY_MAIL_SENDER_ADDRESS: ${STGY_MAIL_SENDER_ADDRESS:?}
-    command: ["node", "dist/mailWorker.js"]
-    restart: unless-stopped
-
-  mediaworker:
-    <<: *host_gw
-    networks: [stgy_net]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    depends_on:
       redis:
         condition: service_healthy
       minio:
         condition: service_started
+      mailpit:
+        condition: service_started
+      ttts:
+        condition: service_started
     environment:
+      STGY_DATABASE_HOST: ${STGY_DATABASE_HOST:?}
+      STGY_DATABASE_PORT: ${STGY_DATABASE_PORT:-5432}
+      STGY_DATABASE_USER: ${STGY_DATABASE_USER:?}
+      STGY_DATABASE_PASSWORD: ${STGY_DATABASE_PASSWORD:?}
+      STGY_DATABASE_NAME: ${STGY_DATABASE_NAME:?}
       STGY_REDIS_HOST: ${STGY_REDIS_HOST:?}
       STGY_REDIS_PORT: ${STGY_REDIS_PORT:-6379}
       STGY_REDIS_PASSWORD: ${STGY_REDIS_PASSWORD:?}
@@ -157,94 +147,12 @@ services:
       STGY_STORAGE_S3_FORCE_PATH_STYLE: ${STGY_STORAGE_S3_FORCE_PATH_STYLE:?}
       STGY_STORAGE_S3_BUCKET_PREFIX: ${STGY_STORAGE_S3_BUCKET_PREFIX:?}
       STGY_STORAGE_S3_PUBLIC_URL_PREFIX: ${STGY_STORAGE_S3_PUBLIC_URL_PREFIX:?}
-    command: ["node", "dist/mediaWorker.js"]
-    restart: unless-stopped
-
-  notificationworker:
-    <<: *host_gw
-    networks: [stgy_net]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      STGY_DATABASE_HOST: ${STGY_DATABASE_HOST:?}
-      STGY_DATABASE_PORT: ${STGY_DATABASE_PORT:-5432}
-      STGY_DATABASE_USER: ${STGY_DATABASE_USER:?}
-      STGY_DATABASE_PASSWORD: ${STGY_DATABASE_PASSWORD:?}
-      STGY_DATABASE_NAME: ${STGY_DATABASE_NAME:?}
-      STGY_REDIS_HOST: ${STGY_REDIS_HOST:?}
-      STGY_REDIS_PORT: ${STGY_REDIS_PORT:-6379}
-      STGY_REDIS_PASSWORD: ${STGY_REDIS_PASSWORD:?}
-    command: ["node", "dist/notificationWorker.js"]
-    restart: unless-stopped
-
-  searchindexworker:
-    <<: *host_gw
-    networks: [stgy_net]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      STGY_DATABASE_HOST: ${STGY_DATABASE_HOST:?}
-      STGY_DATABASE_PORT: ${STGY_DATABASE_PORT:-5432}
-      STGY_DATABASE_USER: ${STGY_DATABASE_USER:?}
-      STGY_DATABASE_PASSWORD: ${STGY_DATABASE_PASSWORD:?}
-      STGY_DATABASE_NAME: ${STGY_DATABASE_NAME:?}
-      STGY_REDIS_HOST: ${STGY_REDIS_HOST:?}
-      STGY_REDIS_PORT: ${STGY_REDIS_PORT:-6379}
-      STGY_REDIS_PASSWORD: ${STGY_REDIS_PASSWORD:?}
+      STGY_SMTP_HOST: ${STGY_SMTP_HOST:?}
+      STGY_SMTP_PORT: ${STGY_SMTP_PORT:-587}
+      STGY_MAIL_SENDER_ADDRESS: ${STGY_MAIL_SENDER_ADDRESS:?}
       STGY_SEARCH_API_BASE_URL: ${STGY_SEARCH_API_BASE_URL:?}
-    command: ["node", "dist/searchIndexWorker.js"]
-    restart: unless-stopped
-
-  aisummaryworker:
-    <<: *host_gw
-    networks: [stgy_net]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
       STGY_BACKEND_API_BASE_URL: ${STGY_BACKEND_API_BASE_URL:?}
-      STGY_DATABASE_HOST: ${STGY_DATABASE_HOST:?}
-      STGY_DATABASE_PORT: ${STGY_DATABASE_PORT:-5432}
-      STGY_DATABASE_USER: ${STGY_DATABASE_USER:?}
-      STGY_DATABASE_PASSWORD: ${STGY_DATABASE_PASSWORD:?}
-      STGY_DATABASE_NAME: ${STGY_DATABASE_NAME:?}
-      STGY_REDIS_HOST: ${STGY_REDIS_HOST:?}
-      STGY_REDIS_PORT: ${STGY_REDIS_PORT:-6379}
-      STGY_REDIS_PASSWORD: ${STGY_REDIS_PASSWORD:?}
-    command: ["node", "dist/aiSummaryWorker.js"]
-    restart: unless-stopped
-
-  aiuserworker:
-    <<: *host_gw
-    networks: [stgy_net]
-    build:
-      context: .
-      dockerfile: backend/Dockerfile
-    depends_on:
-      postgres:
-        condition: service_healthy
-    environment:
-      STGY_BACKEND_API_BASE_URL: ${STGY_BACKEND_API_BASE_URL:?}
-      STGY_DATABASE_HOST: ${STGY_DATABASE_HOST:?}
-      STGY_DATABASE_PORT: ${STGY_DATABASE_PORT:-5432}
-      STGY_DATABASE_USER: ${STGY_DATABASE_USER:?}
-      STGY_DATABASE_PASSWORD: ${STGY_DATABASE_PASSWORD:?}
-      STGY_DATABASE_NAME: ${STGY_DATABASE_NAME:?}
-      STGY_REDIS_HOST: ${STGY_REDIS_HOST:?}
-      STGY_REDIS_PORT: ${STGY_REDIS_PORT:-6379}
-      STGY_REDIS_PASSWORD: ${STGY_REDIS_PASSWORD:?}
-    command: ["node", "dist/aiUserWorker.js"]
+    command: ["node", "dist/oneWorker.js"]
     restart: unless-stopped
 
   backend:
@@ -259,6 +167,8 @@ services:
         condition: service_started
       redis:
         condition: service_healthy
+      ttts:
+        condition: service_started
     ports:
       - "127.0.0.1:${STGY_BACKEND_PORT:-3100}:${STGY_BACKEND_PORT:-3100}"
     environment:

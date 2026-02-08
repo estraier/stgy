@@ -23,10 +23,10 @@ echo 'eval "$(/opt/homebrew/bin/brew shellenv)"' >> ~/.zprofile
 eval "$(/opt/homebrew/bin/brew shellenv)"
 ```
 
-Homebrewで、その他の必要パッケージを入れる。Docker VMであるColima、Dockerクライアント、composeプラグイン、Node.js、Git、GitHub CLIである。
+Homebrewで、その他の必要パッケージを入れる。Docker VMであるColima、Dockerクライアント、composeプラグイン、Node.js、jq、Git、GitHub CLIである。
 
 ```:small
-brew install colima docker docker-compose node git gh
+brew install colima docker docker-compose node jq git gh
 ```
 
 Colimaを起動する。初回の起動ではリソースの使用量をオプションで指定する。
@@ -337,11 +337,11 @@ docker compose version
 docker run --rm hello-world
 ```
 
-Node.jsとnpmをインストールする。Ubuntuのデフォルト設定で入るNode.jsは古いので、Node 22系に手動更新する。
+Node.jsとnpmとjqをインストールする。Ubuntuのデフォルト設定で入るNode.jsは古いので、Node 22系に手動更新する。
 
 ```:small
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
-sudo apt install nodejs npm
+sudo apt install nodejs npm jq
 ```
 
 Node.jsの動作確認をする。それぞれ、「v22.19.0」と「10.9.3」的な文字列が表示されれば成功。
@@ -1105,7 +1105,7 @@ STGYのバックエンドとフロントエンドもネイティブサービス�
 ./scripts/deploy-backend.sh
 ```
 
-デプロイ用スクリプトを実行すると、/home/prod/stgy-backend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。mailWorkerとmediaWorkerとnotificationWorkerとaiSummaryWorkerとaiUserWorkerも同時に起動される。それを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-backend.serviceとして書く。
+デプロイ用スクリプトを実行すると、/home/prod/stgy-backend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。oneWorkerという、各種の非同期ワーカを統合したプロセスもも同時に起動される。それらを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-backend.serviceとして書く。
 
 ```:small
 [Unit]

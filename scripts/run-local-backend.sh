@@ -8,6 +8,7 @@ set +a
 
 CMD="dev"
 PORT="${STGY_BACKEND_PORT:-3100}"
+WORKER="multi"
 OVERRIDING_OPENAI_API_KEY="-"
 
 declare -a PASS_ARGS=()
@@ -25,6 +26,14 @@ while [[ $# -gt 0 ]]; do
       ;;
     --port=*)
       PORT="${1#*=}"
+      shift
+      ;;
+    --one-worker)
+      WORKER="one"
+      shift
+      ;;
+    --no-worker)
+      WORKER="no"
       shift
       ;;
     --openai-api-key)
@@ -71,13 +80,24 @@ cleanup() {
 }
 trap cleanup INT TERM EXIT
 
-echo "[run-local-backend] running workers"
-(sleep 3 ; npm run backend:mail-worker) &
-(sleep 3 ; npm run backend:media-worker) &
-(sleep 3 ; npm run backend:notification-worker) &
-(sleep 3 ; npm run backend:search-index-worker) &
-(sleep 3 ; npm run backend:ai-summary-worker) &
-(sleep 3 ; npm run backend:ai-user-worker) &
+case "${WORKER}" in
+  multi)
+    echo "[run-local-backend] running multiple workers"
+    (sleep 3 ; npm run backend:mail-worker) &
+    (sleep 3 ; npm run backend:media-worker) &
+    (sleep 3 ; npm run backend:notification-worker) &
+    (sleep 3 ; npm run backend:search-index-worker) &
+    (sleep 3 ; npm run backend:ai-summary-worker) &
+    (sleep 3 ; npm run backend:ai-user-worker) &
+    ;;
+  one)
+    echo "[run-local-backend] running one workers"
+    (sleep 3 ; npm run backend:one-worker) &
+    ;;
+  *)
+    echo "[run-local-backend] running no workers"
+    ;;
+esac
 
 echo "[run-local-backend] port=${STGY_BACKEND_PORT} cmd=${CMD}"
 echo "[run-local-backend] npm run ${CMD} -- ${PASS_ARGS[*]-}"

@@ -1,11 +1,12 @@
 import { createLogger } from "./utils/logger";
 import { startMailWorker, lifecycle as mailLifecycle } from "./mailWorker";
 import { startMediaWorker, lifecycle as mediaLifecycle } from "./mediaWorker";
-import { startAiSummaryWorker, lifecycle as summaryLifecycle } from "./aiSummaryWorker";
-import { startAiUserWorker, lifecycle as userLifecycle } from "./aiUserWorker";
 import { startNotificationWorker, lifecycle as notificationLifecycle } from "./notificationWorker";
+import { startSearchIndexWorker, lifecycle as searchIndexLifecycle } from "./searchIndexWorker";
+import { startAiSummaryWorker, lifecycle as aiSummaryLifecycle } from "./aiSummaryWorker";
+import { startAiUserWorker, lifecycle as aiUserLifecycle } from "./aiUserWorker";
 
-const logger = createLogger({ file: "allWorker" });
+const logger = createLogger({ file: "oneWorker" });
 
 async function main() {
   logger.info("Starting All-in-One Worker (Backend)...");
@@ -15,12 +16,12 @@ async function main() {
     if (shuttingDown) return;
     shuttingDown = true;
     logger.info(`Received ${signal}, shutting down all workers...`);
-
     mailLifecycle.stop();
     mediaLifecycle.stop();
-    summaryLifecycle.stop();
-    userLifecycle.stop();
     notificationLifecycle.stop();
+    searchIndexLifecycle.stop();
+    aiSummaryLifecycle.stop();
+    aiUserLifecycle.stop();
   };
 
   process.on("SIGINT", () => shutdown("SIGINT"));
@@ -30,9 +31,10 @@ async function main() {
     await Promise.all([
       startMailWorker(),
       startMediaWorker(),
+      startNotificationWorker(),
+      startSearchIndexWorker(),
       startAiSummaryWorker(),
       startAiUserWorker(),
-      startNotificationWorker(),
     ]);
   } catch (e) {
     logger.error(`A worker crashed: ${e}`);
@@ -43,6 +45,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  logger.error(`Fatal error in allWorker: ${e}`);
+  logger.error(`Fatal error in oneWorker: ${e}`);
   process.exit(1);
 });

@@ -1,24 +1,30 @@
 #!/bin/bash
 
-set -a
-source .env
-set +a
-
-SEARCH_HOST="http://localhost:${STGY_SEARCH_PORT}"
+SEARCH_HOST="http://localhost:3200"
 RESOURCES=("posts" "users")
 
-echo "Resetting search index for: ${RESOURCES[*]} ..."
+echo "Resetting search index for: ${RESOURCES[*]} at ${SEARCH_HOST} ..."
 
 for RESOURCE in "${RESOURCES[@]}"; do
   echo "--------------------------------------------------"
   echo "Target Resource: $RESOURCE"
-  echo "  -> Starting maintenance mode ..."
-  curl -s -X POST "${SEARCH_HOST}/${RESOURCE}/maintenance" > /dev/null
-  echo "  -> Deleting all shards ..."
-  DELETE_RES=$(curl -s -X DELETE "${SEARCH_HOST}/${RESOURCE}/shards")
-  echo "     $DELETE_RES"
-  echo "  -> Ending maintenance mode ..."
-  curl -s -X DELETE "${SEARCH_HOST}/${RESOURCE}/maintenance" > /dev/null
+  echo "  -> Fetching shard list ..."
+  SHARDS_JSON=$(curl -s "${SEARCH_HOST}/${RESOURCE}/shards")
+  if [[ -z "$SHARDS_JSON" ]] || [[ "$SHARDS_JSON" != \[* ]]; then
+    echo "     Error or no response from server. Is ttts running?"
+    echo "     Response: $SHARDS_JSON"
+    continue
+  fi
+  TIMESTAMPS=$(echo "$SHARDS_JSON" | jq -r '.[].startTimestamp // empty')
+  if [ -z "$TIMESTAMPS" ]; then
+    echo "     No shards found."
+  else
+    for TS in $TIMESTAMPS; do
+      echo "  -> Deleting shard: $TS ..."
+      DELETE_RES=$(curl -s -X DELETE "${SEARCH_HOST}/${RESOURCE}/shards/${TS}?wait=60")
+      echo "     $DELETE_RES"
+    done
+  fi
 done
 
 echo "--------------------------------------------------"
