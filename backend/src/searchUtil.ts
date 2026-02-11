@@ -82,7 +82,6 @@ async function fetchJson(
   return res.json();
 }
 
-// 型定義
 interface ShardInfo {
   startTimestamp: number;
   nextTimestamp?: number;
@@ -91,7 +90,7 @@ interface ShardInfo {
 }
 
 interface IdRow {
-  id: string; // BIGINT as string
+  id: string;
 }
 
 interface UserRow {
@@ -366,50 +365,34 @@ async function runRemove(
 async function resetResource(pgPool: Pool, resource: "users" | "posts") {
   logger.info(`Starting RESET sequence for ${resource}...`);
 
-  type TargetRange = { start: string; end: string; dropStartTs?: number };
-  let targets: TargetRange[] = [];
-
-  if (brokenOnly) {
-    logger.info("Checking for broken shards...");
-    const shards = (await fetchJson(resource, "GET", "/shards?detailed=true")) as ShardInfo[];
-    if (!Array.isArray(shards)) throw new Error("Invalid shards response");
-
-    const broken = shards.filter((s) => !s.isHealthy);
-    if (broken.length === 0) {
-      logger.info("No broken shards found. Exiting.");
-      return;
-    }
-
-    logger.info(`Found ${broken.length} broken shards.`);
-    targets = broken.map((s) => ({
-      start: timestampToMinId(s.startTimestamp),
-      end: s.nextTimestamp ? timestampToMinId(s.nextTimestamp) : "9223372036854775807",
-      dropStartTs: s.startTimestamp,
-    }));
-  } else {
-    logger.info("Targeting ALL data (Full Reset).");
-    targets = [
-      {
-        start: "0",
-        end: "9223372036854775807",
-        dropStartTs: undefined,
-      },
-    ];
-  }
-
   logger.info("Enabling maintenance mode...");
   await fetchJson(resource, "POST", "/maintenance");
 
   try {
-    logger.info("Waiting 5s for queue drain...");
-    await sleep(5);
+    logger.info("Waiting 6s for worker to settle...");
+    await sleep(6);
 
     logger.info("Clearing task queue...");
     await fetchJson(resource, "DELETE", "/queue");
 
+    let targets: { start: string; end: string; dropStartTs?: number }[] = [];
+
     if (brokenOnly) {
-      for (const t of targets) {
-        if (t.dropStartTs !== undefined) {
+      logger.info("Checking for broken shards...");
+      const shards = (await fetchJson(resource, "GET", "/shards?detailed=true")) as ShardInfo[];
+      const broken = shards.filter((s) => !s.isHealthy);
+
+      if (broken.length === 0) {
+        logger.info("No broken shards found.");
+      } else {
+        logger.info(`Found ${broken.length} broken shards.`);
+        targets = broken.map((s) => ({
+          start: timestampToMinId(s.startTimestamp),
+          end: s.nextTimestamp ? timestampToMinId(s.nextTimestamp) : "9223372036854775807",
+          dropStartTs: s.startTimestamp,
+        }));
+
+        for (const t of targets) {
           logger.info(`Dropping shard: ${t.dropStartTs}...`);
           try {
             await fetchJson(resource, "DELETE", `/shards/${t.dropStartTs}?wait=10`);
@@ -421,6 +404,7 @@ async function resetResource(pgPool: Pool, resource: "users" | "posts") {
       }
     } else {
       logger.info("Dropping ALL shards...");
+      targets = [{ start: "0", end: "9223372036854775807" }];
       const shards = (await fetchJson(resource, "GET", "/shards")) as ShardInfo[];
       for (const s of shards) {
         logger.info(`Dropping shard: ${s.startTimestamp}...`);
@@ -436,21 +420,28 @@ async function resetResource(pgPool: Pool, resource: "users" | "posts") {
     for (const t of targets) {
       await runReserve(pgPool, resource, t.start, t.end);
     }
-  } finally {
+
     logger.info("Disabling maintenance mode (Restore access)...");
     await fetchJson(resource, "DELETE", "/maintenance");
-  }
 
-  for (const t of targets) {
-    if (resource === "users") {
-      await runAddUsers(pgPool, t.start, t.end);
-    } else {
-      await runAddPosts(pgPool, t.start, t.end);
+    for (const t of targets) {
+      if (resource === "users") {
+        await runAddUsers(pgPool, t.start, t.end);
+      } else {
+        await runAddPosts(pgPool, t.start, t.end);
+      }
     }
-  }
 
-  logger.info("Flushing index...");
-  await fetchJson(resource, "POST", "/flush?wait=10");
+    logger.info("Flushing index...");
+    await fetchJson(resource, "POST", "/flush?wait=10");
+  } catch (e) {
+    logger.error(`Reset sequence failed: ${e}`);
+    logger.info("Ensuring maintenance mode is disabled...");
+    try {
+      await fetchJson(resource, "DELETE", "/maintenance");
+    } catch {}
+    throw e;
+  }
 
   logger.info(`RESET sequence for ${resource} COMPLETED.`);
 }
