@@ -87,6 +87,7 @@
     "reset-data-test": "npm run reset-data && ./scripts/make-volume-test.py",
     "reset-cache": "./scripts/reset-cache.sh",
     "reset-search": "./scripts/run-searchUtil.sh user-reset --print-logs && ./scripts/run-searchUtil.sh post-reset --print-logs",
+    "reset-search-restore": "./scripts/run-searchUtil.sh user-reset --broken-only --print-logs && ./scripts/run-searchUtil.sh post-reset --broken-only --print-logs",
     "endpoint-test": "./tests/endpoint-test.py",
     "psql": "docker compose exec postgres psql -U admin stgy",
     "vps:docker:up": "docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d --build --remove-orphans",

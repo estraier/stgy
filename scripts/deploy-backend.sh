@@ -5,7 +5,7 @@ set -euo pipefail
 CFG_NODE_ENV=production
 CFG_FRONTEND_ORIGIN=https://stgy.jp
 CFG_BACKEND_PORT=3100
-CFG_BACKEND_API_BASE_URL=http://127.0.0.1:3100
+CFG_BACKEND_API_BASE_URL=https://stgy.jp/backend
 CFG_BACKEND_API_PRIVATE_URL_LIST=http://127.0.0.1:3100
 
 # PostgreSQL (native service on the host)
@@ -29,7 +29,10 @@ CFG_REDIS_HOST=127.0.0.1
 CFG_REDIS_PORT=6379
 CFG_REDIS_PASS=stgystgy
 
-# SMTP (Postfix on the same host; auth not required for localhost in your setup)
+# Search (TTTS native service on the host)
+CFG_SEARCH_API_BASE_URL=http://127.0.0.1:3200
+
+# SMTP (Postfix on the same host; auth not required for localhost)
 CFG_SMTP_HOST=127.0.0.1
 CFG_SMTP_PORT=587
 CFG_SMTP_USER=
@@ -66,7 +69,8 @@ rsync -a --delete node_modules/           "$TARGET/node_modules/"
 rsync -a --delete packages/               "$TARGET/packages/"
 
 # Sanity check for entrypoints
-for f in index.js mailWorker.js mediaWorker.js notificationWorker.js aiSummaryWorker.js aiUserWorker.js ; do
+# We only need index.js (API) and oneWorker.js (All workers)
+for f in index.js oneWorker.js ; do
   if [[ ! -f "$TARGET/dist/$f" ]]; then
     echo "[error] Missing '$TARGET/dist/$f' (did the backend build produce it?)"
     exit 1
@@ -110,6 +114,8 @@ export STGY_STORAGE_S3_PUBLIC_URL_PREFIX='__CFG_S3_PUBLIC_URL_PREFIX__'
 export STGY_REDIS_HOST='__CFG_REDIS_HOST__'
 export STGY_REDIS_PORT='__CFG_REDIS_PORT__'
 export STGY_REDIS_PASSWORD='__CFG_REDIS_PASS__'
+
+export STGY_SEARCH_API_BASE_URL='__CFG_SEARCH_API_BASE_URL__'
 
 export STGY_SMTP_HOST='__CFG_SMTP_HOST__'
 export STGY_SMTP_PORT='__CFG_SMTP_PORT__'
@@ -193,30 +199,17 @@ status_one() {
 
 start_all() {
   start_one "backend" "dist/index.js"
-  start_one "mailworker" "dist/mailWorker.js"
-  start_one "mediaworker" "dist/mediaWorker.js"
-  start_one "notificationworker" "dist/notificationWorker.js"
-  start_one "aisummaryworker" "dist/aiSummaryWorker.js"
-  start_one "aiuserworker" "dist/aiUserWorker.js"
+  start_one "oneworker" "dist/oneWorker.js"
 }
 
 stop_all() {
-  # stop in reverse order to minimize dependency errors
-  stop_one "aiuserworker"
-  stop_one "aisummaryworker"
-  stop_one "notificationworker"
-  stop_one "mediaworker"
-  stop_one "mailworker"
+  stop_one "oneworker"
   stop_one "backend"
 }
 
 status_all() {
   status_one "backend"
-  status_one "mailworker"
-  status_one "mediaworker"
-  status_one "notificationworker"
-  status_one "aisummaryworker"
-  status_one "aiuserworker"
+  status_one "oneworker"
 }
 
 # If launched without args: run in foreground & supervise children.
@@ -227,11 +220,7 @@ case "${1:-start}" in
     # Wait until any child exits; then stop the rest and propagate failure.
     while true; do
       if ! pgrep -F "$(pidfile backend)" >/dev/null 2>&1 || \
-         ! pgrep -F "$(pidfile mailworker)" >/dev/null 2>&1 || \
-         ! pgrep -F "$(pidfile mediaworker)" >/dev/null 2>&1 || \
-         ! pgrep -F "$(pidfile notificationworker)" >/dev/null 2>&1 || \
-         ! pgrep -F "$(pidfile aisummaryworker)" >/dev/null 2>&1 || \
-         ! pgrep -F "$(pidfile aiuserworker)" >/dev/null 2>&1; then
+         ! pgrep -F "$(pidfile oneworker)" >/dev/null 2>&1; then
         echo "[supervisor] a child process exited; stopping the others..."
         stop_all
         # non-zero exit if backend died
@@ -279,6 +268,7 @@ sed -i \
   -e "s#__CFG_REDIS_HOST__#${CFG_REDIS_HOST}#g" \
   -e "s#__CFG_REDIS_PORT__#${CFG_REDIS_PORT}#g" \
   -e "s#__CFG_REDIS_PASS__#${CFG_REDIS_PASS}#g" \
+  -e "s#__CFG_SEARCH_API_BASE_URL__#${CFG_SEARCH_API_BASE_URL}#g" \
   -e "s#__CFG_SMTP_HOST__#${CFG_SMTP_HOST}#g" \
   -e "s#__CFG_SMTP_PORT__#${CFG_SMTP_PORT}#g" \
   -e "s#__CFG_SMTP_USER__#${CFG_SMTP_USER}#g" \
@@ -302,5 +292,5 @@ fi
 
 echo "[backend] Deployment completed: $TARGET"
 echo "  To run in foreground (recommended for systemd): $TARGET/start.sh"
-echo "  To stop:                                         $TARGET/start.sh stop"
+echo "  To stop:                                      $TARGET/start.sh stop"
 echo "  Logs: $TARGET/logs/*.log"

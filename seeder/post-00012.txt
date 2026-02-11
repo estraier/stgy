@@ -15,7 +15,7 @@ content:<<____EOF____
 
 STGYの開発作業はDockerが動く環境であればどこでもできるが、ここではMac OSでの環境構築方法について述べる。Linuxについてはデモ環境の構築方法と一緒に後述する。Mac上では、作業環境は自宅等のホームネットワーク環境を想定し、外部からの接続を受け付けることは想定しない。Dockerを使って各種の依存サービスを立てた上で、自ら開発するSTGYのバックエンドサービスとフロントエンドサービスをローカルホストで動かしながら開発を進める。検証時のために、バックエンドサービスとフロントエンドサービスも含めて全てDockerで動くようにもする。
 
-まずは、Homebrewを入れる。カスタマイズ性の高いMacPortsとかよりも、通り一遍で再現性の高い手順となるHomebrewの方が管理しやすい。
+まずは、Homebrewを入れる。カスタマイズ性の高いMacPortsなどよりも、通り一遍で再現性の高い手順となるHomebrewの方が管理しやすい。
 
 ```:small
 /bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
@@ -93,6 +93,7 @@ STGYの関連パッケージは全て単一のリポジトリに収められて�
 - Caddyfile : リバースプロクシCaddyの設定ファイル
 - Caddyfile.vps : VPSのデモ環境用で使うCaddyの設定ファイル
 - packages/ : 独自の依存パッケージ群のディレクトリ
+- ttts/ : 全文検索サービスのソースコードや設定ファイル一式のディレクトリ
 - backend/ : バックエンドサービスのソースコードや設定ファイル一式のディレクトリ
 - frontend/ : フロントエンドサービスのソースコードや設定ファイル一式のディレクトリ
 - scripts/ : 管理用の便利スクリプト一式のディレクトリ
@@ -116,21 +117,24 @@ STGYの関連パッケージは全て単一のリポジトリに収められて�
 - npm install : package.jsonの記述に基づき、新しいバージョンの依存パッケージをインストールする
 - npm run clean : 依存パッケージを消す
 
-backendとfrontendにはDockerfileがあり、それぞれのサービスのDockerインスタンスの設定が書いてある。それ以外の依存サービスの設定はdocker-compose.ymlに直接書いてある。docker composeは.envファイルから環境変数を読み込むが、.envはリポジトリには含まれない。env.dev.txtかenv.vps.txtを.envにコピーしてから、それを環境に合わせて編集して使う。.envにはパスワードなどの秘密情報が書かれるので、Gitの管理対象にすべきではない。
+tttsとbackendとfrontendにはDockerfileがあり、それぞれのサービスのDockerインスタンスの設定が書いてある。それ以外の依存サービスの設定はdocker-compose.ymlに直接書いてある。docker composeは.envファイルから環境変数を読み込むが、.envはリポジトリには含まれない。env.dev.txtかenv.vps.txtを.envにコピーしてから、それを環境に合わせて編集して使う。.envにはパスワードなどの秘密情報が書かれるので、Gitの管理対象にすべきではない。
 
 scriptsの下には、システムの管理に必要なスクリプトが入っている。多くのものはnpmを介して起動される。.envの環境変数から設定を読み込むので、.envを事前に作っておく必要がある。
 
 - reset-data.sh : PostgreSQLのデータベースを初期化し、seederの初期データを投入する
-- reset-minio-data.sh : MinIOのデータベースを初期化する
-- reset-cache.sh : Redisのキャッシュデータを初期化する
+- reset-minio-data.sh : MinIOのデータベースを初期化する。空になる
+- reset-cache.sh : Redisのキャッシュデータを初期化する。空になる
+- reset-ttts-data.sh : TTTSのインデックスを初期化する。空になる
 - edit-users.py : ユーザを作成または更新する
 - edit-posts.py : 投稿を作成または更新する
 - user-actions.py : 個々のユーザでログインしてイイネやフォローやブロックを行う
 - make-volume-test.py : 検証用に大量のユーザと投稿を作成する
+- run-local-ttts.sh : 全文検索サービスをローカルホスト上で起動する
 - run-local-backend.sh : バックエンドサービスをローカルホスト上で起動する
 - run-local-frontend.sh : フロントエンドサービスをローカルホスト上で起動する
 - run-databaseUtil.sh : データベース管理用のユーティリティ
 - run-storageUtil.sh : メディアストレージ管理用のユーティリティ
+- run-searchUtil.sh : 全文検索サービス管理用のユーティリティ
 - deploy-backend.sh : デモ環境にてバックエンドをデプロイする
 - deploy-frontend.sh : デモ環境にてフロントエンドをデプロイする
 
@@ -205,12 +209,14 @@ Docker関係のコマンドを利用目的別に整理する。
   - ローカル環境で内部依存パッケージをビルドして準備する。
 - npm run docker:start-dev
   - backendとfrontend以外の依存サービスのDockerコンテナを起動する。
-  - 止める時はnpm run docker:stopを実行する。
+  - 全文検索サーバも一緒にDocker起動するので、止めたいならdocker compose stop tttsを実行。
+  - 全部止める時はnpm run docker:stopを実行する。
 - ./scripts/run-local-backend.sh
   - backendサービスと各種ワーカをローカルホストで起動する。
   - --startオプションをつけると、ビルド結果を実行する。
   - --openai-api-keyオプションでOpenAIのAPIキーを上書きできる。
-  - 止める時はCtrl-Cで落とす。
+  - --multi-workerをつけると全ワーカを個別プロセスで起動し、--no-workerをつけるとワーカを起動しない。
+  - 止める時はCtrl-Cで落とす。ワーカもサーバと一緒に停止する。
 - ./scripts/run-local-frontend.sh
   - frontendサービスをローカルホストで起動する。
   - --startオプションをつけると、ビルド結果を実行する。
@@ -221,6 +227,8 @@ Docker関係のコマンドを利用目的別に整理する。
   - DBとオブジェクトストレージを初期化して、性能テスト用の大量のデータを投入する。
 - npm run reset-cache
   - Redisのキャッシュを初期化する。
+- npm run reset-search
+  - 全文検索サービスのインデクスを初期化して、全ユーザと全投稿を投入する。
 
 バックエンドやフロントエンドのTypeScriptコードを変更すると、それぞれの起動中のサービスは勝手に再起動して変更を取り込む。ただし、tscやlintのチェックが甘いので、そのままだとDockerイメージにした時に動く保証がない。よって、以下のコマンド群で品質管理をする。frontendやbackendの中で実行しても良い。
 
@@ -309,7 +317,6 @@ prodユーザでログインして、環境設定を行う。
 - 任意のエディタの設定。Emacsの場合は以下
   - sudo apt install emacs
   - .emacsを既存環境からコピー
-  - なぜかemacsと一緒に入るpostfixの削除: sudo apt purge postfix
 
 Docker関連ツールを入れる。標準ではaptがDockerの公式リポジトリを見ないので、設定を加える必要がある。
 
@@ -419,8 +426,10 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
+  - 全文検索サーバをhttp://ttts:3200として認識し、Dockerサブネットで通信。
+    - STGY_SEARCH_API_BASE_URL=http://ttts:3200
 
-- メールワーカ（Node.jsのCLI）
+- メールワーカ（Node.jsのCLI。実運用では統合ワーカのスレッド）
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
@@ -428,14 +437,14 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_SMTP_HOST=mailpit
     - STGY_SMTP_PORT=5587
 
-- メディアワーカ（Node.jsのCLI）
+- メディアワーカ（Node.jsのCLI。実運用では統合ワーカのスレッド）
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
   - S3サーバのエンドポイントをhttp://minio:9000として認識し、Dockerサブネットで通信。
     - STGY_STORAGE_S3_ENDPOINT=http://minio:9000
 
-- 通知ワーカ（Node.jsのCLI）
+- 通知ワーカ（Node.jsのCLI。実運用では統合ワーカのスレッド）
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
@@ -443,7 +452,14 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_DATABASE_HOST=postgres
     - STGY_DATABASE_PORT=5432
 
-- AI要約ワーカ（Node.jsのCLI）
+- 検索インデックスワーカ（Node.jsのCLI。実運用では統合ワーカのスレッド）
+  - DBサーバをpostgres:5432として認識し、Dockerサブネットで通信。
+    - STGY_DATABASE_HOST=postgres
+    - STGY_DATABASE_PORT=5432
+  - 全文検索サーバをhttp://ttts:3200として認識し、Dockerサブネットで通信。
+    - STGY_SEARCH_API_BASE_URL=http://ttts:3200
+
+- AI要約ワーカ（Node.jsのCLI。実運用では統合ワーカのスレッド）
   - バックエンドをhttps://stgy.jp/backendとして認識し、公開サブネットで通信。
     - STGY_BACKEND_API_BASE_URL=https://stgy.jp/backend
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
@@ -453,7 +469,7 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_DATABASE_HOST=postgres
     - STGY_DATABASE_PORT=5432
 
-- AIユーザワーカ（Node.jsのCLI）
+- AIユーザワーカ（Node.jsのCLI。実運用では統合ワーカのスレッド）
   - バックエンドをhttps://stgy.jp/backendとして認識し、公開サブネットで通信。
     - STGY_BACKEND_API_BASE_URL=https://stgy.jp/backend
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
@@ -483,6 +499,10 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
   - Dockerサブネットでmailpit:8025をlistenし、コンソール画面を表示。表にはhttps://mail.stgy.jpとして露出。
     - STGY_MAILPIT_CONSOLE_PORT=8025
   - リレー設定があれば、本番のSMTPサーバにメールを転送。
+
+- 全文検索サーバ（TTTS）
+  - Dockerサブネットでttts:3200をlistenし、全文検索用インデックスを管理。
+    - STGY_SEARCH_PORT=3200
 
 どのサービスがどのサービスの接続を知っているかという参照関係を図にしておく。これは、実際に接続しているという意味ではなく、その設定を読み込んでいるという意味だ。例えば、バックエンドサーバがCaddyに接続することはないが、バックエンドにはCaddy越しに来るフロントエンドのURLを信用する設定が必要だ。また、バックエンドサーバはフロントエンドにS3サービスのURLを伝える必要があり、そこにはCaddyのアドレスが書いてある。同様にして、フロントエンドはCaddy越しにバックエンドやS3サーバに接続するアドレスを知っておく必要がある。
 
@@ -971,7 +991,7 @@ stgy=> SELECT id, nickname, is_admin FROM users;
 
 ## MinIO
 
-MinIOはS3互換のオブジェクトストレージサービス、STGYではメディアデータの管理に使う。MinIOはaptパッケージが無いので、以下のようにバイナリを直接インストールする。
+MinIOはS3互換のオブジェクトストレージサービスであり、STGYではメディアデータの管理に使う。MinIOはaptパッケージが無いので、以下のようにバイナリを直接インストールする。
 
 ```:small
 wget -O /tmp/minio https://dl.min.io/server/minio/release/linux-amd64/minio
@@ -1095,6 +1115,56 @@ CLIで接続確認する。
 redis-cli -a stgystgy PING
 ```
 
+## 全文検索サービス
+
+STGYの全文検索には内製の3TS（TTTS: time-tiered text Search）アーキテクチャに基づく独自のサービスを用いる。Gitのリポジトリ内でビルドして、/home/prod/stgy-tttsの配下にデプロイして、そこにあるJavaScriptコードをNode.jsで実行する起動スクリプトをsystemd経由で実行する。
+
+全文検索サーバをデプロイするには、prodユーザが、stgyリポジトリの中で、以下のコマンドを実行する。stgy.jpで全てネイティブサービスを使った場合の環境設定がスクリプト内に書いてある。
+
+```:small
+./scripts/deploy-ttts.sh
+```
+
+デプロイ用スクリプトを実行すると、/home/prod/stgy-backend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。oneWorkerという、各種の非同期ワーカを統合したプロセスもも同時に起動される。それらを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-backend.serviceとして書く。
+
+```:small
+[Unit]
+Description=STGY TTTS
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=prod
+Group=prod
+WorkingDirectory=/home/prod/stgy-ttts
+Environment=PATH=/usr/local/bin:/usr/bin:/bin
+ExecStart=/home/prod/stgy-ttts/start.sh start
+ExecStop=/home/prod/stgy-ttts/start.sh stop
+ExecReload=/home/prod/stgy-ttts/start.sh restart
+Restart=on-failure
+RestartSec=2s
+TimeoutStopSec=30s
+KillMode=process
+
+[Install]
+WantedBy=multi-user.target
+```
+
+自動起動スクリプトを有効化し、状態を確認する。
+
+```:small
+sudo systemctl daemon-reload
+sudo systemctl enable --now stgy-ttts
+systemctl status stgy-ttts
+```
+
+ネットワークの疎通確認をする。200 OKが返されれば成功。
+
+```:small
+curl -i http://localhost:3200/health
+```
+
 ## STGYのバックエンドとフロントエンド
 
 STGYのバックエンドとフロントエンドもネイティブサービスとして稼働させられる。Gitのリポジトリ内でビルドして、/home/prod/stgy-backendおよび/home/prod/stgy-frontendの配下にデプロイして、そこにあるJavaScriptコードをNode.jsで実行する起動スクリプトをsystemd経由で実行する。
@@ -1139,6 +1209,12 @@ sudo systemctl enable --now stgy-backend
 systemctl status stgy-backend
 ```
 
+ネットワークの疎通確認をする。200 OKが返されれば成功。
+
+```:small
+curl -i http://localhost:3100/health
+```
+
 フロントエンドサーバをデプロイするには、prodユーザが、stgyリポジトリの中で、以下のコマンドを実行する。stgy.jpで全てネイティブサービスを使った場合の環境設定がスクリプト内に書いてある。
 
 ```:small
@@ -1177,6 +1253,12 @@ WantedBy=multi-user.target
 sudo systemctl daemon-reload
 sudo systemctl enable --now stgy-frontend
 systemctl status stgy-frontend
+```
+
+ネットワークの疎通確認をする。200 OKが返されれば成功。
+
+```:small
+curl -i http://localhost:3000/health
 ```
 
 以下のコマンドで初期データの投入を行う。
@@ -1234,7 +1316,7 @@ sudo systemctl enable --now stgy-frontend
 
 バックアップのタスクを実行する環境は、本番稼働環境のネットワーク上にあるLinuxサーバならば何でも良いが、PostgreSQLとMinIOのクライアントが必要になるので、VPSサーバ以外で動かす場合には両者のクライアントパッケージを入れること。それに加えて、以下のパッケージをインストールしておく。
 
-```:smqll
+```:small
 sudo apt install ca-certificates rsync
 ```
 
@@ -1282,6 +1364,22 @@ PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 ```
 
 同一サーバにバックアップデータを置いているとハードウェア障害の際に困るので、rsync等で最新バックアップを別ホストやリモートストレージに退避するのも良い考えだ。退避先にて、月1回、年1回といった区切りのデータは、長期保存の対象にすると良いだろう。
+
+## 全文検索のインデックス構築
+
+全文検索サーバのインデックスはユーザや投稿の更新に応じて自動的に更新されるので、特にメンテナンスの必要はない。しかし、データベースをリストアした場合や、検索サーバのインデックスの設定を変えた際には、検索用のインデックス全体を再構築するべきだ。以下のコマンドを実行すれば良い。
+
+```:small
+npm run reset-search
+```
+
+何らかの理由で検索サーバ上のインデックスだけが壊れた場合、以下のコマンドで壊れたインデックスファイルのみを修復し、その担当範囲のユーザや投稿のみを再登録する。
+
+```:small
+npm run reset-search-restore
+```
+
+検索用インデックスの再構築中にも検索が行える。また、再構築の処理ではユーザや投稿が新しい順に登録され、再構築中に新規登録されたユーザや投稿は最優先して登録される。検索結果は常に新しい順に表示されるので、見かけ上のダウンタイムは小さい。よって、検索用インデックスのバックアップを作るよりは、全体を再構築した方が運用しやすいだろう。
 
 ## まとめ
 

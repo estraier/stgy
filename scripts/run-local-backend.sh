@@ -12,7 +12,7 @@ set +a
 
 CMD="dev"
 PORT="${STGY_BACKEND_PORT:-3100}"
-WORKER="multi"
+WORKER="one"
 OVERRIDING_OPENAI_API_KEY="-"
 
 declare -a PASS_ARGS=()
@@ -32,8 +32,8 @@ while [[ $# -gt 0 ]]; do
       PORT="${1#*=}"
       shift
       ;;
-    --one-worker)
-      WORKER="one"
+    --multi-worker)
+      WORKER="multi"
       shift
       ;;
     --no-worker)
