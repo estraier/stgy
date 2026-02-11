@@ -61,6 +61,34 @@ paths:
               schema:
                 $ref: "#/components/schemas/MaintenanceStatus"
 
+  /{resource}/queue:
+    parameters:
+      - $ref: "#/components/parameters/ResourcePath"
+    delete:
+      summary: Clear task queue (Requires Maintenance Mode)
+      tags: [Management]
+      responses:
+        "200":
+          description: Queue cleared successfully
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result:
+                    type: string
+                    example: queue cleared
+        "409":
+          description: Maintenance mode required
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error:
+                    type: string
+                    example: Maintenance mode required
+
   /{resource}/flush:
     parameters:
       - $ref: "#/components/parameters/ResourcePath"

@@ -100,4 +100,35 @@ describe("TaskQueue System", () => {
     expect(await mgmtQueue.isPending(docId)).toBe(false);
     expect(await docQueue.isPending(mgmtId)).toBe(false);
   });
+
+  test("clear: removes all tasks from input and batch tables", async () => {
+    await mgmtQueue.enqueue({ type: "SYNC", payload: {} });
+    await mgmtQueue.enqueue({ type: "SYNC", payload: {} });
+    expect(await mgmtQueue.countInputTasks()).toBe(2);
+
+    await mgmtQueue.clear();
+    expect(await mgmtQueue.countInputTasks()).toBe(0);
+
+    const t1 = await docQueue.enqueue({
+      type: "ADD",
+      payload: { docId: "1", timestamp: 0, bodyText: "", locale: "" },
+    });
+    const t2 = await docQueue.enqueue({
+      type: "ADD",
+      payload: { docId: "2", timestamp: 0, bodyText: "", locale: "" },
+    });
+
+    const item = await docQueue.fetchFirst();
+    await docQueue.moveToBatch(item!);
+
+    expect(await docQueue.isPending(t1)).toBe(true);
+    expect(await docQueue.isPending(t2)).toBe(true);
+
+    await docQueue.clear();
+
+    expect(await docQueue.isPending(t1)).toBe(false);
+    expect(await docQueue.isPending(t2)).toBe(false);
+    expect(await docQueue.countInputTasks()).toBe(0);
+    expect(await docQueue.getPendingBatchTasks()).toHaveLength(0);
+  });
 });

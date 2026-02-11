@@ -6,7 +6,7 @@ import { SearchTask } from "./taskQueue";
 
 const mockLogger = {
   info: jest.fn(),
-  error: (obj: any, msg?: string) => console.error(msg, obj),
+  error: (obj: unknown, msg?: string) => console.error(msg, obj),
   debug: jest.fn(),
   warn: jest.fn(),
   child: () => mockLogger,
@@ -286,5 +286,27 @@ describe("SearchService (Actor Model)", () => {
     expect(docs[0].id).toBe("doc_fetch");
     expect(docs[0].bodyText).toBe("content body");
     expect(docs[0].attrs).toBe(JSON.stringify({ key: "val" }));
+  });
+
+  test("clearTaskQueue: should clear pending tasks", async () => {
+    await service.startMaintenanceMode();
+
+    await service.enqueueTask({
+      type: "ADD",
+      payload: { docId: "q1", timestamp: 1000, bodyText: "queue test 1", locale: "en" },
+    });
+    await service.enqueueTask({
+      type: "ADD",
+      payload: { docId: "q2", timestamp: 1000, bodyText: "queue test 2", locale: "en" },
+    });
+
+    await service.clearTaskQueue();
+
+    await service.endMaintenanceMode();
+
+    await new Promise((r) => setTimeout(r, 500));
+
+    expect(await service.search("queue test 1")).toEqual([]);
+    expect(await service.search("queue test 2")).toEqual([]);
   });
 });

@@ -86,7 +86,7 @@
     "reset-data": "./scripts/reset-data.sh && ./scripts/reset-minio-data.sh && ./scripts/reset-ttts-data.sh && ./scripts/edit-users.py --insecure-password seeder/user-0*.txt && ./scripts/edit-posts.py seeder/post-0*.txt && ./scripts/user-actions.py seeder/action-*.txt && ./scripts/edit-posts.py seeder/post-x0*.txt",
     "reset-data-test": "npm run reset-data && ./scripts/make-volume-test.py",
     "reset-cache": "./scripts/reset-cache.sh",
-    "reset-search": "./scripts/run-searchUtil.sh user-start-maintenance --print-logs && ./scripts/run-searchUtil.sh user-drop-shards --print-logs && ./scripts/run-searchUtil.sh user-reserve --print-logs && ./scripts/run-searchUtil.sh user-end-maintenance --print-logs && ./scripts/run-searchUtil.sh user-add --print-logs && ./scripts/run-searchUtil.sh user-flush --print-logs && ./scripts/run-searchUtil.sh post-start-maintenance --print-logs && ./scripts/run-searchUtil.sh post-drop-shards --print-logs && ./scripts/run-searchUtil.sh post-reserve --print-logs && ./scripts/run-searchUtil.sh post-end-maintenance --print-logs && ./scripts/run-searchUtil.sh post-add --print-logs && ./scripts/run-searchUtil.sh post-flush --print-logs",
+    "reset-search": "./scripts/run-searchUtil.sh user-reset --print-logs && ./scripts/run-searchUtil.sh post-reset --print-logs",
     "endpoint-test": "./tests/endpoint-test.py",
     "psql": "docker compose exec postgres psql -U admin stgy",
     "vps:docker:up": "docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d --build --remove-orphans",

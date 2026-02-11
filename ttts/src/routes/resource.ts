@@ -49,6 +49,18 @@ export default function createResourceRouter(instance: ResourceInstance) {
     }
   });
 
+  router.delete("/queue", async (_req: Request, res: Response) => {
+    if (!(await searchService.checkMaintenanceMode()))
+      return res.status(409).json({ error: "Maintenance mode required" });
+    try {
+      await searchService.clearTaskQueue();
+      res.json({ result: "queue cleared" });
+    } catch (e) {
+      logger.error(e);
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
   router.post("/reconstruct", async (req: Request, res: Response) => {
     try {
       const { timestamp, newInitialId, useExternalId } = req.body || {};
@@ -92,6 +104,17 @@ export default function createResourceRouter(instance: ResourceInstance) {
     }
   });
 
+  router.get("/shards", async (req: Request, res: Response) => {
+    try {
+      const detailed = req.query.detailed === "true";
+      const files = await searchService.listIndexFiles(detailed);
+      res.json(files);
+    } catch (e) {
+      logger.error(e);
+      res.status(500).json({ error: String(e) });
+    }
+  });
+
   router.delete("/shards/:timestamp", async (req: Request, res: Response) => {
     try {
       const timestamp = parseInt(req.params.timestamp, 10);
@@ -102,17 +125,6 @@ export default function createResourceRouter(instance: ResourceInstance) {
       });
       await handleWait(req, taskId);
       res.json({ result: "enqueued", taskId });
-    } catch (e) {
-      logger.error(e);
-      res.status(500).json({ error: String(e) });
-    }
-  });
-
-  router.get("/shards", async (req: Request, res: Response) => {
-    try {
-      const detailed = req.query.detailed === "true";
-      const files = await searchService.listIndexFiles(detailed);
-      res.json(files);
     } catch (e) {
       logger.error(e);
       res.status(500).json({ error: String(e) });

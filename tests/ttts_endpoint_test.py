@@ -6,9 +6,7 @@ import sys
 import time
 import json
 
-APP_HOST = os.environ.get("STGY_APP_HOST", "localhost")
-APP_PORT = int(os.environ.get("STGY_APP_PORT", 3200))
-BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
+BASE_URL = os.environ.get("STGY_SEARCH_API_BASE_URL", "http://localhost:3200");
 
 def test_root():
   res = requests.get(f"{BASE_URL}/health")
@@ -135,6 +133,17 @@ def test_optimize():
   ts = int(time.time())
   res = requests.post(f"{base_url}/optimize", json={"timestamp": ts, "wait": 5})
   assert res.status_code == 200
+
+def test_queue_clear():
+  resource = "posts"
+  base_url = f"{BASE_URL}/{resource}"
+  requests.post(f"{base_url}/maintenance")
+  ts = int(time.time())
+  requests.put(f"{base_url}/q-clear-1", json={"text": "queue clear test", "timestamp": ts})
+  res = requests.delete(f"{base_url}/queue")
+  assert res.status_code == 200
+  assert res.json()["result"] == "queue cleared"
+  requests.delete(f"{base_url}/maintenance")
 
 def main():
   test_funcs = {name: fn for name, fn in globals().items() if name.startswith("test_") and callable(fn)}

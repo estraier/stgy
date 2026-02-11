@@ -203,6 +203,18 @@ export class SearchService {
   async checkMaintenanceMode(): Promise<boolean> {
     return this.maintenanceMode;
   }
+
+  async clearTaskQueue(): Promise<void> {
+    const releaseWrite = await this.serviceLock.acquireWrite();
+    try {
+      await this.docQueue.clear();
+      await this.mgmtQueue.clear();
+      this.logger.info("Task queues cleared");
+    } finally {
+      releaseWrite();
+    }
+  }
+
   async listIndexFiles(detailed: boolean = false): Promise<IndexFileInfo[]> {
     return this.fileManager.listIndexFiles(detailed);
   }
@@ -773,8 +785,8 @@ export class SearchService {
     await db.exec("BEGIN");
     try {
       await db.exec(`CREATE TABLE IF NOT EXISTS id_tuples (internal_id INTEGER PRIMARY KEY, external_id TEXT UNIQUE);
-                     CREATE TABLE IF NOT EXISTS extra_attrs (external_id TEXT PRIMARY KEY, attrs TEXT);
-                     CREATE TABLE IF NOT EXISTS fts_meta (k TEXT PRIMARY KEY, v INTEGER);`);
+                      CREATE TABLE IF NOT EXISTS extra_attrs (external_id TEXT PRIMARY KEY, attrs TEXT);
+                      CREATE TABLE IF NOT EXISTS fts_meta (k TEXT PRIMARY KEY, v INTEGER);`);
       await db.run(
         `INSERT OR IGNORE INTO fts_meta (k, v) VALUES ('record_positions', ?), ('record_contents', ?);`,
         [rp ? 1 : 0, rc ? 1 : 0],

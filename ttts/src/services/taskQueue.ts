@@ -116,6 +116,7 @@ abstract class BaseTaskQueue<T extends SearchTask> {
   }
 
   abstract isPending(id: string): Promise<boolean>;
+  abstract clear(): Promise<void>;
 
   protected parseRow(row: TaskRow): TaskItem<T> {
     return {
@@ -138,6 +139,11 @@ export class ManagementTaskQueue extends BaseTaskQueue<ManagementTask> {
       [numericId],
     );
     return (row?.count ?? 0) > 0;
+  }
+
+  async clear(): Promise<void> {
+    if (!this.db) throw new Error("Queue not open");
+    await this.db.run(`DELETE FROM ${this.tableName}`);
   }
 }
 
@@ -198,5 +204,18 @@ export class DocumentTaskQueue extends BaseTaskQueue<DocumentTask> {
       [numericId, numericId],
     );
     return (row?.count ?? 0) > 0;
+  }
+
+  async clear(): Promise<void> {
+    if (!this.db) throw new Error("Queue not open");
+    await this.db.exec("BEGIN IMMEDIATE");
+    try {
+      await this.db.run(`DELETE FROM ${this.tableName}`);
+      await this.db.run(`DELETE FROM batch_tasks`);
+      await this.db.exec("COMMIT");
+    } catch (e) {
+      await this.db.exec("ROLLBACK");
+      throw e;
+    }
   }
 }
