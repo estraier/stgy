@@ -2,6 +2,10 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+PROJECT_ROOT="$SCRIPT_DIR/.."
+cd "$PROJECT_ROOT"
+
 set -a
 [ -f .env ] && source .env
 set +a
@@ -41,4 +45,4 @@ then
    exit
 fi
 
-npm run backend:storage-util $@
+npm run backend:storage-util "$@"

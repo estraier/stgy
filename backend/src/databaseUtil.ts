@@ -1,23 +1,41 @@
-import { createLogger } from "./utils/logger";
 import { generatePasswordHash, checkPasswordHash, bytesToHex, hexToBytes } from "./utils/format";
-import { ListUsersInput } from "./models/user";
-import { ListPostsInput } from "./models/post";
-import { UsersService } from "./services/users";
-import { PostsService } from "./services/posts";
-import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
+import type { ListUsersInput } from "./models/user";
+import type { ListPostsInput } from "./models/post";
 
-const logger = createLogger({ file: "databaseUtil" });
+const rawArgs = process.argv.slice(2);
+const printLogs = rawArgs.includes("--print-logs");
+const args = rawArgs.filter((arg) => arg !== "--print-logs");
+
+const logger = {
+  info: (msg: any) => {
+    if (printLogs) {
+      console.error(`[INFO] ${msg}`);
+    }
+  },
+  error: (msg: any) => {
+    console.error(`[ERROR] ${msg}`);
+  },
+};
 
 async function main() {
-  const args = process.argv.slice(2);
   if (args.length < 1) {
     console.log(`Usage:
-  ts-node src/storageUtil.ts hash <password> [hash]
-  ts-node src/storageUtil.ts user-list [offset limit order]
-  ts-node src/storageUtil.ts post-list [offset limit order]
+  ts-node src/databaseUtil.ts hash <password> [hash]
+  ts-node src/databaseUtil.ts user-list [offset limit order] [--print-logs]
+  ts-node src/databaseUtil.ts post-list [offset limit order] [--print-logs]
 `);
     process.exit(1);
   }
+
+  if (!printLogs) {
+    process.env.LOG_LEVEL = "error";
+    process.env.PINO_LOG_LEVEL = "error";
+  }
+
+  const { connectPgWithRetry, connectRedisWithRetry } = await import("./utils/servers");
+  const { UsersService } = await import("./services/users");
+  const { PostsService } = await import("./services/posts");
+
   const command = args[0];
   switch (command) {
     case "hash": {
@@ -102,6 +120,6 @@ async function main() {
 }
 
 main().catch((e) => {
-  logger.info(`Fatal error: ${e}`);
+  logger.error(`Fatal error: ${e}`);
   process.exit(1);
 });

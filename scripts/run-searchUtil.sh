@@ -11,8 +11,8 @@ set -a
 set +a
 
 export STGY_DATABASE_HOST=localhost
-export STGY_REDIS_HOST=localhost
+export STGY_SEARCH_API_BASE_URL=http://localhost:3200
 
 cd backend
 
-ts-node src/databaseUtil.ts "$@"
+ts-node src/searchUtil.ts "$@"
