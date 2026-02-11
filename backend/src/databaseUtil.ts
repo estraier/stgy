@@ -7,12 +7,12 @@ const printLogs = rawArgs.includes("--print-logs");
 const args = rawArgs.filter((arg) => arg !== "--print-logs");
 
 const logger = {
-  info: (msg: any) => {
+  info: (msg: unknown) => {
     if (printLogs) {
       console.error(`[INFO] ${msg}`);
     }
   },
-  error: (msg: any) => {
+  error: (msg: unknown) => {
     console.error(`[ERROR] ${msg}`);
   },
 };

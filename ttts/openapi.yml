@@ -16,7 +16,7 @@ paths:
       summary: Health check
       description: Returns the health status of the service.
       responses:
-        '200':
+        "200":
           description: Service is healthy
           content:
             application/json:
@@ -29,46 +29,46 @@ paths:
 
   /{resource}/maintenance:
     parameters:
-      - $ref: '#/components/parameters/ResourcePath'
+      - $ref: "#/components/parameters/ResourcePath"
     get:
       summary: Check maintenance mode
       tags: [Management]
       responses:
-        '200':
+        "200":
           description: Current maintenance status
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MaintenanceStatus'
+                $ref: "#/components/schemas/MaintenanceStatus"
     post:
       summary: Enable maintenance mode
       tags: [Management]
       responses:
-        '200':
+        "200":
           description: Maintenance mode enabled
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MaintenanceStatus'
+                $ref: "#/components/schemas/MaintenanceStatus"
     delete:
       summary: Disable maintenance mode
       tags: [Management]
       responses:
-        '200':
+        "200":
           description: Maintenance mode disabled
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/MaintenanceStatus'
+                $ref: "#/components/schemas/MaintenanceStatus"
 
   /{resource}/flush:
     parameters:
-      - $ref: '#/components/parameters/ResourcePath'
+      - $ref: "#/components/parameters/ResourcePath"
     post:
       summary: Flush pending tasks (SYNC)
       tags: [Management]
       parameters:
-        - $ref: '#/components/parameters/WaitQuery'
+        - $ref: "#/components/parameters/WaitQuery"
       requestBody:
         content:
           application/json:
@@ -79,21 +79,21 @@ paths:
                   type: number
                   description: Wait time in seconds
       responses:
-        '200':
+        "200":
           description: Flush task enqueued
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TaskResponse'
+                $ref: "#/components/schemas/TaskResponse"
 
   /{resource}/optimize:
     parameters:
-      - $ref: '#/components/parameters/ResourcePath'
+      - $ref: "#/components/parameters/ResourcePath"
     post:
       summary: Optimize a specific shard
       tags: [Management]
       parameters:
-        - $ref: '#/components/parameters/WaitQuery'
+        - $ref: "#/components/parameters/WaitQuery"
       requestBody:
         required: true
         content:
@@ -109,21 +109,21 @@ paths:
                 wait:
                   type: number
       responses:
-        '200':
+        "200":
           description: Optimization task enqueued
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TaskResponse'
+                $ref: "#/components/schemas/TaskResponse"
 
   /{resource}/reconstruct:
     parameters:
-      - $ref: '#/components/parameters/ResourcePath'
+      - $ref: "#/components/parameters/ResourcePath"
     post:
       summary: Reconstruct a shard index
       tags: [Management]
       parameters:
-        - $ref: '#/components/parameters/WaitQuery'
+        - $ref: "#/components/parameters/WaitQuery"
       requestBody:
         required: true
         content:
@@ -142,21 +142,21 @@ paths:
                 wait:
                   type: number
       responses:
-        '200':
+        "200":
           description: Reconstruction task enqueued
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TaskResponse'
+                $ref: "#/components/schemas/TaskResponse"
 
   /{resource}/reserve:
     parameters:
-      - $ref: '#/components/parameters/ResourcePath'
+      - $ref: "#/components/parameters/ResourcePath"
     post:
       summary: Reserve document IDs (Requires Maintenance Mode)
       tags: [Management]
       parameters:
-        - $ref: '#/components/parameters/WaitQuery'
+        - $ref: "#/components/parameters/WaitQuery"
       requestBody:
         required: true
         content:
@@ -181,23 +181,23 @@ paths:
                 wait:
                   type: number
       responses:
-        '200':
+        "200":
           description: Reservation task enqueued
           content:
             application/json:
               schema:
                 allOf:
-                  - $ref: '#/components/schemas/TaskResponse'
+                  - $ref: "#/components/schemas/TaskResponse"
                   - type: object
                     properties:
                       count:
                         type: number
-        '409':
+        "409":
           description: Maintenance mode required
 
   /{resource}/shards:
     parameters:
-      - $ref: '#/components/parameters/ResourcePath'
+      - $ref: "#/components/parameters/ResourcePath"
     get:
       summary: List index files (shards)
       tags: [Management]
@@ -207,18 +207,18 @@ paths:
           schema:
             type: boolean
       responses:
-        '200':
+        "200":
           description: List of index files
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/IndexFileInfo'
+                  $ref: "#/components/schemas/IndexFileInfo"
 
   /{resource}/shards/{timestamp}:
     parameters:
-      - $ref: '#/components/parameters/ResourcePath'
+      - $ref: "#/components/parameters/ResourcePath"
       - name: timestamp
         in: path
         required: true
@@ -228,18 +228,18 @@ paths:
       summary: Drop a specific shard
       tags: [Management]
       parameters:
-        - $ref: '#/components/parameters/WaitQuery'
+        - $ref: "#/components/parameters/WaitQuery"
       responses:
-        '200':
+        "200":
           description: Drop task enqueued
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TaskResponse'
+                $ref: "#/components/schemas/TaskResponse"
 
   /{resource}/tokenize:
     parameters:
-      - $ref: '#/components/parameters/ResourcePath'
+      - $ref: "#/components/parameters/ResourcePath"
     get:
       summary: Tokenize text
       tags: [Search]
@@ -255,7 +255,7 @@ paths:
             type: string
             default: en
       responses:
-        '200':
+        "200":
           description: List of tokens
           content:
             application/json:
@@ -266,7 +266,7 @@ paths:
 
   /{resource}/search:
     parameters:
-      - $ref: '#/components/parameters/ResourcePath'
+      - $ref: "#/components/parameters/ResourcePath"
     get:
       summary: Execute full-text search
       tags: [Search]
@@ -297,7 +297,7 @@ paths:
             type: integer
             default: 1
       responses:
-        '200':
+        "200":
           description: List of matching document IDs
           content:
             application/json:
@@ -308,7 +308,7 @@ paths:
 
   /{resource}/search-fetch:
     parameters:
-      - $ref: '#/components/parameters/ResourcePath'
+      - $ref: "#/components/parameters/ResourcePath"
     get:
       summary: Search and fetch document details
       tags: [Search]
@@ -347,18 +347,18 @@ paths:
           schema:
             type: boolean
       responses:
-        '200':
+        "200":
           description: List of documents
           content:
             application/json:
               schema:
                 type: array
                 items:
-                  $ref: '#/components/schemas/Document'
+                  $ref: "#/components/schemas/Document"
 
   /{resource}/{docId}:
     parameters:
-      - $ref: '#/components/parameters/ResourcePath'
+      - $ref: "#/components/parameters/ResourcePath"
       - name: docId
         in: path
         required: true
@@ -377,20 +377,20 @@ paths:
           schema:
             type: boolean
       responses:
-        '200':
+        "200":
           description: Document details
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/Document'
-        '404':
+                $ref: "#/components/schemas/Document"
+        "404":
           description: Document not found
 
     put:
       summary: Add or update a document
       tags: [Document]
       parameters:
-        - $ref: '#/components/parameters/WaitQuery'
+        - $ref: "#/components/parameters/WaitQuery"
       requestBody:
         required: true
         content:
@@ -414,18 +414,18 @@ paths:
                 wait:
                   type: number
       responses:
-        '202':
+        "202":
           description: Task accepted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TaskResponse'
+                $ref: "#/components/schemas/TaskResponse"
 
     delete:
       summary: Remove a document
       tags: [Document]
       parameters:
-        - $ref: '#/components/parameters/WaitQuery'
+        - $ref: "#/components/parameters/WaitQuery"
       requestBody:
         required: true
         content:
@@ -440,12 +440,12 @@ paths:
                 wait:
                   type: number
       responses:
-        '202':
+        "202":
           description: Task accepted
           content:
             application/json:
               schema:
-                $ref: '#/components/schemas/TaskResponse'
+                $ref: "#/components/schemas/TaskResponse"
 
 components:
   parameters:
