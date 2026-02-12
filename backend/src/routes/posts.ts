@@ -2,14 +2,17 @@ import { Config } from "../config";
 import { Router, Request } from "express";
 import { Pool } from "pg";
 import Redis from "ioredis";
+import crypto from "crypto";
 import type { StorageService } from "../services/storage";
 import { PostsService } from "../services/posts";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
+import { SearchService } from "../services/search";
 import { ThrottleService, DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
 import { EventLogService } from "../services/eventLog";
 import { CreatePostInput, UpdatePostInput } from "../models/post";
+import { SearchCacheEntry } from "../models/search";
 import {
   normalizeOneLiner,
   normalizeMultiLines,
@@ -27,6 +30,7 @@ export default function createPostsRouter(
   const postsService = new PostsService(pgPool, redis, eventLogService);
   const usersService = new UsersService(pgPool, redis, eventLogService);
   const authService = new AuthService(pgPool, redis);
+  const searchService = new SearchService(pgPool, "posts");
   const timerThrottleService = new DailyTimerThrottleService(
     redis,
     "db",
@@ -57,6 +61,66 @@ export default function createPostsRouter(
     }
     return undefined;
   }
+
+  router.get("/search", async (req, res) => {
+    const loginUser = await authHelpers.requireLogin(req, res);
+    if (!loginUser) return;
+    if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
+      return res.status(403).json({ error: "too often operations" });
+    }
+    const query = typeof req.query.query === "string" ? req.query.query.trim() : "";
+    if (!query) {
+      return res.status(400).json({ error: "query is required" });
+    }
+    const locale =
+      typeof req.query.locale === "string" && req.query.locale ? req.query.locale : "en";
+    const offset = Math.max(0, parseInt(req.query.offset as string) || 0);
+    const reqLimit = Math.max(1, parseInt(req.query.limit as string) || 21);
+    const neededLimit = offset + reqLimit;
+    if (neededLimit > Config.SEARCH_LIMIT_MAX) {
+      return res.status(400).json({ error: "Search limit exceeded" });
+    }
+    const hash = crypto.createHash("md5").update(`${query}:${locale}`).digest("hex");
+    const cacheKey = `stgy:search:posts:${hash}`;
+    let docIds: string[] = [];
+    let isHit = false;
+    try {
+      const cachedJson = await redis.get(cacheKey);
+      if (cachedJson) {
+        const cache: SearchCacheEntry = JSON.parse(cachedJson);
+        if (cache.limit >= neededLimit || cache.result.length < cache.limit) {
+          docIds = cache.result;
+          isHit = true;
+        }
+      }
+      if (!isHit) {
+        const watch = timerThrottleService.startWatch(loginUser);
+        try {
+          docIds = await searchService.search({
+            query,
+            locale,
+            offset: 0,
+            limit: neededLimit,
+            timeout: 3,
+          });
+        } finally {
+          watch.done();
+        }
+        const newCache: SearchCacheEntry = {
+          query,
+          limit: neededLimit,
+          result: docIds,
+        };
+        await redis.setex(cacheKey, Config.SEARCH_CACHE_TTL_SEC, JSON.stringify(newCache));
+      }
+      const slicedIds = docIds.slice(offset, offset + reqLimit);
+      const posts = await postsService.listPostsByIds(slicedIds, loginUser.id);
+      res.json(posts);
+    } catch (e: unknown) {
+      console.error("Search error:", e);
+      res.status(500).json({ error: (e as Error).message || "Internal server error" });
+    }
+  });
 
   router.get("/count", async (req, res) => {
     const loginUser = await authHelpers.requireLogin(req, res);

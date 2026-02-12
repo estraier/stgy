@@ -1034,6 +1034,41 @@ paths:
         "403":
           $ref: "#/components/responses/Error403"
 
+  /users/search:
+    get:
+      summary: Search users (Full text search)
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 21 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: locale
+          in: query
+          schema: { type: string, default: "en" }
+      responses:
+        "200":
+          description: Search result
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/UserLite"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
   /users/count:
     get:
       summary: Get total user count (with optional filters)
@@ -1678,6 +1713,38 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /posts/search:
+    get:
+      summary: Search posts (Full text search)
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: query
+          in: query
+          required: true
+          schema: { type: string }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 21 }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+      responses:
+        "200":
+          description: Search result
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/PostLite"
         "400":
           $ref: "#/components/responses/Error400"
         "401":

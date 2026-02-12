@@ -12,3 +12,9 @@ export type SearchInput = {
   limit?: number;
   timeout?: number;
 };
+
+export type SearchCacheEntry = {
+  query: string;
+  limit: number;
+  result: string[];
+};

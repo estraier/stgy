@@ -55,7 +55,7 @@ export class Config {
   static readonly TAGS_NUMBER_LIMIT = envNum("STGY_TAGS_NUMBER_LIMIT", 5);
   static readonly SNIPPET_MAX_LENGTH = envNum("STGY_SNIPPET_MAX_LENGTH", 300);
   static readonly SNIPPET_MAX_HEIGHT = envNum("STGY_SNIPPET_MAX_HEIGHT", 10);
-  static readonly DAILY_DB_TIMER_LIMIT_MS = envNum("STGY_DAILY_DB_TIMER_LIMIT_MS", 180 * 1000);
+  static readonly DAILY_DB_TIMER_LIMIT_MS = envNum("STGY_DAILY_DB_TIMER_LIMIT_MS", 120 * 1000);
   static readonly DAILY_MEDIA_TIMER_LIMIT_MS = envNum(
     "STGY_DAILY_MEDIA_TIMER_LIMIT_MS",
     180 * 1000,
@@ -102,6 +102,8 @@ export class Config {
   static readonly DEFAULT_LOCALE = envStr("STGY_DEFAULT_LOCALE", "ja-JP");
   static readonly DEFAULT_TIMEZONE = envStr("STGY_DEFAULT_TIMEZONE", "Asia/Tokyo");
   static readonly MAX_PAGE_LIMIT = envNum("STGY_MAX_PAGE_LIMIT", 100);
+  static readonly SEARCH_LIMIT_MAX = envNum("STGY_SEARCH_LIMIT_MAX", 1001);
+  static readonly SEARCH_CACHE_TTL_SEC = envNum("STGY_SEARCH_CACHE_TTL_SEC", 600);
   static readonly SEARCH_INDEX_TASK_SLEEP_MS = envNum("STGY_SEARCH_INDEX_TASK_SLEEP_MS", 500);
   static readonly SEARCH_INDEX_LOOP_SLEEP_MS = envNum("STGY_SEARCH_INDEX_LOOP_SLEEP_MS", 3 * 1000);
   static readonly AI_RPC_TIMEOUT_MS = envNum("STGY_AI_RPC_TIMEOUT_MS", 600 * 1000);

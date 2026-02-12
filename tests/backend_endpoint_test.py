@@ -853,6 +853,10 @@ def test_users():
   friends = res.json()
   assert any(u["id"] == admin_id for u in friends)
   print("[users] nickname search OK")
+  res = requests.get(f"{BASE_URL}/users/search?query=admin&limit=3", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  searched = res.json()
+  print("[users] full text search OK:", len(searched))
   logout(session_id)
   print("[test_users] OK")
 
@@ -966,6 +970,11 @@ def test_posts():
   assert res.json()["result"] == "ok"
   res = requests.get(f"{BASE_URL}/posts/{post_id}", headers=headers, cookies=cookies)
   assert res.status_code == 404
+  res = requests.get(f"{BASE_URL}/posts/search?query=admin&limit=3", headers=headers, cookies=cookies)
+  assert res.status_code == 200, res.text
+  searched = res.json()
+  print(searched)
+  print("[posts] full text search OK:", len(searched))
   logout(session_id)
   print("[test_posts] OK")
 
