@@ -32,10 +32,17 @@ describe("parsePostSearchQuery", () => {
     });
   });
 
-  test("quoted phrase in query", () => {
+  test("quoted phrase in query (quotes preserved for non-tag/non-mention)", () => {
     expect(parsePostSearchQuery('"hello   world" #fun')).toEqual({
-      query: "hello world",
+      query: '"hello world"',
       tag: "fun",
+    });
+  });
+
+  test("quoted tag and mention (quotes removed)", () => {
+    expect(parsePostSearchQuery('"#barack obama" "@barack obama"')).toEqual({
+      tag: "barack obama",
+      ownedBy: "barack obama",
     });
   });
 
@@ -65,7 +72,7 @@ describe("serializePostSearchQuery", () => {
   test("escapes quotes and wraps tokens with spaces", () => {
     expect(
       serializePostSearchQuery({ query: 'hello "world"', tag: "big fun", ownedBy: "b o b" }),
-    ).toBe('hello \\"world\\" #"big fun" @"b o b"');
+    ).toBe('hello "world" "#big fun" "@b o b"');
   });
 
   test("escapes leading # and @ in query tokens", () => {
@@ -89,10 +96,16 @@ describe("parseUserSearchQuery", () => {
     expect(parseUserSearchQuery("@bob")).toEqual({ nickname: "bob" });
   });
 
-  test("query + nickname with quoted phrase", () => {
+  test("query + nickname with quoted phrase (quotes preserved)", () => {
     expect(parseUserSearchQuery('"hello world" @bob')).toEqual({
-      query: "hello world",
+      query: '"hello world"',
       nickname: "bob",
+    });
+  });
+
+  test("quoted nickname (quotes removed)", () => {
+    expect(parseUserSearchQuery('"@barack obama"')).toEqual({
+      nickname: "barack obama",
     });
   });
 
@@ -115,7 +128,7 @@ describe("serializeUserSearchQuery", () => {
 
   test("escapes quotes and wraps tokens with spaces", () => {
     expect(serializeUserSearchQuery({ query: 'hello "world"', nickname: "big bob" })).toBe(
-      'hello \\"world\\" @"big bob"',
+      'hello "world" "@big bob"',
     );
   });
 

@@ -16,24 +16,28 @@ export function parsePostSearchQuery(q: string): {
   const queryParts: string[] = [];
   for (let token of tokens) {
     token = token.replace(new RegExp(ESC_SPACE, "g"), " ");
-    if (token.startsWith('"') && token.endsWith('"') && token.length >= 2) {
-      token = token.slice(1, -1);
-    }
-    token = token.replace(/\s+/g, " ").trim();
-    token = token.replace(new RegExp(ESC_QUOTE, "g"), '"');
-    if (!token) continue;
-    if (!tag && token.startsWith("#") && token.length > 1) {
-      tag = token.slice(1);
+    const isQuoted = token.startsWith('"') && token.endsWith('"') && token.length >= 2;
+    let content = isQuoted ? token.slice(1, -1) : token;
+    content = content.replace(/\s+/g, " ").trim();
+    const decodedContent = content.replace(new RegExp(ESC_QUOTE, "g"), '"');
+    if (!decodedContent) continue;
+    if (!tag && decodedContent.startsWith("#") && decodedContent.length > 1) {
+      tag = decodedContent.slice(1);
       continue;
     }
-    if (!ownedBy && token.startsWith("@") && token.length > 1) {
-      ownedBy = token.slice(1);
+    if (!ownedBy && decodedContent.startsWith("@") && decodedContent.length > 1) {
+      ownedBy = decodedContent.slice(1);
       continue;
     }
-    if ((token.startsWith("\\#") || token.startsWith("\\@")) && token.length >= 2) {
-      token = token.slice(1);
+    if (
+      (decodedContent.startsWith("\\#") || decodedContent.startsWith("\\@")) &&
+      decodedContent.length >= 2
+    ) {
+      const unescaped = decodedContent.slice(1);
+      queryParts.push(isQuoted ? '"' + unescaped + '"' : unescaped);
+      continue;
     }
-    queryParts.push(token);
+    queryParts.push(isQuoted ? '"' + decodedContent + '"' : decodedContent);
   }
   const query = queryParts.length > 0 ? queryParts.join(" ") : undefined;
   return {
@@ -49,31 +53,22 @@ export function serializePostSearchQuery(params: {
   ownedBy?: string;
 }): string {
   const tokens: string[] = [];
-  const escapeToken = (token: string): string => {
-    let s = token.replace(/"/g, '\\"');
-    if (s.match(/\s/)) {
-      s = `"${s}"`;
-    }
-    return s;
-  };
   if (params.query) {
-    const parts = params.query.split(/\s+/).filter(Boolean);
+    const parts = params.query.match(/("[^"]*"|[^\s]+)/g) || [];
     for (let p of parts) {
-      if (p.startsWith("#") || p.startsWith("@")) {
+      if (!p.startsWith('"') && (p.startsWith("#") || p.startsWith("@"))) {
         p = "\\" + p;
       }
-      tokens.push(escapeToken(p));
+      tokens.push(p);
     }
   }
   if (params.tag) {
-    let tag = params.tag.replace(/"/g, '\\"');
-    if (tag.match(/\s/)) tag = `"${tag}"`;
-    tokens.push("#" + tag);
+    const tag = params.tag.replace(/"/g, '\\"');
+    tokens.push(tag.match(/\s/) ? '"#' + tag + '"' : "#" + tag);
   }
   if (params.ownedBy) {
-    let owned = params.ownedBy.replace(/"/g, '\\"');
-    if (owned.match(/\s/)) owned = `"${owned}"`;
-    tokens.push("@" + owned);
+    const owned = params.ownedBy.replace(/"/g, '\\"');
+    tokens.push(owned.match(/\s/) ? '"@' + owned + '"' : "@" + owned);
   }
   return tokens.join(" ");
 }
@@ -94,20 +89,21 @@ export function parseUserSearchQuery(q: string): {
   const queryParts: string[] = [];
   for (let token of tokens) {
     token = token.replace(new RegExp(ESC_SPACE, "g"), " ");
-    if (token.startsWith('"') && token.endsWith('"') && token.length >= 2) {
-      token = token.slice(1, -1);
-    }
-    token = token.replace(/\s+/g, " ").trim();
-    token = token.replace(new RegExp(ESC_QUOTE, "g"), '"');
-    if (!token) continue;
-    if (!nickname && token.startsWith("@") && token.length > 1) {
-      nickname = token.slice(1);
+    const isQuoted = token.startsWith('"') && token.endsWith('"') && token.length >= 2;
+    let content = isQuoted ? token.slice(1, -1) : token;
+    content = content.replace(/\s+/g, " ").trim();
+    const decodedContent = content.replace(new RegExp(ESC_QUOTE, "g"), '"');
+    if (!decodedContent) continue;
+    if (!nickname && decodedContent.startsWith("@") && decodedContent.length > 1) {
+      nickname = decodedContent.slice(1);
       continue;
     }
-    if (token.startsWith("\\@") && token.length >= 2) {
-      token = token.slice(1);
+    if (decodedContent.startsWith("\\@") && decodedContent.length >= 2) {
+      const unescaped = decodedContent.slice(1);
+      queryParts.push(isQuoted ? '"' + unescaped + '"' : unescaped);
+      continue;
     }
-    queryParts.push(token);
+    queryParts.push(isQuoted ? '"' + decodedContent + '"' : decodedContent);
   }
   const query = queryParts.length > 0 ? queryParts.join(" ") : undefined;
   return {
@@ -118,26 +114,18 @@ export function parseUserSearchQuery(q: string): {
 
 export function serializeUserSearchQuery(params: { query?: string; nickname?: string }): string {
   const tokens: string[] = [];
-  const escapeToken = (token: string): string => {
-    let s = token.replace(/"/g, '\\"');
-    if (s.match(/\s/)) {
-      s = `"${s}"`;
-    }
-    return s;
-  };
   if (params.query) {
-    const parts = params.query.split(/\s+/).filter(Boolean);
+    const parts = params.query.match(/("[^"]*"|[^\s]+)/g) || [];
     for (let p of parts) {
-      if (p.startsWith("#") || p.startsWith("@")) {
+      if (!p.startsWith('"') && (p.startsWith("#") || p.startsWith("@"))) {
         p = "\\" + p;
       }
-      tokens.push(escapeToken(p));
+      tokens.push(p);
     }
   }
   if (params.nickname) {
-    let nick = params.nickname.replace(/"/g, '\\"');
-    if (nick.match(/\s/)) nick = `"${nick}"`;
-    tokens.push("@" + nick);
+    const nick = params.nickname.replace(/"/g, '\\"');
+    tokens.push(nick.match(/\s/) ? '"@' + nick + '"' : "@" + nick);
   }
   return tokens.join(" ");
 }
@@ -165,7 +153,6 @@ export function parseBodyAndTags(body: string): {
   const bodyLines = reverseLines.reverse();
   const collectedTags: string[] = [];
   const uniqueTags = new Set<string>();
-
   for (let tagLine of tagLines) {
     tagLine = tagLine.replace(/^#/, "");
     for (let tag of tagLine.split(/, *#/g)) {

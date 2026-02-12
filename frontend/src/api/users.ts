@@ -1,6 +1,23 @@
 import type { User, UserDetail, PubConfig } from "./models";
 import { apiFetch, extractError } from "./client";
 
+export async function searchUsers(params: {
+  query: string;
+  offset?: number;
+  limit?: number;
+  locale?: string;
+}): Promise<User[]> {
+  const search = new URLSearchParams();
+  search.append("query", params.query);
+  if (params.offset !== undefined) search.append("offset", String(params.offset));
+  if (params.limit !== undefined) search.append("limit", String(params.limit));
+  if (params.locale) search.append("locale", params.locale);
+  const q = search.toString();
+  const res = await apiFetch(`/users/search?${q}`, { method: "GET" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
 export async function listUsers(
   params: {
     offset?: number;

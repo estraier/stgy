@@ -4,7 +4,7 @@ import { Config } from "@/config";
 import { useEffect, useState, useMemo, useCallback } from "react";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
-import { listUsers, listFollowers, listFollowees } from "@/api/users";
+import { listUsers, listFollowers, listFollowees, searchUsers } from "@/api/users";
 import type { User } from "@/api/models";
 import { parseUserSearchQuery, serializeUserSearchQuery } from "@/utils/parse";
 import UserCard from "@/components/UserCard";
@@ -13,6 +13,7 @@ const TAB_VALUES = ["followees", "followers", "all"] as const;
 
 const RESTORE_ID_KEY = "lastUserId";
 const RESTORE_PAGE_KEY = "lastUserPage";
+const MAX_SEARCH_PAGES = 10;
 
 type UserSearchQuery = {
   query?: string;
@@ -41,12 +42,16 @@ export default function PageBody() {
   );
 
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
+  const userLocale = status.state === "authenticated" ? status.session.userLocale : "en";
+
   const isSearchMode = useMemo(
     () =>
       (searchQueryObj.query && searchQueryObj.query.length > 0) ||
       (searchQueryObj.nickname && searchQueryObj.nickname.length > 0),
     [searchQueryObj],
   );
+
+  const isFullTextSearch = isSearchMode && !!searchQueryObj.query;
 
   const effectiveTab = isSearchMode ? "all" : tab;
 
@@ -99,9 +104,24 @@ export default function PageBody() {
 
     let fetcher: Promise<User[]>;
     if (isSearchMode) {
-      if (searchQueryObj.query) params.query = searchQueryObj.query;
-      if (searchQueryObj.nickname) params.nickname = searchQueryObj.nickname;
-      fetcher = listUsers(params);
+      if (isFullTextSearch) {
+        if (page > MAX_SEARCH_PAGES) {
+          setUsers([]);
+          setHasNext(false);
+          setLoading(false);
+          return;
+        }
+        fetcher = searchUsers({
+          query: searchQueryObj.query!,
+          offset: params.offset,
+          limit: params.limit,
+          locale: userLocale,
+        });
+      } else {
+        if (searchQueryObj.query) params.query = searchQueryObj.query;
+        if (searchQueryObj.nickname) params.nickname = searchQueryObj.nickname;
+        fetcher = listUsers(params);
+      }
     } else if (effectiveTab === "followees") {
       fetcher = listFollowees(userId!, {
         offset: params.offset,
@@ -136,7 +156,11 @@ export default function PageBody() {
           });
           return;
         }
-        setHasNext(data.length > Config.USERS_PAGE_SIZE);
+
+        const hasMore = data.length > Config.USERS_PAGE_SIZE;
+        const forceNoNext = isFullTextSearch && page >= MAX_SEARCH_PAGES;
+        setHasNext(hasMore && !forceNoNext);
+
         setUsers(data.slice(0, Config.USERS_PAGE_SIZE));
       })
       .catch((err) => {
@@ -151,7 +175,9 @@ export default function PageBody() {
     oldestFirst,
     qParam,
     userId,
+    userLocale,
     isSearchMode,
+    isFullTextSearch,
     searchQueryObj,
     tabParamMissing,
     setQuery,
@@ -253,18 +279,20 @@ export default function PageBody() {
             {t.charAt(0).toUpperCase() + t.slice(1)}
           </button>
         ))}
-        <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer ml-4 max-md:ml-1">
-          <input
-            type="checkbox"
-            checked={oldestFirst}
-            onChange={(e) => handleOldestFirstToggle(e.target.checked)}
-            className="cursor-pointer"
-          />
-          <span className="hidden md:inline">Oldest first</span>
-          <span className="md:hidden" aria-hidden>
-            Oldest
-          </span>
-        </label>
+        {!isFullTextSearch && (
+          <label className="flex items-center gap-1 text-sm text-gray-700 cursor-pointer ml-4 max-md:ml-1">
+            <input
+              type="checkbox"
+              checked={oldestFirst}
+              onChange={(e) => handleOldestFirstToggle(e.target.checked)}
+              className="cursor-pointer"
+            />
+            <span className="hidden md:inline">Oldest first</span>
+            <span className="md:hidden" aria-hidden>
+              Oldest
+            </span>
+          </label>
+        )}
       </div>
       {isSearchMode && (
         <div className="mb-2 text-sm text-gray-500">

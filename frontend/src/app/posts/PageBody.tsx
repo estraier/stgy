@@ -9,6 +9,7 @@ import {
   createPost,
   addLike,
   removeLike,
+  searchPosts,
 } from "@/api/posts";
 import { RecommendPostsForUser, RecommendPostsForPost } from "@/api/aiPost";
 import { listUsers } from "@/api/users";
@@ -30,6 +31,7 @@ type PostSearchQuery = {
 
 const RESTORE_ID_KEY = "lastPostId";
 const RESTORE_PAGE_KEY = "lastPage";
+const MAX_SEARCH_PAGES = 10;
 
 export default function PageBody() {
   const status = useRequireLogin();
@@ -79,6 +81,7 @@ export default function PageBody() {
 
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
   const userUpdatedAt = status.state === "authenticated" ? status.session.userUpdatedAt : null;
+  const userLocale = status.state === "authenticated" ? status.session.userLocale : "en";
   const hasTabParam = searchParams.has("tab");
 
   const isSearchMode = isSimilarMode
@@ -88,6 +91,8 @@ export default function PageBody() {
         (searchQueryObj.tag && searchQueryObj.tag.length > 0) ||
         (searchQueryObj.ownedBy && searchQueryObj.ownedBy.length > 0)
       );
+
+  const isFullTextSearch = isSearchMode && !isSimilarMode && !!searchQueryObj.query;
 
   const effectiveTab = isSearchMode ? "all" : tab;
 
@@ -195,8 +200,20 @@ export default function PageBody() {
           limit: params.limit,
           order: params.order,
         });
+      } else if (isFullTextSearch) {
+        if (usePage > MAX_SEARCH_PAGES) {
+          setPosts([]);
+          setHasNext(false);
+          setLoading(false);
+          return;
+        }
+        fetcher = searchPosts({
+          query: searchQueryObj.query!,
+          offset: params.offset,
+          limit: params.limit,
+          locale: userLocale,
+        });
       } else {
-        if (searchQueryObj.query) params.query = searchQueryObj.query;
         if (searchQueryObj.tag) params.tag = searchQueryObj.tag;
         if (effectiveOwnedBy) params.ownedBy = effectiveOwnedBy;
         if (!includingReplies) params.replyTo = "";
@@ -246,7 +263,10 @@ export default function PageBody() {
       return [];
     });
 
-    setHasNext(data.length > Config.POSTS_PAGE_SIZE);
+    const hasMoreItems = data.length > Config.POSTS_PAGE_SIZE;
+    const forceNoNext = isFullTextSearch && usePage >= MAX_SEARCH_PAGES;
+    setHasNext(hasMoreItems && !forceNoNext);
+
     setPosts(
       data.slice(0, Config.POSTS_PAGE_SIZE).map((post) => ({
         ...post,
@@ -272,6 +292,7 @@ export default function PageBody() {
     oldestFirst,
     everyPost,
     userId,
+    userLocale,
     searchQueryObj,
     isSearchMode,
     isSimilarMode,
@@ -282,6 +303,7 @@ export default function PageBody() {
     hasTabParam,
     tab,
     setQuery,
+    isFullTextSearch,
   ]);
 
   useEffect(() => {
@@ -473,7 +495,7 @@ export default function PageBody() {
   if (status.state !== "authenticated") return null;
 
   const showEveryPost = !isSearchMode && effectiveTab === "all";
-  const showLegacyOptions = isSearchMode || effectiveTab !== "all";
+  const showLegacyOptions = (isSearchMode || effectiveTab !== "all") && !isFullTextSearch;
 
   return (
     <main className="max-w-3xl mx-auto mt-4 p-1 sm:p-4" onClick={clearError}>

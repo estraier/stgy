@@ -27,6 +27,23 @@ function buildPostQuery(
   return search;
 }
 
+export async function searchPosts(params: {
+  query: string;
+  offset?: number;
+  limit?: number;
+  locale?: string;
+}): Promise<Post[]> {
+  const search = new URLSearchParams();
+  search.append("query", params.query);
+  if (params.offset !== undefined) search.append("offset", String(params.offset));
+  if (params.limit !== undefined) search.append("limit", String(params.limit));
+  if (params.locale) search.append("locale", params.locale);
+  const q = search.toString();
+  const res = await apiFetch(`/posts/search?${q}`, { method: "GET" });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
 export async function createPost(post: {
   content: string;
   tags: string[];
