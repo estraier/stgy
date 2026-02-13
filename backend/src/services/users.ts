@@ -81,9 +81,8 @@ export class UsersService {
       wheres.push(`(u.nickname ILIKE $1 OR d.introduction ILIKE $1)`);
       params.push(q);
     } else if (nickname) {
-      const q = `%${escapeForLike(nickname)}%`;
-      wheres.push(`u.nickname ILIKE $1`);
-      params.push(q);
+      wheres.push(`LOWER(u.nickname) = LOWER($1)`);
+      params.push(nickname);
     } else if (nicknamePrefix) {
       const q = `${escapeForLike(nicknamePrefix.toLowerCase())}%`;
       wheres.push(`LOWER(u.nickname) LIKE $1`);
@@ -263,9 +262,8 @@ export class UsersService {
       wheres.push(`(u.nickname ILIKE $1 OR d.introduction ILIKE $1)`);
       params.push(q);
     } else if (nickname) {
-      const q = `%${escapeForLike(nickname)}%`;
-      wheres.push(`u.nickname ILIKE $${params.length + 1}`);
-      params.push(q);
+      wheres.push(`LOWER(u.nickname) = LOWER($${params.length + 1})`);
+      params.push(nickname);
     } else if (nicknamePrefix) {
       const q = `${escapeForLike(nicknamePrefix.toLowerCase())}%`;
       wheres.push(`LOWER(u.nickname) LIKE $${params.length + 1}`);

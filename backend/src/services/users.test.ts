@@ -278,9 +278,9 @@ class MockPgClient {
         ).length;
         return { rows: [{ count }] };
       }
-      if (n.includes("WHERE u.nickname ILIKE $1")) {
-        const pat = params[0].toLowerCase().replace(/%/g, "");
-        const count = this.users.filter((u) => u.nickname.toLowerCase().includes(pat)).length;
+      if (n.includes("WHERE LOWER(u.nickname) = LOWER($1)")) {
+        const target = params[0].toLowerCase();
+        const count = this.users.filter((u) => u.nickname.toLowerCase() === target).length;
         return { rows: [{ count }] };
       }
       if (n.includes("WHERE LOWER(u.nickname) LIKE $1")) {
@@ -393,9 +393,9 @@ class MockPgClient {
             u.nickname.toLowerCase().includes(pat) ||
             (this.details[u.id]?.introduction ?? "").toLowerCase().includes(pat),
         );
-      } else if (n.includes("WHERE u.nickname ILIKE")) {
-        const pat = params[0].toLowerCase().replace(/%/g, "");
-        list = list.filter((u) => u.nickname.toLowerCase().includes(pat));
+      } else if (n.includes("WHERE LOWER(u.nickname) = LOWER")) {
+        const target = params[0].toLowerCase();
+        list = list.filter((u) => u.nickname.toLowerCase() === target);
       } else if (n.includes("WHERE LOWER(u.nickname) LIKE")) {
         const pat = params[0].toLowerCase().replace(/%/g, "");
         list = list.filter((u) => u.nickname.toLowerCase().startsWith(pat));
@@ -999,7 +999,7 @@ describe("UsersService", () => {
 
   test("countUsers (all/nickname/query)", async () => {
     expect(await service.countUsers()).toBe(3);
-    expect(await service.countUsers({ nickname: "B" })).toBe(1);
+    expect(await service.countUsers({ nickname: "Bob" })).toBe(1);
     expect(await service.countUsers({ query: "intro" })).toBe(3);
     expect(await service.countUsers({ query: "introA" })).toBe(1);
   });
