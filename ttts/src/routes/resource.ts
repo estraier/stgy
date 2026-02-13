@@ -230,7 +230,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
     try {
       const docId = req.params.docId;
       const { text, timestamp, locale, attrs } = req.body || {};
-      if (!text || typeof timestamp !== "number")
+      if (typeof text !== "string" || typeof timestamp !== "number")
         return res.status(400).json({ error: "text and timestamp are required" });
       const taskId = await searchService.enqueueTask({
         type: "ADD",
