@@ -80,7 +80,6 @@
     "log:search-index-worker": "docker compose logs searchindexworker",
     "log:ai-summary-worker": "docker compose logs aisummaryworker",
     "log:ai-user-worker": "docker compose logs aiuserworker",
-    "log:ttts": "docker compose logs ttts",
     "log:backend": "docker compose logs backend",
     "log:frontend": "docker compose logs frontend",
     "reset-data": "./scripts/reset-data.sh && ./scripts/reset-minio-data.sh && ./scripts/reset-ttts-data.sh && ./scripts/edit-users.py --insecure-password seeder/user-0*.txt && ./scripts/edit-posts.py seeder/post-0*.txt && ./scripts/user-actions.py seeder/action-*.txt && ./scripts/edit-posts.py seeder/post-x0*.txt",

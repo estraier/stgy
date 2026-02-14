@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>STGY Track Viewer Test</title>
+  <link rel="stylesheet" href="./dist/track-viewer.css">
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 800px;
+      margin: 0 auto;
+      padding: 20px;
+      background: #f4f4f4;
+    }
+
+    /* 記事内のスタイルを模倣 */
+    figure.stgy-track-map {
+      background: white;
+      padding: 10px;
+      border: 1px solid #ddd;
+      margin-bottom: 40px;
+      border-radius: 4px;
+    }
+
+    /* 重要: 地図の高さを指定しないとLeafletは表示されません */
+    .stgy-track-canvas {
+      height: 400px;
+      background: #eee; /* ロード前のプレースホルダ色 */
+      margin-bottom: 10px;
+    }
+
+    figcaption {
+      font-weight: bold;
+      color: #333;
+    }
+
+    /* JSが有効なときは詳細リストを隠すなどのスタイル調整も可能 */
+    /* details.stgy-track-pins { display: none; } */
+  </style>
+</head>
+<body>
+
+  <h1>STGY Track Viewer Test</h1>
+
+  <h2>1. Japan Area (Setagaya) with Inline Pins</h2>
+  <figure class="stgy-track-map" data-lon="139.6444794" data-lat="35.6595519" data-zoom="15">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption">東京都世田谷区赤堤</figcaption>
+    <details class="stgy-track-pins" open>
+      <summary>Annotations</summary>
+      <ul>
+        <li data-lon="139.6444772" data-lat="35.6595498">
+          <b>パン屋</b>: 美味い -- <a href="#">詳細リンク</a>
+        </li>
+        <li data-lon="139.640" data-lat="35.660">
+          <b>下高井戸駅</b>: 京王線
+        </li>
+      </ul>
+    </details>
+  </figure>
+
+  <h2>2. Foreign Area (Taiwan) + Guide Markers</h2>
+  <figure class="stgy-track-map" data-lon="121.5" data-lat="25.03" data-zoom="12">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption">Taipei Guide Map</figcaption>
+    <ul class="stgy-track-subtrack-sources">
+      <li><a href="#" class="subtrack-source" data-lon="121.5654" data-lat="25.0330">Taipei 101</a></li>
+      <li><a href="#" class="subtrack-source" data-lon="121.51" data-lat="25.08">Shilin Night Market</a></li>
+    </ul>
+  </figure>
+
+  <h2>3. Border Test (Tsushima) -> Should be GSI</h2>
+  <figure class="stgy-track-map" data-lon="129.29" data-lat="34.20" data-zoom="11">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption">Tsushima Island (Japan)</figcaption>
+  </figure>
+
+  <script src="./dist/track-viewer.js"></script>
+
+  <script>
+    // ハイドレーション実行
+    // グローバル変数 StgyTrackViewer にバンドルされている
+    console.log('Initializing STGY Maps...');
+
+    // クラスをインスタンス化して実行
+    const renderer = new StgyTrackViewer.StgyTrackRenderer();
+    renderer.hydrate();
+  </script>
+</body>
+</html>
