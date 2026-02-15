@@ -1,5 +1,6 @@
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
+import "./stgy-track.css";
 import { isJapan } from "./geo";
 
 // --- Fix for Leaflet default icon path issues in bundlers ---

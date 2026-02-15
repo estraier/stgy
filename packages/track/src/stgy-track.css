@@ -1,0 +1,20 @@
+/* packages/track/src/stgy-track.css */
+
+/* 地図へのデータ供給用要素は、地図描画時には非表示にする */
+.stgy-track-pins,
+.stgy-track-subtrack-sources,
+.stgy-track-sources { /* ついでにトラックソース一覧も隠しておくとスマートです */
+  display: none;
+}
+
+/* 地図のスタイル定義（必要に応じてここに追加できます） */
+.stgy-track-map {
+  position: relative;
+  /* デフォルトのスタイルがあればここに */
+}
+
+.stgy-track-canvas {
+  /* Leafletが描画される要素 */
+  min-height: 300px;
+  background-color: #f0f0f0;
+}
