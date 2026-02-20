@@ -1,20 +1,105 @@
 /* packages/track/src/stgy-track.css */
 
-/* 地図へのデータ供給用要素は、地図描画時には非表示にする */
+/* データ供給用要素は非表示 */
 .stgy-track-pins,
 .stgy-track-subtrack-sources,
-.stgy-track-sources { /* ついでにトラックソース一覧も隠しておくとスマートです */
+.stgy-track-sources {
   display: none;
 }
 
-/* 地図のスタイル定義（必要に応じてここに追加できます） */
+/* --- Base Layout --- */
 .stgy-track-map {
   position: relative;
-  /* デフォルトのスタイルがあればここに */
+  margin-bottom: 2em;
+  display: flex;
+  flex-direction: column;
+  width: 100%;
 }
 
 .stgy-track-canvas {
-  /* Leafletが描画される要素 */
+  width: 100%;
+  flex-grow: 1;
   min-height: 300px;
   background-color: #f0f0f0;
+  border: 1px solid #ddd;
+}
+
+.stgy-track-caption {
+  font-size: 0.9em;
+  color: #555;
+  margin-top: 0.5em;
+  text-align: center;
+  flex-shrink: 0;
+}
+
+
+/* --- Leaflet Popup Styling (.stgy-track-popup) --- */
+
+.stgy-track-popup .leaflet-popup-content-wrapper {
+  border-radius: 8px;
+  padding: 0;
+  overflow: hidden;
+}
+
+.stgy-track-popup .leaflet-popup-content {
+  margin: 12px 14px; /* 内部余白 */
+  line-height: 1.5;
+  font-size: 14px; /* PC向け基本サイズ */
+}
+
+.stgy-track-popup .annot-title {
+  font-weight: bold;
+  font-size: 1.1em;
+  margin-bottom: 4px;
+  color: #333;
+}
+
+.stgy-track-popup .annot-desc {
+  margin-bottom: 8px;
+  color: #555;
+}
+
+.stgy-track-popup .annot-href {
+  margin-bottom: 8px;
+  font-size: 0.9em;
+  word-break: break-all;
+}
+
+.stgy-track-popup .annot-href a {
+  color: #0078A8;
+  text-decoration: none;
+}
+.stgy-track-popup .annot-href a:hover {
+  text-decoration: underline;
+}
+
+.stgy-track-popup .annot-img {
+  margin-top: 8px;
+  text-align: center;
+  background-color: #f9f9f9;
+}
+
+.stgy-track-popup .annot-img img {
+  display: block;
+  margin: 0 auto;
+  max-width: 100%;
+  max-height: 50vh;
+  width: auto;
+  height: auto;
+  object-fit: contain;
+  border-radius: 4px;
+  border: 1px solid #eee;
+}
+
+@media (max-width: 480px) {
+  .stgy-track-popup .leaflet-popup-content {
+    margin: 10px;
+    font-size: 13px;
+  }
+}
+
+/* --- Custom Pin Icon --- */
+.stgy-custom-pin {
+  background: transparent;
+  border: none;
 }

@@ -3,87 +3,115 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>STGY Track Viewer Test</title>
-  <link rel="stylesheet" href="./dist/track-viewer.css">
+  <title>STGY Track Viewer Comprehensive Test</title>
   <style>
     body {
-      font-family: sans-serif;
-      max-width: 800px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+      max-width: 900px;
       margin: 0 auto;
       padding: 20px;
-      background: #f4f4f4;
-    }
-
-    /* 記事内のスタイルを模倣 */
-    figure.stgy-track-map {
-      background: white;
-      padding: 10px;
-      border: 1px solid #ddd;
-      margin-bottom: 40px;
-      border-radius: 4px;
-    }
-
-    /* 重要: 地図の高さを指定しないとLeafletは表示されません */
-    .stgy-track-canvas {
-      height: 400px;
-      background: #eee; /* ロード前のプレースホルダ色 */
-      margin-bottom: 10px;
-    }
-
-    figcaption {
-      font-weight: bold;
+      background-color: #f9f9f9;
       color: #333;
     }
-
-    /* JSが有効なときは詳細リストを隠すなどのスタイル調整も可能 */
-    /* details.stgy-track-pins { display: none; } */
+    h1 { margin-bottom: 10px; border-bottom: 2px solid #ddd; padding-bottom: 10px; }
+    h2 { margin-top: 40px; margin-bottom: 10px; font-size: 1.3rem; color: #444; border-left: 4px solid #0078A8; padding-left: 10px; }
+    p.desc { margin-bottom: 15px; color: #666; font-size: 0.95rem; line-height: 1.5; }
+    code { background: #eee; padding: 2px 5px; border-radius: 3px; font-family: monospace; color: #d63384; }
   </style>
+
+  <link rel="stylesheet" href="./dist/track-viewer.css">
 </head>
 <body>
 
   <h1>STGY Track Viewer Test</h1>
+  <p class="desc">これまでに実装した全機能（カラー指定含む）の挙動を確認するためのテストページです。</p>
 
-  <h2>1. Japan Area (Setagaya) with Inline Pins</h2>
-  <figure class="stgy-track-map" data-lon="139.6444794" data-lat="35.6595519" data-zoom="15">
+  <h2>1. カラフルなピン ＆ オートフィット</h2>
+  <p class="desc">
+    <code>data-color</code> 属性によるピンの色の変更テストです。ズーム指定がないためオートフィットが働きます。
+  </p>
+
+  <figure class="stgy-track-map" style="height: 450px;" data-lon="135.0" data-lat="34.5">
     <div class="stgy-track-canvas">Map loading...</div>
-    <figcaption class="stgy-track-caption">東京都世田谷区赤堤</figcaption>
-    <details class="stgy-track-pins" open>
-      <summary>Annotations</summary>
-      <ul>
-        <li data-lon="139.6444772" data-lat="35.6595498">
-          <b>パン屋</b>: 美味い -- <a href="#">詳細リンク</a>
+    <figcaption class="stgy-track-caption" lang="ja">淡路島 (カラーピンテスト)</figcaption>
+    <details class="stgy-track-pins">
+      <summary>pins and annotations</summary>
+      <ul lang="ja">
+        <li data-lon="135.0114" data-lat="34.6125" data-color="#e74c3c">
+          <div class="annot-title">赤いピン (HEX指定)</div>
+          <div class="annot-desc">data-color="#e74c3c"</div>
         </li>
-        <li data-lon="139.640" data-lat="35.660">
-          <b>下高井戸駅</b>: 京王線
+        <li data-lon="134.8" data-lat="34.4" data-color="green">
+          <div class="annot-title">緑のピン (カラーネーム指定)</div>
+          <div class="annot-desc">data-color="green"</div>
+        </li>
+        <li data-lon="134.6536" data-lat="34.2375">
+          <div class="annot-title">デフォルトのピン</div>
+          <div class="annot-desc">指定なしの場合は、Leaflet標準の青い画像ピンが使用されます。</div>
         </li>
       </ul>
     </details>
   </figure>
 
-  <h2>2. Foreign Area (Taiwan) + Guide Markers</h2>
-  <figure class="stgy-track-map" data-lon="121.5" data-lat="25.03" data-zoom="12">
+  <h2>2. ポップアップのパーセンテージ指定 ＆ 縦長画像スクロール</h2>
+  <p class="desc">
+    <code>data-popup-width</code> と <code>data-popup-height</code> をパーセンテージ(1〜99)で指定します。
+    縦幅を制限しているため、ポップアップ内でスクロールバーが出ます。（ズームは15で固定）
+  </p>
+
+  <figure class="stgy-track-map" style="aspect-ratio: 16 / 9;" data-lon="139.6444794" data-lat="35.6595519" data-zoom="15">
     <div class="stgy-track-canvas">Map loading...</div>
-    <figcaption class="stgy-track-caption">Taipei Guide Map</figcaption>
-    <ul class="stgy-track-subtrack-sources">
-      <li><a href="#" class="subtrack-source" data-lon="121.5654" data-lat="25.0330">Taipei 101</a></li>
-      <li><a href="#" class="subtrack-source" data-lon="121.51" data-lat="25.08">Shilin Night Market</a></li>
-    </ul>
+    <figcaption class="stgy-track-caption" lang="ja">アスペクト比 16:9 レスポンシブ</figcaption>
+    <details class="stgy-track-pins">
+      <summary>pins and annotations</summary>
+      <ul lang="ja">
+        <li data-lon="139.6444772" data-lat="35.6595498" data-popup-width="80" data-popup-height="80" data-color="orange">
+          <div class="annot-title">大きく表示 (80x80)</div>
+          <div class="annot-desc">幅80%、高さ80%に指定。縦長画像を入れているため、スクロールバーが出ます。</div>
+          <div class="annot-img">
+            <img src="https://placehold.co/400x1200/orange/white?text=Tall+Image" alt="Tall image">
+          </div>
+        </li>
+        <li data-lon="139.642" data-lat="35.658" data-popup-width="20" data-popup-height="20" data-color="purple">
+          <div class="annot-title">小さく表示 (20x20)</div>
+          <div class="annot-desc">幅20%、高さ20%。</div>
+        </li>
+        <li data-lon="139.647" data-lat="35.661" data-popup-width="60" data-popup-height="30" data-color="#333333">
+          <div class="annot-title">横長表示 (60x30)</div>
+          <div class="annot-desc">幅60%、高さ30%で指定。</div>
+          <div class="annot-img">
+            <img src="https://placehold.co/600x200/skyblue/white?text=Wide+Image" alt="Wide image">
+          </div>
+        </li>
+      </ul>
+    </details>
   </figure>
 
-  <h2>3. Border Test (Tsushima) -> Should be GSI</h2>
-  <figure class="stgy-track-map" data-lon="129.29" data-lat="34.20" data-zoom="11">
+  <h2>3. 海外の地図 (CyclOSM デフォルト) ＆ サイズ指定なし(フォールバック)</h2>
+  <p class="desc">
+    日本国外のため自動的に <code>CyclOSM</code> がデフォルトレイヤーになります。
+    親要素に <code>height</code> や <code>aspect-ratio</code> を指定していないため、CSSの <code>min-height: 300px;</code> が適用されます。
+  </p>
+
+  <figure class="stgy-track-map" data-lon="121.5654" data-lat="25.0330" data-zoom="13">
     <div class="stgy-track-canvas">Map loading...</div>
-    <figcaption class="stgy-track-caption">Tsushima Island (Japan)</figcaption>
+    <figcaption class="stgy-track-caption">Taipei 101 Guide (min-height fallback)</figcaption>
+    <details class="stgy-track-pins">
+      <summary>pins and annotations</summary>
+      <ul>
+        <li data-lon="121.5654" data-lat="25.0330" data-color="gold">
+          <div class="annot-title">Taipei 101</div>
+          <div class="annot-desc">Iconic skyscraper in Taiwan.</div>
+        </li>
+      </ul>
+    </details>
   </figure>
 
   <script src="./dist/track-viewer.js"></script>
 
   <script>
-    // ハイドレーション実行
-    // グローバル変数 StgyTrackViewer にバンドルされている
     console.log('Initializing STGY Maps...');
-
-    // クラスをインスタンス化して実行
+    // レンダラーのインスタンス化とハイドレーションの実行
     const renderer = new StgyTrackViewer.StgyTrackRenderer();
     renderer.hydrate();
   </script>
