@@ -2,6 +2,7 @@ import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import "./stgy-track.css";
 import { isJapan } from "./geo";
+import { TrackLoader } from "./loader";
 
 // --- Fix for Leaflet default icon path issues in bundlers ---
 const fixLeafletIcons = () => {
@@ -25,24 +26,35 @@ const fixLeafletIcons = () => {
 
 // --- SVG Custom Pin Icon Generator ---
 const createCustomPinIcon = (color: string) => {
-  // Leafletのデフォルトピンに近い形状のSVG
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="25px" height="41px" style="filter: drop-shadow(2px 4px 2px rgba(0,0,0,0.3));">
       <path fill="${color}" stroke="#ffffff" stroke-width="1.5" d="M12 0C5.373 0 0 5.373 0 12c0 8.442 11.373 23.36 11.706 23.784.144.184.364.288.594.288.23 0 .45-.104.594-.288C13.227 35.36 24 20.442 24 12 24 5.373 18.627 0 12 0zm0 18c-3.314 0-6-2.686-6-6s2.686-6 6-6 6 2.686 6 6-2.686 6-6 6z"/>
     </svg>`;
 
   return L.divIcon({
-    className: "stgy-custom-pin", // 背景等のデフォルトスタイルを消すためのクラス
+    className: "stgy-custom-pin",
     html: svg,
     iconSize: [25, 41],
-    iconAnchor: [12, 41],   // ピンの先端を座標に合わせる
-    popupAnchor: [0, -34],  // ポップアップの吹き出し位置
+    iconAnchor: [12, 41],
+    popupAnchor: [0, -34],
   });
 };
 
+// --- Helper: Build HTML string from GeoJSON properties ---
+const buildPopupHtmlFromProps = (props: any): string => {
+  let html = "";
+  if (props.title) html += `<div class="annot-title">${props.title}</div>`;
+  if (props.description) html += `<div class="annot-desc">${props.description}</div>`;
+  if (props.image) html += `<div class="annot-img"><img src="${props.image}" alt="${props.title || ''}"></div>`;
+  return html;
+};
+
 export class StgyTrackRenderer {
+  private loader: TrackLoader;
+
   constructor() {
     fixLeafletIcons();
+    this.loader = new TrackLoader();
   }
 
   public hydrate(rootElement: HTMLElement = document.body) {
@@ -50,74 +62,41 @@ export class StgyTrackRenderer {
     figures.forEach((figure) => this.initMap(figure));
   }
 
-  private initMap(figure: HTMLElement) {
+  private async initMap(figure: HTMLElement) {
     if (figure.dataset.stgyTrackInitialized) return;
 
-    // 1. Get Canvas
     const canvas = figure.querySelector<HTMLElement>(".stgy-track-canvas");
     if (!canvas) {
       console.warn("[StgyTrack] Canvas element .stgy-track-canvas not found.");
       return;
     }
 
-    // 2. Get Parameters
-    // ズームレベルがHTMLで明示的に指定されているかを判定（オートフィットの制御用）
+    const hasExplicitLat = typeof figure.dataset.lat !== "undefined";
+    const hasExplicitLon = typeof figure.dataset.lon !== "undefined";
     const hasExplicitZoom = typeof figure.dataset.zoom !== "undefined";
 
-    const lat = parseFloat(figure.dataset.lat || "0");
-    const lon = parseFloat(figure.dataset.lon || "0");
+    let lat = parseFloat(figure.dataset.lat || "0");
+    let lon = parseFloat(figure.dataset.lon || "0");
     const zoom = parseInt(figure.dataset.zoom || "13", 10);
 
-    // 3. Japan Detection
+    if (!hasExplicitLat || !hasExplicitLon) {
+      const firstPin = figure.querySelector<HTMLElement>(".stgy-track-pins li");
+      if (firstPin) {
+        lat = parseFloat(firstPin.dataset.lat || lat.toString());
+        lon = parseFloat(firstPin.dataset.lon || lon.toString());
+      }
+    }
+
     const isJp = isJapan(lat, lon);
 
-    // 4. Define Tile Layers
-    const gsiPale = L.tileLayer(
-      "https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png",
-      {
-        attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">GSI Japan</a>',
-        maxNativeZoom: 18,
-        maxZoom: 20,
-      }
-    );
+    // --- Define Tile Layers ---
+    const gsiPale = L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png", { attribution: '&copy; GSI Japan', maxNativeZoom: 18, maxZoom: 20 });
+    const gsiStd = L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png", { attribution: '&copy; GSI Japan', maxNativeZoom: 18, maxZoom: 20 });
+    const gsiPhoto = L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg", { attribution: '&copy; GSI Japan', maxNativeZoom: 18, maxZoom: 20 });
+    const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", { attribution: '&copy; OpenStreetMap', maxNativeZoom: 19, maxZoom: 20 });
+    const cyclosm = L.tileLayer("https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png", { attribution: '&copy; CyclOSM', maxNativeZoom: 20, maxZoom: 20 });
+    const opentopo = L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", { attribution: '&copy; OpenTopoMap', maxNativeZoom: 17, maxZoom: 20 });
 
-    const gsiStd = L.tileLayer(
-      "https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png",
-      {
-        attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">GSI Japan</a>',
-        maxNativeZoom: 18,
-        maxZoom: 20,
-      }
-    );
-
-    const gsiPhoto = L.tileLayer(
-      "https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg",
-      {
-        attribution: '&copy; <a href="https://maps.gsi.go.jp/development/ichiran.html">GSI Japan</a>',
-        maxNativeZoom: 18,
-        maxZoom: 20,
-      }
-    );
-
-    const osm = L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
-      maxNativeZoom: 19,
-      maxZoom: 20,
-    });
-
-    const cyclosm = L.tileLayer("https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png", {
-      attribution: '&copy; <a href="https://www.cyclosm.org">CyclOSM</a>',
-      maxNativeZoom: 20,
-      maxZoom: 20,
-    });
-
-    const opentopo = L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", {
-      attribution: '&copy; <a href="https://opentopomap.org">OpenTopoMap</a>',
-      maxNativeZoom: 17,
-      maxZoom: 20,
-    });
-
-    // 5. Build Layer List & Determine Default
     const baseMaps: Record<string, L.TileLayer> = {};
     let defaultLayer: L.TileLayer;
 
@@ -136,7 +115,6 @@ export class StgyTrackRenderer {
       defaultLayer = cyclosm;
     }
 
-    // 6. Initialize Map
     const map = L.map(canvas, {
       center: [lat, lon],
       zoom: zoom,
@@ -145,62 +123,118 @@ export class StgyTrackRenderer {
     });
 
     L.control.layers(baseMaps).addTo(map);
+    const masterGroup = L.featureGroup().addTo(map);
 
-    // --- Handling Content Modes ---
-
-    // Mode A: Inline Pins
+    // --- 1. Render Inline Pins ---
     const inlinePins = figure.querySelectorAll<HTMLElement>(".stgy-track-pins li");
     if (inlinePins.length > 0) {
-      // ズーム指定がない場合のみ autoFit を true にする
-      this.renderInlinePins(map, inlinePins, !hasExplicitZoom);
+      this.renderInlinePins(map, masterGroup, inlinePins);
     }
 
-    // Mark as initialized
+    // --- 2. Load & Render GeoJSON/TrackJSON ---
+    const trackLinks = figure.querySelectorAll<HTMLAnchorElement>(".stgy-track-sources a.track-source");
+    if (trackLinks.length > 0) {
+      const trackPromises = Array.from(trackLinks).map(async (link) => {
+        const href = link.getAttribute("href");
+        if (!href) return;
+
+        try {
+          const geoJsonData = await this.loader.load(href);
+
+          const geoJsonLayer = L.geoJSON(geoJsonData, {
+            // スタイル指定 (LineString, Polygon 等用)
+            style: (feature) => {
+              const props = feature?.properties || {};
+              return {
+                color: props.color || "#0078A8",
+                weight: props.weight || 4,
+                opacity: props.opacity || 0.8
+              };
+            },
+            // Pointデータの描画をカスタムピンに差し替え
+            pointToLayer: (feature, latlng) => {
+              const props = feature.properties || {};
+              const markerOptions: L.MarkerOptions = {};
+              if (props.color) {
+                markerOptions.icon = createCustomPinIcon(props.color);
+              }
+              return L.marker(latlng, markerOptions);
+            },
+            // 各要素（点や線）にポップアップをバインド
+            onEachFeature: (feature, layer) => {
+              const props = feature.properties || {};
+              const popupHtml = buildPopupHtmlFromProps(props);
+
+              if (popupHtml) {
+                const mapContainer = map.getContainer();
+                const mapWidth = mapContainer.clientWidth;
+                const mapHeight = mapContainer.clientHeight;
+
+                const widthPct = Math.max(1, Math.min(99, props.popupWidth || 33));
+                const heightPct = Math.max(1, Math.min(99, props.popupHeight || 33));
+
+                const maxWidth = mapWidth * (widthPct / 100);
+                const popupMaxHeight = mapHeight * (heightPct / 100);
+                const minWidth = Math.min(150, maxWidth * 0.5);
+
+                layer.bindPopup(popupHtml, {
+                  maxWidth: maxWidth,
+                  minWidth: minWidth,
+                  maxHeight: popupMaxHeight,
+                  className: "stgy-track-popup"
+                });
+              }
+            }
+          });
+
+          masterGroup.addLayer(geoJsonLayer);
+        } catch (e) {
+          console.error(`[StgyTrack] Failed to load track data from ${href}`, e);
+        }
+      });
+
+      await Promise.all(trackPromises);
+    }
+
+    // --- 3. Apply Smart Auto-Fit ---
+    const bounds = masterGroup.getBounds();
+    if (bounds.isValid()) {
+      if (!hasExplicitZoom) {
+        map.fitBounds(bounds, { padding: [50, 50] });
+      } else if (!hasExplicitLat || !hasExplicitLon) {
+        map.setView(bounds.getCenter(), zoom);
+      }
+    }
+
     figure.dataset.stgyTrackInitialized = "true";
   }
 
-  /**
-   * Render markers from inline list elements with Responsive Popup Size and Custom Colors
-   */
-  private renderInlinePins(map: L.Map, pins: NodeListOf<HTMLElement>, autoFit: boolean = true) {
-    const markers: L.Marker[] = [];
-
-    // 現在の地図コンテナのサイズを取得
+  private renderInlinePins(map: L.Map, layerGroup: L.FeatureGroup, pins: NodeListOf<HTMLElement>) {
     const mapContainer = map.getContainer();
+    const mapWidth = mapContainer.clientWidth;
+    const mapHeight = mapContainer.clientHeight;
 
     pins.forEach((li) => {
       const lat = parseFloat(li.dataset.lat || "0");
       const lon = parseFloat(li.dataset.lon || "0");
-
       if (lat === 0 && lon === 0) return;
 
-      const mapWidth = mapContainer.clientWidth;
-      const mapHeight = mapContainer.clientHeight;
-
-      // data-popup-width と data-popup-height を取得 (デフォルト 33)
       const widthPctStr = li.dataset.popupWidth || "33";
       const heightPctStr = li.dataset.popupHeight || "33";
-
-      // 1〜99の範囲に収める
       const widthPct = Math.max(1, Math.min(99, parseInt(widthPctStr, 10) || 33));
       const heightPct = Math.max(1, Math.min(99, parseInt(heightPctStr, 10) || 33));
 
-      // パーセンテージから実際のピクセルサイズを計算
       const maxWidth = mapWidth * (widthPct / 100);
       const popupMaxHeight = mapHeight * (heightPct / 100);
-
       const minWidth = Math.min(150, maxWidth * 0.5);
 
-      // 色指定の取得
       const pinColor = li.dataset.color;
       const markerOptions: L.MarkerOptions = {};
-
       if (pinColor) {
         markerOptions.icon = createCustomPinIcon(pinColor);
       }
 
-      const marker = L.marker([lat, lon], markerOptions).addTo(map);
-
+      const marker = L.marker([lat, lon], markerOptions);
       marker.bindPopup(li.innerHTML, {
         maxWidth: maxWidth,
         minWidth: minWidth,
@@ -208,13 +242,7 @@ export class StgyTrackRenderer {
         className: "stgy-track-popup"
       });
 
-      markers.push(marker);
+      layerGroup.addLayer(marker);
     });
-
-    // オートフィットが許可されている場合のみ、ピン全体が収まるようにズーム・移動する
-    if (markers.length > 1 && autoFit) {
-      const group = L.featureGroup(markers);
-      map.fitBounds(group.getBounds().pad(0.1));
-    }
   }
 }
