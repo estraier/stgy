@@ -18,6 +18,38 @@
   <h1>STGY Track Viewer Feature Demo</h1>
   <p class="desc">これまでに実装された全機能の挙動を確認するテストページです。</p>
 
+  <h2>0. 最小構成：data-src だけで読み込む</h2>
+  <p class="desc">
+    <code>data-src</code> だけを指定した最小構成のデモです。<br>
+    TrackJSON / GeoJSON の読み込み元を <code>figure</code> に直接書けることを確認します。
+  </p>
+  <figure class="stgy-track-map" style="height: 300px;" data-src="#demo-geojson-0">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption" lang="ja">data-src 最小構成デモ</figcaption>
+  </figure>
+
+  <template id="demo-geojson-0">
+  {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "geometry": {
+          "type": "Point",
+          "coordinates": [139.767, 35.681]
+        },
+        "properties": {
+          "title": "東京駅",
+          "description": "data-src から読み込まれた最小構成のポイントです。",
+          "color": "#8e44ad",
+          "popupWidth": 40,
+          "popupHeight": 30
+        }
+      }
+    ]
+  }
+  </template>
+
   <h2>1. 基本機能：ピン描画とポップアップサイズ指定（完全オートフィット）</h2>
   <p class="desc">
     <code>data-lat</code>, <code>data-lon</code>, <code>data-zoom</code> を<b>すべて指定していません</b>。<br>

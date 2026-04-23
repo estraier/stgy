@@ -49,6 +49,8 @@ const buildPopupHtmlFromProps = (props: any): string => {
   return html;
 };
 
+const DEFAULT_SINGLE_POINT_ZOOM = 12;
+
 export class StgyTrackRenderer {
   private loader: TrackLoader;
 
@@ -79,11 +81,27 @@ export class StgyTrackRenderer {
     let lon = parseFloat(figure.dataset.lon || "0");
     const zoom = parseInt(figure.dataset.zoom || "13", 10);
 
+    const dataSrc = figure.getAttribute("data-src")?.trim();
+    let preloadedTrackData: any | undefined;
+
     if (!hasExplicitLat || !hasExplicitLon) {
       const firstPin = figure.querySelector<HTMLElement>(".stgy-track-pins li");
       if (firstPin) {
         lat = parseFloat(firstPin.dataset.lat || lat.toString());
         lon = parseFloat(firstPin.dataset.lon || lon.toString());
+      } else if (dataSrc) {
+        try {
+          preloadedTrackData = await this.loader.load(dataSrc);
+          const preloadedLayer = L.geoJSON(preloadedTrackData);
+          const preloadedBounds = preloadedLayer.getBounds();
+          if (preloadedBounds.isValid()) {
+            const center = preloadedBounds.getCenter();
+            lat = center.lat;
+            lon = center.lng;
+          }
+        } catch (e) {
+          console.error(`[StgyTrack] Failed to preload track data from ${dataSrc}`, e);
+        }
       }
     }
 
@@ -132,14 +150,19 @@ export class StgyTrackRenderer {
     }
 
     // --- 2. Load & Render GeoJSON/TrackJSON ---
-    const trackLinks = figure.querySelectorAll<HTMLAnchorElement>(".stgy-track-sources a.track-source");
-    if (trackLinks.length > 0) {
-      const trackPromises = Array.from(trackLinks).map(async (link) => {
-        const href = link.getAttribute("href");
-        if (!href) return;
+    const trackHrefs = dataSrc
+      ? [dataSrc]
+      : Array.from(figure.querySelectorAll<HTMLAnchorElement>(".stgy-track-sources a.track-source"))
+          .map((link) => link.getAttribute("href")?.trim() || "")
+          .filter((href) => href.length > 0);
 
+    if (trackHrefs.length > 0) {
+      const trackPromises = trackHrefs.map(async (href) => {
         try {
-          const geoJsonData = await this.loader.load(href);
+          const geoJsonData =
+            dataSrc && href === dataSrc && typeof preloadedTrackData !== "undefined"
+              ? preloadedTrackData
+              : await this.loader.load(href);
 
           const geoJsonLayer = L.geoJSON(geoJsonData, {
             // スタイル指定 (LineString, Polygon 等用)
@@ -200,7 +223,13 @@ export class StgyTrackRenderer {
     const bounds = masterGroup.getBounds();
     if (bounds.isValid()) {
       if (!hasExplicitZoom) {
-        map.fitBounds(bounds, { padding: [50, 50] });
+        const southWest = bounds.getSouthWest();
+        const northEast = bounds.getNorthEast();
+        if (southWest.lat === northEast.lat && southWest.lng === northEast.lng) {
+          map.setView(bounds.getCenter(), DEFAULT_SINGLE_POINT_ZOOM);
+        } else {
+          map.fitBounds(bounds, { padding: [50, 50] });
+        }
       } else if (!hasExplicitLat || !hasExplicitLon) {
         map.setView(bounds.getCenter(), zoom);
       }
