@@ -155,7 +155,48 @@
   }
   </template>
 
-  <h2>4. 海外地図の自動切り替えとフォールバック座標判定</h2>
+  <h2>4. ガイドマップ：data-render="pin"</h2>
+  <p class="desc">
+    <code>.stgy-track-sources a.track-source[data-render="pin"]</code> のデモです。<br>
+    最初は代表点だけがピンとして表示され、クリックすると対応するルート表示がトグルされます。
+  </p>
+  <figure class="stgy-track-map" style="height: 350px;">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption" lang="ja">ガイドピンからルートを開閉するデモ</figcaption>
+    <ul class="stgy-track-sources">
+      <li><a href="#demo-geojson-2" class="track-source" data-render="pin">皇居ランニングコース</a></li>
+    </ul>
+  </figure>
+
+  <template id="demo-geojson-2">
+  {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [139.7528, 35.6852],
+            [139.7585, 35.6848],
+            [139.7635, 35.6805],
+            [139.7610, 35.6754],
+            [139.7542, 35.6747],
+            [139.7498, 35.6789],
+            [139.7528, 35.6852]
+          ]
+        },
+        "properties": {
+          "color": "#1abc9c",
+          "weight": 5,
+          "opacity": 0.9
+        }
+      }
+    ]
+  }
+  </template>
+
+  <h2>5. 海外地図の自動切り替えとフォールバック座標判定</h2>
   <figure class="stgy-track-map" style="height: 350px;">
     <div class="stgy-track-canvas">Map loading...</div>
     <figcaption class="stgy-track-caption">台北 101 (海外判定テスト)</figcaption>

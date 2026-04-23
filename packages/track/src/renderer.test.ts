@@ -5,6 +5,35 @@ import * as geo from "./geo";
 
 jest.mock("leaflet", () => {
   const originalL = jest.requireActual("leaflet");
+
+  const createFeatureGroup = () => {
+    const layers = new Set<unknown>();
+    const group = {
+      addTo: jest.fn(),
+      addLayer: jest.fn(),
+      removeLayer: jest.fn(),
+      hasLayer: jest.fn(),
+      getBounds: jest.fn().mockReturnValue({
+        isValid: () => true,
+        getCenter: () => ({ lat: 35, lng: 139 }),
+        getSouthWest: () => ({ lat: 34, lng: 138 }),
+        getNorthEast: () => ({ lat: 36, lng: 140 }),
+        pad: jest.fn().mockReturnThis()
+      })
+    };
+    group.addTo.mockReturnValue(group);
+    group.addLayer.mockImplementation((layer: unknown) => {
+      layers.add(layer);
+      return group;
+    });
+    group.removeLayer.mockImplementation((layer: unknown) => {
+      layers.delete(layer);
+      return group;
+    });
+    group.hasLayer.mockImplementation((layer: unknown) => layers.has(layer));
+    return group;
+  };
+
   return {
     ...originalL,
     map: jest.fn().mockReturnValue({
@@ -13,23 +42,17 @@ jest.mock("leaflet", () => {
       fitBounds: jest.fn(),
       getContainer: () => document.createElement("div")
     }),
-    featureGroup: jest.fn().mockReturnValue({
-      addTo: jest.fn().mockReturnThis(),
-      addLayer: jest.fn(),
-      getBounds: jest.fn().mockReturnValue({
-        isValid: () => true,
-        getCenter: () => ({ lat: 35, lng: 139 }),
-        getSouthWest: () => ({ lat: 34, lng: 138 }),
-        getNorthEast: () => ({ lat: 36, lng: 140 }),
-        pad: jest.fn().mockReturnThis()
-      })
-    }),
-    geoJSON: jest.fn().mockReturnValue({
+    marker: jest.fn().mockImplementation(() => ({
+      bindPopup: jest.fn().mockReturnThis(),
+      on: jest.fn().mockReturnThis()
+    })),
+    featureGroup: jest.fn().mockImplementation(createFeatureGroup),
+    geoJSON: jest.fn().mockImplementation(() => ({
       getBounds: jest.fn().mockReturnValue({
         isValid: () => true,
         getCenter: () => ({ lat: 35.681, lng: 139.767 })
       })
-    })
+    }))
   };
 });
 
@@ -173,15 +196,31 @@ describe("StgyTrackRenderer", () => {
     const mockMap = L.map(document.createElement("div"));
     (L.map as jest.Mock).mockReturnValue(mockMap);
 
-    (L.featureGroup as jest.Mock).mockReturnValue({
-      addTo: jest.fn().mockReturnThis(),
-      addLayer: jest.fn(),
-      getBounds: jest.fn().mockReturnValue({
-        isValid: () => true,
-        getCenter: () => ({ lat: 35.681, lng: 139.767 }),
-        getSouthWest: () => ({ lat: 35.681, lng: 139.767 }),
-        getNorthEast: () => ({ lat: 35.681, lng: 139.767 }),
-      })
+    (L.featureGroup as jest.Mock).mockImplementation(() => {
+      const layers = new Set<unknown>();
+      const group = {
+        addTo: jest.fn(),
+        addLayer: jest.fn(),
+        removeLayer: jest.fn(),
+        hasLayer: jest.fn(),
+        getBounds: jest.fn().mockReturnValue({
+          isValid: () => true,
+          getCenter: () => ({ lat: 35.681, lng: 139.767 }),
+          getSouthWest: () => ({ lat: 35.681, lng: 139.767 }),
+          getNorthEast: () => ({ lat: 35.681, lng: 139.767 }),
+        })
+      };
+      group.addTo.mockReturnValue(group);
+      group.addLayer.mockImplementation((layer: unknown) => {
+        layers.add(layer);
+        return group;
+      });
+      group.removeLayer.mockImplementation((layer: unknown) => {
+        layers.delete(layer);
+        return group;
+      });
+      group.hasLayer.mockImplementation((layer: unknown) => layers.has(layer));
+      return group;
     });
 
     jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
@@ -204,5 +243,89 @@ describe("StgyTrackRenderer", () => {
 
     expect(mockMap.setView).toHaveBeenCalledWith({ lat: 35.681, lng: 139.767 }, 12);
     expect(mockMap.fitBounds).not.toHaveBeenCalled();
+  });
+
+  test("renders data-render=pin as a guide pin", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map">
+        <div class="stgy-track-canvas"></div>
+        <ul class="stgy-track-sources">
+          <li><a href="#demo-geojson-pin" class="track-source" data-render="pin">Guide Route</a></li>
+        </ul>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [[139.767, 35.681], [139.78, 35.69]]
+          },
+          properties: {}
+        }
+      ],
+    });
+
+    renderer.hydrate(document.body);
+
+    await new Promise(process.nextTick);
+
+    expect(L.map).toHaveBeenCalledWith(
+      expect.any(HTMLElement),
+      expect.objectContaining({
+        center: [35.681, 139.767]
+      })
+    );
+    expect(L.marker).toHaveBeenCalledWith(
+      expect.objectContaining({ lat: 35.681, lng: 139.767 })
+    );
+  });
+
+  test("toggles route layer when a guide pin is clicked", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map">
+        <div class="stgy-track-canvas"></div>
+        <ul class="stgy-track-sources">
+          <li><a href="#demo-geojson-pin" class="track-source" data-render="pin">Guide Route</a></li>
+        </ul>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [[139.767, 35.681], [139.78, 35.69]]
+          },
+          properties: {}
+        }
+      ],
+    });
+
+    renderer.hydrate(document.body);
+
+    await new Promise(process.nextTick);
+
+    const marker = (L.marker as jest.Mock).mock.results[0].value;
+    const clickHandler = marker.on.mock.calls.find((call: unknown[]) => call[0] === "click")?.[1];
+    const group = (L.featureGroup as jest.Mock).mock.results[0].value;
+    const initialAddCount = group.addLayer.mock.calls.length;
+
+    expect(typeof clickHandler).toBe("function");
+
+    clickHandler();
+
+    expect(group.addLayer.mock.calls.length).toBe(initialAddCount + 1);
+    const routeLayer = group.addLayer.mock.calls[initialAddCount][0];
+
+    clickHandler();
+
+    expect(group.removeLayer).toHaveBeenCalledWith(routeLayer);
   });
 });

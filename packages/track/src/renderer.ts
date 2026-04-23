@@ -64,6 +64,100 @@ export class StgyTrackRenderer {
     figures.forEach((figure) => this.initMap(figure));
   }
 
+  private createGeoJsonLayer(map: L.Map, geoJsonData: any): L.GeoJSON {
+    return L.geoJSON(geoJsonData, {
+      style: (feature) => {
+        const props = feature?.properties || {};
+        return {
+          color: props.color || "#0078A8",
+          weight: props.weight || 4,
+          opacity: props.opacity || 0.8
+        };
+      },
+      pointToLayer: (feature, latlng) => {
+        const props = feature.properties || {};
+        const markerOptions: L.MarkerOptions = {};
+        if (props.color) {
+          markerOptions.icon = createCustomPinIcon(props.color);
+        }
+        return L.marker(latlng, markerOptions);
+      },
+      onEachFeature: (feature, layer) => {
+        const props = feature.properties || {};
+        const popupHtml = buildPopupHtmlFromProps(props);
+
+        if (popupHtml) {
+          const mapContainer = map.getContainer();
+          const mapWidth = mapContainer.clientWidth;
+          const mapHeight = mapContainer.clientHeight;
+
+          const widthPct = Math.max(1, Math.min(99, props.popupWidth || 33));
+          const heightPct = Math.max(1, Math.min(99, props.popupHeight || 33));
+
+          const maxWidth = mapWidth * (widthPct / 100);
+          const popupMaxHeight = mapHeight * (heightPct / 100);
+          const minWidth = Math.min(150, maxWidth * 0.5);
+
+          layer.bindPopup(popupHtml, {
+            maxWidth: maxWidth,
+            minWidth: minWidth,
+            maxHeight: popupMaxHeight,
+            className: "stgy-track-popup"
+          });
+        }
+      }
+    });
+  }
+
+  private getGeoJsonCenter(geoJsonData: any): L.LatLng | null {
+    const layer = L.geoJSON(geoJsonData);
+    const bounds = layer.getBounds();
+    if (!bounds.isValid()) {
+      return null;
+    }
+    return bounds.getCenter();
+  }
+
+  private async loadTrackData(href: string, cache: Record<string, any>): Promise<any> {
+    if (Object.prototype.hasOwnProperty.call(cache, href)) {
+      return cache[href];
+    }
+    const data = await this.loader.load(href);
+    cache[href] = data;
+    return data;
+  }
+
+  private renderTrackAsPin(
+    map: L.Map,
+    layerGroup: L.FeatureGroup,
+    geoJsonData: any,
+    label: string
+  ) {
+    const center = this.getGeoJsonCenter(geoJsonData);
+    if (!center) {
+      return;
+    }
+
+    const marker = L.marker(center);
+    if (label) {
+      marker.bindPopup(`<div class="annot-title">${label}</div>`);
+    }
+
+    let routeLayer: L.GeoJSON | null = null;
+    marker.on("click", () => {
+      if (!routeLayer) {
+        routeLayer = this.createGeoJsonLayer(map, geoJsonData);
+      }
+      if (layerGroup.hasLayer(routeLayer)) {
+        layerGroup.removeLayer(routeLayer);
+      } else {
+        layerGroup.addLayer(routeLayer);
+      }
+    });
+
+    layerGroup.addLayer(marker);
+  }
+
   private async initMap(figure: HTMLElement) {
     if (figure.dataset.stgyTrackInitialized) return;
 
@@ -82,7 +176,10 @@ export class StgyTrackRenderer {
     const zoom = parseInt(figure.dataset.zoom || "13", 10);
 
     const dataSrc = figure.getAttribute("data-src")?.trim();
-    let preloadedTrackData: any | undefined;
+    const sourceLinks = dataSrc
+      ? []
+      : Array.from(figure.querySelectorAll<HTMLAnchorElement>(".stgy-track-sources a.track-source"));
+    const trackDataCache: Record<string, any> = {};
 
     if (!hasExplicitLat || !hasExplicitLon) {
       const firstPin = figure.querySelector<HTMLElement>(".stgy-track-pins li");
@@ -91,16 +188,30 @@ export class StgyTrackRenderer {
         lon = parseFloat(firstPin.dataset.lon || lon.toString());
       } else if (dataSrc) {
         try {
-          preloadedTrackData = await this.loader.load(dataSrc);
-          const preloadedLayer = L.geoJSON(preloadedTrackData);
-          const preloadedBounds = preloadedLayer.getBounds();
-          if (preloadedBounds.isValid()) {
-            const center = preloadedBounds.getCenter();
+          const preloadedTrackData = await this.loadTrackData(dataSrc, trackDataCache);
+          const center = this.getGeoJsonCenter(preloadedTrackData);
+          if (center) {
             lat = center.lat;
             lon = center.lng;
           }
         } catch (e) {
           console.error(`[StgyTrack] Failed to preload track data from ${dataSrc}`, e);
+        }
+      } else {
+        const firstHref = sourceLinks
+          .map((link) => link.getAttribute("href")?.trim() || "")
+          .find((href) => href.length > 0);
+        if (firstHref) {
+          try {
+            const preloadedTrackData = await this.loadTrackData(firstHref, trackDataCache);
+            const center = this.getGeoJsonCenter(preloadedTrackData);
+            if (center) {
+              lat = center.lat;
+              lon = center.lng;
+            }
+          } catch (e) {
+            console.error(`[StgyTrack] Failed to preload track data from ${firstHref}`, e);
+          }
         }
       }
     }
@@ -150,67 +261,29 @@ export class StgyTrackRenderer {
     }
 
     // --- 2. Load & Render GeoJSON/TrackJSON ---
-    const trackHrefs = dataSrc
-      ? [dataSrc]
-      : Array.from(figure.querySelectorAll<HTMLAnchorElement>(".stgy-track-sources a.track-source"))
-          .map((link) => link.getAttribute("href")?.trim() || "")
-          .filter((href) => href.length > 0);
+    if (dataSrc) {
+      try {
+        const geoJsonData = await this.loadTrackData(dataSrc, trackDataCache);
+        const geoJsonLayer = this.createGeoJsonLayer(map, geoJsonData);
+        masterGroup.addLayer(geoJsonLayer);
+      } catch (e) {
+        console.error(`[StgyTrack] Failed to load track data from ${dataSrc}`, e);
+      }
+    } else if (sourceLinks.length > 0) {
+      const trackPromises = sourceLinks.map(async (link) => {
+        const href = link.getAttribute("href")?.trim() || "";
+        if (!href) {
+          return;
+        }
 
-    if (trackHrefs.length > 0) {
-      const trackPromises = trackHrefs.map(async (href) => {
         try {
-          const geoJsonData =
-            dataSrc && href === dataSrc && typeof preloadedTrackData !== "undefined"
-              ? preloadedTrackData
-              : await this.loader.load(href);
-
-          const geoJsonLayer = L.geoJSON(geoJsonData, {
-            // スタイル指定 (LineString, Polygon 等用)
-            style: (feature) => {
-              const props = feature?.properties || {};
-              return {
-                color: props.color || "#0078A8",
-                weight: props.weight || 4,
-                opacity: props.opacity || 0.8
-              };
-            },
-            // Pointデータの描画をカスタムピンに差し替え
-            pointToLayer: (feature, latlng) => {
-              const props = feature.properties || {};
-              const markerOptions: L.MarkerOptions = {};
-              if (props.color) {
-                markerOptions.icon = createCustomPinIcon(props.color);
-              }
-              return L.marker(latlng, markerOptions);
-            },
-            // 各要素（点や線）にポップアップをバインド
-            onEachFeature: (feature, layer) => {
-              const props = feature.properties || {};
-              const popupHtml = buildPopupHtmlFromProps(props);
-
-              if (popupHtml) {
-                const mapContainer = map.getContainer();
-                const mapWidth = mapContainer.clientWidth;
-                const mapHeight = mapContainer.clientHeight;
-
-                const widthPct = Math.max(1, Math.min(99, props.popupWidth || 33));
-                const heightPct = Math.max(1, Math.min(99, props.popupHeight || 33));
-
-                const maxWidth = mapWidth * (widthPct / 100);
-                const popupMaxHeight = mapHeight * (heightPct / 100);
-                const minWidth = Math.min(150, maxWidth * 0.5);
-
-                layer.bindPopup(popupHtml, {
-                  maxWidth: maxWidth,
-                  minWidth: minWidth,
-                  maxHeight: popupMaxHeight,
-                  className: "stgy-track-popup"
-                });
-              }
-            }
-          });
-
-          masterGroup.addLayer(geoJsonLayer);
+          const geoJsonData = await this.loadTrackData(href, trackDataCache);
+          if (link.dataset.render === "pin") {
+            this.renderTrackAsPin(map, masterGroup, geoJsonData, link.textContent?.trim() || "");
+          } else {
+            const geoJsonLayer = this.createGeoJsonLayer(map, geoJsonData);
+            masterGroup.addLayer(geoJsonLayer);
+          }
         } catch (e) {
           console.error(`[StgyTrack] Failed to load track data from ${href}`, e);
         }
