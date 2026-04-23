@@ -7,4 +7,7 @@ module.exports = {
   moduleFileExtensions: ["ts", "tsx", "js", "jsx", "json", "node"],
   clearMocks: true,
   coverageProvider: "v8",
+  moduleNameMapper: {
+    "^.+\\.(css|less|scss|sass)$": "<rootDir>/jest-style-mock.js"
+  }
 };
