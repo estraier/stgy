@@ -50,6 +50,15 @@
   }
   </template>
 
+  <h2>0.1. 圧縮 data URL：application/geo+json+gzip</h2>
+  <p class="desc">
+    <code>data:application/geo+json+gzip;base64,...</code> を <code>data-src</code> に直接指定するデモです。
+  </p>
+  <figure class="stgy-track-map" style="height: 300px;" data-src="data:application/geo+json+gzip;base64,H4sIAAAAAAAC/11Ov0rEMBx+lRLHK2c1rWJWQRwcRBAHuSE0sRepTUhzw3kUTIug6OJ2DuJyUDjQxVG5e5ifQu8tTKs4OH7/vwkyY8URQXucmpHmuzJNeWyEzJCPzn64HJHTyT+fUxMuL7jRY0T+xEMpMuOkWErNREZNl93AUT8KNrGPw/7WDt4eFD5SWiqujWgNLi5M2ua/ZvVqOl/V15/v02b54JoYz2MtVHeIIKpUKmLaonU33zvPZdZLLoXywL56jBrqHR8dOHAH5W0zfwG7bBYfYBdQ3oN9huoJyhlUb1DdgK3BPsJV2d1NpXb1awxHYRA4Rkk1UieCmSEiYfCL97lIhgYRHBTFoPgGucXy4ToBAAA=">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption" lang="ja">gzip 圧縮 GeoJSON data URL デモ</figcaption>
+  </figure>
+
   <h2>1. 基本機能：ピン描画とポップアップサイズ指定（完全オートフィット）</h2>
   <p class="desc">
     <code>data-lat</code>, <code>data-lon</code>, <code>data-zoom</code> を<b>すべて指定していません</b>。<br>
@@ -113,7 +122,7 @@
 
     <ul class="stgy-track-sources">
       <li><a href="#demo-geojson-1" class="track-source">北東行ルート＆ピン (Template)</a></li>
-      <li><a href='data:application/json,{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"LineString","coordinates":[[139.767,35.681],[139.750,35.660],[139.720,35.630]]},"properties":{"color":"%23e74c3c","weight":6}}]}' class="track-source">南西行ルート (Data URI)</a></li>
+      <li><a href='data:application/geo+json,{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"LineString","coordinates":[[139.767,35.681],[139.750,35.660],[139.720,35.630]]},"properties":{"color":"%23e74c3c","weight":6}}]}' class="track-source">南西行ルート (Data URI)</a></li>
     </ul>
   </figure>
 
@@ -208,6 +217,33 @@
         </li>
       </ul>
     </details>
+  </figure>
+
+  <h2>6. エラー表示：非対応 MIME type</h2>
+  <p class="desc">
+    <code>text/plain</code> の data URL を指定しています。MIME ホワイトリスト外なので、地図上にエラーが表示されます。
+  </p>
+  <figure class="stgy-track-map" style="height: 250px;" data-src='data:text/plain,{"type":"FeatureCollection","features":[]}'>
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption" lang="ja">非対応 MIME type エラーデモ</figcaption>
+  </figure>
+
+  <h2>7. エラー表示：壊れた JSON</h2>
+  <p class="desc">
+    MIME は <code>application/geo+json</code> ですが、JSON が壊れています。
+  </p>
+  <figure class="stgy-track-map" style="height: 250px;" data-src='data:application/geo+json,{"type":"FeatureCollection","features":['>
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption" lang="ja">壊れた JSON エラーデモ</figcaption>
+  </figure>
+
+  <h2>8. エラー表示：存在しない template</h2>
+  <p class="desc">
+    <code>data-src="#missing-template"</code> を指定しています。該当する DOM 要素がないため、読み込みエラーになります。
+  </p>
+  <figure class="stgy-track-map" style="height: 250px;" data-src="#missing-template">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption" lang="ja">存在しない template エラーデモ</figcaption>
   </figure>
 
   <script src="./dist/track-viewer.js"></script>

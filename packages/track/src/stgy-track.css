@@ -17,9 +17,11 @@
 }
 
 .stgy-track-canvas {
+  position: relative;
+  overflow: hidden;
   width: 100%;
-  flex-grow: 1;
-  min-height: 300px;
+  flex: 1 1 300px;
+  min-height: 0;
   background-color: #f0f0f0;
   border: 1px solid #ddd;
 }
@@ -102,4 +104,20 @@
 .stgy-custom-pin {
   background: transparent;
   border: none;
+}
+
+/* --- Error Message --- */
+.stgy-track-error-message {
+  position: absolute;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1em;
+  box-sizing: border-box;
+  background: rgba(255, 255, 255, 0.92);
+  color: #a00;
+  font-weight: bold;
+  text-align: center;
 }

@@ -64,8 +64,32 @@ export class StgyTrackRenderer {
     figures.forEach((figure) => this.initMap(figure));
   }
 
+  private showError(figure: HTMLElement, message: string) {
+    const oldErrors = figure.querySelectorAll(".stgy-track-error-message");
+    oldErrors.forEach((node) => node.remove());
+
+    const error = document.createElement("div");
+    error.className = "stgy-track-error-message";
+    error.textContent = message;
+
+    const canvas = figure.querySelector<HTMLElement>(".stgy-track-canvas");
+    if (canvas) {
+      canvas.appendChild(error);
+    } else {
+      figure.appendChild(error);
+    }
+  }
+
+  private toUserErrorMessage(e: unknown): string {
+    if (e instanceof Error && e.message === "Track data MIME type is not supported") {
+      return "Track data MIME type is not supported.";
+    }
+    return "Track data could not be loaded.";
+  }
+
   private createGeoJsonLayer(map: L.Map, geoJsonData: any): L.GeoJSON {
     return L.geoJSON(geoJsonData, {
+      // スタイル指定 (LineString, Polygon 等用)
       style: (feature) => {
         const props = feature?.properties || {};
         return {
@@ -74,6 +98,7 @@ export class StgyTrackRenderer {
           opacity: props.opacity || 0.8
         };
       },
+      // Pointデータの描画をカスタムピンに差し替え
       pointToLayer: (feature, latlng) => {
         const props = feature.properties || {};
         const markerOptions: L.MarkerOptions = {};
@@ -82,6 +107,7 @@ export class StgyTrackRenderer {
         }
         return L.marker(latlng, markerOptions);
       },
+      // 各要素（点や線）にポップアップをバインド
       onEachFeature: (feature, layer) => {
         const props = feature.properties || {};
         const popupHtml = buildPopupHtmlFromProps(props);
@@ -163,7 +189,7 @@ export class StgyTrackRenderer {
 
     const canvas = figure.querySelector<HTMLElement>(".stgy-track-canvas");
     if (!canvas) {
-      console.warn("[StgyTrack] Canvas element .stgy-track-canvas not found.");
+      this.showError(figure, "Track map canvas was not found.");
       return;
     }
 
@@ -195,7 +221,8 @@ export class StgyTrackRenderer {
             lon = center.lng;
           }
         } catch (e) {
-          console.error(`[StgyTrack] Failed to preload track data from ${dataSrc}`, e);
+          this.showError(figure, this.toUserErrorMessage(e));
+          return;
         }
       } else {
         const firstHref = sourceLinks
@@ -210,7 +237,8 @@ export class StgyTrackRenderer {
               lon = center.lng;
             }
           } catch (e) {
-            console.error(`[StgyTrack] Failed to preload track data from ${firstHref}`, e);
+            this.showError(figure, this.toUserErrorMessage(e));
+            return;
           }
         }
       }
@@ -267,7 +295,8 @@ export class StgyTrackRenderer {
         const geoJsonLayer = this.createGeoJsonLayer(map, geoJsonData);
         masterGroup.addLayer(geoJsonLayer);
       } catch (e) {
-        console.error(`[StgyTrack] Failed to load track data from ${dataSrc}`, e);
+        this.showError(figure, this.toUserErrorMessage(e));
+        return;
       }
     } else if (sourceLinks.length > 0) {
       const trackPromises = sourceLinks.map(async (link) => {
@@ -285,7 +314,7 @@ export class StgyTrackRenderer {
             masterGroup.addLayer(geoJsonLayer);
           }
         } catch (e) {
-          console.error(`[StgyTrack] Failed to load track data from ${href}`, e);
+          this.showError(figure, this.toUserErrorMessage(e));
         }
       });
 
