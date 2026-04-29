@@ -87,7 +87,154 @@ export class StgyTrackRenderer {
     return "Track data could not be loaded.";
   }
 
-  private createGeoJsonLayer(map: L.Map, geoJsonData: any): L.GeoJSON {
+  private createHud(canvas: HTMLElement): HTMLElement {
+    const old = canvas.querySelectorAll(".stgy-track-hud");
+    old.forEach((node) => node.remove());
+
+    const hud = document.createElement("div");
+    hud.className = "stgy-track-hud";
+    hud.hidden = true;
+    canvas.appendChild(hud);
+    return hud;
+  }
+
+  private formatLocalTime(value: unknown): string | null {
+    if (typeof value !== "number" || !Number.isFinite(value)) {
+      return null;
+    }
+
+    const millis = value > 100000000000 ? value : value * 1000;
+    const date = new Date(millis);
+    if (Number.isNaN(date.getTime())) {
+      return null;
+    }
+
+    const yyyy = date.getFullYear().toString().padStart(4, "0");
+    const mm = (date.getMonth() + 1).toString().padStart(2, "0");
+    const dd = date.getDate().toString().padStart(2, "0");
+    const hh = date.getHours().toString().padStart(2, "0");
+    const mi = date.getMinutes().toString().padStart(2, "0");
+    const ss = date.getSeconds().toString().padStart(2, "0");
+
+    return `${yyyy}/${mm}/${dd} ${hh}:${mi}:${ss}`;
+  }
+
+  private findNearestCoordinateIndex(coordinates: unknown, latlng: L.LatLng): number | null {
+    if (!Array.isArray(coordinates) || coordinates.length === 0) {
+      return null;
+    }
+
+    let bestIndex = -1;
+    let bestDistance = Number.POSITIVE_INFINITY;
+
+    coordinates.forEach((coordinate, index) => {
+      if (!Array.isArray(coordinate) || coordinate.length < 2) {
+        return;
+      }
+
+      const lon = coordinate[0];
+      const lat = coordinate[1];
+      if (
+        typeof lat !== "number" ||
+        typeof lon !== "number" ||
+        !Number.isFinite(lat) ||
+        !Number.isFinite(lon)
+      ) {
+        return;
+      }
+
+      const dLat = latlng.lat - lat;
+      const dLon = latlng.lng - lon;
+      const distance = dLat * dLat + dLon * dLon;
+
+      if (distance < bestDistance) {
+        bestDistance = distance;
+        bestIndex = index;
+      }
+    });
+
+    return bestIndex >= 0 ? bestIndex : null;
+  }
+
+  private appendHudItem(list: HTMLUListElement, name: string, value: string) {
+    const item = document.createElement("li");
+    item.textContent = `${name}: ${value}`;
+    list.appendChild(item);
+  }
+
+  private renderHudItems(hud: HTMLElement, coordinateProperties: any, index: number): boolean {
+    const list = document.createElement("ul");
+
+    const time = this.formatLocalTime(coordinateProperties.times?.[index]);
+    if (time) {
+      this.appendHudItem(list, "times", time);
+    }
+
+    const elevation = coordinateProperties.elevations?.[index];
+    if (typeof elevation === "number" && Number.isFinite(elevation)) {
+      this.appendHudItem(list, "elevations", `${Math.round(elevation)} m`);
+    }
+
+    const heartRate = coordinateProperties.heartRates?.[index];
+    if (typeof heartRate === "number" && Number.isFinite(heartRate)) {
+      this.appendHudItem(list, "heartRates", `${Math.round(heartRate)} bpm`);
+    }
+
+    const cadence = coordinateProperties.cadences?.[index];
+    if (typeof cadence === "number" && Number.isFinite(cadence)) {
+      this.appendHudItem(list, "cadences", `${Math.round(cadence)} rpm`);
+    }
+
+    const power = coordinateProperties.powers?.[index];
+    if (typeof power === "number" && Number.isFinite(power)) {
+      this.appendHudItem(list, "powers", `${Math.round(power)} W`);
+    }
+
+    const speed = coordinateProperties.speeds?.[index];
+    if (typeof speed === "number" && Number.isFinite(speed)) {
+      this.appendHudItem(list, "speeds", `${speed.toFixed(1)} km/h`);
+    }
+
+    if (list.children.length === 0) {
+      return false;
+    }
+
+    hud.replaceChildren(list);
+    return true;
+  }
+
+  private bindCoordinateHud(feature: any, layer: L.Layer, hud: HTMLElement) {
+    if (feature?.geometry?.type !== "LineString") {
+      return;
+    }
+
+    const coordinates = feature.geometry.coordinates;
+    const coordinateProperties = feature.properties?.coordinateProperties;
+    if (!coordinateProperties || typeof coordinateProperties !== "object") {
+      return;
+    }
+
+    layer.on("mousemove", (event: L.LeafletMouseEvent) => {
+      const index = this.findNearestCoordinateIndex(coordinates, event.latlng);
+      if (index === null) {
+        hud.hidden = true;
+        return;
+      }
+
+      if (!this.renderHudItems(hud, coordinateProperties, index)) {
+        hud.hidden = true;
+        return;
+      }
+
+      hud.hidden = false;
+    });
+
+    layer.on("mouseout", () => {
+      hud.hidden = true;
+    });
+  }
+
+  private createGeoJsonLayer(map: L.Map, geoJsonData: any, hud: HTMLElement): L.GeoJSON {
     return L.geoJSON(geoJsonData, {
       // スタイル指定 (LineString, Polygon 等用)
       style: (feature) => {
@@ -131,6 +278,8 @@ export class StgyTrackRenderer {
             className: "stgy-track-popup"
           });
         }
+
+        this.bindCoordinateHud(feature, layer, hud);
       }
     });
   }
@@ -157,7 +306,8 @@ export class StgyTrackRenderer {
     map: L.Map,
     layerGroup: L.FeatureGroup,
     geoJsonData: any,
-    label: string
+    label: string,
+    hud: HTMLElement
   ) {
     const center = this.getGeoJsonCenter(geoJsonData);
     if (!center) {
@@ -172,7 +322,7 @@ export class StgyTrackRenderer {
     let routeLayer: L.GeoJSON | null = null;
     marker.on("click", () => {
       if (!routeLayer) {
-        routeLayer = this.createGeoJsonLayer(map, geoJsonData);
+        routeLayer = this.createGeoJsonLayer(map, geoJsonData, hud);
       }
       if (layerGroup.hasLayer(routeLayer)) {
         layerGroup.removeLayer(routeLayer);
@@ -280,6 +430,7 @@ export class StgyTrackRenderer {
     });
 
     L.control.layers(baseMaps).addTo(map);
+    const hud = this.createHud(canvas);
     const masterGroup = L.featureGroup().addTo(map);
 
     // --- 1. Render Inline Pins ---
@@ -292,7 +443,7 @@ export class StgyTrackRenderer {
     if (dataSrc) {
       try {
         const geoJsonData = await this.loadTrackData(dataSrc, trackDataCache);
-        const geoJsonLayer = this.createGeoJsonLayer(map, geoJsonData);
+        const geoJsonLayer = this.createGeoJsonLayer(map, geoJsonData, hud);
         masterGroup.addLayer(geoJsonLayer);
       } catch (e) {
         this.showError(figure, this.toUserErrorMessage(e));
@@ -308,9 +459,9 @@ export class StgyTrackRenderer {
         try {
           const geoJsonData = await this.loadTrackData(href, trackDataCache);
           if (link.dataset.render === "pin") {
-            this.renderTrackAsPin(map, masterGroup, geoJsonData, link.textContent?.trim() || "");
+            this.renderTrackAsPin(map, masterGroup, geoJsonData, link.textContent?.trim() || "", hud);
           } else {
-            const geoJsonLayer = this.createGeoJsonLayer(map, geoJsonData);
+            const geoJsonLayer = this.createGeoJsonLayer(map, geoJsonData, hud);
             masterGroup.addLayer(geoJsonLayer);
           }
         } catch (e) {

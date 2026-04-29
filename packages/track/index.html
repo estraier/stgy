@@ -122,7 +122,7 @@
 
     <ul class="stgy-track-sources">
       <li><a href="#demo-geojson-1" class="track-source">北東行ルート＆ピン (Template)</a></li>
-      <li><a href='data:application/geo+json,{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"LineString","coordinates":[[139.767,35.681],[139.750,35.660],[139.720,35.630]]},"properties":{"color":"%23e74c3c","weight":6}}]}' class="track-source">南西行ルート (Data URI)</a></li>
+      <li><a href='data:application/json,{"type":"FeatureCollection","features":[{"type":"Feature","geometry":{"type":"LineString","coordinates":[[139.767,35.681],[139.750,35.660],[139.720,35.630]]},"properties":{"color":"%23e74c3c","weight":6}}]}' class="track-source">南西行ルート (application/json Data URI)</a></li>
     </ul>
   </figure>
 
@@ -205,7 +205,69 @@
   }
   </template>
 
-  <h2>5. 海外地図の自動切り替えとフォールバック座標判定</h2>
+  <h2>5. coordinateProperties HUD</h2>
+  <p class="desc">
+    <code>LineString</code> の各座標に対応する <code>times</code>, <code>elevations</code>, <code>heartRates</code>, <code>cadences</code>, <code>powers</code>, <code>speeds</code> を表示するデモです。<br>
+    ルート上にマウスを乗せると、地図の左下に最寄り点の値が字幕のように表示されます。
+  </p>
+  <figure class="stgy-track-map" style="height: 400px;" data-src="#demo-geojson-hud">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption" lang="ja">座標ごとの時刻・心拍・パワー表示デモ</figcaption>
+  </figure>
+
+  <template id="demo-geojson-hud">
+  {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [139.7528, 35.6852],
+            [139.7550, 35.6848],
+            [139.7585, 35.6840],
+            [139.7615, 35.6815],
+            [139.7635, 35.6788],
+            [139.7610, 35.6754],
+            [139.7570, 35.6749],
+            [139.7542, 35.6747],
+            [139.7510, 35.6770],
+            [139.7498, 35.6789],
+            [139.7528, 35.6852]
+          ]
+        },
+        "properties": {
+          "color": "#e67e22",
+          "weight": 6,
+          "opacity": 0.9,
+          "coordinateProperties": {
+            "times": [
+              1767222000,
+              1767222060,
+              1767222120,
+              1767222180,
+              1767222240,
+              1767222300,
+              1767222360,
+              1767222420,
+              1767222480,
+              1767222540,
+              1767222600
+            ],
+            "elevations": [20, 21, 22, 21, 19, 18, 19, 20, 21, 22, 20],
+            "heartRates": [118, 123, 128, 132, 136, 140, 138, 134, 130, 126, 122],
+            "cadences": [72, 75, 78, 80, 82, 84, 83, 81, 78, 76, 74],
+            "powers": [130, 145, 160, 175, 190, 205, 198, 180, 165, 150, 138],
+            "speeds": [18.5, 19.2, 20.1, 21.0, 21.8, 22.4, 21.9, 20.8, 20.0, 19.1, 18.7]
+          }
+        }
+      }
+    ]
+  }
+  </template>
+
+  <h2>6. 海外地図の自動切り替えとフォールバック座標判定</h2>
   <figure class="stgy-track-map" style="height: 350px;">
     <div class="stgy-track-canvas">Map loading...</div>
     <figcaption class="stgy-track-caption">台北 101 (海外判定テスト)</figcaption>
@@ -219,7 +281,7 @@
     </details>
   </figure>
 
-  <h2>6. エラー表示：非対応 MIME type</h2>
+  <h2>7. エラー表示：非対応 MIME type</h2>
   <p class="desc">
     <code>text/plain</code> の data URL を指定しています。MIME ホワイトリスト外なので、地図上にエラーが表示されます。
   </p>
@@ -228,7 +290,7 @@
     <figcaption class="stgy-track-caption" lang="ja">非対応 MIME type エラーデモ</figcaption>
   </figure>
 
-  <h2>7. エラー表示：壊れた JSON</h2>
+  <h2>8. エラー表示：壊れた JSON</h2>
   <p class="desc">
     MIME は <code>application/geo+json</code> ですが、JSON が壊れています。
   </p>
@@ -237,7 +299,7 @@
     <figcaption class="stgy-track-caption" lang="ja">壊れた JSON エラーデモ</figcaption>
   </figure>
 
-  <h2>8. エラー表示：存在しない template</h2>
+  <h2>9. エラー表示：存在しない template</h2>
   <p class="desc">
     <code>data-src="#missing-template"</code> を指定しています。該当する DOM 要素がないため、読み込みエラーになります。
   </p>

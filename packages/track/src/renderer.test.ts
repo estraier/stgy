@@ -6,6 +6,18 @@ import * as geo from "./geo";
 jest.mock("leaflet", () => {
   const originalL = jest.requireActual("leaflet");
 
+  const createBounds = (
+    center = { lat: 35.681, lng: 139.767 },
+    southWest = { lat: 34, lng: 138 },
+    northEast = { lat: 36, lng: 140 },
+  ) => ({
+    isValid: () => true,
+    getCenter: () => center,
+    getSouthWest: () => southWest,
+    getNorthEast: () => northEast,
+    pad: jest.fn().mockReturnThis(),
+  });
+
   const createFeatureGroup = () => {
     const layers = new Set<unknown>();
     const group = {
@@ -13,13 +25,7 @@ jest.mock("leaflet", () => {
       addLayer: jest.fn(),
       removeLayer: jest.fn(),
       hasLayer: jest.fn(),
-      getBounds: jest.fn().mockReturnValue({
-        isValid: () => true,
-        getCenter: () => ({ lat: 35, lng: 139 }),
-        getSouthWest: () => ({ lat: 34, lng: 138 }),
-        getNorthEast: () => ({ lat: 36, lng: 140 }),
-        pad: jest.fn().mockReturnThis()
-      })
+      getBounds: jest.fn().mockReturnValue(createBounds({ lat: 35, lng: 139 })),
     };
     group.addTo.mockReturnValue(group);
     group.addLayer.mockImplementation((layer: unknown) => {
@@ -34,25 +40,45 @@ jest.mock("leaflet", () => {
     return group;
   };
 
+  const createFeatureLayer = () => ({
+    bindPopup: jest.fn().mockReturnThis(),
+    on: jest.fn().mockReturnThis(),
+  });
+
   return {
     ...originalL,
     map: jest.fn().mockReturnValue({
       addLayer: jest.fn(),
       setView: jest.fn(),
       fitBounds: jest.fn(),
-      getContainer: () => document.createElement("div")
+      getContainer: () => document.createElement("div"),
     }),
     marker: jest.fn().mockImplementation(() => ({
       bindPopup: jest.fn().mockReturnThis(),
-      on: jest.fn().mockReturnThis()
+      on: jest.fn().mockReturnThis(),
     })),
     featureGroup: jest.fn().mockImplementation(createFeatureGroup),
-    geoJSON: jest.fn().mockImplementation(() => ({
-      getBounds: jest.fn().mockReturnValue({
-        isValid: () => true,
-        getCenter: () => ({ lat: 35.681, lng: 139.767 })
-      })
-    }))
+    geoJSON: jest.fn().mockImplementation((data, options) => {
+      const featureLayers: ReturnType<typeof createFeatureLayer>[] = [];
+
+      if (options?.onEachFeature && data?.type === "FeatureCollection" && Array.isArray(data.features)) {
+        data.features.forEach((feature: unknown) => {
+          const layer = createFeatureLayer();
+          featureLayers.push(layer);
+          options.onEachFeature(feature, layer);
+        });
+      }
+
+      return {
+        __featureLayers: featureLayers,
+        addTo: jest.fn().mockReturnThis(),
+        getBounds: jest.fn().mockReturnValue(createBounds()),
+      };
+    }),
+    tileLayer: jest.fn().mockReturnValue({}),
+    control: {
+      layers: jest.fn().mockReturnValue({ addTo: jest.fn() }),
+    },
   };
 });
 
@@ -68,6 +94,7 @@ describe("StgyTrackRenderer", () => {
 
   afterEach(() => {
     isJapanSpy.mockRestore();
+    jest.restoreAllMocks();
   });
 
   test("includes GSI Pale in base layers when coordinates are in Japan", () => {
@@ -84,7 +111,7 @@ describe("StgyTrackRenderer", () => {
     renderer.hydrate(document.body);
 
     expect(L.map).toHaveBeenCalledWith(expect.any(HTMLElement), expect.objectContaining({
-      center: [35.681, 139.767]
+      center: [35.681, 139.767],
     }));
 
     const baseMaps = layersSpy.mock.calls[0][0] as Record<string, L.TileLayer>;
@@ -161,10 +188,10 @@ describe("StgyTrackRenderer", () => {
           type: "Feature",
           geometry: {
             type: "Point",
-            coordinates: [139.767, 35.681]
+            coordinates: [139.767, 35.681],
           },
-          properties: {}
-        }
+          properties: {},
+        },
       ],
     });
 
@@ -178,8 +205,8 @@ describe("StgyTrackRenderer", () => {
     expect(L.map).toHaveBeenCalledWith(
       expect.any(HTMLElement),
       expect.objectContaining({
-        center: [35.681, 139.767]
-      })
+        center: [35.681, 139.767],
+      }),
     );
 
     const baseMaps = layersSpy.mock.calls[0][0] as Record<string, L.TileLayer>;
@@ -208,7 +235,7 @@ describe("StgyTrackRenderer", () => {
           getCenter: () => ({ lat: 35.681, lng: 139.767 }),
           getSouthWest: () => ({ lat: 35.681, lng: 139.767 }),
           getNorthEast: () => ({ lat: 35.681, lng: 139.767 }),
-        })
+        }),
       };
       group.addTo.mockReturnValue(group);
       group.addLayer.mockImplementation((layer: unknown) => {
@@ -230,10 +257,10 @@ describe("StgyTrackRenderer", () => {
           type: "Feature",
           geometry: {
             type: "Point",
-            coordinates: [139.767, 35.681]
+            coordinates: [139.767, 35.681],
           },
-          properties: {}
-        }
+          properties: {},
+        },
       ],
     });
 
@@ -262,10 +289,10 @@ describe("StgyTrackRenderer", () => {
           type: "Feature",
           geometry: {
             type: "LineString",
-            coordinates: [[139.767, 35.681], [139.78, 35.69]]
+            coordinates: [[139.767, 35.681], [139.78, 35.69]],
           },
-          properties: {}
-        }
+          properties: {},
+        },
       ],
     });
 
@@ -276,11 +303,11 @@ describe("StgyTrackRenderer", () => {
     expect(L.map).toHaveBeenCalledWith(
       expect.any(HTMLElement),
       expect.objectContaining({
-        center: [35.681, 139.767]
-      })
+        center: [35.681, 139.767],
+      }),
     );
     expect(L.marker).toHaveBeenCalledWith(
-      expect.objectContaining({ lat: 35.681, lng: 139.767 })
+      expect.objectContaining({ lat: 35.681, lng: 139.767 }),
     );
   });
 
@@ -301,10 +328,10 @@ describe("StgyTrackRenderer", () => {
           type: "Feature",
           geometry: {
             type: "LineString",
-            coordinates: [[139.767, 35.681], [139.78, 35.69]]
+            coordinates: [[139.767, 35.681], [139.78, 35.69]],
           },
-          properties: {}
-        }
+          properties: {},
+        },
       ],
     });
 
@@ -327,5 +354,118 @@ describe("StgyTrackRenderer", () => {
     clickHandler();
 
     expect(group.removeLayer).toHaveBeenCalledWith(routeLayer);
+  });
+
+  test("shows coordinateProperties HUD on LineString mousemove", async () => {
+    const localTime = new Date(2026, 0, 2, 3, 4, 5).getTime() / 1000;
+
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139.760, 35.680],
+              [139.767, 35.681],
+              [139.770, 35.690],
+            ],
+          },
+          properties: {
+            coordinateProperties: {
+              times: [localTime - 60, localTime, localTime + 60],
+              elevations: [10, 20, 30],
+              heartRates: [120, 130, 140],
+              cadences: [70, 80, 90],
+              powers: [150, 180, 210],
+              speeds: [20.1, 22.5, 24.0],
+            },
+          },
+        },
+      ],
+    });
+
+    renderer.hydrate(document.body);
+
+    await new Promise(process.nextTick);
+
+    const renderedGeoJsonResult = (L.geoJSON as jest.Mock).mock.results.find((result) => {
+      return result.value.__featureLayers?.length > 0;
+    });
+
+    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
+    const mousemoveHandler = featureLayer.on.mock.calls.find((call: unknown[]) => call[0] === "mousemove")?.[1];
+
+    expect(typeof mousemoveHandler).toBe("function");
+
+    mousemoveHandler({
+      latlng: { lat: 35.681, lng: 139.767 },
+    });
+
+    const hud = document.querySelector<HTMLElement>(".stgy-track-hud");
+    expect(hud).not.toBeNull();
+    expect(hud?.hidden).toBe(false);
+    expect(hud?.textContent).toContain("2026/01/02 03:04:05");
+    expect(hud?.textContent).toContain("20 m");
+    expect(hud?.textContent).toContain("130 bpm");
+    expect(hud?.textContent).toContain("80 rpm");
+    expect(hud?.textContent).toContain("180 W");
+    expect(hud?.textContent).toContain("22.5 km/h");
+  });
+
+  test("hides coordinateProperties HUD on LineString mouseout", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [[139.767, 35.681]],
+          },
+          properties: {
+            coordinateProperties: {
+              heartRates: [130],
+            },
+          },
+        },
+      ],
+    });
+
+    renderer.hydrate(document.body);
+
+    await new Promise(process.nextTick);
+
+    const renderedGeoJsonResult = (L.geoJSON as jest.Mock).mock.results.find((result) => {
+      return result.value.__featureLayers?.length > 0;
+    });
+
+    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
+    const mousemoveHandler = featureLayer.on.mock.calls.find((call: unknown[]) => call[0] === "mousemove")?.[1];
+    const mouseoutHandler = featureLayer.on.mock.calls.find((call: unknown[]) => call[0] === "mouseout")?.[1];
+
+    mousemoveHandler({
+      latlng: { lat: 35.681, lng: 139.767 },
+    });
+
+    const hud = document.querySelector<HTMLElement>(".stgy-track-hud");
+    expect(hud?.hidden).toBe(false);
+
+    mouseoutHandler();
+
+    expect(hud?.hidden).toBe(true);
   });
 });

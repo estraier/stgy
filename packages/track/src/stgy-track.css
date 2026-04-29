@@ -106,6 +106,35 @@
   border: none;
 }
 
+/* --- HUD --- */
+.stgy-track-hud {
+  position: absolute;
+  left: 12px;
+  bottom: 12px;
+  z-index: 900;
+  max-width: calc(100% - 24px);
+  padding: 6px 10px;
+  box-sizing: border-box;
+  border-radius: 6px;
+  background: rgba(0, 0, 0, 0.72);
+  color: #fff;
+  font-size: 12px;
+  line-height: 1.4;
+  pointer-events: none;
+  white-space: normal;
+}
+
+.stgy-track-hud ul {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.stgy-track-hud li {
+  margin: 0;
+  padding: 0;
+}
+
 /* --- Error Message --- */
 .stgy-track-error-message {
   position: absolute;
