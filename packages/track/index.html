@@ -205,10 +205,49 @@
   }
   </template>
 
-  <h2>5. coordinateProperties HUD</h2>
+  <h2>5. ルート範囲による初期画角</h2>
+  <p class="desc">
+    インラインピンを置かず、<code>data-lat</code>, <code>data-lon</code>, <code>data-zoom</code> も指定していません。<br>
+    ルートの全座標をもとに中心とズームを決定し、東京駅から高尾山方面までの広いルート全体が収まることを確認します。
+  </p>
+  <figure class="stgy-track-map" style="height: 400px;" data-src="#demo-geojson-route-bounds">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption" lang="ja">ルート座標全体を使った初期画角デモ</figcaption>
+  </figure>
+
+  <template id="demo-geojson-route-bounds">
+  {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [139.7670, 35.6812],
+            [139.7000, 35.6895],
+            [139.6500, 35.7000],
+            [139.5800, 35.6900],
+            [139.5000, 35.6700],
+            [139.4100, 35.6550],
+            [139.2900, 35.6250],
+            [139.2430, 35.6255]
+          ]
+        },
+        "properties": {
+          "color": "#c0392b",
+          "weight": 6,
+          "opacity": 0.9
+        }
+      }
+    ]
+  }
+  </template>
+
+  <h2>6. coordinateProperties HUD</h2>
   <p class="desc">
     <code>LineString</code> の各座標に対応する <code>times</code>, <code>elevations</code>, <code>heartRates</code>, <code>cadences</code>, <code>powers</code>, <code>speeds</code> を表示するデモです。<br>
-    ルート上にマウスを乗せると、地図の左下に最寄り点の値が字幕のように表示されます。
+    ルート上にマウスを乗せると、地図の左下に最寄り点の値がリスト形式で表示されます。
   </p>
   <figure class="stgy-track-map" style="height: 400px;" data-src="#demo-geojson-hud">
     <div class="stgy-track-canvas">Map loading...</div>
@@ -267,7 +306,7 @@
   }
   </template>
 
-  <h2>6. 海外地図の自動切り替えとフォールバック座標判定</h2>
+  <h2>7. 海外地図の自動切り替えとフォールバック座標判定</h2>
   <figure class="stgy-track-map" style="height: 350px;">
     <div class="stgy-track-canvas">Map loading...</div>
     <figcaption class="stgy-track-caption">台北 101 (海外判定テスト)</figcaption>
@@ -281,7 +320,7 @@
     </details>
   </figure>
 
-  <h2>7. エラー表示：非対応 MIME type</h2>
+  <h2>8. エラー表示：非対応 MIME type</h2>
   <p class="desc">
     <code>text/plain</code> の data URL を指定しています。MIME ホワイトリスト外なので、地図上にエラーが表示されます。
   </p>
@@ -290,7 +329,7 @@
     <figcaption class="stgy-track-caption" lang="ja">非対応 MIME type エラーデモ</figcaption>
   </figure>
 
-  <h2>8. エラー表示：壊れた JSON</h2>
+  <h2>9. エラー表示：壊れた JSON</h2>
   <p class="desc">
     MIME は <code>application/geo+json</code> ですが、JSON が壊れています。
   </p>
@@ -299,7 +338,7 @@
     <figcaption class="stgy-track-caption" lang="ja">壊れた JSON エラーデモ</figcaption>
   </figure>
 
-  <h2>9. エラー表示：存在しない template</h2>
+  <h2>10. エラー表示：存在しない template</h2>
   <p class="desc">
     <code>data-src="#missing-template"</code> を指定しています。該当する DOM 要素がないため、読み込みエラーになります。
   </p>

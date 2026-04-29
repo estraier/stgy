@@ -51,6 +51,14 @@ const buildPopupHtmlFromProps = (props: any): string => {
 
 const DEFAULT_SINGLE_POINT_ZOOM = 12;
 
+type BoundsAccumulator = {
+  hasValue: boolean;
+  minLat: number;
+  minLng: number;
+  maxLat: number;
+  maxLng: number;
+};
+
 export class StgyTrackRenderer {
   private loader: TrackLoader;
 
@@ -62,6 +70,72 @@ export class StgyTrackRenderer {
   public hydrate(rootElement: HTMLElement = document.body) {
     const figures = rootElement.querySelectorAll<HTMLElement>(".stgy-track-map");
     figures.forEach((figure) => this.initMap(figure));
+  }
+
+  private createBoundsAccumulator(): BoundsAccumulator {
+    return {
+      hasValue: false,
+      minLat: Number.POSITIVE_INFINITY,
+      minLng: Number.POSITIVE_INFINITY,
+      maxLat: Number.NEGATIVE_INFINITY,
+      maxLng: Number.NEGATIVE_INFINITY,
+    };
+  }
+
+  private extendBoundsWithLatLng(bounds: BoundsAccumulator, lat: number, lng: number) {
+    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+      return;
+    }
+
+    if (!bounds.hasValue) {
+      bounds.hasValue = true;
+      bounds.minLat = lat;
+      bounds.maxLat = lat;
+      bounds.minLng = lng;
+      bounds.maxLng = lng;
+      return;
+    }
+
+    bounds.minLat = Math.min(bounds.minLat, lat);
+    bounds.maxLat = Math.max(bounds.maxLat, lat);
+    bounds.minLng = Math.min(bounds.minLng, lng);
+    bounds.maxLng = Math.max(bounds.maxLng, lng);
+  }
+
+  private extendBoundsWithLeafletBounds(bounds: BoundsAccumulator, leafletBounds: L.LatLngBounds) {
+    if (!leafletBounds.isValid()) {
+      return;
+    }
+
+    const southWest = leafletBounds.getSouthWest();
+    const northEast = leafletBounds.getNorthEast();
+
+    this.extendBoundsWithLatLng(bounds, southWest.lat, southWest.lng);
+    this.extendBoundsWithLatLng(bounds, northEast.lat, northEast.lng);
+  }
+
+  private extendBoundsWithGeoJson(bounds: BoundsAccumulator, geoJsonData: any) {
+    const layer = L.geoJSON(geoJsonData);
+    this.extendBoundsWithLeafletBounds(bounds, layer.getBounds());
+  }
+
+  private toLeafletBounds(bounds: BoundsAccumulator): L.LatLngBounds | null {
+    if (!bounds.hasValue) {
+      return null;
+    }
+
+    return L.latLngBounds(
+      [bounds.minLat, bounds.minLng],
+      [bounds.maxLat, bounds.maxLng]
+    );
+  }
+
+  private getBoundsCenter(bounds: BoundsAccumulator): L.LatLng | null {
+    const leafletBounds = this.toLeafletBounds(bounds);
+    if (!leafletBounds || !leafletBounds.isValid()) {
+      return null;
+    }
+    return leafletBounds.getCenter();
   }
 
   private showError(figure: HTMLElement, message: string) {
@@ -356,41 +430,47 @@ export class StgyTrackRenderer {
       ? []
       : Array.from(figure.querySelectorAll<HTMLAnchorElement>(".stgy-track-sources a.track-source"));
     const trackDataCache: Record<string, any> = {};
+    const viewBounds = this.createBoundsAccumulator();
 
-    if (!hasExplicitLat || !hasExplicitLon) {
-      const firstPin = figure.querySelector<HTMLElement>(".stgy-track-pins li");
-      if (firstPin) {
-        lat = parseFloat(firstPin.dataset.lat || lat.toString());
-        lon = parseFloat(firstPin.dataset.lon || lon.toString());
-      } else if (dataSrc) {
+    const inlinePins = figure.querySelectorAll<HTMLElement>(".stgy-track-pins li");
+    inlinePins.forEach((pin) => {
+      const pinLat = parseFloat(pin.dataset.lat || "0");
+      const pinLon = parseFloat(pin.dataset.lon || "0");
+      if (pinLat !== 0 || pinLon !== 0) {
+        this.extendBoundsWithLatLng(viewBounds, pinLat, pinLon);
+      }
+    });
+
+    if (dataSrc) {
+      try {
+        const preloadedTrackData = await this.loadTrackData(dataSrc, trackDataCache);
+        this.extendBoundsWithGeoJson(viewBounds, preloadedTrackData);
+      } catch (e) {
+        this.showError(figure, this.toUserErrorMessage(e));
+        return;
+      }
+    } else {
+      for (const link of sourceLinks) {
+        const href = link.getAttribute("href")?.trim() || "";
+        if (!href) {
+          continue;
+        }
+
         try {
-          const preloadedTrackData = await this.loadTrackData(dataSrc, trackDataCache);
-          const center = this.getGeoJsonCenter(preloadedTrackData);
-          if (center) {
-            lat = center.lat;
-            lon = center.lng;
-          }
+          const preloadedTrackData = await this.loadTrackData(href, trackDataCache);
+          this.extendBoundsWithGeoJson(viewBounds, preloadedTrackData);
         } catch (e) {
           this.showError(figure, this.toUserErrorMessage(e));
           return;
         }
-      } else {
-        const firstHref = sourceLinks
-          .map((link) => link.getAttribute("href")?.trim() || "")
-          .find((href) => href.length > 0);
-        if (firstHref) {
-          try {
-            const preloadedTrackData = await this.loadTrackData(firstHref, trackDataCache);
-            const center = this.getGeoJsonCenter(preloadedTrackData);
-            if (center) {
-              lat = center.lat;
-              lon = center.lng;
-            }
-          } catch (e) {
-            this.showError(figure, this.toUserErrorMessage(e));
-            return;
-          }
-        }
+      }
+    }
+
+    if (!hasExplicitLat || !hasExplicitLon) {
+      const center = this.getBoundsCenter(viewBounds);
+      if (center) {
+        lat = center.lat;
+        lon = center.lng;
       }
     }
 
@@ -434,7 +514,6 @@ export class StgyTrackRenderer {
     const masterGroup = L.featureGroup().addTo(map);
 
     // --- 1. Render Inline Pins ---
-    const inlinePins = figure.querySelectorAll<HTMLElement>(".stgy-track-pins li");
     if (inlinePins.length > 0) {
       this.renderInlinePins(map, masterGroup, inlinePins);
     }
@@ -473,7 +552,11 @@ export class StgyTrackRenderer {
     }
 
     // --- 3. Apply Smart Auto-Fit ---
-    const bounds = masterGroup.getBounds();
+    const accumulatedBounds = this.toLeafletBounds(viewBounds);
+    const bounds = accumulatedBounds && accumulatedBounds.isValid()
+      ? accumulatedBounds
+      : masterGroup.getBounds();
+
     if (bounds.isValid()) {
       if (!hasExplicitZoom) {
         const southWest = bounds.getSouthWest();

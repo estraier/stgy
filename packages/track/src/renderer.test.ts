@@ -8,8 +8,8 @@ jest.mock("leaflet", () => {
 
   const createBounds = (
     center = { lat: 35.681, lng: 139.767 },
-    southWest = { lat: 34, lng: 138 },
-    northEast = { lat: 36, lng: 140 },
+    southWest = center,
+    northEast = center,
   ) => ({
     isValid: () => true,
     getCenter: () => center,
@@ -18,6 +18,67 @@ jest.mock("leaflet", () => {
     pad: jest.fn().mockReturnThis(),
   });
 
+  const createBoundsFromLatLngs = (points: Array<{ lat: number; lng: number }>) => {
+    if (points.length === 0) {
+      return {
+        isValid: () => false,
+        getCenter: () => ({ lat: 0, lng: 0 }),
+        getSouthWest: () => ({ lat: 0, lng: 0 }),
+        getNorthEast: () => ({ lat: 0, lng: 0 }),
+        pad: jest.fn().mockReturnThis(),
+      };
+    }
+
+    const minLat = Math.min(...points.map((p) => p.lat));
+    const maxLat = Math.max(...points.map((p) => p.lat));
+    const minLng = Math.min(...points.map((p) => p.lng));
+    const maxLng = Math.max(...points.map((p) => p.lng));
+
+    return createBounds(
+      { lat: (minLat + maxLat) / 2, lng: (minLng + maxLng) / 2 },
+      { lat: minLat, lng: minLng },
+      { lat: maxLat, lng: maxLng },
+    );
+  };
+
+  const collectPoints = (value: unknown, points: Array<{ lat: number; lng: number }>) => {
+    if (!Array.isArray(value)) return;
+
+    if (
+      value.length >= 2 &&
+      typeof value[0] === "number" &&
+      typeof value[1] === "number"
+    ) {
+      points.push({ lng: value[0], lat: value[1] });
+      return;
+    }
+
+    value.forEach((child) => collectPoints(child, points));
+  };
+
+  const createBoundsFromGeoJson = (data: any) => {
+    const points: Array<{ lat: number; lng: number }> = [];
+
+    const collectGeometry = (geometry: any) => {
+      if (!geometry) return;
+      if (geometry.type === "GeometryCollection" && Array.isArray(geometry.geometries)) {
+        geometry.geometries.forEach(collectGeometry);
+        return;
+      }
+      collectPoints(geometry.coordinates, points);
+    };
+
+    if (data?.type === "FeatureCollection" && Array.isArray(data.features)) {
+      data.features.forEach((feature: any) => collectGeometry(feature.geometry));
+    } else if (data?.type === "Feature") {
+      collectGeometry(data.geometry);
+    } else {
+      collectGeometry(data);
+    }
+
+    return createBoundsFromLatLngs(points);
+  };
+
   const createFeatureGroup = () => {
     const layers = new Set<unknown>();
     const group = {
@@ -25,7 +86,11 @@ jest.mock("leaflet", () => {
       addLayer: jest.fn(),
       removeLayer: jest.fn(),
       hasLayer: jest.fn(),
-      getBounds: jest.fn().mockReturnValue(createBounds({ lat: 35, lng: 139 })),
+      getBounds: jest.fn().mockReturnValue(createBounds(
+        { lat: 35, lng: 139 },
+        { lat: 34, lng: 138 },
+        { lat: 36, lng: 140 },
+      )),
     };
     group.addTo.mockReturnValue(group);
     group.addLayer.mockImplementation((layer: unknown) => {
@@ -72,8 +137,22 @@ jest.mock("leaflet", () => {
       return {
         __featureLayers: featureLayers,
         addTo: jest.fn().mockReturnThis(),
-        getBounds: jest.fn().mockReturnValue(createBounds()),
+        getBounds: jest.fn().mockReturnValue(createBoundsFromGeoJson(data)),
       };
+    }),
+    latLngBounds: jest.fn().mockImplementation((southWest, northEast) => {
+      const sw = Array.isArray(southWest)
+        ? { lat: southWest[0], lng: southWest[1] }
+        : southWest;
+      const ne = Array.isArray(northEast)
+        ? { lat: northEast[0], lng: northEast[1] }
+        : northEast;
+
+      return createBounds(
+        { lat: (sw.lat + ne.lat) / 2, lng: (sw.lng + ne.lng) / 2 },
+        sw,
+        ne,
+      );
     }),
     tileLayer: jest.fn().mockReturnValue({}),
     control: {
@@ -223,33 +302,6 @@ describe("StgyTrackRenderer", () => {
     const mockMap = L.map(document.createElement("div"));
     (L.map as jest.Mock).mockReturnValue(mockMap);
 
-    (L.featureGroup as jest.Mock).mockImplementation(() => {
-      const layers = new Set<unknown>();
-      const group = {
-        addTo: jest.fn(),
-        addLayer: jest.fn(),
-        removeLayer: jest.fn(),
-        hasLayer: jest.fn(),
-        getBounds: jest.fn().mockReturnValue({
-          isValid: () => true,
-          getCenter: () => ({ lat: 35.681, lng: 139.767 }),
-          getSouthWest: () => ({ lat: 35.681, lng: 139.767 }),
-          getNorthEast: () => ({ lat: 35.681, lng: 139.767 }),
-        }),
-      };
-      group.addTo.mockReturnValue(group);
-      group.addLayer.mockImplementation((layer: unknown) => {
-        layers.add(layer);
-        return group;
-      });
-      group.removeLayer.mockImplementation((layer: unknown) => {
-        layers.delete(layer);
-        return group;
-      });
-      group.hasLayer.mockImplementation((layer: unknown) => layers.has(layer));
-      return group;
-    });
-
     jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
       type: "FeatureCollection",
       features: [
@@ -303,11 +355,14 @@ describe("StgyTrackRenderer", () => {
     expect(L.map).toHaveBeenCalledWith(
       expect.any(HTMLElement),
       expect.objectContaining({
-        center: [35.681, 139.767],
+        center: [(35.681 + 35.69) / 2, (139.767 + 139.78) / 2],
       }),
     );
     expect(L.marker).toHaveBeenCalledWith(
-      expect.objectContaining({ lat: 35.681, lng: 139.767 }),
+      expect.objectContaining({
+        lat: (35.681 + 35.69) / 2,
+        lng: (139.767 + 139.78) / 2,
+      }),
     );
   });
 
@@ -412,12 +467,12 @@ describe("StgyTrackRenderer", () => {
     const hud = document.querySelector<HTMLElement>(".stgy-track-hud");
     expect(hud).not.toBeNull();
     expect(hud?.hidden).toBe(false);
-    expect(hud?.textContent).toContain("2026/01/02 03:04:05");
-    expect(hud?.textContent).toContain("20 m");
-    expect(hud?.textContent).toContain("130 bpm");
-    expect(hud?.textContent).toContain("80 rpm");
-    expect(hud?.textContent).toContain("180 W");
-    expect(hud?.textContent).toContain("22.5 km/h");
+    expect(hud?.textContent).toContain("times: 2026/01/02 03:04:05");
+    expect(hud?.textContent).toContain("elevations: 20 m");
+    expect(hud?.textContent).toContain("heartRates: 130 bpm");
+    expect(hud?.textContent).toContain("cadences: 80 rpm");
+    expect(hud?.textContent).toContain("powers: 180 W");
+    expect(hud?.textContent).toContain("speeds: 22.5 km/h");
   });
 
   test("hides coordinateProperties HUD on LineString mouseout", async () => {
