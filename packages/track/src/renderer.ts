@@ -43,9 +43,37 @@ const createCustomPinIcon = (color: string) => {
 // --- Helper: Build HTML string from GeoJSON properties ---
 const buildPopupHtmlFromProps = (props: any): string => {
   let html = "";
-  if (props.title) html += `<div class="annot-title">${props.title}</div>`;
-  if (props.description) html += `<div class="annot-desc">${props.description}</div>`;
-  if (props.image) html += `<div class="annot-img"><img src="${props.image}" alt="${props.title || ''}"></div>`;
+
+  if (props.title) {
+    html += `<div class="annot-title">${props.title}</div>`;
+  }
+
+  if (props.description) {
+    html += `<div class="annot-desc">${props.description}</div>`;
+  }
+
+  if (Array.isArray(props.links)) {
+    props.links.forEach((link: any) => {
+      if (typeof link === "string") {
+        html += `<div class="annot-link"><a href="${link}" target="_blank" rel="noopener noreferrer">${link}</a></div>`;
+      } else if (link && typeof link.href === "string") {
+        const text = typeof link.text === "string" ? link.text : link.href;
+        html += `<div class="annot-link"><a href="${link.href}" target="_blank" rel="noopener noreferrer">${text}</a></div>`;
+      }
+    });
+  }
+
+  if (Array.isArray(props.images)) {
+    props.images.forEach((image: any) => {
+      if (typeof image === "string") {
+        html += `<div class="annot-image"><img src="${image}" alt=""></div>`;
+      } else if (image && typeof image.src === "string") {
+        const alt = typeof image.alt === "string" ? image.alt : "";
+        html += `<div class="annot-image"><img src="${image.src}" alt="${alt}"></div>`;
+      }
+    });
+  }
+
   return html;
 };
 

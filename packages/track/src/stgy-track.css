@@ -61,27 +61,28 @@
   color: #555;
 }
 
-.stgy-track-popup .annot-href {
+.stgy-track-popup .annot-link {
   margin-bottom: 8px;
   font-size: 0.9em;
   word-break: break-all;
 }
 
-.stgy-track-popup .annot-href a {
+.stgy-track-popup .annot-link a {
   color: #0078A8;
   text-decoration: none;
 }
-.stgy-track-popup .annot-href a:hover {
+
+.stgy-track-popup .annot-link a:hover {
   text-decoration: underline;
 }
 
-.stgy-track-popup .annot-img {
+.stgy-track-popup .annot-image {
   margin-top: 8px;
   text-align: center;
   background-color: #f9f9f9;
 }
 
-.stgy-track-popup .annot-img img {
+.stgy-track-popup .annot-image img {
   display: block;
   margin: 0 auto;
   max-width: 100%;

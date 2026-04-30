@@ -72,7 +72,7 @@
         <li data-lon="135.0" data-lat="34.6" data-color="#e74c3c" data-popup-width="80" data-popup-height="80">
           <div class="annot-title">赤いピン (大きく表示)</div>
           <div class="annot-desc">幅80%、高さ80%のポップアップ。スクロールバーが出ます。</div>
-          <div class="annot-img"><img src="https://placehold.co/400x800/orange/white?text=Tall+Image" alt="Tall"></div>
+          <div class="annot-image"><img src="https://placehold.co/400x800/orange/white?text=Tall+Image" alt="Tall"></div>
         </li>
         <li data-lon="134.8" data-lat="34.4" data-color="green" data-popup-width="40" data-popup-height="30">
           <div class="annot-title">緑のピン (横長表示)</div>
@@ -346,6 +346,46 @@
     <div class="stgy-track-canvas">Map loading...</div>
     <figcaption class="stgy-track-caption" lang="ja">存在しない template エラーデモ</figcaption>
   </figure>
+
+  <h2>11. 複数画像・リンク表示デモ</h2>
+  <p class="desc">
+    <code>images</code> と <code>links</code> を配列で指定するデモです。<br>
+    ポップアップ内に複数画像とリンクが表示されます。
+  </p>
+  <figure class="stgy-track-map" style="height: 350px;" data-src="#demo-geojson-popup-media">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption" lang="ja">複数画像・リンクデモ</figcaption>
+  </figure>
+
+  <template id="demo-geojson-popup-media">
+  {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "geometry": {
+          "type": "Point",
+          "coordinates": [139.767, 35.681]
+        },
+        "properties": {
+          "title": "東京駅",
+          "description": "複数画像・リンクのテストです。",
+          "color": "#8e44ad",
+          "popupWidth": 60,
+          "popupHeight": 60,
+          "links": [
+            "https://example.com",
+            { "href": "https://example.com/detail", "text": "詳細ページ" }
+          ],
+          "images": [
+            "https://placehold.co/200x120",
+            { "src": "https://placehold.co/300x180", "alt": "別画像" }
+          ]
+        }
+      }
+    ]
+  }
+  </template>
 
   <script src="./dist/track-viewer.js"></script>
   <script>

@@ -523,4 +523,61 @@ describe("StgyTrackRenderer", () => {
 
     expect(hud?.hidden).toBe(true);
   });
+
+  test("renders multiple popup links and images from properties", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-popup-media">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [139.767, 35.681],
+          },
+          properties: {
+            title: "東京駅",
+            description: "複数画像・リンクのテスト",
+            links: [
+              "https://example.com",
+              { href: "https://example.com/detail", text: "詳細ページ" },
+            ],
+            images: [
+              "https://placehold.co/200x120",
+              { src: "https://placehold.co/300x180", alt: "別画像" },
+            ],
+          },
+        },
+      ],
+    });
+
+    renderer.hydrate(document.body);
+
+    await new Promise(process.nextTick);
+
+    const renderedGeoJsonResult = (L.geoJSON as jest.Mock).mock.results.find((result) => {
+      return result.value.__featureLayers?.length > 0;
+    });
+
+    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
+    const popupHtml = featureLayer.bindPopup.mock.calls[0][0] as string;
+
+    expect(popupHtml).toContain('<div class="annot-title">東京駅</div>');
+    expect(popupHtml).toContain('<div class="annot-desc">複数画像・リンクのテスト</div>');
+    expect(popupHtml).toContain('class="annot-link"');
+    expect(popupHtml).toContain('href="https://example.com"');
+    expect(popupHtml).toContain('href="https://example.com/detail"');
+    expect(popupHtml).toContain('>詳細ページ</a>');
+    expect(popupHtml).toContain('class="annot-image"');
+    expect(popupHtml).toContain('src="https://placehold.co/200x120"');
+    expect(popupHtml).toContain('src="https://placehold.co/300x180"');
+    expect(popupHtml).toContain('alt="別画像"');
+    expect(popupHtml).not.toContain("annot-img");
+    expect(popupHtml).not.toContain("annot-href");
+  });
 });
