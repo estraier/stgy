@@ -469,7 +469,7 @@ describe("StgyTrackRenderer", () => {
     expect(hud?.hidden).toBe(false);
     expect(hud?.textContent).toContain("times: 2026/01/02 03:04:05");
     expect(hud?.textContent).toContain("elevations: 20 m");
-    expect(hud?.textContent).toContain("heartRates: 130 bpm");
+    expect(hud?.textContent).toContain("heart rates: 130 bpm");
     expect(hud?.textContent).toContain("cadences: 80 rpm");
     expect(hud?.textContent).toContain("powers: 180 W");
     expect(hud?.textContent).toContain("speeds: 22.5 km/h");

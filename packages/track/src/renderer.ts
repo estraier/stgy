@@ -221,6 +221,10 @@ export class StgyTrackRenderer {
     return `${yyyy}/${mm}/${dd} ${hh}:${mi}:${ss}`;
   }
 
+  private formatHudLabel(name: string): string {
+    return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase();
+  }
+
   private findNearestCoordinateIndex(coordinates: unknown, latlng: L.LatLng): number | null {
     if (!Array.isArray(coordinates) || coordinates.length === 0) {
       return null;
@@ -260,7 +264,7 @@ export class StgyTrackRenderer {
 
   private appendHudItem(list: HTMLUListElement, name: string, value: string) {
     const item = document.createElement("li");
-    item.textContent = `${name}: ${value}`;
+    item.textContent = `${this.formatHudLabel(name)}: ${value}`;
     list.appendChild(item);
   }
 
