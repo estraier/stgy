@@ -4,7 +4,6 @@ import "./stgy-track.css";
 import { isJapan } from "./geo";
 import { TrackLoader } from "./loader";
 
-// --- Fix for Leaflet default icon path issues in bundlers ---
 const fixLeafletIcons = () => {
   const iconUrl = "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png";
   const iconRetinaUrl = "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png";
@@ -24,7 +23,6 @@ const fixLeafletIcons = () => {
   });
 };
 
-// --- SVG Custom Pin Icon Generator ---
 const createCustomPinIcon = (color: string) => {
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="25px" height="41px" style="filter: drop-shadow(2px 4px 2px rgba(0,0,0,0.3));">
@@ -40,7 +38,6 @@ const createCustomPinIcon = (color: string) => {
   });
 };
 
-// --- Helper: Build HTML string from GeoJSON properties ---
 const buildPopupHtmlFromProps = (props: any): string => {
   let html = "";
 
@@ -85,6 +82,31 @@ type BoundsAccumulator = {
   minLng: number;
   maxLat: number;
   maxLng: number;
+};
+
+type CoordinateMarkerState = {
+  marker: L.CircleMarker | null;
+};
+
+type CoordinateInteractionContext = {
+  map: L.Map;
+  hud: HTMLElement | null;
+  markerState: CoordinateMarkerState;
+};
+
+type TrackGraphXAxisKind = "distance" | "time" | "sample";
+
+type TrackGraphSeries = {
+  name: string;
+  values: number[];
+};
+
+type TrackGraphDataset = {
+  xAxes: Partial<Record<TrackGraphXAxisKind, number[]>>;
+  defaultXAxis: TrackGraphXAxisKind;
+  series: TrackGraphSeries[];
+  latLngs: L.LatLngExpression[];
+  coordinateProperties: any;
 };
 
 export class StgyTrackRenderer {
@@ -200,6 +222,25 @@ export class StgyTrackRenderer {
     return hud;
   }
 
+  private removeGraphPanel(figure: HTMLElement) {
+    let next = figure.nextElementSibling;
+    while (next && next.classList.contains("stgy-track-graph")) {
+      const current = next;
+      next = next.nextElementSibling;
+      current.remove();
+    }
+  }
+
+  private createGraphPanel(figure: HTMLElement): HTMLElement {
+    this.removeGraphPanel(figure);
+
+    const panel = document.createElement("div");
+    panel.className = "stgy-track-graph";
+    panel.hidden = true;
+    figure.insertAdjacentElement("afterend", panel);
+    return panel;
+  }
+
   private formatLocalTime(value: unknown): string | null {
     if (typeof value !== "number" || !Number.isFinite(value)) {
       return null;
@@ -262,6 +303,31 @@ export class StgyTrackRenderer {
     return bestIndex >= 0 ? bestIndex : null;
   }
 
+  private getLatLngAtIndex(coordinates: unknown, index: number): L.LatLngExpression | null {
+    if (!Array.isArray(coordinates)) {
+      return null;
+    }
+
+    const coordinate = coordinates[index];
+    if (!Array.isArray(coordinate) || coordinate.length < 2) {
+      return null;
+    }
+
+    const lon = coordinate[0];
+    const lat = coordinate[1];
+
+    if (
+      typeof lat !== "number" ||
+      typeof lon !== "number" ||
+      !Number.isFinite(lat) ||
+      !Number.isFinite(lon)
+    ) {
+      return null;
+    }
+
+    return [lat, lon];
+  }
+
   private appendHudItem(list: HTMLUListElement, name: string, value: string) {
     const item = document.createElement("li");
     item.textContent = `${this.formatHudLabel(name)}: ${value}`;
@@ -274,6 +340,11 @@ export class StgyTrackRenderer {
     const time = this.formatLocalTime(coordinateProperties.times?.[index]);
     if (time) {
       this.appendHudItem(list, "times", time);
+    }
+
+    const distance = coordinateProperties.distances?.[index];
+    if (typeof distance === "number" && Number.isFinite(distance)) {
+      this.appendHudItem(list, "distances", `${(distance / 1000).toFixed(2)} km`);
     }
 
     const elevation = coordinateProperties.elevations?.[index];
@@ -309,7 +380,76 @@ export class StgyTrackRenderer {
     return true;
   }
 
-  private bindCoordinateHud(feature: any, layer: L.Layer, hud: HTMLElement) {
+  private showCoordinateMarker(
+    context: CoordinateInteractionContext,
+    latLng: L.LatLngExpression
+  ) {
+    if (!context.markerState.marker) {
+      context.markerState.marker = L.circleMarker(latLng, {
+        radius: 7,
+        weight: 3,
+        color: "#ffffff",
+        fillColor: "#0078A8",
+        fillOpacity: 0.95,
+        opacity: 1,
+        interactive: false,
+      });
+    } else {
+      context.markerState.marker.setLatLng(latLng);
+    }
+
+    const marker = context.markerState.marker;
+    if (!context.map.hasLayer(marker)) {
+      context.map.addLayer(marker);
+    }
+  }
+
+  private hideCoordinateMarker(context: CoordinateInteractionContext) {
+    const marker = context.markerState.marker;
+    if (marker && context.map.hasLayer(marker)) {
+      context.map.removeLayer(marker);
+    }
+  }
+
+  private updateCoordinateOverlay(
+    hud: HTMLElement | null,
+    coordinateProperties: any,
+    index: number
+  ) {
+    if (!hud) {
+      return;
+    }
+
+    if (!this.renderHudItems(hud, coordinateProperties, index)) {
+      hud.hidden = true;
+      return;
+    }
+
+    hud.hidden = false;
+  }
+
+  private activateCoordinateSample(
+    context: CoordinateInteractionContext,
+    latLng: L.LatLngExpression,
+    coordinateProperties: any,
+    index: number
+  ) {
+    this.showCoordinateMarker(context, latLng);
+    this.updateCoordinateOverlay(context.hud, coordinateProperties, index);
+  }
+
+  private clearCoordinateSample(context: CoordinateInteractionContext) {
+    this.hideCoordinateMarker(context);
+    if (context.hud) {
+      context.hud.hidden = true;
+    }
+  }
+
+  private bindCoordinateInteractions(
+    feature: any,
+    layer: L.Layer,
+    context: CoordinateInteractionContext
+  ) {
     if (feature?.geometry?.type !== "LineString") {
       return;
     }
@@ -323,26 +463,409 @@ export class StgyTrackRenderer {
     layer.on("mousemove", (event: L.LeafletMouseEvent) => {
       const index = this.findNearestCoordinateIndex(coordinates, event.latlng);
       if (index === null) {
-        hud.hidden = true;
+        this.clearCoordinateSample(context);
         return;
       }
 
-      if (!this.renderHudItems(hud, coordinateProperties, index)) {
-        hud.hidden = true;
+      const latLng = this.getLatLngAtIndex(coordinates, index);
+      if (!latLng) {
+        this.clearCoordinateSample(context);
         return;
       }
 
-      hud.hidden = false;
+      this.activateCoordinateSample(context, latLng, coordinateProperties, index);
     });
 
     layer.on("mouseout", () => {
-      hud.hidden = true;
+      this.clearCoordinateSample(context);
     });
   }
 
-  private createGeoJsonLayer(map: L.Map, geoJsonData: any, hud: HTMLElement): L.GeoJSON {
+  private isNumberArrayWithLength(value: unknown, length: number): value is number[] {
+    return (
+      Array.isArray(value) &&
+      value.length === length &&
+      value.every((item) => typeof item === "number" && Number.isFinite(item))
+    );
+  }
+
+  private createSampleAxis(length: number): number[] {
+    return Array.from({ length }, (_, index) => index);
+  }
+
+  private buildGraphDatasetFromFeature(feature: any): TrackGraphDataset | null {
+    if (feature?.geometry?.type !== "LineString") {
+      return null;
+    }
+
+    const coordinates = feature.geometry.coordinates;
+    if (!Array.isArray(coordinates) || coordinates.length === 0) {
+      return null;
+    }
+
+    const latLngs: L.LatLngExpression[] = coordinates
+      .map((coordinate: unknown) => {
+        if (!Array.isArray(coordinate) || coordinate.length < 2) {
+          return null;
+        }
+
+        const lon = coordinate[0];
+        const lat = coordinate[1];
+        if (
+          typeof lat !== "number" ||
+          typeof lon !== "number" ||
+          !Number.isFinite(lat) ||
+          !Number.isFinite(lon)
+        ) {
+          return null;
+        }
+
+        return [lat, lon] as L.LatLngExpression;
+      })
+      .filter((value: L.LatLngExpression | null): value is L.LatLngExpression => value !== null);
+
+    if (latLngs.length !== coordinates.length) {
+      return null;
+    }
+
+    const coordinateProperties = feature.properties?.coordinateProperties;
+    if (!coordinateProperties || typeof coordinateProperties !== "object") {
+      return null;
+    }
+
+    const length = coordinates.length;
+    const xAxes: Partial<Record<TrackGraphXAxisKind, number[]>> = {
+      sample: this.createSampleAxis(length),
+    };
+
+    if (this.isNumberArrayWithLength(coordinateProperties.distances, length)) {
+      xAxes.distance = coordinateProperties.distances;
+    }
+
+    if (this.isNumberArrayWithLength(coordinateProperties.times, length)) {
+      xAxes.time = coordinateProperties.times;
+    }
+
+    const series: TrackGraphSeries[] = [];
+    Object.keys(coordinateProperties).forEach((key) => {
+      if (key === "distances" || key === "times") {
+        return;
+      }
+
+      const values = coordinateProperties[key];
+      if (this.isNumberArrayWithLength(values, length)) {
+        series.push({
+          name: key,
+          values,
+        });
+      }
+    });
+
+    if (series.length === 0) {
+      return null;
+    }
+
+    const defaultXAxis: TrackGraphXAxisKind = xAxes.distance
+      ? "distance"
+      : xAxes.time
+      ? "time"
+      : "sample";
+
+    return {
+      xAxes,
+      defaultXAxis,
+      series,
+      latLngs,
+      coordinateProperties,
+    };
+  }
+
+  private collectGraphDatasetsFromGeoJson(geoJsonData: any): TrackGraphDataset[] {
+    if (geoJsonData?.type === "FeatureCollection" && Array.isArray(geoJsonData.features)) {
+      return geoJsonData.features
+        .map((feature: any) => this.buildGraphDatasetFromFeature(feature))
+        .filter((dataset: TrackGraphDataset | null): dataset is TrackGraphDataset => dataset !== null);
+    }
+
+    if (geoJsonData?.type === "Feature") {
+      const dataset = this.buildGraphDatasetFromFeature(geoJsonData);
+      return dataset ? [dataset] : [];
+    }
+
+    return [];
+  }
+
+  private formatXAxisLabel(kind: TrackGraphXAxisKind, value: number): string {
+    if (kind === "distance") {
+      return `${(value / 1000).toFixed(2)} km`;
+    }
+
+    if (kind === "time") {
+      return this.formatLocalTime(value) || "";
+    }
+
+    return `${Math.round(value)}`;
+  }
+
+  private formatGraphYValue(seriesName: string, value: number): string {
+    if (seriesName === "elevations") {
+      return `${value.toFixed(1)} m`;
+    }
+
+    if (seriesName === "heartRates") {
+      return `${value.toFixed(0)} bpm`;
+    }
+
+    if (seriesName === "cadences") {
+      return `${value.toFixed(0)} rpm`;
+    }
+
+    if (seriesName === "powers") {
+      return `${value.toFixed(0)} W`;
+    }
+
+    if (seriesName === "speeds") {
+      return `${value.toFixed(1)} km/h`;
+    }
+
+    return `${value.toFixed(1)}`;
+  }
+
+  private renderGraphPanel(
+    panel: HTMLElement,
+    context: CoordinateInteractionContext,
+    dataset: TrackGraphDataset,
+    selectedXAxis: TrackGraphXAxisKind = dataset.defaultXAxis,
+    selectedSeriesName: string = dataset.series[0].name
+  ) {
+    const xValues = dataset.xAxes[selectedXAxis] || dataset.xAxes.sample;
+    const series = dataset.series.find((item) => item.name === selectedSeriesName) || dataset.series[0];
+
+    if (!xValues || !series || xValues.length !== series.values.length || xValues.length === 0) {
+      panel.hidden = true;
+      return;
+    }
+
+    panel.hidden = false;
+    panel.replaceChildren();
+
+    const controls = document.createElement("div");
+    controls.className = "stgy-track-graph-controls";
+
+    if (dataset.series.length > 1) {
+      const seriesSelect = document.createElement("select");
+      seriesSelect.setAttribute("aria-label", "Graph series");
+
+      dataset.series.forEach((item) => {
+        const option = document.createElement("option");
+        option.value = item.name;
+        option.textContent = this.formatHudLabel(item.name);
+        option.selected = item.name === series.name;
+        seriesSelect.appendChild(option);
+      });
+
+      seriesSelect.addEventListener("change", () => {
+        this.renderGraphPanel(panel, context, dataset, selectedXAxis, seriesSelect.value);
+      });
+
+      controls.appendChild(seriesSelect);
+    }
+
+    const availableXAxisKinds: TrackGraphXAxisKind[] = [];
+    if (dataset.xAxes.distance) {
+      availableXAxisKinds.push("distance");
+    }
+    if (dataset.xAxes.time) {
+      availableXAxisKinds.push("time");
+    }
+    availableXAxisKinds.push("sample");
+
+    if (availableXAxisKinds.length > 1) {
+      const axisSelect = document.createElement("select");
+      axisSelect.setAttribute("aria-label", "Graph X axis");
+
+      availableXAxisKinds.forEach((kind) => {
+        const option = document.createElement("option");
+        option.value = kind;
+        option.textContent = kind;
+        option.selected = kind === selectedXAxis;
+        axisSelect.appendChild(option);
+      });
+
+      axisSelect.addEventListener("change", () => {
+        this.renderGraphPanel(panel, context, dataset, axisSelect.value as TrackGraphXAxisKind, series.name);
+      });
+
+      controls.appendChild(axisSelect);
+    }
+
+    const readout = document.createElement("div");
+    readout.className = "stgy-track-graph-readout";
+    readout.textContent = "";
+    controls.appendChild(readout);
+
+    panel.appendChild(controls);
+
+    const svgNs = "http://www.w3.org/2000/svg";
+    const svg = document.createElementNS(svgNs, "svg");
+    svg.setAttribute("viewBox", "0 0 800 180");
+    svg.setAttribute("role", "img");
+    svg.setAttribute("aria-label", `${this.formatHudLabel(series.name)} graph`);
+
+    const plotLeft = 52;
+    const plotRight = 780;
+    const plotTop = 16;
+    const plotBottom = 140;
+    const plotWidth = plotRight - plotLeft;
+    const plotHeight = plotBottom - plotTop;
+
+    const xMin = Math.min(...xValues);
+    const xMax = Math.max(...xValues);
+    const rawYMin = Math.min(...series.values);
+    const rawYMax = Math.max(...series.values);
+    const yPadding = rawYMin === rawYMax ? Math.max(Math.abs(rawYMin) * 0.1, 1) : 0;
+    const yMin = rawYMin - yPadding;
+    const yMax = rawYMax + yPadding;
+
+    const xScale = (value: number): number => {
+      if (xMax === xMin) {
+        return plotLeft + plotWidth / 2;
+      }
+      return plotLeft + ((value - xMin) / (xMax - xMin)) * plotWidth;
+    };
+
+    const yScale = (value: number): number => {
+      if (yMax === yMin) {
+        return plotTop + plotHeight / 2;
+      }
+      return plotBottom - ((value - yMin) / (yMax - yMin)) * plotHeight;
+    };
+
+    const scaledXValues = xValues.map((x) => xScale(x));
+
+    const axis = document.createElementNS(svgNs, "path");
+    axis.setAttribute("class", "stgy-track-graph-axis");
+    axis.setAttribute("d", `M ${plotLeft} ${plotTop} L ${plotLeft} ${plotBottom} L ${plotRight} ${plotBottom}`);
+    svg.appendChild(axis);
+
+    const line = document.createElementNS(svgNs, "polyline");
+    line.setAttribute("class", "stgy-track-graph-line");
+    line.setAttribute(
+      "points",
+      xValues.map((x, index) => `${xScale(x)},${yScale(series.values[index])}`).join(" ")
+    );
+    svg.appendChild(line);
+
+    const hoverLine = document.createElementNS(svgNs, "line");
+    hoverLine.setAttribute("class", "stgy-track-graph-hover-line");
+    hoverLine.setAttribute("y1", `${plotTop}`);
+    hoverLine.setAttribute("y2", `${plotBottom}`);
+    hoverLine.setAttribute("hidden", "true");
+    svg.appendChild(hoverLine);
+
+    const hoverPoint = document.createElementNS(svgNs, "circle");
+    hoverPoint.setAttribute("class", "stgy-track-graph-hover-point");
+    hoverPoint.setAttribute("r", "4");
+    hoverPoint.setAttribute("hidden", "true");
+    svg.appendChild(hoverPoint);
+
+    const yMinLabel = document.createElementNS(svgNs, "text");
+    yMinLabel.setAttribute("class", "stgy-track-graph-label");
+    yMinLabel.setAttribute("x", "8");
+    yMinLabel.setAttribute("y", `${plotBottom}`);
+    yMinLabel.textContent = rawYMin.toFixed(1);
+    svg.appendChild(yMinLabel);
+
+    const yMaxLabel = document.createElementNS(svgNs, "text");
+    yMaxLabel.setAttribute("class", "stgy-track-graph-label");
+    yMaxLabel.setAttribute("x", "8");
+    yMaxLabel.setAttribute("y", `${plotTop + 4}`);
+    yMaxLabel.textContent = rawYMax.toFixed(1);
+    svg.appendChild(yMaxLabel);
+
+    const xMinLabel = document.createElementNS(svgNs, "text");
+    xMinLabel.setAttribute("class", "stgy-track-graph-label");
+    xMinLabel.setAttribute("x", `${plotLeft}`);
+    xMinLabel.setAttribute("y", "168");
+    xMinLabel.textContent = this.formatXAxisLabel(selectedXAxis, xMin);
+    svg.appendChild(xMinLabel);
+
+    const xMaxLabel = document.createElementNS(svgNs, "text");
+    xMaxLabel.setAttribute("class", "stgy-track-graph-label stgy-track-graph-label-end");
+    xMaxLabel.setAttribute("x", `${plotRight}`);
+    xMaxLabel.setAttribute("y", "168");
+    xMaxLabel.textContent = this.formatXAxisLabel(selectedXAxis, xMax);
+    svg.appendChild(xMaxLabel);
+
+    svg.addEventListener("mousemove", (event) => {
+      const rect = svg.getBoundingClientRect();
+      if (rect.width <= 0 || rect.height <= 0) {
+        return;
+      }
+
+      const viewBoxX = ((event.clientX - rect.left) / rect.width) * 800;
+      let nearestIndex = 0;
+      let nearestDistance = Number.POSITIVE_INFINITY;
+
+      scaledXValues.forEach((scaledX, index) => {
+        const distance = Math.abs(scaledX - viewBoxX);
+        if (distance < nearestDistance) {
+          nearestDistance = distance;
+          nearestIndex = index;
+        }
+      });
+
+      const hoverX = scaledXValues[nearestIndex];
+      const hoverY = yScale(series.values[nearestIndex]);
+
+      hoverLine.setAttribute("x1", `${hoverX}`);
+      hoverLine.setAttribute("x2", `${hoverX}`);
+      hoverLine.removeAttribute("hidden");
+
+      hoverPoint.setAttribute("cx", `${hoverX}`);
+      hoverPoint.setAttribute("cy", `${hoverY}`);
+      hoverPoint.removeAttribute("hidden");
+
+      this.activateCoordinateSample(
+        context,
+        dataset.latLngs[nearestIndex],
+        dataset.coordinateProperties,
+        nearestIndex
+      );
+
+      readout.textContent = `${this.formatXAxisLabel(selectedXAxis, xValues[nearestIndex])} / ${this.formatGraphYValue(series.name, series.values[nearestIndex])}`;
+    });
+
+    svg.addEventListener("mouseleave", () => {
+      hoverLine.setAttribute("hidden", "true");
+      hoverPoint.setAttribute("hidden", "true");
+      readout.textContent = "";
+      this.clearCoordinateSample(context);
+    });
+
+    panel.appendChild(svg);
+  }
+
+  private renderFirstGraphDataset(
+    panel: HTMLElement,
+    context: CoordinateInteractionContext,
+    datasets: TrackGraphDataset[]
+  ) {
+    if (datasets.length === 0) {
+      panel.hidden = true;
+      panel.replaceChildren();
+      return;
+    }
+
+    this.renderGraphPanel(panel, context, datasets[0]);
+  }
+
+  private createGeoJsonLayer(
+    map: L.Map,
+    geoJsonData: any,
+    context: CoordinateInteractionContext
+  ): L.GeoJSON {
     return L.geoJSON(geoJsonData, {
-      // スタイル指定 (LineString, Polygon 等用)
       style: (feature) => {
         const props = feature?.properties || {};
         return {
@@ -351,7 +874,6 @@ export class StgyTrackRenderer {
           opacity: props.opacity || 0.8
         };
       },
-      // Pointデータの描画をカスタムピンに差し替え
       pointToLayer: (feature, latlng) => {
         const props = feature.properties || {};
         const markerOptions: L.MarkerOptions = {};
@@ -360,7 +882,6 @@ export class StgyTrackRenderer {
         }
         return L.marker(latlng, markerOptions);
       },
-      // 各要素（点や線）にポップアップをバインド
       onEachFeature: (feature, layer) => {
         const props = feature.properties || {};
         const popupHtml = buildPopupHtmlFromProps(props);
@@ -385,7 +906,7 @@ export class StgyTrackRenderer {
           });
         }
 
-        this.bindCoordinateHud(feature, layer, hud);
+        this.bindCoordinateInteractions(feature, layer, context);
       }
     });
   }
@@ -413,7 +934,7 @@ export class StgyTrackRenderer {
     layerGroup: L.FeatureGroup,
     geoJsonData: any,
     label: string,
-    hud: HTMLElement
+    context: CoordinateInteractionContext
   ) {
     const center = this.getGeoJsonCenter(geoJsonData);
     if (!center) {
@@ -428,7 +949,7 @@ export class StgyTrackRenderer {
     let routeLayer: L.GeoJSON | null = null;
     marker.on("click", () => {
       if (!routeLayer) {
-        routeLayer = this.createGeoJsonLayer(map, geoJsonData, hud);
+        routeLayer = this.createGeoJsonLayer(map, geoJsonData, context);
       }
       if (layerGroup.hasLayer(routeLayer)) {
         layerGroup.removeLayer(routeLayer);
@@ -449,6 +970,13 @@ export class StgyTrackRenderer {
       return;
     }
 
+    const showOverlay = figure.dataset.showOverlay !== "false";
+    const showGraph = figure.dataset.showGraph !== "false";
+    const graphPanel = showGraph ? this.createGraphPanel(figure) : null;
+    if (!showGraph) {
+      this.removeGraphPanel(figure);
+    }
+
     const hasExplicitLat = typeof figure.dataset.lat !== "undefined";
     const hasExplicitLon = typeof figure.dataset.lon !== "undefined";
     const hasExplicitZoom = typeof figure.dataset.zoom !== "undefined";
@@ -463,6 +991,7 @@ export class StgyTrackRenderer {
       : Array.from(figure.querySelectorAll<HTMLAnchorElement>(".stgy-track-sources a.track-source"));
     const trackDataCache: Record<string, any> = {};
     const viewBounds = this.createBoundsAccumulator();
+    const graphDatasets: TrackGraphDataset[] = [];
 
     const inlinePins = figure.querySelectorAll<HTMLElement>(".stgy-track-pins li");
     inlinePins.forEach((pin) => {
@@ -477,6 +1006,9 @@ export class StgyTrackRenderer {
       try {
         const preloadedTrackData = await this.loadTrackData(dataSrc, trackDataCache);
         this.extendBoundsWithGeoJson(viewBounds, preloadedTrackData);
+        if (showGraph) {
+          graphDatasets.push(...this.collectGraphDatasetsFromGeoJson(preloadedTrackData));
+        }
       } catch (e) {
         this.showError(figure, this.toUserErrorMessage(e));
         return;
@@ -491,6 +1023,9 @@ export class StgyTrackRenderer {
         try {
           const preloadedTrackData = await this.loadTrackData(href, trackDataCache);
           this.extendBoundsWithGeoJson(viewBounds, preloadedTrackData);
+          if (showGraph) {
+            graphDatasets.push(...this.collectGraphDatasetsFromGeoJson(preloadedTrackData));
+          }
         } catch (e) {
           this.showError(figure, this.toUserErrorMessage(e));
           return;
@@ -508,7 +1043,6 @@ export class StgyTrackRenderer {
 
     const isJp = isJapan(lat, lon);
 
-    // --- Define Tile Layers ---
     const gsiPale = L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png", { attribution: '&copy; GSI Japan', maxNativeZoom: 18, maxZoom: 20 });
     const gsiStd = L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/std/{z}/{x}/{y}.png", { attribution: '&copy; GSI Japan', maxNativeZoom: 18, maxZoom: 20 });
     const gsiPhoto = L.tileLayer("https://cyberjapandata.gsi.go.jp/xyz/seamlessphoto/{z}/{x}/{y}.jpg", { attribution: '&copy; GSI Japan', maxNativeZoom: 18, maxZoom: 20 });
@@ -542,19 +1076,23 @@ export class StgyTrackRenderer {
     });
 
     L.control.layers(baseMaps).addTo(map);
-    const hud = this.createHud(canvas);
+    const hud = showOverlay ? this.createHud(canvas) : null;
+    const markerState: CoordinateMarkerState = { marker: null };
+    const interactionContext: CoordinateInteractionContext = {
+      map,
+      hud,
+      markerState,
+    };
     const masterGroup = L.featureGroup().addTo(map);
 
-    // --- 1. Render Inline Pins ---
     if (inlinePins.length > 0) {
       this.renderInlinePins(map, masterGroup, inlinePins);
     }
 
-    // --- 2. Load & Render GeoJSON/TrackJSON ---
     if (dataSrc) {
       try {
         const geoJsonData = await this.loadTrackData(dataSrc, trackDataCache);
-        const geoJsonLayer = this.createGeoJsonLayer(map, geoJsonData, hud);
+        const geoJsonLayer = this.createGeoJsonLayer(map, geoJsonData, interactionContext);
         masterGroup.addLayer(geoJsonLayer);
       } catch (e) {
         this.showError(figure, this.toUserErrorMessage(e));
@@ -570,9 +1108,9 @@ export class StgyTrackRenderer {
         try {
           const geoJsonData = await this.loadTrackData(href, trackDataCache);
           if (link.dataset.render === "pin") {
-            this.renderTrackAsPin(map, masterGroup, geoJsonData, link.textContent?.trim() || "", hud);
+            this.renderTrackAsPin(map, masterGroup, geoJsonData, link.textContent?.trim() || "", interactionContext);
           } else {
-            const geoJsonLayer = this.createGeoJsonLayer(map, geoJsonData, hud);
+            const geoJsonLayer = this.createGeoJsonLayer(map, geoJsonData, interactionContext);
             masterGroup.addLayer(geoJsonLayer);
           }
         } catch (e) {
@@ -583,7 +1121,15 @@ export class StgyTrackRenderer {
       await Promise.all(trackPromises);
     }
 
-    // --- 3. Apply Smart Auto-Fit ---
+    if (showGraph && graphPanel) {
+      this.renderFirstGraphDataset(graphPanel, interactionContext, graphDatasets);
+    }
+
+    const invalidateSize = (map as unknown as { invalidateSize?: () => void }).invalidateSize;
+    if (invalidateSize) {
+      invalidateSize.call(map);
+    }
+
     const accumulatedBounds = this.toLeafletBounds(viewBounds);
     const bounds = accumulatedBounds && accumulatedBounds.isValid()
       ? accumulatedBounds
