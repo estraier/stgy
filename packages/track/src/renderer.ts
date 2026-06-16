@@ -4,6 +4,80 @@ import "./stgy-track.css";
 import { isJapan } from "./geo";
 import { TrackLoader } from "./loader";
 
+const DEFAULT_PIN_COLOR = "#3388ff";
+const DEFAULT_ROUTE_COLOR = "#0078A8";
+const ALLOWED_URL_PROTOCOLS = new Set(["http:", "https:"]);
+const ALLOWED_MAP_COLORS = new Set([
+  "red",
+  "green",
+  "blue",
+  "orange",
+  "purple",
+  "gold",
+  "black",
+  "white",
+  "gray",
+  "grey",
+]);
+
+const DEFAULT_SINGLE_POINT_ZOOM = 12;
+
+type BoundsAccumulator = {
+  hasValue: boolean;
+  minLat: number;
+  minLng: number;
+  maxLat: number;
+  maxLng: number;
+};
+
+type CoordinateMarkerState = {
+  marker: L.CircleMarker | null;
+};
+
+type TrackGraphXAxisKind = "distance" | "time" | "sample";
+
+type TrackGraphSeries = {
+  name: string;
+  values: number[];
+};
+
+type TrackGraphDataset = {
+  xAxes: Partial<Record<TrackGraphXAxisKind, number[]>>;
+  defaultXAxis: TrackGraphXAxisKind;
+  series: TrackGraphSeries[];
+  latLngs: L.LatLngExpression[];
+  coordinateProperties: any;
+};
+
+type GraphHoverState = {
+  dataset: TrackGraphDataset;
+  selectedXAxis: TrackGraphXAxisKind;
+  series: TrackGraphSeries;
+  xValues: number[];
+  scaledXValues: number[];
+  yScale: (value: number) => number;
+  hoverLine: SVGLineElement;
+  hoverPoint: SVGCircleElement;
+  readout: HTMLElement;
+};
+
+type CoordinateInteractionContext = {
+  map: L.Map;
+  hud: HTMLElement | null;
+  markerState: CoordinateMarkerState;
+  graphPanel: HTMLElement | null;
+  graphHoverState: GraphHoverState | null;
+  routeDatasetByLayer: WeakMap<L.Layer, TrackGraphDataset>;
+  routeStyleByLayer: WeakMap<L.Layer, L.PathOptions>;
+  activeGraphDataset: TrackGraphDataset | null;
+  activeGraphLayer: L.Layer | null;
+};
+
+type StyleableLayer = L.Layer & {
+  setStyle?: (style: L.PathOptions) => unknown;
+  bringToFront?: () => unknown;
+};
+
 const fixLeafletIcons = () => {
   const iconUrl = "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png";
   const iconRetinaUrl = "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png";
@@ -23,10 +97,34 @@ const fixLeafletIcons = () => {
   });
 };
 
+const normalizeMapColor = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const color = value.trim();
+
+  if (/^#[0-9a-fA-F]{3}$/.test(color)) {
+    return color;
+  }
+
+  if (/^#[0-9a-fA-F]{6}$/.test(color)) {
+    return color;
+  }
+
+  const lowerColor = color.toLowerCase();
+  if (ALLOWED_MAP_COLORS.has(lowerColor)) {
+    return lowerColor;
+  }
+
+  return null;
+};
+
 const createCustomPinIcon = (color: string) => {
+  const safeColor = normalizeMapColor(color) || DEFAULT_PIN_COLOR;
   const svg = `
     <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="25px" height="41px" style="filter: drop-shadow(2px 4px 2px rgba(0,0,0,0.3));">
-      <path fill="${color}" stroke="#ffffff" stroke-width="1.5" d="M12 0C5.373 0 0 5.373 0 12c0 8.442 11.373 23.36 11.706 23.784.144.184.364.288.594.288.23 0 .45-.104.594-.288C13.227 35.36 24 20.442 24 12 24 5.373 18.627 0 12 0zm0 18c-3.314 0-6-2.686-6-6s2.686-6 6-6 6 2.686 6 6-2.686 6-6 6z"/>
+      <path fill="${safeColor}" stroke="#ffffff" stroke-width="1.5" d="M12 0C5.373 0 0 5.373 0 12c0 8.442 11.373 23.36 11.706 23.784.144.184.364.288.594.288.23 0 .45-.104.594-.288C13.227 35.36 24 20.442 24 12 24 5.373 18.627 0 12 0zm0 18c-3.314 0-6-2.686-6-6s2.686-6 6-6 6 2.686 6 6-2.686 6-6 6z"/>
     </svg>`;
 
   return L.divIcon({
@@ -36,77 +134,6 @@ const createCustomPinIcon = (color: string) => {
     iconAnchor: [12, 41],
     popupAnchor: [0, -34],
   });
-};
-
-const buildPopupHtmlFromProps = (props: any): string => {
-  let html = "";
-
-  if (props.title) {
-    html += `<div class="annot-title">${props.title}</div>`;
-  }
-
-  if (props.description) {
-    html += `<div class="annot-desc">${props.description}</div>`;
-  }
-
-  if (Array.isArray(props.links)) {
-    props.links.forEach((link: any) => {
-      if (typeof link === "string") {
-        html += `<div class="annot-link"><a href="${link}" target="_blank" rel="noopener noreferrer">${link}</a></div>`;
-      } else if (link && typeof link.href === "string") {
-        const text = typeof link.text === "string" ? link.text : link.href;
-        html += `<div class="annot-link"><a href="${link.href}" target="_blank" rel="noopener noreferrer">${text}</a></div>`;
-      }
-    });
-  }
-
-  if (Array.isArray(props.images)) {
-    props.images.forEach((image: any) => {
-      if (typeof image === "string") {
-        html += `<div class="annot-image"><img src="${image}" alt=""></div>`;
-      } else if (image && typeof image.src === "string") {
-        const alt = typeof image.alt === "string" ? image.alt : "";
-        html += `<div class="annot-image"><img src="${image.src}" alt="${alt}"></div>`;
-      }
-    });
-  }
-
-  return html;
-};
-
-const DEFAULT_SINGLE_POINT_ZOOM = 12;
-
-type BoundsAccumulator = {
-  hasValue: boolean;
-  minLat: number;
-  minLng: number;
-  maxLat: number;
-  maxLng: number;
-};
-
-type CoordinateMarkerState = {
-  marker: L.CircleMarker | null;
-};
-
-type CoordinateInteractionContext = {
-  map: L.Map;
-  hud: HTMLElement | null;
-  markerState: CoordinateMarkerState;
-};
-
-type TrackGraphXAxisKind = "distance" | "time" | "sample";
-
-type TrackGraphSeries = {
-  name: string;
-  values: number[];
-};
-
-type TrackGraphDataset = {
-  xAxes: Partial<Record<TrackGraphXAxisKind, number[]>>;
-  defaultXAxis: TrackGraphXAxisKind;
-  series: TrackGraphSeries[];
-  latLngs: L.LatLngExpression[];
-  coordinateProperties: any;
 };
 
 export class StgyTrackRenderer {
@@ -239,6 +266,256 @@ export class StgyTrackRenderer {
     panel.hidden = true;
     figure.insertAdjacentElement("afterend", panel);
     return panel;
+  }
+
+  private normalizeSafeUrl(value: unknown): string | null {
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return null;
+    }
+
+    try {
+      const base = document.baseURI || window.location.href;
+      const url = new URL(trimmed, base);
+      if (!ALLOWED_URL_PROTOCOLS.has(url.protocol)) {
+        return null;
+      }
+      return url.href;
+    } catch {
+      return null;
+    }
+  }
+
+  private appendTextBlock(root: HTMLElement, className: string, value: unknown) {
+    if (typeof value !== "string") {
+      return;
+    }
+
+    const div = document.createElement("div");
+    div.className = className;
+    div.textContent = value;
+    root.appendChild(div);
+  }
+
+  private appendSafeLink(root: HTMLElement, hrefValue: unknown, textValue?: unknown) {
+    const href = this.normalizeSafeUrl(hrefValue);
+    if (!href) {
+      return;
+    }
+
+    const div = document.createElement("div");
+    div.className = "annot-link";
+
+    const anchor = document.createElement("a");
+    anchor.href = href;
+    anchor.target = "_blank";
+    anchor.rel = "noopener noreferrer";
+    anchor.textContent = typeof textValue === "string" ? textValue : href;
+
+    div.appendChild(anchor);
+    root.appendChild(div);
+  }
+
+  private appendSafeImage(root: HTMLElement, srcValue: unknown, altValue?: unknown) {
+    const src = this.normalizeSafeUrl(srcValue);
+    if (!src) {
+      return;
+    }
+
+    const div = document.createElement("div");
+    div.className = "annot-image";
+
+    const image = document.createElement("img");
+    image.src = src;
+    image.alt = typeof altValue === "string" ? altValue : "";
+    image.referrerPolicy = "no-referrer";
+    image.loading = "lazy";
+    image.decoding = "async";
+
+    div.appendChild(image);
+    root.appendChild(div);
+  }
+
+  private buildPopupElementFromProps(props: any): HTMLElement | null {
+    const root = document.createElement("div");
+
+    this.appendTextBlock(root, "annot-title", props.title);
+    this.appendTextBlock(root, "annot-desc", props.description);
+
+    if (Array.isArray(props.links)) {
+      props.links.forEach((link: any) => {
+        if (typeof link === "string") {
+          this.appendSafeLink(root, link, link);
+        } else if (link && typeof link === "object") {
+          this.appendSafeLink(root, link.href, link.text);
+        }
+      });
+    }
+
+    if (Array.isArray(props.images)) {
+      props.images.forEach((image: any) => {
+        if (typeof image === "string") {
+          this.appendSafeImage(root, image, "");
+        } else if (image && typeof image === "object") {
+          this.appendSafeImage(root, image.src, image.alt);
+        }
+      });
+    }
+
+    return root.children.length > 0 ? root : null;
+  }
+
+  private buildPopupElementFromInlinePin(li: HTMLElement): HTMLElement | null {
+    const root = document.createElement("div");
+
+    Array.from(li.children).forEach((child) => {
+      if (!(child instanceof HTMLElement)) {
+        return;
+      }
+
+      if (child.classList.contains("annot-title")) {
+        this.appendTextBlock(root, "annot-title", child.textContent || "");
+        return;
+      }
+
+      if (child.classList.contains("annot-desc")) {
+        this.appendTextBlock(root, "annot-desc", child.textContent || "");
+        return;
+      }
+
+      if (child.classList.contains("annot-link")) {
+        const links = Array.from(child.querySelectorAll<HTMLAnchorElement>("a"));
+        if (links.length === 0) {
+          this.appendSafeLink(root, child.textContent || "", child.textContent || "");
+          return;
+        }
+
+        links.forEach((link) => {
+          this.appendSafeLink(
+            root,
+            link.getAttribute("href") || "",
+            link.textContent || link.getAttribute("href") || ""
+          );
+        });
+        return;
+      }
+
+      if (child.classList.contains("annot-image")) {
+        const images = Array.from(child.querySelectorAll<HTMLImageElement>("img"));
+        images.forEach((image) => {
+          this.appendSafeImage(
+            root,
+            image.getAttribute("src") || "",
+            image.getAttribute("alt") || ""
+          );
+        });
+      }
+    });
+
+    return root.children.length > 0 ? root : null;
+  }
+
+  private getFeaturePathStyle(feature: any): L.PathOptions {
+    const props = feature?.properties || {};
+    const color = normalizeMapColor(props.color) || DEFAULT_ROUTE_COLOR;
+    const weight = typeof props.weight === "number" && Number.isFinite(props.weight)
+      ? props.weight
+      : 4;
+    const opacity = typeof props.opacity === "number" && Number.isFinite(props.opacity)
+      ? props.opacity
+      : 0.8;
+
+    return {
+      color,
+      weight,
+      opacity,
+    };
+  }
+
+  private getActiveFeaturePathStyle(baseStyle: L.PathOptions): L.PathOptions {
+    const baseWeight = typeof baseStyle.weight === "number" && Number.isFinite(baseStyle.weight)
+      ? baseStyle.weight
+      : 4;
+
+    return {
+      ...baseStyle,
+      weight: baseWeight + 2,
+      opacity: 1,
+    };
+  }
+
+  private getStyleableLayer(layer: L.Layer): StyleableLayer {
+    return layer as StyleableLayer;
+  }
+
+  private restoreGraphLayerStyle(context: CoordinateInteractionContext, layer: L.Layer) {
+    const styleableLayer = this.getStyleableLayer(layer);
+    const baseStyle = context.routeStyleByLayer.get(layer);
+
+    if (baseStyle && styleableLayer.setStyle) {
+      styleableLayer.setStyle(baseStyle);
+    }
+  }
+
+  private highlightGraphLayer(context: CoordinateInteractionContext, layer: L.Layer) {
+    const styleableLayer = this.getStyleableLayer(layer);
+    const baseStyle = context.routeStyleByLayer.get(layer);
+
+    if (baseStyle && styleableLayer.setStyle) {
+      styleableLayer.setStyle(this.getActiveFeaturePathStyle(baseStyle));
+    }
+
+    if (styleableLayer.bringToFront) {
+      styleableLayer.bringToFront();
+    }
+  }
+
+  private activateGraphDatasetForLayer(context: CoordinateInteractionContext, layer: L.Layer) {
+    const dataset = context.routeDatasetByLayer.get(layer);
+    if (!dataset || !context.graphPanel) {
+      return;
+    }
+
+    this.clearCoordinateSample(context);
+
+    if (context.activeGraphLayer && context.activeGraphLayer !== layer) {
+      this.restoreGraphLayerStyle(context, context.activeGraphLayer);
+    }
+
+    context.activeGraphLayer = layer;
+    context.activeGraphDataset = dataset;
+    this.highlightGraphLayer(context, layer);
+    this.renderGraphPanel(context.graphPanel, context, dataset);
+  }
+
+  private registerGraphDatasetForLayer(
+    feature: any,
+    layer: L.Layer,
+    context: CoordinateInteractionContext
+  ) {
+    if (!context.graphPanel) {
+      return;
+    }
+
+    const dataset = this.buildGraphDatasetFromFeature(feature);
+    if (!dataset) {
+      return;
+    }
+
+    context.routeDatasetByLayer.set(layer, dataset);
+    context.routeStyleByLayer.set(layer, this.getFeaturePathStyle(feature));
+
+    layer.on("click", () => {
+      this.activateGraphDatasetForLayer(context, layer);
+    });
+
+    if (!context.activeGraphDataset) {
+      this.activateGraphDatasetForLayer(context, layer);
+    }
   }
 
   private formatLocalTime(value: unknown): string | null {
@@ -428,6 +705,41 @@ export class StgyTrackRenderer {
     hud.hidden = false;
   }
 
+  private showGraphHoverAtIndex(context: CoordinateInteractionContext, index: number) {
+    const state = context.graphHoverState;
+    if (!state || state.dataset !== context.activeGraphDataset) {
+      return;
+    }
+
+    if (index < 0 || index >= state.xValues.length || index >= state.series.values.length) {
+      return;
+    }
+
+    const hoverX = state.scaledXValues[index];
+    const hoverY = state.yScale(state.series.values[index]);
+
+    state.hoverLine.setAttribute("x1", `${hoverX}`);
+    state.hoverLine.setAttribute("x2", `${hoverX}`);
+    state.hoverLine.removeAttribute("hidden");
+
+    state.hoverPoint.setAttribute("cx", `${hoverX}`);
+    state.hoverPoint.setAttribute("cy", `${hoverY}`);
+    state.hoverPoint.removeAttribute("hidden");
+
+    state.readout.textContent = `${this.formatXAxisLabel(state.selectedXAxis, state.xValues[index])} / ${this.formatGraphYValue(state.series.name, state.series.values[index])}`;
+  }
+
+  private clearGraphHover(context: CoordinateInteractionContext) {
+    const state = context.graphHoverState;
+    if (!state) {
+      return;
+    }
+
+    state.hoverLine.setAttribute("hidden", "true");
+    state.hoverPoint.setAttribute("hidden", "true");
+    state.readout.textContent = "";
+  }
+
   private activateCoordinateSample(
     context: CoordinateInteractionContext,
     latLng: L.LatLngExpression,
@@ -436,10 +748,15 @@ export class StgyTrackRenderer {
   ) {
     this.showCoordinateMarker(context, latLng);
     this.updateCoordinateOverlay(context.hud, coordinateProperties, index);
+
+    if (context.activeGraphDataset?.coordinateProperties === coordinateProperties) {
+      this.showGraphHoverAtIndex(context, index);
+    }
   }
 
   private clearCoordinateSample(context: CoordinateInteractionContext) {
     this.hideCoordinateMarker(context);
+    this.clearGraphHover(context);
     if (context.hud) {
       context.hud.hidden = true;
     }
@@ -580,21 +897,6 @@ export class StgyTrackRenderer {
     };
   }
 
-  private collectGraphDatasetsFromGeoJson(geoJsonData: any): TrackGraphDataset[] {
-    if (geoJsonData?.type === "FeatureCollection" && Array.isArray(geoJsonData.features)) {
-      return geoJsonData.features
-        .map((feature: any) => this.buildGraphDatasetFromFeature(feature))
-        .filter((dataset: TrackGraphDataset | null): dataset is TrackGraphDataset => dataset !== null);
-    }
-
-    if (geoJsonData?.type === "Feature") {
-      const dataset = this.buildGraphDatasetFromFeature(geoJsonData);
-      return dataset ? [dataset] : [];
-    }
-
-    return [];
-  }
-
   private formatXAxisLabel(kind: TrackGraphXAxisKind, value: number): string {
     if (kind === "distance") {
       return `${(value / 1000).toFixed(2)} km`;
@@ -640,6 +942,8 @@ export class StgyTrackRenderer {
   ) {
     const xValues = dataset.xAxes[selectedXAxis] || dataset.xAxes.sample;
     const series = dataset.series.find((item) => item.name === selectedSeriesName) || dataset.series[0];
+
+    context.graphHoverState = null;
 
     if (!xValues || !series || xValues.length !== series.values.length || xValues.length === 0) {
       panel.hidden = true;
@@ -797,6 +1101,18 @@ export class StgyTrackRenderer {
     xMaxLabel.textContent = this.formatXAxisLabel(selectedXAxis, xMax);
     svg.appendChild(xMaxLabel);
 
+    context.graphHoverState = {
+      dataset,
+      selectedXAxis,
+      series,
+      xValues,
+      scaledXValues,
+      yScale,
+      hoverLine,
+      hoverPoint,
+      readout,
+    };
+
     svg.addEventListener("mousemove", (event) => {
       const rect = svg.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) {
@@ -815,16 +1131,7 @@ export class StgyTrackRenderer {
         }
       });
 
-      const hoverX = scaledXValues[nearestIndex];
-      const hoverY = yScale(series.values[nearestIndex]);
-
-      hoverLine.setAttribute("x1", `${hoverX}`);
-      hoverLine.setAttribute("x2", `${hoverX}`);
-      hoverLine.removeAttribute("hidden");
-
-      hoverPoint.setAttribute("cx", `${hoverX}`);
-      hoverPoint.setAttribute("cy", `${hoverY}`);
-      hoverPoint.removeAttribute("hidden");
+      this.showGraphHoverAtIndex(context, nearestIndex);
 
       this.activateCoordinateSample(
         context,
@@ -832,32 +1139,13 @@ export class StgyTrackRenderer {
         dataset.coordinateProperties,
         nearestIndex
       );
-
-      readout.textContent = `${this.formatXAxisLabel(selectedXAxis, xValues[nearestIndex])} / ${this.formatGraphYValue(series.name, series.values[nearestIndex])}`;
     });
 
     svg.addEventListener("mouseleave", () => {
-      hoverLine.setAttribute("hidden", "true");
-      hoverPoint.setAttribute("hidden", "true");
-      readout.textContent = "";
       this.clearCoordinateSample(context);
     });
 
     panel.appendChild(svg);
-  }
-
-  private renderFirstGraphDataset(
-    panel: HTMLElement,
-    context: CoordinateInteractionContext,
-    datasets: TrackGraphDataset[]
-  ) {
-    if (datasets.length === 0) {
-      panel.hidden = true;
-      panel.replaceChildren();
-      return;
-    }
-
-    this.renderGraphPanel(panel, context, datasets[0]);
   }
 
   private createGeoJsonLayer(
@@ -866,27 +1154,21 @@ export class StgyTrackRenderer {
     context: CoordinateInteractionContext
   ): L.GeoJSON {
     return L.geoJSON(geoJsonData, {
-      style: (feature) => {
-        const props = feature?.properties || {};
-        return {
-          color: props.color || "#0078A8",
-          weight: props.weight || 4,
-          opacity: props.opacity || 0.8
-        };
-      },
+      style: (feature) => this.getFeaturePathStyle(feature),
       pointToLayer: (feature, latlng) => {
         const props = feature.properties || {};
         const markerOptions: L.MarkerOptions = {};
-        if (props.color) {
-          markerOptions.icon = createCustomPinIcon(props.color);
+        const pinColor = normalizeMapColor(props.color);
+        if (pinColor) {
+          markerOptions.icon = createCustomPinIcon(pinColor);
         }
         return L.marker(latlng, markerOptions);
       },
       onEachFeature: (feature, layer) => {
         const props = feature.properties || {};
-        const popupHtml = buildPopupHtmlFromProps(props);
+        const popupElement = this.buildPopupElementFromProps(props);
 
-        if (popupHtml) {
+        if (popupElement) {
           const mapContainer = map.getContainer();
           const mapWidth = mapContainer.clientWidth;
           const mapHeight = mapContainer.clientHeight;
@@ -898,7 +1180,7 @@ export class StgyTrackRenderer {
           const popupMaxHeight = mapHeight * (heightPct / 100);
           const minWidth = Math.min(150, maxWidth * 0.5);
 
-          layer.bindPopup(popupHtml, {
+          layer.bindPopup(popupElement, {
             maxWidth: maxWidth,
             minWidth: minWidth,
             maxHeight: popupMaxHeight,
@@ -907,6 +1189,7 @@ export class StgyTrackRenderer {
         }
 
         this.bindCoordinateInteractions(feature, layer, context);
+        this.registerGraphDatasetForLayer(feature, layer, context);
       }
     });
   }
@@ -943,7 +1226,12 @@ export class StgyTrackRenderer {
 
     const marker = L.marker(center);
     if (label) {
-      marker.bindPopup(`<div class="annot-title">${label}</div>`);
+      const popupElement = document.createElement("div");
+      const title = document.createElement("div");
+      title.className = "annot-title";
+      title.textContent = label;
+      popupElement.appendChild(title);
+      marker.bindPopup(popupElement);
     }
 
     let routeLayer: L.GeoJSON | null = null;
@@ -991,7 +1279,6 @@ export class StgyTrackRenderer {
       : Array.from(figure.querySelectorAll<HTMLAnchorElement>(".stgy-track-sources a.track-source"));
     const trackDataCache: Record<string, any> = {};
     const viewBounds = this.createBoundsAccumulator();
-    const graphDatasets: TrackGraphDataset[] = [];
 
     const inlinePins = figure.querySelectorAll<HTMLElement>(".stgy-track-pins li");
     inlinePins.forEach((pin) => {
@@ -1006,9 +1293,6 @@ export class StgyTrackRenderer {
       try {
         const preloadedTrackData = await this.loadTrackData(dataSrc, trackDataCache);
         this.extendBoundsWithGeoJson(viewBounds, preloadedTrackData);
-        if (showGraph) {
-          graphDatasets.push(...this.collectGraphDatasetsFromGeoJson(preloadedTrackData));
-        }
       } catch (e) {
         this.showError(figure, this.toUserErrorMessage(e));
         return;
@@ -1023,9 +1307,6 @@ export class StgyTrackRenderer {
         try {
           const preloadedTrackData = await this.loadTrackData(href, trackDataCache);
           this.extendBoundsWithGeoJson(viewBounds, preloadedTrackData);
-          if (showGraph) {
-            graphDatasets.push(...this.collectGraphDatasetsFromGeoJson(preloadedTrackData));
-          }
         } catch (e) {
           this.showError(figure, this.toUserErrorMessage(e));
           return;
@@ -1076,13 +1357,21 @@ export class StgyTrackRenderer {
     });
 
     L.control.layers(baseMaps).addTo(map);
+
     const hud = showOverlay ? this.createHud(canvas) : null;
     const markerState: CoordinateMarkerState = { marker: null };
     const interactionContext: CoordinateInteractionContext = {
       map,
       hud,
       markerState,
+      graphPanel,
+      graphHoverState: null,
+      routeDatasetByLayer: new WeakMap<L.Layer, TrackGraphDataset>(),
+      routeStyleByLayer: new WeakMap<L.Layer, L.PathOptions>(),
+      activeGraphDataset: null,
+      activeGraphLayer: null,
     };
+
     const masterGroup = L.featureGroup().addTo(map);
 
     if (inlinePins.length > 0) {
@@ -1119,10 +1408,6 @@ export class StgyTrackRenderer {
       });
 
       await Promise.all(trackPromises);
-    }
-
-    if (showGraph && graphPanel) {
-      this.renderFirstGraphDataset(graphPanel, interactionContext, graphDatasets);
     }
 
     const invalidateSize = (map as unknown as { invalidateSize?: () => void }).invalidateSize;
@@ -1171,19 +1456,23 @@ export class StgyTrackRenderer {
       const popupMaxHeight = mapHeight * (heightPct / 100);
       const minWidth = Math.min(150, maxWidth * 0.5);
 
-      const pinColor = li.dataset.color;
       const markerOptions: L.MarkerOptions = {};
+      const pinColor = normalizeMapColor(li.dataset.color);
       if (pinColor) {
         markerOptions.icon = createCustomPinIcon(pinColor);
       }
 
       const marker = L.marker([lat, lon], markerOptions);
-      marker.bindPopup(li.innerHTML, {
-        maxWidth: maxWidth,
-        minWidth: minWidth,
-        maxHeight: popupMaxHeight,
-        className: "stgy-track-popup"
-      });
+      const popupElement = this.buildPopupElementFromInlinePin(li);
+
+      if (popupElement) {
+        marker.bindPopup(popupElement, {
+          maxWidth: maxWidth,
+          minWidth: minWidth,
+          maxHeight: popupMaxHeight,
+          className: "stgy-track-popup"
+        });
+      }
 
       layerGroup.addLayer(marker);
     });
