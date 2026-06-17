@@ -1,128 +1,84 @@
-/* packages/track/src/stgy-track.css */
-
-/* データ供給用要素は非表示 */
 .stgy-track-pins,
 .stgy-track-subtrack-sources,
 .stgy-track-sources {
   display: none;
 }
 
-/* --- Base Layout --- */
 .stgy-track-map {
   position: relative;
-  margin-bottom: 2em;
   display: flex;
   flex-direction: column;
   width: 100%;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+.stgy-track-map *,
+.stgy-track-map *::before,
+.stgy-track-map *::after {
+  box-sizing: border-box;
 }
 
 .stgy-track-canvas {
   position: relative;
   overflow: hidden;
   width: 100%;
+  min-width: 0;
   flex: 1 1 300px;
-  min-height: 0;
-  background-color: #f0f0f0;
+  background: #f4f4f4;
   border: 1px solid #ddd;
 }
 
 .stgy-track-caption {
-  font-size: 0.9em;
-  color: #555;
   margin-top: 0.5em;
-  text-align: center;
-  flex-shrink: 0;
-}
-
-
-/* --- Leaflet Popup Styling (.stgy-track-popup) --- */
-
-.stgy-track-popup .leaflet-popup-content-wrapper {
-  border-radius: 8px;
-  padding: 0;
-  overflow: hidden;
-}
-
-.stgy-track-popup .leaflet-popup-content {
-  margin: 12px 14px; /* 内部余白 */
-  line-height: 1.5;
-  font-size: 14px; /* PC向け基本サイズ */
+  font-size: 0.9em;
+  color: #666;
 }
 
 .stgy-track-popup .annot-title {
-  font-weight: bold;
-  font-size: 1.1em;
-  margin-bottom: 4px;
-  color: #333;
+  margin-bottom: 0.4em;
+  font-weight: 700;
 }
 
 .stgy-track-popup .annot-desc {
-  margin-bottom: 8px;
-  color: #555;
+  margin-bottom: 0.5em;
+  line-height: 1.45;
 }
 
 .stgy-track-popup .annot-link {
-  margin-bottom: 8px;
-  font-size: 0.9em;
-  word-break: break-all;
+  margin-top: 0.4em;
 }
 
 .stgy-track-popup .annot-link a {
-  color: #0078A8;
-  text-decoration: none;
-}
-
-.stgy-track-popup .annot-link a:hover {
-  text-decoration: underline;
+  word-break: break-all;
 }
 
 .stgy-track-popup .annot-image {
-  margin-top: 8px;
-  text-align: center;
-  background-color: #f9f9f9;
+  margin-top: 0.5em;
 }
 
 .stgy-track-popup .annot-image img {
   display: block;
-  margin: 0 auto;
   max-width: 100%;
-  max-height: 50vh;
-  width: auto;
   height: auto;
-  object-fit: contain;
   border-radius: 4px;
-  border: 1px solid #eee;
 }
 
-@media (max-width: 480px) {
-  .stgy-track-popup .leaflet-popup-content {
-    margin: 10px;
-    font-size: 13px;
-  }
-}
-
-/* --- Custom Pin Icon --- */
-.stgy-custom-pin {
-  background: transparent;
-  border: none;
-}
-
-/* --- HUD --- */
 .stgy-track-hud {
   position: absolute;
-  left: 12px;
-  bottom: 12px;
-  z-index: 900;
-  max-width: calc(100% - 24px);
-  padding: 6px 10px;
-  box-sizing: border-box;
+  left: 10px;
+  bottom: 10px;
+  z-index: 500;
+  max-width: calc(100% - 20px);
+  padding: 8px 10px;
   border-radius: 6px;
   background: rgba(0, 0, 0, 0.72);
   color: #fff;
   font-size: 12px;
-  line-height: 1.4;
+  line-height: 1.35;
   pointer-events: none;
-  white-space: normal;
 }
 
 .stgy-track-hud ul {
@@ -134,14 +90,15 @@
 .stgy-track-hud li {
   margin: 0;
   padding: 0;
+  white-space: nowrap;
 }
 
-/* --- Graph --- */
 .stgy-track-graph {
   width: 100%;
+  min-width: 0;
   min-height: 220px;
-  margin-top: 8px;
-  padding: 8px;
+  margin: 8px 0 0;
+  padding: 10px;
   box-sizing: border-box;
   border: 1px solid #ddd;
   background: #fff;
@@ -150,54 +107,59 @@
 .stgy-track-graph-controls {
   display: flex;
   flex-wrap: wrap;
-  gap: 8px;
   align-items: center;
-  margin-bottom: 6px;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 
 .stgy-track-graph-controls select {
-  font-size: 12px;
-  padding: 2px 6px;
+  max-width: 100%;
+  font: inherit;
 }
 
 .stgy-track-graph-readout {
-  font-size: 12px;
-  color: #555;
   min-height: 1.4em;
+  color: #444;
+  font-size: 0.9em;
 }
 
 .stgy-track-graph svg {
   display: block;
   width: 100%;
-  height: 180px;
+  height: auto;
+  max-height: 220px;
+  overflow: visible;
+  touch-action: none;
 }
 
 .stgy-track-graph-axis {
   fill: none;
-  stroke: #aaa;
+  stroke: #999;
   stroke-width: 1;
 }
 
 .stgy-track-graph-line {
   fill: none;
-  stroke: #0078A8;
+  stroke: #0078a8;
   stroke-width: 2;
 }
 
 .stgy-track-graph-hover-line {
-  stroke: #666;
+  stroke: #444;
   stroke-width: 1;
-  stroke-dasharray: 3 3;
+  stroke-dasharray: 4 4;
+  pointer-events: none;
 }
 
 .stgy-track-graph-hover-point {
-  fill: #0078A8;
+  fill: #0078a8;
   stroke: #fff;
-  stroke-width: 1.5;
+  stroke-width: 2;
+  pointer-events: none;
 }
 
 .stgy-track-graph-label {
-  fill: #555;
+  fill: #666;
   font-size: 11px;
 }
 
@@ -205,18 +167,21 @@
   text-anchor: end;
 }
 
-/* --- Error Message --- */
 .stgy-track-error-message {
   position: absolute;
-  inset: 0;
-  z-index: 1000;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1em;
-  box-sizing: border-box;
-  background: rgba(255, 255, 255, 0.92);
-  color: #a00;
-  font-weight: bold;
-  text-align: center;
+  left: 10px;
+  right: 10px;
+  top: 10px;
+  z-index: 600;
+  padding: 10px 12px;
+  border: 1px solid #c0392b;
+  border-radius: 6px;
+  background: #fff5f5;
+  color: #922b21;
+  font-size: 0.95em;
+}
+
+.stgy-custom-pin {
+  background: transparent;
+  border: 0;
 }

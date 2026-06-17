@@ -49,6 +49,12 @@ type TrackGraphDataset = {
   coordinateProperties: any;
 };
 
+type SelectedCoordinateSample = {
+  latLng: L.LatLngExpression;
+  coordinateProperties: any;
+  index: number;
+};
+
 type GraphHoverState = {
   dataset: TrackGraphDataset;
   selectedXAxis: TrackGraphXAxisKind;
@@ -71,6 +77,7 @@ type CoordinateInteractionContext = {
   routeStyleByLayer: WeakMap<L.Layer, L.PathOptions>;
   activeGraphDataset: TrackGraphDataset | null;
   activeGraphLayer: L.Layer | null;
+  pinnedSample: SelectedCoordinateSample | null;
 };
 
 type StyleableLayer = L.Layer & {
@@ -480,7 +487,7 @@ export class StgyTrackRenderer {
       return;
     }
 
-    this.clearCoordinateSample(context);
+    this.clearCoordinateSample(context, true);
 
     if (context.activeGraphLayer && context.activeGraphLayer !== layer) {
       this.restoreGraphLayerStyle(context, context.activeGraphLayer);
@@ -508,10 +515,6 @@ export class StgyTrackRenderer {
 
     context.routeDatasetByLayer.set(layer, dataset);
     context.routeStyleByLayer.set(layer, this.getFeaturePathStyle(feature));
-
-    layer.on("click", () => {
-      this.activateGraphDatasetForLayer(context, layer);
-    });
 
     if (!context.activeGraphDataset) {
       this.activateGraphDatasetForLayer(context, layer);
@@ -740,7 +743,7 @@ export class StgyTrackRenderer {
     state.readout.textContent = "";
   }
 
-  private activateCoordinateSample(
+  private renderCoordinateSample(
     context: CoordinateInteractionContext,
     latLng: L.LatLngExpression,
     coordinateProperties: any,
@@ -754,12 +757,72 @@ export class StgyTrackRenderer {
     }
   }
 
-  private clearCoordinateSample(context: CoordinateInteractionContext) {
+  private activateCoordinateSample(
+    context: CoordinateInteractionContext,
+    latLng: L.LatLngExpression,
+    coordinateProperties: any,
+    index: number,
+    pinned = false
+  ) {
+    if (pinned) {
+      context.pinnedSample = {
+        latLng,
+        coordinateProperties,
+        index,
+      };
+    }
+
+    this.renderCoordinateSample(context, latLng, coordinateProperties, index);
+  }
+
+  private restorePinnedCoordinateSample(context: CoordinateInteractionContext): boolean {
+    if (!context.pinnedSample) {
+      return false;
+    }
+
+    this.renderCoordinateSample(
+      context,
+      context.pinnedSample.latLng,
+      context.pinnedSample.coordinateProperties,
+      context.pinnedSample.index
+    );
+    return true;
+  }
+
+  private clearCoordinateSample(context: CoordinateInteractionContext, force = false) {
+    if (!force && this.restorePinnedCoordinateSample(context)) {
+      return;
+    }
+
+    context.pinnedSample = null;
     this.hideCoordinateMarker(context);
     this.clearGraphHover(context);
+
     if (context.hud) {
       context.hud.hidden = true;
     }
+  }
+
+  private activateCoordinateSampleAtLatLng(
+    context: CoordinateInteractionContext,
+    coordinates: unknown,
+    coordinateProperties: any,
+    latlng: L.LatLng,
+    pinned = false
+  ) {
+    const index = this.findNearestCoordinateIndex(coordinates, latlng);
+    if (index === null) {
+      this.clearCoordinateSample(context);
+      return;
+    }
+
+    const latLng = this.getLatLngAtIndex(coordinates, index);
+    if (!latLng) {
+      this.clearCoordinateSample(context);
+      return;
+    }
+
+    this.activateCoordinateSample(context, latLng, coordinateProperties, index, pinned);
   }
 
   private bindCoordinateInteractions(
@@ -778,19 +841,29 @@ export class StgyTrackRenderer {
     }
 
     layer.on("mousemove", (event: L.LeafletMouseEvent) => {
-      const index = this.findNearestCoordinateIndex(coordinates, event.latlng);
-      if (index === null) {
-        this.clearCoordinateSample(context);
-        return;
+      this.activateCoordinateSampleAtLatLng(
+        context,
+        coordinates,
+        coordinateProperties,
+        event.latlng,
+        false
+      );
+    });
+
+    layer.on("click", (event?: L.LeafletMouseEvent) => {
+      if (context.routeDatasetByLayer.get(layer) && context.graphPanel) {
+        this.activateGraphDatasetForLayer(context, layer);
       }
 
-      const latLng = this.getLatLngAtIndex(coordinates, index);
-      if (!latLng) {
-        this.clearCoordinateSample(context);
-        return;
+      if (event?.latlng) {
+        this.activateCoordinateSampleAtLatLng(
+          context,
+          coordinates,
+          coordinateProperties,
+          event.latlng,
+          true
+        );
       }
-
-      this.activateCoordinateSample(context, latLng, coordinateProperties, index);
     });
 
     layer.on("mouseout", () => {
@@ -1064,6 +1137,7 @@ export class StgyTrackRenderer {
     hoverLine.setAttribute("class", "stgy-track-graph-hover-line");
     hoverLine.setAttribute("y1", `${plotTop}`);
     hoverLine.setAttribute("y2", `${plotBottom}`);
+    hoverLine.setAttribute("stroke-dasharray", "4 4");
     hoverLine.setAttribute("hidden", "true");
     svg.appendChild(hoverLine);
 
@@ -1113,13 +1187,13 @@ export class StgyTrackRenderer {
       readout,
     };
 
-    svg.addEventListener("mousemove", (event) => {
+    const activateGraphSampleFromClientX = (clientX: number, pinned = false) => {
       const rect = svg.getBoundingClientRect();
       if (rect.width <= 0 || rect.height <= 0) {
         return;
       }
 
-      const viewBoxX = ((event.clientX - rect.left) / rect.width) * 800;
+      const viewBoxX = ((clientX - rect.left) / rect.width) * 800;
       let nearestIndex = 0;
       let nearestDistance = Number.POSITIVE_INFINITY;
 
@@ -1131,14 +1205,31 @@ export class StgyTrackRenderer {
         }
       });
 
-      this.showGraphHoverAtIndex(context, nearestIndex);
-
       this.activateCoordinateSample(
         context,
         dataset.latLngs[nearestIndex],
         dataset.coordinateProperties,
-        nearestIndex
+        nearestIndex,
+        pinned
       );
+    };
+
+    svg.addEventListener("mousemove", (event) => {
+      activateGraphSampleFromClientX(event.clientX, false);
+    });
+
+    svg.addEventListener("pointerdown", (event) => {
+      event.preventDefault();
+      activateGraphSampleFromClientX(event.clientX, true);
+    });
+
+    svg.addEventListener("pointermove", (event) => {
+      if (event.buttons === 0) {
+        return;
+      }
+
+      event.preventDefault();
+      activateGraphSampleFromClientX(event.clientX, true);
     });
 
     svg.addEventListener("mouseleave", () => {
@@ -1370,6 +1461,7 @@ export class StgyTrackRenderer {
       routeStyleByLayer: new WeakMap<L.Layer, L.PathOptions>(),
       activeGraphDataset: null,
       activeGraphLayer: null,
+      pinnedSample: null,
     };
 
     const masterGroup = L.featureGroup().addTo(map);
