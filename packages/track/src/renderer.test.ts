@@ -854,6 +854,200 @@ describe("StgyTrackRenderer", () => {
     expect(readout?.textContent).toBe("1.00 km / 200.0 m");
   });
 
+  test("pins route sample on route click and keeps it after mouseout", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers();
+    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
+    const clickHandler = getLayerHandler(featureLayer, "click");
+    const mouseoutHandler = getLayerHandler(featureLayer, "mouseout");
+
+    expect(typeof clickHandler).toBe("function");
+    expect(typeof mouseoutHandler).toBe("function");
+
+    clickHandler({
+      latlng: { lat: 35.6848, lng: 139.7550 },
+    });
+
+    const map = (L.map as jest.Mock).mock.results[0].value;
+    const marker = (L.circleMarker as jest.Mock).mock.results[0].value;
+    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
+    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
+    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
+    const overlay = document.querySelector<HTMLElement>(".stgy-track-hud");
+
+    expect(line?.getAttribute("hidden")).toBeNull();
+    expect(point?.getAttribute("hidden")).toBeNull();
+    expect(readout?.textContent).toBe("0.21 km / 21.0 m");
+    expect(overlay?.hidden).toBe(false);
+    expect(overlay?.textContent).toContain("distances: 0.21 km");
+    expect(overlay?.textContent).toContain("elevations: 21 m");
+    expect(map.hasLayer(marker)).toBe(true);
+
+    mouseoutHandler();
+
+    expect(line?.getAttribute("hidden")).toBeNull();
+    expect(point?.getAttribute("hidden")).toBeNull();
+    expect(readout?.textContent).toBe("0.21 km / 21.0 m");
+    expect(overlay?.hidden).toBe(false);
+    expect(map.hasLayer(marker)).toBe(true);
+  });
+
+  test("pins graph sample on pointerdown and keeps it after mouseleave", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const svg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
+    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
+
+    expect(svg).not.toBeNull();
+    expect(readout).not.toBeNull();
+
+    if (!svg || !readout) return;
+
+    setSvgRect(svg);
+
+    svg.dispatchEvent(new MouseEvent("pointerdown", {
+      bubbles: true,
+      clientX: 333,
+      clientY: 90,
+      buttons: 1,
+    }));
+
+    const map = (L.map as jest.Mock).mock.results[0].value;
+    const marker = (L.circleMarker as jest.Mock).mock.results[0].value;
+    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
+    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
+    const overlay = document.querySelector<HTMLElement>(".stgy-track-hud");
+
+    expect(line?.getAttribute("hidden")).toBeNull();
+    expect(point?.getAttribute("hidden")).toBeNull();
+    expect(readout.textContent).toBe("0.21 km / 21.0 m");
+    expect(overlay?.hidden).toBe(false);
+    expect(map.hasLayer(marker)).toBe(true);
+
+    svg.dispatchEvent(new MouseEvent("mouseleave", {
+      bubbles: true,
+    }));
+
+    expect(line?.getAttribute("hidden")).toBeNull();
+    expect(point?.getAttribute("hidden")).toBeNull();
+    expect(readout.textContent).toBe("0.21 km / 21.0 m");
+    expect(overlay?.hidden).toBe(false);
+    expect(map.hasLayer(marker)).toBe(true);
+  });
+
+  test("updates pinned graph sample while dragging with pointermove", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const svg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
+    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
+
+    expect(svg).not.toBeNull();
+    expect(readout).not.toBeNull();
+
+    if (!svg || !readout) return;
+
+    setSvgRect(svg);
+
+    svg.dispatchEvent(new MouseEvent("pointerdown", {
+      bubbles: true,
+      clientX: 52,
+      clientY: 90,
+      buttons: 1,
+    }));
+
+    expect(readout.textContent).toBe("0.00 km / 20.0 m");
+
+    svg.dispatchEvent(new MouseEvent("pointermove", {
+      bubbles: true,
+      clientX: 780,
+      clientY: 90,
+      buttons: 1,
+    }));
+
+    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
+    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
+    const overlay = document.querySelector<HTMLElement>(".stgy-track-hud");
+
+    expect(line?.getAttribute("hidden")).toBeNull();
+    expect(point?.getAttribute("hidden")).toBeNull();
+    expect(readout.textContent).toBe("0.55 km / 22.0 m");
+    expect(overlay?.textContent).toContain("distances: 0.55 km");
+    expect(overlay?.textContent).toContain("elevations: 22 m");
+  });
+
+  test("ignores graph pointermove without pressed button", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const svg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
+    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
+
+    expect(svg).not.toBeNull();
+    expect(readout).not.toBeNull();
+
+    if (!svg || !readout) return;
+
+    setSvgRect(svg);
+
+    svg.dispatchEvent(new MouseEvent("pointerdown", {
+      bubbles: true,
+      clientX: 52,
+      clientY: 90,
+      buttons: 1,
+    }));
+
+    expect(readout.textContent).toBe("0.00 km / 20.0 m");
+
+    svg.dispatchEvent(new MouseEvent("pointermove", {
+      bubbles: true,
+      clientX: 780,
+      clientY: 90,
+      buttons: 0,
+    }));
+
+    expect(readout.textContent).toBe("0.00 km / 20.0 m");
+  });
+
   test("does not create overlay but keeps coordinate marker interaction when data-show-overlay is false", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map" data-src="#demo-geojson-hud" data-show-overlay="false">
