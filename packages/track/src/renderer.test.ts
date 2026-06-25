@@ -1059,7 +1059,60 @@ describe("StgyTrackRenderer", () => {
     expect(readout.textContent).toBe("0.00 km / 20.0 m");
   });
 
-  test("clears pinned sample on map background click", async () => {
+  test("clears graph pinned sample on map background click", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const svg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
+    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
+
+    expect(svg).not.toBeNull();
+    expect(readout).not.toBeNull();
+
+    if (!svg || !readout) return;
+
+    setSvgRect(svg);
+
+    svg.dispatchEvent(new MouseEvent("pointerdown", {
+      bubbles: true,
+      clientX: 333,
+      clientY: 90,
+      buttons: 1,
+    }));
+
+    const map = (L.map as jest.Mock).mock.results[0].value;
+    const mapClickHandler = getMapHandler(map, "click");
+    const marker = (L.circleMarker as jest.Mock).mock.results[0].value;
+    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
+    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
+    const overlay = document.querySelector<HTMLElement>(".stgy-track-hud");
+
+    expect(typeof mapClickHandler).toBe("function");
+    expect(map.hasLayer(marker)).toBe(true);
+    expect(line?.getAttribute("hidden")).toBeNull();
+    expect(point?.getAttribute("hidden")).toBeNull();
+    expect(readout.textContent).toBe("0.21 km / 21.0 m");
+    expect(overlay?.hidden).toBe(false);
+
+    mapClickHandler();
+
+    expect(map.hasLayer(marker)).toBe(false);
+    expect(line?.getAttribute("hidden")).toBe("true");
+    expect(point?.getAttribute("hidden")).toBe("true");
+    expect(readout.textContent).toBe("");
+    expect(overlay?.hidden).toBe(true);
+  });
+
+  test("ignores immediate map click after route click and clears on next map click", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map" data-src="#demo-geojson-hud">
         <div class="stgy-track-canvas"></div>
@@ -1074,11 +1127,11 @@ describe("StgyTrackRenderer", () => {
 
     const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers();
     const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
-    const clickHandler = getLayerHandler(featureLayer, "click");
+    const routeClickHandler = getLayerHandler(featureLayer, "click");
 
-    expect(typeof clickHandler).toBe("function");
+    expect(typeof routeClickHandler).toBe("function");
 
-    clickHandler({
+    routeClickHandler({
       latlng: { lat: 35.6848, lng: 139.7550 },
       originalEvent: new MouseEvent("click"),
     });
@@ -1092,6 +1145,12 @@ describe("StgyTrackRenderer", () => {
     const overlay = document.querySelector<HTMLElement>(".stgy-track-hud");
 
     expect(typeof mapClickHandler).toBe("function");
+    expect(map.hasLayer(marker)).toBe(true);
+    expect(readout?.textContent).toBe("0.21 km / 21.0 m");
+    expect(overlay?.hidden).toBe(false);
+
+    mapClickHandler();
+
     expect(map.hasLayer(marker)).toBe(true);
     expect(line?.getAttribute("hidden")).toBeNull();
     expect(point?.getAttribute("hidden")).toBeNull();

@@ -78,6 +78,7 @@ type CoordinateInteractionContext = {
   activeGraphDataset: TrackGraphDataset | null;
   activeGraphLayer: L.Layer | null;
   pinnedSample: SelectedCoordinateSample | null;
+  ignoreNextMapClick: boolean;
 };
 
 type StyleableLayer = L.Layer & {
@@ -803,6 +804,14 @@ export class StgyTrackRenderer {
     }
   }
 
+  private ignoreNextMapClickOnce(context: CoordinateInteractionContext) {
+    context.ignoreNextMapClick = true;
+
+    window.setTimeout(() => {
+      context.ignoreNextMapClick = false;
+    }, 0);
+  }
+
   private activateCoordinateSampleAtLatLng(
     context: CoordinateInteractionContext,
     coordinates: unknown,
@@ -851,6 +860,8 @@ export class StgyTrackRenderer {
     });
 
     layer.on("click", (event?: L.LeafletMouseEvent) => {
+      this.ignoreNextMapClickOnce(context);
+
       if (event?.originalEvent) {
         L.DomEvent.stopPropagation(event.originalEvent);
       }
@@ -1466,9 +1477,15 @@ export class StgyTrackRenderer {
       activeGraphDataset: null,
       activeGraphLayer: null,
       pinnedSample: null,
+      ignoreNextMapClick: false,
     };
 
     map.on("click", () => {
+      if (interactionContext.ignoreNextMapClick) {
+        interactionContext.ignoreNextMapClick = false;
+        return;
+      }
+
       this.clearCoordinateSample(interactionContext, true);
     });
 
