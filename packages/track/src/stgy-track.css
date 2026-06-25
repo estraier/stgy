@@ -71,6 +71,7 @@
   left: 10px;
   bottom: 10px;
   z-index: 500;
+  width: max-content;
   max-width: calc(100% - 20px);
   padding: 8px 10px;
   border-radius: 6px;
@@ -184,4 +185,37 @@
 .stgy-custom-pin {
   background: transparent;
   border: 0;
+}
+
+@media (max-width: 600px) {
+  .stgy-track-graph {
+    margin-top: 6px;
+    padding: 8px;
+  }
+
+  .stgy-track-graph-controls {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .stgy-track-graph-controls select {
+    width: 100%;
+  }
+
+  .stgy-track-graph-readout {
+    font-size: 0.85em;
+  }
+
+  .stgy-track-hud {
+    left: 6px;
+    right: auto;
+    bottom: 6px;
+    max-width: calc(100% - 12px);
+    font-size: 11px;
+  }
+
+  .stgy-track-hud li {
+    white-space: normal;
+  }
 }
