@@ -89,6 +89,7 @@ jest.mock("leaflet", () => {
       fitBounds: jest.fn(),
       invalidateSize: jest.fn(),
       getContainer: () => document.createElement("div"),
+      on: jest.fn(),
     };
 
     map.addLayer.mockImplementation((layer: unknown) => {
@@ -100,6 +101,7 @@ jest.mock("leaflet", () => {
       return map;
     });
     map.hasLayer.mockImplementation((layer: unknown) => layers.has(layer));
+    map.on.mockReturnValue(map);
 
     return map;
   };
@@ -139,6 +141,10 @@ jest.mock("leaflet", () => {
 
   return {
     ...originalL,
+    DomEvent: {
+      ...originalL.DomEvent,
+      stopPropagation: jest.fn(),
+    },
     map: jest.fn().mockImplementation(createMap),
     marker: jest.fn().mockImplementation(() => ({
       bindPopup: jest.fn().mockReturnThis(),
@@ -226,6 +232,10 @@ const findRenderedGeoJsonWithFeatureLayers = (count?: number) => {
 
 const getLayerHandler = (layer: any, eventName: string) => {
   return layer.on.mock.calls.find((call: unknown[]) => call[0] === eventName)?.[1];
+};
+
+const getMapHandler = (map: any, eventName: string) => {
+  return map.on.mock.calls.find((call: unknown[]) => call[0] === eventName)?.[1];
 };
 
 const makeTrackWithGraph = () => ({
@@ -877,6 +887,7 @@ describe("StgyTrackRenderer", () => {
 
     clickHandler({
       latlng: { lat: 35.6848, lng: 139.7550 },
+      originalEvent: new MouseEvent("click"),
     });
 
     const map = (L.map as jest.Mock).mock.results[0].value;
@@ -1046,6 +1057,82 @@ describe("StgyTrackRenderer", () => {
     }));
 
     expect(readout.textContent).toBe("0.00 km / 20.0 m");
+  });
+
+  test("clears pinned sample on map background click", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers();
+    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
+    const clickHandler = getLayerHandler(featureLayer, "click");
+
+    expect(typeof clickHandler).toBe("function");
+
+    clickHandler({
+      latlng: { lat: 35.6848, lng: 139.7550 },
+      originalEvent: new MouseEvent("click"),
+    });
+
+    const map = (L.map as jest.Mock).mock.results[0].value;
+    const mapClickHandler = getMapHandler(map, "click");
+    const marker = (L.circleMarker as jest.Mock).mock.results[0].value;
+    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
+    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
+    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
+    const overlay = document.querySelector<HTMLElement>(".stgy-track-hud");
+
+    expect(typeof mapClickHandler).toBe("function");
+    expect(map.hasLayer(marker)).toBe(true);
+    expect(line?.getAttribute("hidden")).toBeNull();
+    expect(point?.getAttribute("hidden")).toBeNull();
+    expect(readout?.textContent).toBe("0.21 km / 21.0 m");
+    expect(overlay?.hidden).toBe(false);
+
+    mapClickHandler();
+
+    expect(map.hasLayer(marker)).toBe(false);
+    expect(line?.getAttribute("hidden")).toBe("true");
+    expect(point?.getAttribute("hidden")).toBe("true");
+    expect(readout?.textContent).toBe("");
+    expect(overlay?.hidden).toBe(true);
+  });
+
+  test("stops route click propagation to keep pinned sample", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers();
+    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
+    const clickHandler = getLayerHandler(featureLayer, "click");
+    const originalEvent = new MouseEvent("click");
+
+    expect(typeof clickHandler).toBe("function");
+
+    clickHandler({
+      latlng: { lat: 35.6848, lng: 139.7550 },
+      originalEvent,
+    });
+
+    expect(L.DomEvent.stopPropagation).toHaveBeenCalledWith(originalEvent);
   });
 
   test("does not create overlay but keeps coordinate marker interaction when data-show-overlay is false", async () => {

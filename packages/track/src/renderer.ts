@@ -851,6 +851,10 @@ export class StgyTrackRenderer {
     });
 
     layer.on("click", (event?: L.LeafletMouseEvent) => {
+      if (event?.originalEvent) {
+        L.DomEvent.stopPropagation(event.originalEvent);
+      }
+
       if (context.routeDatasetByLayer.get(layer) && context.graphPanel) {
         this.activateGraphDatasetForLayer(context, layer);
       }
@@ -1463,6 +1467,10 @@ export class StgyTrackRenderer {
       activeGraphLayer: null,
       pinnedSample: null,
     };
+
+    map.on("click", () => {
+      this.clearCoordinateSample(interactionContext, true);
+    });
 
     const masterGroup = L.featureGroup().addTo(map);
 
