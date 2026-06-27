@@ -37,6 +37,21 @@
   color: #666;
 }
 
+.stgy-track-actions {
+  margin-top: 0.5em;
+  font-size: 0.9em;
+}
+
+.stgy-track-download {
+  display: inline-block;
+  text-decoration: none;
+}
+
+.stgy-track-download:hover,
+.stgy-track-download:focus {
+  text-decoration: underline;
+}
+
 .stgy-track-popup .annot-title {
   margin-bottom: 0.4em;
   font-weight: 700;

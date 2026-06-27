@@ -6,7 +6,8 @@ web applications.
 
 It renders GeoJSON-compatible track data from simple HTML markup. It supports
 inline pins, route layers, safe popups, per-coordinate route data, graph
-inspection, multiple routes, and touch-friendly interaction for mobile devices.
+inspection, multiple routes, original-data download links, and touch-friendly
+interaction for mobile devices.
 
 ## Features
 
@@ -29,6 +30,7 @@ inspection, multiple routes, and touch-friendly interaction for mobile devices.
   * multiple links
   * multiple images
 * Validate URL protocols for popup links and images.
+* Display optional original-data download links.
 * Display per-coordinate route data in a map overlay.
 * Render graphs from `coordinateProperties`.
 * Support distance, time, and sample-index graph axes.
@@ -187,14 +189,17 @@ CSS. Without a height, Leaflet cannot render a visible map.
 
 ### Map Attributes
 
-| Attribute           | Description                                               |
-| ------------------- | --------------------------------------------------------- |
-| `data-src`          | Track data source. Supports DOM IDs, URLs, and data URLs. |
-| `data-lat`          | Initial latitude.                                         |
-| `data-lon`          | Initial longitude.                                        |
-| `data-zoom`         | Initial zoom level.                                       |
-| `data-show-overlay` | Set to `false` to disable the map overlay.                |
-| `data-show-graph`   | Set to `false` to disable the graph panel.                |
+| Attribute                | Description                                               |
+| ------------------------ | --------------------------------------------------------- |
+| `data-src`               | Track data source. Supports DOM IDs, URLs, and data URLs. |
+| `data-lat`               | Initial latitude.                                         |
+| `data-lon`               | Initial longitude.                                        |
+| `data-zoom`              | Initial zoom level.                                       |
+| `data-show-overlay`      | Set to `false` to disable the map overlay.                |
+| `data-show-graph`        | Set to `false` to disable the graph panel.                |
+| `data-download-src`      | Optional original-data download URL.                      |
+| `data-download-label`    | Optional download link label.                             |
+| `data-download-filename` | Optional filename for the `download` attribute.           |
 
 ### View Behavior
 
@@ -284,6 +289,63 @@ reported as load errors.
 
 JSON and GeoJSON-compatible MIME types should be used for uncompressed data.
 gzip-compressed GeoJSON data should use a supported gzip GeoJSON MIME type.
+
+## Original Data Download Links
+
+The viewer can display an optional download link for original master data.
+
+This is useful when the map displays a reduced digest file, while the original
+source file remains available for download.
+
+For example, a social networking service may store:
+
+* the original FIT file as master data
+* a reduced TrackJSON / GeoJSON-compatible digest for map rendering
+
+The viewer can render the digest through `data-src` and expose the original file
+through `data-download-src`.
+
+```html
+<figure
+  class="stgy-track-map"
+  style="height: 400px;"
+  data-src="/maps/digests/112233/4c712e88c5542322.trjgz"
+  data-download-src="/maps/masters/112233/4c712e88c5542322.fit"
+  data-download-label="Download original FIT file"
+  data-download-filename="ride.fit">
+  <div class="stgy-track-canvas">Map loading...</div>
+  <figcaption class="stgy-track-caption">Ride to Kamakura</figcaption>
+</figure>
+```
+
+### Download Attributes
+
+| Attribute                | Description                                                      |
+| ------------------------ | ---------------------------------------------------------------- |
+| `data-download-src`      | URL of the original data file. No link is rendered when omitted. |
+| `data-download-label`    | Link text. Defaults to `Download original data`.                 |
+| `data-download-filename` | Optional filename for the `download` attribute.                  |
+
+The download link is inserted as `.stgy-track-actions` inside the figure. When a
+caption exists directly under the figure, the actions block is inserted after
+the caption. Otherwise, it is appended to the figure.
+
+```html
+<div class="stgy-track-actions">
+  <a class="stgy-track-download" href="/maps/masters/112233/ride.fit" download="ride.fit">
+    Download original FIT file
+  </a>
+</div>
+```
+
+`data-download-src` uses the same safe URL normalization as popup media.
+Relative URLs are allowed. Absolute URLs must use `http:` or `https:`.
+
+Unsafe URLs such as `javascript:` and `data:` are ignored, and no download link
+is rendered.
+
+`data-download-filename` is optional. When it is omitted, the viewer does not
+set the `download` attribute.
 
 ## Inline Pins
 
@@ -681,6 +743,9 @@ Typical error cases include:
 * Failed network request.
 * Unsupported gzip decoding environment.
 
+Invalid optional download URLs do not display an error message. The download
+link is simply omitted.
+
 ## Security
 
 STGY Track Viewer avoids injecting raw HTML from GeoJSON properties into
@@ -688,6 +753,9 @@ popups.
 
 Popup text fields are rendered as text content. Popup link and image URLs are
 validated, and only `http:` and `https:` URLs are accepted.
+
+Download link URLs are also validated. Relative URLs are accepted, while unsafe
+absolute URLs such as `javascript:` and `data:` are ignored.
 
 This prevents common script injection vectors such as `javascript:` URLs,
 unsafe `data:` URLs, and inline HTML execution through popup fields.
@@ -777,7 +845,9 @@ Before submitting changes, check the following:
 * Map background click or tap clears the pinned sample.
 * Multiple routes switch the active graph correctly.
 * Popup links and images reject unsafe URLs.
-* Error messages are shown for invalid sources.
+* Original-data download links are shown only when `data-download-src` is valid.
+* Download labels and filenames are reflected correctly.
+* Error messages are shown for invalid track sources.
 
 ## Contributing
 

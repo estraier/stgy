@@ -478,6 +478,93 @@ describe("StgyTrackRenderer", () => {
     expect(mockMap.fitBounds).not.toHaveBeenCalled();
   });
 
+  test("renders download action link with custom label and filename", () => {
+    document.body.innerHTML = `
+      <figure
+        class="stgy-track-map"
+        data-download-src="/maps/masters/112233/4c712e88c5542322.fit"
+        data-download-label="Download original FIT file"
+        data-download-filename="ride.fit">
+        <div class="stgy-track-canvas"></div>
+        <figcaption class="stgy-track-caption">Ride to Kamakura</figcaption>
+      </figure>
+    `;
+
+    renderer.hydrate(document.body);
+
+    const figure = document.querySelector<HTMLElement>(".stgy-track-map");
+    const caption = document.querySelector<HTMLElement>(".stgy-track-caption");
+    const actions = document.querySelector<HTMLElement>(".stgy-track-actions");
+    const link = document.querySelector<HTMLAnchorElement>(".stgy-track-download");
+
+    expect(figure).not.toBeNull();
+    expect(actions).not.toBeNull();
+    expect(link).not.toBeNull();
+    expect(caption?.nextElementSibling).toBe(actions);
+    expect(actions?.parentElement).toBe(figure);
+    expect(link?.textContent).toBe("Download original FIT file");
+    expect(link?.href.endsWith("/maps/masters/112233/4c712e88c5542322.fit")).toBe(true);
+    expect(link?.download).toBe("ride.fit");
+  });
+
+  test("renders download action link with default label and no download attribute", () => {
+    document.body.innerHTML = `
+      <figure
+        class="stgy-track-map"
+        data-download-src="/maps/masters/112233/4c712e88c5542322.trjgz">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    renderer.hydrate(document.body);
+
+    const actions = document.querySelector<HTMLElement>(".stgy-track-actions");
+    const link = document.querySelector<HTMLAnchorElement>(".stgy-track-download");
+
+    expect(actions).not.toBeNull();
+    expect(link).not.toBeNull();
+    expect(actions?.parentElement).toBe(document.querySelector(".stgy-track-map"));
+    expect(link?.textContent).toBe("Download original data");
+    expect(link?.href.endsWith("/maps/masters/112233/4c712e88c5542322.trjgz")).toBe(true);
+    expect(link?.hasAttribute("download")).toBe(false);
+  });
+
+  test("does not render download action link without data-download-src", () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map">
+        <div class="stgy-track-canvas"></div>
+        <figcaption class="stgy-track-caption">No download</figcaption>
+      </figure>
+    `;
+
+    renderer.hydrate(document.body);
+
+    expect(document.querySelector(".stgy-track-actions")).toBeNull();
+    expect(document.querySelector(".stgy-track-download")).toBeNull();
+  });
+
+  test("rejects unsafe download action URLs", () => {
+    document.body.innerHTML = `
+      <figure
+        class="stgy-track-map"
+        data-download-src="javascript:alert(1)"
+        data-download-label="Bad JavaScript URL">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+      <figure
+        class="stgy-track-map"
+        data-download-src="data:text/html,<script>alert(1)</script>"
+        data-download-label="Bad data URL">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    renderer.hydrate(document.body);
+
+    expect(document.querySelector(".stgy-track-actions")).toBeNull();
+    expect(document.querySelector(".stgy-track-download")).toBeNull();
+  });
+
   test("renders data-render=pin as a guide pin", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map">

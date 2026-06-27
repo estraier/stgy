@@ -6,6 +6,7 @@ import { TrackLoader } from "./loader";
 
 const DEFAULT_PIN_COLOR = "#3388ff";
 const DEFAULT_ROUTE_COLOR = "#0078A8";
+const DEFAULT_DOWNLOAD_LABEL = "Download original data";
 const ALLOWED_URL_PROTOCOLS = new Set(["http:", "https:"]);
 const ALLOWED_MAP_COLORS = new Set([
   "red",
@@ -286,16 +287,34 @@ export class StgyTrackRenderer {
       return null;
     }
 
-    try {
-      const base = document.baseURI || window.location.href;
-      const url = new URL(trimmed, base);
-      if (!ALLOWED_URL_PROTOCOLS.has(url.protocol)) {
+    const schemeMatch = trimmed.match(/^([a-zA-Z][a-zA-Z0-9+.-]*):/);
+    if (schemeMatch) {
+      try {
+        const url = new URL(trimmed);
+        if (!ALLOWED_URL_PROTOCOLS.has(url.protocol)) {
+          return null;
+        }
+        return url.href;
+      } catch {
         return null;
       }
-      return url.href;
-    } catch {
-      return null;
     }
+
+    if (trimmed.startsWith("//")) {
+      try {
+        const currentProtocol = window.location.protocol;
+        const protocol = ALLOWED_URL_PROTOCOLS.has(currentProtocol) ? currentProtocol : "https:";
+        const url = new URL(`${protocol}${trimmed}`);
+        if (!ALLOWED_URL_PROTOCOLS.has(url.protocol)) {
+          return null;
+        }
+        return url.href;
+      } catch {
+        return null;
+      }
+    }
+
+    return trimmed;
   }
 
   private appendTextBlock(root: HTMLElement, className: string, value: unknown) {
@@ -425,6 +444,52 @@ export class StgyTrackRenderer {
     });
 
     return root.children.length > 0 ? root : null;
+  }
+
+  private removeDownloadActions(figure: HTMLElement) {
+    Array.from(figure.children).forEach((child) => {
+      if (child instanceof HTMLElement && child.classList.contains("stgy-track-actions")) {
+        child.remove();
+      }
+    });
+  }
+
+  private createDownloadActions(figure: HTMLElement) {
+    this.removeDownloadActions(figure);
+
+    const downloadSrc = figure.dataset.downloadSrc?.trim();
+    if (!downloadSrc) {
+      return;
+    }
+
+    const href = this.normalizeSafeUrl(downloadSrc);
+    if (!href) {
+      return;
+    }
+
+    const label = figure.dataset.downloadLabel?.trim() || DEFAULT_DOWNLOAD_LABEL;
+    const filename = figure.dataset.downloadFilename?.trim();
+
+    const actions = document.createElement("div");
+    actions.className = "stgy-track-actions";
+
+    const link = document.createElement("a");
+    link.className = "stgy-track-download";
+    link.href = href;
+    link.textContent = label;
+
+    if (filename) {
+      link.download = filename;
+    }
+
+    actions.appendChild(link);
+
+    const caption = figure.querySelector<HTMLElement>(".stgy-track-caption");
+    if (caption && caption.parentElement === figure) {
+      caption.insertAdjacentElement("afterend", actions);
+    } else {
+      figure.appendChild(actions);
+    }
   }
 
   private getFeaturePathStyle(feature: any): L.PathOptions {
@@ -1363,6 +1428,8 @@ export class StgyTrackRenderer {
       this.showError(figure, "Track map canvas was not found.");
       return;
     }
+
+    this.createDownloadActions(figure);
 
     const showOverlay = figure.dataset.showOverlay !== "false";
     const showGraph = figure.dataset.showGraph !== "false";
