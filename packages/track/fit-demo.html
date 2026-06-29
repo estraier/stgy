@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>FIT to TrackJSON Demo</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="./dist/track-viewer.css">
+  <style>
+    body {
+      margin: 0;
+      padding: 24px;
+      font-family: system-ui, sans-serif;
+      line-height: 1.5;
+      color: #222;
+      background: #fff;
+    }
+
+    .fit-demo {
+      max-width: 1100px;
+      margin: 0 auto;
+    }
+
+    .fit-demo h1 {
+      margin: 0 0 0.5em;
+      font-size: 1.8rem;
+    }
+
+    .fit-demo p {
+      margin: 0 0 1em;
+    }
+
+    .fit-demo-panel {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+      gap: 12px;
+      margin: 18px 0;
+      padding: 16px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      background: #fafafa;
+    }
+
+    .fit-demo-field {
+      display: flex;
+      flex-direction: column;
+      gap: 4px;
+    }
+
+    .fit-demo-field-inline {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .fit-demo-field label,
+    .fit-demo-field-inline label {
+      font-weight: 600;
+    }
+
+    .fit-demo-field input[type="text"],
+    .fit-demo-field input[type="number"],
+    .fit-demo-field input[type="file"] {
+      max-width: 100%;
+      font: inherit;
+    }
+
+    .fit-demo-actions {
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 10px;
+      margin: 14px 0;
+    }
+
+    .fit-demo-actions button,
+    .fit-demo-actions a {
+      font: inherit;
+    }
+
+    .fit-demo-status {
+      min-height: 1.5em;
+      margin: 10px 0;
+      color: #444;
+    }
+
+    .fit-demo-status.is-error {
+      color: #922b21;
+    }
+
+    .fit-demo-summary {
+      margin: 10px 0 18px;
+      padding: 12px;
+      border: 1px solid #ddd;
+      border-radius: 8px;
+      background: #fff;
+      white-space: pre-wrap;
+    }
+
+    .fit-demo-map-output {
+      margin: 18px 0;
+    }
+
+    .fit-demo-track-json {
+      width: 100%;
+      min-height: 260px;
+      margin-top: 12px;
+      padding: 10px;
+      box-sizing: border-box;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 12px;
+    }
+
+    @media (max-width: 600px) {
+      body {
+        padding: 14px;
+      }
+
+      .fit-demo-panel {
+        padding: 12px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main class="fit-demo">
+    <h1>FIT to TrackJSON Demo</h1>
+
+    <p>
+      Select a FIT file, convert it to TrackJSON, optionally downsample it,
+      and render the result with STGY Track Viewer.
+    </p>
+
+    <section class="fit-demo-panel" aria-label="FIT conversion options">
+      <div class="fit-demo-field">
+        <label for="fit-demo-file">FIT file</label>
+        <input id="fit-demo-file" type="file" accept=".fit,application/octet-stream">
+      </div>
+
+      <div class="fit-demo-field">
+        <label for="fit-demo-title">Route title</label>
+        <input id="fit-demo-title" type="text" placeholder="Use file name">
+      </div>
+
+      <div class="fit-demo-field-inline">
+        <input id="fit-demo-downsample" type="checkbox" checked>
+        <label for="fit-demo-downsample">Downsample</label>
+      </div>
+
+      <div class="fit-demo-field">
+        <label for="fit-demo-max-points">Max points</label>
+        <input id="fit-demo-max-points" type="number" min="2" step="1" value="3000">
+      </div>
+
+      <div class="fit-demo-field-inline">
+        <input id="fit-demo-preserve-endpoints" type="checkbox" checked>
+        <label for="fit-demo-preserve-endpoints">Preserve endpoints</label>
+      </div>
+
+      <div class="fit-demo-field-inline">
+        <input id="fit-demo-pretty" type="checkbox">
+        <label for="fit-demo-pretty">Pretty-print TrackJSON</label>
+      </div>
+    </section>
+
+    <div class="fit-demo-actions">
+      <button id="fit-demo-convert" type="button">Convert and render</button>
+      <button id="fit-demo-copy" type="button" disabled>Copy TrackJSON</button>
+      <a id="fit-demo-download" href="#" download="track.json" hidden>
+        Download TrackJSON
+      </a>
+    </div>
+
+    <div id="fit-demo-status" class="fit-demo-status" role="status"></div>
+    <div id="fit-demo-summary" class="fit-demo-summary" hidden></div>
+    <div id="fit-demo-map-output" class="fit-demo-map-output"></div>
+
+    <label for="fit-demo-track-json">
+      TrackJSON
+    </label>
+    <textarea
+      id="fit-demo-track-json"
+      class="fit-demo-track-json"
+      readonly
+      spellcheck="false"></textarea>
+  </main>
+
+  <script src="./dist/track-viewer.js"></script>
+  <script src="./dist/fit-demo.js"></script>
+  <script>
+    StgyFitDemo.initFitDemo();
+  </script>
+</body>
+</html>
