@@ -154,6 +154,12 @@
   stroke-width: 1;
 }
 
+.stgy-track-graph-y-grid {
+  fill: none;
+  stroke: #ddd;
+  stroke-width: 1;
+}
+
 .stgy-track-graph-line {
   fill: none;
   stroke: #0078a8;
@@ -181,6 +187,11 @@
 
 .stgy-track-graph-label-end {
   text-anchor: end;
+}
+
+.stgy-track-graph-tick-label {
+  fill: #666;
+  font-size: 8px;
 }
 
 .stgy-track-error-message {

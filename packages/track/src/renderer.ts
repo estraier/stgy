@@ -22,6 +22,19 @@ const ALLOWED_MAP_COLORS = new Set([
 ]);
 
 const DEFAULT_SINGLE_POINT_ZOOM = 12;
+const TRACK_GRAPH_SMOOTHING_WINDOWS = [
+  1,
+  3,
+  5,
+  7,
+  11,
+  15,
+  31,
+  61,
+  121,
+] as const;
+const TARGET_GRAPH_X_TICKS = 5;
+const TARGET_GRAPH_Y_TICKS = 5;
 
 type BoundsAccumulator = {
   hasValue: boolean;
@@ -36,6 +49,7 @@ type CoordinateMarkerState = {
 };
 
 type TrackGraphXAxisKind = "distance" | "time" | "sample";
+type TrackGraphSmoothingWindow = typeof TRACK_GRAPH_SMOOTHING_WINDOWS[number];
 
 type TrackGraphSeries = {
   name: string;
@@ -61,6 +75,7 @@ type GraphHoverState = {
   selectedXAxis: TrackGraphXAxisKind;
   series: TrackGraphSeries;
   xValues: number[];
+  displayValues: number[];
   scaledXValues: number[];
   yScale: (value: number) => number;
   hoverLine: SVGLineElement;
@@ -780,12 +795,13 @@ export class StgyTrackRenderer {
       return;
     }
 
-    if (index < 0 || index >= state.xValues.length || index >= state.series.values.length) {
+    if (index < 0 || index >= state.xValues.length || index >= state.displayValues.length) {
       return;
     }
 
+    const displayValue = state.displayValues[index];
     const hoverX = state.scaledXValues[index];
-    const hoverY = state.yScale(state.series.values[index]);
+    const hoverY = state.yScale(displayValue);
 
     state.hoverLine.setAttribute("x1", `${hoverX}`);
     state.hoverLine.setAttribute("x2", `${hoverX}`);
@@ -795,7 +811,9 @@ export class StgyTrackRenderer {
     state.hoverPoint.setAttribute("cy", `${hoverY}`);
     state.hoverPoint.removeAttribute("hidden");
 
-    state.readout.textContent = `${this.formatXAxisLabel(state.selectedXAxis, state.xValues[index])} / ${this.formatGraphYValue(state.series.name, state.series.values[index])}`;
+    state.readout.textContent =
+      `${this.formatXAxisLabel(state.selectedXAxis, state.xValues[index])} / ` +
+      `${this.formatGraphYValue(state.series.name, displayValue)}`;
   }
 
   private clearGraphHover(context: CoordinateInteractionContext) {
@@ -1086,15 +1104,201 @@ export class StgyTrackRenderer {
     return `${value.toFixed(1)}`;
   }
 
+  private formatGraphYTickLabel(seriesName: string, value: number): string {
+    const roundedValue = Math.round(value);
+
+    if (seriesName === "elevations") {
+      return `${roundedValue} m`;
+    }
+
+    if (seriesName === "heartRates") {
+      return `${roundedValue} bpm`;
+    }
+
+    if (seriesName === "cadences") {
+      return `${roundedValue} rpm`;
+    }
+
+    if (seriesName === "powers") {
+      return `${roundedValue} W`;
+    }
+
+    if (seriesName === "speeds") {
+      return `${roundedValue} km/h`;
+    }
+
+    return `${roundedValue}`;
+  }
+
+  private usesZeroGraphYMin(seriesName: string): boolean {
+    return (
+      seriesName === "elevations" ||
+      seriesName === "heartRates" ||
+      seriesName === "cadences" ||
+      seriesName === "powers" ||
+      seriesName === "speeds"
+    );
+  }
+
+  private normalizeGraphSmoothingWindow(value: unknown): TrackGraphSmoothingWindow {
+    const numberValue = typeof value === "number" ? value : Number(value);
+    if (TRACK_GRAPH_SMOOTHING_WINDOWS.includes(
+      numberValue as TrackGraphSmoothingWindow
+    )) {
+      return numberValue as TrackGraphSmoothingWindow;
+    }
+
+    return 1;
+  }
+
+  private smoothCenteredMovingAverage(
+    values: number[],
+    windowSize: TrackGraphSmoothingWindow
+  ): number[] {
+    if (windowSize <= 1 || values.length <= 2) {
+      return values;
+    }
+
+    const half = Math.floor(windowSize / 2);
+    const sums: number[] = [0];
+
+    values.forEach((value) => {
+      const previous = sums[sums.length - 1] ?? 0;
+      sums.push(previous + value);
+    });
+
+    return values.map((_, index) => {
+      const start = Math.max(0, index - half);
+      const end = Math.min(values.length, index + half + 1);
+      const startSum = sums[start] ?? 0;
+      const endSum = sums[end] ?? 0;
+      return (endSum - startSum) / (end - start);
+    });
+  }
+
+  private createNiceTicks(min: number, max: number, targetCount: number): number[] {
+    if (!Number.isFinite(min) || !Number.isFinite(max) || targetCount <= 0) {
+      return [];
+    }
+
+    if (min === max) {
+      return [min];
+    }
+
+    const span = max - min;
+    const rawStep = span / Math.max(1, targetCount - 1);
+    const step = this.niceStep(rawStep);
+    const start = Math.ceil(min / step) * step;
+    const end = Math.floor(max / step) * step;
+    const ticks: number[] = [];
+
+    for (let value = start; value <= end + step * 0.5; value += step) {
+      ticks.push(this.roundTickValue(value));
+      if (ticks.length > 100) {
+        break;
+      }
+    }
+
+    if (ticks.length === 0) {
+      return [min, max];
+    }
+
+    return ticks;
+  }
+
+  private niceStep(value: number): number {
+    if (!Number.isFinite(value) || value <= 0) {
+      return 1;
+    }
+
+    const exponent = Math.floor(Math.log10(value));
+    const base = 10 ** exponent;
+    const fraction = value / base;
+
+    let niceFraction: number;
+    if (fraction <= 1) {
+      niceFraction = 1;
+    } else if (fraction <= 2) {
+      niceFraction = 2;
+    } else if (fraction <= 5) {
+      niceFraction = 5;
+    } else {
+      niceFraction = 10;
+    }
+
+    return niceFraction * base;
+  }
+
+  private roundTickValue(value: number): number {
+    if (!Number.isFinite(value)) {
+      return value;
+    }
+
+    const absValue = Math.abs(value);
+    if (absValue >= 1000) {
+      return Math.round(value);
+    }
+
+    if (absValue >= 10) {
+      return Math.round(value * 10) / 10;
+    }
+
+    return Math.round(value * 100) / 100;
+  }
+
+  private formatXAxisTickLabel(
+    kind: TrackGraphXAxisKind,
+    value: number,
+    min: number,
+    max: number
+  ): string {
+    if (kind === "distance") {
+      return `${Math.round(value / 1000)} km`;
+    }
+
+    if (kind === "time") {
+      const millis = value > 100000000000 ? value : value * 1000;
+      const date = new Date(millis);
+      if (Number.isNaN(date.getTime())) {
+        return "";
+      }
+
+      const minMillis = min > 100000000000 ? min : min * 1000;
+      const maxMillis = max > 100000000000 ? max : max * 1000;
+      const minDate = new Date(minMillis);
+      const maxDate = new Date(maxMillis);
+
+      const hh = date.getHours().toString().padStart(2, "0");
+      const mi = date.getMinutes().toString().padStart(2, "0");
+
+      if (
+        !Number.isNaN(minDate.getTime()) &&
+        !Number.isNaN(maxDate.getTime()) &&
+        minDate.toDateString() !== maxDate.toDateString()
+      ) {
+        const mm = (date.getMonth() + 1).toString().padStart(2, "0");
+        const dd = date.getDate().toString().padStart(2, "0");
+        return `${mm}/${dd} ${hh}:${mi}`;
+      }
+
+      return `${hh}:${mi}`;
+    }
+
+    return `${Math.round(value)}`;
+  }
+
   private renderGraphPanel(
     panel: HTMLElement,
     context: CoordinateInteractionContext,
     dataset: TrackGraphDataset,
     selectedXAxis: TrackGraphXAxisKind = dataset.defaultXAxis,
-    selectedSeriesName: string = dataset.series[0].name
+    selectedSeriesName: string = dataset.series[0].name,
+    selectedSmoothingWindow: TrackGraphSmoothingWindow = 1
   ) {
     const xValues = dataset.xAxes[selectedXAxis] || dataset.xAxes.sample;
-    const series = dataset.series.find((item) => item.name === selectedSeriesName) || dataset.series[0];
+    const series = dataset.series.find((item) => item.name === selectedSeriesName) ||
+      dataset.series[0];
+    const smoothingWindow = this.normalizeGraphSmoothingWindow(selectedSmoothingWindow);
 
     context.graphHoverState = null;
 
@@ -1102,6 +1306,8 @@ export class StgyTrackRenderer {
       panel.hidden = true;
       return;
     }
+
+    const displayValues = this.smoothCenteredMovingAverage(series.values, smoothingWindow);
 
     panel.hidden = false;
     panel.replaceChildren();
@@ -1122,7 +1328,14 @@ export class StgyTrackRenderer {
       });
 
       seriesSelect.addEventListener("change", () => {
-        this.renderGraphPanel(panel, context, dataset, selectedXAxis, seriesSelect.value);
+        this.renderGraphPanel(
+          panel,
+          context,
+          dataset,
+          selectedXAxis,
+          seriesSelect.value,
+          smoothingWindow
+        );
       });
 
       controls.appendChild(seriesSelect);
@@ -1150,11 +1363,44 @@ export class StgyTrackRenderer {
       });
 
       axisSelect.addEventListener("change", () => {
-        this.renderGraphPanel(panel, context, dataset, axisSelect.value as TrackGraphXAxisKind, series.name);
+        this.renderGraphPanel(
+          panel,
+          context,
+          dataset,
+          axisSelect.value as TrackGraphXAxisKind,
+          series.name,
+          smoothingWindow
+        );
       });
 
       controls.appendChild(axisSelect);
     }
+
+    const smoothingSelect = document.createElement("select");
+    smoothingSelect.setAttribute("aria-label", "Graph smoothing");
+
+    TRACK_GRAPH_SMOOTHING_WINDOWS.forEach((windowSize) => {
+      const option = document.createElement("option");
+      option.value = `${windowSize}`;
+      option.textContent = windowSize === 1
+        ? "smoothing: none"
+        : `smoothing: ${windowSize}`;
+      option.selected = windowSize === smoothingWindow;
+      smoothingSelect.appendChild(option);
+    });
+
+    smoothingSelect.addEventListener("change", () => {
+      this.renderGraphPanel(
+        panel,
+        context,
+        dataset,
+        selectedXAxis,
+        series.name,
+        this.normalizeGraphSmoothingWindow(smoothingSelect.value)
+      );
+    });
+
+    controls.appendChild(smoothingSelect);
 
     const readout = document.createElement("div");
     readout.className = "stgy-track-graph-readout";
@@ -1178,11 +1424,17 @@ export class StgyTrackRenderer {
 
     const xMin = Math.min(...xValues);
     const xMax = Math.max(...xValues);
-    const rawYMin = Math.min(...series.values);
-    const rawYMax = Math.max(...series.values);
-    const yPadding = rawYMin === rawYMax ? Math.max(Math.abs(rawYMin) * 0.1, 1) : 0;
-    const yMin = rawYMin - yPadding;
-    const yMax = rawYMax + yPadding;
+    const rawYMin = Math.min(...displayValues);
+    const rawYMax = Math.max(...displayValues);
+    const useZeroYMin = this.usesZeroGraphYMin(series.name);
+    const baseYMin = useZeroYMin ? 0 : rawYMin;
+    const yPadding = !useZeroYMin && baseYMin === rawYMax
+      ? Math.max(Math.abs(baseYMin) * 0.1, 1)
+      : 0;
+    const yMin = useZeroYMin ? 0 : baseYMin - yPadding;
+    const yMax = rawYMax <= yMin
+      ? yMin + Math.max(Math.abs(yMin) * 0.1, 1)
+      : rawYMax + yPadding;
 
     const xScale = (value: number): number => {
       if (xMax === xMin) {
@@ -1199,17 +1451,55 @@ export class StgyTrackRenderer {
     };
 
     const scaledXValues = xValues.map((x) => xScale(x));
+    const xTicks = this.createNiceTicks(xMin, xMax, TARGET_GRAPH_X_TICKS);
+    const yTicks = this.createNiceTicks(yMin, yMax, TARGET_GRAPH_Y_TICKS);
+
+    yTicks.forEach((tick) => {
+      const y = yScale(tick);
+
+      const grid = document.createElementNS(svgNs, "line");
+      grid.setAttribute("class", "stgy-track-graph-y-grid");
+      grid.setAttribute("x1", `${plotLeft}`);
+      grid.setAttribute("x2", `${plotRight}`);
+      grid.setAttribute("y1", `${y}`);
+      grid.setAttribute("y2", `${y}`);
+      svg.appendChild(grid);
+
+      const label = document.createElementNS(svgNs, "text");
+      label.setAttribute("class", "stgy-track-graph-tick-label");
+      label.setAttribute("x", "8");
+      label.setAttribute("y", `${y + 3}`);
+      label.textContent = this.formatGraphYTickLabel(series.name, tick);
+      svg.appendChild(label);
+    });
+
+    xTicks.forEach((tick) => {
+      const x = xScale(tick);
+
+      const label = document.createElementNS(svgNs, "text");
+      label.setAttribute("class", "stgy-track-graph-tick-label");
+      label.setAttribute("x", `${x}`);
+      label.setAttribute("y", "168");
+      label.setAttribute("text-anchor", "middle");
+      label.textContent = this.formatXAxisTickLabel(selectedXAxis, tick, xMin, xMax);
+      svg.appendChild(label);
+    });
 
     const axis = document.createElementNS(svgNs, "path");
     axis.setAttribute("class", "stgy-track-graph-axis");
-    axis.setAttribute("d", `M ${plotLeft} ${plotTop} L ${plotLeft} ${plotBottom} L ${plotRight} ${plotBottom}`);
+    axis.setAttribute(
+      "d",
+      `M ${plotLeft} ${plotTop} L ${plotLeft} ${plotBottom} L ${plotRight} ${plotBottom}`
+    );
     svg.appendChild(axis);
 
     const line = document.createElementNS(svgNs, "polyline");
     line.setAttribute("class", "stgy-track-graph-line");
     line.setAttribute(
       "points",
-      xValues.map((x, index) => `${xScale(x)},${yScale(series.values[index])}`).join(" ")
+      xValues.map((x, index) => {
+        return `${xScale(x)},${yScale(displayValues[index])}`;
+      }).join(" ")
     );
     svg.appendChild(line);
 
@@ -1227,39 +1517,12 @@ export class StgyTrackRenderer {
     hoverPoint.setAttribute("hidden", "true");
     svg.appendChild(hoverPoint);
 
-    const yMinLabel = document.createElementNS(svgNs, "text");
-    yMinLabel.setAttribute("class", "stgy-track-graph-label");
-    yMinLabel.setAttribute("x", "8");
-    yMinLabel.setAttribute("y", `${plotBottom}`);
-    yMinLabel.textContent = rawYMin.toFixed(1);
-    svg.appendChild(yMinLabel);
-
-    const yMaxLabel = document.createElementNS(svgNs, "text");
-    yMaxLabel.setAttribute("class", "stgy-track-graph-label");
-    yMaxLabel.setAttribute("x", "8");
-    yMaxLabel.setAttribute("y", `${plotTop + 4}`);
-    yMaxLabel.textContent = rawYMax.toFixed(1);
-    svg.appendChild(yMaxLabel);
-
-    const xMinLabel = document.createElementNS(svgNs, "text");
-    xMinLabel.setAttribute("class", "stgy-track-graph-label");
-    xMinLabel.setAttribute("x", `${plotLeft}`);
-    xMinLabel.setAttribute("y", "168");
-    xMinLabel.textContent = this.formatXAxisLabel(selectedXAxis, xMin);
-    svg.appendChild(xMinLabel);
-
-    const xMaxLabel = document.createElementNS(svgNs, "text");
-    xMaxLabel.setAttribute("class", "stgy-track-graph-label stgy-track-graph-label-end");
-    xMaxLabel.setAttribute("x", `${plotRight}`);
-    xMaxLabel.setAttribute("y", "168");
-    xMaxLabel.textContent = this.formatXAxisLabel(selectedXAxis, xMax);
-    svg.appendChild(xMaxLabel);
-
     context.graphHoverState = {
       dataset,
       selectedXAxis,
       series,
       xValues,
+      displayValues,
       scaledXValues,
       yScale,
       hoverLine,

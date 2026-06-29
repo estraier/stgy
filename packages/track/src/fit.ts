@@ -75,7 +75,7 @@ export type ParseFitOptions = {
 
 export type DownsampleTrackOptions = {
   maxPoints?: number;
-  strategy?: "uniform";
+  strategy?: "uniform" | "aggregate";
   preserveEndpoints?: boolean;
 };
 
@@ -86,6 +86,7 @@ export type TrackJsonOptions = {
   weight?: number;
   opacity?: number;
   includeMetrics?: boolean;
+  includeMetadata?: boolean;
   pretty?: boolean;
 };
 
@@ -225,7 +226,7 @@ export function downsampleTrackActivity(
   options: DownsampleTrackOptions = {}
 ): TrackActivity {
   const strategy = options.strategy || "uniform";
-  if (strategy !== "uniform") {
+  if (strategy !== "uniform" && strategy !== "aggregate") {
     throw new RangeError(`Unsupported downsampling strategy: ${strategy}`);
   }
 
@@ -236,14 +237,11 @@ export function downsampleTrackActivity(
     return cloneTrackActivity(activity);
   }
 
-  const indices = preserveEndpoints
-    ? selectUniformIndicesWithEndpoints(activity.points.length, maxPoints)
-    : selectUniformIndices(activity.points.length, maxPoints);
+  if (strategy === "uniform") {
+    return downsampleTrackActivityUniform(activity, maxPoints, preserveEndpoints);
+  }
 
-  return {
-    ...cloneTrackActivity(activity),
-    points: indices.map((index) => cloneTrackPoint(activity.points[index])),
-  };
+  return downsampleTrackActivityAggregate(activity, maxPoints, preserveEndpoints);
 }
 
 export function trackActivityToTrackJson(
@@ -281,6 +279,13 @@ export function trackActivityToTrackJson(
     properties.description = options.description.trim();
   }
 
+  if (options.includeMetadata !== false) {
+    const metadata = buildTrackJsonMetadata(activity.metadata);
+    if (metadata) {
+      properties.metadata = metadata;
+    }
+  }
+
   if (Object.keys(coordinateProperties).length > 0) {
     properties.coordinateProperties = coordinateProperties;
   }
@@ -302,6 +307,54 @@ export function trackActivityToTrackJson(
   return JSON.stringify(trackJson, null, options.pretty ? 2 : 0);
 }
 
+function buildTrackJsonMetadata(
+  metadata: TrackActivityMetadata
+): Record<string, unknown> | undefined {
+  const output: Record<string, unknown> = {};
+
+  if (metadata.source) {
+    output.source = { ...metadata.source };
+  }
+
+  if (isNonEmptyString(metadata.name)) {
+    output.name = metadata.name.trim();
+  }
+
+  if (isNonEmptyString(metadata.description)) {
+    output.description = metadata.description.trim();
+  }
+
+  if (isNonEmptyString(metadata.sport)) {
+    output.sport = metadata.sport.trim();
+  }
+
+  if (isNonEmptyString(metadata.subSport)) {
+    output.subSport = metadata.subSport.trim();
+  }
+
+  if (metadata.device) {
+    output.device = { ...metadata.device };
+  }
+
+  assignMetadataNumber(output, "createdAt", metadata.createdAt);
+  assignMetadataNumber(output, "startTime", metadata.startTime);
+  assignMetadataNumber(output, "totalElapsedTime", metadata.totalElapsedTime);
+  assignMetadataNumber(output, "totalTimerTime", metadata.totalTimerTime);
+  assignMetadataNumber(output, "totalDistanceM", metadata.totalDistanceM);
+
+  return Object.keys(output).length > 0 ? output : undefined;
+}
+
+function assignMetadataNumber(
+  output: Record<string, unknown>,
+  key: string,
+  value: number | undefined
+) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    output[key] = value;
+  }
+}
+
 function normalizeInputBytes(bytes: ArrayBuffer | Uint8Array): ArrayBuffer {
   if (bytes instanceof ArrayBuffer) {
     return bytes;
@@ -314,10 +367,155 @@ function normalizeInputBytes(bytes: ArrayBuffer | Uint8Array): ArrayBuffer {
 
 function normalizeMaxPoints(value: number): number {
   if (!Number.isFinite(value) || value < 2) {
-    throw new RangeError("maxPoints must be a finite number greater than or equal to 2.");
+    throw new RangeError(
+      "maxPoints must be a finite number greater than or equal to 2."
+    );
   }
 
   return Math.floor(value);
+}
+
+function downsampleTrackActivityUniform(
+  activity: TrackActivity,
+  maxPoints: number,
+  preserveEndpoints: boolean
+): TrackActivity {
+  const indices = preserveEndpoints
+    ? selectUniformIndicesWithEndpoints(activity.points.length, maxPoints)
+    : selectUniformIndices(activity.points.length, maxPoints);
+
+  return {
+    ...cloneTrackActivity(activity),
+    points: indices.map((index) => cloneTrackPoint(activity.points[index])),
+  };
+}
+
+function downsampleTrackActivityAggregate(
+  activity: TrackActivity,
+  maxPoints: number,
+  preserveEndpoints: boolean
+): TrackActivity {
+  const points = preserveEndpoints
+    ? aggregatePointsWithEndpoints(activity.points, maxPoints)
+    : aggregatePoints(activity.points, maxPoints);
+
+  return {
+    ...cloneTrackActivity(activity),
+    points,
+  };
+}
+
+function aggregatePointsWithEndpoints(
+  points: TrackPoint[],
+  maxPoints: number
+): TrackPoint[] {
+  if (maxPoints <= 2) {
+    return [
+      cloneTrackPoint(points[0]),
+      cloneTrackPoint(points[points.length - 1]),
+    ];
+  }
+
+  const middlePoints = points.slice(1, -1);
+  const middleCount = maxPoints - 2;
+  const aggregated = aggregatePoints(middlePoints, middleCount);
+
+  return [
+    cloneTrackPoint(points[0]),
+    ...aggregated,
+    cloneTrackPoint(points[points.length - 1]),
+  ];
+}
+
+function aggregatePoints(points: TrackPoint[], maxPoints: number): TrackPoint[] {
+  if (points.length <= maxPoints) {
+    return points.map(cloneTrackPoint);
+  }
+
+  return createBucketRanges(points.length, maxPoints).map(([start, end]) => {
+    return aggregateTrackPointBucket(points, start, end);
+  });
+}
+
+function createBucketRanges(length: number, count: number): Array<[number, number]> {
+  const ranges: Array<[number, number]> = [];
+
+  for (let i = 0; i < count; i += 1) {
+    const start = Math.floor((i * length) / count);
+    const end = Math.floor(((i + 1) * length) / count);
+    ranges.push([start, Math.max(start + 1, end)]);
+  }
+
+  return ranges;
+}
+
+function aggregateTrackPointBucket(
+  points: TrackPoint[],
+  start: number,
+  end: number
+): TrackPoint {
+  const bucket = points.slice(start, end);
+  const representative = points[Math.floor((start + end - 1) / 2)];
+  const point: TrackPoint = {};
+
+  assignNumber(point, "time", representative.time);
+  assignNumber(point, "lat", representative.lat);
+  assignNumber(point, "lon", representative.lon);
+  assignNumber(point, "distanceM", representative.distanceM);
+  assignNumber(point, "elevationM", averagePointValue(bucket, (item) => item.elevationM));
+  assignNumber(point, "heartRateBpm", averagePointValue(bucket, (item) => item.heartRateBpm));
+  assignNumber(point, "cadenceRpm", averagePointValue(bucket, (item) => item.cadenceRpm));
+  assignNumber(point, "powerW", averagePointValue(bucket, (item) => item.powerW));
+  assignNumber(point, "speedMps", averagePointValue(bucket, (item) => item.speedMps));
+  assignNumber(point, "temperatureC", averagePointValue(bucket, (item) => item.temperatureC));
+
+  const metrics = aggregateMetricValues(bucket);
+  if (metrics) {
+    point.metrics = metrics;
+  }
+
+  return point;
+}
+
+function averagePointValue(
+  points: TrackPoint[],
+  getValue: (point: TrackPoint) => number | undefined
+): number | undefined {
+  let sum = 0;
+  let count = 0;
+
+  points.forEach((point) => {
+    const value = getValue(point);
+    if (isFiniteNumber(value)) {
+      sum += value;
+      count += 1;
+    }
+  });
+
+  return count > 0 ? sum / count : undefined;
+}
+
+function aggregateMetricValues(points: TrackPoint[]): Record<string, number> | undefined {
+  const metricNames = new Set<string>();
+
+  points.forEach((point) => {
+    Object.keys(point.metrics || {}).forEach((name) => {
+      if (isSafeMetricName(name)) {
+        metricNames.add(name);
+      }
+    });
+  });
+
+  const metrics: Record<string, number> = {};
+
+  metricNames.forEach((name) => {
+    const value = averagePointValue(points, (point) => point.metrics?.[name]);
+    if (isFiniteNumber(value)) {
+      metrics[name] = value;
+    }
+  });
+
+  return Object.keys(metrics).length > 0 ? metrics : undefined;
 }
 
 function selectUniformIndicesWithEndpoints(length: number, count: number): number[] {
