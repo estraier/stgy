@@ -3,7 +3,16 @@ import {
   parseFitBytes,
   trackActivityToTrackJson,
 } from "./fit";
+import {
+  compactTrackJsonData,
+  countTrackJsonPositionedPoints,
+  downsampleTrackJsonData,
+  getTrackJsonMetadata,
+  getTrackJsonTitle,
+  parseTrackJsonData,
+} from "./trackjson";
 import type { TrackActivity } from "./fit";
+import type { TrackJsonDownsampleStrategy } from "./trackjson";
 
 type TrackRenderer = {
   hydrate: (root?: HTMLElement) => void;
@@ -16,8 +25,6 @@ type StgyTrackViewerGlobal = {
 type StreamConstructor = new (
   format: string
 ) => TransformStream<Uint8Array, Uint8Array>;
-
-type DownsampleStrategy = "uniform" | "aggregate";
 
 type DemoElements = {
   fileInput: HTMLInputElement;
@@ -194,238 +201,6 @@ function convertTrackJsonText(
   };
 }
 
-function parseTrackJsonData(text: string): unknown {
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch (e) {
-    throw new Error(`TrackJSON could not be parsed: ${getErrorMessage(e)}`);
-  }
-
-  if (!data || typeof data !== "object") {
-    throw new Error("TrackJSON root must be an object.");
-  }
-
-  const type = (data as { type?: unknown }).type;
-  if (type !== "FeatureCollection" && type !== "Feature") {
-    throw new Error("TrackJSON must be a GeoJSON FeatureCollection or Feature.");
-  }
-
-  return data;
-}
-
-const TRACK_JSON_PRECISION = {
-  coordinates: 5,
-  times: 0,
-  distances: 1,
-  elevations: 1,
-  heartRates: 1,
-  cadences: 1,
-  powers: 1,
-  speeds: 1,
-  metrics: 1,
-  metadata: 1,
-};
-
-function compactTrackJsonData(data: unknown): unknown {
-  if (!isRecord(data)) {
-    return data;
-  }
-
-  if (data.type === "Feature") {
-    return compactTrackJsonFeature(data);
-  }
-
-  if (data.type !== "FeatureCollection" || !Array.isArray(data.features)) {
-    return compactTrackJsonValue(data, undefined);
-  }
-
-  const output: Record<string, unknown> = {
-    ...data,
-    features: data.features.map((feature) => {
-      return isRecord(feature) ? compactTrackJsonFeature(feature) : feature;
-    }),
-  };
-
-  if (isRecord(data.metadata)) {
-    output.metadata = compactTrackJsonMetadata(data.metadata);
-  }
-
-  return output;
-}
-
-function compactTrackJsonFeature(
-  feature: Record<string, unknown>
-): Record<string, unknown> {
-  const output: Record<string, unknown> = { ...feature };
-  const geometry = feature.geometry;
-
-  if (isRecord(geometry)) {
-    output.geometry = compactTrackJsonGeometry(geometry);
-  }
-
-  if (isRecord(feature.properties)) {
-    output.properties = compactTrackJsonProperties(feature.properties);
-  }
-
-  return output;
-}
-
-function compactTrackJsonGeometry(
-  geometry: Record<string, unknown>
-): Record<string, unknown> {
-  if (geometry.type !== "LineString" || !Array.isArray(geometry.coordinates)) {
-    return compactTrackJsonValue(geometry, undefined) as Record<string, unknown>;
-  }
-
-  return {
-    ...geometry,
-    coordinates: geometry.coordinates.map(compactTrackJsonCoordinate),
-  };
-}
-
-function compactTrackJsonCoordinate(coordinate: unknown): unknown {
-  if (!Array.isArray(coordinate)) {
-    return coordinate;
-  }
-
-  return coordinate.map((value, index) => {
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      return value;
-    }
-
-    return roundNumber(
-      value,
-      index < 2 ? TRACK_JSON_PRECISION.coordinates : TRACK_JSON_PRECISION.elevations
-    );
-  });
-}
-
-function compactTrackJsonProperties(
-  properties: Record<string, unknown>
-): Record<string, unknown> {
-  const output: Record<string, unknown> = { ...properties };
-
-  if (isRecord(properties.coordinateProperties)) {
-    output.coordinateProperties = compactCoordinateProperties(
-      properties.coordinateProperties
-    );
-  }
-
-  if (isRecord(properties.metadata)) {
-    output.metadata = compactTrackJsonMetadata(properties.metadata);
-  }
-
-  return output;
-}
-
-function compactCoordinateProperties(
-  coordinateProperties: Record<string, unknown>
-): Record<string, unknown> {
-  const output: Record<string, unknown> = {};
-
-  Object.keys(coordinateProperties).forEach((name) => {
-    const value = coordinateProperties[name];
-    if (!Array.isArray(value)) {
-      output[name] = value;
-      return;
-    }
-
-    const precision = getCoordinatePropertyPrecision(name);
-    output[name] = value.map((item) => {
-      return typeof item === "number" && Number.isFinite(item)
-        ? roundNumber(item, precision)
-        : item;
-    });
-  });
-
-  return output;
-}
-
-function getCoordinatePropertyPrecision(name: string): number {
-  if (name === "times") {
-    return TRACK_JSON_PRECISION.times;
-  }
-
-  if (name === "distances") {
-    return TRACK_JSON_PRECISION.distances;
-  }
-
-  if (name === "elevations") {
-    return TRACK_JSON_PRECISION.elevations;
-  }
-
-  if (name === "heartRates") {
-    return TRACK_JSON_PRECISION.heartRates;
-  }
-
-  if (name === "cadences") {
-    return TRACK_JSON_PRECISION.cadences;
-  }
-
-  if (name === "powers") {
-    return TRACK_JSON_PRECISION.powers;
-  }
-
-  if (name === "speeds") {
-    return TRACK_JSON_PRECISION.speeds;
-  }
-
-  return TRACK_JSON_PRECISION.metrics;
-}
-
-function compactTrackJsonMetadata(
-  metadata: Record<string, unknown>
-): Record<string, unknown> {
-  return compactTrackJsonValue(metadata, undefined) as Record<string, unknown>;
-}
-
-function compactTrackJsonValue(value: unknown, key: string | undefined): unknown {
-  if (typeof value === "number" && Number.isFinite(value)) {
-    return roundNumber(value, getMetadataPrecision(key));
-  }
-
-  if (Array.isArray(value)) {
-    return value.map((item) => compactTrackJsonValue(item, key));
-  }
-
-  if (isRecord(value)) {
-    const output: Record<string, unknown> = {};
-    Object.keys(value).forEach((childKey) => {
-      output[childKey] = compactTrackJsonValue(value[childKey], childKey);
-    });
-    return output;
-  }
-
-  return value;
-}
-
-function getMetadataPrecision(key: string | undefined): number {
-  if (
-    key === "createdAt" ||
-    key === "startTime" ||
-    key === "timeCreated" ||
-    key === "serialNumber"
-  ) {
-    return 0;
-  }
-
-  if (key === "totalElapsedTime" || key === "totalTimerTime") {
-    return 0;
-  }
-
-  return TRACK_JSON_PRECISION.metadata;
-}
-
-function roundNumber(value: number, precision: number): number {
-  if (precision <= 0) {
-    return Math.round(value);
-  }
-
-  const factor = 10 ** precision;
-  return Math.round(value * factor) / factor;
-}
-
 function maybeDownsample(
   activity: TrackActivity,
   elements: DemoElements
@@ -449,247 +224,11 @@ function maybeDownsampleTrackJsonData(
     return data;
   }
 
-  return downsampleTrackJsonData(
-    data,
-    getMaxPoints(elements),
-    getDownsampleStrategy(elements),
-    elements.preserveEndpointsInput.checked
-  );
-}
-
-function downsampleTrackJsonData(
-  data: unknown,
-  maxPoints: number,
-  strategy: DownsampleStrategy,
-  preserveEndpoints: boolean
-): unknown {
-  if (!isRecord(data)) {
-    return data;
-  }
-
-  if (data.type === "Feature") {
-    return downsampleTrackJsonFeature(
-      data,
-      maxPoints,
-      strategy,
-      preserveEndpoints
-    );
-  }
-
-  if (data.type !== "FeatureCollection" || !Array.isArray(data.features)) {
-    return data;
-  }
-
-  return {
-    ...data,
-    features: data.features.map((feature) => {
-      return isRecord(feature)
-        ? downsampleTrackJsonFeature(
-            feature,
-            maxPoints,
-            strategy,
-            preserveEndpoints
-          )
-        : feature;
-    }),
-  };
-}
-
-function downsampleTrackJsonFeature(
-  feature: Record<string, unknown>,
-  maxPoints: number,
-  strategy: DownsampleStrategy,
-  preserveEndpoints: boolean
-): Record<string, unknown> {
-  const geometry = feature.geometry;
-  if (!isRecord(geometry)) {
-    return feature;
-  }
-
-  if (geometry.type !== "LineString" || !Array.isArray(geometry.coordinates)) {
-    return feature;
-  }
-
-  if (geometry.coordinates.length <= maxPoints) {
-    return feature;
-  }
-
-  const ranges = createTrackJsonDownsampleRanges(
-    geometry.coordinates.length,
-    maxPoints,
-    strategy,
-    preserveEndpoints
-  );
-  const coordinates = ranges.map((range) => {
-    return cloneTrackJsonCoordinate(geometry.coordinates[range.representative]);
+  return downsampleTrackJsonData(data, {
+    maxPoints: getMaxPoints(elements),
+    strategy: getDownsampleStrategy(elements),
+    preserveEndpoints: elements.preserveEndpointsInput.checked,
   });
-  const output: Record<string, unknown> = {
-    ...feature,
-    geometry: {
-      ...geometry,
-      coordinates,
-    },
-  };
-
-  const properties = feature.properties;
-  if (isRecord(properties) && isRecord(properties.coordinateProperties)) {
-    output.properties = {
-      ...properties,
-      coordinateProperties: downsampleCoordinateProperties(
-        properties.coordinateProperties,
-        ranges,
-        geometry.coordinates.length,
-        strategy
-      ),
-    };
-  }
-
-  return output;
-}
-
-type TrackJsonDownsampleRange = {
-  start: number;
-  end: number;
-  representative: number;
-};
-
-function createTrackJsonDownsampleRanges(
-  length: number,
-  maxPoints: number,
-  strategy: DownsampleStrategy,
-  preserveEndpoints: boolean
-): TrackJsonDownsampleRange[] {
-  if (length <= maxPoints) {
-    return Array.from({ length }, (_, index) => {
-      return { start: index, end: index + 1, representative: index };
-    });
-  }
-
-  if (strategy === "uniform") {
-    const indices = preserveEndpoints
-      ? selectUniformIndicesWithEndpoints(length, maxPoints)
-      : selectUniformIndices(length, maxPoints);
-    return indices.map((index) => {
-      return { start: index, end: index + 1, representative: index };
-    });
-  }
-
-  if (!preserveEndpoints) {
-    return createAggregateRanges(length, maxPoints, 0);
-  }
-
-  if (maxPoints <= 2) {
-    return [
-      { start: 0, end: 1, representative: 0 },
-      { start: length - 1, end: length, representative: length - 1 },
-    ];
-  }
-
-  return [
-    { start: 0, end: 1, representative: 0 },
-    ...createAggregateRanges(length - 2, maxPoints - 2, 1),
-    { start: length - 1, end: length, representative: length - 1 },
-  ];
-}
-
-function createAggregateRanges(
-  length: number,
-  count: number,
-  offset: number
-): TrackJsonDownsampleRange[] {
-  return Array.from({ length: count }, (_, index) => {
-    const start = offset + Math.floor((index * length) / count);
-    const end = offset + Math.floor(((index + 1) * length) / count);
-    return {
-      start,
-      end: Math.max(start + 1, end),
-      representative: Math.floor((start + Math.max(start + 1, end) - 1) / 2),
-    };
-  });
-}
-
-function selectUniformIndices(length: number, count: number): number[] {
-  return Array.from({ length: count }, (_, index) => {
-    return Math.floor((index * length) / count);
-  });
-}
-
-function selectUniformIndicesWithEndpoints(length: number, count: number): number[] {
-  if (count <= 1) {
-    return [0];
-  }
-
-  return Array.from({ length: count }, (_, index) => {
-    return Math.round((index * (length - 1)) / (count - 1));
-  });
-}
-
-function cloneTrackJsonCoordinate(coordinate: unknown): unknown {
-  return Array.isArray(coordinate) ? [...coordinate] : coordinate;
-}
-
-function downsampleCoordinateProperties(
-  coordinateProperties: Record<string, unknown>,
-  ranges: TrackJsonDownsampleRange[],
-  sourceLength: number,
-  strategy: DownsampleStrategy
-): Record<string, unknown> {
-  const output: Record<string, unknown> = { ...coordinateProperties };
-
-  Object.keys(coordinateProperties).forEach((name) => {
-    const series = coordinateProperties[name];
-    if (!Array.isArray(series) || series.length !== sourceLength) {
-      return;
-    }
-
-    output[name] = downsampleCoordinatePropertySeries(
-      name,
-      series,
-      ranges,
-      strategy
-    );
-  });
-
-  return output;
-}
-
-function downsampleCoordinatePropertySeries(
-  name: string,
-  series: unknown[],
-  ranges: TrackJsonDownsampleRange[],
-  strategy: DownsampleStrategy
-): unknown[] {
-  if (strategy === "uniform" || isRepresentativeCoordinateProperty(name)) {
-    return ranges.map((range) => series[range.representative]);
-  }
-
-  return ranges.map((range) => {
-    const average = averageCoordinatePropertyRange(series, range.start, range.end);
-    return typeof average === "number" ? average : series[range.representative];
-  });
-}
-
-function isRepresentativeCoordinateProperty(name: string): boolean {
-  return name === "times" || name === "distances";
-}
-
-function averageCoordinatePropertyRange(
-  series: unknown[],
-  start: number,
-  end: number
-): number | undefined {
-  let sum = 0;
-  let count = 0;
-
-  for (let index = start; index < end; index += 1) {
-    const value = series[index];
-    if (typeof value === "number" && Number.isFinite(value)) {
-      sum += value;
-      count += 1;
-    }
-  }
-
-  return count > 0 ? sum / count : undefined;
 }
 
 function renderTrackJson(
@@ -999,7 +538,9 @@ function getMaxPoints(elements: DemoElements): number {
   return Math.floor(value);
 }
 
-function getDownsampleStrategy(elements: DemoElements): DownsampleStrategy {
+function getDownsampleStrategy(
+  elements: DemoElements
+): TrackJsonDownsampleStrategy {
   return elements.downsampleStrategySelect.value === "aggregate"
     ? "aggregate"
     : "uniform";
@@ -1008,90 +549,6 @@ function getDownsampleStrategy(elements: DemoElements): DownsampleStrategy {
 function getRouteTitle(elements: DemoElements, file: File): string {
   const title = elements.titleInput.value.trim();
   return title || stripExtension(file.name) || "Track";
-}
-
-function getTrackJsonTitle(data: unknown): string | undefined {
-  const feature = getFirstFeature(data);
-  const properties = feature?.properties;
-  if (!properties || typeof properties !== "object") {
-    return undefined;
-  }
-
-  const title = (properties as Record<string, unknown>).title;
-  return typeof title === "string" && title.trim() ? title.trim() : undefined;
-}
-
-function getTrackJsonMetadata(data: unknown): Record<string, unknown> | undefined {
-  const root = data as Record<string, unknown>;
-  if (root && typeof root === "object" && isRecord(root.metadata)) {
-    return root.metadata;
-  }
-
-  const feature = getFirstFeature(data);
-  const properties = feature?.properties;
-  if (!properties || typeof properties !== "object") {
-    return undefined;
-  }
-
-  const metadata = (properties as Record<string, unknown>).metadata;
-  return isRecord(metadata) ? metadata : undefined;
-}
-
-function getFirstFeature(data: unknown): { properties?: unknown } | undefined {
-  if (!data || typeof data !== "object") {
-    return undefined;
-  }
-
-  const root = data as Record<string, unknown>;
-  if (root.type === "Feature") {
-    return root as { properties?: unknown };
-  }
-
-  if (root.type !== "FeatureCollection" || !Array.isArray(root.features)) {
-    return undefined;
-  }
-
-  return root.features.find((feature) => {
-    return isRecord(feature) && feature.type === "Feature";
-  }) as { properties?: unknown } | undefined;
-}
-
-function countTrackJsonPositionedPoints(data: unknown): number {
-  if (!data || typeof data !== "object") {
-    return 0;
-  }
-
-  const root = data as Record<string, unknown>;
-  if (root.type === "Feature") {
-    return countFeaturePositionedPoints(root);
-  }
-
-  if (root.type !== "FeatureCollection" || !Array.isArray(root.features)) {
-    return 0;
-  }
-
-  return root.features.reduce((sum, feature) => {
-    return isRecord(feature) ? sum + countFeaturePositionedPoints(feature) : sum;
-  }, 0);
-}
-
-function countFeaturePositionedPoints(feature: Record<string, unknown>): number {
-  const geometry = feature.geometry;
-  if (!isRecord(geometry)) {
-    return 0;
-  }
-
-  if (geometry.type === "LineString" && Array.isArray(geometry.coordinates)) {
-    return geometry.coordinates.length;
-  }
-
-  if (geometry.type === "MultiLineString" && Array.isArray(geometry.coordinates)) {
-    return geometry.coordinates.reduce((sum, line) => {
-      return Array.isArray(line) ? sum + line.length : sum;
-    }, 0);
-  }
-
-  return 0;
 }
 
 function makeTrackJsonFileName(file: File, extension: ".trj" | ".trjgz"): string {
@@ -1151,10 +608,6 @@ function getNumberProperty(
 ): number | undefined {
   const value = object[key];
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
 function getErrorMessage(error: unknown): string {

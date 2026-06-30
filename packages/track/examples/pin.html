@@ -1,0 +1,51 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stgy-track pin example</title>
+  <link rel="stylesheet" href="../dist/track-viewer.css">
+  <style>
+    body {
+      margin: 2rem;
+      font-family: system-ui, sans-serif;
+      line-height: 1.5;
+    }
+    .stgy-track-map {
+      height: 520px;
+      margin: 1rem 0;
+    }
+    .stgy-track-canvas {
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <h1>Inline pins</h1>
+  <p>This example renders pins defined directly in HTML.</p>
+
+  <figure class="stgy-track-map" data-lat="35.319" data-lon="139.550" data-zoom="14">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption>Kamakura pins</figcaption>
+
+    <ul class="stgy-track-pins">
+      <li data-lat="35.31924" data-lon="139.55080" data-color="#0078A8">
+        <div class="annot-title">Start</div>
+        <div class="annot-desc">Sample route start point.</div>
+      </li>
+      <li data-lat="35.32472" data-lon="139.56336" data-color="#e74c3c">
+        <div class="annot-title">Goal</div>
+        <div class="annot-desc">Sample route goal point.</div>
+        <div class="annot-link">
+          <a href="https://www.city.kamakura.kanagawa.jp/">Kamakura City</a>
+        </div>
+      </li>
+    </ul>
+  </figure>
+
+  <script src="../dist/track-viewer.js"></script>
+  <script>
+    new StgyTrackViewer.StgyTrackRenderer().hydrate();
+  </script>
+</body>
+</html>

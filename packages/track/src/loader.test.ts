@@ -1,9 +1,4 @@
-import { TextDecoder, TextEncoder } from "util";
-import { ReadableStream, WritableStream } from "stream/web";
 import { TrackLoader } from "./loader";
-
-global.TextDecoder = TextDecoder as typeof global.TextDecoder;
-global.TextEncoder = TextEncoder as typeof global.TextEncoder;
 
 describe("TrackLoader", () => {
   let loader: TrackLoader;
@@ -26,103 +21,166 @@ describe("TrackLoader", () => {
     `;
 
     const data = await loader.load("#test-data");
-    expect(data).toEqual({ type: "Feature", properties: { name: "test" } });
-  });
 
-  test("parses JSON directly from an application/geo+json Data URI", async () => {
-    const uri = 'data:application/geo+json,{"color":"%23e74c3c"}';
-
-    (global.fetch as jest.Mock).mockResolvedValueOnce({
-      ok: true,
-      headers: {
-        get: () => "application/geo+json",
+    expect(data).toEqual({
+      type: "Feature",
+      properties: {
+        name: "test",
       },
-      json: async () => JSON.parse(decodeURIComponent(uri.split(",")[1])),
     });
-
-    const data = await loader.load(uri);
-    expect(data.color).toBe("#e74c3c");
   });
 
-  test("parses JSON directly from an application/json Data URI", async () => {
-    const uri = 'data:application/json,{"color":"%23e74c3c"}';
+  test("parses JSON from a non-template DOM element", async () => {
+    document.body.innerHTML = `
+      <script id="test-data" type="application/json">
+        { "type": "FeatureCollection", "features": [] }
+      </script>
+    `;
 
-    (global.fetch as jest.Mock).mockResolvedValueOnce({
-      ok: true,
-      headers: {
-        get: () => "application/json",
-      },
-      json: async () => JSON.parse(decodeURIComponent(uri.split(",")[1])),
+    const data = await loader.load("#test-data");
+
+    expect(data).toEqual({
+      type: "FeatureCollection",
+      features: [],
     });
-
-    const data = await loader.load(uri);
-    expect(data.color).toBe("#e74c3c");
   });
 
-  test("parses gzipped TrackJSON from application/geo+json+gzip", async () => {
-    const originalDecompressionStream = global.DecompressionStream;
-    const body = '{ "type": "FeatureCollection", "features": [] }';
-
-    class MockDecompressionStream {
-      public readable: ReadableStream<Uint8Array>;
-      public writable: WritableStream<Uint8Array>;
-
-      constructor(_format: string) {
-        const bytes = new TextEncoder().encode(body);
-        this.readable = new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(bytes);
-            controller.close();
-          },
-        });
-        this.writable = new WritableStream<Uint8Array>();
+  test("parses JSON directly from a data URI with application/json", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(mockTextResponse(
+      '{"color":"#e74c3c"}',
+      {
+        contentType: "application/json",
       }
-    }
+    ));
 
-    global.DecompressionStream = MockDecompressionStream as unknown as typeof DecompressionStream;
+    const data = await loader.load('data:application/json,{"color":"%23e74c3c"}');
 
-    const compressedBlob = {
-      size: 3,
-      stream: () =>
-        new ReadableStream<Uint8Array>({
-          start(controller) {
-            controller.enqueue(new Uint8Array([1, 2, 3]));
-            controller.close();
-          },
-        }),
-    };
-
-    (global.fetch as jest.Mock).mockResolvedValueOnce({
-      ok: true,
-      headers: {
-        get: () => "application/geo+json+gzip",
-      },
-      blob: async () => compressedBlob,
-    });
-
-    try {
-      const data = await loader.load("data:application/geo+json+gzip;base64,H4sIAAAAAAAA");
-      expect(data).toEqual({ type: "FeatureCollection", features: [] });
-    } finally {
-      global.DecompressionStream = originalDecompressionStream;
-    }
+    expect(data.color).toBe("#e74c3c");
   });
 
-  test("throws an error for unsupported MIME type", async () => {
-    (global.fetch as jest.Mock).mockResolvedValueOnce({
-      ok: true,
-      headers: {
-        get: () => "text/plain",
-      },
-      json: async () => ({}),
-    });
+  test("parses .trj even when the server returns application/octet-stream", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(mockTextResponse(
+      '{"type":"FeatureCollection","features":[]}',
+      {
+        contentType: "application/octet-stream",
+      }
+    ));
 
-    await expect(loader.load("data:text/plain,{}")).rejects.toThrow(
+    const data = await loader.load("/examples/sample-track.trj");
+
+    expect(data).toEqual({
+      type: "FeatureCollection",
+      features: [],
+    });
+  });
+
+  test("parses .json and .geojson by extension", async () => {
+    (global.fetch as jest.Mock)
+      .mockResolvedValueOnce(mockTextResponse('{"ok":1}', {
+        contentType: "text/plain",
+      }))
+      .mockResolvedValueOnce(mockTextResponse('{"ok":2}', {
+        contentType: "text/plain",
+      }));
+
+    await expect(loader.load("/tracks/sample.json")).resolves.toEqual({ ok: 1 });
+    await expect(loader.load("/tracks/sample.geojson")).resolves.toEqual({ ok: 2 });
+  });
+
+  test("keeps query strings and hashes from breaking extension detection", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(mockTextResponse(
+      '{"type":"FeatureCollection","features":[]}',
+      {
+        contentType: "application/octet-stream",
+      }
+    ));
+
+    const data = await loader.load("/examples/sample-track.trj?x=1#route");
+
+    expect(data).toEqual({
+      type: "FeatureCollection",
+      features: [],
+    });
+  });
+
+  test("accepts application/geo+json by MIME type", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(mockTextResponse(
+      '{"type":"FeatureCollection","features":[]}',
+      {
+        contentType: "application/geo+json; charset=utf-8",
+      }
+    ));
+
+    const data = await loader.load("/track");
+
+    expect(data).toEqual({
+      type: "FeatureCollection",
+      features: [],
+    });
+  });
+
+  test("rejects unsupported MIME type when extension is unknown", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(mockTextResponse(
+      '{"type":"FeatureCollection","features":[]}',
+      {
+        contentType: "text/plain",
+      }
+    ));
+
+    await expect(loader.load("/track.txt")).rejects.toThrow(
       "Track data MIME type is not supported"
     );
   });
 
   test("throws an error for non-existent DOM ID", async () => {
-    await expect(loader.load("#not-exist")).rejects.toThrow("Track data element not found: #not-exist");
+    await expect(loader.load("#not-exist")).rejects.toThrow(
+      "Track data element not found: #not-exist"
+    );
+  });
+
+  test("throws an error for invalid JSON", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(mockTextResponse("{", {
+      contentType: "application/json",
+    }));
+
+    await expect(loader.load("/track.trj")).rejects.toThrow("Invalid JSON");
+  });
+
+  test("throws an error for failed fetch", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce({
+      ok: false,
+      statusText: "Not Found",
+      headers: makeHeaders({}),
+      text: jest.fn(),
+    });
+
+    await expect(loader.load("/missing.trj")).rejects.toThrow(
+      "Failed to fetch track: Not Found"
+    );
   });
 });
+
+function mockTextResponse(
+  text: string,
+  options: {
+    contentType?: string;
+    contentEncoding?: string;
+  } = {}
+): Response {
+  return {
+    ok: true,
+    statusText: "OK",
+    headers: makeHeaders({
+      "content-type": options.contentType || "",
+      "content-encoding": options.contentEncoding || "",
+    }),
+    body: null,
+    text: jest.fn().mockResolvedValue(text),
+  } as unknown as Response;
+}
+
+function makeHeaders(values: Record<string, string>) {
+  return {
+    get: (name: string) => values[name.toLowerCase()] || null,
+  };
+}

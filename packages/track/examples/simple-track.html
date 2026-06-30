@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stgy-track simple track example</title>
+  <link rel="stylesheet" href="../dist/track-viewer.css">
+  <style>
+    body {
+      margin: 2rem;
+      font-family: system-ui, sans-serif;
+      line-height: 1.5;
+    }
+    .stgy-track-map {
+      height: 520px;
+      margin: 1rem 0;
+    }
+    .stgy-track-canvas {
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <h1>Simple track</h1>
+  <p>This example loads a raw <code>.trj</code> TrackJSON file.</p>
+
+  <figure
+    class="stgy-track-map"
+    data-src="./sample-track.trj"
+    data-download-src="./sample-track.trj"
+    data-download-label="Download sample .trj"
+    data-download-filename="sample-track.trj">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption>Kamakura sample ride</figcaption>
+  </figure>
+
+  <script src="../dist/track-viewer.js"></script>
+  <script>
+    new StgyTrackViewer.StgyTrackRenderer().hydrate();
+  </script>
+</body>
+</html>

@@ -1,0 +1,42 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stgy-track multi-track example</title>
+  <link rel="stylesheet" href="../dist/track-viewer.css">
+  <style>
+    body {
+      margin: 2rem;
+      font-family: system-ui, sans-serif;
+      line-height: 1.5;
+    }
+    .stgy-track-map {
+      height: 520px;
+      margin: 1rem 0;
+    }
+    .stgy-track-canvas {
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <h1>Multiple tracks</h1>
+  <p>This example loads multiple TrackJSON files from <code>.stgy-track-sources</code>.</p>
+
+  <figure class="stgy-track-map">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption>Two sample routes</figcaption>
+
+    <div class="stgy-track-sources">
+      <a class="track-source" href="./sample-track.trj">Main route</a>
+      <a class="track-source" href="./sample-track-alt.trj">Alternate route</a>
+    </div>
+  </figure>
+
+  <script src="../dist/track-viewer.js"></script>
+  <script>
+    new StgyTrackViewer.StgyTrackRenderer().hydrate();
+  </script>
+</body>
+</html>

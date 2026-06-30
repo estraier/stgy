@@ -1,23 +1,27 @@
+const TRACK_JSON_EXTENSIONS = [".trj", ".json", ".geojson"];
+const TRACK_JSON_GZIP_EXTENSIONS = [".trjgz"];
+const JSON_MIME_TYPES = new Set([
+  "application/json",
+  "application/geo+json",
+  "application/vnd.geo+json",
+]);
+const GZIP_MIME_TYPES = new Set([
+  "application/gzip",
+  "application/x-gzip",
+]);
+
+type TrackDataKind = "json" | "gzip";
+
 /**
- * Track Data Loader
- * Handles fetching from URL, Data URI, or DOM Element (Template).
+ * Track data loader for TrackJSON, compressed TrackJSON, data URLs, and DOM
+ * template sources.
  */
-const JSON_MIME = "application/json";
-const TRACK_JSON_MIME = "application/geo+json";
-const GZIPPED_TRACK_JSON_MIME = "application/geo+json+gzip";
-
-const MAX_COMPRESSED_BYTES = 8 * 1024 * 1024;
-const MAX_UNCOMPRESSED_BYTES = 32 * 1024 * 1024;
-const MAX_COMPRESSION_RATIO = 80;
-
 export class TrackLoader {
-  /**
-   * Load track data from a given source string (URL, Data URI, or DOM ID)
-   */
   public async load(source: string): Promise<any> {
     if (source.startsWith("#")) {
       return Promise.resolve(this.loadFromDom(source));
     }
+
     return this.loadFromUrl(source);
   }
 
@@ -29,104 +33,103 @@ export class TrackLoader {
       throw new Error(`Track data element not found: ${selector}`);
     }
 
-    let jsonString = "";
-    if (element instanceof HTMLTemplateElement) {
-      jsonString = element.content.textContent || "";
-    } else {
-      jsonString = element.textContent || "";
-    }
+    const jsonText = this.getElementText(element).trim();
 
-    jsonString = jsonString.trim();
-
-    if (!jsonString) {
+    if (!jsonText) {
       throw new Error(`Track data is empty in element: ${selector}`);
     }
 
-    try {
-      return JSON.parse(jsonString);
-    } catch (e) {
-      throw new Error(`Invalid JSON in element ${selector}: ${(e as Error).message}`);
-    }
+    return this.parseJsonText(jsonText, selector);
   }
 
-  private async loadFromUrl(url: string): Promise<any> {
-    const response = await fetch(url);
+  private getElementText(element: HTMLElement): string {
+    if (element instanceof HTMLTemplateElement) {
+      return element.content.textContent || "";
+    }
+
+    return element.textContent || "";
+  }
+
+  private async loadFromUrl(source: string): Promise<any> {
+    const response = await fetch(source);
+
     if (!response.ok) {
       throw new Error(`Failed to fetch track: ${response.statusText}`);
     }
 
-    const contentType = this.getContentType(response);
+    const kind = this.detectTrackDataKind(source, response);
 
-    if (
-      contentType !== JSON_MIME &&
-      contentType !== TRACK_JSON_MIME &&
-      contentType !== GZIPPED_TRACK_JSON_MIME
-    ) {
+    if (!kind) {
       throw new Error("Track data MIME type is not supported");
     }
 
-    if (contentType === GZIPPED_TRACK_JSON_MIME) {
-      const text = await this.readGzippedTrackJson(response);
-      return JSON.parse(text);
+    if (kind === "gzip") {
+      return this.loadGzipResponse(response, source);
     }
 
-    return await response.json();
+    return this.parseJsonText(await response.text(), source);
   }
 
-  private getContentType(response: Response): string {
-    return (
-      response.headers
-        .get("content-type")
-        ?.split(";")[0]
-        .trim()
-        .toLowerCase() || ""
+  private detectTrackDataKind(source: string, response: Response): TrackDataKind | null {
+    if (this.hasExtension(source, TRACK_JSON_GZIP_EXTENSIONS)) {
+      return "gzip";
+    }
+
+    if (this.hasExtension(source, TRACK_JSON_EXTENSIONS)) {
+      return "json";
+    }
+
+    const mimeType = this.getMimeType(response);
+
+    if (JSON_MIME_TYPES.has(mimeType)) {
+      return "json";
+    }
+
+    if (GZIP_MIME_TYPES.has(mimeType)) {
+      return "gzip";
+    }
+
+    return null;
+  }
+
+  private hasExtension(source: string, extensions: string[]): boolean {
+    const path = source.split(/[?#]/, 1)[0].toLowerCase();
+    return extensions.some((extension) => path.endsWith(extension));
+  }
+
+  private getMimeType(response: Response): string {
+    const contentType = response.headers.get("content-type") || "";
+    return contentType.split(";", 1)[0].trim().toLowerCase();
+  }
+
+  private isContentEncodedGzip(response: Response): boolean {
+    const contentEncoding = response.headers.get("content-encoding") || "";
+    return contentEncoding.toLowerCase().split(",").some((encoding) => {
+      return encoding.trim() === "gzip";
+    });
+  }
+
+  private async loadGzipResponse(response: Response, source: string): Promise<any> {
+    if (this.isContentEncodedGzip(response)) {
+      return this.parseJsonText(await response.text(), source);
+    }
+
+    if (typeof DecompressionStream === "undefined" || !response.body) {
+      throw new Error("Gzip decompression is not supported in this browser");
+    }
+
+    const decompressedStream = response.body.pipeThrough(
+      new DecompressionStream("gzip")
     );
+    const decompressedResponse = new Response(decompressedStream);
+    return this.parseJsonText(await decompressedResponse.text(), source);
   }
 
-  private async readGzippedTrackJson(response: Response): Promise<string> {
-    if (typeof DecompressionStream === "undefined") {
-      throw new Error("Gzip compressed TrackJSON is not supported in this environment");
+  private parseJsonText(text: string, source: string): any {
+    try {
+      return JSON.parse(text);
+    } catch (e) {
+      throw new Error(`Invalid JSON in track data ${source}: ${(e as Error).message}`);
     }
-
-    const blob = await response.blob();
-
-    if (blob.size > MAX_COMPRESSED_BYTES) {
-      throw new Error("Compressed TrackJSON is too large");
-    }
-
-    const stream = blob.stream().pipeThrough(new DecompressionStream("gzip"));
-    const reader = stream.getReader();
-
-    let total = 0;
-    const chunks: Uint8Array[] = [];
-
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      if (!value) continue;
-
-      total += value.byteLength;
-
-      if (total > MAX_UNCOMPRESSED_BYTES) {
-        await reader.cancel("uncompressed size limit exceeded");
-        throw new Error("Uncompressed TrackJSON is too large");
-      }
-
-      if (blob.size > 0 && total > blob.size * MAX_COMPRESSION_RATIO) {
-        await reader.cancel("compression ratio limit exceeded");
-        throw new Error("Suspicious TrackJSON compression ratio");
-      }
-
-      chunks.push(value);
-    }
-
-    const merged = new Uint8Array(total);
-    let offset = 0;
-    for (const chunk of chunks) {
-      merged.set(chunk, offset);
-      offset += chunk.byteLength;
-    }
-
-    return new TextDecoder("utf-8", { fatal: true }).decode(merged);
   }
 }

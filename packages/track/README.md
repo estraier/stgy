@@ -1,10 +1,10 @@
 # stgy-track
 
 `stgy-track` is a TypeScript / Leaflet based track viewer for embedding maps,
-pins, routes, and activity graphs in HTML pages.
+pins, routes, activity graphs, and TrackJSON files in HTML pages.
 
-It renders TrackJSON, a GeoJSON-compatible route format, and includes a FIT demo
-that can convert FIT files to TrackJSON.
+The package renders TrackJSON (`.trj`), gzip-compressed TrackJSON (`.trjgz`),
+and includes a browser demo that converts FIT files to TrackJSON.
 
 ## Features
 
@@ -20,14 +20,19 @@ that can convert FIT files to TrackJSON.
   - OpenStreetMap
   - OpenTopoMap
 - Inline pins with safe title, description, links, and images
-- TrackJSON loading from `.json` and `.geojson`
+- TrackJSON loading from `.trj`, `.json`, and `.geojson`
 - gzip-compressed TrackJSON loading from `.trjgz`
 - Optional original/master file download link
 - Coordinate HUD for route samples
 - Graph panel for route sample data
+- Graph X axis selection: distance / time / sample
+- Graph Y series selection: elevations / heartRates / cadences / powers / speeds
+- Graph smoothing with centered moving averages
 - FIT to TrackJSON conversion demo
-- Raw TrackJSON and compressed `.trjgz` downloads
-- Uniform and aggregate downsampling for FIT conversion
+- Raw `.trj` and compressed `.trjgz` downloads
+- Uniform and aggregate downsampling
+- TrackJSON compacting and numeric precision reduction
+- Pure TrackJSON helpers in `src/trackjson.ts`
 
 ## Development
 
@@ -47,7 +52,7 @@ npm run lint
 npm run bundle
 ```
 
-`npm run bundle` builds the browser bundles.
+`npm run bundle` builds browser bundles.
 
 ```text
 dist/track-viewer.js
@@ -76,10 +81,13 @@ dist/fit-demo.js
 `data-src` can point to raw TrackJSON or compressed TrackJSON.
 
 ```text
+/tracks/ride.trj
 /tracks/ride.json
 /tracks/ride.geojson
 /tracks/ride.trjgz
 ```
+
+`.trj` is the preferred raw TrackJSON extension.
 
 `.trjgz` is gzip-compressed TrackJSON.
 
@@ -99,8 +107,8 @@ dist/fit-demo.js
 | `data-download-label` | Download link label |
 | `data-download-filename` | Download filename |
 
-When `data-lat` or `data-lon` is omitted, the map center is computed from
-pins and track bounds.
+When `data-lat` or `data-lon` is omitted, the map center is computed from pins
+and track bounds.
 
 When `data-zoom` is omitted, the map uses `fitBounds`.
 
@@ -167,8 +175,8 @@ TrackJSON is a GeoJSON `FeatureCollection`.
       "geometry": {
         "type": "LineString",
         "coordinates": [
-          [139.767125, 35.681236],
-          [139.768000, 35.682000]
+          [139.76713, 35.68124],
+          [139.768, 35.682]
         ]
       },
       "properties": {
@@ -212,8 +220,8 @@ Standard coordinate properties:
 
 TrackJSON can store metadata in `Feature.properties.metadata`.
 
-FIT conversion writes FIT-derived metadata there when
-`includeMetadata` is not `false`.
+FIT conversion writes FIT-derived metadata there when `includeMetadata` is not
+`false`.
 
 ```json
 {
@@ -226,7 +234,7 @@ FIT conversion writes FIT-derived metadata there when
       "sport": "cycling",
       "subSport": "road",
       "startTime": 1710000000,
-      "totalDistanceM": 12345.6,
+      "totalDistanceM": 12345.7,
       "totalTimerTime": 3600,
       "totalElapsedTime": 3900,
       "device": {
@@ -247,7 +255,7 @@ existing rendering.
 `.trjgz` is gzip-compressed TrackJSON.
 
 ```text
-ride.json   raw TrackJSON
+ride.trj    raw TrackJSON
 ride.trjgz  gzip-compressed TrackJSON
 ```
 
@@ -259,10 +267,13 @@ The FIT demo adds a compressed download link beside the raw TrackJSON download.
 Download TrackJSON  (compressed)
 ```
 
-`Download TrackJSON` saves a raw `.json` file.
+`Download TrackJSON` saves a raw `.trj` file.
 
 `(compressed)` saves a gzip-compressed `.trjgz` file. If the browser does not
 support `CompressionStream("gzip")`, the compressed link is hidden.
+
+The browser `CompressionStream` API does not expose a gzip compression level.
+For maximum compression, generate `.trjgz` on the server side or in a build step.
 
 ## Coordinate HUD
 
@@ -280,8 +291,8 @@ powers
 speeds
 ```
 
-The HUD shows raw `coordinateProperties` values. Graph smoothing does not affect
-the HUD.
+The HUD shows raw `coordinateProperties` values from the rendered TrackJSON.
+Graph smoothing does not affect the HUD.
 
 ## Graph panel
 
@@ -376,25 +387,27 @@ For other custom numeric series, the Y axis range is based on the sample range.
 
 ```text
 .fit
+.trj
 .json
 .geojson
 .trjgz
 ```
 
 For FIT input, the demo parses the FIT file, optionally downsamples it, converts
-it to TrackJSON, and renders it.
+it to TrackJSON, compacts it, and renders it.
 
-For `.json` and `.geojson` input, the demo renders the TrackJSON directly.
+For `.trj`, `.json`, and `.geojson` input, the demo parses the TrackJSON,
+optionally downsamples it, compacts it, and renders it.
 
-For `.trjgz` input, the demo decompresses the gzip data and renders the
-TrackJSON.
+For `.trjgz` input, the demo decompresses the gzip data, parses the TrackJSON,
+optionally downsamples it, compacts it, and renders it.
 
-The demo can also copy TrackJSON, download raw `.json`, and download compressed
+The demo can also copy TrackJSON, download raw `.trj`, and download compressed
 `.trjgz`.
 
 ## FIT conversion API
 
-`src/fit.ts` provides these functions.
+`src/fit.ts` provides FIT conversion functions.
 
 ```ts
 export function parseFitBytes(
@@ -426,13 +439,52 @@ export type TrackActivity = {
 
 This type is source-agnostic and can be reused for future formats such as TCX.
 
+## TrackJSON helper API
+
+`src/trackjson.ts` contains pure TrackJSON helpers used by the demo.
+
+```ts
+export function parseTrackJsonData(text: string): unknown;
+
+export function compactTrackJsonData(
+  data: unknown,
+  precisionOptions?: TrackJsonPrecisionOptions
+): unknown;
+
+export function downsampleTrackJsonData(
+  data: unknown,
+  options: TrackJsonDownsampleOptions
+): unknown;
+
+export function countTrackJsonPositionedPoints(data: unknown): number;
+
+export function getTrackJsonTitle(data: unknown): string | undefined;
+
+export function getTrackJsonMetadata(
+  data: unknown
+): Record<string, unknown> | undefined;
+```
+
+These helpers are independent from the demo UI and are tested in
+`src/trackjson.test.ts`.
+
 ## Downsampling
 
-`downsampleTrackActivity()` supports two strategies.
+FIT activities and TrackJSON data both support two downsampling strategies.
 
 ```ts
 export type DownsampleTrackOptions = {
   maxPoints?: number;
+  strategy?: "uniform" | "aggregate";
+  preserveEndpoints?: boolean;
+};
+```
+
+For TrackJSON helpers:
+
+```ts
+export type TrackJsonDownsampleOptions = {
+  maxPoints: number;
   strategy?: "uniform" | "aggregate";
   preserveEndpoints?: boolean;
 };
@@ -463,16 +515,16 @@ representative point for each bucket.
 For each bucket:
 
 ```text
-lat/lon    representative middle sample
-time       representative middle sample
-distanceM  representative middle sample
-elevation  average
-heartRate  average
-cadence    average
-power      average
-speed      average
-temperature average
-metrics    average
+lat/lon      representative middle sample
+time         representative middle sample
+distance     representative middle sample
+elevation    average
+heart rate   average
+cadence      average
+power        average
+speed        average
+temperature  average
+metrics      average
 ```
 
 `0` is treated as a valid value. `undefined` is ignored.
@@ -501,6 +553,34 @@ middle points aggregate buckets
 
 For SNS route digests, `preserveEndpoints: true` is usually the best default.
 
+## Numeric precision
+
+To reduce TrackJSON size, numeric values are rounded when TrackJSON is emitted
+or compacted.
+
+Default precision:
+
+| Value | Precision |
+| --- | --- |
+| coordinates | 5 decimal places |
+| times | integer |
+| distances | 1 decimal place |
+| elevations | 1 decimal place |
+| heartRates | 1 decimal place |
+| cadences | 1 decimal place |
+| powers | 1 decimal place |
+| speeds | 1 decimal place |
+| custom metrics | 1 decimal place |
+| metadata | 1 decimal place |
+| `createdAt` / `startTime` / `timeCreated` | integer |
+| `serialNumber` | integer |
+| `totalElapsedTime` / `totalTimerTime` | integer |
+
+Coordinate precision of 5 decimal places is roughly meter-level precision.
+
+FIT internal values and downsampling calculations keep their original precision.
+Rounding is applied only when emitting or compacting TrackJSON.
+
 ## TrackJSON conversion options
 
 ```ts
@@ -515,19 +595,6 @@ export type TrackJsonOptions = {
   pretty?: boolean;
   precision?: TrackJsonPrecisionOptions;
 };
-
-export type TrackJsonPrecisionOptions = {
-  coordinates?: number;
-  times?: number;
-  distances?: number;
-  elevations?: number;
-  heartRates?: number;
-  cadences?: number;
-  powers?: number;
-  speeds?: number;
-  metrics?: number;
-  metadata?: number;
-};
 ```
 
 `includeMetadata` controls whether `TrackActivity.metadata` is written to
@@ -535,36 +602,6 @@ export type TrackJsonPrecisionOptions = {
 
 `includeMetrics` controls whether custom numeric metrics are written to
 `coordinateProperties`.
-
-## TrackJSON output precision
-
-`trackActivityToTrackJson()` rounds numeric values only when emitting TrackJSON.
-The internal `TrackActivity` values and downsampling calculations keep their
-original precision.
-
-Default output precision:
-
-| Field | Precision |
-| --- | --- |
-| coordinates | 5 decimal places |
-| times | integer |
-| distances | 1 decimal place |
-| elevations | 1 decimal place |
-| heartRates | 1 decimal place |
-| cadences | 1 decimal place |
-| powers | 1 decimal place |
-| speeds | 1 decimal place |
-| metrics | 1 decimal place |
-| metadata `totalDistanceM` | 1 decimal place |
-| metadata `totalElapsedTime` | integer |
-| metadata `totalTimerTime` | integer |
-| metadata `createdAt` | integer |
-| metadata `startTime` | integer |
-| metadata device `serialNumber` | unchanged integer |
-
-Coordinate precision of 5 decimal places is roughly meter-level precision.
-Reducing numeric precision makes both raw `.json` and compressed `.trjgz`
-smaller.
 
 ## Fill-forward behavior
 
@@ -614,6 +651,28 @@ new StgyTrackViewer.StgyTrackRenderer().hydrate();
 Compressed TrackJSON download in the FIT demo uses `CompressionStream("gzip")`.
 
 Browsers without these APIs may not support `.trjgz` upload/download in the demo.
+
+## Testing
+
+Run all tests:
+
+```sh
+npm run test
+```
+
+Important test files:
+
+```text
+src/fit.test.ts
+src/trackjson.test.ts
+src/renderer.test.ts
+src/loader.test.ts
+src/geo.test.ts
+```
+
+`src/trackjson.test.ts` covers TrackJSON-specific pure logic, including
+downsampling, compaction, point counting, title extraction, and metadata
+extraction.
 
 ## License
 

@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stgy-track graph example</title>
+  <link rel="stylesheet" href="../dist/track-viewer.css">
+  <style>
+    body {
+      margin: 2rem;
+      font-family: system-ui, sans-serif;
+      line-height: 1.5;
+    }
+    .stgy-track-map {
+      height: 520px;
+      margin: 1rem 0;
+    }
+    .stgy-track-canvas {
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <h1>Graph and HUD</h1>
+  <p>This example uses TrackJSON with coordinateProperties for graph and HUD checks.</p>
+
+  <figure
+    class="stgy-track-map"
+    data-src="./sample-track.trj">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption>Graphable sample route</figcaption>
+  </figure>
+
+  <script src="../dist/track-viewer.js"></script>
+  <script>
+    new StgyTrackViewer.StgyTrackRenderer().hydrate();
+  </script>
+</body>
+</html>
