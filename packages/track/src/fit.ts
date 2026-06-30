@@ -3,6 +3,18 @@ import { Decoder, Stream } from "@garmin/fitsdk";
 const DEFAULT_MAX_POINTS = 3000;
 const DEFAULT_ROUTE_COLOR = "#0078A8";
 const SEMICIRCLE_TO_DEGREES = 180 / 2147483648;
+const DEFAULT_TRACK_JSON_PRECISION = {
+  coordinates: 5,
+  times: 0,
+  distances: 1,
+  elevations: 1,
+  heartRates: 1,
+  cadences: 1,
+  powers: 1,
+  speeds: 1,
+  metrics: 1,
+  metadata: 1,
+};
 const RESERVED_METRIC_NAMES = new Set([
   "times",
   "distances",
@@ -88,6 +100,20 @@ export type TrackJsonOptions = {
   includeMetrics?: boolean;
   includeMetadata?: boolean;
   pretty?: boolean;
+  precision?: TrackJsonPrecisionOptions;
+};
+
+export type TrackJsonPrecisionOptions = {
+  coordinates?: number;
+  times?: number;
+  distances?: number;
+  elevations?: number;
+  heartRates?: number;
+  cadences?: number;
+  powers?: number;
+  speeds?: number;
+  metrics?: number;
+  metadata?: number;
 };
 
 export type TrackParseErrorCode =
@@ -264,7 +290,12 @@ export function trackActivityToTrackJson(
     );
   }
 
-  const coordinateProperties = buildCoordinateProperties(geoPoints, options);
+  const precision = resolveTrackJsonPrecision(options.precision);
+  const coordinateProperties = buildCoordinateProperties(
+    geoPoints,
+    options,
+    precision
+  );
   const properties: Record<string, unknown> = {
     color: options.color || DEFAULT_ROUTE_COLOR,
     weight: isFiniteNumber(options.weight) ? options.weight : 4,
@@ -280,7 +311,7 @@ export function trackActivityToTrackJson(
   }
 
   if (options.includeMetadata !== false) {
-    const metadata = buildTrackJsonMetadata(activity.metadata);
+    const metadata = buildTrackJsonMetadata(activity.metadata, precision);
     if (metadata) {
       properties.metadata = metadata;
     }
@@ -297,7 +328,10 @@ export function trackActivityToTrackJson(
         type: "Feature",
         geometry: {
           type: "LineString",
-          coordinates: geoPoints.map((point) => [point.lon, point.lat]),
+          coordinates: geoPoints.map((point) => [
+            roundNumber(point.lon, precision.coordinates),
+            roundNumber(point.lat, precision.coordinates),
+          ]),
         },
         properties,
       },
@@ -308,7 +342,8 @@ export function trackActivityToTrackJson(
 }
 
 function buildTrackJsonMetadata(
-  metadata: TrackActivityMetadata
+  metadata: TrackActivityMetadata,
+  precision: Required<TrackJsonPrecisionOptions>
 ): Record<string, unknown> | undefined {
   const output: Record<string, unknown> = {};
 
@@ -336,23 +371,109 @@ function buildTrackJsonMetadata(
     output.device = { ...metadata.device };
   }
 
-  assignMetadataNumber(output, "createdAt", metadata.createdAt);
-  assignMetadataNumber(output, "startTime", metadata.startTime);
-  assignMetadataNumber(output, "totalElapsedTime", metadata.totalElapsedTime);
-  assignMetadataNumber(output, "totalTimerTime", metadata.totalTimerTime);
-  assignMetadataNumber(output, "totalDistanceM", metadata.totalDistanceM);
+  assignMetadataInteger(output, "createdAt", metadata.createdAt);
+  assignMetadataInteger(output, "startTime", metadata.startTime);
+  assignMetadataNumber(
+    output,
+    "totalElapsedTime",
+    metadata.totalElapsedTime,
+    0
+  );
+  assignMetadataNumber(output, "totalTimerTime", metadata.totalTimerTime, 0);
+  assignMetadataNumber(
+    output,
+    "totalDistanceM",
+    metadata.totalDistanceM,
+    precision.metadata
+  );
 
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
-function assignMetadataNumber(
+function assignMetadataInteger(
   output: Record<string, unknown>,
   key: string,
   value: number | undefined
 ) {
   if (typeof value === "number" && Number.isFinite(value)) {
-    output[key] = value;
+    output[key] = Math.round(value);
   }
+}
+
+function assignMetadataNumber(
+  output: Record<string, unknown>,
+  key: string,
+  value: number | undefined,
+  precision: number
+) {
+  if (typeof value === "number" && Number.isFinite(value)) {
+    output[key] = roundNumber(value, precision);
+  }
+}
+
+function resolveTrackJsonPrecision(
+  precision: TrackJsonPrecisionOptions | undefined
+): Required<TrackJsonPrecisionOptions> {
+  return {
+    coordinates: normalizePrecision(
+      precision?.coordinates,
+      DEFAULT_TRACK_JSON_PRECISION.coordinates
+    ),
+    times: normalizePrecision(precision?.times, DEFAULT_TRACK_JSON_PRECISION.times),
+    distances: normalizePrecision(
+      precision?.distances,
+      DEFAULT_TRACK_JSON_PRECISION.distances
+    ),
+    elevations: normalizePrecision(
+      precision?.elevations,
+      DEFAULT_TRACK_JSON_PRECISION.elevations
+    ),
+    heartRates: normalizePrecision(
+      precision?.heartRates,
+      DEFAULT_TRACK_JSON_PRECISION.heartRates
+    ),
+    cadences: normalizePrecision(
+      precision?.cadences,
+      DEFAULT_TRACK_JSON_PRECISION.cadences
+    ),
+    powers: normalizePrecision(
+      precision?.powers,
+      DEFAULT_TRACK_JSON_PRECISION.powers
+    ),
+    speeds: normalizePrecision(
+      precision?.speeds,
+      DEFAULT_TRACK_JSON_PRECISION.speeds
+    ),
+    metrics: normalizePrecision(
+      precision?.metrics,
+      DEFAULT_TRACK_JSON_PRECISION.metrics
+    ),
+    metadata: normalizePrecision(
+      precision?.metadata,
+      DEFAULT_TRACK_JSON_PRECISION.metadata
+    ),
+  };
+}
+
+function normalizePrecision(value: number | undefined, fallback: number): number {
+  if (!Number.isFinite(value)) {
+    return fallback;
+  }
+
+  return Math.max(0, Math.min(12, Math.floor(value as number)));
+}
+
+function roundNumber(value: number, precision: number): number {
+  if (!Number.isFinite(value)) {
+    return value;
+  }
+
+  if (precision <= 0) {
+    return Math.round(value);
+  }
+
+  const factor = 10 ** precision;
+  return Math.round(value * factor) / factor;
 }
 
 function normalizeInputBytes(bytes: ArrayBuffer | Uint8Array): ArrayBuffer {
@@ -814,26 +935,63 @@ function createFitWarnings(
 
 function buildCoordinateProperties(
   points: TrackPoint[],
-  options: TrackJsonOptions
+  options: TrackJsonOptions,
+  precision: Required<TrackJsonPrecisionOptions>
 ): Record<string, number[]> {
   const properties: Record<string, number[]> = {};
 
-  addCompleteSeries(properties, "times", points, (point) => point.time);
-  addCompleteSeries(properties, "distances", points, (point) => point.distanceM);
-  addCompleteSeries(properties, "elevations", points, (point) => point.elevationM);
-  addFillForwardSeries(properties, "heartRates", points, (point) => point.heartRateBpm);
-  addFillForwardSeries(properties, "cadences", points, (point) => point.cadenceRpm);
-  addFillForwardSeries(properties, "powers", points, (point) => point.powerW);
+  addCompleteSeries(
+    properties,
+    "times",
+    points,
+    (point) => point.time,
+    (value) => roundNumber(value, precision.times)
+  );
+  addCompleteSeries(
+    properties,
+    "distances",
+    points,
+    (point) => point.distanceM,
+    (value) => roundNumber(value, precision.distances)
+  );
+  addCompleteSeries(
+    properties,
+    "elevations",
+    points,
+    (point) => point.elevationM,
+    (value) => roundNumber(value, precision.elevations)
+  );
+  addFillForwardSeries(
+    properties,
+    "heartRates",
+    points,
+    (point) => point.heartRateBpm,
+    (value) => roundNumber(value, precision.heartRates)
+  );
+  addFillForwardSeries(
+    properties,
+    "cadences",
+    points,
+    (point) => point.cadenceRpm,
+    (value) => roundNumber(value, precision.cadences)
+  );
+  addFillForwardSeries(
+    properties,
+    "powers",
+    points,
+    (point) => point.powerW,
+    (value) => roundNumber(value, precision.powers)
+  );
   addCompleteSeries(
     properties,
     "speeds",
     points,
     (point) => point.speedMps,
-    (speedMps) => speedMps * 3.6
+    (speedMps) => roundNumber(speedMps * 3.6, precision.speeds)
   );
 
   if (options.includeMetrics !== false) {
-    addMetricSeries(properties, points);
+    addMetricSeries(properties, points, precision);
   }
 
   return properties;
@@ -880,7 +1038,11 @@ function addFillForwardSeries(
   output[name] = values;
 }
 
-function addMetricSeries(output: Record<string, number[]>, points: TrackPoint[]) {
+function addMetricSeries(
+  output: Record<string, number[]>,
+  points: TrackPoint[],
+  precision: Required<TrackJsonPrecisionOptions>
+) {
   const metricNames = new Set<string>();
 
   points.forEach((point) => {
@@ -894,7 +1056,9 @@ function addMetricSeries(output: Record<string, number[]>, points: TrackPoint[])
   Array.from(metricNames).sort().forEach((name) => {
     const values = points.map((point) => point.metrics?.[name]);
     if (values.every(isFiniteNumber)) {
-      output[name] = values as number[];
+      output[name] = (values as number[]).map((value) => {
+        return roundNumber(value, precision.metrics);
+      });
     }
   });
 }

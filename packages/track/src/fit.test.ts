@@ -1,267 +1,447 @@
 import { Decoder, Stream } from "@garmin/fitsdk";
 import {
-  TrackActivity,
   TrackJsonConversionError,
   TrackParseError,
   downsampleTrackActivity,
   parseFitBytes,
   trackActivityToTrackJson,
 } from "./fit";
+import type { TrackActivity, TrackPoint } from "./fit";
 
-jest.mock("@garmin/fitsdk", () => ({
-  Decoder: jest.fn(),
-  Stream: {
-    fromArrayBuffer: jest.fn(),
-  },
-}));
+jest.mock("@garmin/fitsdk", () => {
+  return {
+    Decoder: jest.fn(),
+    Stream: {
+      fromArrayBuffer: jest.fn(),
+    },
+  };
+});
 
-type MockDecoderInstance = {
-  isFIT: jest.Mock;
-  read: jest.Mock;
+type MockFitReadResult = {
+  messages?: Record<string, unknown>;
+  errors?: unknown[];
 };
 
 const decoderMock = Decoder as unknown as jest.Mock;
-const streamFromArrayBufferMock = Stream.fromArrayBuffer as jest.Mock;
+const fromArrayBufferMock = Stream.fromArrayBuffer as unknown as jest.Mock;
 
-const toSemicircle = (degrees: number) => {
-  return Math.round((degrees * 2147483648) / 180);
-};
-
-const makeActivity = (count: number): TrackActivity => ({
-  schemaVersion: 1,
-  metadata: {
-    source: {
-      type: "test",
-    },
-    name: "Test activity",
-  },
-  points: Array.from({ length: count }, (_, index) => ({
-    time: 1767222000 + index,
-    lat: 35 + index * 0.001,
-    lon: 139 + index * 0.001,
-    distanceM: index * 10,
-    elevationM: 100 + index,
-    heartRateBpm: 120 + index,
-    cadenceRpm: 80 + index,
-    powerW: 150 + index,
-    speedMps: 5 + index * 0.1,
-    metrics: {
-      torqueEffectiveness: 70 + index,
-    },
-  })),
-  warnings: [
-    {
-      code: "test_warning",
-      message: "Test warning",
-    },
-  ],
+beforeEach(() => {
+  decoderMock.mockReset();
+  fromArrayBufferMock.mockReset();
+  fromArrayBufferMock.mockReturnValue({});
 });
 
-const mockFitDecoder = (
-  readResult: unknown,
-  isFit = true,
-): MockDecoderInstance => {
-  const stream = { stream: true };
-  const decoder: MockDecoderInstance = {
-    isFIT: jest.fn().mockReturnValue(isFit),
-    read: jest.fn().mockReturnValue(readResult),
-  };
-
-  streamFromArrayBufferMock.mockReturnValue(stream);
-  decoderMock.mockImplementation(() => decoder);
-
-  return decoder;
-};
-
-describe("downsampleTrackActivity", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
+describe("parseFitBytes", () => {
+  test("rejects empty input", () => {
+    expect(() => parseFitBytes(new ArrayBuffer(0))).toThrow(TrackParseError);
+    expect(() => parseFitBytes(new ArrayBuffer(0))).toThrow("FIT input is empty");
   });
 
-  test("keeps activity unchanged when point count is within maxPoints", () => {
-    const activity = makeActivity(3);
-
-    const result = downsampleTrackActivity(activity, {
-      maxPoints: 5,
+  test("rejects non-FIT input", () => {
+    mockDecoder(false, {
+      messages: {},
     });
 
-    expect(result).toEqual(activity);
-    expect(result).not.toBe(activity);
-    expect(result.metadata).not.toBe(activity.metadata);
-    expect(result.metadata.source).not.toBe(activity.metadata.source);
-    expect(result.points).not.toBe(activity.points);
-    expect(result.points[0]).not.toBe(activity.points[0]);
-    expect(result.points).toHaveLength(3);
+    expect(() => parseFitBytes(new Uint8Array([1, 2, 3]))).toThrow(TrackParseError);
+    expect(() => parseFitBytes(new Uint8Array([1, 2, 3]))).toThrow(
+      "Input is not a FIT file"
+    );
   });
 
-  test("reduces points to maxPoints and preserves endpoints by default", () => {
-    const activity = makeActivity(10);
-
-    const result = downsampleTrackActivity(activity, {
-      maxPoints: 4,
+  test("rejects FIT input without records", () => {
+    mockDecoder(true, {
+      messages: {},
     });
 
-    expect(result.points).toHaveLength(4);
-    expect(result.points.map((point) => point.time)).toEqual([
-      1767222000,
-      1767222003,
-      1767222006,
-      1767222009,
+    expect(() => parseFitBytes(new Uint8Array([1, 2, 3]))).toThrow(TrackParseError);
+    expect(() => parseFitBytes(new Uint8Array([1, 2, 3]))).toThrow(
+      "FIT data does not contain record messages"
+    );
+  });
+
+  test("reports decoder errors when no records exist", () => {
+    mockDecoder(true, {
+      messages: {},
+      errors: [new Error("broken crc")],
+    });
+
+    expect(() => parseFitBytes(new Uint8Array([1, 2, 3]))).toThrow("broken crc");
+  });
+
+  test("parses record messages and metadata", () => {
+    mockDecoder(true, {
+      messages: {
+        fileIdMesgs: [{
+          timeCreated: new Date("2024-03-01T00:00:00Z"),
+          manufacturer: "garmin",
+          productName: "edge",
+          serialNumber: 123456,
+        }],
+        sportMesgs: [{
+          sport: "cycling",
+          subSport: "road",
+        }],
+        sessionMesgs: [{
+          startTime: new Date("2024-03-01T01:00:00Z"),
+          totalElapsedTime: 3900.4,
+          totalTimerTime: 3600.6,
+          totalDistance: 12345.67,
+        }],
+        recordMesgs: [{
+          timestamp: new Date("2024-03-01T01:00:01Z"),
+          positionLat: 35.1234567,
+          positionLong: 139.1234567,
+          distance: 12.3,
+          enhancedAltitude: 101.2,
+          altitude: 99.9,
+          heartRate: 120,
+          cadence: 81,
+          power: 150,
+          enhancedSpeed: 5.5,
+          speed: 5.1,
+          temperature: 20,
+        }],
+      },
+    });
+
+    const activity = parseFitBytes(new Uint8Array([1, 2, 3]));
+
+    expect(activity.schemaVersion).toBe(1);
+    expect(activity.metadata.source).toEqual({ type: "fit" });
+    expect(activity.metadata.sport).toBe("cycling");
+    expect(activity.metadata.subSport).toBe("road");
+    expect(activity.metadata.device).toEqual({
+      manufacturer: "garmin",
+      product: "edge",
+      serialNumber: 123456,
+    });
+    expect(activity.metadata.createdAt).toBe(1709251200);
+    expect(activity.metadata.startTime).toBe(1709254800);
+    expect(activity.metadata.totalElapsedTime).toBeCloseTo(3900.4);
+    expect(activity.metadata.totalTimerTime).toBeCloseTo(3600.6);
+    expect(activity.metadata.totalDistanceM).toBeCloseTo(12345.67);
+
+    expect(activity.points).toHaveLength(1);
+    expect(activity.points[0]).toMatchObject({
+      time: 1709254801,
+      lat: 35.1234567,
+      lon: 139.1234567,
+      distanceM: 12.3,
+      elevationM: 101.2,
+      heartRateBpm: 120,
+      cadenceRpm: 81,
+      powerW: 150,
+      speedMps: 5.5,
+      temperatureC: 20,
+    });
+  });
+
+  test("can prefer regular altitude and speed fields", () => {
+    mockDecoder(true, {
+      messages: {
+        recordMesgs: [{
+          positionLat: 35,
+          positionLong: 139,
+          enhancedAltitude: 101.2,
+          altitude: 99.9,
+          enhancedSpeed: 5.5,
+          speed: 5.1,
+        }],
+      },
+    });
+
+    const activity = parseFitBytes(new Uint8Array([1, 2, 3]), {
+      preferEnhancedFields: false,
+    });
+
+    expect(activity.points[0].elevationM).toBeCloseTo(99.9);
+    expect(activity.points[0].speedMps).toBeCloseTo(5.1);
+  });
+
+  test("adds warnings for decoder errors and low positioned point counts", () => {
+    mockDecoder(true, {
+      messages: {
+        recordMesgs: [{
+          timestamp: 1710000000,
+          heartRate: 120,
+        }],
+      },
+      errors: ["minor warning"],
+    });
+
+    const activity = parseFitBytes(new Uint8Array([1, 2, 3]), {
+      includePausedRecords: false,
+      minPositionPoints: 2,
+    });
+
+    expect(activity.warnings).toEqual([
+      {
+        code: "fit_decoder_warning",
+        message: "minor warning",
+      },
+      {
+        code: "paused_record_filter_not_supported",
+        message: "Paused record filtering is not implemented yet.",
+      },
+      {
+        code: "not_enough_position_points",
+        message: "Only 0 positioned point(s) were found.",
+      },
     ]);
   });
+});
 
-  test("keeps point order after downsampling", () => {
-    const activity = makeActivity(20);
-
-    const result = downsampleTrackActivity(activity, {
-      maxPoints: 6,
+describe("downsampleTrackActivity", () => {
+  test("returns a cloned activity when it is already small enough", () => {
+    const activity = makeActivity(3);
+    const downsampled = downsampleTrackActivity(activity, {
+      maxPoints: 3,
     });
 
-    const times = result.points.map((point) => {
-      expect(point.time).toBeDefined();
-      return point.time as number;
-    });
-    const sortedTimes = [...times].sort((a, b) => a - b);
+    expect(downsampled).not.toBe(activity);
+    expect(downsampled.points).not.toBe(activity.points);
+    expect(downsampled.points).toEqual(activity.points);
 
-    expect(times).toEqual(sortedTimes);
+    downsampled.points[0].heartRateBpm = 999;
+    expect(activity.points[0].heartRateBpm).toBe(120);
   });
 
-  test("can downsample without preserving the last endpoint", () => {
+  test("uniform downsampling preserves endpoints by default", () => {
     const activity = makeActivity(10);
-
-    const result = downsampleTrackActivity(activity, {
+    const downsampled = downsampleTrackActivity(activity, {
       maxPoints: 4,
+      strategy: "uniform",
+    });
+
+    expect(getTimes(downsampled)).toEqual([1710000000, 1710000003, 1710000006, 1710000009]);
+  });
+
+  test("uniform downsampling can skip preserving endpoints", () => {
+    const activity = makeActivity(10);
+    const downsampled = downsampleTrackActivity(activity, {
+      maxPoints: 4,
+      strategy: "uniform",
       preserveEndpoints: false,
     });
 
-    expect(result.points.map((point) => point.time)).toEqual([
-      1767222000,
-      1767222002,
-      1767222005,
-      1767222007,
+    expect(getTimes(downsampled)).toEqual([1710000000, 1710000002, 1710000005, 1710000007]);
+  });
+
+  test("aggregate downsampling averages sensor values without preserving endpoints", () => {
+    const activity = makeActivity(8);
+    const downsampled = downsampleTrackActivity(activity, {
+      maxPoints: 4,
+      strategy: "aggregate",
+      preserveEndpoints: false,
+    });
+
+    expect(downsampled.points).toHaveLength(4);
+    expect(getTimes(downsampled)).toEqual([
+      1710000000,
+      1710000002,
+      1710000004,
+      1710000006,
+    ]);
+    expect(downsampled.points.map((point) => point.heartRateBpm)).toEqual([
+      120.5,
+      122.5,
+      124.5,
+      126.5,
+    ]);
+    expect(downsampled.points.map((point) => point.powerW)).toEqual([
+      150.5,
+      152.5,
+      154.5,
+      156.5,
+    ]);
+    expect(downsampled.points.map((point) => point.speedMps)).toEqual([
+      5.05,
+      5.25,
+      5.45,
+      5.65,
     ]);
   });
 
-  test("does not mutate the original activity", () => {
+  test("aggregate downsampling preserves raw endpoints when requested", () => {
     const activity = makeActivity(10);
-    const originalJson = JSON.stringify(activity);
-
-    const result = downsampleTrackActivity(activity, {
+    const downsampled = downsampleTrackActivity(activity, {
       maxPoints: 4,
+      strategy: "aggregate",
+      preserveEndpoints: true,
     });
 
-    result.metadata.name = "Changed";
-    result.points[0].time = 1;
-    if (result.points[0].metrics) {
-      result.points[0].metrics.torqueEffectiveness = 1;
-    }
-    result.warnings[0].message = "Changed";
-
-    expect(JSON.stringify(activity)).toBe(originalJson);
+    expect(downsampled.points).toHaveLength(4);
+    expect(getTimes(downsampled)).toEqual([
+      1710000000,
+      1710000002,
+      1710000006,
+      1710000009,
+    ]);
+    expect(downsampled.points[0].heartRateBpm).toBe(120);
+    expect(downsampled.points[1].heartRateBpm).toBe(122.5);
+    expect(downsampled.points[2].heartRateBpm).toBe(126.5);
+    expect(downsampled.points[3].heartRateBpm).toBe(129);
   });
 
-  test("rejects invalid maxPoints", () => {
-    const activity = makeActivity(10);
+  test("aggregate downsampling treats zero as a valid value", () => {
+    const activity = makeActivity(4);
+    activity.points[0].powerW = 0;
+    activity.points[1].powerW = 100;
+    activity.points[2].powerW = 0;
+    activity.points[3].powerW = 200;
 
-    expect(() => downsampleTrackActivity(activity, {
-      maxPoints: 1,
-    })).toThrow(RangeError);
+    const downsampled = downsampleTrackActivity(activity, {
+      maxPoints: 2,
+      strategy: "aggregate",
+      preserveEndpoints: false,
+    });
 
-    expect(() => downsampleTrackActivity(activity, {
-      maxPoints: Number.NaN,
-    })).toThrow(RangeError);
+    expect(downsampled.points.map((point) => point.powerW)).toEqual([50, 100]);
+  });
+
+  test("aggregate downsampling averages metrics", () => {
+    const activity = makeActivity(4);
+    activity.points[0].metrics = { grade: 1, ignored: 10 };
+    activity.points[1].metrics = { grade: 3 };
+    activity.points[2].metrics = { grade: 5 };
+    activity.points[3].metrics = { grade: 7, ignored: 20 };
+
+    const downsampled = downsampleTrackActivity(activity, {
+      maxPoints: 2,
+      strategy: "aggregate",
+      preserveEndpoints: false,
+    });
+
+    expect(downsampled.points[0].metrics).toEqual({
+      grade: 2,
+      ignored: 10,
+    });
+    expect(downsampled.points[1].metrics).toEqual({
+      grade: 6,
+      ignored: 20,
+    });
   });
 
   test("rejects unsupported downsampling strategy", () => {
-    const activity = makeActivity(10);
+    const activity = makeActivity(3);
 
     expect(() => downsampleTrackActivity(activity, {
       strategy: "distance" as unknown as "uniform",
     })).toThrow(RangeError);
   });
+
+  test("rejects invalid maxPoints", () => {
+    const activity = makeActivity(3);
+
+    expect(() => downsampleTrackActivity(activity, {
+      maxPoints: 1,
+    })).toThrow(RangeError);
+  });
 });
 
 describe("trackActivityToTrackJson", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
-
-  test("converts TrackActivity to GeoJSON FeatureCollection", () => {
-    const activity = makeActivity(3);
-
-    const json = trackActivityToTrackJson(activity, {
-      title: "Morning ride",
-      description: "A short test ride",
-      color: "#e67e22",
-      weight: 6,
-      opacity: 0.9,
-    });
-
-    const parsed = JSON.parse(json);
+  test("writes a GeoJSON FeatureCollection", () => {
+    const parsed = parseTrackJson(trackActivityToTrackJson(makeActivity(3), {
+      title: " Ride ",
+      description: " Test route ",
+    }));
+    const feature = parsed.features[0];
 
     expect(parsed.type).toBe("FeatureCollection");
-    expect(parsed.features).toHaveLength(1);
-    expect(parsed.features[0].type).toBe("Feature");
-    expect(parsed.features[0].geometry.type).toBe("LineString");
+    expect(feature.type).toBe("Feature");
+    expect(feature.geometry.type).toBe("LineString");
+    expect(feature.properties.title).toBe("Ride");
+    expect(feature.properties.description).toBe("Test route");
+    expect(feature.properties.color).toBe("#0078A8");
+    expect(feature.properties.weight).toBe(4);
+    expect(feature.properties.opacity).toBe(0.8);
+  });
+
+  test("rounds coordinates to the default output precision", () => {
+    const parsed = parseTrackJson(trackActivityToTrackJson(makeActivity(2)));
+
     expect(parsed.features[0].geometry.coordinates).toEqual([
       [139, 35],
-      [139.001, 35.001],
-      [139.002, 35.002],
+      [139.00001, 35.00001],
     ]);
-    expect(parsed.features[0].properties.title).toBe("Morning ride");
-    expect(parsed.features[0].properties.description).toBe("A short test ride");
-    expect(parsed.features[0].properties.color).toBe("#e67e22");
-    expect(parsed.features[0].properties.weight).toBe(6);
-    expect(parsed.features[0].properties.opacity).toBe(0.9);
   });
 
   test("writes standard coordinateProperties arrays", () => {
-    const activity = makeActivity(3);
-
-    const parsed = JSON.parse(trackActivityToTrackJson(activity));
+    const parsed = parseTrackJson(trackActivityToTrackJson(makeActivity(3)));
     const coordinateProperties = parsed.features[0].properties.coordinateProperties;
 
     expect(coordinateProperties.times).toEqual([
-      1767222000,
-      1767222001,
-      1767222002,
+      1710000000,
+      1710000001,
+      1710000002,
     ]);
-    expect(coordinateProperties.distances).toEqual([0, 10, 20]);
-    expect(coordinateProperties.elevations).toEqual([100, 101, 102]);
+    expect(coordinateProperties.distances).toEqual([0, 10.2, 20.5]);
+    expect(coordinateProperties.elevations).toEqual([100.1, 101.1, 102.1]);
     expect(coordinateProperties.heartRates).toEqual([120, 121, 122]);
     expect(coordinateProperties.cadences).toEqual([80, 81, 82]);
     expect(coordinateProperties.powers).toEqual([150, 151, 152]);
-    expect(coordinateProperties.speeds).toHaveLength(3);
-    expect(coordinateProperties.speeds[0]).toBeCloseTo(18);
-    expect(coordinateProperties.speeds[1]).toBeCloseTo(18.36);
-    expect(coordinateProperties.speeds[2]).toBeCloseTo(18.72);
+    expect(coordinateProperties.speeds).toEqual([18, 18.4, 18.7]);
   });
 
-  test("includes custom numeric metrics as graph series", () => {
-    const activity = makeActivity(3);
+  test("writes metadata by default", () => {
+    const parsed = parseTrackJson(trackActivityToTrackJson(makeActivity(2)));
+    const metadata = parsed.features[0].properties.metadata;
 
-    const parsed = JSON.parse(trackActivityToTrackJson(activity));
-    const coordinateProperties = parsed.features[0].properties.coordinateProperties;
-
-    expect(coordinateProperties.torqueEffectiveness).toEqual([70, 71, 72]);
+    expect(metadata).toEqual({
+      source: {
+        type: "fit",
+      },
+      sport: "cycling",
+      subSport: "road",
+      createdAt: 1710000000,
+      startTime: 1710000001,
+      totalElapsedTime: 3901,
+      totalTimerTime: 3601,
+      totalDistanceM: 12345.7,
+      device: {
+        manufacturer: "garmin",
+        product: "edge",
+        serialNumber: 123456789,
+      },
+    });
   });
 
-  test("can omit custom metrics", () => {
-    const activity = makeActivity(3);
-
-    const parsed = JSON.parse(trackActivityToTrackJson(activity, {
-      includeMetrics: false,
+  test("can omit metadata", () => {
+    const parsed = parseTrackJson(trackActivityToTrackJson(makeActivity(2), {
+      includeMetadata: false,
     }));
-    const coordinateProperties = parsed.features[0].properties.coordinateProperties;
 
-    expect(coordinateProperties.torqueEffectiveness).toBeUndefined();
+    expect(parsed.features[0].properties.metadata).toBeUndefined();
+  });
+
+  test("can override output precision", () => {
+    const parsed = parseTrackJson(trackActivityToTrackJson(makeActivity(3), {
+      precision: {
+        coordinates: 6,
+        distances: 0,
+        elevations: 0,
+        heartRates: 0,
+        cadences: 0,
+        powers: 0,
+        speeds: 2,
+        metadata: 0,
+      },
+    }));
+    const feature = parsed.features[0];
+    const coordinateProperties = feature.properties.coordinateProperties;
+
+    expect(feature.geometry.coordinates[1]).toEqual([139.000011, 35.000011]);
+    expect(coordinateProperties.distances).toEqual([0, 10, 20]);
+    expect(coordinateProperties.elevations).toEqual([100, 101, 102]);
+    expect(coordinateProperties.speeds).toEqual([18, 18.36, 18.72]);
+    expect(feature.properties.metadata.totalDistanceM).toBe(12346);
   });
 
   test("fill-forwards selected standard series when some geo points are missing values", () => {
     const activity = makeActivity(3);
     delete activity.points[1].heartRateBpm;
 
-    const parsed = JSON.parse(trackActivityToTrackJson(activity));
+    const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const coordinateProperties = parsed.features[0].properties.coordinateProperties;
 
     expect(coordinateProperties.heartRates).toEqual([120, 120, 122]);
@@ -273,66 +453,91 @@ describe("trackActivityToTrackJson", () => {
     delete activity.points[0].heartRateBpm;
     delete activity.points[1].heartRateBpm;
 
-    const parsed = JSON.parse(trackActivityToTrackJson(activity));
+    const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const coordinateProperties = parsed.features[0].properties.coordinateProperties;
 
     expect(coordinateProperties.heartRates).toEqual([0, 0, 122]);
   });
 
-  test("omits metric series when some geo points are missing values", () => {
+  test("omits a fill-forward series when it has no valid values", () => {
     const activity = makeActivity(3);
-    delete activity.points[1].metrics;
+    activity.points.forEach((point) => {
+      delete point.heartRateBpm;
+    });
 
-    const parsed = JSON.parse(trackActivityToTrackJson(activity));
+    const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const coordinateProperties = parsed.features[0].properties.coordinateProperties;
 
-    expect(coordinateProperties.torqueEffectiveness).toBeUndefined();
+    expect(coordinateProperties.heartRates).toBeUndefined();
   });
 
-  test("ignores reserved and unsafe metric names", () => {
-    const activity = makeActivity(2);
+  test("omits complete standard series when some geo points are missing values", () => {
+    const activity = makeActivity(3);
+    delete activity.points[1].elevationM;
+
+    const parsed = parseTrackJson(trackActivityToTrackJson(activity));
+    const coordinateProperties = parsed.features[0].properties.coordinateProperties;
+
+    expect(coordinateProperties.elevations).toBeUndefined();
+    expect(coordinateProperties.heartRates).toEqual([120, 121, 122]);
+  });
+
+  test("writes custom metric series when complete and safe", () => {
+    const activity = makeActivity(3);
     activity.points[0].metrics = {
-      __proto__: 1,
-      constructor: 2,
-      times: 3,
-      customMetric: 4,
+      grade: 1.23,
+      powers: 999,
+      constructor: 999,
     };
     activity.points[1].metrics = {
-      __proto__: 5,
-      constructor: 6,
-      times: 7,
-      customMetric: 8,
+      grade: 2.34,
+      powers: 999,
+      constructor: 999,
+    };
+    activity.points[2].metrics = {
+      grade: 3.45,
+      powers: 999,
+      constructor: 999,
     };
 
-    const parsed = JSON.parse(trackActivityToTrackJson(activity));
+    const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const coordinateProperties = parsed.features[0].properties.coordinateProperties;
 
-    expect(coordinateProperties.customMetric).toEqual([4, 8]);
-    expect(coordinateProperties.times).toEqual([1767222000, 1767222001]);
+    expect(coordinateProperties.grade).toEqual([1.2, 2.3, 3.5]);
     expect(Object.prototype.hasOwnProperty.call(
       coordinateProperties,
-      "constructor",
+      "constructor"
     )).toBe(false);
+    expect(coordinateProperties.powers).toEqual([150, 151, 152]);
   });
 
-  test("uses only points with both latitude and longitude", () => {
-    const activity = makeActivity(4);
-    delete activity.points[1].lat;
-    delete activity.points[2].lon;
+  test("omits incomplete custom metric series", () => {
+    const activity = makeActivity(3);
+    activity.points[0].metrics = { grade: 1 };
+    activity.points[1].metrics = {};
+    activity.points[2].metrics = { grade: 3 };
 
-    const parsed = JSON.parse(trackActivityToTrackJson(activity));
+    const parsed = parseTrackJson(trackActivityToTrackJson(activity));
+    const coordinateProperties = parsed.features[0].properties.coordinateProperties;
 
-    expect(parsed.features[0].geometry.coordinates).toEqual([
-      [139, 35],
-      [139.003, 35.003],
-    ]);
-    expect(parsed.features[0].properties.coordinateProperties.times).toEqual([
-      1767222000,
-      1767222003,
-    ]);
+    expect(coordinateProperties.grade).toBeUndefined();
   });
 
-  test("throws no_position_points when no points have lat/lon", () => {
+  test("can omit custom metrics", () => {
+    const activity = makeActivity(3);
+    activity.points.forEach((point, index) => {
+      point.metrics = { grade: index };
+    });
+
+    const parsed = parseTrackJson(trackActivityToTrackJson(activity, {
+      includeMetrics: false,
+    }));
+    const coordinateProperties = parsed.features[0].properties.coordinateProperties;
+
+    expect(coordinateProperties.grade).toBeUndefined();
+  });
+
+  test("throws when there are no positioned points", () => {
     const activity = makeActivity(3);
     activity.points.forEach((point) => {
       delete point.lat;
@@ -342,411 +547,78 @@ describe("trackActivityToTrackJson", () => {
     expect(() => trackActivityToTrackJson(activity)).toThrow(
       TrackJsonConversionError
     );
-
-    try {
-      trackActivityToTrackJson(activity);
-      throw new Error("Expected trackActivityToTrackJson to throw.");
-    } catch (e) {
-      expect(e).toBeInstanceOf(TrackJsonConversionError);
-      expect((e as TrackJsonConversionError).code).toBe("no_position_points");
-    }
   });
 
-  test("throws not_enough_position_points when only one point has lat/lon", () => {
-    const activity = makeActivity(3);
-    delete activity.points[1].lat;
-    delete activity.points[1].lon;
-    delete activity.points[2].lat;
-    delete activity.points[2].lon;
+  test("throws when there is only one positioned point", () => {
+    const activity = makeActivity(1);
 
     expect(() => trackActivityToTrackJson(activity)).toThrow(
       TrackJsonConversionError
     );
-
-    try {
-      trackActivityToTrackJson(activity);
-      throw new Error("Expected trackActivityToTrackJson to throw.");
-    } catch (e) {
-      expect(e).toBeInstanceOf(TrackJsonConversionError);
-      expect((e as TrackJsonConversionError).code).toBe(
-        "not_enough_position_points"
-      );
-    }
   });
 
-  test("pretty-prints JSON when pretty is true", () => {
-    const activity = makeActivity(2);
-
-    const json = trackActivityToTrackJson(activity, {
+  test("pretty-prints TrackJSON when requested", () => {
+    const json = trackActivityToTrackJson(makeActivity(2), {
       pretty: true,
     });
 
     expect(json).toContain("\n  ");
-    expect(JSON.parse(json).type).toBe("FeatureCollection");
   });
 });
 
-describe("parseFitBytes", () => {
-  beforeEach(() => {
-    jest.clearAllMocks();
-  });
-
-  test("throws TrackParseError empty_input for empty ArrayBuffer input", () => {
-    expect(() => parseFitBytes(new ArrayBuffer(0))).toThrow(TrackParseError);
-
-    try {
-      parseFitBytes(new ArrayBuffer(0));
-      throw new Error("Expected parseFitBytes to throw.");
-    } catch (e) {
-      expect(e).toBeInstanceOf(TrackParseError);
-      expect((e as TrackParseError).code).toBe("empty_input");
-      expect((e as TrackParseError).sourceType).toBe("fit");
-    }
-  });
-
-  test("throws TrackParseError empty_input for empty Uint8Array input", () => {
-    expect(() => parseFitBytes(new Uint8Array())).toThrow(TrackParseError);
-
-    try {
-      parseFitBytes(new Uint8Array());
-      throw new Error("Expected parseFitBytes to throw.");
-    } catch (e) {
-      expect(e).toBeInstanceOf(TrackParseError);
-      expect((e as TrackParseError).code).toBe("empty_input");
-      expect((e as TrackParseError).sourceType).toBe("fit");
-    }
-  });
-
-  test("throws TrackParseError decode_failed when input is not FIT", () => {
-    mockFitDecoder({
-      messages: {},
-    }, false);
-
-    expect(() => parseFitBytes(new Uint8Array([1, 2, 3]))).toThrow(
-      TrackParseError
-    );
-
-    try {
-      parseFitBytes(new Uint8Array([1, 2, 3]));
-      throw new Error("Expected parseFitBytes to throw.");
-    } catch (e) {
-      expect(e).toBeInstanceOf(TrackParseError);
-      expect((e as TrackParseError).code).toBe("decode_failed");
-      expect((e as TrackParseError).sourceType).toBe("fit");
-    }
-  });
-
-  test("throws TrackParseError decode_failed when decoder.read throws", () => {
-    const stream = { stream: true };
-    const decoder: MockDecoderInstance = {
-      isFIT: jest.fn().mockReturnValue(true),
-      read: jest.fn().mockImplementation(() => {
-        throw new Error("broken fit");
-      }),
+function mockDecoder(isFIT: boolean, readResult: MockFitReadResult) {
+  decoderMock.mockImplementation(() => {
+    return {
+      isFIT: () => isFIT,
+      read: () => readResult,
     };
-
-    streamFromArrayBufferMock.mockReturnValue(stream);
-    decoderMock.mockImplementation(() => decoder);
-
-    expect(() => parseFitBytes(new Uint8Array([1, 2, 3]))).toThrow(
-      TrackParseError
-    );
-
-    try {
-      parseFitBytes(new Uint8Array([1, 2, 3]));
-      throw new Error("Expected parseFitBytes to throw.");
-    } catch (e) {
-      expect(e).toBeInstanceOf(TrackParseError);
-      expect((e as TrackParseError).code).toBe("decode_failed");
-      expect((e as TrackParseError).message).toContain("broken fit");
-    }
   });
+}
 
-  test("throws TrackParseError no_record_messages when there are no records", () => {
-    mockFitDecoder({
-      messages: {
-        fileIdMesgs: [
-          {
-            manufacturer: "garmin",
-          },
-        ],
-      },
-    });
-
-    expect(() => parseFitBytes(new Uint8Array([1, 2, 3]))).toThrow(
-      TrackParseError
-    );
-
-    try {
-      parseFitBytes(new Uint8Array([1, 2, 3]));
-      throw new Error("Expected parseFitBytes to throw.");
-    } catch (e) {
-      expect(e).toBeInstanceOf(TrackParseError);
-      expect((e as TrackParseError).code).toBe("no_record_messages");
-    }
-  });
-
-  test("throws decode_failed when decoder returns errors and no records", () => {
-    mockFitDecoder({
-      messages: {},
-      errors: [
-        new Error("checksum failed"),
-      ],
-    });
-
-    try {
-      parseFitBytes(new Uint8Array([1, 2, 3]));
-      throw new Error("Expected parseFitBytes to throw.");
-    } catch (e) {
-      expect(e).toBeInstanceOf(TrackParseError);
-      expect((e as TrackParseError).code).toBe("decode_failed");
-      expect((e as TrackParseError).message).toContain("checksum failed");
-    }
-  });
-
-  test("passes sliced Uint8Array data to Stream.fromArrayBuffer", () => {
-    const source = new Uint8Array([0, 1, 2, 3, 4, 5]);
-    const slice = source.subarray(2, 5);
-
-    mockFitDecoder({
-      messages: {
-        recordMesgs: [
-          {
-            timestamp: 1767222000,
-          },
-        ],
-      },
-    });
-
-    parseFitBytes(slice);
-
-    const passedBuffer = streamFromArrayBufferMock.mock.calls[0][0] as ArrayBuffer;
-    expect(Array.from(new Uint8Array(passedBuffer))).toEqual([2, 3, 4]);
-  });
-
-  test("calls the FIT decoder with expected read options", () => {
-    const decoder = mockFitDecoder({
-      messages: {
-        recordMesgs: [
-          {
-            timestamp: 1767222000,
-          },
-        ],
-      },
-    });
-
-    parseFitBytes(new Uint8Array([1, 2, 3]));
-
-    expect(decoder.read).toHaveBeenCalledWith(expect.objectContaining({
-      applyScaleAndOffset: true,
-      expandSubFields: true,
-      expandComponents: true,
-      convertTypesToStrings: true,
-      convertDateTimesToDates: true,
-      mergeHeartRates: true,
-    }));
-  });
-
-  test("returns TrackActivity with normalized metadata and points", () => {
-    mockFitDecoder({
-      messages: {
-        fileIdMesgs: [
-          {
-            timeCreated: new Date("2026-01-01T00:00:00Z"),
-            manufacturer: "garmin",
-            productName: "Edge 1040",
-            serialNumber: 123456789,
-          },
-        ],
-        sportMesgs: [
-          {
-            sport: "cycling",
-            subSport: "road",
-          },
-        ],
-        sessionMesgs: [
-          {
-            startTime: new Date("2026-01-01T01:00:00Z"),
-            totalElapsedTime: 3600,
-            totalTimerTime: 3500,
-            totalDistance: 12345.6,
-          },
-        ],
-        recordMesgs: [
-          {
-            timestamp: new Date("2026-01-01T01:00:01Z"),
-            positionLat: 35.681,
-            positionLong: 139.767,
-            distance: 10,
-            altitude: 90,
-            enhancedAltitude: 100,
-            heartRate: 120,
-            cadence: 80,
-            power: 150,
-            speed: 4,
-            enhancedSpeed: 5,
-            temperature: 20,
-          },
-          {
-            timestamp: 1767229202000,
-            position_lat: toSemicircle(35.682),
-            position_long: toSemicircle(139.768),
-            distance: 20,
-            altitude: 91,
-            enhanced_altitude: 101,
-            heart_rate: 121,
-            cadence: 81,
-            power: 151,
-            speed: 4.1,
-            enhanced_speed: 5.1,
-            temperature: 21,
-          },
-        ],
-      },
-    });
-
-    const activity = parseFitBytes(new Uint8Array([1, 2, 3]));
-
-    expect(activity.schemaVersion).toBe(1);
-    expect(activity.metadata).toEqual({
+function makeActivity(pointCount: number): TrackActivity {
+  return {
+    schemaVersion: 1,
+    metadata: {
       source: {
         type: "fit",
       },
       sport: "cycling",
       subSport: "road",
+      createdAt: 1710000000.4,
+      startTime: 1710000001.4,
+      totalElapsedTime: 3900.6,
+      totalTimerTime: 3600.6,
+      totalDistanceM: 12345.67,
       device: {
         manufacturer: "garmin",
-        product: "Edge 1040",
+        product: "edge",
         serialNumber: 123456789,
       },
-      createdAt: 1767225600,
-      startTime: 1767229200,
-      totalElapsedTime: 3600,
-      totalTimerTime: 3500,
-      totalDistanceM: 12345.6,
-    });
-    expect(activity.points).toEqual([
-      {
-        time: 1767229201,
-        lat: 35.681,
-        lon: 139.767,
-        distanceM: 10,
-        elevationM: 100,
-        heartRateBpm: 120,
-        cadenceRpm: 80,
-        powerW: 150,
-        speedMps: 5,
-        temperatureC: 20,
-      },
-      {
-        time: 1767229202,
-        lat: expect.closeTo(35.682, 6),
-        lon: expect.closeTo(139.768, 6),
-        distanceM: 20,
-        elevationM: 101,
-        heartRateBpm: 121,
-        cadenceRpm: 81,
-        powerW: 151,
-        speedMps: 5.1,
-        temperatureC: 21,
-      },
-    ]);
-    expect(activity.warnings).toEqual([]);
-  });
+    },
+    points: Array.from({ length: pointCount }, (_, index) => makePoint(index)),
+    warnings: [],
+  };
+}
 
-  test("uses regular altitude and speed when preferEnhancedFields is false", () => {
-    mockFitDecoder({
-      messages: {
-        recordMesgs: [
-          {
-            timestamp: 1767222000,
-            positionLat: 35.681,
-            positionLong: 139.767,
-            altitude: 90,
-            enhancedAltitude: 100,
-            speed: 4,
-            enhancedSpeed: 5,
-          },
-        ],
-      },
-    });
+function makePoint(index: number): TrackPoint {
+  return {
+    time: 1710000000 + index,
+    lat: 35 + index * 0.00001 + 0.00000123,
+    lon: 139 + index * 0.00001 + 0.00000123,
+    distanceM: index * 10.234,
+    elevationM: 100.123 + index,
+    heartRateBpm: 120 + index,
+    cadenceRpm: 80 + index,
+    powerW: 150 + index,
+    speedMps: 5 + index * 0.1,
+    temperatureC: 20 + index * 0.1,
+  };
+}
 
-    const activity = parseFitBytes(new Uint8Array([1, 2, 3]), {
-      preferEnhancedFields: false,
-    });
+function getTimes(activity: TrackActivity): number[] {
+  return activity.points.map((point) => point.time as number);
+}
 
-    expect(activity.points[0].elevationM).toBe(90);
-    expect(activity.points[0].speedMps).toBe(4);
-  });
-
-  test("adds decoder errors to warnings when records exist", () => {
-    mockFitDecoder({
-      messages: {
-        recordMesgs: [
-          {
-            timestamp: 1767222000,
-            positionLat: 35.681,
-            positionLong: 139.767,
-          },
-        ],
-      },
-      errors: [
-        "minor warning",
-      ],
-    });
-
-    const activity = parseFitBytes(new Uint8Array([1, 2, 3]));
-
-    expect(activity.warnings).toContainEqual({
-      code: "fit_decoder_warning",
-      message: "minor warning",
-    });
-  });
-
-  test("adds warning when positioned point count is below minPositionPoints", () => {
-    mockFitDecoder({
-      messages: {
-        recordMesgs: [
-          {
-            timestamp: 1767222000,
-            positionLat: 35.681,
-            positionLong: 139.767,
-          },
-          {
-            timestamp: 1767222001,
-          },
-        ],
-      },
-    });
-
-    const activity = parseFitBytes(new Uint8Array([1, 2, 3]), {
-      minPositionPoints: 2,
-    });
-
-    expect(activity.warnings).toContainEqual({
-      code: "not_enough_position_points",
-      message: "Only 1 positioned point(s) were found.",
-    });
-  });
-
-  test("adds warning when paused record filtering is requested", () => {
-    mockFitDecoder({
-      messages: {
-        recordMesgs: [
-          {
-            timestamp: 1767222000,
-          },
-        ],
-      },
-    });
-
-    const activity = parseFitBytes(new Uint8Array([1, 2, 3]), {
-      includePausedRecords: false,
-    });
-
-    expect(activity.warnings).toContainEqual({
-      code: "paused_record_filter_not_supported",
-      message: "Paused record filtering is not implemented yet.",
-    });
-  });
-});
+function parseTrackJson(json: string): any {
+  return JSON.parse(json);
+}
