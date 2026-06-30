@@ -1,0 +1,50 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>stgy-track base layer example</title>
+  <link rel="stylesheet" href="../dist/track-viewer.css">
+  <style>
+    body {
+      margin: 2rem;
+      font-family: system-ui, sans-serif;
+      line-height: 1.5;
+    }
+    .stgy-track-map {
+      height: 520px;
+      margin: 1rem 0 2rem;
+    }
+    .stgy-track-canvas {
+      height: 100%;
+    }
+  </style>
+</head>
+<body>
+  <h1>Default base layer</h1>
+  <p><a href="./index.html">Back to examples</a></p>
+
+  <h2>OpenStreetMap default</h2>
+  <figure
+    class="stgy-track-map"
+    data-src="./sample-track.trj"
+    data-base-layer="osm">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption">data-base-layer="osm"</figcaption>
+  </figure>
+
+  <h2>GSI photo default</h2>
+  <figure
+    class="stgy-track-map"
+    data-src="./sample-track.trj"
+    data-base-layer="gsi-photo">
+    <div class="stgy-track-canvas">Map loading...</div>
+    <figcaption class="stgy-track-caption">data-base-layer="gsi-photo"</figcaption>
+  </figure>
+
+  <script src="../dist/track-viewer.js"></script>
+  <script>
+    new StgyTrackViewer.StgyTrackRenderer().hydrate();
+  </script>
+</body>
+</html>

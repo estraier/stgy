@@ -101,6 +101,7 @@ dist/fit-demo.js
 | `data-lat` | Initial center latitude |
 | `data-lon` | Initial center longitude |
 | `data-zoom` | Initial zoom |
+| `data-base-layer` | Initial base layer name or alias |
 | `data-show-overlay` | Set `false` to hide the coordinate HUD |
 | `data-show-graph` | Set `false` to hide the graph panel |
 | `data-download-src` | Original/master file download URL |
@@ -111,6 +112,32 @@ When `data-lat` or `data-lon` is omitted, the map center is computed from pins
 and track bounds.
 
 When `data-zoom` is omitted, the map uses `fitBounds`.
+
+When `data-base-layer` is omitted, the default is `GSI Pale` in Japan and
+`CyclOSM` outside Japan.
+
+Supported values are case-insensitive. Spaces and underscores are treated like
+hyphens.
+
+| Value | Layer |
+| --- | --- |
+| `gsi-pale`, `pale` | GSI Pale |
+| `gsi-standard`, `gsi-std`, `std` | GSI Standard |
+| `gsi-photo`, `photo`, `seamlessphoto` | GSI Photo |
+| `cyclosm`, `cycle` | CyclOSM |
+| `openstreetmap`, `open-street-map`, `osm` | OpenStreetMap |
+| `opentopomap`, `open-topo-map`, `opentopo`, `topo` | OpenTopoMap |
+
+Example:
+
+```html
+<figure
+  class="stgy-track-map"
+  data-src="/tracks/ride.trjgz"
+  data-base-layer="osm">
+  <div class="stgy-track-canvas">Map loading...</div>
+</figure>
+```
 
 ## Inline pins
 

@@ -36,12 +36,58 @@ const TRACK_GRAPH_SMOOTHING_WINDOWS = [
 const TARGET_GRAPH_X_TICKS = 5;
 const TARGET_GRAPH_Y_TICKS = 5;
 
+type BaseLayerKey =
+  | "gsi-pale"
+  | "gsi-standard"
+  | "gsi-photo"
+  | "cyclosm"
+  | "openstreetmap"
+  | "opentopomap";
+
+type BaseLayerDefinition = {
+  key: BaseLayerKey;
+  label: string;
+  layer: L.TileLayer;
+  japanOnly?: boolean;
+};
+
+const BASE_LAYER_ALIASES: Record<string, BaseLayerKey> = {
+  "gsi-pale": "gsi-pale",
+  pale: "gsi-pale",
+  "gsi-standard": "gsi-standard",
+  "gsi-std": "gsi-standard",
+  standard: "gsi-standard",
+  std: "gsi-standard",
+  "gsi-photo": "gsi-photo",
+  "gsi-seamlessphoto": "gsi-photo",
+  "seamless-photo": "gsi-photo",
+  seamlessphoto: "gsi-photo",
+  photo: "gsi-photo",
+  cyclosm: "cyclosm",
+  cycle: "cyclosm",
+  openstreetmap: "openstreetmap",
+  "open-street-map": "openstreetmap",
+  osm: "openstreetmap",
+  opentopomap: "opentopomap",
+  "open-topo-map": "opentopomap",
+  opentopo: "opentopomap",
+  topo: "opentopomap",
+};
+
 type BoundsAccumulator = {
   hasValue: boolean;
   minLat: number;
   minLng: number;
   maxLat: number;
   maxLng: number;
+};
+
+type JsonRecord = Record<string, unknown>;
+type CoordinateProperties = JsonRecord;
+type GeoJsonInput = Parameters<typeof L.geoJSON>[0];
+type GeoJsonFeatureLike = {
+  geometry?: unknown;
+  properties?: unknown;
 };
 
 type CoordinateMarkerState = {
@@ -61,12 +107,12 @@ type TrackGraphDataset = {
   defaultXAxis: TrackGraphXAxisKind;
   series: TrackGraphSeries[];
   latLngs: L.LatLngExpression[];
-  coordinateProperties: any;
+  coordinateProperties: CoordinateProperties;
 };
 
 type SelectedCoordinateSample = {
   latLng: L.LatLngExpression;
-  coordinateProperties: any;
+  coordinateProperties: CoordinateProperties;
   index: number;
 };
 
@@ -119,6 +165,22 @@ const fixLeafletIcons = () => {
     tooltipAnchor: [16, -28],
     shadowSize: [41, 41],
   });
+};
+
+const isRecord = (value: unknown): value is JsonRecord => {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+};
+
+const asGeoJsonInput = (value: unknown): GeoJsonInput => {
+  return value as GeoJsonInput;
+};
+
+const getFeatureProperties = (feature: GeoJsonFeatureLike | null | undefined): JsonRecord => {
+  return isRecord(feature?.properties) ? feature.properties : {};
+};
+
+const getFiniteNumber = (value: unknown, fallback: number): number => {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 };
 
 const normalizeMapColor = (value: unknown): string | null => {
@@ -215,8 +277,8 @@ export class StgyTrackRenderer {
     this.extendBoundsWithLatLng(bounds, northEast.lat, northEast.lng);
   }
 
-  private extendBoundsWithGeoJson(bounds: BoundsAccumulator, geoJsonData: any) {
-    const layer = L.geoJSON(geoJsonData);
+  private extendBoundsWithGeoJson(bounds: BoundsAccumulator, geoJsonData: unknown) {
+    const layer = L.geoJSON(asGeoJsonInput(geoJsonData));
     this.extendBoundsWithLeafletBounds(bounds, layer.getBounds());
   }
 
@@ -229,6 +291,57 @@ export class StgyTrackRenderer {
       [bounds.minLat, bounds.minLng],
       [bounds.maxLat, bounds.maxLng]
     );
+  }
+
+
+  private normalizeBaseLayerKey(value: unknown): BaseLayerKey | null {
+    if (typeof value !== "string") {
+      return null;
+    }
+
+    const normalized = value.trim().toLowerCase().replace(/[\s_]+/g, "-");
+    if (!normalized) {
+      return null;
+    }
+
+    return BASE_LAYER_ALIASES[normalized] || null;
+  }
+
+  private getDefaultBaseLayerKey(isJp: boolean): BaseLayerKey {
+    return isJp ? "gsi-pale" : "cyclosm";
+  }
+
+  private createBaseMaps(
+    baseLayerDefinitions: BaseLayerDefinition[],
+    isJp: boolean,
+    requestedBaseLayerKey: BaseLayerKey | null
+  ): { baseMaps: Record<string, L.TileLayer>; defaultLayer: L.TileLayer } {
+    const defaultBaseLayerKey = requestedBaseLayerKey || this.getDefaultBaseLayerKey(isJp);
+    const availableBaseLayerDefinitions = baseLayerDefinitions.filter((definition) => {
+      return !definition.japanOnly || isJp || definition.key === requestedBaseLayerKey;
+    });
+
+    const baseMaps: Record<string, L.TileLayer> = {};
+    availableBaseLayerDefinitions.forEach((definition) => {
+      baseMaps[definition.label] = definition.layer;
+    });
+
+    const fallbackBaseLayerDefinition = availableBaseLayerDefinitions[0];
+    if (!fallbackBaseLayerDefinition) {
+      throw new Error("No base layers are available.");
+    }
+
+    const defaultBaseLayerDefinition =
+      availableBaseLayerDefinitions.find((definition) => definition.key === defaultBaseLayerKey) ||
+      availableBaseLayerDefinitions.find((definition) => {
+        return definition.key === this.getDefaultBaseLayerKey(isJp);
+      }) ||
+      fallbackBaseLayerDefinition;
+
+    return {
+      baseMaps,
+      defaultLayer: defaultBaseLayerDefinition.layer,
+    };
   }
 
   private getBoundsCenter(bounds: BoundsAccumulator): L.LatLng | null {
@@ -382,27 +495,27 @@ export class StgyTrackRenderer {
     root.appendChild(div);
   }
 
-  private buildPopupElementFromProps(props: any): HTMLElement | null {
+  private buildPopupElementFromProps(props: JsonRecord): HTMLElement | null {
     const root = document.createElement("div");
 
     this.appendTextBlock(root, "annot-title", props.title);
     this.appendTextBlock(root, "annot-desc", props.description);
 
     if (Array.isArray(props.links)) {
-      props.links.forEach((link: any) => {
+      props.links.forEach((link: unknown) => {
         if (typeof link === "string") {
           this.appendSafeLink(root, link, link);
-        } else if (link && typeof link === "object") {
+        } else if (isRecord(link)) {
           this.appendSafeLink(root, link.href, link.text);
         }
       });
     }
 
     if (Array.isArray(props.images)) {
-      props.images.forEach((image: any) => {
+      props.images.forEach((image: unknown) => {
         if (typeof image === "string") {
           this.appendSafeImage(root, image, "");
-        } else if (image && typeof image === "object") {
+        } else if (isRecord(image)) {
           this.appendSafeImage(root, image.src, image.alt);
         }
       });
@@ -507,15 +620,11 @@ export class StgyTrackRenderer {
     }
   }
 
-  private getFeaturePathStyle(feature: any): L.PathOptions {
-    const props = feature?.properties || {};
+  private getFeaturePathStyle(feature: GeoJsonFeatureLike | null | undefined): L.PathOptions {
+    const props = getFeatureProperties(feature);
     const color = normalizeMapColor(props.color) || DEFAULT_ROUTE_COLOR;
-    const weight = typeof props.weight === "number" && Number.isFinite(props.weight)
-      ? props.weight
-      : 4;
-    const opacity = typeof props.opacity === "number" && Number.isFinite(props.opacity)
-      ? props.opacity
-      : 0.8;
+    const weight = getFiniteNumber(props.weight, 4);
+    const opacity = getFiniteNumber(props.opacity, 0.8);
 
     return {
       color,
@@ -581,7 +690,7 @@ export class StgyTrackRenderer {
   }
 
   private registerGraphDatasetForLayer(
-    feature: any,
+    feature: GeoJsonFeatureLike,
     layer: L.Layer,
     context: CoordinateInteractionContext
   ) {
@@ -695,40 +804,75 @@ export class StgyTrackRenderer {
     list.appendChild(item);
   }
 
-  private renderHudItems(hud: HTMLElement, coordinateProperties: any, index: number): boolean {
+  private getCoordinatePropertyValue(
+    coordinateProperties: CoordinateProperties,
+    name: string,
+    index: number
+  ): unknown {
+    const series = coordinateProperties[name];
+    return Array.isArray(series) ? series[index] : undefined;
+  }
+
+  private renderHudItems(hud: HTMLElement, coordinateProperties: CoordinateProperties, index: number): boolean {
     const list = document.createElement("ul");
 
-    const time = this.formatLocalTime(coordinateProperties.times?.[index]);
+    const time = this.formatLocalTime(
+      this.getCoordinatePropertyValue(coordinateProperties, "times", index)
+    );
     if (time) {
       this.appendHudItem(list, "times", time);
     }
 
-    const distance = coordinateProperties.distances?.[index];
+    const distance = this.getCoordinatePropertyValue(
+      coordinateProperties,
+      "distances",
+      index
+    );
     if (typeof distance === "number" && Number.isFinite(distance)) {
       this.appendHudItem(list, "distances", `${(distance / 1000).toFixed(2)} km`);
     }
 
-    const elevation = coordinateProperties.elevations?.[index];
+    const elevation = this.getCoordinatePropertyValue(
+      coordinateProperties,
+      "elevations",
+      index
+    );
     if (typeof elevation === "number" && Number.isFinite(elevation)) {
       this.appendHudItem(list, "elevations", `${Math.round(elevation)} m`);
     }
 
-    const heartRate = coordinateProperties.heartRates?.[index];
+    const heartRate = this.getCoordinatePropertyValue(
+      coordinateProperties,
+      "heartRates",
+      index
+    );
     if (typeof heartRate === "number" && Number.isFinite(heartRate)) {
       this.appendHudItem(list, "heartRates", `${Math.round(heartRate)} bpm`);
     }
 
-    const cadence = coordinateProperties.cadences?.[index];
+    const cadence = this.getCoordinatePropertyValue(
+      coordinateProperties,
+      "cadences",
+      index
+    );
     if (typeof cadence === "number" && Number.isFinite(cadence)) {
       this.appendHudItem(list, "cadences", `${Math.round(cadence)} rpm`);
     }
 
-    const power = coordinateProperties.powers?.[index];
+    const power = this.getCoordinatePropertyValue(
+      coordinateProperties,
+      "powers",
+      index
+    );
     if (typeof power === "number" && Number.isFinite(power)) {
       this.appendHudItem(list, "powers", `${Math.round(power)} W`);
     }
 
-    const speed = coordinateProperties.speeds?.[index];
+    const speed = this.getCoordinatePropertyValue(
+      coordinateProperties,
+      "speeds",
+      index
+    );
     if (typeof speed === "number" && Number.isFinite(speed)) {
       this.appendHudItem(list, "speeds", `${speed.toFixed(1)} km/h`);
     }
@@ -774,7 +918,7 @@ export class StgyTrackRenderer {
 
   private updateCoordinateOverlay(
     hud: HTMLElement | null,
-    coordinateProperties: any,
+    coordinateProperties: CoordinateProperties,
     index: number
   ) {
     if (!hud) {
@@ -830,7 +974,7 @@ export class StgyTrackRenderer {
   private renderCoordinateSample(
     context: CoordinateInteractionContext,
     latLng: L.LatLngExpression,
-    coordinateProperties: any,
+    coordinateProperties: CoordinateProperties,
     index: number
   ) {
     this.showCoordinateMarker(context, latLng);
@@ -844,7 +988,7 @@ export class StgyTrackRenderer {
   private activateCoordinateSample(
     context: CoordinateInteractionContext,
     latLng: L.LatLngExpression,
-    coordinateProperties: any,
+    coordinateProperties: CoordinateProperties,
     index: number,
     pinned = false
   ) {
@@ -898,7 +1042,7 @@ export class StgyTrackRenderer {
   private activateCoordinateSampleAtLatLng(
     context: CoordinateInteractionContext,
     coordinates: unknown,
-    coordinateProperties: any,
+    coordinateProperties: CoordinateProperties,
     latlng: L.LatLng,
     pinned = false
   ) {
@@ -918,17 +1062,19 @@ export class StgyTrackRenderer {
   }
 
   private bindCoordinateInteractions(
-    feature: any,
+    feature: GeoJsonFeatureLike,
     layer: L.Layer,
     context: CoordinateInteractionContext
   ) {
-    if (feature?.geometry?.type !== "LineString") {
+    const geometry = feature.geometry;
+    if (!isRecord(geometry) || geometry.type !== "LineString") {
       return;
     }
 
-    const coordinates = feature.geometry.coordinates;
-    const coordinateProperties = feature.properties?.coordinateProperties;
-    if (!coordinateProperties || typeof coordinateProperties !== "object") {
+    const coordinates = geometry.coordinates;
+    const props = getFeatureProperties(feature);
+    const coordinateProperties = props.coordinateProperties;
+    if (!isRecord(coordinateProperties)) {
       return;
     }
 
@@ -981,12 +1127,13 @@ export class StgyTrackRenderer {
     return Array.from({ length }, (_, index) => index);
   }
 
-  private buildGraphDatasetFromFeature(feature: any): TrackGraphDataset | null {
-    if (feature?.geometry?.type !== "LineString") {
+  private buildGraphDatasetFromFeature(feature: GeoJsonFeatureLike): TrackGraphDataset | null {
+    const geometry = feature.geometry;
+    if (!isRecord(geometry) || geometry.type !== "LineString") {
       return null;
     }
 
-    const coordinates = feature.geometry.coordinates;
+    const coordinates = geometry.coordinates;
     if (!Array.isArray(coordinates) || coordinates.length === 0) {
       return null;
     }
@@ -1016,8 +1163,9 @@ export class StgyTrackRenderer {
       return null;
     }
 
-    const coordinateProperties = feature.properties?.coordinateProperties;
-    if (!coordinateProperties || typeof coordinateProperties !== "object") {
+    const props = getFeatureProperties(feature);
+    const coordinateProperties = props.coordinateProperties;
+    if (!isRecord(coordinateProperties)) {
       return null;
     }
 
@@ -1026,12 +1174,14 @@ export class StgyTrackRenderer {
       sample: this.createSampleAxis(length),
     };
 
-    if (this.isNumberArrayWithLength(coordinateProperties.distances, length)) {
-      xAxes.distance = coordinateProperties.distances;
+    const distances = coordinateProperties.distances;
+    if (this.isNumberArrayWithLength(distances, length)) {
+      xAxes.distance = distances;
     }
 
-    if (this.isNumberArrayWithLength(coordinateProperties.times, length)) {
-      xAxes.time = coordinateProperties.times;
+    const times = coordinateProperties.times;
+    if (this.isNumberArrayWithLength(times, length)) {
+      xAxes.time = times;
     }
 
     const series: TrackGraphSeries[] = [];
@@ -1584,13 +1734,13 @@ export class StgyTrackRenderer {
 
   private createGeoJsonLayer(
     map: L.Map,
-    geoJsonData: any,
+    geoJsonData: unknown,
     context: CoordinateInteractionContext
   ): L.GeoJSON {
-    return L.geoJSON(geoJsonData, {
+    return L.geoJSON(asGeoJsonInput(geoJsonData), {
       style: (feature) => this.getFeaturePathStyle(feature),
       pointToLayer: (feature, latlng) => {
-        const props = feature.properties || {};
+        const props = getFeatureProperties(feature);
         const markerOptions: L.MarkerOptions = {};
         const pinColor = normalizeMapColor(props.color);
         if (pinColor) {
@@ -1599,7 +1749,7 @@ export class StgyTrackRenderer {
         return L.marker(latlng, markerOptions);
       },
       onEachFeature: (feature, layer) => {
-        const props = feature.properties || {};
+        const props = getFeatureProperties(feature);
         const popupElement = this.buildPopupElementFromProps(props);
 
         if (popupElement) {
@@ -1607,8 +1757,8 @@ export class StgyTrackRenderer {
           const mapWidth = mapContainer.clientWidth;
           const mapHeight = mapContainer.clientHeight;
 
-          const widthPct = Math.max(1, Math.min(99, props.popupWidth || 33));
-          const heightPct = Math.max(1, Math.min(99, props.popupHeight || 33));
+          const widthPct = Math.max(1, Math.min(99, getFiniteNumber(props.popupWidth, 33)));
+          const heightPct = Math.max(1, Math.min(99, getFiniteNumber(props.popupHeight, 33)));
 
           const maxWidth = mapWidth * (widthPct / 100);
           const popupMaxHeight = mapHeight * (heightPct / 100);
@@ -1628,8 +1778,8 @@ export class StgyTrackRenderer {
     });
   }
 
-  private getGeoJsonCenter(geoJsonData: any): L.LatLng | null {
-    const layer = L.geoJSON(geoJsonData);
+  private getGeoJsonCenter(geoJsonData: unknown): L.LatLng | null {
+    const layer = L.geoJSON(asGeoJsonInput(geoJsonData));
     const bounds = layer.getBounds();
     if (!bounds.isValid()) {
       return null;
@@ -1637,7 +1787,7 @@ export class StgyTrackRenderer {
     return bounds.getCenter();
   }
 
-  private async loadTrackData(href: string, cache: Record<string, any>): Promise<any> {
+  private async loadTrackData(href: string, cache: Record<string, unknown>): Promise<unknown> {
     if (Object.prototype.hasOwnProperty.call(cache, href)) {
       return cache[href];
     }
@@ -1649,7 +1799,7 @@ export class StgyTrackRenderer {
   private renderTrackAsPin(
     map: L.Map,
     layerGroup: L.FeatureGroup,
-    geoJsonData: any,
+    geoJsonData: unknown,
     label: string,
     context: CoordinateInteractionContext
   ) {
@@ -1713,7 +1863,7 @@ export class StgyTrackRenderer {
     const sourceLinks = dataSrc
       ? []
       : Array.from(figure.querySelectorAll<HTMLAnchorElement>(".stgy-track-sources a.track-source"));
-    const trackDataCache: Record<string, any> = {};
+    const trackDataCache: Record<string, unknown> = {};
     const viewBounds = this.createBoundsAccumulator();
 
     const inlinePins = figure.querySelectorAll<HTMLElement>(".stgy-track-pins li");
@@ -1767,23 +1917,20 @@ export class StgyTrackRenderer {
     const cyclosm = L.tileLayer("https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png", { attribution: '&copy; CyclOSM', maxNativeZoom: 20, maxZoom: 20 });
     const opentopo = L.tileLayer("https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png", { attribution: '&copy; OpenTopoMap', maxNativeZoom: 17, maxZoom: 20 });
 
-    const baseMaps: Record<string, L.TileLayer> = {};
-    let defaultLayer: L.TileLayer;
-
-    if (isJp) {
-      baseMaps["GSI Pale"] = gsiPale;
-      baseMaps["GSI Standard"] = gsiStd;
-      baseMaps["GSI Photo"] = gsiPhoto;
-      baseMaps["CyclOSM"] = cyclosm;
-      baseMaps["OpenStreetMap"] = osm;
-      baseMaps["OpenTopoMap"] = opentopo;
-      defaultLayer = gsiPale;
-    } else {
-      baseMaps["CyclOSM"] = cyclosm;
-      baseMaps["OpenStreetMap"] = osm;
-      baseMaps["OpenTopoMap"] = opentopo;
-      defaultLayer = cyclosm;
-    }
+    const baseLayerDefinitions: BaseLayerDefinition[] = [
+      { key: "gsi-pale", label: "GSI Pale", layer: gsiPale, japanOnly: true },
+      { key: "gsi-standard", label: "GSI Standard", layer: gsiStd, japanOnly: true },
+      { key: "gsi-photo", label: "GSI Photo", layer: gsiPhoto, japanOnly: true },
+      { key: "cyclosm", label: "CyclOSM", layer: cyclosm },
+      { key: "openstreetmap", label: "OpenStreetMap", layer: osm },
+      { key: "opentopomap", label: "OpenTopoMap", layer: opentopo },
+    ];
+    const requestedBaseLayerKey = this.normalizeBaseLayerKey(figure.dataset.baseLayer);
+    const { baseMaps, defaultLayer } = this.createBaseMaps(
+      baseLayerDefinitions,
+      isJp,
+      requestedBaseLayerKey
+    );
 
     const map = L.map(canvas, {
       center: [lat, lon],

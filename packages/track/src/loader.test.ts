@@ -55,7 +55,7 @@ describe("TrackLoader", () => {
 
     const data = await loader.load('data:application/json,{"color":"%23e74c3c"}');
 
-    expect(data.color).toBe("#e74c3c");
+    expect(asRecord(data).color).toBe("#e74c3c");
   });
 
   test("parses .trj even when the server returns application/octet-stream", async () => {
@@ -119,6 +119,40 @@ describe("TrackLoader", () => {
     });
   });
 
+  test("accepts application/geo+json+gzip as gzip TrackJSON", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(mockTextResponse(
+      '{"type":"FeatureCollection","features":[]}',
+      {
+        contentType: "application/geo+json+gzip",
+        contentEncoding: "gzip",
+      }
+    ));
+
+    const data = await loader.load("data:application/geo+json+gzip;base64,test");
+
+    expect(data).toEqual({
+      type: "FeatureCollection",
+      features: [],
+    });
+  });
+
+  test("accepts generic +gzip MIME suffix as gzip TrackJSON", async () => {
+    (global.fetch as jest.Mock).mockResolvedValueOnce(mockTextResponse(
+      '{"type":"FeatureCollection","features":[]}',
+      {
+        contentType: "application/example+gzip",
+        contentEncoding: "gzip",
+      }
+    ));
+
+    const data = await loader.load("data:application/example+gzip;base64,test");
+
+    expect(data).toEqual({
+      type: "FeatureCollection",
+      features: [],
+    });
+  });
+
   test("rejects unsupported MIME type when extension is unknown", async () => {
     (global.fetch as jest.Mock).mockResolvedValueOnce(mockTextResponse(
       '{"type":"FeatureCollection","features":[]}',
@@ -159,6 +193,15 @@ describe("TrackLoader", () => {
     );
   });
 });
+
+
+function asRecord(value: unknown): Record<string, unknown> {
+  if (value !== null && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+
+  throw new TypeError("Expected object.");
+}
 
 function mockTextResponse(
   text: string,

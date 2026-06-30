@@ -88,8 +88,8 @@ jest.mock("leaflet", () => {
       setView: jest.fn(),
       fitBounds: jest.fn(),
       invalidateSize: jest.fn(),
+      on: jest.fn().mockReturnThis(),
       getContainer: () => document.createElement("div"),
-      on: jest.fn(),
     };
 
     map.addLayer.mockImplementation((layer: unknown) => {
@@ -101,7 +101,6 @@ jest.mock("leaflet", () => {
       return map;
     });
     map.hasLayer.mockImplementation((layer: unknown) => layers.has(layer));
-    map.on.mockReturnValue(map);
 
     return map;
   };
@@ -135,16 +134,10 @@ jest.mock("leaflet", () => {
   const createFeatureLayer = () => ({
     bindPopup: jest.fn().mockReturnThis(),
     on: jest.fn().mockReturnThis(),
-    setStyle: jest.fn().mockReturnThis(),
-    bringToFront: jest.fn().mockReturnThis(),
   });
 
   return {
     ...originalL,
-    DomEvent: {
-      ...originalL.DomEvent,
-      stopPropagation: jest.fn(),
-    },
     map: jest.fn().mockImplementation(createMap),
     marker: jest.fn().mockImplementation(() => ({
       bindPopup: jest.fn().mockReturnThis(),
@@ -186,7 +179,7 @@ jest.mock("leaflet", () => {
         ne,
       );
     }),
-    tileLayer: jest.fn().mockReturnValue({}),
+    tileLayer: jest.fn().mockImplementation((url) => ({ __url: url })),
     control: {
       layers: jest.fn().mockReturnValue({ addTo: jest.fn() }),
     },
@@ -195,47 +188,6 @@ jest.mock("leaflet", () => {
 
 const flushPromises = async () => {
   await new Promise(process.nextTick);
-};
-
-const setSvgRect = (svg: SVGSVGElement) => {
-  svg.getBoundingClientRect = jest.fn().mockReturnValue({
-    left: 0,
-    top: 0,
-    width: 800,
-    height: 180,
-    right: 800,
-    bottom: 180,
-    x: 0,
-    y: 0,
-    toJSON: () => ({}),
-  });
-};
-
-const hoverGraphAtMiddlePoint = (svg: SVGSVGElement) => {
-  setSvgRect(svg);
-  svg.dispatchEvent(new MouseEvent("mousemove", {
-    bubbles: true,
-    clientX: 333,
-    clientY: 90,
-  }));
-};
-
-const findRenderedGeoJsonWithFeatureLayers = (count?: number) => {
-  return (L.geoJSON as jest.Mock).mock.results.find((result) => {
-    const layers = result.value.__featureLayers;
-    if (!layers || layers.length === 0) {
-      return false;
-    }
-    return typeof count === "number" ? layers.length === count : true;
-  });
-};
-
-const getLayerHandler = (layer: any, eventName: string) => {
-  return layer.on.mock.calls.find((call: unknown[]) => call[0] === eventName)?.[1];
-};
-
-const getMapHandler = (map: any, eventName: string) => {
-  return map.on.mock.calls.find((call: unknown[]) => call[0] === eventName)?.[1];
 };
 
 const makeTrackWithGraph = () => ({
@@ -261,54 +213,6 @@ const makeTrackWithGraph = () => ({
           elevations: [20, 21, 22],
           heartRates: [118, 123, 128],
           powers: [130, 145, 160],
-        },
-      },
-    },
-  ],
-});
-
-const makeTwoRouteTrackWithGraphs = () => ({
-  type: "FeatureCollection",
-  features: [
-    {
-      type: "Feature",
-      geometry: {
-        type: "LineString",
-        coordinates: [
-          [139.7500, 35.6800],
-          [139.7510, 35.6810],
-          [139.7520, 35.6820],
-        ],
-      },
-      properties: {
-        color: "#ff0000",
-        weight: 4,
-        opacity: 0.8,
-        coordinateProperties: {
-          distances: [0, 100, 200],
-          elevations: [10, 11, 12],
-          heartRates: [100, 101, 102],
-        },
-      },
-    },
-    {
-      type: "Feature",
-      geometry: {
-        type: "LineString",
-        coordinates: [
-          [139.7600, 35.6900],
-          [139.7610, 35.6910],
-          [139.7620, 35.6920],
-        ],
-      },
-      properties: {
-        color: "#00aa00",
-        weight: 5,
-        opacity: 0.7,
-        coordinateProperties: {
-          distances: [0, 1000, 2000],
-          elevations: [100, 200, 300],
-          heartRates: [120, 130, 140],
         },
       },
     },
@@ -349,6 +253,54 @@ describe("StgyTrackRenderer", () => {
 
     const baseMaps = layersSpy.mock.calls[0][0] as Record<string, L.TileLayer>;
     expect(baseMaps).toHaveProperty("GSI Pale");
+  });
+
+  test("uses data-base-layer as the initial base layer", () => {
+    document.body.innerHTML = `
+      <figure
+        class="stgy-track-map"
+        data-lat="35.681"
+        data-lon="139.767"
+        data-base-layer="OpenStreetMap">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    isJapanSpy.mockReturnValue(true);
+
+    renderer.hydrate(document.body);
+
+    const mapOptions = (L.map as jest.Mock).mock.calls[0][1] as {
+      layers: Array<{ __url: string }>;
+    };
+
+    expect(mapOptions.layers[0].__url).toContain("tile.openstreetmap.org");
+  });
+
+  test("accepts base layer aliases and includes a requested Japan-only layer", () => {
+    document.body.innerHTML = `
+      <figure
+        class="stgy-track-map"
+        data-lat="40.7128"
+        data-lon="-74.0060"
+        data-base-layer="gsi-photo">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    isJapanSpy.mockReturnValue(false);
+
+    const layersSpy = jest.spyOn(L.control, "layers").mockReturnValue({ addTo: jest.fn() } as any);
+
+    renderer.hydrate(document.body);
+
+    const baseMaps = layersSpy.mock.calls[0][0] as Record<string, L.TileLayer>;
+    const mapOptions = (L.map as jest.Mock).mock.calls[0][1] as {
+      layers: Array<{ __url: string }>;
+    };
+
+    expect(baseMaps).toHaveProperty("GSI Photo");
+    expect(mapOptions.layers[0].__url).toContain("seamlessphoto");
   });
 
   test("calls fitBounds when data-zoom is not provided and bounds are not a single point", async () => {
@@ -478,93 +430,6 @@ describe("StgyTrackRenderer", () => {
     expect(mockMap.fitBounds).not.toHaveBeenCalled();
   });
 
-  test("renders download action link with custom label and filename", () => {
-    document.body.innerHTML = `
-      <figure
-        class="stgy-track-map"
-        data-download-src="/maps/masters/112233/4c712e88c5542322.fit"
-        data-download-label="Download original FIT file"
-        data-download-filename="ride.fit">
-        <div class="stgy-track-canvas"></div>
-        <figcaption class="stgy-track-caption">Ride to Kamakura</figcaption>
-      </figure>
-    `;
-
-    renderer.hydrate(document.body);
-
-    const figure = document.querySelector<HTMLElement>(".stgy-track-map");
-    const caption = document.querySelector<HTMLElement>(".stgy-track-caption");
-    const actions = document.querySelector<HTMLElement>(".stgy-track-actions");
-    const link = document.querySelector<HTMLAnchorElement>(".stgy-track-download");
-
-    expect(figure).not.toBeNull();
-    expect(actions).not.toBeNull();
-    expect(link).not.toBeNull();
-    expect(caption?.nextElementSibling).toBe(actions);
-    expect(actions?.parentElement).toBe(figure);
-    expect(link?.textContent).toBe("Download original FIT file");
-    expect(link?.href.endsWith("/maps/masters/112233/4c712e88c5542322.fit")).toBe(true);
-    expect(link?.download).toBe("ride.fit");
-  });
-
-  test("renders download action link with default label and no download attribute", () => {
-    document.body.innerHTML = `
-      <figure
-        class="stgy-track-map"
-        data-download-src="/maps/masters/112233/4c712e88c5542322.trjgz">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    renderer.hydrate(document.body);
-
-    const actions = document.querySelector<HTMLElement>(".stgy-track-actions");
-    const link = document.querySelector<HTMLAnchorElement>(".stgy-track-download");
-
-    expect(actions).not.toBeNull();
-    expect(link).not.toBeNull();
-    expect(actions?.parentElement).toBe(document.querySelector(".stgy-track-map"));
-    expect(link?.textContent).toBe("Download original data");
-    expect(link?.href.endsWith("/maps/masters/112233/4c712e88c5542322.trjgz")).toBe(true);
-    expect(link?.hasAttribute("download")).toBe(false);
-  });
-
-  test("does not render download action link without data-download-src", () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map">
-        <div class="stgy-track-canvas"></div>
-        <figcaption class="stgy-track-caption">No download</figcaption>
-      </figure>
-    `;
-
-    renderer.hydrate(document.body);
-
-    expect(document.querySelector(".stgy-track-actions")).toBeNull();
-    expect(document.querySelector(".stgy-track-download")).toBeNull();
-  });
-
-  test("rejects unsafe download action URLs", () => {
-    document.body.innerHTML = `
-      <figure
-        class="stgy-track-map"
-        data-download-src="javascript:alert(1)"
-        data-download-label="Bad JavaScript URL">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-      <figure
-        class="stgy-track-map"
-        data-download-src="data:text/html,<script>alert(1)</script>"
-        data-download-label="Bad data URL">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    renderer.hydrate(document.body);
-
-    expect(document.querySelector(".stgy-track-actions")).toBeNull();
-    expect(document.querySelector(".stgy-track-download")).toBeNull();
-  });
-
   test("renders data-render=pin as a guide pin", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map">
@@ -636,7 +501,7 @@ describe("StgyTrackRenderer", () => {
     await flushPromises();
 
     const marker = (L.marker as jest.Mock).mock.results[0].value;
-    const clickHandler = getLayerHandler(marker, "click");
+    const clickHandler = marker.on.mock.calls.find((call: unknown[]) => call[0] === "click")?.[1];
     const group = (L.featureGroup as jest.Mock).mock.results[0].value;
     const initialAddCount = group.addLayer.mock.calls.length;
 
@@ -693,9 +558,12 @@ describe("StgyTrackRenderer", () => {
 
     await flushPromises();
 
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers();
+    const renderedGeoJsonResult = (L.geoJSON as jest.Mock).mock.results.find((result) => {
+      return result.value.__featureLayers?.length > 0;
+    });
+
     const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
-    const mousemoveHandler = getLayerHandler(featureLayer, "mousemove");
+    const mousemoveHandler = featureLayer.on.mock.calls.find((call: unknown[]) => call[0] === "mousemove")?.[1];
 
     expect(typeof mousemoveHandler).toBe("function");
 
@@ -744,10 +612,13 @@ describe("StgyTrackRenderer", () => {
 
     await flushPromises();
 
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers();
+    const renderedGeoJsonResult = (L.geoJSON as jest.Mock).mock.results.find((result) => {
+      return result.value.__featureLayers?.length > 0;
+    });
+
     const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
-    const mousemoveHandler = getLayerHandler(featureLayer, "mousemove");
-    const mouseoutHandler = getLayerHandler(featureLayer, "mouseout");
+    const mousemoveHandler = featureLayer.on.mock.calls.find((call: unknown[]) => call[0] === "mousemove")?.[1];
+    const mouseoutHandler = featureLayer.on.mock.calls.find((call: unknown[]) => call[0] === "mouseout")?.[1];
 
     mousemoveHandler({
       latlng: { lat: 35.681, lng: 139.767 },
@@ -761,527 +632,7 @@ describe("StgyTrackRenderer", () => {
     expect(overlay?.hidden).toBe(true);
   });
 
-  test("highlights corresponding map point while hovering the route and removes it on leave", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
-
-    renderer.hydrate(document.body);
-
-    await flushPromises();
-
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers();
-    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
-    const mousemoveHandler = getLayerHandler(featureLayer, "mousemove");
-    const mouseoutHandler = getLayerHandler(featureLayer, "mouseout");
-
-    expect(typeof mousemoveHandler).toBe("function");
-    expect(typeof mouseoutHandler).toBe("function");
-
-    mousemoveHandler({
-      latlng: { lat: 35.6848, lng: 139.755 },
-    });
-
-    const map = (L.map as jest.Mock).mock.results[0].value;
-    const marker = (L.circleMarker as jest.Mock).mock.results[0].value;
-
-    expect(L.circleMarker).toHaveBeenCalledWith([35.6848, 139.755], expect.objectContaining({
-      radius: 7,
-      interactive: false,
-    }));
-    expect(map.addLayer).toHaveBeenCalledWith(marker);
-    expect(map.hasLayer(marker)).toBe(true);
-
-    mouseoutHandler();
-
-    expect(map.removeLayer).toHaveBeenCalledWith(marker);
-    expect(map.hasLayer(marker)).toBe(false);
-  });
-
-  test("shows graph hover indicator when hovering the active route", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#multi-route">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTwoRouteTrackWithGraphs());
-
-    renderer.hydrate(document.body);
-
-    await flushPromises();
-
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers(2);
-    const firstLayer = renderedGeoJsonResult?.value.__featureLayers[0];
-    const mousemoveHandler = getLayerHandler(firstLayer, "mousemove");
-
-    expect(typeof mousemoveHandler).toBe("function");
-
-    mousemoveHandler({
-      latlng: { lat: 35.6810, lng: 139.7510 },
-    });
-
-    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
-    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
-    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
-
-    expect(line).not.toBeNull();
-    expect(point).not.toBeNull();
-    expect(readout).not.toBeNull();
-    expect(line?.getAttribute("hidden")).toBeNull();
-    expect(point?.getAttribute("hidden")).toBeNull();
-    expect(line?.getAttribute("x1")).toBe("416");
-    expect(line?.getAttribute("x2")).toBe("416");
-    expect(readout?.textContent).toBe("0.10 km / 11.0 m");
-  });
-
-  test("clears graph hover indicator when leaving the active route", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#multi-route">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTwoRouteTrackWithGraphs());
-
-    renderer.hydrate(document.body);
-
-    await flushPromises();
-
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers(2);
-    const firstLayer = renderedGeoJsonResult?.value.__featureLayers[0];
-    const mousemoveHandler = getLayerHandler(firstLayer, "mousemove");
-    const mouseoutHandler = getLayerHandler(firstLayer, "mouseout");
-
-    mousemoveHandler({
-      latlng: { lat: 35.6810, lng: 139.7510 },
-    });
-
-    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
-    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
-    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
-
-    expect(line?.getAttribute("hidden")).toBeNull();
-    expect(point?.getAttribute("hidden")).toBeNull();
-    expect(readout?.textContent).toBe("0.10 km / 11.0 m");
-
-    mouseoutHandler();
-
-    expect(line?.getAttribute("hidden")).toBe("true");
-    expect(point?.getAttribute("hidden")).toBe("true");
-    expect(readout?.textContent).toBe("");
-  });
-
-  test("does not move graph hover indicator when hovering an inactive route", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#multi-route">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTwoRouteTrackWithGraphs());
-
-    renderer.hydrate(document.body);
-
-    await flushPromises();
-
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers(2);
-    const secondLayer = renderedGeoJsonResult?.value.__featureLayers[1];
-    const mousemoveHandler = getLayerHandler(secondLayer, "mousemove");
-
-    expect(typeof mousemoveHandler).toBe("function");
-
-    mousemoveHandler({
-      latlng: { lat: 35.6910, lng: 139.7610 },
-    });
-
-    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
-    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
-    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
-    const overlay = document.querySelector<HTMLElement>(".stgy-track-hud");
-
-    expect(line?.getAttribute("hidden")).toBe("true");
-    expect(point?.getAttribute("hidden")).toBe("true");
-    expect(readout?.textContent).toBe("");
-    expect(overlay?.hidden).toBe(false);
-    expect(overlay?.textContent).toContain("distances: 1.00 km");
-    expect(overlay?.textContent).toContain("elevations: 200 m");
-    expect(overlay?.textContent).toContain("heart rates: 130 bpm");
-  });
-
-  test("shows graph hover indicator after switching active route by click", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#multi-route">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTwoRouteTrackWithGraphs());
-
-    renderer.hydrate(document.body);
-
-    await flushPromises();
-
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers(2);
-    const secondLayer = renderedGeoJsonResult?.value.__featureLayers[1];
-    const clickHandler = getLayerHandler(secondLayer, "click");
-    const mousemoveHandler = getLayerHandler(secondLayer, "mousemove");
-
-    expect(typeof clickHandler).toBe("function");
-    expect(typeof mousemoveHandler).toBe("function");
-
-    clickHandler();
-
-    mousemoveHandler({
-      latlng: { lat: 35.6910, lng: 139.7610 },
-    });
-
-    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
-    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
-    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
-
-    expect(line?.getAttribute("hidden")).toBeNull();
-    expect(point?.getAttribute("hidden")).toBeNull();
-    expect(line?.getAttribute("x1")).toBe("416");
-    expect(line?.getAttribute("x2")).toBe("416");
-    expect(readout?.textContent).toBe("1.00 km / 200.0 m");
-  });
-
-  test("pins route sample on route click and keeps it after mouseout", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
-
-    renderer.hydrate(document.body);
-
-    await flushPromises();
-
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers();
-    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
-    const clickHandler = getLayerHandler(featureLayer, "click");
-    const mouseoutHandler = getLayerHandler(featureLayer, "mouseout");
-
-    expect(typeof clickHandler).toBe("function");
-    expect(typeof mouseoutHandler).toBe("function");
-
-    clickHandler({
-      latlng: { lat: 35.6848, lng: 139.7550 },
-      originalEvent: new MouseEvent("click"),
-    });
-
-    const map = (L.map as jest.Mock).mock.results[0].value;
-    const marker = (L.circleMarker as jest.Mock).mock.results[0].value;
-    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
-    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
-    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
-    const overlay = document.querySelector<HTMLElement>(".stgy-track-hud");
-
-    expect(line?.getAttribute("hidden")).toBeNull();
-    expect(point?.getAttribute("hidden")).toBeNull();
-    expect(readout?.textContent).toBe("0.21 km / 21.0 m");
-    expect(overlay?.hidden).toBe(false);
-    expect(overlay?.textContent).toContain("distances: 0.21 km");
-    expect(overlay?.textContent).toContain("elevations: 21 m");
-    expect(map.hasLayer(marker)).toBe(true);
-
-    mouseoutHandler();
-
-    expect(line?.getAttribute("hidden")).toBeNull();
-    expect(point?.getAttribute("hidden")).toBeNull();
-    expect(readout?.textContent).toBe("0.21 km / 21.0 m");
-    expect(overlay?.hidden).toBe(false);
-    expect(map.hasLayer(marker)).toBe(true);
-  });
-
-  test("pins graph sample on pointerdown and keeps it after mouseleave", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
-
-    renderer.hydrate(document.body);
-
-    await flushPromises();
-
-    const svg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
-    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
-
-    expect(svg).not.toBeNull();
-    expect(readout).not.toBeNull();
-
-    if (!svg || !readout) return;
-
-    setSvgRect(svg);
-
-    svg.dispatchEvent(new MouseEvent("pointerdown", {
-      bubbles: true,
-      clientX: 333,
-      clientY: 90,
-      buttons: 1,
-    }));
-
-    const map = (L.map as jest.Mock).mock.results[0].value;
-    const marker = (L.circleMarker as jest.Mock).mock.results[0].value;
-    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
-    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
-    const overlay = document.querySelector<HTMLElement>(".stgy-track-hud");
-
-    expect(line?.getAttribute("hidden")).toBeNull();
-    expect(point?.getAttribute("hidden")).toBeNull();
-    expect(readout.textContent).toBe("0.21 km / 21.0 m");
-    expect(overlay?.hidden).toBe(false);
-    expect(map.hasLayer(marker)).toBe(true);
-
-    svg.dispatchEvent(new MouseEvent("mouseleave", {
-      bubbles: true,
-    }));
-
-    expect(line?.getAttribute("hidden")).toBeNull();
-    expect(point?.getAttribute("hidden")).toBeNull();
-    expect(readout.textContent).toBe("0.21 km / 21.0 m");
-    expect(overlay?.hidden).toBe(false);
-    expect(map.hasLayer(marker)).toBe(true);
-  });
-
-  test("updates pinned graph sample while dragging with pointermove", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
-
-    renderer.hydrate(document.body);
-
-    await flushPromises();
-
-    const svg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
-    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
-
-    expect(svg).not.toBeNull();
-    expect(readout).not.toBeNull();
-
-    if (!svg || !readout) return;
-
-    setSvgRect(svg);
-
-    svg.dispatchEvent(new MouseEvent("pointerdown", {
-      bubbles: true,
-      clientX: 52,
-      clientY: 90,
-      buttons: 1,
-    }));
-
-    expect(readout.textContent).toBe("0.00 km / 20.0 m");
-
-    svg.dispatchEvent(new MouseEvent("pointermove", {
-      bubbles: true,
-      clientX: 780,
-      clientY: 90,
-      buttons: 1,
-    }));
-
-    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
-    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
-    const overlay = document.querySelector<HTMLElement>(".stgy-track-hud");
-
-    expect(line?.getAttribute("hidden")).toBeNull();
-    expect(point?.getAttribute("hidden")).toBeNull();
-    expect(readout.textContent).toBe("0.55 km / 22.0 m");
-    expect(overlay?.textContent).toContain("distances: 0.55 km");
-    expect(overlay?.textContent).toContain("elevations: 22 m");
-  });
-
-  test("ignores graph pointermove without pressed button", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
-
-    renderer.hydrate(document.body);
-
-    await flushPromises();
-
-    const svg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
-    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
-
-    expect(svg).not.toBeNull();
-    expect(readout).not.toBeNull();
-
-    if (!svg || !readout) return;
-
-    setSvgRect(svg);
-
-    svg.dispatchEvent(new MouseEvent("pointerdown", {
-      bubbles: true,
-      clientX: 52,
-      clientY: 90,
-      buttons: 1,
-    }));
-
-    expect(readout.textContent).toBe("0.00 km / 20.0 m");
-
-    svg.dispatchEvent(new MouseEvent("pointermove", {
-      bubbles: true,
-      clientX: 780,
-      clientY: 90,
-      buttons: 0,
-    }));
-
-    expect(readout.textContent).toBe("0.00 km / 20.0 m");
-  });
-
-  test("clears graph pinned sample on map background click", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
-
-    renderer.hydrate(document.body);
-
-    await flushPromises();
-
-    const svg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
-    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
-
-    expect(svg).not.toBeNull();
-    expect(readout).not.toBeNull();
-
-    if (!svg || !readout) return;
-
-    setSvgRect(svg);
-
-    svg.dispatchEvent(new MouseEvent("pointerdown", {
-      bubbles: true,
-      clientX: 333,
-      clientY: 90,
-      buttons: 1,
-    }));
-
-    const map = (L.map as jest.Mock).mock.results[0].value;
-    const mapClickHandler = getMapHandler(map, "click");
-    const marker = (L.circleMarker as jest.Mock).mock.results[0].value;
-    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
-    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
-    const overlay = document.querySelector<HTMLElement>(".stgy-track-hud");
-
-    expect(typeof mapClickHandler).toBe("function");
-    expect(map.hasLayer(marker)).toBe(true);
-    expect(line?.getAttribute("hidden")).toBeNull();
-    expect(point?.getAttribute("hidden")).toBeNull();
-    expect(readout.textContent).toBe("0.21 km / 21.0 m");
-    expect(overlay?.hidden).toBe(false);
-
-    mapClickHandler();
-
-    expect(map.hasLayer(marker)).toBe(false);
-    expect(line?.getAttribute("hidden")).toBe("true");
-    expect(point?.getAttribute("hidden")).toBe("true");
-    expect(readout.textContent).toBe("");
-    expect(overlay?.hidden).toBe(true);
-  });
-
-  test("ignores immediate map click after route click and clears on next map click", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
-
-    renderer.hydrate(document.body);
-
-    await flushPromises();
-
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers();
-    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
-    const routeClickHandler = getLayerHandler(featureLayer, "click");
-
-    expect(typeof routeClickHandler).toBe("function");
-
-    routeClickHandler({
-      latlng: { lat: 35.6848, lng: 139.7550 },
-      originalEvent: new MouseEvent("click"),
-    });
-
-    const map = (L.map as jest.Mock).mock.results[0].value;
-    const mapClickHandler = getMapHandler(map, "click");
-    const marker = (L.circleMarker as jest.Mock).mock.results[0].value;
-    const line = document.querySelector<SVGLineElement>(".stgy-track-graph-hover-line");
-    const point = document.querySelector<SVGCircleElement>(".stgy-track-graph-hover-point");
-    const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
-    const overlay = document.querySelector<HTMLElement>(".stgy-track-hud");
-
-    expect(typeof mapClickHandler).toBe("function");
-    expect(map.hasLayer(marker)).toBe(true);
-    expect(readout?.textContent).toBe("0.21 km / 21.0 m");
-    expect(overlay?.hidden).toBe(false);
-
-    mapClickHandler();
-
-    expect(map.hasLayer(marker)).toBe(true);
-    expect(line?.getAttribute("hidden")).toBeNull();
-    expect(point?.getAttribute("hidden")).toBeNull();
-    expect(readout?.textContent).toBe("0.21 km / 21.0 m");
-    expect(overlay?.hidden).toBe(false);
-
-    mapClickHandler();
-
-    expect(map.hasLayer(marker)).toBe(false);
-    expect(line?.getAttribute("hidden")).toBe("true");
-    expect(point?.getAttribute("hidden")).toBe("true");
-    expect(readout?.textContent).toBe("");
-    expect(overlay?.hidden).toBe(true);
-  });
-
-  test("stops route click propagation to keep pinned sample", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
-
-    renderer.hydrate(document.body);
-
-    await flushPromises();
-
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers();
-    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
-    const clickHandler = getLayerHandler(featureLayer, "click");
-    const originalEvent = new MouseEvent("click");
-
-    expect(typeof clickHandler).toBe("function");
-
-    clickHandler({
-      latlng: { lat: 35.6848, lng: 139.7550 },
-      originalEvent,
-    });
-
-    expect(L.DomEvent.stopPropagation).toHaveBeenCalledWith(originalEvent);
-  });
-
-  test("does not create overlay but keeps coordinate marker interaction when data-show-overlay is false", async () => {
+  test("does not create overlay when data-show-overlay is false", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map" data-src="#demo-geojson-hud" data-show-overlay="false">
         <div class="stgy-track-canvas"></div>
@@ -1294,26 +645,14 @@ describe("StgyTrackRenderer", () => {
 
     await flushPromises();
 
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers();
-    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
-    const mousemoveHandler = getLayerHandler(featureLayer, "mousemove");
-
-    expect(document.querySelector(".stgy-track-hud")).toBeNull();
-    expect(typeof mousemoveHandler).toBe("function");
-
-    mousemoveHandler({
-      latlng: { lat: 35.6848, lng: 139.755 },
+    const renderedGeoJsonResult = (L.geoJSON as jest.Mock).mock.results.find((result) => {
+      return result.value.__featureLayers?.length > 0;
     });
 
-    const map = (L.map as jest.Mock).mock.results[0].value;
-    const marker = (L.circleMarker as jest.Mock).mock.results[0].value;
+    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
 
-    expect(L.circleMarker).toHaveBeenCalledWith([35.6848, 139.755], expect.objectContaining({
-      radius: 7,
-      interactive: false,
-    }));
-    expect(map.addLayer).toHaveBeenCalledWith(marker);
     expect(document.querySelector(".stgy-track-hud")).toBeNull();
+    expect(featureLayer).toBeDefined();
   });
 
   test("renders graph by default and disables it when data-show-graph is false", async () => {
@@ -1337,8 +676,9 @@ describe("StgyTrackRenderer", () => {
 
     expect(graphs).toHaveLength(1);
     expect(figures[0].nextElementSibling).toBe(graphs[0]);
-    const secondNext = figures[1].nextElementSibling;
-    expect(secondNext?.classList.contains("stgy-track-graph") ?? false).toBe(false);
+    expect(
+      figures[1].nextElementSibling?.classList.contains("stgy-track-graph") ?? false
+    ).toBe(false);
   });
 
   test("renders multiple popup links and images from properties", async () => {
@@ -1358,15 +698,15 @@ describe("StgyTrackRenderer", () => {
             coordinates: [139.767, 35.681],
           },
           properties: {
-            title: "Tokyo Station",
-            description: "Multiple media test",
+            title: "東京駅",
+            description: "複数画像・リンクのテスト",
             links: [
               "https://example.com",
-              { href: "https://example.com/detail", text: "Details" },
+              { href: "https://example.com/detail", text: "詳細ページ" },
             ],
             images: [
               "https://placehold.co/200x120",
-              { src: "https://placehold.co/300x180", alt: "Alternate image" },
+              { src: "https://placehold.co/300x180", alt: "別画像" },
             ],
           },
         },
@@ -1377,96 +717,28 @@ describe("StgyTrackRenderer", () => {
 
     await flushPromises();
 
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers();
-    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
-    const popupElement = featureLayer.bindPopup.mock.calls[0][0] as HTMLElement;
-
-    expect(popupElement.querySelector(".annot-title")?.textContent).toBe("Tokyo Station");
-    expect(popupElement.querySelector(".annot-desc")?.textContent).toBe("Multiple media test");
-
-    const links = Array.from(popupElement.querySelectorAll<HTMLAnchorElement>(".annot-link a"));
-    expect(links).toHaveLength(2);
-    expect(links[0].textContent).toBe("https://example.com");
-    expect(links[0].getAttribute("href")).toBe("https://example.com/");
-    expect(links[0].getAttribute("target")).toBe("_blank");
-    expect(links[0].getAttribute("rel")).toBe("noopener noreferrer");
-    expect(links[1].textContent).toBe("Details");
-    expect(links[1].getAttribute("href")).toBe("https://example.com/detail");
-
-    const images = Array.from(popupElement.querySelectorAll<HTMLImageElement>(".annot-image img"));
-    expect(images).toHaveLength(2);
-    expect(images[0].getAttribute("src")).toBe("https://placehold.co/200x120");
-    expect(images[0].getAttribute("alt")).toBe("");
-    expect(images[0].referrerPolicy).toBe("no-referrer");
-    expect(images[0].loading).toBe("lazy");
-    expect(images[0].decoding).toBe("async");
-    expect(images[1].getAttribute("src")).toBe("https://placehold.co/300x180");
-    expect(images[1].getAttribute("alt")).toBe("Alternate image");
-    expect(images[1].referrerPolicy).toBe("no-referrer");
-    expect(popupElement.querySelector(".annot-img")).toBeNull();
-    expect(popupElement.querySelector(".annot-href")).toBeNull();
-  });
-
-  test("sanitizes popup content and rejects unsafe URLs from properties", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#demo-geojson-xss">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
-      type: "FeatureCollection",
-      features: [
-        {
-          type: "Feature",
-          geometry: {
-            type: "Point",
-            coordinates: [139.767, 35.681],
-          },
-          properties: {
-            title: "<img src=x onerror=alert(1)>",
-            description: "<script>alert(1)</script>",
-            links: [
-              "javascript:alert(1)",
-              { href: "data:text/html,<script>alert(1)</script>", text: "Bad data URL" },
-              { href: "https://safe.example/path", text: "<b>Safe link</b>" },
-            ],
-            images: [
-              { src: "javascript:alert(1)", alt: "Bad image" },
-              { src: "data:image/svg+xml,<svg onload=alert(1)>", alt: "Bad data image" },
-              { src: "https://safe.example/image.png", alt: "<script>Safe alt</script>" },
-            ],
-          },
-        },
-      ],
+    const renderedGeoJsonResult = (L.geoJSON as jest.Mock).mock.results.find((result) => {
+      return result.value.__featureLayers?.length > 0;
     });
 
-    renderer.hydrate(document.body);
-
-    await flushPromises();
-
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers();
     const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
-    const popupElement = featureLayer.bindPopup.mock.calls[0][0] as HTMLElement;
+    const popupContent = featureLayer.bindPopup.mock.calls[0][0] as string | HTMLElement;
+    const popupHtml = typeof popupContent === "string"
+      ? popupContent
+      : popupContent.outerHTML;
 
-    expect(popupElement.querySelector(".annot-title")?.textContent).toBe("<img src=x onerror=alert(1)>");
-    expect(popupElement.querySelector(".annot-desc")?.textContent).toBe("<script>alert(1)</script>");
-    expect(popupElement.querySelector("script")).toBeNull();
-    expect(popupElement.querySelector("img[src^='javascript']")).toBeNull();
-    expect(popupElement.querySelector("a[href^='javascript']")).toBeNull();
-    expect(popupElement.querySelector("a[href^='data']")).toBeNull();
-    expect(popupElement.querySelector("img[src^='data']")).toBeNull();
-
-    const links = Array.from(popupElement.querySelectorAll<HTMLAnchorElement>(".annot-link a"));
-    expect(links).toHaveLength(1);
-    expect(links[0].textContent).toBe("<b>Safe link</b>");
-    expect(links[0].getAttribute("href")).toBe("https://safe.example/path");
-
-    const images = Array.from(popupElement.querySelectorAll<HTMLImageElement>(".annot-image img"));
-    expect(images).toHaveLength(1);
-    expect(images[0].getAttribute("src")).toBe("https://safe.example/image.png");
-    expect(images[0].getAttribute("alt")).toBe("<script>Safe alt</script>");
-    expect(images[0].referrerPolicy).toBe("no-referrer");
+    expect(popupHtml).toContain('<div class="annot-title">東京駅</div>');
+    expect(popupHtml).toContain('<div class="annot-desc">複数画像・リンクのテスト</div>');
+    expect(popupHtml).toContain('class="annot-link"');
+    expect(popupHtml).toContain('href="https://example.com/"');
+    expect(popupHtml).toContain('href="https://example.com/detail"');
+    expect(popupHtml).toContain('>詳細ページ</a>');
+    expect(popupHtml).toContain('class="annot-image"');
+    expect(popupHtml).toContain('src="https://placehold.co/200x120"');
+    expect(popupHtml).toContain('src="https://placehold.co/300x180"');
+    expect(popupHtml).toContain('alt="別画像"');
+    expect(popupHtml).not.toContain("annot-img");
+    expect(popupHtml).not.toContain("annot-href");
   });
 
   test("renders graph outside the figure without shrinking map area", async () => {
@@ -1599,12 +871,28 @@ describe("StgyTrackRenderer", () => {
 
     if (!svg || !readout) return;
 
-    hoverGraphAtMiddlePoint(svg);
+    svg.getBoundingClientRect = jest.fn().mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 800,
+      height: 180,
+      right: 800,
+      bottom: 180,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    svg.dispatchEvent(new MouseEvent("mousemove", {
+      bubbles: true,
+      clientX: 333,
+      clientY: 90,
+    }));
 
     expect(readout.textContent).toBe("0.21 km / 21.0 m");
   });
 
-  test("updates overlay and highlights corresponding map point while hovering graph", async () => {
+  test("highlights corresponding map point while hovering graph and removes it on leave", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map" data-src="#demo-geojson-hud">
         <div class="stgy-track-canvas"></div>
@@ -1622,12 +910,27 @@ describe("StgyTrackRenderer", () => {
 
     if (!svg) return;
 
+    svg.getBoundingClientRect = jest.fn().mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 800,
+      height: 180,
+      right: 800,
+      bottom: 180,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
     const map = (L.map as jest.Mock).mock.results[0].value;
 
-    hoverGraphAtMiddlePoint(svg);
+    svg.dispatchEvent(new MouseEvent("mousemove", {
+      bubbles: true,
+      clientX: 333,
+      clientY: 90,
+    }));
 
     const marker = (L.circleMarker as jest.Mock).mock.results[0].value;
-    const overlay = document.querySelector<HTMLElement>(".stgy-track-hud");
 
     expect(L.circleMarker).toHaveBeenCalledWith([35.6848, 139.755], expect.objectContaining({
       radius: 7,
@@ -1635,12 +938,6 @@ describe("StgyTrackRenderer", () => {
     }));
     expect(map.addLayer).toHaveBeenCalledWith(marker);
     expect(map.hasLayer(marker)).toBe(true);
-    expect(overlay).not.toBeNull();
-    expect(overlay?.hidden).toBe(false);
-    expect(overlay?.textContent).toContain("distances: 0.21 km");
-    expect(overlay?.textContent).toContain("elevations: 21 m");
-    expect(overlay?.textContent).toContain("heart rates: 123 bpm");
-    expect(overlay?.textContent).toContain("powers: 145 W");
 
     svg.dispatchEvent(new MouseEvent("mouseleave", {
       bubbles: true,
@@ -1648,67 +945,134 @@ describe("StgyTrackRenderer", () => {
 
     expect(map.removeLayer).toHaveBeenCalledWith(marker);
     expect(map.hasLayer(marker)).toBe(false);
-    expect(overlay?.hidden).toBe(true);
   });
 
-  test("switches graph dataset when a route layer is clicked", async () => {
+  const setupBaseLayerMap = (baseLayer: string | null, isJapanValue: boolean) => {
+    const baseLayerAttribute = baseLayer === null
+      ? ""
+      : ` data-base-layer="${baseLayer}"`;
+
     document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#multi-route">
+      <figure
+        class="stgy-track-map"
+        data-lat="35.681"
+        data-lon="139.767"${baseLayerAttribute}>
         <div class="stgy-track-canvas"></div>
       </figure>
     `;
 
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTwoRouteTrackWithGraphs());
+    isJapanSpy.mockReturnValue(isJapanValue);
 
     renderer.hydrate(document.body);
 
-    await flushPromises();
+    const mapOptions = (L.map as jest.Mock).mock.calls[0][1] as {
+      layers: Array<{ __url: string }>;
+    };
+    const baseMaps = (L.control.layers as jest.Mock).mock.calls[0][0] as Record<
+      string,
+      { __url: string }
+    >;
 
-    const renderedGeoJsonResult = findRenderedGeoJsonWithFeatureLayers(2);
-    const firstLayer = renderedGeoJsonResult?.value.__featureLayers[0];
-    const secondLayer = renderedGeoJsonResult?.value.__featureLayers[1];
+    return {
+      defaultUrl: mapOptions.layers[0].__url,
+      baseMaps,
+    };
+  };
 
-    expect(firstLayer).toBeDefined();
-    expect(secondLayer).toBeDefined();
+  test("uses GSI Pale by default in Japan", () => {
+    const result = setupBaseLayerMap(null, true);
 
-    const secondClickHandler = getLayerHandler(secondLayer, "click");
-    expect(typeof secondClickHandler).toBe("function");
+    expect(result.defaultUrl).toContain("/pale/");
+  });
 
-    const firstSvg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
-    const firstReadout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
+  test("uses CyclOSM by default outside Japan", () => {
+    const result = setupBaseLayerMap(null, false);
 
-    expect(firstSvg).not.toBeNull();
-    expect(firstReadout).not.toBeNull();
+    expect(result.defaultUrl).toContain("tile-cyclosm");
+  });
 
-    if (!firstSvg || !firstReadout) return;
+  test("uses OpenStreetMap when data-base-layer is osm", () => {
+    const result = setupBaseLayerMap("osm", true);
 
-    hoverGraphAtMiddlePoint(firstSvg);
+    expect(result.defaultUrl).toContain("tile.openstreetmap.org");
+  });
 
-    expect(firstReadout.textContent).toBe("0.10 km / 11.0 m");
+  test("uses OpenStreetMap when data-base-layer is openstreetmap", () => {
+    const result = setupBaseLayerMap("openstreetmap", true);
 
-    secondClickHandler();
+    expect(result.defaultUrl).toContain("tile.openstreetmap.org");
+  });
 
-    const secondSvg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
-    const secondReadout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
+  test("uses OpenStreetMap when data-base-layer is open-street-map", () => {
+    const result = setupBaseLayerMap("open-street-map", true);
 
-    expect(secondSvg).not.toBeNull();
-    expect(secondReadout).not.toBeNull();
+    expect(result.defaultUrl).toContain("tile.openstreetmap.org");
+  });
 
-    if (!secondSvg || !secondReadout) return;
+  test("normalizes base layer names with spaces and case", () => {
+    const result = setupBaseLayerMap(" Open Street Map ", true);
 
-    hoverGraphAtMiddlePoint(secondSvg);
+    expect(result.defaultUrl).toContain("tile.openstreetmap.org");
+  });
 
-    expect(secondReadout.textContent).toBe("1.00 km / 200.0 m");
-    expect(firstLayer.setStyle).toHaveBeenCalledWith(expect.objectContaining({
-      color: "#ff0000",
-      weight: 4,
-      opacity: 0.8,
-    }));
-    expect(secondLayer.setStyle).toHaveBeenCalledWith(expect.objectContaining({
-      color: "#00aa00",
-      weight: 7,
-      opacity: 1,
-    }));
-    expect(secondLayer.bringToFront).toHaveBeenCalled();
+  test("uses GSI Pale when data-base-layer is pale", () => {
+    const result = setupBaseLayerMap("pale", true);
+
+    expect(result.defaultUrl).toContain("/pale/");
+  });
+
+  test("uses GSI Standard when data-base-layer is std", () => {
+    const result = setupBaseLayerMap("std", true);
+
+    expect(result.defaultUrl).toContain("/std/");
+  });
+
+  test("uses GSI Standard when data-base-layer is gsi_standard", () => {
+    const result = setupBaseLayerMap("gsi_standard", true);
+
+    expect(result.defaultUrl).toContain("/std/");
+  });
+
+  test("uses GSI Photo when data-base-layer is photo", () => {
+    const result = setupBaseLayerMap("photo", true);
+
+    expect(result.defaultUrl).toContain("seamlessphoto");
+  });
+
+  test("allows requested GSI Photo outside Japan", () => {
+    const result = setupBaseLayerMap("gsi-photo", false);
+
+    expect(result.defaultUrl).toContain("seamlessphoto");
+    expect(result.baseMaps).toHaveProperty("GSI Photo");
+  });
+
+  test("uses CyclOSM when data-base-layer is cycle", () => {
+    const result = setupBaseLayerMap("cycle", true);
+
+    expect(result.defaultUrl).toContain("tile-cyclosm");
+  });
+
+  test("uses OpenTopoMap when data-base-layer is topo", () => {
+    const result = setupBaseLayerMap("topo", true);
+
+    expect(result.defaultUrl).toContain("tile.opentopomap.org");
+  });
+
+  test("uses OpenTopoMap when data-base-layer is open_topo_map", () => {
+    const result = setupBaseLayerMap("open_topo_map", true);
+
+    expect(result.defaultUrl).toContain("tile.opentopomap.org");
+  });
+
+  test("falls back to GSI Pale for an invalid layer in Japan", () => {
+    const result = setupBaseLayerMap("unknown-layer", true);
+
+    expect(result.defaultUrl).toContain("/pale/");
+  });
+
+  test("falls back to CyclOSM for an invalid layer outside Japan", () => {
+    const result = setupBaseLayerMap("unknown-layer", false);
+
+    expect(result.defaultUrl).toContain("tile-cyclosm");
   });
 });

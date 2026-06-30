@@ -8,6 +8,9 @@ const JSON_MIME_TYPES = new Set([
 const GZIP_MIME_TYPES = new Set([
   "application/gzip",
   "application/x-gzip",
+  "application/json+gzip",
+  "application/geo+json+gzip",
+  "application/vnd.geo+json+gzip",
 ]);
 
 type TrackDataKind = "json" | "gzip";
@@ -17,7 +20,7 @@ type TrackDataKind = "json" | "gzip";
  * template sources.
  */
 export class TrackLoader {
-  public async load(source: string): Promise<any> {
+  public async load(source: string): Promise<unknown> {
     if (source.startsWith("#")) {
       return Promise.resolve(this.loadFromDom(source));
     }
@@ -25,7 +28,7 @@ export class TrackLoader {
     return this.loadFromUrl(source);
   }
 
-  private loadFromDom(selector: string): any {
+  private loadFromDom(selector: string): unknown {
     const id = selector.substring(1);
     const element = document.getElementById(id);
 
@@ -50,7 +53,7 @@ export class TrackLoader {
     return element.textContent || "";
   }
 
-  private async loadFromUrl(source: string): Promise<any> {
+  private async loadFromUrl(source: string): Promise<unknown> {
     const response = await fetch(source);
 
     if (!response.ok) {
@@ -85,7 +88,7 @@ export class TrackLoader {
       return "json";
     }
 
-    if (GZIP_MIME_TYPES.has(mimeType)) {
+    if (GZIP_MIME_TYPES.has(mimeType) || mimeType.endsWith("+gzip")) {
       return "gzip";
     }
 
@@ -109,7 +112,7 @@ export class TrackLoader {
     });
   }
 
-  private async loadGzipResponse(response: Response, source: string): Promise<any> {
+  private async loadGzipResponse(response: Response, source: string): Promise<unknown> {
     if (this.isContentEncodedGzip(response)) {
       return this.parseJsonText(await response.text(), source);
     }
@@ -125,7 +128,7 @@ export class TrackLoader {
     return this.parseJsonText(await decompressedResponse.text(), source);
   }
 
-  private parseJsonText(text: string, source: string): any {
+  private parseJsonText(text: string, source: string): unknown {
     try {
       return JSON.parse(text);
     } catch (e) {

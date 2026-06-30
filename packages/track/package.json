@@ -2,16 +2,48 @@
   "name": "stgy-track",
   "version": "1.0.0",
   "private": true,
+  "description": "Leaflet-based TrackJSON and FIT route viewer for HTML pages",
   "author": "Mikio Hirabayashi",
   "license": "MIT",
   "type": "commonjs",
-  "main": "dist/index.js",
-  "types": "dist/index.d.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "require": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./fit": {
+      "types": "./dist/fit.d.ts",
+      "require": "./dist/fit.js",
+      "default": "./dist/fit.js"
+    },
+    "./trackjson": {
+      "types": "./dist/trackjson.d.ts",
+      "require": "./dist/trackjson.js",
+      "default": "./dist/trackjson.js"
+    },
+    "./trackjson.schema.json": "./trackjson.schema.json",
+    "./track-viewer.js": "./dist/track-viewer.js",
+    "./track-viewer.css": "./dist/track-viewer.css",
+    "./fit-demo.js": "./dist/fit-demo.js"
+  },
   "files": [
-    "dist"
+    "dist",
+    "README.md",
+    "TRACKJSON.md",
+    "CHANGELOG.md",
+    "LICENSE",
+    "trackjson.schema.json"
+  ],
+  "sideEffects": [
+    "*.css",
+    "dist/*.css",
+    "src/**/*.css"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "tsc -p tsconfig.build.json",
     "dev": "tsc -w -p tsconfig.json",
     "check": "tsc --noEmit",
     "bundle": "npm run bundle:viewer && npm run bundle:fit-demo",
@@ -19,7 +51,13 @@
     "bundle:fit-demo": "esbuild src/fit-demo.ts --bundle --minify --outfile=dist/fit-demo.js --format=iife --global-name=StgyFitDemo",
     "test": "jest",
     "lint": "eslint src",
-    "clean": "rm -rf node_modules dist"
+    "verify": "npm run test && npm run check && npm run lint",
+    "dist": "npm run clean && npm run build && npm run bundle",
+    "serve:examples": "python3 -m http.server 8000",
+    "pack:dry-run": "npm pack --dry-run",
+    "release:check": "sh scripts/check-release.sh",
+    "prepack": "npm run dist",
+    "clean": "rm -rf dist coverage"
   },
   "dependencies": {
     "@garmin/fitsdk": "^21.208.0",
