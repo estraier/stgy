@@ -1,4 +1,4 @@
-import { gzipSync, gunzipSync } from "zlib";
+import { gzipSync } from "zlib";
 
 type TrackActivity = {
   schemaVersion: number;
@@ -31,10 +31,10 @@ type TrackJsonModule = {
   compactTrackJsonData: (data: unknown) => unknown;
 };
 
-function loadModule<T>(candidates: string[]): T {
+async function loadModule<T>(candidates: string[]): Promise<T> {
   for (const candidate of candidates) {
     try {
-      return require(candidate) as T;
+      return (await import(candidate)) as T;
     } catch {
       // Try the next candidate. Package layouts differ between source and dist.
     }
@@ -42,8 +42,8 @@ function loadModule<T>(candidates: string[]): T {
   throw new Error(`Cannot load module: ${candidates.join(", ")}`);
 }
 
-function loadFitModule(): FitModule {
-  return loadModule<FitModule>([
+async function loadFitModule(): Promise<FitModule> {
+  return await loadModule<FitModule>([
     "stgy-track/fit",
     "stgy-track/dist/fit",
     "stgy-track/dist/src/fit",
@@ -51,12 +51,11 @@ function loadFitModule(): FitModule {
   ]);
 }
 
-function loadTrackJsonModule(): TrackJsonModule {
-  return loadModule<TrackJsonModule>([
+async function loadTrackJsonModule(): Promise<TrackJsonModule> {
+  return await loadModule<TrackJsonModule>([
     "stgy-track/trackjson",
     "stgy-track/dist/trackjson",
     "stgy-track/dist/src/trackjson",
-    "stgy-track/src/trackjson",
   ]);
 }
 
@@ -64,12 +63,11 @@ function gzipUtf8(text: string): Uint8Array {
   return new Uint8Array(gzipSync(Buffer.from(text, "utf8")));
 }
 
-function gunzipUtf8(bytes: Uint8Array): string {
-  return gunzipSync(Buffer.from(bytes)).toString("utf8");
-}
-
-export function makeFitTrackPreview(bytes: Uint8Array, maxPoints: number): Uint8Array {
-  const fit = loadFitModule();
+export async function makeFitTrackPreview(
+  bytes: Uint8Array,
+  maxPoints: number,
+): Promise<Uint8Array> {
+  const fit = await loadFitModule();
   const activity = fit.parseFitBytes(bytes);
   const preview = fit.downsampleTrackActivity(activity, {
     maxPoints,
@@ -82,9 +80,11 @@ export function makeFitTrackPreview(bytes: Uint8Array, maxPoints: number): Uint8
   return gzipUtf8(text);
 }
 
-export function makeTrackJsonTrackPreview(bytes: Uint8Array, maxPoints: number): Uint8Array {
-  const trackjson = loadTrackJsonModule();
-  const text = gunzipUtf8(bytes);
+export async function makeTrackJsonTrackPreview(
+  text: string,
+  maxPoints: number,
+): Promise<Uint8Array> {
+  const trackjson = await loadTrackJsonModule();
   const data = trackjson.parseTrackJsonData(text);
   const downsampled = trackjson.downsampleTrackJsonData(data, {
     maxPoints,

@@ -10,6 +10,11 @@ jest.mock("../config", () => ({
     MEDIA_TRACK_BYTE_LIMIT: 20 * 1024 * 1024,
     MEDIA_TRACK_BYTE_LIMIT_PER_MONTH: 200 * 1024 * 1024,
     MEDIA_TRACK_PREVIEW_MAX_POINTS: 3000,
+    MEDIA_TRACK_JSON_BYTE_LIMIT: 1024,
+    MEDIA_TRACK_JSON_FEATURE_LIMIT: 100,
+    MEDIA_TRACK_JSON_POINT_LIMIT: 100000,
+    MEDIA_TRACK_JSON_PROPERTY_VALUE_LIMIT: 1000000,
+    MEDIA_TRACK_JSON_DEPTH_LIMIT: 32,
   },
 }));
 
@@ -85,6 +90,16 @@ describe("TracksService", () => {
       storageClass: "STANDARD",
       contentType,
     };
+  }
+
+  function makeFitBytes(): Uint8Array {
+    const bytes = new Uint8Array(14);
+    bytes[0] = 14;
+    bytes[8] = 0x2e;
+    bytes[9] = 0x46;
+    bytes[10] = 0x49;
+    bytes[11] = 0x54;
+    return bytes;
   }
 
   test("presignTrackUpload: success for FIT with monthly quota check", async () => {
@@ -170,7 +185,7 @@ describe("TracksService", () => {
     storage.headObject.mockResolvedValueOnce(
       makeMeta(stagingKey, 2 * 1024 * 1024, "application/octet-stream"),
     );
-    storage.loadObject.mockResolvedValueOnce(new Uint8Array([1, 2, 3, 4]));
+    storage.loadObject.mockResolvedValueOnce(makeFitBytes()).mockResolvedValueOnce(makeFitBytes());
     storage.listObjects.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
 
     const masterMeta = makeMeta(
@@ -217,7 +232,9 @@ describe("TracksService", () => {
       features: [],
     });
     storage.headObject.mockResolvedValueOnce(makeMeta(stagingKey, 1000, "application/gzip"));
-    storage.loadObject.mockResolvedValueOnce(new Uint8Array(gzipSync(Buffer.from(trackJson))));
+    storage.loadObject
+      .mockResolvedValueOnce(new Uint8Array(gzipSync(Buffer.from(trackJson))).slice(0, 64))
+      .mockResolvedValueOnce(new Uint8Array(gzipSync(Buffer.from(trackJson))));
     storage.listObjects.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
     storage.headObject
       .mockResolvedValueOnce(makeMeta("u1/masters/797491/master.trjgz", 1000, "application/gzip"))
@@ -232,6 +249,16 @@ describe("TracksService", () => {
     expect(storage.saveObject.mock.calls[0][0].key).toMatch(
       /^u1\/previews\/797491\/[0-9a-f]{16}\.trjgz$/,
     );
+  });
+
+  test("finalizeTrack: deletes and rejects invalid FIT header", async () => {
+    const stagingKey = "tracks-staging/u1/tmp.fit";
+    storage.headObject.mockResolvedValueOnce(makeMeta(stagingKey, 1000, "application/octet-stream"));
+    storage.loadObject.mockResolvedValueOnce(new Uint8Array([1, 2, 3, 4]));
+
+    await expect(service.finalizeTrack(userId, stagingKey)).rejects.toThrow(/invalid track data/i);
+    expect(storage.deleteObject).toHaveBeenCalledWith({ bucket, key: stagingKey });
+    expect(storage.loadObject).toHaveBeenCalledTimes(1);
   });
 
   test("finalizeTrack: rejects invalid key path", async () => {
@@ -250,7 +277,7 @@ describe("TracksService", () => {
 
     const stagingKey = "tracks-staging/u1/tmp.fit";
     storage.headObject.mockResolvedValueOnce(makeMeta(stagingKey, 1000, "application/octet-stream"));
-    storage.loadObject.mockResolvedValueOnce(new Uint8Array([1, 2, 3, 4]));
+    storage.loadObject.mockResolvedValueOnce(makeFitBytes()).mockResolvedValueOnce(makeFitBytes());
 
     await expect(service.finalizeTrack(userId, stagingKey)).rejects.toThrow(/invalid track data/i);
     expect(storage.deleteObject).toHaveBeenCalledWith({ bucket, key: stagingKey });
@@ -261,7 +288,7 @@ describe("TracksService", () => {
     storage.headObject.mockResolvedValueOnce(
       makeMeta(stagingKey, 2 * 1024 * 1024, "application/octet-stream"),
     );
-    storage.loadObject.mockResolvedValueOnce(new Uint8Array([1, 2, 3, 4]));
+    storage.loadObject.mockResolvedValueOnce(makeFitBytes()).mockResolvedValueOnce(makeFitBytes());
     storage.listObjects
       .mockResolvedValueOnce([makeMeta("u1/masters/797491/a.fit", 199 * 1024 * 1024)])
       .mockResolvedValueOnce([makeMeta("u1/previews/797491/a.trjgz", 2 * 1024 * 1024)]);
@@ -270,6 +297,22 @@ describe("TracksService", () => {
       /monthly quota exceeded/i,
     );
     expect(storage.deleteObject).toHaveBeenCalledWith({ bucket, key: stagingKey });
+  });
+
+  test("finalizeTrack: deletes and rejects oversized TRJGZ JSON", async () => {
+    const stagingKey = "tracks-staging/u1/tmp.trjgz";
+    const body = JSON.stringify({
+      type: "FeatureCollection",
+      features: [],
+      padding: "x".repeat(2048),
+    });
+    const gz = new Uint8Array(gzipSync(Buffer.from(body)));
+    storage.headObject.mockResolvedValueOnce(makeMeta(stagingKey, gz.length, "application/gzip"));
+    storage.loadObject.mockResolvedValueOnce(gz.slice(0, 64)).mockResolvedValueOnce(gz);
+
+    await expect(service.finalizeTrack(userId, stagingKey)).rejects.toThrow(/invalid track data/i);
+    expect(storage.deleteObject).toHaveBeenCalledWith({ bucket, key: stagingKey });
+    expect(storage.moveObject).not.toHaveBeenCalled();
   });
 
   test("listTracks: returns masters with public and preview URLs", async () => {

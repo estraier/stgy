@@ -6,6 +6,12 @@ import {
 import type { StorageService } from "./storage";
 import { Config } from "../config";
 import { makeFitTrackPreview, makeTrackJsonTrackPreview } from "./trackPreview";
+import {
+  gunzipWithLimit,
+  sniffFitHeader,
+  sniffGzipHeader,
+  validateTrackJsonOperationalLimits,
+} from "../utils/track";
 
 export type TrackStorageMonthlyQuota = {
   userId: string;
@@ -126,11 +132,40 @@ function getPreviewMaxPoints(): number {
   return Number.isFinite(value) && value >= 2 ? Math.floor(value) : 3000;
 }
 
-function makePreviewBytes(kind: TrackMasterKind, bytes: Uint8Array): Uint8Array {
+function getTrackJsonByteLimit(): number {
+  const value = Number(Config.MEDIA_TRACK_JSON_BYTE_LIMIT ?? 0);
+  return Number.isFinite(value) && value > 0 ? Math.floor(value) : 10 * 1024 * 1024;
+}
+
+function getTrackJsonLimits() {
+  return {
+    maxFeatures: Number(Config.MEDIA_TRACK_JSON_FEATURE_LIMIT ?? 0) || 100,
+    maxPoints: Number(Config.MEDIA_TRACK_JSON_POINT_LIMIT ?? 0) || 100000,
+    maxPropertyValues: Number(Config.MEDIA_TRACK_JSON_PROPERTY_VALUE_LIMIT ?? 0) || 1000000,
+    maxDepth: Number(Config.MEDIA_TRACK_JSON_DEPTH_LIMIT ?? 0) || 32,
+  };
+}
+
+function bytesToUtf8(bytes: Uint8Array): string {
+  return Buffer.from(bytes).toString("utf8");
+}
+
+async function makePreviewBytes(kind: TrackMasterKind, bytes: Uint8Array): Promise<Uint8Array> {
   const maxPoints = getPreviewMaxPoints();
-  return kind === "fit"
-    ? makeFitTrackPreview(bytes, maxPoints)
-    : makeTrackJsonTrackPreview(bytes, maxPoints);
+  if (kind === "fit") {
+    return makeFitTrackPreview(bytes, maxPoints);
+  }
+
+  const jsonBytes = await gunzipWithLimit(bytes, getTrackJsonByteLimit());
+  const jsonText = bytesToUtf8(jsonBytes);
+  let data: unknown;
+  try {
+    data = JSON.parse(jsonText);
+  } catch {
+    throw new Error("invalid track json");
+  }
+  validateTrackJsonOperationalLimits(data, getTrackJsonLimits());
+  return makeTrackJsonTrackPreview(jsonText, maxPoints);
 }
 
 function getYyyyMm(d: Date): string {
@@ -209,6 +244,18 @@ export class TracksService {
       throw new Error("unsupported content type");
     }
 
+    const headerBytes = await this.storage.loadObject(
+      {
+        bucket: Config.MEDIA_BUCKET_TRACKS,
+        key: stagingKey,
+      },
+      { offset: 0, length: 64 },
+    );
+    if (kind === "fit" ? !sniffFitHeader(headerBytes) : !sniffGzipHeader(headerBytes)) {
+      await this.deleteStaging(stagingKey);
+      throw new Error("invalid track data");
+    }
+
     const bytes = await this.storage.loadObject({
       bucket: Config.MEDIA_BUCKET_TRACKS,
       key: stagingKey,
@@ -216,7 +263,7 @@ export class TracksService {
 
     let previewBytes: Uint8Array;
     try {
-      previewBytes = makePreviewBytes(kind, bytes);
+      previewBytes = await makePreviewBytes(kind, bytes);
     } catch {
       await this.deleteStaging(stagingKey);
       throw new Error("invalid track data");
