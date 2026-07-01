@@ -2,7 +2,11 @@ import { Decoder, Stream } from "@garmin/fitsdk";
 import {
   TrackJsonConversionError,
   TrackParseError,
+  computeHeartRateZoneSummary,
+  computePowerZoneSummary,
   downsampleTrackActivity,
+  getHeartRateZone,
+  getPowerZone,
   parseFitBytes,
   obfuscateFitPrivacy,
   trackActivityToTrackJson,
@@ -258,6 +262,27 @@ describe("parseFitBytes", () => {
     });
   });
 
+
+  test("computes Strava-style best power efforts", () => {
+    mockDecoder(true, {
+      messages: {
+        recordMesgs: Array.from({ length: 20 }, (_, index) => {
+          return {
+            timestamp: 1710000000 + index,
+            power: index < 10 ? 100 : 300,
+          };
+        }),
+      },
+    });
+
+    const activity = parseFitBytes(new Uint8Array([1, 2, 3]));
+
+    expect(activity.metadata.bestEfforts?.powerW).toEqual({
+      "5": 300,
+      "15": 233.33333333333334,
+    });
+  });
+
   test("uses FIT total work when present", () => {
     mockDecoder(true, {
       messages: {
@@ -498,6 +523,12 @@ describe("downsampleTrackActivity", () => {
         totalWork: "computed",
       },
     };
+    activity.metadata.bestEfforts = {
+      powerW: {
+        "5": 450,
+        "60": 250,
+      },
+    };
 
     const downsampled = downsampleTrackActivity(activity, {
       maxPoints: 4,
@@ -515,6 +546,12 @@ describe("downsampleTrackActivity", () => {
     expect(downsampled.metadata.training).not.toBe(activity.metadata.training);
     expect(downsampled.metadata.training?.source).not.toBe(
       activity.metadata.training.source,
+    );
+    expect(downsampled.metadata.bestEfforts).not.toBe(
+      activity.metadata.bestEfforts,
+    );
+    expect(downsampled.metadata.bestEfforts?.powerW).not.toBe(
+      activity.metadata.bestEfforts.powerW,
     );
   });
 
@@ -631,6 +668,12 @@ describe("trackActivityToTrackJson", () => {
         totalCalories: "fit",
       },
     };
+    activity.metadata.bestEfforts = {
+      powerW: {
+        "5": 512.34,
+        "60": 234.56,
+      },
+    };
 
     const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const metadata = parsed.features[0].properties.metadata;
@@ -655,6 +698,12 @@ describe("trackActivityToTrackJson", () => {
         normalizedPower: "computed",
         totalWork: "computed",
         totalCalories: "fit",
+      },
+    });
+    expect(metadata.bestEfforts).toEqual({
+      powerW: {
+        "5": 512.3,
+        "60": 234.6,
       },
     });
   });
@@ -828,6 +877,70 @@ describe("trackActivityToTrackJson", () => {
     });
 
     expect(json).toContain("\n  ");
+  });
+});
+
+
+describe("training zones", () => {
+  test("classifies Coggan-style power zones", () => {
+    expect(getPowerZone(110, 200)).toBe("z1");
+    expect(getPowerZone(150, 200)).toBe("z2");
+    expect(getPowerZone(180, 200)).toBe("z3");
+    expect(getPowerZone(210, 200)).toBe("z4");
+    expect(getPowerZone(240, 200)).toBe("z5");
+    expect(getPowerZone(300, 200)).toBe("z6");
+    expect(getPowerZone(301, 200)).toBe("z7");
+  });
+
+  test("classifies LTHR-based heart-rate zones", () => {
+    expect(getHeartRateZone(130, 160)).toBe("z1");
+    expect(getHeartRateZone(142, 160)).toBe("z2");
+    expect(getHeartRateZone(150, 160)).toBe("z3");
+    expect(getHeartRateZone(160, 160)).toBe("z4");
+    expect(getHeartRateZone(161, 160)).toBe("z5");
+  });
+
+  test("computes timed power zone durations", () => {
+    const points: TrackPoint[] = [
+      { time: 0, powerW: 100 },
+      { time: 10, powerW: 160 },
+      { time: 20, powerW: 220 },
+      { time: 30, powerW: 320 },
+    ];
+
+    const summary = computePowerZoneSummary(points, 200);
+
+    expect(summary.totalSeconds).toBe(30);
+    expect(summary.durations).toEqual({
+      z1: 10,
+      z2: 0,
+      z3: 10,
+      z4: 0,
+      z5: 10,
+      z6: 0,
+      z7: 0,
+    });
+    expect(summary.percentages.z1).toBeCloseTo(33.3333);
+  });
+
+  test("computes timed heart-rate zone durations", () => {
+    const points: TrackPoint[] = [
+      { time: 0, heartRateBpm: 120 },
+      { time: 10, heartRateBpm: 140 },
+      { time: 20, heartRateBpm: 155 },
+      { time: 30, heartRateBpm: 170 },
+    ];
+
+    const summary = computeHeartRateZoneSummary(points, 160);
+
+    expect(summary.totalSeconds).toBe(30);
+    expect(summary.durations).toEqual({
+      z1: 10,
+      z2: 10,
+      z3: 0,
+      z4: 10,
+      z5: 0,
+    });
   });
 });
 

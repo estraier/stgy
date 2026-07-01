@@ -15,6 +15,41 @@ const DEFAULT_TRACK_JSON_PRECISION = {
   metrics: 1,
   metadata: 1,
 };
+export const STRAVA_POWER_CURVE_DURATIONS_SECONDS = [
+  5,
+  15,
+  30,
+  60,
+  120,
+  180,
+  300,
+  480,
+  600,
+  900,
+  1200,
+  1800,
+  2700,
+  3600,
+  7200,
+] as const;
+
+const POWER_ZONE_KEYS: TrackPowerZoneKey[] = [
+  "z1",
+  "z2",
+  "z3",
+  "z4",
+  "z5",
+  "z6",
+  "z7",
+];
+const HEART_RATE_ZONE_KEYS: TrackHeartRateZoneKey[] = [
+  "z1",
+  "z2",
+  "z3",
+  "z4",
+  "z5",
+];
+
 const RESERVED_METRIC_NAMES = new Set([
   "times",
   "distances",
@@ -50,6 +85,7 @@ export type TrackActivityMetadata = {
   totalDistanceM?: number;
   statistics?: TrackActivityStatistics;
   training?: TrackActivityTraining;
+  bestEfforts?: TrackActivityBestEfforts;
 };
 
 export type TrackActivityStatistics = {
@@ -77,6 +113,24 @@ export type TrackActivityTrainingSource = {
   normalizedPower?: "fit" | "computed";
   totalWork?: "fit" | "computed";
   totalCalories?: "fit";
+};
+
+export type TrackActivityBestEfforts = {
+  powerW?: TrackDurationBestEfforts;
+};
+
+export type TrackDurationBestEfforts = Record<string, number>;
+
+export type TrackPowerZoneKey = "z1" | "z2" | "z3" | "z4" | "z5" | "z6" | "z7";
+export type TrackHeartRateZoneKey = "z1" | "z2" | "z3" | "z4" | "z5";
+
+export type TrackPowerZoneSummary = TrackZoneSummary<TrackPowerZoneKey>;
+export type TrackHeartRateZoneSummary = TrackZoneSummary<TrackHeartRateZoneKey>;
+
+export type TrackZoneSummary<TZone extends string> = {
+  totalSeconds: number;
+  durations: Record<TZone, number>;
+  percentages: Record<TZone, number>;
 };
 
 export type TrackDataSource = {
@@ -192,6 +246,94 @@ export class TrackJsonConversionError extends Error {
     this.code = code;
     Object.setPrototypeOf(this, TrackJsonConversionError.prototype);
   }
+}
+
+export function getPowerZone(
+  powerW: number,
+  ftpW: number,
+): TrackPowerZoneKey | undefined {
+  assertPositiveFiniteNumber(ftpW, "ftpW");
+  if (!isFiniteNumber(powerW)) {
+    return undefined;
+  }
+
+  const ratio = powerW / ftpW;
+  if (ratio <= 0.55) {
+    return "z1";
+  }
+  if (ratio <= 0.75) {
+    return "z2";
+  }
+  if (ratio <= 0.9) {
+    return "z3";
+  }
+  if (ratio <= 1.05) {
+    return "z4";
+  }
+  if (ratio <= 1.2) {
+    return "z5";
+  }
+  if (ratio <= 1.5) {
+    return "z6";
+  }
+
+  return "z7";
+}
+
+export function getHeartRateZone(
+  heartRateBpm: number,
+  lthrBpm: number,
+): TrackHeartRateZoneKey | undefined {
+  assertPositiveFiniteNumber(lthrBpm, "lthrBpm");
+  if (!isFiniteNumber(heartRateBpm)) {
+    return undefined;
+  }
+
+  const z1Max = Math.round(lthrBpm * 0.81);
+  const z2Max = Math.round(lthrBpm * 0.89);
+  const z3Max = Math.round(lthrBpm * 0.94);
+  const z4Max = Math.round(lthrBpm);
+
+  if (heartRateBpm <= z1Max) {
+    return "z1";
+  }
+  if (heartRateBpm <= z2Max) {
+    return "z2";
+  }
+  if (heartRateBpm <= z3Max) {
+    return "z3";
+  }
+  if (heartRateBpm <= z4Max) {
+    return "z4";
+  }
+
+  return "z5";
+}
+
+export function computePowerZoneSummary(
+  points: TrackPoint[],
+  ftpW: number,
+): TrackPowerZoneSummary {
+  assertPositiveFiniteNumber(ftpW, "ftpW");
+  return computeZoneSummary(
+    points,
+    (point) => point.powerW,
+    (value) => getPowerZone(value, ftpW),
+    POWER_ZONE_KEYS,
+  );
+}
+
+export function computeHeartRateZoneSummary(
+  points: TrackPoint[],
+  lthrBpm: number,
+): TrackHeartRateZoneSummary {
+  assertPositiveFiniteNumber(lthrBpm, "lthrBpm");
+  return computeZoneSummary(
+    points,
+    (point) => point.heartRateBpm,
+    (value) => getHeartRateZone(value, lthrBpm),
+    HEART_RATE_ZONE_KEYS,
+  );
 }
 
 export function parseFitBytes(
@@ -441,6 +583,11 @@ function buildTrackJsonMetadata(
     output.training = training;
   }
 
+  const bestEfforts = buildTrackJsonBestEfforts(metadata.bestEfforts, precision);
+  if (bestEfforts) {
+    output.bestEfforts = bestEfforts;
+  }
+
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
@@ -542,6 +689,43 @@ function buildTrackJsonTraining(
   }
 
   return Object.keys(output).length > 0 ? output : undefined;
+}
+
+function buildTrackJsonBestEfforts(
+  bestEfforts: TrackActivityBestEfforts | undefined,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Record<string, unknown> | undefined {
+  if (!bestEfforts) {
+    return undefined;
+  }
+
+  const output: Record<string, unknown> = {};
+  if (bestEfforts.powerW) {
+    const powerW = roundDurationBestEfforts(bestEfforts.powerW, precision);
+    if (Object.keys(powerW).length > 0) {
+      output.powerW = powerW;
+    }
+  }
+
+  return Object.keys(output).length > 0 ? output : undefined;
+}
+
+function roundDurationBestEfforts(
+  efforts: TrackDurationBestEfforts,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Record<string, number> {
+  const output: Record<string, number> = {};
+
+  Object.keys(efforts)
+    .sort((a, b) => Number(a) - Number(b))
+    .forEach((duration) => {
+      const value = efforts[duration];
+      if (isFiniteNumber(value)) {
+        output[duration] = roundNumber(value, precision.metadata);
+      }
+    });
+
+  return output;
 }
 
 function assignMetadataInteger(
@@ -882,6 +1066,7 @@ function cloneMetadata(metadata: TrackActivityMetadata): TrackActivityMetadata {
     devices: metadata.devices?.map((device) => ({ ...device })),
     statistics: cloneStatistics(metadata.statistics),
     training: cloneTraining(metadata.training),
+    bestEfforts: cloneBestEfforts(metadata.bestEfforts),
   };
 }
 
@@ -905,6 +1090,18 @@ function cloneNumericStats(
   stats: TrackNumericStats | undefined,
 ): TrackNumericStats | undefined {
   return stats ? { ...stats } : undefined;
+}
+
+function cloneBestEfforts(
+  bestEfforts: TrackActivityBestEfforts | undefined,
+): TrackActivityBestEfforts | undefined {
+  if (!bestEfforts) {
+    return undefined;
+  }
+
+  return {
+    powerW: bestEfforts.powerW ? { ...bestEfforts.powerW } : undefined,
+  };
 }
 
 function cloneTraining(
@@ -1041,6 +1238,11 @@ function fitMessagesToMetadata(
     metadata.training = training;
   }
 
+  const bestEfforts = buildActivityBestEfforts(points);
+  if (bestEfforts) {
+    metadata.bestEfforts = bestEfforts;
+  }
+
   return metadata;
 }
 
@@ -1113,6 +1315,61 @@ function buildNumericStats(
     median,
     max: sorted[sorted.length - 1],
   };
+}
+
+function buildActivityBestEfforts(
+  points: TrackPoint[],
+): TrackActivityBestEfforts | undefined {
+  const powerW = computeBestPowerCurveW(points);
+  if (!powerW) {
+    return undefined;
+  }
+
+  return { powerW };
+}
+
+function computeBestPowerCurveW(
+  points: TrackPoint[],
+): TrackDurationBestEfforts | undefined {
+  const samples = buildPowerSamples(points);
+  const efforts: TrackDurationBestEfforts = {};
+
+  STRAVA_POWER_CURVE_DURATIONS_SECONDS.forEach((duration) => {
+    const best = computeBestAverageValue(samples, duration);
+    if (isFiniteNumber(best)) {
+      efforts[String(duration)] = best;
+    }
+  });
+
+  return Object.keys(efforts).length > 0 ? efforts : undefined;
+}
+
+function computeBestAverageValue(
+  samples: number[],
+  durationSeconds: number,
+): number | undefined {
+  if (durationSeconds <= 0 || samples.length < durationSeconds) {
+    return undefined;
+  }
+
+  let rollingSum = 0;
+  let best: number | undefined;
+
+  samples.forEach((value, index) => {
+    rollingSum += value;
+    if (index >= durationSeconds) {
+      rollingSum -= samples[index - durationSeconds];
+    }
+
+    if (index >= durationSeconds - 1) {
+      const average = rollingSum / durationSeconds;
+      if (!isFiniteNumber(best) || average > best) {
+        best = average;
+      }
+    }
+  });
+
+  return best;
 }
 
 function buildActivityTraining(
@@ -1252,6 +1509,103 @@ function hasTrainingValues(training: TrackActivityTraining): boolean {
     isFiniteNumber(training.totalWorkJ) ||
     isFiniteNumber(training.totalCaloriesCal)
   );
+}
+
+function computeZoneSummary<TZone extends string>(
+  points: TrackPoint[],
+  getValue: (point: TrackPoint) => number | undefined,
+  getZone: (value: number) => TZone | undefined,
+  zoneKeys: readonly TZone[],
+): TrackZoneSummary<TZone> {
+  const durations = createZoneRecord(zoneKeys);
+  const percentages = createZoneRecord(zoneKeys);
+  let totalSeconds = assignTimedZoneDurations(points, getValue, getZone, durations);
+
+  if (totalSeconds === 0) {
+    totalSeconds = assignSampleZoneDurations(points, getValue, getZone, durations);
+  }
+
+  zoneKeys.forEach((zone) => {
+    percentages[zone] = totalSeconds > 0 ? (durations[zone] / totalSeconds) * 100 : 0;
+  });
+
+  return {
+    totalSeconds,
+    durations,
+    percentages,
+  };
+}
+
+function assignTimedZoneDurations<TZone extends string>(
+  points: TrackPoint[],
+  getValue: (point: TrackPoint) => number | undefined,
+  getZone: (value: number) => TZone | undefined,
+  durations: Record<TZone, number>,
+): number {
+  const timed = points
+    .filter((point): point is TrackPoint & { time: number } => {
+      return isFiniteNumber(point.time);
+    })
+    .sort((a, b) => a.time - b.time);
+
+  let totalSeconds = 0;
+  for (let index = 0; index + 1 < timed.length; index += 1) {
+    const current = timed[index];
+    const next = timed[index + 1];
+    const deltaSeconds = next.time - current.time;
+    const value = getValue(current);
+
+    if (deltaSeconds <= 0 || deltaSeconds > 30 || !isFiniteNumber(value)) {
+      continue;
+    }
+
+    const zone = getZone(value);
+    if (zone) {
+      durations[zone] += deltaSeconds;
+      totalSeconds += deltaSeconds;
+    }
+  }
+
+  return totalSeconds;
+}
+
+function assignSampleZoneDurations<TZone extends string>(
+  points: TrackPoint[],
+  getValue: (point: TrackPoint) => number | undefined,
+  getZone: (value: number) => TZone | undefined,
+  durations: Record<TZone, number>,
+): number {
+  let totalSeconds = 0;
+
+  points.forEach((point) => {
+    const value = getValue(point);
+    if (!isFiniteNumber(value)) {
+      return;
+    }
+
+    const zone = getZone(value);
+    if (zone) {
+      durations[zone] += 1;
+      totalSeconds += 1;
+    }
+  });
+
+  return totalSeconds;
+}
+
+function createZoneRecord<TZone extends string>(
+  zoneKeys: readonly TZone[],
+): Record<TZone, number> {
+  return zoneKeys.reduce((record, zone) => {
+    record[zone] = 0;
+    return record;
+  }, {} as Record<TZone, number>);
+}
+
+function assertPositiveFiniteNumber(value: number, name: string) {
+  if (!isFiniteNumber(value) || value <= 0) {
+    throw new RangeError(`${name} must be a positive finite number.`);
+  }
 }
 
 function computeNormalizedPowerW(points: TrackPoint[]): number | undefined {

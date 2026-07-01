@@ -245,6 +245,17 @@ TrackJSON metadata is stored in `Feature.properties.metadata`.
         "totalWork": "computed",
         "totalCalories": "fit"
       }
+    },
+    "bestEfforts": {
+      "powerW": {
+        "5": 742,
+        "15": 610,
+        "30": 552,
+        "60": 421,
+        "300": 310,
+        "1200": 245,
+        "3600": 198
+      }
     }
   }
 }
@@ -265,9 +276,10 @@ Common metadata fields:
 | `totalDistanceM` | number | Total distance in meters |
 | `totalTimerTime` | number | Moving/timer time in seconds |
 | `totalElapsedTime` | number | Elapsed time in seconds |
-| `device.manufacturer` | string | Device manufacturer |
-| `device.product` | string | Device product |
-| `device.serialNumber` | number | Device serial number |
+| `recordingDevice.manufacturer` | string | Recording device manufacturer from FIT `file_id` |
+| `recordingDevice.product` | string | Recording device product from FIT `file_id` |
+| `recordingDevice.serialNumber` | number | Recording device serial number from FIT `file_id` |
+| `devices[]` | array | Device summaries from FIT `device_info` messages |
 | `statistics.speedKph` | object | Speed statistics from raw speed samples in km/h |
 | `statistics.cadenceRpm` | object | Cadence statistics from raw cadence samples in rpm |
 | `statistics.heartRateBpm` | object | Heart-rate statistics from raw heart-rate samples in bpm |
@@ -276,6 +288,7 @@ Common metadata fields:
 | `training.totalWorkJ` | number | Total mechanical work in joules, from FIT when present or computed from raw power |
 | `training.totalCaloriesCal` | number | Total calories in calories, converted from FIT totalCalories metadata when present |
 | `training.source.*` | string | Source marker such as `fit` or `computed` |
+| `bestEfforts.powerW` | object | Strava-style best average power efforts keyed by duration seconds |
 
 Statistic objects use these fields.
 
@@ -289,9 +302,14 @@ Activity average speed is intentionally not stored separately. Consumers can
 compute gross or timer/moving average later from `totalDistanceM`,
 `totalElapsedTime`, and `totalTimerTime`.
 
-TSS, IF, and FTP are intentionally not computed or emitted by the FIT converter.
-If a future source format provides them explicitly, they can be added as
-additional metadata fields.
+`bestEfforts.powerW` stores best average power over Strava-style durations:
+5s, 15s, 30s, 1m, 2m, 3m, 5m, 8m, 10m, 15m, 20m, 30m, 45m, 1h, and 2h.
+JSON keys are duration seconds, such as `"5"`, `"300"`, and `"3600"`.
+
+FTP, TSS, IF, power-zone durations, LTHR, and heart-rate-zone durations are
+intentionally not stored in TrackJSON. They depend on user settings that may be
+changed later. Consumers should compute zones at analysis time from
+`coordinateProperties.powers`, `coordinateProperties.heartRates`, FTP, and LTHR.
 
 Metadata is optional. The viewer ignores unknown metadata fields.
 
@@ -318,7 +336,7 @@ Default precision:
 | `serialNumber` | integer |
 | `totalElapsedTime` / `totalTimerTime` | integer |
 | `training.totalWorkJ` / `training.totalCaloriesCal` | integer |
-| statistics and `training.normalizedPowerW` | metadata precision |
+| statistics, `training.normalizedPowerW`, and `bestEfforts` | metadata precision |
 
 Rounding should be applied when emitting or compacting TrackJSON, not while
 performing internal calculations.
@@ -521,6 +539,33 @@ series when complete and aligned with the coordinate array.
 Non-numeric or incomplete custom series may be ignored.
 
 
+## Zone analysis
+
+Power and heart-rate zones are intentionally computed outside TrackJSON.
+
+Power zones should be calculated from FTP when needed. The recommended
+Coggan-style seven-zone split is:
+
+| Zone | Power range |
+| --- | --- |
+| Z1 | <= 55% FTP |
+| Z2 | <= 75% FTP |
+| Z3 | <= 90% FTP |
+| Z4 | <= 105% FTP |
+| Z5 | <= 120% FTP |
+| Z6 | <= 150% FTP |
+| Z7 | > 150% FTP |
+
+Heart-rate zones should be calculated from LTHR when needed.
+
+| Zone | Heart-rate range |
+| --- | --- |
+| Z1 | <= 81% LTHR |
+| Z2 | <= 89% LTHR |
+| Z3 | <= 94% LTHR |
+| Z4 | <= 100% LTHR |
+| Z5 | > 100% LTHR |
+
 ## Privacy obfuscation
 
 TrackJSON coordinates can be privacy-obfuscated before downsampling. The clamp
@@ -540,6 +585,6 @@ Otherwise, cumulative coordinate distance is computed from the LineString.
 
 FIT inputs may contain per-record temperature samples and one or more
 `device_info` messages. When available, `statistics.temperatureC` stores raw
-temperature statistics in degrees Celsius, and `metadata.recordingDevices` stores device
-summary records such as the head unit, sensors, and power meters. The existing
-`metadata.recordingDevice` field remains the primary `file_id` device summary.
+temperature statistics in degrees Celsius, and `metadata.devices` stores device
+summary records such as the head unit, sensors, and power meters.
+`metadata.recordingDevice` stores the primary `file_id` device summary.

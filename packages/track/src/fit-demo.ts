@@ -1,4 +1,6 @@
 import {
+  computeHeartRateZoneSummary,
+  computePowerZoneSummary,
   downsampleTrackActivity,
   parseFitBytes,
   obfuscateFitPrivacy,
@@ -13,7 +15,7 @@ import {
   getTrackJsonTitle,
   parseTrackJsonData,
 } from "./trackjson";
-import type { TrackActivity } from "./fit";
+import type { TrackActivity, TrackPoint } from "./fit";
 import type { TrackJsonDownsampleStrategy } from "./trackjson";
 
 type TrackRenderer = {
@@ -38,6 +40,8 @@ type DemoElements = {
   obfuscatePrivacyInput: HTMLInputElement;
   obfuscateStartDistanceInput: HTMLInputElement;
   obfuscateEndDistanceInput: HTMLInputElement;
+  ftpInput: HTMLInputElement;
+  lthrInput: HTMLInputElement;
   prettyInput: HTMLInputElement;
   convertButton: HTMLButtonElement;
   copyButton: HTMLButtonElement;
@@ -60,6 +64,7 @@ type ConversionResult = {
   renderedPointCount?: number;
   activity?: TrackActivity;
   renderedActivity?: TrackActivity;
+  analysisPoints?: TrackPoint[];
   obfuscatedFitBytes?: Uint8Array;
   obfuscatedPrivacyApplied?: boolean;
   privacyStartDistanceM?: number;
@@ -185,6 +190,7 @@ async function convertFitFile(
     renderedPointCount: digest.points.length,
     activity,
     renderedActivity: digest,
+    analysisPoints: activity.points,
     obfuscatedFitBytes,
     obfuscatedPrivacyApplied: Boolean(obfuscatedFitBytes),
     privacyStartDistanceM: privacyOptions.startDistanceM,
@@ -216,6 +222,7 @@ function convertTrackJsonText(
     elements.prettyInput.checked ? 2 : 0
   );
   const renderedPointCount = countTrackJsonPositionedPoints(trackJsonData);
+  const analysisPoints = extractTrackJsonAnalysisPoints(obfuscatedTrackJsonData);
 
   return {
     trackJson,
@@ -224,6 +231,7 @@ function convertTrackJsonText(
     sourceType,
     originalPointCount,
     renderedPointCount,
+    analysisPoints,
     obfuscatedPrivacyApplied: elements.obfuscatePrivacyInput.checked,
     privacyStartDistanceM: privacyOptions.startDistanceM,
     privacyEndDistanceM: privacyOptions.endDistanceM,
@@ -481,6 +489,8 @@ function showSummary(
     div.textContent = line;
     elements.summaryOutput.appendChild(div);
   });
+
+  appendAnalysisSections(elements.summaryOutput, result, elements, metadata);
 }
 
 function getResultMetadata(result: ConversionResult): Record<string, unknown> | undefined {
@@ -618,6 +628,791 @@ function appendDeviceSummaryLines(
   }
 }
 
+type ZoneSummary = {
+  totalSeconds: number;
+  durations: Record<string, number>;
+  percentages: Record<string, number>;
+};
+
+type ZoneHistogramRow = {
+  label: string;
+  seconds: number;
+  percentage: number;
+  color: string;
+};
+
+type PowerCurvePoint = {
+  durationSeconds: number;
+  watts: number;
+};
+
+type HistogramBin = {
+  label: string;
+  color: string;
+  matches: (value: number) => boolean;
+};
+
+function appendAnalysisSections(
+  container: HTMLElement,
+  result: ConversionResult,
+  elements: DemoElements,
+  metadata: Record<string, unknown> | undefined
+) {
+  const points = result.analysisPoints || [];
+  if (points.length > 0) {
+    appendSpeedHistogram(container, points);
+    appendCadenceHistogram(container, points);
+
+    const lthrBpm = getPositiveNumber(elements.lthrInput);
+    if (typeof lthrBpm === "number") {
+      appendHeartRateHistogram(container, points, lthrBpm);
+    }
+
+    const ftpW = getPositiveNumber(elements.ftpInput);
+    if (typeof ftpW === "number") {
+      appendPowerHistogram(container, points, ftpW);
+    }
+  }
+
+  appendPowerCurve(container, metadata);
+}
+
+function appendSpeedHistogram(container: HTMLElement, points: TrackPoint[]) {
+  const rows = computeHistogramRows(points, {
+    title: "Speed histogram",
+    getValue: (point) => {
+      if (typeof point.speedMps !== "number" || !Number.isFinite(point.speedMps)) {
+        return undefined;
+      }
+      return point.speedMps * 3.6;
+    },
+    ignoreZero: true,
+    bins: [
+      {
+        label: "≤15 km/h",
+        color: "#6fd3ff",
+        matches: (value) => value <= 15,
+      },
+      {
+        label: "15–20 km/h",
+        color: "#2f7df6",
+        matches: (value) => value > 15 && value <= 20,
+      },
+      {
+        label: "20–25 km/h",
+        color: "#2fa84f",
+        matches: (value) => value > 20 && value <= 25,
+      },
+      {
+        label: "25–30 km/h",
+        color: "#f2d33b",
+        matches: (value) => value > 25 && value <= 30,
+      },
+      {
+        label: "30–35 km/h",
+        color: "#e14545",
+        matches: (value) => value > 30 && value <= 35,
+      },
+      {
+        label: ">35 km/h",
+        color: "#7a3db8",
+        matches: (value) => value > 35,
+      },
+    ],
+  });
+
+  if (rows) {
+    appendHistogramSection(container, rows.title, rows.rows);
+  }
+}
+
+function appendCadenceHistogram(container: HTMLElement, points: TrackPoint[]) {
+  const rows = computeHistogramRows(points, {
+    title: "Cadence histogram",
+    getValue: (point) => point.cadenceRpm,
+    ignoreZero: true,
+    bins: [
+      {
+        label: "≤50 rpm",
+        color: "#6fd3ff",
+        matches: (value) => value <= 50,
+      },
+      {
+        label: "50–60 rpm",
+        color: "#2f7df6",
+        matches: (value) => value > 50 && value <= 60,
+      },
+      {
+        label: "60–70 rpm",
+        color: "#2fa84f",
+        matches: (value) => value > 60 && value <= 70,
+      },
+      {
+        label: "70–80 rpm",
+        color: "#f2d33b",
+        matches: (value) => value > 70 && value <= 80,
+      },
+      {
+        label: "80–90 rpm",
+        color: "#f39c34",
+        matches: (value) => value > 80 && value <= 90,
+      },
+      {
+        label: "90–100 rpm",
+        color: "#e14545",
+        matches: (value) => value > 90 && value <= 100,
+      },
+      {
+        label: ">100 rpm",
+        color: "#7a3db8",
+        matches: (value) => value > 100,
+      },
+    ],
+  });
+
+  if (rows) {
+    appendHistogramSection(container, rows.title, rows.rows);
+  }
+}
+
+function appendHeartRateHistogram(
+  container: HTMLElement,
+  points: TrackPoint[],
+  lthrBpm: number
+) {
+  const summary = computeHeartRateZoneSummary(points, lthrBpm);
+  if (summary.totalSeconds <= 0) {
+    return;
+  }
+
+  appendHistogramSection(
+    container,
+    `Heart-rate histogram by LTHR ${formatNumber(lthrBpm, 0)} bpm`,
+    createHeartRateZoneRows(summary, lthrBpm)
+  );
+}
+
+function appendPowerHistogram(
+  container: HTMLElement,
+  points: TrackPoint[],
+  ftpW: number
+) {
+  const summary = computePowerZoneSummary(points, ftpW);
+  if (summary.totalSeconds <= 0) {
+    return;
+  }
+
+  appendHistogramSection(
+    container,
+    `Power histogram by FTP ${formatNumber(ftpW, 0)} W`,
+    createPowerZoneRows(summary, ftpW)
+  );
+}
+
+function appendHistogramSection(
+  container: HTMLElement,
+  titleText: string,
+  rows: ZoneHistogramRow[]
+) {
+  if (rows.every((row) => row.seconds <= 0)) {
+    return;
+  }
+
+  const section = document.createElement("section");
+  section.className = "fit-demo-zone-histogram";
+
+  const title = document.createElement("div");
+  title.className = "fit-demo-zone-title";
+  title.textContent = titleText;
+  section.appendChild(title);
+
+  rows.forEach((row) => {
+    const item = document.createElement("div");
+    item.className = "fit-demo-zone-row";
+
+    const label = document.createElement("div");
+    label.className = "fit-demo-zone-label";
+    label.textContent = `${row.label}: ${formatDuration(row.seconds)} (${formatNumber(
+      row.percentage,
+      0
+    )}%)`;
+
+    const track = document.createElement("div");
+    track.className = "fit-demo-zone-bar-track";
+
+    const bar = document.createElement("div");
+    bar.className = "fit-demo-zone-bar";
+    bar.style.width = `${clampPercentage(row.percentage)}%`;
+    bar.style.background = row.color;
+    bar.title = label.textContent || "";
+
+    track.appendChild(bar);
+    item.appendChild(label);
+    item.appendChild(track);
+    section.appendChild(item);
+  });
+
+  container.appendChild(section);
+}
+
+function appendPowerCurve(
+  container: HTMLElement,
+  metadata: Record<string, unknown> | undefined
+) {
+  const points = getPowerCurvePoints(metadata);
+  if (points.length === 0) {
+    return;
+  }
+
+  const section = document.createElement("section");
+  section.className = "fit-demo-power-curve";
+
+  const title = document.createElement("div");
+  title.className = "fit-demo-zone-title";
+  title.textContent = "Power curve";
+  section.appendChild(title);
+
+  const svg = buildPowerCurveSvg(points);
+  section.appendChild(svg);
+
+  container.appendChild(section);
+}
+
+function getPowerCurvePoints(
+  metadata: Record<string, unknown> | undefined
+): PowerCurvePoint[] {
+  if (!metadata) {
+    return [];
+  }
+
+  const bestEfforts = getRecordProperty(metadata, "bestEfforts");
+  const powerW = bestEfforts ? getRecordProperty(bestEfforts, "powerW") : undefined;
+  if (!powerW) {
+    return [];
+  }
+
+  return Object.entries(powerW)
+    .map(([duration, watts]) => {
+      const durationSeconds = Number(duration);
+      return typeof watts === "number" && Number.isFinite(watts) &&
+        Number.isFinite(durationSeconds) && durationSeconds > 0
+        ? { durationSeconds, watts }
+        : undefined;
+    })
+    .filter((point): point is PowerCurvePoint => Boolean(point))
+    .sort((left, right) => left.durationSeconds - right.durationSeconds);
+}
+
+function buildPowerCurveSvg(points: PowerCurvePoint[]): SVGSVGElement {
+  const width = 760;
+  const height = 260;
+  const marginTop = 16;
+  const marginRight = 16;
+  const marginBottom = 40;
+  const marginLeft = 52;
+  const plotWidth = width - marginLeft - marginRight;
+  const plotHeight = height - marginTop - marginBottom;
+  const minDuration = points[0].durationSeconds;
+  const maxDuration = points[points.length - 1].durationSeconds;
+  const maxPower = Math.max(...points.map((point) => point.watts));
+  const yMax = getNiceCeiling(maxPower);
+  const svgNs = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNs, "svg");
+
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("class", "fit-demo-power-curve-svg");
+  svg.setAttribute("role", "img");
+  svg.setAttribute("aria-label", "Power curve chart");
+
+  const xValue = (seconds: number) => {
+    if (maxDuration <= minDuration) {
+      return marginLeft + plotWidth / 2;
+    }
+    const minLog = Math.log10(minDuration);
+    const maxLog = Math.log10(maxDuration);
+    const valueLog = Math.log10(seconds);
+    const ratio = (valueLog - minLog) / (maxLog - minLog);
+    return marginLeft + ratio * plotWidth;
+  };
+  const yValue = (watts: number) => {
+    const ratio = yMax <= 0 ? 0 : watts / yMax;
+    return marginTop + plotHeight - ratio * plotHeight;
+  };
+
+  appendSvgLine(svg, marginLeft, marginTop, marginLeft, marginTop + plotHeight, "#666");
+  appendSvgLine(
+    svg,
+    marginLeft,
+    marginTop + plotHeight,
+    marginLeft + plotWidth,
+    marginTop + plotHeight,
+    "#666"
+  );
+
+  const yTicks = createLinearTicks(yMax, 5);
+  yTicks.forEach((tick) => {
+    const y = yValue(tick);
+    appendSvgLine(svg, marginLeft, y, marginLeft + plotWidth, y, "#e5e5e5");
+    appendSvgText(svg, marginLeft - 8, y + 4, formatNumber(tick, 0), "end", "11px");
+  });
+
+  points.forEach((point) => {
+    const x = xValue(point.durationSeconds);
+    appendSvgLine(
+      svg,
+      x,
+      marginTop + plotHeight,
+      x,
+      marginTop + plotHeight + 6,
+      "#666"
+    );
+    appendSvgText(
+      svg,
+      x,
+      marginTop + plotHeight + 20,
+      formatDurationLabel(point.durationSeconds),
+      "middle",
+      "11px"
+    );
+  });
+
+  const polyline = document.createElementNS(svgNs, "polyline");
+  polyline.setAttribute(
+    "points",
+    points
+      .map((point) => `${xValue(point.durationSeconds)},${yValue(point.watts)}`)
+      .join(" ")
+  );
+  polyline.setAttribute("fill", "none");
+  polyline.setAttribute("stroke", "#0078A8");
+  polyline.setAttribute("stroke-width", "2.5");
+  svg.appendChild(polyline);
+
+  points.forEach((point) => {
+    const circle = document.createElementNS(svgNs, "circle");
+    circle.setAttribute("cx", String(xValue(point.durationSeconds)));
+    circle.setAttribute("cy", String(yValue(point.watts)));
+    circle.setAttribute("r", "3");
+    circle.setAttribute("fill", "#0078A8");
+    circle.setAttribute(
+      "aria-label",
+      `${formatDurationLabel(point.durationSeconds)} ${formatNumber(point.watts, 0)} W`
+    );
+    svg.appendChild(circle);
+  });
+
+  appendSvgText(svg, 16, marginTop + 8, "W", "start", "11px");
+
+  return svg;
+}
+
+function appendSvgLine(
+  svg: SVGSVGElement,
+  x1: number,
+  y1: number,
+  x2: number,
+  y2: number,
+  stroke: string
+) {
+  const svgNs = "http://www.w3.org/2000/svg";
+  const line = document.createElementNS(svgNs, "line");
+  line.setAttribute("x1", String(x1));
+  line.setAttribute("y1", String(y1));
+  line.setAttribute("x2", String(x2));
+  line.setAttribute("y2", String(y2));
+  line.setAttribute("stroke", stroke);
+  line.setAttribute("stroke-width", "1");
+  svg.appendChild(line);
+}
+
+function appendSvgText(
+  svg: SVGSVGElement,
+  x: number,
+  y: number,
+  text: string,
+  anchor: "start" | "middle" | "end",
+  fontSize: string
+) {
+  const svgNs = "http://www.w3.org/2000/svg";
+  const node = document.createElementNS(svgNs, "text");
+  node.setAttribute("x", String(x));
+  node.setAttribute("y", String(y));
+  node.setAttribute("text-anchor", anchor);
+  node.setAttribute("font-size", fontSize);
+  node.setAttribute("fill", "#444");
+  node.textContent = text;
+  svg.appendChild(node);
+}
+
+function createLinearTicks(maxValue: number, targetCount: number): number[] {
+  if (maxValue <= 0) {
+    return [0];
+  }
+
+  const step = getNiceTickStep(maxValue / targetCount);
+  const ticks: number[] = [];
+  for (let value = 0; value <= maxValue + step * 0.5; value += step) {
+    ticks.push(value);
+  }
+  return ticks;
+}
+
+function getNiceTickStep(value: number): number {
+  if (value <= 0 || !Number.isFinite(value)) {
+    return 1;
+  }
+
+  const exponent = Math.floor(Math.log10(value));
+  const fraction = value / Math.pow(10, exponent);
+  let niceFraction = 1;
+  if (fraction <= 1) {
+    niceFraction = 1;
+  } else if (fraction <= 2) {
+    niceFraction = 2;
+  } else if (fraction <= 5) {
+    niceFraction = 5;
+  } else {
+    niceFraction = 10;
+  }
+  return niceFraction * Math.pow(10, exponent);
+}
+
+function getNiceCeiling(value: number): number {
+  if (value <= 0 || !Number.isFinite(value)) {
+    return 1;
+  }
+  return Math.ceil(value / getNiceTickStep(value / 5)) * getNiceTickStep(value / 5);
+}
+
+function formatDurationLabel(seconds: number): string {
+  if (seconds < 60) {
+    return `${formatNumber(seconds, 0)}s`;
+  }
+  if (seconds % 3600 === 0) {
+    return `${formatNumber(seconds / 3600, 0)}h`;
+  }
+  if (seconds % 60 === 0) {
+    return `${formatNumber(seconds / 60, 0)}m`;
+  }
+  return formatDuration(seconds);
+}
+
+function computeHistogramRows(
+  points: TrackPoint[],
+  options: {
+    title: string;
+    getValue: (point: TrackPoint) => number | undefined;
+    bins: HistogramBin[];
+    ignoreZero: boolean;
+  }
+): { title: string; rows: ZoneHistogramRow[] } | undefined {
+  const durations = options.bins.map(() => 0);
+  const useTimedDurations = hasTimedAnalysisPoints(points);
+  let totalSeconds = 0;
+
+  if (useTimedDurations) {
+    for (let index = 0; index < points.length - 1; index += 1) {
+      const value = options.getValue(points[index]);
+      const duration = getPointDurationSeconds(points, index);
+      if (duration <= 0 || !isHistogramValueValid(value, options.ignoreZero)) {
+        continue;
+      }
+      const binIndex = options.bins.findIndex((bin) => bin.matches(value));
+      if (binIndex < 0) {
+        continue;
+      }
+      durations[binIndex] += duration;
+      totalSeconds += duration;
+    }
+  } else {
+    points.forEach((point) => {
+      const value = options.getValue(point);
+      if (!isHistogramValueValid(value, options.ignoreZero)) {
+        return;
+      }
+      const binIndex = options.bins.findIndex((bin) => bin.matches(value));
+      if (binIndex < 0) {
+        return;
+      }
+      durations[binIndex] += 1;
+      totalSeconds += 1;
+    });
+  }
+
+  if (totalSeconds <= 0) {
+    return undefined;
+  }
+
+  return {
+    title: options.title,
+    rows: options.bins.map((bin, index) => ({
+      label: bin.label,
+      seconds: durations[index],
+      percentage: (durations[index] / totalSeconds) * 100,
+      color: bin.color,
+    })),
+  };
+}
+
+function isHistogramValueValid(
+  value: number | undefined,
+  ignoreZero: boolean
+): value is number {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return false;
+  }
+  if (ignoreZero && value <= 0) {
+    return false;
+  }
+  return true;
+}
+
+function hasTimedAnalysisPoints(points: TrackPoint[]): boolean {
+  for (let index = 0; index < points.length - 1; index += 1) {
+    if (getPointDurationSeconds(points, index) > 0) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getPointDurationSeconds(points: TrackPoint[], index: number): number {
+  const current = points[index]?.time;
+  const next = points[index + 1]?.time;
+  if (
+    typeof current !== "number" ||
+    !Number.isFinite(current) ||
+    typeof next !== "number" ||
+    !Number.isFinite(next)
+  ) {
+    return 0;
+  }
+  return next > current ? next - current : 0;
+}
+
+function createPowerZoneRows(
+  summary: ZoneSummary,
+  ftpW: number
+): ZoneHistogramRow[] {
+  const z1Max = Math.floor(ftpW * 0.55);
+  const z2Max = Math.floor(ftpW * 0.75);
+  const z3Max = Math.floor(ftpW * 0.9);
+  const z4Max = Math.floor(ftpW * 1.05);
+  const z5Max = Math.floor(ftpW * 1.2);
+  const z6Max = Math.floor(ftpW * 1.5);
+
+  return [
+    createZoneHistogramRow(summary, "z1", `Z1 ≤55% FTP, ≤${z1Max} W`, "#6fd3ff"),
+    createZoneHistogramRow(
+      summary,
+      "z2",
+      `Z2 56–75% FTP, ${z1Max + 1}–${z2Max} W`,
+      "#2f7df6"
+    ),
+    createZoneHistogramRow(
+      summary,
+      "z3",
+      `Z3 76–90% FTP, ${z2Max + 1}–${z3Max} W`,
+      "#2fa84f"
+    ),
+    createZoneHistogramRow(
+      summary,
+      "z4",
+      `Z4 91–105% FTP, ${z3Max + 1}–${z4Max} W`,
+      "#f2d33b"
+    ),
+    createZoneHistogramRow(
+      summary,
+      "z5",
+      `Z5 106–120% FTP, ${z4Max + 1}–${z5Max} W`,
+      "#f39c34"
+    ),
+    createZoneHistogramRow(
+      summary,
+      "z6",
+      `Z6 121–150% FTP, ${z5Max + 1}–${z6Max} W`,
+      "#e14545"
+    ),
+    createZoneHistogramRow(
+      summary,
+      "z7",
+      `Z7 >150% FTP, ≥${z6Max + 1} W`,
+      "#7a3db8"
+    ),
+  ];
+}
+
+function createHeartRateZoneRows(
+  summary: ZoneSummary,
+  lthrBpm: number
+): ZoneHistogramRow[] {
+  const z1Max = Math.round(lthrBpm * 0.81);
+  const z2Max = Math.round(lthrBpm * 0.89);
+  const z3Max = Math.round(lthrBpm * 0.94);
+  const z4Max = Math.round(lthrBpm);
+
+  return [
+    createZoneHistogramRow(summary, "z1", `Z1 ≤81% LTHR, ≤${z1Max} bpm`, "#2f7df6"),
+    createZoneHistogramRow(
+      summary,
+      "z2",
+      `Z2 82–89% LTHR, ${z1Max + 1}–${z2Max} bpm`,
+      "#2fa84f"
+    ),
+    createZoneHistogramRow(
+      summary,
+      "z3",
+      `Z3 90–94% LTHR, ${z2Max + 1}–${z3Max} bpm`,
+      "#f2d33b"
+    ),
+    createZoneHistogramRow(
+      summary,
+      "z4",
+      `Z4 95–100% LTHR, ${z3Max + 1}–${z4Max} bpm`,
+      "#f39c34"
+    ),
+    createZoneHistogramRow(summary, "z5", `Z5 >100% LTHR, ≥${z4Max + 1} bpm`, "#e14545"),
+  ];
+}
+
+function createZoneHistogramRow(
+  summary: ZoneSummary,
+  zone: string,
+  label: string,
+  color: string
+): ZoneHistogramRow {
+  return {
+    label,
+    seconds: summary.durations[zone] || 0,
+    percentage: summary.percentages[zone] || 0,
+    color,
+  };
+}
+
+function clampPercentage(value: number): number {
+  if (!Number.isFinite(value) || value <= 0) {
+    return 0;
+  }
+
+  return Math.min(100, Math.max(1, value));
+}
+
+function extractTrackJsonAnalysisPoints(data: unknown): TrackPoint[] {
+  const points: TrackPoint[] = [];
+
+  getTrackJsonFeatures(data).forEach((feature) => {
+    const geometry = feature.geometry;
+    const properties = feature.properties;
+    if (!isRecord(geometry) || geometry.type !== "LineString") {
+      return;
+    }
+    if (!Array.isArray(geometry.coordinates) || !isRecord(properties)) {
+      return;
+    }
+
+    const coordinateProperties = properties.coordinateProperties;
+    if (!isRecord(coordinateProperties)) {
+      return;
+    }
+
+    geometry.coordinates.forEach((_, index) => {
+      const point: TrackPoint = {};
+      assignTrackJsonSeriesNumber(
+        point,
+        "time",
+        coordinateProperties.times,
+        index,
+        normalizeTrackJsonTime
+      );
+      assignTrackJsonSeriesNumber(
+        point,
+        "powerW",
+        coordinateProperties.powers,
+        index
+      );
+      assignTrackJsonSeriesNumber(
+        point,
+        "heartRateBpm",
+        coordinateProperties.heartRates,
+        index
+      );
+      assignTrackJsonSeriesNumber(
+        point,
+        "cadenceRpm",
+        coordinateProperties.cadences,
+        index
+      );
+      assignTrackJsonSeriesNumber(
+        point,
+        "speedMps",
+        coordinateProperties.speeds,
+        index,
+        normalizeTrackJsonSpeedKph
+      );
+      if (Object.keys(point).length > 0) {
+        points.push(point);
+      }
+    });
+  });
+
+  return points;
+}
+
+function getTrackJsonFeatures(data: unknown): Array<Record<string, unknown>> {
+  if (!isRecord(data)) {
+    return [];
+  }
+
+  if (data.type === "Feature") {
+    return [data];
+  }
+
+  if (data.type !== "FeatureCollection" || !Array.isArray(data.features)) {
+    return [];
+  }
+
+  return data.features.filter(isRecord);
+}
+
+function assignTrackJsonSeriesNumber<K extends keyof TrackPoint>(
+  point: TrackPoint,
+  key: K,
+  series: unknown,
+  index: number,
+  convert: (value: number) => number | undefined = (value) => value
+) {
+  if (!Array.isArray(series)) {
+    return;
+  }
+
+  const value = series[index];
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return;
+  }
+
+  const converted = convert(value);
+  if (typeof converted === "number" && Number.isFinite(converted)) {
+    point[key] = converted as TrackPoint[K];
+  }
+}
+
+function normalizeTrackJsonTime(value: number): number | undefined {
+  if (!Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return value > 100000000000 ? value / 1000 : value;
+}
+
+
+function normalizeTrackJsonSpeedKph(value: number): number | undefined {
+  if (!Number.isFinite(value)) {
+    return undefined;
+  }
+
+  return value / 3.6;
+}
+
 function formatDeviceSummary(device: Record<string, unknown>): string | undefined {
   const parts = [
     getStringProperty(device, "manufacturer"),
@@ -694,6 +1489,11 @@ function getNonNegativeDistance(input: HTMLInputElement): number {
   return Math.floor(value);
 }
 
+function getPositiveNumber(input: HTMLInputElement): number | undefined {
+  const value = Number(input.value);
+  return Number.isFinite(value) && value > 0 ? value : undefined;
+}
+
 function setBusy(elements: DemoElements, busy: boolean) {
   elements.convertButton.disabled = busy;
   elements.fileInput.disabled = busy;
@@ -736,6 +1536,8 @@ function getDemoElements(root: Document | HTMLElement): DemoElements {
       root,
       "fit-demo-obfuscate-end-distance"
     ),
+    ftpInput: getElement<HTMLInputElement>(root, "fit-demo-ftp"),
+    lthrInput: getElement<HTMLInputElement>(root, "fit-demo-lthr"),
     prettyInput: getElement<HTMLInputElement>(root, "fit-demo-pretty"),
     convertButton: getElement<HTMLButtonElement>(root, "fit-demo-convert"),
     copyButton: getElement<HTMLButtonElement>(root, "fit-demo-copy"),

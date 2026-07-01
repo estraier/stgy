@@ -63,6 +63,70 @@
       font-size: 0.9em;
     }
 
+    .fit-demo-zone-histogram {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid #eee;
+    }
+
+    .fit-demo-zone-title {
+      font-weight: 600;
+    }
+
+    .fit-demo-zone-row {
+      display: grid;
+      grid-template-columns: minmax(300px, 420px) 1fr;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .fit-demo-zone-label {
+      overflow: hidden;
+      white-space: nowrap;
+      text-overflow: ellipsis;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .fit-demo-zone-bar-track {
+      height: 14px;
+      overflow: hidden;
+      border-radius: 999px;
+      background: #eee;
+    }
+
+    .fit-demo-zone-bar {
+      height: 100%;
+      border-radius: inherit;
+      background: #777;
+    }
+
+
+    .fit-demo-power-curve {
+      display: grid;
+      gap: 6px;
+      margin-top: 10px;
+      padding-top: 8px;
+      border-top: 1px solid #eee;
+    }
+
+    .fit-demo-power-curve-svg {
+      width: 100%;
+      height: auto;
+      overflow: visible;
+      border: 1px solid #ddd;
+      border-radius: 6px;
+      background: #fff;
+    }
+
+    @media (max-width: 720px) {
+      .fit-demo-zone-row {
+        grid-template-columns: 1fr;
+        gap: 4px;
+      }
+    }
+
     .fit-demo-metadata {
       margin: 12px 0;
       padding: 10px;
@@ -171,6 +235,28 @@
             min="0"
             step="1"
             value="1000">
+        </label>
+      </div>
+
+      <div class="fit-demo-row">
+        <label>
+          FTP (W)
+          <input
+            id="fit-demo-ftp"
+            type="number"
+            min="1"
+            step="1"
+            value="230">
+        </label>
+
+        <label>
+          LTHR (bpm)
+          <input
+            id="fit-demo-lthr"
+            type="number"
+            min="1"
+            step="1"
+            value="160">
         </label>
       </div>
 

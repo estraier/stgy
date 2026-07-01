@@ -248,6 +248,9 @@
             }
           },
           "additionalProperties": true
+        },
+        "bestEfforts": {
+          "$ref": "#/$defs/bestEfforts"
         }
       },
       "additionalProperties": true
@@ -350,6 +353,23 @@
         },
         "sourceType": {
           "type": "string"
+        }
+      },
+      "additionalProperties": true
+    },
+    "bestEfforts": {
+      "type": "object",
+      "properties": {
+        "powerW": {
+          "type": "object",
+          "patternProperties": {
+            "^[0-9]+$": {
+              "type": "number"
+            }
+          },
+          "additionalProperties": {
+            "type": "number"
+          }
         }
       },
       "additionalProperties": true
