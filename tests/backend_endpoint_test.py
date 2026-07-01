@@ -5,6 +5,8 @@ import os
 import sys
 import time
 import base64
+import gzip
+import json
 
 
 ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
@@ -1078,6 +1080,144 @@ def test_media():
   print("[media] avatar inexistence OK")
   logout(session_id)
   print("[test_media] OK")
+
+def make_sample_trackjson():
+  return {
+    "type": "FeatureCollection",
+    "features": [
+      {
+        "type": "Feature",
+        "geometry": {
+          "type": "LineString",
+          "coordinates": [
+            [139.76713, 35.68124],
+            [139.76800, 35.68200],
+            [139.76900, 35.68300],
+          ],
+        },
+        "properties": {
+          "title": "Integration test route",
+          "color": "#0078A8",
+          "coordinateProperties": {
+            "times": [1710000000, 1710000030, 1710000060],
+            "distances": [0, 120.5, 241.0],
+            "elevations": [12.3, 15.8, 14.2],
+            "heartRates": [120, 125, 129],
+            "cadences": [80, 82, 79],
+            "powers": [150, 180, 160],
+            "speeds": [24.2, 25.1, 23.8],
+          },
+        },
+      },
+    ],
+  }
+
+def test_tracks():
+  print("[tracks] admin login")
+  session_id = login()
+  cookies = {"session_id": session_id}
+  sess = get_session(session_id)
+  user_id = sess["userId"]
+
+  track_json = make_sample_trackjson()
+  track_text = json.dumps(track_json, separators=(",", ":"))
+  track_bytes = gzip.compress(track_text.encode("utf-8"))
+  filename = "sample.trjgz"
+  size_bytes = len(track_bytes)
+
+  presigned_url = f"{BASE_URL}/media/{user_id}/tracks/presigned"
+  res = requests.post(
+    presigned_url,
+    json={"filename": filename, "sizeBytes": size_bytes},
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  pres = res.json()
+  print("[tracks] presigned:", pres)
+  assert pres["objectKey"].startswith(f"tracks-staging/{user_id}/")
+  assert pres["objectKey"].endswith(".trjgz")
+  assert pres["fields"].get("Content-Type") == "application/gzip"
+
+  upload_url = pres["url"]
+  fields = pres["fields"]
+  files = {
+    "file": (filename, track_bytes, "application/gzip"),
+  }
+  res = requests.post(upload_url, data=fields, files=files)
+  assert res.status_code in (200, 201, 204), f"upload failed: {res.status_code} {res.text}"
+  print("[tracks] uploaded to storage")
+
+  finalize_url = f"{BASE_URL}/media/{user_id}/tracks/finalize"
+  res = requests.post(finalize_url, json={"key": pres["objectKey"]}, cookies=cookies)
+  assert res.status_code == 200, res.text
+  finalized = res.json()
+  print("[tracks] finalized:", finalized)
+
+  assert "master" in finalized
+  assert "preview" in finalized
+  master = finalized["master"]
+  preview = finalized["preview"]
+  assert "bucket" in master and "key" in master and master["size"] > 0
+  assert "bucket" in preview and "key" in preview and preview["size"] > 0
+  assert master["key"].startswith(f"{user_id}/masters/")
+  assert master["key"].endswith(".trjgz")
+  assert preview["key"].startswith(f"{user_id}/previews/")
+  assert preview["key"].endswith(".trjgz")
+  assert master["previewKey"] == preview["key"]
+  assert master["previewUrl"] == preview["publicUrl"]
+  assert master["publicUrl"] != preview["publicUrl"]
+
+  final_key = master["key"]
+  rest_path = final_key[len(user_id) + 1 :]
+  get_url = f"{BASE_URL}/media/{user_id}/tracks/{rest_path}"
+  res = requests.get(get_url, cookies=cookies)
+  assert res.status_code == 200, res.text
+  assert res.content == track_bytes, "downloaded master bytes mismatch"
+  print("[tracks] downloaded master OK")
+
+  preview_key = preview["key"]
+  preview_rest_path = preview_key[len(user_id) + 1 :]
+  preview_url = f"{BASE_URL}/media/{user_id}/tracks/{preview_rest_path}"
+  res = requests.get(preview_url, cookies=cookies)
+  assert res.status_code == 200, res.text
+  assert res.content[:2] == b"\x1f\x8b", "preview is not gzip data"
+  preview_json = json.loads(gzip.decompress(res.content).decode("utf-8"))
+  assert preview_json["type"] == "FeatureCollection"
+  assert isinstance(preview_json["features"], list)
+  assert len(preview_json["features"]) > 0
+  print("[tracks] downloaded preview OK")
+
+  list_url = f"{BASE_URL}/media/{user_id}/tracks?offset=0&limit=10"
+  res = requests.get(list_url, cookies=cookies)
+  assert res.status_code == 200, res.text
+  items = res.json()
+  assert any(it["key"] == final_key for it in items), "finalized key not in list"
+  listed = next(it for it in items if it["key"] == final_key)
+  assert listed["previewKey"] == preview_key
+  assert listed["previewUrl"] == preview["publicUrl"]
+  print("[tracks] list OK (contains finalized object)")
+
+  quota_url = f"{BASE_URL}/media/{user_id}/tracks/quota"
+  res = requests.get(quota_url, cookies=cookies)
+  assert res.status_code == 200, res.text
+  quota = res.json()
+  assert "yyyymm" in quota
+  assert quota["bytesMasters"] > 0
+  assert quota["bytesPreviews"] > 0
+  assert quota["bytesTotal"] >= quota["bytesMasters"] + quota["bytesPreviews"]
+  print("[tracks] quota OK")
+
+  res = requests.delete(get_url, cookies=cookies)
+  assert res.status_code == 200, res.text
+  print("[tracks] deleted")
+  res = requests.get(get_url, cookies=cookies)
+  assert res.status_code in (404, 400), f"expected not found, got {res.status_code}"
+  res = requests.get(preview_url, cookies=cookies)
+  assert res.status_code in (404, 400), f"expected preview not found, got {res.status_code}"
+  print("[tracks] inexistence OK")
+
+  logout(session_id)
+  print("[test_tracks] OK")
 
 def test_notifications():
   print("[notifications] admin login")

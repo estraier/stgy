@@ -17,6 +17,7 @@ import createUsersRouter from "./routes/users";
 import createPostsRouter from "./routes/posts";
 import createSignupRouter from "./routes/signup";
 import createMediaRouter from "./routes/media";
+import createTracksRouter from "./routes/tracks";
 import createNotificationsRouter from "./routes/notifications";
 import { getSampleAddr, connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 
@@ -94,15 +95,15 @@ async function main() {
   app.use("/users", createUsersRouter(pgPool, redis, storageService, eventLogService));
   app.use("/posts", createPostsRouter(pgPool, redis, storageService, eventLogService));
   app.use("/media", createMediaRouter(pgPool, redis, storageService));
+  app.use("/media", createTracksRouter(pgPool, redis, storageService));
   app.use("/notifications", createNotificationsRouter(pgPool, redis));
 
-  const errorHandler: ErrorRequestHandler = (err, req, res, next) => {
-    logger.error(`[API ERROR] ${err}`);
-    if (res.headersSent) return next(err);
-    const status = (err as { statusCode?: number }).statusCode || 500;
-    res.status(status).json({
-      error: (err as { message?: string }).message || "internal server error",
-    });
+  const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
+    logger.error(`[error] ${req.method} ${req.path}: ${err}`);
+    if (res.headersSent) {
+      return;
+    }
+    res.status(500).json({ error: "internal server error" });
   };
   app.use(errorHandler);
 
