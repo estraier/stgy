@@ -6,6 +6,11 @@ export type TrackJsonDownsampleOptions = {
   preserveEndpoints?: boolean;
 };
 
+export type TrackJsonPrivacyObfuscationOptions = {
+  startDistanceM?: number;
+  endDistanceM?: number;
+};
+
 export type TrackJsonPrecisionOptions = {
   coordinates?: number;
   times?: number;
@@ -132,6 +137,35 @@ export function downsampleTrackJsonData(
             preserveEndpoints
           )
         : feature;
+    }),
+  };
+}
+
+export function obfuscateTrackJsonPrivacy(
+  data: unknown,
+  options: TrackJsonPrivacyObfuscationOptions
+): unknown {
+  const startDistanceM = normalizePrivacyDistance(options.startDistanceM);
+  const endDistanceM = normalizePrivacyDistance(options.endDistanceM);
+
+  if (!isRecord(data)) {
+    return data;
+  }
+
+  if (data.type === "Feature") {
+    return obfuscateTrackJsonFeature(data, startDistanceM, endDistanceM);
+  }
+
+  if (data.type !== "FeatureCollection" || !Array.isArray(data.features)) {
+    return cloneTrackJsonValue(data);
+  }
+
+  return {
+    ...data,
+    features: data.features.map((feature) => {
+      return isRecord(feature)
+        ? obfuscateTrackJsonFeature(feature, startDistanceM, endDistanceM)
+        : cloneTrackJsonValue(feature);
     }),
   };
 }
@@ -549,6 +583,280 @@ function averageCoordinatePropertyRange(
   }
 
   return count > 0 ? sum / count : undefined;
+}
+
+function obfuscateTrackJsonFeature(
+  feature: Record<string, unknown>,
+  startDistanceM: number,
+  endDistanceM: number
+): Record<string, unknown> {
+  const geometry = feature.geometry;
+  if (!isRecord(geometry)) {
+    return cloneRecord(feature);
+  }
+
+  if (geometry.type !== "LineString" || !Array.isArray(geometry.coordinates)) {
+    return cloneRecord(feature);
+  }
+
+  const sourceCoordinates = geometry.coordinates;
+  const coordinates = obfuscateTrackJsonCoordinates(
+    sourceCoordinates,
+    getTrackJsonFeatureDistances(feature, sourceCoordinates),
+    startDistanceM,
+    endDistanceM
+  );
+
+  return {
+    ...feature,
+    geometry: {
+      ...geometry,
+      coordinates,
+    },
+  };
+}
+
+function obfuscateTrackJsonCoordinates(
+  sourceCoordinates: unknown[],
+  distances: number[],
+  startDistanceM: number,
+  endDistanceM: number
+): unknown[] {
+  const coordinates = sourceCoordinates.map((coordinate) => {
+    return cloneTrackJsonCoordinate(coordinate);
+  });
+
+  if (coordinates.length === 0 || (startDistanceM === 0 && endDistanceM === 0)) {
+    return coordinates;
+  }
+
+  const positionedIndices = coordinates
+    .map((coordinate, index) => {
+      return isTrackJsonPosition(coordinate) ? index : -1;
+    })
+    .filter((index) => index >= 0);
+
+  if (positionedIndices.length === 0) {
+    return coordinates;
+  }
+
+  const totalDistanceM = distances[positionedIndices[positionedIndices.length - 1]];
+  if (!Number.isFinite(totalDistanceM) || totalDistanceM <= 0) {
+    return coordinates;
+  }
+
+  if (startDistanceM + endDistanceM >= totalDistanceM) {
+    const anchorIndex = findTrackJsonDistanceIndex(
+      positionedIndices,
+      distances,
+      totalDistanceM / 2
+    );
+    clampTrackJsonCoordinateRange(
+      coordinates,
+      positionedIndices,
+      0,
+      positionedIndices.length - 1,
+      anchorIndex
+    );
+    return coordinates;
+  }
+
+  if (startDistanceM > 0) {
+    const anchorIndex = findTrackJsonDistanceIndex(
+      positionedIndices,
+      distances,
+      startDistanceM
+    );
+    const anchorPosition = positionedIndices.indexOf(anchorIndex);
+    if (anchorPosition >= 0) {
+      clampTrackJsonCoordinateRange(
+        coordinates,
+        positionedIndices,
+        0,
+        anchorPosition,
+        anchorIndex
+      );
+    }
+  }
+
+  if (endDistanceM > 0) {
+    const endThresholdM = Math.max(0, totalDistanceM - endDistanceM);
+    const anchorIndex = findTrackJsonDistanceIndex(
+      positionedIndices,
+      distances,
+      endThresholdM
+    );
+    const anchorPosition = positionedIndices.indexOf(anchorIndex);
+    if (anchorPosition >= 0) {
+      clampTrackJsonCoordinateRange(
+        coordinates,
+        positionedIndices,
+        anchorPosition,
+        positionedIndices.length - 1,
+        anchorIndex
+      );
+    }
+  }
+
+  return coordinates;
+}
+
+function clampTrackJsonCoordinateRange(
+  coordinates: unknown[],
+  positionedIndices: number[],
+  startPosition: number,
+  endPosition: number,
+  anchorIndex: number
+) {
+  const anchor = coordinates[anchorIndex];
+  if (!isTrackJsonPosition(anchor)) {
+    return;
+  }
+
+  for (let position = startPosition; position <= endPosition; position += 1) {
+    const coordinate = coordinates[positionedIndices[position]];
+    if (isTrackJsonPosition(coordinate)) {
+      coordinate[0] = anchor[0];
+      coordinate[1] = anchor[1];
+    }
+  }
+}
+
+function findTrackJsonDistanceIndex(
+  positionedIndices: number[],
+  distances: number[],
+  thresholdM: number
+): number {
+  const found = positionedIndices.find((index) => {
+    return distances[index] >= thresholdM;
+  });
+
+  return typeof found === "number"
+    ? found
+    : positionedIndices[positionedIndices.length - 1];
+}
+
+function getTrackJsonFeatureDistances(
+  feature: Record<string, unknown>,
+  coordinates: unknown[]
+): number[] {
+  const properties = feature.properties;
+  if (isRecord(properties) && isRecord(properties.coordinateProperties)) {
+    const distances = properties.coordinateProperties.distances;
+    if (isUsableDistanceSeries(distances, coordinates.length)) {
+      return distances;
+    }
+  }
+
+  return computeTrackJsonCoordinateDistances(coordinates);
+}
+
+function isUsableDistanceSeries(
+  value: unknown,
+  length: number
+): value is number[] {
+  if (!Array.isArray(value) || value.length !== length) {
+    return false;
+  }
+
+  let previous = -Infinity;
+  return value.every((item) => {
+    if (typeof item !== "number" || !Number.isFinite(item) || item < previous) {
+      return false;
+    }
+    previous = item;
+    return true;
+  });
+}
+
+function computeTrackJsonCoordinateDistances(coordinates: unknown[]): number[] {
+  const distances: number[] = [];
+  let total = 0;
+  let previous: [number, number] | undefined;
+
+  coordinates.forEach((coordinate, index) => {
+    const position = getTrackJsonPosition(coordinate);
+    if (position && previous) {
+      total += getHaversineDistanceM(previous[1], previous[0], position[1], position[0]);
+    }
+    distances[index] = total;
+    if (position) {
+      previous = position;
+    }
+  });
+
+  return distances;
+}
+
+function isTrackJsonPosition(value: unknown): value is number[] {
+  return Array.isArray(value) && getTrackJsonPosition(value) !== undefined;
+}
+
+function getTrackJsonPosition(value: unknown): [number, number] | undefined {
+  if (!Array.isArray(value) || value.length < 2) {
+    return undefined;
+  }
+
+  const lon = value[0];
+  const lat = value[1];
+  if (
+    typeof lon !== "number" ||
+    !Number.isFinite(lon) ||
+    typeof lat !== "number" ||
+    !Number.isFinite(lat)
+  ) {
+    return undefined;
+  }
+
+  return [lon, lat];
+}
+
+function getHaversineDistanceM(
+  lat1: number,
+  lon1: number,
+  lat2: number,
+  lon2: number
+): number {
+  const earthRadiusM = 6371000;
+  const dLat = degreesToRadians(lat2 - lat1);
+  const dLon = degreesToRadians(lon2 - lon1);
+  const rLat1 = degreesToRadians(lat1);
+  const rLat2 = degreesToRadians(lat2);
+  const a = Math.sin(dLat / 2) ** 2 +
+    Math.cos(rLat1) * Math.cos(rLat2) * Math.sin(dLon / 2) ** 2;
+  return 2 * earthRadiusM * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+function degreesToRadians(value: number): number {
+  return (value * Math.PI) / 180;
+}
+
+function normalizePrivacyDistance(value: number | undefined): number {
+  if (typeof value === "undefined") {
+    return 0;
+  }
+
+  if (!Number.isFinite(value) || value < 0) {
+    throw new RangeError("privacy distance must be a non-negative finite number.");
+  }
+
+  return Math.floor(value);
+}
+
+function cloneTrackJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneTrackJsonValue(item));
+  }
+
+  if (isRecord(value)) {
+    const output: Record<string, unknown> = {};
+    Object.keys(value).forEach((key) => {
+      output[key] = cloneTrackJsonValue(value[key]);
+    });
+    return output;
+  }
+
+  return value;
 }
 
 function countFeaturePositionedPoints(feature: Record<string, unknown>): number {

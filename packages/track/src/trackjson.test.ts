@@ -4,6 +4,7 @@ import {
   downsampleTrackJsonData,
   getTrackJsonMetadata,
   getTrackJsonTitle,
+  obfuscateTrackJsonPrivacy,
   parseTrackJsonData,
 } from "./trackjson";
 
@@ -160,6 +161,67 @@ describe("downsampleTrackJsonData", () => {
 
     expect(() => downsampleTrackJsonData(data, {
       maxPoints: 1,
+    })).toThrow(RangeError);
+  });
+});
+
+
+describe("obfuscateTrackJsonPrivacy", () => {
+  test("clamps start and end coordinates using distance series", () => {
+    const data = makeFeatureCollection(6);
+    const obfuscated = obfuscateTrackJsonPrivacy(data, {
+      startDistanceM: 20,
+      endDistanceM: 20,
+    }) as any;
+    const coordinates = obfuscated.features[0].geometry.coordinates;
+
+    expectCoordinatesToBeClose(coordinates.slice(0, 3), [
+      [139.00002123, 35.00002123],
+      [139.00002123, 35.00002123],
+      [139.00002123, 35.00002123],
+    ]);
+    expectCoordinatesToBeClose(coordinates.slice(3), [
+      [139.00003123, 35.00003123],
+      [139.00003123, 35.00003123],
+      [139.00003123, 35.00003123],
+    ]);
+    expect(obfuscated.features[0].properties.coordinateProperties.distances).toEqual([
+      0,
+      10,
+      20,
+      30,
+      40,
+      50,
+    ]);
+  });
+
+  test("does not mutate the input TrackJSON", () => {
+    const data = makeFeatureCollection(4);
+    const before = JSON.stringify(data);
+
+    obfuscateTrackJsonPrivacy(data, { startDistanceM: 10 });
+
+    expect(JSON.stringify(data)).toBe(before);
+  });
+
+  test("uses coordinate distance fallback when distances are missing", () => {
+    const data = makeFeatureCollection(4);
+    delete (data.features[0] as any).properties.coordinateProperties.distances;
+
+    const obfuscated = obfuscateTrackJsonPrivacy(data, {
+      startDistanceM: 1,
+    }) as any;
+    const coordinates = obfuscated.features[0].geometry.coordinates;
+
+    expectCoordinatesToBeClose(coordinates.slice(0, 2), [
+      [139.00001123, 35.00001123],
+      [139.00001123, 35.00001123],
+    ]);
+  });
+
+  test("rejects negative privacy distances", () => {
+    expect(() => obfuscateTrackJsonPrivacy(makeFeatureCollection(3), {
+      startDistanceM: -1,
     })).toThrow(RangeError);
   });
 });

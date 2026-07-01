@@ -221,6 +221,81 @@
             }
           },
           "additionalProperties": true
+        },
+        "statistics": {
+          "$ref": "#/$defs/statistics"
+        },
+        "training": {
+          "$ref": "#/$defs/training"
+        }
+      },
+      "additionalProperties": true
+    },
+    "statistics": {
+      "type": "object",
+      "properties": {
+        "speedKph": {
+          "$ref": "#/$defs/numericStats"
+        },
+        "cadenceRpm": {
+          "$ref": "#/$defs/numericStats"
+        },
+        "heartRateBpm": {
+          "$ref": "#/$defs/numericStats"
+        },
+        "powerW": {
+          "$ref": "#/$defs/numericStats"
+        }
+      },
+      "additionalProperties": true
+    },
+    "numericStats": {
+      "type": "object",
+      "properties": {
+        "avg": {
+          "type": "number"
+        },
+        "median": {
+          "type": "number"
+        },
+        "max": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    },
+    "training": {
+      "type": "object",
+      "properties": {
+        "normalizedPowerW": {
+          "type": "number"
+        },
+        "totalWorkJ": {
+          "type": "number"
+        },
+        "totalCaloriesCal": {
+          "type": "number"
+        },
+        "source": {
+          "type": "object",
+          "properties": {
+            "normalizedPower": {
+              "enum": [
+                "fit",
+                "computed"
+              ]
+            },
+            "totalWork": {
+              "enum": [
+                "fit",
+                "computed"
+              ]
+            },
+            "totalCalories": {
+              "const": "fit"
+            }
+          },
+          "additionalProperties": true
         }
       },
       "additionalProperties": true

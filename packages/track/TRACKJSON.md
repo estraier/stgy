@@ -215,6 +215,23 @@ TrackJSON metadata is stored in `Feature.properties.metadata`.
       "manufacturer": "garmin",
       "product": "edge",
       "serialNumber": 123456789
+    },
+    "statistics": {
+      "powerW": {
+        "avg": 176.5,
+        "median": 164,
+        "max": 742
+      }
+    },
+    "training": {
+      "normalizedPowerW": 213,
+      "totalWorkJ": 1285000,
+      "totalCaloriesCal": 720000,
+      "source": {
+        "normalizedPower": "computed",
+        "totalWork": "computed",
+        "totalCalories": "fit"
+      }
     }
   }
 }
@@ -238,6 +255,30 @@ Common metadata fields:
 | `device.manufacturer` | string | Device manufacturer |
 | `device.product` | string | Device product |
 | `device.serialNumber` | number | Device serial number |
+| `statistics.speedKph` | object | Speed statistics from raw speed samples in km/h |
+| `statistics.cadenceRpm` | object | Cadence statistics from raw cadence samples in rpm |
+| `statistics.heartRateBpm` | object | Heart-rate statistics from raw heart-rate samples in bpm |
+| `statistics.powerW` | object | Power statistics from raw power samples in watts |
+| `training.normalizedPowerW` | number | Normalized Power in watts, from FIT when present or computed from raw power |
+| `training.totalWorkJ` | number | Total mechanical work in joules, from FIT when present or computed from raw power |
+| `training.totalCaloriesCal` | number | Total calories in calories, converted from FIT totalCalories metadata when present |
+| `training.source.*` | string | Source marker such as `fit` or `computed` |
+
+Statistic objects use these fields.
+
+| Field | Type | Description |
+| --- | --- | --- |
+| `avg` | number | Arithmetic average of raw samples |
+| `median` | number | Median of raw samples |
+| `max` | number | Maximum raw sample value |
+
+Activity average speed is intentionally not stored separately. Consumers can
+compute gross or timer/moving average later from `totalDistanceM`,
+`totalElapsedTime`, and `totalTimerTime`.
+
+TSS, IF, and FTP are intentionally not computed or emitted by the FIT converter.
+If a future source format provides them explicitly, they can be added as
+additional metadata fields.
 
 Metadata is optional. The viewer ignores unknown metadata fields.
 
@@ -263,6 +304,8 @@ Default precision:
 | `createdAt` / `startTime` / `timeCreated` | integer |
 | `serialNumber` | integer |
 | `totalElapsedTime` / `totalTimerTime` | integer |
+| `training.totalWorkJ` / `training.totalCaloriesCal` | integer |
+| statistics and `training.normalizedPowerW` | metadata precision |
 
 Rounding should be applied when emitting or compacting TrackJSON, not while
 performing internal calculations.
@@ -463,3 +506,19 @@ Unknown numeric `coordinateProperties` series may be shown as custom graph
 series when complete and aligned with the coordinate array.
 
 Non-numeric or incomplete custom series may be ignored.
+
+
+## Privacy obfuscation
+
+TrackJSON coordinates can be privacy-obfuscated before downsampling. The clamp
+algorithm replaces the longitude and latitude of the first `startDistanceM`
+meters with the boundary coordinate at `startDistanceM`, and replaces the last
+`endDistanceM` meters with the boundary coordinate at `totalDistanceM -
+endDistanceM`.
+
+The operation changes only coordinate longitude and latitude values. It preserves
+metadata and `coordinateProperties`, including distances, times, heart rate,
+cadence, power, and speed.
+
+If `coordinateProperties.distances` is present, it is used for boundary matching.
+Otherwise, cumulative coordinate distance is computed from the LineString.

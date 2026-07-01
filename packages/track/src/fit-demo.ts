@@ -1,10 +1,12 @@
 import {
   downsampleTrackActivity,
   parseFitBytes,
+  obfuscateFitPrivacy,
   trackActivityToTrackJson,
 } from "./fit";
 import {
   compactTrackJsonData,
+  obfuscateTrackJsonPrivacy,
   countTrackJsonPositionedPoints,
   downsampleTrackJsonData,
   getTrackJsonMetadata,
@@ -33,13 +35,18 @@ type DemoElements = {
   downsampleStrategySelect: HTMLSelectElement;
   maxPointsInput: HTMLInputElement;
   preserveEndpointsInput: HTMLInputElement;
+  obfuscatePrivacyInput: HTMLInputElement;
+  obfuscateStartDistanceInput: HTMLInputElement;
+  obfuscateEndDistanceInput: HTMLInputElement;
   prettyInput: HTMLInputElement;
   convertButton: HTMLButtonElement;
   copyButton: HTMLButtonElement;
   downloadLink: HTMLAnchorElement;
   compressedDownloadLink: HTMLAnchorElement;
+  obfuscatedFitDownloadLink: HTMLAnchorElement;
   statusOutput: HTMLElement;
   summaryOutput: HTMLElement;
+  metadataOutput: HTMLElement;
   mapOutput: HTMLElement;
   trackJsonOutput: HTMLTextAreaElement;
 };
@@ -53,6 +60,10 @@ type ConversionResult = {
   renderedPointCount?: number;
   activity?: TrackActivity;
   renderedActivity?: TrackActivity;
+  obfuscatedFitBytes?: Uint8Array;
+  obfuscatedPrivacyApplied?: boolean;
+  privacyStartDistanceM?: number;
+  privacyEndDistanceM?: number;
 };
 
 declare global {
@@ -63,6 +74,7 @@ declare global {
 
 let currentTrackJsonUrl: string | undefined;
 let currentCompressedTrackJsonUrl: string | undefined;
+let currentObfuscatedFitUrl: string | undefined;
 
 export function initFitDemo(root: Document | HTMLElement = document) {
   const elements = getDemoElements(root);
@@ -106,6 +118,7 @@ async function convertAndRender(elements: DemoElements, renderer: TrackRenderer)
       file,
       result.trackJson
     );
+    updateObfuscatedFitDownload(elements, file, result.obfuscatedFitBytes);
 
     elements.trackJsonOutput.value = result.trackJson;
     elements.copyButton.disabled = false;
@@ -146,8 +159,13 @@ async function convertFitFile(
   file: File,
   elements: DemoElements
 ): Promise<ConversionResult> {
-  const bytes = await file.arrayBuffer();
-  const activity = parseFitBytes(bytes);
+  const originalBytes = await file.arrayBuffer();
+  const privacyOptions = getPrivacyObfuscationOptions(elements);
+  const obfuscatedFitBytes = elements.obfuscatePrivacyInput.checked
+    ? obfuscateFitPrivacy(originalBytes, privacyOptions)
+    : undefined;
+  const fitBytes = obfuscatedFitBytes || originalBytes;
+  const activity = parseFitBytes(fitBytes);
   const digest = maybeDownsample(activity, elements);
   const title = getRouteTitle(elements, file);
 
@@ -167,6 +185,10 @@ async function convertFitFile(
     renderedPointCount: digest.points.length,
     activity,
     renderedActivity: digest,
+    obfuscatedFitBytes,
+    obfuscatedPrivacyApplied: Boolean(obfuscatedFitBytes),
+    privacyStartDistanceM: privacyOptions.startDistanceM,
+    privacyEndDistanceM: privacyOptions.endDistanceM,
   };
 }
 
@@ -177,10 +199,14 @@ function convertTrackJsonText(
   sourceType: "trackjson" | "trjgz"
 ): ConversionResult {
   const originalTrackJsonData = parseTrackJsonData(text);
-  const title = getTrackJsonTitle(originalTrackJsonData) || getRouteTitle(elements, file);
+  const privacyOptions = getPrivacyObfuscationOptions(elements);
+  const obfuscatedTrackJsonData = elements.obfuscatePrivacyInput.checked
+    ? obfuscateTrackJsonPrivacy(originalTrackJsonData, privacyOptions)
+    : originalTrackJsonData;
+  const title = getTrackJsonTitle(obfuscatedTrackJsonData) || getRouteTitle(elements, file);
   const originalPointCount = countTrackJsonPositionedPoints(originalTrackJsonData);
   const downsampledTrackJsonData = maybeDownsampleTrackJsonData(
-    originalTrackJsonData,
+    obfuscatedTrackJsonData,
     elements
   );
   const trackJsonData = compactTrackJsonData(downsampledTrackJsonData);
@@ -198,6 +224,9 @@ function convertTrackJsonText(
     sourceType,
     originalPointCount,
     renderedPointCount,
+    obfuscatedPrivacyApplied: elements.obfuscatePrivacyInput.checked,
+    privacyStartDistanceM: privacyOptions.startDistanceM,
+    privacyEndDistanceM: privacyOptions.endDistanceM,
   };
 }
 
@@ -292,6 +321,40 @@ async function updateTrackJsonDownload(
   return rawUrl;
 }
 
+function copyUint8ArrayToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
+}
+
+function updateObfuscatedFitDownload(
+  elements: DemoElements,
+  file: File,
+  bytes: Uint8Array | undefined
+) {
+  if (currentObfuscatedFitUrl) {
+    URL.revokeObjectURL(currentObfuscatedFitUrl);
+    currentObfuscatedFitUrl = undefined;
+  }
+
+  elements.obfuscatedFitDownloadLink.removeAttribute("href");
+  elements.obfuscatedFitDownloadLink.hidden = true;
+
+  if (!bytes) {
+    return;
+  }
+
+  const blob = new Blob([copyUint8ArrayToArrayBuffer(bytes)], {
+    type: "application/octet-stream",
+  });
+  const url = URL.createObjectURL(blob);
+  currentObfuscatedFitUrl = url;
+
+  elements.obfuscatedFitDownloadLink.href = url;
+  elements.obfuscatedFitDownloadLink.download = makeObfuscatedFitFileName(file);
+  elements.obfuscatedFitDownloadLink.hidden = false;
+}
+
 async function gzipText(text: string): Promise<Blob | null> {
   const CompressionStreamCtor = (
     globalThis as unknown as { CompressionStream?: StreamConstructor }
@@ -365,8 +428,16 @@ function showSummary(
     lines.push(`rendered points: ${result.renderedPointCount}`);
   }
 
-  const metadata = result.activity?.metadata ||
-    getTrackJsonMetadata(result.trackJsonData);
+  if (result.obfuscatedPrivacyApplied) {
+    lines.push(
+      `Privacy obfuscation: start ${formatNumber(
+        result.privacyStartDistanceM || 0,
+        0
+      )} m, end ${formatNumber(result.privacyEndDistanceM || 0, 0)} m`
+    );
+  }
+
+  const metadata = getResultMetadata(result);
 
   if (metadata) {
     const sport = getStringProperty(metadata, "sport");
@@ -392,7 +463,11 @@ function showSummary(
     } else if (typeof totalElapsedTime === "number") {
       lines.push(`elapsed time: ${formatDuration(totalElapsedTime)}`);
     }
+
+    appendMetadataSummaryLines(lines, metadata);
   }
+
+  showMetadata(elements, metadata);
 
   if (result.activity && result.activity.warnings.length > 0) {
     lines.push(`warnings: ${result.activity.warnings.length}`);
@@ -408,6 +483,111 @@ function showSummary(
   });
 }
 
+function getResultMetadata(result: ConversionResult): Record<string, unknown> | undefined {
+  const trackJsonMetadata = getTrackJsonMetadata(result.trackJsonData);
+  if (trackJsonMetadata) {
+    return trackJsonMetadata;
+  }
+
+  const activityMetadata = result.renderedActivity?.metadata || result.activity?.metadata;
+  return isRecord(activityMetadata) ? activityMetadata : undefined;
+}
+
+function showMetadata(
+  elements: DemoElements,
+  metadata: Record<string, unknown> | undefined
+) {
+  elements.metadataOutput.textContent = "";
+
+  if (!metadata) {
+    elements.metadataOutput.hidden = true;
+    return;
+  }
+
+  const details = document.createElement("details");
+  details.open = true;
+
+  const summary = document.createElement("summary");
+  summary.textContent = "Metadata";
+
+  const pre = document.createElement("pre");
+  pre.textContent = JSON.stringify(metadata, null, 2);
+
+  details.appendChild(summary);
+  details.appendChild(pre);
+
+  elements.metadataOutput.hidden = false;
+  elements.metadataOutput.appendChild(details);
+}
+
+function appendMetadataSummaryLines(
+  lines: string[],
+  metadata: Record<string, unknown>
+) {
+  const statistics = getRecordProperty(metadata, "statistics");
+  if (statistics) {
+    appendStatsLine(lines, statistics, "speedKph", "speed", "km/h");
+    appendStatsLine(lines, statistics, "cadenceRpm", "cadence", "rpm");
+    appendStatsLine(lines, statistics, "heartRateBpm", "heart rate", "bpm");
+    appendStatsLine(lines, statistics, "powerW", "power", "W");
+  }
+
+  const training = getRecordProperty(metadata, "training");
+  if (!training) {
+    return;
+  }
+
+  const normalizedPowerW = getNumberProperty(training, "normalizedPowerW");
+  const totalWorkJ = getNumberProperty(training, "totalWorkJ");
+  const totalCaloriesCal = getNumberProperty(training, "totalCaloriesCal");
+
+  if (typeof normalizedPowerW === "number") {
+    lines.push(`normalized power: ${formatNumber(normalizedPowerW, 0)} W`);
+  }
+
+  if (typeof totalWorkJ === "number") {
+    lines.push(`total work: ${formatNumber(totalWorkJ, 0)} J`);
+  }
+
+  if (typeof totalCaloriesCal === "number") {
+    lines.push(`calories: ${formatNumber(totalCaloriesCal, 0)} cal`);
+  }
+}
+
+function appendStatsLine(
+  lines: string[],
+  statistics: Record<string, unknown>,
+  key: string,
+  label: string,
+  unit: string
+) {
+  const stats = getRecordProperty(statistics, key);
+  if (!stats) {
+    return;
+  }
+
+  const avg = getNumberProperty(stats, "avg");
+  const median = getNumberProperty(stats, "median");
+  const max = getNumberProperty(stats, "max");
+  const parts: string[] = [];
+
+  if (typeof avg === "number") {
+    parts.push(`avg ${formatNumber(avg, getStatsPrecision(unit))}`);
+  }
+
+  if (typeof median === "number") {
+    parts.push(`median ${formatNumber(median, getStatsPrecision(unit))}`);
+  }
+
+  if (typeof max === "number") {
+    parts.push(`max ${formatNumber(max, getStatsPrecision(unit))}`);
+  }
+
+  if (parts.length > 0) {
+    lines.push(`${label}: ${parts.join(", ")} ${unit}`);
+  }
+}
+
 function clearOutput(elements: DemoElements) {
   revokeCurrentTrackJsonUrls();
 
@@ -421,8 +601,14 @@ function clearOutput(elements: DemoElements) {
   elements.compressedDownloadLink.removeAttribute("href");
   elements.compressedDownloadLink.hidden = true;
 
+  elements.obfuscatedFitDownloadLink.removeAttribute("href");
+  elements.obfuscatedFitDownloadLink.hidden = true;
+
   elements.summaryOutput.textContent = "";
   elements.summaryOutput.hidden = true;
+
+  elements.metadataOutput.textContent = "";
+  elements.metadataOutput.hidden = true;
 }
 
 function revokeCurrentTrackJsonUrls() {
@@ -435,6 +621,11 @@ function revokeCurrentTrackJsonUrls() {
     URL.revokeObjectURL(currentCompressedTrackJsonUrl);
     currentCompressedTrackJsonUrl = undefined;
   }
+
+  if (currentObfuscatedFitUrl) {
+    URL.revokeObjectURL(currentObfuscatedFitUrl);
+    currentObfuscatedFitUrl = undefined;
+  }
 }
 
 function syncDownsampleControls(elements: DemoElements) {
@@ -442,6 +633,22 @@ function syncDownsampleControls(elements: DemoElements) {
   elements.downsampleStrategySelect.disabled = !enabled;
   elements.maxPointsInput.disabled = !enabled;
   elements.preserveEndpointsInput.disabled = !enabled;
+}
+
+function getPrivacyObfuscationOptions(elements: DemoElements) {
+  return {
+    startDistanceM: getNonNegativeDistance(elements.obfuscateStartDistanceInput),
+    endDistanceM: getNonNegativeDistance(elements.obfuscateEndDistanceInput),
+  };
+}
+
+function getNonNegativeDistance(input: HTMLInputElement): number {
+  const value = Number(input.value);
+  if (!Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+
+  return Math.floor(value);
 }
 
 function setBusy(elements: DemoElements, busy: boolean) {
@@ -474,13 +681,30 @@ function getDemoElements(root: Document | HTMLElement): DemoElements {
       root,
       "fit-demo-preserve-endpoints"
     ),
+    obfuscatePrivacyInput: getElement<HTMLInputElement>(
+      root,
+      "fit-demo-obfuscate-privacy"
+    ),
+    obfuscateStartDistanceInput: getElement<HTMLInputElement>(
+      root,
+      "fit-demo-obfuscate-start-distance"
+    ),
+    obfuscateEndDistanceInput: getElement<HTMLInputElement>(
+      root,
+      "fit-demo-obfuscate-end-distance"
+    ),
     prettyInput: getElement<HTMLInputElement>(root, "fit-demo-pretty"),
     convertButton: getElement<HTMLButtonElement>(root, "fit-demo-convert"),
     copyButton: getElement<HTMLButtonElement>(root, "fit-demo-copy"),
     downloadLink,
     compressedDownloadLink,
+    obfuscatedFitDownloadLink: getElement<HTMLAnchorElement>(
+      root,
+      "fit-demo-download-obfuscated-fit"
+    ),
     statusOutput: getElement<HTMLElement>(root, "fit-demo-status"),
     summaryOutput: getElement<HTMLElement>(root, "fit-demo-summary"),
+    metadataOutput: getElement<HTMLElement>(root, "fit-demo-metadata"),
     mapOutput: getElement<HTMLElement>(root, "fit-demo-map-output"),
     trackJsonOutput: getElement<HTMLTextAreaElement>(root, "fit-demo-track-json"),
   };
@@ -555,6 +779,10 @@ function makeTrackJsonFileName(file: File, extension: ".trj" | ".trjgz"): string
   return `${stripExtension(file.name) || "track"}${extension}`;
 }
 
+function makeObfuscatedFitFileName(file: File): string {
+  return `${stripExtension(file.name) || "track"}.obfuscated.fit`;
+}
+
 function stripExtension(name: string): string {
   return name.replace(/\.[^.]*$/, "");
 }
@@ -592,6 +820,26 @@ function formatDuration(seconds: number): string {
   }
 
   return `${minutes}:${restSeconds.toString().padStart(2, "0")}`;
+}
+
+function getRecordProperty(
+  object: Record<string, unknown>,
+  key: string
+): Record<string, unknown> | undefined {
+  const value = object[key];
+  return isRecord(value) ? value : undefined;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function formatNumber(value: number, digits: number): string {
+  return value.toFixed(digits);
+}
+
+function getStatsPrecision(unit: string): number {
+  return unit === "rpm" || unit === "bpm" || unit === "W" ? 0 : 1;
 }
 
 function getStringProperty(
