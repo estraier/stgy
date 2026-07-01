@@ -50,7 +50,6 @@ type DemoElements = {
   obfuscatedFitDownloadLink: HTMLAnchorElement;
   statusOutput: HTMLElement;
   summaryOutput: HTMLElement;
-  metadataOutput: HTMLElement;
   mapOutput: HTMLElement;
   trackJsonOutput: HTMLTextAreaElement;
 };
@@ -475,7 +474,6 @@ function showSummary(
     appendMetadataSummaryLines(lines, metadata);
   }
 
-  showMetadata(elements, metadata);
 
   if (result.activity && result.activity.warnings.length > 0) {
     lines.push(`warnings: ${result.activity.warnings.length}`);
@@ -501,33 +499,6 @@ function getResultMetadata(result: ConversionResult): Record<string, unknown> | 
 
   const activityMetadata = result.renderedActivity?.metadata || result.activity?.metadata;
   return isRecord(activityMetadata) ? activityMetadata : undefined;
-}
-
-function showMetadata(
-  elements: DemoElements,
-  metadata: Record<string, unknown> | undefined
-) {
-  elements.metadataOutput.textContent = "";
-
-  if (!metadata) {
-    elements.metadataOutput.hidden = true;
-    return;
-  }
-
-  const details = document.createElement("details");
-  details.open = true;
-
-  const summary = document.createElement("summary");
-  summary.textContent = "Metadata";
-
-  const pre = document.createElement("pre");
-  pre.textContent = JSON.stringify(metadata, null, 2);
-
-  details.appendChild(summary);
-  details.appendChild(pre);
-
-  elements.metadataOutput.hidden = false;
-  elements.metadataOutput.appendChild(details);
 }
 
 function appendMetadataSummaryLines(
@@ -988,6 +959,15 @@ function buildPowerCurveSvg(points: PowerCurvePoint[]): SVGSVGElement {
   polyline.setAttribute("stroke-width", "2.5");
   svg.appendChild(polyline);
 
+  appendSvgText(
+    svg,
+    marginLeft + plotWidth / 2,
+    height - 8,
+    "Duration",
+    "middle",
+    "11px"
+  );
+
   points.forEach((point) => {
     const circle = document.createElementNS(svgNs, "circle");
     circle.setAttribute("cx", String(xValue(point.durationSeconds)));
@@ -1001,7 +981,7 @@ function buildPowerCurveSvg(points: PowerCurvePoint[]): SVGSVGElement {
     svg.appendChild(circle);
   });
 
-  appendSvgText(svg, 16, marginTop + 8, "W", "start", "11px");
+  appendSvgText(svg, marginLeft, marginTop - 4, "Power (W)", "start", "11px");
 
   return svg;
 }
@@ -1445,8 +1425,6 @@ function clearOutput(elements: DemoElements) {
   elements.summaryOutput.textContent = "";
   elements.summaryOutput.hidden = true;
 
-  elements.metadataOutput.textContent = "";
-  elements.metadataOutput.hidden = true;
 }
 
 function revokeCurrentTrackJsonUrls() {
@@ -1549,7 +1527,6 @@ function getDemoElements(root: Document | HTMLElement): DemoElements {
     ),
     statusOutput: getElement<HTMLElement>(root, "fit-demo-status"),
     summaryOutput: getElement<HTMLElement>(root, "fit-demo-summary"),
-    metadataOutput: getElement<HTMLElement>(root, "fit-demo-metadata"),
     mapOutput: getElement<HTMLElement>(root, "fit-demo-map-output"),
     trackJsonOutput: getElement<HTMLTextAreaElement>(root, "fit-demo-track-json"),
   };
