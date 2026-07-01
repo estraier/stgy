@@ -530,7 +530,10 @@ function appendMetadataSummaryLines(
     appendStatsLine(lines, statistics, "cadenceRpm", "cadence", "rpm");
     appendStatsLine(lines, statistics, "heartRateBpm", "heart rate", "bpm");
     appendStatsLine(lines, statistics, "powerW", "power", "W");
+    appendStatsLine(lines, statistics, "temperatureC", "temperature", "°C");
   }
+
+  appendDeviceSummaryLines(lines, metadata);
 
   const training = getRecordProperty(metadata, "training");
   if (!training) {
@@ -586,6 +589,46 @@ function appendStatsLine(
   if (parts.length > 0) {
     lines.push(`${label}: ${parts.join(", ")} ${unit}`);
   }
+}
+
+function appendDeviceSummaryLines(
+  lines: string[],
+  metadata: Record<string, unknown>
+) {
+  const recordingDevice = getRecordProperty(metadata, "recordingDevice");
+  const recordingDeviceLabel = recordingDevice
+    ? formatDeviceSummary(recordingDevice)
+    : undefined;
+  if (recordingDeviceLabel) {
+    lines.push(`recording device: ${recordingDeviceLabel}`);
+  }
+
+  const devices = metadata.devices;
+  if (!Array.isArray(devices)) {
+    return;
+  }
+
+  const labels = devices
+    .filter(isRecord)
+    .map(formatDeviceSummary)
+    .filter((label): label is string => Boolean(label));
+
+  if (labels.length > 0) {
+    lines.push(`devices: ${labels.join("; ")}`);
+  }
+}
+
+function formatDeviceSummary(device: Record<string, unknown>): string | undefined {
+  const parts = [
+    getStringProperty(device, "manufacturer"),
+    getStringProperty(device, "productName") || getStringProperty(device, "product"),
+  ].filter((part): part is string => Boolean(part));
+
+  if (parts.length === 0) {
+    return undefined;
+  }
+
+  return parts.join(" ");
 }
 
 function clearOutput(elements: DemoElements) {

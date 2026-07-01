@@ -211,16 +211,29 @@ TrackJSON metadata is stored in `Feature.properties.metadata`.
     "totalDistanceM": 12345.7,
     "totalTimerTime": 3600,
     "totalElapsedTime": 3900,
-    "device": {
+    "recordingDevice": {
       "manufacturer": "garmin",
       "product": "edge",
       "serialNumber": 123456789
     },
+    "devices": [
+      {
+        "manufacturer": "garmin",
+        "product": "Edge 1040",
+        "softwareVersion": "19.12",
+        "deviceType": "bike_computer"
+      }
+    ],
     "statistics": {
       "powerW": {
         "avg": 176.5,
         "median": 164,
         "max": 742
+      },
+      "temperatureC": {
+        "avg": 22.4,
+        "median": 22,
+        "max": 28
       }
     },
     "training": {
@@ -522,3 +535,11 @@ cadence, power, and speed.
 
 If `coordinateProperties.distances` is present, it is used for boundary matching.
 Otherwise, cumulative coordinate distance is computed from the LineString.
+
+### Device and temperature metadata
+
+FIT inputs may contain per-record temperature samples and one or more
+`device_info` messages. When available, `statistics.temperatureC` stores raw
+temperature statistics in degrees Celsius, and `metadata.recordingDevices` stores device
+summary records such as the head unit, sensors, and power meters. The existing
+`metadata.recordingDevice` field remains the primary `file_id` device summary.

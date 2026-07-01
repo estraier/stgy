@@ -41,7 +41,8 @@ export type TrackActivityMetadata = {
   description?: string;
   sport?: string;
   subSport?: string;
-  device?: TrackDeviceInfo;
+  recordingDevice?: TrackDeviceInfo;
+  devices?: TrackDeviceInfo[];
   createdAt?: number;
   startTime?: number;
   totalElapsedTime?: number;
@@ -56,6 +57,7 @@ export type TrackActivityStatistics = {
   cadenceRpm?: TrackNumericStats;
   heartRateBpm?: TrackNumericStats;
   powerW?: TrackNumericStats;
+  temperatureC?: TrackNumericStats;
 };
 
 export type TrackNumericStats = {
@@ -85,7 +87,12 @@ export type TrackDataSource = {
 export type TrackDeviceInfo = {
   manufacturer?: string;
   product?: string;
+  productName?: string;
   serialNumber?: number;
+  softwareVersion?: string;
+  hardwareVersion?: string;
+  deviceType?: string;
+  sourceType?: string;
 };
 
 export type TrackPoint = {
@@ -400,8 +407,12 @@ function buildTrackJsonMetadata(
     output.subSport = metadata.subSport.trim();
   }
 
-  if (metadata.device) {
-    output.device = { ...metadata.device };
+  if (metadata.recordingDevice) {
+    output.recordingDevice = { ...metadata.recordingDevice };
+  }
+
+  if (metadata.devices && metadata.devices.length > 0) {
+    output.devices = metadata.devices.map((device) => ({ ...device }));
   }
 
   assignMetadataInteger(output, "createdAt", metadata.createdAt);
@@ -461,6 +472,12 @@ function buildTrackJsonStatistics(
     precision,
   );
   assignTrackJsonNumericStats(output, "powerW", statistics.powerW, precision);
+  assignTrackJsonNumericStats(
+    output,
+    "temperatureC",
+    statistics.temperatureC,
+    precision,
+  );
 
   return Object.keys(output).length > 0 ? output : undefined;
 }
@@ -859,7 +876,10 @@ function cloneMetadata(metadata: TrackActivityMetadata): TrackActivityMetadata {
   return {
     ...metadata,
     source: metadata.source ? { ...metadata.source } : undefined,
-    device: metadata.device ? { ...metadata.device } : undefined,
+    recordingDevice: metadata.recordingDevice
+      ? { ...metadata.recordingDevice }
+      : undefined,
+    devices: metadata.devices?.map((device) => ({ ...device })),
     statistics: cloneStatistics(metadata.statistics),
     training: cloneTraining(metadata.training),
   };
@@ -877,6 +897,7 @@ function cloneStatistics(
     cadenceRpm: cloneNumericStats(statistics.cadenceRpm),
     heartRateBpm: cloneNumericStats(statistics.heartRateBpm),
     powerW: cloneNumericStats(statistics.powerW),
+    temperatureC: cloneNumericStats(statistics.temperatureC),
   };
 }
 
@@ -942,7 +963,8 @@ function fitMessagesToMetadata(
     "session",
   ])[0];
 
-  const device = buildDeviceInfo(fileId);
+  const recordingDevice = buildDeviceInfo(fileId);
+  const devices = buildDeviceInfos(messages);
   const metadata: TrackActivityMetadata = {
     source: {
       type: "fit",
@@ -964,8 +986,12 @@ function fitMessagesToMetadata(
     }
   }
 
-  if (device) {
-    metadata.device = device;
+  if (recordingDevice) {
+    metadata.recordingDevice = recordingDevice;
+  }
+
+  if (devices.length > 0) {
+    metadata.devices = devices;
   }
 
   if (fileId) {
@@ -1044,6 +1070,11 @@ function buildActivityStatistics(
     statistics,
     "powerW",
     points.map((point) => point.powerW),
+  );
+  assignActivityStats(
+    statistics,
+    "temperatureC",
+    points.map((point) => point.temperatureC),
   );
 
   return Object.keys(statistics).length > 0 ? statistics : undefined;
@@ -1311,15 +1342,54 @@ function buildDeviceInfo(
     return undefined;
   }
 
+  const device = buildDeviceInfoFromMessage(fileId);
+  return Object.keys(device).length > 0 ? device : undefined;
+}
+
+function buildDeviceInfos(messages: FitMessages): TrackDeviceInfo[] {
+  const deviceMessages = getMessageArray(messages, [
+    "deviceInfoMesgs",
+    "deviceInfoMessages",
+    "deviceInfos",
+    "deviceInfo",
+  ]);
+
+  return deviceMessages
+    .map(buildDeviceInfoFromMessage)
+    .filter((device) => Object.keys(device).length > 0);
+}
+
+function buildDeviceInfoFromMessage(message: FitMessage): TrackDeviceInfo {
   const device: TrackDeviceInfo = {};
   const manufacturer = toOptionalString(
-    getFirstValue(fileId, ["manufacturer"]),
+    getFirstValue(message, ["manufacturer"]),
   );
   const product = toOptionalString(
-    getFirstValue(fileId, ["productName", "garminProduct", "product"]),
+    getFirstValue(message, ["productName", "garminProduct", "product"]),
+  );
+  const productName = toOptionalString(
+    getFirstValue(message, [
+      "productName",
+      "product_name",
+      "deviceName",
+      "device_name",
+      "name",
+    ]),
   );
   const serialNumber = toFiniteNumber(
-    getFirstValue(fileId, ["serialNumber", "serial_number"]),
+    getFirstValue(message, ["serialNumber", "serial_number"]),
+  );
+  const softwareVersion = toOptionalString(
+    getFirstValue(message, ["softwareVersion", "software_version"]),
+  );
+  const hardwareVersion = toOptionalString(
+    getFirstValue(message, ["hardwareVersion", "hardware_version"]),
+  );
+  const deviceType = toOptionalString(
+    getFirstValue(message, ["deviceType", "device_type"]),
+  );
+  const sourceType = toOptionalString(
+    getFirstValue(message, ["sourceType", "source_type"]),
   );
 
   if (manufacturer) {
@@ -1330,11 +1400,31 @@ function buildDeviceInfo(
     device.product = product;
   }
 
+  if (productName && productName !== product) {
+    device.productName = productName;
+  }
+
   if (typeof serialNumber === "number") {
     device.serialNumber = serialNumber;
   }
 
-  return Object.keys(device).length > 0 ? device : undefined;
+  if (softwareVersion) {
+    device.softwareVersion = softwareVersion;
+  }
+
+  if (hardwareVersion) {
+    device.hardwareVersion = hardwareVersion;
+  }
+
+  if (deviceType) {
+    device.deviceType = deviceType;
+  }
+
+  if (sourceType) {
+    device.sourceType = sourceType;
+  }
+
+  return device;
 }
 
 function fitRecordToTrackPoint(

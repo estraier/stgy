@@ -207,7 +207,19 @@
         "totalElapsedTime": {
           "type": "number"
         },
-        "device": {
+        "statistics": {
+          "$ref": "#/$defs/statistics"
+        },
+        "training": {
+          "$ref": "#/$defs/training"
+        },
+        "devices": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/device"
+          }
+        },
+        "recordingDevice": {
           "type": "object",
           "properties": {
             "manufacturer": {
@@ -218,15 +230,24 @@
             },
             "serialNumber": {
               "type": "number"
+            },
+            "productName": {
+              "type": "string"
+            },
+            "softwareVersion": {
+              "type": "string"
+            },
+            "hardwareVersion": {
+              "type": "string"
+            },
+            "deviceType": {
+              "type": "string"
+            },
+            "sourceType": {
+              "type": "string"
             }
           },
           "additionalProperties": true
-        },
-        "statistics": {
-          "$ref": "#/$defs/statistics"
-        },
-        "training": {
-          "$ref": "#/$defs/training"
         }
       },
       "additionalProperties": true
@@ -244,6 +265,9 @@
           "$ref": "#/$defs/numericStats"
         },
         "powerW": {
+          "$ref": "#/$defs/numericStats"
+        },
+        "temperatureC": {
           "$ref": "#/$defs/numericStats"
         }
       },
@@ -296,6 +320,36 @@
             }
           },
           "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "device": {
+      "type": "object",
+      "properties": {
+        "manufacturer": {
+          "type": "string"
+        },
+        "product": {
+          "type": "string"
+        },
+        "serialNumber": {
+          "type": "number"
+        },
+        "productName": {
+          "type": "string"
+        },
+        "softwareVersion": {
+          "type": "string"
+        },
+        "hardwareVersion": {
+          "type": "string"
+        },
+        "deviceType": {
+          "type": "string"
+        },
+        "sourceType": {
+          "type": "string"
         }
       },
       "additionalProperties": true

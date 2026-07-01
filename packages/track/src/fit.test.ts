@@ -94,6 +94,17 @@ describe("parseFitBytes", () => {
             subSport: "road",
           },
         ],
+        deviceInfoMesgs: [
+          {
+            manufacturer: "garmin",
+            productName: "Edge 1040",
+            serialNumber: 777,
+            softwareVersion: 19.12,
+            hardwareVersion: 7,
+            deviceType: "bike_computer",
+            sourceType: "local",
+          },
+        ],
         sessionMesgs: [
           {
             startTime: new Date("2024-03-01T01:00:00Z"),
@@ -127,11 +138,22 @@ describe("parseFitBytes", () => {
     expect(activity.metadata.source).toEqual({ type: "fit" });
     expect(activity.metadata.sport).toBe("cycling");
     expect(activity.metadata.subSport).toBe("road");
-    expect(activity.metadata.device).toEqual({
+    expect(activity.metadata.recordingDevice).toEqual({
       manufacturer: "garmin",
       product: "edge",
       serialNumber: 123456,
     });
+    expect(activity.metadata.devices).toEqual([
+      {
+        manufacturer: "garmin",
+        product: "Edge 1040",
+        serialNumber: 777,
+        softwareVersion: "19.12",
+        hardwareVersion: "7",
+        deviceType: "bike_computer",
+        sourceType: "local",
+      },
+    ]);
     expect(activity.metadata.createdAt).toBe(1709251200);
     expect(activity.metadata.startTime).toBe(1709254800);
     expect(activity.metadata.totalElapsedTime).toBeCloseTo(3900.4);
@@ -169,6 +191,7 @@ describe("parseFitBytes", () => {
             cadence: 80,
             power: 100,
             speed: 5,
+            temperature: 20,
           },
           {
             timestamp: 1710000010,
@@ -176,6 +199,7 @@ describe("parseFitBytes", () => {
             cadence: 90,
             power: 200,
             speed: 6,
+            temperature: 22,
           },
           {
             timestamp: 1710000020,
@@ -183,6 +207,7 @@ describe("parseFitBytes", () => {
             cadence: 100,
             power: 300,
             speed: 7,
+            temperature: 24,
           },
           {
             timestamp: 1710000030,
@@ -190,6 +215,7 @@ describe("parseFitBytes", () => {
             cadence: 110,
             power: 400,
             speed: 8,
+            temperature: 30,
           },
         ],
       },
@@ -214,6 +240,11 @@ describe("parseFitBytes", () => {
       avg: 250,
       median: 250,
       max: 400,
+    });
+    expect(activity.metadata.statistics?.temperatureC).toEqual({
+      avg: 24,
+      median: 23,
+      max: 30,
     });
     expect(activity.metadata.training).toEqual({
       normalizedPowerW: 255.4,
@@ -449,8 +480,15 @@ describe("downsampleTrackActivity", () => {
 
   test("preserves and clones metadata during downsampling", () => {
     const activity = makeActivity(10);
+    activity.metadata.devices = [
+      {
+        manufacturer: "garmin",
+        product: "Edge 1040",
+      },
+    ];
     activity.metadata.statistics = {
       powerW: { avg: 150, median: 150, max: 300 },
+      temperatureC: { avg: 22, median: 22, max: 28 },
     };
     activity.metadata.training = {
       normalizedPowerW: 180,
@@ -467,6 +505,10 @@ describe("downsampleTrackActivity", () => {
     });
 
     expect(downsampled.metadata).toEqual(activity.metadata);
+    expect(downsampled.metadata.devices).not.toBe(activity.metadata.devices);
+    expect(downsampled.metadata.devices?.[0]).not.toBe(
+      activity.metadata.devices?.[0],
+    );
     expect(downsampled.metadata.statistics).not.toBe(
       activity.metadata.statistics,
     );
@@ -557,7 +599,7 @@ describe("trackActivityToTrackJson", () => {
       totalElapsedTime: 3901,
       totalTimerTime: 3601,
       totalDistanceM: 12345.7,
-      device: {
+      recordingDevice: {
         manufacturer: "garmin",
         product: "edge",
         serialNumber: 123456789,
@@ -567,9 +609,17 @@ describe("trackActivityToTrackJson", () => {
 
   test("writes statistics and training metadata", () => {
     const activity = makeActivity(2);
+    activity.metadata.devices = [
+      {
+        manufacturer: "garmin",
+        product: "Edge 1040",
+        softwareVersion: "19.12",
+      },
+    ];
     activity.metadata.statistics = {
       speedKph: { avg: 18.36, median: 18.36, max: 19.1 },
       powerW: { avg: 150.25, median: 150.25, max: 200 },
+      temperatureC: { avg: 21.24, median: 21.24, max: 25 },
     };
     activity.metadata.training = {
       normalizedPowerW: 201.23,
@@ -585,9 +635,17 @@ describe("trackActivityToTrackJson", () => {
     const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const metadata = parsed.features[0].properties.metadata;
 
+    expect(metadata.devices).toEqual([
+      {
+        manufacturer: "garmin",
+        product: "Edge 1040",
+        softwareVersion: "19.12",
+      },
+    ]);
     expect(metadata.statistics).toEqual({
       speedKph: { avg: 18.4, median: 18.4, max: 19.1 },
       powerW: { avg: 150.3, median: 150.3, max: 200 },
+      temperatureC: { avg: 21.2, median: 21.2, max: 25 },
     });
     expect(metadata.training).toEqual({
       normalizedPowerW: 201.2,
@@ -796,7 +854,7 @@ function makeActivity(pointCount: number): TrackActivity {
       totalElapsedTime: 3900.6,
       totalTimerTime: 3600.6,
       totalDistanceM: 12345.67,
-      device: {
+      recordingDevice: {
         manufacturer: "garmin",
         product: "edge",
         serialNumber: 123456789,
