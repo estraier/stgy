@@ -30,6 +30,9 @@ const TRACK_GRAPH_SMOOTHING_WINDOWS = [
   31,
   61,
   121,
+  241,
+  481,
+  961,
 ] as const;
 const TARGET_GRAPH_X_TICKS = 5;
 const TARGET_GRAPH_Y_TICKS = 5;
