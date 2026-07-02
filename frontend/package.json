@@ -26,7 +26,8 @@
     "react-icons": "^5.5.0",
     "react-leaflet": "^5.0.0",
     "stgy-markdown": "^1",
-    "utif": "^3.1.0"
+    "utif": "^3.1.0",
+    "stgy-track": "^1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
