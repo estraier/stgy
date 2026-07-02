@@ -130,6 +130,7 @@ const POWER_CURVE_DURATIONS_SECONDS = [
 ] as const;
 
 export default function TrackSandbox() {
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
   const [files, setFiles] = useState<File[]>([]);
   const [downsample, setDownsample] = useState(false);
   const [strategy, setStrategy] = useState<DownsampleStrategy>("aggregate");
@@ -216,6 +217,10 @@ export default function TrackSandbox() {
   }, [files, options, revokeUrls]);
 
   const reset = useCallback(() => {
+    if (fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
+
     setFiles([]);
     setResult(null);
     setError(null);
@@ -250,6 +255,7 @@ export default function TrackSandbox() {
                 Track files
               </div>
               <input
+                ref={fileInputRef}
                 type="file"
                 multiple
                 accept=".fit,.trj,.json,.geojson,.trjgz,application/json,application/gzip"
