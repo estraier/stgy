@@ -1,8 +1,7 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { ComponentType } from "react";
-import type { GeoJSON as LeafletGeoJson, Map as LeafletMap } from "leaflet";
 import {
   Bike,
   CalendarClock,
@@ -448,7 +447,7 @@ export default function TrackSandbox() {
                   </div>
                   <MapPinned className="h-5 w-5 text-sky-700" />
                 </div>
-                <TrackMap trackJsonData={result.trackJsonData} />
+                <TrackMap trackJson={result.trackJson} />
               </section>
 
               <section className="space-y-4">
@@ -507,83 +506,92 @@ export default function TrackSandbox() {
   );
 }
 
-function TrackMap({ trackJsonData }: { trackJsonData: unknown }) {
-  const canvasRef = useRef<HTMLDivElement | null>(null);
-  const mapRef = useRef<LeafletMap | null>(null);
+function TrackMap({ trackJson }: { trackJson: string }) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const reactId = useId();
+  const sourceId = useMemo(() => {
+    const safeId = reactId.replace(/[^a-zA-Z0-9_-]/g, "");
+    return `track-sandbox-${safeId}`;
+  }, [reactId]);
 
   useEffect(() => {
+    const root = rootRef.current;
     let disposed = false;
-    let routeLayer: LeafletGeoJson | null = null;
+
+    if (!root) {
+      return;
+    }
+
+    root.querySelectorAll(".stgy-track-graph").forEach((node) => node.remove());
+    root.querySelectorAll<HTMLElement>(".stgy-track-map").forEach((figure) => {
+      delete figure.dataset.stgyTrackInitialized;
+
+      const canvas = figure.querySelector<HTMLElement>(".stgy-track-canvas");
+      if (!canvas) {
+        return;
+      }
+
+      const nextCanvas = canvas.cloneNode(false) as HTMLElement;
+      canvas.replaceWith(nextCanvas);
+    });
 
     (async () => {
-      const L = await import("leaflet");
-      const canvas = canvasRef.current;
-      if (!canvas || disposed) return;
-
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
+      const { StgyTrackRenderer } = await import("stgy-track");
+      if (disposed || !rootRef.current) {
+        return;
       }
 
-      const cyclosm = L.tileLayer(
-        "https://{s}.tile-cyclosm.openstreetmap.fr/cyclosm/{z}/{x}/{y}.png",
-        { attribution: "&copy; CyclOSM", maxNativeZoom: 20, maxZoom: 20 },
-      );
-      const osm = L.tileLayer(
-        "https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png",
-        { attribution: "&copy; OpenStreetMap", maxNativeZoom: 19, maxZoom: 20 },
-      );
-      const opentopo = L.tileLayer(
-        "https://{s}.tile.opentopomap.org/{z}/{x}/{y}.png",
-        { attribution: "&copy; OpenTopoMap", maxNativeZoom: 17, maxZoom: 20 },
-      );
-      const gsiPale = L.tileLayer(
-        "https://cyberjapandata.gsi.go.jp/xyz/pale/{z}/{x}/{y}.png",
-        { attribution: "&copy; GSI Japan", maxNativeZoom: 18, maxZoom: 20 },
-      );
-
-      const map = L.map(canvas, {
-        center: [35.681, 139.767],
-        zoom: 13,
-        layers: [cyclosm],
-        scrollWheelZoom: false,
-      });
-      mapRef.current = map;
-
-      L.control.layers({
-        CyclOSM: cyclosm,
-        OpenStreetMap: osm,
-        OpenTopoMap: opentopo,
-        "GSI Pale": gsiPale,
-      }).addTo(map);
-
-      routeLayer = L.geoJSON(trackJsonData as GeoJSON.GeoJsonObject, {
-        style: {
-          color: "#0f80c9",
-          weight: 5,
-          opacity: 0.88,
-        },
-      }).addTo(map);
-
-      const bounds = routeLayer.getBounds();
-      if (bounds.isValid()) {
-        map.fitBounds(bounds, { padding: [28, 28] });
+      const renderer = new StgyTrackRenderer();
+      renderer.hydrate(rootRef.current);
+    })().catch((e: unknown) => {
+      if (disposed) {
+        return;
       }
-    })().catch(() => {});
+
+      const message = e instanceof Error ? e.message : String(e);
+      const currentCanvas = rootRef.current?.querySelector<HTMLElement>(".stgy-track-canvas");
+      if (currentCanvas) {
+        currentCanvas.textContent = `Track renderer could not be loaded: ${message}`;
+      }
+    });
 
     return () => {
       disposed = true;
-      if (routeLayer) {
-        routeLayer.remove();
-      }
-      if (mapRef.current) {
-        mapRef.current.remove();
-        mapRef.current = null;
-      }
+      root.querySelectorAll(".stgy-track-graph").forEach((node) => node.remove());
     };
-  }, [trackJsonData]);
+  }, [sourceId, trackJson]);
 
-  return <div ref={canvasRef} className="h-[520px] w-full bg-slate-100" />;
+  return (
+    <div ref={rootRef}>
+      <figure
+        key={sourceId}
+        className="stgy-track-map"
+        data-src={`#${sourceId}`}
+        data-base-layer="cyclosm"
+        data-show-graph="true"
+        data-show-overlay="true"
+      >
+        <div
+          className="stgy-track-canvas h-[780px] w-full bg-slate-100"
+          aria-label="Track map"
+        />
+      </figure>
+      <script
+        id={sourceId}
+        type="application/json"
+        dangerouslySetInnerHTML={{ __html: escapeJsonScriptContent(trackJson) }}
+      />
+    </div>
+  );
+}
+
+function escapeJsonScriptContent(json: string): string {
+  return json
+    .replace(/</g, "\\u003c")
+    .replace(/>/g, "\\u003e")
+    .replace(/&/g, "\\u0026")
+    .replace(/\u2028/g, "\\u2028")
+    .replace(/\u2029/g, "\\u2029");
 }
 
 function RideSummary({ activity }: { activity: TrackActivity }) {

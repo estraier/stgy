@@ -1,6 +1,4 @@
 import L from "leaflet";
-import "leaflet/dist/leaflet.css";
-import "./stgy-track.css";
 import { isJapan } from "./geo";
 import { TrackLoader } from "./loader";
 

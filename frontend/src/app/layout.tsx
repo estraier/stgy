@@ -1,6 +1,7 @@
 import "./globals.css";
 import "./published.css";
 import "leaflet/dist/leaflet.css";
+import "stgy-track/track-viewer.css";
 import type { Metadata, Viewport } from "next";
 
 export const metadata: Metadata = {
