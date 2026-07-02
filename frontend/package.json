@@ -27,7 +27,7 @@
     "react-leaflet": "^5.0.0",
     "stgy-markdown": "^1",
     "utif": "^3.1.0",
-    "stgy-track": "^1"
+    "stgy-track": "file:../packages/track"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",
