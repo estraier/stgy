@@ -14,7 +14,6 @@ import {
   countTrackJsonPositionedPoints,
   downsampleTrackJsonData,
   getTrackJsonMetadata,
-  getTrackJsonTitle,
   parseTrackJsonData,
 } from "./trackjson";
 import type { TrackActivity, TrackPoint } from "./fit";
@@ -34,7 +33,6 @@ type StreamConstructor = new (
 
 type DemoElements = {
   fileInput: HTMLInputElement;
-  titleInput: HTMLInputElement;
   downsampleInput: HTMLInputElement;
   downsampleStrategySelect: HTMLSelectElement;
   maxPointsInput: HTMLInputElement;
@@ -44,6 +42,7 @@ type DemoElements = {
   obfuscateEndDistanceInput: HTMLInputElement;
   ftpInput: HTMLInputElement;
   lthrInput: HTMLInputElement;
+  printAnalysisInput: HTMLInputElement;
   prettyInput: HTMLInputElement;
   convertButton: HTMLButtonElement;
   copyButton: HTMLButtonElement;
@@ -95,9 +94,19 @@ export function initFitDemo(root: Document | HTMLElement = document) {
   const renderer = createRenderer();
 
   syncDownsampleControls(elements);
+  syncPrivacyControls(elements);
+  syncAnalysisControls(elements);
 
   elements.downsampleInput.addEventListener("change", () => {
     syncDownsampleControls(elements);
+  });
+
+  elements.obfuscatePrivacyInput.addEventListener("change", () => {
+    syncPrivacyControls(elements);
+  });
+
+  elements.printAnalysisInput.addEventListener("change", () => {
+    syncAnalysisControls(elements);
   });
 
   elements.convertButton.addEventListener("click", () => {
@@ -160,7 +169,7 @@ async function convertInputFiles(
   const parsedInputs = await Promise.all(
     files.map((file) => convertInputFileToActivity(file, elements))
   );
-  const title = getMergedRouteTitle(elements, files);
+  const title = getMergedRouteTitle(files);
   const mergedActivity = mergeTrackActivities(
     parsedInputs.map((input) => input.activity),
     {
@@ -250,7 +259,7 @@ function convertTrackJsonTextToActivity(
     : originalTrackJsonData;
   const activity = trackJsonDataToTrackActivity(obfuscatedTrackJsonData, {
     sourceType,
-    name: getTrackJsonTitle(obfuscatedTrackJsonData) || stripExtension(file.name),
+    name: getRouteTitle(file),
   });
 
   return {
@@ -297,7 +306,7 @@ async function convertFitFile(
   const fitBytes = obfuscatedFitBytes || originalBytes;
   const activity = parseFitBytes(fitBytes);
   const digest = maybeDownsample(activity, elements);
-  const title = getRouteTitle(elements, file);
+  const title = getRouteTitle(file);
 
   const trackJson = trackActivityToTrackJson(digest, {
     title,
@@ -334,7 +343,7 @@ function convertTrackJsonText(
   const obfuscatedTrackJsonData = elements.obfuscatePrivacyInput.checked
     ? obfuscateTrackJsonPrivacy(originalTrackJsonData, privacyOptions)
     : originalTrackJsonData;
-  const title = getTrackJsonTitle(obfuscatedTrackJsonData) || getRouteTitle(elements, file);
+  const title = getRouteTitle(file);
   const originalPointCount = countTrackJsonPositionedPoints(originalTrackJsonData);
   const downsampledTrackJsonData = maybeDownsampleTrackJsonData(
     obfuscatedTrackJsonData,
@@ -757,6 +766,10 @@ function appendAnalysisSections(
   elements: DemoElements,
   metadata: Record<string, unknown> | undefined
 ) {
+  if (!elements.printAnalysisInput.checked) {
+    return;
+  }
+
   const points = result.analysisPoints || [];
   if (points.length > 0) {
     appendSpeedHistogram(container, points);
@@ -1576,6 +1589,18 @@ function syncDownsampleControls(elements: DemoElements) {
   elements.preserveEndpointsInput.disabled = !enabled;
 }
 
+function syncPrivacyControls(elements: DemoElements) {
+  const enabled = elements.obfuscatePrivacyInput.checked;
+  elements.obfuscateStartDistanceInput.disabled = !enabled;
+  elements.obfuscateEndDistanceInput.disabled = !enabled;
+}
+
+function syncAnalysisControls(elements: DemoElements) {
+  const enabled = elements.printAnalysisInput.checked;
+  elements.ftpInput.disabled = !enabled;
+  elements.lthrInput.disabled = !enabled;
+}
+
 function getPrivacyObfuscationOptions(elements: DemoElements) {
   return {
     startDistanceM: getNonNegativeDistance(elements.obfuscateStartDistanceInput),
@@ -1616,7 +1641,6 @@ function getDemoElements(root: Document | HTMLElement): DemoElements {
 
   return {
     fileInput: getElement<HTMLInputElement>(root, "fit-demo-file"),
-    titleInput: getElement<HTMLInputElement>(root, "fit-demo-title"),
     downsampleInput: getElement<HTMLInputElement>(root, "fit-demo-downsample"),
     downsampleStrategySelect: getElement<HTMLSelectElement>(
       root,
@@ -1641,6 +1665,10 @@ function getDemoElements(root: Document | HTMLElement): DemoElements {
     ),
     ftpInput: getElement<HTMLInputElement>(root, "fit-demo-ftp"),
     lthrInput: getElement<HTMLInputElement>(root, "fit-demo-lthr"),
+    printAnalysisInput: getElement<HTMLInputElement>(
+      root,
+      "fit-demo-print-analysis"
+    ),
     prettyInput: getElement<HTMLInputElement>(root, "fit-demo-pretty"),
     convertButton: getElement<HTMLButtonElement>(root, "fit-demo-convert"),
     copyButton: getElement<HTMLButtonElement>(root, "fit-demo-copy"),
@@ -1717,17 +1745,11 @@ function getDownsampleStrategy(
     : "uniform";
 }
 
-function getRouteTitle(elements: DemoElements, file: File): string {
-  const title = elements.titleInput.value.trim();
-  return title || stripExtension(file.name) || "Track";
+function getRouteTitle(file: File): string {
+  return stripExtension(file.name) || "Track";
 }
 
-function getMergedRouteTitle(elements: DemoElements, files: File[]): string {
-  const title = elements.titleInput.value.trim();
-  if (title) {
-    return title;
-  }
-
+function getMergedRouteTitle(files: File[]): string {
   const firstName = stripExtension(files[0]?.name || "");
   return firstName ? `${firstName} merged` : "Merged track";
 }

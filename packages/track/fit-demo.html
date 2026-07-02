@@ -158,22 +158,15 @@
 
       <div class="fit-demo-row">
         <label>
-          Title
-          <input id="fit-demo-title" type="text" placeholder="Use file name">
-        </label>
-      </div>
-
-      <div class="fit-demo-row">
-        <label>
-          <input id="fit-demo-downsample" type="checkbox" checked>
+          <input id="fit-demo-downsample" type="checkbox">
           Downsample input
         </label>
 
         <label>
           Strategy
           <select id="fit-demo-downsample-strategy">
-            <option value="uniform" selected>Uniform</option>
-            <option value="aggregate">Aggregate</option>
+            <option value="uniform">Uniform</option>
+            <option value="aggregate" selected>Aggregate</option>
           </select>
         </label>
 
@@ -217,13 +210,19 @@
 
       <div class="fit-demo-row">
         <label>
+          <input id="fit-demo-print-analysis" type="checkbox">
+          Print analysis
+        </label>
+
+        <label>
           FTP (W)
           <input
             id="fit-demo-ftp"
             type="number"
             min="1"
             step="1"
-            value="223">
+            value="223"
+            disabled>
         </label>
 
         <label>
@@ -233,7 +232,8 @@
             type="number"
             min="1"
             step="1"
-            value="151">
+            value="151"
+            disabled>
         </label>
       </div>
 
