@@ -556,6 +556,44 @@ components:
             publicUrl: { type: string }
           required: [publicUrl]
 
+    TrackObject:
+      allOf:
+        - $ref: "#/components/schemas/StorageObjectMetadata"
+        - type: object
+          properties:
+            publicUrl: { type: string }
+            previewKey: { type: string }
+            previewUrl: { type: string }
+          required: [publicUrl, previewKey, previewUrl]
+
+    FinalizedTrack:
+      type: object
+      properties:
+        master:
+          $ref: "#/components/schemas/TrackObject"
+        preview:
+          $ref: "#/components/schemas/TrackObject"
+      required: [master, preview]
+
+    TrackStorageMonthlyQuota:
+      type: object
+      properties:
+        userId: { type: string }
+        yyyymm: { type: string }
+        bytesMasters: { type: integer }
+        bytesPreviews: { type: integer }
+        bytesTotal: { type: integer }
+        limitSingleBytes: { type: integer, nullable: true }
+        limitMonthlyBytes: { type: integer, nullable: true }
+      required:
+        - userId
+        - yyyymm
+        - bytesMasters
+        - bytesPreviews
+        - bytesTotal
+        - limitSingleBytes
+        - limitMonthlyBytes
+
     PresignedPostResult:
       type: object
       properties:
@@ -3096,6 +3134,207 @@ paths:
       summary: Delete a specific image master (and its thumbnails)
       description: |
         NOTE: {path} may contain slashes (server treats it as a catch-all).
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Deleted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  result: { type: string }
+                required: [result]
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /media/{userId}/tracks/presigned:
+    post:
+      summary: Get presigned POST for track upload
+      description: |
+        Creates a short-lived storage upload target for public-safe track data.
+        Supported filename extensions are .fit and .trjgz.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                filename: { type: string }
+                sizeBytes: { type: integer }
+              required: [filename, sizeBytes]
+      responses:
+        "200":
+          description: Presigned POST to upload track bytes to storage
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PresignedPostResult"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /media/{userId}/tracks/finalize:
+    post:
+      summary: Finalize track upload
+      description: |
+        Validates the staged FIT/TRJGZ object, stores the master object, and
+        creates a TRJGZ preview object for map rendering.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                key:
+                  type: string
+                  description: Staging object key returned as objectKey from presign API
+              required: [key]
+      responses:
+        "200":
+          description: Finalized track master and preview objects
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/FinalizedTrack"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /media/{userId}/tracks:
+    get:
+      summary: List user's tracks
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: offset
+          in: query
+          schema: { type: integer, default: 0 }
+        - name: limit
+          in: query
+          schema: { type: integer, default: 100 }
+      responses:
+        "200":
+          description: List of track master objects with preview URLs
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/TrackObject"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /media/{userId}/tracks/quota:
+    get:
+      summary: Get monthly track storage quota
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: yyyymm
+          in: query
+          required: false
+          schema:
+            type: string
+            pattern: "^[0-9]{6}$"
+      responses:
+        "200":
+          description: Monthly track storage quota
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TrackStorageMonthlyQuota"
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+
+  /media/{userId}/tracks/{path}:
+    get:
+      summary: Download a specific track master or preview
+      description: |
+        NOTE: {path} may contain slashes (server treats it as a catch-all).
+        Masters are stored under masters/ and previews under previews/.
+      security:
+        - sessionCookie: []
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: string }
+        - name: path
+          in: path
+          required: true
+          schema: { type: string }
+      responses:
+        "200":
+          description: Track bytes
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+            application/gzip:
+              schema: { type: string, format: binary }
+        "400":
+          $ref: "#/components/responses/Error400"
+        "401":
+          $ref: "#/components/responses/Error401"
+        "403":
+          $ref: "#/components/responses/Error403"
+    delete:
+      summary: Delete a specific track master and its preview
+      description: |
+        NOTE: {path} may contain slashes (server treats it as a catch-all).
+        Delete the master path; the derived preview object is deleted together.
       security:
         - sessionCookie: []
       parameters:
