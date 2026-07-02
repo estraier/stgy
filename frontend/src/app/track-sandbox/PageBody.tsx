@@ -37,6 +37,7 @@ type ParsedInput = {
   activity: TrackActivity;
   sourceType: SourceType;
   originalPointCount: number;
+  fitBytes?: Uint8Array;
 };
 
 type ConvertOptions = {
@@ -58,11 +59,13 @@ type TrackResult = {
   originalPointCount: number;
   renderedPointCount: number;
   sourceLabel: string;
+  fitBytes?: Uint8Array;
 };
 
 type ObjectUrlSet = {
   raw?: string;
   gzip?: string;
+  fit?: string;
 };
 
 type SummaryCard = {
@@ -126,6 +129,7 @@ export default function TrackSandbox() {
   const revokeUrls = useCallback((urls: ObjectUrlSet) => {
     if (urls.raw) URL.revokeObjectURL(urls.raw);
     if (urls.gzip) URL.revokeObjectURL(urls.gzip);
+    if (urls.fit) URL.revokeObjectURL(urls.fit);
   }, []);
 
   useEffect(() => {
@@ -169,10 +173,15 @@ export default function TrackSandbox() {
       }));
       const gzipBlob = await gzipText(nextResult.trackJson);
       const gzipUrl = URL.createObjectURL(gzipBlob);
+      const fitUrl = nextResult.fitBytes
+        ? URL.createObjectURL(new Blob([nextResult.fitBytes], {
+          type: "application/octet-stream",
+        }))
+        : undefined;
 
       setDownloadUrls((current) => {
         revokeUrls(current);
-        return { raw: rawUrl, gzip: gzipUrl };
+        return { raw: rawUrl, gzip: gzipUrl, fit: fitUrl };
       });
       setResult(nextResult);
       setStatus("Track is ready.");
@@ -234,9 +243,6 @@ export default function TrackSandbox() {
                   setFiles(Array.from(e.currentTarget.files || []));
                 }}
               />
-              <p className="mt-2 text-xs text-slate-500">
-                Select multiple files to merge accidental ride splits into one route.
-              </p>
               {files.length > 0 && (
                 <ul className="mt-3 flex flex-wrap gap-2 text-xs text-slate-600">
                   {files.map((file) => (
@@ -408,56 +414,71 @@ export default function TrackSandbox() {
         </section>
 
         {result && (
-          <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
-            <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
-              <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
-                <div>
-                  <h2 className="font-semibold text-slate-950">{result.title}</h2>
-                  <p className="text-xs text-slate-500">
-                    {result.sourceLabel} · {result.renderedPointCount.toLocaleString()} points
-                  </p>
+          <>
+            <div className="grid gap-4 lg:grid-cols-[1.2fr_0.8fr]">
+              <section className="overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-sm">
+                <div className="flex items-center justify-between border-b border-slate-100 px-4 py-3">
+                  <div>
+                    <h2 className="font-semibold text-slate-950">{result.title}</h2>
+                    <p className="text-xs text-slate-500">
+                      {result.sourceLabel} · {result.renderedPointCount.toLocaleString()} points
+                    </p>
+                  </div>
+                  <MapPinned className="h-5 w-5 text-sky-700" />
                 </div>
-                <MapPinned className="h-5 w-5 text-sky-700" />
-              </div>
-              <TrackMap trackJsonData={result.trackJsonData} />
-            </section>
+                <TrackMap trackJsonData={result.trackJsonData} />
+              </section>
 
-            <section className="space-y-4">
-              <RideSummary activity={result.activity} result={result} />
+              <section className="space-y-4">
+                <RideSummary activity={result.activity} />
 
-              <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-                <h2 className="mb-3 text-sm font-semibold text-slate-900">Download</h2>
-                <div className="flex flex-wrap gap-3">
-                  {downloadUrls.raw && (
-                    <a
-                      href={downloadUrls.raw}
-                      download={`${safeBaseName(result.title)}.trj`}
-                      className="inline-flex items-center gap-2 rounded-xl bg-slate-900
-                        px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
-                    >
-                      <Download className="h-4 w-4" />
-                      TrackJSON
-                    </a>
-                  )}
-                  {downloadUrls.gzip && (
-                    <a
-                      href={downloadUrls.gzip}
-                      download={`${safeBaseName(result.title)}.trjgz`}
-                      className="inline-flex items-center gap-2 rounded-xl border border-slate-300
-                        bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                    >
-                      <Download className="h-4 w-4" />
-                      Compressed
-                    </a>
-                  )}
+                <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <h2 className="mb-3 text-sm font-semibold text-slate-900">Download</h2>
+                  <div className="flex flex-wrap gap-3">
+                    {downloadUrls.raw && (
+                      <a
+                        href={downloadUrls.raw}
+                        download={`${safeBaseName(result.title)}.trj`}
+                        className="inline-flex items-center gap-2 rounded-xl bg-slate-900
+                          px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+                      >
+                        <Download className="h-4 w-4" />
+                        TrackJSON
+                      </a>
+                    )}
+                    {downloadUrls.gzip && (
+                      <a
+                        href={downloadUrls.gzip}
+                        download={`${safeBaseName(result.title)}.trjgz`}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-300
+                          bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        <Download className="h-4 w-4" />
+                        Compressed
+                      </a>
+                    )}
+                    {downloadUrls.fit && (
+                      <a
+                        href={downloadUrls.fit}
+                        download={`${safeBaseName(result.title)}.fit`}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-300
+                          bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        <Download className="h-4 w-4" />
+                        FIT
+                      </a>
+                    )}
+                  </div>
                 </div>
-              </div>
+              </section>
+            </div>
 
-              {showAnalysis && (
+            {showAnalysis && (
+              <div className="mt-4">
                 <RideAnalysis activity={result.activity} ftpW={ftpW} lthrBpm={lthrBpm} />
-              )}
-            </section>
-          </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </main>
@@ -543,14 +564,8 @@ function TrackMap({ trackJsonData }: { trackJsonData: unknown }) {
   return <div ref={canvasRef} className="h-[520px] w-full bg-slate-100" />;
 }
 
-function RideSummary({
-  activity,
-  result,
-}: {
-  activity: TrackActivity;
-  result: TrackResult;
-}) {
-  const cards = useMemo(() => buildSummaryCards(activity, result), [activity, result]);
+function RideSummary({ activity }: { activity: TrackActivity }) {
+  const cards = useMemo(() => buildSummaryCards(activity), [activity]);
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -583,22 +598,58 @@ function RideAnalysis({
   ftpW: number;
   lthrBpm: number;
 }) {
+  const speedRows = useMemo(() => {
+    return computeHistogramRows(activity.points, (point) => {
+      return typeof point.speedMps === "number" ? point.speedMps * 3.6 : undefined;
+    }, [
+      { label: "≤15 km/h", matches: (value) => value <= 15 },
+      { label: "15–20", matches: (value) => value > 15 && value <= 20 },
+      { label: "20–25", matches: (value) => value > 20 && value <= 25 },
+      { label: "25–30", matches: (value) => value > 25 && value <= 30 },
+      { label: "30–35", matches: (value) => value > 30 && value <= 35 },
+      { label: ">35", matches: (value) => value > 35 },
+    ]);
+  }, [activity.points]);
+  const cadenceRows = useMemo(() => {
+    return computeHistogramRows(activity.points, (point) => point.cadenceRpm, [
+      { label: "≤50 rpm", matches: (value) => value <= 50 },
+      { label: "50–60", matches: (value) => value > 50 && value <= 60 },
+      { label: "60–70", matches: (value) => value > 60 && value <= 70 },
+      { label: "70–80", matches: (value) => value > 70 && value <= 80 },
+      { label: "80–90", matches: (value) => value > 80 && value <= 90 },
+      { label: "90–100", matches: (value) => value > 90 && value <= 100 },
+      { label: ">100", matches: (value) => value > 100 },
+    ]);
+  }, [activity.points]);
   const powerZones = useMemo(() => {
     return computeZoneRows(activity.points, (point) => point.powerW, ftpW, POWER_ZONES);
   }, [activity.points, ftpW]);
   const heartRateZones = useMemo(() => {
-    return computeZoneRows(activity.points, (point) => point.heartRateBpm, lthrBpm, HEART_RATE_ZONES);
+    return computeZoneRows(
+      activity.points,
+      (point) => point.heartRateBpm,
+      lthrBpm,
+      HEART_RATE_ZONES,
+    );
   }, [activity.points, lthrBpm]);
   const powerCurve = useMemo(() => getPowerCurvePoints(activity), [activity]);
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-      <h2 className="mb-3 text-sm font-semibold text-slate-900">Analysis</h2>
-      <div className="space-y-4">
-        {powerCurve.length > 0 && <PowerCurve points={powerCurve} />}
-        {powerZones.length > 0 && <ZoneBars title={`Power zones · FTP ${ftpW} W`} rows={powerZones} />}
+      <h2 className="mb-4 text-sm font-semibold text-slate-900">Analysis</h2>
+      <div className="grid gap-5 lg:grid-cols-2">
+        {speedRows.length > 0 && <ZoneBars title="Speed histogram" rows={speedRows} />}
+        {cadenceRows.length > 0 && <ZoneBars title="Cadence histogram" rows={cadenceRows} />}
+        {powerZones.length > 0 && (
+          <ZoneBars title={`Power zones · FTP ${ftpW} W`} rows={powerZones} />
+        )}
         {heartRateZones.length > 0 && (
           <ZoneBars title={`Heart-rate zones · LTHR ${lthrBpm} bpm`} rows={heartRateZones} />
+        )}
+        {powerCurve.length > 0 && (
+          <div className="lg:col-span-2">
+            <PowerCurve points={powerCurve} />
+          </div>
         )}
       </div>
     </section>
@@ -657,7 +708,7 @@ function PowerCurve({ points }: { points: PowerCurvePoint[] }) {
             <circle cx={xValue(point.durationSeconds)} cy={yValue(point.watts)} r="2.5"
               fill="#0f80c9" />
             <text x={xValue(point.durationSeconds)} y={height - 9} textAnchor="middle"
-              fontSize="9" fill="#64748b">
+              fontSize="7" fill="#64748b">
               {formatDurationLabel(point.durationSeconds)}
             </text>
           </g>
@@ -673,7 +724,7 @@ function ZoneBars({ title, rows }: { title: string; rows: ZoneRow[] }) {
       <div className="mb-2 text-xs font-semibold text-slate-600">{title}</div>
       <div className="space-y-2">
         {rows.map((row) => (
-          <div key={row.label} className="grid grid-cols-[7.5rem_1fr_3.5rem] items-center gap-2">
+          <div key={row.label} className="grid grid-cols-[7.5rem_1fr_5.5rem] items-center gap-2">
             <div className="text-xs text-slate-600">{row.label}</div>
             <div className="h-2.5 overflow-hidden rounded-full bg-slate-100">
               <div
@@ -683,6 +734,9 @@ function ZoneBars({ title, rows }: { title: string; rows: ZoneRow[] }) {
             </div>
             <div className="text-right text-xs tabular-nums text-slate-500">
               {formatDuration(row.seconds)}
+              <span className="ml-1 text-slate-400">
+                {formatNumber(row.percentage, 1)}%
+              </span>
             </div>
           </div>
         ))}
@@ -735,6 +789,7 @@ async function convertFiles(files: File[], options: ConvertOptions): Promise<Tra
     originalPointCount: parsed.reduce((sum, item) => sum + item.originalPointCount, 0),
     renderedPointCount: renderedActivity.points.length,
     sourceLabel: summarizeSources(parsed),
+    fitBytes: activityToFitBytes(renderedActivity),
   };
 }
 
@@ -762,7 +817,7 @@ async function parseInputFile(file: File, options: ConvertOptions): Promise<Pars
   };
   const fitBytes = options.obfuscatePrivacy
     ? obfuscateFitPrivacy(originalBytes, privacyOptions)
-    : originalBytes;
+    : new Uint8Array(originalBytes);
   const activity = parseFitBytes(fitBytes);
   activity.metadata.name = fileTitle(file);
 
@@ -771,6 +826,7 @@ async function parseInputFile(file: File, options: ConvertOptions): Promise<Pars
     activity,
     sourceType: "fit",
     originalPointCount: activity.points.length,
+    fitBytes,
   };
 }
 
@@ -1171,7 +1227,290 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
 }
 
-function buildSummaryCards(activity: TrackActivity, result: TrackResult): SummaryCard[] {
+const FIT_EPOCH_UNIX_SECONDS = 631065600;
+const FIT_CRC_TABLE = [
+  0x0000,
+  0xcc01,
+  0xd801,
+  0x1400,
+  0xf001,
+  0x3c00,
+  0x2800,
+  0xe401,
+  0xa001,
+  0x6c00,
+  0x7800,
+  0xb401,
+  0x5000,
+  0x9c01,
+  0x8801,
+  0x4400,
+] as const;
+
+type FitFieldDefinition = {
+  num: number;
+  size: number;
+  baseType: number;
+};
+
+type FitRecordField = FitFieldDefinition & {
+  write: (view: DataView, offset: number, point: TrackPoint, fallbackTime: number) => void;
+};
+
+function activityToFitBytes(activity: TrackActivity): Uint8Array {
+  const points = activity.points.filter((point) => {
+    return hasPosition(point) || typeof point.time === "number";
+  });
+  const chunks: number[] = [];
+
+  writeDefinitionMessage(chunks, 0, 0, [
+    { num: 0, size: 1, baseType: 0x00 },
+    { num: 4, size: 4, baseType: 0x86 },
+  ]);
+  writeFileIdMessage(chunks, getActivityFitStartTime(activity, points));
+  writeDefinitionMessage(chunks, 1, 20, getFitRecordFields());
+
+  points.forEach((point, index) => {
+    writeRecordMessage(chunks, point, index);
+  });
+
+  const data = new Uint8Array(chunks);
+  const header = new Uint8Array(14);
+  const headerView = new DataView(header.buffer);
+  header[0] = 14;
+  header[1] = 16;
+  headerView.setUint16(2, 2135, true);
+  headerView.setUint32(4, data.length, true);
+  header[8] = 0x2e;
+  header[9] = 0x46;
+  header[10] = 0x49;
+  header[11] = 0x54;
+  const headerCrc = calculateFitCrc(header.subarray(0, 12));
+  headerView.setUint16(12, headerCrc, true);
+
+  const body = new Uint8Array(header.length + data.length + 2);
+  body.set(header, 0);
+  body.set(data, header.length);
+  const fileCrc = calculateFitCrc(body.subarray(0, header.length + data.length));
+  new DataView(body.buffer).setUint16(header.length + data.length, fileCrc, true);
+  return body;
+}
+
+function writeDefinitionMessage(
+  chunks: number[],
+  localMessageType: number,
+  globalMessageNumber: number,
+  fields: FitFieldDefinition[],
+) {
+  chunks.push(0x40 | localMessageType);
+  chunks.push(0);
+  chunks.push(0);
+  pushUint16(chunks, globalMessageNumber);
+  chunks.push(fields.length);
+
+  fields.forEach((field) => {
+    chunks.push(field.num);
+    chunks.push(field.size);
+    chunks.push(field.baseType);
+  });
+}
+
+function writeFileIdMessage(chunks: number[], fitStartTime: number) {
+  chunks.push(0);
+  chunks.push(4);
+  pushUint32(chunks, fitStartTime);
+}
+
+function getFitRecordFields(): FitRecordField[] {
+  return [
+    {
+      num: 253,
+      size: 4,
+      baseType: 0x86,
+      write: (view, offset, _point, fallbackTime) => view.setUint32(offset, fallbackTime, true),
+    },
+    {
+      num: 0,
+      size: 4,
+      baseType: 0x85,
+      write: (view, offset, point) => writeFitSemicircles(view, offset, point.lat),
+    },
+    {
+      num: 1,
+      size: 4,
+      baseType: 0x85,
+      write: (view, offset, point) => writeFitSemicircles(view, offset, point.lon),
+    },
+    {
+      num: 2,
+      size: 2,
+      baseType: 0x84,
+      write: (view, offset, point) => writeFitScaledUint16(view, offset, point.elevationM, 5, 500),
+    },
+    {
+      num: 5,
+      size: 4,
+      baseType: 0x86,
+      write: (view, offset, point) => writeFitScaledUint32(view, offset, point.distanceM, 100, 0),
+    },
+    {
+      num: 6,
+      size: 2,
+      baseType: 0x84,
+      write: (view, offset, point) => writeFitScaledUint16(view, offset, point.speedMps, 1000, 0),
+    },
+    {
+      num: 3,
+      size: 1,
+      baseType: 0x02,
+      write: (view, offset, point) => writeFitUint8(view, offset, point.heartRateBpm),
+    },
+    {
+      num: 4,
+      size: 1,
+      baseType: 0x02,
+      write: (view, offset, point) => writeFitUint8(view, offset, point.cadenceRpm),
+    },
+    {
+      num: 7,
+      size: 2,
+      baseType: 0x84,
+      write: (view, offset, point) => writeFitUint16(view, offset, point.powerW),
+    },
+    {
+      num: 13,
+      size: 1,
+      baseType: 0x01,
+      write: (view, offset, point) => writeFitSint8(view, offset, point.temperatureC),
+    },
+  ];
+}
+
+function writeRecordMessage(chunks: number[], point: TrackPoint, index: number) {
+  const fields = getFitRecordFields();
+  const size = fields.reduce((sum, field) => sum + field.size, 0);
+  const record = new Uint8Array(size);
+  const view = new DataView(record.buffer);
+  const fallbackTime = getPointFitTimestamp(point, index);
+  let offset = 0;
+
+  fields.forEach((field) => {
+    field.write(view, offset, point, fallbackTime);
+    offset += field.size;
+  });
+
+  chunks.push(1);
+  chunks.push(...record);
+}
+
+function getActivityFitStartTime(activity: TrackActivity, points: TrackPoint[]): number {
+  const startTime = numberValue(activity.metadata.startTime) ??
+    points.map((point) => point.time).filter(isFiniteNumber)[0] ??
+    Math.floor(Date.now() / 1000);
+  return unixTimeToFitTime(startTime);
+}
+
+function getPointFitTimestamp(point: TrackPoint, index: number): number {
+  const time = typeof point.time === "number"
+    ? point.time
+    : Math.floor(Date.now() / 1000) + index;
+  return unixTimeToFitTime(time);
+}
+
+function unixTimeToFitTime(unixTimeSeconds: number): number {
+  return Math.max(0, Math.round(unixTimeSeconds - FIT_EPOCH_UNIX_SECONDS));
+}
+
+function writeFitSemicircles(view: DataView, offset: number, degrees: number | undefined) {
+  if (typeof degrees !== "number" || !Number.isFinite(degrees)) {
+    view.setInt32(offset, 0x7fffffff, true);
+    return;
+  }
+  view.setInt32(offset, Math.round((degrees * 0x80000000) / 180), true);
+}
+
+function writeFitScaledUint32(
+  view: DataView,
+  offset: number,
+  value: number | undefined,
+  scale: number,
+  offsetValue: number,
+) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    view.setUint32(offset, 0xffffffff, true);
+    return;
+  }
+  view.setUint32(offset, Math.max(0, Math.round((value + offsetValue) * scale)), true);
+}
+
+function writeFitScaledUint16(
+  view: DataView,
+  offset: number,
+  value: number | undefined,
+  scale: number,
+  offsetValue: number,
+) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    view.setUint16(offset, 0xffff, true);
+    return;
+  }
+  view.setUint16(offset, Math.max(0, Math.round((value + offsetValue) * scale)), true);
+}
+
+function writeFitUint16(view: DataView, offset: number, value: number | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    view.setUint16(offset, 0xffff, true);
+    return;
+  }
+  view.setUint16(offset, Math.max(0, Math.round(value)), true);
+}
+
+function writeFitUint8(view: DataView, offset: number, value: number | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    view.setUint8(offset, 0xff);
+    return;
+  }
+  view.setUint8(offset, Math.max(0, Math.min(254, Math.round(value))));
+}
+
+function writeFitSint8(view: DataView, offset: number, value: number | undefined) {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    view.setInt8(offset, 0x7f);
+    return;
+  }
+  view.setInt8(offset, Math.max(-127, Math.min(126, Math.round(value))));
+}
+
+function pushUint16(chunks: number[], value: number) {
+  chunks.push(value & 0xff, (value >>> 8) & 0xff);
+}
+
+function pushUint32(chunks: number[], value: number) {
+  chunks.push(
+    value & 0xff,
+    (value >>> 8) & 0xff,
+    (value >>> 16) & 0xff,
+    (value >>> 24) & 0xff,
+  );
+}
+
+function calculateFitCrc(bytes: Uint8Array): number {
+  let crc = 0;
+
+  bytes.forEach((byte) => {
+    let tmp = FIT_CRC_TABLE[crc & 0x0f];
+    crc = (crc >> 4) & 0x0fff;
+    crc = crc ^ tmp ^ FIT_CRC_TABLE[byte & 0x0f];
+
+    tmp = FIT_CRC_TABLE[crc & 0x0f];
+    crc = (crc >> 4) & 0x0fff;
+    crc = crc ^ tmp ^ FIT_CRC_TABLE[(byte >> 4) & 0x0f];
+  });
+
+  return crc & 0xffff;
+}
+
+function buildSummaryCards(activity: TrackActivity): SummaryCard[] {
   const metadata = activity.metadata;
   const stats = asRecord(metadata.statistics);
   const training = asRecord(metadata.training);
@@ -1223,13 +1562,6 @@ function buildSummaryCards(activity: TrackActivity, result: TrackResult): Summar
     });
   }
 
-  cards.push({
-    label: "Samples",
-    value: result.renderedPointCount.toLocaleString(),
-    sub: `${result.originalPointCount.toLocaleString()} original`,
-    icon: MapPinned,
-  });
-
   return cards;
 }
 
@@ -1271,6 +1603,46 @@ function computeZoneRows(
 
   return zones.map((zone, index) => ({
     label: zone.label,
+    seconds: seconds[index],
+    percentage: (seconds[index] / totalSeconds) * 100,
+  }));
+}
+
+function computeHistogramRows(
+  points: TrackPoint[],
+  getValue: (point: TrackPoint) => number | undefined,
+  bins: { label: string; matches: (value: number) => boolean }[],
+): ZoneRow[] {
+  const seconds = bins.map(() => 0);
+  let totalSeconds = 0;
+  const timed = hasTimedIntervals(points);
+
+  points.forEach((point, index) => {
+    const value = getValue(point);
+    if (!Number.isFinite(value) || value == null || value <= 0) {
+      return;
+    }
+
+    const duration = timed ? getPointDurationSeconds(points, index) : 1;
+    if (duration <= 0) {
+      return;
+    }
+
+    const binIndex = bins.findIndex((bin) => bin.matches(value));
+    if (binIndex < 0) {
+      return;
+    }
+
+    seconds[binIndex] += duration;
+    totalSeconds += duration;
+  });
+
+  if (totalSeconds <= 0) {
+    return [];
+  }
+
+  return bins.map((bin, index) => ({
+    label: bin.label,
     seconds: seconds[index],
     percentage: (seconds[index] / totalSeconds) * 100,
   }));
