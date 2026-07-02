@@ -108,6 +108,28 @@ const HEART_RATE_ZONES = [
   { label: "Z5 Hard", maxRatio: Number.POSITIVE_INFINITY },
 ];
 
+const POWER_CURVE_DURATIONS_SECONDS = [
+  5,
+  10,
+  15,
+  20,
+  30,
+  45,
+  60,
+  90,
+  120,
+  180,
+  300,
+  600,
+  900,
+  1200,
+  1800,
+  2700,
+  3600,
+  5400,
+  7200,
+] as const;
+
 export default function TrackSandbox() {
   const [files, setFiles] = useState<File[]>([]);
   const [downsample, setDownsample] = useState(false);
@@ -174,7 +196,7 @@ export default function TrackSandbox() {
       const gzipBlob = await gzipText(nextResult.trackJson);
       const gzipUrl = URL.createObjectURL(gzipBlob);
       const fitUrl = nextResult.fitBytes
-        ? URL.createObjectURL(new Blob([nextResult.fitBytes], {
+        ? URL.createObjectURL(new Blob([copyUint8ArrayToArrayBuffer(nextResult.fitBytes)], {
           type: "application/octet-stream",
         }))
         : undefined;
@@ -665,8 +687,8 @@ function PowerCurve({ points }: { points: PowerCurvePoint[] }) {
   const bottom = 28;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
-  const minDuration = points[0]?.durationSeconds || 5;
-  const maxDuration = points[points.length - 1]?.durationSeconds || 7200;
+  const minDuration = POWER_CURVE_DURATIONS_SECONDS[0];
+  const maxDuration = POWER_CURVE_DURATIONS_SECONDS[POWER_CURVE_DURATIONS_SECONDS.length - 1];
   const maxPower = Math.max(...points.map((point) => point.watts), 1);
   const yMax = Math.ceil(maxPower / 50) * 50;
   const yTicks = Array.from(
@@ -706,16 +728,22 @@ function PowerCurve({ points }: { points: PowerCurvePoint[] }) {
             </g>
           );
         })}
+        {POWER_CURVE_DURATIONS_SECONDS.map((seconds) => {
+          const x = xValue(seconds);
+          return (
+            <g key={seconds}>
+              <line x1={x} y1={top + plotHeight} x2={x} y2={top + plotHeight + 4}
+                stroke="#94a3b8" />
+              <text x={x} y={height - 9} textAnchor="middle" fontSize="7" fill="#64748b">
+                {formatDurationLabel(seconds)}
+              </text>
+            </g>
+          );
+        })}
         <path d={path} fill="none" stroke="#0f80c9" strokeWidth="2.6" />
         {points.map((point) => (
-          <g key={point.durationSeconds}>
-            <circle cx={xValue(point.durationSeconds)} cy={yValue(point.watts)} r="2.5"
-              fill="#0f80c9" />
-            <text x={xValue(point.durationSeconds)} y={height - 9} textAnchor="middle"
-              fontSize="7" fill="#64748b">
-              {formatDurationLabel(point.durationSeconds)}
-            </text>
-          </g>
+          <circle key={point.durationSeconds} cx={xValue(point.durationSeconds)}
+            cy={yValue(point.watts)} r="2.5" fill="#0f80c9" />
         ))}
       </svg>
     </div>
@@ -1660,16 +1688,14 @@ function getPowerCurvePoints(activity: TrackActivity): PowerCurvePoint[] {
     return [];
   }
 
-  return Object.entries(powerW)
-    .map(([duration, watts]) => {
-      const durationSeconds = Number(duration);
-      const power = Number(watts);
-      return Number.isFinite(durationSeconds) && Number.isFinite(power)
-        ? { durationSeconds, watts: power }
+  return POWER_CURVE_DURATIONS_SECONDS
+    .map((durationSeconds): PowerCurvePoint | undefined => {
+      const watts = Number(powerW[String(durationSeconds)]);
+      return Number.isFinite(watts)
+        ? { durationSeconds, watts }
         : undefined;
     })
-    .filter((point): point is PowerCurvePoint => Boolean(point))
-    .sort((a, b) => a.durationSeconds - b.durationSeconds);
+    .filter((point): point is PowerCurvePoint => point !== undefined);
 }
 
 function hasTimedIntervals(points: TrackPoint[]): boolean {
@@ -1725,6 +1751,12 @@ function getCompressionStream(
     CompressionStreamConstructor
   >>;
   return win[name];
+}
+
+function copyUint8ArrayToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
 }
 
 async function gzipText(text: string): Promise<Blob> {
