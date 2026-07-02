@@ -5,6 +5,8 @@ import {
   computeHeartRateZoneSummary,
   computePowerZoneSummary,
   downsampleTrackActivity,
+  mergeTrackActivities,
+  trackJsonDataToTrackActivity,
   getHeartRateZone,
   getPowerZone,
   parseFitBytes,
@@ -279,7 +281,9 @@ describe("parseFitBytes", () => {
 
     expect(activity.metadata.bestEfforts?.powerW).toEqual({
       "5": 300,
+      "10": 300,
       "15": 233.33333333333334,
+      "20": 200,
     });
   });
 
@@ -573,6 +577,140 @@ describe("downsampleTrackActivity", () => {
         maxPoints: 1,
       }),
     ).toThrow(RangeError);
+  });
+});
+
+describe("trackJsonDataToTrackActivity", () => {
+  test("converts TrackJSON LineString data to TrackActivity", () => {
+    const activity = trackJsonDataToTrackActivity({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139.0, 35.0, 10],
+              [139.1, 35.1, 11],
+            ],
+          },
+          properties: {
+            title: "TrackJSON ride",
+            metadata: {
+              sport: "cycling",
+            },
+            coordinateProperties: {
+              times: [100, 110],
+              distances: [0, 120],
+              heartRates: [120, 130],
+              powers: [150, 180],
+              speeds: [18, 21.6],
+              grade: [1.2, 1.4],
+            },
+          },
+        },
+      ],
+    });
+
+    expect(activity.metadata.source).toEqual({ type: "trackjson" });
+    expect(activity.metadata.name).toBe("TrackJSON ride");
+    expect(activity.metadata.sport).toBe("cycling");
+    expect(activity.points).toHaveLength(2);
+    expect(activity.points[1]).toMatchObject({
+      time: 110,
+      lon: 139.1,
+      lat: 35.1,
+      elevationM: 11,
+      distanceM: 120,
+      heartRateBpm: 130,
+      powerW: 180,
+      speedMps: 6,
+      metrics: {
+        grade: 1.4,
+      },
+    });
+  });
+});
+
+describe("mergeTrackActivities", () => {
+  test("merges three activities into one chronological activity", () => {
+    const first = makeActivity(2);
+    first.metadata.name = "Morning ride";
+    first.points[0].time = 100;
+    first.points[1].time = 110;
+    first.points[0].distanceM = 0;
+    first.points[1].distanceM = 100;
+    first.points[0].speedMps = 5;
+    first.points[1].speedMps = 5;
+
+    const second = makeActivity(2);
+    second.points[0].time = 200;
+    second.points[1].time = 210;
+    second.points[0].distanceM = 0;
+    second.points[1].distanceM = 80;
+    second.points[0].speedMps = 6;
+    second.points[1].speedMps = 6;
+
+    const third = makeActivity(2);
+    third.points[0].time = 300;
+    third.points[1].time = 310;
+    third.points[0].distanceM = 0;
+    third.points[1].distanceM = 50;
+    third.points[0].speedMps = 7;
+    third.points[1].speedMps = 7;
+
+    const merged = mergeTrackActivities([first, second, third]);
+
+    expect(merged.metadata.source).toEqual({ type: "merged" });
+    expect(merged.metadata.name).toBe("Morning ride");
+    expect(merged.metadata.startTime).toBe(100);
+    expect(merged.metadata.totalElapsedTime).toBe(210);
+    expect(merged.metadata.totalTimerTime).toBe(30);
+    expect(merged.metadata.totalDistanceM).toBe(230);
+    expect(merged.points.map((point) => point.time)).toEqual([
+      100, 110, 200, 210, 300, 310,
+    ]);
+    expect(merged.points.map((point) => point.distanceM)).toEqual([
+      0, 100, 100, 180, 180, 230,
+    ]);
+  });
+
+  test("writes merged activities as a single LineString", () => {
+    const first = makeActivity(2);
+    const second = makeActivity(2);
+    second.points.forEach((point, index) => {
+      point.time = 1710000100 + index;
+      point.distanceM = index * 20;
+    });
+
+    const merged = mergeTrackActivities([first, second]);
+    const parsed = parseTrackJson(trackActivityToTrackJson(merged));
+
+    expect(parsed.features).toHaveLength(1);
+    expect(parsed.features[0].geometry.type).toBe("LineString");
+    expect(parsed.features[0].geometry.coordinates).toHaveLength(4);
+    expect(parsed.features[0].properties.metadata.source).toEqual({
+      type: "merged",
+    });
+  });
+
+  test("does not count gaps between source files as moving time", () => {
+    const first = makeActivity(2);
+    first.points[0].time = 0;
+    first.points[1].time = 10;
+    first.points[0].speedMps = 5;
+    first.points[1].speedMps = 5;
+
+    const second = makeActivity(2);
+    second.points[0].time = 1000;
+    second.points[1].time = 1010;
+    second.points[0].speedMps = 5;
+    second.points[1].speedMps = 5;
+
+    const merged = mergeTrackActivities([first, second]);
+
+    expect(merged.metadata.totalElapsedTime).toBe(1010);
+    expect(merged.metadata.totalTimerTime).toBe(20);
   });
 });
 

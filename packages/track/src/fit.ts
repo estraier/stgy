@@ -17,19 +17,23 @@ const DEFAULT_TRACK_JSON_PRECISION = {
 };
 export const STRAVA_POWER_CURVE_DURATIONS_SECONDS = [
   5,
+  10,
   15,
+  20,
   30,
+  45,
   60,
+  90,
   120,
   180,
   300,
-  480,
   600,
   900,
   1200,
   1800,
   2700,
   3600,
+  5400,
   7200,
 ] as const;
 
@@ -190,6 +194,18 @@ export type TrackJsonOptions = {
   includeMetadata?: boolean;
   pretty?: boolean;
   precision?: TrackJsonPrecisionOptions;
+};
+
+export type MergeTrackActivitiesOptions = {
+  name?: string;
+  description?: string;
+  movingSpeedThresholdMps?: number;
+};
+
+export type TrackJsonActivityOptions = {
+  sourceType?: string;
+  name?: string;
+  description?: string;
 };
 
 export type TrackJsonPrecisionOptions = {
@@ -452,6 +468,121 @@ export function downsampleTrackActivity(
   );
 }
 
+export function trackJsonDataToTrackActivity(
+  data: unknown,
+  options: TrackJsonActivityOptions = {},
+): TrackActivity {
+  const features = getTrackJsonLineStringFeatures(data);
+  const points: TrackPoint[] = [];
+  const firstFeature = features[0];
+  const firstProperties = getRecordProperty(firstFeature, "properties");
+  const baseMetadata = buildTrackJsonActivityMetadata(
+    data,
+    firstFeature,
+    options,
+  );
+
+  features.forEach((feature) => {
+    const geometry = getRecordProperty(feature, "geometry");
+    const coordinates = Array.isArray(geometry?.coordinates)
+      ? geometry.coordinates
+      : [];
+    const properties = getRecordProperty(feature, "properties");
+    const coordinateProperties = getRecordProperty(
+      properties,
+      "coordinateProperties",
+    );
+
+    coordinates.forEach((coordinate, index) => {
+      const point = trackJsonCoordinateToPoint(coordinate, coordinateProperties, index);
+      if (hasAnyPointValue(point)) {
+        points.push(point);
+      }
+    });
+  });
+
+  const metadata: TrackActivityMetadata = {
+    ...baseMetadata,
+    source: {
+      type: options.sourceType || "trackjson",
+    },
+  };
+
+  if (!metadata.name && firstProperties) {
+    const title = firstProperties.title;
+    if (typeof title === "string" && title.trim()) {
+      metadata.name = title.trim();
+    }
+  }
+
+  if (!metadata.description && firstProperties) {
+    const description = firstProperties.description;
+    if (typeof description === "string" && description.trim()) {
+      metadata.description = description.trim();
+    }
+  }
+
+  applyComputedMetadata(metadata, points);
+
+  return {
+    schemaVersion: 1,
+    metadata,
+    points,
+    warnings: [],
+  };
+}
+
+export function mergeTrackActivities(
+  activities: TrackActivity[],
+  options: MergeTrackActivitiesOptions = {},
+): TrackActivity {
+  if (activities.length === 0) {
+    throw new RangeError("At least one track activity is required.");
+  }
+
+  const indexedPoints: IndexedTrackPoint[] = [];
+  let distanceOffsetM = 0;
+
+  getActivityMergeOrder(activities).forEach(({ activity, originalIndex }, orderIndex) => {
+    const normalizedPoints = normalizeActivityDistances(
+      activity.points,
+      distanceOffsetM,
+    );
+    const distanceDeltaM = getActivityDistanceDelta(normalizedPoints);
+
+    normalizedPoints.forEach((point, pointIndex) => {
+      indexedPoints.push({
+        activityIndex: originalIndex,
+        orderIndex,
+        pointIndex,
+        point,
+      });
+    });
+
+    if (isFiniteNumber(distanceDeltaM) && distanceDeltaM > 0) {
+      distanceOffsetM += distanceDeltaM;
+    }
+  });
+
+  const sortedIndexedPoints = [...indexedPoints].sort(compareIndexedTrackPoints);
+  const points = sortedIndexedPoints.map((item) => cloneTrackPoint(item.point));
+  const metadata = buildMergedActivityMetadata(
+    activities,
+    sortedIndexedPoints,
+    options,
+  );
+  const warnings = activities.flatMap((activity) => {
+    return activity.warnings.map((warning) => ({ ...warning }));
+  });
+
+  return {
+    schemaVersion: 1,
+    metadata,
+    points,
+    warnings,
+  };
+}
+
 export function trackActivityToTrackJson(
   activity: TrackActivity,
   options: TrackJsonOptions = {},
@@ -521,6 +652,517 @@ export function trackActivityToTrackJson(
   };
 
   return JSON.stringify(trackJson, null, options.pretty ? 2 : 0);
+}
+
+type IndexedTrackPoint = {
+  activityIndex: number;
+  orderIndex: number;
+  pointIndex: number;
+  point: TrackPoint;
+};
+
+type OrderedActivity = {
+  activity: TrackActivity;
+  originalIndex: number;
+  sortTime: number | undefined;
+};
+
+function getTrackJsonLineStringFeatures(data: unknown): FitMessage[] {
+  if (!isObjectRecord(data)) {
+    return [];
+  }
+
+  if (data.type === "Feature") {
+    return isTrackJsonLineStringFeature(data) ? [data] : [];
+  }
+
+  if (data.type !== "FeatureCollection" || !Array.isArray(data.features)) {
+    return [];
+  }
+
+  return data.features.filter(isTrackJsonLineStringFeature);
+}
+
+function isTrackJsonLineStringFeature(value: unknown): value is FitMessage {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  const geometry = getRecordProperty(value, "geometry");
+  return geometry?.type === "LineString" && Array.isArray(geometry.coordinates);
+}
+
+function getRecordProperty(
+  value: unknown,
+  key: string,
+): Record<string, unknown> | undefined {
+  if (!isObjectRecord(value)) {
+    return undefined;
+  }
+
+  const child = value[key];
+  return isObjectRecord(child) ? child : undefined;
+}
+
+function buildTrackJsonActivityMetadata(
+  data: unknown,
+  firstFeature: FitMessage | undefined,
+  options: TrackJsonActivityOptions,
+): TrackActivityMetadata {
+  const featureProperties = getRecordProperty(firstFeature, "properties");
+  const featureMetadata = getRecordProperty(featureProperties, "metadata");
+  const rootMetadata = getRecordProperty(data, "metadata");
+  const src = featureMetadata || rootMetadata;
+  const metadata: TrackActivityMetadata = {
+    source: {
+      type: options.sourceType || "trackjson",
+    },
+  };
+
+  if (src) {
+    copyOptionalString(src, metadata, "name");
+    copyOptionalString(src, metadata, "description");
+    copyOptionalString(src, metadata, "sport");
+    copyOptionalString(src, metadata, "subSport");
+    copyOptionalNumber(src, metadata, "createdAt");
+    copyOptionalNumber(src, metadata, "startTime");
+    copyOptionalNumber(src, metadata, "totalElapsedTime");
+    copyOptionalNumber(src, metadata, "totalTimerTime");
+    copyOptionalNumber(src, metadata, "totalDistanceM");
+
+    const recordingDevice = getRecordProperty(src, "recordingDevice");
+    if (recordingDevice) {
+      metadata.recordingDevice = { ...recordingDevice } as TrackDeviceInfo;
+    }
+
+    if (Array.isArray(src.devices)) {
+      metadata.devices = src.devices
+        .filter(isObjectRecord)
+        .map((device) => ({ ...device }) as TrackDeviceInfo);
+    }
+  }
+
+  if (options.name) {
+    metadata.name = options.name;
+  }
+  if (options.description) {
+    metadata.description = options.description;
+  }
+
+  return metadata;
+}
+
+function copyOptionalString(
+  src: Record<string, unknown>,
+  dest: TrackActivityMetadata,
+  key: keyof TrackActivityMetadata,
+) {
+  const value = src[key];
+  if (typeof value === "string" && value.trim()) {
+    dest[key] = value.trim() as never;
+  }
+}
+
+function copyOptionalNumber(
+  src: Record<string, unknown>,
+  dest: TrackActivityMetadata,
+  key: keyof TrackActivityMetadata,
+) {
+  const value = toFiniteNumber(src[key]);
+  if (isFiniteNumber(value)) {
+    dest[key] = value as never;
+  }
+}
+
+function trackJsonCoordinateToPoint(
+  coordinate: unknown,
+  coordinateProperties: Record<string, unknown> | undefined,
+  index: number,
+): TrackPoint {
+  const point: TrackPoint = {};
+
+  if (Array.isArray(coordinate) && coordinate.length >= 2) {
+    const lon = toFiniteNumber(coordinate[0]);
+    const lat = toFiniteNumber(coordinate[1]);
+    const elevation = toFiniteNumber(coordinate[2]);
+    if (isFiniteNumber(lon)) {
+      point.lon = lon;
+    }
+    if (isFiniteNumber(lat)) {
+      point.lat = lat;
+    }
+    if (isFiniteNumber(elevation)) {
+      point.elevationM = elevation;
+    }
+  }
+
+  if (!coordinateProperties) {
+    return point;
+  }
+
+  assignPointFromSeries(point, "time", coordinateProperties.times, index);
+  assignPointFromSeries(point, "distanceM", coordinateProperties.distances, index);
+  assignPointFromSeries(point, "elevationM", coordinateProperties.elevations, index);
+  assignPointFromSeries(point, "heartRateBpm", coordinateProperties.heartRates, index);
+  assignPointFromSeries(point, "cadenceRpm", coordinateProperties.cadences, index);
+  assignPointFromSeries(point, "powerW", coordinateProperties.powers, index);
+  assignPointFromSeries(
+    point,
+    "speedMps",
+    coordinateProperties.speeds,
+    index,
+    (value) => value / 3.6,
+  );
+
+  Object.keys(coordinateProperties).forEach((name) => {
+    if (!isSafeMetricName(name)) {
+      return;
+    }
+    const values = coordinateProperties[name];
+    if (!Array.isArray(values)) {
+      return;
+    }
+    const value = toFiniteNumber(values[index]);
+    if (!isFiniteNumber(value)) {
+      return;
+    }
+    if (!point.metrics) {
+      point.metrics = {};
+    }
+    point.metrics[name] = value;
+  });
+
+  return point;
+}
+
+function assignPointFromSeries(
+  point: TrackPoint,
+  key: keyof TrackPoint,
+  series: unknown,
+  index: number,
+  convertValue: (value: number) => number = (value) => value,
+) {
+  if (!Array.isArray(series)) {
+    return;
+  }
+
+  const value = toFiniteNumber(series[index]);
+  if (isFiniteNumber(value)) {
+    point[key] = convertValue(value) as never;
+  }
+}
+
+function getActivityMergeOrder(activities: TrackActivity[]): OrderedActivity[] {
+  return activities
+    .map((activity, originalIndex) => ({
+      activity,
+      originalIndex,
+      sortTime: getActivitySortTime(activity),
+    }))
+    .sort((a, b) => {
+      if (isFiniteNumber(a.sortTime) && isFiniteNumber(b.sortTime)) {
+        return a.sortTime - b.sortTime || a.originalIndex - b.originalIndex;
+      }
+      if (isFiniteNumber(a.sortTime)) {
+        return -1;
+      }
+      if (isFiniteNumber(b.sortTime)) {
+        return 1;
+      }
+      return a.originalIndex - b.originalIndex;
+    });
+}
+
+function getActivitySortTime(activity: TrackActivity): number | undefined {
+  const pointTimes = activity.points
+    .map((point) => point.time)
+    .filter(isFiniteNumber);
+
+  if (pointTimes.length > 0) {
+    return Math.min(...pointTimes);
+  }
+
+  return activity.metadata.startTime;
+}
+
+function normalizeActivityDistances(
+  points: TrackPoint[],
+  distanceOffsetM: number,
+): TrackPoint[] {
+  const cloned = points.map(cloneTrackPoint);
+  const finiteDistances = cloned
+    .map((point) => point.distanceM)
+    .filter(isFiniteNumber);
+
+  if (finiteDistances.length > 0) {
+    const firstDistance = finiteDistances[0];
+    cloned.forEach((point) => {
+      if (isFiniteNumber(point.distanceM)) {
+        point.distanceM = Math.max(0, point.distanceM - firstDistance) + distanceOffsetM;
+      }
+    });
+    return cloned;
+  }
+
+  let cumulativeDistanceM = distanceOffsetM;
+  let previousPosition: (TrackPoint & { lat: number; lon: number }) | undefined;
+  cloned.forEach((point) => {
+    if (hasPosition(point)) {
+      if (previousPosition) {
+        cumulativeDistanceM += calculateDistanceM(previousPosition, point);
+      }
+      point.distanceM = cumulativeDistanceM;
+      previousPosition = point;
+    }
+  });
+
+  return cloned;
+}
+
+function getActivityDistanceDelta(points: TrackPoint[]): number | undefined {
+  const distances = points
+    .map((point) => point.distanceM)
+    .filter(isFiniteNumber);
+
+  if (distances.length >= 2) {
+    return Math.max(0, distances[distances.length - 1] - distances[0]);
+  }
+
+  return undefined;
+}
+
+function compareIndexedTrackPoints(a: IndexedTrackPoint, b: IndexedTrackPoint): number {
+  if (isFiniteNumber(a.point.time) && isFiniteNumber(b.point.time)) {
+    return (
+      a.point.time - b.point.time ||
+      a.orderIndex - b.orderIndex ||
+      a.pointIndex - b.pointIndex
+    );
+  }
+
+  if (isFiniteNumber(a.point.time)) {
+    return -1;
+  }
+
+  if (isFiniteNumber(b.point.time)) {
+    return 1;
+  }
+
+  return a.orderIndex - b.orderIndex || a.pointIndex - b.pointIndex;
+}
+
+function buildMergedActivityMetadata(
+  activities: TrackActivity[],
+  indexedPoints: IndexedTrackPoint[],
+  options: MergeTrackActivitiesOptions,
+): TrackActivityMetadata {
+  const base = cloneMetadata(activities[0].metadata);
+  const points = indexedPoints.map((item) => item.point);
+  const metadata: TrackActivityMetadata = {
+    ...base,
+    source: {
+      type: "merged",
+    },
+  };
+
+  if (options.name) {
+    metadata.name = options.name;
+  }
+  if (options.description) {
+    metadata.description = options.description;
+  }
+
+  const times = points.map((point) => point.time).filter(isFiniteNumber);
+  if (times.length > 0) {
+    const startTime = Math.min(...times);
+    const endTime = Math.max(...times);
+    metadata.startTime = startTime;
+    metadata.totalElapsedTime = Math.max(0, endTime - startTime);
+  }
+
+  const movingTime = calculateMergedMovingTime(
+    indexedPoints,
+    options.movingSpeedThresholdMps ?? 0.5,
+  );
+  if (movingTime > 0) {
+    metadata.totalTimerTime = movingTime;
+  } else {
+    const summedTimerTime = sumMetadataNumber(activities, "totalTimerTime");
+    if (isFiniteNumber(summedTimerTime)) {
+      metadata.totalTimerTime = summedTimerTime;
+    }
+  }
+
+  const totalDistanceM = getMergedTotalDistance(points);
+  if (isFiniteNumber(totalDistanceM)) {
+    metadata.totalDistanceM = totalDistanceM;
+  }
+
+  applyComputedMetadata(metadata, points);
+
+  return metadata;
+}
+
+function applyComputedMetadata(
+  metadata: TrackActivityMetadata,
+  points: TrackPoint[],
+) {
+  const statistics = buildActivityStatistics(points);
+  if (statistics) {
+    metadata.statistics = statistics;
+  } else {
+    delete metadata.statistics;
+  }
+
+  const training = buildMergedTraining(points);
+  if (training) {
+    metadata.training = training;
+  } else {
+    delete metadata.training;
+  }
+
+  const bestEfforts = buildActivityBestEfforts(points);
+  if (bestEfforts) {
+    metadata.bestEfforts = bestEfforts;
+  } else {
+    delete metadata.bestEfforts;
+  }
+}
+
+function buildMergedTraining(points: TrackPoint[]): TrackActivityTraining | undefined {
+  const training: TrackActivityTraining = {};
+  const source: TrackActivityTrainingSource = {};
+
+  const normalizedPowerW = computeNormalizedPowerW(points);
+  if (isFiniteNumber(normalizedPowerW)) {
+    training.normalizedPowerW = normalizedPowerW;
+    source.normalizedPower = "computed";
+  }
+
+  const totalWorkJ = computeTotalWorkJ(points);
+  if (isFiniteNumber(totalWorkJ)) {
+    training.totalWorkJ = totalWorkJ;
+    source.totalWork = "computed";
+  }
+
+  if (Object.keys(source).length > 0) {
+    training.source = source;
+  }
+
+  return hasTrainingValues(training) ? training : undefined;
+}
+
+function calculateMergedMovingTime(
+  indexedPoints: IndexedTrackPoint[],
+  movingSpeedThresholdMps: number,
+): number {
+  const groups = new Map<number, IndexedTrackPoint[]>();
+  indexedPoints.forEach((item) => {
+    const group = groups.get(item.activityIndex) || [];
+    group.push(item);
+    groups.set(item.activityIndex, group);
+  });
+
+  let totalSeconds = 0;
+  groups.forEach((group) => {
+    const hasSpeed = group.some((item) => isFiniteNumber(item.point.speedMps));
+    const sorted = [...group].sort(compareIndexedTrackPoints);
+    for (let index = 1; index < sorted.length; index += 1) {
+      const previous = sorted[index - 1].point;
+      const current = sorted[index].point;
+      if (!isFiniteNumber(previous.time) || !isFiniteNumber(current.time)) {
+        continue;
+      }
+
+      const deltaSeconds = current.time - previous.time;
+      if (deltaSeconds <= 0) {
+        continue;
+      }
+
+      if (isMovingInterval(previous, current, movingSpeedThresholdMps, hasSpeed)) {
+        totalSeconds += deltaSeconds;
+      }
+    }
+  });
+
+  return totalSeconds;
+}
+
+function isMovingInterval(
+  previous: TrackPoint,
+  current: TrackPoint,
+  movingSpeedThresholdMps: number,
+  hasSpeed: boolean,
+): boolean {
+  if (hasSpeed) {
+    const previousSpeed = previous.speedMps;
+    const currentSpeed = current.speedMps;
+    return (
+      (isFiniteNumber(previousSpeed) && previousSpeed > movingSpeedThresholdMps) ||
+      (isFiniteNumber(currentSpeed) && currentSpeed > movingSpeedThresholdMps)
+    );
+  }
+
+  if (isFiniteNumber(previous.distanceM) && isFiniteNumber(current.distanceM)) {
+    return current.distanceM > previous.distanceM;
+  }
+
+  if (hasPosition(previous) && hasPosition(current)) {
+    return previous.lat !== current.lat || previous.lon !== current.lon;
+  }
+
+  return false;
+}
+
+function getMergedTotalDistance(points: TrackPoint[]): number | undefined {
+  const distances = points
+    .map((point) => point.distanceM)
+    .filter(isFiniteNumber);
+
+  if (distances.length >= 2) {
+    return Math.max(0, Math.max(...distances) - Math.min(...distances));
+  }
+
+  return undefined;
+}
+
+function calculateDistanceM(
+  a: TrackPoint & { lat: number; lon: number },
+  b: TrackPoint & { lat: number; lon: number },
+): number {
+  const earthRadiusM = 6371008.8;
+  const lat1 = degreesToRadians(a.lat);
+  const lat2 = degreesToRadians(b.lat);
+  const deltaLat = degreesToRadians(b.lat - a.lat);
+  const deltaLon = degreesToRadians(b.lon - a.lon);
+  const sinHalfLat = Math.sin(deltaLat / 2);
+  const sinHalfLon = Math.sin(deltaLon / 2);
+  const h =
+    sinHalfLat * sinHalfLat +
+    Math.cos(lat1) * Math.cos(lat2) * sinHalfLon * sinHalfLon;
+  return 2 * earthRadiusM * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function degreesToRadians(value: number): number {
+  return (value * Math.PI) / 180;
+}
+
+function sumMetadataNumber(
+  activities: TrackActivity[],
+  key: keyof TrackActivityMetadata,
+): number | undefined {
+  let total = 0;
+  let hasValue = false;
+
+  activities.forEach((activity) => {
+    const value = activity.metadata[key];
+    if (isFiniteNumber(value)) {
+      total += value;
+      hasValue = true;
+    }
+  });
+
+  return hasValue ? total : undefined;
 }
 
 function buildTrackJsonMetadata(

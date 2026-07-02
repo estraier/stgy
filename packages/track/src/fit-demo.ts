@@ -2,9 +2,11 @@ import {
   computeHeartRateZoneSummary,
   computePowerZoneSummary,
   downsampleTrackActivity,
+  mergeTrackActivities,
   parseFitBytes,
   obfuscateFitPrivacy,
   trackActivityToTrackJson,
+  trackJsonDataToTrackActivity,
 } from "./fit";
 import {
   compactTrackJsonData,
@@ -58,7 +60,7 @@ type ConversionResult = {
   trackJson: string;
   trackJsonData: unknown;
   title: string;
-  sourceType: "fit" | "trackjson" | "trjgz";
+  sourceType: "fit" | "trackjson" | "trjgz" | "merged";
   originalPointCount?: number;
   renderedPointCount?: number;
   activity?: TrackActivity;
@@ -68,6 +70,14 @@ type ConversionResult = {
   obfuscatedPrivacyApplied?: boolean;
   privacyStartDistanceM?: number;
   privacyEndDistanceM?: number;
+};
+
+type ParsedInputActivity = {
+  file: File;
+  activity: TrackActivity;
+  sourceType: "fit" | "trackjson" | "trjgz";
+  originalPointCount: number;
+  obfuscatedFitBytes?: Uint8Array;
 };
 
 declare global {
@@ -105,34 +115,150 @@ export function initFitDemo(root: Document | HTMLElement = document) {
 }
 
 async function convertAndRender(elements: DemoElements, renderer: TrackRenderer) {
-  const file = elements.fileInput.files?.[0];
-  if (!file) {
-    setStatus(elements, "Choose a FIT, TrackJSON, TRJ, or TRJGZ file first.", true);
+  const files = Array.from(elements.fileInput.files || []);
+  if (files.length === 0) {
+    setStatus(elements, "Choose FIT, TrackJSON, TRJ, or TRJGZ file(s) first.", true);
     return;
   }
 
   setBusy(elements, true);
   clearOutput(elements);
-  setStatus(elements, "Converting...");
+  setStatus(elements, files.length > 1 ? "Converting and merging..." : "Converting...");
 
   try {
-    const result = await convertInputFile(file, elements);
+    const result = await convertInputFiles(files, elements);
     const trackJsonUrl = await updateTrackJsonDownload(
       elements,
-      file,
+      getDownloadBaseName(files, result),
       result.trackJson
     );
-    updateObfuscatedFitDownload(elements, file, result.obfuscatedFitBytes);
+    updateObfuscatedFitDownload(
+      elements,
+      files.length === 1 ? files[0] : undefined,
+      result.obfuscatedFitBytes
+    );
 
     elements.trackJsonOutput.value = result.trackJson;
     elements.copyButton.disabled = false;
 
     renderTrackJson(elements, renderer, trackJsonUrl, result.title);
-    showSummary(elements, file, result);
+    showSummary(elements, files, result);
     setStatus(elements, "Track data was rendered.");
   } finally {
     setBusy(elements, false);
   }
+}
+
+async function convertInputFiles(
+  files: File[],
+  elements: DemoElements
+): Promise<ConversionResult> {
+  if (files.length === 1) {
+    return convertInputFile(files[0], elements);
+  }
+
+  const parsedInputs = await Promise.all(
+    files.map((file) => convertInputFileToActivity(file, elements))
+  );
+  const title = getMergedRouteTitle(elements, files);
+  const mergedActivity = mergeTrackActivities(
+    parsedInputs.map((input) => input.activity),
+    {
+      name: title,
+      description: `Merged from ${files.map((file) => file.name).join(", ")}`,
+    }
+  );
+  const renderedActivity = maybeDownsample(mergedActivity, elements);
+  const trackJson = trackActivityToTrackJson(renderedActivity, {
+    title,
+    description: `Merged from ${files.map((file) => file.name).join(", ")}`,
+    pretty: elements.prettyInput.checked,
+  });
+  const trackJsonData = JSON.parse(trackJson);
+  const obfuscatedFitBytes = parsedInputs.length === 1
+    ? parsedInputs[0].obfuscatedFitBytes
+    : undefined;
+
+  return {
+    trackJson,
+    trackJsonData,
+    title,
+    sourceType: "merged",
+    originalPointCount: parsedInputs.reduce(
+      (sum, input) => sum + input.originalPointCount,
+      0
+    ),
+    renderedPointCount: renderedActivity.points.length,
+    activity: mergedActivity,
+    renderedActivity,
+    analysisPoints: mergedActivity.points,
+    obfuscatedFitBytes,
+    obfuscatedPrivacyApplied: elements.obfuscatePrivacyInput.checked,
+    privacyStartDistanceM: getPrivacyObfuscationOptions(elements).startDistanceM,
+    privacyEndDistanceM: getPrivacyObfuscationOptions(elements).endDistanceM,
+  };
+}
+
+async function convertInputFileToActivity(
+  file: File,
+  elements: DemoElements
+): Promise<ParsedInputActivity> {
+  const lowerName = file.name.toLowerCase();
+
+  if (
+    lowerName.endsWith(".json") ||
+    lowerName.endsWith(".geojson") ||
+    lowerName.endsWith(".trj")
+  ) {
+    const text = await file.text();
+    return convertTrackJsonTextToActivity(file, text, elements, "trackjson");
+  }
+
+  if (lowerName.endsWith(".trjgz")) {
+    const bytes = await file.arrayBuffer();
+    const text = await decompressGzipText(bytes);
+    return convertTrackJsonTextToActivity(file, text, elements, "trjgz");
+  }
+
+  const originalBytes = await file.arrayBuffer();
+  const privacyOptions = getPrivacyObfuscationOptions(elements);
+  const obfuscatedFitBytes = elements.obfuscatePrivacyInput.checked
+    ? obfuscateFitPrivacy(originalBytes, privacyOptions)
+    : undefined;
+  const fitBytes = obfuscatedFitBytes || originalBytes;
+  const activity = parseFitBytes(fitBytes);
+
+  return {
+    file,
+    activity,
+    sourceType: "fit",
+    originalPointCount: activity.points.length,
+    obfuscatedFitBytes,
+  };
+}
+
+function convertTrackJsonTextToActivity(
+  file: File,
+  text: string,
+  elements: DemoElements,
+  sourceType: "trackjson" | "trjgz"
+): ParsedInputActivity {
+  const originalTrackJsonData = parseTrackJsonData(text);
+  const privacyOptions = getPrivacyObfuscationOptions(elements);
+  const obfuscatedTrackJsonData = elements.obfuscatePrivacyInput.checked
+    ? obfuscateTrackJsonPrivacy(originalTrackJsonData, privacyOptions)
+    : originalTrackJsonData;
+  const activity = trackJsonDataToTrackActivity(obfuscatedTrackJsonData, {
+    sourceType,
+    name: getTrackJsonTitle(obfuscatedTrackJsonData) || stripExtension(file.name),
+  });
+
+  return {
+    file,
+    activity,
+    sourceType,
+    originalPointCount: countTrackJsonPositionedPoints(originalTrackJsonData),
+  };
 }
 
 async function convertInputFile(
@@ -297,7 +423,7 @@ function renderTrackJson(
 
 async function updateTrackJsonDownload(
   elements: DemoElements,
-  file: File,
+  baseName: string,
   trackJson: string
 ): Promise<string> {
   revokeCurrentTrackJsonUrls();
@@ -309,7 +435,7 @@ async function updateTrackJsonDownload(
   currentTrackJsonUrl = rawUrl;
 
   elements.downloadLink.href = rawUrl;
-  elements.downloadLink.download = makeTrackJsonFileName(file, ".trj");
+  elements.downloadLink.download = makeTrackJsonFileName(baseName, ".trj");
   elements.downloadLink.hidden = false;
 
   elements.compressedDownloadLink.removeAttribute("href");
@@ -321,7 +447,7 @@ async function updateTrackJsonDownload(
     currentCompressedTrackJsonUrl = compressedUrl;
 
     elements.compressedDownloadLink.href = compressedUrl;
-    elements.compressedDownloadLink.download = makeTrackJsonFileName(file, ".trjgz");
+    elements.compressedDownloadLink.download = makeTrackJsonFileName(baseName, ".trjgz");
     elements.compressedDownloadLink.hidden = false;
   }
 
@@ -336,7 +462,7 @@ function copyUint8ArrayToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
 
 function updateObfuscatedFitDownload(
   elements: DemoElements,
-  file: File,
+  file: File | undefined,
   bytes: Uint8Array | undefined
 ) {
   if (currentObfuscatedFitUrl) {
@@ -347,7 +473,7 @@ function updateObfuscatedFitDownload(
   elements.obfuscatedFitDownloadLink.removeAttribute("href");
   elements.obfuscatedFitDownloadLink.hidden = true;
 
-  if (!bytes) {
+  if (!bytes || !file) {
     return;
   }
 
@@ -419,11 +545,13 @@ async function copyTrackJson(elements: DemoElements) {
 
 function showSummary(
   elements: DemoElements,
-  file: File,
+  files: File[],
   result: ConversionResult
 ) {
   const lines: string[] = [
-    `file: ${file.name}`,
+    files.length === 1
+      ? `file: ${files[0].name}`
+      : `files: ${files.length} (${files.map((file) => file.name).join(", ")})`,
     `source: ${formatSourceType(result.sourceType)}`,
   ];
 
@@ -1068,13 +1196,10 @@ function formatDurationLabel(seconds: number): string {
   if (seconds < 60) {
     return `${formatNumber(seconds, 0)}s`;
   }
-  if (seconds % 3600 === 0) {
-    return `${formatNumber(seconds / 3600, 0)}h`;
+  if (seconds < 3600) {
+    return `${formatNumber(seconds / 60, seconds % 60 === 0 ? 0 : 1)}m`;
   }
-  if (seconds % 60 === 0) {
-    return `${formatNumber(seconds / 60, 0)}m`;
-  }
-  return formatDuration(seconds);
+  return `${formatNumber(seconds / 3600, seconds % 3600 === 0 ? 0 : 1)}h`;
 }
 
 function computeHistogramRows(
@@ -1597,8 +1722,27 @@ function getRouteTitle(elements: DemoElements, file: File): string {
   return title || stripExtension(file.name) || "Track";
 }
 
-function makeTrackJsonFileName(file: File, extension: ".trj" | ".trjgz"): string {
-  return `${stripExtension(file.name) || "track"}${extension}`;
+function getMergedRouteTitle(elements: DemoElements, files: File[]): string {
+  const title = elements.titleInput.value.trim();
+  if (title) {
+    return title;
+  }
+
+  const firstName = stripExtension(files[0]?.name || "");
+  return firstName ? `${firstName} merged` : "Merged track";
+}
+
+function getDownloadBaseName(files: File[], result: ConversionResult): string {
+  if (files.length === 1) {
+    return stripExtension(files[0].name) || "track";
+  }
+
+  const title = result.title.trim();
+  return title || "merged-track";
+}
+
+function makeTrackJsonFileName(baseName: string, extension: ".trj" | ".trjgz"): string {
+  return `${stripExtension(baseName) || "track"}${extension}`;
 }
 
 function makeObfuscatedFitFileName(file: File): string {
