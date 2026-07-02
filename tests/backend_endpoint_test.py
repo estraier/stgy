@@ -847,9 +847,18 @@ def test_users():
   got2 = res.json()
   saved2["locale"] = got2["locale"]
   assert got2 == saved2
+  user1_track = upload_sample_track(user1_id, user1_cookies, "users")
+  res = requests.get(user1_track["getUrl"], cookies=user1_cookies)
+  assert res.status_code == 200, res.text
+  assert res.content == user1_track["trackBytes"]
+  res = requests.get(user1_track["previewUrl"], cookies=user1_cookies)
+  assert res.status_code == 200, res.text
+  print("[users] user1 track uploaded before deletion")
+
   res = requests.delete(f"{BASE_URL}/users/{user1_id}", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   print("[users] user1 deleted")
+  assert_track_deleted(user1_track, cookies, "users")
   res = requests.get(f"{BASE_URL}/users/friends/by-nickname-prefix?limit=2000&nicknamePrefix=adm", headers=headers, cookies=cookies)
   assert res.status_code == 200, res.text
   friends = res.json()
@@ -1112,13 +1121,7 @@ def make_sample_trackjson():
     ],
   }
 
-def test_tracks():
-  print("[tracks] admin login")
-  session_id = login()
-  cookies = {"session_id": session_id}
-  sess = get_session(session_id)
-  user_id = sess["userId"]
-
+def upload_sample_track(user_id, cookies, label="tracks"):
   track_json = make_sample_trackjson()
   track_text = json.dumps(track_json, separators=(",", ":"))
   track_bytes = gzip.compress(track_text.encode("utf-8"))
@@ -1133,7 +1136,7 @@ def test_tracks():
   )
   assert res.status_code == 200, res.text
   pres = res.json()
-  print("[tracks] presigned:", pres)
+  print(f"[{label}] presigned:", pres)
   assert pres["objectKey"].startswith(f"tracks-staging/{user_id}/")
   assert pres["objectKey"].endswith(".trjgz")
   assert pres["fields"].get("Content-Type") == "application/gzip"
@@ -1145,13 +1148,13 @@ def test_tracks():
   }
   res = requests.post(upload_url, data=fields, files=files)
   assert res.status_code in (200, 201, 204), f"upload failed: {res.status_code} {res.text}"
-  print("[tracks] uploaded to storage")
+  print(f"[{label}] uploaded to storage")
 
   finalize_url = f"{BASE_URL}/media/{user_id}/tracks/finalize"
   res = requests.post(finalize_url, json={"key": pres["objectKey"]}, cookies=cookies)
   assert res.status_code == 200, res.text
   finalized = res.json()
-  print("[tracks] finalized:", finalized)
+  print(f"[{label}] finalized:", finalized)
 
   assert "master" in finalized
   assert "preview" in finalized
@@ -1170,15 +1173,43 @@ def test_tracks():
   final_key = master["key"]
   rest_path = final_key[len(user_id) + 1 :]
   get_url = f"{BASE_URL}/media/{user_id}/tracks/{rest_path}"
-  res = requests.get(get_url, cookies=cookies)
-  assert res.status_code == 200, res.text
-  assert res.content == track_bytes, "downloaded master bytes mismatch"
-  print("[tracks] downloaded master OK")
-
   preview_key = preview["key"]
   preview_rest_path = preview_key[len(user_id) + 1 :]
   preview_url = f"{BASE_URL}/media/{user_id}/tracks/{preview_rest_path}"
-  res = requests.get(preview_url, cookies=cookies)
+
+  return {
+    "trackBytes": track_bytes,
+    "finalized": finalized,
+    "master": master,
+    "preview": preview,
+    "finalKey": final_key,
+    "previewKey": preview_key,
+    "getUrl": get_url,
+    "previewUrl": preview_url,
+  }
+
+def assert_track_deleted(track, cookies, label="tracks"):
+  res = requests.get(track["getUrl"], cookies=cookies)
+  assert res.status_code in (404, 400), f"expected master not found, got {res.status_code}"
+  res = requests.get(track["previewUrl"], cookies=cookies)
+  assert res.status_code in (404, 400), f"expected preview not found, got {res.status_code}"
+  print(f"[{label}] master/preview inexistence OK")
+
+def test_tracks():
+  print("[tracks] admin login")
+  session_id = login()
+  cookies = {"session_id": session_id}
+  sess = get_session(session_id)
+  user_id = sess["userId"]
+
+  track = upload_sample_track(user_id, cookies)
+
+  res = requests.get(track["getUrl"], cookies=cookies)
+  assert res.status_code == 200, res.text
+  assert res.content == track["trackBytes"], "downloaded master bytes mismatch"
+  print("[tracks] downloaded master OK")
+
+  res = requests.get(track["previewUrl"], cookies=cookies)
   assert res.status_code == 200, res.text
   assert res.content[:2] == b"\x1f\x8b", "preview is not gzip data"
   preview_json = json.loads(gzip.decompress(res.content).decode("utf-8"))
@@ -1191,10 +1222,10 @@ def test_tracks():
   res = requests.get(list_url, cookies=cookies)
   assert res.status_code == 200, res.text
   items = res.json()
-  assert any(it["key"] == final_key for it in items), "finalized key not in list"
-  listed = next(it for it in items if it["key"] == final_key)
-  assert listed["previewKey"] == preview_key
-  assert listed["previewUrl"] == preview["publicUrl"]
+  assert any(it["key"] == track["finalKey"] for it in items), "finalized key not in list"
+  listed = next(it for it in items if it["key"] == track["finalKey"])
+  assert listed["previewKey"] == track["previewKey"]
+  assert listed["previewUrl"] == track["preview"]["publicUrl"]
   print("[tracks] list OK (contains finalized object)")
 
   quota_url = f"{BASE_URL}/media/{user_id}/tracks/quota"
@@ -1207,14 +1238,10 @@ def test_tracks():
   assert quota["bytesTotal"] >= quota["bytesMasters"] + quota["bytesPreviews"]
   print("[tracks] quota OK")
 
-  res = requests.delete(get_url, cookies=cookies)
+  res = requests.delete(track["getUrl"], cookies=cookies)
   assert res.status_code == 200, res.text
   print("[tracks] deleted")
-  res = requests.get(get_url, cookies=cookies)
-  assert res.status_code in (404, 400), f"expected not found, got {res.status_code}"
-  res = requests.get(preview_url, cookies=cookies)
-  assert res.status_code in (404, 400), f"expected preview not found, got {res.status_code}"
-  print("[tracks] inexistence OK")
+  assert_track_deleted(track, cookies)
 
   logout(session_id)
   print("[test_tracks] OK")

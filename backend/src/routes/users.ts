@@ -6,6 +6,7 @@ import crypto from "crypto";
 import type { StorageService } from "../services/storage";
 import { UsersService } from "../services/users";
 import { MediaService } from "../services/media";
+import { TracksService } from "../services/tracks";
 import { AuthService } from "../services/auth";
 import { ThrottleService, DailyTimerThrottleService } from "../services/throttle";
 import { SearchService } from "../services/search";
@@ -34,6 +35,7 @@ export default function createUsersRouter(
   const router = Router();
   const usersService = new UsersService(pgPool, redis, eventLogService);
   const mediaService = new MediaService(storageService, redis);
+  const tracksService = new TracksService(storageService);
   const authService = new AuthService(pgPool, redis);
   const searchService = new SearchService(pgPool, "users");
   const timerThrottleService = new DailyTimerThrottleService(
@@ -492,6 +494,7 @@ export default function createUsersRouter(
     try {
       await usersService.deleteUser(req.params.id);
       await mediaService.deleteAllImagesAndProfiles(req.params.id);
+      await tracksService.deleteAllTracks(req.params.id);
       res.json({ result: "ok" });
     } catch (e: unknown) {
       const msg = (e as Error).message || "";
