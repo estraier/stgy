@@ -669,6 +669,10 @@ function PowerCurve({ points }: { points: PowerCurvePoint[] }) {
   const maxDuration = points[points.length - 1]?.durationSeconds || 7200;
   const maxPower = Math.max(...points.map((point) => point.watts), 1);
   const yMax = Math.ceil(maxPower / 50) * 50;
+  const yTicks = Array.from(
+    { length: Math.max(1, Math.floor(yMax / 50)) },
+    (_, index) => (index + 1) * 50,
+  );
 
   const xValue = (seconds: number) => {
     const minLog = Math.log10(minDuration);
@@ -685,19 +689,19 @@ function PowerCurve({ points }: { points: PowerCurvePoint[] }) {
     .join(" ");
 
   return (
-    <div>
+    <div className="mx-auto w-full lg:w-4/5">
       <div className="mb-2 text-xs font-semibold text-slate-600">Power curve</div>
       <svg viewBox={`0 0 ${width} ${height}`} className="w-full rounded-xl bg-slate-50">
         <line x1={left} y1={top + plotHeight} x2={width - right} y2={top + plotHeight}
           stroke="#cbd5e1" />
         <line x1={left} y1={top} x2={left} y2={top + plotHeight} stroke="#cbd5e1" />
-        {[0.25, 0.5, 0.75, 1].map((ratio) => {
-          const y = top + plotHeight - ratio * plotHeight;
+        {yTicks.map((tick) => {
+          const y = yValue(tick);
           return (
-            <g key={ratio}>
+            <g key={tick}>
               <line x1={left} y1={y} x2={width - right} y2={y} stroke="#e2e8f0" />
-              <text x={left - 6} y={y + 4} textAnchor="end" fontSize="10" fill="#64748b">
-                {Math.round(yMax * ratio)}
+              <text x={left - 6} y={y + 3} textAnchor="end" fontSize="7" fill="#64748b">
+                {tick}
               </text>
             </g>
           );
