@@ -180,6 +180,199 @@ describe("parseMarkdown", () => {
     ];
     expect(stripPos(parseMarkdown(mdText))).toStrictEqual(expected);
   });
+  it("track map source", () => {
+    const mdText = "@[Ride](/maps/ride.trjgz){float=right,size=large}";
+    const expected = [
+      {
+        type: "element",
+        tag: "figure",
+        attrs: {
+          class: "stgy-track-map",
+          "data-src": "/maps/ride.trjgz",
+          "data-float": "right",
+          "data-size": "large",
+        },
+        children: [
+          {
+            type: "element",
+            tag: "div",
+            attrs: {
+              class: "stgy-track-canvas",
+            },
+            children: [],
+          },
+          {
+            type: "element",
+            tag: "figcaption",
+            attrs: {
+              class: "stgy-track-caption",
+            },
+            children: [
+              {
+                type: "text",
+                text: "Ride",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    expect(stripPos(parseMarkdown(mdText))).toStrictEqual(expected);
+  });
+
+  it("inline track map pins", () => {
+    const mdText =
+      "@[Akatutumi](map://139.6444794,35.6595519,15|" +
+      "139.6444772,35.6595498;Bakery;Good;" +
+      "http://example.com/;/media/1234/bread.jpg)";
+    const expected = [
+      {
+        type: "element",
+        tag: "figure",
+        attrs: {
+          class: "stgy-track-map",
+          "data-lon": 139.6444794,
+          "data-lat": 35.6595519,
+          "data-zoom": 15,
+          "data-center-address": "Akatutumi",
+        },
+        children: [
+          {
+            type: "element",
+            tag: "div",
+            attrs: {
+              class: "stgy-track-canvas",
+            },
+            children: [],
+          },
+          {
+            type: "element",
+            tag: "ul",
+            attrs: {
+              class: "stgy-track-pins",
+            },
+            children: [
+              {
+                type: "element",
+                tag: "li",
+                attrs: {
+                  "data-lon": 139.6444772,
+                  "data-lat": 35.6595498,
+                },
+                children: [
+                  {
+                    type: "element",
+                    tag: "div",
+                    attrs: {
+                      class: "annot-title",
+                    },
+                    children: [
+                      {
+                        type: "text",
+                        text: "Bakery",
+                      },
+                    ],
+                  },
+                  {
+                    type: "element",
+                    tag: "div",
+                    attrs: {
+                      class: "annot-desc",
+                    },
+                    children: [
+                      {
+                        type: "text",
+                        text: "Good",
+                      },
+                    ],
+                  },
+                  {
+                    type: "element",
+                    tag: "div",
+                    attrs: {
+                      class: "annot-link",
+                    },
+                    children: [
+                      {
+                        type: "element",
+                        tag: "a",
+                        attrs: {
+                          href: "http://example.com/",
+                        },
+                        children: [
+                          {
+                            type: "text",
+                            text: "http://example.com/",
+                          },
+                        ],
+                      },
+                    ],
+                  },
+                  {
+                    type: "element",
+                    tag: "div",
+                    attrs: {
+                      class: "annot-image",
+                    },
+                    children: [
+                      {
+                        type: "element",
+                        tag: "img",
+                        attrs: {
+                          src: "/media/1234/bread.jpg",
+                          alt: "Bakery",
+                        },
+                        children: [],
+                      },
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            type: "element",
+            tag: "figcaption",
+            attrs: {
+              class: "stgy-track-caption",
+            },
+            children: [
+              {
+                type: "text",
+                text: "Akatutumi",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    expect(stripPos(parseMarkdown(mdText))).toStrictEqual(expected);
+  });
+
+  it("broken inline track map does not become data-src", () => {
+    const mdText = "@[](map://139.6444794,35.6595519){height=240}";
+    const expected = [
+      {
+        type: "element",
+        tag: "figure",
+        attrs: {
+          class: "stgy-track-map",
+          style: "height:240px",
+        },
+        children: [
+          {
+            type: "element",
+            tag: "div",
+            attrs: {
+              class: "stgy-track-canvas",
+            },
+            children: [],
+          },
+        ],
+      },
+    ];
+    expect(stripPos(parseMarkdown(mdText))).toStrictEqual(expected);
+  });
 });
 
 describe("mdGroupImageGrid", () => {
@@ -1759,6 +1952,30 @@ describe("mdRenderHtml basics", () => {
     );
   });
 
+  it("track map source", () => {
+    const mdText = "@[Ride](/maps/ride.trjgz){float=right,size=large}";
+    expect(makeHtml(mdText)).toBe(
+      '<figure class="stgy-track-map" data-float="right" data-size="large" data-src="/maps/ride.trjgz"><div class="stgy-track-canvas"></div><figcaption class="stgy-track-caption">Ride</figcaption></figure>',
+    );
+  });
+
+  it("inline track map pins", () => {
+    const mdText =
+      "@[Akatutumi](map://139.6444794,35.6595519,15|" +
+      "139.6444772,35.6595498;Bakery;Good;" +
+      "http://example.com/;/media/1234/bread.jpg)";
+    expect(makeHtml(mdText)).toBe(
+      '<figure class="stgy-track-map" data-center-address="Akatutumi" data-lat="35.6595519" data-lon="139.6444794" data-zoom="15"><div class="stgy-track-canvas"></div><ul class="stgy-track-pins"><li data-lat="35.6595498" data-lon="139.6444772"><div class="annot-title">Bakery</div><div class="annot-desc">Good</div><div class="annot-link"><a href="http://example.com/">http://example.com/</a></div><div class="annot-image"><img src="/media/1234/bread.jpg" alt="" decoding="async" loading="lazy"></div></li></ul><figcaption class="stgy-track-caption">Akatutumi</figcaption></figure>',
+    );
+  });
+
+  it("broken inline track map does not render data-src", () => {
+    const mdText = "@[](map://139.6444794,35.6595519){height=240}";
+    expect(makeHtml(mdText)).toBe(
+      '<figure class="stgy-track-map" style="height:240px"><div class="stgy-track-canvas"></div></figure>',
+    );
+  });
+
   it("quote", () => {
     const mdText = "> hello world";
     expect(makeHtml(mdText)).toBe("<blockquote>hello world</blockquote>");
@@ -1966,6 +2183,21 @@ describe("mdRenderMarkdown basics", () => {
   it("video", () => {
     const mdText = "![tako](/data/tako.mp4){autoplay}";
     expect(makeMarkdown(mdText)).toBe("![tako](/data/tako.mp4){autoplay}\n");
+  });
+
+  it("track map source", () => {
+    const mdText = "@[Ride](/maps/ride.trjgz){float=right,size=large}";
+    expect(makeMarkdown(mdText)).toBe(
+      "@[Ride](/maps/ride.trjgz){float=right, size=large}\n",
+    );
+  });
+
+  it("inline track map pins", () => {
+    const mdText =
+      "@[Akatutumi](map://139.6444794,35.6595519,15|" +
+      "139.6444772,35.6595498;Bakery;Good;" +
+      "http://example.com/;/media/1234/bread.jpg)";
+    expect(makeMarkdown(mdText)).toBe(mdText + "\n");
   });
 
   it("quote", () => {
@@ -2273,6 +2505,14 @@ describe("serialization", () => {
     expect(serialized).toBe(
       '[{"T":"div","C":[{"T":"figure","C":[{"T":"img","SR":"/data/img1.jpg","GD":true},{"T":"figcaption","X":"img1"}],"CL":"image-block"},{"T":"figure","C":[{"T":"img","SR":"/data/img2.jpg","GD":true},{"T":"figcaption","X":"img2"}],"CL":"image-block"}],"CL":"image-grid","DC":2},{"T":"div","C":[{"T":"figure","C":[{"T":"img","SR":"/data/img3.jpg","GD":true},{"T":"figcaption","X":"img3"}],"CL":"image-block"}],"CL":"image-grid","DC":1}]',
     );
+    const deserialized = deserializeMdNodes(serialized);
+    expect(stripPos(deserialized)).toStrictEqual(stripPos(nodes));
+  });
+
+  it("track map", () => {
+    const mdText = "@[Ride](/maps/ride.trjgz){float=right,size=large}";
+    const nodes = parseMarkdown(mdText);
+    const serialized = serializeMdNodes(nodes);
     const deserialized = deserializeMdNodes(serialized);
     expect(stripPos(deserialized)).toStrictEqual(stripPos(nodes));
   });

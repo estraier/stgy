@@ -112,6 +112,294 @@ function isInlineTag(tag: string): boolean {
   return INLINE_TAGS.has(tag.toLowerCase());
 }
 
+
+type MdMacroOptions = Record<string, string | boolean>;
+
+type MdMapPin = {
+  lon: number;
+  lat: number;
+  title?: string;
+  description?: string;
+  url?: string;
+  image?: string;
+};
+
+type MdMapSpec = {
+  lon: number;
+  lat: number;
+  zoom: number;
+  pins: MdMapPin[];
+};
+
+function parseMdMacroOptions(raw: string | undefined): MdMacroOptions {
+  const macro: MdMacroOptions = {};
+  if (!raw) return macro;
+  for (const pair of raw.split(",")) {
+    const m = pair.match(/^\s*([a-z][a-z0-9-]*)(?:=([^,]+))?\s*$/i);
+    if (m) {
+      const key = m[1]!.toLowerCase();
+      if (m[2] === undefined) macro[key] = true;
+      else macro[key] = m[2]!.replace(/\s+/g, " ").trim();
+    }
+  }
+  return macro;
+}
+
+function macroStringValue(
+  value: string | boolean | undefined,
+): string | undefined {
+  if (typeof value === "string") return value.trim();
+  return undefined;
+}
+
+function macroBooleanValue(
+  value: string | boolean | undefined,
+): boolean | undefined {
+  if (value === true) return true;
+  if (typeof value !== "string") return undefined;
+  const s = value.trim().toLowerCase();
+  if (s === "true" || s === "1" || s === "yes" || s === "on") return true;
+  if (s === "false" || s === "0" || s === "no" || s === "off") return false;
+  return undefined;
+}
+
+function normalizeMdMapCssLength(
+  value: string | boolean | undefined,
+): string | undefined {
+  const raw = macroStringValue(value);
+  if (!raw) return undefined;
+  const s = raw.toLowerCase();
+  if (/^\d+(?:\.\d+)?$/.test(s)) return `${s}px`;
+  if (/^\d+(?:\.\d+)?(?:px|em|rem|vh|vw|%)$/.test(s)) return s;
+  return undefined;
+}
+
+function isSafeMdMapUrl(value: string | undefined): value is string {
+  if (!value) return false;
+  const s = value.trim();
+  return /^(https?:\/\/|\/(?!\/)|\.\/|\.\.\/)/i.test(s);
+}
+
+function isFiniteMdMapCoordinate(
+  lon: number,
+  lat: number,
+): boolean {
+  return (
+    Number.isFinite(lon) &&
+    Number.isFinite(lat) &&
+    lon >= -180 &&
+    lon <= 180 &&
+    lat >= -90 &&
+    lat <= 90
+  );
+}
+
+function parseMdMapLonLat(raw: string): { lon: number; lat: number } | null {
+  const parts = raw.split(",").map((part) => part.trim());
+  if (parts.length < 2) return null;
+  const lon = Number(parts[0]);
+  const lat = Number(parts[1]);
+  if (!isFiniteMdMapCoordinate(lon, lat)) return null;
+  return { lon, lat };
+}
+
+function parseMdMapUri(url: string): MdMapSpec | null {
+  const prefix = "map://";
+  if (!url.startsWith(prefix)) return null;
+
+  const body = url.slice(prefix.length).trim();
+  if (!body) return null;
+
+  const blocks = body.split("|").map((block) => block.trim());
+  if (blocks.length === 0 || !blocks[0]) return null;
+
+  const centerParts = blocks[0]!.split(",").map((part) => part.trim());
+  if (centerParts.length !== 3) return null;
+
+  const lon = Number(centerParts[0]);
+  const lat = Number(centerParts[1]);
+  const zoom = Number(centerParts[2]);
+  if (!isFiniteMdMapCoordinate(lon, lat)) return null;
+  if (!Number.isFinite(zoom) || zoom < 0 || zoom > 22) return null;
+
+  const pins: MdMapPin[] = [];
+  for (const block of blocks.slice(1)) {
+    if (!block) continue;
+    const fields = block.split(";").map((field) => field.trim());
+    const point = parseMdMapLonLat(fields[0] || "");
+    if (!point) continue;
+
+    const title = fields[1] || undefined;
+    const description = fields[2] || undefined;
+    const urlField = fields[3] || undefined;
+    const imageField = fields[4] || undefined;
+    const pin: MdMapPin = { lon: point.lon, lat: point.lat };
+    if (title) pin.title = title;
+    if (description) pin.description = description;
+    if (isSafeMdMapUrl(urlField)) pin.url = urlField;
+    if (isSafeMdMapUrl(imageField)) pin.image = imageField;
+    pins.push(pin);
+  }
+
+  return { lon, lat, zoom, pins };
+}
+
+function applyMdTrackMapOptions(attrs: MdAttrs, macro: MdMacroOptions) {
+  for (const [key, value] of Object.entries(macro)) {
+    if (key === "height") continue;
+    if (key === "base" || key === "base-layer") {
+      const baseLayer = macroStringValue(value);
+      if (baseLayer) attrs["data-base-layer"] = baseLayer;
+      continue;
+    }
+    if (key === "graph") {
+      const graph = macroBooleanValue(value);
+      if (graph !== undefined) attrs["data-show-graph"] = graph ? "true" : "false";
+      continue;
+    }
+    if (key === "overlay") {
+      const overlay = macroBooleanValue(value);
+      if (overlay !== undefined)
+        attrs["data-show-overlay"] = overlay ? "true" : "false";
+      continue;
+    }
+    attrs[`data-${key}`] = value === true ? "true" : String(value);
+  }
+
+  const height = normalizeMdMapCssLength(macro.height);
+  if (height) attrs.style = `height:${height}`;
+}
+
+function makeMdTrackCanvas(line: number, char: number): MdElementNode {
+  return makeElement(
+    "div",
+    [],
+    { class: "stgy-track-canvas" },
+    line,
+    char,
+  );
+}
+
+function makeMdTextBlock(
+  className: string,
+  text: string,
+  line: number,
+  char: number,
+): MdElementNode {
+  return makeElement(
+    "div",
+    [{ type: "text", text }],
+    { class: className },
+    line,
+    char,
+  );
+}
+
+function makeMdMapPinElement(
+  pin: MdMapPin,
+  line: number,
+  char: number,
+): MdElementNode {
+  const children: MdNode[] = [];
+  if (pin.title) children.push(makeMdTextBlock("annot-title", pin.title, line, char));
+  if (pin.description)
+    children.push(makeMdTextBlock("annot-desc", pin.description, line, char));
+  if (pin.url) {
+    children.push(
+      makeElement(
+        "div",
+        [
+          makeElement(
+            "a",
+            [{ type: "text", text: pin.url }],
+            { href: pin.url },
+            line,
+            char,
+          ),
+        ],
+        { class: "annot-link" },
+        line,
+        char,
+      ),
+    );
+  }
+  if (pin.image) {
+    children.push(
+      makeElement(
+        "div",
+        [
+          makeElement(
+            "img",
+            [],
+            { src: pin.image, alt: pin.title || "" },
+            line,
+            char,
+          ),
+        ],
+        { class: "annot-image" },
+        line,
+        char,
+      ),
+    );
+  }
+
+  return makeElement(
+    "li",
+    children,
+    { "data-lon": pin.lon, "data-lat": pin.lat },
+    line,
+    char,
+  );
+}
+
+function makeMdTrackMapElement(
+  desc: string,
+  url: string,
+  macro: MdMacroOptions,
+  line: number,
+  char: number,
+): MdElementNode {
+  const attrs: MdAttrs = { class: "stgy-track-map" };
+  const children: MdNode[] = [makeMdTrackCanvas(line, char)];
+  const mapSpec = parseMdMapUri(url);
+
+  if (mapSpec) {
+    attrs["data-lon"] = mapSpec.lon;
+    attrs["data-lat"] = mapSpec.lat;
+    attrs["data-zoom"] = mapSpec.zoom;
+    if (desc) attrs["data-center-address"] = desc;
+    if (mapSpec.pins.length > 0) {
+      children.push(
+        makeElement(
+          "ul",
+          mapSpec.pins.map((pin) => makeMdMapPinElement(pin, line, char)),
+          { class: "stgy-track-pins" },
+          line,
+          char,
+        ),
+      );
+    }
+  } else if (!url.trim().toLowerCase().startsWith("map://")) {
+    attrs["data-src"] = url;
+  }
+
+  applyMdTrackMapOptions(attrs, macro);
+
+  if (desc) {
+    children.push(
+      makeElement(
+        "figcaption",
+        [{ type: "text", text: desc }],
+        { class: "stgy-track-caption" },
+        line,
+        char,
+      ),
+    );
+  }
+
+  return makeElement("figure", children, attrs, line, char);
+}
+
 export function parseMarkdown(mdText: string): MdNode[] {
   let src = mdText.replace(/\r\n/g, "\n");
   const lines = src.split("\n");
@@ -282,6 +570,7 @@ export function parseMarkdown(mdText: string): MdNode[] {
     }
   }
   const imageMacroRe = /^!\[([^\]]*)\]\s*\(([^)]+)\)\s*(?:\{([^\}]*)\})?$/;
+  const mapMacroRe = /^@\[([^\]]*)\]\s*\(([^)]+)\)\s*(?:\{([^\}]*)\})?$/;
   const videoExts = /\.(mpg|mp4|m4a|mov|avi|wmv|webm)(\?.*)?$/i;
   for (let i = 0; i < lines.length; ++i) {
     const line = lines[i]!;
@@ -366,6 +655,18 @@ export function parseMarkdown(mdText: string): MdNode[] {
       );
       continue;
     }
+    const map = line.match(mapMacroRe);
+    if (map) {
+      flushPara();
+      flushList();
+      flushTable();
+      flushQuote();
+      const desc = map[1] || "";
+      const url = map[2] || "";
+      const macro = parseMdMacroOptions(map[3]);
+      nodes.push(makeMdTrackMapElement(desc, url, macro, i, lineCharStart));
+      continue;
+    }
     const img = line.match(imageMacroRe);
     if (img) {
       flushPara();
@@ -374,16 +675,7 @@ export function parseMarkdown(mdText: string): MdNode[] {
       flushQuote();
       const desc = img[1] || "";
       const url = img[2];
-      const macro: Record<string, string | boolean> = {};
-      if (img[3]) {
-        for (const pair of img[3].split(",")) {
-          const m = pair.match(/^\s*([a-z][a-z0-9-]*)(?:=([^,]+))?\s*$/i);
-          if (m) {
-            if (m[2] === undefined) macro[m[1]!.toLowerCase()] = true;
-            else macro[m[1]!.toLowerCase()] = m[2]!.replace(/\s+/g, " ");
-          }
-        }
-      }
+      const macro = parseMdMacroOptions(img[3]);
       const isVideo = macro["media"] === "video" || videoExts.test(url);
       const mediaAttrs: MdAttrs = { src: url };
       for (const [k, v] of Object.entries(macro)) {
@@ -2769,9 +3061,12 @@ export function mdRenderHtml(
       for (const c of n.children || []) {
         if (c.type === "element" && isMediaElement(c))
           inner += serializeMedia(c as MdMediaElement);
-        else if (c.type === "element" && c.tag === "figcaption")
-          inner += `<figcaption>${serializeAll(c.children || [])}</figcaption>`;
-        else inner += serializeOne(c);
+        else if (c.type === "element" && c.tag === "figcaption") {
+          const captionAttrs = withPos(c.attrs, c);
+          inner += `<figcaption${attrsToString(captionAttrs)}>${serializeAll(
+            c.children || [],
+          )}</figcaption>`;
+        } else inner += serializeOne(c);
       }
       return `<figure${attrsToString(figAttrs)}>${inner}</figure>`;
     }
@@ -3063,6 +3358,77 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     const attrsStr = macro.length ? `{${macro.join(", ")}}` : "";
     return `![${desc}](${src})${attrsStr}`;
   };
+  const renderTrackFigureMacro = (fig: MdElementNode): string => {
+    const caption = extractAltFromFigureOrImg(fig);
+    const macro: string[] = [];
+    const dataAttr = (name: string): string | undefined =>
+      getAttrStr(fig.attrs, `data-${name}`);
+    const addOpt = (key: string, value: string | undefined) => {
+      if (value) macro.push(`${key}=${value}`);
+    };
+    addOpt("float", dataAttr("float"));
+    addOpt("size", dataAttr("size"));
+    addOpt("base", dataAttr("base-layer"));
+    addOpt("graph", dataAttr("show-graph"));
+    addOpt("overlay", dataAttr("show-overlay"));
+
+    const style = getAttrStr(fig.attrs, "style") || "";
+    const height = /(?:^|;)\s*height\s*:\s*([^;]+)/i.exec(style)?.[1]?.trim();
+    addOpt("height", height);
+
+    const dataSrc = getAttrStr(fig.attrs, "data-src");
+    let url = dataSrc ? sanitizeUrl(dataSrc) : "";
+    if (!url) {
+      const lon = getAttrStr(fig.attrs, "data-lon") || "";
+      const lat = getAttrStr(fig.attrs, "data-lat") || "";
+      const zoom = getAttrStr(fig.attrs, "data-zoom") || "";
+      const blocks: string[] = [`${lon},${lat},${zoom}`];
+      for (const child of fig.children || []) {
+        if (!isElement(child, "ul") || !hasClass(child, "stgy-track-pins")) {
+          continue;
+        }
+        for (const pin of child.children || []) {
+          if (!isElement(pin, "li")) continue;
+          const pinLon = getAttrStr(pin.attrs, "data-lon") || "";
+          const pinLat = getAttrStr(pin.attrs, "data-lat") || "";
+          const fields = [`${pinLon},${pinLat}`];
+          const findChildText = (cls: string): string => {
+            const found = (pin.children || []).find(
+              (n) => isElement(n) && hasClass(n, cls),
+            ) as MdElementNode | undefined;
+            return collectPlainText(found?.children || []).trim();
+          };
+          const title = findChildText("annot-title");
+          const description = findChildText("annot-desc");
+          let href = "";
+          let image = "";
+          for (const n of pin.children || []) {
+            if (isElement(n) && hasClass(n, "annot-link")) {
+              const a = (n.children || []).find((c) => isElement(c, "a")) as
+                | MdElementNode
+                | undefined;
+              href = getAttrStr(a?.attrs, "href") || "";
+            }
+            if (isElement(n) && hasClass(n, "annot-image")) {
+              const img = (n.children || []).find((c) => isElement(c, "img")) as
+                | MdElementNode
+                | undefined;
+              image = getAttrStr(img?.attrs, "src") || "";
+            }
+          }
+          if (title || description || href || image) fields.push(title);
+          if (description || href || image) fields.push(description);
+          if (href || image) fields.push(href);
+          if (image) fields.push(image);
+          blocks.push(fields.join(";"));
+        }
+      }
+      url = `map://${blocks.join("|")}`;
+    }
+
+    const attrsStr = macro.length ? `{${macro.join(", ")}}` : "";
+    return `@[${caption}](${url})${attrsStr}`;
+  };
   const tableCellAlign = (
     cell: MdElementNode,
   ): "right" | "center" | undefined => {
@@ -3191,6 +3557,7 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
       case "toc":
         return "<!TOC!>";
       case "figure":
+        if (hasClass(el, "stgy-track-map")) return renderTrackFigureMacro(el);
         return renderFigureMacro(el);
       case "table": {
         const rows: string[] = [];
