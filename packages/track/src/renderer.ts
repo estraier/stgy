@@ -36,6 +36,14 @@ const TRACK_GRAPH_SMOOTHING_WINDOWS = [
 ] as const;
 const TARGET_GRAPH_X_TICKS = 5;
 const TARGET_GRAPH_Y_TICKS = 5;
+const TRACK_GRAPH_SERIES_ORDER = [
+  "elevations",
+  "speeds",
+  "cadences",
+  "heartRates",
+  "powers",
+] as const;
+const TRACK_GRAPH_SERIES_ORDER_SET = new Set<string>(TRACK_GRAPH_SERIES_ORDER);
 
 type BaseLayerKey =
   | "gsi-pale"
@@ -1186,8 +1194,22 @@ export class StgyTrackRenderer {
     }
 
     const series: TrackGraphSeries[] = [];
+    TRACK_GRAPH_SERIES_ORDER.forEach((key) => {
+      const values = coordinateProperties[key];
+      if (this.isNumberArrayWithLength(values, length)) {
+        series.push({
+          name: key,
+          values,
+        });
+      }
+    });
+
     Object.keys(coordinateProperties).forEach((key) => {
-      if (key === "distances" || key === "times") {
+      if (
+        key === "distances" ||
+        key === "times" ||
+        TRACK_GRAPH_SERIES_ORDER_SET.has(key)
+      ) {
         return;
       }
 
@@ -1438,6 +1460,15 @@ export class StgyTrackRenderer {
     return `${Math.round(value)}`;
   }
 
+  private decorateGraphSelect(select: HTMLSelectElement) {
+    select.className = "stgy-track-graph-select";
+    select.style.backgroundColor = "#f8fafc";
+    select.style.border = "1px solid #cbd5e1";
+    select.style.borderRadius = "4px";
+    select.style.padding = "2px 6px";
+    select.style.color = "#1f2937";
+  }
+
   private renderGraphPanel(
     panel: HTMLElement,
     context: CoordinateInteractionContext,
@@ -1469,6 +1500,7 @@ export class StgyTrackRenderer {
     if (dataset.series.length > 1) {
       const seriesSelect = document.createElement("select");
       seriesSelect.setAttribute("aria-label", "Graph series");
+      this.decorateGraphSelect(seriesSelect);
 
       dataset.series.forEach((item) => {
         const option = document.createElement("option");
@@ -1504,6 +1536,7 @@ export class StgyTrackRenderer {
     if (availableXAxisKinds.length > 1) {
       const axisSelect = document.createElement("select");
       axisSelect.setAttribute("aria-label", "Graph X axis");
+      this.decorateGraphSelect(axisSelect);
 
       availableXAxisKinds.forEach((kind) => {
         const option = document.createElement("option");
@@ -1529,6 +1562,7 @@ export class StgyTrackRenderer {
 
     const smoothingSelect = document.createElement("select");
     smoothingSelect.setAttribute("aria-label", "Graph smoothing");
+    this.decorateGraphSelect(smoothingSelect);
 
     TRACK_GRAPH_SMOOTHING_WINDOWS.forEach((windowSize) => {
       const option = document.createElement("option");

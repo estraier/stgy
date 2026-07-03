@@ -816,6 +816,7 @@ describe("StgyTrackRenderer", () => {
       "time",
       "sample",
     ]);
+    expect(axisSelect?.className).toBe("stgy-track-graph-select");
   });
 
   test("excludes distances and times from graph series selector", async () => {
@@ -848,6 +849,59 @@ describe("StgyTrackRenderer", () => {
     ]);
     expect(options.map((option) => option.value)).not.toContain("distances");
     expect(options.map((option) => option.value)).not.toContain("times");
+  });
+
+  test("orders standard graph series by display priority", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139.7528, 35.6852],
+              [139.7550, 35.6848],
+              [139.7585, 35.6840],
+            ],
+          },
+          properties: {
+            coordinateProperties: {
+              times: [1767222000, 1767222060, 1767222120],
+              distances: [0, 210, 545],
+              heartRates: [118, 123, 128],
+              powers: [130, 145, 160],
+              cadences: [72, 75, 78],
+              speeds: [18.5, 19.2, 20.1],
+              elevations: [20, 21, 22],
+            },
+          },
+        },
+      ],
+    });
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const seriesSelect = document.querySelector<HTMLSelectElement>(
+      '.stgy-track-graph select[aria-label="Graph series"]',
+    );
+
+    expect(seriesSelect).not.toBeNull();
+    expect(Array.from(seriesSelect?.options || []).map((option) => option.value)).toEqual([
+      "elevations",
+      "speeds",
+      "cadences",
+      "heartRates",
+      "powers",
+    ]);
   });
 
   test("updates graph readout on hover", async () => {

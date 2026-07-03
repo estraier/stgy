@@ -175,7 +175,7 @@ export default function TrackSandbox() {
   const [obfuscatePrivacy, setObfuscatePrivacy] = useState(false);
   const [privacyStartDistanceM, setPrivacyStartDistanceM] = useState(1000);
   const [privacyEndDistanceM, setPrivacyEndDistanceM] = useState(1000);
-  const [showAnalysis, setShowAnalysis] = useState(false);
+  const [showAnalysis, setShowAnalysis] = useState(true);
   const [ftpW, setFtpW] = useState(DEFAULT_FTP_W);
   const [lthrBpm, setLthrBpm] = useState(DEFAULT_LTHR_BPM);
   const [busy, setBusy] = useState(false);
@@ -707,7 +707,7 @@ function RideAnalysis({
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <h2 className="mb-4 text-sm font-semibold text-slate-900">Analysis</h2>
-      <div className="grid gap-5 lg:grid-cols-2">
+      <div className="grid gap-6 lg:grid-cols-2">
         {speedRows.length > 0 && <ZoneBars title="Speed histogram" rows={speedRows} />}
         {cadenceRows.length > 0 && <ZoneBars title="Cadence histogram" rows={cadenceRows} />}
         {heartRateZones.length > 0 && (
@@ -806,9 +806,9 @@ function ZoneBars({ title, rows }: { title: string; rows: ZoneRow[] }) {
         {rows.map((row) => (
           <div
             key={row.label}
-            className="grid grid-cols-[minmax(9rem,12rem)_minmax(0,1fr)_7.75rem] items-center gap-2"
+            className="grid grid-cols-[6.25rem_minmax(0,1fr)_7.75rem] items-center gap-2"
           >
-            <div className="text-xs text-slate-600">{row.label}</div>
+            <div className="whitespace-nowrap text-xs text-slate-600">{row.label}</div>
             <div className="h-2.5 min-w-0 overflow-hidden rounded-full bg-slate-100">
               <div
                 className="h-full rounded-full bg-sky-600"
