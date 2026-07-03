@@ -80,6 +80,21 @@ type ZoneRow = {
   percentage: number;
 };
 
+type HistogramBin = {
+  label: string;
+  maxInclusive?: number;
+};
+
+type ZoneDefinition = {
+  label: string;
+  maxRatio: number;
+};
+
+type ZoneLabelOptions = {
+  basisLabel: string;
+  unit: string;
+};
+
 type PowerCurvePoint = {
   durationSeconds: number;
   watts: number;
@@ -88,8 +103,29 @@ type PowerCurvePoint = {
 const DEFAULT_FTP_W = 223;
 const DEFAULT_LTHR_BPM = 151;
 const DEFAULT_MAX_POINTS = 10000;
+const ZONE_RATIO_EPSILON = 1e-12;
 
-const POWER_ZONES = [
+const SPEED_HISTOGRAM_BINS: HistogramBin[] = [
+  { label: "≤15 km/h", maxInclusive: 15 },
+  { label: "≤20 km/h", maxInclusive: 20 },
+  { label: "≤25 km/h", maxInclusive: 25 },
+  { label: "≤30 km/h", maxInclusive: 30 },
+  { label: "≤35 km/h", maxInclusive: 35 },
+  { label: "≤40 km/h", maxInclusive: 40 },
+  { label: ">40 km/h" },
+];
+
+const CADENCE_HISTOGRAM_BINS: HistogramBin[] = [
+  { label: "≤50 rpm", maxInclusive: 50 },
+  { label: "≤60 rpm", maxInclusive: 60 },
+  { label: "≤70 rpm", maxInclusive: 70 },
+  { label: "≤80 rpm", maxInclusive: 80 },
+  { label: "≤90 rpm", maxInclusive: 90 },
+  { label: "≤100 rpm", maxInclusive: 100 },
+  { label: ">100 rpm" },
+];
+
+const POWER_ZONES: ZoneDefinition[] = [
   { label: "Z1 Recovery", maxRatio: 0.55 },
   { label: "Z2 Endurance", maxRatio: 0.75 },
   { label: "Z3 Tempo", maxRatio: 0.90 },
@@ -99,11 +135,11 @@ const POWER_ZONES = [
   { label: "Z7 Sprint", maxRatio: Number.POSITIVE_INFINITY },
 ];
 
-const HEART_RATE_ZONES = [
+const HEART_RATE_ZONES: ZoneDefinition[] = [
   { label: "Z1 Easy", maxRatio: 0.81 },
   { label: "Z2 Endurance", maxRatio: 0.89 },
-  { label: "Z3 Tempo", maxRatio: 0.93 },
-  { label: "Z4 Threshold", maxRatio: 0.99 },
+  { label: "Z3 Tempo", maxRatio: 0.94 },
+  { label: "Z4 Threshold", maxRatio: 1.0 },
   { label: "Z5 Hard", maxRatio: Number.POSITIVE_INFINITY },
 ];
 
@@ -639,29 +675,23 @@ function RideAnalysis({
   const speedRows = useMemo(() => {
     return computeHistogramRows(activity.points, (point) => {
       return typeof point.speedMps === "number" ? point.speedMps * 3.6 : undefined;
-    }, [
-      { label: "≤15 km/h", matches: (value) => value <= 15 },
-      { label: "15–20", matches: (value) => value > 15 && value <= 20 },
-      { label: "20–25", matches: (value) => value > 20 && value <= 25 },
-      { label: "25–30", matches: (value) => value > 25 && value <= 30 },
-      { label: "30–35", matches: (value) => value > 30 && value <= 35 },
-      { label: "35–40", matches: (value) => value > 35 && value <= 40 },
-      { label: ">40", matches: (value) => value > 40 },
-    ]);
+    }, SPEED_HISTOGRAM_BINS);
   }, [activity.points]);
   const cadenceRows = useMemo(() => {
-    return computeHistogramRows(activity.points, (point) => point.cadenceRpm, [
-      { label: "≤50 rpm", matches: (value) => value <= 50 },
-      { label: "50–60", matches: (value) => value > 50 && value <= 60 },
-      { label: "60–70", matches: (value) => value > 60 && value <= 70 },
-      { label: "70–80", matches: (value) => value > 70 && value <= 80 },
-      { label: "80–90", matches: (value) => value > 80 && value <= 90 },
-      { label: "90–100", matches: (value) => value > 90 && value <= 100 },
-      { label: ">100", matches: (value) => value > 100 },
-    ]);
+    return computeHistogramRows(
+      activity.points,
+      (point) => point.cadenceRpm,
+      CADENCE_HISTOGRAM_BINS,
+    );
   }, [activity.points]);
   const powerZones = useMemo(() => {
-    return computeZoneRows(activity.points, (point) => point.powerW, ftpW, POWER_ZONES);
+    return computeZoneRows(
+      activity.points,
+      (point) => point.powerW,
+      ftpW,
+      POWER_ZONES,
+      { basisLabel: "FTP", unit: "W" },
+    );
   }, [activity.points, ftpW]);
   const heartRateZones = useMemo(() => {
     return computeZoneRows(
@@ -669,6 +699,7 @@ function RideAnalysis({
       (point) => point.heartRateBpm,
       lthrBpm,
       HEART_RATE_ZONES,
+      { basisLabel: "LTHR", unit: "bpm" },
     );
   }, [activity.points, lthrBpm]);
   const powerCurve = useMemo(() => getPowerCurvePoints(activity), [activity]);
@@ -679,11 +710,11 @@ function RideAnalysis({
       <div className="grid gap-5 lg:grid-cols-2">
         {speedRows.length > 0 && <ZoneBars title="Speed histogram" rows={speedRows} />}
         {cadenceRows.length > 0 && <ZoneBars title="Cadence histogram" rows={cadenceRows} />}
-        {powerZones.length > 0 && (
-          <ZoneBars title={`Power zones · FTP ${ftpW} W`} rows={powerZones} />
-        )}
         {heartRateZones.length > 0 && (
           <ZoneBars title={`Heart-rate zones · LTHR ${lthrBpm} bpm`} rows={heartRateZones} />
+        )}
+        {powerZones.length > 0 && (
+          <ZoneBars title={`Power zones · FTP ${ftpW} W`} rows={powerZones} />
         )}
         {powerCurve.length > 0 && (
           <div className="lg:col-span-2">
@@ -775,7 +806,7 @@ function ZoneBars({ title, rows }: { title: string; rows: ZoneRow[] }) {
         {rows.map((row) => (
           <div
             key={row.label}
-            className="grid grid-cols-[7.5rem_minmax(0,1fr)_7.75rem] items-center gap-2"
+            className="grid grid-cols-[minmax(9rem,12rem)_minmax(0,1fr)_7.75rem] items-center gap-2"
           >
             <div className="text-xs text-slate-600">{row.label}</div>
             <div className="h-2.5 min-w-0 overflow-hidden rounded-full bg-slate-100">
@@ -1621,7 +1652,8 @@ function computeZoneRows(
   points: TrackPoint[],
   getValue: (point: TrackPoint) => number | undefined,
   threshold: number,
-  zones: { label: string; maxRatio: number }[],
+  zones: ZoneDefinition[],
+  labelOptions: ZoneLabelOptions,
 ): ZoneRow[] {
   if (!Number.isFinite(threshold) || threshold <= 0 || points.length === 0) {
     return [];
@@ -1641,7 +1673,7 @@ function computeZoneRows(
       return;
     }
     const ratio = value / threshold;
-    const zoneIndex = zones.findIndex((zone) => ratio <= zone.maxRatio);
+    const zoneIndex = zones.findIndex((zone) => isRatioAtMost(ratio, zone.maxRatio));
     if (zoneIndex < 0) {
       return;
     }
@@ -1654,7 +1686,7 @@ function computeZoneRows(
   }
 
   return zones.map((zone, index) => ({
-    label: zone.label,
+    label: formatZoneLabel(zone, zones[index - 1], threshold, labelOptions),
     seconds: seconds[index],
     percentage: (seconds[index] / totalSeconds) * 100,
   }));
@@ -1663,7 +1695,7 @@ function computeZoneRows(
 function computeHistogramRows(
   points: TrackPoint[],
   getValue: (point: TrackPoint) => number | undefined,
-  bins: { label: string; matches: (value: number) => boolean }[],
+  bins: HistogramBin[],
 ): ZoneRow[] {
   const seconds = bins.map(() => 0);
   let totalSeconds = 0;
@@ -1680,7 +1712,11 @@ function computeHistogramRows(
       return;
     }
 
-    const binIndex = bins.findIndex((bin) => bin.matches(value));
+    const binIndex = bins.findIndex((bin) => {
+      return typeof bin.maxInclusive === "number"
+        ? value <= bin.maxInclusive + ZONE_RATIO_EPSILON
+        : true;
+    });
     if (binIndex < 0) {
       return;
     }
@@ -1698,6 +1734,34 @@ function computeHistogramRows(
     seconds: seconds[index],
     percentage: (seconds[index] / totalSeconds) * 100,
   }));
+}
+
+function isRatioAtMost(value: number, maxInclusive: number): boolean {
+  return value <= maxInclusive + ZONE_RATIO_EPSILON;
+}
+
+function formatZoneLabel(
+  zone: ZoneDefinition,
+  previousZone: ZoneDefinition | undefined,
+  threshold: number,
+  options: ZoneLabelOptions,
+): string {
+  const zoneKey = getZoneKey(zone.label);
+
+  if (!Number.isFinite(zone.maxRatio)) {
+    const previousMaxRatio = previousZone?.maxRatio;
+    if (typeof previousMaxRatio !== "number" || !Number.isFinite(previousMaxRatio)) {
+      return zoneKey;
+    }
+
+    return `${zoneKey}: >${formatCompactNumber(previousMaxRatio * threshold)} ${options.unit}`;
+  }
+
+  return `${zoneKey}: ≤${formatCompactNumber(zone.maxRatio * threshold)} ${options.unit}`;
+}
+
+function getZoneKey(label: string): string {
+  return label.trim().split(/\s+/)[0] || label;
 }
 
 function getPowerCurvePoints(activity: TrackActivity): PowerCurvePoint[] {
@@ -1851,6 +1915,10 @@ function formatNumber(value: number, fractionDigits: number): string {
     maximumFractionDigits: fractionDigits,
     minimumFractionDigits: fractionDigits,
   });
+}
+
+function formatCompactNumber(value: number): string {
+  return formatNumber(value, 1);
 }
 
 function formatDistance(distanceM: number): string {

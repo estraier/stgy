@@ -806,27 +806,27 @@ function appendSpeedHistogram(container: HTMLElement, points: TrackPoint[]) {
         matches: (value) => value <= 15,
       },
       {
-        label: "15–20 km/h",
+        label: "≤20 km/h",
         color: "#2f7df6",
         matches: (value) => value > 15 && value <= 20,
       },
       {
-        label: "20–25 km/h",
+        label: "≤25 km/h",
         color: "#2fa84f",
         matches: (value) => value > 20 && value <= 25,
       },
       {
-        label: "25–30 km/h",
+        label: "≤30 km/h",
         color: "#f2d33b",
         matches: (value) => value > 25 && value <= 30,
       },
       {
-        label: "30–35 km/h",
+        label: "≤35 km/h",
         color: "#e14545",
         matches: (value) => value > 30 && value <= 35,
       },
       {
-        label: "35–40 km/h",
+        label: "≤40 km/h",
         color: "#7a3db8",
         matches: (value) => value > 35 && value <= 40,
       },
@@ -855,27 +855,27 @@ function appendCadenceHistogram(container: HTMLElement, points: TrackPoint[]) {
         matches: (value) => value <= 50,
       },
       {
-        label: "50–60 rpm",
+        label: "≤60 rpm",
         color: "#2f7df6",
         matches: (value) => value > 50 && value <= 60,
       },
       {
-        label: "60–70 rpm",
+        label: "≤70 rpm",
         color: "#2fa84f",
         matches: (value) => value > 60 && value <= 70,
       },
       {
-        label: "70–80 rpm",
+        label: "≤80 rpm",
         color: "#f2d33b",
         matches: (value) => value > 70 && value <= 80,
       },
       {
-        label: "80–90 rpm",
+        label: "≤90 rpm",
         color: "#f39c34",
         matches: (value) => value > 80 && value <= 90,
       },
       {
-        label: "90–100 rpm",
+        label: "≤100 rpm",
         color: "#e14545",
         matches: (value) => value > 90 && value <= 100,
       },
@@ -1312,53 +1312,64 @@ function getPointDurationSeconds(points: TrackPoint[], index: number): number {
   return next > current ? next - current : 0;
 }
 
+function formatZoneLimit(value: number): string {
+  return Number.isInteger(value)
+    ? formatNumber(value, 0)
+    : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+
 function createPowerZoneRows(
   summary: ZoneSummary,
   ftpW: number
 ): ZoneHistogramRow[] {
-  const z1Max = Math.floor(ftpW * 0.55);
-  const z2Max = Math.floor(ftpW * 0.75);
-  const z3Max = Math.floor(ftpW * 0.9);
-  const z4Max = Math.floor(ftpW * 1.05);
-  const z5Max = Math.floor(ftpW * 1.2);
-  const z6Max = Math.floor(ftpW * 1.5);
+  const z1Max = ftpW * 0.55;
+  const z2Max = ftpW * 0.75;
+  const z3Max = ftpW * 0.9;
+  const z4Max = ftpW * 1.05;
+  const z5Max = ftpW * 1.2;
+  const z6Max = ftpW * 1.5;
 
   return [
-    createZoneHistogramRow(summary, "z1", `Z1 ≤55% FTP, ≤${z1Max} W`, "#6fd3ff"),
+    createZoneHistogramRow(
+      summary,
+      "z1",
+      `Z1 ≤55% FTP, ≤${formatZoneLimit(z1Max)} W`,
+      "#6fd3ff"
+    ),
     createZoneHistogramRow(
       summary,
       "z2",
-      `Z2 56–75% FTP, ${z1Max + 1}–${z2Max} W`,
+      `Z2 ≤75% FTP, ≤${formatZoneLimit(z2Max)} W`,
       "#2f7df6"
     ),
     createZoneHistogramRow(
       summary,
       "z3",
-      `Z3 76–90% FTP, ${z2Max + 1}–${z3Max} W`,
+      `Z3 ≤90% FTP, ≤${formatZoneLimit(z3Max)} W`,
       "#2fa84f"
     ),
     createZoneHistogramRow(
       summary,
       "z4",
-      `Z4 91–105% FTP, ${z3Max + 1}–${z4Max} W`,
+      `Z4 ≤105% FTP, ≤${formatZoneLimit(z4Max)} W`,
       "#f2d33b"
     ),
     createZoneHistogramRow(
       summary,
       "z5",
-      `Z5 106–120% FTP, ${z4Max + 1}–${z5Max} W`,
+      `Z5 ≤120% FTP, ≤${formatZoneLimit(z5Max)} W`,
       "#f39c34"
     ),
     createZoneHistogramRow(
       summary,
       "z6",
-      `Z6 121–150% FTP, ${z5Max + 1}–${z6Max} W`,
+      `Z6 ≤150% FTP, ≤${formatZoneLimit(z6Max)} W`,
       "#e14545"
     ),
     createZoneHistogramRow(
       summary,
       "z7",
-      `Z7 >150% FTP, ≥${z6Max + 1} W`,
+      `Z7 >150% FTP, >${formatZoneLimit(z6Max)} W`,
       "#7a3db8"
     ),
   ];
@@ -1368,32 +1379,42 @@ function createHeartRateZoneRows(
   summary: ZoneSummary,
   lthrBpm: number
 ): ZoneHistogramRow[] {
-  const z1Max = Math.round(lthrBpm * 0.81);
-  const z2Max = Math.round(lthrBpm * 0.89);
-  const z3Max = Math.round(lthrBpm * 0.94);
-  const z4Max = Math.round(lthrBpm);
+  const z1Max = lthrBpm * 0.81;
+  const z2Max = lthrBpm * 0.89;
+  const z3Max = lthrBpm * 0.94;
+  const z4Max = lthrBpm;
 
   return [
-    createZoneHistogramRow(summary, "z1", `Z1 ≤81% LTHR, ≤${z1Max} bpm`, "#2f7df6"),
+    createZoneHistogramRow(
+      summary,
+      "z1",
+      `Z1 ≤81% LTHR, ≤${formatZoneLimit(z1Max)} bpm`,
+      "#2f7df6"
+    ),
     createZoneHistogramRow(
       summary,
       "z2",
-      `Z2 82–89% LTHR, ${z1Max + 1}–${z2Max} bpm`,
+      `Z2 ≤89% LTHR, ≤${formatZoneLimit(z2Max)} bpm`,
       "#2fa84f"
     ),
     createZoneHistogramRow(
       summary,
       "z3",
-      `Z3 90–94% LTHR, ${z2Max + 1}–${z3Max} bpm`,
+      `Z3 ≤94% LTHR, ≤${formatZoneLimit(z3Max)} bpm`,
       "#f2d33b"
     ),
     createZoneHistogramRow(
       summary,
       "z4",
-      `Z4 95–100% LTHR, ${z3Max + 1}–${z4Max} bpm`,
+      `Z4 ≤100% LTHR, ≤${formatZoneLimit(z4Max)} bpm`,
       "#f39c34"
     ),
-    createZoneHistogramRow(summary, "z5", `Z5 >100% LTHR, ≥${z4Max + 1} bpm`, "#e14545"),
+    createZoneHistogramRow(
+      summary,
+      "z5",
+      `Z5 >100% LTHR, >${formatZoneLimit(z4Max)} bpm`,
+      "#e14545"
+    ),
   ];
 }
 

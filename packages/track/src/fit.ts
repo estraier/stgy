@@ -53,6 +53,7 @@ const HEART_RATE_ZONE_KEYS: TrackHeartRateZoneKey[] = [
   "z4",
   "z5",
 ];
+const ZONE_RATIO_EPSILON = 1e-12;
 
 const RESERVED_METRIC_NAMES = new Set([
   "times",
@@ -274,22 +275,22 @@ export function getPowerZone(
   }
 
   const ratio = powerW / ftpW;
-  if (ratio <= 0.55) {
+  if (isRatioAtMost(ratio, 0.55)) {
     return "z1";
   }
-  if (ratio <= 0.75) {
+  if (isRatioAtMost(ratio, 0.75)) {
     return "z2";
   }
-  if (ratio <= 0.9) {
+  if (isRatioAtMost(ratio, 0.9)) {
     return "z3";
   }
-  if (ratio <= 1.05) {
+  if (isRatioAtMost(ratio, 1.05)) {
     return "z4";
   }
-  if (ratio <= 1.2) {
+  if (isRatioAtMost(ratio, 1.2)) {
     return "z5";
   }
-  if (ratio <= 1.5) {
+  if (isRatioAtMost(ratio, 1.5)) {
     return "z6";
   }
 
@@ -305,21 +306,17 @@ export function getHeartRateZone(
     return undefined;
   }
 
-  const z1Max = Math.round(lthrBpm * 0.81);
-  const z2Max = Math.round(lthrBpm * 0.89);
-  const z3Max = Math.round(lthrBpm * 0.94);
-  const z4Max = Math.round(lthrBpm);
-
-  if (heartRateBpm <= z1Max) {
+  const ratio = heartRateBpm / lthrBpm;
+  if (isRatioAtMost(ratio, 0.81)) {
     return "z1";
   }
-  if (heartRateBpm <= z2Max) {
+  if (isRatioAtMost(ratio, 0.89)) {
     return "z2";
   }
-  if (heartRateBpm <= z3Max) {
+  if (isRatioAtMost(ratio, 0.94)) {
     return "z3";
   }
-  if (heartRateBpm <= z4Max) {
+  if (isRatioAtMost(ratio, 1)) {
     return "z4";
   }
 
@@ -2816,6 +2813,10 @@ function hasPosition(point: TrackPoint): point is TrackPoint & {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function isRatioAtMost(value: number, maxInclusive: number): boolean {
+  return value <= maxInclusive + ZONE_RATIO_EPSILON;
 }
 
 function isNonEmptyString(value: unknown): value is string {

@@ -1022,20 +1022,25 @@ describe("trackActivityToTrackJson", () => {
 describe("training zones", () => {
   test("classifies Coggan-style power zones", () => {
     expect(getPowerZone(110, 200)).toBe("z1");
+    expect(getPowerZone(110.1, 200)).toBe("z2");
     expect(getPowerZone(150, 200)).toBe("z2");
+    expect(getPowerZone(150.1, 200)).toBe("z3");
     expect(getPowerZone(180, 200)).toBe("z3");
     expect(getPowerZone(210, 200)).toBe("z4");
     expect(getPowerZone(240, 200)).toBe("z5");
     expect(getPowerZone(300, 200)).toBe("z6");
-    expect(getPowerZone(301, 200)).toBe("z7");
+    expect(getPowerZone(300.1, 200)).toBe("z7");
   });
 
   test("classifies LTHR-based heart-rate zones", () => {
-    expect(getHeartRateZone(130, 160)).toBe("z1");
-    expect(getHeartRateZone(142, 160)).toBe("z2");
-    expect(getHeartRateZone(150, 160)).toBe("z3");
+    expect(getHeartRateZone(129.6, 160)).toBe("z1");
+    expect(getHeartRateZone(129.7, 160)).toBe("z2");
+    expect(getHeartRateZone(142.4, 160)).toBe("z2");
+    expect(getHeartRateZone(142.5, 160)).toBe("z3");
+    expect(getHeartRateZone(150.4, 160)).toBe("z3");
+    expect(getHeartRateZone(150.5, 160)).toBe("z4");
     expect(getHeartRateZone(160, 160)).toBe("z4");
-    expect(getHeartRateZone(161, 160)).toBe("z5");
+    expect(getHeartRateZone(160.1, 160)).toBe("z5");
   });
 
   test("computes timed power zone durations", () => {
