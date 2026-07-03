@@ -1,28 +1,34 @@
-# STGY track Next CSS entry fix v15
+# STGY fit-demo Leaflet CSS explicit fix v28
 
-v14 removed CSS imports from renderer.ts, but index.ts can also import CSS.
-Next.js was still loading leaflet/dist/leaflet.css from packages/track/dist/index.js.
+Fixes scrambled Leaflet tiles in fit-demo.html without putting CSS imports back
+into the package JS entry.
 
-Fix:
-- packages/track/src/index.ts exports only JS symbols.
-- packages/track/src/renderer.ts imports no CSS.
-- frontend/src/app/layout.tsx imports Leaflet CSS and stgy-track/track-viewer.css.
+Why:
+- Next.js needs `stgy-track` JS entries to be CSS-free.
+- Static demos still need Leaflet's CSS.
+- fit-demo.html now explicitly loads `./dist/leaflet.css` before
+  `./dist/track-viewer.css`.
+
+Files:
+- packages/track/fit-demo.html
+- packages/track/package.json
+- packages/track/scripts/copy-assets.js
+- packages/track/src/fit-demo.ts
 
 Apply:
 ```sh
 cd ~/dev/stgy
-cp ~/Downloads/stgy_track_next_css_entry_fix_v15/packages/track/src/index.ts packages/track/src/index.ts
-cp ~/Downloads/stgy_track_next_css_entry_fix_v15/packages/track/src/renderer.ts packages/track/src/renderer.ts
-cp ~/Downloads/stgy_track_next_css_entry_fix_v15/packages/track/package.json packages/track/package.json
-cp ~/Downloads/stgy_track_next_css_entry_fix_v15/frontend/src/app/layout.tsx frontend/src/app/layout.tsx
-cp ~/Downloads/stgy_track_next_css_entry_fix_v15/frontend/src/app/track-sandbox/PageBody.tsx frontend/src/app/track-sandbox/PageBody.tsx
+cp ~/Downloads/stgy_track_fit_demo_leaflet_css_explicit_v28/packages/track/fit-demo.html packages/track/fit-demo.html
+cp ~/Downloads/stgy_track_fit_demo_leaflet_css_explicit_v28/packages/track/package.json packages/track/package.json
+mkdir -p packages/track/scripts
+cp ~/Downloads/stgy_track_fit_demo_leaflet_css_explicit_v28/packages/track/scripts/copy-assets.js packages/track/scripts/copy-assets.js
+cp ~/Downloads/stgy_track_fit_demo_leaflet_css_explicit_v28/packages/track/src/fit-demo.ts packages/track/src/fit-demo.ts
 
-rm -rf packages/track/dist
-npm run packages:build
-grep -R "leaflet/dist/leaflet.css\|stgy-track.css" packages/track/dist || true
-
-cd frontend
-rm -rf .next
-npm run build
-npm run dev
+cd packages/track
+rm -rf dist
+npm run dist
+python3 -m http.server 8000
 ```
+
+Then open the demo in a new tab or hard-reload:
+`http://localhost:8000/fit-demo.html`

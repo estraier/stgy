@@ -645,7 +645,8 @@ function RideAnalysis({
       { label: "20–25", matches: (value) => value > 20 && value <= 25 },
       { label: "25–30", matches: (value) => value > 25 && value <= 30 },
       { label: "30–35", matches: (value) => value > 30 && value <= 35 },
-      { label: ">35", matches: (value) => value > 35 },
+      { label: "35–40", matches: (value) => value > 35 && value <= 40 },
+      { label: ">40", matches: (value) => value > 40 },
     ]);
   }, [activity.points]);
   const cadenceRows = useMemo(() => {

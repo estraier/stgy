@@ -44,7 +44,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && npm run copy:assets",
-    "copy:assets": "cp src/stgy-track.css dist/stgy-track.css && cp src/stgy-track.css dist/track-viewer.css",
+    "copy:assets": "node scripts/copy-assets.js",
     "dev": "tsc -w -p tsconfig.json",
     "check": "tsc --noEmit",
     "bundle": "npm run bundle:viewer && npm run bundle:fit-demo",

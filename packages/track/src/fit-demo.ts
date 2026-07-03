@@ -826,9 +826,14 @@ function appendSpeedHistogram(container: HTMLElement, points: TrackPoint[]) {
         matches: (value) => value > 30 && value <= 35,
       },
       {
-        label: ">35 km/h",
+        label: "35–40 km/h",
         color: "#7a3db8",
-        matches: (value) => value > 35,
+        matches: (value) => value > 35 && value <= 40,
+      },
+      {
+        label: ">40 km/h",
+        color: "#7a3db8",
+        matches: (value) => value > 40,
       },
     ],
   });
@@ -955,7 +960,6 @@ function appendHistogramSection(
     const bar = document.createElement("div");
     bar.className = "fit-demo-zone-bar";
     bar.style.width = `${clampPercentage(row.percentage)}%`;
-    bar.style.background = row.color;
     bar.title = label.textContent || "";
 
     track.appendChild(bar);
