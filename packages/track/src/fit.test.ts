@@ -2,6 +2,7 @@ import { Decoder, Stream } from "@garmin/fitsdk";
 import {
   TrackJsonConversionError,
   TrackParseError,
+  addTrackJsonBbox,
   computeHeartRateZoneSummary,
   computePowerZoneSummary,
   downsampleTrackActivity,
@@ -725,6 +726,8 @@ describe("trackActivityToTrackJson", () => {
     const feature = parsed.features[0];
 
     expect(parsed.type).toBe("FeatureCollection");
+    expect(parsed.bbox).toEqual([139, 35, 139.00002, 35.00002]);
+    expect(parsed.rcenter).toEqual([139.00001, 35.00001]);
     expect(feature.type).toBe("Feature");
     expect(feature.geometry.type).toBe("LineString");
     expect(feature.properties.title).toBe("Ride");
@@ -741,6 +744,50 @@ describe("trackActivityToTrackJson", () => {
       [139, 35],
       [139.00001, 35.00001],
     ]);
+  });
+
+  test("writes bbox using the output coordinate precision", () => {
+    const parsed = parseTrackJson(
+      trackActivityToTrackJson(makeActivity(2), {
+        precision: { coordinates: 6 },
+      }),
+    );
+
+    expect(parsed.bbox).toEqual([139.000001, 35.000001, 139.000011, 35.000011]);
+    expect(parsed.rcenter).toEqual([139.000006, 35.000006]);
+  });
+
+  test("can add bbox and rcenter to TrackJSON features including pins", () => {
+    const data = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [138.12, 36.3],
+              [138.4, 36.5],
+            ],
+          },
+          properties: {},
+        },
+        {
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [138.7, 36.8],
+          },
+          properties: { title: "東御市役所" },
+        },
+      ],
+    };
+
+    expect(addTrackJsonBbox(data)).toEqual({
+      ...data,
+      bbox: [138.12, 36.3, 138.7, 36.8],
+      rcenter: [138.26, 36.4],
+    });
   });
 
   test("writes standard coordinateProperties arrays", () => {

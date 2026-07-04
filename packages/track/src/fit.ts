@@ -168,6 +168,9 @@ export type TrackPoint = {
   metrics?: Record<string, number>;
 };
 
+export type TrackJsonBbox = [number, number, number, number];
+export type TrackJsonRcenter = [number, number];
+
 export type TrackWarning = {
   code: string;
   message: string;
@@ -194,6 +197,10 @@ export type TrackJsonOptions = {
   includeMetrics?: boolean;
   includeMetadata?: boolean;
   pretty?: boolean;
+  precision?: TrackJsonPrecisionOptions;
+};
+
+export type AddTrackJsonBboxOptions = {
   precision?: TrackJsonPrecisionOptions;
 };
 
@@ -347,6 +354,46 @@ export function computeHeartRateZoneSummary(
     (value) => getHeartRateZone(value, lthrBpm),
     HEART_RATE_ZONE_KEYS,
   );
+}
+
+export function computeTrackJsonBbox(data: unknown): TrackJsonBbox | undefined {
+  const bounds = createTrackJsonBounds();
+  addTrackJsonObjectToBounds(bounds, data);
+  return trackJsonBoundsToBbox(bounds);
+}
+
+export function computeTrackJsonRcenter(data: unknown): TrackJsonRcenter | undefined {
+  const center = createTrackJsonRouteCenter();
+  addTrackJsonObjectToRouteCenter(center, data);
+  return trackJsonRouteCenterToRcenter(center);
+}
+
+export function addTrackJsonBbox(
+  data: unknown,
+  options: AddTrackJsonBboxOptions = {},
+): unknown {
+  if (!isObjectRecord(data)) {
+    return data;
+  }
+
+  const bbox = computeTrackJsonBbox(data);
+  const rcenter = computeTrackJsonRcenter(data);
+  if (!bbox && !rcenter) {
+    return data;
+  }
+
+  const precision = resolveTrackJsonPrecision(options.precision);
+  const nextData: Record<string, unknown> = { ...data };
+
+  if (bbox) {
+    nextData.bbox = roundTrackJsonBbox(bbox, precision.coordinates);
+  }
+
+  if (rcenter) {
+    nextData.rcenter = roundTrackJsonRcenter(rcenter, precision.coordinates);
+  }
+
+  return nextData;
 }
 
 export function parseFitBytes(
@@ -633,6 +680,8 @@ export function trackActivityToTrackJson(
 
   const trackJson = {
     type: "FeatureCollection",
+    bbox: buildTrackJsonBboxFromPoints(geoPoints, precision.coordinates),
+    rcenter: buildTrackJsonRcenterFromPoints(geoPoints, precision.coordinates),
     features: [
       {
         type: "Feature",
@@ -649,6 +698,300 @@ export function trackActivityToTrackJson(
   };
 
   return JSON.stringify(trackJson, null, options.pretty ? 2 : 0);
+}
+
+type TrackJsonBounds = {
+  west?: number;
+  south?: number;
+  east?: number;
+  north?: number;
+};
+
+type TrackJsonRouteCenter = {
+  sumLon: number;
+  sumLat: number;
+  totalLengthM: number;
+  fallback?: TrackJsonRcenter;
+};
+
+function createTrackJsonBounds(): TrackJsonBounds {
+  return {};
+}
+
+function createTrackJsonRouteCenter(): TrackJsonRouteCenter {
+  return {
+    sumLon: 0,
+    sumLat: 0,
+    totalLengthM: 0,
+  };
+}
+
+function buildTrackJsonBboxFromPoints(
+  points: (TrackPoint & { lat: number; lon: number })[],
+  precision: number,
+): TrackJsonBbox {
+  const bounds = createTrackJsonBounds();
+
+  points.forEach((point) => {
+    addTrackJsonPositionToBounds(bounds, point.lon, point.lat);
+  });
+
+  const bbox = trackJsonBoundsToBbox(bounds);
+  if (!bbox) {
+    throw new TrackJsonConversionError(
+      "no_position_points",
+      "Track activity does not contain positioned points.",
+    );
+  }
+
+  return roundTrackJsonBbox(bbox, precision);
+}
+
+function buildTrackJsonRcenterFromPoints(
+  points: (TrackPoint & { lat: number; lon: number })[],
+  precision: number,
+): TrackJsonRcenter | undefined {
+  const center = createTrackJsonRouteCenter();
+  let previous: TrackJsonRcenter | undefined;
+
+  points.forEach((point) => {
+    const position: TrackJsonRcenter = [point.lon, point.lat];
+    setTrackJsonRouteCenterFallback(center, position);
+
+    if (previous) {
+      addTrackJsonRouteSegmentToCenter(center, previous, position);
+    }
+
+    previous = position;
+  });
+
+  const rcenter = trackJsonRouteCenterToRcenter(center);
+  return rcenter ? roundTrackJsonRcenter(rcenter, precision) : undefined;
+}
+
+function roundTrackJsonBbox(bbox: TrackJsonBbox, precision: number): TrackJsonBbox {
+  return [
+    roundNumber(bbox[0], precision),
+    roundNumber(bbox[1], precision),
+    roundNumber(bbox[2], precision),
+    roundNumber(bbox[3], precision),
+  ];
+}
+
+function roundTrackJsonRcenter(
+  rcenter: TrackJsonRcenter,
+  precision: number,
+): TrackJsonRcenter {
+  return [
+    roundNumber(rcenter[0], precision),
+    roundNumber(rcenter[1], precision),
+  ];
+}
+
+function addTrackJsonObjectToBounds(bounds: TrackJsonBounds, value: unknown) {
+  if (!isObjectRecord(value)) {
+    return;
+  }
+
+  if (value.type === "FeatureCollection" && Array.isArray(value.features)) {
+    value.features.forEach((feature) => {
+      addTrackJsonObjectToBounds(bounds, feature);
+    });
+    return;
+  }
+
+  if (value.type === "Feature") {
+    addTrackJsonGeometryToBounds(bounds, value.geometry);
+    return;
+  }
+
+  addTrackJsonGeometryToBounds(bounds, value);
+}
+
+function addTrackJsonGeometryToBounds(bounds: TrackJsonBounds, geometry: unknown) {
+  if (!isObjectRecord(geometry)) {
+    return;
+  }
+
+  if (geometry.type === "GeometryCollection" && Array.isArray(geometry.geometries)) {
+    geometry.geometries.forEach((child) => {
+      addTrackJsonGeometryToBounds(bounds, child);
+    });
+    return;
+  }
+
+  addTrackJsonCoordinatesToBounds(bounds, geometry.coordinates);
+}
+
+function addTrackJsonCoordinatesToBounds(bounds: TrackJsonBounds, value: unknown) {
+  if (!Array.isArray(value)) {
+    return;
+  }
+
+  if (isTrackJsonPosition(value)) {
+    addTrackJsonPositionToBounds(bounds, value[0], value[1]);
+    return;
+  }
+
+  value.forEach((child) => {
+    addTrackJsonCoordinatesToBounds(bounds, child);
+  });
+}
+
+function isTrackJsonPosition(value: unknown[]): value is [number, number, ...unknown[]] {
+  return value.length >= 2 && isFiniteNumber(value[0]) && isFiniteNumber(value[1]);
+}
+
+function addTrackJsonObjectToRouteCenter(
+  center: TrackJsonRouteCenter,
+  value: unknown,
+) {
+  if (!isObjectRecord(value)) {
+    return;
+  }
+
+  if (value.type === "FeatureCollection" && Array.isArray(value.features)) {
+    value.features.forEach((feature) => {
+      addTrackJsonObjectToRouteCenter(center, feature);
+    });
+    return;
+  }
+
+  if (value.type === "Feature") {
+    addTrackJsonGeometryToRouteCenter(center, value.geometry);
+    return;
+  }
+
+  addTrackJsonGeometryToRouteCenter(center, value);
+}
+
+function addTrackJsonGeometryToRouteCenter(
+  center: TrackJsonRouteCenter,
+  geometry: unknown,
+) {
+  if (!isObjectRecord(geometry)) {
+    return;
+  }
+
+  if (geometry.type === "GeometryCollection" && Array.isArray(geometry.geometries)) {
+    geometry.geometries.forEach((child) => {
+      addTrackJsonGeometryToRouteCenter(center, child);
+    });
+    return;
+  }
+
+  if (geometry.type === "LineString") {
+    addTrackJsonLineStringToRouteCenter(center, geometry.coordinates);
+    return;
+  }
+
+  if (geometry.type === "MultiLineString" && Array.isArray(geometry.coordinates)) {
+    geometry.coordinates.forEach((lineString) => {
+      addTrackJsonLineStringToRouteCenter(center, lineString);
+    });
+  }
+}
+
+function addTrackJsonLineStringToRouteCenter(
+  center: TrackJsonRouteCenter,
+  coordinates: unknown,
+) {
+  if (!Array.isArray(coordinates)) {
+    return;
+  }
+
+  let previous: TrackJsonRcenter | undefined;
+
+  coordinates.forEach((coordinate) => {
+    if (!Array.isArray(coordinate) || !isTrackJsonPosition(coordinate)) {
+      previous = undefined;
+      return;
+    }
+
+    const position: TrackJsonRcenter = [coordinate[0], coordinate[1]];
+    setTrackJsonRouteCenterFallback(center, position);
+
+    if (previous) {
+      addTrackJsonRouteSegmentToCenter(center, previous, position);
+    }
+
+    previous = position;
+  });
+}
+
+function setTrackJsonRouteCenterFallback(
+  center: TrackJsonRouteCenter,
+  position: TrackJsonRcenter,
+) {
+  if (!center.fallback) {
+    center.fallback = position;
+  }
+}
+
+function addTrackJsonRouteSegmentToCenter(
+  center: TrackJsonRouteCenter,
+  start: TrackJsonRcenter,
+  end: TrackJsonRcenter,
+) {
+  const lengthM = calculateCoordinateDistanceM(start, end);
+  if (lengthM <= 0) {
+    return;
+  }
+
+  center.sumLon += ((start[0] + end[0]) / 2) * lengthM;
+  center.sumLat += ((start[1] + end[1]) / 2) * lengthM;
+  center.totalLengthM += lengthM;
+}
+
+function calculateCoordinateDistanceM(
+  start: TrackJsonRcenter,
+  end: TrackJsonRcenter,
+): number {
+  return calculateDistanceM(
+    { lon: start[0], lat: start[1] },
+    { lon: end[0], lat: end[1] },
+  );
+}
+
+function trackJsonRouteCenterToRcenter(
+  center: TrackJsonRouteCenter,
+): TrackJsonRcenter | undefined {
+  if (center.totalLengthM > 0) {
+    return [
+      center.sumLon / center.totalLengthM,
+      center.sumLat / center.totalLengthM,
+    ];
+  }
+
+  return center.fallback;
+}
+
+function addTrackJsonPositionToBounds(
+  bounds: TrackJsonBounds,
+  lon: number,
+  lat: number,
+) {
+  if (!isFiniteNumber(lon) || !isFiniteNumber(lat)) {
+    return;
+  }
+
+  bounds.west = typeof bounds.west === "number" ? Math.min(bounds.west, lon) : lon;
+  bounds.south = typeof bounds.south === "number" ? Math.min(bounds.south, lat) : lat;
+  bounds.east = typeof bounds.east === "number" ? Math.max(bounds.east, lon) : lon;
+  bounds.north = typeof bounds.north === "number" ? Math.max(bounds.north, lat) : lat;
+}
+
+function trackJsonBoundsToBbox(bounds: TrackJsonBounds): TrackJsonBbox | undefined {
+  if (
+    typeof bounds.west !== "number" ||
+    typeof bounds.south !== "number" ||
+    typeof bounds.east !== "number" ||
+    typeof bounds.north !== "number"
+  ) {
+    return undefined;
+  }
+
+  return [bounds.west, bounds.south, bounds.east, bounds.north];
 }
 
 type IndexedTrackPoint = {

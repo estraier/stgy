@@ -1,4 +1,5 @@
 import {
+  addTrackJsonBbox,
   computeHeartRateZoneSummary,
   computePowerZoneSummary,
   downsampleTrackActivity,
@@ -349,7 +350,9 @@ function convertTrackJsonText(
     obfuscatedTrackJsonData,
     elements
   );
-  const trackJsonData = compactTrackJsonData(downsampledTrackJsonData);
+  const trackJsonData = addTrackJsonBbox(
+    compactTrackJsonData(downsampledTrackJsonData)
+  );
   const trackJson = JSON.stringify(
     trackJsonData,
     null,
@@ -572,6 +575,9 @@ function showSummary(
     lines.push(`rendered points: ${result.renderedPointCount}`);
   }
 
+  appendBboxSummaryLine(lines, result.trackJsonData);
+  appendRcenterSummaryLine(lines, result.trackJsonData);
+
   if (result.obfuscatedPrivacyApplied) {
     lines.push(
       `Privacy obfuscation: start ${formatNumber(
@@ -626,6 +632,58 @@ function showSummary(
   });
 
   appendAnalysisSections(elements.summaryOutput, result, elements, metadata);
+}
+
+function appendBboxSummaryLine(lines: string[], data: unknown) {
+  const bbox = getTrackJsonBbox(data);
+  if (!bbox) {
+    return;
+  }
+
+  lines.push(
+    `bbox: west ${formatNumber(bbox[0], 5)}, ` +
+    `south ${formatNumber(bbox[1], 5)}, ` +
+    `east ${formatNumber(bbox[2], 5)}, ` +
+    `north ${formatNumber(bbox[3], 5)}`
+  );
+}
+
+function appendRcenterSummaryLine(lines: string[], data: unknown) {
+  const rcenter = getTrackJsonRcenter(data);
+  if (!rcenter) {
+    return;
+  }
+
+  lines.push(
+    `rcenter: lon ${formatNumber(rcenter[0], 5)}, ` +
+    `lat ${formatNumber(rcenter[1], 5)}`
+  );
+}
+
+function getTrackJsonBbox(data: unknown): [number, number, number, number] | undefined {
+  if (!isRecord(data) || !Array.isArray(data.bbox) || data.bbox.length < 4) {
+    return undefined;
+  }
+
+  const bbox = data.bbox.slice(0, 4);
+  if (!bbox.every((value) => typeof value === "number" && Number.isFinite(value))) {
+    return undefined;
+  }
+
+  return bbox as [number, number, number, number];
+}
+
+function getTrackJsonRcenter(data: unknown): [number, number] | undefined {
+  if (!isRecord(data) || !Array.isArray(data.rcenter) || data.rcenter.length < 2) {
+    return undefined;
+  }
+
+  const rcenter = data.rcenter.slice(0, 2);
+  if (!rcenter.every((value) => typeof value === "number" && Number.isFinite(value))) {
+    return undefined;
+  }
+
+  return rcenter as [number, number];
 }
 
 function getResultMetadata(result: ConversionResult): Record<string, unknown> | undefined {
