@@ -68,11 +68,18 @@ type ObjectUrlSet = {
   fit?: string;
 };
 
-type SummaryCard = {
+type SummaryCardItem = {
   label: string;
   value: string;
+};
+
+type SummaryCard = {
+  label: string;
+  value?: string;
   sub?: string;
   icon: ComponentType<{ className?: string }>;
+  wide?: boolean;
+  items?: SummaryCardItem[];
 };
 
 type ZoneRow = {
@@ -92,7 +99,6 @@ type ZoneDefinition = {
 };
 
 type ZoneLabelOptions = {
-  basisLabel: string;
   unit: string;
 };
 
@@ -104,7 +110,24 @@ type PowerCurvePoint = {
 const DEFAULT_FTP_W = 223;
 const DEFAULT_LTHR_BPM = 151;
 const DEFAULT_MAX_POINTS = 10000;
-const ZONE_RATIO_EPSILON = 1e-12;
+
+const POWER_ZONES = [
+  { label: "Z1 Recovery", maxRatio: 0.55 },
+  { label: "Z2 Endurance", maxRatio: 0.75 },
+  { label: "Z3 Tempo", maxRatio: 0.90 },
+  { label: "Z4 Threshold", maxRatio: 1.05 },
+  { label: "Z5 VO₂ max", maxRatio: 1.20 },
+  { label: "Z6 Anaerobic", maxRatio: 1.50 },
+  { label: "Z7 Sprint", maxRatio: Number.POSITIVE_INFINITY },
+];
+
+const HEART_RATE_ZONES = [
+  { label: "Z1 Easy", maxRatio: 0.81 },
+  { label: "Z2 Endurance", maxRatio: 0.89 },
+  { label: "Z3 Tempo", maxRatio: 0.94 },
+  { label: "Z4 Threshold", maxRatio: 1.00 },
+  { label: "Z5 Hard", maxRatio: Number.POSITIVE_INFINITY },
+];
 
 const SPEED_HISTOGRAM_BINS: HistogramBin[] = [
   { label: "≤15 km/h", maxInclusive: 15 },
@@ -126,23 +149,7 @@ const CADENCE_HISTOGRAM_BINS: HistogramBin[] = [
   { label: ">100 rpm" },
 ];
 
-const POWER_ZONES: ZoneDefinition[] = [
-  { label: "Z1 Recovery", maxRatio: 0.55 },
-  { label: "Z2 Endurance", maxRatio: 0.75 },
-  { label: "Z3 Tempo", maxRatio: 0.90 },
-  { label: "Z4 Threshold", maxRatio: 1.05 },
-  { label: "Z5 VO₂ max", maxRatio: 1.20 },
-  { label: "Z6 Anaerobic", maxRatio: 1.50 },
-  { label: "Z7 Sprint", maxRatio: Number.POSITIVE_INFINITY },
-];
-
-const HEART_RATE_ZONES: ZoneDefinition[] = [
-  { label: "Z1 Easy", maxRatio: 0.81 },
-  { label: "Z2 Endurance", maxRatio: 0.89 },
-  { label: "Z3 Tempo", maxRatio: 0.94 },
-  { label: "Z4 Threshold", maxRatio: 1.0 },
-  { label: "Z5 Hard", maxRatio: Number.POSITIVE_INFINITY },
-];
+const ZONE_RATIO_EPSILON = 1e-12;
 
 const POWER_CURVE_DURATIONS_SECONDS = [
   5,
@@ -491,7 +498,7 @@ export default function TrackSandbox() {
               </section>
 
               <section className="space-y-4">
-                <RideSummary activity={result.activity} />
+                <RideSummary activity={result.activity} trackJsonData={result.trackJsonData} />
 
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <h2 className="mb-3 text-sm font-semibold text-slate-900">Download</h2>
@@ -639,8 +646,16 @@ function escapeJsonScriptContent(json: string): string {
     .replace(/\u2029/g, "\\u2029");
 }
 
-function RideSummary({ activity }: { activity: TrackActivity }) {
-  const cards = useMemo(() => buildSummaryCards(activity), [activity]);
+function RideSummary({
+  activity,
+  trackJsonData,
+}: {
+  activity: TrackActivity;
+  trackJsonData: unknown;
+}) {
+  const cards = useMemo(() => {
+    return buildSummaryCards(activity, trackJsonData);
+  }, [activity, trackJsonData]);
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -650,13 +665,31 @@ function RideSummary({ activity }: { activity: TrackActivity }) {
       </div>
       <div className="grid grid-cols-2 gap-3">
         {cards.map((card) => (
-          <div key={card.label} className="rounded-2xl bg-slate-50 p-3">
+          <div
+            key={card.label}
+            className={`rounded-2xl bg-slate-50 p-3 ${card.wide ? "col-span-2" : ""}`}
+          >
             <div className="mb-2 flex items-center gap-2 text-xs font-medium text-slate-500">
               <card.icon className="h-4 w-4 text-sky-700" />
               {card.label}
             </div>
-            <div className="text-xl font-bold tabular-nums text-slate-950">{card.value}</div>
-            {card.sub && <div className="mt-1 text-xs text-slate-500">{card.sub}</div>}
+            {card.items ? (
+              <div className="grid gap-3 sm:grid-cols-3">
+                {card.items.map((item) => (
+                  <div key={item.label}>
+                    <div className="text-[11px] font-medium text-slate-500">{item.label}</div>
+                    <div className="mt-1 text-lg font-bold tabular-nums text-slate-950">
+                      {item.value}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <>
+                <div className="text-xl font-bold tabular-nums text-slate-950">{card.value}</div>
+                {card.sub && <div className="mt-1 text-xs text-slate-500">{card.sub}</div>}
+              </>
+            )}
           </div>
         ))}
       </div>
@@ -691,7 +724,7 @@ function RideAnalysis({
       (point) => point.powerW,
       ftpW,
       POWER_ZONES,
-      { basisLabel: "FTP", unit: "W" },
+      { unit: "W" },
     );
   }, [activity.points, ftpW]);
   const heartRateZones = useMemo(() => {
@@ -700,7 +733,7 @@ function RideAnalysis({
       (point) => point.heartRateBpm,
       lthrBpm,
       HEART_RATE_ZONES,
-      { basisLabel: "LTHR", unit: "bpm" },
+      { unit: "bpm" },
     );
   }, [activity.points, lthrBpm]);
   const powerCurve = useMemo(() => getPowerCurvePoints(activity), [activity]);
@@ -863,13 +896,16 @@ async function convertFiles(files: File[], options: ConvertOptions): Promise<Tra
     includeMetadata: true,
     pretty: false,
   });
-  const extraFeatures = parsed.flatMap((item) => item.extraFeatures);
-  const trackJson = appendExtraFeaturesToTrackJson(generatedTrackJson, extraFeatures);
+  const trackJsonData = appendTrackJsonExtraFeatures(
+    JSON.parse(generatedTrackJson),
+    parsed.flatMap((item) => item.extraFeatures),
+  );
+  const trackJson = JSON.stringify(trackJsonData);
 
   return {
     title,
     trackJson,
-    trackJsonData: JSON.parse(trackJson),
+    trackJsonData,
     activity,
     renderedActivity,
     originalPointCount: parsed.reduce((sum, item) => sum + item.originalPointCount, 0),
@@ -935,13 +971,14 @@ function parseTrackJsonInput(
     sourceType,
     name: fileTitle(file),
   });
+  const extraFeatures = getTrackJsonExtraFeatures(publicData);
 
   return {
     file,
     activity,
     sourceType,
     originalPointCount: countTrackJsonPositionedPoints(originalData),
-    extraFeatures: getTrackJsonExtraFeatures(publicData),
+    extraFeatures,
   };
 }
 
@@ -982,7 +1019,12 @@ function trackJsonDataToLocalActivity(
     });
   });
 
-  const metadata = buildTrackJsonActivityMetadata(features, options);
+  const sourceMetadata = getTrackJsonActivityMetadata(data, features[0]);
+  const metadata = {
+    ...sourceMetadata,
+    name: getStringProperty(sourceMetadata, "name") || options.name,
+    source: { type: options.sourceType },
+  } as TrackActivity["metadata"];
 
   applyLocalComputedMetadata(metadata, points);
 
@@ -992,54 +1034,6 @@ function trackJsonDataToLocalActivity(
     points,
     warnings: [],
   };
-}
-
-function buildTrackJsonActivityMetadata(
-  features: Record<string, unknown>[],
-  options: LocalTrackJsonActivityOptions,
-): TrackActivity["metadata"] {
-  const sourceMetadata = features
-    .map((feature) => asRecord(asRecord(feature.properties)?.metadata))
-    .find((metadata) => metadata !== undefined);
-  return {
-    ...(sourceMetadata || {}),
-    name: options.name,
-    source: { type: options.sourceType },
-  } as TrackActivity["metadata"];
-}
-
-function appendExtraFeaturesToTrackJson(
-  trackJson: string,
-  extraFeatures: Record<string, unknown>[],
-): string {
-  if (extraFeatures.length === 0) {
-    return trackJson;
-  }
-
-  const data = JSON.parse(trackJson) as unknown;
-  const record = asRecord(data);
-  if (!record) {
-    return trackJson;
-  }
-
-  const clonedExtraFeatures = extraFeatures.map(cloneJsonFeature);
-  if (record.type === "FeatureCollection" && Array.isArray(record.features)) {
-    record.features.push(...clonedExtraFeatures);
-    return JSON.stringify(record);
-  }
-
-  if (record.type === "Feature") {
-    return JSON.stringify({
-      type: "FeatureCollection",
-      features: [record, ...clonedExtraFeatures],
-    });
-  }
-
-  return trackJson;
-}
-
-function cloneJsonFeature(feature: Record<string, unknown>): Record<string, unknown> {
-  return JSON.parse(JSON.stringify(feature)) as Record<string, unknown>;
 }
 
 function mergeLocalTrackActivities(
@@ -1070,12 +1064,8 @@ function mergeLocalTrackActivities(
     description: options.description,
     source: { type: "merged" },
   } as TrackActivity["metadata"];
+  applyMergedTimeMetadata(metadata, activities, points);
 
-  const times = points.map((point) => point.time).filter(isFiniteNumber);
-  if (times.length > 0) {
-    metadata.startTime = Math.min(...times);
-    metadata.totalElapsedTime = Math.max(...times) - metadata.startTime;
-  }
 
   const totalDistanceM = getPointDistanceM(points);
   if (typeof totalDistanceM === "number") {
@@ -1097,21 +1087,25 @@ function mergeLocalTrackActivities(
   };
 }
 
-function getTrackJsonLineStringFeatures(data: unknown): Record<string, unknown>[] {
+
+function appendTrackJsonExtraFeatures(
+  data: unknown,
+  extraFeatures: Record<string, unknown>[],
+): unknown {
+  if (extraFeatures.length === 0) {
+    return data;
+  }
+
   const record = asRecord(data);
-  if (!record) {
-    return [];
+  if (!record || record.type !== "FeatureCollection") {
+    return data;
   }
 
-  if (record.type === "Feature") {
-    return isTrackJsonLineStringFeature(record) ? [record] : [];
-  }
-
-  if (record.type !== "FeatureCollection" || !Array.isArray(record.features)) {
-    return [];
-  }
-
-  return record.features.filter(isTrackJsonLineStringFeature);
+  const features = Array.isArray(record.features) ? record.features : [];
+  return {
+    ...record,
+    features: [...features, ...extraFeatures],
+  };
 }
 
 function getTrackJsonExtraFeatures(data: unknown): Record<string, unknown>[] {
@@ -1129,10 +1123,84 @@ function getTrackJsonExtraFeatures(data: unknown): Record<string, unknown>[] {
   }
 
   return record.features.filter((feature): feature is Record<string, unknown> => {
-    const recordFeature = asRecord(feature);
-    return !!recordFeature && recordFeature.type === "Feature" &&
-      !isTrackJsonLineStringFeature(recordFeature);
+    return Boolean(asRecord(feature)) && !isTrackJsonLineStringFeature(feature);
   });
+}
+
+function getTrackJsonActivityMetadata(
+  data: unknown,
+  feature: Record<string, unknown> | undefined,
+): Record<string, unknown> {
+  const topLevel = asRecord(data);
+  const topMetadata = asRecord(topLevel?.metadata);
+  const properties = asRecord(feature?.properties);
+  const featureMetadata = asRecord(properties?.metadata);
+  return {
+    ...(topMetadata || {}),
+    ...(featureMetadata || {}),
+  };
+}
+
+function applyMergedTimeMetadata(
+  metadata: TrackActivity["metadata"],
+  activities: TrackActivity[],
+  points: TrackPoint[],
+) {
+  const metadataRecord = metadata as Record<string, unknown>;
+  const createdAtValues = activities
+    .map((activity) => {
+      return numberValue((activity.metadata as Record<string, unknown>).createdAt);
+    })
+    .filter(isFiniteNumber);
+
+  if (createdAtValues.length > 0) {
+    metadataRecord.createdAt = Math.min(...createdAtValues);
+  } else {
+    delete metadataRecord.createdAt;
+  }
+
+  const times = points.map((point) => point.time).filter(isFiniteNumber);
+  if (times.length > 0) {
+    const startTime = Math.min(...times);
+    const endTime = Math.max(...times);
+    metadataRecord.startTime = startTime;
+    metadataRecord.endTime = endTime;
+    metadataRecord.totalElapsedTime = endTime - startTime;
+  } else {
+    delete metadataRecord.startTime;
+    delete metadataRecord.endTime;
+    delete metadataRecord.totalElapsedTime;
+  }
+
+  const offsets = activities.map((activity) => {
+    return numberValue((activity.metadata as Record<string, unknown>).localTimeOffsetSeconds);
+  });
+  const offset = offsets[0];
+  if (
+    typeof offset === "number" &&
+    offsets.every((value) => value === offset)
+  ) {
+    metadataRecord.localTimeOffsetSeconds = offset;
+  } else {
+    delete metadataRecord.localTimeOffsetSeconds;
+  }
+}
+
+function getTrackJsonLineStringFeatures(data: unknown): Record<string, unknown>[] {
+  const record = asRecord(data);
+  if (!record) {
+    return [];
+  }
+
+  if (record.type === "Feature") {
+    return isTrackJsonLineStringFeature(record) ? [record] : [];
+  }
+
+  if (record.type !== "FeatureCollection" || !Array.isArray(record.features)) {
+    return [];
+  }
+
+  return record.features.filter(isTrackJsonLineStringFeature);
 }
 
 function isTrackJsonLineStringFeature(value: unknown): value is Record<string, unknown> {
@@ -1664,8 +1732,9 @@ function calculateFitCrc(bytes: Uint8Array): number {
   return crc & 0xffff;
 }
 
-function buildSummaryCards(activity: TrackActivity): SummaryCard[] {
+function buildSummaryCards(activity: TrackActivity, trackJsonData: unknown): SummaryCard[] {
   const metadata = activity.metadata;
+  const metadataRecord = metadata as Record<string, unknown>;
   const stats = asRecord(metadata.statistics);
   const training = asRecord(metadata.training);
   const distanceM = numberValue(metadata.totalDistanceM) ?? getPointDistanceM(activity.points);
@@ -1680,6 +1749,16 @@ function buildSummaryCards(activity: TrackActivity): SummaryCard[] {
   const totalCaloriesCal = getNumberProperty(training, "totalCaloriesCal");
   const elevationGainM = getElevationGainM(activity.points);
   const cards: SummaryCard[] = [];
+  const context = buildRideContextSummary(activity, trackJsonData);
+
+  if (context) {
+    cards.push({
+      label: "Context",
+      items: context.items,
+      icon: MapPinned,
+      wide: true,
+    });
+  }
 
   if (distanceM) {
     cards.push({ label: "Distance", value: formatDistance(distanceM), icon: Bike });
@@ -1716,7 +1795,134 @@ function buildSummaryCards(activity: TrackActivity): SummaryCard[] {
     });
   }
 
+  void metadataRecord;
   return cards;
+}
+
+function buildRideContextSummary(
+  activity: TrackActivity,
+  trackJsonData: unknown,
+): { items: SummaryCardItem[] } | undefined {
+  const center = getTrackJsonRcenter(trackJsonData) ??
+    getActivityRouteCenter(activity.points) ??
+    getTrackJsonBboxCenter(trackJsonData);
+  const metadata = activity.metadata as Record<string, unknown>;
+  const startTime = numberValue(metadata.startTime);
+  const endTime = numberValue(metadata.endTime) ?? getActivityEndTime(activity);
+  const offsetSeconds = numberValue(metadata.localTimeOffsetSeconds);
+  const items: SummaryCardItem[] = [];
+
+  if (center) {
+    items.push({ label: "Coordinates", value: formatCoordinate(center.lon, center.lat) });
+  }
+  if (typeof startTime === "number") {
+    items.push({ label: "Start Time", value: formatLocalDateTime(startTime, offsetSeconds) });
+  }
+  if (typeof endTime === "number") {
+    items.push({ label: "End Time", value: formatLocalDateTime(endTime, offsetSeconds) });
+  }
+
+  return items.length > 0 ? { items } : undefined;
+}
+
+function getTrackJsonRcenter(data: unknown): { lon: number; lat: number } | undefined {
+  const record = asRecord(data);
+  const rcenter = record?.rcenter;
+  if (!Array.isArray(rcenter) || rcenter.length < 2) {
+    return undefined;
+  }
+
+  const lon = numberValue(rcenter[0]);
+  const lat = numberValue(rcenter[1]);
+  if (typeof lon !== "number" || typeof lat !== "number") {
+    return undefined;
+  }
+  return { lon, lat };
+}
+
+function getTrackJsonBboxCenter(data: unknown): { lon: number; lat: number } | undefined {
+  const record = asRecord(data);
+  const bbox = record?.bbox;
+  if (!Array.isArray(bbox) || bbox.length < 4) {
+    return undefined;
+  }
+
+  const west = numberValue(bbox[0]);
+  const south = numberValue(bbox[1]);
+  const east = numberValue(bbox[2]);
+  const north = numberValue(bbox[3]);
+  if (
+    typeof west !== "number" ||
+    typeof south !== "number" ||
+    typeof east !== "number" ||
+    typeof north !== "number"
+  ) {
+    return undefined;
+  }
+
+  return {
+    lon: (west + east) / 2,
+    lat: (south + north) / 2,
+  };
+}
+
+function getActivityRouteCenter(points: TrackPoint[]): { lon: number; lat: number } | undefined {
+  let sumLon = 0;
+  let sumLat = 0;
+  let totalLength = 0;
+  let previous: (TrackPoint & { lat: number; lon: number }) | undefined;
+
+  points.forEach((point) => {
+    if (!hasPosition(point)) {
+      return;
+    }
+
+    if (previous) {
+      const length = haversineDistanceM(previous, point);
+      if (length > 0) {
+        sumLon += ((previous.lon + point.lon) / 2) * length;
+        sumLat += ((previous.lat + point.lat) / 2) * length;
+        totalLength += length;
+      }
+    }
+    previous = point;
+  });
+
+  if (totalLength > 0) {
+    return {
+      lon: sumLon / totalLength,
+      lat: sumLat / totalLength,
+    };
+  }
+
+  const positioned = points.filter(hasPosition);
+  if (positioned.length === 0) {
+    return undefined;
+  }
+
+  const lon = positioned.reduce((sum, point) => sum + point.lon, 0) / positioned.length;
+  const lat = positioned.reduce((sum, point) => sum + point.lat, 0) / positioned.length;
+  return { lon, lat };
+}
+
+function getActivityEndTime(activity: TrackActivity): number | undefined {
+  const metadata = activity.metadata as Record<string, unknown>;
+  const endTime = numberValue(metadata.endTime);
+  if (typeof endTime === "number") {
+    return endTime;
+  }
+
+  const startTime = numberValue(metadata.startTime);
+  const elapsedTime = numberValue(metadata.totalElapsedTime);
+  if (typeof startTime === "number" && typeof elapsedTime === "number") {
+    return startTime + elapsedTime;
+  }
+
+  const times = activity.points.map((point) => point.time).filter(isFiniteNumber);
+  if (times.length === 0) {
+    return undefined;
+  }
+  return Math.max(...times);
 }
 
 function computeZoneRows(
@@ -1784,9 +1990,7 @@ function computeHistogramRows(
     }
 
     const binIndex = bins.findIndex((bin) => {
-      return typeof bin.maxInclusive === "number"
-        ? value <= bin.maxInclusive + ZONE_RATIO_EPSILON
-        : true;
+      return typeof bin.maxInclusive === "number" ? value <= bin.maxInclusive : true;
     });
     if (binIndex < 0) {
       return;
@@ -1977,6 +2181,11 @@ function getNumberProperty(value: Record<string, unknown> | undefined, key: stri
   return value ? numberValue(value[key]) : undefined;
 }
 
+function getStringProperty(value: Record<string, unknown> | undefined, key: string) {
+  const property = value?.[key];
+  return typeof property === "string" ? property : undefined;
+}
+
 function getNestedNumber(value: Record<string, unknown> | undefined, key: string, childKey: string) {
   return getNumberProperty(asRecord(value?.[key]), childKey);
 }
@@ -1997,6 +2206,44 @@ function formatDistance(distanceM: number): string {
     return `${formatNumber(distanceM / 1000, 2)} km`;
   }
   return `${formatNumber(distanceM, 0)} m`;
+}
+
+function formatCoordinate(lon: number, lat: number): string {
+  return `${formatDirectionalCoordinate(lon, "E", "W")}, ` +
+    formatDirectionalCoordinate(lat, "N", "S");
+}
+
+function formatDirectionalCoordinate(
+  value: number,
+  positiveSuffix: string,
+  negativeSuffix: string
+): string {
+  const suffix = value < 0 ? negativeSuffix : positiveSuffix;
+  return `${Math.abs(value).toFixed(4)}${suffix}`;
+}
+
+function formatLocalDateTime(
+  unixSeconds: number,
+  offsetSeconds: number | undefined
+): string {
+  if (typeof offsetSeconds === "number" && Number.isFinite(offsetSeconds)) {
+    return formatDateTimeParts(new Date((unixSeconds + offsetSeconds) * 1000), true);
+  }
+
+  return formatDateTimeParts(new Date(unixSeconds * 1000), false);
+}
+
+function formatDateTimeParts(date: Date, useUtcFields: boolean): string {
+  const year = useUtcFields ? date.getUTCFullYear() : date.getFullYear();
+  const month = useUtcFields ? date.getUTCMonth() + 1 : date.getMonth() + 1;
+  const day = useUtcFields ? date.getUTCDate() : date.getDate();
+  const hours = useUtcFields ? date.getUTCHours() : date.getHours();
+  const minutes = useUtcFields ? date.getUTCMinutes() : date.getMinutes();
+  const seconds = useUtcFields ? date.getUTCSeconds() : date.getSeconds();
+
+  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")} ` +
+    `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:` +
+    String(seconds).padStart(2, "0");
 }
 
 function formatDuration(seconds: number): string {
