@@ -592,9 +592,15 @@ function showSummary(
   if (metadata) {
     const sport = getStringProperty(metadata, "sport");
     const subSport = getStringProperty(metadata, "subSport");
+    const createdAt = getNumberProperty(metadata, "createdAt");
+    const startTime = getNumberProperty(metadata, "startTime");
     const totalDistanceM = getNumberProperty(metadata, "totalDistanceM");
     const totalTimerTime = getNumberProperty(metadata, "totalTimerTime");
     const totalElapsedTime = getNumberProperty(metadata, "totalElapsedTime");
+    const localTimeOffsetSeconds = getNumberProperty(
+      metadata,
+      "localTimeOffsetSeconds"
+    );
 
     if (sport) {
       lines.push(`sport: ${sport}`);
@@ -602,6 +608,19 @@ function showSummary(
 
     if (subSport) {
       lines.push(`sub sport: ${subSport}`);
+    }
+
+    if (typeof createdAt === "number") {
+      lines.push(`created at: ${formatUtcDateTime(createdAt)}`);
+    }
+
+    if (typeof startTime === "number") {
+      lines.push(`start time: ${formatUtcDateTime(startTime)}`);
+    }
+
+    const endTime = getActivityEndTime(metadata);
+    if (typeof endTime === "number") {
+      lines.push(`end time: ${formatUtcDateTime(endTime)}`);
     }
 
     if (typeof totalDistanceM === "number") {
@@ -612,6 +631,10 @@ function showSummary(
       lines.push(`timer time: ${formatDuration(totalTimerTime)}`);
     } else if (typeof totalElapsedTime === "number") {
       lines.push(`elapsed time: ${formatDuration(totalElapsedTime)}`);
+    }
+
+    if (typeof localTimeOffsetSeconds === "number") {
+      lines.push(`local time offset: ${formatTimeOffset(localTimeOffsetSeconds)}`);
     }
 
     appendMetadataSummaryLines(lines, metadata);
@@ -1891,6 +1914,42 @@ function formatDuration(seconds: number): string {
   }
 
   return `${minutes}:${restSeconds.toString().padStart(2, "0")}`;
+}
+
+function getActivityEndTime(metadata: Record<string, unknown>): number | undefined {
+  const endTime = getNumberProperty(metadata, "endTime");
+  if (typeof endTime === "number") {
+    return endTime;
+  }
+
+  const startTime = getNumberProperty(metadata, "startTime");
+  const totalElapsedTime = getNumberProperty(metadata, "totalElapsedTime");
+  if (typeof startTime === "number" && typeof totalElapsedTime === "number") {
+    return startTime + totalElapsedTime;
+  }
+
+  return undefined;
+}
+
+function formatUtcDateTime(unixSeconds: number): string {
+  return new Date(unixSeconds * 1000).toISOString();
+}
+
+function formatTimeOffset(seconds: number): string {
+  const totalSeconds = Math.round(seconds);
+  const sign = totalSeconds < 0 ? "-" : "+";
+  const absoluteSeconds = Math.abs(totalSeconds);
+  const hours = Math.floor(absoluteSeconds / 3600);
+  const minutes = Math.floor((absoluteSeconds % 3600) / 60);
+  const restSeconds = absoluteSeconds % 60;
+  const prefix = `UTC${sign}${hours.toString().padStart(2, "0")}:` +
+    minutes.toString().padStart(2, "0");
+
+  if (restSeconds > 0) {
+    return `${prefix}:${restSeconds.toString().padStart(2, "0")}`;
+  }
+
+  return prefix;
 }
 
 function getRecordProperty(

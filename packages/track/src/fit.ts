@@ -54,6 +54,8 @@ const HEART_RATE_ZONE_KEYS: TrackHeartRateZoneKey[] = [
   "z5",
 ];
 const ZONE_RATIO_EPSILON = 1e-12;
+const FIT_EPOCH_UNIX_SECONDS = 631065600;
+const LOCAL_TIME_OFFSET_LIMIT_SECONDS = 24 * 3600;
 
 const RESERVED_METRIC_NAMES = new Set([
   "times",
@@ -85,6 +87,8 @@ export type TrackActivityMetadata = {
   devices?: TrackDeviceInfo[];
   createdAt?: number;
   startTime?: number;
+  endTime?: number;
+  localTimeOffsetSeconds?: number;
   totalElapsedTime?: number;
   totalTimerTime?: number;
   totalDistanceM?: number;
@@ -1066,6 +1070,8 @@ function buildTrackJsonActivityMetadata(
     copyOptionalString(src, metadata, "subSport");
     copyOptionalNumber(src, metadata, "createdAt");
     copyOptionalNumber(src, metadata, "startTime");
+    copyOptionalNumber(src, metadata, "endTime");
+    copyOptionalNumber(src, metadata, "localTimeOffsetSeconds");
     copyOptionalNumber(src, metadata, "totalElapsedTime");
     copyOptionalNumber(src, metadata, "totalTimerTime");
     copyOptionalNumber(src, metadata, "totalDistanceM");
@@ -1312,12 +1318,18 @@ function buildMergedActivityMetadata(
     metadata.description = options.description;
   }
 
-  const times = points.map((point) => point.time).filter(isFiniteNumber);
-  if (times.length > 0) {
-    const startTime = Math.min(...times);
-    const endTime = Math.max(...times);
-    metadata.startTime = startTime;
-    metadata.totalElapsedTime = Math.max(0, endTime - startTime);
+  assignMergedCreatedAt(metadata, activities);
+  assignMergedLocalTimeOffset(metadata, activities);
+
+  const timeRange = getMergedTimeRange(activities, points);
+  if (timeRange) {
+    metadata.startTime = timeRange.startTime;
+    metadata.endTime = timeRange.endTime;
+    metadata.totalElapsedTime = Math.max(0, timeRange.endTime - timeRange.startTime);
+  } else {
+    delete metadata.startTime;
+    delete metadata.endTime;
+    delete metadata.totalElapsedTime;
   }
 
   const movingTime = calculateMergedMovingTime(
@@ -1341,6 +1353,90 @@ function buildMergedActivityMetadata(
   applyComputedMetadata(metadata, points);
 
   return metadata;
+}
+
+function assignMergedCreatedAt(
+  metadata: TrackActivityMetadata,
+  activities: TrackActivity[],
+) {
+  const createdAtValues = activities
+    .map((activity) => activity.metadata.createdAt)
+    .filter(isFiniteNumber);
+
+  if (createdAtValues.length > 0) {
+    metadata.createdAt = Math.min(...createdAtValues);
+  } else {
+    delete metadata.createdAt;
+  }
+}
+
+function assignMergedLocalTimeOffset(
+  metadata: TrackActivityMetadata,
+  activities: TrackActivity[],
+) {
+  const offsets = activities
+    .map((activity) => activity.metadata.localTimeOffsetSeconds)
+    .filter(isFiniteNumber);
+  const firstOffset = offsets[0];
+
+  if (
+    offsets.length === activities.length &&
+    isFiniteNumber(firstOffset) &&
+    offsets.every((offset) => offset === firstOffset)
+  ) {
+    metadata.localTimeOffsetSeconds = firstOffset;
+  } else {
+    delete metadata.localTimeOffsetSeconds;
+  }
+}
+
+type TrackActivityTimeRange = {
+  startTime: number;
+  endTime: number;
+};
+
+function getMergedTimeRange(
+  activities: TrackActivity[],
+  points: TrackPoint[],
+): TrackActivityTimeRange | undefined {
+  const pointTimes = points.map((point) => point.time).filter(isFiniteNumber);
+  if (pointTimes.length > 0) {
+    return {
+      startTime: Math.min(...pointTimes),
+      endTime: Math.max(...pointTimes),
+    };
+  }
+
+  const startTimes = activities
+    .map((activity) => activity.metadata.startTime)
+    .filter(isFiniteNumber);
+  const endTimes = activities
+    .map(getActivityEndTime)
+    .filter(isFiniteNumber);
+
+  if (startTimes.length === 0 || endTimes.length === 0) {
+    return undefined;
+  }
+
+  return {
+    startTime: Math.min(...startTimes),
+    endTime: Math.max(...endTimes),
+  };
+}
+
+function getActivityEndTime(activity: TrackActivity): number | undefined {
+  if (isFiniteNumber(activity.metadata.endTime)) {
+    return activity.metadata.endTime;
+  }
+
+  if (
+    isFiniteNumber(activity.metadata.startTime) &&
+    isFiniteNumber(activity.metadata.totalElapsedTime)
+  ) {
+    return activity.metadata.startTime + activity.metadata.totalElapsedTime;
+  }
+
+  return undefined;
 }
 
 function applyComputedMetadata(
@@ -1541,6 +1637,12 @@ function buildTrackJsonMetadata(
 
   assignMetadataInteger(output, "createdAt", metadata.createdAt);
   assignMetadataInteger(output, "startTime", metadata.startTime);
+  assignMetadataInteger(output, "endTime", metadata.endTime);
+  assignMetadataInteger(
+    output,
+    "localTimeOffsetSeconds",
+    metadata.localTimeOffsetSeconds,
+  );
   assignMetadataNumber(
     output,
     "totalElapsedTime",
@@ -2142,6 +2244,13 @@ function fitMessagesToMetadata(
     "session",
   ])[0];
 
+  const activity = getMessageArray(messages, [
+    "activityMesgs",
+    "activityMessages",
+    "activities",
+    "activity",
+  ])[0];
+
   const recordingDevice = buildDeviceInfo(fileId);
   const devices = buildDeviceInfos(messages);
   const metadata: TrackActivityMetadata = {
@@ -2210,6 +2319,16 @@ function fitMessagesToMetadata(
     );
   }
 
+  assignFitEndTime(metadata, session, points);
+
+  if (activity) {
+    assignNumber(
+      metadata,
+      "localTimeOffsetSeconds",
+      getFitLocalTimeOffsetSeconds(activity),
+    );
+  }
+
   const statistics = buildActivityStatistics(points);
   if (statistics) {
     metadata.statistics = statistics;
@@ -2226,6 +2345,83 @@ function fitMessagesToMetadata(
   }
 
   return metadata;
+}
+
+function assignFitEndTime(
+  metadata: TrackActivityMetadata,
+  session: FitMessage | undefined,
+  points: TrackPoint[],
+) {
+  if (isFiniteNumber(metadata.startTime) &&
+      isFiniteNumber(metadata.totalElapsedTime)) {
+    metadata.endTime = metadata.startTime + metadata.totalElapsedTime;
+    return;
+  }
+
+  const sessionEndTime = session
+    ? toUnixSeconds(getFirstValue(session, ["timestamp"]))
+    : undefined;
+  if (isFiniteNumber(sessionEndTime)) {
+    metadata.endTime = sessionEndTime;
+    return;
+  }
+
+  const times = points.map((point) => point.time).filter(isFiniteNumber);
+  if (times.length > 0) {
+    metadata.endTime = Math.max(...times);
+  }
+}
+
+function getFitLocalTimeOffsetSeconds(message: FitMessage): number | undefined {
+  const timestampValue = getFirstValue(message, ["timestamp"]);
+  const localTimestampValue = getFirstValue(message, [
+    "localTimestamp",
+    "localTimeStamp",
+    "local_timestamp",
+  ]);
+  const timestamps = getFitDateTimeCandidates(timestampValue);
+  const localTimestamps = getFitDateTimeCandidates(localTimestampValue);
+
+  for (const timestamp of timestamps) {
+    for (const localTimestamp of localTimestamps) {
+      const offset = Math.round(localTimestamp - timestamp);
+      if (
+        Number.isFinite(offset) &&
+        Math.abs(offset) <= LOCAL_TIME_OFFSET_LIMIT_SECONDS
+      ) {
+        return offset;
+      }
+    }
+  }
+
+  return undefined;
+}
+
+function getFitDateTimeCandidates(value: unknown): number[] {
+  const unwrapped = unwrapSingleValue(value);
+  const candidates: number[] = [];
+
+  if (unwrapped instanceof Date) {
+    const millis = unwrapped.getTime();
+    if (Number.isFinite(millis)) {
+      candidates.push(Math.trunc(millis / 1000));
+    }
+    return candidates;
+  }
+
+  const numberValue = toFiniteNumber(unwrapped);
+  if (typeof numberValue !== "number") {
+    return candidates;
+  }
+
+  if (numberValue > 100000000000) {
+    candidates.push(Math.trunc(numberValue / 1000));
+    return candidates;
+  }
+
+  candidates.push(numberValue);
+  candidates.push(numberValue + FIT_EPOCH_UNIX_SECONDS);
+  return Array.from(new Set(candidates));
 }
 
 function buildActivityStatistics(

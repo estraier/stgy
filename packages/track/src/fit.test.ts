@@ -120,6 +120,12 @@ describe("parseFitBytes", () => {
             totalDistance: 12345.67,
           },
         ],
+        activityMesgs: [
+          {
+            timestamp: new Date("2024-03-01T02:05:00Z"),
+            localTimestamp: new Date("2024-03-01T11:05:00Z"),
+          },
+        ],
         recordMesgs: [
           {
             timestamp: new Date("2024-03-01T01:00:01Z"),
@@ -163,6 +169,8 @@ describe("parseFitBytes", () => {
     ]);
     expect(activity.metadata.createdAt).toBe(1709251200);
     expect(activity.metadata.startTime).toBe(1709254800);
+    expect(activity.metadata.endTime).toBeCloseTo(1709258700.4);
+    expect(activity.metadata.localTimeOffsetSeconds).toBe(32400);
     expect(activity.metadata.totalElapsedTime).toBeCloseTo(3900.4);
     expect(activity.metadata.totalTimerTime).toBeCloseTo(3600.6);
     expect(activity.metadata.totalDistanceM).toBeCloseTo(12345.67);
@@ -180,6 +188,33 @@ describe("parseFitBytes", () => {
       speedMps: 5.5,
       temperatureC: 20,
     });
+  });
+
+  test("reads raw FIT local timestamp seconds as a local time offset", () => {
+    const rawLocalTimestamp = Date.parse("2024-03-01T11:05:00Z") / 1000 -
+      631065600;
+
+    mockDecoder(true, {
+      messages: {
+        activityMesgs: [
+          {
+            timestamp: new Date("2024-03-01T02:05:00Z"),
+            localTimestamp: rawLocalTimestamp,
+          },
+        ],
+        recordMesgs: [
+          {
+            timestamp: new Date("2024-03-01T01:00:01Z"),
+            positionLat: 35.1234567,
+            positionLong: 139.1234567,
+          },
+        ],
+      },
+    });
+
+    const activity = parseFitBytes(new Uint8Array([1, 2, 3]));
+
+    expect(activity.metadata.localTimeOffsetSeconds).toBe(32400);
   });
 
   test("adds statistics and training metadata", () => {
@@ -599,6 +634,9 @@ describe("trackJsonDataToTrackActivity", () => {
             title: "TrackJSON ride",
             metadata: {
               sport: "cycling",
+              startTime: 100,
+              endTime: 110,
+              localTimeOffsetSeconds: 32400,
             },
             coordinateProperties: {
               times: [100, 110],
@@ -616,6 +654,9 @@ describe("trackJsonDataToTrackActivity", () => {
     expect(activity.metadata.source).toEqual({ type: "trackjson" });
     expect(activity.metadata.name).toBe("TrackJSON ride");
     expect(activity.metadata.sport).toBe("cycling");
+    expect(activity.metadata.startTime).toBe(100);
+    expect(activity.metadata.endTime).toBe(110);
+    expect(activity.metadata.localTimeOffsetSeconds).toBe(32400);
     expect(activity.points).toHaveLength(2);
     expect(activity.points[1]).toMatchObject({
       time: 110,
@@ -637,6 +678,7 @@ describe("mergeTrackActivities", () => {
   test("merges three activities into one chronological activity", () => {
     const first = makeActivity(2);
     first.metadata.name = "Morning ride";
+    first.metadata.createdAt = 300;
     first.points[0].time = 100;
     first.points[1].time = 110;
     first.points[0].distanceM = 0;
@@ -645,6 +687,7 @@ describe("mergeTrackActivities", () => {
     first.points[1].speedMps = 5;
 
     const second = makeActivity(2);
+    second.metadata.createdAt = 200;
     second.points[0].time = 200;
     second.points[1].time = 210;
     second.points[0].distanceM = 0;
@@ -653,6 +696,7 @@ describe("mergeTrackActivities", () => {
     second.points[1].speedMps = 6;
 
     const third = makeActivity(2);
+    third.metadata.createdAt = 400;
     third.points[0].time = 300;
     third.points[1].time = 310;
     third.points[0].distanceM = 0;
@@ -664,7 +708,10 @@ describe("mergeTrackActivities", () => {
 
     expect(merged.metadata.source).toEqual({ type: "merged" });
     expect(merged.metadata.name).toBe("Morning ride");
+    expect(merged.metadata.createdAt).toBe(200);
     expect(merged.metadata.startTime).toBe(100);
+    expect(merged.metadata.endTime).toBe(310);
+    expect(merged.metadata.localTimeOffsetSeconds).toBe(32400);
     expect(merged.metadata.totalElapsedTime).toBe(210);
     expect(merged.metadata.totalTimerTime).toBe(30);
     expect(merged.metadata.totalDistanceM).toBe(230);
@@ -674,6 +721,21 @@ describe("mergeTrackActivities", () => {
     expect(merged.points.map((point) => point.distanceM)).toEqual([
       0, 100, 100, 180, 180, 230,
     ]);
+  });
+
+  test("drops merged local time offset unless all inputs agree", () => {
+    const first = makeActivity(2);
+    const second = makeActivity(2);
+    second.metadata.localTimeOffsetSeconds = 3600;
+
+    expect(mergeTrackActivities([first, second]).metadata.localTimeOffsetSeconds)
+      .toBeUndefined();
+
+    second.metadata.localTimeOffsetSeconds = 32400;
+    delete first.metadata.localTimeOffsetSeconds;
+
+    expect(mergeTrackActivities([first, second]).metadata.localTimeOffsetSeconds)
+      .toBeUndefined();
   });
 
   test("writes merged activities as a single LineString", () => {
@@ -818,6 +880,8 @@ describe("trackActivityToTrackJson", () => {
       subSport: "road",
       createdAt: 1710000000,
       startTime: 1710000001,
+      endTime: 1710003902,
+      localTimeOffsetSeconds: 32400,
       totalElapsedTime: 3901,
       totalTimerTime: 3601,
       totalDistanceM: 12345.7,
@@ -1154,6 +1218,8 @@ function makeActivity(pointCount: number): TrackActivity {
       subSport: "road",
       createdAt: 1710000000.4,
       startTime: 1710000001.4,
+      endTime: 1710003902,
+      localTimeOffsetSeconds: 32400,
       totalElapsedTime: 3900.6,
       totalTimerTime: 3600.6,
       totalDistanceM: 12345.67,
