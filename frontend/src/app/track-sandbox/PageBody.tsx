@@ -36,6 +36,7 @@ type ParsedInput = {
   activity: TrackActivity;
   sourceType: SourceType;
   originalPointCount: number;
+  extraFeatures: Record<string, unknown>[];
   fitBytes?: Uint8Array;
 };
 
@@ -854,7 +855,7 @@ async function convertFiles(files: File[], options: ConvertOptions): Promise<Tra
       preserveEndpoints: options.preserveEndpoints,
     })
     : activity;
-  const trackJson = trackActivityToTrackJson(renderedActivity, {
+  const generatedTrackJson = trackActivityToTrackJson(renderedActivity, {
     title,
     description: files.length === 1
       ? `Converted from ${firstFile.name}`
@@ -862,6 +863,8 @@ async function convertFiles(files: File[], options: ConvertOptions): Promise<Tra
     includeMetadata: true,
     pretty: false,
   });
+  const extraFeatures = parsed.flatMap((item) => item.extraFeatures);
+  const trackJson = appendExtraFeaturesToTrackJson(generatedTrackJson, extraFeatures);
 
   return {
     title,
@@ -909,6 +912,7 @@ async function parseInputFile(file: File, options: ConvertOptions): Promise<Pars
     activity,
     sourceType: "fit",
     originalPointCount: activity.points.length,
+    extraFeatures: [],
     fitBytes,
   };
 }
@@ -937,6 +941,7 @@ function parseTrackJsonInput(
     activity,
     sourceType,
     originalPointCount: countTrackJsonPositionedPoints(originalData),
+    extraFeatures: getTrackJsonExtraFeatures(publicData),
   };
 }
 
@@ -977,10 +982,7 @@ function trackJsonDataToLocalActivity(
     });
   });
 
-  const metadata = {
-    name: options.name,
-    source: { type: options.sourceType },
-  } as TrackActivity["metadata"];
+  const metadata = buildTrackJsonActivityMetadata(features, options);
 
   applyLocalComputedMetadata(metadata, points);
 
@@ -990,6 +992,54 @@ function trackJsonDataToLocalActivity(
     points,
     warnings: [],
   };
+}
+
+function buildTrackJsonActivityMetadata(
+  features: Record<string, unknown>[],
+  options: LocalTrackJsonActivityOptions,
+): TrackActivity["metadata"] {
+  const sourceMetadata = features
+    .map((feature) => asRecord(asRecord(feature.properties)?.metadata))
+    .find((metadata) => metadata !== undefined);
+  return {
+    ...(sourceMetadata || {}),
+    name: options.name,
+    source: { type: options.sourceType },
+  } as TrackActivity["metadata"];
+}
+
+function appendExtraFeaturesToTrackJson(
+  trackJson: string,
+  extraFeatures: Record<string, unknown>[],
+): string {
+  if (extraFeatures.length === 0) {
+    return trackJson;
+  }
+
+  const data = JSON.parse(trackJson) as unknown;
+  const record = asRecord(data);
+  if (!record) {
+    return trackJson;
+  }
+
+  const clonedExtraFeatures = extraFeatures.map(cloneJsonFeature);
+  if (record.type === "FeatureCollection" && Array.isArray(record.features)) {
+    record.features.push(...clonedExtraFeatures);
+    return JSON.stringify(record);
+  }
+
+  if (record.type === "Feature") {
+    return JSON.stringify({
+      type: "FeatureCollection",
+      features: [record, ...clonedExtraFeatures],
+    });
+  }
+
+  return trackJson;
+}
+
+function cloneJsonFeature(feature: Record<string, unknown>): Record<string, unknown> {
+  return JSON.parse(JSON.stringify(feature)) as Record<string, unknown>;
 }
 
 function mergeLocalTrackActivities(
@@ -1062,6 +1112,27 @@ function getTrackJsonLineStringFeatures(data: unknown): Record<string, unknown>[
   }
 
   return record.features.filter(isTrackJsonLineStringFeature);
+}
+
+function getTrackJsonExtraFeatures(data: unknown): Record<string, unknown>[] {
+  const record = asRecord(data);
+  if (!record) {
+    return [];
+  }
+
+  if (record.type === "Feature") {
+    return isTrackJsonLineStringFeature(record) ? [] : [record];
+  }
+
+  if (record.type !== "FeatureCollection" || !Array.isArray(record.features)) {
+    return [];
+  }
+
+  return record.features.filter((feature): feature is Record<string, unknown> => {
+    const recordFeature = asRecord(feature);
+    return !!recordFeature && recordFeature.type === "Feature" &&
+      !isTrackJsonLineStringFeature(recordFeature);
+  });
 }
 
 function isTrackJsonLineStringFeature(value: unknown): value is Record<string, unknown> {

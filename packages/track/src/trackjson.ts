@@ -238,7 +238,7 @@ function compactTrackJsonGeometry(
   geometry: Record<string, unknown>,
   precision: Required<TrackJsonPrecisionOptions>
 ): Record<string, unknown> {
-  if (geometry.type !== "LineString" || !Array.isArray(geometry.coordinates)) {
+  if (!isCoordinateGeometryType(geometry.type) || !Array.isArray(geometry.coordinates)) {
     return compactTrackJsonValue(
       geometry,
       undefined,
@@ -248,27 +248,43 @@ function compactTrackJsonGeometry(
 
   return {
     ...geometry,
-    coordinates: geometry.coordinates.map((coordinate) => {
-      return compactTrackJsonCoordinate(coordinate, precision);
-    }),
+    coordinates: compactTrackJsonCoordinates(geometry.coordinates, precision),
   };
 }
 
-function compactTrackJsonCoordinate(
-  coordinate: unknown,
+function isCoordinateGeometryType(type: unknown): boolean {
+  return type === "Point" ||
+    type === "MultiPoint" ||
+    type === "LineString" ||
+    type === "MultiLineString" ||
+    type === "Polygon" ||
+    type === "MultiPolygon";
+}
+
+function compactTrackJsonCoordinates(
+  coordinates: unknown,
   precision: Required<TrackJsonPrecisionOptions>
 ): unknown {
-  if (!Array.isArray(coordinate)) {
-    return coordinate;
+  if (!Array.isArray(coordinates)) {
+    return coordinates;
   }
 
-  return coordinate.map((value, index) => {
-    if (typeof value !== "number" || !Number.isFinite(value)) {
-      return value;
-    }
+  if (isTrackJsonPosition(coordinates)) {
+    return compactTrackJsonCoordinate(coordinates, precision);
+  }
 
+  return coordinates.map((coordinate) => {
+    return compactTrackJsonCoordinates(coordinate, precision);
+  });
+}
+
+function compactTrackJsonCoordinate(
+  coordinate: unknown[],
+  precision: Required<TrackJsonPrecisionOptions>
+): unknown[] {
+  return coordinate.map((value, index) => {
     return roundNumber(
-      value,
+      value as number,
       index < 2 ? precision.coordinates : precision.elevations
     );
   });

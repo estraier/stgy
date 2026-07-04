@@ -260,6 +260,21 @@ describe("compactTrackJsonData", () => {
     expect(feature.properties.coordinateProperties.speeds).toEqual([18, 18.36]);
     expect(feature.properties.metadata.totalDistanceM).toBe(12346);
   });
+
+  test("rounds point coordinates with coordinate precision", () => {
+    const compacted = compactTrackJsonData({
+      type: "Feature",
+      geometry: {
+        type: "Point",
+        coordinates: [138.330295, 36.35955, 541.234],
+      },
+      properties: {
+        title: "Pin",
+      },
+    }) as any;
+
+    expect(compacted.geometry.coordinates).toEqual([138.3303, 36.35955, 541.2]);
+  });
 });
 
 
