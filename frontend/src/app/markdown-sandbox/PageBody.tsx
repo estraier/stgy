@@ -506,6 +506,8 @@ export default function MarkdownSnippetSandbox({
 
 ![これはロゴです](/data/logo-square.svg){size=small}
 
+@[](/data/demo-tomi.trj)
+
 \`\`\`text
 コードブロック
 # これはヘッダじゃない
@@ -601,6 +603,31 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
   const previewHtmlBRef = useRef<HTMLDivElement>(null);
   const previewHtmlFrontIsARef = useRef(true);
   const gutterRef = useRef<HTMLDivElement | null>(null);
+
+  const hydrateTrackMaps = useCallback((root: HTMLElement | null) => {
+    if (!root) return;
+    const maps = Array.from(root.querySelectorAll<HTMLElement>(".stgy-track-map"));
+    if (maps.length === 0) return;
+
+    maps.forEach((figure) => {
+      delete figure.dataset.stgyTrackInitialized;
+      const canvas = figure.querySelector<HTMLElement>(".stgy-track-canvas");
+      if (!canvas) return;
+      const nextCanvas = canvas.cloneNode(false) as HTMLElement;
+      canvas.replaceWith(nextCanvas);
+    });
+    root.querySelectorAll(".stgy-track-graph").forEach((node) => node.remove());
+
+    void import("stgy-track").then(({ StgyTrackRenderer }) => {
+      const renderer = new StgyTrackRenderer();
+      renderer.hydrate(root);
+    }).catch((e: unknown) => {
+      const message = e instanceof Error ? e.message : String(e);
+      root.querySelectorAll<HTMLElement>(".stgy-track-canvas").forEach((canvas) => {
+        canvas.textContent = `Track renderer could not be loaded: ${message}`;
+      });
+    });
+  }, []);
 
   const caretMirrorRef = useRef<HTMLDivElement | null>(null);
   const highlightOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -1207,11 +1234,20 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
     back.style.display = "none";
     front.innerHTML = renderedHtml;
     previewBodyRef.current = front;
+    requestAnimationFrame(() => hydrateTrackMaps(front));
     rebuildAnchors();
     scheduleSync();
     schedulePreviewHighlight();
     attachObservers();
-  }, [mode, renderedHtml, rebuildAnchors, scheduleSync, schedulePreviewHighlight, attachObservers]);
+  }, [
+    mode,
+    renderedHtml,
+    hydrateTrackMaps,
+    rebuildAnchors,
+    scheduleSync,
+    schedulePreviewHighlight,
+    attachObservers,
+  ]);
 
   useEffect(() => {
     if (mode !== "html") return;
@@ -1227,12 +1263,21 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       back.style.display = "block";
       previewHtmlFrontIsARef.current = !frontIsA;
       previewBodyRef.current = back;
+      hydrateTrackMaps(back);
       rebuildAnchors();
       scheduleSync();
       schedulePreviewHighlight();
       attachObservers();
     });
-  }, [renderedHtml, mode, rebuildAnchors, scheduleSync, schedulePreviewHighlight, attachObservers]);
+  }, [
+    renderedHtml,
+    mode,
+    hydrateTrackMaps,
+    rebuildAnchors,
+    scheduleSync,
+    schedulePreviewHighlight,
+    attachObservers,
+  ]);
 
   const onToolbarPrefix = useCallback(
     (prefix: string) => (e: React.MouseEvent) => {

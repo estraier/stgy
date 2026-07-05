@@ -1,9 +1,11 @@
 import {
-  addTrackJsonBbox,
   computeHeartRateZoneSummary,
   computePowerZoneSummary,
   downsampleTrackActivity,
   mergeTrackActivities,
+} from "./activity";
+import {
+  addTrackJsonBbox,
   parseFitBytes,
   obfuscateFitPrivacy,
   trackActivityToTrackJson,
@@ -17,7 +19,7 @@ import {
   getTrackJsonMetadata,
   parseTrackJsonData,
 } from "./trackjson";
-import type { TrackActivity, TrackPoint } from "./fit";
+import type { TrackActivity, TrackPoint } from "./activity";
 import type { TrackJsonDownsampleStrategy } from "./trackjson";
 
 type TrackRenderer = {
