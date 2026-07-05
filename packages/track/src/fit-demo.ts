@@ -5,17 +5,12 @@ import {
   mergeTrackActivities,
 } from "./activity";
 import {
-  addTrackJsonBbox,
   parseFitBytes,
-  obfuscateFitPrivacy,
   trackActivityToTrackJson,
   trackJsonDataToTrackActivity,
 } from "./fit";
+import { parseGpxText } from "./gpx";
 import {
-  compactTrackJsonData,
-  obfuscateTrackJsonPrivacy,
-  countTrackJsonPositionedPoints,
-  downsampleTrackJsonData,
   getTrackJsonMetadata,
   parseTrackJsonData,
 } from "./trackjson";
@@ -51,24 +46,24 @@ type DemoElements = {
   copyButton: HTMLButtonElement;
   downloadLink: HTMLAnchorElement;
   compressedDownloadLink: HTMLAnchorElement;
-  obfuscatedFitDownloadLink: HTMLAnchorElement;
   statusOutput: HTMLElement;
   summaryOutput: HTMLElement;
   mapOutput: HTMLElement;
   trackJsonOutput: HTMLTextAreaElement;
 };
 
+type InputSourceType = "fit" | "gpx" | "trackjson" | "trjgz";
+
 type ConversionResult = {
   trackJson: string;
   trackJsonData: unknown;
   title: string;
-  sourceType: "fit" | "trackjson" | "trjgz" | "merged";
+  sourceType: InputSourceType | "merged";
   originalPointCount?: number;
   renderedPointCount?: number;
   activity?: TrackActivity;
   renderedActivity?: TrackActivity;
   analysisPoints?: TrackPoint[];
-  obfuscatedFitBytes?: Uint8Array;
   obfuscatedPrivacyApplied?: boolean;
   privacyStartDistanceM?: number;
   privacyEndDistanceM?: number;
@@ -77,9 +72,8 @@ type ConversionResult = {
 type ParsedInputActivity = {
   file: File;
   activity: TrackActivity;
-  sourceType: "fit" | "trackjson" | "trjgz";
+  sourceType: InputSourceType;
   originalPointCount: number;
-  obfuscatedFitBytes?: Uint8Array;
 };
 
 declare global {
@@ -90,7 +84,6 @@ declare global {
 
 let currentTrackJsonUrl: string | undefined;
 let currentCompressedTrackJsonUrl: string | undefined;
-let currentObfuscatedFitUrl: string | undefined;
 
 export function initFitDemo(root: Document | HTMLElement = document) {
   const elements = getDemoElements(root);
@@ -129,7 +122,7 @@ export function initFitDemo(root: Document | HTMLElement = document) {
 async function convertAndRender(elements: DemoElements, renderer: TrackRenderer) {
   const files = Array.from(elements.fileInput.files || []);
   if (files.length === 0) {
-    setStatus(elements, "Choose FIT, TrackJSON, TRJ, or TRJGZ file(s) first.", true);
+    setStatus(elements, "Choose FIT, GPX, TrackJSON, TRJ, or TRJGZ file(s) first.", true);
     return;
   }
 
@@ -143,11 +136,6 @@ async function convertAndRender(elements: DemoElements, renderer: TrackRenderer)
       elements,
       getDownloadBaseName(files, result),
       result.trackJson
-    );
-    updateObfuscatedFitDownload(
-      elements,
-      files.length === 1 ? files[0] : undefined,
-      result.obfuscatedFitBytes
     );
 
     elements.trackJsonOutput.value = result.trackJson;
@@ -165,56 +153,43 @@ async function convertInputFiles(
   files: File[],
   elements: DemoElements
 ): Promise<ConversionResult> {
-  if (files.length === 1) {
-    return convertInputFile(files[0], elements);
+  const parsedInputs = await Promise.all(
+    files.map((file) => convertInputFileToActivity(file))
+  );
+
+  if (parsedInputs.length === 1) {
+    const input = parsedInputs[0];
+    return buildConversionResultFromActivity({
+      activity: input.activity,
+      elements,
+      title: getRouteTitle(input.file),
+      description: `Converted from ${input.file.name}`,
+      sourceType: input.sourceType,
+      originalPointCount: input.originalPointCount,
+    });
   }
 
-  const parsedInputs = await Promise.all(
-    files.map((file) => convertInputFileToActivity(file, elements))
-  );
   const title = getMergedRouteTitle(files);
+  const description = `Merged from ${files.map((file) => file.name).join(", ")}`;
   const mergedActivity = mergeTrackActivities(
     parsedInputs.map((input) => input.activity),
-    {
-      name: title,
-      description: `Merged from ${files.map((file) => file.name).join(", ")}`,
-    }
+    { name: title, description }
   );
-  const renderedActivity = maybeDownsample(mergedActivity, elements);
-  const trackJson = trackActivityToTrackJson(renderedActivity, {
-    title,
-    description: `Merged from ${files.map((file) => file.name).join(", ")}`,
-    pretty: elements.prettyInput.checked,
-  });
-  const trackJsonData = JSON.parse(trackJson);
-  const obfuscatedFitBytes = parsedInputs.length === 1
-    ? parsedInputs[0].obfuscatedFitBytes
-    : undefined;
 
-  return {
-    trackJson,
-    trackJsonData,
+  return buildConversionResultFromActivity({
+    activity: mergedActivity,
+    elements,
     title,
+    description,
     sourceType: "merged",
     originalPointCount: parsedInputs.reduce(
       (sum, input) => sum + input.originalPointCount,
       0
     ),
-    renderedPointCount: renderedActivity.points.length,
-    activity: mergedActivity,
-    renderedActivity,
-    analysisPoints: mergedActivity.points,
-    obfuscatedFitBytes,
-    obfuscatedPrivacyApplied: elements.obfuscatePrivacyInput.checked,
-    privacyStartDistanceM: getPrivacyObfuscationOptions(elements).startDistanceM,
-    privacyEndDistanceM: getPrivacyObfuscationOptions(elements).endDistanceM,
-  };
+  });
 }
 
-async function convertInputFileToActivity(
-  file: File,
-  elements: DemoElements
-): Promise<ParsedInputActivity> {
+async function convertInputFileToActivity(file: File): Promise<ParsedInputActivity> {
   const lowerName = file.name.toLowerCase();
 
   if (
@@ -222,45 +197,35 @@ async function convertInputFileToActivity(
     lowerName.endsWith(".geojson") ||
     lowerName.endsWith(".trj")
   ) {
-    const text = await file.text();
-    return convertTrackJsonTextToActivity(file, text, elements, "trackjson");
+    return convertTrackJsonTextToActivity(
+      file,
+      await file.text(),
+      "trackjson"
+    );
   }
 
   if (lowerName.endsWith(".trjgz")) {
     const bytes = await file.arrayBuffer();
-    const text = await decompressGzipText(bytes);
-    return convertTrackJsonTextToActivity(file, text, elements, "trjgz");
+    return convertTrackJsonTextToActivity(
+      file,
+      await decompressGzipText(bytes),
+      "trjgz"
+    );
   }
 
-  const originalBytes = await file.arrayBuffer();
-  const privacyOptions = getPrivacyObfuscationOptions(elements);
-  const obfuscatedFitBytes = elements.obfuscatePrivacyInput.checked
-    ? obfuscateFitPrivacy(originalBytes, privacyOptions)
-    : undefined;
-  const fitBytes = obfuscatedFitBytes || originalBytes;
-  const activity = parseFitBytes(fitBytes);
+  if (lowerName.endsWith(".gpx")) {
+    return convertGpxTextToActivity(file, await file.text());
+  }
 
-  return {
-    file,
-    activity,
-    sourceType: "fit",
-    originalPointCount: activity.points.length,
-    obfuscatedFitBytes,
-  };
+  return convertFitBytesToActivity(file, await file.arrayBuffer());
 }
 
 function convertTrackJsonTextToActivity(
   file: File,
   text: string,
-  elements: DemoElements,
   sourceType: "trackjson" | "trjgz"
 ): ParsedInputActivity {
-  const originalTrackJsonData = parseTrackJsonData(text);
-  const privacyOptions = getPrivacyObfuscationOptions(elements);
-  const obfuscatedTrackJsonData = elements.obfuscatePrivacyInput.checked
-    ? obfuscateTrackJsonPrivacy(originalTrackJsonData, privacyOptions)
-    : originalTrackJsonData;
-  const activity = trackJsonDataToTrackActivity(obfuscatedTrackJsonData, {
+  const activity = trackJsonDataToTrackActivity(parseTrackJsonData(text), {
     sourceType,
     name: getRouteTitle(file),
   });
@@ -269,112 +234,207 @@ function convertTrackJsonTextToActivity(
     file,
     activity,
     sourceType,
-    originalPointCount: countTrackJsonPositionedPoints(originalTrackJsonData),
+    originalPointCount: activity.points.length,
   };
 }
 
-async function convertInputFile(
-  file: File,
-  elements: DemoElements
-): Promise<ConversionResult> {
-  const lowerName = file.name.toLowerCase();
-
-  if (
-    lowerName.endsWith(".json") ||
-    lowerName.endsWith(".geojson") ||
-    lowerName.endsWith(".trj")
-  ) {
-    const text = await file.text();
-    return convertTrackJsonText(file, text, elements, "trackjson");
-  }
-
-  if (lowerName.endsWith(".trjgz")) {
-    const bytes = await file.arrayBuffer();
-    const text = await decompressGzipText(bytes);
-    return convertTrackJsonText(file, text, elements, "trjgz");
-  }
-
-  return convertFitFile(file, elements);
-}
-
-async function convertFitFile(
-  file: File,
-  elements: DemoElements
-): Promise<ConversionResult> {
-  const originalBytes = await file.arrayBuffer();
-  const privacyOptions = getPrivacyObfuscationOptions(elements);
-  const obfuscatedFitBytes = elements.obfuscatePrivacyInput.checked
-    ? obfuscateFitPrivacy(originalBytes, privacyOptions)
-    : undefined;
-  const fitBytes = obfuscatedFitBytes || originalBytes;
-  const activity = parseFitBytes(fitBytes);
-  const digest = maybeDownsample(activity, elements);
-  const title = getRouteTitle(file);
-
-  const trackJson = trackActivityToTrackJson(digest, {
-    title,
-    description: `Converted from ${file.name}`,
-    pretty: elements.prettyInput.checked,
-  });
-  const trackJsonData = JSON.parse(trackJson);
+function convertGpxTextToActivity(file: File, text: string): ParsedInputActivity {
+  const activity = parseGpxText(text);
 
   return {
-    trackJson,
-    trackJsonData,
-    title,
+    file,
+    activity,
+    sourceType: "gpx",
+    originalPointCount: activity.points.length,
+  };
+}
+
+function convertFitBytesToActivity(file: File, bytes: ArrayBuffer): ParsedInputActivity {
+  const activity = parseFitBytes(bytes);
+
+  return {
+    file,
+    activity,
     sourceType: "fit",
     originalPointCount: activity.points.length,
-    renderedPointCount: digest.points.length,
+  };
+}
+
+type BuildConversionResultOptions = {
+  activity: TrackActivity;
+  elements: DemoElements;
+  title: string;
+  description: string;
+  sourceType: ConversionResult["sourceType"];
+  originalPointCount: number;
+};
+
+function buildConversionResultFromActivity(
+  options: BuildConversionResultOptions
+): ConversionResult {
+  const activity = maybeObfuscateActivityPrivacy(options.activity, options.elements);
+  const renderedActivity = maybeDownsample(activity, options.elements);
+  const trackJson = trackActivityToTrackJson(renderedActivity, {
+    title: options.title,
+    description: options.description,
+    pretty: options.elements.prettyInput.checked,
+  });
+  const trackJsonData = JSON.parse(trackJson);
+  const privacyOptions = getPrivacyObfuscationOptions(options.elements);
+
+  return {
+    trackJson,
+    trackJsonData,
+    title: options.title,
+    sourceType: options.sourceType,
+    originalPointCount: options.originalPointCount,
+    renderedPointCount: renderedActivity.points.length,
     activity,
-    renderedActivity: digest,
+    renderedActivity,
     analysisPoints: activity.points,
-    obfuscatedFitBytes,
-    obfuscatedPrivacyApplied: Boolean(obfuscatedFitBytes),
+    obfuscatedPrivacyApplied: options.elements.obfuscatePrivacyInput.checked,
     privacyStartDistanceM: privacyOptions.startDistanceM,
     privacyEndDistanceM: privacyOptions.endDistanceM,
   };
 }
 
-function convertTrackJsonText(
-  file: File,
-  text: string,
-  elements: DemoElements,
-  sourceType: "trackjson" | "trjgz"
-): ConversionResult {
-  const originalTrackJsonData = parseTrackJsonData(text);
-  const privacyOptions = getPrivacyObfuscationOptions(elements);
-  const obfuscatedTrackJsonData = elements.obfuscatePrivacyInput.checked
-    ? obfuscateTrackJsonPrivacy(originalTrackJsonData, privacyOptions)
-    : originalTrackJsonData;
-  const title = getRouteTitle(file);
-  const originalPointCount = countTrackJsonPositionedPoints(originalTrackJsonData);
-  const downsampledTrackJsonData = maybeDownsampleTrackJsonData(
-    obfuscatedTrackJsonData,
-    elements
-  );
-  const trackJsonData = addTrackJsonBbox(
-    compactTrackJsonData(downsampledTrackJsonData)
-  );
-  const trackJson = JSON.stringify(
-    trackJsonData,
-    null,
-    elements.prettyInput.checked ? 2 : 0
-  );
-  const renderedPointCount = countTrackJsonPositionedPoints(trackJsonData);
-  const analysisPoints = extractTrackJsonAnalysisPoints(obfuscatedTrackJsonData);
+function maybeObfuscateActivityPrivacy(
+  activity: TrackActivity,
+  elements: DemoElements
+): TrackActivity {
+  if (!elements.obfuscatePrivacyInput.checked) {
+    return activity;
+  }
+
+  const options = getPrivacyObfuscationOptions(elements);
+  const startDistanceM = options.startDistanceM;
+  const endDistanceM = options.endDistanceM;
+  if (startDistanceM === 0 && endDistanceM === 0) {
+    return activity;
+  }
+
+  const points = activity.points.map((point) => ({
+    ...point,
+    ...(point.metrics ? { metrics: { ...point.metrics } } : {}),
+  }));
+  const positionedIndices = points
+    .map((point, index) => {
+      return hasActivityPosition(point) ? index : -1;
+    })
+    .filter((index) => index >= 0);
+  const totalDistanceM = getActivityPrivacyDistance(points, positionedIndices);
+
+  if (!Number.isFinite(totalDistanceM) || totalDistanceM <= 0) {
+    return {
+      ...activity,
+      metadata: { ...activity.metadata },
+      points,
+      warnings: [...activity.warnings],
+    };
+  }
+
+  if (startDistanceM + endDistanceM >= totalDistanceM) {
+    const anchorIndex = findActivityDistanceIndex(
+      points,
+      positionedIndices,
+      totalDistanceM / 2
+    );
+    clampActivityPositionRange(
+      points,
+      positionedIndices,
+      0,
+      positionedIndices.length - 1,
+      anchorIndex
+    );
+  } else {
+    if (startDistanceM > 0) {
+      const anchorIndex = findActivityDistanceIndex(points, positionedIndices, startDistanceM);
+      const anchorPosition = positionedIndices.indexOf(anchorIndex);
+      if (anchorPosition >= 0) {
+        clampActivityPositionRange(points, positionedIndices, 0, anchorPosition, anchorIndex);
+      }
+    }
+
+    if (endDistanceM > 0) {
+      const thresholdM = Math.max(0, totalDistanceM - endDistanceM);
+      const anchorIndex = findActivityDistanceIndex(points, positionedIndices, thresholdM);
+      const anchorPosition = positionedIndices.indexOf(anchorIndex);
+      if (anchorPosition >= 0) {
+        clampActivityPositionRange(
+          points,
+          positionedIndices,
+          anchorPosition,
+          positionedIndices.length - 1,
+          anchorIndex
+        );
+      }
+    }
+  }
 
   return {
-    trackJson,
-    trackJsonData,
-    title,
-    sourceType,
-    originalPointCount,
-    renderedPointCount,
-    analysisPoints,
-    obfuscatedPrivacyApplied: elements.obfuscatePrivacyInput.checked,
-    privacyStartDistanceM: privacyOptions.startDistanceM,
-    privacyEndDistanceM: privacyOptions.endDistanceM,
+    ...activity,
+    metadata: { ...activity.metadata },
+    points,
+    warnings: [...activity.warnings],
   };
+}
+
+function hasActivityPosition(point: TrackPoint): boolean {
+  return (
+    typeof point.lat === "number" &&
+    Number.isFinite(point.lat) &&
+    typeof point.lon === "number" &&
+    Number.isFinite(point.lon)
+  );
+}
+
+function getActivityPrivacyDistance(points: TrackPoint[], positionedIndices: number[]): number {
+  if (positionedIndices.length === 0) {
+    return 0;
+  }
+
+  const lastPositioned = points[positionedIndices[positionedIndices.length - 1]];
+  const lastDistance = lastPositioned?.distanceM;
+  return typeof lastDistance === "number" && Number.isFinite(lastDistance)
+    ? lastDistance
+    : 0;
+}
+
+function findActivityDistanceIndex(
+  points: TrackPoint[],
+  positionedIndices: number[],
+  thresholdM: number
+): number {
+  const found = positionedIndices.find((index) => {
+    const distanceM = points[index]?.distanceM;
+    return typeof distanceM === "number" && Number.isFinite(distanceM) &&
+      distanceM >= thresholdM;
+  });
+
+  return typeof found === "number"
+    ? found
+    : positionedIndices[positionedIndices.length - 1];
+}
+
+function clampActivityPositionRange(
+  points: TrackPoint[],
+  positionedIndices: number[],
+  startPosition: number,
+  endPosition: number,
+  anchorIndex: number
+) {
+  const anchor = points[anchorIndex];
+  if (!hasActivityPosition(anchor)) {
+    return;
+  }
+
+  for (let position = startPosition; position <= endPosition; position += 1) {
+    const point = points[positionedIndices[position]];
+    if (point && hasActivityPosition(point)) {
+      point.lat = anchor.lat;
+      point.lon = anchor.lon;
+    }
+  }
 }
 
 function maybeDownsample(
@@ -386,21 +446,6 @@ function maybeDownsample(
   }
 
   return downsampleTrackActivity(activity, {
-    maxPoints: getMaxPoints(elements),
-    strategy: getDownsampleStrategy(elements),
-    preserveEndpoints: elements.preserveEndpointsInput.checked,
-  });
-}
-
-function maybeDownsampleTrackJsonData(
-  data: unknown,
-  elements: DemoElements
-): unknown {
-  if (!elements.downsampleInput.checked) {
-    return data;
-  }
-
-  return downsampleTrackJsonData(data, {
     maxPoints: getMaxPoints(elements),
     strategy: getDownsampleStrategy(elements),
     preserveEndpoints: elements.preserveEndpointsInput.checked,
@@ -466,40 +511,6 @@ async function updateTrackJsonDownload(
   }
 
   return rawUrl;
-}
-
-function copyUint8ArrayToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
-  const buffer = new ArrayBuffer(bytes.byteLength);
-  new Uint8Array(buffer).set(bytes);
-  return buffer;
-}
-
-function updateObfuscatedFitDownload(
-  elements: DemoElements,
-  file: File | undefined,
-  bytes: Uint8Array | undefined
-) {
-  if (currentObfuscatedFitUrl) {
-    URL.revokeObjectURL(currentObfuscatedFitUrl);
-    currentObfuscatedFitUrl = undefined;
-  }
-
-  elements.obfuscatedFitDownloadLink.removeAttribute("href");
-  elements.obfuscatedFitDownloadLink.hidden = true;
-
-  if (!bytes || !file) {
-    return;
-  }
-
-  const blob = new Blob([copyUint8ArrayToArrayBuffer(bytes)], {
-    type: "application/octet-stream",
-  });
-  const url = URL.createObjectURL(blob);
-  currentObfuscatedFitUrl = url;
-
-  elements.obfuscatedFitDownloadLink.href = url;
-  elements.obfuscatedFitDownloadLink.download = makeObfuscatedFitFileName(file);
-  elements.obfuscatedFitDownloadLink.hidden = false;
 }
 
 async function gzipText(text: string): Promise<Blob | null> {
@@ -1523,122 +1534,6 @@ function clampPercentage(value: number): number {
   return Math.min(100, Math.max(1, value));
 }
 
-function extractTrackJsonAnalysisPoints(data: unknown): TrackPoint[] {
-  const points: TrackPoint[] = [];
-
-  getTrackJsonFeatures(data).forEach((feature) => {
-    const geometry = feature.geometry;
-    const properties = feature.properties;
-    if (!isRecord(geometry) || geometry.type !== "LineString") {
-      return;
-    }
-    if (!Array.isArray(geometry.coordinates) || !isRecord(properties)) {
-      return;
-    }
-
-    const coordinateProperties = properties.coordinateProperties;
-    if (!isRecord(coordinateProperties)) {
-      return;
-    }
-
-    geometry.coordinates.forEach((_, index) => {
-      const point: TrackPoint = {};
-      assignTrackJsonSeriesNumber(
-        point,
-        "time",
-        coordinateProperties.times,
-        index,
-        normalizeTrackJsonTime
-      );
-      assignTrackJsonSeriesNumber(
-        point,
-        "powerW",
-        coordinateProperties.powers,
-        index
-      );
-      assignTrackJsonSeriesNumber(
-        point,
-        "heartRateBpm",
-        coordinateProperties.heartRates,
-        index
-      );
-      assignTrackJsonSeriesNumber(
-        point,
-        "cadenceRpm",
-        coordinateProperties.cadences,
-        index
-      );
-      assignTrackJsonSeriesNumber(
-        point,
-        "speedMps",
-        coordinateProperties.speeds,
-        index,
-        normalizeTrackJsonSpeedKph
-      );
-      if (Object.keys(point).length > 0) {
-        points.push(point);
-      }
-    });
-  });
-
-  return points;
-}
-
-function getTrackJsonFeatures(data: unknown): Array<Record<string, unknown>> {
-  if (!isRecord(data)) {
-    return [];
-  }
-
-  if (data.type === "Feature") {
-    return [data];
-  }
-
-  if (data.type !== "FeatureCollection" || !Array.isArray(data.features)) {
-    return [];
-  }
-
-  return data.features.filter(isRecord);
-}
-
-function assignTrackJsonSeriesNumber<K extends keyof TrackPoint>(
-  point: TrackPoint,
-  key: K,
-  series: unknown,
-  index: number,
-  convert: (value: number) => number | undefined = (value) => value
-) {
-  if (!Array.isArray(series)) {
-    return;
-  }
-
-  const value = series[index];
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    return;
-  }
-
-  const converted = convert(value);
-  if (typeof converted === "number" && Number.isFinite(converted)) {
-    point[key] = converted as TrackPoint[K];
-  }
-}
-
-function normalizeTrackJsonTime(value: number): number | undefined {
-  if (!Number.isFinite(value)) {
-    return undefined;
-  }
-
-  return value > 100000000000 ? value / 1000 : value;
-}
-
-
-function normalizeTrackJsonSpeedKph(value: number): number | undefined {
-  if (!Number.isFinite(value)) {
-    return undefined;
-  }
-
-  return value / 3.6;
-}
-
 function formatDeviceSummary(device: Record<string, unknown>): string | undefined {
   const parts = [
     getStringProperty(device, "manufacturer"),
@@ -1665,12 +1560,8 @@ function clearOutput(elements: DemoElements) {
   elements.compressedDownloadLink.removeAttribute("href");
   elements.compressedDownloadLink.hidden = true;
 
-  elements.obfuscatedFitDownloadLink.removeAttribute("href");
-  elements.obfuscatedFitDownloadLink.hidden = true;
-
   elements.summaryOutput.textContent = "";
   elements.summaryOutput.hidden = true;
-
 }
 
 function revokeCurrentTrackJsonUrls() {
@@ -1682,11 +1573,6 @@ function revokeCurrentTrackJsonUrls() {
   if (currentCompressedTrackJsonUrl) {
     URL.revokeObjectURL(currentCompressedTrackJsonUrl);
     currentCompressedTrackJsonUrl = undefined;
-  }
-
-  if (currentObfuscatedFitUrl) {
-    URL.revokeObjectURL(currentObfuscatedFitUrl);
-    currentObfuscatedFitUrl = undefined;
   }
 }
 
@@ -1782,10 +1668,6 @@ function getDemoElements(root: Document | HTMLElement): DemoElements {
     copyButton: getElement<HTMLButtonElement>(root, "fit-demo-copy"),
     downloadLink,
     compressedDownloadLink,
-    obfuscatedFitDownloadLink: getElement<HTMLAnchorElement>(
-      root,
-      "fit-demo-download-obfuscated-fit"
-    ),
     statusOutput: getElement<HTMLElement>(root, "fit-demo-status"),
     summaryOutput: getElement<HTMLElement>(root, "fit-demo-summary"),
     mapOutput: getElement<HTMLElement>(root, "fit-demo-map-output"),
@@ -1875,10 +1757,6 @@ function makeTrackJsonFileName(baseName: string, extension: ".trj" | ".trjgz"): 
   return `${stripExtension(baseName) || "track"}${extension}`;
 }
 
-function makeObfuscatedFitFileName(file: File): string {
-  return `${stripExtension(file.name) || "track"}.obfuscated.fit`;
-}
-
 function stripExtension(name: string): string {
   return name.replace(/\.[^.]*$/, "");
 }
@@ -1888,8 +1766,16 @@ function formatSourceType(sourceType: ConversionResult["sourceType"]): string {
     return "FIT";
   }
 
+  if (sourceType === "gpx") {
+    return "GPX";
+  }
+
   if (sourceType === "trjgz") {
     return "TrackJSON gzip";
+  }
+
+  if (sourceType === "merged") {
+    return "Merged";
   }
 
   return "TrackJSON";

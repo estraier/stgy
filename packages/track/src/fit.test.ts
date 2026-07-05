@@ -672,6 +672,53 @@ describe("trackJsonDataToTrackActivity", () => {
       },
     });
   });
+
+  test("preserves TrackJSON LineString feature breaks", () => {
+    const activity = trackJsonDataToTrackActivity({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139.0, 35.0],
+              [139.1, 35.1],
+            ],
+          },
+          properties: {
+            coordinateProperties: {
+              times: [1, 2],
+            },
+          },
+        },
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [140.0, 36.0],
+              [140.1, 36.1],
+            ],
+          },
+          properties: {
+            coordinateProperties: {
+              times: [3, 4],
+            },
+          },
+        },
+      ],
+    });
+
+    expect(activity.points).toEqual([
+      expect.objectContaining({ lon: 139.0, lat: 35.0, time: 1 }),
+      expect.objectContaining({ lon: 139.1, lat: 35.1, time: 2 }),
+      {},
+      expect.objectContaining({ lon: 140.0, lat: 36.0, time: 3 }),
+      expect.objectContaining({ lon: 140.1, lat: 36.1, time: 4 }),
+    ]);
+  });
+
 });
 
 describe("mergeTrackActivities", () => {
@@ -848,8 +895,59 @@ describe("trackActivityToTrackJson", () => {
     expect(addTrackJsonBbox(data)).toEqual({
       ...data,
       bbox: [138.12, 36.3, 138.7, 36.8],
-      rcenter: [138.26, 36.4],
+      rcenter: [138.25982, 36.40008],
     });
+  });
+
+  test("computes rcenter across the antimeridian", () => {
+    const parsed = parseTrackJson(
+      trackActivityToTrackJson(
+        {
+          schemaVersion: 1,
+          metadata: {},
+          points: [
+            { lat: 1, lon: 179.9 },
+            { lat: 1, lon: -179.9 },
+          ],
+          warnings: [],
+        },
+        { precision: { coordinates: 4 } },
+      ),
+    );
+
+    expect(parsed.rcenter).toEqual([180, 1]);
+  });
+
+  test("does not connect separated point segments", () => {
+    const parsed = parseTrackJson(
+      trackActivityToTrackJson(
+        {
+          schemaVersion: 1,
+          metadata: {},
+          points: [
+            { lat: 35.0, lon: 139.0, time: 1, distanceM: 0 },
+            { lat: 35.1, lon: 139.1, time: 2, distanceM: 1000 },
+            {},
+            { lat: 36.0, lon: 140.0, time: 3, distanceM: 2000 },
+            { lat: 36.1, lon: 140.1, time: 4, distanceM: 3000 },
+          ],
+          warnings: [],
+        },
+        { precision: { coordinates: 4 } },
+      ),
+    );
+
+    expect(parsed.features).toHaveLength(2);
+    expect(parsed.features[0].geometry.coordinates).toEqual([
+      [139, 35],
+      [139.1, 35.1],
+    ]);
+    expect(parsed.features[1].geometry.coordinates).toEqual([
+      [140, 36],
+      [140.1, 36.1],
+    ]);
+    expect(parsed.features[0].properties.coordinateProperties.times).toEqual([1, 2]);
+    expect(parsed.features[1].properties.coordinateProperties.times).toEqual([3, 4]);
   });
 
   test("writes standard coordinateProperties arrays", () => {

@@ -309,11 +309,15 @@ export function trackJsonDataToTrackActivity(
     options,
   );
 
-  features.forEach((feature) => {
+  features.forEach((feature, featureIndex) => {
     const geometry = getRecordProperty(feature, "geometry");
     const coordinates = Array.isArray(geometry?.coordinates)
       ? geometry.coordinates
       : [];
+    if (featureIndex > 0 && coordinates.length > 0 && points.length > 0) {
+      points.push({});
+    }
+
     const properties = getRecordProperty(feature, "properties");
     const coordinateProperties = getRecordProperty(
       properties,
@@ -363,7 +367,8 @@ export function trackActivityToTrackJson(
   activity: TrackActivity,
   options: TrackJsonOptions = {},
 ): string {
-  const geoPoints = activity.points.filter(hasPosition);
+  const geoPointSegments = splitTrackActivityPositionSegments(activity.points);
+  const geoPoints = geoPointSegments.flat();
 
   if (geoPoints.length === 0) {
     throw new TrackJsonConversionError(
@@ -372,19 +377,75 @@ export function trackActivityToTrackJson(
     );
   }
 
-  if (geoPoints.length < 2) {
+  const routeSegments = geoPointSegments.filter((segment) => segment.length >= 2);
+  if (routeSegments.length === 0) {
     throw new TrackJsonConversionError(
       "not_enough_position_points",
-      "At least two positioned points are required.",
+      "At least two consecutive positioned points are required.",
     );
   }
 
   const precision = resolveTrackJsonPrecision(options.precision);
-  const coordinateProperties = buildCoordinateProperties(
-    geoPoints,
-    options,
-    precision,
-  );
+  const baseProperties = buildTrackJsonRouteProperties(activity, options, precision);
+
+  const trackJson = {
+    type: "FeatureCollection",
+    bbox: buildTrackJsonBboxFromPoints(geoPoints, precision.coordinates),
+    rcenter: buildTrackJsonRcenterFromPointSegments(
+      routeSegments,
+      precision.coordinates,
+    ),
+    features: routeSegments.map((segment) => ({
+      type: "Feature",
+      geometry: {
+        type: "LineString",
+        coordinates: segment.map((point) => [
+          roundNumber(point.lon, precision.coordinates),
+          roundNumber(point.lat, precision.coordinates),
+        ]),
+      },
+      properties: buildTrackJsonSegmentProperties(
+        baseProperties,
+        segment,
+        options,
+        precision,
+      ),
+    })),
+  };
+
+  return JSON.stringify(trackJson, null, options.pretty ? 2 : 0);
+}
+
+function splitTrackActivityPositionSegments(
+  points: TrackPoint[],
+): (TrackPoint & { lat: number; lon: number })[][] {
+  const segments: (TrackPoint & { lat: number; lon: number })[][] = [];
+  let current: (TrackPoint & { lat: number; lon: number })[] = [];
+
+  points.forEach((point) => {
+    if (hasPosition(point)) {
+      current.push(point);
+      return;
+    }
+
+    if (current.length > 0) {
+      segments.push(current);
+      current = [];
+    }
+  });
+
+  if (current.length > 0) {
+    segments.push(current);
+  }
+
+  return segments;
+}
+
+function buildTrackJsonRouteProperties(
+  activity: TrackActivity,
+  options: TrackJsonOptions,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Record<string, unknown> {
   const properties: Record<string, unknown> = {
     color: options.color || DEFAULT_ROUTE_COLOR,
     weight: isFiniteNumber(options.weight) ? options.weight : 4,
@@ -406,30 +467,23 @@ export function trackActivityToTrackJson(
     }
   }
 
+  return properties;
+}
+
+function buildTrackJsonSegmentProperties(
+  baseProperties: Record<string, unknown>,
+  segment: TrackPoint[],
+  options: TrackJsonOptions,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Record<string, unknown> {
+  const properties: Record<string, unknown> = { ...baseProperties };
+  const coordinateProperties = buildCoordinateProperties(segment, options, precision);
+
   if (Object.keys(coordinateProperties).length > 0) {
     properties.coordinateProperties = coordinateProperties;
   }
 
-  const trackJson = {
-    type: "FeatureCollection",
-    bbox: buildTrackJsonBboxFromPoints(geoPoints, precision.coordinates),
-    rcenter: buildTrackJsonRcenterFromPoints(geoPoints, precision.coordinates),
-    features: [
-      {
-        type: "Feature",
-        geometry: {
-          type: "LineString",
-          coordinates: geoPoints.map((point) => [
-            roundNumber(point.lon, precision.coordinates),
-            roundNumber(point.lat, precision.coordinates),
-          ]),
-        },
-        properties,
-      },
-    ],
-  };
-
-  return JSON.stringify(trackJson, null, options.pretty ? 2 : 0);
+  return properties;
 }
 
 type TrackJsonBounds = {
@@ -439,9 +493,16 @@ type TrackJsonBounds = {
   north?: number;
 };
 
+type TrackJsonVector = {
+  x: number;
+  y: number;
+  z: number;
+};
+
 type TrackJsonRouteCenter = {
-  sumLon: number;
-  sumLat: number;
+  sumX: number;
+  sumY: number;
+  sumZ: number;
   totalLengthM: number;
   fallback?: TrackJsonRcenter;
 };
@@ -452,8 +513,9 @@ function createTrackJsonBounds(): TrackJsonBounds {
 
 function createTrackJsonRouteCenter(): TrackJsonRouteCenter {
   return {
-    sumLon: 0,
-    sumLat: 0,
+    sumX: 0,
+    sumY: 0,
+    sumZ: 0,
     totalLengthM: 0,
   };
 }
@@ -479,22 +541,25 @@ function buildTrackJsonBboxFromPoints(
   return roundTrackJsonBbox(bbox, precision);
 }
 
-function buildTrackJsonRcenterFromPoints(
-  points: (TrackPoint & { lat: number; lon: number })[],
+function buildTrackJsonRcenterFromPointSegments(
+  segments: (TrackPoint & { lat: number; lon: number })[][],
   precision: number,
 ): TrackJsonRcenter | undefined {
   const center = createTrackJsonRouteCenter();
-  let previous: TrackJsonRcenter | undefined;
 
-  points.forEach((point) => {
-    const position: TrackJsonRcenter = [point.lon, point.lat];
-    setTrackJsonRouteCenterFallback(center, position);
+  segments.forEach((segment) => {
+    let previous: TrackJsonRcenter | undefined;
 
-    if (previous) {
-      addTrackJsonRouteSegmentToCenter(center, previous, position);
-    }
+    segment.forEach((point) => {
+      const position: TrackJsonRcenter = [point.lon, point.lat];
+      setTrackJsonRouteCenterFallback(center, position);
 
-    previous = position;
+      if (previous) {
+        addTrackJsonRouteSegmentToCenter(center, previous, position);
+      }
+
+      previous = position;
+    });
   });
 
   const rcenter = trackJsonRouteCenterToRcenter(center);
@@ -670,8 +735,10 @@ function addTrackJsonRouteSegmentToCenter(
     return;
   }
 
-  center.sumLon += ((start[0] + end[0]) / 2) * lengthM;
-  center.sumLat += ((start[1] + end[1]) / 2) * lengthM;
+  const midpoint = calculateSphericalMidpointVector(start, end);
+  center.sumX += midpoint.x * lengthM;
+  center.sumY += midpoint.y * lengthM;
+  center.sumZ += midpoint.z * lengthM;
   center.totalLengthM += lengthM;
 }
 
@@ -689,13 +756,77 @@ function trackJsonRouteCenterToRcenter(
   center: TrackJsonRouteCenter,
 ): TrackJsonRcenter | undefined {
   if (center.totalLengthM > 0) {
-    return [
-      center.sumLon / center.totalLengthM,
-      center.sumLat / center.totalLengthM,
-    ];
+    return vectorToTrackJsonRcenter({
+      x: center.sumX / center.totalLengthM,
+      y: center.sumY / center.totalLengthM,
+      z: center.sumZ / center.totalLengthM,
+    }) ?? center.fallback;
   }
 
   return center.fallback;
+}
+
+function calculateSphericalMidpointVector(
+  start: TrackJsonRcenter,
+  end: TrackJsonRcenter,
+): TrackJsonVector {
+  const startVector = trackJsonRcenterToVector(start);
+  const endVector = trackJsonRcenterToVector(end);
+  return normalizeTrackJsonVector({
+    x: startVector.x + endVector.x,
+    y: startVector.y + endVector.y,
+    z: startVector.z + endVector.z,
+  }) ?? startVector;
+}
+
+function trackJsonRcenterToVector(position: TrackJsonRcenter): TrackJsonVector {
+  const lonRad = degreesToRadians(position[0]);
+  const latRad = degreesToRadians(position[1]);
+  const cosLat = Math.cos(latRad);
+
+  return {
+    x: cosLat * Math.cos(lonRad),
+    y: cosLat * Math.sin(lonRad),
+    z: Math.sin(latRad),
+  };
+}
+
+function vectorToTrackJsonRcenter(
+  vector: TrackJsonVector,
+): TrackJsonRcenter | undefined {
+  const normalized = normalizeTrackJsonVector(vector);
+  if (!normalized) {
+    return undefined;
+  }
+
+  const lon = radiansToDegrees(Math.atan2(normalized.y, normalized.x));
+  const lat = radiansToDegrees(
+    Math.atan2(normalized.z, Math.hypot(normalized.x, normalized.y)),
+  );
+  return [lon, lat];
+}
+
+function normalizeTrackJsonVector(
+  vector: TrackJsonVector,
+): TrackJsonVector | undefined {
+  const length = Math.hypot(vector.x, vector.y, vector.z);
+  if (!Number.isFinite(length) || length <= 0) {
+    return undefined;
+  }
+
+  return {
+    x: vector.x / length,
+    y: vector.y / length,
+    z: vector.z / length,
+  };
+}
+
+function degreesToRadians(degrees: number): number {
+  return (degrees * Math.PI) / 180;
+}
+
+function radiansToDegrees(radians: number): number {
+  return (radians * 180) / Math.PI;
 }
 
 function addTrackJsonPositionToBounds(
@@ -928,10 +1059,6 @@ function calculateDistanceM(
     sinHalfLat * sinHalfLat +
     Math.cos(lat1) * Math.cos(lat2) * sinHalfLon * sinHalfLon;
   return 2 * earthRadiusM * Math.asin(Math.min(1, Math.sqrt(h)));
-}
-
-function degreesToRadians(value: number): number {
-  return (value * Math.PI) / 180;
 }
 
 function buildTrackJsonMetadata(

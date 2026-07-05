@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>FIT / TrackJSON demo</title>
+  <title>FIT / GPX / TrackJSON demo</title>
   <link rel="stylesheet" href="./dist/leaflet.css">
   <link rel="stylesheet" href="./dist/track-viewer.css">
   <style>
@@ -103,7 +103,6 @@
       background: #777;
     }
 
-
     .fit-demo-power-curve {
       display: grid;
       gap: 6px;
@@ -143,7 +142,7 @@
 </head>
 <body>
   <main class="fit-demo">
-    <h1>FIT / TrackJSON demo</h1>
+    <h1>FIT / GPX / TrackJSON demo</h1>
 
     <section class="fit-demo-panel">
       <div class="fit-demo-row">
@@ -153,7 +152,7 @@
             id="fit-demo-file"
             type="file"
             multiple
-            accept=".fit,.trj,.json,.geojson,.trjgz,application/json,application/gzip,application/octet-stream">
+            accept=".fit,.gpx,.trj,.json,.geojson,.trjgz,application/gpx+xml,application/xml,text/xml,application/json,application/gzip,application/octet-stream">
         </label>
       </div>
 
@@ -254,11 +253,6 @@
           href="#"
           download="track.trjgz"
           hidden>(compressed)</a>
-        <a
-          id="fit-demo-download-obfuscated-fit"
-          href="#"
-          download="track.obfuscated.fit"
-          hidden>Download obfuscated FIT</a>
       </div>
 
       <div id="fit-demo-status" class="fit-demo-status" role="status"></div>
