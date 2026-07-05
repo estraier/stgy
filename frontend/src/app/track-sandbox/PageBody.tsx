@@ -17,18 +17,20 @@ import {
 } from "lucide-react";
 import {
   downsampleTrackActivity,
-  obfuscateFitPrivacy,
+  mergeTrackActivities,
   parseFitBytes,
+  trackActivityToFit,
   trackActivityToTrackJson,
+  trackJsonDataToTrackActivity,
 } from "stgy-track/fit";
 import type { TrackActivity, TrackPoint } from "stgy-track/fit";
 import {
-  countTrackJsonPositionedPoints,
-  obfuscateTrackJsonPrivacy,
-  parseTrackJsonData,
-} from "stgy-track/trackjson";
+  parseGpxText,
+  trackActivityToGpx,
+} from "stgy-track/gpx";
+import { parseTrackJsonData } from "stgy-track/trackjson";
 
-type SourceType = "fit" | "trackjson" | "trjgz";
+type SourceType = "fit" | "gpx" | "trackjson" | "trjgz";
 type DownsampleStrategy = "uniform" | "aggregate";
 
 type ParsedInput = {
@@ -36,8 +38,6 @@ type ParsedInput = {
   activity: TrackActivity;
   sourceType: SourceType;
   originalPointCount: number;
-  extraFeatures: Record<string, unknown>[];
-  fitBytes?: Uint8Array;
 };
 
 type ConvertOptions = {
@@ -54,17 +54,19 @@ type TrackResult = {
   title: string;
   trackJson: string;
   trackJsonData: unknown;
+  gpx: string;
   activity: TrackActivity;
   renderedActivity: TrackActivity;
   originalPointCount: number;
   renderedPointCount: number;
   sourceLabel: string;
-  fitBytes?: Uint8Array;
+  fitBytes: Uint8Array;
 };
 
 type ObjectUrlSet = {
   raw?: string;
   gzip?: string;
+  gpx?: string;
   fit?: string;
 };
 
@@ -187,7 +189,7 @@ export default function TrackSandbox() {
   const [ftpW, setFtpW] = useState(DEFAULT_FTP_W);
   const [lthrBpm, setLthrBpm] = useState(DEFAULT_LTHR_BPM);
   const [busy, setBusy] = useState(false);
-  const [status, setStatus] = useState("Choose FIT, TrackJSON, or TRJGZ files.");
+  const [status, setStatus] = useState("Choose FIT, GPX, TrackJSON, or TRJGZ files.");
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<TrackResult | null>(null);
   const [downloadUrls, setDownloadUrls] = useState<ObjectUrlSet>({});
@@ -195,6 +197,7 @@ export default function TrackSandbox() {
   const revokeUrls = useCallback((urls: ObjectUrlSet) => {
     if (urls.raw) URL.revokeObjectURL(urls.raw);
     if (urls.gzip) URL.revokeObjectURL(urls.gzip);
+    if (urls.gpx) URL.revokeObjectURL(urls.gpx);
     if (urls.fit) URL.revokeObjectURL(urls.fit);
   }, []);
 
@@ -224,7 +227,7 @@ export default function TrackSandbox() {
 
   const convert = useCallback(async () => {
     if (files.length === 0) {
-      setError("Choose at least one FIT, TrackJSON, or TRJGZ file.");
+      setError("Choose at least one FIT, GPX, TrackJSON, or TRJGZ file.");
       return;
     }
 
@@ -239,15 +242,18 @@ export default function TrackSandbox() {
       }));
       const gzipBlob = await gzipText(nextResult.trackJson);
       const gzipUrl = URL.createObjectURL(gzipBlob);
-      const fitUrl = nextResult.fitBytes
-        ? URL.createObjectURL(new Blob([copyUint8ArrayToArrayBuffer(nextResult.fitBytes)], {
-          type: "application/octet-stream",
-        }))
-        : undefined;
+      const gpxUrl = URL.createObjectURL(new Blob([nextResult.gpx], {
+        type: "application/gpx+xml",
+      }));
+      const fitUrl = URL.createObjectURL(new Blob([copyUint8ArrayToArrayBuffer(
+        nextResult.fitBytes
+      )], {
+        type: "application/octet-stream",
+      }));
 
       setDownloadUrls((current) => {
         revokeUrls(current);
-        return { raw: rawUrl, gzip: gzipUrl, fit: fitUrl };
+        return { raw: rawUrl, gzip: gzipUrl, gpx: gpxUrl, fit: fitUrl };
       });
       setResult(nextResult);
       setStatus("Track is ready.");
@@ -268,7 +274,7 @@ export default function TrackSandbox() {
     setFiles([]);
     setResult(null);
     setError(null);
-    setStatus("Choose FIT, TrackJSON, or TRJGZ files.");
+    setStatus("Choose FIT, GPX, TrackJSON, or TRJGZ files.");
     setDownloadUrls((current) => {
       revokeUrls(current);
       return {};
@@ -285,8 +291,8 @@ export default function TrackSandbox() {
             </p>
             <h1 className="text-2xl font-bold text-slate-950">Track sandbox</h1>
             <p className="mt-1 text-sm text-slate-500">
-              Convert FIT / TrackJSON rides, preview them on a cycling map,
-              and download public-safe TrackJSON.
+              Convert FIT / GPX / TrackJSON rides, preview them on a cycling map,
+              and download public-safe TrackJSON, GPX, and FIT.
             </p>
           </div>
         </header>
@@ -302,7 +308,7 @@ export default function TrackSandbox() {
                 ref={fileInputRef}
                 type="file"
                 multiple
-                accept=".fit,.trj,.json,.geojson,.trjgz,application/json,application/gzip"
+                accept=".fit,.gpx,.trj,.json,.geojson,.trjgz,application/gpx+xml,application/xml,text/xml,application/json,application/gzip,application/octet-stream"
                 disabled={busy}
                 className="block w-full text-sm text-slate-700 file:mr-3 file:rounded-lg
                   file:border-0 file:bg-sky-700 file:px-3 file:py-2 file:text-sm
@@ -523,6 +529,17 @@ export default function TrackSandbox() {
                       >
                         <Download className="h-4 w-4" />
                         Compressed
+                      </a>
+                    )}
+                    {downloadUrls.gpx && (
+                      <a
+                        href={downloadUrls.gpx}
+                        download={`${safeBaseName(result.title)}.gpx`}
+                        className="inline-flex items-center gap-2 rounded-xl border border-slate-300
+                          bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                      >
+                        <Download className="h-4 w-4" />
+                        GPX
                       </a>
                     )}
                     {downloadUrls.fit && (
@@ -868,7 +885,7 @@ async function convertFiles(files: File[], options: ConvertOptions): Promise<Tra
     throw new Error("No track file was selected.");
   }
 
-  const parsed = await Promise.all(files.map((file) => parseInputFile(file, options)));
+  const parsed = await Promise.all(files.map((file) => parseInputFile(file)));
   const firstParsed = parsed[0];
   if (!firstParsed) {
     throw new Error("No track file could be parsed.");
@@ -877,45 +894,51 @@ async function convertFiles(files: File[], options: ConvertOptions): Promise<Tra
   const title = files.length === 1 ? fileTitle(firstFile) : `${fileTitle(firstFile)} merged`;
   const activity = parsed.length === 1
     ? firstParsed.activity
-    : mergeLocalTrackActivities(parsed.map((item) => item.activity), {
+    : mergeTrackActivities(parsed.map((item) => item.activity), {
       name: title,
       description: `Merged from ${files.map((file) => file.name).join(", ")}`,
     });
+  const processedActivity = options.obfuscatePrivacy
+    ? obfuscateActivityPrivacy(activity, options)
+    : activity;
   const renderedActivity = options.downsample
-    ? downsampleTrackActivity(activity, {
+    ? downsampleTrackActivity(processedActivity, {
       maxPoints: options.maxPoints,
       strategy: options.strategy,
       preserveEndpoints: options.preserveEndpoints,
     })
-    : activity;
-  const generatedTrackJson = trackActivityToTrackJson(renderedActivity, {
+    : processedActivity;
+  const description = files.length === 1
+    ? `Converted from ${firstFile.name}`
+    : `Merged from ${files.map((file) => file.name).join(", ")}`;
+  const trackJson = trackActivityToTrackJson(renderedActivity, {
     title,
-    description: files.length === 1
-      ? `Converted from ${firstFile.name}`
-      : `Merged from ${files.map((file) => file.name).join(", ")}`,
+    description,
     includeMetadata: true,
     pretty: false,
   });
-  const trackJsonData = appendTrackJsonExtraFeatures(
-    JSON.parse(generatedTrackJson),
-    parsed.flatMap((item) => item.extraFeatures),
-  );
-  const trackJson = JSON.stringify(trackJsonData);
+  const trackJsonData = JSON.parse(trackJson);
+  const gpx = trackActivityToGpx(renderedActivity, {
+    name: title,
+    description,
+  });
+  const fitBytes = trackActivityToFit(renderedActivity);
 
   return {
     title,
     trackJson,
     trackJsonData,
-    activity,
+    gpx,
+    activity: processedActivity,
     renderedActivity,
     originalPointCount: parsed.reduce((sum, item) => sum + item.originalPointCount, 0),
     renderedPointCount: renderedActivity.points.length,
     sourceLabel: summarizeSources(parsed),
-    fitBytes: activityToFitBytes(renderedActivity),
+    fitBytes,
   };
 }
 
-async function parseInputFile(file: File, options: ConvertOptions): Promise<ParsedInput> {
+async function parseInputFile(file: File): Promise<ParsedInput> {
   const lowerName = file.name.toLowerCase();
 
   if (
@@ -924,23 +947,19 @@ async function parseInputFile(file: File, options: ConvertOptions): Promise<Pars
     lowerName.endsWith(".trj")
   ) {
     const text = await file.text();
-    return parseTrackJsonInput(file, text, options, "trackjson");
+    return parseTrackJsonInput(file, text, "trackjson");
   }
 
   if (lowerName.endsWith(".trjgz")) {
     const text = await decompressGzipText(await file.arrayBuffer());
-    return parseTrackJsonInput(file, text, options, "trjgz");
+    return parseTrackJsonInput(file, text, "trjgz");
   }
 
-  const originalBytes = await file.arrayBuffer();
-  const privacyOptions = {
-    startDistanceM: options.privacyStartDistanceM,
-    endDistanceM: options.privacyEndDistanceM,
-  };
-  const fitBytes = options.obfuscatePrivacy
-    ? obfuscateFitPrivacy(originalBytes, privacyOptions)
-    : new Uint8Array(originalBytes);
-  const activity = parseFitBytes(fitBytes);
+  if (lowerName.endsWith(".gpx")) {
+    return parseGpxInput(file, await file.text());
+  }
+
+  const activity = parseFitBytes(await file.arrayBuffer());
   activity.metadata.name = fileTitle(file);
 
   return {
@@ -948,788 +967,178 @@ async function parseInputFile(file: File, options: ConvertOptions): Promise<Pars
     activity,
     sourceType: "fit",
     originalPointCount: activity.points.length,
-    extraFeatures: [],
-    fitBytes,
+  };
+}
+
+function parseGpxInput(file: File, text: string): ParsedInput {
+  const activity = parseGpxText(text);
+  activity.metadata.name = getStringProperty(activity.metadata as Record<string, unknown>, "name") ||
+    fileTitle(file);
+
+  return {
+    file,
+    activity,
+    sourceType: "gpx",
+    originalPointCount: activity.points.length,
   };
 }
 
 function parseTrackJsonInput(
   file: File,
   text: string,
-  options: ConvertOptions,
   sourceType: "trackjson" | "trjgz",
 ): ParsedInput {
   const originalData = parseTrackJsonData(text);
-  const privacyOptions = {
-    startDistanceM: options.privacyStartDistanceM,
-    endDistanceM: options.privacyEndDistanceM,
-  };
-  const publicData = options.obfuscatePrivacy
-    ? obfuscateTrackJsonPrivacy(originalData, privacyOptions)
-    : originalData;
-  const activity = trackJsonDataToLocalActivity(publicData, {
+  const activity = trackJsonDataToTrackActivity(originalData, {
     sourceType,
     name: fileTitle(file),
   });
-  const extraFeatures = getTrackJsonExtraFeatures(publicData);
 
   return {
     file,
     activity,
     sourceType,
-    originalPointCount: countTrackJsonPositionedPoints(originalData),
-    extraFeatures,
+    originalPointCount: activity.points.length,
   };
 }
 
-type LocalTrackJsonActivityOptions = {
-  sourceType: SourceType;
-  name: string;
-};
-
-type LocalMergeOptions = {
-  name: string;
-  description: string;
-};
-
-type IndexedPoint = {
-  activityIndex: number;
-  pointIndex: number;
-  point: TrackPoint;
-};
-
-function trackJsonDataToLocalActivity(
-  data: unknown,
-  options: LocalTrackJsonActivityOptions,
+function obfuscateActivityPrivacy(
+  activity: TrackActivity,
+  options: ConvertOptions,
 ): TrackActivity {
-  const features = getTrackJsonLineStringFeatures(data);
-  const points: TrackPoint[] = [];
+  const startDistanceM = options.privacyStartDistanceM;
+  const endDistanceM = options.privacyEndDistanceM;
+  if (startDistanceM === 0 && endDistanceM === 0) {
+    return cloneActivity(activity);
+  }
 
-  features.forEach((feature) => {
-    const geometry = asRecord(feature.geometry);
-    const coordinates = Array.isArray(geometry?.coordinates) ? geometry.coordinates : [];
-    const properties = asRecord(feature.properties);
-    const coordinateProperties = asRecord(properties?.coordinateProperties);
+  const points = activity.points.map((point) => ({
+    ...point,
+    ...(point.metrics ? { metrics: { ...point.metrics } } : {}),
+  }));
+  const positionedIndices = points
+    .map((point, index) => hasPosition(point) ? index : -1)
+    .filter((index) => index >= 0);
+  const totalDistanceM = getActivityPrivacyDistance(points, positionedIndices);
 
-    coordinates.forEach((coordinate, index) => {
-      const point = trackJsonCoordinateToPoint(coordinate, coordinateProperties, index);
-      if (hasPointValue(point)) {
-        points.push(point);
+  if (!Number.isFinite(totalDistanceM) || totalDistanceM <= 0) {
+    return {
+      ...cloneActivity(activity),
+      points,
+    };
+  }
+
+  if (startDistanceM + endDistanceM >= totalDistanceM) {
+    const anchorIndex = findActivityDistanceIndex(
+      points,
+      positionedIndices,
+      totalDistanceM / 2,
+    );
+    clampActivityPositionRange(
+      points,
+      positionedIndices,
+      0,
+      positionedIndices.length - 1,
+      anchorIndex,
+    );
+  } else {
+    if (startDistanceM > 0) {
+      const anchorIndex = findActivityDistanceIndex(points, positionedIndices, startDistanceM);
+      const anchorPosition = positionedIndices.indexOf(anchorIndex);
+      if (anchorPosition >= 0) {
+        clampActivityPositionRange(points, positionedIndices, 0, anchorPosition, anchorIndex);
       }
-    });
-  });
-
-  const sourceMetadata = getTrackJsonActivityMetadata(data, features[0]);
-  const metadata = {
-    ...sourceMetadata,
-    name: getStringProperty(sourceMetadata, "name") || options.name,
-    source: { type: options.sourceType },
-  } as TrackActivity["metadata"];
-
-  applyLocalComputedMetadata(metadata, points);
-
-  return {
-    schemaVersion: 1,
-    metadata,
-    points,
-    warnings: [],
-  };
-}
-
-function mergeLocalTrackActivities(
-  activities: TrackActivity[],
-  options: LocalMergeOptions,
-): TrackActivity {
-  const indexedPoints: IndexedPoint[] = [];
-  let distanceOffsetM = 0;
-
-  getActivityMergeOrder(activities).forEach((activity, activityIndex) => {
-    const points = normalizeActivityDistances(activity.points, distanceOffsetM);
-    const delta = getActivityDistanceDelta(points);
-
-    points.forEach((point, pointIndex) => {
-      indexedPoints.push({ activityIndex, pointIndex, point });
-    });
-
-    if (typeof delta === "number" && delta > 0) {
-      distanceOffsetM += delta;
     }
-  });
 
-  indexedPoints.sort(compareIndexedPoints);
-  const points = indexedPoints.map((item) => ({ ...item.point }));
-  const metadata = {
-    ...activities[0]?.metadata,
-    name: options.name,
-    description: options.description,
-    source: { type: "merged" },
-  } as TrackActivity["metadata"];
-  applyMergedTimeMetadata(metadata, activities, points);
-
-
-  const totalDistanceM = getPointDistanceM(points);
-  if (typeof totalDistanceM === "number") {
-    metadata.totalDistanceM = totalDistanceM;
+    if (endDistanceM > 0) {
+      const thresholdM = Math.max(0, totalDistanceM - endDistanceM);
+      const anchorIndex = findActivityDistanceIndex(points, positionedIndices, thresholdM);
+      const anchorPosition = positionedIndices.indexOf(anchorIndex);
+      if (anchorPosition >= 0) {
+        clampActivityPositionRange(
+          points,
+          positionedIndices,
+          anchorPosition,
+          positionedIndices.length - 1,
+          anchorIndex,
+        );
+      }
+    }
   }
-
-  const movingTime = calculateMovingTime(indexedPoints);
-  if (movingTime > 0) {
-    metadata.totalTimerTime = movingTime;
-  }
-
-  applyLocalComputedMetadata(metadata, points);
 
   return {
-    schemaVersion: 1,
-    metadata,
+    ...cloneActivity(activity),
     points,
-    warnings: activities.flatMap((activity) => activity.warnings || []),
   };
 }
 
-
-function appendTrackJsonExtraFeatures(
-  data: unknown,
-  extraFeatures: Record<string, unknown>[],
-): unknown {
-  if (extraFeatures.length === 0) {
-    return data;
-  }
-
-  const record = asRecord(data);
-  if (!record || record.type !== "FeatureCollection") {
-    return data;
-  }
-
-  const features = Array.isArray(record.features) ? record.features : [];
+function cloneActivity(activity: TrackActivity): TrackActivity {
   return {
-    ...record,
-    features: [...features, ...extraFeatures],
+    ...activity,
+    metadata: { ...activity.metadata },
+    points: activity.points.map((point) => ({
+      ...point,
+      ...(point.metrics ? { metrics: { ...point.metrics } } : {}),
+    })),
+    pins: activity.pins?.map((pin) => ({
+      ...pin,
+      properties: pin.properties ? JSON.parse(JSON.stringify(pin.properties)) : undefined,
+    })),
+    warnings: activity.warnings.map((warning) => ({ ...warning })),
   };
 }
 
-function getTrackJsonExtraFeatures(data: unknown): Record<string, unknown>[] {
-  const record = asRecord(data);
-  if (!record) {
-    return [];
+function getActivityPrivacyDistance(points: TrackPoint[], positionedIndices: number[]): number {
+  if (positionedIndices.length === 0) {
+    return 0;
   }
 
-  if (record.type === "Feature") {
-    return isTrackJsonLineStringFeature(record) ? [] : [record];
-  }
-
-  if (record.type !== "FeatureCollection" || !Array.isArray(record.features)) {
-    return [];
-  }
-
-  return record.features.filter((feature): feature is Record<string, unknown> => {
-    return Boolean(asRecord(feature)) && !isTrackJsonLineStringFeature(feature);
-  });
+  const lastPositioned = points[positionedIndices[positionedIndices.length - 1]];
+  const lastDistance = lastPositioned?.distanceM;
+  return typeof lastDistance === "number" && Number.isFinite(lastDistance)
+    ? lastDistance
+    : 0;
 }
 
-function getTrackJsonActivityMetadata(
-  data: unknown,
-  feature: Record<string, unknown> | undefined,
-): Record<string, unknown> {
-  const topLevel = asRecord(data);
-  const topMetadata = asRecord(topLevel?.metadata);
-  const properties = asRecord(feature?.properties);
-  const featureMetadata = asRecord(properties?.metadata);
-  return {
-    ...(topMetadata || {}),
-    ...(featureMetadata || {}),
-  };
-}
-
-function applyMergedTimeMetadata(
-  metadata: TrackActivity["metadata"],
-  activities: TrackActivity[],
+function findActivityDistanceIndex(
   points: TrackPoint[],
-) {
-  const metadataRecord = metadata as Record<string, unknown>;
-  const createdAtValues = activities
-    .map((activity) => {
-      return numberValue((activity.metadata as Record<string, unknown>).createdAt);
-    })
-    .filter(isFiniteNumber);
-
-  if (createdAtValues.length > 0) {
-    metadataRecord.createdAt = Math.min(...createdAtValues);
-  } else {
-    delete metadataRecord.createdAt;
-  }
-
-  const times = points.map((point) => point.time).filter(isFiniteNumber);
-  if (times.length > 0) {
-    const startTime = Math.min(...times);
-    const endTime = Math.max(...times);
-    metadataRecord.startTime = startTime;
-    metadataRecord.endTime = endTime;
-    metadataRecord.totalElapsedTime = endTime - startTime;
-  } else {
-    delete metadataRecord.startTime;
-    delete metadataRecord.endTime;
-    delete metadataRecord.totalElapsedTime;
-  }
-
-  const offsets = activities.map((activity) => {
-    return numberValue((activity.metadata as Record<string, unknown>).localTimeOffsetSeconds);
+  positionedIndices: number[],
+  thresholdM: number,
+): number {
+  const found = positionedIndices.find((index) => {
+    const distanceM = points[index]?.distanceM;
+    return typeof distanceM === "number" && Number.isFinite(distanceM) &&
+      distanceM >= thresholdM;
   });
-  const offset = offsets[0];
-  if (
-    typeof offset === "number" &&
-    offsets.every((value) => value === offset)
-  ) {
-    metadataRecord.localTimeOffsetSeconds = offset;
-  } else {
-    delete metadataRecord.localTimeOffsetSeconds;
-  }
+
+  return typeof found === "number"
+    ? found
+    : positionedIndices[positionedIndices.length - 1];
 }
 
-function getTrackJsonLineStringFeatures(data: unknown): Record<string, unknown>[] {
-  const record = asRecord(data);
-  if (!record) {
-    return [];
-  }
-
-  if (record.type === "Feature") {
-    return isTrackJsonLineStringFeature(record) ? [record] : [];
-  }
-
-  if (record.type !== "FeatureCollection" || !Array.isArray(record.features)) {
-    return [];
-  }
-
-  return record.features.filter(isTrackJsonLineStringFeature);
-}
-
-function isTrackJsonLineStringFeature(value: unknown): value is Record<string, unknown> {
-  const record = asRecord(value);
-  const geometry = asRecord(record?.geometry);
-  return geometry?.type === "LineString" && Array.isArray(geometry.coordinates);
-}
-
-function trackJsonCoordinateToPoint(
-  coordinate: unknown,
-  coordinateProperties: Record<string, unknown> | undefined,
-  index: number,
-): TrackPoint {
-  const point: TrackPoint = {};
-
-  if (Array.isArray(coordinate)) {
-    const lon = numberValue(coordinate[0]);
-    const lat = numberValue(coordinate[1]);
-    const elevation = numberValue(coordinate[2]);
-    if (typeof lon === "number") point.lon = lon;
-    if (typeof lat === "number") point.lat = lat;
-    if (typeof elevation === "number") point.elevationM = elevation;
-  }
-
-  if (!coordinateProperties) {
-    return point;
-  }
-
-  assignPointSeries(point, "time", coordinateProperties.times, index);
-  assignPointSeries(point, "distanceM", coordinateProperties.distances, index);
-  assignPointSeries(point, "elevationM", coordinateProperties.elevations, index);
-  assignPointSeries(point, "heartRateBpm", coordinateProperties.heartRates, index);
-  assignPointSeries(point, "cadenceRpm", coordinateProperties.cadences, index);
-  assignPointSeries(point, "powerW", coordinateProperties.powers, index);
-  assignPointSeries(point, "speedMps", coordinateProperties.speeds, index, (value) => value / 3.6);
-
-  return point;
-}
-
-function assignPointSeries(
-  point: TrackPoint,
-  key: keyof TrackPoint,
-  series: unknown,
-  index: number,
-  convert: (value: number) => number = (value) => value,
+function clampActivityPositionRange(
+  points: TrackPoint[],
+  positionedIndices: number[],
+  startPosition: number,
+  endPosition: number,
+  anchorIndex: number,
 ) {
-  if (!Array.isArray(series)) {
+  const anchor = points[anchorIndex];
+  if (!anchor || !hasPosition(anchor)) {
     return;
   }
 
-  const value = numberValue(series[index]);
-  if (typeof value === "number") {
-    point[key] = convert(value) as never;
-  }
-}
-
-function hasPointValue(point: TrackPoint): boolean {
-  return Object.values(point).some((value) => typeof value !== "undefined");
-}
-
-function getActivityMergeOrder(activities: TrackActivity[]): TrackActivity[] {
-  return [...activities].sort((a, b) => {
-    const left = getActivityStartTime(a);
-    const right = getActivityStartTime(b);
-    if (typeof left === "number" && typeof right === "number") {
-      return left - right;
+  for (let position = startPosition; position <= endPosition; position += 1) {
+    const point = points[positionedIndices[position]];
+    if (point && hasPosition(point)) {
+      point.lat = anchor.lat;
+      point.lon = anchor.lon;
     }
-    if (typeof left === "number") {
-      return -1;
-    }
-    if (typeof right === "number") {
-      return 1;
-    }
-    return 0;
-  });
-}
-
-function getActivityStartTime(activity: TrackActivity): number | undefined {
-  const pointTimes = activity.points.map((point) => point.time).filter(isFiniteNumber);
-  if (pointTimes.length > 0) {
-    return Math.min(...pointTimes);
   }
-  return numberValue(activity.metadata.startTime);
-}
-
-function normalizeActivityDistances(points: TrackPoint[], offsetM: number): TrackPoint[] {
-  const cloned = points.map((point) => ({ ...point }));
-  const distances = cloned.map((point) => point.distanceM).filter(isFiniteNumber);
-
-  if (distances.length > 0) {
-    const first = distances[0] || 0;
-    cloned.forEach((point) => {
-      if (typeof point.distanceM === "number") {
-        point.distanceM = Math.max(0, point.distanceM - first) + offsetM;
-      }
-    });
-    return cloned;
-  }
-
-  let cumulative = offsetM;
-  let previous: TrackPoint | undefined;
-
-  cloned.forEach((point) => {
-    if (hasPosition(point)) {
-      if (previous && hasPosition(previous)) {
-        cumulative += haversineDistanceM(previous, point);
-      }
-      point.distanceM = cumulative;
-      previous = point;
-    }
-  });
-
-  return cloned;
-}
-
-function getActivityDistanceDelta(points: TrackPoint[]): number | undefined {
-  const distances = points.map((point) => point.distanceM).filter(isFiniteNumber);
-  if (distances.length < 2) {
-    return undefined;
-  }
-  return Math.max(0, distances[distances.length - 1] - distances[0]);
-}
-
-function compareIndexedPoints(a: IndexedPoint, b: IndexedPoint): number {
-  if (typeof a.point.time === "number" && typeof b.point.time === "number") {
-    return a.point.time - b.point.time ||
-      a.activityIndex - b.activityIndex ||
-      a.pointIndex - b.pointIndex;
-  }
-  if (typeof a.point.time === "number") {
-    return -1;
-  }
-  if (typeof b.point.time === "number") {
-    return 1;
-  }
-  return a.activityIndex - b.activityIndex || a.pointIndex - b.pointIndex;
-}
-
-function calculateMovingTime(indexedPoints: IndexedPoint[]): number {
-  const groups = new Map<number, IndexedPoint[]>();
-  indexedPoints.forEach((item) => {
-    const group = groups.get(item.activityIndex) || [];
-    group.push(item);
-    groups.set(item.activityIndex, group);
-  });
-
-  let total = 0;
-  groups.forEach((group) => {
-    const ordered = [...group].sort(compareIndexedPoints);
-    for (let index = 1; index < ordered.length; index += 1) {
-      const prev = ordered[index - 1].point;
-      const cur = ordered[index].point;
-      if (typeof prev.time !== "number" || typeof cur.time !== "number") {
-        continue;
-      }
-
-      const dt = cur.time - prev.time;
-      if (dt <= 0) {
-        continue;
-      }
-
-      if (isMovingInterval(prev, cur)) {
-        total += dt;
-      }
-    }
-  });
-
-  return total;
-}
-
-function isMovingInterval(prev: TrackPoint, cur: TrackPoint): boolean {
-  if (typeof prev.speedMps === "number" || typeof cur.speedMps === "number") {
-    return (prev.speedMps || 0) > 0.5 || (cur.speedMps || 0) > 0.5;
-  }
-  if (typeof prev.distanceM === "number" && typeof cur.distanceM === "number") {
-    return cur.distanceM > prev.distanceM;
-  }
-  return hasPosition(prev) && hasPosition(cur) && (prev.lat !== cur.lat || prev.lon !== cur.lon);
-}
-
-function applyLocalComputedMetadata(metadata: TrackActivity["metadata"], points: TrackPoint[]) {
-  const distanceM = getPointDistanceM(points);
-  if (typeof distanceM === "number" && typeof metadata.totalDistanceM !== "number") {
-    metadata.totalDistanceM = distanceM;
-  }
-
-  if (!metadata.statistics) {
-    metadata.statistics = buildLocalStatistics(points);
-  }
-}
-
-function buildLocalStatistics(points: TrackPoint[]): TrackActivity["metadata"]["statistics"] {
-  return {
-    speedKph: numericStats(points
-      .map((point) => typeof point.speedMps === "number" ? point.speedMps * 3.6 : undefined)),
-    cadenceRpm: numericStats(points.map((point) => point.cadenceRpm)),
-    heartRateBpm: numericStats(points.map((point) => point.heartRateBpm)),
-    powerW: numericStats(points.map((point) => point.powerW)),
-    temperatureC: numericStats(points.map((point) => point.temperatureC)),
-  };
-}
-
-function numericStats(values: (number | undefined)[]) {
-  const nums = values.filter(isFiniteNumber).sort((a, b) => a - b);
-  if (nums.length === 0) {
-    return undefined;
-  }
-
-  const mid = Math.floor(nums.length / 2);
-  const median = nums.length % 2 === 0
-    ? ((nums[mid - 1] || 0) + (nums[mid] || 0)) / 2
-    : nums[mid];
-
-  return {
-    avg: nums.reduce((sum, value) => sum + value, 0) / nums.length,
-    median,
-    max: nums[nums.length - 1],
-  };
 }
 
 function hasPosition(point: TrackPoint): point is TrackPoint & { lat: number; lon: number } {
   return typeof point.lat === "number" && typeof point.lon === "number";
-}
-
-function haversineDistanceM(
-  a: TrackPoint & { lat: number; lon: number },
-  b: TrackPoint & { lat: number; lon: number },
-): number {
-  const earthRadiusM = 6371008.8;
-  const lat1 = degreesToRadians(a.lat);
-  const lat2 = degreesToRadians(b.lat);
-  const deltaLat = degreesToRadians(b.lat - a.lat);
-  const deltaLon = degreesToRadians(b.lon - a.lon);
-  const sinHalfLat = Math.sin(deltaLat / 2);
-  const sinHalfLon = Math.sin(deltaLon / 2);
-  const h = sinHalfLat * sinHalfLat +
-    Math.cos(lat1) * Math.cos(lat2) * sinHalfLon * sinHalfLon;
-  return 2 * earthRadiusM * Math.asin(Math.min(1, Math.sqrt(h)));
-}
-
-function degreesToRadians(value: number): number {
-  return (value * Math.PI) / 180;
-}
-
-function isFiniteNumber(value: unknown): value is number {
-  return typeof value === "number" && Number.isFinite(value);
-}
-
-const FIT_EPOCH_UNIX_SECONDS = 631065600;
-const FIT_CRC_TABLE = [
-  0x0000,
-  0xcc01,
-  0xd801,
-  0x1400,
-  0xf001,
-  0x3c00,
-  0x2800,
-  0xe401,
-  0xa001,
-  0x6c00,
-  0x7800,
-  0xb401,
-  0x5000,
-  0x9c01,
-  0x8801,
-  0x4400,
-] as const;
-
-type FitFieldDefinition = {
-  num: number;
-  size: number;
-  baseType: number;
-};
-
-type FitRecordField = FitFieldDefinition & {
-  write: (view: DataView, offset: number, point: TrackPoint, fallbackTime: number) => void;
-};
-
-function activityToFitBytes(activity: TrackActivity): Uint8Array {
-  const points = activity.points.filter((point) => {
-    return hasPosition(point) || typeof point.time === "number";
-  });
-  const chunks: number[] = [];
-
-  writeDefinitionMessage(chunks, 0, 0, [
-    { num: 0, size: 1, baseType: 0x00 },
-    { num: 4, size: 4, baseType: 0x86 },
-  ]);
-  writeFileIdMessage(chunks, getActivityFitStartTime(activity, points));
-  writeDefinitionMessage(chunks, 1, 20, getFitRecordFields());
-
-  points.forEach((point, index) => {
-    writeRecordMessage(chunks, point, index);
-  });
-
-  const data = new Uint8Array(chunks);
-  const header = new Uint8Array(14);
-  const headerView = new DataView(header.buffer);
-  header[0] = 14;
-  header[1] = 16;
-  headerView.setUint16(2, 2135, true);
-  headerView.setUint32(4, data.length, true);
-  header[8] = 0x2e;
-  header[9] = 0x46;
-  header[10] = 0x49;
-  header[11] = 0x54;
-  const headerCrc = calculateFitCrc(header.subarray(0, 12));
-  headerView.setUint16(12, headerCrc, true);
-
-  const body = new Uint8Array(header.length + data.length + 2);
-  body.set(header, 0);
-  body.set(data, header.length);
-  const fileCrc = calculateFitCrc(body.subarray(0, header.length + data.length));
-  new DataView(body.buffer).setUint16(header.length + data.length, fileCrc, true);
-  return body;
-}
-
-function writeDefinitionMessage(
-  chunks: number[],
-  localMessageType: number,
-  globalMessageNumber: number,
-  fields: FitFieldDefinition[],
-) {
-  chunks.push(0x40 | localMessageType);
-  chunks.push(0);
-  chunks.push(0);
-  pushUint16(chunks, globalMessageNumber);
-  chunks.push(fields.length);
-
-  fields.forEach((field) => {
-    chunks.push(field.num);
-    chunks.push(field.size);
-    chunks.push(field.baseType);
-  });
-}
-
-function writeFileIdMessage(chunks: number[], fitStartTime: number) {
-  chunks.push(0);
-  chunks.push(4);
-  pushUint32(chunks, fitStartTime);
-}
-
-function getFitRecordFields(): FitRecordField[] {
-  return [
-    {
-      num: 253,
-      size: 4,
-      baseType: 0x86,
-      write: (view, offset, _point, fallbackTime) => view.setUint32(offset, fallbackTime, true),
-    },
-    {
-      num: 0,
-      size: 4,
-      baseType: 0x85,
-      write: (view, offset, point) => writeFitSemicircles(view, offset, point.lat),
-    },
-    {
-      num: 1,
-      size: 4,
-      baseType: 0x85,
-      write: (view, offset, point) => writeFitSemicircles(view, offset, point.lon),
-    },
-    {
-      num: 2,
-      size: 2,
-      baseType: 0x84,
-      write: (view, offset, point) => writeFitScaledUint16(view, offset, point.elevationM, 5, 500),
-    },
-    {
-      num: 5,
-      size: 4,
-      baseType: 0x86,
-      write: (view, offset, point) => writeFitScaledUint32(view, offset, point.distanceM, 100, 0),
-    },
-    {
-      num: 6,
-      size: 2,
-      baseType: 0x84,
-      write: (view, offset, point) => writeFitScaledUint16(view, offset, point.speedMps, 1000, 0),
-    },
-    {
-      num: 3,
-      size: 1,
-      baseType: 0x02,
-      write: (view, offset, point) => writeFitUint8(view, offset, point.heartRateBpm),
-    },
-    {
-      num: 4,
-      size: 1,
-      baseType: 0x02,
-      write: (view, offset, point) => writeFitUint8(view, offset, point.cadenceRpm),
-    },
-    {
-      num: 7,
-      size: 2,
-      baseType: 0x84,
-      write: (view, offset, point) => writeFitUint16(view, offset, point.powerW),
-    },
-    {
-      num: 13,
-      size: 1,
-      baseType: 0x01,
-      write: (view, offset, point) => writeFitSint8(view, offset, point.temperatureC),
-    },
-  ];
-}
-
-function writeRecordMessage(chunks: number[], point: TrackPoint, index: number) {
-  const fields = getFitRecordFields();
-  const size = fields.reduce((sum, field) => sum + field.size, 0);
-  const record = new Uint8Array(size);
-  const view = new DataView(record.buffer);
-  const fallbackTime = getPointFitTimestamp(point, index);
-  let offset = 0;
-
-  fields.forEach((field) => {
-    field.write(view, offset, point, fallbackTime);
-    offset += field.size;
-  });
-
-  chunks.push(1);
-  chunks.push(...record);
-}
-
-function getActivityFitStartTime(activity: TrackActivity, points: TrackPoint[]): number {
-  const startTime = numberValue(activity.metadata.startTime) ??
-    points.map((point) => point.time).filter(isFiniteNumber)[0] ??
-    Math.floor(Date.now() / 1000);
-  return unixTimeToFitTime(startTime);
-}
-
-function getPointFitTimestamp(point: TrackPoint, index: number): number {
-  const time = typeof point.time === "number"
-    ? point.time
-    : Math.floor(Date.now() / 1000) + index;
-  return unixTimeToFitTime(time);
-}
-
-function unixTimeToFitTime(unixTimeSeconds: number): number {
-  return Math.max(0, Math.round(unixTimeSeconds - FIT_EPOCH_UNIX_SECONDS));
-}
-
-function writeFitSemicircles(view: DataView, offset: number, degrees: number | undefined) {
-  if (typeof degrees !== "number" || !Number.isFinite(degrees)) {
-    view.setInt32(offset, 0x7fffffff, true);
-    return;
-  }
-  view.setInt32(offset, Math.round((degrees * 0x80000000) / 180), true);
-}
-
-function writeFitScaledUint32(
-  view: DataView,
-  offset: number,
-  value: number | undefined,
-  scale: number,
-  offsetValue: number,
-) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    view.setUint32(offset, 0xffffffff, true);
-    return;
-  }
-  view.setUint32(offset, Math.max(0, Math.round((value + offsetValue) * scale)), true);
-}
-
-function writeFitScaledUint16(
-  view: DataView,
-  offset: number,
-  value: number | undefined,
-  scale: number,
-  offsetValue: number,
-) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    view.setUint16(offset, 0xffff, true);
-    return;
-  }
-  view.setUint16(offset, Math.max(0, Math.round((value + offsetValue) * scale)), true);
-}
-
-function writeFitUint16(view: DataView, offset: number, value: number | undefined) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    view.setUint16(offset, 0xffff, true);
-    return;
-  }
-  view.setUint16(offset, Math.max(0, Math.round(value)), true);
-}
-
-function writeFitUint8(view: DataView, offset: number, value: number | undefined) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    view.setUint8(offset, 0xff);
-    return;
-  }
-  view.setUint8(offset, Math.max(0, Math.min(254, Math.round(value))));
-}
-
-function writeFitSint8(view: DataView, offset: number, value: number | undefined) {
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    view.setInt8(offset, 0x7f);
-    return;
-  }
-  view.setInt8(offset, Math.max(-127, Math.min(126, Math.round(value))));
-}
-
-function pushUint16(chunks: number[], value: number) {
-  chunks.push(value & 0xff, (value >>> 8) & 0xff);
-}
-
-function pushUint32(chunks: number[], value: number) {
-  chunks.push(
-    value & 0xff,
-    (value >>> 8) & 0xff,
-    (value >>> 16) & 0xff,
-    (value >>> 24) & 0xff,
-  );
-}
-
-function calculateFitCrc(bytes: Uint8Array): number {
-  let crc = 0;
-
-  bytes.forEach((byte) => {
-    let tmp = FIT_CRC_TABLE[crc & 0x0f];
-    crc = (crc >> 4) & 0x0fff;
-    crc = crc ^ tmp ^ FIT_CRC_TABLE[byte & 0x0f];
-
-    tmp = FIT_CRC_TABLE[crc & 0x0f];
-    crc = (crc >> 4) & 0x0fff;
-    crc = crc ^ tmp ^ FIT_CRC_TABLE[(byte >> 4) & 0x0f];
-  });
-
-  return crc & 0xffff;
 }
 
 function buildSummaryCards(activity: TrackActivity, trackJsonData: unknown): SummaryCard[] {
@@ -2098,6 +1507,28 @@ function getElevationGainM(points: TrackPoint[]): number {
   return gain;
 }
 
+
+function haversineDistanceM(
+  a: TrackPoint & { lat: number; lon: number },
+  b: TrackPoint & { lat: number; lon: number },
+): number {
+  const earthRadiusM = 6371008.8;
+  const lat1 = degreesToRadians(a.lat);
+  const lat2 = degreesToRadians(b.lat);
+  const deltaLat = degreesToRadians(b.lat - a.lat);
+  const deltaLon = degreesToRadians(b.lon - a.lon);
+  const sinHalfLat = Math.sin(deltaLat / 2);
+  const sinHalfLon = Math.sin(deltaLon / 2);
+  const h = sinHalfLat * sinHalfLat +
+    Math.cos(lat1) * Math.cos(lat2) * sinHalfLon * sinHalfLon;
+  return 2 * earthRadiusM * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
+function degreesToRadians(value: number): number {
+  return (value * Math.PI) / 180;
+}
+
+
 type CompressionStreamConstructor = new (
   format: string
 ) => TransformStream<Uint8Array, Uint8Array>;
@@ -2142,10 +1573,11 @@ function summarizeSources(inputs: ParsedInput[]): string {
   const counts = inputs.reduce<Record<SourceType, number>>((acc, input) => {
     acc[input.sourceType] += 1;
     return acc;
-  }, { fit: 0, trackjson: 0, trjgz: 0 });
+  }, { fit: 0, gpx: 0, trackjson: 0, trjgz: 0 });
 
   return [
     counts.fit ? `${counts.fit} FIT` : "",
+    counts.gpx ? `${counts.gpx} GPX` : "",
     counts.trackjson ? `${counts.trackjson} TrackJSON` : "",
     counts.trjgz ? `${counts.trjgz} TRJGZ` : "",
   ].filter(Boolean).join(" + ");
@@ -2169,6 +1601,7 @@ function safeBaseName(name: string): string {
   return (name.replace(/\.[^.]*$/, "").trim() || "track").replace(/[^\w.-]+/g, "-");
 }
 
+
 function asRecord(value: unknown): Record<string, unknown> | undefined {
   return value && typeof value === "object" ? value as Record<string, unknown> : undefined;
 }
@@ -2177,17 +1610,21 @@ function numberValue(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
 
+function isFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
 function getNumberProperty(value: Record<string, unknown> | undefined, key: string) {
   return value ? numberValue(value[key]) : undefined;
+}
+
+function getNestedNumber(value: Record<string, unknown> | undefined, key: string, childKey: string) {
+  return getNumberProperty(asRecord(value?.[key]), childKey);
 }
 
 function getStringProperty(value: Record<string, unknown> | undefined, key: string) {
   const property = value?.[key];
   return typeof property === "string" ? property : undefined;
-}
-
-function getNestedNumber(value: Record<string, unknown> | undefined, key: string, childKey: string) {
-  return getNumberProperty(asRecord(value?.[key]), childKey);
 }
 
 function formatNumber(value: number, fractionDigits: number): string {
@@ -2196,6 +1633,7 @@ function formatNumber(value: number, fractionDigits: number): string {
     minimumFractionDigits: fractionDigits,
   });
 }
+
 
 function formatCompactNumber(value: number): string {
   return formatNumber(value, 1);

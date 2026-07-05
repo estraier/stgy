@@ -1850,7 +1850,10 @@ function getDownloadBaseName(files: File[], result: ConversionResult): string {
   return title || "merged-track";
 }
 
-function makeTrackJsonFileName(baseName: string, extension: ".trj" | ".trjgz"): string {
+function makeTrackJsonFileName(
+  baseName: string,
+  extension: ".trj" | ".trjgz" | ".gpx" | ".fit",
+): string {
   return `${stripExtension(baseName) || "track"}${extension}`;
 }
 

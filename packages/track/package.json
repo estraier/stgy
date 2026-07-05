@@ -19,6 +19,11 @@
       "require": "./dist/fit.js",
       "default": "./dist/fit.js"
     },
+    "./gpx": {
+      "types": "./dist/gpx.d.ts",
+      "require": "./dist/gpx.js",
+      "default": "./dist/gpx.js"
+    },
     "./trackjson": {
       "types": "./dist/trackjson.d.ts",
       "require": "./dist/trackjson.js",
@@ -44,7 +49,7 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && npm run copy:assets",
-    "copy:assets": "node scripts/copy-assets.js",
+    "copy:assets": "cp src/stgy-track.css dist/stgy-track.css && cp src/stgy-track.css dist/track-viewer.css",
     "dev": "tsc -w -p tsconfig.json",
     "check": "tsc --noEmit",
     "bundle": "npm run bundle:viewer && npm run bundle:fit-demo",
