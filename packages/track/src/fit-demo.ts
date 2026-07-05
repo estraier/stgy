@@ -6,10 +6,11 @@ import {
 } from "./activity";
 import {
   parseFitBytes,
+  trackActivityToFit,
   trackActivityToTrackJson,
   trackJsonDataToTrackActivity,
 } from "./fit";
-import { parseGpxText } from "./gpx";
+import { parseGpxText, trackActivityToGpx } from "./gpx";
 import {
   getTrackJsonMetadata,
   parseTrackJsonData,
@@ -46,6 +47,8 @@ type DemoElements = {
   copyButton: HTMLButtonElement;
   downloadLink: HTMLAnchorElement;
   compressedDownloadLink: HTMLAnchorElement;
+  gpxDownloadLink: HTMLAnchorElement;
+  fitDownloadLink: HTMLAnchorElement;
   statusOutput: HTMLElement;
   summaryOutput: HTMLElement;
   mapOutput: HTMLElement;
@@ -84,6 +87,8 @@ declare global {
 
 let currentTrackJsonUrl: string | undefined;
 let currentCompressedTrackJsonUrl: string | undefined;
+let currentGpxUrl: string | undefined;
+let currentFitUrl: string | undefined;
 
 export function initFitDemo(root: Document | HTMLElement = document) {
   const elements = getDemoElements(root);
@@ -132,10 +137,10 @@ async function convertAndRender(elements: DemoElements, renderer: TrackRenderer)
 
   try {
     const result = await convertInputFiles(files, elements);
-    const trackJsonUrl = await updateTrackJsonDownload(
+    const trackJsonUrl = await updateActivityDownloads(
       elements,
       getDownloadBaseName(files, result),
-      result.trackJson
+      result
     );
 
     elements.trackJsonOutput.value = result.trackJson;
@@ -480,14 +485,14 @@ function renderTrackJson(
   renderer.hydrate(elements.mapOutput);
 }
 
-async function updateTrackJsonDownload(
+async function updateActivityDownloads(
   elements: DemoElements,
   baseName: string,
-  trackJson: string
+  result: ConversionResult
 ): Promise<string> {
-  revokeCurrentTrackJsonUrls();
+  revokeCurrentDownloadUrls();
 
-  const rawBlob = new Blob([trackJson], {
+  const rawBlob = new Blob([result.trackJson], {
     type: "application/json",
   });
   const rawUrl = URL.createObjectURL(rawBlob);
@@ -500,7 +505,7 @@ async function updateTrackJsonDownload(
   elements.compressedDownloadLink.removeAttribute("href");
   elements.compressedDownloadLink.hidden = true;
 
-  const compressedBlob = await gzipText(trackJson);
+  const compressedBlob = await gzipText(result.trackJson);
   if (compressedBlob) {
     const compressedUrl = URL.createObjectURL(compressedBlob);
     currentCompressedTrackJsonUrl = compressedUrl;
@@ -510,7 +515,42 @@ async function updateTrackJsonDownload(
     elements.compressedDownloadLink.hidden = false;
   }
 
+  const exportActivity = result.renderedActivity ?? result.activity;
+  if (exportActivity) {
+    const gpx = trackActivityToGpx(exportActivity, {
+      name: result.title,
+      description: `Converted from ${formatSourceType(result.sourceType)}`,
+    });
+    const gpxUrl = URL.createObjectURL(new Blob([gpx], {
+      type: "application/gpx+xml",
+    }));
+    currentGpxUrl = gpxUrl;
+    elements.gpxDownloadLink.href = gpxUrl;
+    elements.gpxDownloadLink.download = makeTrackJsonFileName(baseName, ".gpx");
+    elements.gpxDownloadLink.hidden = false;
+
+    const fitBytes = trackActivityToFit(exportActivity);
+    const fitUrl = URL.createObjectURL(new Blob([copyUint8ArrayToArrayBuffer(fitBytes)], {
+      type: "application/octet-stream",
+    }));
+    currentFitUrl = fitUrl;
+    elements.fitDownloadLink.href = fitUrl;
+    elements.fitDownloadLink.download = makeTrackJsonFileName(baseName, ".fit");
+    elements.fitDownloadLink.hidden = false;
+  } else {
+    elements.gpxDownloadLink.removeAttribute("href");
+    elements.gpxDownloadLink.hidden = true;
+    elements.fitDownloadLink.removeAttribute("href");
+    elements.fitDownloadLink.hidden = true;
+  }
+
   return rawUrl;
+}
+
+function copyUint8ArrayToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const buffer = new ArrayBuffer(bytes.byteLength);
+  new Uint8Array(buffer).set(bytes);
+  return buffer;
 }
 
 async function gzipText(text: string): Promise<Blob | null> {
@@ -1548,7 +1588,7 @@ function formatDeviceSummary(device: Record<string, unknown>): string | undefine
 }
 
 function clearOutput(elements: DemoElements) {
-  revokeCurrentTrackJsonUrls();
+  revokeCurrentDownloadUrls();
 
   elements.mapOutput.textContent = "";
   elements.trackJsonOutput.value = "";
@@ -1560,11 +1600,17 @@ function clearOutput(elements: DemoElements) {
   elements.compressedDownloadLink.removeAttribute("href");
   elements.compressedDownloadLink.hidden = true;
 
+  elements.gpxDownloadLink.removeAttribute("href");
+  elements.gpxDownloadLink.hidden = true;
+
+  elements.fitDownloadLink.removeAttribute("href");
+  elements.fitDownloadLink.hidden = true;
+
   elements.summaryOutput.textContent = "";
   elements.summaryOutput.hidden = true;
 }
 
-function revokeCurrentTrackJsonUrls() {
+function revokeCurrentDownloadUrls() {
   if (currentTrackJsonUrl) {
     URL.revokeObjectURL(currentTrackJsonUrl);
     currentTrackJsonUrl = undefined;
@@ -1573,6 +1619,16 @@ function revokeCurrentTrackJsonUrls() {
   if (currentCompressedTrackJsonUrl) {
     URL.revokeObjectURL(currentCompressedTrackJsonUrl);
     currentCompressedTrackJsonUrl = undefined;
+  }
+
+  if (currentGpxUrl) {
+    URL.revokeObjectURL(currentGpxUrl);
+    currentGpxUrl = undefined;
+  }
+
+  if (currentFitUrl) {
+    URL.revokeObjectURL(currentFitUrl);
+    currentFitUrl = undefined;
   }
 }
 
@@ -1632,6 +1688,20 @@ function getDemoElements(root: Document | HTMLElement): DemoElements {
     root,
     downloadLink
   );
+  const gpxDownloadLink = getOrCreateSiblingDownloadLink(
+    root,
+    compressedDownloadLink,
+    "fit-demo-download-gpx",
+    "Download GPX",
+    "track.gpx"
+  );
+  const fitDownloadLink = getOrCreateSiblingDownloadLink(
+    root,
+    gpxDownloadLink,
+    "fit-demo-download-fit",
+    "Download FIT",
+    "track.fit"
+  );
 
   return {
     fileInput: getElement<HTMLInputElement>(root, "fit-demo-file"),
@@ -1668,6 +1738,8 @@ function getDemoElements(root: Document | HTMLElement): DemoElements {
     copyButton: getElement<HTMLButtonElement>(root, "fit-demo-copy"),
     downloadLink,
     compressedDownloadLink,
+    gpxDownloadLink,
+    fitDownloadLink,
     statusOutput: getElement<HTMLElement>(root, "fit-demo-status"),
     summaryOutput: getElement<HTMLElement>(root, "fit-demo-summary"),
     mapOutput: getElement<HTMLElement>(root, "fit-demo-map-output"),
@@ -1695,6 +1767,31 @@ function getOrCreateCompressedDownloadLink(
 
   downloadLink.insertAdjacentText("afterend", " ");
   downloadLink.insertAdjacentElement("afterend", link);
+
+  return link;
+}
+
+function getOrCreateSiblingDownloadLink(
+  root: Document | HTMLElement,
+  afterLink: HTMLAnchorElement,
+  id: string,
+  label: string,
+  downloadName: string
+): HTMLAnchorElement {
+  const existing = root.querySelector<HTMLAnchorElement>(`#${id}`);
+  if (existing) {
+    return existing;
+  }
+
+  const link = document.createElement("a");
+  link.id = id;
+  link.href = "#";
+  link.download = downloadName;
+  link.hidden = true;
+  link.textContent = label;
+
+  afterLink.insertAdjacentText("afterend", " ");
+  afterLink.insertAdjacentElement("afterend", link);
 
   return link;
 }

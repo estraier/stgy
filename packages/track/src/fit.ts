@@ -11,6 +11,7 @@ import type {
   TrackActivity,
   TrackActivityBestEfforts,
   TrackActivityMetadata,
+  TrackActivityPin,
   TrackActivityStatistics,
   TrackActivityTraining,
   TrackActivityTrainingSource,
@@ -131,7 +132,7 @@ export type TrackParseErrorCode =
   "empty_input" | "decode_failed" | "no_record_messages";
 
 export type TrackJsonConversionErrorCode =
-  "no_position_points" | "not_enough_position_points";
+  "no_position_points" | "not_enough_position_points" | "invalid_point_feature";
 
 type FitMessage = Record<string, unknown>;
 type FitMessages = Record<string, unknown>;
@@ -300,6 +301,7 @@ export function trackJsonDataToTrackActivity(
   options: TrackJsonActivityOptions = {},
 ): TrackActivity {
   const features = getTrackJsonLineStringFeatures(data);
+  const pins = getTrackJsonPointFeatures(data).map(trackJsonPointFeatureToPin);
   const points: TrackPoint[] = [];
   const firstFeature = features[0];
   const firstProperties = getRecordProperty(firstFeature, "properties");
@@ -359,6 +361,7 @@ export function trackJsonDataToTrackActivity(
     schemaVersion: 1,
     metadata,
     points,
+    ...(pins.length > 0 ? { pins } : {}),
     warnings: [],
   };
 }
@@ -369,6 +372,11 @@ export function trackActivityToTrackJson(
 ): string {
   const geoPointSegments = splitTrackActivityPositionSegments(activity.points);
   const geoPoints = geoPointSegments.flat();
+  const pins = activity.pins || [];
+  const bboxPoints = [
+    ...geoPoints,
+    ...pins.map((pin) => ({ lat: pin.lat, lon: pin.lon })),
+  ];
 
   if (geoPoints.length === 0) {
     throw new TrackJsonConversionError(
@@ -390,27 +398,30 @@ export function trackActivityToTrackJson(
 
   const trackJson = {
     type: "FeatureCollection",
-    bbox: buildTrackJsonBboxFromPoints(geoPoints, precision.coordinates),
+    bbox: buildTrackJsonBboxFromPoints(bboxPoints, precision.coordinates),
     rcenter: buildTrackJsonRcenterFromPointSegments(
       routeSegments,
       precision.coordinates,
     ),
-    features: routeSegments.map((segment) => ({
-      type: "Feature",
-      geometry: {
-        type: "LineString",
-        coordinates: segment.map((point) => [
-          roundNumber(point.lon, precision.coordinates),
-          roundNumber(point.lat, precision.coordinates),
-        ]),
-      },
-      properties: buildTrackJsonSegmentProperties(
-        baseProperties,
-        segment,
-        options,
-        precision,
-      ),
-    })),
+    features: [
+      ...routeSegments.map((segment) => ({
+        type: "Feature",
+        geometry: {
+          type: "LineString",
+          coordinates: segment.map((point) => [
+            roundNumber(point.lon, precision.coordinates),
+            roundNumber(point.lat, precision.coordinates),
+          ]),
+        },
+        properties: buildTrackJsonSegmentProperties(
+          baseProperties,
+          segment,
+          options,
+          precision,
+        ),
+      })),
+      ...pins.map((pin) => trackActivityPinToTrackJsonFeature(pin, precision.coordinates)),
+    ],
   };
 
   return JSON.stringify(trackJson, null, options.pretty ? 2 : 0);
@@ -484,6 +495,29 @@ function buildTrackJsonSegmentProperties(
   }
 
   return properties;
+}
+
+function trackActivityPinToTrackJsonFeature(
+  pin: TrackActivityPin,
+  coordinatePrecision: number,
+): Record<string, unknown> {
+  const coordinates = [
+    roundNumber(pin.lon, coordinatePrecision),
+    roundNumber(pin.lat, coordinatePrecision),
+  ];
+
+  if (isFiniteNumber(pin.elevationM)) {
+    coordinates.push(roundNumber(pin.elevationM, coordinatePrecision));
+  }
+
+  return {
+    type: "Feature",
+    geometry: {
+      type: "Point",
+      coordinates,
+    },
+    properties: pin.properties ? cloneJsonValue(pin.properties) : {},
+  };
 }
 
 type TrackJsonBounds = {
@@ -880,6 +914,54 @@ function isTrackJsonLineStringFeature(value: unknown): value is FitMessage {
 
   const geometry = getRecordProperty(value, "geometry");
   return geometry?.type === "LineString" && Array.isArray(geometry.coordinates);
+}
+
+function getTrackJsonPointFeatures(data: unknown): FitMessage[] {
+  if (!isObjectRecord(data)) {
+    return [];
+  }
+
+  if (data.type === "Feature") {
+    return isTrackJsonPointFeature(data) ? [data] : [];
+  }
+
+  if (data.type !== "FeatureCollection" || !Array.isArray(data.features)) {
+    return [];
+  }
+
+  return data.features.filter(isTrackJsonPointFeature);
+}
+
+function isTrackJsonPointFeature(value: unknown): value is FitMessage {
+  if (!isObjectRecord(value)) {
+    return false;
+  }
+
+  const geometry = getRecordProperty(value, "geometry");
+  return geometry?.type === "Point" && Array.isArray(geometry.coordinates);
+}
+
+function trackJsonPointFeatureToPin(feature: FitMessage): TrackActivityPin {
+  const geometry = getRecordProperty(feature, "geometry");
+  const coordinates = Array.isArray(geometry?.coordinates) ? geometry.coordinates : [];
+  const lon = toFiniteNumber(coordinates[0]);
+  const lat = toFiniteNumber(coordinates[1]);
+  const elevationM = toFiniteNumber(coordinates[2]);
+  const properties = getRecordProperty(feature, "properties");
+
+  if (!isFiniteNumber(lon) || !isFiniteNumber(lat)) {
+    throw new TrackJsonConversionError(
+      "invalid_point_feature",
+      "TrackJSON Point Feature must contain finite lon/lat coordinates.",
+    );
+  }
+
+  return {
+    lat,
+    lon,
+    ...(isFiniteNumber(elevationM) ? { elevationM } : {}),
+    ...(properties ? { properties: cloneJsonValue(properties) as Record<string, unknown> } : {}),
+  };
 }
 
 function getRecordProperty(
@@ -2216,6 +2298,10 @@ function isObjectRecord(value: unknown): value is FitMessage {
   return value !== null && typeof value === "object" && !Array.isArray(value);
 }
 
+function cloneJsonValue<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
+}
+
 function getErrorMessage(error: unknown): string {
   if (error instanceof Error) {
     return error.message;
@@ -2712,3 +2798,652 @@ function writeInt32(
   data[offset + 2] = (unsignedValue >> 8) & 0xff;
   data[offset + 3] = unsignedValue & 0xff;
 }
+
+export type FitExportOptions = {
+  manufacturer?: number;
+  product?: number;
+  serialNumber?: number;
+  includeSessionSummary?: boolean;
+};
+
+export type FitExportErrorCode = "no_exportable_points";
+
+export class FitExportError extends Error {
+  public readonly code: FitExportErrorCode;
+
+  constructor(code: FitExportErrorCode, message: string) {
+    super(message);
+    this.name = "FitExportError";
+    this.code = code;
+    Object.setPrototypeOf(this, FitExportError.prototype);
+  }
+}
+
+type FitWriteFieldDefinition = {
+  num: number;
+  size: number;
+  baseType: number;
+};
+
+type FitWriteRecordField = FitWriteFieldDefinition & {
+  write: (
+    view: DataView,
+    offset: number,
+    point: TrackPoint,
+    fallbackTime: number
+  ) => void;
+};
+
+const FIT_WRITE_CRC_TABLE = [
+  0x0000,
+  0xcc01,
+  0xd801,
+  0x1400,
+  0xf001,
+  0x3c00,
+  0x2800,
+  0xe401,
+  0xa001,
+  0x6c00,
+  0x7800,
+  0xb401,
+  0x5000,
+  0x9c01,
+  0x8801,
+  0x4400,
+] as const;
+
+export function trackActivityToFit(
+  activity: TrackActivity,
+  options: FitExportOptions = {},
+): Uint8Array {
+  const points = activity.points.filter(isFitExportablePoint);
+  if (points.length === 0) {
+    throw new FitExportError(
+      "no_exportable_points",
+      "Track activity does not contain points that can be exported as FIT.",
+    );
+  }
+
+  const chunks: number[] = [];
+  const startTime = getFitExportActivityStartTime(activity, points);
+
+  writeFitDefinitionMessage(chunks, 0, 0, getFitFileIdFields(options));
+  writeFitFileIdMessage(chunks, startTime, options);
+  writeFitDefinitionMessage(chunks, 1, 20, getFitExportRecordFields());
+  points.forEach((point, index) => writeFitRecordMessage(chunks, point, index));
+
+  if (options.includeSessionSummary !== false) {
+    writeFitDefinitionMessage(chunks, 2, 19, getFitLapFields());
+    writeFitLapMessage(chunks, activity, points);
+    writeFitDefinitionMessage(chunks, 3, 18, getFitSessionFields());
+    writeFitSessionMessage(chunks, activity, points);
+    writeFitDefinitionMessage(chunks, 4, 34, getFitActivityFields());
+    writeFitActivityMessage(chunks, activity, points);
+  }
+
+  return buildFitFile(chunks);
+}
+
+function isFitExportablePoint(point: TrackPoint): boolean {
+  return hasPosition(point) || isFiniteNumber(point.time);
+}
+
+function getFitFileIdFields(options: FitExportOptions): FitWriteFieldDefinition[] {
+  const fields: FitWriteFieldDefinition[] = [
+    { num: 0, size: 1, baseType: 0x00 },
+    { num: 4, size: 4, baseType: 0x86 },
+  ];
+
+  if (isFiniteNumber(options.manufacturer)) {
+    fields.push({ num: 1, size: 2, baseType: 0x84 });
+  }
+  if (isFiniteNumber(options.product)) {
+    fields.push({ num: 2, size: 2, baseType: 0x84 });
+  }
+  if (isFiniteNumber(options.serialNumber)) {
+    fields.push({ num: 3, size: 4, baseType: 0x8c });
+  }
+
+  return fields;
+}
+
+function writeFitFileIdMessage(
+  chunks: number[],
+  startTime: number,
+  options: FitExportOptions,
+) {
+  chunks.push(0);
+  chunks.push(4);
+  fitPushUint32(chunks, unixTimeToFitTime(startTime));
+
+  if (isFiniteNumber(options.manufacturer)) {
+    fitPushUint16(chunks, options.manufacturer);
+  }
+  if (isFiniteNumber(options.product)) {
+    fitPushUint16(chunks, options.product);
+  }
+  if (isFiniteNumber(options.serialNumber)) {
+    fitPushUint32(chunks, options.serialNumber);
+  }
+}
+
+function getFitExportRecordFields(): FitWriteRecordField[] {
+  return [
+    {
+      num: 253,
+      size: 4,
+      baseType: 0x86,
+      write: (view, offset, _point, fallbackTime) => {
+        view.setUint32(offset, fallbackTime, true);
+      },
+    },
+    {
+      num: 0,
+      size: 4,
+      baseType: 0x85,
+      write: (view, offset, point) => writeFitSemicircles(view, offset, point.lat),
+    },
+    {
+      num: 1,
+      size: 4,
+      baseType: 0x85,
+      write: (view, offset, point) => writeFitSemicircles(view, offset, point.lon),
+    },
+    {
+      num: 2,
+      size: 2,
+      baseType: 0x84,
+      write: (view, offset, point) => {
+        writeFitScaledUint16(view, offset, point.elevationM, 5, 500);
+      },
+    },
+    {
+      num: 5,
+      size: 4,
+      baseType: 0x86,
+      write: (view, offset, point) => {
+        writeFitScaledUint32(view, offset, point.distanceM, 100, 0);
+      },
+    },
+    {
+      num: 6,
+      size: 2,
+      baseType: 0x84,
+      write: (view, offset, point) => {
+        writeFitScaledUint16(view, offset, point.speedMps, 1000, 0);
+      },
+    },
+    {
+      num: 3,
+      size: 1,
+      baseType: 0x02,
+      write: (view, offset, point) => writeFitUint8(view, offset, point.heartRateBpm),
+    },
+    {
+      num: 4,
+      size: 1,
+      baseType: 0x02,
+      write: (view, offset, point) => writeFitUint8(view, offset, point.cadenceRpm),
+    },
+    {
+      num: 7,
+      size: 2,
+      baseType: 0x84,
+      write: (view, offset, point) => writeFitUint16(view, offset, point.powerW),
+    },
+    {
+      num: 13,
+      size: 1,
+      baseType: 0x01,
+      write: (view, offset, point) => writeFitSint8(view, offset, point.temperatureC),
+    },
+  ];
+}
+
+function writeFitRecordMessage(chunks: number[], point: TrackPoint, index: number) {
+  const fields = getFitExportRecordFields();
+  const size = fields.reduce((sum, field) => sum + field.size, 0);
+  const record = new Uint8Array(size);
+  const view = new DataView(record.buffer);
+  const fallbackTime = getPointFitTimestamp(point, index);
+  let offset = 0;
+
+  fields.forEach((field) => {
+    field.write(view, offset, point, fallbackTime);
+    offset += field.size;
+  });
+
+  chunks.push(1);
+  chunks.push(...record);
+}
+
+function getFitLapFields(): FitWriteFieldDefinition[] {
+  return [
+    { num: 253, size: 4, baseType: 0x86 },
+    { num: 2, size: 4, baseType: 0x86 },
+    { num: 7, size: 4, baseType: 0x86 },
+    { num: 8, size: 4, baseType: 0x86 },
+    { num: 9, size: 4, baseType: 0x86 },
+    { num: 13, size: 2, baseType: 0x84 },
+    { num: 14, size: 2, baseType: 0x84 },
+    { num: 15, size: 1, baseType: 0x02 },
+    { num: 16, size: 1, baseType: 0x02 },
+    { num: 17, size: 1, baseType: 0x02 },
+    { num: 18, size: 1, baseType: 0x02 },
+    { num: 19, size: 2, baseType: 0x84 },
+    { num: 20, size: 2, baseType: 0x84 },
+    { num: 25, size: 1, baseType: 0x00 },
+  ];
+}
+
+function writeFitLapMessage(chunks: number[], activity: TrackActivity, points: TrackPoint[]) {
+  const summary = buildFitExportSummary(activity, points);
+  const record = new Uint8Array(35);
+  const view = new DataView(record.buffer);
+  let offset = 0;
+
+  view.setUint32(offset, unixTimeToFitTime(summary.endTime), true);
+  offset += 4;
+  view.setUint32(offset, unixTimeToFitTime(summary.startTime), true);
+  offset += 4;
+  writeFitScaledUint32Value(view, offset, summary.elapsedTime, 1000);
+  offset += 4;
+  writeFitScaledUint32Value(view, offset, summary.timerTime, 1000);
+  offset += 4;
+  writeFitScaledUint32Value(view, offset, summary.distanceM, 100);
+  offset += 4;
+  writeFitScaledUint16(view, offset, summary.avgSpeedMps, 1000, 0);
+  offset += 2;
+  writeFitScaledUint16(view, offset, summary.maxSpeedMps, 1000, 0);
+  offset += 2;
+  writeFitUint8(view, offset, summary.avgHeartRateBpm);
+  offset += 1;
+  writeFitUint8(view, offset, summary.maxHeartRateBpm);
+  offset += 1;
+  writeFitUint8(view, offset, summary.avgCadenceRpm);
+  offset += 1;
+  writeFitUint8(view, offset, summary.maxCadenceRpm);
+  offset += 1;
+  writeFitUint16(view, offset, summary.avgPowerW);
+  offset += 2;
+  writeFitUint16(view, offset, summary.maxPowerW);
+  offset += 2;
+  view.setUint8(offset, getFitSport(activity));
+
+  chunks.push(2);
+  chunks.push(...record);
+}
+
+function getFitSessionFields(): FitWriteFieldDefinition[] {
+  return [
+    { num: 253, size: 4, baseType: 0x86 },
+    { num: 2, size: 4, baseType: 0x86 },
+    { num: 7, size: 4, baseType: 0x86 },
+    { num: 8, size: 4, baseType: 0x86 },
+    { num: 9, size: 4, baseType: 0x86 },
+    { num: 14, size: 2, baseType: 0x84 },
+    { num: 15, size: 2, baseType: 0x84 },
+    { num: 16, size: 1, baseType: 0x02 },
+    { num: 17, size: 1, baseType: 0x02 },
+    { num: 18, size: 1, baseType: 0x02 },
+    { num: 19, size: 1, baseType: 0x02 },
+    { num: 20, size: 2, baseType: 0x84 },
+    { num: 21, size: 2, baseType: 0x84 },
+    { num: 5, size: 1, baseType: 0x00 },
+  ];
+}
+
+function writeFitSessionMessage(
+  chunks: number[],
+  activity: TrackActivity,
+  points: TrackPoint[],
+) {
+  const summary = buildFitExportSummary(activity, points);
+  const record = new Uint8Array(35);
+  const view = new DataView(record.buffer);
+  let offset = 0;
+
+  view.setUint32(offset, unixTimeToFitTime(summary.endTime), true);
+  offset += 4;
+  view.setUint32(offset, unixTimeToFitTime(summary.startTime), true);
+  offset += 4;
+  writeFitScaledUint32Value(view, offset, summary.elapsedTime, 1000);
+  offset += 4;
+  writeFitScaledUint32Value(view, offset, summary.timerTime, 1000);
+  offset += 4;
+  writeFitScaledUint32Value(view, offset, summary.distanceM, 100);
+  offset += 4;
+  writeFitScaledUint16(view, offset, summary.avgSpeedMps, 1000, 0);
+  offset += 2;
+  writeFitScaledUint16(view, offset, summary.maxSpeedMps, 1000, 0);
+  offset += 2;
+  writeFitUint8(view, offset, summary.avgHeartRateBpm);
+  offset += 1;
+  writeFitUint8(view, offset, summary.maxHeartRateBpm);
+  offset += 1;
+  writeFitUint8(view, offset, summary.avgCadenceRpm);
+  offset += 1;
+  writeFitUint8(view, offset, summary.maxCadenceRpm);
+  offset += 1;
+  writeFitUint16(view, offset, summary.avgPowerW);
+  offset += 2;
+  writeFitUint16(view, offset, summary.maxPowerW);
+  offset += 2;
+  view.setUint8(offset, getFitSport(activity));
+
+  chunks.push(3);
+  chunks.push(...record);
+}
+
+function getFitActivityFields(): FitWriteFieldDefinition[] {
+  return [
+    { num: 253, size: 4, baseType: 0x86 },
+    { num: 0, size: 4, baseType: 0x86 },
+    { num: 1, size: 2, baseType: 0x84 },
+    { num: 2, size: 1, baseType: 0x00 },
+    { num: 3, size: 1, baseType: 0x00 },
+    { num: 4, size: 1, baseType: 0x00 },
+  ];
+}
+
+function writeFitActivityMessage(
+  chunks: number[],
+  activity: TrackActivity,
+  points: TrackPoint[],
+) {
+  const summary = buildFitExportSummary(activity, points);
+  const record = new Uint8Array(13);
+  const view = new DataView(record.buffer);
+  let offset = 0;
+
+  view.setUint32(offset, unixTimeToFitTime(summary.endTime), true);
+  offset += 4;
+  writeFitScaledUint32Value(view, offset, summary.timerTime, 1000);
+  offset += 4;
+  view.setUint16(offset, 1, true);
+  offset += 2;
+  view.setUint8(offset, 0);
+  offset += 1;
+  view.setUint8(offset, 26);
+  offset += 1;
+  view.setUint8(offset, 1);
+
+  chunks.push(4);
+  chunks.push(...record);
+}
+
+type FitExportSummary = {
+  startTime: number;
+  endTime: number;
+  elapsedTime: number;
+  timerTime: number;
+  distanceM?: number;
+  avgSpeedMps?: number;
+  maxSpeedMps?: number;
+  avgHeartRateBpm?: number;
+  maxHeartRateBpm?: number;
+  avgCadenceRpm?: number;
+  maxCadenceRpm?: number;
+  avgPowerW?: number;
+  maxPowerW?: number;
+};
+
+function buildFitExportSummary(
+  activity: TrackActivity,
+  points: TrackPoint[],
+): FitExportSummary {
+  const startTime = getFitExportActivityStartTime(activity, points);
+  const endTime = getFitExportActivityEndTime(activity, points, startTime);
+  const elapsedTime = getFiniteMetadataNumber(activity.metadata.totalElapsedTime) ??
+    Math.max(0, endTime - startTime);
+  const timerTime = getFiniteMetadataNumber(activity.metadata.totalTimerTime) ?? elapsedTime;
+  const distanceM = getFiniteMetadataNumber(activity.metadata.totalDistanceM) ??
+    getFitExportDistance(points);
+  const speeds = points.map((point) => point.speedMps).filter(isFiniteNumber);
+  const heartRates = points.map((point) => point.heartRateBpm).filter(isFiniteNumber);
+  const cadences = points.map((point) => point.cadenceRpm).filter(isFiniteNumber);
+  const powers = points.map((point) => point.powerW).filter(isFiniteNumber);
+
+  return {
+    startTime,
+    endTime,
+    elapsedTime,
+    timerTime,
+    distanceM,
+    avgSpeedMps: averageFiniteNumbers(speeds),
+    maxSpeedMps: maxFiniteNumbers(speeds),
+    avgHeartRateBpm: averageFiniteNumbers(heartRates),
+    maxHeartRateBpm: maxFiniteNumbers(heartRates),
+    avgCadenceRpm: averageFiniteNumbers(cadences),
+    maxCadenceRpm: maxFiniteNumbers(cadences),
+    avgPowerW: averageFiniteNumbers(powers),
+    maxPowerW: maxFiniteNumbers(powers),
+  };
+}
+
+function getFitExportActivityStartTime(
+  activity: TrackActivity,
+  points: TrackPoint[],
+): number {
+  const metadataStartTime = getFiniteMetadataNumber(activity.metadata.startTime);
+  if (isFiniteNumber(metadataStartTime)) {
+    return metadataStartTime;
+  }
+
+  const times = points.map((point) => point.time).filter(isFiniteNumber);
+  return times.length > 0 ? Math.min(...times) : Math.floor(Date.now() / 1000);
+}
+
+function getFitExportActivityEndTime(
+  activity: TrackActivity,
+  points: TrackPoint[],
+  startTime: number,
+): number {
+  const metadataEndTime = getFiniteMetadataNumber(activity.metadata.endTime);
+  if (isFiniteNumber(metadataEndTime)) {
+    return metadataEndTime;
+  }
+
+  const times = points.map((point) => point.time).filter(isFiniteNumber);
+  return times.length > 0 ? Math.max(...times) : startTime + Math.max(0, points.length - 1);
+}
+
+function getFitExportDistance(points: TrackPoint[]): number | undefined {
+  const distances = points.map((point) => point.distanceM).filter(isFiniteNumber);
+  if (distances.length === 0) {
+    return undefined;
+  }
+
+  return Math.max(...distances) - Math.min(...distances);
+}
+
+function getFitSport(activity: TrackActivity): number {
+  const sport = activity.metadata.sport?.toLowerCase();
+  if (sport === "cycling" || sport === "bike" || sport === "biking") {
+    return 2;
+  }
+  if (sport === "running" || sport === "run") {
+    return 1;
+  }
+  if (sport === "swimming" || sport === "swim") {
+    return 5;
+  }
+  return 2;
+}
+
+function getFiniteMetadataNumber(value: unknown): number | undefined {
+  return isFiniteNumber(value) ? value : undefined;
+}
+
+function averageFiniteNumbers(values: number[]): number | undefined {
+  if (values.length === 0) {
+    return undefined;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
+}
+
+function maxFiniteNumbers(values: number[]): number | undefined {
+  return values.length > 0 ? Math.max(...values) : undefined;
+}
+
+function getPointFitTimestamp(point: TrackPoint, index: number): number {
+  const time = isFiniteNumber(point.time)
+    ? point.time
+    : Math.floor(Date.now() / 1000) + index;
+  return unixTimeToFitTime(time);
+}
+
+function unixTimeToFitTime(unixTimeSeconds: number): number {
+  return Math.max(0, Math.round(unixTimeSeconds - FIT_EPOCH_UNIX_SECONDS));
+}
+
+function writeFitDefinitionMessage(
+  chunks: number[],
+  localMessageType: number,
+  globalMessageNumber: number,
+  fields: FitWriteFieldDefinition[],
+) {
+  chunks.push(0x40 | localMessageType);
+  chunks.push(0);
+  chunks.push(0);
+  fitPushUint16(chunks, globalMessageNumber);
+  chunks.push(fields.length);
+
+  fields.forEach((field) => {
+    chunks.push(field.num);
+    chunks.push(field.size);
+    chunks.push(field.baseType);
+  });
+}
+
+function buildFitFile(chunks: number[]): Uint8Array {
+  const data = new Uint8Array(chunks);
+  const header = new Uint8Array(14);
+  const headerView = new DataView(header.buffer);
+  header[0] = 14;
+  header[1] = 16;
+  headerView.setUint16(2, 2135, true);
+  headerView.setUint32(4, data.length, true);
+  header[8] = 0x2e;
+  header[9] = 0x46;
+  header[10] = 0x49;
+  header[11] = 0x54;
+  const headerCrc = calculateFitWriteCrc(header.subarray(0, 12));
+  headerView.setUint16(12, headerCrc, true);
+
+  const body = new Uint8Array(header.length + data.length + 2);
+  body.set(header, 0);
+  body.set(data, header.length);
+  const fileCrc = calculateFitWriteCrc(body.subarray(0, header.length + data.length));
+  new DataView(body.buffer).setUint16(header.length + data.length, fileCrc, true);
+  return body;
+}
+
+function writeFitSemicircles(
+  view: DataView,
+  offset: number,
+  degrees: number | undefined,
+) {
+  if (!isFiniteNumber(degrees)) {
+    view.setInt32(offset, 0x7fffffff, true);
+    return;
+  }
+  view.setInt32(offset, Math.round((degrees * 0x80000000) / 180), true);
+}
+
+function writeFitScaledUint32(
+  view: DataView,
+  offset: number,
+  value: number | undefined,
+  scale: number,
+  offsetValue: number,
+) {
+  if (!isFiniteNumber(value)) {
+    view.setUint32(offset, 0xffffffff, true);
+    return;
+  }
+  view.setUint32(offset, Math.max(0, Math.round((value + offsetValue) * scale)), true);
+}
+
+function writeFitScaledUint32Value(
+  view: DataView,
+  offset: number,
+  value: number | undefined,
+  scale: number,
+) {
+  if (!isFiniteNumber(value)) {
+    view.setUint32(offset, 0xffffffff, true);
+    return;
+  }
+  view.setUint32(offset, Math.max(0, Math.round(value * scale)), true);
+}
+
+function writeFitScaledUint16(
+  view: DataView,
+  offset: number,
+  value: number | undefined,
+  scale: number,
+  offsetValue: number,
+) {
+  if (!isFiniteNumber(value)) {
+    view.setUint16(offset, 0xffff, true);
+    return;
+  }
+  view.setUint16(offset, Math.max(0, Math.round((value + offsetValue) * scale)), true);
+}
+
+function writeFitUint16(view: DataView, offset: number, value: number | undefined) {
+  if (!isFiniteNumber(value)) {
+    view.setUint16(offset, 0xffff, true);
+    return;
+  }
+  view.setUint16(offset, Math.max(0, Math.round(value)), true);
+}
+
+function writeFitUint8(view: DataView, offset: number, value: number | undefined) {
+  if (!isFiniteNumber(value)) {
+    view.setUint8(offset, 0xff);
+    return;
+  }
+  view.setUint8(offset, Math.max(0, Math.min(254, Math.round(value))));
+}
+
+function writeFitSint8(view: DataView, offset: number, value: number | undefined) {
+  if (!isFiniteNumber(value)) {
+    view.setInt8(offset, 0x7f);
+    return;
+  }
+  view.setInt8(offset, Math.max(-127, Math.min(126, Math.round(value))));
+}
+
+function fitPushUint16(chunks: number[], value: number) {
+  chunks.push(value & 0xff, (value >>> 8) & 0xff);
+}
+
+function fitPushUint32(chunks: number[], value: number) {
+  chunks.push(
+    value & 0xff,
+    (value >>> 8) & 0xff,
+    (value >>> 16) & 0xff,
+    (value >>> 24) & 0xff,
+  );
+}
+
+function calculateFitWriteCrc(bytes: Uint8Array): number {
+  let crc = 0;
+
+  bytes.forEach((byte) => {
+    let tmp = FIT_WRITE_CRC_TABLE[crc & 0x0f];
+    crc = (crc >> 4) & 0x0fff;
+    crc = crc ^ tmp ^ FIT_WRITE_CRC_TABLE[byte & 0x0f];
+
+    tmp = FIT_WRITE_CRC_TABLE[crc & 0x0f];
+    crc = (crc >> 4) & 0x0fff;
+    crc = crc ^ tmp ^ FIT_WRITE_CRC_TABLE[(byte >> 4) & 0x0f];
+  });
+
+  return crc & 0xffff;
+}
+

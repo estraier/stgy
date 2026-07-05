@@ -12,6 +12,7 @@ import {
   getPowerZone,
   parseFitBytes,
   obfuscateFitPrivacy,
+  trackActivityToFit,
   trackActivityToTrackJson,
 } from "./fit";
 import type { TrackActivity, TrackPoint } from "./fit";
@@ -1606,3 +1607,137 @@ describe("obfuscateFitPrivacy", () => {
     );
   });
 });
+
+
+describe("trackActivityToFit", () => {
+  test("exports TrackActivity as FIT bytes", () => {
+    const exported = trackActivityToFit({
+      schemaVersion: 1,
+      metadata: {
+        sport: "cycling",
+        startTime: 1710000000,
+        endTime: 1710000010,
+        totalElapsedTime: 10,
+        totalTimerTime: 10,
+        totalDistanceM: 120,
+      },
+      points: [
+        {
+          time: 1710000000,
+          lat: 35,
+          lon: 139,
+          distanceM: 0,
+          elevationM: 10,
+          speedMps: 12,
+          heartRateBpm: 100,
+          cadenceRpm: 80,
+          powerW: 150,
+          temperatureC: 20,
+        },
+        {
+          time: 1710000010,
+          lat: 35.0001,
+          lon: 139.0001,
+          distanceM: 120,
+          elevationM: 11,
+          speedMps: 12,
+          heartRateBpm: 102,
+          cadenceRpm: 82,
+          powerW: 160,
+          temperatureC: 21,
+        },
+      ],
+      warnings: [],
+    });
+
+    expect(exported[0]).toBe(14);
+    expect(String.fromCharCode(...exported.slice(8, 12))).toBe(".FIT");
+    expect(exported.length).toBeGreaterThan(14 + 2);
+  });
+});
+
+
+describe("TrackJSON Point Feature pins", () => {
+  test("preserves Point Features through TrackActivity", () => {
+    const input = {
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [138.1, 36.1],
+              [138.2, 36.2],
+            ],
+          },
+          properties: {},
+        },
+        {
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [138.330295, 36.35955],
+          },
+          properties: {
+            title: "東御市役所",
+            description: "雷電為右衛門の像があります",
+            links: [{ href: "https://www.city.tomi.nagano.jp/", text: "東御市役所" }],
+            images: [{ src: "/data/demo-raiden.jpg", alt: "雷電為右衛門の像" }],
+          },
+        },
+      ],
+    };
+
+    const activity = trackJsonDataToTrackActivity(input, { sourceType: "trackjson" });
+    expect(activity.pins).toEqual([
+      {
+        lat: 36.35955,
+        lon: 138.330295,
+        properties: {
+          title: "東御市役所",
+          description: "雷電為右衛門の像があります",
+          links: [{ href: "https://www.city.tomi.nagano.jp/", text: "東御市役所" }],
+          images: [{ src: "/data/demo-raiden.jpg", alt: "雷電為右衛門の像" }],
+        },
+      },
+    ]);
+
+    const output = JSON.parse(trackActivityToTrackJson(activity, {
+      precision: { coordinates: 6 },
+    }));
+    const pointFeature = output.features.find((feature: any) => {
+      return feature.geometry?.type === "Point";
+    });
+
+    expect(pointFeature).toEqual(input.features[1]);
+    expect(output.bbox).toEqual([138.1, 36.1, 138.330295, 36.35955]);
+  });
+
+  test("keeps pins when downsampling and merging activities", () => {
+    const activity: TrackActivity = {
+      schemaVersion: 1,
+      metadata: {},
+      points: [
+        { lat: 36.1, lon: 138.1, distanceM: 0 },
+        { lat: 36.2, lon: 138.2, distanceM: 1000 },
+        { lat: 36.3, lon: 138.3, distanceM: 2000 },
+      ],
+      pins: [
+        {
+          lat: 36.35955,
+          lon: 138.330295,
+          properties: { title: "東御市役所" },
+        },
+      ],
+      warnings: [],
+    };
+
+    const downsampled = downsampleTrackActivity(activity, { maxPoints: 2 });
+    expect(downsampled.pins).toEqual(activity.pins);
+
+    const merged = mergeTrackActivities([activity], { name: "Merged" });
+    expect(merged.pins).toEqual(activity.pins);
+  });
+});
+
