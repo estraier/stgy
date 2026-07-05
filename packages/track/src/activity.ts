@@ -625,7 +625,7 @@ export function applyComputedMetadata(
     delete metadata.statistics;
   }
 
-  const training = buildMergedTraining(points);
+  const training = mergeTrainingMetadata(metadata.training, buildMergedTraining(points));
   if (training) {
     metadata.training = training;
   } else {
@@ -638,6 +638,35 @@ export function applyComputedMetadata(
   } else {
     delete metadata.bestEfforts;
   }
+}
+
+function mergeTrainingMetadata(
+  existing: TrackActivityTraining | undefined,
+  computed: TrackActivityTraining | undefined,
+): TrackActivityTraining | undefined {
+  if (!existing) {
+    return computed;
+  }
+  if (!computed) {
+    return hasTrainingValues(existing) ? { ...existing } : undefined;
+  }
+
+  const training: TrackActivityTraining = {
+    ...existing,
+    ...computed,
+  };
+  const source = {
+    ...(existing.source || {}),
+    ...(computed.source || {}),
+  };
+
+  if (Object.keys(source).length > 0) {
+    training.source = source;
+  } else {
+    delete training.source;
+  }
+
+  return hasTrainingValues(training) ? training : undefined;
 }
 
 function buildMergedTraining(points: TrackPoint[]): TrackActivityTraining | undefined {

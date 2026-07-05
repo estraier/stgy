@@ -141,4 +141,50 @@ describe("trackActivityToGpx", () => {
     expect(gpx).toContain('<gpxtpx:hr>100</gpxtpx:hr>');
     expect(gpx.match(/<trkseg>/gu)).toHaveLength(2);
   });
+  test("round-trips elapsed time, moving time, and calories through GPX extensions", () => {
+    const gpx = trackActivityToGpx({
+      schemaVersion: 1,
+      metadata: {
+        name: "Export ride",
+        sport: "cycling",
+        startTime: 1710000000,
+        endTime: 1710000120,
+        totalElapsedTime: 120,
+        totalTimerTime: 90,
+        totalDistanceM: 1200,
+        training: {
+          totalCaloriesCal: 123000,
+          source: {
+            totalCalories: "fit",
+          },
+        },
+      },
+      points: [
+        {
+          time: 1710000000,
+          lat: 35,
+          lon: 139,
+          distanceM: 0,
+          powerW: 150,
+        },
+        {
+          time: 1710000090,
+          lat: 35.001,
+          lon: 139.001,
+          distanceM: 1200,
+          powerW: 160,
+        },
+      ],
+      warnings: [],
+    });
+    const parsed = parseGpxText(gpx);
+
+    expect(gpx).toContain("stgy:TrackActivity");
+    expect(parsed.metadata.startTime).toBe(1710000000);
+    expect(parsed.metadata.endTime).toBe(1710000120);
+    expect(parsed.metadata.totalElapsedTime).toBe(120);
+    expect(parsed.metadata.totalTimerTime).toBe(90);
+    expect(parsed.metadata.training?.totalCaloriesCal).toBe(123000);
+  });
+
 });

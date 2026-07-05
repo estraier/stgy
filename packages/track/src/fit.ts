@@ -1014,6 +1014,10 @@ function buildTrackJsonActivityMetadata(
         .filter(isObjectRecord)
         .map((device) => ({ ...device }) as TrackDeviceInfo);
     }
+
+    metadata.statistics = readTrackJsonStatistics(getRecordProperty(src, "statistics"));
+    metadata.training = readTrackJsonTraining(getRecordProperty(src, "training"));
+    metadata.bestEfforts = readTrackJsonBestEfforts(getRecordProperty(src, "bestEfforts"));
   }
 
   if (options.name) {
@@ -1024,6 +1028,121 @@ function buildTrackJsonActivityMetadata(
   }
 
   return metadata;
+}
+
+function readTrackJsonStatistics(
+  value: Record<string, unknown> | undefined,
+): TrackActivityStatistics | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const statistics: TrackActivityStatistics = {};
+  assignTrackJsonNumericStatsFromMetadata(statistics, value, "speedKph");
+  assignTrackJsonNumericStatsFromMetadata(statistics, value, "cadenceRpm");
+  assignTrackJsonNumericStatsFromMetadata(statistics, value, "heartRateBpm");
+  assignTrackJsonNumericStatsFromMetadata(statistics, value, "powerW");
+  assignTrackJsonNumericStatsFromMetadata(statistics, value, "temperatureC");
+
+  return Object.keys(statistics).length > 0 ? statistics : undefined;
+}
+
+function assignTrackJsonNumericStatsFromMetadata(
+  output: TrackActivityStatistics,
+  src: Record<string, unknown>,
+  key: keyof TrackActivityStatistics,
+) {
+  const stats = readTrackJsonNumericStats(getRecordProperty(src, key));
+  if (stats) {
+    output[key] = stats as never;
+  }
+}
+
+function readTrackJsonNumericStats(
+  value: Record<string, unknown> | undefined,
+): TrackNumericStats | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const stats: TrackNumericStats = {};
+  assignOptionalNumber(stats, value, "avg");
+  assignOptionalNumber(stats, value, "median");
+  assignOptionalNumber(stats, value, "max");
+
+  return Object.keys(stats).length > 0 ? stats : undefined;
+}
+
+function readTrackJsonTraining(
+  value: Record<string, unknown> | undefined,
+): TrackActivityTraining | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const training: TrackActivityTraining = {};
+  assignOptionalNumber(training, value, "normalizedPowerW");
+  assignOptionalNumber(training, value, "totalWorkJ");
+  assignOptionalNumber(training, value, "totalCaloriesCal");
+
+  const sourceValue = getRecordProperty(value, "source");
+  if (sourceValue) {
+    const source: TrackActivityTrainingSource = {};
+    copyOptionalString(sourceValue, source as never, "normalizedPower" as never);
+    copyOptionalString(sourceValue, source as never, "totalWork" as never);
+    copyOptionalString(sourceValue, source as never, "totalCalories" as never);
+    if (Object.keys(source).length > 0) {
+      training.source = source;
+    }
+  }
+
+  return hasTrainingValues(training) ? training : undefined;
+}
+
+function readTrackJsonBestEfforts(
+  value: Record<string, unknown> | undefined,
+): TrackActivityBestEfforts | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const bestEfforts: TrackActivityBestEfforts = {};
+  const powerW = readTrackJsonDurationBestEfforts(getRecordProperty(value, "powerW"));
+  if (powerW) {
+    bestEfforts.powerW = powerW;
+  }
+
+  return Object.keys(bestEfforts).length > 0 ? bestEfforts : undefined;
+}
+
+function readTrackJsonDurationBestEfforts(
+  value: Record<string, unknown> | undefined,
+): TrackDurationBestEfforts | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const efforts: TrackDurationBestEfforts = {};
+  Object.keys(value).forEach((key) => {
+    const durationSeconds = Number(key);
+    const effort = toFiniteNumber(value[key]);
+    if (Number.isFinite(durationSeconds) && durationSeconds > 0 && isFiniteNumber(effort)) {
+      efforts[String(Math.round(durationSeconds))] = effort;
+    }
+  });
+
+  return Object.keys(efforts).length > 0 ? efforts : undefined;
+}
+
+function assignOptionalNumber(
+  output: Record<string, unknown>,
+  src: Record<string, unknown>,
+  key: string,
+) {
+  const value = toFiniteNumber(src[key]);
+  if (isFiniteNumber(value)) {
+    output[key] = value;
+  }
 }
 
 function copyOptionalString(
@@ -1568,6 +1687,7 @@ function fitMessagesToMetadata(
   }
 
   assignFitEndTime(metadata, session, points);
+  assignFitTimeFallbacks(metadata, points);
 
   if (activity) {
     assignNumber(
@@ -1593,6 +1713,36 @@ function fitMessagesToMetadata(
   }
 
   return metadata;
+}
+
+function assignFitTimeFallbacks(
+  metadata: TrackActivityMetadata,
+  points: TrackPoint[],
+) {
+  const times = points.map((point) => point.time).filter(isFiniteNumber);
+  if (times.length === 0) {
+    return;
+  }
+
+  if (!isFiniteNumber(metadata.startTime)) {
+    metadata.startTime = Math.min(...times);
+  }
+  if (!isFiniteNumber(metadata.endTime)) {
+    metadata.endTime = Math.max(...times);
+  }
+  if (
+    !isFiniteNumber(metadata.totalElapsedTime) &&
+    isFiniteNumber(metadata.startTime) &&
+    isFiniteNumber(metadata.endTime)
+  ) {
+    metadata.totalElapsedTime = Math.max(0, metadata.endTime - metadata.startTime);
+  }
+  if (
+    !isFiniteNumber(metadata.totalTimerTime) &&
+    isFiniteNumber(metadata.totalElapsedTime)
+  ) {
+    metadata.totalTimerTime = metadata.totalElapsedTime;
+  }
 }
 
 function assignFitEndTime(
@@ -3025,6 +3175,7 @@ function getFitLapFields(): FitWriteFieldDefinition[] {
     { num: 7, size: 4, baseType: 0x86 },
     { num: 8, size: 4, baseType: 0x86 },
     { num: 9, size: 4, baseType: 0x86 },
+    { num: 11, size: 2, baseType: 0x84 },
     { num: 13, size: 2, baseType: 0x84 },
     { num: 14, size: 2, baseType: 0x84 },
     { num: 15, size: 1, baseType: 0x02 },
@@ -3053,6 +3204,8 @@ function writeFitLapMessage(chunks: number[], activity: TrackActivity, points: T
   offset += 4;
   writeFitScaledUint32Value(view, offset, summary.distanceM, 100);
   offset += 4;
+  writeFitUint16(view, offset, getFitExportKilocalories(summary.totalCaloriesCal));
+  offset += 2;
   writeFitScaledUint16(view, offset, summary.avgSpeedMps, 1000, 0);
   offset += 2;
   writeFitScaledUint16(view, offset, summary.maxSpeedMps, 1000, 0);
@@ -3082,6 +3235,7 @@ function getFitSessionFields(): FitWriteFieldDefinition[] {
     { num: 7, size: 4, baseType: 0x86 },
     { num: 8, size: 4, baseType: 0x86 },
     { num: 9, size: 4, baseType: 0x86 },
+    { num: 11, size: 2, baseType: 0x84 },
     { num: 14, size: 2, baseType: 0x84 },
     { num: 15, size: 2, baseType: 0x84 },
     { num: 16, size: 1, baseType: 0x02 },
@@ -3114,6 +3268,8 @@ function writeFitSessionMessage(
   offset += 4;
   writeFitScaledUint32Value(view, offset, summary.distanceM, 100);
   offset += 4;
+  writeFitUint16(view, offset, getFitExportKilocalories(summary.totalCaloriesCal));
+  offset += 2;
   writeFitScaledUint16(view, offset, summary.avgSpeedMps, 1000, 0);
   offset += 2;
   writeFitScaledUint16(view, offset, summary.maxSpeedMps, 1000, 0);
@@ -3187,6 +3343,7 @@ type FitExportSummary = {
   maxCadenceRpm?: number;
   avgPowerW?: number;
   maxPowerW?: number;
+  totalCaloriesCal?: number;
 };
 
 function buildFitExportSummary(
@@ -3219,6 +3376,9 @@ function buildFitExportSummary(
     maxCadenceRpm: maxFiniteNumbers(cadences),
     avgPowerW: averageFiniteNumbers(powers),
     maxPowerW: maxFiniteNumbers(powers),
+    totalCaloriesCal: getFiniteMetadataNumber(
+      activity.metadata.training?.totalCaloriesCal,
+    ),
   };
 }
 
@@ -3256,6 +3416,10 @@ function getFitExportDistance(points: TrackPoint[]): number | undefined {
   }
 
   return Math.max(...distances) - Math.min(...distances);
+}
+
+function getFitExportKilocalories(totalCaloriesCal: number | undefined): number | undefined {
+  return isFiniteNumber(totalCaloriesCal) ? totalCaloriesCal / 1000 : undefined;
 }
 
 function getFitSport(activity: TrackActivity): number {

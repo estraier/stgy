@@ -31,6 +31,8 @@ type ParsedGpxTime = {
   offsetSeconds?: number;
 };
 
+const STGY_GPX_EXTENSION_NAMESPACE = "https://stgy.jp/xmlschemas/TrackActivity/v1";
+
 export function parseGpxText(
   xmlText: string,
   options: ParseGpxOptions = {},
@@ -232,7 +234,59 @@ function buildGpxMetadata(root: Element, points: TrackPoint[]): TrackActivityMet
     metadata.totalDistanceM = totalDistanceM;
   }
 
+  applyGpxActivityExtensionMetadata(metadata, metadataElement);
+
   return metadata;
+}
+
+function applyGpxActivityExtensionMetadata(
+  metadata: TrackActivityMetadata,
+  metadataElement: Element | undefined,
+) {
+  const activityElement = metadataElement
+    ? getAllDescendants(metadataElement).find((element) => {
+      return getLocalName(element) === "TrackActivity";
+    })
+    : undefined;
+  if (!activityElement) {
+    return;
+  }
+
+  assignGpxActivityExtensionNumber(metadata, activityElement, "startTime");
+  assignGpxActivityExtensionNumber(metadata, activityElement, "endTime");
+  assignGpxActivityExtensionNumber(metadata, activityElement, "totalElapsedTime");
+  assignGpxActivityExtensionNumber(metadata, activityElement, "totalTimerTime");
+  assignGpxActivityExtensionNumber(metadata, activityElement, "totalDistanceM");
+  assignGpxActivityExtensionNumber(
+    metadata,
+    activityElement,
+    "localTimeOffsetSeconds",
+  );
+
+  const totalCaloriesCal = parseOptionalNumber(
+    getDirectChildText(activityElement, "totalCaloriesCal"),
+  );
+  if (isFiniteNumber(totalCaloriesCal)) {
+    metadata.training = {
+      ...(metadata.training || {}),
+      totalCaloriesCal,
+      source: {
+        ...(metadata.training?.source || {}),
+        totalCalories: "fit",
+      },
+    };
+  }
+}
+
+function assignGpxActivityExtensionNumber(
+  metadata: TrackActivityMetadata,
+  activityElement: Element,
+  key: keyof TrackActivityMetadata,
+) {
+  const value = parseOptionalNumber(getDirectChildText(activityElement, String(key)));
+  if (isFiniteNumber(value)) {
+    metadata[key] = value as never;
+  }
 }
 
 function getCommonLocalTimeOffset(root: Element): number | undefined {
@@ -486,14 +540,21 @@ export function trackActivityToGpx(
   const name = options.name || activity.metadata.name || "Track";
   const description = options.description || activity.metadata.description;
   const createdAt = activity.metadata.createdAt ?? activity.metadata.startTime;
+  const metadataExtensionLines = formatGpxActivityMetadataExtensions(activity);
   const lines: string[] = [
     '<?xml version="1.0" encoding="UTF-8"?>',
     `<gpx creator="${escapeXmlAttribute(creator)}" version="1.1" ` +
       'xmlns="http://www.topografix.com/GPX/1/1" ' +
-      'xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1">',
+      'xmlns:gpxtpx="http://www.garmin.com/xmlschemas/TrackPointExtension/v1" ' +
+      `xmlns:stgy="${STGY_GPX_EXTENSION_NAMESPACE}">`,
   ];
 
-  if (isFiniteNumber(createdAt) || isNonEmptyText(name) || isNonEmptyText(description)) {
+  if (
+    isFiniteNumber(createdAt) ||
+    isNonEmptyText(name) ||
+    isNonEmptyText(description) ||
+    metadataExtensionLines.length > 0
+  ) {
     lines.push("  <metadata>");
     if (isNonEmptyText(name)) {
       lines.push(`    <name>${escapeXmlText(name)}</name>`);
@@ -503,6 +564,11 @@ export function trackActivityToGpx(
     }
     if (isFiniteNumber(createdAt)) {
       lines.push(`    <time>${formatGpxTime(createdAt)}</time>`);
+    }
+    if (metadataExtensionLines.length > 0) {
+      lines.push("    <extensions>");
+      lines.push(...metadataExtensionLines.map((line) => `      ${line}`));
+      lines.push("    </extensions>");
     }
     lines.push("  </metadata>");
   }
@@ -533,6 +599,37 @@ export function trackActivityToGpx(
   lines.push("  </trk>");
   lines.push("</gpx>");
   return `${lines.join("\n")}\n`;
+}
+
+function formatGpxActivityMetadataExtensions(activity: TrackActivity): string[] {
+  const values: [string, number | undefined][] = [
+    ["startTime", activity.metadata.startTime],
+    ["endTime", activity.metadata.endTime],
+    ["totalElapsedTime", activity.metadata.totalElapsedTime],
+    ["totalTimerTime", activity.metadata.totalTimerTime],
+    ["totalDistanceM", activity.metadata.totalDistanceM],
+    ["localTimeOffsetSeconds", activity.metadata.localTimeOffsetSeconds],
+    ["totalCaloriesCal", activity.metadata.training?.totalCaloriesCal],
+  ];
+  const lines = values
+    .filter((entry): entry is [string, number] => isFiniteNumber(entry[1]))
+    .map(([key, value]) => {
+      return `<stgy:${key}>${formatGpxMetadataNumber(value)}</stgy:${key}>`;
+    });
+
+  if (lines.length === 0) {
+    return [];
+  }
+
+  return [
+    "<stgy:TrackActivity>",
+    ...lines.map((line) => `  ${line}`),
+    "</stgy:TrackActivity>",
+  ];
+}
+
+function formatGpxMetadataNumber(value: number): string {
+  return Number.isInteger(value) ? String(value) : String(value);
 }
 
 type GpxTrackPointFormatOptions = {

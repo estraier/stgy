@@ -1620,6 +1620,12 @@ describe("trackActivityToFit", () => {
         totalElapsedTime: 10,
         totalTimerTime: 10,
         totalDistanceM: 120,
+        training: {
+          totalCaloriesCal: 123000,
+          source: {
+            totalCalories: "fit",
+          },
+        },
       },
       points: [
         {
@@ -1650,11 +1656,82 @@ describe("trackActivityToFit", () => {
       warnings: [],
     });
 
+    const definitions = readFitExportDefinitions(exported);
+
     expect(exported[0]).toBe(14);
     expect(String.fromCharCode(...exported.slice(8, 12))).toBe(".FIT");
     expect(exported.length).toBeGreaterThan(14 + 2);
+    expect(getFitExportDefinition(definitions, 18)?.fields.map((field) => field.num))
+      .toContain(11);
+    expect(getFitExportDefinition(definitions, 19)?.fields.map((field) => field.num))
+      .toContain(11);
   });
 });
+
+
+type FitExportDefinition = {
+  localMessageType: number;
+  globalMessageNumber: number;
+  fields: { num: number; size: number; baseType: number }[];
+};
+
+function readFitExportDefinitions(bytes: Uint8Array): FitExportDefinition[] {
+  const headerSize = bytes[0];
+  const dataSize = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength)
+    .getUint32(4, true);
+  const definitions = new Map<number, FitExportDefinition>();
+  const output: FitExportDefinition[] = [];
+  let offset = headerSize;
+  const end = headerSize + dataSize;
+
+  while (offset < end) {
+    const recordHeader = bytes[offset];
+    offset += 1;
+    const localMessageType = recordHeader & 0x0f;
+
+    if ((recordHeader & 0x40) !== 0) {
+      offset += 1;
+      const architecture = bytes[offset];
+      offset += 1;
+      const littleEndian = architecture === 0;
+      const view = new DataView(bytes.buffer, bytes.byteOffset + offset, 2);
+      const globalMessageNumber = view.getUint16(0, littleEndian);
+      offset += 2;
+      const fieldCount = bytes[offset];
+      offset += 1;
+      const fields = Array.from({ length: fieldCount }, () => {
+        const field = {
+          num: bytes[offset],
+          size: bytes[offset + 1],
+          baseType: bytes[offset + 2],
+        };
+        offset += 3;
+        return field;
+      });
+      const definition = { localMessageType, globalMessageNumber, fields };
+      definitions.set(localMessageType, definition);
+      output.push(definition);
+      continue;
+    }
+
+    const definition = definitions.get(localMessageType);
+    if (!definition) {
+      throw new Error(`FIT data message has no definition: ${localMessageType}`);
+    }
+    offset += definition.fields.reduce((sum, field) => sum + field.size, 0);
+  }
+
+  return output;
+}
+
+function getFitExportDefinition(
+  definitions: FitExportDefinition[],
+  globalMessageNumber: number,
+): FitExportDefinition | undefined {
+  return definitions.find((definition) => {
+    return definition.globalMessageNumber === globalMessageNumber;
+  });
+}
 
 
 describe("TrackJSON Point Feature pins", () => {
@@ -1738,6 +1815,54 @@ describe("TrackJSON Point Feature pins", () => {
 
     const merged = mergeTrackActivities([activity], { name: "Merged" });
     expect(merged.pins).toEqual(activity.pins);
+  });
+});
+
+
+describe("TrackJSON metadata round-trip", () => {
+  test("preserves training calories from FIT-derived TrackJSON", () => {
+    const activity: TrackActivity = {
+      schemaVersion: 1,
+      metadata: {
+        name: "Calorie Ride",
+        totalElapsedTime: 2,
+        totalTimerTime: 2,
+        totalDistanceM: 12,
+        training: {
+          normalizedPowerW: 147,
+          totalWorkJ: 294,
+          totalCaloriesCal: 123456,
+          source: {
+            normalizedPower: "computed",
+            totalWork: "computed",
+            totalCalories: "fit",
+          },
+        },
+      },
+      points: [
+        {
+          lat: 36,
+          lon: 138,
+          time: 1000,
+          distanceM: 0,
+          powerW: 147,
+        },
+        {
+          lat: 36.0001,
+          lon: 138.0001,
+          time: 1002,
+          distanceM: 12,
+          powerW: 147,
+        },
+      ],
+      warnings: [],
+    };
+
+    const trackJson = trackActivityToTrackJson(activity, { includeMetadata: true });
+    const parsed = trackJsonDataToTrackActivity(JSON.parse(trackJson));
+
+    expect(parsed.metadata.training?.totalCaloriesCal).toBe(123456);
+    expect(parsed.metadata.training?.source?.totalCalories).toBe("fit");
   });
 });
 

@@ -508,51 +508,55 @@ export default function TrackSandbox() {
 
                 <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
                   <h2 className="mb-3 text-sm font-semibold text-slate-900">Download</h2>
-                  <div className="flex flex-wrap gap-3">
-                    {downloadUrls.raw && (
-                      <a
-                        href={downloadUrls.raw}
-                        download={`${safeBaseName(result.title)}.trj`}
-                        className="inline-flex items-center gap-2 rounded-xl bg-slate-900
-                          px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
-                      >
-                        <Download className="h-4 w-4" />
-                        TrackJSON
-                      </a>
-                    )}
-                    {downloadUrls.gzip && (
-                      <a
-                        href={downloadUrls.gzip}
-                        download={`${safeBaseName(result.title)}.trjgz`}
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-300
-                          bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        <Download className="h-4 w-4" />
-                        Compressed
-                      </a>
-                    )}
-                    {downloadUrls.gpx && (
-                      <a
-                        href={downloadUrls.gpx}
-                        download={`${safeBaseName(result.title)}.gpx`}
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-300
-                          bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        <Download className="h-4 w-4" />
-                        GPX
-                      </a>
-                    )}
-                    {downloadUrls.fit && (
-                      <a
-                        href={downloadUrls.fit}
-                        download={`${safeBaseName(result.title)}.fit`}
-                        className="inline-flex items-center gap-2 rounded-xl border border-slate-300
-                          bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
-                      >
-                        <Download className="h-4 w-4" />
-                        FIT
-                      </a>
-                    )}
+                  <div className="space-y-3">
+                    <div className="flex flex-wrap gap-3">
+                      {downloadUrls.raw && (
+                        <a
+                          href={downloadUrls.raw}
+                          download={`${safeBaseName(result.title)}.trj`}
+                          className="inline-flex items-center gap-2 rounded-xl bg-slate-900
+                            px-4 py-2 text-sm font-semibold text-white hover:bg-slate-700"
+                        >
+                          <Download className="h-4 w-4" />
+                          TrackJSON
+                        </a>
+                      )}
+                      {downloadUrls.gzip && (
+                        <a
+                          href={downloadUrls.gzip}
+                          download={`${safeBaseName(result.title)}.trjgz`}
+                          className="inline-flex items-center gap-2 rounded-xl border border-slate-300
+                            bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          <Download className="h-4 w-4" />
+                          Compressed
+                        </a>
+                      )}
+                    </div>
+                    <div className="flex flex-wrap gap-3">
+                      {downloadUrls.gpx && (
+                        <a
+                          href={downloadUrls.gpx}
+                          download={`${safeBaseName(result.title)}.gpx`}
+                          className="inline-flex items-center gap-2 rounded-xl border border-slate-300
+                            bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          <Download className="h-4 w-4" />
+                          GPX
+                        </a>
+                      )}
+                      {downloadUrls.fit && (
+                        <a
+                          href={downloadUrls.fit}
+                          download={`${safeBaseName(result.title)}.fit`}
+                          className="inline-flex items-center gap-2 rounded-xl border border-slate-300
+                            bg-white px-4 py-2 text-sm font-semibold text-slate-700 hover:bg-slate-50"
+                        >
+                          <Download className="h-4 w-4" />
+                          FIT
+                        </a>
+                      )}
+                    </div>
                   </div>
                 </div>
               </section>
