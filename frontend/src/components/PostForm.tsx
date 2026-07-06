@@ -10,6 +10,7 @@ import React, {
   useId,
 } from "react";
 import { makeArticleHtmlFromMarkdown } from "@/utils/article";
+import { useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
 import { parseBodyAndTags } from "@/utils/parse";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import UserMentionButton from "@/components/UserMentionButton";
@@ -543,6 +544,7 @@ export default function PostForm({
   const pasteNodesRef = useRef<MdNode[] | null>(null);
   const pasteImageNodesRef = useRef<MdElementNode[] | null>(null);
   const pasteHasBlockRef = useRef<boolean>(false);
+  const hydrateTrackMaps = useTrackMapHydrator();
 
   function cryptoRandomId() {
     if (typeof crypto !== "undefined" && typeof (crypto as Crypto).randomUUID === "function") {
@@ -1648,6 +1650,7 @@ export default function PostForm({
         back.style.display = "block";
         frontIsARef.current = !frontIsA;
         bodyRef.current = back;
+        hydrateTrackMaps(back);
         rebuildAnchors();
         scheduleSyncRef.current();
         schedulePreviewHighlightRef.current();
@@ -1657,6 +1660,7 @@ export default function PostForm({
     },
     [
       previewHtml,
+      hydrateTrackMaps,
       rebuildAnchors,
       overlayActive,
       attachPreviewObservers,
@@ -1676,6 +1680,7 @@ export default function PostForm({
       front.style.display = "block";
       (previewFrontIsARef.current ? b : a).style.display = "none";
       previewBodyRef.current = front;
+      hydrateTrackMaps(front);
     };
     const initOverlay = () => {
       const a = overlayBodyARef.current,
@@ -1686,15 +1691,19 @@ export default function PostForm({
       front.style.display = "block";
       (overlayFrontIsARef.current ? b : a).style.display = "none";
       overlayBodyRef.current = front;
+      hydrateTrackMaps(front);
     };
     if (overlayActive) initOverlay();
     else initNormal();
-  }, [showPreview, overlayActive, previewHtml]);
+  }, [showPreview, overlayActive, previewHtml, hydrateTrackMaps]);
 
   useEffect(() => {
-    swapInto(previewBodyARef.current, previewBodyBRef.current, previewFrontIsARef, previewBodyRef);
-    swapInto(overlayBodyARef.current, overlayBodyBRef.current, overlayFrontIsARef, overlayBodyRef);
-  }, [previewHtml, swapInto]);
+    if (overlayActive) {
+      swapInto(overlayBodyARef.current, overlayBodyBRef.current, overlayFrontIsARef, overlayBodyRef);
+    } else {
+      swapInto(previewBodyARef.current, previewBodyBRef.current, previewFrontIsARef, previewBodyRef);
+    }
+  }, [overlayActive, previewHtml, swapInto]);
 
   function handleSubmit(e: React.FormEvent) {
     if (overLimit) {

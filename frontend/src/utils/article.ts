@@ -89,6 +89,8 @@ export function makeSnippetHtmlFromMarkdown(mdText: string, idPrefix?: string) {
   nodes = rewriteMediaUrls(nodes, true);
   nodes = mdFilterForFeatured(nodes);
   nodes = mdCutOff(nodes, { maxLen, maxHeight, imgLen, imgHeight, cutOnHr: true });
+  nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
+  nodes = mdGroupMapGrid(nodes, { maxElements: 5 });
   return mdRenderHtml(nodes, false, idPrefix);
 }
 
@@ -123,6 +125,8 @@ export function makePubAttributesFromJsonSnippet(snippet: string): {
 export function makeHtmlFromJsonSnippet(snippet: string, idPrefix?: string) {
   let nodes = deserializeMdNodes(snippet);
   nodes = rewriteMediaUrls(nodes, true);
+  nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
+  nodes = mdGroupMapGrid(nodes, { maxElements: 5 });
   return mdRenderHtml(nodes, false, idPrefix);
 }
 

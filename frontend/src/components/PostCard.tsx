@@ -4,6 +4,7 @@ import { Config } from "@/config";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRef, useMemo, useEffect, useState, useCallback } from "react";
 import PrismHighlighter from "@/components/PrismHighlighter";
+import { stopTrackMapEvent, useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
 import type { Post, PostDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
 import { Heart, MessageCircle, Copy } from "lucide-react";
@@ -63,6 +64,22 @@ export default function PostCard({
   );
 
   const prismDeps = useMemo(() => [bodyHtml], [bodyHtml]);
+  const hydrateTrackMaps = useTrackMapHydrator();
+  const shouldHydrateMaps = bodyHtml.includes("stgy-track-map");
+
+  useEffect(() => {
+    if (!shouldHydrateMaps) return;
+    const root = contentRef.current;
+    if (!root) return;
+    let id2 = 0;
+    const id1 = requestAnimationFrame(() => {
+      id2 = requestAnimationFrame(() => hydrateTrackMaps(root));
+    });
+    return () => {
+      cancelAnimationFrame(id1);
+      if (id2) cancelAnimationFrame(id2);
+    };
+  });
 
   const isBlockedForFocusUser = Boolean(
     (post as { isBlockingFocusUser?: boolean }).isBlockingFocusUser,
@@ -630,6 +647,8 @@ export default function PostCard({
         lang={postLang}
         className={`markdown-body post-content${truncated ? " excerpt" : ""}`}
         style={{ minHeight: 36, userSelect: "text" }}
+        onMouseDown={stopTrackMapEvent}
+        onClick={stopTrackMapEvent}
         dangerouslySetInnerHTML={{ __html: bodyHtml }}
       />
 
