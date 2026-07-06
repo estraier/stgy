@@ -11,7 +11,7 @@ const ALLOWED_TRACK_IMAGE_PATTERNS: RegExp[] = [
 
 export function stopTrackMapEvent(e: SyntheticEvent) {
   const target = e.target;
-  if (target instanceof HTMLElement && target.closest(".stgy-track-map, .stgy-track-graph")) {
+  if (target instanceof Element && target.closest(".stgy-track-map, .stgy-track-graph")) {
     e.stopPropagation();
   }
 }

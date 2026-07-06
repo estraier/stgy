@@ -49,6 +49,8 @@ function MarkdownHtmlBodyImpl({
         lang={lang}
         className={className}
         style={{ minHeight, userSelect }}
+        onPointerDown={stopTrackMapEvent}
+        onTouchStart={stopTrackMapEvent}
         onMouseDown={stopTrackMapEvent}
         onClick={stopTrackMapEvent}
         dangerouslySetInnerHTML={{ __html: html }}
