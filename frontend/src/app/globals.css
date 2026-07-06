@@ -401,6 +401,39 @@ body {
   width: min(35em, 70%);
   height: 35em;
 }
+.markdown-body figure.stgy-track-map {
+  overflow: clip;
+  contain: layout paint;
+}
+@supports not (overflow: clip) {
+  .markdown-body figure.stgy-track-map {
+    overflow: hidden;
+  }
+}
+.markdown-body figure.stgy-track-map .stgy-track-canvas,
+.markdown-body figure.stgy-track-map .leaflet-container {
+  overflow: hidden;
+}
+.markdown-body figure.stgy-track-map .leaflet-control-container {
+  max-width: 100%;
+}
+.markdown-body figure.stgy-track-map .leaflet-popup-content-wrapper,
+.markdown-body figure.stgy-track-map .leaflet-popup-tip {
+  max-width: 100%;
+}
+.markdown-body figure.stgy-track-map + .stgy-track-graph {
+  display: flow-root;
+  overflow: clip;
+}
+@supports not (overflow: clip) {
+  .markdown-body figure.stgy-track-map + .stgy-track-graph {
+    overflow: hidden;
+  }
+}
+.markdown-body figure.stgy-track-map + .stgy-track-graph svg {
+  display: block;
+}
+
 .markdown-body figure.stgy-track-map .stgy-track-canvas {
   box-sizing: border-box;
   width: 100%;
