@@ -371,6 +371,7 @@ body {
   width: 100%;
 }
 
+/* Track maps base layout. Keep this early block in place: Leaflet relies on this structure. */
 .markdown-body figure.stgy-track-map {
   position: relative;
   display: flow-root;
@@ -618,7 +619,10 @@ span[aria-label="Identicon"] > svg {
   transform: translate(-0.5px, -0.5px);
 }
 
-/* Keep captions outside the clipped Leaflet canvas. */
+/* Track maps final overrides.
+   Keep this late block after generic Markdown/media rules.
+   Do not merge it into the base block: moving these rules has caused Leaflet to see 0px maps.
+   size controls canvas height only; width is controlled by normal/grid/float layout. */
 .markdown-body figure.stgy-track-map {
   height: auto;
   overflow: visible;
@@ -631,34 +635,12 @@ span[aria-label="Identicon"] > svg {
 .markdown-body figure.stgy-track-map[data-size="xlarge"] {
   height: auto;
 }
-/* Final track map size rules:
-   size controls canvas height only. Width is controlled by layout mode. */
+/* Explicit canvas heights. Keep pixel heights here; CSS-variable height broke Leaflet sizing. */
 .markdown-body figure.stgy-track-map {
-  --stgy-track-map-height: 520px;
   width: 100%;
   max-width: 100%;
   height: auto;
   overflow: visible;
-}
-
-.markdown-body figure.stgy-track-map[data-size="xsmall"] {
-  --stgy-track-map-height: 260px;
-}
-
-.markdown-body figure.stgy-track-map[data-size="small"] {
-  --stgy-track-map-height: 360px;
-}
-
-.markdown-body figure.stgy-track-map[data-size="medium"] {
-  --stgy-track-map-height: 520px;
-}
-
-.markdown-body figure.stgy-track-map[data-size="large"] {
-  --stgy-track-map-height: 640px;
-}
-
-.markdown-body figure.stgy-track-map[data-size="xlarge"] {
-  --stgy-track-map-height: 760px;
 }
 
 .markdown-body figure.stgy-track-map .stgy-track-canvas {
