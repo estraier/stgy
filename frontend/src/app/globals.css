@@ -381,26 +381,6 @@ body {
   height: 26em;
   margin: 0.55em 0.25em;
 }
-.markdown-body figure.stgy-track-map[data-size="xsmall"] {
-  width: min(13em, 32%);
-  height: 13em;
-}
-.markdown-body figure.stgy-track-map[data-size="small"] {
-  width: min(16em, 40%);
-  height: 16em;
-}
-.markdown-body figure.stgy-track-map[data-size="medium"] {
-  width: min(20em, 50%);
-  height: 20em;
-}
-.markdown-body figure.stgy-track-map[data-size="large"] {
-  width: min(27.5em, 60%);
-  height: 27.5em;
-}
-.markdown-body figure.stgy-track-map[data-size="xlarge"] {
-  width: min(35em, 70%);
-  height: 35em;
-}
 .markdown-body figure.stgy-track-map {
   overflow: clip;
   contain: layout paint;
@@ -480,57 +460,6 @@ body {
   width: min(24em, 50%);
   margin: 0.15em 0 0.15em 0.6em;
 }
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="left"][data-size="xsmall"],
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="right"][data-size="xsmall"] {
-  width: min(13em, 32%);
-}
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="left"][data-size="small"],
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="right"][data-size="small"] {
-  width: min(16em, 40%);
-}
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="left"][data-size="medium"],
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="right"][data-size="medium"] {
-  width: min(20em, 50%);
-}
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="left"][data-size="large"],
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="right"][data-size="large"] {
-  width: min(27.5em, 60%);
-}
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="left"][data-size="xlarge"],
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="right"][data-size="xlarge"] {
-  width: min(35em, 70%);
-}
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map:not([data-float])[data-size="xsmall"]
-  + .stgy-track-graph {
-  width: min(13em, 32%);
-  margin: 0 0.25em 0.55em;
-}
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map:not([data-float])[data-size="small"]
-  + .stgy-track-graph {
-  width: min(16em, 40%);
-  margin: 0 0.25em 0.55em;
-}
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map:not([data-float])[data-size="medium"]
-  + .stgy-track-graph {
-  width: min(20em, 50%);
-  margin: 0 0.25em 0.55em;
-}
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map:not([data-float])[data-size="large"]
-  + .stgy-track-graph {
-  width: min(27.5em, 60%);
-  margin: 0 0.25em 0.55em;
-}
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map:not([data-float])[data-size="xlarge"]
-  + .stgy-track-graph {
-  width: min(35em, 70%);
-  margin: 0 0.25em 0.55em;
-}
-
 .markdown-body:not(.excerpt) figure.stgy-track-map[data-float="left"] + .stgy-track-graph {
   float: left;
   clear: left;
@@ -543,47 +472,6 @@ body {
   width: min(24em, 50%);
   margin: 0 0 0.15em 0.6em;
 }
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map[data-float="left"][data-size="xsmall"]
-  + .stgy-track-graph,
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map[data-float="right"][data-size="xsmall"]
-  + .stgy-track-graph {
-  width: min(13em, 32%);
-}
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map[data-float="left"][data-size="small"]
-  + .stgy-track-graph,
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map[data-float="right"][data-size="small"]
-  + .stgy-track-graph {
-  width: min(16em, 40%);
-}
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map[data-float="left"][data-size="medium"]
-  + .stgy-track-graph,
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map[data-float="right"][data-size="medium"]
-  + .stgy-track-graph {
-  width: min(20em, 50%);
-}
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map[data-float="left"][data-size="large"]
-  + .stgy-track-graph,
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map[data-float="right"][data-size="large"]
-  + .stgy-track-graph {
-  width: min(27.5em, 60%);
-}
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map[data-float="left"][data-size="xlarge"]
-  + .stgy-track-graph,
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map[data-float="right"][data-size="xlarge"]
-  + .stgy-track-graph {
-  width: min(35em, 70%);
-}
-
 .markdown-body:not(.excerpt) .stgy-track-grid {
   display: grid;
   gap: 0.5em;
@@ -597,47 +485,8 @@ body {
   max-width: 100%;
   margin: 0;
 }
-.markdown-body:not(.excerpt) .stgy-track-grid figure.stgy-track-map[data-size] {
-  width: unset;
-}
 .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="1"] {
   grid-template-columns: minmax(0, 1fr);
-  width: 60%;
-  margin-left: auto;
-  margin-right: auto;
-}
-.markdown-body:not(.excerpt)
-  .stgy-track-grid[data-cols="1"]:has(figure.stgy-track-map[data-size="xsmall"]) {
-  width: 35%;
-}
-.markdown-body:not(.excerpt)
-  .stgy-track-grid[data-cols="1"]:has(figure.stgy-track-map[data-size="small"]) {
-  width: 46%;
-}
-.markdown-body:not(.excerpt)
-  .stgy-track-grid[data-cols="1"]:has(figure.stgy-track-map[data-size="large"]) {
-  width: 73%;
-}
-.markdown-body:not(.excerpt)
-  .stgy-track-grid[data-cols="1"]:has(figure.stgy-track-map[data-size="xlarge"]) {
-  width: 95%;
-}
-@media (max-width: 640px) {
-  .markdown-body:not(.excerpt)
-    .stgy-track-grid[data-cols="1"]:has(figure.stgy-track-map[data-size="xsmall"]) {
-    width: 46%;
-  }
-  .markdown-body:not(.excerpt)
-    .stgy-track-grid[data-cols="1"]:has(figure.stgy-track-map[data-size="small"]) {
-    width: 60%;
-  }
-  .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="1"] {
-    width: 80%;
-  }
-  .markdown-body:not(.excerpt)
-    .stgy-track-grid[data-cols="1"]:has(figure.stgy-track-map[data-size="large"]) {
-    width: 90%;
-  }
 }
 .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="2"] {
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -803,93 +652,6 @@ span[aria-label="Identicon"] > svg {
   height: 35em;
 }
 
-/* Track map size policy:
-   - size controls only canvas height.
-   - normal and grid maps use the available width.
-   - float controls width independently from size. */
-.markdown-body figure.stgy-track-map {
-  --stgy-track-map-height: 520px;
-  width: 100%;
-  max-width: 100%;
-  height: auto;
-  overflow: visible;
-  contain: layout;
-}
-
-.markdown-body figure.stgy-track-map[data-size="xsmall"] {
-  --stgy-track-map-height: 260px;
-  width: 100%;
-  max-width: 100%;
-}
-
-.markdown-body figure.stgy-track-map[data-size="small"] {
-  --stgy-track-map-height: 360px;
-  width: 100%;
-  max-width: 100%;
-}
-
-.markdown-body figure.stgy-track-map[data-size="medium"] {
-  --stgy-track-map-height: 520px;
-  width: 100%;
-  max-width: 100%;
-}
-
-.markdown-body figure.stgy-track-map[data-size="large"] {
-  --stgy-track-map-height: 640px;
-  width: 100%;
-  max-width: 100%;
-}
-
-.markdown-body figure.stgy-track-map[data-size="xlarge"] {
-  --stgy-track-map-height: 760px;
-  width: 100%;
-  max-width: 100%;
-}
-
-.markdown-body figure.stgy-track-map .stgy-track-canvas {
-  width: 100%;
-  max-width: 100%;
-  height: var(--stgy-track-map-height);
-  overflow: hidden;
-  contain: layout paint;
-}
-
-.markdown-body figure.stgy-track-map + .stgy-track-graph {
-  width: 100%;
-  max-width: 100%;
-  margin: 0 0.25em 0.55em;
-}
-
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="left"],
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="right"] {
-  width: min(24rem, 50%);
-  max-width: 100%;
-}
-
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="left"] + .stgy-track-graph,
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="right"] + .stgy-track-graph {
-  width: min(24rem, 50%);
-  max-width: 100%;
-}
-
-.markdown-body:not(.excerpt) .stgy-track-grid {
-  width: 100%;
-}
-
-.markdown-body:not(.excerpt) .stgy-track-grid[data-cols="1"],
-.markdown-body:not(.excerpt) .stgy-track-grid[data-cols="1"]:has(figure.stgy-track-map[data-size="xsmall"]),
-.markdown-body:not(.excerpt) .stgy-track-grid[data-cols="1"]:has(figure.stgy-track-map[data-size="small"]),
-.markdown-body:not(.excerpt) .stgy-track-grid[data-cols="1"]:has(figure.stgy-track-map[data-size="large"]),
-.markdown-body:not(.excerpt) .stgy-track-grid[data-cols="1"]:has(figure.stgy-track-map[data-size="xlarge"]) {
-  width: 100%;
-}
-
-.markdown-body:not(.excerpt) .stgy-track-grid figure.stgy-track-map,
-.markdown-body:not(.excerpt) .stgy-track-grid figure.stgy-track-map[data-size] {
-  width: 100%;
-  max-width: 100%;
-}
-
 /* Final track map size rules:
    size controls canvas height only. Width is controlled by layout mode. */
 .markdown-body figure.stgy-track-map {
@@ -990,32 +752,7 @@ span[aria-label="Identicon"] > svg {
 }
 
 .markdown-body:not(.excerpt) figure.stgy-track-map[data-float="left"] + .stgy-track-graph,
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="right"] + .stgy-track-graph,
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="left"][data-size] + .stgy-track-graph,
-.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="right"][data-size] + .stgy-track-graph {
+.markdown-body:not(.excerpt) figure.stgy-track-map[data-float="right"] + .stgy-track-graph {
   width: min(24rem, 50%);
   max-width: 100%;
-}
-
-/* Track graph width must not follow map size.
-   These selectors intentionally match the old high-specificity size rules. */
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map:not([data-float])[data-size="xsmall"]
-  + .stgy-track-graph,
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map:not([data-float])[data-size="small"]
-  + .stgy-track-graph,
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map:not([data-float])[data-size="medium"]
-  + .stgy-track-graph,
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map:not([data-float])[data-size="large"]
-  + .stgy-track-graph,
-.markdown-body:not(.excerpt)
-  figure.stgy-track-map:not([data-float])[data-size="xlarge"]
-  + .stgy-track-graph {
-  width: 100%;
-  max-width: 100%;
-  margin: 0 0.25em 0.55em;
-  box-sizing: border-box;
 }
