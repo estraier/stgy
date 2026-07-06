@@ -16,6 +16,7 @@ import { formatDateTime, makeAbsoluteUrl, convertForDirection } from "@/utils/fo
 import { parseDateString } from "@/utils/parse";
 import PubImageBlockBinder from "@/components/PubImageBlockBinder";
 import PubScrollAction from "@/components/PubScrollAction";
+import PubTrackMapHydrator from "@/components/PubTrackMapHydrator";
 import type { Metadata } from "next";
 
 type PageParams = { id: string };
@@ -146,6 +147,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
     const olderHref = post.olderPostId
       ? `/pub/${post.olderPostId}${design ? `?design=${encodeURIComponent(design)}` : ""}`
       : "";
+    const hasTrackMap = article.html.includes("stgy-track-map");
 
     return (
       <div
@@ -179,6 +181,7 @@ export default async function PubPostPage({ params, searchParams }: Props) {
                 className="markdown-body post-content"
                 html={article.html}
               />
+              {hasTrackMap && <PubTrackMapHydrator htmlKey={String(post.id)} />}
               {pubcfg.showPagenation && (
                 <nav className="pub-pager" aria-label="Pagination">
                   <div className="pager-row">
