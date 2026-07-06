@@ -92,6 +92,10 @@ type BoundsAccumulator = {
 };
 
 type JsonRecord = Record<string, unknown>;
+
+export type StgyTrackRendererOptions = {
+  allowedImagePatterns?: RegExp[];
+};
 type CoordinateProperties = JsonRecord;
 type GeoJsonInput = Parameters<typeof L.geoJSON>[0];
 type GeoJsonFeatureLike = {
@@ -233,10 +237,14 @@ const createCustomPinIcon = (color: string) => {
 
 export class StgyTrackRenderer {
   private loader: TrackLoader;
+  private allowedImagePatterns?: RegExp[];
 
-  constructor() {
+  constructor(options: StgyTrackRendererOptions = {}) {
     fixLeafletIcons();
     this.loader = new TrackLoader();
+    this.allowedImagePatterns = this.normalizeAllowedImagePatterns(
+      options.allowedImagePatterns,
+    );
   }
 
   public hydrate(rootElement: HTMLElement = document.body) {
@@ -414,6 +422,20 @@ export class StgyTrackRenderer {
     return panel;
   }
 
+  private normalizeAllowedImagePatterns(patterns?: RegExp[]): RegExp[] | undefined {
+    return patterns?.map((pattern) => {
+      const flags = pattern.flags.replace(/[gy]/g, "");
+      return new RegExp(pattern.source, flags);
+    });
+  }
+
+  private isAllowedImageUrl(src: string): boolean {
+    if (!this.allowedImagePatterns) {
+      return true;
+    }
+    return this.allowedImagePatterns.some((pattern) => pattern.test(src));
+  }
+
   private normalizeSafeUrl(value: unknown): string | null {
     if (typeof value !== "string") {
       return null;
@@ -486,7 +508,7 @@ export class StgyTrackRenderer {
 
   private appendSafeImage(root: HTMLElement, srcValue: unknown, altValue?: unknown) {
     const src = this.normalizeSafeUrl(srcValue);
-    if (!src) {
+    if (!src || !this.isAllowedImageUrl(src)) {
       return;
     }
 
@@ -569,6 +591,12 @@ export class StgyTrackRenderer {
       }
 
       if (child.classList.contains("annot-image")) {
+        const dataSrc = child.dataset.src;
+        if (dataSrc) {
+          this.appendSafeImage(root, dataSrc, child.dataset.alt || "");
+          return;
+        }
+
         const images = Array.from(child.querySelectorAll<HTMLImageElement>("img"));
         images.forEach((image) => {
           this.appendSafeImage(

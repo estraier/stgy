@@ -741,6 +741,87 @@ describe("StgyTrackRenderer", () => {
     expect(popupHtml).not.toContain("annot-href");
   });
 
+  test("filters popup images from properties by allowedImagePatterns", async () => {
+    renderer = new StgyTrackRenderer({
+      allowedImagePatterns: [/^\/media\//],
+    });
+
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-popup-media-filter">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [139.767, 35.681],
+          },
+          properties: {
+            title: "東京駅",
+            images: [
+              "/media/ok.jpg",
+              "https://example.com/ng.jpg",
+            ],
+          },
+        },
+      ],
+    });
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const renderedGeoJsonResult = (L.geoJSON as jest.Mock).mock.results.find((result) => {
+      return result.value.__featureLayers?.length > 0;
+    });
+    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
+    const popupContent = featureLayer.bindPopup.mock.calls[0][0] as string | HTMLElement;
+    const popupHtml = typeof popupContent === "string"
+      ? popupContent
+      : popupContent.outerHTML;
+
+    expect(popupHtml).toContain('src="/media/ok.jpg"');
+    expect(popupHtml).not.toContain("https://example.com/ng.jpg");
+  });
+
+  test("builds inline pin popup images from data-src and filters them", async () => {
+    renderer = new StgyTrackRenderer({
+      allowedImagePatterns: [/^\/media\//],
+    });
+
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-lat="35.681" data-lon="139.767">
+        <div class="stgy-track-canvas"></div>
+        <ul class="stgy-track-pins">
+          <li data-lat="35.681" data-lon="139.767">
+            <div class="annot-title">OK</div>
+            <div class="annot-image" data-src="/media/ok.jpg" data-alt="OK"></div>
+          </li>
+          <li data-lat="35.682" data-lon="139.768">
+            <div class="annot-title">NG</div>
+            <div class="annot-image" data-src="https://example.com/ng.jpg" data-alt="NG"></div>
+          </li>
+        </ul>
+      </figure>
+    `;
+
+    renderer.hydrate(document.body);
+
+    const firstMarker = (L.marker as jest.Mock).mock.results[0].value;
+    const secondMarker = (L.marker as jest.Mock).mock.results[1].value;
+    const firstPopup = firstMarker.bindPopup.mock.calls[0][0] as HTMLElement;
+    const secondPopup = secondMarker.bindPopup.mock.calls[0][0] as HTMLElement;
+
+    expect(firstPopup.outerHTML).toContain('src="/media/ok.jpg"');
+    expect(secondPopup.outerHTML).not.toContain("https://example.com/ng.jpg");
+    expect(secondPopup.outerHTML).toContain('<div class="annot-title">NG</div>');
+  });
+
   test("renders graph outside the figure without shrinking map area", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map" data-src="#demo-geojson-hud">

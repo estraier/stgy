@@ -24,6 +24,7 @@ import {
 import {
   parseMarkdown,
   mdGroupImageGrid,
+  mdGroupMapGrid,
   mdFilterForFeatured,
   mdCutOff,
   mdRenderHtml,
@@ -450,11 +451,6 @@ export default function MarkdownSnippetSandbox({
 
 ここは、**Markdown**のサイドバイサイドエディタの**デモサイト**です。
 
-@[東御市サイクリング](/data/demo-toumi.trj)
-
-@[東京都世田谷区赤堤](map://139.6444794,35.6595519,15){grid}
-@[東京都世田谷区赤堤](map://139.6444794,35.6595519,15){grid}
-
 <!TOC!>
 
 画面の左半分が入力フォームです。入力フォームの内容を編集すれば、その内容がMarkdownとして解釈され、AST（抽象構文木）を経てHTMLに変換され、右側の欄に描写されます。
@@ -511,8 +507,6 @@ export default function MarkdownSnippetSandbox({
 
 ![これはロゴです](/data/logo-square.svg){size=small}
 
-@[](/data/demo-tomi.trj)
-
 \`\`\`text
 コードブロック
 # これはヘッダじゃない
@@ -534,13 +528,21 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
 
 {{寿限無|じゅげむ}}{{寿限無|じゅげむ}}{{五劫|ごこう}}のすりきれ {{海砂利水魚|かいじゃりすいぎょ}}の{{水行末|すいぎょうまつ}}{{雲来末|うんらいまつ}}{{風来末|ふうらいまつ}} 食う寝るところに住むところ やぶらこうじのぶらこうじ パイポパイポパイポのシューリンガン シューリンガンのグーリンダイ グーリンダイのポンポコピーのポンポコナーの{{長久命|ちょうきゅうめい}}の{{長助|ちょうすけ}}
 
-
 ![ロゴ1](/data/logo-square.svg){grid}
 ![ロゴ1](/data/logo-square.svg){grid}
 ---
 ![ロゴ1](/data/logo-square.svg){grid}
 ![ロゴ2](/data/logo-square.svg){grid,featured}
 ![ロゴ3](/data/logo-square.svg){grid}
+---
+
+@[東御市サイクリング](/data/demo-toumi.trj)
+---
+@[京都市北区大北山原谷乾町](map://135.718625,35.047774,16|135.718625,35.047774;タップハイツ;この道を行けばどうなるものか、危ぶむなかれ。危ぶめば道はなし。踏み出せばその一足が道となり、その一足が道となる。迷わず行けよ。行けばわかるさ。){grid,base=osm}
+@[東京都世田谷区赤堤](map://139.642525,35.657482,16|139.642525,35.657482;Tachibana;Float like a butterfly, sting like a bee.){grid,base=osm}
+---
+
+人間五十年、下天の内をくらぶれば、夢幻の如くなり。
 `,
   placeholder = "Write Markdown here…",
   className = "",
@@ -579,6 +581,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
   });
   const renderAbortRef = useRef<AbortController | null>(null);
   const idleHandleRef = useRef<number | null>(null);
+  const trackHydrateSeqRef = useRef(0);
   const requestIdle = useCallback((cb: IdleRequestCallback, timeout = 500): number => {
     const win = window as typeof window & {
       requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
@@ -614,6 +617,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
     const maps = Array.from(root.querySelectorAll<HTMLElement>(".stgy-track-map"));
     if (maps.length === 0) return;
 
+    const hydrateSeq = ++trackHydrateSeqRef.current;
     maps.forEach((figure) => {
       delete figure.dataset.stgyTrackInitialized;
       const canvas = figure.querySelector<HTMLElement>(".stgy-track-canvas");
@@ -624,9 +628,11 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
     root.querySelectorAll(".stgy-track-graph").forEach((node) => node.remove());
 
     void import("stgy-track").then(({ StgyTrackRenderer }) => {
+      if (hydrateSeq !== trackHydrateSeqRef.current || !root.isConnected) return;
       const renderer = new StgyTrackRenderer();
       renderer.hydrate(root);
     }).catch((e: unknown) => {
+      if (hydrateSeq !== trackHydrateSeqRef.current || !root.isConnected) return;
       const message = e instanceof Error ? e.message : String(e);
       root.querySelectorAll<HTMLElement>(".stgy-track-canvas").forEach((canvas) => {
         canvas.textContent = `Track renderer could not be loaded: ${message}`;
@@ -992,6 +998,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       if (signal.aborted) return;
       if (mode === "html") {
         nodes = mdGroupImageGrid(nodes);
+        nodes = mdGroupMapGrid(nodes);
         if (useFeatured) nodes = mdFilterForFeatured(nodes);
         if (maxLen || maxHeight) nodes = mdCutOff(nodes, { maxLen, maxHeight });
         if (signal.aborted) return;

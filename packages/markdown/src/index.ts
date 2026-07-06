@@ -327,16 +327,12 @@ function makeMdMapPinElement(
     children.push(
       makeElement(
         "div",
-        [
-          makeElement(
-            "img",
-            [],
-            { src: pin.image, alt: pin.title || "" },
-            line,
-            char,
-          ),
-        ],
-        { class: "annot-image" },
+        [],
+        {
+          class: "annot-image",
+          "data-src": pin.image,
+          "data-alt": pin.title || "",
+        },
         line,
         char,
       ),
@@ -3483,10 +3479,13 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
               href = getAttrStr(a?.attrs, "href") || "";
             }
             if (isElement(n) && hasClass(n, "annot-image")) {
-              const img = (n.children || []).find((c) => isElement(c, "img")) as
-                | MdElementNode
-                | undefined;
-              image = getAttrStr(img?.attrs, "src") || "";
+              image = getAttrStr(n.attrs, "data-src") || "";
+              if (!image) {
+                const img = (n.children || []).find((c) => isElement(c, "img")) as
+                  | MdElementNode
+                  | undefined;
+                image = getAttrStr(img?.attrs, "src") || "";
+              }
             }
           }
           if (title || description || href || image) fields.push(title);

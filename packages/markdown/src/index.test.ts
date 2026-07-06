@@ -314,18 +314,10 @@ describe("parseMarkdown", () => {
                     tag: "div",
                     attrs: {
                       class: "annot-image",
+                      "data-src": "/media/1234/bread.jpg",
+                      "data-alt": "Bakery",
                     },
-                    children: [
-                      {
-                        type: "element",
-                        tag: "img",
-                        attrs: {
-                          src: "/media/1234/bread.jpg",
-                          alt: "Bakery",
-                        },
-                        children: [],
-                      },
-                    ],
+                    children: [],
                   },
                 ],
               },
@@ -2206,7 +2198,7 @@ describe("mdRenderHtml basics", () => {
       "139.6444772,35.6595498;Bakery;Good;" +
       "http://example.com/;/media/1234/bread.jpg)";
     expect(makeHtml(mdText)).toBe(
-      '<figure class="stgy-track-map" data-center-address="Akatutumi" data-lat="35.6595519" data-lon="139.6444794" data-zoom="15"><div class="stgy-track-canvas"></div><ul class="stgy-track-pins"><li data-lat="35.6595498" data-lon="139.6444772"><div class="annot-title">Bakery</div><div class="annot-desc">Good</div><div class="annot-link"><a href="http://example.com/">http://example.com/</a></div><div class="annot-image"><img src="/media/1234/bread.jpg" alt="" decoding="async" loading="lazy"></div></li></ul><figcaption class="stgy-track-caption">Akatutumi</figcaption></figure>',
+      '<figure class="stgy-track-map" data-center-address="Akatutumi" data-lat="35.6595519" data-lon="139.6444794" data-zoom="15"><div class="stgy-track-canvas"></div><ul class="stgy-track-pins"><li data-lat="35.6595498" data-lon="139.6444772"><div class="annot-title">Bakery</div><div class="annot-desc">Good</div><div class="annot-link"><a href="http://example.com/">http://example.com/</a></div><div class="annot-image" data-alt="Bakery" data-src="/media/1234/bread.jpg"></div></li></ul><figcaption class="stgy-track-caption">Akatutumi</figcaption></figure>',
     );
   });
 

@@ -7,6 +7,7 @@ import {
   mdRewriteLinkUrls,
   mdRewriteMediaUrls,
   mdGroupImageGrid,
+  mdGroupMapGrid,
   mdFindFeatured,
   mdFilterForFeatured,
   mdAnnotateElements,
@@ -30,6 +31,7 @@ export function makeArticleHtmlFromMarkdown(
     nodes = rewriteMediaUrls(nodes, false);
   }
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
+  nodes = mdGroupMapGrid(nodes, { maxElements: 5 });
   return mdRenderHtml(nodes, usePosAttrs, idPrefix);
 }
 
@@ -59,6 +61,7 @@ export function makePubArticleHtmlFromMarkdown(
   nodes = rewriteMediaUrls(nodes, true);
   nodes = rewritePublishedUrls(nodes);
   nodes = mdGroupImageGrid(nodes, { maxElements: 5 });
+  nodes = mdGroupMapGrid(nodes, { maxElements: 5 });
   nodes = mdAnnotateElements(nodes);
   const html = mdRenderHtml(nodes, false, idPrefix);
   let featured: string | null = null;
