@@ -631,27 +631,6 @@ span[aria-label="Identicon"] > svg {
 .markdown-body figure.stgy-track-map[data-size="xlarge"] {
   height: auto;
 }
-.markdown-body figure.stgy-track-map .stgy-track-canvas {
-  height: 26em;
-  overflow: hidden;
-  contain: layout paint;
-}
-.markdown-body figure.stgy-track-map[data-size="xsmall"] .stgy-track-canvas {
-  height: 13em;
-}
-.markdown-body figure.stgy-track-map[data-size="small"] .stgy-track-canvas {
-  height: 16em;
-}
-.markdown-body figure.stgy-track-map[data-size="medium"] .stgy-track-canvas {
-  height: 20em;
-}
-.markdown-body figure.stgy-track-map[data-size="large"] .stgy-track-canvas {
-  height: 27.5em;
-}
-.markdown-body figure.stgy-track-map[data-size="xlarge"] .stgy-track-canvas {
-  height: 35em;
-}
-
 /* Final track map size rules:
    size controls canvas height only. Width is controlled by layout mode. */
 .markdown-body figure.stgy-track-map {
@@ -664,32 +643,22 @@ span[aria-label="Identicon"] > svg {
 
 .markdown-body figure.stgy-track-map[data-size="xsmall"] {
   --stgy-track-map-height: 260px;
-  width: 100%;
-  max-width: 100%;
 }
 
 .markdown-body figure.stgy-track-map[data-size="small"] {
   --stgy-track-map-height: 360px;
-  width: 100%;
-  max-width: 100%;
 }
 
 .markdown-body figure.stgy-track-map[data-size="medium"] {
   --stgy-track-map-height: 520px;
-  width: 100%;
-  max-width: 100%;
 }
 
 .markdown-body figure.stgy-track-map[data-size="large"] {
   --stgy-track-map-height: 640px;
-  width: 100%;
-  max-width: 100%;
 }
 
 .markdown-body figure.stgy-track-map[data-size="xlarge"] {
   --stgy-track-map-height: 760px;
-  width: 100%;
-  max-width: 100%;
 }
 
 .markdown-body figure.stgy-track-map .stgy-track-canvas {
@@ -720,17 +689,6 @@ span[aria-label="Identicon"] > svg {
   height: 760px;
 }
 
-.markdown-body figure.stgy-track-map + .stgy-track-graph,
-.markdown-body figure.stgy-track-map[data-size="xsmall"] + .stgy-track-graph,
-.markdown-body figure.stgy-track-map[data-size="small"] + .stgy-track-graph,
-.markdown-body figure.stgy-track-map[data-size="medium"] + .stgy-track-graph,
-.markdown-body figure.stgy-track-map[data-size="large"] + .stgy-track-graph,
-.markdown-body figure.stgy-track-map[data-size="xlarge"] + .stgy-track-graph {
-  width: 100%;
-  max-width: 100%;
-  box-sizing: border-box;
-}
-
 .markdown-body:not(.excerpt) .stgy-track-grid,
 .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="1"],
 .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="2"],
@@ -739,8 +697,7 @@ span[aria-label="Identicon"] > svg {
   max-width: 100%;
 }
 
-.markdown-body:not(.excerpt) .stgy-track-grid figure.stgy-track-map,
-.markdown-body:not(.excerpt) .stgy-track-grid figure.stgy-track-map[data-size] {
+.markdown-body:not(.excerpt) .stgy-track-grid figure.stgy-track-map {
   width: 100%;
   max-width: 100%;
 }

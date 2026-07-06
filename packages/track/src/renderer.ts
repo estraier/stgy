@@ -404,6 +404,12 @@ export class StgyTrackRenderer {
   }
 
   private removeGraphPanel(figure: HTMLElement) {
+    Array.from(figure.children).forEach((child) => {
+      if (child.classList.contains("stgy-track-graph")) {
+        child.remove();
+      }
+    });
+
     let next = figure.nextElementSibling;
     while (next && next.classList.contains("stgy-track-graph")) {
       const current = next;
@@ -418,7 +424,20 @@ export class StgyTrackRenderer {
     const panel = document.createElement("div");
     panel.className = "stgy-track-graph";
     panel.hidden = true;
-    figure.insertAdjacentElement("afterend", panel);
+
+    if (figure.parentElement?.classList.contains("stgy-track-grid")) {
+      const caption = Array.from(figure.children).find((child) => {
+        return child.tagName.toLowerCase() === "figcaption";
+      });
+      if (caption) {
+        figure.insertBefore(panel, caption);
+      } else {
+        figure.appendChild(panel);
+      }
+    } else {
+      figure.insertAdjacentElement("afterend", panel);
+    }
+
     return panel;
   }
 

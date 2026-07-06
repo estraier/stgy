@@ -681,6 +681,44 @@ describe("StgyTrackRenderer", () => {
     ).toBe(false);
   });
 
+  test("renders graph inside map figure when the map is in a grid", async () => {
+    document.body.innerHTML = `
+      <div class="stgy-track-grid" data-cols="2">
+        <figure class="stgy-track-map" data-src="#track-a">
+          <div class="stgy-track-canvas"></div>
+          <figcaption class="stgy-track-caption">A</figcaption>
+        </figure>
+        <figure class="stgy-track-map" data-src="#track-b">
+          <div class="stgy-track-canvas"></div>
+          <figcaption class="stgy-track-caption">B</figcaption>
+        </figure>
+      </div>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockImplementation(async () => {
+      return makeTrackWithGraph();
+    });
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const grid = document.querySelector<HTMLElement>(".stgy-track-grid");
+    const figures = Array.from(document.querySelectorAll<HTMLElement>(".stgy-track-map"));
+    const graphs = Array.from(document.querySelectorAll<HTMLElement>(".stgy-track-graph"));
+
+    expect(figures).toHaveLength(2);
+    expect(graphs).toHaveLength(2);
+    expect(grid?.children).toHaveLength(2);
+    expect(figures[0].querySelector(".stgy-track-graph")).toBe(graphs[0]);
+    expect(figures[1].querySelector(".stgy-track-graph")).toBe(graphs[1]);
+    expect(figures[0].nextElementSibling).toBe(figures[1]);
+    expect(graphs[0].nextElementSibling?.tagName.toLowerCase()).toBe("figcaption");
+    expect(graphs[1].nextElementSibling?.tagName.toLowerCase()).toBe("figcaption");
+    expect(graphs[0].hidden).toBe(false);
+    expect(graphs[1].hidden).toBe(false);
+  });
+
   test("renders multiple popup links and images from properties", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map" data-src="#demo-geojson-popup-media">
