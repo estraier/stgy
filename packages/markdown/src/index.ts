@@ -2147,6 +2147,79 @@ export function mdGroupImageGrid(
   return groupInArray(nodes);
 }
 
+export function mdGroupMapGrid(
+  nodes: MdNode[],
+  opts?: { maxElements?: number },
+): MdNode[] {
+  const maxElements = Math.max(1, opts?.maxElements ?? 100);
+  function isFigureMapBlock(
+    n: MdNode,
+  ): n is MdElementNode & { tag: "figure" } {
+    return (
+      n.type === "element" &&
+      n.tag === "figure" &&
+      n.attrs?.class === "stgy-track-map"
+    );
+  }
+  function hasGridFlag(a?: MdAttrs): boolean {
+    if (!a) return false;
+    return !!a["data-grid"] || !!a["grid"];
+  }
+  function getLine(n: MdNode): number | undefined {
+    return n.type === "element" ? n.linePosition : undefined;
+  }
+  function groupInArray(arr: MdNode[]): MdNode[] {
+    const out: MdNode[] = [];
+    for (let i = 0; i < arr.length; ) {
+      const node = arr[i];
+      if (isFigureMapBlock(node) && hasGridFlag(node.attrs)) {
+        const group: MdNode[] = [node];
+        let j = i + 1;
+        let prevLine = getLine(node);
+        while (
+          j < arr.length &&
+          isFigureMapBlock(arr[j]) &&
+          hasGridFlag((arr[j] as MdElementNode).attrs)
+        ) {
+          const candLine = getLine(arr[j]);
+          if (
+            typeof prevLine === "number" &&
+            typeof candLine === "number" &&
+            candLine !== prevLine + 1
+          ) {
+            break;
+          }
+          group.push(arr[j]);
+          prevLine = candLine;
+          j++;
+        }
+        for (let k = 0; k < group.length; k += maxElements) {
+          const chunk = group.slice(k, k + maxElements);
+          out.push(
+            makeElement(
+              "div",
+              chunk,
+              { class: "stgy-track-grid", "data-cols": chunk.length },
+              undefined,
+              undefined,
+            ),
+          );
+        }
+        i = j;
+        continue;
+      }
+      if (node.type === "element" && node.children) {
+        out.push({ ...node, children: groupInArray(node.children) });
+      } else {
+        out.push(node);
+      }
+      i++;
+    }
+    return out;
+  }
+  return groupInArray(nodes);
+}
+
 export function mdFindFeatured(nodes: MdNode[]): MdElementNode | null {
   function isFigureImageBlock(
     n: MdNode,

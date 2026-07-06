@@ -4,6 +4,7 @@ import {
   structurizeHtml,
   countHtmlElements,
   mdGroupImageGrid,
+  mdGroupMapGrid,
   MdMediaRewriteOptions,
   mdRewriteLinkUrls,
   mdRewriteMediaUrls,
@@ -497,6 +498,246 @@ describe("mdGroupImageGrid", () => {
     expect(stripPos(mdGroupImageGrid(parseMarkdown(mdText)))).toStrictEqual(
       expected,
     );
+  });
+});
+
+describe("mdGroupMapGrid", () => {
+  it("single", () => {
+    const mdText = "@[Map1](/maps/map1.trjgz){grid}";
+    const expected = [
+      {
+        type: "element",
+        tag: "div",
+        attrs: {
+          class: "stgy-track-grid",
+          "data-cols": 1,
+        },
+        children: [
+          {
+            type: "element",
+            tag: "figure",
+            attrs: {
+              class: "stgy-track-map",
+              "data-src": "/maps/map1.trjgz",
+              "data-grid": "true",
+            },
+            children: [
+              {
+                type: "element",
+                tag: "div",
+                attrs: {
+                  class: "stgy-track-canvas",
+                },
+                children: [],
+              },
+              {
+                type: "element",
+                tag: "figcaption",
+                attrs: {
+                  class: "stgy-track-caption",
+                },
+                children: [
+                  {
+                    type: "text",
+                    text: "Map1",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    expect(stripPos(mdGroupMapGrid(parseMarkdown(mdText)))).toStrictEqual(
+      expected,
+    );
+  });
+
+  it("double", () => {
+    const mdText = `@[Map1](/maps/map1.trjgz){grid}
+@[Map2](/maps/map2.trjgz){grid}`;
+    const expected = [
+      {
+        type: "element",
+        tag: "div",
+        attrs: {
+          class: "stgy-track-grid",
+          "data-cols": 2,
+        },
+        children: [
+          {
+            type: "element",
+            tag: "figure",
+            attrs: {
+              class: "stgy-track-map",
+              "data-src": "/maps/map1.trjgz",
+              "data-grid": "true",
+            },
+            children: [
+              {
+                type: "element",
+                tag: "div",
+                attrs: {
+                  class: "stgy-track-canvas",
+                },
+                children: [],
+              },
+              {
+                type: "element",
+                tag: "figcaption",
+                attrs: {
+                  class: "stgy-track-caption",
+                },
+                children: [
+                  {
+                    type: "text",
+                    text: "Map1",
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            type: "element",
+            tag: "figure",
+            attrs: {
+              class: "stgy-track-map",
+              "data-src": "/maps/map2.trjgz",
+              "data-grid": "true",
+            },
+            children: [
+              {
+                type: "element",
+                tag: "div",
+                attrs: {
+                  class: "stgy-track-canvas",
+                },
+                children: [],
+              },
+              {
+                type: "element",
+                tag: "figcaption",
+                attrs: {
+                  class: "stgy-track-caption",
+                },
+                children: [
+                  {
+                    type: "text",
+                    text: "Map2",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    expect(stripPos(mdGroupMapGrid(parseMarkdown(mdText)))).toStrictEqual(
+      expected,
+    );
+  });
+
+  it("breaks groups by blank lines", () => {
+    const mdText = `@[Map1](/maps/map1.trjgz){grid}
+
+@[Map2](/maps/map2.trjgz){grid}`;
+    const grouped = stripPos(mdGroupMapGrid(parseMarkdown(mdText)));
+    expect(grouped).toStrictEqual([
+      {
+        type: "element",
+        tag: "div",
+        attrs: {
+          class: "stgy-track-grid",
+          "data-cols": 1,
+        },
+        children: [
+          {
+            type: "element",
+            tag: "figure",
+            attrs: {
+              class: "stgy-track-map",
+              "data-src": "/maps/map1.trjgz",
+              "data-grid": "true",
+            },
+            children: [
+              {
+                type: "element",
+                tag: "div",
+                attrs: {
+                  class: "stgy-track-canvas",
+                },
+                children: [],
+              },
+              {
+                type: "element",
+                tag: "figcaption",
+                attrs: {
+                  class: "stgy-track-caption",
+                },
+                children: [
+                  {
+                    type: "text",
+                    text: "Map1",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: "element",
+        tag: "div",
+        attrs: {
+          class: "stgy-track-grid",
+          "data-cols": 1,
+        },
+        children: [
+          {
+            type: "element",
+            tag: "figure",
+            attrs: {
+              class: "stgy-track-map",
+              "data-src": "/maps/map2.trjgz",
+              "data-grid": "true",
+            },
+            children: [
+              {
+                type: "element",
+                tag: "div",
+                attrs: {
+                  class: "stgy-track-canvas",
+                },
+                children: [],
+              },
+              {
+                type: "element",
+                tag: "figcaption",
+                attrs: {
+                  class: "stgy-track-caption",
+                },
+                children: [
+                  {
+                    type: "text",
+                    text: "Map2",
+                  },
+                ],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("respects maxElements", () => {
+    const mdText = `@[Map1](/maps/map1.trjgz){grid}
+@[Map2](/maps/map2.trjgz){grid}
+@[Map3](/maps/map3.trjgz){grid}`;
+    const grouped = stripPos(mdGroupMapGrid(parseMarkdown(mdText), { maxElements: 2 }));
+    expect(grouped.map((node) => {
+      return node.type === "element" ? node.attrs?.["data-cols"] : undefined;
+    })).toStrictEqual([2, 1]);
   });
 });
 
