@@ -1812,27 +1812,32 @@ export class StgyTrackRenderer {
         return L.marker(latlng, markerOptions);
       },
       onEachFeature: (feature, layer) => {
-        const props = getFeatureProperties(feature);
-        const popupElement = this.buildPopupElementFromProps(props);
+        if (
+          feature?.geometry?.type === "Point" ||
+          feature?.geometry?.type === "MultiPoint"
+        ) {
+          const props = getFeatureProperties(feature);
+          const popupElement = this.buildPopupElementFromProps(props);
 
-        if (popupElement) {
-          const mapContainer = map.getContainer();
-          const mapWidth = mapContainer.clientWidth;
-          const mapHeight = mapContainer.clientHeight;
+          if (popupElement) {
+            const mapContainer = map.getContainer();
+            const mapWidth = mapContainer.clientWidth;
+            const mapHeight = mapContainer.clientHeight;
 
-          const widthPct = Math.max(1, Math.min(99, getFiniteNumber(props.popupWidth, 33)));
-          const heightPct = Math.max(1, Math.min(99, getFiniteNumber(props.popupHeight, 33)));
+            const widthPct = Math.max(1, Math.min(99, getFiniteNumber(props.popupWidth, 33)));
+            const heightPct = Math.max(1, Math.min(99, getFiniteNumber(props.popupHeight, 33)));
 
-          const maxWidth = mapWidth * (widthPct / 100);
-          const popupMaxHeight = mapHeight * (heightPct / 100);
-          const minWidth = Math.min(150, maxWidth * 0.5);
+            const maxWidth = mapWidth * (widthPct / 100);
+            const popupMaxHeight = mapHeight * (heightPct / 100);
+            const minWidth = Math.min(150, maxWidth * 0.5);
 
-          layer.bindPopup(popupElement, {
-            maxWidth: maxWidth,
-            minWidth: minWidth,
-            maxHeight: popupMaxHeight,
-            className: "stgy-track-popup"
-          });
+            layer.bindPopup(popupElement, {
+              maxWidth: maxWidth,
+              minWidth: minWidth,
+              maxHeight: popupMaxHeight,
+              className: "stgy-track-popup"
+            });
+          }
         }
 
         this.bindCoordinateInteractions(feature, layer, context);

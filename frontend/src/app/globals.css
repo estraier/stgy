@@ -768,3 +768,37 @@ body {
 span[aria-label="Identicon"] > svg {
   transform: translate(-0.5px, -0.5px);
 }
+
+/* Keep captions outside the clipped Leaflet canvas. */
+.markdown-body figure.stgy-track-map {
+  height: auto;
+  overflow: visible;
+  contain: layout;
+}
+.markdown-body figure.stgy-track-map[data-size="xsmall"],
+.markdown-body figure.stgy-track-map[data-size="small"],
+.markdown-body figure.stgy-track-map[data-size="medium"],
+.markdown-body figure.stgy-track-map[data-size="large"],
+.markdown-body figure.stgy-track-map[data-size="xlarge"] {
+  height: auto;
+}
+.markdown-body figure.stgy-track-map .stgy-track-canvas {
+  height: 26em;
+  overflow: hidden;
+  contain: layout paint;
+}
+.markdown-body figure.stgy-track-map[data-size="xsmall"] .stgy-track-canvas {
+  height: 13em;
+}
+.markdown-body figure.stgy-track-map[data-size="small"] .stgy-track-canvas {
+  height: 16em;
+}
+.markdown-body figure.stgy-track-map[data-size="medium"] .stgy-track-canvas {
+  height: 20em;
+}
+.markdown-body figure.stgy-track-map[data-size="large"] .stgy-track-canvas {
+  height: 27.5em;
+}
+.markdown-body figure.stgy-track-map[data-size="xlarge"] .stgy-track-canvas {
+  height: 35em;
+}

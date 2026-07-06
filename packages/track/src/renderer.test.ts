@@ -741,6 +741,62 @@ describe("StgyTrackRenderer", () => {
     expect(popupHtml).not.toContain("annot-href");
   });
 
+  test("does not bind popup to route LineString features", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-route-popup">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139.767, 35.681],
+              [139.770, 35.682],
+            ],
+          },
+          properties: {
+            title: "demo-toumi",
+            description: "Converted from demo-toumi.fit",
+            coordinateProperties: {
+              elevations: [10, 20],
+            },
+          },
+        },
+        {
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [139.767, 35.681],
+          },
+          properties: {
+            title: "東京駅",
+          },
+        },
+      ],
+    });
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const renderedGeoJsonResult = (L.geoJSON as jest.Mock).mock.results.find((result) => {
+      return result.value.__featureLayers?.length > 1;
+    });
+
+    const routeLayer = renderedGeoJsonResult?.value.__featureLayers[0];
+    const pinLayer = renderedGeoJsonResult?.value.__featureLayers[1];
+
+    expect(routeLayer.bindPopup).not.toHaveBeenCalled();
+    expect(routeLayer.on).toHaveBeenCalled();
+    expect(pinLayer.bindPopup).toHaveBeenCalled();
+  });
+
   test("filters popup images from properties by allowedImagePatterns", async () => {
     renderer = new StgyTrackRenderer({
       allowedImagePatterns: [/^\/media\//],
