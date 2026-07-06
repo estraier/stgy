@@ -5,7 +5,7 @@ import Image from "next/image";
 import type { User, UserDetail } from "@/api/models";
 import { addFollow, removeFollow, addBlock, removeBlock } from "@/api/users";
 import AvatarImg from "@/components/AvatarImg";
-import { stopTrackMapEvent, useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
+import MarkdownHtmlBody from "@/components/MarkdownHtmlBody";
 import { formatDateTime, normalizeLinefeeds } from "@/utils/format";
 import { makeArticleHtmlFromMarkdown, makeHtmlFromJsonSnippet } from "@/utils/article";
 import { Config } from "@/config";
@@ -37,8 +37,6 @@ export default function UserCard({
   const [blockedByTarget, setBlockedByTarget] = useState(false);
   const [menuOpen, setMenuOpen] = useState(false);
   const menuRef = useRef<HTMLDivElement | null>(null);
-  const contentRef = useRef<HTMLDivElement | null>(null);
-  const hydrateTrackMaps = useTrackMapHydrator();
 
   useEffect(() => {
     setUser(initialUser);
@@ -165,21 +163,6 @@ export default function UserCard({
   const introHtml = hasIntro ? makeArticleHtmlFromMarkdown(user.introduction as string) : "";
   const snippetHtml = makeHtmlFromJsonSnippet(user.snippet || "[]", idPrefix);
   const bodyHtml = truncated ? snippetHtml : introHtml || snippetHtml;
-  const shouldHydrateMaps = bodyHtml.includes("stgy-track-map");
-
-  useEffect(() => {
-    if (!shouldHydrateMaps) return;
-    const root = contentRef.current;
-    if (!root) return;
-    let id2 = 0;
-    const id1 = requestAnimationFrame(() => {
-      id2 = requestAnimationFrame(() => hydrateTrackMaps(root));
-    });
-    return () => {
-      cancelAnimationFrame(id1);
-      if (id2) cancelAnimationFrame(id2);
-    };
-  });
 
   const masterSrc = (() => {
     if (!user.avatar) return "";
@@ -381,13 +364,10 @@ export default function UserCard({
         </div>
       )}
 
-      <div
-        ref={contentRef}
+      <MarkdownHtmlBody
+        html={bodyHtml}
         lang={userLang}
         className={`markdown-body user-introduction${truncated ? " excerpt" : ""}`}
-        onMouseDown={stopTrackMapEvent}
-        onClick={stopTrackMapEvent}
-        dangerouslySetInnerHTML={{ __html: bodyHtml }}
       />
 
       {!truncated && user.aiModel && user.aiModel.trim() !== "" && (

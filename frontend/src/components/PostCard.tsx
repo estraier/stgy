@@ -3,8 +3,7 @@
 import { Config } from "@/config";
 import { useRouter, usePathname, useSearchParams } from "next/navigation";
 import { useRef, useMemo, useEffect, useState, useCallback } from "react";
-import PrismHighlighter from "@/components/PrismHighlighter";
-import { stopTrackMapEvent, useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
+import MarkdownHtmlBody from "@/components/MarkdownHtmlBody";
 import type { Post, PostDetail } from "@/api/models";
 import AvatarImg from "@/components/AvatarImg";
 import { Heart, MessageCircle, Copy } from "lucide-react";
@@ -53,7 +52,6 @@ export default function PostCard({
   const router = useRouter();
   const pathname = usePathname();
   const searchParams = useSearchParams();
-  const contentRef = useRef<HTMLDivElement | null>(null);
   const hasContent =
     "content" in post && typeof post.content === "string" && post.content.length > 0;
 
@@ -63,23 +61,6 @@ export default function PostCard({
       : makeHtmlFromJsonSnippet(post.snippet, idPrefix),
   );
 
-  const prismDeps = useMemo(() => [bodyHtml], [bodyHtml]);
-  const hydrateTrackMaps = useTrackMapHydrator();
-  const shouldHydrateMaps = bodyHtml.includes("stgy-track-map");
-
-  useEffect(() => {
-    if (!shouldHydrateMaps) return;
-    const root = contentRef.current;
-    if (!root) return;
-    let id2 = 0;
-    const id1 = requestAnimationFrame(() => {
-      id2 = requestAnimationFrame(() => hydrateTrackMaps(root));
-    });
-    return () => {
-      cancelAnimationFrame(id1);
-      if (id2) cancelAnimationFrame(id2);
-    };
-  });
 
   const isBlockedForFocusUser = Boolean(
     (post as { isBlockingFocusUser?: boolean }).isBlockingFocusUser,
@@ -642,17 +623,13 @@ export default function PostCard({
         </span>
       </div>
 
-      <div
-        ref={contentRef}
+      <MarkdownHtmlBody
+        html={bodyHtml}
         lang={postLang}
         className={`markdown-body post-content${truncated ? " excerpt" : ""}`}
-        style={{ minHeight: 36, userSelect: "text" }}
-        onMouseDown={stopTrackMapEvent}
-        onClick={stopTrackMapEvent}
-        dangerouslySetInnerHTML={{ __html: bodyHtml }}
+        minHeight={36}
+        userSelect="text"
       />
-
-      <PrismHighlighter root={contentRef.current} deps={prismDeps} />
 
       <div className="mt-1 flex items-center gap-2 text-xs text-gray-600">
         {(showPublishedLabel || (post.tags && post.tags.length > 0)) && (
