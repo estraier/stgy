@@ -2951,18 +2951,19 @@ html:has(.site-container) {
 }
 
 /* Vertical size scale:
-   xsmall=18em, small=24em, medium/default=30em, large=35em, xlarge=40em.
-   The vertical article body is capped at 40em, so xlarge fills the article height. */
+   Heights stay xsmall=18em, small=24em, medium/default=30em, large=35em,
+   xlarge=40em. Widths use a wider 4:3-oriented scale where the viewport allows. */
 /* Vertical public track media.
    Images can use natural intrinsic sizing, but Leaflet maps cannot: Leaflet reads
    concrete clientWidth/clientHeight during hydration. Give the map canvas and optional
-   graph a concrete physical width capped by the mobile viewport. */
+   graph a concrete physical width capped by the mobile viewport.  Default maps are
+   40em x 30em so the visible map area is close to a 4:3 landscape rectangle. */
 .pub-theme-dir-vert .markdown-body figure.stgy-track-map {
   writing-mode: inherit !important;
   text-orientation: inherit !important;
   box-sizing: border-box;
   width: auto !important;
-  max-width: min(30em, calc(100svw - 2rem)) !important;
+  max-width: min(40em, calc(100svw - 2rem)) !important;
   height: auto !important;
   max-height: none !important;
   margin: 0.55em 0.25em;
@@ -2970,15 +2971,15 @@ html:has(.site-container) {
 }
 
 .pub-theme-dir-vert .markdown-body figure.stgy-track-map[data-size="xsmall"] {
-  max-width: min(18em, calc(100svw - 2rem)) !important;
-}
-
-.pub-theme-dir-vert .markdown-body figure.stgy-track-map[data-size="small"] {
   max-width: min(24em, calc(100svw - 2rem)) !important;
 }
 
+.pub-theme-dir-vert .markdown-body figure.stgy-track-map[data-size="small"] {
+  max-width: min(32em, calc(100svw - 2rem)) !important;
+}
+
 .pub-theme-dir-vert .markdown-body figure.stgy-track-map[data-size="medium"] {
-  max-width: min(30em, calc(100svw - 2rem)) !important;
+  max-width: min(40em, calc(100svw - 2rem)) !important;
 }
 
 .pub-theme-dir-vert .markdown-body figure.stgy-track-map[data-size="large"] {
@@ -2991,7 +2992,7 @@ html:has(.site-container) {
 
 .pub-theme-dir-vert .markdown-body figure.stgy-track-map .stgy-track-canvas {
   box-sizing: border-box;
-  width: min(30em, calc(100svw - 2rem)) !important;
+  width: min(40em, calc(100svw - 2rem)) !important;
   max-width: 100% !important;
   height: min(30em, calc(100svh - 4rem)) !important;
   min-height: min(30em, calc(100svh - 4rem)) !important;
@@ -3002,7 +3003,7 @@ html:has(.site-container) {
   .markdown-body
   figure.stgy-track-map[data-size="xsmall"]
   .stgy-track-canvas {
-  width: min(18em, calc(100svw - 2rem)) !important;
+  width: min(24em, calc(100svw - 2rem)) !important;
   height: min(18em, calc(100svh - 4rem)) !important;
   min-height: min(18em, calc(100svh - 4rem)) !important;
 }
@@ -3011,7 +3012,7 @@ html:has(.site-container) {
   .markdown-body
   figure.stgy-track-map[data-size="small"]
   .stgy-track-canvas {
-  width: min(24em, calc(100svw - 2rem)) !important;
+  width: min(32em, calc(100svw - 2rem)) !important;
   height: min(24em, calc(100svh - 4rem)) !important;
   min-height: min(24em, calc(100svh - 4rem)) !important;
 }
@@ -3020,7 +3021,7 @@ html:has(.site-container) {
   .markdown-body
   figure.stgy-track-map[data-size="medium"]
   .stgy-track-canvas {
-  width: min(30em, calc(100svw - 2rem)) !important;
+  width: min(40em, calc(100svw - 2rem)) !important;
   height: min(30em, calc(100svh - 4rem)) !important;
   min-height: min(30em, calc(100svh - 4rem)) !important;
 }
@@ -3051,7 +3052,7 @@ html:has(.site-container) {
 .pub-theme-dir-vert .markdown-body figure.stgy-track-map .stgy-track-graph,
 .pub-theme-dir-vert .markdown-body figure.stgy-track-map + .stgy-track-graph {
   box-sizing: border-box;
-  width: min(30em, calc(100svw - 2rem)) !important;
+  width: min(40em, calc(100svw - 2rem)) !important;
   max-width: 100% !important;
   overflow-x: auto;
 }
@@ -3064,7 +3065,7 @@ html:has(.site-container) {
   .markdown-body
   figure.stgy-track-map[data-size="xsmall"]
   + .stgy-track-graph {
-  width: min(18em, calc(100svw - 2rem)) !important;
+  width: min(24em, calc(100svw - 2rem)) !important;
 }
 
 .pub-theme-dir-vert
@@ -3075,7 +3076,7 @@ html:has(.site-container) {
   .markdown-body
   figure.stgy-track-map[data-size="small"]
   + .stgy-track-graph {
-  width: min(24em, calc(100svw - 2rem)) !important;
+  width: min(32em, calc(100svw - 2rem)) !important;
 }
 
 .pub-theme-dir-vert
@@ -3143,19 +3144,160 @@ html:has(.site-container) {
 
 }
 
+/* Vertical public non-grid track maps with a graph.
+   In vertical writing mode, block children advance horizontally.  Without an
+   explicit layout box, the left-side graph can protrude outside the figure and
+   overlap the next vertical-flow item.  Keep the whole map+graph media box
+   horizontal and give the graph an explicit grid area inside the figure. */
+.pub-theme-dir-vert .markdown-body figure.stgy-track-map:has(> .stgy-track-graph:not([hidden])) {
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+  direction: ltr;
+  display: grid;
+  grid-template-columns: minmax(19.2em, 24em) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) auto;
+  grid-template-areas:
+    "graph map"
+    "caption caption";
+  column-gap: 0.35em;
+  row-gap: 0.2em;
+  width: min(64.35em, calc(100svw - 2rem)) !important;
+  max-width: min(64.35em, calc(100svw - 2rem)) !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map[data-size="xsmall"]:has(> .stgy-track-graph:not([hidden])) {
+  width: min(48.35em, calc(100svw - 2rem)) !important;
+  max-width: min(48.35em, calc(100svw - 2rem)) !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map[data-size="small"]:has(> .stgy-track-graph:not([hidden])) {
+  width: min(56.35em, calc(100svw - 2rem)) !important;
+  max-width: min(56.35em, calc(100svw - 2rem)) !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map[data-size="medium"]:has(> .stgy-track-graph:not([hidden])) {
+  width: min(64.35em, calc(100svw - 2rem)) !important;
+  max-width: min(64.35em, calc(100svw - 2rem)) !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map[data-size="large"]:has(> .stgy-track-graph:not([hidden])),
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map[data-size="xlarge"]:has(> .stgy-track-graph:not([hidden])) {
+  width: min(64.35em, calc(100svw - 2rem)) !important;
+  max-width: min(64.35em, calc(100svw - 2rem)) !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map:has(> .stgy-track-graph:not([hidden]))
+  .stgy-track-canvas {
+  grid-area: map;
+  align-self: stretch;
+  justify-self: stretch;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map:has(> .stgy-track-graph:not([hidden]))
+  .leaflet-container {
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map:has(> .stgy-track-graph:not([hidden]))
+  > .stgy-track-graph {
+  grid-area: graph;
+  align-self: stretch;
+  justify-self: stretch;
+  box-sizing: border-box;
+  width: 100% !important;
+  max-width: 100% !important;
+  min-width: 0 !important;
+  overflow: auto;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map:has(> .stgy-track-graph:not([hidden]))
+  > figcaption,
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map:has(> .stgy-track-graph:not([hidden]))
+  > .stgy-track-caption {
+  grid-area: caption;
+  align-self: start;
+  justify-self: center;
+  max-width: 100%;
+}
+
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map:has(> .stgy-track-graph:not([hidden]))
+  > .stgy-track-graph
+  svg,
+.pub-theme-dir-vert
+  .markdown-body
+  figure.stgy-track-map:has(> .stgy-track-graph:not([hidden]))
+  > .stgy-track-graph
+  canvas {
+  display: block;
+  max-width: 100%;
+}
+
+@media (max-width: 480px) {
+  .pub-theme-dir-vert
+    .markdown-body
+    figure.stgy-track-map:has(> .stgy-track-graph:not([hidden])),
+  .pub-theme-dir-vert
+    .markdown-body
+    figure.stgy-track-map[data-size="xsmall"]:has(> .stgy-track-graph:not([hidden])),
+  .pub-theme-dir-vert
+    .markdown-body
+    figure.stgy-track-map[data-size="small"]:has(> .stgy-track-graph:not([hidden])),
+  .pub-theme-dir-vert
+    .markdown-body
+    figure.stgy-track-map[data-size="medium"]:has(> .stgy-track-graph:not([hidden])),
+  .pub-theme-dir-vert
+    .markdown-body
+    figure.stgy-track-map[data-size="large"]:has(> .stgy-track-graph:not([hidden])),
+  .pub-theme-dir-vert
+    .markdown-body
+    figure.stgy-track-map[data-size="xlarge"]:has(> .stgy-track-graph:not([hidden])) {
+    width: calc(100svw - 1rem) !important;
+    max-width: calc(100svw - 1rem) !important;
+  }
+}
+
 /* Vertical public track grids.
    Keep the grid container vertical so grid-template-columns split the inline axis
    vertically, i.e. maps are stacked top/bottom just like image grids.
    Each grid item becomes a horizontal media box so Leaflet and an optional graph can
-   lay out normally inside the vertical grid cell. */
+   lay out normally inside the vertical grid cell.
+   Use physical width as well as block-size: the grid items are horizontal media boxes,
+   so this is the dimension that actually makes their map and graph wider. */
 .pub-theme-dir-vert .markdown-body:not(.excerpt) .stgy-track-grid {
   writing-mode: inherit !important;
   text-orientation: inherit !important;
   box-sizing: border-box;
-  width: auto !important;
+  width: 60em !important;
   max-width: none !important;
-  block-size: min(30em, calc(100svw - 2rem));
-  max-block-size: calc(100svw - 2rem);
+  block-size: 60em;
+  max-block-size: none;
   min-block-size: 0;
   height: min(40em, calc(100svh - 4rem));
   max-height: 100%;
@@ -3166,25 +3308,29 @@ html:has(.site-container) {
 .pub-theme-dir-vert
   .markdown-body:not(.excerpt)
   .stgy-track-grid:has(figure.stgy-track-map[data-size="xsmall"]) {
-  block-size: min(18em, calc(100svw - 2rem));
+  width: 36em !important;
+  block-size: 36em;
 }
 
 .pub-theme-dir-vert
   .markdown-body:not(.excerpt)
   .stgy-track-grid:has(figure.stgy-track-map[data-size="small"]) {
-  block-size: min(24em, calc(100svw - 2rem));
+  width: 48em !important;
+  block-size: 48em;
 }
 
 .pub-theme-dir-vert
   .markdown-body:not(.excerpt)
   .stgy-track-grid:has(figure.stgy-track-map[data-size="large"]) {
-  block-size: min(40em, calc(100svw - 2rem));
+  width: 80em !important;
+  block-size: 80em;
 }
 
 .pub-theme-dir-vert
   .markdown-body:not(.excerpt)
   .stgy-track-grid:has(figure.stgy-track-map[data-size="xlarge"]) {
-  block-size: min(40em, calc(100svw - 2rem));
+  width: 80em !important;
+  block-size: 80em;
 }
 
 .pub-theme-dir-vert .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="1"] {
@@ -3294,7 +3440,9 @@ html:has(.site-container) {
 
 @media (max-width: 480px) {
   .pub-theme-dir-vert .markdown-body:not(.excerpt) .stgy-track-grid {
-    block-size: min(30em, calc(100svw - 1rem));
+    width: calc(100svw - 1rem) !important;
+    max-width: calc(100svw - 1rem) !important;
+    block-size: calc(100svw - 1rem);
     max-block-size: calc(100svw - 1rem);
     height: min(40em, calc(100svh - 3rem));
   }
@@ -3302,25 +3450,25 @@ html:has(.site-container) {
   .pub-theme-dir-vert
     .markdown-body:not(.excerpt)
     .stgy-track-grid:has(figure.stgy-track-map[data-size="xsmall"]) {
-    block-size: min(18em, calc(100svw - 1rem));
+    block-size: min(36em, calc(100svw - 1rem));
   }
 
   .pub-theme-dir-vert
     .markdown-body:not(.excerpt)
     .stgy-track-grid:has(figure.stgy-track-map[data-size="small"]) {
-    block-size: min(24em, calc(100svw - 1rem));
+    block-size: min(48em, calc(100svw - 1rem));
   }
 
   .pub-theme-dir-vert
     .markdown-body:not(.excerpt)
     .stgy-track-grid:has(figure.stgy-track-map[data-size="large"]) {
-    block-size: min(40em, calc(100svw - 1rem));
+    block-size: min(80em, calc(100svw - 1rem));
   }
 
   .pub-theme-dir-vert
     .markdown-body:not(.excerpt)
     .stgy-track-grid:has(figure.stgy-track-map[data-size="xlarge"]) {
-    block-size: min(40em, calc(100svw - 1rem));
+    block-size: min(80em, calc(100svw - 1rem));
   }
 }
 
@@ -3334,7 +3482,7 @@ html:has(.site-container) {
   .stgy-track-grid
   > figure.stgy-track-map {
   display: grid;
-  grid-template-columns: minmax(9.6em, 51.2%) minmax(0, 1fr);
+  grid-template-columns: minmax(19.2em, 51.2%) minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr) auto;
   grid-template-areas:
     "graph map"
