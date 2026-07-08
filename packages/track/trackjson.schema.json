@@ -213,6 +213,9 @@
         "training": {
           "$ref": "#/$defs/training"
         },
+        "histograms": {
+          "$ref": "#/$defs/histograms"
+        },
         "devices": {
           "type": "array",
           "items": {
@@ -323,6 +326,52 @@
             }
           },
           "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "histograms": {
+      "type": "object",
+      "properties": {
+        "powerW": {
+          "$ref": "#/$defs/powerHistogram"
+        }
+      },
+      "additionalProperties": true
+    },
+    "powerHistogram": {
+      "type": "object",
+      "properties": {
+        "bucketSizeW": {
+          "type": "number"
+        },
+        "maxBucketW": {
+          "type": "number"
+        },
+        "totalSeconds": {
+          "type": "number"
+        },
+        "buckets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/histogramBucket"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "histogramBucket": {
+      "type": "object",
+      "required": [
+        "label",
+        "seconds"
+      ],
+      "properties": {
+        "label": {
+          "type": "string"
+        },
+        "seconds": {
+          "type": "number"
         }
       },
       "additionalProperties": true

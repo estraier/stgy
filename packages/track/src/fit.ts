@@ -2,6 +2,7 @@ import { Decoder, Stream } from "@garmin/fitsdk";
 import {
   applyComputedMetadata,
   buildActivityBestEfforts,
+  buildActivityHistograms,
   buildActivityStatistics,
   computeNormalizedPowerW,
   computeTotalWorkJ,
@@ -10,11 +11,14 @@ import {
 import type {
   TrackActivity,
   TrackActivityBestEfforts,
+  TrackActivityHistograms,
   TrackActivityMetadata,
   TrackActivityPin,
   TrackActivityStatistics,
   TrackActivityTraining,
   TrackActivityTrainingSource,
+  TrackPowerHistogram,
+  TrackPowerHistogramBucket,
   TrackDeviceInfo,
   TrackDurationBestEfforts,
   TrackJsonBbox,
@@ -38,6 +42,7 @@ export type {
   MergeTrackActivitiesOptions,
   TrackActivity,
   TrackActivityBestEfforts,
+  TrackActivityHistograms,
   TrackActivityMetadata,
   TrackActivityStatistics,
   TrackActivityTraining,
@@ -51,6 +56,8 @@ export type {
   TrackHeartRateZoneSummary,
   TrackNumericStats,
   TrackPoint,
+  TrackPowerHistogram,
+  TrackPowerHistogramBucket,
   TrackPowerZoneKey,
   TrackPowerZoneSummary,
   TrackWarning,
@@ -1018,6 +1025,7 @@ function buildTrackJsonActivityMetadata(
     metadata.statistics = readTrackJsonStatistics(getRecordProperty(src, "statistics"));
     metadata.training = readTrackJsonTraining(getRecordProperty(src, "training"));
     metadata.bestEfforts = readTrackJsonBestEfforts(getRecordProperty(src, "bestEfforts"));
+    metadata.histograms = readTrackJsonHistograms(getRecordProperty(src, "histograms"));
   }
 
   if (options.name) {
@@ -1097,6 +1105,79 @@ function readTrackJsonTraining(
   }
 
   return hasTrainingValues(training) ? training : undefined;
+}
+
+
+function readTrackJsonHistograms(
+  value: Record<string, unknown> | undefined,
+): TrackActivityHistograms | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const histograms: TrackActivityHistograms = {};
+  const powerW = readTrackJsonPowerHistogram(getRecordProperty(value, "powerW"));
+  if (powerW) {
+    histograms.powerW = powerW;
+  }
+
+  return Object.keys(histograms).length > 0 ? histograms : undefined;
+}
+
+function readTrackJsonPowerHistogram(
+  value: Record<string, unknown> | undefined,
+): TrackPowerHistogram | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const bucketSizeW = toFiniteNumber(value.bucketSizeW);
+  const maxBucketW = toFiniteNumber(value.maxBucketW);
+  const totalSeconds = toFiniteNumber(value.totalSeconds);
+  const bucketsValue = value.buckets;
+
+  if (
+    !isFiniteNumber(bucketSizeW) ||
+    bucketSizeW <= 0 ||
+    !isFiniteNumber(maxBucketW) ||
+    maxBucketW <= 0 ||
+    !isFiniteNumber(totalSeconds) ||
+    totalSeconds <= 0 ||
+    !Array.isArray(bucketsValue)
+  ) {
+    return undefined;
+  }
+
+  const buckets = bucketsValue
+    .map(readTrackJsonPowerHistogramBucket)
+    .filter((bucket): bucket is TrackPowerHistogramBucket => Boolean(bucket));
+
+  if (buckets.length === 0) {
+    return undefined;
+  }
+
+  return {
+    bucketSizeW,
+    maxBucketW,
+    totalSeconds,
+    buckets,
+  };
+}
+
+function readTrackJsonPowerHistogramBucket(
+  value: unknown,
+): TrackPowerHistogramBucket | undefined {
+  if (!isObjectRecord(value)) {
+    return undefined;
+  }
+
+  const label = typeof value.label === "string" ? value.label.trim() : "";
+  const seconds = toFiniteNumber(value.seconds);
+  if (!label || !isFiniteNumber(seconds) || seconds <= 0) {
+    return undefined;
+  }
+
+  return { label, seconds };
 }
 
 function readTrackJsonBestEfforts(
@@ -1333,6 +1414,11 @@ function buildTrackJsonMetadata(
     output.bestEfforts = bestEfforts;
   }
 
+  const histograms = buildTrackJsonHistograms(metadata.histograms, precision);
+  if (histograms) {
+    output.histograms = histograms;
+  }
+
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
@@ -1434,6 +1520,53 @@ function buildTrackJsonTraining(
   }
 
   return Object.keys(output).length > 0 ? output : undefined;
+}
+
+
+function buildTrackJsonHistograms(
+  histograms: TrackActivityHistograms | undefined,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Record<string, unknown> | undefined {
+  if (!histograms) {
+    return undefined;
+  }
+
+  const output: Record<string, unknown> = {};
+  const powerW = buildTrackJsonPowerHistogram(histograms.powerW, precision);
+  if (powerW) {
+    output.powerW = powerW;
+  }
+
+  return Object.keys(output).length > 0 ? output : undefined;
+}
+
+function buildTrackJsonPowerHistogram(
+  histogram: TrackPowerHistogram | undefined,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Record<string, unknown> | undefined {
+  if (!histogram || histogram.buckets.length === 0) {
+    return undefined;
+  }
+
+  const buckets = histogram.buckets
+    .map((bucket) => {
+      const seconds = roundNumber(bucket.seconds, precision.metadata);
+      return bucket.label && seconds > 0
+        ? { label: bucket.label, seconds }
+        : undefined;
+    })
+    .filter((bucket): bucket is { label: string; seconds: number } => Boolean(bucket));
+
+  if (buckets.length === 0) {
+    return undefined;
+  }
+
+  return {
+    bucketSizeW: roundNumber(histogram.bucketSizeW, precision.metadata),
+    maxBucketW: roundNumber(histogram.maxBucketW, precision.metadata),
+    totalSeconds: roundNumber(histogram.totalSeconds, precision.metadata),
+    buckets,
+  };
 }
 
 function buildTrackJsonBestEfforts(
@@ -1710,6 +1843,11 @@ function fitMessagesToMetadata(
   const bestEfforts = buildActivityBestEfforts(points);
   if (bestEfforts) {
     metadata.bestEfforts = bestEfforts;
+  }
+
+  const histograms = buildActivityHistograms(points);
+  if (histograms) {
+    metadata.histograms = histograms;
   }
 
   return metadata;

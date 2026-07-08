@@ -894,6 +894,11 @@ type HistogramBin = {
   matches: (value: number) => boolean;
 };
 
+type MetadataPowerHistogramBucket = {
+  label: string;
+  seconds: number;
+};
+
 function appendAnalysisSections(
   container: HTMLElement,
   result: ConversionResult,
@@ -920,6 +925,7 @@ function appendAnalysisSections(
     }
   }
 
+  appendMetadataPowerHistogram(container, metadata);
   appendPowerCurve(container, metadata);
 }
 
@@ -1085,7 +1091,7 @@ function appendHistogramSection(
     label.className = "fit-demo-zone-label";
     label.textContent = `${row.label}: ${formatDuration(row.seconds)} (${formatNumber(
       row.percentage,
-      0
+      1
     )}%)`;
 
     const track = document.createElement("div");
@@ -1103,6 +1109,77 @@ function appendHistogramSection(
   });
 
   container.appendChild(section);
+}
+
+function appendMetadataPowerHistogram(
+  container: HTMLElement,
+  metadata: Record<string, unknown> | undefined
+) {
+  const rows = getMetadataPowerHistogramRows(metadata);
+  if (rows.length === 0) {
+    return;
+  }
+
+  appendHistogramSection(container, "Power histogram (25 W brackets)", rows);
+}
+
+function getMetadataPowerHistogramRows(
+  metadata: Record<string, unknown> | undefined
+): ZoneHistogramRow[] {
+  const histogram = getMetadataPowerHistogram(metadata);
+  if (!histogram) {
+    return [];
+  }
+
+  const totalSeconds = histogram.totalSeconds > 0
+    ? histogram.totalSeconds
+    : histogram.buckets.reduce((sum, bucket) => sum + bucket.seconds, 0);
+  if (totalSeconds <= 0) {
+    return [];
+  }
+
+  return histogram.buckets.map((bucket) => ({
+    label: bucket.label,
+    seconds: bucket.seconds,
+    percentage: (bucket.seconds / totalSeconds) * 100,
+    color: "#0078A8",
+  }));
+}
+
+function getMetadataPowerHistogram(
+  metadata: Record<string, unknown> | undefined
+): { totalSeconds: number; buckets: MetadataPowerHistogramBucket[] } | undefined {
+  const histograms = metadata ? getRecordProperty(metadata, "histograms") : undefined;
+  const powerW = histograms ? getRecordProperty(histograms, "powerW") : undefined;
+  if (!powerW || !Array.isArray(powerW.buckets)) {
+    return undefined;
+  }
+
+  const buckets = powerW.buckets
+    .map(readMetadataPowerHistogramBucket)
+    .filter((bucket): bucket is MetadataPowerHistogramBucket => Boolean(bucket));
+  if (buckets.length === 0) {
+    return undefined;
+  }
+
+  const totalSeconds = getNumberProperty(powerW, "totalSeconds") || 0;
+  return { totalSeconds, buckets };
+}
+
+function readMetadataPowerHistogramBucket(
+  value: unknown
+): MetadataPowerHistogramBucket | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const label = typeof value.label === "string" ? value.label.trim() : "";
+  const seconds = getNumberProperty(value, "seconds");
+  if (!label || typeof seconds !== "number" || seconds <= 0) {
+    return undefined;
+  }
+
+  return { label, seconds };
 }
 
 function appendPowerCurve(

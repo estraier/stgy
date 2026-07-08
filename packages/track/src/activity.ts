@@ -1,4 +1,6 @@
 const DEFAULT_MAX_POINTS = 3000;
+const POWER_HISTOGRAM_BUCKET_SIZE_W = 25;
+const POWER_HISTOGRAM_MAX_BUCKET_W = 2000;
 export const STRAVA_POWER_CURVE_DURATIONS_SECONDS = [
   5,
   10,
@@ -85,6 +87,7 @@ export type TrackActivityMetadata = {
   statistics?: TrackActivityStatistics;
   training?: TrackActivityTraining;
   bestEfforts?: TrackActivityBestEfforts;
+  histograms?: TrackActivityHistograms;
 };
 
 export type TrackActivityStatistics = {
@@ -119,6 +122,22 @@ export type TrackActivityBestEfforts = {
 };
 
 export type TrackDurationBestEfforts = Record<string, number>;
+
+export type TrackActivityHistograms = {
+  powerW?: TrackPowerHistogram;
+};
+
+export type TrackPowerHistogram = {
+  bucketSizeW: number;
+  maxBucketW: number;
+  totalSeconds: number;
+  buckets: TrackPowerHistogramBucket[];
+};
+
+export type TrackPowerHistogramBucket = {
+  label: string;
+  seconds: number;
+};
 
 export type TrackPowerZoneKey = "z1" | "z2" | "z3" | "z4" | "z5" | "z6" | "z7";
 export type TrackHeartRateZoneKey = "z1" | "z2" | "z3" | "z4" | "z5";
@@ -638,6 +657,13 @@ export function applyComputedMetadata(
   } else {
     delete metadata.bestEfforts;
   }
+
+  const histograms = buildActivityHistograms(points);
+  if (histograms) {
+    metadata.histograms = histograms;
+  } else {
+    delete metadata.histograms;
+  }
 }
 
 function mergeTrainingMetadata(
@@ -876,6 +902,134 @@ function buildNumericStats(
     median,
     max: sorted[sorted.length - 1],
   };
+}
+
+export function buildActivityHistograms(
+  points: TrackPoint[],
+): TrackActivityHistograms | undefined {
+  const powerW = buildPowerHistogram(points);
+  if (!powerW) {
+    return undefined;
+  }
+
+  return { powerW };
+}
+
+function buildPowerHistogram(
+  points: TrackPoint[],
+): TrackPowerHistogram | undefined {
+  const secondsByBucket = createPowerHistogramBuckets();
+  let totalSeconds = assignTimedPowerHistogramDurations(points, secondsByBucket);
+
+  if (totalSeconds === 0) {
+    totalSeconds = assignSamplePowerHistogramDurations(points, secondsByBucket);
+  }
+
+  if (totalSeconds === 0) {
+    return undefined;
+  }
+
+  const buckets = secondsByBucket
+    .map((seconds, index) => {
+      return seconds > 0
+        ? { label: getPowerHistogramBucketLabel(index), seconds }
+        : undefined;
+    })
+    .filter((bucket): bucket is TrackPowerHistogramBucket => Boolean(bucket));
+
+  return {
+    bucketSizeW: POWER_HISTOGRAM_BUCKET_SIZE_W,
+    maxBucketW: POWER_HISTOGRAM_MAX_BUCKET_W,
+    totalSeconds,
+    buckets,
+  };
+}
+
+function createPowerHistogramBuckets(): number[] {
+  return Array.from(
+    {
+      length: POWER_HISTOGRAM_MAX_BUCKET_W / POWER_HISTOGRAM_BUCKET_SIZE_W + 2,
+    },
+    () => 0,
+  );
+}
+
+function assignTimedPowerHistogramDurations(
+  points: TrackPoint[],
+  secondsByBucket: number[],
+): number {
+  const timed = points
+    .filter((point): point is TrackPoint & { time: number } => {
+      return isFiniteNumber(point.time);
+    })
+    .sort((a, b) => a.time - b.time);
+
+  let totalSeconds = 0;
+  for (let index = 0; index + 1 < timed.length; index += 1) {
+    const current = timed[index];
+    const next = timed[index + 1];
+    const deltaSeconds = next.time - current.time;
+    const bucketIndex = getPowerHistogramBucketIndex(current.powerW);
+
+    if (deltaSeconds <= 0 || deltaSeconds > 30 || bucketIndex === undefined) {
+      continue;
+    }
+
+    secondsByBucket[bucketIndex] += deltaSeconds;
+    totalSeconds += deltaSeconds;
+  }
+
+  return totalSeconds;
+}
+
+function assignSamplePowerHistogramDurations(
+  points: TrackPoint[],
+  secondsByBucket: number[],
+): number {
+  let totalSeconds = 0;
+
+  points.forEach((point) => {
+    const bucketIndex = getPowerHistogramBucketIndex(point.powerW);
+    if (bucketIndex === undefined) {
+      return;
+    }
+
+    secondsByBucket[bucketIndex] += 1;
+    totalSeconds += 1;
+  });
+
+  return totalSeconds;
+}
+
+function getPowerHistogramBucketIndex(
+  powerW: number | undefined,
+): number | undefined {
+  if (!isFiniteNumber(powerW) || powerW < 0) {
+    return undefined;
+  }
+
+  if (powerW <= 0) {
+    return 0;
+  }
+
+  if (powerW > POWER_HISTOGRAM_MAX_BUCKET_W) {
+    return POWER_HISTOGRAM_MAX_BUCKET_W / POWER_HISTOGRAM_BUCKET_SIZE_W + 1;
+  }
+
+  return Math.ceil(powerW / POWER_HISTOGRAM_BUCKET_SIZE_W);
+}
+
+function getPowerHistogramBucketLabel(index: number): string {
+  if (index === 0) {
+    return "0 W";
+  }
+
+  const maxIndex = POWER_HISTOGRAM_MAX_BUCKET_W / POWER_HISTOGRAM_BUCKET_SIZE_W;
+  if (index > maxIndex) {
+    return `>${POWER_HISTOGRAM_MAX_BUCKET_W} W`;
+  }
+
+  return `≤${index * POWER_HISTOGRAM_BUCKET_SIZE_W} W`;
 }
 
 export function buildActivityBestEfforts(
@@ -1370,6 +1524,7 @@ function cloneMetadata(metadata: TrackActivityMetadata): TrackActivityMetadata {
     statistics: cloneStatistics(metadata.statistics),
     training: cloneTraining(metadata.training),
     bestEfforts: cloneBestEfforts(metadata.bestEfforts),
+    histograms: cloneHistograms(metadata.histograms),
   };
 }
 
@@ -1404,6 +1559,23 @@ function cloneBestEfforts(
 
   return {
     powerW: bestEfforts.powerW ? { ...bestEfforts.powerW } : undefined,
+  };
+}
+
+function cloneHistograms(
+  histograms: TrackActivityHistograms | undefined,
+): TrackActivityHistograms | undefined {
+  if (!histograms) {
+    return undefined;
+  }
+
+  return {
+    powerW: histograms.powerW
+      ? {
+          ...histograms.powerW,
+          buckets: histograms.powerW.buckets.map((bucket) => ({ ...bucket })),
+        }
+      : undefined,
   };
 }
 

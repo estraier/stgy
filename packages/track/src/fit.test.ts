@@ -299,6 +299,16 @@ describe("parseFitBytes", () => {
         totalCalories: "fit",
       },
     });
+    expect(activity.metadata.histograms?.powerW).toEqual({
+      bucketSizeW: 25,
+      maxBucketW: 2000,
+      totalSeconds: 30,
+      buckets: [
+        { label: "≤100 W", seconds: 10 },
+        { label: "≤200 W", seconds: 10 },
+        { label: "≤300 W", seconds: 10 },
+      ],
+    });
   });
 
 
@@ -570,6 +580,17 @@ describe("downsampleTrackActivity", () => {
         "60": 250,
       },
     };
+    activity.metadata.histograms = {
+      powerW: {
+        bucketSizeW: 25,
+        maxBucketW: 2000,
+        totalSeconds: 3,
+        buckets: [
+          { label: "≤150 W", seconds: 1 },
+          { label: "≤175 W", seconds: 2 },
+        ],
+      },
+    };
 
     const downsampled = downsampleTrackActivity(activity, {
       maxPoints: 4,
@@ -593,6 +614,15 @@ describe("downsampleTrackActivity", () => {
     );
     expect(downsampled.metadata.bestEfforts?.powerW).not.toBe(
       activity.metadata.bestEfforts.powerW,
+    );
+    expect(downsampled.metadata.histograms).not.toBe(
+      activity.metadata.histograms,
+    );
+    expect(downsampled.metadata.histograms?.powerW).not.toBe(
+      activity.metadata.histograms.powerW,
+    );
+    expect(downsampled.metadata.histograms?.powerW?.buckets).not.toBe(
+      activity.metadata.histograms.powerW!.buckets,
     );
   });
 
@@ -1022,6 +1052,18 @@ describe("trackActivityToTrackJson", () => {
         "60": 234.56,
       },
     };
+    activity.metadata.histograms = {
+      powerW: {
+        bucketSizeW: 25,
+        maxBucketW: 2000,
+        totalSeconds: 30.24,
+        buckets: [
+          { label: "0 W", seconds: 3 },
+          { label: "≤25 W", seconds: 10.24 },
+          { label: ">2000 W", seconds: 17 },
+        ],
+      },
+    };
 
     const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const metadata = parsed.features[0].properties.metadata;
@@ -1052,6 +1094,18 @@ describe("trackActivityToTrackJson", () => {
       powerW: {
         "5": 512.3,
         "60": 234.6,
+      },
+    });
+    expect(metadata.histograms).toEqual({
+      powerW: {
+        bucketSizeW: 25,
+        maxBucketW: 2000,
+        totalSeconds: 30.2,
+        buckets: [
+          { label: "0 W", seconds: 3 },
+          { label: "≤25 W", seconds: 10.2 },
+          { label: ">2000 W", seconds: 17 },
+        ],
       },
     });
   });
