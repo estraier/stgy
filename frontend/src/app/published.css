@@ -3597,3 +3597,50 @@ html:has(.site-container) {
     "map"
     "caption";
 }
+
+/* Mobile vertical non-grid track maps.
+   The published mobile layout switches at 800px, not 480px.  In vertical writing
+   mode the figure's auto physical width can shrink before the canvas resolves its
+   percentage width, so give non-grid maps a concrete viewport-width box.  Grid
+   maps are excluded because their sizing is controlled by the grid rules above. */
+@media (max-width: 800px) {
+  .pub-theme-dir-vert
+    .markdown-body
+    figure.stgy-track-map:not(.stgy-track-grid > figure.stgy-track-map) {
+    width: calc(100svw - 1rem) !important;
+    max-width: calc(100svw - 1rem) !important;
+  }
+
+  .pub-theme-dir-vert
+    .markdown-body
+    figure.stgy-track-map:not(.stgy-track-grid > figure.stgy-track-map)
+    .stgy-track-canvas {
+    width: calc(100svw - 1rem) !important;
+    max-width: 100% !important;
+  }
+
+  .pub-theme-dir-vert
+    .markdown-body
+    figure.stgy-track-map:not(.stgy-track-grid > figure.stgy-track-map)
+    .stgy-track-graph,
+  .pub-theme-dir-vert
+    .markdown-body
+    figure.stgy-track-map:not(.stgy-track-grid > figure.stgy-track-map)
+    + .stgy-track-graph {
+    width: calc(100svw - 1rem) !important;
+    max-width: 100% !important;
+  }
+
+  .pub-theme-dir-vert
+    .markdown-body
+    figure.stgy-track-map:not(.stgy-track-grid > figure.stgy-track-map):has(
+      > .stgy-track-graph:not([hidden])
+    ) {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(0, auto) auto auto;
+    grid-template-areas:
+      "map"
+      "graph"
+      "caption";
+  }
+}
