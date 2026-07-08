@@ -11,9 +11,16 @@ const trackCssPath = path.join(root, "src", "stgy-track.css");
 fs.mkdirSync(distDir, { recursive: true });
 fs.mkdirSync(imagesDir, { recursive: true });
 
-fs.copyFileSync(leafletCssPath, path.join(distDir, "leaflet.css"));
-fs.copyFileSync(trackCssPath, path.join(distDir, "stgy-track.css"));
-fs.copyFileSync(trackCssPath, path.join(distDir, "track-viewer.css"));
+const leafletCss = fs.readFileSync(leafletCssPath, "utf8");
+const trackCss = fs.readFileSync(trackCssPath, "utf8");
+
+fs.writeFileSync(path.join(distDir, "leaflet.css"), leafletCss, "utf8");
+fs.writeFileSync(path.join(distDir, "stgy-track.css"), trackCss, "utf8");
+fs.writeFileSync(
+  path.join(distDir, "track-viewer.css"),
+  `${leafletCss}\n\n${trackCss}`,
+  "utf8"
+);
 
 fs.readdirSync(leafletImagesDir).forEach((fileName) => {
   fs.copyFileSync(
