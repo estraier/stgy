@@ -131,6 +131,8 @@ type MdMapSpec = {
   pins: MdMapPin[];
 };
 
+const DEFAULT_MD_MAP_ZOOM = 13;
+
 function parseMdMacroOptions(raw: string | undefined): MdMacroOptions {
   const macro: MdMacroOptions = {};
   if (!raw) return macro;
@@ -214,11 +216,12 @@ function parseMdMapUri(url: string): MdMapSpec | null {
   if (blocks.length === 0 || !blocks[0]) return null;
 
   const centerParts = blocks[0]!.split(",").map((part) => part.trim());
-  if (centerParts.length !== 3) return null;
+  if (centerParts.length !== 2 && centerParts.length !== 3) return null;
 
   const lon = Number(centerParts[0]);
   const lat = Number(centerParts[1]);
-  const zoom = Number(centerParts[2]);
+  const zoom =
+    centerParts.length === 3 ? Number(centerParts[2]) : DEFAULT_MD_MAP_ZOOM;
   if (!isFiniteMdMapCoordinate(lon, lat)) return null;
   if (!Number.isFinite(zoom) || zoom < 0 || zoom > 22) return null;
 

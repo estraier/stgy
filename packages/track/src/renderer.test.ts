@@ -719,6 +719,36 @@ describe("StgyTrackRenderer", () => {
     expect(graphs[1].hidden).toBe(false);
   });
 
+  test("renders graph inside map figure in a vertical public page", async () => {
+    document.body.innerHTML = `
+      <div class="pub-page pub-theme-dir-vert">
+        <article class="markdown-body">
+          <figure class="stgy-track-map" data-src="#track-a">
+            <div class="stgy-track-canvas"></div>
+            <figcaption class="stgy-track-caption">A</figcaption>
+          </figure>
+        </article>
+      </div>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockImplementation(async () => {
+      return makeTrackWithGraph();
+    });
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const figure = document.querySelector<HTMLElement>(".stgy-track-map");
+    const graph = document.querySelector<HTMLElement>(".stgy-track-graph");
+
+    expect(graph).toBeTruthy();
+    expect(figure?.querySelector(".stgy-track-graph")).toBe(graph);
+    expect(graph?.nextElementSibling?.tagName.toLowerCase()).toBe("figcaption");
+    expect(figure?.nextElementSibling).toBeNull();
+    expect(graph?.hidden).toBe(false);
+  });
+
   test("renders multiple popup links and images from properties", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map" data-src="#demo-geojson-popup-media">

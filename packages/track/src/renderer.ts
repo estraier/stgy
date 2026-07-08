@@ -425,7 +425,10 @@ export class StgyTrackRenderer {
     panel.className = "stgy-track-graph";
     panel.hidden = true;
 
-    if (figure.parentElement?.classList.contains("stgy-track-grid")) {
+    if (
+      figure.parentElement?.classList.contains("stgy-track-grid") ||
+      figure.closest(".pub-theme-dir-vert")
+    ) {
       const caption = Array.from(figure.children).find((child) => {
         return child.tagName.toLowerCase() === "figcaption";
       });

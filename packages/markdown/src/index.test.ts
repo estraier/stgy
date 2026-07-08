@@ -342,7 +342,7 @@ describe("parseMarkdown", () => {
     expect(stripPos(parseMarkdown(mdText))).toStrictEqual(expected);
   });
 
-  it("broken inline track map does not become data-src", () => {
+  it("inline track map uses default zoom when zoom is omitted", () => {
     const mdText = "@[](map://139.6444794,35.6595519){height=240}";
     const expected = [
       {
@@ -350,6 +350,9 @@ describe("parseMarkdown", () => {
         tag: "figure",
         attrs: {
           class: "stgy-track-map",
+          "data-lon": 139.6444794,
+          "data-lat": 35.6595519,
+          "data-zoom": 13,
           style: "height:240px",
         },
         children: [
@@ -2202,10 +2205,20 @@ describe("mdRenderHtml basics", () => {
     );
   });
 
-  it("broken inline track map does not render data-src", () => {
+  it("inline track map renders default zoom when zoom is omitted", () => {
     const mdText = "@[](map://139.6444794,35.6595519){height=240}";
     expect(makeHtml(mdText)).toBe(
-      '<figure class="stgy-track-map" style="height:240px"><div class="stgy-track-canvas"></div></figure>',
+      '<figure class="stgy-track-map" data-lat="35.6595519" ' +
+        'data-lon="139.6444794" data-zoom="13" style="height:240px">' +
+        '<div class="stgy-track-canvas"></div></figure>',
+    );
+  });
+
+  it("inline track map accepts lon lat without zoom", () => {
+    const mdText = "@[](map://135,35)";
+    expect(makeHtml(mdText)).toBe(
+      '<figure class="stgy-track-map" data-lat="35" data-lon="135" ' +
+        'data-zoom="13"><div class="stgy-track-canvas"></div></figure>',
     );
   });
 
