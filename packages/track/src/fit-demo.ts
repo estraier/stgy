@@ -888,13 +888,28 @@ type PowerCurvePoint = {
   watts: number;
 };
 
-type ScatterMetricKey = "cadenceRpm" | "powerW" | "heartRateBpm";
+type ScatterMetricKey =
+  "cadenceRpm" |
+  "powerW" |
+  "heartRateBpm" |
+  "speedKph" |
+  "gradePercent" |
+  "temperatureC" |
+  "elevationM" |
+  "estimatedTorqueNm";
 
-type SmoothedScatterPoint = {
-  cadenceRpm?: number;
-  powerW?: number;
-  heartRateBpm?: number;
+type ScatterMetricDefinition = {
+  key: ScatterMetricKey;
+  label: string;
+  axisLabel: string;
+  getValue: (
+    point: TrackPoint,
+    index: number,
+    points: TrackPoint[]
+  ) => number | undefined;
 };
+
+type SmoothedScatterPoint = Partial<Record<ScatterMetricKey, number>>;
 
 type ScatterPlotPoint = {
   x: number;
@@ -1279,69 +1294,232 @@ function buildPowerCurveSvg(points: PowerCurvePoint[]): SVGSVGElement {
   return svg;
 }
 
+const SCATTER_METRICS: ScatterMetricDefinition[] = [
+  {
+    key: "speedKph",
+    label: "Speed",
+    axisLabel: "Speed (km/h)",
+    getValue: (point) => {
+      if (typeof point.speedMps !== "number" || !Number.isFinite(point.speedMps)) {
+        return undefined;
+      }
+      return point.speedMps * 3.6;
+    },
+  },
+  {
+    key: "cadenceRpm",
+    label: "Cadence",
+    axisLabel: "Cadence (rpm)",
+    getValue: (point) => point.cadenceRpm,
+  },
+  {
+    key: "heartRateBpm",
+    label: "Heart rate",
+    axisLabel: "Heart rate (bpm)",
+    getValue: (point) => point.heartRateBpm,
+  },
+  {
+    key: "powerW",
+    label: "Power",
+    axisLabel: "Power (W)",
+    getValue: (point) => point.powerW,
+  },
+  {
+    key: "estimatedTorqueNm",
+    label: "Torque",
+    axisLabel: "Torque (Nm)",
+    getValue: getEstimatedTorqueNm,
+  },
+  {
+    key: "gradePercent",
+    label: "Grade",
+    axisLabel: "Grade (%)",
+    getValue: getGradePercent,
+  },
+  {
+    key: "elevationM",
+    label: "Elevation",
+    axisLabel: "Elevation (m)",
+    getValue: (point) => point.elevationM,
+  },
+];
+
 function appendSmoothedScatterPlots(
   container: HTMLElement,
   points: TrackPoint[]
 ) {
-  const smoothed = buildSmoothedScatterSeries(points, 30);
-  appendScatterPlotSection(
-    container,
-    "Cadence vs Power",
-    buildScatterPlotPoints(smoothed, "cadenceRpm", "powerW"),
-    {
-      xLabel: "Cadence (rpm)",
-      yLabel: "Power (W)",
-      pointColor: "#0078A8",
-    }
+  const smoothed = sampleSmoothedScatterPoints(
+    buildSmoothedScatterSeries(points, 30, SCATTER_METRICS),
+    1000
   );
-  appendScatterPlotSection(
-    container,
-    "Cadence vs Heart rate",
-    buildScatterPlotPoints(smoothed, "cadenceRpm", "heartRateBpm"),
-    {
-      xLabel: "Cadence (rpm)",
-      yLabel: "Heart rate (bpm)",
-      pointColor: "#2fa84f",
+  const availableMetrics = getAvailableScatterMetrics(smoothed, SCATTER_METRICS);
+  if (availableMetrics.length === 0) {
+    return;
+  }
+
+  const section = document.createElement("section");
+  section.className = "fit-demo-power-curve fit-demo-scatter-plot";
+
+  const title = document.createElement("div");
+  title.className = "fit-demo-zone-title";
+  title.textContent = "Scatter plot";
+  section.appendChild(title);
+
+  const controls = document.createElement("div");
+  controls.className = "fit-demo-scatter-controls";
+
+  const xSelect = createScatterMetricSelect(availableMetrics);
+  const ySelect = createScatterMetricSelect(availableMetrics);
+  const defaultPair = getDefaultScatterPair(availableMetrics);
+  xSelect.value = defaultPair.x.key;
+  ySelect.value = defaultPair.y.key;
+
+  const xLabel = document.createElement("label");
+  xLabel.textContent = "X ";
+  xLabel.appendChild(xSelect);
+
+  const yLabel = document.createElement("label");
+  yLabel.textContent = "Y ";
+  yLabel.appendChild(ySelect);
+
+  const trimInput = document.createElement("input");
+  trimInput.type = "checkbox";
+
+  const trimLabel = document.createElement("label");
+  trimLabel.appendChild(trimInput);
+  trimLabel.appendChild(document.createTextNode(" Trim outliers (2–98%)"));
+
+  controls.appendChild(xLabel);
+  controls.appendChild(yLabel);
+  controls.appendChild(trimLabel);
+  section.appendChild(controls);
+
+  const plotContainer = document.createElement("div");
+  plotContainer.className = "fit-demo-scatter-plot-output";
+  section.appendChild(plotContainer);
+
+  const redraw = () => {
+    const xMetric = findScatterMetric(availableMetrics, xSelect.value);
+    const yMetric = findScatterMetric(availableMetrics, ySelect.value);
+    plotContainer.replaceChildren();
+    if (!xMetric || !yMetric) {
+      return;
     }
-  );
-  appendScatterPlotSection(
-    container,
-    "Power vs Heart rate",
-    buildScatterPlotPoints(smoothed, "powerW", "heartRateBpm"),
-    {
-      xLabel: "Power (W)",
-      yLabel: "Heart rate (bpm)",
-      pointColor: "#e14545",
+
+    const scatterPoints = buildScatterPlotPoints(
+      smoothed,
+      xMetric.key,
+      yMetric.key,
+      1000
+    );
+    if (scatterPoints.length === 0) {
+      const message = document.createElement("div");
+      message.textContent = "No matching points for this metric pair.";
+      plotContainer.appendChild(message);
+      return;
     }
-  );
+
+    plotContainer.appendChild(
+      buildScatterPlotSvg(scatterPoints, {
+        xLabel: xMetric.axisLabel,
+        yLabel: yMetric.axisLabel,
+        pointColor: "#0078A8",
+        trimPercentile: trimInput.checked,
+      })
+    );
+  };
+
+  xSelect.addEventListener("change", redraw);
+  ySelect.addEventListener("change", redraw);
+  trimInput.addEventListener("change", redraw);
+  redraw();
+
+  container.appendChild(section);
+}
+
+function createScatterMetricSelect(
+  metrics: ScatterMetricDefinition[]
+): HTMLSelectElement {
+  const select = document.createElement("select");
+  metrics.forEach((metric) => {
+    const option = document.createElement("option");
+    option.value = metric.key;
+    option.textContent = metric.label;
+    select.appendChild(option);
+  });
+  return select;
+}
+
+function getDefaultScatterPair(metrics: ScatterMetricDefinition[]): {
+  x: ScatterMetricDefinition;
+  y: ScatterMetricDefinition;
+} {
+  const cadence = findScatterMetric(metrics, "cadenceRpm");
+  const speed = findScatterMetric(metrics, "speedKph");
+  if (cadence && speed) {
+    return { x: cadence, y: speed };
+  }
+  return { x: metrics[0], y: metrics[1] || metrics[0] };
+}
+
+function findScatterMetric(
+  metrics: ScatterMetricDefinition[],
+  key: string
+): ScatterMetricDefinition | undefined {
+  return metrics.find((metric) => metric.key === key);
+}
+
+function getAvailableScatterMetrics(
+  points: SmoothedScatterPoint[],
+  metrics: ScatterMetricDefinition[]
+): ScatterMetricDefinition[] {
+  return metrics.filter((metric) => {
+    let count = 0;
+    for (const point of points) {
+      const value = point[metric.key];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        count += 1;
+        if (count >= 2) {
+          return true;
+        }
+      }
+    }
+    return false;
+  });
 }
 
 function buildSmoothedScatterSeries(
   points: TrackPoint[],
-  windowSeconds: number
+  windowSeconds: number,
+  metrics: ScatterMetricDefinition[]
 ): SmoothedScatterPoint[] {
   if (points.length === 0) {
     return [];
   }
 
   const useTimedWindow = hasTimedAnalysisPoints(points);
-  return points.map((_, index) => ({
-    cadenceRpm: computeSmoothedMetric(points, index, "cadenceRpm", windowSeconds, useTimedWindow),
-    powerW: computeSmoothedMetric(points, index, "powerW", windowSeconds, useTimedWindow),
-    heartRateBpm: computeSmoothedMetric(
-      points,
-      index,
-      "heartRateBpm",
-      windowSeconds,
-      useTimedWindow
-    ),
-  }));
+  return points.map((_, index) => {
+    const smoothedPoint: SmoothedScatterPoint = {};
+    metrics.forEach((metric) => {
+      const value = computeSmoothedMetric(
+        points,
+        index,
+        metric,
+        windowSeconds,
+        useTimedWindow
+      );
+      if (typeof value === "number") {
+        smoothedPoint[metric.key] = value;
+      }
+    });
+    return smoothedPoint;
+  });
 }
 
 function computeSmoothedMetric(
   points: TrackPoint[],
   index: number,
-  key: ScatterMetricKey,
+  metric: ScatterMetricDefinition,
   windowSeconds: number,
   useTimedWindow: boolean
 ): number | undefined {
@@ -1360,7 +1538,7 @@ function computeSmoothedMetric(
       if (time < startTime) {
         break;
       }
-      const value = points[cursor]?.[key];
+      const value = metric.getValue(points[cursor], cursor, points);
       if (typeof value === "number" && Number.isFinite(value)) {
         samples.push(value);
       }
@@ -1368,7 +1546,7 @@ function computeSmoothedMetric(
   } else {
     const startIndex = Math.max(0, index - windowSeconds + 1);
     for (let cursor = startIndex; cursor <= index; cursor += 1) {
-      const value = points[cursor]?.[key];
+      const value = metric.getValue(points[cursor], cursor, points);
       if (typeof value === "number" && Number.isFinite(value)) {
         samples.push(value);
       }
@@ -1386,7 +1564,8 @@ function computeSmoothedMetric(
 function buildScatterPlotPoints(
   points: SmoothedScatterPoint[],
   xKey: ScatterMetricKey,
-  yKey: ScatterMetricKey
+  yKey: ScatterMetricKey,
+  maxPoints: number
 ): ScatterPlotPoint[] {
   const filtered = points
     .map((point) => {
@@ -1399,7 +1578,7 @@ function buildScatterPlotPoints(
     })
     .filter((point): point is ScatterPlotPoint => Boolean(point));
 
-  return sampleScatterPlotPoints(filtered, 1000);
+  return sampleScatterPlotPoints(filtered, maxPoints);
 }
 
 function sampleScatterPlotPoints(
@@ -1418,31 +1597,20 @@ function sampleScatterPlotPoints(
   return sampled;
 }
 
-function appendScatterPlotSection(
-  container: HTMLElement,
-  titleText: string,
-  points: ScatterPlotPoint[],
-  options: {
-    xLabel: string;
-    yLabel: string;
-    pointColor: string;
-  }
-) {
-  if (points.length === 0) {
-    return;
+function sampleSmoothedScatterPoints(
+  points: SmoothedScatterPoint[],
+  maxPoints: number
+): SmoothedScatterPoint[] {
+  if (points.length <= maxPoints) {
+    return points;
   }
 
-  const section = document.createElement("section");
-  section.className = "fit-demo-power-curve";
-
-  const title = document.createElement("div");
-  title.className = "fit-demo-zone-title";
-  title.textContent = titleText;
-  section.appendChild(title);
-
-  const svg = buildScatterPlotSvg(points, options);
-  section.appendChild(svg);
-  container.appendChild(section);
+  const sampled: SmoothedScatterPoint[] = [];
+  for (let index = 0; index < maxPoints; index += 1) {
+    const sourceIndex = Math.round(index * (points.length - 1) / (maxPoints - 1));
+    sampled.push(points[sourceIndex]);
+  }
+  return sampled;
 }
 
 function buildScatterPlotSvg(
@@ -1451,6 +1619,7 @@ function buildScatterPlotSvg(
     xLabel: string;
     yLabel: string;
     pointColor: string;
+    trimPercentile: boolean;
   }
 ): SVGSVGElement {
   const width = 760;
@@ -1461,8 +1630,14 @@ function buildScatterPlotSvg(
   const marginLeft = 56;
   const plotWidth = width - marginLeft - marginRight;
   const plotHeight = height - marginTop - marginBottom;
-  const xMax = getNiceCeiling(Math.max(...points.map((point) => point.x)));
-  const yMax = getNiceCeiling(Math.max(...points.map((point) => point.y)));
+  const xRange = getScatterAxisRange(
+    points.map((point) => point.x),
+    options.trimPercentile
+  );
+  const yRange = getScatterAxisRange(
+    points.map((point) => point.y),
+    options.trimPercentile
+  );
   const svgNs = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(svgNs, "svg");
 
@@ -1475,11 +1650,11 @@ function buildScatterPlotSvg(
   );
 
   const xValue = (value: number) => {
-    const ratio = xMax <= 0 ? 0 : value / xMax;
+    const ratio = (value - xRange.min) / (xRange.max - xRange.min);
     return marginLeft + ratio * plotWidth;
   };
   const yValue = (value: number) => {
-    const ratio = yMax <= 0 ? 0 : value / yMax;
+    const ratio = (value - yRange.min) / (yRange.max - yRange.min);
     return marginTop + plotHeight - ratio * plotHeight;
   };
 
@@ -1493,32 +1668,47 @@ function buildScatterPlotSvg(
     "#666"
   );
 
-  createLinearTicks(xMax, 5).forEach((tick) => {
+  createRangeTicks(xRange.min, xRange.max, 5).forEach((tick) => {
     const x = xValue(tick);
     appendSvgLine(svg, x, marginTop, x, marginTop + plotHeight, "#e5e5e5");
     appendSvgText(
       svg,
       x,
       marginTop + plotHeight + 20,
-      formatNumber(tick, 0),
+      formatScatterTick(tick, xRange.max - xRange.min),
       "middle",
       "11px"
     );
   });
 
-  createLinearTicks(yMax, 5).forEach((tick) => {
+  createRangeTicks(yRange.min, yRange.max, 5).forEach((tick) => {
     const y = yValue(tick);
     appendSvgLine(svg, marginLeft, y, marginLeft + plotWidth, y, "#e5e5e5");
-    appendSvgText(svg, marginLeft - 8, y + 4, formatNumber(tick, 0), "end", "11px");
+    appendSvgText(
+      svg,
+      marginLeft - 8,
+      y + 4,
+      formatScatterTick(tick, yRange.max - yRange.min),
+      "end",
+      "11px"
+    );
   });
 
   points.forEach((point) => {
+    if (
+      point.x < xRange.min ||
+      point.x > xRange.max ||
+      point.y < yRange.min ||
+      point.y > yRange.max
+    ) {
+      return;
+    }
     const circle = document.createElementNS(svgNs, "circle");
     circle.setAttribute("cx", String(xValue(point.x)));
     circle.setAttribute("cy", String(yValue(point.y)));
-    circle.setAttribute("r", "3");
+    circle.setAttribute("r", "2.2");
     circle.setAttribute("fill", options.pointColor);
-    circle.setAttribute("fill-opacity", "0.55");
+    circle.setAttribute("fill-opacity", "0.45");
     circle.setAttribute(
       "aria-label",
       `${options.xLabel} ${formatNumber(point.x, 1)}, ${options.yLabel} ${formatNumber(point.y, 1)}`
@@ -1537,6 +1727,170 @@ function buildScatterPlotSvg(
   appendSvgText(svg, marginLeft, marginTop - 4, options.yLabel, "start", "11px");
 
   return svg;
+}
+
+function getScatterAxisRange(values: number[], trimPercentile: boolean): {
+  min: number;
+  max: number;
+} {
+  const finiteValues = values.filter((value) => Number.isFinite(value));
+  if (finiteValues.length === 0) {
+    return { min: 0, max: 1 };
+  }
+
+  const sorted = finiteValues.slice().sort((left, right) => left - right);
+  const rawMin = trimPercentile ? getPercentile(sorted, 0.02) : sorted[0];
+  const rawMax = trimPercentile ? getPercentile(sorted, 0.98) : sorted[sorted.length - 1];
+  if (!Number.isFinite(rawMin) || !Number.isFinite(rawMax) || rawMax <= rawMin) {
+    const value = sorted[0];
+    return { min: value - 1, max: value + 1 };
+  }
+
+  if (trimPercentile) {
+    return { min: rawMin, max: rawMax };
+  }
+
+  const span = rawMax - rawMin;
+  const padding = span * 0.05;
+  return {
+    min: rawMin - padding,
+    max: rawMax + padding,
+  };
+}
+
+function getPercentile(sortedValues: number[], ratio: number): number {
+  if (sortedValues.length === 1) {
+    return sortedValues[0];
+  }
+
+  const position = ratio * (sortedValues.length - 1);
+  const lowerIndex = Math.floor(position);
+  const upperIndex = Math.ceil(position);
+  const lower = sortedValues[lowerIndex];
+  const upper = sortedValues[upperIndex];
+  if (lowerIndex === upperIndex) {
+    return lower;
+  }
+  return lower + (upper - lower) * (position - lowerIndex);
+}
+
+function createRangeTicks(minValue: number, maxValue: number, targetCount: number): number[] {
+  if (!Number.isFinite(minValue) || !Number.isFinite(maxValue) || maxValue <= minValue) {
+    return [0];
+  }
+
+  const step = getNiceTickStep((maxValue - minValue) / targetCount);
+  const first = Math.ceil(minValue / step) * step;
+  const ticks: number[] = [];
+  for (let value = first; value <= maxValue + step * 1e-9; value += step) {
+    ticks.push(value);
+  }
+  return ticks.length > 0 ? ticks : [minValue, maxValue];
+}
+
+function formatScatterTick(value: number, range: number): string {
+  return formatNumber(value, range < 10 ? 1 : 0);
+}
+
+function getGradePercent(
+  point: TrackPoint,
+  index: number,
+  points: TrackPoint[]
+): number | undefined {
+  const direct = getFirstMetricNumber(point, [
+    "grade",
+    "gradePercent",
+    "slope",
+    "slopePercent",
+  ]);
+  if (typeof direct === "number") {
+    return direct;
+  }
+
+  return estimateGradePercent(index, points);
+}
+
+function getFirstMetricNumber(
+  point: TrackPoint,
+  keys: string[]
+): number | undefined {
+  for (const key of keys) {
+    const value = getMetricNumber(point, key);
+    if (typeof value === "number") {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function estimateGradePercent(
+  index: number,
+  points: TrackPoint[]
+): number | undefined {
+  const current = points[index];
+  if (!hasDistanceAndElevation(current)) {
+    return undefined;
+  }
+
+  const previous = findDistanceElevationPoint(points, index, -1);
+  const next = findDistanceElevationPoint(points, index, 1);
+  const start = previous || current;
+  const end = next || current;
+  const distanceDelta = end.distanceM - start.distanceM;
+  if (!Number.isFinite(distanceDelta) || Math.abs(distanceDelta) < 1) {
+    return undefined;
+  }
+
+  return ((end.elevationM - start.elevationM) / distanceDelta) * 100;
+}
+
+function findDistanceElevationPoint(
+  points: TrackPoint[],
+  startIndex: number,
+  direction: -1 | 1
+): Required<Pick<TrackPoint, "distanceM" | "elevationM">> | undefined {
+  for (
+    let index = startIndex + direction;
+    index >= 0 && index < points.length;
+    index += direction
+  ) {
+    const point = points[index];
+    if (hasDistanceAndElevation(point)) {
+      return point;
+    }
+  }
+  return undefined;
+}
+
+function hasDistanceAndElevation(
+  point: TrackPoint | undefined
+): point is Required<Pick<TrackPoint, "distanceM" | "elevationM">> {
+  return point !== undefined &&
+    typeof point.distanceM === "number" &&
+    Number.isFinite(point.distanceM) &&
+    typeof point.elevationM === "number" &&
+    Number.isFinite(point.elevationM);
+}
+
+function getMetricNumber(point: TrackPoint, key: string): number | undefined {
+  const value = point.metrics?.[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function getEstimatedTorqueNm(point: TrackPoint): number | undefined {
+  const powerW = point.powerW;
+  const cadenceRpm = point.cadenceRpm;
+  if (
+    typeof powerW !== "number" ||
+    !Number.isFinite(powerW) ||
+    typeof cadenceRpm !== "number" ||
+    !Number.isFinite(cadenceRpm) ||
+    cadenceRpm < 10
+  ) {
+    return undefined;
+  }
+
+  return powerW / (cadenceRpm * 2 * Math.PI / 60);
 }
 
 function appendSvgLine(

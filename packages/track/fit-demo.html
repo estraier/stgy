@@ -120,6 +120,24 @@
       background: #fff;
     }
 
+    .fit-demo-scatter-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: flex-end;
+    }
+
+    .fit-demo-scatter-controls label {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+    }
+
+    .fit-demo-scatter-plot-svg {
+      overflow: hidden;
+    }
+
     .fit-demo-scatter-plot-svg circle {
       vector-effect: non-scaling-stroke;
     }
@@ -214,7 +232,7 @@
 
       <div class="fit-demo-row">
         <label>
-          <input id="fit-demo-print-analysis" type="checkbox">
+          <input id="fit-demo-print-analysis" type="checkbox" checked>
           Print analysis
         </label>
 
@@ -243,7 +261,7 @@
 
       <div class="fit-demo-row">
         <label>
-          <input id="fit-demo-pretty" type="checkbox">
+          <input id="fit-demo-pretty" type="checkbox" checked>
           Pretty-print TrackJSON
         </label>
       </div>
