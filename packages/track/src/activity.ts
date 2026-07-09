@@ -1,6 +1,9 @@
 const DEFAULT_MAX_POINTS = 3000;
 const POWER_HISTOGRAM_BUCKET_SIZE_W = 25;
 const POWER_HISTOGRAM_MAX_BUCKET_W = 2000;
+const HEART_RATE_HISTOGRAM_BUCKET_SIZE_BPM = 10;
+const HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM = 50;
+const HEART_RATE_HISTOGRAM_MAX_BUCKET_BPM = 200;
 const PEDALING_MIN_SPEED_KPH = 3;
 const PEDALING_MIN_CADENCE_RPM = 10;
 const PEDALING_MIN_POWER_W = 20;
@@ -112,6 +115,7 @@ export type TrackDurationBestEfforts = Record<string, number>;
 
 export type TrackActivityHistograms = {
   powerW?: TrackPowerHistogram;
+  heartRateBpm?: TrackHeartRateHistogram;
 };
 
 export type TrackPowerHistogram = {
@@ -122,6 +126,19 @@ export type TrackPowerHistogram = {
 };
 
 export type TrackPowerHistogramBucket = {
+  label: string;
+  seconds: number;
+};
+
+export type TrackHeartRateHistogram = {
+  bucketSizeBpm: number;
+  firstBucketMaxBpm: number;
+  maxBucketBpm: number;
+  totalSeconds: number;
+  buckets: TrackHeartRateHistogramBucket[];
+};
+
+export type TrackHeartRateHistogramBucket = {
   label: string;
   seconds: number;
 };
@@ -919,11 +936,12 @@ export function buildActivityHistograms(
   points: TrackPoint[],
 ): TrackActivityHistograms | undefined {
   const powerW = buildPowerHistogram(points);
-  if (!powerW) {
+  const heartRateBpm = buildHeartRateHistogram(points);
+  if (!powerW && !heartRateBpm) {
     return undefined;
   }
 
-  return { powerW };
+  return { powerW, heartRateBpm };
 }
 
 export function buildActivityPedaling(
@@ -1185,6 +1203,160 @@ function getPowerHistogramBucketLabel(index: number): string {
   }
 
   return `≤${index * POWER_HISTOGRAM_BUCKET_SIZE_W} W`;
+}
+
+function buildHeartRateHistogram(
+  points: TrackPoint[],
+): TrackHeartRateHistogram | undefined {
+  const secondsByBucket = createHeartRateHistogramBuckets();
+  let totalSeconds = assignTimedHeartRateHistogramDurations(
+    points,
+    secondsByBucket,
+  );
+
+  if (totalSeconds === 0) {
+    totalSeconds = assignSampleHeartRateHistogramDurations(
+      points,
+      secondsByBucket,
+    );
+  }
+
+  if (totalSeconds === 0) {
+    return undefined;
+  }
+
+  const buckets = secondsByBucket
+    .map((seconds, index) => {
+      return seconds > 0
+        ? { label: getHeartRateHistogramBucketLabel(index), seconds }
+        : undefined;
+    })
+    .filter((bucket): bucket is TrackHeartRateHistogramBucket => Boolean(bucket));
+
+  return {
+    bucketSizeBpm: HEART_RATE_HISTOGRAM_BUCKET_SIZE_BPM,
+    firstBucketMaxBpm: HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM,
+    maxBucketBpm: HEART_RATE_HISTOGRAM_MAX_BUCKET_BPM,
+    totalSeconds,
+    buckets,
+  };
+}
+
+function createHeartRateHistogramBuckets(): number[] {
+  return Array.from(
+    {
+      length:
+        (HEART_RATE_HISTOGRAM_MAX_BUCKET_BPM -
+          HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM) /
+          HEART_RATE_HISTOGRAM_BUCKET_SIZE_BPM +
+        3,
+    },
+    () => 0,
+  );
+}
+
+function assignTimedHeartRateHistogramDurations(
+  points: TrackPoint[],
+  secondsByBucket: number[],
+): number {
+  const timed = points
+    .filter((point): point is TrackPoint & { time: number } => {
+      return isFiniteNumber(point.time);
+    })
+    .sort((a, b) => a.time - b.time);
+
+  let totalSeconds = 0;
+  for (let index = 0; index + 1 < timed.length; index += 1) {
+    const current = timed[index];
+    const next = timed[index + 1];
+    const deltaSeconds = next.time - current.time;
+    const bucketIndex = getHeartRateHistogramBucketIndex(current.heartRateBpm);
+
+    if (deltaSeconds <= 0 || deltaSeconds > 30 || bucketIndex === undefined) {
+      continue;
+    }
+
+    secondsByBucket[bucketIndex] += deltaSeconds;
+    totalSeconds += deltaSeconds;
+  }
+
+  return totalSeconds;
+}
+
+function assignSampleHeartRateHistogramDurations(
+  points: TrackPoint[],
+  secondsByBucket: number[],
+): number {
+  let totalSeconds = 0;
+
+  points.forEach((point) => {
+    const bucketIndex = getHeartRateHistogramBucketIndex(point.heartRateBpm);
+    if (bucketIndex === undefined) {
+      return;
+    }
+
+    secondsByBucket[bucketIndex] += 1;
+    totalSeconds += 1;
+  });
+
+  return totalSeconds;
+}
+
+function getHeartRateHistogramBucketIndex(
+  heartRateBpm: number | undefined,
+): number | undefined {
+  if (!isFiniteNumber(heartRateBpm) || heartRateBpm < 0) {
+    return undefined;
+  }
+
+  if (heartRateBpm <= 0) {
+    return 0;
+  }
+
+  if (heartRateBpm <= HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM) {
+    return 1;
+  }
+
+  if (heartRateBpm > HEART_RATE_HISTOGRAM_MAX_BUCKET_BPM) {
+    return getHeartRateHistogramOverflowBucketIndex();
+  }
+
+  return (
+    Math.ceil(
+      (heartRateBpm - HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM) /
+        HEART_RATE_HISTOGRAM_BUCKET_SIZE_BPM,
+    ) + 1
+  );
+}
+
+function getHeartRateHistogramOverflowBucketIndex(): number {
+  return (
+    (HEART_RATE_HISTOGRAM_MAX_BUCKET_BPM -
+      HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM) /
+      HEART_RATE_HISTOGRAM_BUCKET_SIZE_BPM +
+    2
+  );
+}
+
+function getHeartRateHistogramBucketLabel(index: number): string {
+  if (index === 0) {
+    return "0 bpm";
+  }
+
+  if (index === 1) {
+    return `≤${HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM} bpm`;
+  }
+
+  if (index >= getHeartRateHistogramOverflowBucketIndex()) {
+    return `>${HEART_RATE_HISTOGRAM_MAX_BUCKET_BPM} bpm`;
+  }
+
+  return (
+    `≤${
+      HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM +
+      (index - 1) * HEART_RATE_HISTOGRAM_BUCKET_SIZE_BPM
+    } bpm`
+  );
 }
 
 export function buildActivityBestEfforts(
@@ -1751,6 +1923,14 @@ function cloneHistograms(
       ? {
           ...histograms.powerW,
           buckets: histograms.powerW.buckets.map((bucket) => ({ ...bucket })),
+        }
+      : undefined,
+    heartRateBpm: histograms.heartRateBpm
+      ? {
+          ...histograms.heartRateBpm,
+          buckets: histograms.heartRateBpm.buckets.map((bucket) => ({
+            ...bucket,
+          })),
         }
       : undefined,
   };

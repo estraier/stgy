@@ -78,7 +78,7 @@ export function compactTrackJsonData(
   }
 
   if (data.type !== "FeatureCollection" || !Array.isArray(data.features)) {
-    return compactTrackJsonValue(data, undefined, precision);
+    return compactTrackJsonValue(data, undefined, [], precision);
   }
 
   const output: Record<string, unknown> = {
@@ -242,6 +242,7 @@ function compactTrackJsonGeometry(
     return compactTrackJsonValue(
       geometry,
       undefined,
+      [],
       precision
     ) as Record<string, unknown>;
   }
@@ -376,6 +377,7 @@ function compactTrackJsonMetadata(
   return compactTrackJsonValue(
     metadata,
     undefined,
+    [],
     precision
   ) as Record<string, unknown>;
 }
@@ -383,14 +385,15 @@ function compactTrackJsonMetadata(
 function compactTrackJsonValue(
   value: unknown,
   key: string | undefined,
+  path: string[],
   precision: Required<TrackJsonPrecisionOptions>
 ): unknown {
   if (typeof value === "number" && Number.isFinite(value)) {
-    return roundNumber(value, getMetadataPrecision(key, precision));
+    return roundNumber(value, getMetadataPrecision(key, path, precision));
   }
 
   if (Array.isArray(value)) {
-    return value.map((item) => compactTrackJsonValue(item, key, precision));
+    return value.map((item) => compactTrackJsonValue(item, key, path, precision));
   }
 
   if (isRecord(value)) {
@@ -399,6 +402,7 @@ function compactTrackJsonValue(
       output[childKey] = compactTrackJsonValue(
         value[childKey],
         childKey,
+        [...path, childKey],
         precision
       );
     });
@@ -410,6 +414,7 @@ function compactTrackJsonValue(
 
 function getMetadataPrecision(
   key: string | undefined,
+  path: string[],
   precision: Required<TrackJsonPrecisionOptions>
 ): number {
   if (
@@ -425,7 +430,15 @@ function getMetadataPrecision(
     return 0;
   }
 
+  if (isMetricMetadataPath(path)) {
+    return 3;
+  }
+
   return precision.metadata;
+}
+
+function isMetricMetadataPath(path: string[]): boolean {
+  return path[0] === "statistics" || path[0] === "pedaling";
 }
 
 function downsampleTrackJsonFeature(

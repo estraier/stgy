@@ -785,6 +785,11 @@ function appendMetadataSummaryLines(
     appendStatsLine(lines, statistics, "temperatureC", "temperature", "°C");
   }
 
+  const pedaling = getRecordProperty(metadata, "pedaling");
+  if (pedaling) {
+    appendPedalingSummaryLine(lines, pedaling);
+  }
+
   appendDeviceSummaryLines(lines, metadata);
 
   const training = getRecordProperty(metadata, "training");
@@ -797,7 +802,7 @@ function appendMetadataSummaryLines(
   const totalCaloriesCal = getNumberProperty(training, "totalCaloriesCal");
 
   if (typeof normalizedPowerW === "number") {
-    lines.push(`normalized power: ${formatNumber(normalizedPowerW, 0)} W`);
+    lines.push(`normalized power: ${formatNumber(normalizedPowerW, 1)} W`);
   }
 
   if (typeof totalWorkJ === "number") {
@@ -806,6 +811,42 @@ function appendMetadataSummaryLines(
 
   if (typeof totalCaloriesCal === "number") {
     lines.push(`calories: ${formatNumber(totalCaloriesCal, 0)} cal`);
+  }
+}
+
+function appendPedalingSummaryLine(
+  lines: string[],
+  pedaling: Record<string, unknown>
+) {
+  const totalSeconds = getNumberProperty(pedaling, "totalSeconds");
+  const averageSpeedKph = getNumberProperty(pedaling, "averageSpeedKph");
+  const averageCadenceRpm = getNumberProperty(pedaling, "averageCadenceRpm");
+  const averageHeartRateBpm = getNumberProperty(pedaling, "averageHeartRateBpm");
+  const averagePowerW = getNumberProperty(pedaling, "averagePowerW");
+  const normalizedPowerW = getNumberProperty(pedaling, "normalizedPowerW");
+  const parts: string[] = [];
+
+  if (typeof totalSeconds === "number") {
+    parts.push(`time ${formatDuration(totalSeconds)}`);
+  }
+  if (typeof averageSpeedKph === "number") {
+    parts.push(`speed ${formatNumber(averageSpeedKph, 1)} km/h`);
+  }
+  if (typeof averageCadenceRpm === "number") {
+    parts.push(`cadence ${formatNumber(averageCadenceRpm, 1)} rpm`);
+  }
+  if (typeof averageHeartRateBpm === "number") {
+    parts.push(`heart rate ${formatNumber(averageHeartRateBpm, 1)} bpm`);
+  }
+  if (typeof averagePowerW === "number") {
+    parts.push(`power ${formatNumber(averagePowerW, 1)} W`);
+  }
+  if (typeof normalizedPowerW === "number") {
+    parts.push(`NP ${formatNumber(normalizedPowerW, 1)} W`);
+  }
+
+  if (parts.length > 0) {
+    lines.push(`pedaling: ${parts.join(", ")}`);
   }
 }
 
@@ -883,6 +924,16 @@ type ZoneHistogramRow = {
   color: string;
 };
 
+type MetadataHistogramBucket = {
+  label: string;
+  seconds: number;
+};
+
+type MetadataHistogram = {
+  totalSeconds: number;
+  buckets: MetadataHistogramBucket[];
+};
+
 type PowerCurvePoint = {
   durationSeconds: number;
   watts: number;
@@ -934,6 +985,8 @@ function appendAnalysisSections(
   }
 
   const points = result.analysisPoints || [];
+  let heartRateBracketHistogramAppended = false;
+  let powerBracketHistogramAppended = false;
   if (points.length > 0) {
     appendSpeedHistogram(container, points);
     appendCadenceHistogram(container, points);
@@ -941,14 +994,24 @@ function appendAnalysisSections(
     const lthrBpm = getPositiveNumber(elements.lthrInput);
     if (typeof lthrBpm === "number") {
       appendHeartRateHistogram(container, points, lthrBpm);
+      appendMetadataHeartRateHistogram(container, metadata);
+      heartRateBracketHistogramAppended = true;
     }
 
     const ftpW = getPositiveNumber(elements.ftpInput);
     if (typeof ftpW === "number") {
       appendPowerHistogram(container, points, ftpW);
+      appendMetadataPowerHistogram(container, metadata);
+      powerBracketHistogramAppended = true;
     }
   }
 
+  if (!heartRateBracketHistogramAppended) {
+    appendMetadataHeartRateHistogram(container, metadata);
+  }
+  if (!powerBracketHistogramAppended) {
+    appendMetadataPowerHistogram(container, metadata);
+  }
   appendPowerCurve(container, metadata);
   appendSmoothedScatterPlots(container, points);
 }
@@ -1133,6 +1196,92 @@ function appendHistogramSection(
   });
 
   container.appendChild(section);
+}
+
+function appendMetadataPowerHistogram(
+  container: HTMLElement,
+  metadata: Record<string, unknown> | undefined
+) {
+  const rows = getMetadataHistogramRows(metadata, "powerW", "#0078A8");
+  if (rows.length === 0) {
+    return;
+  }
+
+  appendHistogramSection(container, "Power histogram (25 W brackets)", rows);
+}
+
+function appendMetadataHeartRateHistogram(
+  container: HTMLElement,
+  metadata: Record<string, unknown> | undefined
+) {
+  const rows = getMetadataHistogramRows(metadata, "heartRateBpm", "#e14545");
+  if (rows.length === 0) {
+    return;
+  }
+
+  appendHistogramSection(container, "Heart-rate histogram (10 bpm brackets)", rows);
+}
+
+function getMetadataHistogramRows(
+  metadata: Record<string, unknown> | undefined,
+  key: string,
+  color: string
+): ZoneHistogramRow[] {
+  const histogram = getMetadataHistogram(metadata, key);
+  if (!histogram) {
+    return [];
+  }
+
+  const totalSeconds = histogram.totalSeconds > 0
+    ? histogram.totalSeconds
+    : histogram.buckets.reduce((sum, bucket) => sum + bucket.seconds, 0);
+  if (totalSeconds <= 0) {
+    return [];
+  }
+
+  return histogram.buckets.map((bucket) => ({
+    label: bucket.label,
+    seconds: bucket.seconds,
+    percentage: (bucket.seconds / totalSeconds) * 100,
+    color,
+  }));
+}
+
+function getMetadataHistogram(
+  metadata: Record<string, unknown> | undefined,
+  key: string
+): MetadataHistogram | undefined {
+  const histograms = metadata ? getRecordProperty(metadata, "histograms") : undefined;
+  const value = histograms ? getRecordProperty(histograms, key) : undefined;
+  if (!value || !Array.isArray(value.buckets)) {
+    return undefined;
+  }
+
+  const buckets = value.buckets
+    .map(readMetadataHistogramBucket)
+    .filter((bucket): bucket is MetadataHistogramBucket => Boolean(bucket));
+  if (buckets.length === 0) {
+    return undefined;
+  }
+
+  const totalSeconds = getNumberProperty(value, "totalSeconds") || 0;
+  return { totalSeconds, buckets };
+}
+
+function readMetadataHistogramBucket(
+  value: unknown
+): MetadataHistogramBucket | undefined {
+  if (!isRecord(value)) {
+    return undefined;
+  }
+
+  const label = typeof value.label === "string" ? value.label.trim() : "";
+  const seconds = getNumberProperty(value, "seconds");
+  if (!label || typeof seconds !== "number" || seconds <= 0) {
+    return undefined;
+  }
+
+  return { label, seconds };
 }
 
 function appendPowerCurve(
@@ -2607,8 +2756,8 @@ function formatNumber(value: number, digits: number): string {
   return value.toFixed(digits);
 }
 
-function getStatsPrecision(unit: string): number {
-  return unit === "rpm" || unit === "bpm" || unit === "W" ? 0 : 1;
+function getStatsPrecision(_unit: string): number {
+  return 1;
 }
 
 function getStringProperty(

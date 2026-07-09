@@ -1177,9 +1177,9 @@ describe("trackActivityToTrackJson", () => {
       },
     ]);
     expect(metadata.statistics).toEqual({
-      speedKph: { avg: 18.4, median: 18.4, max: 19.1 },
-      powerW: { avg: 150.3, median: 150.3, max: 200 },
-      temperatureC: { avg: 21.2, median: 21.2, max: 25 },
+      speedKph: { avg: 18.36, median: 18.36, max: 19.1 },
+      powerW: { avg: 150.25, median: 150.25, max: 200 },
+      temperatureC: { avg: 21.24, median: 21.24, max: 25 },
     });
     expect(metadata.training).toEqual({
       normalizedPowerW: 201.2,
@@ -1211,11 +1211,11 @@ describe("trackActivityToTrackJson", () => {
     });
     expect(metadata.pedaling).toEqual({
       totalSeconds: 1234,
-      averageSpeedKph: 25.4,
-      averageCadenceRpm: 82.4,
-      averageHeartRateBpm: 140.4,
-      averagePowerW: 210.4,
-      normalizedPowerW: 230.4,
+      averageSpeedKph: 25.44,
+      averageCadenceRpm: 82.44,
+      averageHeartRateBpm: 140.44,
+      averagePowerW: 210.44,
+      normalizedPowerW: 230.44,
     });
   });
 

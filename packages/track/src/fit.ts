@@ -14,6 +14,8 @@ import type {
   TrackActivityBestEfforts,
   TrackActivityHistograms,
   TrackActivityMetadata,
+  TrackHeartRateHistogram,
+  TrackHeartRateHistogramBucket,
   TrackActivityPedaling,
   TrackActivityPin,
   TrackActivityStatistics,
@@ -57,6 +59,8 @@ export type {
   TrackJsonBbox,
   TrackJsonRcenter,
   TrackHeartRateZoneSummary,
+  TrackHeartRateHistogram,
+  TrackHeartRateHistogramBucket,
   TrackNumericStats,
   TrackPoint,
   TrackPowerHistogram,
@@ -81,6 +85,7 @@ const DEFAULT_TRACK_JSON_PRECISION = {
   metrics: 1,
   metadata: 1,
 };
+const TRACK_JSON_METRIC_METADATA_PRECISION = 3;
 const FIT_EPOCH_UNIX_SECONDS = 631065600;
 const LOCAL_TIME_OFFSET_LIMIT_SECONDS = 24 * 3600;
 
@@ -1145,6 +1150,13 @@ function readTrackJsonHistograms(
     histograms.powerW = powerW;
   }
 
+  const heartRateBpm = readTrackJsonHeartRateHistogram(
+    getRecordProperty(value, "heartRateBpm"),
+  );
+  if (heartRateBpm) {
+    histograms.heartRateBpm = heartRateBpm;
+  }
+
   return Object.keys(histograms).length > 0 ? histograms : undefined;
 }
 
@@ -1202,6 +1214,57 @@ function readTrackJsonPowerHistogramBucket(
   }
 
   return { label, seconds };
+}
+
+function readTrackJsonHeartRateHistogram(
+  value: Record<string, unknown> | undefined,
+): TrackHeartRateHistogram | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const bucketSizeBpm = toFiniteNumber(value.bucketSizeBpm);
+  const firstBucketMaxBpm = toFiniteNumber(value.firstBucketMaxBpm);
+  const maxBucketBpm = toFiniteNumber(value.maxBucketBpm);
+  const totalSeconds = toFiniteNumber(value.totalSeconds);
+  const bucketsValue = value.buckets;
+
+  if (
+    !isFiniteNumber(bucketSizeBpm) ||
+    bucketSizeBpm <= 0 ||
+    !isFiniteNumber(firstBucketMaxBpm) ||
+    firstBucketMaxBpm <= 0 ||
+    !isFiniteNumber(maxBucketBpm) ||
+    maxBucketBpm <= firstBucketMaxBpm ||
+    !isFiniteNumber(totalSeconds) ||
+    totalSeconds <= 0 ||
+    !Array.isArray(bucketsValue)
+  ) {
+    return undefined;
+  }
+
+  const buckets = bucketsValue
+    .filter(isObjectRecord)
+    .map((bucket): TrackHeartRateHistogramBucket | undefined => {
+      const label = typeof bucket.label === "string" ? bucket.label : undefined;
+      const seconds = toFiniteNumber(bucket.seconds);
+      return label && isFiniteNumber(seconds) && seconds > 0
+        ? { label, seconds }
+        : undefined;
+    })
+    .filter((bucket): bucket is TrackHeartRateHistogramBucket => Boolean(bucket));
+
+  if (buckets.length === 0) {
+    return undefined;
+  }
+
+  return {
+    bucketSizeBpm,
+    firstBucketMaxBpm,
+    maxBucketBpm,
+    totalSeconds,
+    buckets,
+  };
 }
 
 function readTrackJsonBestEfforts(
@@ -1500,9 +1563,14 @@ function assignTrackJsonNumericStats(
   }
 
   const values: Record<string, unknown> = {};
-  assignMetadataNumber(values, "avg", stats.avg, precision.metadata);
-  assignMetadataNumber(values, "median", stats.median, precision.metadata);
-  assignMetadataNumber(values, "max", stats.max, precision.metadata);
+  assignMetadataNumber(values, "avg", stats.avg, TRACK_JSON_METRIC_METADATA_PRECISION);
+  assignMetadataNumber(
+    values,
+    "median",
+    stats.median,
+    TRACK_JSON_METRIC_METADATA_PRECISION,
+  );
+  assignMetadataNumber(values, "max", stats.max, TRACK_JSON_METRIC_METADATA_PRECISION);
 
   if (Object.keys(values).length > 0) {
     output[key] = values;
@@ -1566,31 +1634,31 @@ function buildTrackJsonPedaling(
     output,
     "averageSpeedKph",
     pedaling.averageSpeedKph,
-    precision.metadata,
+    TRACK_JSON_METRIC_METADATA_PRECISION,
   );
   assignMetadataNumber(
     output,
     "averageCadenceRpm",
     pedaling.averageCadenceRpm,
-    precision.metadata,
+    TRACK_JSON_METRIC_METADATA_PRECISION,
   );
   assignMetadataNumber(
     output,
     "averageHeartRateBpm",
     pedaling.averageHeartRateBpm,
-    precision.metadata,
+    TRACK_JSON_METRIC_METADATA_PRECISION,
   );
   assignMetadataNumber(
     output,
     "averagePowerW",
     pedaling.averagePowerW,
-    precision.metadata,
+    TRACK_JSON_METRIC_METADATA_PRECISION,
   );
   assignMetadataNumber(
     output,
     "normalizedPowerW",
     pedaling.normalizedPowerW,
-    precision.metadata,
+    TRACK_JSON_METRIC_METADATA_PRECISION,
   );
 
   return Object.keys(output).length > 0 ? output : undefined;
@@ -1608,6 +1676,14 @@ function buildTrackJsonHistograms(
   const powerW = buildTrackJsonPowerHistogram(histograms.powerW, precision);
   if (powerW) {
     output.powerW = powerW;
+  }
+
+  const heartRateBpm = buildTrackJsonHeartRateHistogram(
+    histograms.heartRateBpm,
+    precision,
+  );
+  if (heartRateBpm) {
+    output.heartRateBpm = heartRateBpm;
   }
 
   return Object.keys(output).length > 0 ? output : undefined;
@@ -1637,6 +1713,39 @@ function buildTrackJsonPowerHistogram(
   return {
     bucketSizeW: roundNumber(histogram.bucketSizeW, precision.metadata),
     maxBucketW: roundNumber(histogram.maxBucketW, precision.metadata),
+    totalSeconds: roundNumber(histogram.totalSeconds, precision.metadata),
+    buckets,
+  };
+}
+
+function buildTrackJsonHeartRateHistogram(
+  histogram: TrackHeartRateHistogram | undefined,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Record<string, unknown> | undefined {
+  if (!histogram || histogram.buckets.length === 0) {
+    return undefined;
+  }
+
+  const buckets = histogram.buckets
+    .map((bucket) => {
+      const seconds = roundNumber(bucket.seconds, precision.metadata);
+      return bucket.label && seconds > 0
+        ? { label: bucket.label, seconds }
+        : undefined;
+    })
+    .filter((bucket): bucket is { label: string; seconds: number } => Boolean(bucket));
+
+  if (buckets.length === 0) {
+    return undefined;
+  }
+
+  return {
+    bucketSizeBpm: roundNumber(histogram.bucketSizeBpm, precision.metadata),
+    firstBucketMaxBpm: roundNumber(
+      histogram.firstBucketMaxBpm,
+      precision.metadata,
+    ),
+    maxBucketBpm: roundNumber(histogram.maxBucketBpm, precision.metadata),
     totalSeconds: roundNumber(histogram.totalSeconds, precision.metadata),
     buckets,
   };

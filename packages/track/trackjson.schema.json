@@ -362,6 +362,9 @@
       "properties": {
         "powerW": {
           "$ref": "#/$defs/powerHistogram"
+        },
+        "heartRateBpm": {
+          "$ref": "#/$defs/heartRateHistogram"
         }
       },
       "additionalProperties": true
@@ -373,6 +376,30 @@
           "type": "number"
         },
         "maxBucketW": {
+          "type": "number"
+        },
+        "totalSeconds": {
+          "type": "number"
+        },
+        "buckets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/histogramBucket"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "heartRateHistogram": {
+      "type": "object",
+      "properties": {
+        "bucketSizeBpm": {
+          "type": "number"
+        },
+        "firstBucketMaxBpm": {
+          "type": "number"
+        },
+        "maxBucketBpm": {
           "type": "number"
         },
         "totalSeconds": {

@@ -151,6 +151,9 @@ const CADENCE_HISTOGRAM_BINS: HistogramBin[] = [
   { label: ">100 rpm" },
 ];
 
+const POWER_HISTOGRAM_BUCKET_SIZE_W = 25;
+const POWER_HISTOGRAM_MAX_BUCKET_W = 2000;
+
 const ZONE_RATIO_EPSILON = 1e-12;
 
 const POWER_CURVE_DURATIONS_SECONDS = [
@@ -748,6 +751,9 @@ function RideAnalysis({
       { unit: "W" },
     );
   }, [activity.points, ftpW]);
+  const powerBracketRows = useMemo(() => {
+    return getPowerBracketHistogramRows(activity);
+  }, [activity]);
   const heartRateZones = useMemo(() => {
     return computeZoneRows(
       activity.points,
@@ -770,6 +776,9 @@ function RideAnalysis({
         )}
         {powerZones.length > 0 && (
           <ZoneBars title={`Power zones · FTP ${ftpW} W`} rows={powerZones} />
+        )}
+        {powerBracketRows.length > 0 && (
+          <ZoneBars title="Power histogram · 25 W brackets" rows={powerBracketRows} />
         )}
         {powerCurve.length > 0 && (
           <div className="lg:col-span-2">
@@ -1336,6 +1345,126 @@ function getActivityEndTime(activity: TrackActivity): number | undefined {
     return undefined;
   }
   return Math.max(...times);
+}
+
+function getPowerBracketHistogramRows(activity: TrackActivity): ZoneRow[] {
+  const metadataRows = getMetadataPowerHistogramRows(activity);
+  return metadataRows.length > 0
+    ? metadataRows
+    : computePowerBracketHistogramRows(activity.points);
+}
+
+function getMetadataPowerHistogramRows(activity: TrackActivity): ZoneRow[] {
+  const metadata = activity.metadata as Record<string, unknown>;
+  const histograms = asRecord(metadata.histograms);
+  const powerW = asRecord(histograms?.powerW);
+  const buckets = Array.isArray(powerW?.buckets) ? powerW.buckets : undefined;
+  if (!buckets || buckets.length === 0) {
+    return [];
+  }
+
+  const parsedBuckets = buckets
+    .map((bucket) => {
+      const record = asRecord(bucket);
+      const label = typeof record?.label === "string" ? record.label.trim() : "";
+      const seconds = numberValue(record?.seconds);
+      return label && typeof seconds === "number" && seconds > 0
+        ? { label, seconds }
+        : undefined;
+    })
+    .filter((bucket): bucket is { label: string; seconds: number } => bucket !== undefined);
+  if (parsedBuckets.length === 0) {
+    return [];
+  }
+
+  const metadataTotalSeconds = numberValue(powerW?.totalSeconds);
+  const totalSeconds = metadataTotalSeconds && metadataTotalSeconds > 0
+    ? metadataTotalSeconds
+    : parsedBuckets.reduce((sum, bucket) => sum + bucket.seconds, 0);
+  if (totalSeconds <= 0) {
+    return [];
+  }
+
+  return parsedBuckets.map((bucket) => ({
+    label: bucket.label,
+    seconds: bucket.seconds,
+    percentage: (bucket.seconds / totalSeconds) * 100,
+  }));
+}
+
+function computePowerBracketHistogramRows(points: TrackPoint[]): ZoneRow[] {
+  const secondsByBucket = createPowerHistogramBuckets();
+  const timed = hasTimedIntervals(points);
+  let totalSeconds = 0;
+
+  points.forEach((point, index) => {
+    const bucketIndex = getPowerHistogramBucketIndex(point.powerW);
+    if (bucketIndex == null) {
+      return;
+    }
+
+    const duration = timed ? getPointDurationSeconds(points, index) : 1;
+    if (duration <= 0 || duration > 30) {
+      return;
+    }
+
+    secondsByBucket[bucketIndex] += duration;
+    totalSeconds += duration;
+  });
+
+  if (totalSeconds <= 0) {
+    return [];
+  }
+
+  return secondsByBucket
+    .map((seconds, index) => {
+      return seconds > 0
+        ? {
+          label: getPowerHistogramBucketLabel(index),
+          seconds,
+          percentage: (seconds / totalSeconds) * 100,
+        }
+        : undefined;
+    })
+    .filter((row): row is ZoneRow => row !== undefined);
+}
+
+function createPowerHistogramBuckets(): number[] {
+  return Array.from(
+    {
+      length: POWER_HISTOGRAM_MAX_BUCKET_W / POWER_HISTOGRAM_BUCKET_SIZE_W + 2,
+    },
+    () => 0,
+  );
+}
+
+function getPowerHistogramBucketIndex(powerW: number | undefined): number | undefined {
+  if (!Number.isFinite(powerW) || powerW == null || powerW < 0) {
+    return undefined;
+  }
+
+  if (powerW <= 0) {
+    return 0;
+  }
+
+  if (powerW > POWER_HISTOGRAM_MAX_BUCKET_W) {
+    return POWER_HISTOGRAM_MAX_BUCKET_W / POWER_HISTOGRAM_BUCKET_SIZE_W + 1;
+  }
+
+  return Math.ceil(powerW / POWER_HISTOGRAM_BUCKET_SIZE_W);
+}
+
+function getPowerHistogramBucketLabel(index: number): string {
+  if (index === 0) {
+    return "0 W";
+  }
+
+  const maxIndex = POWER_HISTOGRAM_MAX_BUCKET_W / POWER_HISTOGRAM_BUCKET_SIZE_W;
+  if (index > maxIndex) {
+    return `>${POWER_HISTOGRAM_MAX_BUCKET_W} W`;
+  }
+
+  return `≤${index * POWER_HISTOGRAM_BUCKET_SIZE_W} W`;
 }
 
 function computeZoneRows(
