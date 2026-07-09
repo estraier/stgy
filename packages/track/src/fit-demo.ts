@@ -3,6 +3,7 @@ import {
   computePowerZoneSummary,
   downsampleTrackActivity,
   mergeTrackActivities,
+  trimTrackActivity,
 } from "./activity";
 import {
   TRACK_SCATTER_METRICS,
@@ -50,6 +51,9 @@ type DemoElements = {
   downsampleStrategySelect: HTMLSelectElement;
   maxPointsInput: HTMLInputElement;
   preserveEndpointsInput: HTMLInputElement;
+  trimActivityInput: HTMLInputElement;
+  trimStartSecondsInput: HTMLInputElement;
+  trimEndSecondsInput: HTMLInputElement;
   obfuscatePrivacyInput: HTMLInputElement;
   obfuscateStartDistanceInput: HTMLInputElement;
   obfuscateEndDistanceInput: HTMLInputElement;
@@ -81,6 +85,10 @@ type ConversionResult = {
   activity?: TrackActivity;
   renderedActivity?: TrackActivity;
   analysisPoints?: TrackPoint[];
+  trimApplied?: boolean;
+  trimStartSeconds?: number;
+  trimEndSeconds?: number;
+  trimmedPointCount?: number;
   obfuscatedPrivacyApplied?: boolean;
   privacyStartDistanceM?: number;
   privacyEndDistanceM?: number;
@@ -109,11 +117,16 @@ export function initFitDemo(root: Document | HTMLElement = document) {
   const renderer = createRenderer();
 
   syncDownsampleControls(elements);
+  syncTrimControls(elements);
   syncPrivacyControls(elements);
   syncAnalysisControls(elements);
 
   elements.downsampleInput.addEventListener("change", () => {
     syncDownsampleControls(elements);
+  });
+
+  elements.trimActivityInput.addEventListener("change", () => {
+    syncTrimControls(elements);
   });
 
   elements.obfuscatePrivacyInput.addEventListener("change", () => {
@@ -291,7 +304,8 @@ type BuildConversionResultOptions = {
 function buildConversionResultFromActivity(
   options: BuildConversionResultOptions
 ): ConversionResult {
-  const activity = maybeObfuscateActivityPrivacy(options.activity, options.elements);
+  const trimmedActivity = maybeTrimActivity(options.activity, options.elements);
+  const activity = maybeObfuscateActivityPrivacy(trimmedActivity, options.elements);
   const renderedActivity = maybeDownsample(activity, options.elements);
   const trackJson = trackActivityToTrackJson(renderedActivity, {
     title: options.title,
@@ -300,6 +314,9 @@ function buildConversionResultFromActivity(
   });
   const trackJsonData = JSON.parse(trackJson);
   const privacyOptions = getPrivacyObfuscationOptions(options.elements);
+  const trimOptions = getTrimActivityOptions(options.elements);
+  const trimApplied = isTrimActivityEnabled(options.elements) &&
+    (trimOptions.trimStartSeconds > 0 || trimOptions.trimEndSeconds > 0);
 
   return {
     trackJson,
@@ -311,10 +328,30 @@ function buildConversionResultFromActivity(
     activity,
     renderedActivity,
     analysisPoints: activity.points,
+    trimApplied,
+    trimStartSeconds: trimOptions.trimStartSeconds,
+    trimEndSeconds: trimOptions.trimEndSeconds,
+    trimmedPointCount: trimmedActivity.points.length,
     obfuscatedPrivacyApplied: options.elements.obfuscatePrivacyInput.checked,
     privacyStartDistanceM: privacyOptions.startDistanceM,
     privacyEndDistanceM: privacyOptions.endDistanceM,
   };
+}
+
+function maybeTrimActivity(
+  activity: TrackActivity,
+  elements: DemoElements
+): TrackActivity {
+  if (!isTrimActivityEnabled(elements)) {
+    return activity;
+  }
+
+  const options = getTrimActivityOptions(elements);
+  if (options.trimStartSeconds === 0 && options.trimEndSeconds === 0) {
+    return activity;
+  }
+
+  return trimTrackActivity(activity, options);
 }
 
 function maybeObfuscateActivityPrivacy(
@@ -642,6 +679,16 @@ function showSummary(
     lines.push(`rendered points: ${result.renderedPointCount}`);
   }
 
+  if (result.trimApplied) {
+    lines.push(
+      `trim: start ${formatNumber(result.trimStartSeconds || 0, 0)} s, ` +
+      `end ${formatNumber(result.trimEndSeconds || 0, 0)} s`
+    );
+    if (typeof result.trimmedPointCount === "number") {
+      lines.push(`trimmed points: ${result.trimmedPointCount}`);
+    }
+  }
+
   appendBboxSummaryLine(lines, result.trackJsonData);
   appendRcenterSummaryLine(lines, result.trackJsonData);
 
@@ -706,7 +753,6 @@ function showSummary(
 
     appendMetadataSummaryLines(lines, metadata);
   }
-
 
   if (result.activity && result.activity.warnings.length > 0) {
     lines.push(`warnings: ${result.activity.warnings.length}`);
@@ -832,7 +878,6 @@ function appendMetadataSummaryLines(
     lines.push(`calories: ${formatNumber(totalCaloriesCal, 0)} cal`);
   }
 }
-
 
 function appendAnalysisSummaryLine(
   lines: string[],
@@ -2083,6 +2128,12 @@ function syncDownsampleControls(elements: DemoElements) {
   elements.preserveEndpointsInput.disabled = !enabled;
 }
 
+function syncTrimControls(elements: DemoElements) {
+  const enabled = elements.trimActivityInput.checked;
+  elements.trimStartSecondsInput.disabled = !enabled;
+  elements.trimEndSecondsInput.disabled = !enabled;
+}
+
 function syncPrivacyControls(elements: DemoElements) {
   const enabled = elements.obfuscatePrivacyInput.checked;
   elements.obfuscateStartDistanceInput.disabled = !enabled;
@@ -2095,6 +2146,17 @@ function syncAnalysisControls(elements: DemoElements) {
   elements.lthrInput.disabled = !enabled;
 }
 
+function isTrimActivityEnabled(elements: DemoElements): boolean {
+  return elements.trimActivityInput.checked;
+}
+
+function getTrimActivityOptions(elements: DemoElements) {
+  return {
+    trimStartSeconds: getNonNegativeSeconds(elements.trimStartSecondsInput),
+    trimEndSeconds: getNonNegativeSeconds(elements.trimEndSecondsInput),
+  };
+}
+
 function getPrivacyObfuscationOptions(elements: DemoElements) {
   return {
     startDistanceM: getNonNegativeDistance(elements.obfuscateStartDistanceInput),
@@ -2103,6 +2165,14 @@ function getPrivacyObfuscationOptions(elements: DemoElements) {
 }
 
 function getNonNegativeDistance(input: HTMLInputElement): number {
+  return getNonNegativeInteger(input);
+}
+
+function getNonNegativeSeconds(input: HTMLInputElement): number {
+  return getNonNegativeInteger(input);
+}
+
+function getNonNegativeInteger(input: HTMLInputElement): number {
   const value = Number(input.value);
   if (!Number.isFinite(value) || value < 0) {
     return 0;
@@ -2119,6 +2189,24 @@ function getPositiveNumber(input: HTMLInputElement): number | undefined {
 function setBusy(elements: DemoElements, busy: boolean) {
   elements.convertButton.disabled = busy;
   elements.fileInput.disabled = busy;
+  elements.downsampleInput.disabled = busy;
+  elements.trimActivityInput.disabled = busy;
+  elements.obfuscatePrivacyInput.disabled = busy;
+
+  if (busy) {
+    elements.downsampleStrategySelect.disabled = true;
+    elements.maxPointsInput.disabled = true;
+    elements.preserveEndpointsInput.disabled = true;
+    elements.trimStartSecondsInput.disabled = true;
+    elements.trimEndSecondsInput.disabled = true;
+    elements.obfuscateStartDistanceInput.disabled = true;
+    elements.obfuscateEndDistanceInput.disabled = true;
+    return;
+  }
+
+  syncDownsampleControls(elements);
+  syncTrimControls(elements);
+  syncPrivacyControls(elements);
 }
 
 function setStatus(elements: DemoElements, message: string, isError = false) {
@@ -2158,6 +2246,18 @@ function getDemoElements(root: Document | HTMLElement): DemoElements {
     preserveEndpointsInput: getElement<HTMLInputElement>(
       root,
       "fit-demo-preserve-endpoints"
+    ),
+    trimActivityInput: getElement<HTMLInputElement>(
+      root,
+      "fit-demo-trim-activity"
+    ),
+    trimStartSecondsInput: getElement<HTMLInputElement>(
+      root,
+      "fit-demo-trim-start-seconds"
+    ),
+    trimEndSecondsInput: getElement<HTMLInputElement>(
+      root,
+      "fit-demo-trim-end-seconds"
     ),
     obfuscatePrivacyInput: getElement<HTMLInputElement>(
       root,

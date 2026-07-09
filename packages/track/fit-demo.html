@@ -120,28 +120,6 @@
       background: #fff;
     }
 
-    .fit-demo-scatter-controls {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-      justify-content: flex-end;
-    }
-
-    .fit-demo-scatter-controls label {
-      display: inline-flex;
-      gap: 6px;
-      align-items: center;
-    }
-
-    .fit-demo-scatter-plot-svg {
-      overflow: hidden;
-    }
-
-    .fit-demo-scatter-plot-svg circle {
-      vector-effect: non-scaling-stroke;
-    }
-
     @media (max-width: 720px) {
       .fit-demo-zone-row {
         grid-template-columns: 1fr;
@@ -205,6 +183,33 @@
 
       <div class="fit-demo-row">
         <label>
+          <input id="fit-demo-trim-activity" type="checkbox">
+          Trim activity
+        </label>
+
+        <label>
+          Start seconds
+          <input
+            id="fit-demo-trim-start-seconds"
+            type="number"
+            min="0"
+            step="1"
+            value="0">
+        </label>
+
+        <label>
+          End seconds
+          <input
+            id="fit-demo-trim-end-seconds"
+            type="number"
+            min="0"
+            step="1"
+            value="0">
+        </label>
+      </div>
+
+      <div class="fit-demo-row">
+        <label>
           <input id="fit-demo-obfuscate-privacy" type="checkbox">
           Obfuscate privacy
         </label>
@@ -232,7 +237,7 @@
 
       <div class="fit-demo-row">
         <label>
-          <input id="fit-demo-print-analysis" type="checkbox" checked>
+          <input id="fit-demo-print-analysis" type="checkbox">
           Print analysis
         </label>
 
@@ -261,7 +266,7 @@
 
       <div class="fit-demo-row">
         <label>
-          <input id="fit-demo-pretty" type="checkbox" checked>
+          <input id="fit-demo-pretty" type="checkbox">
           Pretty-print TrackJSON
         </label>
       </div>

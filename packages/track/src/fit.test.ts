@@ -7,6 +7,7 @@ import {
   computePowerZoneSummary,
   downsampleTrackActivity,
   mergeTrackActivities,
+  trimTrackActivity,
   trackJsonDataToTrackActivity,
   getHeartRateZone,
   getPowerZone,
@@ -749,6 +750,70 @@ describe("downsampleTrackActivity", () => {
   });
 });
 
+describe("trimTrackActivity", () => {
+  test("keeps an inner time range and rebases time and distance", () => {
+    const activity = makeActivity(6);
+    const trimmed = trimTrackActivity(activity, {
+      trimStartSeconds: 2,
+      trimEndSeconds: 1,
+    });
+
+    expect(trimmed).not.toBe(activity);
+    expect(getTimes(trimmed)).toEqual([0, 1, 2]);
+    expect(trimmed.points[0].distanceM).toBeCloseTo(0);
+    expect(trimmed.points[1].distanceM).toBeCloseTo(10.234);
+    expect(trimmed.points[2].distanceM).toBeCloseTo(20.468);
+    expect(trimmed.metadata.startTime).toBe(1710000002);
+    expect(trimmed.metadata.endTime).toBe(1710000004);
+    expect(trimmed.metadata.totalElapsedTime).toBe(2);
+    expect(trimmed.metadata.totalTimerTime).toBe(2);
+    expect(trimmed.metadata.totalDistanceM).toBeCloseTo(20.468);
+    expect(trimmed.metadata.statistics?.heartRateBpm?.avg).toBe(122.5);
+    expect(trimmed.metadata.histograms?.heartRateBpm?.totalSeconds).toBe(2);
+  });
+
+  test("uses existing samples only without boundary interpolation", () => {
+    const activity = makeActivity(6);
+    const trimmed = trimTrackActivity(activity, {
+      trimStartSeconds: 2.5,
+      trimEndSeconds: 1.5,
+    });
+
+    expect(getTimes(trimmed)).toEqual([0]);
+    expect(trimmed.points[0].heartRateBpm).toBe(123);
+    expect(trimmed.metadata.startTime).toBe(1710000003);
+    expect(trimmed.metadata.totalElapsedTime).toBe(0);
+  });
+
+  test("rebases relative point times while preserving absolute metadata time", () => {
+    const activity = makeActivity(5);
+    activity.metadata.startTime = 1710000000;
+    activity.metadata.endTime = 1710000004;
+    activity.points.forEach((point, index) => {
+      point.time = index;
+    });
+
+    const trimmed = trimTrackActivity(activity, {
+      trimStartSeconds: 2,
+    });
+
+    expect(getTimes(trimmed)).toEqual([0, 1, 2]);
+    expect(trimmed.metadata.startTime).toBe(1710000002);
+    expect(trimmed.metadata.endTime).toBe(1710000004);
+  });
+
+  test("rejects trimming timed points out of range", () => {
+    const activity = makeActivity(3);
+
+    expect(() =>
+      trimTrackActivity(activity, {
+        trimStartSeconds: 3,
+        trimEndSeconds: 1,
+      }),
+    ).toThrow(RangeError);
+  });
+});
+
 describe("trackJsonDataToTrackActivity", () => {
   test("converts TrackJSON LineString data to TrackActivity", () => {
     const activity = trackJsonDataToTrackActivity({
@@ -1428,7 +1493,6 @@ describe("trackActivityToTrackJson", () => {
   });
 });
 
-
 describe("training zones", () => {
   test("classifies Coggan-style power zones", () => {
     expect(getPowerZone(110, 200)).toBe("z1");
@@ -1808,7 +1872,6 @@ describe("obfuscateFitPrivacy", () => {
   });
 });
 
-
 describe("trackActivityToFit", () => {
   test("exports TrackActivity as FIT bytes", () => {
     const exported = trackActivityToFit({
@@ -1867,7 +1930,6 @@ describe("trackActivityToFit", () => {
       .toContain(11);
   });
 });
-
 
 type FitExportDefinition = {
   localMessageType: number;
@@ -1932,7 +1994,6 @@ function getFitExportDefinition(
     return definition.globalMessageNumber === globalMessageNumber;
   });
 }
-
 
 describe("TrackJSON Point Feature pins", () => {
   test("preserves Point Features through TrackActivity", () => {
@@ -2017,7 +2078,6 @@ describe("TrackJSON Point Feature pins", () => {
     expect(merged.pins).toEqual(activity.pins);
   });
 });
-
 
 describe("TrackJSON metadata round-trip", () => {
   test("preserves training calories from FIT-derived TrackJSON", () => {

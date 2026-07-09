@@ -223,6 +223,11 @@ export type MergeTrackActivitiesOptions = {
   movingSpeedThresholdMps?: number;
 };
 
+export type TrimTrackActivityOptions = {
+  trimStartSeconds?: number;
+  trimEndSeconds?: number;
+};
+
 export function getPowerZone(
   powerW: number,
   ftpW: number,
@@ -338,6 +343,86 @@ export function downsampleTrackActivity(
   );
 }
 
+export function trimTrackActivity(
+  activity: TrackActivity,
+  options: TrimTrackActivityOptions = {},
+): TrackActivity {
+  const trimStartSeconds = normalizeTrimSeconds(options.trimStartSeconds || 0);
+  const trimEndSeconds = normalizeTrimSeconds(options.trimEndSeconds || 0);
+  if (trimStartSeconds === 0 && trimEndSeconds === 0) {
+    return cloneTrackActivity(activity);
+  }
+
+  const timeRange = getTrackActivityPointTimeRange(activity.points);
+  if (!timeRange) {
+    throw new RangeError("Track activity does not contain timed points.");
+  }
+
+  if (trimStartSeconds + trimEndSeconds > timeRange.durationSeconds) {
+    throw new RangeError(
+      "Trim start and end seconds exceed the activity duration.",
+    );
+  }
+
+  const sliceStartTime = timeRange.startTime + trimStartSeconds;
+  const sliceEndTime = timeRange.endTime - trimEndSeconds;
+  const slicedPoints = activity.points
+    .filter((point) => {
+      return isFiniteNumber(point.time) &&
+        point.time >= sliceStartTime &&
+        point.time <= sliceEndTime;
+    })
+    .map(cloneTrackPoint);
+
+  if (slicedPoints.length === 0) {
+    throw new RangeError("Trim options remove all timed points.");
+  }
+
+  const firstPointTime = slicedPoints[0].time as number;
+  const absoluteStartTime = getTrimmedAbsoluteStartTime(
+    activity,
+    timeRange.startTime,
+    firstPointTime,
+  );
+  slicedPoints.forEach((point) => {
+    if (isFiniteNumber(point.time)) {
+      point.time = point.time - firstPointTime;
+    }
+  });
+
+  const normalizedPoints = normalizeActivityDistances(slicedPoints, 0);
+  const metadata = cloneMetadata(activity.metadata);
+  clearComputedMetadata(metadata);
+  metadata.startTime = absoluteStartTime;
+  metadata.endTime = absoluteStartTime + getTrimmedElapsedTime(normalizedPoints);
+  metadata.totalElapsedTime = getTrimmedElapsedTime(normalizedPoints);
+
+  const totalDistanceM = getActivityDistanceDelta(normalizedPoints);
+  if (isFiniteNumber(totalDistanceM)) {
+    metadata.totalDistanceM = totalDistanceM;
+  } else {
+    delete metadata.totalDistanceM;
+  }
+
+  const movingTime = getMovingAnalysisIntervals(normalizedPoints)
+    .reduce((sum, interval) => sum + interval.seconds, 0);
+  if (movingTime > 0) {
+    metadata.totalTimerTime = movingTime;
+  } else {
+    delete metadata.totalTimerTime;
+  }
+
+  applyComputedMetadata(metadata, normalizedPoints);
+
+  return {
+    schemaVersion: activity.schemaVersion,
+    metadata,
+    points: normalizedPoints,
+    pins: activity.pins?.map(cloneTrackActivityPin),
+    warnings: activity.warnings.map((warning) => ({ ...warning })),
+  };
+}
+
 export function mergeTrackActivities(
   activities: TrackActivity[],
   options: MergeTrackActivitiesOptions = {},
@@ -394,6 +479,70 @@ export function mergeTrackActivities(
     ...(pins.length > 0 ? { pins } : {}),
     warnings,
   };
+}
+
+type TrackActivityPointTimeRange = {
+  startTime: number;
+  endTime: number;
+  durationSeconds: number;
+};
+
+function normalizeTrimSeconds(value: number): number {
+  if (!Number.isFinite(value) || value < 0) {
+    return 0;
+  }
+  return value;
+}
+
+function getTrackActivityPointTimeRange(
+  points: TrackPoint[],
+): TrackActivityPointTimeRange | undefined {
+  const times = points.map((point) => point.time).filter(isFiniteNumber);
+  if (times.length === 0) {
+    return undefined;
+  }
+
+  const startTime = Math.min(...times);
+  const endTime = Math.max(...times);
+  return {
+    startTime,
+    endTime,
+    durationSeconds: Math.max(0, endTime - startTime),
+  };
+}
+
+function getTrimmedAbsoluteStartTime(
+  activity: TrackActivity,
+  originalFirstPointTime: number,
+  firstTrimmedPointTime: number,
+): number {
+  const metadataStartTime = activity.metadata.startTime;
+  if (
+    isFiniteNumber(metadataStartTime) &&
+    isRelativePointTime(originalFirstPointTime, metadataStartTime)
+  ) {
+    return metadataStartTime + firstTrimmedPointTime - originalFirstPointTime;
+  }
+
+  return firstTrimmedPointTime;
+}
+
+function isRelativePointTime(pointTime: number, metadataStartTime: number): boolean {
+  return metadataStartTime >= 100000000 && pointTime < 100000000;
+}
+
+function getTrimmedElapsedTime(points: TrackPoint[]): number {
+  const range = getTrackActivityPointTimeRange(points);
+  return range ? range.durationSeconds : 0;
+}
+
+function clearComputedMetadata(metadata: TrackActivityMetadata) {
+  delete metadata.analysis;
+  delete metadata.statistics;
+  delete metadata.training;
+  delete metadata.bestEfforts;
+  delete metadata.histograms;
+  delete metadata.pedaling;
 }
 
 type IndexedTrackPoint = {

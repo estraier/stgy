@@ -42,10 +42,12 @@ export {
   getHeartRateZone,
   getPowerZone,
   mergeTrackActivities,
+  trimTrackActivity,
 } from "./activity";
 export type {
   DownsampleTrackOptions,
   MergeTrackActivitiesOptions,
+  TrimTrackActivityOptions,
   TrackActivity,
   TrackActivityAnalysisMetadata,
   TrackActivityBestEfforts,
@@ -3397,7 +3399,9 @@ export function trackActivityToFit(
   writeFitDefinitionMessage(chunks, 0, 0, getFitFileIdFields(options));
   writeFitFileIdMessage(chunks, startTime, options);
   writeFitDefinitionMessage(chunks, 1, 20, getFitExportRecordFields());
-  points.forEach((point, index) => writeFitRecordMessage(chunks, point, index));
+  points.forEach((point, index) => {
+    writeFitRecordMessage(chunks, point, index, startTime);
+  });
 
   if (options.includeSessionSummary !== false) {
     writeFitDefinitionMessage(chunks, 2, 19, getFitLapFields());
@@ -3527,12 +3531,17 @@ function getFitExportRecordFields(): FitWriteRecordField[] {
   ];
 }
 
-function writeFitRecordMessage(chunks: number[], point: TrackPoint, index: number) {
+function writeFitRecordMessage(
+  chunks: number[],
+  point: TrackPoint,
+  index: number,
+  activityStartTime: number,
+) {
   const fields = getFitExportRecordFields();
   const size = fields.reduce((sum, field) => sum + field.size, 0);
   const record = new Uint8Array(size);
   const view = new DataView(record.buffer);
-  const fallbackTime = getPointFitTimestamp(point, index);
+  const fallbackTime = getPointFitTimestamp(point, index, activityStartTime);
   let offset = 0;
 
   fields.forEach((field) => {
@@ -3828,11 +3837,22 @@ function maxFiniteNumbers(values: number[]): number | undefined {
   return values.length > 0 ? Math.max(...values) : undefined;
 }
 
-function getPointFitTimestamp(point: TrackPoint, index: number): number {
+function getPointFitTimestamp(
+  point: TrackPoint,
+  index: number,
+  activityStartTime: number,
+): number {
   const time = isFiniteNumber(point.time)
-    ? point.time
-    : Math.floor(Date.now() / 1000) + index;
+    ? getAbsoluteFitPointTime(point.time, activityStartTime)
+    : activityStartTime + index;
   return unixTimeToFitTime(time);
+}
+
+function getAbsoluteFitPointTime(pointTime: number, activityStartTime: number): number {
+  if (activityStartTime >= 100000000 && pointTime < 100000000) {
+    return activityStartTime + pointTime;
+  }
+  return pointTime;
 }
 
 function unixTimeToFitTime(unixTimeSeconds: number): number {
