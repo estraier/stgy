@@ -60,7 +60,7 @@ describe("parseGpxText", () => {
     expect(activity.points[1].distanceM).toBeGreaterThan(0);
     expect(activity.points[1].speedMps).toBeGreaterThan(0);
     expect(activity.metadata.totalDistanceM).toBeGreaterThan(0);
-    expect(activity.metadata.statistics?.heartRateBpm?.avg).toBe(124);
+    expect(activity.metadata.statistics?.heartRateBpm?.avg).toBe(123);
     expect(activity.metadata.training?.totalWorkJ).toBeGreaterThan(0);
   });
 

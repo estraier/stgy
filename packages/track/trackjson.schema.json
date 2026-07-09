@@ -207,6 +207,9 @@
         "totalElapsedTime": {
           "type": "number"
         },
+        "analysis": {
+          "$ref": "#/$defs/analysis"
+        },
         "statistics": {
           "$ref": "#/$defs/statistics"
         },
@@ -257,6 +260,15 @@
         },
         "bestEfforts": {
           "$ref": "#/$defs/bestEfforts"
+        }
+      },
+      "additionalProperties": true
+    },
+    "analysis": {
+      "type": "object",
+      "properties": {
+        "movingSpeedThresholdKph": {
+          "type": "number"
         }
       },
       "additionalProperties": true

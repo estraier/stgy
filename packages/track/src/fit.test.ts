@@ -266,28 +266,31 @@ describe("parseFitBytes", () => {
 
     const activity = parseFitBytes(new Uint8Array([1, 2, 3]));
 
+    expect(activity.metadata.analysis).toEqual({
+      movingSpeedThresholdKph: 3,
+    });
     expect(activity.metadata.statistics?.speedKph?.avg).toBeCloseTo(23.4);
     expect(activity.metadata.statistics?.speedKph?.median).toBeCloseTo(23.4);
-    expect(activity.metadata.statistics?.speedKph?.max).toBeCloseTo(28.8);
+    expect(activity.metadata.statistics?.speedKph?.max).toBeCloseTo(27);
     expect(activity.metadata.statistics?.cadenceRpm).toEqual({
-      avg: 95,
-      median: 95,
-      max: 110,
+      avg: 90,
+      median: 90,
+      max: 100,
     });
     expect(activity.metadata.statistics?.heartRateBpm).toEqual({
-      avg: 135,
-      median: 135,
-      max: 150,
+      avg: 130,
+      median: 130,
+      max: 140,
     });
     expect(activity.metadata.statistics?.powerW).toEqual({
-      avg: 250,
-      median: 250,
-      max: 400,
+      avg: 200,
+      median: 200,
+      max: 300,
     });
     expect(activity.metadata.statistics?.temperatureC).toEqual({
-      avg: 24,
-      median: 23,
-      max: 30,
+      avg: 22,
+      median: 22,
+      max: 24,
     });
     expect(activity.metadata.training).toEqual({
       normalizedPowerW: 255.4,
@@ -309,13 +312,23 @@ describe("parseFitBytes", () => {
         { label: "≤300 W", seconds: 10 },
       ],
     });
-    expect(activity.metadata.pedaling).toEqual({
+    expect(activity.metadata.histograms?.heartRateBpm).toEqual({
+      bucketSizeBpm: 10,
+      firstBucketMaxBpm: 50,
+      maxBucketBpm: 200,
       totalSeconds: 30,
-      averageSpeedKph: 21.6,
-      averageCadenceRpm: 90,
-      averageHeartRateBpm: 130,
-      averagePowerW: 200,
-      normalizedPowerW: 200,
+      buckets: [
+        { label: "≤120 bpm", seconds: 10 },
+        { label: "≤130 bpm", seconds: 10 },
+        { label: "≤140 bpm", seconds: 10 },
+      ],
+    });
+    expect(activity.metadata.pedaling).toEqual({
+      totalSeconds: 20,
+      averageSpeedKph: 23.4,
+      averageCadenceRpm: 95,
+      averageHeartRateBpm: 135,
+      averagePowerW: 250,
     });
   });
 
@@ -361,6 +374,13 @@ describe("parseFitBytes", () => {
           {
             timestamp: 1710000050,
             heartRate: 150,
+            cadence: 100,
+            power: 300,
+            speed: 7,
+          },
+          {
+            timestamp: 1710000060,
+            heartRate: 160,
             cadence: 90,
             power: 0,
             speed: 6,
@@ -372,11 +392,11 @@ describe("parseFitBytes", () => {
     const activity = parseFitBytes(new Uint8Array([1, 2, 3]));
 
     expect(activity.metadata.pedaling).toEqual({
-      totalSeconds: 20,
-      averageSpeedKph: 19.8,
-      averageCadenceRpm: 85,
-      averageHeartRateBpm: 135,
-      averagePowerW: 150,
+      totalSeconds: 10,
+      averageSpeedKph: 21.6,
+      averageCadenceRpm: 90,
+      averageHeartRateBpm: 140,
+      averagePowerW: 200,
     });
   });
 
@@ -387,6 +407,7 @@ describe("parseFitBytes", () => {
           return {
             timestamp: 1710000000 + index,
             power: index < 10 ? 100 : 300,
+            speed: 5,
           };
         }),
       },
@@ -396,9 +417,8 @@ describe("parseFitBytes", () => {
 
     expect(activity.metadata.bestEfforts?.powerW).toEqual({
       "5": 300,
-      "10": 300,
-      "15": 233.33333333333334,
-      "20": 200,
+      "10": 280,
+      "15": 220,
     });
   });
 
@@ -411,8 +431,8 @@ describe("parseFitBytes", () => {
           },
         ],
         recordMesgs: [
-          { timestamp: 1710000000, power: 100 },
-          { timestamp: 1710000010, power: 200 },
+          { timestamp: 1710000000, power: 100, speed: 5 },
+          { timestamp: 1710000010, power: 200, speed: 5 },
         ],
       },
     });
@@ -430,6 +450,7 @@ describe("parseFitBytes", () => {
           return {
             timestamp: 1710000000 + index,
             power: 100,
+            speed: 5,
           };
         }),
       },
@@ -630,6 +651,9 @@ describe("downsampleTrackActivity", () => {
         product: "Edge 1040",
       },
     ];
+    activity.metadata.analysis = {
+      movingSpeedThresholdKph: 3,
+    };
     activity.metadata.statistics = {
       powerW: { avg: 150, median: 150, max: 300 },
       temperatureC: { avg: 22, median: 22, max: 28 },
@@ -678,6 +702,7 @@ describe("downsampleTrackActivity", () => {
     expect(downsampled.metadata.devices?.[0]).not.toBe(
       activity.metadata.devices?.[0],
     );
+    expect(downsampled.metadata.analysis).not.toBe(activity.metadata.analysis);
     expect(downsampled.metadata.statistics).not.toBe(
       activity.metadata.statistics,
     );
@@ -745,6 +770,9 @@ describe("trackJsonDataToTrackActivity", () => {
               startTime: 100,
               endTime: 110,
               localTimeOffsetSeconds: 32400,
+              analysis: {
+                movingSpeedThresholdKph: 3,
+              },
               pedaling: {
                 totalSeconds: 10,
                 averageSpeedKph: 19.8,
@@ -773,6 +801,9 @@ describe("trackJsonDataToTrackActivity", () => {
     expect(activity.metadata.startTime).toBe(100);
     expect(activity.metadata.endTime).toBe(110);
     expect(activity.metadata.localTimeOffsetSeconds).toBe(32400);
+    expect(activity.metadata.analysis).toEqual({
+      movingSpeedThresholdKph: 3,
+    });
     expect(activity.metadata.pedaling).toEqual({
       totalSeconds: 10,
       averageSpeedKph: 19.8,
@@ -1124,6 +1155,9 @@ describe("trackActivityToTrackJson", () => {
         softwareVersion: "19.12",
       },
     ];
+    activity.metadata.analysis = {
+      movingSpeedThresholdKph: 3,
+    };
     activity.metadata.statistics = {
       speedKph: { avg: 18.36, median: 18.36, max: 19.1 },
       powerW: { avg: 150.25, median: 150.25, max: 200 },
@@ -1176,6 +1210,9 @@ describe("trackActivityToTrackJson", () => {
         softwareVersion: "19.12",
       },
     ]);
+    expect(metadata.analysis).toEqual({
+      movingSpeedThresholdKph: 3,
+    });
     expect(metadata.statistics).toEqual({
       speedKph: { avg: 18.36, median: 18.36, max: 19.1 },
       powerW: { avg: 150.25, median: 150.25, max: 200 },
@@ -1418,10 +1455,10 @@ describe("training zones", () => {
 
   test("computes timed power zone durations", () => {
     const points: TrackPoint[] = [
-      { time: 0, powerW: 100 },
-      { time: 10, powerW: 160 },
-      { time: 20, powerW: 220 },
-      { time: 30, powerW: 320 },
+      { time: 0, speedMps: 5, powerW: 100 },
+      { time: 10, speedMps: 5, powerW: 160 },
+      { time: 20, speedMps: 5, powerW: 220 },
+      { time: 30, speedMps: 5, powerW: 320 },
     ];
 
     const summary = computePowerZoneSummary(points, 200);
@@ -1441,10 +1478,10 @@ describe("training zones", () => {
 
   test("computes timed heart-rate zone durations", () => {
     const points: TrackPoint[] = [
-      { time: 0, heartRateBpm: 120 },
-      { time: 10, heartRateBpm: 140 },
-      { time: 20, heartRateBpm: 155 },
-      { time: 30, heartRateBpm: 170 },
+      { time: 0, speedMps: 5, heartRateBpm: 120 },
+      { time: 10, speedMps: 5, heartRateBpm: 140 },
+      { time: 20, speedMps: 5, heartRateBpm: 155 },
+      { time: 30, speedMps: 5, heartRateBpm: 170 },
     ];
 
     const summary = computeHeartRateZoneSummary(points, 160);

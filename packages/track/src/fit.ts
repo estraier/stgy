@@ -1,6 +1,7 @@
 import { Decoder, Stream } from "@garmin/fitsdk";
 import {
   applyComputedMetadata,
+  buildActivityAnalysisMetadata,
   buildActivityBestEfforts,
   buildActivityHistograms,
   buildActivityPedaling,
@@ -11,6 +12,7 @@ import {
 } from "./activity";
 import type {
   TrackActivity,
+  TrackActivityAnalysisMetadata,
   TrackActivityBestEfforts,
   TrackActivityHistograms,
   TrackActivityMetadata,
@@ -45,6 +47,7 @@ export type {
   DownsampleTrackOptions,
   MergeTrackActivitiesOptions,
   TrackActivity,
+  TrackActivityAnalysisMetadata,
   TrackActivityBestEfforts,
   TrackActivityHistograms,
   TrackActivityMetadata,
@@ -1030,10 +1033,17 @@ function buildTrackJsonActivityMetadata(
         .map((device) => ({ ...device }) as TrackDeviceInfo);
     }
 
-    metadata.statistics = readTrackJsonStatistics(getRecordProperty(src, "statistics"));
+    metadata.analysis = readTrackJsonAnalysis(getRecordProperty(src, "analysis"));
+    metadata.statistics = readTrackJsonStatistics(
+      getRecordProperty(src, "statistics"),
+    );
     metadata.training = readTrackJsonTraining(getRecordProperty(src, "training"));
-    metadata.bestEfforts = readTrackJsonBestEfforts(getRecordProperty(src, "bestEfforts"));
-    metadata.histograms = readTrackJsonHistograms(getRecordProperty(src, "histograms"));
+    metadata.bestEfforts = readTrackJsonBestEfforts(
+      getRecordProperty(src, "bestEfforts"),
+    );
+    metadata.histograms = readTrackJsonHistograms(
+      getRecordProperty(src, "histograms"),
+    );
     metadata.pedaling = readTrackJsonPedaling(getRecordProperty(src, "pedaling"));
   }
 
@@ -1088,6 +1098,23 @@ function readTrackJsonNumericStats(
   assignOptionalNumber(stats, value, "max");
 
   return Object.keys(stats).length > 0 ? stats : undefined;
+}
+
+function readTrackJsonAnalysis(
+  value: Record<string, unknown> | undefined,
+): TrackActivityAnalysisMetadata | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const movingSpeedThresholdKph = toFiniteNumber(
+    value.movingSpeedThresholdKph,
+  );
+  if (!isFiniteNumber(movingSpeedThresholdKph)) {
+    return undefined;
+  }
+
+  return { movingSpeedThresholdKph };
 }
 
 function readTrackJsonTraining(
@@ -1486,6 +1513,11 @@ function buildTrackJsonMetadata(
     precision.metadata,
   );
 
+  const analysis = buildTrackJsonAnalysis(metadata.analysis);
+  if (analysis) {
+    output.analysis = analysis;
+  }
+
   const statistics = buildTrackJsonStatistics(metadata.statistics, precision);
   if (statistics) {
     output.statistics = statistics;
@@ -1511,6 +1543,23 @@ function buildTrackJsonMetadata(
     output.pedaling = pedaling;
   }
 
+  return Object.keys(output).length > 0 ? output : undefined;
+}
+
+function buildTrackJsonAnalysis(
+  analysis: TrackActivityAnalysisMetadata | undefined,
+): Record<string, unknown> | undefined {
+  if (!analysis) {
+    return undefined;
+  }
+
+  const output: Record<string, unknown> = {};
+  assignMetadataNumber(
+    output,
+    "movingSpeedThresholdKph",
+    analysis.movingSpeedThresholdKph,
+    1,
+  );
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
@@ -2011,6 +2060,8 @@ function fitMessagesToMetadata(
       getFitLocalTimeOffsetSeconds(activity),
     );
   }
+
+  metadata.analysis = buildActivityAnalysisMetadata();
 
   const statistics = buildActivityStatistics(points);
   if (statistics) {

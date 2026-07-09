@@ -1,13 +1,17 @@
+import {
+  DEFAULT_MOVING_SPEED_THRESHOLD_KPH,
+  buildHeartRateBracketHistogram,
+  buildPowerBracketHistogram,
+  getMovingAnalysisIntervals,
+  getMovingAnalysisPoints,
+  hasTimedAnalysisPointPairs,
+} from "./analysis";
+import type { TrackMovingAnalysisInterval } from "./analysis";
+
 const DEFAULT_MAX_POINTS = 3000;
-const POWER_HISTOGRAM_BUCKET_SIZE_W = 25;
-const POWER_HISTOGRAM_MAX_BUCKET_W = 2000;
-const HEART_RATE_HISTOGRAM_BUCKET_SIZE_BPM = 10;
-const HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM = 50;
-const HEART_RATE_HISTOGRAM_MAX_BUCKET_BPM = 200;
 const PEDALING_MIN_SPEED_KPH = 3;
 const PEDALING_MIN_CADENCE_RPM = 10;
 const PEDALING_MIN_POWER_W = 20;
-const PEDALING_MAX_INTERVAL_SECONDS = 30;
 export const STRAVA_POWER_CURVE_DURATIONS_SECONDS = [
   5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1200, 1800, 2700,
   3600, 5400, 7200,
@@ -73,11 +77,16 @@ export type TrackActivityMetadata = {
   totalElapsedTime?: number;
   totalTimerTime?: number;
   totalDistanceM?: number;
+  analysis?: TrackActivityAnalysisMetadata;
   statistics?: TrackActivityStatistics;
   training?: TrackActivityTraining;
   bestEfforts?: TrackActivityBestEfforts;
   histograms?: TrackActivityHistograms;
   pedaling?: TrackActivityPedaling;
+};
+
+export type TrackActivityAnalysisMetadata = {
+  movingSpeedThresholdKph: number;
 };
 
 export type TrackActivityStatistics = {
@@ -650,6 +659,8 @@ export function applyComputedMetadata(
   metadata: TrackActivityMetadata,
   points: TrackPoint[],
 ) {
+  metadata.analysis = buildActivityAnalysisMetadata();
+
   const statistics = buildActivityStatistics(points);
   if (statistics) {
     metadata.statistics = statistics;
@@ -793,9 +804,10 @@ function isMovingInterval(
     const previousSpeed = previous.speedMps;
     const currentSpeed = current.speedMps;
     return (
-      (isFiniteNumber(previousSpeed) &&
-        previousSpeed > movingSpeedThresholdMps) ||
-      (isFiniteNumber(currentSpeed) && currentSpeed > movingSpeedThresholdMps)
+      isFiniteNumber(previousSpeed) &&
+      previousSpeed >= movingSpeedThresholdMps &&
+      isFiniteNumber(currentSpeed) &&
+      currentSpeed >= movingSpeedThresholdMps
     );
   }
 
@@ -861,7 +873,99 @@ function sumMetadataNumber(
   return hasValue ? total : undefined;
 }
 
+export function buildActivityAnalysisMetadata(): TrackActivityAnalysisMetadata {
+  return {
+    movingSpeedThresholdKph: DEFAULT_MOVING_SPEED_THRESHOLD_KPH,
+  };
+}
+
 export function buildActivityStatistics(
+  points: TrackPoint[],
+): TrackActivityStatistics | undefined {
+  const timed = hasTimedAnalysisPointPairs(points);
+  const intervals = getMovingAnalysisIntervals(points);
+  if (intervals.length > 0) {
+    return buildTimedMovingActivityStatistics(intervals);
+  }
+
+  if (timed) {
+    return undefined;
+  }
+
+  return buildSampleMovingActivityStatistics(getMovingAnalysisPoints(points));
+}
+
+function buildTimedMovingActivityStatistics(
+  intervals: TrackMovingAnalysisInterval[],
+): TrackActivityStatistics | undefined {
+  const statistics: TrackActivityStatistics = {};
+
+  const speedStats = buildTimedMovingSpeedStats(intervals);
+  if (speedStats) {
+    statistics.speedKph = speedStats;
+  }
+  assignWeightedActivityStats(
+    statistics,
+    "cadenceRpm",
+    intervals.map((interval) => ({
+      value: interval.point.cadenceRpm,
+      seconds: interval.seconds,
+    })),
+  );
+  assignWeightedActivityStats(
+    statistics,
+    "heartRateBpm",
+    intervals.map((interval) => ({
+      value: interval.point.heartRateBpm,
+      seconds: interval.seconds,
+    })),
+  );
+  assignWeightedActivityStats(
+    statistics,
+    "powerW",
+    intervals.map((interval) => ({
+      value: interval.point.powerW,
+      seconds: interval.seconds,
+    })),
+  );
+  assignWeightedActivityStats(
+    statistics,
+    "temperatureC",
+    intervals.map((interval) => ({
+      value: interval.point.temperatureC,
+      seconds: interval.seconds,
+    })),
+  );
+
+  return Object.keys(statistics).length > 0 ? statistics : undefined;
+}
+
+function buildTimedMovingSpeedStats(
+  intervals: TrackMovingAnalysisInterval[],
+): TrackNumericStats | undefined {
+  const weightedSpeeds = intervals.map((interval) => ({
+    value: interval.speedKph,
+    seconds: interval.seconds,
+  }));
+  const stats = buildWeightedNumericStats(weightedSpeeds);
+  if (!stats) {
+    return undefined;
+  }
+
+  const distanceM = intervals.reduce((sum, interval) => {
+    return isFiniteNumber(interval.distanceM) ? sum + interval.distanceM : sum;
+  }, 0);
+  const seconds = intervals.reduce((sum, interval) => {
+    return isFiniteNumber(interval.distanceM) ? sum + interval.seconds : sum;
+  }, 0);
+  if (distanceM > 0 && seconds > 0) {
+    stats.avg = (distanceM / seconds) * 3.6;
+  }
+
+  return stats;
+}
+
+function buildSampleMovingActivityStatistics(
   points: TrackPoint[],
 ): TrackActivityStatistics | undefined {
   const statistics: TrackActivityStatistics = {};
@@ -897,6 +1001,17 @@ export function buildActivityStatistics(
   return Object.keys(statistics).length > 0 ? statistics : undefined;
 }
 
+function assignWeightedActivityStats(
+  statistics: TrackActivityStatistics,
+  key: keyof TrackActivityStatistics,
+  values: WeightedNumericValue[],
+) {
+  const stats = buildWeightedNumericStats(values);
+  if (stats) {
+    statistics[key] = stats;
+  }
+}
+
 function assignActivityStats(
   statistics: TrackActivityStatistics,
   key: keyof TrackActivityStatistics,
@@ -906,6 +1021,47 @@ function assignActivityStats(
   if (stats) {
     statistics[key] = stats;
   }
+}
+
+type WeightedNumericValue = {
+  value: number | undefined;
+  seconds: number;
+};
+
+function buildWeightedNumericStats(
+  values: WeightedNumericValue[],
+): TrackNumericStats | undefined {
+  const numericValues = values.filter((item): item is { value: number; seconds: number } => {
+    return isFiniteNumber(item.value) && item.seconds > 0;
+  });
+  if (numericValues.length === 0) {
+    return undefined;
+  }
+
+  const totalSeconds = numericValues.reduce((sum, item) => sum + item.seconds, 0);
+  if (totalSeconds <= 0) {
+    return undefined;
+  }
+
+  const sorted = [...numericValues].sort((a, b) => a.value - b.value);
+  const halfSeconds = totalSeconds / 2;
+  let cumulativeSeconds = 0;
+  let median = sorted[sorted.length - 1].value;
+  for (const item of sorted) {
+    cumulativeSeconds += item.seconds;
+    if (cumulativeSeconds >= halfSeconds) {
+      median = item.value;
+      break;
+    }
+  }
+
+  return {
+    avg:
+      numericValues.reduce((sum, item) => sum + item.value * item.seconds, 0) /
+      totalSeconds,
+    median,
+    max: sorted[sorted.length - 1].value,
+  };
 }
 
 function buildNumericStats(
@@ -935,8 +1091,8 @@ function buildNumericStats(
 export function buildActivityHistograms(
   points: TrackPoint[],
 ): TrackActivityHistograms | undefined {
-  const powerW = buildPowerHistogram(points);
-  const heartRateBpm = buildHeartRateHistogram(points);
+  const powerW = buildPowerBracketHistogram(points);
+  const heartRateBpm = buildHeartRateBracketHistogram(points);
   if (!powerW && !heartRateBpm) {
     return undefined;
   }
@@ -1012,11 +1168,12 @@ function assignTimedPedalingDurations(
     })
     .sort((a, b) => a.time - b.time);
 
-  for (let index = 0; index + 1 < timed.length; index += 1) {
+  for (let index = 1; index + 1 < timed.length; index += 1) {
+    const previous = timed[index - 1];
     const current = timed[index];
     const next = timed[index + 1];
     const deltaSeconds = next.time - current.time;
-    if (deltaSeconds <= 0 || deltaSeconds > PEDALING_MAX_INTERVAL_SECONDS) {
+    if (deltaSeconds <= 0 || !isPedalingWindow(previous, current, next)) {
       continue;
     }
 
@@ -1028,9 +1185,14 @@ function assignSamplePedalingDurations(
   points: TrackPoint[],
   accumulator: PedalingAccumulator,
 ) {
-  points.forEach((point) => {
-    addPedalingSample(point, 1, accumulator);
-  });
+  for (let index = 1; index + 1 < points.length; index += 1) {
+    const previous = points[index - 1];
+    const current = points[index];
+    const next = points[index + 1];
+    if (isPedalingWindow(previous, current, next)) {
+      addPedalingSample(current, 1, accumulator);
+    }
+  }
 }
 
 function addPedalingSample(
@@ -1059,6 +1221,22 @@ function addPedalingSample(
   }
 }
 
+function isPedalingWindow(
+  previous: TrackPoint,
+  current: TrackPoint,
+  next: TrackPoint,
+): current is TrackPoint & {
+  speedMps: number;
+  cadenceRpm: number;
+  powerW: number;
+} {
+  return (
+    isPedalingPoint(previous) &&
+    isPedalingPoint(current) &&
+    isPedalingPoint(next)
+  );
+}
+
 function isPedalingPoint(point: TrackPoint): point is TrackPoint & {
   speedMps: number;
   cadenceRpm: number;
@@ -1083,280 +1261,6 @@ function appendPowerSamplesForDuration(
   for (let index = 0; index < count; index += 1) {
     samples.push(powerW);
   }
-}
-
-function buildPowerHistogram(
-  points: TrackPoint[],
-): TrackPowerHistogram | undefined {
-  const secondsByBucket = createPowerHistogramBuckets();
-  let totalSeconds = assignTimedPowerHistogramDurations(
-    points,
-    secondsByBucket,
-  );
-
-  if (totalSeconds === 0) {
-    totalSeconds = assignSamplePowerHistogramDurations(points, secondsByBucket);
-  }
-
-  if (totalSeconds === 0) {
-    return undefined;
-  }
-
-  const buckets = secondsByBucket
-    .map((seconds, index) => {
-      return seconds > 0
-        ? { label: getPowerHistogramBucketLabel(index), seconds }
-        : undefined;
-    })
-    .filter((bucket): bucket is TrackPowerHistogramBucket => Boolean(bucket));
-
-  return {
-    bucketSizeW: POWER_HISTOGRAM_BUCKET_SIZE_W,
-    maxBucketW: POWER_HISTOGRAM_MAX_BUCKET_W,
-    totalSeconds,
-    buckets,
-  };
-}
-
-function createPowerHistogramBuckets(): number[] {
-  return Array.from(
-    {
-      length: POWER_HISTOGRAM_MAX_BUCKET_W / POWER_HISTOGRAM_BUCKET_SIZE_W + 2,
-    },
-    () => 0,
-  );
-}
-
-function assignTimedPowerHistogramDurations(
-  points: TrackPoint[],
-  secondsByBucket: number[],
-): number {
-  const timed = points
-    .filter((point): point is TrackPoint & { time: number } => {
-      return isFiniteNumber(point.time);
-    })
-    .sort((a, b) => a.time - b.time);
-
-  let totalSeconds = 0;
-  for (let index = 0; index + 1 < timed.length; index += 1) {
-    const current = timed[index];
-    const next = timed[index + 1];
-    const deltaSeconds = next.time - current.time;
-    const bucketIndex = getPowerHistogramBucketIndex(current.powerW);
-
-    if (deltaSeconds <= 0 || deltaSeconds > 30 || bucketIndex === undefined) {
-      continue;
-    }
-
-    secondsByBucket[bucketIndex] += deltaSeconds;
-    totalSeconds += deltaSeconds;
-  }
-
-  return totalSeconds;
-}
-
-function assignSamplePowerHistogramDurations(
-  points: TrackPoint[],
-  secondsByBucket: number[],
-): number {
-  let totalSeconds = 0;
-
-  points.forEach((point) => {
-    const bucketIndex = getPowerHistogramBucketIndex(point.powerW);
-    if (bucketIndex === undefined) {
-      return;
-    }
-
-    secondsByBucket[bucketIndex] += 1;
-    totalSeconds += 1;
-  });
-
-  return totalSeconds;
-}
-
-function getPowerHistogramBucketIndex(
-  powerW: number | undefined,
-): number | undefined {
-  if (!isFiniteNumber(powerW) || powerW < 0) {
-    return undefined;
-  }
-
-  if (powerW <= 0) {
-    return 0;
-  }
-
-  if (powerW > POWER_HISTOGRAM_MAX_BUCKET_W) {
-    return POWER_HISTOGRAM_MAX_BUCKET_W / POWER_HISTOGRAM_BUCKET_SIZE_W + 1;
-  }
-
-  return Math.ceil(powerW / POWER_HISTOGRAM_BUCKET_SIZE_W);
-}
-
-function getPowerHistogramBucketLabel(index: number): string {
-  if (index === 0) {
-    return "0 W";
-  }
-
-  const maxIndex = POWER_HISTOGRAM_MAX_BUCKET_W / POWER_HISTOGRAM_BUCKET_SIZE_W;
-  if (index > maxIndex) {
-    return `>${POWER_HISTOGRAM_MAX_BUCKET_W} W`;
-  }
-
-  return `≤${index * POWER_HISTOGRAM_BUCKET_SIZE_W} W`;
-}
-
-function buildHeartRateHistogram(
-  points: TrackPoint[],
-): TrackHeartRateHistogram | undefined {
-  const secondsByBucket = createHeartRateHistogramBuckets();
-  let totalSeconds = assignTimedHeartRateHistogramDurations(
-    points,
-    secondsByBucket,
-  );
-
-  if (totalSeconds === 0) {
-    totalSeconds = assignSampleHeartRateHistogramDurations(
-      points,
-      secondsByBucket,
-    );
-  }
-
-  if (totalSeconds === 0) {
-    return undefined;
-  }
-
-  const buckets = secondsByBucket
-    .map((seconds, index) => {
-      return seconds > 0
-        ? { label: getHeartRateHistogramBucketLabel(index), seconds }
-        : undefined;
-    })
-    .filter((bucket): bucket is TrackHeartRateHistogramBucket => Boolean(bucket));
-
-  return {
-    bucketSizeBpm: HEART_RATE_HISTOGRAM_BUCKET_SIZE_BPM,
-    firstBucketMaxBpm: HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM,
-    maxBucketBpm: HEART_RATE_HISTOGRAM_MAX_BUCKET_BPM,
-    totalSeconds,
-    buckets,
-  };
-}
-
-function createHeartRateHistogramBuckets(): number[] {
-  return Array.from(
-    {
-      length:
-        (HEART_RATE_HISTOGRAM_MAX_BUCKET_BPM -
-          HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM) /
-          HEART_RATE_HISTOGRAM_BUCKET_SIZE_BPM +
-        3,
-    },
-    () => 0,
-  );
-}
-
-function assignTimedHeartRateHistogramDurations(
-  points: TrackPoint[],
-  secondsByBucket: number[],
-): number {
-  const timed = points
-    .filter((point): point is TrackPoint & { time: number } => {
-      return isFiniteNumber(point.time);
-    })
-    .sort((a, b) => a.time - b.time);
-
-  let totalSeconds = 0;
-  for (let index = 0; index + 1 < timed.length; index += 1) {
-    const current = timed[index];
-    const next = timed[index + 1];
-    const deltaSeconds = next.time - current.time;
-    const bucketIndex = getHeartRateHistogramBucketIndex(current.heartRateBpm);
-
-    if (deltaSeconds <= 0 || deltaSeconds > 30 || bucketIndex === undefined) {
-      continue;
-    }
-
-    secondsByBucket[bucketIndex] += deltaSeconds;
-    totalSeconds += deltaSeconds;
-  }
-
-  return totalSeconds;
-}
-
-function assignSampleHeartRateHistogramDurations(
-  points: TrackPoint[],
-  secondsByBucket: number[],
-): number {
-  let totalSeconds = 0;
-
-  points.forEach((point) => {
-    const bucketIndex = getHeartRateHistogramBucketIndex(point.heartRateBpm);
-    if (bucketIndex === undefined) {
-      return;
-    }
-
-    secondsByBucket[bucketIndex] += 1;
-    totalSeconds += 1;
-  });
-
-  return totalSeconds;
-}
-
-function getHeartRateHistogramBucketIndex(
-  heartRateBpm: number | undefined,
-): number | undefined {
-  if (!isFiniteNumber(heartRateBpm) || heartRateBpm < 0) {
-    return undefined;
-  }
-
-  if (heartRateBpm <= 0) {
-    return 0;
-  }
-
-  if (heartRateBpm <= HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM) {
-    return 1;
-  }
-
-  if (heartRateBpm > HEART_RATE_HISTOGRAM_MAX_BUCKET_BPM) {
-    return getHeartRateHistogramOverflowBucketIndex();
-  }
-
-  return (
-    Math.ceil(
-      (heartRateBpm - HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM) /
-        HEART_RATE_HISTOGRAM_BUCKET_SIZE_BPM,
-    ) + 1
-  );
-}
-
-function getHeartRateHistogramOverflowBucketIndex(): number {
-  return (
-    (HEART_RATE_HISTOGRAM_MAX_BUCKET_BPM -
-      HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM) /
-      HEART_RATE_HISTOGRAM_BUCKET_SIZE_BPM +
-    2
-  );
-}
-
-function getHeartRateHistogramBucketLabel(index: number): string {
-  if (index === 0) {
-    return "0 bpm";
-  }
-
-  if (index === 1) {
-    return `≤${HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM} bpm`;
-  }
-
-  if (index >= getHeartRateHistogramOverflowBucketIndex()) {
-    return `>${HEART_RATE_HISTOGRAM_MAX_BUCKET_BPM} bpm`;
-  }
-
-  return (
-    `≤${
-      HEART_RATE_HISTOGRAM_FIRST_BUCKET_MAX_BPM +
-      (index - 1) * HEART_RATE_HISTOGRAM_BUCKET_SIZE_BPM
-    } bpm`
-  );
 }
 
 export function buildActivityBestEfforts(
@@ -1437,9 +1341,9 @@ function computeZoneSummary<TZone extends string>(
     durations,
   );
 
-  if (totalSeconds === 0) {
+  if (totalSeconds === 0 && !hasTimedAnalysisPointPairs(points)) {
     totalSeconds = assignSampleZoneDurations(
-      points,
+      getMovingAnalysisPoints(points),
       getValue,
       getZone,
       durations,
@@ -1464,29 +1368,20 @@ function assignTimedZoneDurations<TZone extends string>(
   getZone: (value: number) => TZone | undefined,
   durations: Record<TZone, number>,
 ): number {
-  const timed = points
-    .filter((point): point is TrackPoint & { time: number } => {
-      return isFiniteNumber(point.time);
-    })
-    .sort((a, b) => a.time - b.time);
-
   let totalSeconds = 0;
-  for (let index = 0; index + 1 < timed.length; index += 1) {
-    const current = timed[index];
-    const next = timed[index + 1];
-    const deltaSeconds = next.time - current.time;
-    const value = getValue(current);
 
-    if (deltaSeconds <= 0 || deltaSeconds > 30 || !isFiniteNumber(value)) {
-      continue;
+  getMovingAnalysisIntervals(points).forEach((interval) => {
+    const value = getValue(interval.point);
+    if (!isFiniteNumber(value)) {
+      return;
     }
 
     const zone = getZone(value);
     if (zone) {
-      durations[zone] += deltaSeconds;
-      totalSeconds += deltaSeconds;
+      durations[zone] += interval.seconds;
+      totalSeconds += interval.seconds;
     }
-  }
+  });
 
   return totalSeconds;
 }
@@ -1567,56 +1462,43 @@ function computeNormalizedPowerFromSamples(
 }
 
 function buildPowerSamples(points: TrackPoint[]): number[] {
-  const timed = points
-    .filter((point): point is TrackPoint & { time: number; powerW: number } => {
-      return isFiniteNumber(point.time) && isFiniteNumber(point.powerW);
-    })
-    .sort((a, b) => a.time - b.time);
-
-  if (timed.length >= 2) {
-    const firstTime = Math.ceil(timed[0].time);
-    const lastTime = Math.floor(timed[timed.length - 1].time);
-    const duration = lastTime - firstTime + 1;
-
-    if (duration >= 30 && duration <= 86400) {
-      const samples: number[] = [];
-      let index = 0;
-      for (let time = firstTime; time <= lastTime; time += 1) {
-        while (index + 1 < timed.length && timed[index + 1].time <= time) {
-          index += 1;
-        }
-        samples.push(timed[index].powerW);
+  const intervals = getMovingAnalysisIntervals(points);
+  if (intervals.length > 0) {
+    const samples: number[] = [];
+    intervals.forEach((interval) => {
+      if (isFiniteNumber(interval.point.powerW)) {
+        appendPowerSamplesForDuration(
+          samples,
+          interval.point.powerW,
+          interval.seconds,
+        );
       }
-      return samples;
-    }
+    });
+    return samples;
   }
 
-  return points.map((point) => point.powerW).filter(isFiniteNumber);
+  if (hasTimedAnalysisPointPairs(points)) {
+    return [];
+  }
+
+  return getMovingAnalysisPoints(points)
+    .map((point) => point.powerW)
+    .filter(isFiniteNumber);
 }
 
 export function computeTotalWorkJ(points: TrackPoint[]): number | undefined {
-  const timed = points
-    .filter((point): point is TrackPoint & { time: number; powerW: number } => {
-      return isFiniteNumber(point.time) && isFiniteNumber(point.powerW);
-    })
-    .sort((a, b) => a.time - b.time);
-
-  if (timed.length < 2) {
-    return undefined;
-  }
-
   let totalWorkJ = 0;
   let hasSegment = false;
 
-  for (let index = 1; index < timed.length; index += 1) {
-    const previous = timed[index - 1];
-    const current = timed[index];
-    const deltaSeconds = current.time - previous.time;
-    if (deltaSeconds > 0 && deltaSeconds <= 30) {
-      totalWorkJ += ((previous.powerW + current.powerW) / 2) * deltaSeconds;
-      hasSegment = true;
+  getMovingAnalysisIntervals(points).forEach((interval) => {
+    const currentPowerW = interval.point.powerW;
+    const nextPowerW = interval.nextPoint.powerW;
+    if (!isFiniteNumber(currentPowerW) || !isFiniteNumber(nextPowerW)) {
+      return;
     }
-  }
+    totalWorkJ += ((currentPowerW + nextPowerW) / 2) * interval.seconds;
+    hasSegment = true;
+  });
 
   return hasSegment ? totalWorkJ : undefined;
 }
@@ -1869,6 +1751,7 @@ function cloneMetadata(metadata: TrackActivityMetadata): TrackActivityMetadata {
       ? { ...metadata.recordingDevice }
       : undefined,
     devices: metadata.devices?.map((device) => ({ ...device })),
+    analysis: metadata.analysis ? { ...metadata.analysis } : undefined,
     statistics: cloneStatistics(metadata.statistics),
     training: cloneTraining(metadata.training),
     bestEfforts: cloneBestEfforts(metadata.bestEfforts),
