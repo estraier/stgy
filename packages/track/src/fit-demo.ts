@@ -785,7 +785,6 @@ function appendMetadataSummaryLines(
     appendStatsLine(lines, statistics, "temperatureC", "temperature", "°C");
   }
 
-  appendPedalingSummaryLine(lines, metadata);
   appendDeviceSummaryLines(lines, metadata);
 
   const training = getRecordProperty(metadata, "training");
@@ -844,63 +843,6 @@ function appendStatsLine(
   }
 }
 
-function appendPedalingSummaryLine(
-  lines: string[],
-  metadata: Record<string, unknown>
-) {
-  const pedaling = getRecordProperty(metadata, "pedaling");
-  if (!pedaling) {
-    return;
-  }
-
-  const totalSeconds = getNumberProperty(pedaling, "totalSeconds");
-  if (typeof totalSeconds !== "number" || totalSeconds <= 0) {
-    return;
-  }
-
-  const parts = [`time ${formatDuration(totalSeconds)}`];
-  appendPedalingNumberPart(
-    parts,
-    pedaling,
-    "averageSpeedKph",
-    "avg speed",
-    "km/h"
-  );
-  appendPedalingNumberPart(
-    parts,
-    pedaling,
-    "averageCadenceRpm",
-    "avg cadence",
-    "rpm"
-  );
-  appendPedalingNumberPart(
-    parts,
-    pedaling,
-    "averageHeartRateBpm",
-    "avg heart rate",
-    "bpm"
-  );
-  appendPedalingNumberPart(parts, pedaling, "averagePowerW", "avg power", "W");
-  appendPedalingNumberPart(parts, pedaling, "normalizedPowerW", "NP", "W");
-
-  lines.push(`pedaling: ${parts.join(", ")}`);
-}
-
-function appendPedalingNumberPart(
-  parts: string[],
-  pedaling: Record<string, unknown>,
-  key: string,
-  label: string,
-  unit: string
-) {
-  const value = getNumberProperty(pedaling, key);
-  if (typeof value !== "number") {
-    return;
-  }
-
-  parts.push(`${label} ${formatNumber(value, getStatsPrecision(unit))} ${unit}`);
-}
-
 function appendDeviceSummaryLines(
   lines: string[],
   metadata: Record<string, unknown>
@@ -946,15 +888,23 @@ type PowerCurvePoint = {
   watts: number;
 };
 
+type ScatterMetricKey = "cadenceRpm" | "powerW" | "heartRateBpm";
+
+type SmoothedScatterPoint = {
+  cadenceRpm?: number;
+  powerW?: number;
+  heartRateBpm?: number;
+};
+
+type ScatterPlotPoint = {
+  x: number;
+  y: number;
+};
+
 type HistogramBin = {
   label: string;
   color: string;
   matches: (value: number) => boolean;
-};
-
-type MetadataPowerHistogramBucket = {
-  label: string;
-  seconds: number;
 };
 
 function appendAnalysisSections(
@@ -983,8 +933,8 @@ function appendAnalysisSections(
     }
   }
 
-  appendMetadataPowerHistogram(container, metadata);
   appendPowerCurve(container, metadata);
+  appendSmoothedScatterPlots(container, points);
 }
 
 function appendSpeedHistogram(container: HTMLElement, points: TrackPoint[]) {
@@ -1149,7 +1099,7 @@ function appendHistogramSection(
     label.className = "fit-demo-zone-label";
     label.textContent = `${row.label}: ${formatDuration(row.seconds)} (${formatNumber(
       row.percentage,
-      1
+      0
     )}%)`;
 
     const track = document.createElement("div");
@@ -1167,77 +1117,6 @@ function appendHistogramSection(
   });
 
   container.appendChild(section);
-}
-
-function appendMetadataPowerHistogram(
-  container: HTMLElement,
-  metadata: Record<string, unknown> | undefined
-) {
-  const rows = getMetadataPowerHistogramRows(metadata);
-  if (rows.length === 0) {
-    return;
-  }
-
-  appendHistogramSection(container, "Power histogram (25 W brackets)", rows);
-}
-
-function getMetadataPowerHistogramRows(
-  metadata: Record<string, unknown> | undefined
-): ZoneHistogramRow[] {
-  const histogram = getMetadataPowerHistogram(metadata);
-  if (!histogram) {
-    return [];
-  }
-
-  const totalSeconds = histogram.totalSeconds > 0
-    ? histogram.totalSeconds
-    : histogram.buckets.reduce((sum, bucket) => sum + bucket.seconds, 0);
-  if (totalSeconds <= 0) {
-    return [];
-  }
-
-  return histogram.buckets.map((bucket) => ({
-    label: bucket.label,
-    seconds: bucket.seconds,
-    percentage: (bucket.seconds / totalSeconds) * 100,
-    color: "#0078A8",
-  }));
-}
-
-function getMetadataPowerHistogram(
-  metadata: Record<string, unknown> | undefined
-): { totalSeconds: number; buckets: MetadataPowerHistogramBucket[] } | undefined {
-  const histograms = metadata ? getRecordProperty(metadata, "histograms") : undefined;
-  const powerW = histograms ? getRecordProperty(histograms, "powerW") : undefined;
-  if (!powerW || !Array.isArray(powerW.buckets)) {
-    return undefined;
-  }
-
-  const buckets = powerW.buckets
-    .map(readMetadataPowerHistogramBucket)
-    .filter((bucket): bucket is MetadataPowerHistogramBucket => Boolean(bucket));
-  if (buckets.length === 0) {
-    return undefined;
-  }
-
-  const totalSeconds = getNumberProperty(powerW, "totalSeconds") || 0;
-  return { totalSeconds, buckets };
-}
-
-function readMetadataPowerHistogramBucket(
-  value: unknown
-): MetadataPowerHistogramBucket | undefined {
-  if (!isRecord(value)) {
-    return undefined;
-  }
-
-  const label = typeof value.label === "string" ? value.label.trim() : "";
-  const seconds = getNumberProperty(value, "seconds");
-  if (!label || typeof seconds !== "number" || seconds <= 0) {
-    return undefined;
-  }
-
-  return { label, seconds };
 }
 
 function appendPowerCurve(
@@ -1396,6 +1275,266 @@ function buildPowerCurveSvg(points: PowerCurvePoint[]): SVGSVGElement {
   });
 
   appendSvgText(svg, marginLeft, marginTop - 4, "Power (W)", "start", "11px");
+
+  return svg;
+}
+
+function appendSmoothedScatterPlots(
+  container: HTMLElement,
+  points: TrackPoint[]
+) {
+  const smoothed = buildSmoothedScatterSeries(points, 30);
+  appendScatterPlotSection(
+    container,
+    "Cadence vs Power",
+    buildScatterPlotPoints(smoothed, "cadenceRpm", "powerW"),
+    {
+      xLabel: "Cadence (rpm)",
+      yLabel: "Power (W)",
+      pointColor: "#0078A8",
+    }
+  );
+  appendScatterPlotSection(
+    container,
+    "Cadence vs Heart rate",
+    buildScatterPlotPoints(smoothed, "cadenceRpm", "heartRateBpm"),
+    {
+      xLabel: "Cadence (rpm)",
+      yLabel: "Heart rate (bpm)",
+      pointColor: "#2fa84f",
+    }
+  );
+  appendScatterPlotSection(
+    container,
+    "Power vs Heart rate",
+    buildScatterPlotPoints(smoothed, "powerW", "heartRateBpm"),
+    {
+      xLabel: "Power (W)",
+      yLabel: "Heart rate (bpm)",
+      pointColor: "#e14545",
+    }
+  );
+}
+
+function buildSmoothedScatterSeries(
+  points: TrackPoint[],
+  windowSeconds: number
+): SmoothedScatterPoint[] {
+  if (points.length === 0) {
+    return [];
+  }
+
+  const useTimedWindow = hasTimedAnalysisPoints(points);
+  return points.map((_, index) => ({
+    cadenceRpm: computeSmoothedMetric(points, index, "cadenceRpm", windowSeconds, useTimedWindow),
+    powerW: computeSmoothedMetric(points, index, "powerW", windowSeconds, useTimedWindow),
+    heartRateBpm: computeSmoothedMetric(
+      points,
+      index,
+      "heartRateBpm",
+      windowSeconds,
+      useTimedWindow
+    ),
+  }));
+}
+
+function computeSmoothedMetric(
+  points: TrackPoint[],
+  index: number,
+  key: ScatterMetricKey,
+  windowSeconds: number,
+  useTimedWindow: boolean
+): number | undefined {
+  const samples: number[] = [];
+  if (useTimedWindow) {
+    const endTime = points[index]?.time;
+    if (typeof endTime !== "number" || !Number.isFinite(endTime)) {
+      return undefined;
+    }
+    const startTime = endTime - windowSeconds;
+    for (let cursor = index; cursor >= 0; cursor -= 1) {
+      const time = points[cursor]?.time;
+      if (typeof time !== "number" || !Number.isFinite(time)) {
+        continue;
+      }
+      if (time < startTime) {
+        break;
+      }
+      const value = points[cursor]?.[key];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        samples.push(value);
+      }
+    }
+  } else {
+    const startIndex = Math.max(0, index - windowSeconds + 1);
+    for (let cursor = startIndex; cursor <= index; cursor += 1) {
+      const value = points[cursor]?.[key];
+      if (typeof value === "number" && Number.isFinite(value)) {
+        samples.push(value);
+      }
+    }
+  }
+
+  if (samples.length === 0) {
+    return undefined;
+  }
+
+  const sum = samples.reduce((total, value) => total + value, 0);
+  return sum / samples.length;
+}
+
+function buildScatterPlotPoints(
+  points: SmoothedScatterPoint[],
+  xKey: ScatterMetricKey,
+  yKey: ScatterMetricKey
+): ScatterPlotPoint[] {
+  const filtered = points
+    .map((point) => {
+      const x = point[xKey];
+      const y = point[yKey];
+      return typeof x === "number" && Number.isFinite(x) &&
+        typeof y === "number" && Number.isFinite(y)
+        ? { x, y }
+        : undefined;
+    })
+    .filter((point): point is ScatterPlotPoint => Boolean(point));
+
+  return sampleScatterPlotPoints(filtered, 1000);
+}
+
+function sampleScatterPlotPoints(
+  points: ScatterPlotPoint[],
+  maxPoints: number
+): ScatterPlotPoint[] {
+  if (points.length <= maxPoints) {
+    return points;
+  }
+
+  const sampled: ScatterPlotPoint[] = [];
+  for (let index = 0; index < maxPoints; index += 1) {
+    const sourceIndex = Math.round(index * (points.length - 1) / (maxPoints - 1));
+    sampled.push(points[sourceIndex]);
+  }
+  return sampled;
+}
+
+function appendScatterPlotSection(
+  container: HTMLElement,
+  titleText: string,
+  points: ScatterPlotPoint[],
+  options: {
+    xLabel: string;
+    yLabel: string;
+    pointColor: string;
+  }
+) {
+  if (points.length === 0) {
+    return;
+  }
+
+  const section = document.createElement("section");
+  section.className = "fit-demo-power-curve";
+
+  const title = document.createElement("div");
+  title.className = "fit-demo-zone-title";
+  title.textContent = titleText;
+  section.appendChild(title);
+
+  const svg = buildScatterPlotSvg(points, options);
+  section.appendChild(svg);
+  container.appendChild(section);
+}
+
+function buildScatterPlotSvg(
+  points: ScatterPlotPoint[],
+  options: {
+    xLabel: string;
+    yLabel: string;
+    pointColor: string;
+  }
+): SVGSVGElement {
+  const width = 760;
+  const height = 300;
+  const marginTop = 16;
+  const marginRight = 20;
+  const marginBottom = 46;
+  const marginLeft = 56;
+  const plotWidth = width - marginLeft - marginRight;
+  const plotHeight = height - marginTop - marginBottom;
+  const xMax = getNiceCeiling(Math.max(...points.map((point) => point.x)));
+  const yMax = getNiceCeiling(Math.max(...points.map((point) => point.y)));
+  const svgNs = "http://www.w3.org/2000/svg";
+  const svg = document.createElementNS(svgNs, "svg");
+
+  svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+  svg.setAttribute("class", "fit-demo-power-curve-svg fit-demo-scatter-plot-svg");
+  svg.setAttribute("role", "img");
+  svg.setAttribute(
+    "aria-label",
+    `${options.yLabel} versus ${options.xLabel} scatter plot`
+  );
+
+  const xValue = (value: number) => {
+    const ratio = xMax <= 0 ? 0 : value / xMax;
+    return marginLeft + ratio * plotWidth;
+  };
+  const yValue = (value: number) => {
+    const ratio = yMax <= 0 ? 0 : value / yMax;
+    return marginTop + plotHeight - ratio * plotHeight;
+  };
+
+  appendSvgLine(svg, marginLeft, marginTop, marginLeft, marginTop + plotHeight, "#666");
+  appendSvgLine(
+    svg,
+    marginLeft,
+    marginTop + plotHeight,
+    marginLeft + plotWidth,
+    marginTop + plotHeight,
+    "#666"
+  );
+
+  createLinearTicks(xMax, 5).forEach((tick) => {
+    const x = xValue(tick);
+    appendSvgLine(svg, x, marginTop, x, marginTop + plotHeight, "#e5e5e5");
+    appendSvgText(
+      svg,
+      x,
+      marginTop + plotHeight + 20,
+      formatNumber(tick, 0),
+      "middle",
+      "11px"
+    );
+  });
+
+  createLinearTicks(yMax, 5).forEach((tick) => {
+    const y = yValue(tick);
+    appendSvgLine(svg, marginLeft, y, marginLeft + plotWidth, y, "#e5e5e5");
+    appendSvgText(svg, marginLeft - 8, y + 4, formatNumber(tick, 0), "end", "11px");
+  });
+
+  points.forEach((point) => {
+    const circle = document.createElementNS(svgNs, "circle");
+    circle.setAttribute("cx", String(xValue(point.x)));
+    circle.setAttribute("cy", String(yValue(point.y)));
+    circle.setAttribute("r", "3");
+    circle.setAttribute("fill", options.pointColor);
+    circle.setAttribute("fill-opacity", "0.55");
+    circle.setAttribute(
+      "aria-label",
+      `${options.xLabel} ${formatNumber(point.x, 1)}, ${options.yLabel} ${formatNumber(point.y, 1)}`
+    );
+    svg.appendChild(circle);
+  });
+
+  appendSvgText(
+    svg,
+    marginLeft + plotWidth / 2,
+    height - 8,
+    options.xLabel,
+    "middle",
+    "11px"
+  );
+  appendSvgText(svg, marginLeft, marginTop - 4, options.yLabel, "start", "11px");
 
   return svg;
 }
