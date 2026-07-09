@@ -893,6 +893,7 @@ type ScatterMetricKey =
   "powerW" |
   "heartRateBpm" |
   "speedKph" |
+  "efficiency" |
   "gradePercent" |
   "temperatureC" |
   "elevationM" |
@@ -1325,6 +1326,12 @@ const SCATTER_METRICS: ScatterMetricDefinition[] = [
     getValue: (point) => point.powerW,
   },
   {
+    key: "efficiency",
+    label: "Efficiency",
+    axisLabel: "Efficiency (W/bpm)",
+    getValue: () => undefined,
+  },
+  {
     key: "estimatedTorqueNm",
     label: "Torque",
     axisLabel: "Torque (Nm)",
@@ -1501,6 +1508,9 @@ function buildSmoothedScatterSeries(
   return points.map((_, index) => {
     const smoothedPoint: SmoothedScatterPoint = {};
     metrics.forEach((metric) => {
+      if (metric.key === "efficiency") {
+        return;
+      }
       const value = computeSmoothedMetric(
         points,
         index,
@@ -1512,6 +1522,19 @@ function buildSmoothedScatterSeries(
         smoothedPoint[metric.key] = value;
       }
     });
+
+    const powerW = smoothedPoint.powerW;
+    const heartRateBpm = smoothedPoint.heartRateBpm;
+    if (
+      typeof powerW === "number" &&
+      Number.isFinite(powerW) &&
+      typeof heartRateBpm === "number" &&
+      Number.isFinite(heartRateBpm) &&
+      heartRateBpm > 0
+    ) {
+      smoothedPoint.efficiency = powerW / heartRateBpm;
+    }
+
     return smoothedPoint;
   });
 }
