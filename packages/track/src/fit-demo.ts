@@ -785,6 +785,7 @@ function appendMetadataSummaryLines(
     appendStatsLine(lines, statistics, "temperatureC", "temperature", "°C");
   }
 
+  appendPedalingSummaryLine(lines, metadata);
   appendDeviceSummaryLines(lines, metadata);
 
   const training = getRecordProperty(metadata, "training");
@@ -841,6 +842,63 @@ function appendStatsLine(
   if (parts.length > 0) {
     lines.push(`${label}: ${parts.join(", ")} ${unit}`);
   }
+}
+
+function appendPedalingSummaryLine(
+  lines: string[],
+  metadata: Record<string, unknown>
+) {
+  const pedaling = getRecordProperty(metadata, "pedaling");
+  if (!pedaling) {
+    return;
+  }
+
+  const totalSeconds = getNumberProperty(pedaling, "totalSeconds");
+  if (typeof totalSeconds !== "number" || totalSeconds <= 0) {
+    return;
+  }
+
+  const parts = [`time ${formatDuration(totalSeconds)}`];
+  appendPedalingNumberPart(
+    parts,
+    pedaling,
+    "averageSpeedKph",
+    "avg speed",
+    "km/h"
+  );
+  appendPedalingNumberPart(
+    parts,
+    pedaling,
+    "averageCadenceRpm",
+    "avg cadence",
+    "rpm"
+  );
+  appendPedalingNumberPart(
+    parts,
+    pedaling,
+    "averageHeartRateBpm",
+    "avg heart rate",
+    "bpm"
+  );
+  appendPedalingNumberPart(parts, pedaling, "averagePowerW", "avg power", "W");
+  appendPedalingNumberPart(parts, pedaling, "normalizedPowerW", "NP", "W");
+
+  lines.push(`pedaling: ${parts.join(", ")}`);
+}
+
+function appendPedalingNumberPart(
+  parts: string[],
+  pedaling: Record<string, unknown>,
+  key: string,
+  label: string,
+  unit: string
+) {
+  const value = getNumberProperty(pedaling, key);
+  if (typeof value !== "number") {
+    return;
+  }
+
+  parts.push(`${label} ${formatNumber(value, getStatsPrecision(unit))} ${unit}`);
 }
 
 function appendDeviceSummaryLines(

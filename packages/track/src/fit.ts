@@ -3,6 +3,7 @@ import {
   applyComputedMetadata,
   buildActivityBestEfforts,
   buildActivityHistograms,
+  buildActivityPedaling,
   buildActivityStatistics,
   computeNormalizedPowerW,
   computeTotalWorkJ,
@@ -13,6 +14,7 @@ import type {
   TrackActivityBestEfforts,
   TrackActivityHistograms,
   TrackActivityMetadata,
+  TrackActivityPedaling,
   TrackActivityPin,
   TrackActivityStatistics,
   TrackActivityTraining,
@@ -44,6 +46,7 @@ export type {
   TrackActivityBestEfforts,
   TrackActivityHistograms,
   TrackActivityMetadata,
+  TrackActivityPedaling,
   TrackActivityStatistics,
   TrackActivityTraining,
   TrackActivityTrainingSource,
@@ -1026,6 +1029,7 @@ function buildTrackJsonActivityMetadata(
     metadata.training = readTrackJsonTraining(getRecordProperty(src, "training"));
     metadata.bestEfforts = readTrackJsonBestEfforts(getRecordProperty(src, "bestEfforts"));
     metadata.histograms = readTrackJsonHistograms(getRecordProperty(src, "histograms"));
+    metadata.pedaling = readTrackJsonPedaling(getRecordProperty(src, "pedaling"));
   }
 
   if (options.name) {
@@ -1107,6 +1111,26 @@ function readTrackJsonTraining(
   return hasTrainingValues(training) ? training : undefined;
 }
 
+
+function readTrackJsonPedaling(
+  value: Record<string, unknown> | undefined,
+): TrackActivityPedaling | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const pedaling: TrackActivityPedaling = {
+    totalSeconds: 0,
+  };
+  assignOptionalNumber(pedaling, value, "totalSeconds");
+  assignOptionalNumber(pedaling, value, "averageSpeedKph");
+  assignOptionalNumber(pedaling, value, "averageCadenceRpm");
+  assignOptionalNumber(pedaling, value, "averageHeartRateBpm");
+  assignOptionalNumber(pedaling, value, "averagePowerW");
+  assignOptionalNumber(pedaling, value, "normalizedPowerW");
+
+  return pedaling.totalSeconds > 0 ? pedaling : undefined;
+}
 
 function readTrackJsonHistograms(
   value: Record<string, unknown> | undefined,
@@ -1419,6 +1443,11 @@ function buildTrackJsonMetadata(
     output.histograms = histograms;
   }
 
+  const pedaling = buildTrackJsonPedaling(metadata.pedaling, precision);
+  if (pedaling) {
+    output.pedaling = pedaling;
+  }
+
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
@@ -1522,6 +1551,50 @@ function buildTrackJsonTraining(
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
+
+function buildTrackJsonPedaling(
+  pedaling: TrackActivityPedaling | undefined,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Record<string, unknown> | undefined {
+  if (!pedaling || pedaling.totalSeconds <= 0) {
+    return undefined;
+  }
+
+  const output: Record<string, unknown> = {};
+  assignMetadataNumber(output, "totalSeconds", pedaling.totalSeconds, 0);
+  assignMetadataNumber(
+    output,
+    "averageSpeedKph",
+    pedaling.averageSpeedKph,
+    precision.metadata,
+  );
+  assignMetadataNumber(
+    output,
+    "averageCadenceRpm",
+    pedaling.averageCadenceRpm,
+    precision.metadata,
+  );
+  assignMetadataNumber(
+    output,
+    "averageHeartRateBpm",
+    pedaling.averageHeartRateBpm,
+    precision.metadata,
+  );
+  assignMetadataNumber(
+    output,
+    "averagePowerW",
+    pedaling.averagePowerW,
+    precision.metadata,
+  );
+  assignMetadataNumber(
+    output,
+    "normalizedPowerW",
+    pedaling.normalizedPowerW,
+    precision.metadata,
+  );
+
+  return Object.keys(output).length > 0 ? output : undefined;
+}
 
 function buildTrackJsonHistograms(
   histograms: TrackActivityHistograms | undefined,
@@ -1848,6 +1921,11 @@ function fitMessagesToMetadata(
   const histograms = buildActivityHistograms(points);
   if (histograms) {
     metadata.histograms = histograms;
+  }
+
+  const pedaling = buildActivityPedaling(points);
+  if (pedaling) {
+    metadata.pedaling = pedaling;
   }
 
   return metadata;

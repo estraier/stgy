@@ -309,8 +309,76 @@ describe("parseFitBytes", () => {
         { label: "≤300 W", seconds: 10 },
       ],
     });
+    expect(activity.metadata.pedaling).toEqual({
+      totalSeconds: 30,
+      averageSpeedKph: 21.6,
+      averageCadenceRpm: 90,
+      averageHeartRateBpm: 130,
+      averagePowerW: 200,
+      normalizedPowerW: 200,
+    });
   });
 
+  test("computes pedaling metadata with coasting thresholds", () => {
+    mockDecoder(true, {
+      messages: {
+        recordMesgs: [
+          {
+            timestamp: 1710000000,
+            heartRate: 100,
+            cadence: 80,
+            power: 100,
+            speed: 0.5,
+          },
+          {
+            timestamp: 1710000010,
+            heartRate: 110,
+            cadence: 5,
+            power: 100,
+            speed: 5,
+          },
+          {
+            timestamp: 1710000020,
+            heartRate: 120,
+            cadence: 80,
+            power: 10,
+            speed: 5,
+          },
+          {
+            timestamp: 1710000030,
+            heartRate: 130,
+            cadence: 80,
+            power: 100,
+            speed: 5,
+          },
+          {
+            timestamp: 1710000040,
+            heartRate: 140,
+            cadence: 90,
+            power: 200,
+            speed: 6,
+          },
+          {
+            timestamp: 1710000050,
+            heartRate: 150,
+            cadence: 90,
+            power: 0,
+            speed: 6,
+          },
+        ],
+      },
+    });
+
+    const activity = parseFitBytes(new Uint8Array([1, 2, 3]));
+
+    expect(activity.metadata.pedaling).toEqual({
+      totalSeconds: 20,
+      averageSpeedKph: 19.8,
+      averageCadenceRpm: 85,
+      averageHeartRateBpm: 135,
+      averagePowerW: 150,
+    });
+  });
 
   test("computes Strava-style best power efforts", () => {
     mockDecoder(true, {
@@ -591,6 +659,14 @@ describe("downsampleTrackActivity", () => {
         ],
       },
     };
+    activity.metadata.pedaling = {
+      totalSeconds: 1234,
+      averageSpeedKph: 25.4,
+      averageCadenceRpm: 82,
+      averageHeartRateBpm: 140,
+      averagePowerW: 210,
+      normalizedPowerW: 230,
+    };
 
     const downsampled = downsampleTrackActivity(activity, {
       maxPoints: 4,
@@ -624,6 +700,7 @@ describe("downsampleTrackActivity", () => {
     expect(downsampled.metadata.histograms?.powerW?.buckets).not.toBe(
       activity.metadata.histograms.powerW!.buckets,
     );
+    expect(downsampled.metadata.pedaling).not.toBe(activity.metadata.pedaling);
   });
 
   test("rejects unsupported downsampling strategy", () => {
@@ -668,6 +745,14 @@ describe("trackJsonDataToTrackActivity", () => {
               startTime: 100,
               endTime: 110,
               localTimeOffsetSeconds: 32400,
+              pedaling: {
+                totalSeconds: 10,
+                averageSpeedKph: 19.8,
+                averageCadenceRpm: 85,
+                averageHeartRateBpm: 125,
+                averagePowerW: 165,
+                normalizedPowerW: 170,
+              },
             },
             coordinateProperties: {
               times: [100, 110],
@@ -688,6 +773,14 @@ describe("trackJsonDataToTrackActivity", () => {
     expect(activity.metadata.startTime).toBe(100);
     expect(activity.metadata.endTime).toBe(110);
     expect(activity.metadata.localTimeOffsetSeconds).toBe(32400);
+    expect(activity.metadata.pedaling).toEqual({
+      totalSeconds: 10,
+      averageSpeedKph: 19.8,
+      averageCadenceRpm: 85,
+      averageHeartRateBpm: 125,
+      averagePowerW: 165,
+      normalizedPowerW: 170,
+    });
     expect(activity.points).toHaveLength(2);
     expect(activity.points[1]).toMatchObject({
       time: 110,
@@ -1064,6 +1157,14 @@ describe("trackActivityToTrackJson", () => {
         ],
       },
     };
+    activity.metadata.pedaling = {
+      totalSeconds: 1234.4,
+      averageSpeedKph: 25.44,
+      averageCadenceRpm: 82.44,
+      averageHeartRateBpm: 140.44,
+      averagePowerW: 210.44,
+      normalizedPowerW: 230.44,
+    };
 
     const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const metadata = parsed.features[0].properties.metadata;
@@ -1107,6 +1208,14 @@ describe("trackActivityToTrackJson", () => {
           { label: ">2000 W", seconds: 17 },
         ],
       },
+    });
+    expect(metadata.pedaling).toEqual({
+      totalSeconds: 1234,
+      averageSpeedKph: 25.4,
+      averageCadenceRpm: 82.4,
+      averageHeartRateBpm: 140.4,
+      averagePowerW: 210.4,
+      normalizedPowerW: 230.4,
     });
   });
 

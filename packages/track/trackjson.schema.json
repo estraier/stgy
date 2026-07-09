@@ -216,6 +216,9 @@
         "histograms": {
           "$ref": "#/$defs/histograms"
         },
+        "pedaling": {
+          "$ref": "#/$defs/pedaling"
+        },
         "devices": {
           "type": "array",
           "items": {
@@ -326,6 +329,30 @@
             }
           },
           "additionalProperties": true
+        }
+      },
+      "additionalProperties": true
+    },
+    "pedaling": {
+      "type": "object",
+      "properties": {
+        "totalSeconds": {
+          "type": "number"
+        },
+        "averageSpeedKph": {
+          "type": "number"
+        },
+        "averageCadenceRpm": {
+          "type": "number"
+        },
+        "averageHeartRateBpm": {
+          "type": "number"
+        },
+        "averagePowerW": {
+          "type": "number"
+        },
+        "normalizedPowerW": {
+          "type": "number"
         }
       },
       "additionalProperties": true

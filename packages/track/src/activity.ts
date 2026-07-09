@@ -1,28 +1,14 @@
 const DEFAULT_MAX_POINTS = 3000;
 const POWER_HISTOGRAM_BUCKET_SIZE_W = 25;
 const POWER_HISTOGRAM_MAX_BUCKET_W = 2000;
+const PEDALING_MIN_SPEED_KPH = 3;
+const PEDALING_MIN_CADENCE_RPM = 10;
+const PEDALING_MIN_POWER_W = 20;
+const PEDALING_MAX_INTERVAL_SECONDS = 30;
 export const STRAVA_POWER_CURVE_DURATIONS_SECONDS = [
-  5,
-  10,
-  15,
-  20,
-  30,
-  45,
-  60,
-  90,
-  120,
-  180,
-  300,
-  600,
-  900,
-  1200,
-  1800,
-  2700,
-  3600,
-  5400,
-  7200,
+  5, 10, 15, 20, 30, 45, 60, 90, 120, 180, 300, 600, 900, 1200, 1800, 2700,
+  3600, 5400, 7200,
 ] as const;
-
 
 const POWER_ZONE_KEYS: TrackPowerZoneKey[] = [
   "z1",
@@ -88,6 +74,7 @@ export type TrackActivityMetadata = {
   training?: TrackActivityTraining;
   bestEfforts?: TrackActivityBestEfforts;
   histograms?: TrackActivityHistograms;
+  pedaling?: TrackActivityPedaling;
 };
 
 export type TrackActivityStatistics = {
@@ -137,6 +124,15 @@ export type TrackPowerHistogram = {
 export type TrackPowerHistogramBucket = {
   label: string;
   seconds: number;
+};
+
+export type TrackActivityPedaling = {
+  totalSeconds: number;
+  averageSpeedKph?: number;
+  averageCadenceRpm?: number;
+  averageHeartRateBpm?: number;
+  averagePowerW?: number;
+  normalizedPowerW?: number;
 };
 
 export type TrackPowerZoneKey = "z1" | "z2" | "z3" | "z4" | "z5" | "z6" | "z7";
@@ -189,20 +185,17 @@ export type TrackWarning = {
   message: string;
 };
 
-
 export type DownsampleTrackOptions = {
   maxPoints?: number;
   strategy?: "uniform" | "aggregate";
   preserveEndpoints?: boolean;
 };
 
-
 export type MergeTrackActivitiesOptions = {
   name?: string;
   description?: string;
   movingSpeedThresholdMps?: number;
 };
-
 
 export function getPowerZone(
   powerW: number,
@@ -288,7 +281,6 @@ export function computeHeartRateZoneSummary(
   );
 }
 
-
 export function downsampleTrackActivity(
   activity: TrackActivity,
   options: DownsampleTrackOptions = {},
@@ -319,7 +311,6 @@ export function downsampleTrackActivity(
     preserveEndpoints,
   );
 }
-
 
 export function mergeTrackActivities(
   activities: TrackActivity[],
@@ -354,7 +345,9 @@ export function mergeTrackActivities(
     }
   });
 
-  const sortedIndexedPoints = [...indexedPoints].sort(compareIndexedTrackPoints);
+  const sortedIndexedPoints = [...indexedPoints].sort(
+    compareIndexedTrackPoints,
+  );
   const points = sortedIndexedPoints.map((item) => cloneTrackPoint(item.point));
   const metadata = buildMergedActivityMetadata(
     activities,
@@ -377,7 +370,6 @@ export function mergeTrackActivities(
   };
 }
 
-
 type IndexedTrackPoint = {
   activityIndex: number;
   orderIndex: number;
@@ -390,7 +382,6 @@ type OrderedActivity = {
   originalIndex: number;
   sortTime: number | undefined;
 };
-
 
 function getActivityMergeOrder(activities: TrackActivity[]): OrderedActivity[] {
   return activities
@@ -438,7 +429,8 @@ function normalizeActivityDistances(
     const firstDistance = finiteDistances[0];
     cloned.forEach((point) => {
       if (isFiniteNumber(point.distanceM)) {
-        point.distanceM = Math.max(0, point.distanceM - firstDistance) + distanceOffsetM;
+        point.distanceM =
+          Math.max(0, point.distanceM - firstDistance) + distanceOffsetM;
       }
     });
     return cloned;
@@ -471,7 +463,10 @@ function getActivityDistanceDelta(points: TrackPoint[]): number | undefined {
   return undefined;
 }
 
-function compareIndexedTrackPoints(a: IndexedTrackPoint, b: IndexedTrackPoint): number {
+function compareIndexedTrackPoints(
+  a: IndexedTrackPoint,
+  b: IndexedTrackPoint,
+): number {
   if (isFiniteNumber(a.point.time) && isFiniteNumber(b.point.time)) {
     return (
       a.point.time - b.point.time ||
@@ -519,7 +514,10 @@ function buildMergedActivityMetadata(
   if (timeRange) {
     metadata.startTime = timeRange.startTime;
     metadata.endTime = timeRange.endTime;
-    metadata.totalElapsedTime = Math.max(0, timeRange.endTime - timeRange.startTime);
+    metadata.totalElapsedTime = Math.max(
+      0,
+      timeRange.endTime - timeRange.startTime,
+    );
   } else {
     delete metadata.startTime;
     delete metadata.endTime;
@@ -604,9 +602,7 @@ function getMergedTimeRange(
   const startTimes = activities
     .map((activity) => activity.metadata.startTime)
     .filter(isFiniteNumber);
-  const endTimes = activities
-    .map(getActivityEndTime)
-    .filter(isFiniteNumber);
+  const endTimes = activities.map(getActivityEndTime).filter(isFiniteNumber);
 
   if (startTimes.length === 0 || endTimes.length === 0) {
     return undefined;
@@ -644,7 +640,10 @@ export function applyComputedMetadata(
     delete metadata.statistics;
   }
 
-  const training = mergeTrainingMetadata(metadata.training, buildMergedTraining(points));
+  const training = mergeTrainingMetadata(
+    metadata.training,
+    buildMergedTraining(points),
+  );
   if (training) {
     metadata.training = training;
   } else {
@@ -663,6 +662,15 @@ export function applyComputedMetadata(
     metadata.histograms = histograms;
   } else {
     delete metadata.histograms;
+  }
+
+  const pedaling = buildActivityPedaling(points);
+  if (pedaling) {
+    metadata.pedaling = pedaling;
+  } else if (metadata.pedaling && metadata.pedaling.totalSeconds > 0) {
+    metadata.pedaling = { ...metadata.pedaling };
+  } else {
+    delete metadata.pedaling;
   }
 }
 
@@ -695,7 +703,9 @@ function mergeTrainingMetadata(
   return hasTrainingValues(training) ? training : undefined;
 }
 
-function buildMergedTraining(points: TrackPoint[]): TrackActivityTraining | undefined {
+function buildMergedTraining(
+  points: TrackPoint[],
+): TrackActivityTraining | undefined {
   const training: TrackActivityTraining = {};
   const source: TrackActivityTrainingSource = {};
 
@@ -745,7 +755,9 @@ function calculateMergedMovingTime(
         continue;
       }
 
-      if (isMovingInterval(previous, current, movingSpeedThresholdMps, hasSpeed)) {
+      if (
+        isMovingInterval(previous, current, movingSpeedThresholdMps, hasSpeed)
+      ) {
         totalSeconds += deltaSeconds;
       }
     }
@@ -764,7 +776,8 @@ function isMovingInterval(
     const previousSpeed = previous.speedMps;
     const currentSpeed = current.speedMps;
     return (
-      (isFiniteNumber(previousSpeed) && previousSpeed > movingSpeedThresholdMps) ||
+      (isFiniteNumber(previousSpeed) &&
+        previousSpeed > movingSpeedThresholdMps) ||
       (isFiniteNumber(currentSpeed) && currentSpeed > movingSpeedThresholdMps)
     );
   }
@@ -791,7 +804,6 @@ function getMergedTotalDistance(points: TrackPoint[]): number | undefined {
 
   return undefined;
 }
-
 
 function calculateDistanceM(
   a: TrackPoint & { lat: number; lon: number },
@@ -831,7 +843,6 @@ function sumMetadataNumber(
 
   return hasValue ? total : undefined;
 }
-
 
 export function buildActivityStatistics(
   points: TrackPoint[],
@@ -915,11 +926,155 @@ export function buildActivityHistograms(
   return { powerW };
 }
 
+export function buildActivityPedaling(
+  points: TrackPoint[],
+): TrackActivityPedaling | undefined {
+  const accumulator = createPedalingAccumulator();
+
+  assignTimedPedalingDurations(points, accumulator);
+  if (accumulator.totalSeconds === 0) {
+    assignSamplePedalingDurations(points, accumulator);
+  }
+
+  if (accumulator.totalSeconds === 0) {
+    return undefined;
+  }
+
+  const pedaling: TrackActivityPedaling = {
+    totalSeconds: accumulator.totalSeconds,
+    averageSpeedKph: accumulator.speedKphSeconds / accumulator.totalSeconds,
+    averageCadenceRpm: accumulator.cadenceRpmSeconds / accumulator.totalSeconds,
+    averagePowerW: accumulator.powerWSeconds / accumulator.totalSeconds,
+  };
+
+  if (accumulator.heartRateSeconds > 0) {
+    pedaling.averageHeartRateBpm =
+      accumulator.heartRateBpmSeconds / accumulator.heartRateSeconds;
+  }
+
+  const normalizedPowerW = computeNormalizedPowerFromSamples(
+    accumulator.powerSamples,
+  );
+  if (isFiniteNumber(normalizedPowerW)) {
+    pedaling.normalizedPowerW = normalizedPowerW;
+  }
+
+  return pedaling;
+}
+
+type PedalingAccumulator = {
+  totalSeconds: number;
+  speedKphSeconds: number;
+  cadenceRpmSeconds: number;
+  heartRateBpmSeconds: number;
+  heartRateSeconds: number;
+  powerWSeconds: number;
+  powerSamples: number[];
+};
+
+function createPedalingAccumulator(): PedalingAccumulator {
+  return {
+    totalSeconds: 0,
+    speedKphSeconds: 0,
+    cadenceRpmSeconds: 0,
+    heartRateBpmSeconds: 0,
+    heartRateSeconds: 0,
+    powerWSeconds: 0,
+    powerSamples: [],
+  };
+}
+
+function assignTimedPedalingDurations(
+  points: TrackPoint[],
+  accumulator: PedalingAccumulator,
+) {
+  const timed = points
+    .filter((point): point is TrackPoint & { time: number } => {
+      return isFiniteNumber(point.time);
+    })
+    .sort((a, b) => a.time - b.time);
+
+  for (let index = 0; index + 1 < timed.length; index += 1) {
+    const current = timed[index];
+    const next = timed[index + 1];
+    const deltaSeconds = next.time - current.time;
+    if (deltaSeconds <= 0 || deltaSeconds > PEDALING_MAX_INTERVAL_SECONDS) {
+      continue;
+    }
+
+    addPedalingSample(current, deltaSeconds, accumulator);
+  }
+}
+
+function assignSamplePedalingDurations(
+  points: TrackPoint[],
+  accumulator: PedalingAccumulator,
+) {
+  points.forEach((point) => {
+    addPedalingSample(point, 1, accumulator);
+  });
+}
+
+function addPedalingSample(
+  point: TrackPoint,
+  seconds: number,
+  accumulator: PedalingAccumulator,
+) {
+  if (!isPedalingPoint(point)) {
+    return;
+  }
+
+  const speedKph = point.speedMps * 3.6;
+  accumulator.totalSeconds += seconds;
+  accumulator.speedKphSeconds += speedKph * seconds;
+  accumulator.cadenceRpmSeconds += point.cadenceRpm * seconds;
+  accumulator.powerWSeconds += point.powerW * seconds;
+  appendPowerSamplesForDuration(
+    accumulator.powerSamples,
+    point.powerW,
+    seconds,
+  );
+
+  if (isFiniteNumber(point.heartRateBpm)) {
+    accumulator.heartRateBpmSeconds += point.heartRateBpm * seconds;
+    accumulator.heartRateSeconds += seconds;
+  }
+}
+
+function isPedalingPoint(point: TrackPoint): point is TrackPoint & {
+  speedMps: number;
+  cadenceRpm: number;
+  powerW: number;
+} {
+  return (
+    isFiniteNumber(point.speedMps) &&
+    point.speedMps * 3.6 >= PEDALING_MIN_SPEED_KPH &&
+    isFiniteNumber(point.cadenceRpm) &&
+    point.cadenceRpm >= PEDALING_MIN_CADENCE_RPM &&
+    isFiniteNumber(point.powerW) &&
+    point.powerW >= PEDALING_MIN_POWER_W
+  );
+}
+
+function appendPowerSamplesForDuration(
+  samples: number[],
+  powerW: number,
+  seconds: number,
+) {
+  const count = Math.max(1, Math.round(seconds));
+  for (let index = 0; index < count; index += 1) {
+    samples.push(powerW);
+  }
+}
+
 function buildPowerHistogram(
   points: TrackPoint[],
 ): TrackPowerHistogram | undefined {
   const secondsByBucket = createPowerHistogramBuckets();
-  let totalSeconds = assignTimedPowerHistogramDurations(points, secondsByBucket);
+  let totalSeconds = assignTimedPowerHistogramDurations(
+    points,
+    secondsByBucket,
+  );
 
   if (totalSeconds === 0) {
     totalSeconds = assignSamplePowerHistogramDurations(points, secondsByBucket);
@@ -1087,7 +1242,6 @@ function computeBestAverageValue(
   return best;
 }
 
-
 export function hasTrainingValues(training: TrackActivityTraining): boolean {
   return (
     isFiniteNumber(training.normalizedPowerW) ||
@@ -1104,14 +1258,25 @@ function computeZoneSummary<TZone extends string>(
 ): TrackZoneSummary<TZone> {
   const durations = createZoneRecord(zoneKeys);
   const percentages = createZoneRecord(zoneKeys);
-  let totalSeconds = assignTimedZoneDurations(points, getValue, getZone, durations);
+  let totalSeconds = assignTimedZoneDurations(
+    points,
+    getValue,
+    getZone,
+    durations,
+  );
 
   if (totalSeconds === 0) {
-    totalSeconds = assignSampleZoneDurations(points, getValue, getZone, durations);
+    totalSeconds = assignSampleZoneDurations(
+      points,
+      getValue,
+      getZone,
+      durations,
+    );
   }
 
   zoneKeys.forEach((zone) => {
-    percentages[zone] = totalSeconds > 0 ? (durations[zone] / totalSeconds) * 100 : 0;
+    percentages[zone] =
+      totalSeconds > 0 ? (durations[zone] / totalSeconds) * 100 : 0;
   });
 
   return {
@@ -1181,10 +1346,13 @@ function assignSampleZoneDurations<TZone extends string>(
 function createZoneRecord<TZone extends string>(
   zoneKeys: readonly TZone[],
 ): Record<TZone, number> {
-  return zoneKeys.reduce((record, zone) => {
-    record[zone] = 0;
-    return record;
-  }, {} as Record<TZone, number>);
+  return zoneKeys.reduce(
+    (record, zone) => {
+      record[zone] = 0;
+      return record;
+    },
+    {} as Record<TZone, number>,
+  );
 }
 
 function assertPositiveFiniteNumber(value: number, name: string) {
@@ -1193,8 +1361,15 @@ function assertPositiveFiniteNumber(value: number, name: string) {
   }
 }
 
-export function computeNormalizedPowerW(points: TrackPoint[]): number | undefined {
-  const samples = buildPowerSamples(points);
+export function computeNormalizedPowerW(
+  points: TrackPoint[],
+): number | undefined {
+  return computeNormalizedPowerFromSamples(buildPowerSamples(points));
+}
+
+function computeNormalizedPowerFromSamples(
+  samples: number[],
+): number | undefined {
   if (samples.length < 30) {
     return undefined;
   }
@@ -1273,7 +1448,6 @@ export function computeTotalWorkJ(points: TrackPoint[]): number | undefined {
 
   return hasSegment ? totalWorkJ : undefined;
 }
-
 
 function normalizeMaxPoints(value: number): number {
   if (!Number.isFinite(value) || value < 2) {
@@ -1509,7 +1683,9 @@ function cloneTrackActivityPin(pin: TrackActivityPin): TrackActivityPin {
   };
 }
 
-function cloneJsonRecord(record: Record<string, unknown>): Record<string, unknown> {
+function cloneJsonRecord(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
   return JSON.parse(JSON.stringify(record)) as Record<string, unknown>;
 }
 
@@ -1525,6 +1701,7 @@ function cloneMetadata(metadata: TrackActivityMetadata): TrackActivityMetadata {
     training: cloneTraining(metadata.training),
     bestEfforts: cloneBestEfforts(metadata.bestEfforts),
     histograms: cloneHistograms(metadata.histograms),
+    pedaling: metadata.pedaling ? { ...metadata.pedaling } : undefined,
   };
 }
 
@@ -1598,7 +1775,6 @@ function cloneTrackPoint(point: TrackPoint): TrackPoint {
     metrics: point.metrics ? { ...point.metrics } : undefined,
   };
 }
-
 
 function assignNumber<T extends object, K extends keyof T>(
   object: T,
