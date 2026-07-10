@@ -85,6 +85,7 @@ export type TrackActivityMetadata = {
   bestEfforts?: TrackActivityBestEfforts;
   histograms?: TrackActivityHistograms;
   pedaling?: TrackActivityPedaling;
+  pedalingDynamics?: TrackActivityPedalingDynamics;
 };
 
 export type TrackActivityAnalysisMetadata = {
@@ -187,6 +188,23 @@ export type TrackActivityPedaling = {
   averageHeartRateBpm?: number;
   averagePowerW?: number;
   normalizedPowerW?: number;
+};
+
+export type TrackActivityPedalingDynamics = {
+  leftRightBalance?: TrackActivityLeftRightBalance;
+  torqueEffectiveness?: TrackActivityPedalingSidePercentages;
+  pedalSmoothness?: TrackActivityPedalingSidePercentages;
+};
+
+export type TrackActivityLeftRightBalance = {
+  leftPercentage?: number;
+  rightPercentage?: number;
+};
+
+export type TrackActivityPedalingSidePercentages = {
+  leftPercentage?: number;
+  rightPercentage?: number;
+  combinedPercentage?: number;
 };
 
 export type TrackPowerZoneKey = "z1" | "z2" | "z3" | "z4" | "z5" | "z6" | "z7";
@@ -1936,6 +1954,27 @@ function cloneMetadata(metadata: TrackActivityMetadata): TrackActivityMetadata {
     bestEfforts: cloneBestEfforts(metadata.bestEfforts),
     histograms: cloneHistograms(metadata.histograms),
     pedaling: metadata.pedaling ? { ...metadata.pedaling } : undefined,
+    pedalingDynamics: clonePedalingDynamics(metadata.pedalingDynamics),
+  };
+}
+
+function clonePedalingDynamics(
+  dynamics: TrackActivityPedalingDynamics | undefined,
+): TrackActivityPedalingDynamics | undefined {
+  if (!dynamics) {
+    return undefined;
+  }
+
+  return {
+    leftRightBalance: dynamics.leftRightBalance
+      ? { ...dynamics.leftRightBalance }
+      : undefined,
+    torqueEffectiveness: dynamics.torqueEffectiveness
+      ? { ...dynamics.torqueEffectiveness }
+      : undefined,
+    pedalSmoothness: dynamics.pedalSmoothness
+      ? { ...dynamics.pedalSmoothness }
+      : undefined,
   };
 }
 

@@ -260,6 +260,9 @@
         },
         "bestEfforts": {
           "$ref": "#/$defs/bestEfforts"
+        },
+        "pedalingDynamics": {
+          "$ref": "#/$defs/pedalingDynamics"
         }
       },
       "additionalProperties": true
@@ -533,6 +536,48 @@
           "additionalProperties": {
             "type": "number"
           }
+        }
+      },
+      "additionalProperties": true
+    },
+    "pedalingDynamics": {
+      "type": "object",
+      "properties": {
+        "leftRightBalance": {
+          "$ref": "#/$defs/leftRightBalance"
+        },
+        "torqueEffectiveness": {
+          "$ref": "#/$defs/pedalingSidePercentages"
+        },
+        "pedalSmoothness": {
+          "$ref": "#/$defs/pedalingSidePercentages"
+        }
+      },
+      "additionalProperties": true
+    },
+    "leftRightBalance": {
+      "type": "object",
+      "properties": {
+        "leftPercentage": {
+          "type": "number"
+        },
+        "rightPercentage": {
+          "type": "number"
+        }
+      },
+      "additionalProperties": true
+    },
+    "pedalingSidePercentages": {
+      "type": "object",
+      "properties": {
+        "leftPercentage": {
+          "type": "number"
+        },
+        "rightPercentage": {
+          "type": "number"
+        },
+        "combinedPercentage": {
+          "type": "number"
         }
       },
       "additionalProperties": true

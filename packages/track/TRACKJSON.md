@@ -256,6 +256,19 @@ TrackJSON metadata is stored in `Feature.properties.metadata`.
         "1200": 245,
         "3600": 198
       }
+    },
+    "pedalingDynamics": {
+      "leftRightBalance": {
+        "leftPercentage": 51.2,
+        "rightPercentage": 48.8
+      },
+      "torqueEffectiveness": {
+        "leftPercentage": 80.1,
+        "rightPercentage": 81.2
+      },
+      "pedalSmoothness": {
+        "combinedPercentage": 22.9
+      }
     }
   }
 }
@@ -289,6 +302,9 @@ Common metadata fields:
 | `training.totalCaloriesCal` | number | Total calories in calories, converted from FIT totalCalories metadata when present |
 | `training.source.*` | string | Source marker such as `fit` or `computed` |
 | `bestEfforts.powerW` | object | Strava-style best average power efforts keyed by duration seconds |
+| `pedalingDynamics.leftRightBalance` | object | Left/right power balance percentages from FIT, when present |
+| `pedalingDynamics.torqueEffectiveness` | object | Left/right/combined torque effectiveness percentages from FIT, when present |
+| `pedalingDynamics.pedalSmoothness` | object | Left/right/combined pedal smoothness percentages from FIT, when present |
 
 Statistic objects use these fields.
 

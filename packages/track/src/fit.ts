@@ -19,6 +19,9 @@ import type {
   TrackHeartRateHistogram,
   TrackHeartRateHistogramBucket,
   TrackActivityPedaling,
+  TrackActivityPedalingDynamics,
+  TrackActivityLeftRightBalance,
+  TrackActivityPedalingSidePercentages,
   TrackActivityPin,
   TrackActivityStatistics,
   TrackActivityTraining,
@@ -58,6 +61,9 @@ export type {
   TrackActivityHistograms,
   TrackActivityMetadata,
   TrackActivityPedaling,
+  TrackActivityPedalingDynamics,
+  TrackActivityLeftRightBalance,
+  TrackActivityPedalingSidePercentages,
   TrackActivityStatistics,
   TrackActivityTraining,
   TrackActivityTrainingSource,
@@ -1055,6 +1061,9 @@ function buildTrackJsonActivityMetadata(
       getRecordProperty(src, "histograms"),
     );
     metadata.pedaling = readTrackJsonPedaling(getRecordProperty(src, "pedaling"));
+    metadata.pedalingDynamics = readTrackJsonPedalingDynamics(
+      getRecordProperty(src, "pedalingDynamics"),
+    );
   }
 
   if (options.name) {
@@ -1644,6 +1653,14 @@ function buildTrackJsonMetadata(
     output.pedaling = pedaling;
   }
 
+  const pedalingDynamics = buildTrackJsonPedalingDynamics(
+    metadata.pedalingDynamics,
+    precision,
+  );
+  if (pedalingDynamics) {
+    output.pedalingDynamics = pedalingDynamics;
+  }
+
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
@@ -1662,6 +1679,65 @@ function buildTrackJsonAnalysis(
     1,
   );
   return Object.keys(output).length > 0 ? output : undefined;
+}
+
+function readTrackJsonPedalingDynamics(
+  value: Record<string, unknown> | undefined,
+): TrackActivityPedalingDynamics | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const dynamics: TrackActivityPedalingDynamics = {};
+  const leftRightBalance = readTrackJsonLeftRightBalance(
+    getRecordProperty(value, "leftRightBalance"),
+  );
+  if (leftRightBalance) {
+    dynamics.leftRightBalance = leftRightBalance;
+  }
+
+  const torqueEffectiveness = readTrackJsonPedalingSidePercentages(
+    getRecordProperty(value, "torqueEffectiveness"),
+  );
+  if (torqueEffectiveness) {
+    dynamics.torqueEffectiveness = torqueEffectiveness;
+  }
+
+  const pedalSmoothness = readTrackJsonPedalingSidePercentages(
+    getRecordProperty(value, "pedalSmoothness"),
+  );
+  if (pedalSmoothness) {
+    dynamics.pedalSmoothness = pedalSmoothness;
+  }
+
+  return Object.keys(dynamics).length > 0 ? dynamics : undefined;
+}
+
+function readTrackJsonLeftRightBalance(
+  value: Record<string, unknown> | undefined,
+): TrackActivityLeftRightBalance | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const balance: TrackActivityLeftRightBalance = {};
+  assignOptionalNumber(balance, value, "leftPercentage");
+  assignOptionalNumber(balance, value, "rightPercentage");
+  return Object.keys(balance).length > 0 ? balance : undefined;
+}
+
+function readTrackJsonPedalingSidePercentages(
+  value: Record<string, unknown> | undefined,
+): TrackActivityPedalingSidePercentages | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const percentages: TrackActivityPedalingSidePercentages = {};
+  assignOptionalNumber(percentages, value, "leftPercentage");
+  assignOptionalNumber(percentages, value, "rightPercentage");
+  assignOptionalNumber(percentages, value, "combinedPercentage");
+  return Object.keys(percentages).length > 0 ? percentages : undefined;
 }
 
 function buildTrackJsonStatistics(
@@ -1811,6 +1887,96 @@ function buildTrackJsonPedaling(
     TRACK_JSON_METRIC_METADATA_PRECISION,
   );
 
+  return Object.keys(output).length > 0 ? output : undefined;
+}
+
+function buildTrackJsonPedalingDynamics(
+  dynamics: TrackActivityPedalingDynamics | undefined,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Record<string, unknown> | undefined {
+  if (!dynamics) {
+    return undefined;
+  }
+
+  const output: Record<string, unknown> = {};
+  const leftRightBalance = buildTrackJsonLeftRightBalance(
+    dynamics.leftRightBalance,
+    precision,
+  );
+  if (leftRightBalance) {
+    output.leftRightBalance = leftRightBalance;
+  }
+
+  const torqueEffectiveness = buildTrackJsonPedalingSidePercentages(
+    dynamics.torqueEffectiveness,
+    precision,
+  );
+  if (torqueEffectiveness) {
+    output.torqueEffectiveness = torqueEffectiveness;
+  }
+
+  const pedalSmoothness = buildTrackJsonPedalingSidePercentages(
+    dynamics.pedalSmoothness,
+    precision,
+  );
+  if (pedalSmoothness) {
+    output.pedalSmoothness = pedalSmoothness;
+  }
+
+  return Object.keys(output).length > 0 ? output : undefined;
+}
+
+function buildTrackJsonLeftRightBalance(
+  balance: TrackActivityLeftRightBalance | undefined,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Record<string, unknown> | undefined {
+  if (!balance) {
+    return undefined;
+  }
+
+  const output: Record<string, unknown> = {};
+  assignMetadataNumber(
+    output,
+    "leftPercentage",
+    balance.leftPercentage,
+    TRACK_JSON_METRIC_METADATA_PRECISION,
+  );
+  assignMetadataNumber(
+    output,
+    "rightPercentage",
+    balance.rightPercentage,
+    TRACK_JSON_METRIC_METADATA_PRECISION,
+  );
+  return Object.keys(output).length > 0 ? output : undefined;
+}
+
+function buildTrackJsonPedalingSidePercentages(
+  percentages: TrackActivityPedalingSidePercentages | undefined,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Record<string, unknown> | undefined {
+  if (!percentages) {
+    return undefined;
+  }
+
+  const output: Record<string, unknown> = {};
+  assignMetadataNumber(
+    output,
+    "leftPercentage",
+    percentages.leftPercentage,
+    TRACK_JSON_METRIC_METADATA_PRECISION,
+  );
+  assignMetadataNumber(
+    output,
+    "rightPercentage",
+    percentages.rightPercentage,
+    TRACK_JSON_METRIC_METADATA_PRECISION,
+  );
+  assignMetadataNumber(
+    output,
+    "combinedPercentage",
+    percentages.combinedPercentage,
+    TRACK_JSON_METRIC_METADATA_PRECISION,
+  );
   return Object.keys(output).length > 0 ? output : undefined;
 }
 
@@ -2251,6 +2417,11 @@ function fitMessagesToMetadata(
     metadata.pedaling = pedaling;
   }
 
+  const pedalingDynamics = buildFitPedalingDynamics(messages);
+  if (pedalingDynamics) {
+    metadata.pedalingDynamics = pedalingDynamics;
+  }
+
   return metadata;
 }
 
@@ -2411,6 +2582,225 @@ function buildActivityTraining(
   }
 
   return hasTrainingValues(training) ? training : undefined;
+}
+
+function buildFitPedalingDynamics(
+  messages: FitMessages,
+): TrackActivityPedalingDynamics | undefined {
+  const summaryMessages = getSummaryMessages(messages);
+  const records = getMessageArray(messages, [
+    "recordMesgs",
+    "recordMessages",
+    "records",
+    "record",
+  ]);
+  const dynamics: TrackActivityPedalingDynamics = {};
+
+  const leftRightBalance = getFitLeftRightBalance(summaryMessages, records);
+  if (leftRightBalance) {
+    dynamics.leftRightBalance = leftRightBalance;
+  }
+
+  const torqueEffectiveness = getFitPedalingSidePercentages(
+    summaryMessages,
+    records,
+    {
+      left: [
+        "avgLeftTorqueEffectiveness",
+        "avg_left_torque_effectiveness",
+        "leftTorqueEffectiveness",
+        "left_torque_effectiveness",
+      ],
+      right: [
+        "avgRightTorqueEffectiveness",
+        "avg_right_torque_effectiveness",
+        "rightTorqueEffectiveness",
+        "right_torque_effectiveness",
+      ],
+      combined: [
+        "avgTorqueEffectiveness",
+        "avg_torque_effectiveness",
+        "torqueEffectiveness",
+        "torque_effectiveness",
+      ],
+    },
+  );
+  if (torqueEffectiveness) {
+    dynamics.torqueEffectiveness = torqueEffectiveness;
+  }
+
+  const pedalSmoothness = getFitPedalingSidePercentages(
+    summaryMessages,
+    records,
+    {
+      left: [
+        "avgLeftPedalSmoothness",
+        "avg_left_pedal_smoothness",
+        "leftPedalSmoothness",
+        "left_pedal_smoothness",
+      ],
+      right: [
+        "avgRightPedalSmoothness",
+        "avg_right_pedal_smoothness",
+        "rightPedalSmoothness",
+        "right_pedal_smoothness",
+      ],
+      combined: [
+        "avgCombinedPedalSmoothness",
+        "avg_combined_pedal_smoothness",
+        "combinedPedalSmoothness",
+        "combined_pedal_smoothness",
+        "avgPedalSmoothness",
+        "avg_pedal_smoothness",
+        "pedalSmoothness",
+        "pedal_smoothness",
+      ],
+    },
+  );
+  if (pedalSmoothness) {
+    dynamics.pedalSmoothness = pedalSmoothness;
+  }
+
+  return Object.keys(dynamics).length > 0 ? dynamics : undefined;
+}
+
+function getFitLeftRightBalance(
+  summaryMessages: FitMessage[],
+  records: FitMessage[],
+): TrackActivityLeftRightBalance | undefined {
+  const summaryValue = getFirstValueFromMessages(summaryMessages, [
+    "avgLeftRightBalance",
+    "avg_left_right_balance",
+    "leftRightBalance",
+    "left_right_balance",
+  ]);
+  const summaryBalance = normalizeLeftRightBalance(summaryValue);
+  if (summaryBalance) {
+    return summaryBalance;
+  }
+
+  const leftPercentages = records
+    .map((record) => normalizeLeftRightBalance(
+      getFirstValue(record, ["leftRightBalance", "left_right_balance"]),
+    )?.leftPercentage)
+    .filter(isFiniteNumber);
+  const leftPercentage = mean(leftPercentages);
+  return isFiniteNumber(leftPercentage)
+    ? buildLeftRightBalance(leftPercentage)
+    : undefined;
+}
+
+type FitPedalingSideKeys = {
+  left: string[];
+  right: string[];
+  combined: string[];
+};
+
+function getFitPedalingSidePercentages(
+  summaryMessages: FitMessage[],
+  records: FitMessage[],
+  keys: FitPedalingSideKeys,
+): TrackActivityPedalingSidePercentages | undefined {
+  const percentages: TrackActivityPedalingSidePercentages = {};
+
+  const left = getFitSummaryOrRecordMean(summaryMessages, records, keys.left);
+  if (isFiniteNumber(left)) {
+    percentages.leftPercentage = left;
+  }
+
+  const right = getFitSummaryOrRecordMean(summaryMessages, records, keys.right);
+  if (isFiniteNumber(right)) {
+    percentages.rightPercentage = right;
+  }
+
+  const combined = getFitSummaryOrRecordMean(
+    summaryMessages,
+    records,
+    keys.combined,
+  );
+  if (isFiniteNumber(combined)) {
+    percentages.combinedPercentage = combined;
+  }
+
+  return Object.keys(percentages).length > 0 ? percentages : undefined;
+}
+
+function getFitSummaryOrRecordMean(
+  summaryMessages: FitMessage[],
+  records: FitMessage[],
+  keys: string[],
+): number | undefined {
+  const summaryValue = toFiniteNumber(getFirstValueFromMessages(summaryMessages, keys));
+  if (isFiniteNumber(summaryValue)) {
+    return summaryValue;
+  }
+
+  const values = records
+    .map((record) => toFiniteNumber(getFirstValue(record, keys)))
+    .filter(isFiniteNumber);
+  return mean(values);
+}
+
+function normalizeLeftRightBalance(
+  value: unknown,
+): TrackActivityLeftRightBalance | undefined {
+  const numberValue = toFiniteNumber(value);
+  if (!isFiniteNumber(numberValue)) {
+    return undefined;
+  }
+
+  const decoded = decodeFitLeftRightBalance(numberValue);
+  if (!decoded || decoded.percentage < 0 || decoded.percentage > 100) {
+    return undefined;
+  }
+
+  const rightPercentage = decoded.isRight
+    ? decoded.percentage
+    : 100 - decoded.percentage;
+  const leftPercentage = 100 - rightPercentage;
+  return buildLeftRightBalance(leftPercentage, rightPercentage);
+}
+
+function buildLeftRightBalance(
+  leftPercentage: number,
+  rightPercentage: number = 100 - leftPercentage,
+): TrackActivityLeftRightBalance {
+  return {
+    leftPercentage: roundNumber(leftPercentage, 3),
+    rightPercentage: roundNumber(rightPercentage, 3),
+  };
+}
+
+function decodeFitLeftRightBalance(
+  value: number,
+): { percentage: number; isRight: boolean } | undefined {
+  if (Number.isInteger(value) && value >= 256) {
+    return {
+      percentage: (value & 0x3fff) / 100,
+      isRight: (value & 0x8000) !== 0,
+    };
+  }
+
+  if (Number.isInteger(value) && value >= 128) {
+    return {
+      percentage: value & 0x7f,
+      isRight: (value & 0x80) !== 0,
+    };
+  }
+
+  if (value > 128 && value < 256) {
+    return { percentage: value - 128, isRight: true };
+  }
+
+  return { percentage: value, isRight: false };
+}
+
+function mean(values: number[]): number | undefined {
+  if (values.length === 0) {
+    return undefined;
+  }
+
+  return values.reduce((sum, value) => sum + value, 0) / values.length;
 }
 
 function getSummaryMessages(messages: FitMessages): FitMessage[] {

@@ -120,6 +120,12 @@ describe("parseFitBytes", () => {
             totalElapsedTime: 3900.4,
             totalTimerTime: 3600.6,
             totalDistance: 12345.67,
+            avgLeftRightBalance: 51.5,
+            avgLeftTorqueEffectiveness: 80.1,
+            avgRightTorqueEffectiveness: 81.2,
+            avgLeftPedalSmoothness: 22.3,
+            avgRightPedalSmoothness: 23.4,
+            avgCombinedPedalSmoothness: 22.9,
           },
         ],
         activityMesgs: [
@@ -176,6 +182,15 @@ describe("parseFitBytes", () => {
     expect(activity.metadata.totalElapsedTime).toBeCloseTo(3900.4);
     expect(activity.metadata.totalTimerTime).toBeCloseTo(3600.6);
     expect(activity.metadata.totalDistanceM).toBeCloseTo(12345.67);
+    expect(activity.metadata.pedalingDynamics).toEqual({
+      leftRightBalance: { leftPercentage: 51.5, rightPercentage: 48.5 },
+      torqueEffectiveness: { leftPercentage: 80.1, rightPercentage: 81.2 },
+      pedalSmoothness: {
+        leftPercentage: 22.3,
+        rightPercentage: 23.4,
+        combinedPercentage: 22.9,
+      },
+    });
 
     expect(activity.points).toHaveLength(1);
     expect(activity.points[0]).toMatchObject({
@@ -189,6 +204,93 @@ describe("parseFitBytes", () => {
       powerW: 150,
       speedMps: 5.5,
       temperatureC: 20,
+    });
+  });
+
+  test("decodes FIT left/right balance right flag", () => {
+    mockDecoder(true, {
+      messages: {
+        sessionMesgs: [
+          {
+            startTime: new Date("2024-03-01T01:00:00Z"),
+            totalElapsedTime: 10,
+            totalTimerTime: 10,
+            avgLeftRightBalance: 0x80 | 46,
+          },
+        ],
+        recordMesgs: [
+          {
+            timestamp: new Date("2024-03-01T01:00:00Z"),
+            positionLat: 35,
+            positionLong: 139,
+          },
+        ],
+      },
+    });
+
+    const activity = parseFitBytes(new Uint8Array([1, 2, 3]));
+
+    expect(activity.metadata.pedalingDynamics?.leftRightBalance).toEqual({
+      leftPercentage: 54,
+      rightPercentage: 46,
+    });
+  });
+
+  test("decodes FIT left/right balance 100 right flag", () => {
+    mockDecoder(true, {
+      messages: {
+        sessionMesgs: [
+          {
+            startTime: new Date("2024-03-01T01:00:00Z"),
+            totalElapsedTime: 10,
+            totalTimerTime: 10,
+            avgLeftRightBalance: 0x8000 | 4620,
+          },
+        ],
+        recordMesgs: [
+          {
+            timestamp: new Date("2024-03-01T01:00:00Z"),
+            positionLat: 35,
+            positionLong: 139,
+          },
+        ],
+      },
+    });
+
+    const activity = parseFitBytes(new Uint8Array([1, 2, 3]));
+
+    expect(activity.metadata.pedalingDynamics?.leftRightBalance).toEqual({
+      leftPercentage: 53.8,
+      rightPercentage: 46.2,
+    });
+  });
+
+  test("defensively decodes decimal FIT left/right balance right flag", () => {
+    mockDecoder(true, {
+      messages: {
+        sessionMesgs: [
+          {
+            startTime: new Date("2024-03-01T01:00:00Z"),
+            totalElapsedTime: 10,
+            totalTimerTime: 10,
+            avgLeftRightBalance: 174.2,
+          },
+        ],
+        recordMesgs: [
+          {
+            timestamp: new Date("2024-03-01T01:00:00Z"),
+            positionLat: 35,
+            positionLong: 139,
+          },
+        ],
+      },
+    });
+
+    const activity = parseFitBytes(new Uint8Array([1, 2, 3]));
+
+    expect(activity.metadata.pedalingDynamics?.leftRightBalance).toEqual({
+      leftPercentage: 53.8,
+      rightPercentage: 46.2,
     });
   });
 
@@ -886,6 +988,11 @@ describe("trackJsonDataToTrackActivity", () => {
                 averagePowerW: 165,
                 normalizedPowerW: 170,
               },
+              pedalingDynamics: {
+                leftRightBalance: { leftPercentage: 52, rightPercentage: 48 },
+                torqueEffectiveness: { leftPercentage: 80, rightPercentage: 81 },
+                pedalSmoothness: { combinedPercentage: 22 },
+              },
             },
             coordinateProperties: {
               times: [100, 110],
@@ -916,6 +1023,11 @@ describe("trackJsonDataToTrackActivity", () => {
       averageHeartRateBpm: 125,
       averagePowerW: 165,
       normalizedPowerW: 170,
+    });
+    expect(activity.metadata.pedalingDynamics).toEqual({
+      leftRightBalance: { leftPercentage: 52, rightPercentage: 48 },
+      torqueEffectiveness: { leftPercentage: 80, rightPercentage: 81 },
+      pedalSmoothness: { combinedPercentage: 22 },
     });
     expect(activity.points).toHaveLength(2);
     expect(activity.points[1]).toMatchObject({
@@ -1324,6 +1436,11 @@ describe("trackActivityToTrackJson", () => {
       averagePowerW: 210.44,
       normalizedPowerW: 230.44,
     };
+    activity.metadata.pedalingDynamics = {
+      leftRightBalance: { leftPercentage: 51.25, rightPercentage: 48.75 },
+      torqueEffectiveness: { leftPercentage: 80.123, rightPercentage: 81.234 },
+      pedalSmoothness: { combinedPercentage: 22.567 },
+    };
 
     const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const metadata = parsed.features[0].properties.metadata;
@@ -1398,6 +1515,11 @@ describe("trackActivityToTrackJson", () => {
       averageHeartRateBpm: 140.44,
       averagePowerW: 210.44,
       normalizedPowerW: 230.44,
+    });
+    expect(metadata.pedalingDynamics).toEqual({
+      leftRightBalance: { leftPercentage: 51.25, rightPercentage: 48.75 },
+      torqueEffectiveness: { leftPercentage: 80.123, rightPercentage: 81.234 },
+      pedalSmoothness: { combinedPercentage: 22.567 },
     });
   });
 

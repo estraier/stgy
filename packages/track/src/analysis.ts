@@ -402,6 +402,11 @@ export function getActivityMetadataSummaryLines(
     appendPedalingSummaryLines(lines, pedaling);
   }
 
+  const pedalingDynamics = getRecordProperty(metadata, "pedalingDynamics");
+  if (pedalingDynamics) {
+    appendPedalingDynamicsSummaryLines(lines, pedalingDynamics);
+  }
+
   appendDeviceSummaryLines(lines, metadata);
 
   const training = getRecordProperty(metadata, "training");
@@ -1647,6 +1652,81 @@ function appendPedalingSummaryLines(
   );
 }
 
+function appendPedalingDynamicsSummaryLines(
+  lines: TrackMetadataSummaryLine[],
+  dynamics: Record<string, unknown>,
+) {
+  const leftRightBalance = getRecordProperty(dynamics, "leftRightBalance");
+  if (leftRightBalance) {
+    appendLeftRightBalanceSummaryLine(lines, leftRightBalance);
+  }
+
+  const torqueEffectiveness = getRecordProperty(dynamics, "torqueEffectiveness");
+  if (torqueEffectiveness) {
+    appendSidePercentagesSummaryLine(
+      lines,
+      torqueEffectiveness,
+      "pedaling dynamics | torque effectiveness",
+    );
+  }
+
+  const pedalSmoothness = getRecordProperty(dynamics, "pedalSmoothness");
+  if (pedalSmoothness) {
+    appendSidePercentagesSummaryLine(
+      lines,
+      pedalSmoothness,
+      "pedaling dynamics | pedal smoothness",
+    );
+  }
+}
+
+function appendLeftRightBalanceSummaryLine(
+  lines: TrackMetadataSummaryLine[],
+  balance: Record<string, unknown>,
+) {
+  const left = getNumberProperty(balance, "leftPercentage");
+  const right = getNumberProperty(balance, "rightPercentage");
+  const parts: string[] = [];
+  if (isFiniteNumber(left)) {
+    parts.push(`L ${formatNumber(left, 1)}%`);
+  }
+  if (isFiniteNumber(right)) {
+    parts.push(`R ${formatNumber(right, 1)}%`);
+  }
+  if (parts.length > 0) {
+    lines.push({
+      key: "pedaling-dynamics-left-right-balance",
+      text: `pedaling dynamics | L/R balance: ${parts.join(" / ")}`,
+    });
+  }
+}
+
+function appendSidePercentagesSummaryLine(
+  lines: TrackMetadataSummaryLine[],
+  percentages: Record<string, unknown>,
+  label: string,
+) {
+  const left = getNumberProperty(percentages, "leftPercentage");
+  const right = getNumberProperty(percentages, "rightPercentage");
+  const combined = getNumberProperty(percentages, "combinedPercentage");
+  const parts: string[] = [];
+  if (isFiniteNumber(left)) {
+    parts.push(`L ${formatNumber(left, 1)}%`);
+  }
+  if (isFiniteNumber(right)) {
+    parts.push(`R ${formatNumber(right, 1)}%`);
+  }
+  if (isFiniteNumber(combined)) {
+    parts.push(`combined ${formatNumber(combined, 1)}%`);
+  }
+  if (parts.length > 0) {
+    lines.push({
+      key: label.replace(/[^a-z0-9]+/gi, "-").toLowerCase(),
+      text: `${label}: ${parts.join(", ")}`,
+    });
+  }
+}
+
 function appendDurationSummaryLine(
   lines: TrackMetadataSummaryLine[],
   object: Record<string, unknown>,
@@ -1733,22 +1813,21 @@ function appendDerivedTrainingSummaryLines(
   ftpW: number | undefined,
 ) {
   const metrics = getDerivedTrainingMetrics(metadata, ftpW);
+  const parts: string[] = [];
   if (isFiniteNumber(metrics.intensityFactor)) {
-    lines.push({
-      key: "training-if",
-      text: `IF: ${formatNumber(metrics.intensityFactor, 3)}`,
-    });
+    parts.push(`IF ${formatNumber(metrics.intensityFactor, 3)}`);
   }
   if (isFiniteNumber(metrics.variabilityIndex)) {
-    lines.push({
-      key: "training-vi",
-      text: `VI: ${formatNumber(metrics.variabilityIndex, 3)}`,
-    });
+    parts.push(`VI ${formatNumber(metrics.variabilityIndex, 3)}`);
   }
   if (isFiniteNumber(metrics.trainingStressScore)) {
+    parts.push(`TSS ${formatNumber(metrics.trainingStressScore, 1)}`);
+  }
+
+  if (parts.length > 0) {
     lines.push({
-      key: "training-tss",
-      text: `TSS: ${formatNumber(metrics.trainingStressScore, 1)}`,
+      key: "training-metrics",
+      text: `training metrics: ${parts.join(", ")}`,
     });
   }
 }

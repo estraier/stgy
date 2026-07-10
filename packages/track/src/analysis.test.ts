@@ -272,6 +272,11 @@ describe("display analysis helpers", () => {
           averagePowerW: 123.456,
           normalizedPowerW: 130.123,
         },
+        pedalingDynamics: {
+          leftRightBalance: { leftPercentage: 51.2, rightPercentage: 48.8 },
+          torqueEffectiveness: { leftPercentage: 80, rightPercentage: 81 },
+          pedalSmoothness: { combinedPercentage: 22.5 },
+        },
         training: {
           normalizedPowerW: 136.456,
           totalWorkJ: 1234.4,
@@ -293,11 +298,12 @@ describe("display analysis helpers", () => {
       "pedaling | time: 1:05",
       "pedaling | power: 123.5 W",
       "pedaling | NP: 130.1 W",
+      "pedaling dynamics | L/R balance: L 51.2% / R 48.8%",
+      "pedaling dynamics | torque effectiveness: L 80.0%, R 81.0%",
+      "pedaling dynamics | pedal smoothness: combined 22.5%",
       "normalized power: 136.5 W",
       "total work: 1234 J",
-      "IF: 0.682",
-      "VI: 0.910",
-      "TSS: 23.3",
+      "training metrics: IF 0.682, VI 0.910, TSS 23.3",
     ]);
   });
 
