@@ -770,12 +770,20 @@ export class StgyTrackRenderer {
     }
   }
 
-  private formatLocalTime(value: unknown): string | null {
+  private normalizeTimeSeconds(value: unknown): number | null {
     if (typeof value !== "number" || !Number.isFinite(value)) {
       return null;
     }
+    return value > 100000000000 ? value / 1000 : value;
+  }
 
-    const millis = value > 100000000000 ? value : value * 1000;
+  private formatLocalTime(value: unknown): string | null {
+    const seconds = this.normalizeTimeSeconds(value);
+    if (seconds === null) {
+      return null;
+    }
+
+    const millis = seconds * 1000;
     const date = new Date(millis);
     if (Number.isNaN(date.getTime())) {
       return null;
@@ -789,6 +797,35 @@ export class StgyTrackRenderer {
     const ss = date.getSeconds().toString().padStart(2, "0");
 
     return `${yyyy}/${mm}/${dd} ${hh}:${mi}:${ss}`;
+  }
+
+  private formatElapsedDuration(seconds: number): string {
+    const totalSeconds = Math.max(0, Math.round(seconds));
+    const hours = Math.floor(totalSeconds / 3600);
+    const minutes = Math.floor((totalSeconds % 3600) / 60);
+    const restSeconds = totalSeconds % 60;
+
+    return `${hours.toString().padStart(2, "0")}:${minutes
+      .toString()
+      .padStart(2, "0")}:${restSeconds.toString().padStart(2, "0")}`;
+  }
+
+  private getCoordinateElapsedSeconds(
+    coordinateProperties: CoordinateProperties,
+    index: number,
+  ): number | null {
+    const times = coordinateProperties.times;
+    if (!Array.isArray(times)) {
+      return null;
+    }
+
+    const firstTime = this.normalizeTimeSeconds(times[0]);
+    const currentTime = this.normalizeTimeSeconds(times[index]);
+    if (firstTime === null || currentTime === null || currentTime < firstTime) {
+      return null;
+    }
+
+    return currentTime - firstTime;
   }
 
   private formatHudLabel(name: string): string {
@@ -880,6 +917,14 @@ export class StgyTrackRenderer {
     );
     if (time) {
       this.appendHudItem(list, "times", time);
+      const elapsed = this.getCoordinateElapsedSeconds(coordinateProperties, index);
+      if (elapsed !== null) {
+        this.appendHudItem(
+          list,
+          "elapsed",
+          `${Math.round(elapsed)}s (${this.formatElapsedDuration(elapsed)})`,
+        );
+      }
     }
 
     const distance = this.getCoordinatePropertyValue(

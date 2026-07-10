@@ -370,6 +370,16 @@ export function getActivityMetadataSummaryLines(
   }
 
   const lines: TrackMetadataSummaryLine[] = [];
+  const grossLine = getGrossSummaryText(metadata);
+  if (grossLine) {
+    lines.push({ key: "gross", text: grossLine });
+  }
+
+  const netLine = getNetSummaryText(input, metadata);
+  if (netLine) {
+    lines.push({ key: "net", text: netLine });
+  }
+
   const analysis = getRecordProperty(metadata, "analysis");
   if (analysis) {
     const line = getAnalysisSummaryText(analysis);
@@ -1470,6 +1480,84 @@ function formatZoneLimit(value: number): string {
   return Number.isInteger(value)
     ? formatNumber(value, 0)
     : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function getGrossSummaryText(
+  metadata: Record<string, unknown>,
+): string | undefined {
+  const elapsedTime = getNumberProperty(metadata, "totalElapsedTime");
+  const distanceM = getNumberProperty(metadata, "totalDistanceM");
+  const parts: string[] = [];
+
+  if (isFiniteNumber(elapsedTime)) {
+    parts.push(`elapsed time ${formatDuration(elapsedTime)}`);
+  }
+  if (isFiniteNumber(distanceM)) {
+    parts.push(`distance ${formatNumber(distanceM / 1000, 2)} km`);
+  }
+  if (
+    isFiniteNumber(elapsedTime) &&
+    elapsedTime > 0 &&
+    isFiniteNumber(distanceM)
+  ) {
+    parts.push(`average speed ${formatNumber((distanceM / elapsedTime) * 3.6, 1)} km/h`);
+  }
+
+  return parts.length > 0 ? `gross: ${parts.join(", ")}` : undefined;
+}
+
+function getNetSummaryText(
+  input: TrackActivityMetadataInput,
+  metadata: Record<string, unknown>,
+): string | undefined {
+  const points = getActivityInputPoints(input);
+  if (points.length < 2) {
+    return undefined;
+  }
+
+  const analysis = getRecordProperty(metadata, "analysis");
+  const movingSpeedThresholdKph = analysis
+    ? getNumberProperty(analysis, "movingSpeedThresholdKph")
+    : undefined;
+  const intervals = getMovingAnalysisIntervals(points, {
+    ...(isFiniteNumber(movingSpeedThresholdKph)
+      ? { movingSpeedThresholdKph }
+      : {}),
+  });
+  const movingTime = intervals.reduce((sum, interval) => {
+    return sum + interval.seconds;
+  }, 0);
+  const movingDistanceM = intervals.reduce((sum, interval) => {
+    return sum + (isFiniteNumber(interval.distanceM) ? interval.distanceM : 0);
+  }, 0);
+
+  if (movingTime <= 0 && movingDistanceM <= 0) {
+    return undefined;
+  }
+
+  const parts: string[] = [];
+  if (movingTime > 0) {
+    parts.push(`moving time ${formatDuration(movingTime)}`);
+  }
+  if (movingDistanceM > 0) {
+    parts.push(`distance ${formatNumber(movingDistanceM / 1000, 2)} km`);
+  }
+  if (movingTime > 0 && movingDistanceM > 0) {
+    parts.push(`average speed ${formatNumber((movingDistanceM / movingTime) * 3.6, 1)} km/h`);
+  }
+
+  return parts.length > 0 ? `net: ${parts.join(", ")}` : undefined;
+}
+
+function getActivityInputPoints(input: TrackActivityMetadataInput): TrackPoint[] {
+  const record = asRecord(input);
+  return Array.isArray(record?.points)
+    ? record.points.filter(isTrackPoint)
+    : [];
+}
+
+function isTrackPoint(value: unknown): value is TrackPoint {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function getAnalysisSummaryText(

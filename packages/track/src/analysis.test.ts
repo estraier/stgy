@@ -257,23 +257,35 @@ describe("display analysis helpers", () => {
 
   test("formats metadata summary lines for reusable display", () => {
     expect(getActivityMetadataSummaryLines({
-      analysis: { movingSpeedThresholdKph: 3 },
-      statistics: {
-        speedKph: { mean: 18.123, median: 18, max: 30 },
-        heartRateBpm: { mean: 120, median: 121, max: 150 },
-        powerW: { mean: 150, median: 155, max: 210 },
+      metadata: {
+        totalElapsedTime: 7815,
+        totalDistanceM: 54321,
+        analysis: { movingSpeedThresholdKph: 3 },
+        statistics: {
+          speedKph: { mean: 18.123, median: 18, max: 30 },
+          heartRateBpm: { mean: 120, median: 121, max: 150 },
+          powerW: { mean: 150, median: 155, max: 210 },
+        },
+        totalTimerTime: 1800,
+        pedaling: {
+          totalSeconds: 65,
+          averagePowerW: 123.456,
+          normalizedPowerW: 130.123,
+        },
+        training: {
+          normalizedPowerW: 136.456,
+          totalWorkJ: 1234.4,
+        },
       },
-      totalTimerTime: 1800,
-      pedaling: {
-        totalSeconds: 65,
-        averagePowerW: 123.456,
-        normalizedPowerW: 130.123,
-      },
-      training: {
-        normalizedPowerW: 136.456,
-        totalWorkJ: 1234.4,
-      },
+      points: [
+        { time: 0, distanceM: 0, speedMps: 2 },
+        { time: 10, distanceM: 20, speedMps: 2 },
+        { time: 20, distanceM: 20, speedMps: 0 },
+        { time: 30, distanceM: 40, speedMps: 2 },
+      ],
     }, { ftpW: 200, lthrBpm: 150 }).map((line) => line.text)).toEqual([
+      "gross: elapsed time 2:10:15, distance 54.32 km, average speed 25.0 km/h",
+      "net: moving time 0:10, distance 0.02 km, average speed 7.2 km/h",
       "moving threshold: >= 3.0 km/h",
       "speed: mean 18.1, median 18.0, max 30.0 km/h",
       "heart rate: mean 120.0, median 121.0, max 150.0 bpm",

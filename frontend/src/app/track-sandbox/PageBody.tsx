@@ -1390,8 +1390,7 @@ function buildSummaryCards(activity: TrackActivity, trackJsonData: unknown): Sum
   const distanceM = numberValue(metadata.totalDistanceM) ?? getPointDistanceM(activity.points);
   const timerTime = numberValue(metadata.totalTimerTime);
   const elapsedTime = numberValue(metadata.totalElapsedTime);
-  const avgSpeed = getNestedNumber(stats, "speedKph", "mean") ??
-    (distanceM && timerTime ? (distanceM / timerTime) * 3.6 : undefined);
+  const avgSpeed = getNestedNumber(stats, "speedKph", "mean");
   const avgPower = getNestedNumber(stats, "powerW", "mean");
   const avgHeartRate = getNestedNumber(stats, "heartRateBpm", "mean");
   const normalizedPowerW = getNumberProperty(training, "normalizedPowerW");
@@ -1411,16 +1410,16 @@ function buildSummaryCards(activity: TrackActivity, trackJsonData: unknown): Sum
   }
 
   if (distanceM) {
-    cards.push({ label: "Distance", value: formatDistance(distanceM), icon: Bike });
+    cards.push({ label: "Total distance", value: formatDistance(distanceM), icon: Bike });
   }
   if (timerTime) {
     cards.push({ label: "Moving time", value: formatDuration(timerTime), icon: Timer });
   }
   if (elapsedTime) {
-    cards.push({ label: "Elapsed", value: formatDuration(elapsedTime), icon: CalendarClock });
+    cards.push({ label: "Elapsed time", value: formatDuration(elapsedTime), icon: CalendarClock });
   }
   if (avgSpeed) {
-    cards.push({ label: "Avg speed", value: `${formatNumber(avgSpeed, 1)} km/h`, icon: Gauge });
+    cards.push({ label: "Average speed", value: `${formatNumber(avgSpeed, 1)} km/h`, icon: Gauge });
   }
   if (elevationGainM > 0) {
     cards.push({ label: "Elevation", value: `${formatNumber(elevationGainM, 0)} m`, icon: Mountain });
@@ -1429,10 +1428,10 @@ function buildSummaryCards(activity: TrackActivity, trackJsonData: unknown): Sum
     cards.push({ label: "Mean HR", value: `${formatNumber(avgHeartRate, 1)} bpm`, icon: HeartPulse });
   }
   if (avgPower) {
-    cards.push({ label: "Mean power", value: `${formatNumber(avgPower, 1)} W`, icon: Zap });
+    cards.push({ label: "Average power", value: `${formatNumber(avgPower, 1)} W`, icon: Zap });
   }
   if (normalizedPowerW) {
-    cards.push({ label: "Normalized", value: `${formatNumber(normalizedPowerW, 1)} W`, icon: Zap });
+    cards.push({ label: "Normalized power", value: `${formatNumber(normalizedPowerW, 1)} W`, icon: Zap });
   }
   if (totalWorkJ) {
     cards.push({ label: "Work", value: `${formatNumber(totalWorkJ / 1000, 0)} kJ`, icon: Zap });

@@ -758,7 +758,7 @@ function showSummary(
       lines.push(`local time offset: ${formatTimeOffset(localTimeOffsetSeconds)}`);
     }
 
-    appendMetadataSummaryLines(lines, metadata);
+    appendMetadataSummaryLines(lines, result, metadata);
   }
 
   if (result.activity && result.activity.warnings.length > 0) {
@@ -841,9 +841,12 @@ function getResultMetadata(result: ConversionResult): Record<string, unknown> | 
 
 function appendMetadataSummaryLines(
   lines: string[],
+  result: ConversionResult,
   metadata: Record<string, unknown>
 ) {
-  getActivityMetadataSummaryLines(metadata).forEach((line) => {
+  const activity = result.renderedActivity || result.activity;
+  const input = activity || { metadata };
+  getActivityMetadataSummaryLines(input).forEach((line) => {
     lines.push(line.text);
   });
 }

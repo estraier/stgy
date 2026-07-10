@@ -575,6 +575,7 @@ describe("StgyTrackRenderer", () => {
     expect(overlay).not.toBeNull();
     expect(overlay?.hidden).toBe(false);
     expect(overlay?.textContent).toContain("times: 2026/01/02 03:04:05");
+    expect(overlay?.textContent).toContain("elapsed: 60s (00:01:00)");
     expect(overlay?.textContent).toContain("distances: 0.21 km");
     expect(overlay?.textContent).toContain("elevations: 20 m");
     expect(overlay?.textContent).toContain("heart rates: 130 bpm");
