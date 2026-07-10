@@ -16,6 +16,8 @@ import {
   Zap,
 } from "lucide-react";
 import {
+  computeHeartRateZoneSummary,
+  computePowerZoneSummary,
   downsampleTrackActivity,
   mergeTrackActivities,
   parseFitBytes,
@@ -23,7 +25,28 @@ import {
   trackActivityToTrackJson,
   trackJsonDataToTrackActivity,
 } from "stgy-track/fit";
-import type { TrackActivity, TrackPoint } from "stgy-track/fit";
+import { trimTrackActivity } from "stgy-track/activity";
+import type { TrackActivity, TrackPoint } from "stgy-track/activity";
+import {
+  buildScatterPlotPoints,
+  buildSmoothedScatterSamples,
+  createRangeTicks,
+  getActivityHistogramDisplays,
+  getActivityMetadataSummaryLines,
+  getActivityPowerCurvePoints,
+  getAvailableScatterMetrics,
+  getHeartRateZoneDisplayRows,
+  getPowerZoneDisplayRows,
+  getScatterAxisRange,
+} from "stgy-track/analysis";
+import type {
+  TrackAnalysisDisplayRow,
+  TrackHistogramDisplay,
+  TrackPowerCurvePoint,
+  TrackScatterMetricDefinition,
+  TrackScatterMetricKey,
+  TrackScatterPoint,
+} from "stgy-track/analysis";
 import {
   parseGpxText,
   trackActivityToGpx,
@@ -45,6 +68,9 @@ type ConvertOptions = {
   strategy: DownsampleStrategy;
   maxPoints: number;
   preserveEndpoints: boolean;
+  trimActivity: boolean;
+  trimStartSeconds: number;
+  trimEndSeconds: number;
   obfuscatePrivacy: boolean;
   privacyStartDistanceM: number;
   privacyEndDistanceM: number;
@@ -84,99 +110,15 @@ type SummaryCard = {
   items?: SummaryCardItem[];
 };
 
-type ZoneRow = {
-  label: string;
-  seconds: number;
-  percentage: number;
-};
-
-type HistogramBin = {
-  label: string;
-  maxInclusive?: number;
-};
-
-type ZoneDefinition = {
-  label: string;
-  maxRatio: number;
-};
-
-type ZoneLabelOptions = {
-  unit: string;
-};
-
-type PowerCurvePoint = {
-  durationSeconds: number;
-  watts: number;
-};
+type ZoneRow = TrackAnalysisDisplayRow;
+type PowerCurvePoint = TrackPowerCurvePoint;
 
 const DEFAULT_FTP_W = 223;
 const DEFAULT_LTHR_BPM = 151;
 const DEFAULT_MAX_POINTS = 10000;
 
-const POWER_ZONES = [
-  { label: "Z1 Recovery", maxRatio: 0.55 },
-  { label: "Z2 Endurance", maxRatio: 0.75 },
-  { label: "Z3 Tempo", maxRatio: 0.90 },
-  { label: "Z4 Threshold", maxRatio: 1.05 },
-  { label: "Z5 VO₂ max", maxRatio: 1.20 },
-  { label: "Z6 Anaerobic", maxRatio: 1.50 },
-  { label: "Z7 Sprint", maxRatio: Number.POSITIVE_INFINITY },
-];
-
-const HEART_RATE_ZONES = [
-  { label: "Z1 Easy", maxRatio: 0.81 },
-  { label: "Z2 Endurance", maxRatio: 0.89 },
-  { label: "Z3 Tempo", maxRatio: 0.94 },
-  { label: "Z4 Threshold", maxRatio: 1.00 },
-  { label: "Z5 Hard", maxRatio: Number.POSITIVE_INFINITY },
-];
-
-const SPEED_HISTOGRAM_BINS: HistogramBin[] = [
-  { label: "≤15 km/h", maxInclusive: 15 },
-  { label: "≤20 km/h", maxInclusive: 20 },
-  { label: "≤25 km/h", maxInclusive: 25 },
-  { label: "≤30 km/h", maxInclusive: 30 },
-  { label: "≤35 km/h", maxInclusive: 35 },
-  { label: "≤40 km/h", maxInclusive: 40 },
-  { label: ">40 km/h" },
-];
-
-const CADENCE_HISTOGRAM_BINS: HistogramBin[] = [
-  { label: "≤50 rpm", maxInclusive: 50 },
-  { label: "≤60 rpm", maxInclusive: 60 },
-  { label: "≤70 rpm", maxInclusive: 70 },
-  { label: "≤80 rpm", maxInclusive: 80 },
-  { label: "≤90 rpm", maxInclusive: 90 },
-  { label: "≤100 rpm", maxInclusive: 100 },
-  { label: ">100 rpm" },
-];
-
-const POWER_HISTOGRAM_BUCKET_SIZE_W = 25;
-const POWER_HISTOGRAM_MAX_BUCKET_W = 2000;
-
-const ZONE_RATIO_EPSILON = 1e-12;
-
-const POWER_CURVE_DURATIONS_SECONDS = [
-  5,
-  10,
-  15,
-  20,
-  30,
-  45,
-  60,
-  90,
-  120,
-  180,
-  300,
-  600,
-  900,
-  1200,
-  1800,
-  2700,
-  3600,
-  5400,
-  7200,
-] as const;
+const SCATTER_AXIS_TICK_TARGET = 8;
+const ANALYSIS_BAR_FILL_COLOR = "#0078A8";
 
 export default function TrackSandbox() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
@@ -185,6 +127,9 @@ export default function TrackSandbox() {
   const [strategy, setStrategy] = useState<DownsampleStrategy>("aggregate");
   const [maxPoints, setMaxPoints] = useState(DEFAULT_MAX_POINTS);
   const [preserveEndpoints, setPreserveEndpoints] = useState(true);
+  const [trimActivityEnabled, setTrimActivityEnabled] = useState(false);
+  const [trimStartSeconds, setTrimStartSeconds] = useState(0);
+  const [trimEndSeconds, setTrimEndSeconds] = useState(0);
   const [obfuscatePrivacy, setObfuscatePrivacy] = useState(false);
   const [privacyStartDistanceM, setPrivacyStartDistanceM] = useState(1000);
   const [privacyEndDistanceM, setPrivacyEndDistanceM] = useState(1000);
@@ -215,6 +160,9 @@ export default function TrackSandbox() {
     strategy,
     maxPoints,
     preserveEndpoints,
+    trimActivity: trimActivityEnabled,
+    trimStartSeconds,
+    trimEndSeconds,
     obfuscatePrivacy,
     privacyStartDistanceM,
     privacyEndDistanceM,
@@ -223,6 +171,9 @@ export default function TrackSandbox() {
     strategy,
     maxPoints,
     preserveEndpoints,
+    trimActivityEnabled,
+    trimStartSeconds,
+    trimEndSeconds,
     obfuscatePrivacy,
     privacyStartDistanceM,
     privacyEndDistanceM,
@@ -360,7 +311,7 @@ export default function TrackSandbox() {
                   <select
                     value={strategy}
                     disabled={busy || !downsample}
-                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100"
+                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100 disabled:text-slate-400"
                     onChange={(e) => setStrategy(e.currentTarget.value as DownsampleStrategy)}
                   >
                     <option value="uniform">Uniform</option>
@@ -376,8 +327,50 @@ export default function TrackSandbox() {
                     step={1}
                     value={maxPoints}
                     disabled={busy || !downsample}
-                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100"
+                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100 disabled:text-slate-400"
                     onChange={(e) => setMaxPoints(parsePositiveInt(e.currentTarget.value, 2))}
+                  />
+                </label>
+              </div>
+
+              <div className="grid gap-3 sm:grid-cols-[1fr_1fr_1fr]">
+                <label className="inline-flex items-center gap-2">
+                  <input
+                    type="checkbox"
+                    checked={trimActivityEnabled}
+                    disabled={busy}
+                    onChange={(e) => setTrimActivityEnabled(e.currentTarget.checked)}
+                  />
+                  <span>Trim activity</span>
+                </label>
+
+                <label className="grid gap-1">
+                  <span className="text-xs font-medium text-slate-500">Start seconds</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={trimStartSeconds}
+                    disabled={busy || !trimActivityEnabled}
+                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100 disabled:text-slate-400"
+                    onChange={(e) => {
+                      setTrimStartSeconds(parseNonNegativeInt(e.currentTarget.value));
+                    }}
+                  />
+                </label>
+
+                <label className="grid gap-1">
+                  <span className="text-xs font-medium text-slate-500">End seconds</span>
+                  <input
+                    type="number"
+                    min={0}
+                    step={1}
+                    value={trimEndSeconds}
+                    disabled={busy || !trimActivityEnabled}
+                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100 disabled:text-slate-400"
+                    onChange={(e) => {
+                      setTrimEndSeconds(parseNonNegativeInt(e.currentTarget.value));
+                    }}
                   />
                 </label>
               </div>
@@ -401,7 +394,7 @@ export default function TrackSandbox() {
                     step={1}
                     value={privacyStartDistanceM}
                     disabled={busy || !obfuscatePrivacy}
-                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100"
+                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100 disabled:text-slate-400"
                     onChange={(e) => {
                       setPrivacyStartDistanceM(parseNonNegativeInt(e.currentTarget.value));
                     }}
@@ -416,7 +409,7 @@ export default function TrackSandbox() {
                     step={1}
                     value={privacyEndDistanceM}
                     disabled={busy || !obfuscatePrivacy}
-                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100"
+                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100 disabled:text-slate-400"
                     onChange={(e) => {
                       setPrivacyEndDistanceM(parseNonNegativeInt(e.currentTarget.value));
                     }}
@@ -443,7 +436,7 @@ export default function TrackSandbox() {
                     step={1}
                     value={ftpW}
                     disabled={busy || !showAnalysis}
-                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100"
+                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100 disabled:text-slate-400"
                     onChange={(e) => setFtpW(parsePositiveInt(e.currentTarget.value, 1))}
                   />
                 </label>
@@ -456,7 +449,7 @@ export default function TrackSandbox() {
                     step={1}
                     value={lthrBpm}
                     disabled={busy || !showAnalysis}
-                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100"
+                    className="rounded-lg border border-slate-300 px-3 py-2 disabled:bg-slate-100 disabled:text-slate-400"
                     onChange={(e) => setLthrBpm(parsePositiveInt(e.currentTarget.value, 1))}
                   />
                 </label>
@@ -730,63 +723,279 @@ function RideAnalysis({
   ftpW: number;
   lthrBpm: number;
 }) {
-  const speedRows = useMemo(() => {
-    return computeHistogramRows(activity.points, (point) => {
-      return typeof point.speedMps === "number" ? point.speedMps * 3.6 : undefined;
-    }, SPEED_HISTOGRAM_BINS);
-  }, [activity.points]);
-  const cadenceRows = useMemo(() => {
-    return computeHistogramRows(
-      activity.points,
-      (point) => point.cadenceRpm,
-      CADENCE_HISTOGRAM_BINS,
-    );
-  }, [activity.points]);
-  const powerZones = useMemo(() => {
-    return computeZoneRows(
-      activity.points,
-      (point) => point.powerW,
-      ftpW,
-      POWER_ZONES,
-      { unit: "W" },
-    );
-  }, [activity.points, ftpW]);
-  const powerBracketRows = useMemo(() => {
-    return getPowerBracketHistogramRows(activity);
+  const metadataSummaryLines = useMemo(() => {
+    return getActivityMetadataSummaryLines(activity, { ftpW });
+  }, [activity, ftpW]);
+  const histogramDisplays = useMemo(() => {
+    return getActivityHistogramDisplays(activity);
   }, [activity]);
+  const speedHistogram = getHistogramDisplay(histogramDisplays, "speedKph");
+  const cadenceHistogram = getHistogramDisplay(histogramDisplays, "cadenceRpm");
+  const heartRateHistogram = getHistogramDisplay(histogramDisplays, "heartRateBpm");
+  const powerHistogram = getHistogramDisplay(histogramDisplays, "powerW");
+  const powerZones = useMemo(() => {
+    return getPowerZoneDisplayRows(computePowerZoneSummary(activity.points, ftpW), ftpW);
+  }, [activity.points, ftpW]);
   const heartRateZones = useMemo(() => {
-    return computeZoneRows(
-      activity.points,
-      (point) => point.heartRateBpm,
+    return getHeartRateZoneDisplayRows(
+      computeHeartRateZoneSummary(activity.points, lthrBpm),
       lthrBpm,
-      HEART_RATE_ZONES,
-      { unit: "bpm" },
     );
   }, [activity.points, lthrBpm]);
-  const powerCurve = useMemo(() => getPowerCurvePoints(activity), [activity]);
+  const powerCurve = useMemo(() => getActivityPowerCurvePoints(activity), [activity]);
 
   return (
     <section className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
       <h2 className="mb-4 text-sm font-semibold text-slate-900">Analysis</h2>
       <div className="grid gap-6 lg:grid-cols-2">
-        {speedRows.length > 0 && <ZoneBars title="Speed histogram" rows={speedRows} />}
-        {cadenceRows.length > 0 && <ZoneBars title="Cadence histogram" rows={cadenceRows} />}
-        {heartRateZones.length > 0 && (
+        {metadataSummaryLines.length > 0 && (
+          <div className="lg:col-span-2">
+            <MetadataSummary lines={metadataSummaryLines} />
+          </div>
+        )}
+        {speedHistogram && <ZoneBars title={speedHistogram.title} rows={speedHistogram.rows} />}
+        {cadenceHistogram && (
+          <ZoneBars title={cadenceHistogram.title} rows={cadenceHistogram.rows} />
+        )}
+        {hasNonZeroRows(heartRateZones) && (
           <ZoneBars title={`Heart-rate zones · LTHR ${lthrBpm} bpm`} rows={heartRateZones} />
         )}
-        {powerZones.length > 0 && (
+        {heartRateHistogram && (
+          <ZoneBars title={heartRateHistogram.title} rows={heartRateHistogram.rows} />
+        )}
+        {hasNonZeroRows(powerZones) && (
           <ZoneBars title={`Power zones · FTP ${ftpW} W`} rows={powerZones} />
         )}
-        {powerBracketRows.length > 0 && (
-          <ZoneBars title="Power histogram · 25 W brackets" rows={powerBracketRows} />
-        )}
+        {powerHistogram && <ZoneBars title={powerHistogram.title} rows={powerHistogram.rows} />}
         {powerCurve.length > 0 && (
           <div className="lg:col-span-2">
             <PowerCurve points={powerCurve} />
           </div>
         )}
+        <div className="lg:col-span-2">
+          <ScatterAnalysis activity={activity} />
+        </div>
       </div>
     </section>
+  );
+}
+
+function getHistogramDisplay(
+  displays: TrackHistogramDisplay[],
+  key: TrackHistogramDisplay["key"],
+): TrackHistogramDisplay | undefined {
+  return displays.find((display) => display.key === key);
+}
+
+function hasNonZeroRows(rows: ZoneRow[]): boolean {
+  return rows.some((row) => row.seconds > 0);
+}
+
+function MetadataSummary({ lines }: { lines: Array<{ key: string; text: string }> }) {
+  return (
+    <div>
+      <div className="mb-2 text-xs font-semibold text-slate-600">Metadata</div>
+      <ul className="space-y-1 rounded-xl bg-slate-50 p-4 text-base leading-7 text-slate-700">
+        {lines.map((line) => (
+          <li key={line.key}>{line.text}</li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
+function ScatterAnalysis({ activity }: { activity: TrackActivity }) {
+  const [xKey, setXKey] = useState<TrackScatterMetricKey>("cadenceRpm");
+  const [yKey, setYKey] = useState<TrackScatterMetricKey>("speedKph");
+  const [trimOutliers, setTrimOutliers] = useState(false);
+  const samples = useMemo(() => {
+    return buildSmoothedScatterSamples(activity.points);
+  }, [activity.points]);
+  const metrics = useMemo(() => getAvailableScatterMetrics(samples), [samples]);
+
+  useEffect(() => {
+    if (metrics.length === 0) {
+      return;
+    }
+
+    setXKey((current) => {
+      if (metrics.some((metric) => metric.key === current)) {
+        return current;
+      }
+      return metrics.find((metric) => metric.key === "cadenceRpm")?.key ||
+        metrics[0]?.key || current;
+    });
+    setYKey((current) => {
+      if (metrics.some((metric) => metric.key === current)) {
+        return current;
+      }
+      return metrics.find((metric) => metric.key === "speedKph")?.key ||
+        metrics[0]?.key || current;
+    });
+  }, [metrics]);
+
+  if (metrics.length === 0) {
+    return null;
+  }
+
+  const fallbackMetric = metrics[0];
+  if (!fallbackMetric) {
+    return null;
+  }
+  const xMetric = getScatterMetric(metrics, xKey) || fallbackMetric;
+  const yMetric = getScatterMetric(metrics, yKey) || fallbackMetric;
+  const points = buildScatterPlotPoints(samples, xMetric.key, yMetric.key);
+
+  if (points.length === 0) {
+    return null;
+  }
+
+  return (
+    <div>
+      <div className="mb-2 text-xs font-semibold text-slate-600">
+        Scatter plot · 30 s smoothed
+      </div>
+      <div className="mb-3 flex flex-wrap items-end gap-3">
+        <ScatterMetricSelect
+          label="X axis"
+          metrics={metrics}
+          value={xMetric.key}
+          onChange={setXKey}
+        />
+        <ScatterMetricSelect
+          label="Y axis"
+          metrics={metrics}
+          value={yMetric.key}
+          onChange={setYKey}
+        />
+        <label className="inline-flex h-[38px] items-center gap-2 text-xs text-slate-600">
+          <input
+            type="checkbox"
+            checked={trimOutliers}
+            onChange={(e) => setTrimOutliers(e.currentTarget.checked)}
+          />
+          <span>Trim outliers (2–98%)</span>
+        </label>
+      </div>
+      <ScatterPlot
+        points={points}
+        xMetric={xMetric}
+        yMetric={yMetric}
+        trimOutliers={trimOutliers}
+      />
+    </div>
+  );
+}
+
+function ScatterMetricSelect({
+  label,
+  metrics,
+  value,
+  onChange,
+}: {
+  label: string;
+  metrics: TrackScatterMetricDefinition[];
+  value: TrackScatterMetricKey;
+  onChange: (value: TrackScatterMetricKey) => void;
+}) {
+  return (
+    <label className="grid min-w-[9rem] gap-1 text-xs">
+      <span className="font-medium text-slate-500">{label}</span>
+      <select
+        value={value}
+        className="rounded-lg border border-slate-300 px-3 py-2 text-sm"
+        onChange={(e) => onChange(e.currentTarget.value as TrackScatterMetricKey)}
+      >
+        {metrics.map((metric) => (
+          <option key={metric.key} value={metric.key}>{metric.label}</option>
+        ))}
+      </select>
+    </label>
+  );
+}
+
+function getScatterMetric(
+  metrics: TrackScatterMetricDefinition[],
+  key: TrackScatterMetricKey,
+): TrackScatterMetricDefinition | undefined {
+  return metrics.find((metric) => metric.key === key);
+}
+
+function ScatterPlot({
+  points,
+  xMetric,
+  yMetric,
+  trimOutliers,
+}: {
+  points: TrackScatterPoint[];
+  xMetric: TrackScatterMetricDefinition;
+  yMetric: TrackScatterMetricDefinition;
+  trimOutliers: boolean;
+}) {
+  const width = 620;
+  const height = 260;
+  const left = 58;
+  const right = 18;
+  const top = 16;
+  const bottom = 42;
+  const plotWidth = width - left - right;
+  const plotHeight = height - top - bottom;
+  const xRange = getScatterAxisRange(points.map((point) => point.x), trimOutliers);
+  const yRange = getScatterAxisRange(points.map((point) => point.y), trimOutliers);
+  const xTicks = createRangeTicks(xRange.min, xRange.max, SCATTER_AXIS_TICK_TARGET);
+  const yTicks = createRangeTicks(yRange.min, yRange.max, SCATTER_AXIS_TICK_TARGET);
+  const xValue = (value: number) => {
+    return left + ((value - xRange.min) / Math.max(0.000001, xRange.max - xRange.min)) * plotWidth;
+  };
+  const yValue = (value: number) => {
+    return top + plotHeight -
+      ((value - yRange.min) / Math.max(0.000001, yRange.max - yRange.min)) * plotHeight;
+  };
+  const visiblePoints = points.filter((point) => {
+    return point.x >= xRange.min && point.x <= xRange.max &&
+      point.y >= yRange.min && point.y <= yRange.max;
+  });
+
+  return (
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full overflow-visible rounded-xl bg-slate-50">
+      <line x1={left} y1={top + plotHeight} x2={width - right} y2={top + plotHeight}
+        stroke="#cbd5e1" />
+      <line x1={left} y1={top} x2={left} y2={top + plotHeight} stroke="#cbd5e1" />
+      {xTicks.map((tick) => {
+        const x = xValue(tick);
+        return (
+          <g key={`x-${tick}`}>
+            <line x1={x} y1={top} x2={x} y2={top + plotHeight} stroke="#e2e8f0" />
+            <text x={x} y={height - 22} textAnchor="middle" fontSize="9" fill="#64748b">
+              {formatCompactNumber(tick)}
+            </text>
+          </g>
+        );
+      })}
+      {yTicks.map((tick) => {
+        const y = yValue(tick);
+        return (
+          <g key={`y-${tick}`}>
+            <line x1={left} y1={y} x2={width - right} y2={y} stroke="#e2e8f0" />
+            <text x={left - 8} y={y + 3} textAnchor="end" fontSize="9" fill="#64748b">
+              {formatCompactNumber(tick)}
+            </text>
+          </g>
+        );
+      })}
+      {visiblePoints.map((point, index) => (
+        <circle key={index} cx={xValue(point.x)} cy={yValue(point.y)} r="2" fill="#0f80c9"
+          opacity="0.45" />
+      ))}
+      <text x={left + plotWidth / 2} y={height - 6} textAnchor="middle" fontSize="8"
+        fill="#475569">
+        {xMetric.axisLabel}
+      </text>
+      <text x="13" y={top + plotHeight / 2} textAnchor="middle" fontSize="8"
+        fill="#475569" transform={`rotate(-90 13 ${top + plotHeight / 2})`}>
+        {yMetric.axisLabel}
+      </text>
+    </svg>
   );
 }
 
@@ -799,8 +1008,9 @@ function PowerCurve({ points }: { points: PowerCurvePoint[] }) {
   const bottom = 28;
   const plotWidth = width - left - right;
   const plotHeight = height - top - bottom;
-  const minDuration = POWER_CURVE_DURATIONS_SECONDS[0];
-  const maxDuration = POWER_CURVE_DURATIONS_SECONDS[POWER_CURVE_DURATIONS_SECONDS.length - 1];
+  const durations = points.map((point) => point.durationSeconds);
+  const minDuration = Math.max(1, Math.min(...durations));
+  const maxDuration = Math.max(minDuration + 1, Math.max(...durations));
   const maxPower = Math.max(...points.map((point) => point.watts), 1);
   const yMax = Math.ceil(maxPower / 50) * 50;
   const yTicks = Array.from(
@@ -840,7 +1050,7 @@ function PowerCurve({ points }: { points: PowerCurvePoint[] }) {
             </g>
           );
         })}
-        {POWER_CURVE_DURATIONS_SECONDS.map((seconds) => {
+        {durations.map((seconds) => {
           const x = xValue(seconds);
           return (
             <g key={seconds}>
@@ -867,29 +1077,41 @@ function ZoneBars({ title, rows }: { title: string; rows: ZoneRow[] }) {
     <div>
       <div className="mb-2 text-xs font-semibold text-slate-600">{title}</div>
       <div className="space-y-2">
-        {rows.map((row) => (
-          <div
-            key={row.label}
-            className="grid grid-cols-[6.25rem_minmax(0,1fr)_7.75rem] items-center gap-2"
-          >
-            <div className="whitespace-nowrap text-xs text-slate-600">{row.label}</div>
-            <div className="h-2.5 min-w-0 overflow-hidden rounded-full bg-slate-100">
-              <div
-                className="h-full rounded-full bg-sky-600"
-                style={{ width: `${Math.max(2, row.percentage)}%` }}
-              />
+        {rows.map((row) => {
+          const label = formatZoneBarLabel(row.label);
+          return (
+            <div
+              key={row.label}
+              className="grid grid-cols-[6.25rem_minmax(0,1fr)_7.75rem] items-center gap-2"
+            >
+              <div className="whitespace-nowrap text-xs text-slate-600">{label}</div>
+              <div className="h-2.5 min-w-0 overflow-hidden rounded-full bg-slate-100">
+                <div
+                  className="h-full rounded-full"
+                  style={{
+                    width: row.percentage > 0 ? `${Math.max(2, row.percentage)}%` : "0%",
+                    backgroundColor: ANALYSIS_BAR_FILL_COLOR,
+                  }}
+                />
+              </div>
+              <div className="whitespace-nowrap text-right text-[11px] tabular-nums text-slate-500">
+                {formatDuration(row.seconds)}
+                <span className="ml-1 text-slate-400">
+                  {formatNumber(row.percentage, 1)}%
+                </span>
+              </div>
             </div>
-            <div className="whitespace-nowrap text-right text-[11px] tabular-nums text-slate-500">
-              {formatDuration(row.seconds)}
-              <span className="ml-1 text-slate-400">
-                {formatNumber(row.percentage, 1)}%
-              </span>
-            </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
     </div>
   );
+}
+
+
+function formatZoneBarLabel(label: string): string {
+  const match = /^(Z\d+)\s+[^,]+,\s+([≤>].+)$/.exec(label);
+  return match ? `${match[1]}: ${match[2]}` : label;
 }
 
 async function convertFiles(files: File[], options: ConvertOptions): Promise<TrackResult> {
@@ -911,9 +1133,15 @@ async function convertFiles(files: File[], options: ConvertOptions): Promise<Tra
       name: title,
       description: `Merged from ${files.map((file) => file.name).join(", ")}`,
     });
-  const processedActivity = options.obfuscatePrivacy
-    ? obfuscateActivityPrivacy(activity, options)
+  const trimmedActivity = options.trimActivity
+    ? trimTrackActivity(activity, {
+      trimStartSeconds: options.trimStartSeconds,
+      trimEndSeconds: options.trimEndSeconds,
+    })
     : activity;
+  const processedActivity = options.obfuscatePrivacy
+    ? obfuscateActivityPrivacy(trimmedActivity, options)
+    : trimmedActivity;
   const renderedActivity = options.downsample
     ? downsampleTrackActivity(processedActivity, {
       maxPoints: options.maxPoints,
@@ -1162,10 +1390,10 @@ function buildSummaryCards(activity: TrackActivity, trackJsonData: unknown): Sum
   const distanceM = numberValue(metadata.totalDistanceM) ?? getPointDistanceM(activity.points);
   const timerTime = numberValue(metadata.totalTimerTime);
   const elapsedTime = numberValue(metadata.totalElapsedTime);
-  const avgSpeed = getNestedNumber(stats, "speedKph", "avg") ??
+  const avgSpeed = getNestedNumber(stats, "speedKph", "mean") ??
     (distanceM && timerTime ? (distanceM / timerTime) * 3.6 : undefined);
-  const avgPower = getNestedNumber(stats, "powerW", "avg");
-  const avgHeartRate = getNestedNumber(stats, "heartRateBpm", "avg");
+  const avgPower = getNestedNumber(stats, "powerW", "mean");
+  const avgHeartRate = getNestedNumber(stats, "heartRateBpm", "mean");
   const normalizedPowerW = getNumberProperty(training, "normalizedPowerW");
   const totalWorkJ = getNumberProperty(training, "totalWorkJ");
   const totalCaloriesCal = getNumberProperty(training, "totalCaloriesCal");
@@ -1198,13 +1426,13 @@ function buildSummaryCards(activity: TrackActivity, trackJsonData: unknown): Sum
     cards.push({ label: "Elevation", value: `${formatNumber(elevationGainM, 0)} m`, icon: Mountain });
   }
   if (avgHeartRate) {
-    cards.push({ label: "Avg HR", value: `${formatNumber(avgHeartRate, 0)} bpm`, icon: HeartPulse });
+    cards.push({ label: "Mean HR", value: `${formatNumber(avgHeartRate, 1)} bpm`, icon: HeartPulse });
   }
   if (avgPower) {
-    cards.push({ label: "Avg power", value: `${formatNumber(avgPower, 0)} W`, icon: Zap });
+    cards.push({ label: "Mean power", value: `${formatNumber(avgPower, 1)} W`, icon: Zap });
   }
   if (normalizedPowerW) {
-    cards.push({ label: "Normalized", value: `${formatNumber(normalizedPowerW, 0)} W`, icon: Zap });
+    cards.push({ label: "Normalized", value: `${formatNumber(normalizedPowerW, 1)} W`, icon: Zap });
   }
   if (totalWorkJ) {
     cards.push({ label: "Work", value: `${formatNumber(totalWorkJ / 1000, 0)} kJ`, icon: Zap });
@@ -1345,271 +1573,6 @@ function getActivityEndTime(activity: TrackActivity): number | undefined {
     return undefined;
   }
   return Math.max(...times);
-}
-
-function getPowerBracketHistogramRows(activity: TrackActivity): ZoneRow[] {
-  const metadataRows = getMetadataPowerHistogramRows(activity);
-  return metadataRows.length > 0
-    ? metadataRows
-    : computePowerBracketHistogramRows(activity.points);
-}
-
-function getMetadataPowerHistogramRows(activity: TrackActivity): ZoneRow[] {
-  const metadata = activity.metadata as Record<string, unknown>;
-  const histograms = asRecord(metadata.histograms);
-  const powerW = asRecord(histograms?.powerW);
-  const buckets = Array.isArray(powerW?.buckets) ? powerW.buckets : undefined;
-  if (!buckets || buckets.length === 0) {
-    return [];
-  }
-
-  const parsedBuckets = buckets
-    .map((bucket) => {
-      const record = asRecord(bucket);
-      const label = typeof record?.label === "string" ? record.label.trim() : "";
-      const seconds = numberValue(record?.seconds);
-      return label && typeof seconds === "number" && seconds > 0
-        ? { label, seconds }
-        : undefined;
-    })
-    .filter((bucket): bucket is { label: string; seconds: number } => bucket !== undefined);
-  if (parsedBuckets.length === 0) {
-    return [];
-  }
-
-  const metadataTotalSeconds = numberValue(powerW?.totalSeconds);
-  const totalSeconds = metadataTotalSeconds && metadataTotalSeconds > 0
-    ? metadataTotalSeconds
-    : parsedBuckets.reduce((sum, bucket) => sum + bucket.seconds, 0);
-  if (totalSeconds <= 0) {
-    return [];
-  }
-
-  return parsedBuckets.map((bucket) => ({
-    label: bucket.label,
-    seconds: bucket.seconds,
-    percentage: (bucket.seconds / totalSeconds) * 100,
-  }));
-}
-
-function computePowerBracketHistogramRows(points: TrackPoint[]): ZoneRow[] {
-  const secondsByBucket = createPowerHistogramBuckets();
-  const timed = hasTimedIntervals(points);
-  let totalSeconds = 0;
-
-  points.forEach((point, index) => {
-    const bucketIndex = getPowerHistogramBucketIndex(point.powerW);
-    if (bucketIndex == null) {
-      return;
-    }
-
-    const duration = timed ? getPointDurationSeconds(points, index) : 1;
-    if (duration <= 0 || duration > 30) {
-      return;
-    }
-
-    secondsByBucket[bucketIndex] += duration;
-    totalSeconds += duration;
-  });
-
-  if (totalSeconds <= 0) {
-    return [];
-  }
-
-  return secondsByBucket
-    .map((seconds, index) => {
-      return seconds > 0
-        ? {
-          label: getPowerHistogramBucketLabel(index),
-          seconds,
-          percentage: (seconds / totalSeconds) * 100,
-        }
-        : undefined;
-    })
-    .filter((row): row is ZoneRow => row !== undefined);
-}
-
-function createPowerHistogramBuckets(): number[] {
-  return Array.from(
-    {
-      length: POWER_HISTOGRAM_MAX_BUCKET_W / POWER_HISTOGRAM_BUCKET_SIZE_W + 2,
-    },
-    () => 0,
-  );
-}
-
-function getPowerHistogramBucketIndex(powerW: number | undefined): number | undefined {
-  if (!Number.isFinite(powerW) || powerW == null || powerW < 0) {
-    return undefined;
-  }
-
-  if (powerW <= 0) {
-    return 0;
-  }
-
-  if (powerW > POWER_HISTOGRAM_MAX_BUCKET_W) {
-    return POWER_HISTOGRAM_MAX_BUCKET_W / POWER_HISTOGRAM_BUCKET_SIZE_W + 1;
-  }
-
-  return Math.ceil(powerW / POWER_HISTOGRAM_BUCKET_SIZE_W);
-}
-
-function getPowerHistogramBucketLabel(index: number): string {
-  if (index === 0) {
-    return "0 W";
-  }
-
-  const maxIndex = POWER_HISTOGRAM_MAX_BUCKET_W / POWER_HISTOGRAM_BUCKET_SIZE_W;
-  if (index > maxIndex) {
-    return `>${POWER_HISTOGRAM_MAX_BUCKET_W} W`;
-  }
-
-  return `≤${index * POWER_HISTOGRAM_BUCKET_SIZE_W} W`;
-}
-
-function computeZoneRows(
-  points: TrackPoint[],
-  getValue: (point: TrackPoint) => number | undefined,
-  threshold: number,
-  zones: ZoneDefinition[],
-  labelOptions: ZoneLabelOptions,
-): ZoneRow[] {
-  if (!Number.isFinite(threshold) || threshold <= 0 || points.length === 0) {
-    return [];
-  }
-
-  const seconds = zones.map(() => 0);
-  let totalSeconds = 0;
-  const timed = hasTimedIntervals(points);
-
-  points.forEach((point, index) => {
-    const value = getValue(point);
-    if (!Number.isFinite(value) || value == null || value <= 0) {
-      return;
-    }
-    const duration = timed ? getPointDurationSeconds(points, index) : 1;
-    if (duration <= 0) {
-      return;
-    }
-    const ratio = value / threshold;
-    const zoneIndex = zones.findIndex((zone) => isRatioAtMost(ratio, zone.maxRatio));
-    if (zoneIndex < 0) {
-      return;
-    }
-    seconds[zoneIndex] += duration;
-    totalSeconds += duration;
-  });
-
-  if (totalSeconds <= 0) {
-    return [];
-  }
-
-  return zones.map((zone, index) => ({
-    label: formatZoneLabel(zone, zones[index - 1], threshold, labelOptions),
-    seconds: seconds[index],
-    percentage: (seconds[index] / totalSeconds) * 100,
-  }));
-}
-
-function computeHistogramRows(
-  points: TrackPoint[],
-  getValue: (point: TrackPoint) => number | undefined,
-  bins: HistogramBin[],
-): ZoneRow[] {
-  const seconds = bins.map(() => 0);
-  let totalSeconds = 0;
-  const timed = hasTimedIntervals(points);
-
-  points.forEach((point, index) => {
-    const value = getValue(point);
-    if (!Number.isFinite(value) || value == null || value <= 0) {
-      return;
-    }
-
-    const duration = timed ? getPointDurationSeconds(points, index) : 1;
-    if (duration <= 0) {
-      return;
-    }
-
-    const binIndex = bins.findIndex((bin) => {
-      return typeof bin.maxInclusive === "number" ? value <= bin.maxInclusive : true;
-    });
-    if (binIndex < 0) {
-      return;
-    }
-
-    seconds[binIndex] += duration;
-    totalSeconds += duration;
-  });
-
-  if (totalSeconds <= 0) {
-    return [];
-  }
-
-  return bins.map((bin, index) => ({
-    label: bin.label,
-    seconds: seconds[index],
-    percentage: (seconds[index] / totalSeconds) * 100,
-  }));
-}
-
-function isRatioAtMost(value: number, maxInclusive: number): boolean {
-  return value <= maxInclusive + ZONE_RATIO_EPSILON;
-}
-
-function formatZoneLabel(
-  zone: ZoneDefinition,
-  previousZone: ZoneDefinition | undefined,
-  threshold: number,
-  options: ZoneLabelOptions,
-): string {
-  const zoneKey = getZoneKey(zone.label);
-
-  if (!Number.isFinite(zone.maxRatio)) {
-    const previousMaxRatio = previousZone?.maxRatio;
-    if (typeof previousMaxRatio !== "number" || !Number.isFinite(previousMaxRatio)) {
-      return zoneKey;
-    }
-
-    return `${zoneKey}: >${formatCompactNumber(previousMaxRatio * threshold)} ${options.unit}`;
-  }
-
-  return `${zoneKey}: ≤${formatCompactNumber(zone.maxRatio * threshold)} ${options.unit}`;
-}
-
-function getZoneKey(label: string): string {
-  return label.trim().split(/\s+/)[0] || label;
-}
-
-function getPowerCurvePoints(activity: TrackActivity): PowerCurvePoint[] {
-  const bestEfforts = asRecord(activity.metadata.bestEfforts);
-  const powerW = asRecord(bestEfforts?.powerW);
-
-  if (!powerW) {
-    return [];
-  }
-
-  return POWER_CURVE_DURATIONS_SECONDS
-    .map((durationSeconds): PowerCurvePoint | undefined => {
-      const watts = Number(powerW[String(durationSeconds)]);
-      return Number.isFinite(watts)
-        ? { durationSeconds, watts }
-        : undefined;
-    })
-    .filter((point): point is PowerCurvePoint => point !== undefined);
-}
-
-function hasTimedIntervals(points: TrackPoint[]): boolean {
-  return points.some((point, index) => getPointDurationSeconds(points, index) > 0);
-}
-
-function getPointDurationSeconds(points: TrackPoint[], index: number): number {
-  const current = points[index];
-  const next = points[index + 1];
-  if (!current || !next || !Number.isFinite(current.time) || !Number.isFinite(next.time)) {
-    return 0;
-  }
-  return Math.max(0, (next.time || 0) - (current.time || 0));
 }
 
 function getPointDistanceM(points: TrackPoint[]): number | undefined {

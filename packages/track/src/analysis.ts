@@ -145,6 +145,22 @@ export type TrackActivityMetadataInput =
   | Record<string, unknown>
   | undefined;
 
+export type TrackMetadataSummaryOptions = {
+  ftpW?: number;
+  lthrBpm?: number;
+};
+
+export type TrackDerivedTrainingMetrics = {
+  intensityFactor?: number;
+  variabilityIndex?: number;
+  trainingStressScore?: number;
+};
+
+export type TrackDerivedHeartRateMetrics = {
+  meanHeartRatePercentageOfLthr?: number;
+  maxHeartRatePercentageOfLthr?: number;
+};
+
 export const TRACK_HISTOGRAM_DISPLAY_DEFINITIONS:
   TrackHistogramDisplayDefinition[] = [
     {
@@ -346,6 +362,7 @@ export function getHeartRateZoneDisplayRows(
 
 export function getActivityMetadataSummaryLines(
   input: TrackActivityMetadataInput,
+  options: TrackMetadataSummaryOptions = {},
 ): TrackMetadataSummaryLine[] {
   const metadata = getActivityMetadataRecord(input);
   if (!metadata) {
@@ -372,10 +389,7 @@ export function getActivityMetadataSummaryLines(
 
   const pedaling = getRecordProperty(metadata, "pedaling");
   if (pedaling) {
-    const line = getPedalingSummaryText(pedaling);
-    if (line) {
-      lines.push({ key: "pedaling", text: line });
-    }
+    appendPedalingSummaryLines(lines, pedaling);
   }
 
   appendDeviceSummaryLines(lines, metadata);
@@ -384,6 +398,8 @@ export function getActivityMetadataSummaryLines(
   if (training) {
     appendTrainingSummaryLines(lines, training);
   }
+
+  appendDerivedTrainingSummaryLines(lines, metadata, options.ftpW);
 
   return lines;
 }
@@ -1466,7 +1482,7 @@ function getAnalysisSummaryText(
   if (!isFiniteNumber(movingSpeedThresholdKph)) {
     return undefined;
   }
-  return `analysis: moving >= ${formatNumber(movingSpeedThresholdKph, 1)} km/h`;
+  return `moving threshold: >= ${formatNumber(movingSpeedThresholdKph, 1)} km/h`;
 }
 
 function appendStatsSummaryLine(
@@ -1501,39 +1517,65 @@ function appendStatsSummaryLine(
   }
 }
 
-function getPedalingSummaryText(
+function appendPedalingSummaryLines(
+  lines: TrackMetadataSummaryLine[],
   pedaling: Record<string, unknown>,
-): string | undefined {
-  const parts: string[] = [];
-  appendDurationSummaryPart(parts, pedaling, "totalSeconds", "time");
-  appendNumberSummaryPart(parts, pedaling, "averageSpeedKph", "speed", "km/h");
-  appendNumberSummaryPart(parts, pedaling, "averageCadenceRpm", "cadence", "rpm");
-  appendNumberSummaryPart(
-    parts,
+) {
+  appendDurationSummaryLine(lines, pedaling, "totalSeconds", "pedaling | time");
+  appendNumberSummaryLine(
+    lines,
+    pedaling,
+    "averageSpeedKph",
+    "pedaling | speed",
+    "km/h",
+  );
+  appendNumberSummaryLine(
+    lines,
+    pedaling,
+    "averageCadenceRpm",
+    "pedaling | cadence",
+    "rpm",
+  );
+  appendNumberSummaryLine(
+    lines,
     pedaling,
     "averageHeartRateBpm",
-    "heart rate",
+    "pedaling | heart rate",
     "bpm",
   );
-  appendNumberSummaryPart(parts, pedaling, "averagePowerW", "power", "W");
-  appendNumberSummaryPart(parts, pedaling, "normalizedPowerW", "NP", "W");
-  return parts.length > 0 ? `pedaling: ${parts.join(", ")}` : undefined;
+  appendNumberSummaryLine(
+    lines,
+    pedaling,
+    "averagePowerW",
+    "pedaling | power",
+    "W",
+  );
+  appendNumberSummaryLine(
+    lines,
+    pedaling,
+    "normalizedPowerW",
+    "pedaling | NP",
+    "W",
+  );
 }
 
-function appendDurationSummaryPart(
-  parts: string[],
+function appendDurationSummaryLine(
+  lines: TrackMetadataSummaryLine[],
   object: Record<string, unknown>,
   key: string,
   label: string,
 ) {
   const value = getNumberProperty(object, key);
   if (isFiniteNumber(value)) {
-    parts.push(`${label} ${formatDuration(value)}`);
+    lines.push({
+      key: `${label}-${key}`,
+      text: `${label}: ${formatDuration(value)}`,
+    });
   }
 }
 
-function appendNumberSummaryPart(
-  parts: string[],
+function appendNumberSummaryLine(
+  lines: TrackMetadataSummaryLine[],
   object: Record<string, unknown>,
   key: string,
   label: string,
@@ -1541,8 +1583,138 @@ function appendNumberSummaryPart(
 ) {
   const value = getNumberProperty(object, key);
   if (isFiniteNumber(value)) {
-    parts.push(`${label} ${formatNumber(value, 1)} ${unit}`);
+    lines.push({
+      key: `${label}-${key}`,
+      text: `${label}: ${formatNumber(value, 1)} ${unit}`,
+    });
   }
+}
+
+export function getDerivedTrainingMetrics(
+  input: TrackActivityMetadataInput,
+  ftpW: number | undefined,
+): TrackDerivedTrainingMetrics {
+  const metadata = getActivityMetadataRecord(input);
+  if (!metadata || !isFiniteNumber(ftpW) || ftpW <= 0) {
+    return {};
+  }
+
+  const normalizedPowerW = getTrainingNormalizedPowerW(metadata);
+  if (!isFiniteNumber(normalizedPowerW) || normalizedPowerW <= 0) {
+    return {};
+  }
+
+  const intensityFactor = normalizedPowerW / ftpW;
+  const meanPowerW = getStatisticsMeanValue(metadata, "powerW");
+  const totalSeconds = getActivityDurationSeconds(metadata);
+  return {
+    intensityFactor,
+    variabilityIndex: isFiniteNumber(meanPowerW) && meanPowerW > 0
+      ? normalizedPowerW / meanPowerW
+      : undefined,
+    trainingStressScore: isFiniteNumber(totalSeconds) && totalSeconds > 0
+      ? (totalSeconds * normalizedPowerW * intensityFactor) / (ftpW * 3600) * 100
+      : undefined,
+  };
+}
+
+export function getDerivedHeartRateMetrics(
+  input: TrackActivityMetadataInput,
+  lthrBpm: number | undefined,
+): TrackDerivedHeartRateMetrics {
+  const metadata = getActivityMetadataRecord(input);
+  if (!metadata || !isFiniteNumber(lthrBpm) || lthrBpm <= 0) {
+    return {};
+  }
+
+  const meanHeartRateBpm = getStatisticsMeanValue(metadata, "heartRateBpm");
+  const maxHeartRateBpm = getStatisticsMaxValue(metadata, "heartRateBpm");
+  return {
+    meanHeartRatePercentageOfLthr: isFiniteNumber(meanHeartRateBpm)
+      ? meanHeartRateBpm / lthrBpm * 100
+      : undefined,
+    maxHeartRatePercentageOfLthr: isFiniteNumber(maxHeartRateBpm)
+      ? maxHeartRateBpm / lthrBpm * 100
+      : undefined,
+  };
+}
+
+function appendDerivedTrainingSummaryLines(
+  lines: TrackMetadataSummaryLine[],
+  metadata: Record<string, unknown>,
+  ftpW: number | undefined,
+) {
+  const metrics = getDerivedTrainingMetrics(metadata, ftpW);
+  if (isFiniteNumber(metrics.intensityFactor)) {
+    lines.push({
+      key: "training-if",
+      text: `IF: ${formatNumber(metrics.intensityFactor, 3)}`,
+    });
+  }
+  if (isFiniteNumber(metrics.variabilityIndex)) {
+    lines.push({
+      key: "training-vi",
+      text: `VI: ${formatNumber(metrics.variabilityIndex, 3)}`,
+    });
+  }
+  if (isFiniteNumber(metrics.trainingStressScore)) {
+    lines.push({
+      key: "training-tss",
+      text: `TSS: ${formatNumber(metrics.trainingStressScore, 1)}`,
+    });
+  }
+}
+
+function appendDerivedHeartRateSummaryLines(
+  lines: TrackMetadataSummaryLine[],
+  metadata: Record<string, unknown>,
+  lthrBpm: number | undefined,
+) {
+  const metrics = getDerivedHeartRateMetrics(metadata, lthrBpm);
+  if (isFiniteNumber(metrics.meanHeartRatePercentageOfLthr)) {
+    lines.push({
+      key: "heart-rate-mean-lthr",
+      text: `mean HR: ${formatNumber(metrics.meanHeartRatePercentageOfLthr, 1)}% LTHR`,
+    });
+  }
+  if (isFiniteNumber(metrics.maxHeartRatePercentageOfLthr)) {
+    lines.push({
+      key: "heart-rate-max-lthr",
+      text: `max HR: ${formatNumber(metrics.maxHeartRatePercentageOfLthr, 1)}% LTHR`,
+    });
+  }
+}
+
+function getTrainingNormalizedPowerW(
+  metadata: Record<string, unknown>,
+): number | undefined {
+  const training = getRecordProperty(metadata, "training");
+  return training ? getNumberProperty(training, "normalizedPowerW") : undefined;
+}
+
+function getStatisticsMeanValue(
+  metadata: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const statistics = getRecordProperty(metadata, "statistics");
+  const stats = statistics ? getRecordProperty(statistics, key) : undefined;
+  return stats ? getNumberProperty(stats, "mean") : undefined;
+}
+
+function getStatisticsMaxValue(
+  metadata: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const statistics = getRecordProperty(metadata, "statistics");
+  const stats = statistics ? getRecordProperty(statistics, key) : undefined;
+  return stats ? getNumberProperty(stats, "max") : undefined;
+}
+
+function getActivityDurationSeconds(
+  metadata: Record<string, unknown>,
+): number | undefined {
+  return getNumberProperty(metadata, "totalTimerTime") ||
+    getNumberProperty(metadata, "totalElapsedTime");
 }
 
 function appendDeviceSummaryLines(

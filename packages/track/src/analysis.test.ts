@@ -11,6 +11,8 @@ import {
   getActivityHistogramDisplays,
   getActivityMetadataSummaryLines,
   getActivityPowerCurvePoints,
+  getDerivedHeartRateMetrics,
+  getDerivedTrainingMetrics,
   getHeartRateZoneDisplayRows,
   getPowerZoneDisplayRows,
   getAvailableScatterMetrics,
@@ -258,7 +260,10 @@ describe("display analysis helpers", () => {
       analysis: { movingSpeedThresholdKph: 3 },
       statistics: {
         speedKph: { mean: 18.123, median: 18, max: 30 },
+        heartRateBpm: { mean: 120, median: 121, max: 150 },
+        powerW: { mean: 150, median: 155, max: 210 },
       },
+      totalTimerTime: 1800,
       pedaling: {
         totalSeconds: 65,
         averagePowerW: 123.456,
@@ -268,13 +273,40 @@ describe("display analysis helpers", () => {
         normalizedPowerW: 136.456,
         totalWorkJ: 1234.4,
       },
-    }).map((line) => line.text)).toEqual([
-      "analysis: moving >= 3.0 km/h",
+    }, { ftpW: 200, lthrBpm: 150 }).map((line) => line.text)).toEqual([
+      "moving threshold: >= 3.0 km/h",
       "speed: mean 18.1, median 18.0, max 30.0 km/h",
-      "pedaling: time 1:05, power 123.5 W, NP 130.1 W",
+      "heart rate: mean 120.0, median 121.0, max 150.0 bpm",
+      "power: mean 150.0, median 155.0, max 210.0 W",
+      "pedaling | time: 1:05",
+      "pedaling | power: 123.5 W",
+      "pedaling | NP: 130.1 W",
       "normalized power: 136.5 W",
       "total work: 1234 J",
+      "IF: 0.682",
+      "VI: 0.910",
+      "TSS: 23.3",
     ]);
+  });
+
+  test("calculates derived FTP and LTHR metrics", () => {
+    const metadata = {
+      totalTimerTime: 3600,
+      statistics: {
+        powerW: { mean: 150, median: 155, max: 210 },
+        heartRateBpm: { mean: 120, median: 122, max: 165 },
+      },
+      training: { normalizedPowerW: 180 },
+    };
+
+    expect(getDerivedTrainingMetrics(metadata, 200)).toEqual({
+      intensityFactor: 0.9,
+      variabilityIndex: 1.2,
+      trainingStressScore: 81,
+    });
+    const heartRateMetrics = getDerivedHeartRateMetrics(metadata, 150);
+    expect(heartRateMetrics.meanHeartRatePercentageOfLthr).toBeCloseTo(80, 10);
+    expect(heartRateMetrics.maxHeartRatePercentageOfLthr).toBeCloseTo(110, 10);
   });
 });
 
