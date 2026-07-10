@@ -1,7 +1,17 @@
-import type { TrackPoint } from "./activity";
+import type {
+  TrackActivity,
+  TrackActivityMetadata,
+  TrackHeartRateZoneSummary,
+  TrackPoint,
+  TrackPowerZoneSummary,
+} from "./activity";
 
 export const POWER_BRACKET_HISTOGRAM_BUCKET_SIZE_W = 25;
 export const POWER_BRACKET_HISTOGRAM_MAX_BUCKET_W = 2000;
+export const SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH = 5;
+export const SPEED_BRACKET_HISTOGRAM_MAX_BUCKET_KPH = 100;
+export const CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM = 10;
+export const CADENCE_BRACKET_HISTOGRAM_MAX_BUCKET_RPM = 200;
 export const HEART_RATE_BRACKET_HISTOGRAM_BUCKET_SIZE_BPM = 10;
 export const HEART_RATE_BRACKET_HISTOGRAM_FIRST_BUCKET_MAX_BPM = 50;
 export const HEART_RATE_BRACKET_HISTOGRAM_MAX_BUCKET_BPM = 200;
@@ -35,6 +45,20 @@ export type TrackAnalysisHistogramBucket = {
 export type TrackPowerBracketHistogram = {
   bucketSizeW: number;
   maxBucketW: number;
+  totalSeconds: number;
+  buckets: TrackAnalysisHistogramBucket[];
+};
+
+export type TrackSpeedBracketHistogram = {
+  bucketSizeKph: number;
+  maxBucketKph: number;
+  totalSeconds: number;
+  buckets: TrackAnalysisHistogramBucket[];
+};
+
+export type TrackCadenceBracketHistogram = {
+  bucketSizeRpm: number;
+  maxBucketRpm: number;
   totalSeconds: number;
   buckets: TrackAnalysisHistogramBucket[];
 };
@@ -81,6 +105,288 @@ export type ScatterAxisRange = {
   min: number;
   max: number;
 };
+
+export type TrackHistogramKey =
+  "speedKph" |
+  "cadenceRpm" |
+  "heartRateBpm" |
+  "powerW";
+
+export type TrackAnalysisDisplayRow = {
+  label: string;
+  seconds: number;
+  percentage: number;
+  color: string;
+};
+
+export type TrackHistogramDisplayDefinition = {
+  key: TrackHistogramKey;
+  title: string;
+  color: string;
+};
+
+export type TrackHistogramDisplay = TrackHistogramDisplayDefinition & {
+  rows: TrackAnalysisDisplayRow[];
+};
+
+export type TrackPowerCurvePoint = {
+  durationSeconds: number;
+  watts: number;
+};
+
+export type TrackMetadataSummaryLine = {
+  key: string;
+  text: string;
+};
+
+export type TrackActivityMetadataInput =
+  | TrackActivity
+  | TrackActivityMetadata
+  | Record<string, unknown>
+  | undefined;
+
+export const TRACK_HISTOGRAM_DISPLAY_DEFINITIONS:
+  TrackHistogramDisplayDefinition[] = [
+    {
+      key: "speedKph",
+      title: "Speed histogram (5 km/h brackets)",
+      color: "#2f7df6",
+    },
+    {
+      key: "cadenceRpm",
+      title: "Cadence histogram (10 rpm brackets)",
+      color: "#2fa84f",
+    },
+    {
+      key: "heartRateBpm",
+      title: "Heart-rate histogram (10 bpm brackets)",
+      color: "#e14545",
+    },
+    {
+      key: "powerW",
+      title: "Power histogram (25 W brackets)",
+      color: "#0078A8",
+    },
+  ];
+
+export function getActivityHistogramDisplays(
+  input: TrackActivityMetadataInput,
+): TrackHistogramDisplay[] {
+  return TRACK_HISTOGRAM_DISPLAY_DEFINITIONS
+    .map((definition) => getActivityHistogramDisplay(input, definition.key))
+    .filter((display): display is TrackHistogramDisplay => Boolean(display));
+}
+
+export function getActivityHistogramDisplay(
+  input: TrackActivityMetadataInput,
+  key: TrackHistogramKey,
+): TrackHistogramDisplay | undefined {
+  const definition = TRACK_HISTOGRAM_DISPLAY_DEFINITIONS.find(
+    (item) => item.key === key,
+  );
+  if (!definition) {
+    return undefined;
+  }
+
+  const rows = getActivityHistogramRows(input, key, definition.color);
+  return rows.length > 0 ? { ...definition, rows } : undefined;
+}
+
+export function getActivityHistogramRows(
+  input: TrackActivityMetadataInput,
+  key: TrackHistogramKey,
+  color: string,
+): TrackAnalysisDisplayRow[] {
+  const histogram = getMetadataHistogram(input, key);
+  if (!histogram) {
+    return [];
+  }
+
+  const totalSeconds = histogram.totalSeconds > 0
+    ? histogram.totalSeconds
+    : histogram.buckets.reduce((sum, bucket) => sum + bucket.seconds, 0);
+  if (totalSeconds <= 0) {
+    return [];
+  }
+
+  return histogram.buckets.map((bucket) => ({
+    label: bucket.label,
+    seconds: bucket.seconds,
+    percentage: (bucket.seconds / totalSeconds) * 100,
+    color,
+  }));
+}
+
+export function getActivityPowerCurvePoints(
+  input: TrackActivityMetadataInput,
+): TrackPowerCurvePoint[] {
+  const metadata = getActivityMetadataRecord(input);
+  if (!metadata) {
+    return [];
+  }
+
+  const bestEfforts = getRecordProperty(metadata, "bestEfforts");
+  const powerW = bestEfforts ? getRecordProperty(bestEfforts, "powerW") : undefined;
+  if (!powerW) {
+    return [];
+  }
+
+  return Object.entries(powerW)
+    .map(([duration, watts]) => {
+      const durationSeconds = Number(duration);
+      return isFiniteNumber(watts) &&
+        Number.isFinite(durationSeconds) &&
+        durationSeconds > 0
+        ? { durationSeconds, watts }
+        : undefined;
+    })
+    .filter((point): point is TrackPowerCurvePoint => Boolean(point))
+    .sort((left, right) => left.durationSeconds - right.durationSeconds);
+}
+
+export function getPowerZoneDisplayRows(
+  summary: TrackPowerZoneSummary,
+  ftpW: number,
+): TrackAnalysisDisplayRow[] {
+  const z1Max = ftpW * 0.55;
+  const z2Max = ftpW * 0.75;
+  const z3Max = ftpW * 0.9;
+  const z4Max = ftpW * 1.05;
+  const z5Max = ftpW * 1.2;
+  const z6Max = ftpW * 1.5;
+
+  return [
+    createZoneDisplayRow(
+      summary,
+      "z1",
+      `Z1 ≤55% FTP, ≤${formatZoneLimit(z1Max)} W`,
+      "#6fd3ff",
+    ),
+    createZoneDisplayRow(
+      summary,
+      "z2",
+      `Z2 ≤75% FTP, ≤${formatZoneLimit(z2Max)} W`,
+      "#2f7df6",
+    ),
+    createZoneDisplayRow(
+      summary,
+      "z3",
+      `Z3 ≤90% FTP, ≤${formatZoneLimit(z3Max)} W`,
+      "#2fa84f",
+    ),
+    createZoneDisplayRow(
+      summary,
+      "z4",
+      `Z4 ≤105% FTP, ≤${formatZoneLimit(z4Max)} W`,
+      "#f2d33b",
+    ),
+    createZoneDisplayRow(
+      summary,
+      "z5",
+      `Z5 ≤120% FTP, ≤${formatZoneLimit(z5Max)} W`,
+      "#f39c34",
+    ),
+    createZoneDisplayRow(
+      summary,
+      "z6",
+      `Z6 ≤150% FTP, ≤${formatZoneLimit(z6Max)} W`,
+      "#e14545",
+    ),
+    createZoneDisplayRow(
+      summary,
+      "z7",
+      `Z7 >150% FTP, >${formatZoneLimit(z6Max)} W`,
+      "#7a3db8",
+    ),
+  ];
+}
+
+export function getHeartRateZoneDisplayRows(
+  summary: TrackHeartRateZoneSummary,
+  lthrBpm: number,
+): TrackAnalysisDisplayRow[] {
+  const z1Max = lthrBpm * 0.81;
+  const z2Max = lthrBpm * 0.89;
+  const z3Max = lthrBpm * 0.94;
+  const z4Max = lthrBpm;
+
+  return [
+    createZoneDisplayRow(
+      summary,
+      "z1",
+      `Z1 ≤81% LTHR, ≤${formatZoneLimit(z1Max)} bpm`,
+      "#2f7df6",
+    ),
+    createZoneDisplayRow(
+      summary,
+      "z2",
+      `Z2 ≤89% LTHR, ≤${formatZoneLimit(z2Max)} bpm`,
+      "#2fa84f",
+    ),
+    createZoneDisplayRow(
+      summary,
+      "z3",
+      `Z3 ≤94% LTHR, ≤${formatZoneLimit(z3Max)} bpm`,
+      "#f2d33b",
+    ),
+    createZoneDisplayRow(
+      summary,
+      "z4",
+      `Z4 ≤100% LTHR, ≤${formatZoneLimit(z4Max)} bpm`,
+      "#f39c34",
+    ),
+    createZoneDisplayRow(
+      summary,
+      "z5",
+      `Z5 >100% LTHR, >${formatZoneLimit(z4Max)} bpm`,
+      "#e14545",
+    ),
+  ];
+}
+
+export function getActivityMetadataSummaryLines(
+  input: TrackActivityMetadataInput,
+): TrackMetadataSummaryLine[] {
+  const metadata = getActivityMetadataRecord(input);
+  if (!metadata) {
+    return [];
+  }
+
+  const lines: TrackMetadataSummaryLine[] = [];
+  const analysis = getRecordProperty(metadata, "analysis");
+  if (analysis) {
+    const line = getAnalysisSummaryText(analysis);
+    if (line) {
+      lines.push({ key: "analysis", text: line });
+    }
+  }
+
+  const statistics = getRecordProperty(metadata, "statistics");
+  if (statistics) {
+    appendStatsSummaryLine(lines, statistics, "speedKph", "speed", "km/h");
+    appendStatsSummaryLine(lines, statistics, "cadenceRpm", "cadence", "rpm");
+    appendStatsSummaryLine(lines, statistics, "heartRateBpm", "heart rate", "bpm");
+    appendStatsSummaryLine(lines, statistics, "powerW", "power", "W");
+    appendStatsSummaryLine(lines, statistics, "temperatureC", "temperature", "°C");
+  }
+
+  const pedaling = getRecordProperty(metadata, "pedaling");
+  if (pedaling) {
+    const line = getPedalingSummaryText(pedaling);
+    if (line) {
+      lines.push({ key: "pedaling", text: line });
+    }
+  }
+
+  appendDeviceSummaryLines(lines, metadata);
+
+  const training = getRecordProperty(metadata, "training");
+  if (training) {
+    appendTrainingSummaryLines(lines, training);
+  }
+
+  return lines;
+}
 
 export type BuildSmoothedScatterSamplesOptions = TrackAnalysisOptions & {
   windowSeconds?: number;
@@ -149,7 +455,7 @@ export function buildPowerBracketHistogram(
   let totalSeconds = assignTimedBracketHistogramDurations(
     points,
     secondsByBucket,
-    (point) => getPowerBracketHistogramBucketIndex(point.powerW),
+    (interval) => getPowerBracketHistogramBucketIndex(interval.point.powerW),
     options,
   );
 
@@ -181,6 +487,76 @@ export function buildPowerBracketHistogram(
   };
 }
 
+export function buildSpeedBracketHistogram(
+  points: TrackPoint[],
+  options: TrackAnalysisOptions = {},
+): TrackSpeedBracketHistogram | undefined {
+  const secondsByBucket = createSpeedBracketHistogramBuckets();
+  let totalSeconds = assignTimedBracketHistogramDurations(
+    points,
+    secondsByBucket,
+    (interval) => getSpeedBracketHistogramBucketIndex(interval.speedKph),
+    options,
+  );
+
+  if (totalSeconds === 0 && !hasTimedAnalysisPointPairs(points)) {
+    totalSeconds = assignSampleBracketHistogramDurations(
+      getMovingAnalysisPoints(points, options),
+      secondsByBucket,
+      (point) => getSpeedBracketHistogramBucketIndex(getPointSpeedKph(point)),
+    );
+  }
+
+  if (totalSeconds === 0) {
+    return undefined;
+  }
+
+  return {
+    bucketSizeKph: SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH,
+    maxBucketKph: SPEED_BRACKET_HISTOGRAM_MAX_BUCKET_KPH,
+    totalSeconds,
+    buckets: buildLeadingBracketHistogramBuckets(
+      secondsByBucket,
+      getSpeedBracketHistogramBucketLabel,
+    ),
+  };
+}
+
+export function buildCadenceBracketHistogram(
+  points: TrackPoint[],
+  options: TrackAnalysisOptions = {},
+): TrackCadenceBracketHistogram | undefined {
+  const secondsByBucket = createCadenceBracketHistogramBuckets();
+  let totalSeconds = assignTimedBracketHistogramDurations(
+    points,
+    secondsByBucket,
+    (interval) => getCadenceBracketHistogramBucketIndex(interval.point.cadenceRpm),
+    options,
+  );
+
+  if (totalSeconds === 0 && !hasTimedAnalysisPointPairs(points)) {
+    totalSeconds = assignSampleBracketHistogramDurations(
+      getMovingAnalysisPoints(points, options),
+      secondsByBucket,
+      (point) => getCadenceBracketHistogramBucketIndex(point.cadenceRpm),
+    );
+  }
+
+  if (totalSeconds === 0) {
+    return undefined;
+  }
+
+  return {
+    bucketSizeRpm: CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM,
+    maxBucketRpm: CADENCE_BRACKET_HISTOGRAM_MAX_BUCKET_RPM,
+    totalSeconds,
+    buckets: buildLeadingBracketHistogramBuckets(
+      secondsByBucket,
+      getCadenceBracketHistogramBucketLabel,
+    ),
+  };
+}
+
 export function buildHeartRateBracketHistogram(
   points: TrackPoint[],
   options: TrackAnalysisOptions = {},
@@ -189,7 +565,7 @@ export function buildHeartRateBracketHistogram(
   let totalSeconds = assignTimedBracketHistogramDurations(
     points,
     secondsByBucket,
-    (point) => getHeartRateBracketHistogramBucketIndex(point.heartRateBpm),
+    (interval) => getHeartRateBracketHistogramBucketIndex(interval.point.heartRateBpm),
     options,
   );
 
@@ -205,20 +581,15 @@ export function buildHeartRateBracketHistogram(
     return undefined;
   }
 
-  const buckets = secondsByBucket
-    .map((seconds, index) => {
-      return seconds > 0
-        ? { label: getHeartRateBracketHistogramBucketLabel(index), seconds }
-        : undefined;
-    })
-    .filter((bucket): bucket is TrackAnalysisHistogramBucket => Boolean(bucket));
-
   return {
     bucketSizeBpm: HEART_RATE_BRACKET_HISTOGRAM_BUCKET_SIZE_BPM,
     firstBucketMaxBpm: HEART_RATE_BRACKET_HISTOGRAM_FIRST_BUCKET_MAX_BPM,
     maxBucketBpm: HEART_RATE_BRACKET_HISTOGRAM_MAX_BUCKET_BPM,
     totalSeconds,
-    buckets,
+    buckets: buildLeadingBracketHistogramBuckets(
+      secondsByBucket,
+      getHeartRateBracketHistogramBucketLabel,
+    ),
   };
 }
 
@@ -553,6 +924,30 @@ function createPowerBracketHistogramBuckets(): number[] {
   );
 }
 
+function createSpeedBracketHistogramBuckets(): number[] {
+  return Array.from(
+    {
+      length:
+        SPEED_BRACKET_HISTOGRAM_MAX_BUCKET_KPH /
+          SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH +
+        2,
+    },
+    () => 0,
+  );
+}
+
+function createCadenceBracketHistogramBuckets(): number[] {
+  return Array.from(
+    {
+      length:
+        CADENCE_BRACKET_HISTOGRAM_MAX_BUCKET_RPM /
+          CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM +
+        2,
+    },
+    () => 0,
+  );
+}
+
 function createHeartRateBracketHistogramBuckets(): number[] {
   return Array.from(
     {
@@ -569,12 +964,12 @@ function createHeartRateBracketHistogramBuckets(): number[] {
 function assignTimedBracketHistogramDurations(
   points: TrackPoint[],
   secondsByBucket: number[],
-  getBucketIndex: (point: TrackPoint) => number | undefined,
+  getBucketIndex: (interval: TrackMovingAnalysisInterval) => number | undefined,
   options: TrackAnalysisOptions,
 ): number {
   let totalSeconds = 0;
   getMovingAnalysisIntervals(points, options).forEach((interval) => {
-    const bucketIndex = getBucketIndex(interval.point);
+    const bucketIndex = getBucketIndex(interval);
     if (bucketIndex === undefined) {
       return;
     }
@@ -604,6 +999,25 @@ function assignSampleBracketHistogramDurations(
   });
 
   return totalSeconds;
+}
+
+function buildLeadingBracketHistogramBuckets(
+  secondsByBucket: number[],
+  getBucketLabel: (index: number) => string,
+): TrackAnalysisHistogramBucket[] {
+  const lastNonZeroIndex = secondsByBucket.reduce((lastIndex, seconds, index) => {
+    return seconds > 0 ? index : lastIndex;
+  }, -1);
+  if (lastNonZeroIndex < 0) {
+    return [];
+  }
+
+  return secondsByBucket
+    .slice(0, lastNonZeroIndex + 1)
+    .map((seconds, index) => ({
+      label: getBucketLabel(index),
+      seconds,
+    }));
 }
 
 function getPowerBracketHistogramBucketIndex(
@@ -640,6 +1054,82 @@ function getPowerBracketHistogramBucketLabel(index: number): string {
   }
 
   return `≤${index * POWER_BRACKET_HISTOGRAM_BUCKET_SIZE_W} W`;
+}
+
+function getSpeedBracketHistogramBucketIndex(
+  speedKph: number | undefined,
+): number | undefined {
+  if (!isFiniteNumber(speedKph) || speedKph < 0) {
+    return undefined;
+  }
+
+  if (speedKph <= 0) {
+    return 0;
+  }
+
+  if (speedKph > SPEED_BRACKET_HISTOGRAM_MAX_BUCKET_KPH) {
+    return getSpeedBracketHistogramOverflowBucketIndex();
+  }
+
+  return Math.ceil(speedKph / SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH);
+}
+
+function getSpeedBracketHistogramOverflowBucketIndex(): number {
+  return (
+    SPEED_BRACKET_HISTOGRAM_MAX_BUCKET_KPH /
+      SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH +
+    1
+  );
+}
+
+function getSpeedBracketHistogramBucketLabel(index: number): string {
+  if (index === 0) {
+    return "0 km/h";
+  }
+
+  if (index >= getSpeedBracketHistogramOverflowBucketIndex()) {
+    return `>${SPEED_BRACKET_HISTOGRAM_MAX_BUCKET_KPH} km/h`;
+  }
+
+  return `≤${index * SPEED_BRACKET_HISTOGRAM_BUCKET_SIZE_KPH} km/h`;
+}
+
+function getCadenceBracketHistogramBucketIndex(
+  cadenceRpm: number | undefined,
+): number | undefined {
+  if (!isFiniteNumber(cadenceRpm) || cadenceRpm < 0) {
+    return undefined;
+  }
+
+  if (cadenceRpm <= 0) {
+    return 0;
+  }
+
+  if (cadenceRpm > CADENCE_BRACKET_HISTOGRAM_MAX_BUCKET_RPM) {
+    return getCadenceBracketHistogramOverflowBucketIndex();
+  }
+
+  return Math.ceil(cadenceRpm / CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM);
+}
+
+function getCadenceBracketHistogramOverflowBucketIndex(): number {
+  return (
+    CADENCE_BRACKET_HISTOGRAM_MAX_BUCKET_RPM /
+      CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM +
+    1
+  );
+}
+
+function getCadenceBracketHistogramBucketLabel(index: number): string {
+  if (index === 0) {
+    return "0 rpm";
+  }
+
+  if (index >= getCadenceBracketHistogramOverflowBucketIndex()) {
+    return `>${CADENCE_BRACKET_HISTOGRAM_MAX_BUCKET_RPM} rpm`;
+  }
+
+  return `≤${index * CADENCE_BRACKET_HISTOGRAM_BUCKET_SIZE_RPM} rpm`;
 }
 
 function getHeartRateBracketHistogramBucketIndex(
@@ -899,6 +1389,287 @@ function getNiceTickStep(value: number): number {
     niceFraction = 10;
   }
   return niceFraction * Math.pow(10, exponent);
+}
+
+
+function getMetadataHistogram(
+  input: TrackActivityMetadataInput,
+  key: TrackHistogramKey,
+): { totalSeconds: number; buckets: TrackAnalysisHistogramBucket[] } | undefined {
+  const metadata = getActivityMetadataRecord(input);
+  const histograms = metadata ? getRecordProperty(metadata, "histograms") : undefined;
+  const value = histograms ? getRecordProperty(histograms, key) : undefined;
+  if (!value || !Array.isArray(value.buckets)) {
+    return undefined;
+  }
+
+  const buckets = value.buckets
+    .map(readMetadataHistogramBucket)
+    .filter((bucket): bucket is TrackAnalysisHistogramBucket => Boolean(bucket));
+  if (buckets.length === 0) {
+    return undefined;
+  }
+
+  return {
+    totalSeconds: getNumberProperty(value, "totalSeconds") || 0,
+    buckets,
+  };
+}
+
+function readMetadataHistogramBucket(
+  value: unknown,
+): TrackAnalysisHistogramBucket | undefined {
+  const record = asRecord(value);
+  if (!record) {
+    return undefined;
+  }
+
+  const label = getStringProperty(record, "label");
+  const seconds = getNumberProperty(record, "seconds");
+  if (!label || !isFiniteNumber(seconds) || seconds < 0) {
+    return undefined;
+  }
+
+  return { label, seconds };
+}
+
+function createZoneDisplayRow<TZone extends string>(
+  summary: {
+    durations: Record<TZone, number>;
+    percentages: Record<TZone, number>;
+  },
+  zone: TZone,
+  label: string,
+  color: string,
+): TrackAnalysisDisplayRow {
+  return {
+    label,
+    seconds: summary.durations[zone] || 0,
+    percentage: summary.percentages[zone] || 0,
+    color,
+  };
+}
+
+function formatZoneLimit(value: number): string {
+  return Number.isInteger(value)
+    ? formatNumber(value, 0)
+    : value.toFixed(2).replace(/0+$/, "").replace(/\.$/, "");
+}
+
+function getAnalysisSummaryText(
+  analysis: Record<string, unknown>,
+): string | undefined {
+  const movingSpeedThresholdKph = getNumberProperty(
+    analysis,
+    "movingSpeedThresholdKph",
+  );
+  if (!isFiniteNumber(movingSpeedThresholdKph)) {
+    return undefined;
+  }
+  return `analysis: moving >= ${formatNumber(movingSpeedThresholdKph, 1)} km/h`;
+}
+
+function appendStatsSummaryLine(
+  lines: TrackMetadataSummaryLine[],
+  statistics: Record<string, unknown>,
+  key: string,
+  label: string,
+  unit: string,
+) {
+  const stats = getRecordProperty(statistics, key);
+  if (!stats) {
+    return;
+  }
+
+  const mean = getNumberProperty(stats, "mean");
+  const median = getNumberProperty(stats, "median");
+  const max = getNumberProperty(stats, "max");
+  const parts: string[] = [];
+
+  if (isFiniteNumber(mean)) {
+    parts.push(`mean ${formatNumber(mean, getStatsPrecision(unit))}`);
+  }
+  if (isFiniteNumber(median)) {
+    parts.push(`median ${formatNumber(median, getStatsPrecision(unit))}`);
+  }
+  if (isFiniteNumber(max)) {
+    parts.push(`max ${formatNumber(max, getStatsPrecision(unit))}`);
+  }
+
+  if (parts.length > 0) {
+    lines.push({ key, text: `${label}: ${parts.join(", ")} ${unit}` });
+  }
+}
+
+function getPedalingSummaryText(
+  pedaling: Record<string, unknown>,
+): string | undefined {
+  const parts: string[] = [];
+  appendDurationSummaryPart(parts, pedaling, "totalSeconds", "time");
+  appendNumberSummaryPart(parts, pedaling, "averageSpeedKph", "speed", "km/h");
+  appendNumberSummaryPart(parts, pedaling, "averageCadenceRpm", "cadence", "rpm");
+  appendNumberSummaryPart(
+    parts,
+    pedaling,
+    "averageHeartRateBpm",
+    "heart rate",
+    "bpm",
+  );
+  appendNumberSummaryPart(parts, pedaling, "averagePowerW", "power", "W");
+  appendNumberSummaryPart(parts, pedaling, "normalizedPowerW", "NP", "W");
+  return parts.length > 0 ? `pedaling: ${parts.join(", ")}` : undefined;
+}
+
+function appendDurationSummaryPart(
+  parts: string[],
+  object: Record<string, unknown>,
+  key: string,
+  label: string,
+) {
+  const value = getNumberProperty(object, key);
+  if (isFiniteNumber(value)) {
+    parts.push(`${label} ${formatDuration(value)}`);
+  }
+}
+
+function appendNumberSummaryPart(
+  parts: string[],
+  object: Record<string, unknown>,
+  key: string,
+  label: string,
+  unit: string,
+) {
+  const value = getNumberProperty(object, key);
+  if (isFiniteNumber(value)) {
+    parts.push(`${label} ${formatNumber(value, 1)} ${unit}`);
+  }
+}
+
+function appendDeviceSummaryLines(
+  lines: TrackMetadataSummaryLine[],
+  metadata: Record<string, unknown>,
+) {
+  const recordingDevice = getRecordProperty(metadata, "recordingDevice");
+  const recordingDeviceLabel = recordingDevice
+    ? formatDeviceSummary(recordingDevice)
+    : undefined;
+  if (recordingDeviceLabel) {
+    lines.push({
+      key: "recordingDevice",
+      text: `recording device: ${recordingDeviceLabel}`,
+    });
+  }
+
+  const devices = metadata.devices;
+  if (!Array.isArray(devices)) {
+    return;
+  }
+
+  const labels = devices
+    .map(asRecord)
+    .filter((device): device is Record<string, unknown> => Boolean(device))
+    .map(formatDeviceSummary)
+    .filter((label): label is string => Boolean(label));
+  if (labels.length > 0) {
+    lines.push({ key: "devices", text: `devices: ${labels.join("; ")}` });
+  }
+}
+
+function appendTrainingSummaryLines(
+  lines: TrackMetadataSummaryLine[],
+  training: Record<string, unknown>,
+) {
+  const normalizedPowerW = getNumberProperty(training, "normalizedPowerW");
+  const totalWorkJ = getNumberProperty(training, "totalWorkJ");
+  const totalCaloriesCal = getNumberProperty(training, "totalCaloriesCal");
+
+  if (isFiniteNumber(normalizedPowerW)) {
+    lines.push({
+      key: "normalizedPowerW",
+      text: `normalized power: ${formatNumber(normalizedPowerW, 1)} W`,
+    });
+  }
+  if (isFiniteNumber(totalWorkJ)) {
+    lines.push({ key: "totalWorkJ", text: `total work: ${formatNumber(totalWorkJ, 0)} J` });
+  }
+  if (isFiniteNumber(totalCaloriesCal)) {
+    lines.push({
+      key: "totalCaloriesCal",
+      text: `calories: ${formatNumber(totalCaloriesCal, 0)} cal`,
+    });
+  }
+}
+
+function formatDeviceSummary(
+  device: Record<string, unknown>,
+): string | undefined {
+  const parts = [
+    getStringProperty(device, "manufacturer"),
+    getStringProperty(device, "productName") || getStringProperty(device, "product"),
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? parts.join(" ") : undefined;
+}
+
+function getActivityMetadataRecord(
+  input: TrackActivityMetadataInput,
+): Record<string, unknown> | undefined {
+  const record = asRecord(input);
+  if (!record) {
+    return undefined;
+  }
+  return asRecord(record.metadata) || record;
+}
+
+function getRecordProperty(
+  object: Record<string, unknown>,
+  key: string,
+): Record<string, unknown> | undefined {
+  return asRecord(object[key]);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function getStringProperty(
+  object: Record<string, unknown>,
+  key: string,
+): string | undefined {
+  const value = object[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function getNumberProperty(
+  object: Record<string, unknown>,
+  key: string,
+): number | undefined {
+  const value = object[key];
+  return isFiniteNumber(value) ? value : undefined;
+}
+
+function formatDuration(seconds: number): string {
+  const totalSeconds = Math.max(0, Math.round(seconds));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const restSeconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return `${hours}:${minutes.toString().padStart(2, "0")}:${restSeconds
+      .toString()
+      .padStart(2, "0")}`;
+  }
+
+  return `${minutes}:${restSeconds.toString().padStart(2, "0")}`;
+}
+
+function formatNumber(value: number, digits: number): string {
+  return value.toFixed(digits);
+}
+
+function getStatsPrecision(_unit: string): number {
+  return 1;
 }
 
 function isFiniteNumber(value: unknown): value is number {

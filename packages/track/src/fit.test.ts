@@ -270,26 +270,26 @@ describe("parseFitBytes", () => {
     expect(activity.metadata.analysis).toEqual({
       movingSpeedThresholdKph: 3,
     });
-    expect(activity.metadata.statistics?.speedKph?.avg).toBeCloseTo(23.4);
+    expect(activity.metadata.statistics?.speedKph?.mean).toBeCloseTo(23.4);
     expect(activity.metadata.statistics?.speedKph?.median).toBeCloseTo(23.4);
     expect(activity.metadata.statistics?.speedKph?.max).toBeCloseTo(27);
     expect(activity.metadata.statistics?.cadenceRpm).toEqual({
-      avg: 90,
+      mean: 90,
       median: 90,
       max: 100,
     });
     expect(activity.metadata.statistics?.heartRateBpm).toEqual({
-      avg: 130,
+      mean: 130,
       median: 130,
       max: 140,
     });
     expect(activity.metadata.statistics?.powerW).toEqual({
-      avg: 200,
+      mean: 200,
       median: 200,
       max: 300,
     });
     expect(activity.metadata.statistics?.temperatureC).toEqual({
-      avg: 22,
+      mean: 22,
       median: 22,
       max: 24,
     });
@@ -302,6 +302,38 @@ describe("parseFitBytes", () => {
         totalWork: "computed",
         totalCalories: "fit",
       },
+    });
+    expect(activity.metadata.histograms?.speedKph).toEqual({
+      bucketSizeKph: 5,
+      maxBucketKph: 100,
+      totalSeconds: 30,
+      buckets: [
+        { label: "0 km/h", seconds: 0 },
+        { label: "≤5 km/h", seconds: 0 },
+        { label: "≤10 km/h", seconds: 0 },
+        { label: "≤15 km/h", seconds: 0 },
+        { label: "≤20 km/h", seconds: 10 },
+        { label: "≤25 km/h", seconds: 10 },
+        { label: "≤30 km/h", seconds: 10 },
+      ],
+    });
+    expect(activity.metadata.histograms?.cadenceRpm).toEqual({
+      bucketSizeRpm: 10,
+      maxBucketRpm: 200,
+      totalSeconds: 30,
+      buckets: [
+        { label: "0 rpm", seconds: 0 },
+        { label: "≤10 rpm", seconds: 0 },
+        { label: "≤20 rpm", seconds: 0 },
+        { label: "≤30 rpm", seconds: 0 },
+        { label: "≤40 rpm", seconds: 0 },
+        { label: "≤50 rpm", seconds: 0 },
+        { label: "≤60 rpm", seconds: 0 },
+        { label: "≤70 rpm", seconds: 0 },
+        { label: "≤80 rpm", seconds: 10 },
+        { label: "≤90 rpm", seconds: 10 },
+        { label: "≤100 rpm", seconds: 10 },
+      ],
     });
     expect(activity.metadata.histograms?.powerW).toEqual({
       bucketSizeW: 25,
@@ -319,6 +351,14 @@ describe("parseFitBytes", () => {
       maxBucketBpm: 200,
       totalSeconds: 30,
       buckets: [
+        { label: "0 bpm", seconds: 0 },
+        { label: "≤50 bpm", seconds: 0 },
+        { label: "≤60 bpm", seconds: 0 },
+        { label: "≤70 bpm", seconds: 0 },
+        { label: "≤80 bpm", seconds: 0 },
+        { label: "≤90 bpm", seconds: 0 },
+        { label: "≤100 bpm", seconds: 0 },
+        { label: "≤110 bpm", seconds: 0 },
         { label: "≤120 bpm", seconds: 10 },
         { label: "≤130 bpm", seconds: 10 },
         { label: "≤140 bpm", seconds: 10 },
@@ -656,8 +696,8 @@ describe("downsampleTrackActivity", () => {
       movingSpeedThresholdKph: 3,
     };
     activity.metadata.statistics = {
-      powerW: { avg: 150, median: 150, max: 300 },
-      temperatureC: { avg: 22, median: 22, max: 28 },
+      powerW: { mean: 150, median: 150, max: 300 },
+      temperatureC: { mean: 22, median: 22, max: 28 },
     };
     activity.metadata.training = {
       normalizedPowerW: 180,
@@ -768,7 +808,7 @@ describe("trimTrackActivity", () => {
     expect(trimmed.metadata.totalElapsedTime).toBe(2);
     expect(trimmed.metadata.totalTimerTime).toBe(2);
     expect(trimmed.metadata.totalDistanceM).toBeCloseTo(20.468);
-    expect(trimmed.metadata.statistics?.heartRateBpm?.avg).toBe(122.5);
+    expect(trimmed.metadata.statistics?.heartRateBpm?.mean).toBe(122.5);
     expect(trimmed.metadata.histograms?.heartRateBpm?.totalSeconds).toBe(2);
   });
 
@@ -1224,9 +1264,9 @@ describe("trackActivityToTrackJson", () => {
       movingSpeedThresholdKph: 3,
     };
     activity.metadata.statistics = {
-      speedKph: { avg: 18.36, median: 18.36, max: 19.1 },
-      powerW: { avg: 150.25, median: 150.25, max: 200 },
-      temperatureC: { avg: 21.24, median: 21.24, max: 25 },
+      speedKph: { mean: 18.36, median: 18.36, max: 19.1 },
+      powerW: { mean: 150.25, median: 150.25, max: 200 },
+      temperatureC: { mean: 21.24, median: 21.24, max: 25 },
     };
     activity.metadata.training = {
       normalizedPowerW: 201.23,
@@ -1245,6 +1285,26 @@ describe("trackActivityToTrackJson", () => {
       },
     };
     activity.metadata.histograms = {
+      speedKph: {
+        bucketSizeKph: 5,
+        maxBucketKph: 100,
+        totalSeconds: 20,
+        buckets: [
+          { label: "0 km/h", seconds: 0 },
+          { label: "≤5 km/h", seconds: 2.24 },
+          { label: "≤10 km/h", seconds: 17.76 },
+        ],
+      },
+      cadenceRpm: {
+        bucketSizeRpm: 10,
+        maxBucketRpm: 200,
+        totalSeconds: 20,
+        buckets: [
+          { label: "0 rpm", seconds: 0 },
+          { label: "≤10 rpm", seconds: 1.25 },
+          { label: "≤20 rpm", seconds: 18.75 },
+        ],
+      },
       powerW: {
         bucketSizeW: 25,
         maxBucketW: 2000,
@@ -1279,9 +1339,9 @@ describe("trackActivityToTrackJson", () => {
       movingSpeedThresholdKph: 3,
     });
     expect(metadata.statistics).toEqual({
-      speedKph: { avg: 18.36, median: 18.36, max: 19.1 },
-      powerW: { avg: 150.25, median: 150.25, max: 200 },
-      temperatureC: { avg: 21.24, median: 21.24, max: 25 },
+      speedKph: { mean: 18.36, median: 18.36, max: 19.1 },
+      powerW: { mean: 150.25, median: 150.25, max: 200 },
+      temperatureC: { mean: 21.24, median: 21.24, max: 25 },
     });
     expect(metadata.training).toEqual({
       normalizedPowerW: 201.2,
@@ -1300,6 +1360,26 @@ describe("trackActivityToTrackJson", () => {
       },
     });
     expect(metadata.histograms).toEqual({
+      speedKph: {
+        bucketSizeKph: 5,
+        maxBucketKph: 100,
+        totalSeconds: 20,
+        buckets: [
+          { label: "0 km/h", seconds: 0 },
+          { label: "≤5 km/h", seconds: 2.2 },
+          { label: "≤10 km/h", seconds: 17.8 },
+        ],
+      },
+      cadenceRpm: {
+        bucketSizeRpm: 10,
+        maxBucketRpm: 200,
+        totalSeconds: 20,
+        buckets: [
+          { label: "0 rpm", seconds: 0 },
+          { label: "≤10 rpm", seconds: 1.3 },
+          { label: "≤20 rpm", seconds: 18.8 },
+        ],
+      },
       powerW: {
         bucketSizeW: 25,
         maxBucketW: 2000,

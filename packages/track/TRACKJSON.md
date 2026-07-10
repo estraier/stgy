@@ -226,12 +226,12 @@ TrackJSON metadata is stored in `Feature.properties.metadata`.
     ],
     "statistics": {
       "powerW": {
-        "avg": 176.5,
+        "mean": 176.5,
         "median": 164,
         "max": 742
       },
       "temperatureC": {
-        "avg": 22.4,
+        "mean": 22.4,
         "median": 22,
         "max": 28
       }
@@ -294,7 +294,7 @@ Statistic objects use these fields.
 
 | Field | Type | Description |
 | --- | --- | --- |
-| `avg` | number | Arithmetic average of raw samples |
+| `mean` | number | Arithmetic mean of raw samples |
 | `median` | number | Median of raw samples |
 | `max` | number | Maximum raw sample value |
 

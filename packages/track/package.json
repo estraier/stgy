@@ -14,15 +14,20 @@
       "require": "./dist/index.js",
       "default": "./dist/index.js"
     },
-    "./fit": {
-      "types": "./dist/fit.d.ts",
-      "require": "./dist/fit.js",
-      "default": "./dist/fit.js"
+    "./activity": {
+      "types": "./dist/activity.d.ts",
+      "require": "./dist/activity.js",
+      "default": "./dist/activity.js"
     },
     "./analysis": {
       "types": "./dist/analysis.d.ts",
       "require": "./dist/analysis.js",
       "default": "./dist/analysis.js"
+    },
+    "./fit": {
+      "types": "./dist/fit.d.ts",
+      "require": "./dist/fit.js",
+      "default": "./dist/fit.js"
     },
     "./gpx": {
       "types": "./dist/gpx.d.ts",
@@ -54,11 +59,11 @@
   ],
   "scripts": {
     "build": "tsc -p tsconfig.build.json && npm run copy:assets",
-    "copy:assets": "cp src/stgy-track.css dist/stgy-track.css && cp src/stgy-track.css dist/track-viewer.css",
+    "copy:assets": "node scripts/copy-assets.js",
     "dev": "tsc -w -p tsconfig.json",
     "check": "tsc --noEmit",
     "bundle": "npm run bundle:viewer && npm run bundle:fit-demo",
-    "bundle:viewer": "esbuild src/index.ts --bundle --minify --outfile=dist/track-viewer.js --format=iife --global-name=StgyTrackViewer --loader:.png=dataurl --loader:.svg=dataurl",
+    "bundle:viewer": "esbuild src/browser.ts --bundle --minify --outfile=dist/track-viewer.js --format=iife --global-name=StgyTrackViewer --loader:.png=dataurl --loader:.svg=dataurl",
     "bundle:fit-demo": "esbuild src/fit-demo.ts --bundle --minify --outfile=dist/fit-demo.js --format=iife --global-name=StgyFitDemo",
     "test": "jest",
     "lint": "eslint src",

@@ -1,7 +1,9 @@
 import {
   DEFAULT_MOVING_SPEED_THRESHOLD_KPH,
+  buildCadenceBracketHistogram,
   buildHeartRateBracketHistogram,
   buildPowerBracketHistogram,
+  buildSpeedBracketHistogram,
   getMovingAnalysisIntervals,
   getMovingAnalysisPoints,
   hasTimedAnalysisPointPairs,
@@ -98,7 +100,7 @@ export type TrackActivityStatistics = {
 };
 
 export type TrackNumericStats = {
-  avg?: number;
+  mean?: number;
   median?: number;
   max?: number;
 };
@@ -123,6 +125,8 @@ export type TrackActivityBestEfforts = {
 export type TrackDurationBestEfforts = Record<string, number>;
 
 export type TrackActivityHistograms = {
+  speedKph?: TrackSpeedHistogram;
+  cadenceRpm?: TrackCadenceHistogram;
   powerW?: TrackPowerHistogram;
   heartRateBpm?: TrackHeartRateHistogram;
 };
@@ -135,6 +139,30 @@ export type TrackPowerHistogram = {
 };
 
 export type TrackPowerHistogramBucket = {
+  label: string;
+  seconds: number;
+};
+
+export type TrackSpeedHistogram = {
+  bucketSizeKph: number;
+  maxBucketKph: number;
+  totalSeconds: number;
+  buckets: TrackSpeedHistogramBucket[];
+};
+
+export type TrackSpeedHistogramBucket = {
+  label: string;
+  seconds: number;
+};
+
+export type TrackCadenceHistogram = {
+  bucketSizeRpm: number;
+  maxBucketRpm: number;
+  totalSeconds: number;
+  buckets: TrackCadenceHistogramBucket[];
+};
+
+export type TrackCadenceHistogramBucket = {
   label: string;
   seconds: number;
 };
@@ -1108,7 +1136,7 @@ function buildTimedMovingSpeedStats(
     return isFiniteNumber(interval.distanceM) ? sum + interval.seconds : sum;
   }, 0);
   if (distanceM > 0 && seconds > 0) {
-    stats.avg = (distanceM / seconds) * 3.6;
+    stats.mean = (distanceM / seconds) * 3.6;
   }
 
   return stats;
@@ -1205,7 +1233,7 @@ function buildWeightedNumericStats(
   }
 
   return {
-    avg:
+    mean:
       numericValues.reduce((sum, item) => sum + item.value * item.seconds, 0) /
       totalSeconds,
     median,
@@ -1229,7 +1257,7 @@ function buildNumericStats(
       : sorted[middle];
 
   return {
-    avg:
+    mean:
       numericValues.reduce((sum, value) => sum + value, 0) /
       numericValues.length,
     median,
@@ -1240,13 +1268,15 @@ function buildNumericStats(
 export function buildActivityHistograms(
   points: TrackPoint[],
 ): TrackActivityHistograms | undefined {
+  const speedKph = buildSpeedBracketHistogram(points);
+  const cadenceRpm = buildCadenceBracketHistogram(points);
   const powerW = buildPowerBracketHistogram(points);
   const heartRateBpm = buildHeartRateBracketHistogram(points);
-  if (!powerW && !heartRateBpm) {
+  if (!speedKph && !cadenceRpm && !powerW && !heartRateBpm) {
     return undefined;
   }
 
-  return { powerW, heartRateBpm };
+  return { speedKph, cadenceRpm, powerW, heartRateBpm };
 }
 
 export function buildActivityPedaling(
@@ -1951,6 +1981,18 @@ function cloneHistograms(
   }
 
   return {
+    speedKph: histograms.speedKph
+      ? {
+          ...histograms.speedKph,
+          buckets: histograms.speedKph.buckets.map((bucket) => ({ ...bucket })),
+        }
+      : undefined,
+    cadenceRpm: histograms.cadenceRpm
+      ? {
+          ...histograms.cadenceRpm,
+          buckets: histograms.cadenceRpm.buckets.map((bucket) => ({ ...bucket })),
+        }
+      : undefined,
     powerW: histograms.powerW
       ? {
           ...histograms.powerW,

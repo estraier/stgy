@@ -1,10 +1,18 @@
 import {
   TRACK_SCATTER_METRICS,
+  buildCadenceBracketHistogram,
   buildHeartRateBracketHistogram,
   buildPowerBracketHistogram,
+  buildSpeedBracketHistogram,
   buildScatterPlotPoints,
   buildSmoothedScatterSamples,
   createRangeTicks,
+  getActivityHistogramDisplay,
+  getActivityHistogramDisplays,
+  getActivityMetadataSummaryLines,
+  getActivityPowerCurvePoints,
+  getHeartRateZoneDisplayRows,
+  getPowerZoneDisplayRows,
   getAvailableScatterMetrics,
   getEstimatedTorqueNm,
   getGradePercent,
@@ -92,27 +100,181 @@ describe("buildPowerBracketHistogram", () => {
 });
 
 describe("buildHeartRateBracketHistogram", () => {
-  test("uses 0, <=50, 10 bpm buckets, and overflow", () => {
+  test("keeps leading 0, <=50, and 10 bpm buckets", () => {
     const points: TrackPoint[] = [
-      { speedMps: 5, heartRateBpm: 0 },
-      { speedMps: 5, heartRateBpm: 50 },
-      { speedMps: 5, heartRateBpm: 51 },
-      { speedMps: 5, heartRateBpm: 60 },
-      { speedMps: 5, heartRateBpm: 201 },
+      { speedMps: 5, heartRateBpm: 100 },
+      { speedMps: 5, heartRateBpm: 120 },
     ];
 
     expect(buildHeartRateBracketHistogram(points)).toEqual({
       bucketSizeBpm: 10,
       firstBucketMaxBpm: 50,
       maxBucketBpm: 200,
-      totalSeconds: 5,
+      totalSeconds: 2,
       buckets: [
-        { label: "0 bpm", seconds: 1 },
-        { label: "≤50 bpm", seconds: 1 },
-        { label: "≤60 bpm", seconds: 2 },
-        { label: ">200 bpm", seconds: 1 },
+        { label: "0 bpm", seconds: 0 },
+        { label: "≤50 bpm", seconds: 0 },
+        { label: "≤60 bpm", seconds: 0 },
+        { label: "≤70 bpm", seconds: 0 },
+        { label: "≤80 bpm", seconds: 0 },
+        { label: "≤90 bpm", seconds: 0 },
+        { label: "≤100 bpm", seconds: 1 },
+        { label: "≤110 bpm", seconds: 0 },
+        { label: "≤120 bpm", seconds: 1 },
       ],
     });
+  });
+});
+
+describe("buildSpeedBracketHistogram", () => {
+  test("uses 0, <=5, 5 km/h buckets, and keeps leading buckets", () => {
+    const points: TrackPoint[] = [
+      { speedMps: 5 / 3.6 },
+      { speedMps: 12 / 3.6 },
+    ];
+
+    expect(buildSpeedBracketHistogram(points)).toEqual({
+      bucketSizeKph: 5,
+      maxBucketKph: 100,
+      totalSeconds: 2,
+      buckets: [
+        { label: "0 km/h", seconds: 0 },
+        { label: "≤5 km/h", seconds: 1 },
+        { label: "≤10 km/h", seconds: 0 },
+        { label: "≤15 km/h", seconds: 1 },
+      ],
+    });
+  });
+});
+
+describe("buildCadenceBracketHistogram", () => {
+  test("uses 0, <=10, 10 rpm buckets, and keeps leading buckets", () => {
+    const points: TrackPoint[] = [
+      { speedMps: 5, cadenceRpm: 60 },
+      { speedMps: 5, cadenceRpm: 80 },
+    ];
+
+    expect(buildCadenceBracketHistogram(points)).toEqual({
+      bucketSizeRpm: 10,
+      maxBucketRpm: 200,
+      totalSeconds: 2,
+      buckets: [
+        { label: "0 rpm", seconds: 0 },
+        { label: "≤10 rpm", seconds: 0 },
+        { label: "≤20 rpm", seconds: 0 },
+        { label: "≤30 rpm", seconds: 0 },
+        { label: "≤40 rpm", seconds: 0 },
+        { label: "≤50 rpm", seconds: 0 },
+        { label: "≤60 rpm", seconds: 1 },
+        { label: "≤70 rpm", seconds: 0 },
+        { label: "≤80 rpm", seconds: 1 },
+      ],
+    });
+  });
+});
+
+
+describe("display analysis helpers", () => {
+  test("turns metadata histograms into display rows in shared order", () => {
+    const metadata = {
+      histograms: {
+        speedKph: {
+          totalSeconds: 20,
+          buckets: [{ label: "≤20 km/h", seconds: 20 }],
+        },
+        heartRateBpm: {
+          totalSeconds: 30,
+          buckets: [{ label: "≤120 bpm", seconds: 15 }],
+        },
+        powerW: {
+          totalSeconds: 40,
+          buckets: [{ label: "≤200 W", seconds: 20 }],
+        },
+      },
+    };
+
+    expect(getActivityHistogramDisplays(metadata).map((display) => display.key)).toEqual([
+      "speedKph",
+      "heartRateBpm",
+      "powerW",
+    ]);
+    expect(getActivityHistogramDisplay(metadata, "heartRateBpm")).toEqual({
+      key: "heartRateBpm",
+      title: "Heart-rate histogram (10 bpm brackets)",
+      color: "#e14545",
+      rows: [
+        {
+          label: "≤120 bpm",
+          seconds: 15,
+          percentage: 50,
+          color: "#e14545",
+        },
+      ],
+    });
+  });
+
+  test("reads power curve points from activity metadata", () => {
+    expect(getActivityPowerCurvePoints({
+      schemaVersion: 1,
+      metadata: {
+        bestEfforts: { powerW: { "60": 210, "5": 300 } },
+      },
+      points: [],
+      warnings: [],
+    })).toEqual([
+      { durationSeconds: 5, watts: 300 },
+      { durationSeconds: 60, watts: 210 },
+    ]);
+  });
+
+  test("builds shared zone display rows", () => {
+    const powerRows = getPowerZoneDisplayRows({
+      totalSeconds: 10,
+      durations: { z1: 5, z2: 5, z3: 0, z4: 0, z5: 0, z6: 0, z7: 0 },
+      percentages: { z1: 50, z2: 50, z3: 0, z4: 0, z5: 0, z6: 0, z7: 0 },
+    }, 200);
+    expect(powerRows[0]).toEqual({
+      label: "Z1 ≤55% FTP, ≤110 W",
+      seconds: 5,
+      percentage: 50,
+      color: "#6fd3ff",
+    });
+
+    const heartRateRows = getHeartRateZoneDisplayRows({
+      totalSeconds: 10,
+      durations: { z1: 0, z2: 10, z3: 0, z4: 0, z5: 0 },
+      percentages: { z1: 0, z2: 100, z3: 0, z4: 0, z5: 0 },
+    }, 150);
+    expect(heartRateRows[1]).toEqual({
+      label: "Z2 ≤89% LTHR, ≤133.5 bpm",
+      seconds: 10,
+      percentage: 100,
+      color: "#2fa84f",
+    });
+  });
+
+  test("formats metadata summary lines for reusable display", () => {
+    expect(getActivityMetadataSummaryLines({
+      analysis: { movingSpeedThresholdKph: 3 },
+      statistics: {
+        speedKph: { mean: 18.123, median: 18, max: 30 },
+      },
+      pedaling: {
+        totalSeconds: 65,
+        averagePowerW: 123.456,
+        normalizedPowerW: 130.123,
+      },
+      training: {
+        normalizedPowerW: 136.456,
+        totalWorkJ: 1234.4,
+      },
+    }).map((line) => line.text)).toEqual([
+      "analysis: moving >= 3.0 km/h",
+      "speed: mean 18.1, median 18.0, max 30.0 km/h",
+      "pedaling: time 1:05, power 123.5 W, NP 130.1 W",
+      "normalized power: 136.5 W",
+      "total work: 1234 J",
+    ]);
   });
 });
 

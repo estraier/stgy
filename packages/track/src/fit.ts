@@ -23,8 +23,12 @@ import type {
   TrackActivityStatistics,
   TrackActivityTraining,
   TrackActivityTrainingSource,
+  TrackCadenceHistogram,
+  TrackCadenceHistogramBucket,
   TrackPowerHistogram,
   TrackPowerHistogramBucket,
+  TrackSpeedHistogram,
+  TrackSpeedHistogramBucket,
   TrackDeviceInfo,
   TrackDurationBestEfforts,
   TrackJsonBbox,
@@ -57,6 +61,8 @@ export type {
   TrackActivityStatistics,
   TrackActivityTraining,
   TrackActivityTrainingSource,
+  TrackCadenceHistogram,
+  TrackCadenceHistogramBucket,
   TrackDataSource,
   TrackDeviceInfo,
   TrackDurationBestEfforts,
@@ -70,6 +76,8 @@ export type {
   TrackPoint,
   TrackPowerHistogram,
   TrackPowerHistogramBucket,
+  TrackSpeedHistogram,
+  TrackSpeedHistogramBucket,
   TrackPowerZoneKey,
   TrackPowerZoneSummary,
   TrackWarning,
@@ -1095,7 +1103,7 @@ function readTrackJsonNumericStats(
   }
 
   const stats: TrackNumericStats = {};
-  assignOptionalNumber(stats, value, "avg");
+  assignOptionalNumber(stats, value, "mean");
   assignOptionalNumber(stats, value, "median");
   assignOptionalNumber(stats, value, "max");
 
@@ -1174,6 +1182,18 @@ function readTrackJsonHistograms(
   }
 
   const histograms: TrackActivityHistograms = {};
+  const speedKph = readTrackJsonSpeedHistogram(getRecordProperty(value, "speedKph"));
+  if (speedKph) {
+    histograms.speedKph = speedKph;
+  }
+
+  const cadenceRpm = readTrackJsonCadenceHistogram(
+    getRecordProperty(value, "cadenceRpm"),
+  );
+  if (cadenceRpm) {
+    histograms.cadenceRpm = cadenceRpm;
+  }
+
   const powerW = readTrackJsonPowerHistogram(getRecordProperty(value, "powerW"));
   if (powerW) {
     histograms.powerW = powerW;
@@ -1232,17 +1252,103 @@ function readTrackJsonPowerHistogram(
 function readTrackJsonPowerHistogramBucket(
   value: unknown,
 ): TrackPowerHistogramBucket | undefined {
+  return readTrackJsonHistogramBucket(value);
+}
+
+function readTrackJsonHistogramBucket(
+  value: unknown,
+): { label: string; seconds: number } | undefined {
   if (!isObjectRecord(value)) {
     return undefined;
   }
 
   const label = typeof value.label === "string" ? value.label.trim() : "";
   const seconds = toFiniteNumber(value.seconds);
-  if (!label || !isFiniteNumber(seconds) || seconds <= 0) {
+  if (!label || !isFiniteNumber(seconds) || seconds < 0) {
     return undefined;
   }
 
   return { label, seconds };
+}
+
+function readTrackJsonSpeedHistogram(
+  value: Record<string, unknown> | undefined,
+): TrackSpeedHistogram | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const bucketSizeKph = toFiniteNumber(value.bucketSizeKph);
+  const maxBucketKph = toFiniteNumber(value.maxBucketKph);
+  const totalSeconds = toFiniteNumber(value.totalSeconds);
+  const bucketsValue = value.buckets;
+
+  if (
+    !isFiniteNumber(bucketSizeKph) ||
+    bucketSizeKph <= 0 ||
+    !isFiniteNumber(maxBucketKph) ||
+    maxBucketKph <= 0 ||
+    !isFiniteNumber(totalSeconds) ||
+    totalSeconds <= 0 ||
+    !Array.isArray(bucketsValue)
+  ) {
+    return undefined;
+  }
+
+  const buckets = bucketsValue
+    .map(readTrackJsonHistogramBucket)
+    .filter((bucket): bucket is TrackSpeedHistogramBucket => Boolean(bucket));
+
+  if (buckets.length === 0) {
+    return undefined;
+  }
+
+  return {
+    bucketSizeKph,
+    maxBucketKph,
+    totalSeconds,
+    buckets,
+  };
+}
+
+function readTrackJsonCadenceHistogram(
+  value: Record<string, unknown> | undefined,
+): TrackCadenceHistogram | undefined {
+  if (!value) {
+    return undefined;
+  }
+
+  const bucketSizeRpm = toFiniteNumber(value.bucketSizeRpm);
+  const maxBucketRpm = toFiniteNumber(value.maxBucketRpm);
+  const totalSeconds = toFiniteNumber(value.totalSeconds);
+  const bucketsValue = value.buckets;
+
+  if (
+    !isFiniteNumber(bucketSizeRpm) ||
+    bucketSizeRpm <= 0 ||
+    !isFiniteNumber(maxBucketRpm) ||
+    maxBucketRpm <= 0 ||
+    !isFiniteNumber(totalSeconds) ||
+    totalSeconds <= 0 ||
+    !Array.isArray(bucketsValue)
+  ) {
+    return undefined;
+  }
+
+  const buckets = bucketsValue
+    .map(readTrackJsonHistogramBucket)
+    .filter((bucket): bucket is TrackCadenceHistogramBucket => Boolean(bucket));
+
+  if (buckets.length === 0) {
+    return undefined;
+  }
+
+  return {
+    bucketSizeRpm,
+    maxBucketRpm,
+    totalSeconds,
+    buckets,
+  };
 }
 
 function readTrackJsonHeartRateHistogram(
@@ -1273,14 +1379,7 @@ function readTrackJsonHeartRateHistogram(
   }
 
   const buckets = bucketsValue
-    .filter(isObjectRecord)
-    .map((bucket): TrackHeartRateHistogramBucket | undefined => {
-      const label = typeof bucket.label === "string" ? bucket.label : undefined;
-      const seconds = toFiniteNumber(bucket.seconds);
-      return label && isFiniteNumber(seconds) && seconds > 0
-        ? { label, seconds }
-        : undefined;
-    })
+    .map(readTrackJsonHistogramBucket)
     .filter((bucket): bucket is TrackHeartRateHistogramBucket => Boolean(bucket));
 
   if (buckets.length === 0) {
@@ -1614,7 +1713,7 @@ function assignTrackJsonNumericStats(
   }
 
   const values: Record<string, unknown> = {};
-  assignMetadataNumber(values, "avg", stats.avg, TRACK_JSON_METRIC_METADATA_PRECISION);
+  assignMetadataNumber(values, "mean", stats.mean, TRACK_JSON_METRIC_METADATA_PRECISION);
   assignMetadataNumber(
     values,
     "median",
@@ -1724,6 +1823,19 @@ function buildTrackJsonHistograms(
   }
 
   const output: Record<string, unknown> = {};
+  const speedKph = buildTrackJsonSpeedHistogram(histograms.speedKph, precision);
+  if (speedKph) {
+    output.speedKph = speedKph;
+  }
+
+  const cadenceRpm = buildTrackJsonCadenceHistogram(
+    histograms.cadenceRpm,
+    precision,
+  );
+  if (cadenceRpm) {
+    output.cadenceRpm = cadenceRpm;
+  }
+
   const powerW = buildTrackJsonPowerHistogram(histograms.powerW, precision);
   if (powerW) {
     output.powerW = powerW;
@@ -1738,6 +1850,62 @@ function buildTrackJsonHistograms(
   }
 
   return Object.keys(output).length > 0 ? output : undefined;
+}
+
+function buildTrackJsonSpeedHistogram(
+  histogram: TrackSpeedHistogram | undefined,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Record<string, unknown> | undefined {
+  if (!histogram || histogram.buckets.length === 0) {
+    return undefined;
+  }
+
+  const buckets = buildTrackJsonHistogramBuckets(histogram.buckets, precision);
+  if (buckets.length === 0) {
+    return undefined;
+  }
+
+  return {
+    bucketSizeKph: roundNumber(histogram.bucketSizeKph, precision.metadata),
+    maxBucketKph: roundNumber(histogram.maxBucketKph, precision.metadata),
+    totalSeconds: roundNumber(histogram.totalSeconds, precision.metadata),
+    buckets,
+  };
+}
+
+function buildTrackJsonCadenceHistogram(
+  histogram: TrackCadenceHistogram | undefined,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Record<string, unknown> | undefined {
+  if (!histogram || histogram.buckets.length === 0) {
+    return undefined;
+  }
+
+  const buckets = buildTrackJsonHistogramBuckets(histogram.buckets, precision);
+  if (buckets.length === 0) {
+    return undefined;
+  }
+
+  return {
+    bucketSizeRpm: roundNumber(histogram.bucketSizeRpm, precision.metadata),
+    maxBucketRpm: roundNumber(histogram.maxBucketRpm, precision.metadata),
+    totalSeconds: roundNumber(histogram.totalSeconds, precision.metadata),
+    buckets,
+  };
+}
+
+function buildTrackJsonHistogramBuckets(
+  buckets: Array<{ label: string; seconds: number }>,
+  precision: Required<TrackJsonPrecisionOptions>,
+): Array<{ label: string; seconds: number }> {
+  return buckets
+    .map((bucket) => {
+      const seconds = roundNumber(bucket.seconds, precision.metadata);
+      return bucket.label && seconds >= 0
+        ? { label: bucket.label, seconds }
+        : undefined;
+    })
+    .filter((bucket): bucket is { label: string; seconds: number } => Boolean(bucket));
 }
 
 function buildTrackJsonPowerHistogram(
@@ -1777,14 +1945,7 @@ function buildTrackJsonHeartRateHistogram(
     return undefined;
   }
 
-  const buckets = histogram.buckets
-    .map((bucket) => {
-      const seconds = roundNumber(bucket.seconds, precision.metadata);
-      return bucket.label && seconds > 0
-        ? { label: bucket.label, seconds }
-        : undefined;
-    })
-    .filter((bucket): bucket is { label: string; seconds: number } => Boolean(bucket));
+  const buckets = buildTrackJsonHistogramBuckets(histogram.buckets, precision);
 
   if (buckets.length === 0) {
     return undefined;

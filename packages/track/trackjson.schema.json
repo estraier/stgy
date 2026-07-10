@@ -297,7 +297,7 @@
     "numericStats": {
       "type": "object",
       "properties": {
-        "avg": {
+        "mean": {
           "type": "number"
         },
         "median": {
@@ -372,11 +372,59 @@
     "histograms": {
       "type": "object",
       "properties": {
+        "speedKph": {
+          "$ref": "#/$defs/speedHistogram"
+        },
+        "cadenceRpm": {
+          "$ref": "#/$defs/cadenceHistogram"
+        },
         "powerW": {
           "$ref": "#/$defs/powerHistogram"
         },
         "heartRateBpm": {
           "$ref": "#/$defs/heartRateHistogram"
+        }
+      },
+      "additionalProperties": true
+    },
+    "speedHistogram": {
+      "type": "object",
+      "properties": {
+        "bucketSizeKph": {
+          "type": "number"
+        },
+        "maxBucketKph": {
+          "type": "number"
+        },
+        "totalSeconds": {
+          "type": "number"
+        },
+        "buckets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/histogramBucket"
+          }
+        }
+      },
+      "additionalProperties": true
+    },
+    "cadenceHistogram": {
+      "type": "object",
+      "properties": {
+        "bucketSizeRpm": {
+          "type": "number"
+        },
+        "maxBucketRpm": {
+          "type": "number"
+        },
+        "totalSeconds": {
+          "type": "number"
+        },
+        "buckets": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/histogramBucket"
+          }
         }
       },
       "additionalProperties": true
