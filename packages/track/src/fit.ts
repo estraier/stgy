@@ -108,6 +108,52 @@ const TRACK_JSON_METRIC_METADATA_PRECISION = 3;
 const FIT_EPOCH_UNIX_SECONDS = 631065600;
 const LOCAL_TIME_OFFSET_LIMIT_SECONDS = 24 * 3600;
 
+const FIT_TORQUE_EFFECTIVENESS_KEYS: FitPedalingSideKeys = {
+  left: [
+    "avgLeftTorqueEffectiveness",
+    "avg_left_torque_effectiveness",
+    "leftTorqueEffectiveness",
+    "left_torque_effectiveness",
+  ],
+  right: [
+    "avgRightTorqueEffectiveness",
+    "avg_right_torque_effectiveness",
+    "rightTorqueEffectiveness",
+    "right_torque_effectiveness",
+  ],
+  combined: [
+    "avgTorqueEffectiveness",
+    "avg_torque_effectiveness",
+    "torqueEffectiveness",
+    "torque_effectiveness",
+  ],
+};
+
+const FIT_PEDAL_SMOOTHNESS_KEYS: FitPedalingSideKeys = {
+  left: [
+    "avgLeftPedalSmoothness",
+    "avg_left_pedal_smoothness",
+    "leftPedalSmoothness",
+    "left_pedal_smoothness",
+  ],
+  right: [
+    "avgRightPedalSmoothness",
+    "avg_right_pedal_smoothness",
+    "rightPedalSmoothness",
+    "right_pedal_smoothness",
+  ],
+  combined: [
+    "avgCombinedPedalSmoothness",
+    "avg_combined_pedal_smoothness",
+    "combinedPedalSmoothness",
+    "combined_pedal_smoothness",
+    "avgPedalSmoothness",
+    "avg_pedal_smoothness",
+    "pedalSmoothness",
+    "pedal_smoothness",
+  ],
+};
+
 const RESERVED_METRIC_NAMES = new Set([
   "times",
   "distances",
@@ -2604,26 +2650,7 @@ function buildFitPedalingDynamics(
   const torqueEffectiveness = getFitPedalingSidePercentages(
     summaryMessages,
     records,
-    {
-      left: [
-        "avgLeftTorqueEffectiveness",
-        "avg_left_torque_effectiveness",
-        "leftTorqueEffectiveness",
-        "left_torque_effectiveness",
-      ],
-      right: [
-        "avgRightTorqueEffectiveness",
-        "avg_right_torque_effectiveness",
-        "rightTorqueEffectiveness",
-        "right_torque_effectiveness",
-      ],
-      combined: [
-        "avgTorqueEffectiveness",
-        "avg_torque_effectiveness",
-        "torqueEffectiveness",
-        "torque_effectiveness",
-      ],
-    },
+    FIT_TORQUE_EFFECTIVENESS_KEYS,
   );
   if (torqueEffectiveness) {
     dynamics.torqueEffectiveness = torqueEffectiveness;
@@ -2632,30 +2659,7 @@ function buildFitPedalingDynamics(
   const pedalSmoothness = getFitPedalingSidePercentages(
     summaryMessages,
     records,
-    {
-      left: [
-        "avgLeftPedalSmoothness",
-        "avg_left_pedal_smoothness",
-        "leftPedalSmoothness",
-        "left_pedal_smoothness",
-      ],
-      right: [
-        "avgRightPedalSmoothness",
-        "avg_right_pedal_smoothness",
-        "rightPedalSmoothness",
-        "right_pedal_smoothness",
-      ],
-      combined: [
-        "avgCombinedPedalSmoothness",
-        "avg_combined_pedal_smoothness",
-        "combinedPedalSmoothness",
-        "combined_pedal_smoothness",
-        "avgPedalSmoothness",
-        "avg_pedal_smoothness",
-        "pedalSmoothness",
-        "pedal_smoothness",
-      ],
-    },
+    FIT_PEDAL_SMOOTHNESS_KEYS,
   );
   if (pedalSmoothness) {
     dynamics.pedalSmoothness = pedalSmoothness;
@@ -2723,6 +2727,30 @@ function getFitPedalingSidePercentages(
   }
 
   return Object.keys(percentages).length > 0 ? percentages : undefined;
+}
+
+function getFitRecordPedalingSidePercentage(
+  record: FitMessage,
+  keys: FitPedalingSideKeys,
+): number | undefined {
+  const combined = toFinitePercentage(getFirstValue(record, keys.combined));
+  if (isFiniteNumber(combined)) {
+    return combined;
+  }
+
+  const left = toFinitePercentage(getFirstValue(record, keys.left));
+  const right = toFinitePercentage(getFirstValue(record, keys.right));
+  if (isFiniteNumber(left) && isFiniteNumber(right)) {
+    return roundNumber((left + right) / 2, 3);
+  }
+  return left ?? right;
+}
+
+function toFinitePercentage(value: unknown): number | undefined {
+  const numberValue = toFiniteNumber(value);
+  return isFiniteNumber(numberValue) && numberValue >= 0 && numberValue <= 100
+    ? numberValue
+    : undefined;
 }
 
 function getFitSummaryOrRecordMean(
@@ -3040,6 +3068,16 @@ function fitRecordToTrackPoint(
     "temperatureC",
     toFiniteNumber(getFirstValue(record, ["temperature", "temperatureC"])),
   );
+  assignPointMetric(
+    point,
+    "torqueEffectivenessPercentage",
+    getFitRecordPedalingSidePercentage(record, FIT_TORQUE_EFFECTIVENESS_KEYS),
+  );
+  assignPointMetric(
+    point,
+    "pedalSmoothnessPercentage",
+    getFitRecordPedalingSidePercentage(record, FIT_PEDAL_SMOOTHNESS_KEYS),
+  );
 
   return point;
 }
@@ -3352,6 +3390,20 @@ function assignNumber<T extends object, K extends keyof T>(
   if (typeof value === "number" && Number.isFinite(value)) {
     object[key] = value as T[K];
   }
+}
+
+function assignPointMetric(
+  point: TrackPoint,
+  key: string,
+  value: number | undefined,
+) {
+  if (!isFiniteNumber(value)) {
+    return;
+  }
+  if (!point.metrics) {
+    point.metrics = {};
+  }
+  point.metrics[key] = value;
 }
 
 function hasAnyPointValue(point: TrackPoint): boolean {

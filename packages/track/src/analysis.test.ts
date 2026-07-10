@@ -18,7 +18,9 @@ import {
   getAvailableScatterMetrics,
   getEstimatedTorqueNm,
   getGradePercent,
+  getPedalSmoothnessPercentage,
   getScatterAxisRange,
+  getTorqueEffectivenessPercentage,
   sampleEvenly,
 } from "./analysis";
 import type { TrackPoint } from "./activity";
@@ -340,6 +342,12 @@ describe("scatter analysis", () => {
       powerW: 120,
       distanceM: 0,
       altitudeM: 0,
+      metrics: {
+        leftTorqueEffectiveness: 78,
+        rightTorqueEffectiveness: 82,
+        leftPedalSmoothness: 20,
+        rightPedalSmoothness: 24,
+      },
     },
     {
       time: 10,
@@ -349,6 +357,12 @@ describe("scatter analysis", () => {
       powerW: 140,
       distanceM: 100,
       altitudeM: 5,
+      metrics: {
+        leftTorqueEffectiveness: 80,
+        rightTorqueEffectiveness: 84,
+        leftPedalSmoothness: 22,
+        rightPedalSmoothness: 26,
+      },
     },
     {
       time: 20,
@@ -358,6 +372,12 @@ describe("scatter analysis", () => {
       powerW: 160,
       distanceM: 200,
       altitudeM: 20,
+      metrics: {
+        leftTorqueEffectiveness: 82,
+        rightTorqueEffectiveness: 86,
+        leftPedalSmoothness: 24,
+        rightPedalSmoothness: 28,
+      },
     },
     {
       time: 40,
@@ -367,6 +387,10 @@ describe("scatter analysis", () => {
       powerW: 180,
       distanceM: 300,
       altitudeM: 30,
+      metrics: {
+        torqueEffectivenessPercentage: 88,
+        pedalSmoothnessPercentage: 30,
+      },
     },
   ];
 
@@ -379,6 +403,8 @@ describe("scatter analysis", () => {
     expect(samples[2].cadenceRpm).toBeCloseTo(70);
     expect(samples[2].speedKph).toBeCloseTo(21.6);
     expect(samples[2].efficiency).toBeCloseTo(140 / 110);
+    expect(samples[2].torqueEffectivenessPercentage).toBeCloseTo(82);
+    expect(samples[2].pedalSmoothnessPercentage).toBeCloseTo(24);
   });
 
   test("reports available metrics in display order", () => {
@@ -394,8 +420,10 @@ describe("scatter analysis", () => {
       "Cadence",
       "Heart rate",
       "Power",
-      "Efficiency",
+      "Cardio efficiency",
       "Torque",
+      "Torque efficiency",
+      "Pedal smoothness",
       "Grade",
       "Altitude",
     ]);
@@ -414,11 +442,20 @@ describe("scatter analysis", () => {
     ]);
   });
 
-  test("computes estimated torque and grade", () => {
+  test("computes estimated torque, pedaling dynamics, and grade", () => {
     expect(getEstimatedTorqueNm({ powerW: 200, cadenceRpm: 60 })).toBeCloseTo(
       200 / (2 * Math.PI),
     );
     expect(getEstimatedTorqueNm({ powerW: 200, cadenceRpm: 9 })).toBeUndefined();
+    expect(getTorqueEffectivenessPercentage({
+      metrics: {
+        leftTorqueEffectiveness: 80,
+        rightTorqueEffectiveness: 82,
+      },
+    })).toBe(81);
+    expect(getPedalSmoothnessPercentage({
+      metrics: { pedalSmoothnessPercentage: 23 },
+    })).toBe(23);
     expect(getGradePercent({ metrics: { grade: 3.5 } }, 0, [])).toBe(3.5);
     expect(getGradePercent(points[1], 1, points)).toBeCloseTo(10);
   });
@@ -447,6 +484,8 @@ test("exports the scatter metric table", () => {
     "powerW",
     "efficiency",
     "estimatedTorqueNm",
+    "torqueEffectivenessPercentage",
+    "pedalSmoothnessPercentage",
     "gradePercent",
     "altitudeM",
   ]);

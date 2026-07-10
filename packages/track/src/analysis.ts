@@ -78,6 +78,8 @@ export type TrackScatterMetricKey =
   "powerW" |
   "efficiency" |
   "estimatedTorqueNm" |
+  "torqueEffectivenessPercentage" |
+  "pedalSmoothnessPercentage" |
   "gradePercent" |
   "altitudeM";
 
@@ -454,8 +456,8 @@ export const TRACK_SCATTER_METRICS: TrackScatterMetricDefinition[] = [
   },
   {
     key: "efficiency",
-    label: "Efficiency",
-    axisLabel: "Efficiency (W/bpm)",
+    label: "Cardio efficiency",
+    axisLabel: "Cardio efficiency (W/bpm)",
     getValue: () => undefined,
   },
   {
@@ -463,6 +465,18 @@ export const TRACK_SCATTER_METRICS: TrackScatterMetricDefinition[] = [
     label: "Torque",
     axisLabel: "Torque (Nm)",
     getValue: getEstimatedTorqueNm,
+  },
+  {
+    key: "torqueEffectivenessPercentage",
+    label: "Torque efficiency",
+    axisLabel: "Torque efficiency (%)",
+    getValue: getTorqueEffectivenessPercentage,
+  },
+  {
+    key: "pedalSmoothnessPercentage",
+    label: "Pedal smoothness",
+    axisLabel: "Pedal smoothness (%)",
+    getValue: getPedalSmoothnessPercentage,
   },
   {
     key: "gradePercent",
@@ -743,6 +757,58 @@ export function sampleEvenly<T>(items: T[], maxItems: number): T[] {
     sampled.push(items[sourceIndex]);
   }
   return sampled;
+}
+
+export function getTorqueEffectivenessPercentage(
+  point: TrackPoint,
+): number | undefined {
+  return getSideAveragedMetricPercentage(
+    point,
+    [
+      "torqueEffectivenessPercentage",
+      "torqueEfficiencyPercentage",
+      "torqueEffectiveness",
+      "torqueEfficiency",
+    ],
+    [
+      "leftTorqueEffectivenessPercentage",
+      "leftTorqueEfficiencyPercentage",
+      "leftTorqueEffectiveness",
+      "leftTorqueEfficiency",
+    ],
+    [
+      "rightTorqueEffectivenessPercentage",
+      "rightTorqueEfficiencyPercentage",
+      "rightTorqueEffectiveness",
+      "rightTorqueEfficiency",
+    ],
+  );
+}
+
+export function getPedalSmoothnessPercentage(
+  point: TrackPoint,
+): number | undefined {
+  return getSideAveragedMetricPercentage(
+    point,
+    [
+      "pedalSmoothnessPercentage",
+      "pedalingSmoothnessPercentage",
+      "pedalSmoothness",
+      "pedalingSmoothness",
+    ],
+    [
+      "leftPedalSmoothnessPercentage",
+      "leftPedalingSmoothnessPercentage",
+      "leftPedalSmoothness",
+      "leftPedalingSmoothness",
+    ],
+    [
+      "rightPedalSmoothnessPercentage",
+      "rightPedalingSmoothnessPercentage",
+      "rightPedalSmoothness",
+      "rightPedalingSmoothness",
+    ],
+  );
 }
 
 export function getEstimatedTorqueNm(point: TrackPoint): number | undefined {
@@ -1319,6 +1385,36 @@ function getPointDurationSeconds(points: TrackPoint[], index: number): number {
     return 0;
   }
   return next > current ? next - current : 0;
+}
+
+
+function getSideAveragedMetricPercentage(
+  point: TrackPoint,
+  combinedKeys: string[],
+  leftKeys: string[],
+  rightKeys: string[],
+): number | undefined {
+  const combined = getFirstMetricPercentage(point, combinedKeys);
+  if (isFiniteNumber(combined)) {
+    return combined;
+  }
+
+  const left = getFirstMetricPercentage(point, leftKeys);
+  const right = getFirstMetricPercentage(point, rightKeys);
+  if (isFiniteNumber(left) && isFiniteNumber(right)) {
+    return (left + right) / 2;
+  }
+  return left ?? right;
+}
+
+function getFirstMetricPercentage(
+  point: TrackPoint,
+  keys: string[],
+): number | undefined {
+  const value = getFirstMetricNumber(point, keys);
+  return isFiniteNumber(value) && value >= 0 && value <= 100
+    ? value
+    : undefined;
 }
 
 function getFirstMetricNumber(

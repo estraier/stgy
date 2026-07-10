@@ -148,6 +148,10 @@ describe("parseFitBytes", () => {
             enhancedSpeed: 5.5,
             speed: 5.1,
             temperature: 20,
+            leftTorqueEffectiveness: 80,
+            rightTorqueEffectiveness: 82,
+            leftPedalSmoothness: 22,
+            rightPedalSmoothness: 24,
           },
         ],
       },
@@ -204,6 +208,10 @@ describe("parseFitBytes", () => {
       powerW: 150,
       speedMps: 5.5,
       temperatureC: 20,
+      metrics: {
+        torqueEffectivenessPercentage: 81,
+        pedalSmoothnessPercentage: 23,
+      },
     });
   });
 
@@ -291,6 +299,30 @@ describe("parseFitBytes", () => {
     expect(activity.metadata.pedalingDynamics?.leftRightBalance).toEqual({
       leftPercentage: 53.8,
       rightPercentage: 46.2,
+    });
+  });
+
+  test("adds per-record pedaling dynamics metrics", () => {
+    mockDecoder(true, {
+      messages: {
+        recordMesgs: [
+          {
+            timestamp: new Date("2024-03-01T01:00:01Z"),
+            positionLat: 35,
+            positionLong: 139,
+            leftTorqueEffectiveness: 80,
+            rightTorqueEffectiveness: 84,
+            combinedPedalSmoothness: 23.5,
+          },
+        ],
+      },
+    });
+
+    const activity = parseFitBytes(new Uint8Array([1, 2, 3]));
+
+    expect(activity.points[0].metrics).toEqual({
+      torqueEffectivenessPercentage: 82,
+      pedalSmoothnessPercentage: 23.5,
     });
   });
 
