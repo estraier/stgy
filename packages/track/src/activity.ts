@@ -39,7 +39,7 @@ const ZONE_RATIO_EPSILON = 1e-12;
 const RESERVED_METRIC_NAMES = new Set([
   "times",
   "distances",
-  "elevations",
+  "altitudes",
   "heartRates",
   "cadences",
   "powers",
@@ -60,7 +60,7 @@ export type TrackActivity = {
 export type TrackActivityPin = {
   lat: number;
   lon: number;
-  elevationM?: number;
+  altitudeM?: number;
   properties?: Record<string, unknown>;
 };
 
@@ -222,7 +222,7 @@ export type TrackPoint = {
   lat?: number;
   lon?: number;
   distanceM?: number;
-  elevationM?: number;
+  altitudeM?: number;
   heartRateBpm?: number;
   cadenceRpm?: number;
   powerW?: number;
@@ -1787,8 +1787,8 @@ function aggregateTrackPointBucket(
   assignNumber(point, "distanceM", representative.distanceM);
   assignNumber(
     point,
-    "elevationM",
-    averagePointValue(bucket, (item) => item.elevationM),
+    "altitudeM",
+    averagePointValue(bucket, (item) => item.altitudeM),
   );
   assignNumber(
     point,

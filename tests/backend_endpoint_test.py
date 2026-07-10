@@ -1110,7 +1110,7 @@ def make_sample_trackjson():
           "coordinateProperties": {
             "times": [1710000000, 1710000030, 1710000060],
             "distances": [0, 120.5, 241.0],
-            "elevations": [12.3, 15.8, 14.2],
+            "altitudes": [12.3, 15.8, 14.2],
             "heartRates": [120, 125, 129],
             "cadences": [80, 82, 79],
             "powers": [150, 180, 160],

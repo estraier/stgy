@@ -90,7 +90,7 @@ const DEFAULT_TRACK_JSON_PRECISION = {
   coordinates: 5,
   times: 0,
   distances: 1,
-  elevations: 1,
+  altitudes: 1,
   heartRates: 1,
   cadences: 1,
   powers: 1,
@@ -105,7 +105,7 @@ const LOCAL_TIME_OFFSET_LIMIT_SECONDS = 24 * 3600;
 const RESERVED_METRIC_NAMES = new Set([
   "times",
   "distances",
-  "elevations",
+  "altitudes",
   "heartRates",
   "cadences",
   "powers",
@@ -147,7 +147,7 @@ export type TrackJsonPrecisionOptions = {
   coordinates?: number;
   times?: number;
   distances?: number;
-  elevations?: number;
+  altitudes?: number;
   heartRates?: number;
   cadences?: number;
   powers?: number;
@@ -534,8 +534,8 @@ function trackActivityPinToTrackJsonFeature(
     roundNumber(pin.lat, coordinatePrecision),
   ];
 
-  if (isFiniteNumber(pin.elevationM)) {
-    coordinates.push(roundNumber(pin.elevationM, coordinatePrecision));
+  if (isFiniteNumber(pin.altitudeM)) {
+    coordinates.push(roundNumber(pin.altitudeM, coordinatePrecision));
   }
 
   return {
@@ -974,7 +974,7 @@ function trackJsonPointFeatureToPin(feature: FitMessage): TrackActivityPin {
   const coordinates = Array.isArray(geometry?.coordinates) ? geometry.coordinates : [];
   const lon = toFiniteNumber(coordinates[0]);
   const lat = toFiniteNumber(coordinates[1]);
-  const elevationM = toFiniteNumber(coordinates[2]);
+  const altitudeM = toFiniteNumber(coordinates[2]);
   const properties = getRecordProperty(feature, "properties");
 
   if (!isFiniteNumber(lon) || !isFiniteNumber(lat)) {
@@ -987,7 +987,7 @@ function trackJsonPointFeatureToPin(feature: FitMessage): TrackActivityPin {
   return {
     lat,
     lon,
-    ...(isFiniteNumber(elevationM) ? { elevationM } : {}),
+    ...(isFiniteNumber(altitudeM) ? { altitudeM } : {}),
     ...(properties ? { properties: cloneJsonValue(properties) as Record<string, unknown> } : {}),
   };
 }
@@ -1473,15 +1473,15 @@ function trackJsonCoordinateToPoint(
   if (Array.isArray(coordinate) && coordinate.length >= 2) {
     const lon = toFiniteNumber(coordinate[0]);
     const lat = toFiniteNumber(coordinate[1]);
-    const elevation = toFiniteNumber(coordinate[2]);
+    const altitude = toFiniteNumber(coordinate[2]);
     if (isFiniteNumber(lon)) {
       point.lon = lon;
     }
     if (isFiniteNumber(lat)) {
       point.lat = lat;
     }
-    if (isFiniteNumber(elevation)) {
-      point.elevationM = elevation;
+    if (isFiniteNumber(altitude)) {
+      point.altitudeM = altitude;
     }
   }
 
@@ -1491,7 +1491,7 @@ function trackJsonCoordinateToPoint(
 
   assignPointFromSeries(point, "time", coordinateProperties.times, index);
   assignPointFromSeries(point, "distanceM", coordinateProperties.distances, index);
-  assignPointFromSeries(point, "elevationM", coordinateProperties.elevations, index);
+  assignPointFromSeries(point, "altitudeM", coordinateProperties.altitudes, index);
   assignPointFromSeries(point, "heartRateBpm", coordinateProperties.heartRates, index);
   assignPointFromSeries(point, "cadenceRpm", coordinateProperties.cadences, index);
   assignPointFromSeries(point, "powerW", coordinateProperties.powers, index);
@@ -2037,9 +2037,9 @@ function resolveTrackJsonPrecision(
       precision?.distances,
       DEFAULT_TRACK_JSON_PRECISION.distances,
     ),
-    elevations: normalizePrecision(
-      precision?.elevations,
-      DEFAULT_TRACK_JSON_PRECISION.elevations,
+    altitudes: normalizePrecision(
+      precision?.altitudes,
+      DEFAULT_TRACK_JSON_PRECISION.altitudes,
     ),
     heartRates: normalizePrecision(
       precision?.heartRates,
@@ -2624,8 +2624,8 @@ function fitRecordToTrackPoint(
   );
   assignNumber(
     point,
-    "elevationM",
-    selectElevation(record, preferEnhancedFields),
+    "altitudeM",
+    selectAltitude(record, preferEnhancedFields),
   );
   assignNumber(
     point,
@@ -2654,7 +2654,7 @@ function fitRecordToTrackPoint(
   return point;
 }
 
-function selectElevation(
+function selectAltitude(
   record: FitMessage,
   preferEnhancedFields: boolean,
 ): number | undefined {
@@ -2667,7 +2667,7 @@ function selectElevation(
     ]),
   );
   const regular = toFiniteNumber(
-    getFirstValue(record, ["altitude", "elevation", "elevationM"]),
+    getFirstValue(record, ["altitude", "elevation", "altitudeM"]),
   );
 
   return preferEnhancedFields ? (enhanced ?? regular) : (regular ?? enhanced);
@@ -2742,10 +2742,10 @@ function buildCoordinateProperties(
   );
   addCompleteSeries(
     properties,
-    "elevations",
+    "altitudes",
     points,
-    (point) => point.elevationM,
-    (value) => roundNumber(value, precision.elevations),
+    (point) => point.altitudeM,
+    (value) => roundNumber(value, precision.altitudes),
   );
   addFillForwardSeries(
     properties,
@@ -3646,7 +3646,7 @@ function getFitExportRecordFields(): FitWriteRecordField[] {
       size: 2,
       baseType: 0x84,
       write: (view, offset, point) => {
-        writeFitScaledUint16(view, offset, point.elevationM, 5, 500);
+        writeFitScaledUint16(view, offset, point.altitudeM, 5, 500);
       },
     },
     {

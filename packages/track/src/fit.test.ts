@@ -183,7 +183,7 @@ describe("parseFitBytes", () => {
       lat: 35.1234567,
       lon: 139.1234567,
       distanceM: 12.3,
-      elevationM: 101.2,
+      altitudeM: 101.2,
       heartRateBpm: 120,
       cadenceRpm: 81,
       powerW: 150,
@@ -525,7 +525,7 @@ describe("parseFitBytes", () => {
       preferEnhancedFields: false,
     });
 
-    expect(activity.points[0].elevationM).toBeCloseTo(99.9);
+    expect(activity.points[0].altitudeM).toBeCloseTo(99.9);
     expect(activity.points[0].speedMps).toBeCloseTo(5.1);
   });
 
@@ -922,7 +922,7 @@ describe("trackJsonDataToTrackActivity", () => {
       time: 110,
       lon: 139.1,
       lat: 35.1,
-      elevationM: 11,
+      altitudeM: 11,
       distanceM: 120,
       heartRateBpm: 130,
       powerW: 180,
@@ -1219,7 +1219,7 @@ describe("trackActivityToTrackJson", () => {
       1710000000, 1710000001, 1710000002,
     ]);
     expect(coordinateProperties.distances).toEqual([0, 10.2, 20.5]);
-    expect(coordinateProperties.elevations).toEqual([100.1, 101.1, 102.1]);
+    expect(coordinateProperties.altitudes).toEqual([100.1, 101.1, 102.1]);
     expect(coordinateProperties.heartRates).toEqual([120, 121, 122]);
     expect(coordinateProperties.cadences).toEqual([80, 81, 82]);
     expect(coordinateProperties.powers).toEqual([150, 151, 152]);
@@ -1417,7 +1417,7 @@ describe("trackActivityToTrackJson", () => {
         precision: {
           coordinates: 6,
           distances: 0,
-          elevations: 0,
+          altitudes: 0,
           heartRates: 0,
           cadences: 0,
           powers: 0,
@@ -1431,7 +1431,7 @@ describe("trackActivityToTrackJson", () => {
 
     expect(feature.geometry.coordinates[1]).toEqual([139.000011, 35.000011]);
     expect(coordinateProperties.distances).toEqual([0, 10, 20]);
-    expect(coordinateProperties.elevations).toEqual([100, 101, 102]);
+    expect(coordinateProperties.altitudes).toEqual([100, 101, 102]);
     expect(coordinateProperties.speeds).toEqual([18, 18.36, 18.72]);
     expect(feature.properties.metadata.totalDistanceM).toBe(12346);
   });
@@ -1475,13 +1475,13 @@ describe("trackActivityToTrackJson", () => {
 
   test("omits complete standard series when some geo points are missing values", () => {
     const activity = makeActivity(3);
-    delete activity.points[1].elevationM;
+    delete activity.points[1].altitudeM;
 
     const parsed = parseTrackJson(trackActivityToTrackJson(activity));
     const coordinateProperties =
       parsed.features[0].properties.coordinateProperties;
 
-    expect(coordinateProperties.elevations).toBeUndefined();
+    expect(coordinateProperties.altitudes).toBeUndefined();
     expect(coordinateProperties.heartRates).toEqual([120, 121, 122]);
   });
 
@@ -1683,7 +1683,7 @@ function makePoint(index: number): TrackPoint {
     lat: 35 + index * 0.00001 + 0.00000123,
     lon: 139 + index * 0.00001 + 0.00000123,
     distanceM: index * 10.234,
-    elevationM: 100.123 + index,
+    altitudeM: 100.123 + index,
     heartRateBpm: 120 + index,
     cadenceRpm: 80 + index,
     powerW: 150 + index,
@@ -1976,7 +1976,7 @@ describe("trackActivityToFit", () => {
           lat: 35,
           lon: 139,
           distanceM: 0,
-          elevationM: 10,
+          altitudeM: 10,
           speedMps: 12,
           heartRateBpm: 100,
           cadenceRpm: 80,
@@ -1988,7 +1988,7 @@ describe("trackActivityToFit", () => {
           lat: 35.0001,
           lon: 139.0001,
           distanceM: 120,
-          elevationM: 11,
+          altitudeM: 11,
           speedMps: 12,
           heartRateBpm: 102,
           cadenceRpm: 82,

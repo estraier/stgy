@@ -79,7 +79,7 @@ export type TrackScatterMetricKey =
   "efficiency" |
   "estimatedTorqueNm" |
   "gradePercent" |
-  "elevationM";
+  "altitudeM";
 
 export type TrackScatterMetricDefinition = {
   key: TrackScatterMetricKey;
@@ -466,10 +466,10 @@ export const TRACK_SCATTER_METRICS: TrackScatterMetricDefinition[] = [
     getValue: getGradePercent,
   },
   {
-    key: "elevationM",
-    label: "Elevation",
-    axisLabel: "Elevation (m)",
-    getValue: (point) => point.elevationM,
+    key: "altitudeM",
+    label: "Altitude",
+    axisLabel: "Altitude (m)",
+    getValue: (point) => point.altitudeM,
   },
 ];
 
@@ -1334,12 +1334,12 @@ function estimateGradePercent(
   points: TrackPoint[],
 ): number | undefined {
   const current = points[index];
-  if (!hasDistanceAndElevation(current)) {
+  if (!hasDistanceAndAltitude(current)) {
     return undefined;
   }
 
-  const previous = findDistanceElevationPoint(points, index, -1);
-  const next = findDistanceElevationPoint(points, index, 1);
+  const previous = findDistanceAltitudePoint(points, index, -1);
+  const next = findDistanceAltitudePoint(points, index, 1);
   const start = previous || current;
   const end = next || current;
   const distanceDelta = end.distanceM - start.distanceM;
@@ -1347,33 +1347,33 @@ function estimateGradePercent(
     return undefined;
   }
 
-  return ((end.elevationM - start.elevationM) / distanceDelta) * 100;
+  return ((end.altitudeM - start.altitudeM) / distanceDelta) * 100;
 }
 
-function findDistanceElevationPoint(
+function findDistanceAltitudePoint(
   points: TrackPoint[],
   startIndex: number,
   direction: -1 | 1,
-): Required<Pick<TrackPoint, "distanceM" | "elevationM">> | undefined {
+): Required<Pick<TrackPoint, "distanceM" | "altitudeM">> | undefined {
   for (
     let index = startIndex + direction;
     index >= 0 && index < points.length;
     index += direction
   ) {
     const point = points[index];
-    if (hasDistanceAndElevation(point)) {
+    if (hasDistanceAndAltitude(point)) {
       return point;
     }
   }
   return undefined;
 }
 
-function hasDistanceAndElevation(
+function hasDistanceAndAltitude(
   point: TrackPoint | undefined,
-): point is Required<Pick<TrackPoint, "distanceM" | "elevationM">> {
+): point is Required<Pick<TrackPoint, "distanceM" | "altitudeM">> {
   return point !== undefined &&
     isFiniteNumber(point.distanceM) &&
-    isFiniteNumber(point.elevationM);
+    isFiniteNumber(point.altitudeM);
 }
 
 function getMetricNumber(point: TrackPoint, key: string): number | undefined {

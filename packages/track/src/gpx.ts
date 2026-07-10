@@ -127,9 +127,9 @@ function gpxPointToTrackPoint(pointElement: Element): TrackPoint {
     point.lon = lon;
   }
 
-  const elevationM = parseOptionalNumber(getDirectChildText(pointElement, "ele"));
-  if (isFiniteNumber(elevationM)) {
-    point.elevationM = elevationM;
+  const altitudeM = parseOptionalNumber(getDirectChildText(pointElement, "ele"));
+  if (isFiniteNumber(altitudeM)) {
+    point.altitudeM = altitudeM;
   }
 
   const time = parseGpxTime(getDirectChildText(pointElement, "time"));
@@ -499,7 +499,7 @@ export type GpxExportOptions = {
   description?: string;
   includeExtensions?: boolean;
   coordinatePrecision?: number;
-  elevationPrecision?: number;
+  altitudePrecision?: number;
 };
 
 export type GpxExportErrorCode = "no_position_points" | "not_enough_position_points";
@@ -536,7 +536,7 @@ export function trackActivityToGpx(
 
   const creator = options.creator || "stgy-track";
   const coordinatePrecision = options.coordinatePrecision ?? 7;
-  const elevationPrecision = options.elevationPrecision ?? 1;
+  const altitudePrecision = options.altitudePrecision ?? 1;
   const name = options.name || activity.metadata.name || "Track";
   const description = options.description || activity.metadata.description;
   const createdAt = activity.metadata.createdAt ?? activity.metadata.startTime;
@@ -589,7 +589,7 @@ export function trackActivityToGpx(
     segment.forEach((point) => {
       lines.push(formatGpxTrackPoint(point, {
         coordinatePrecision,
-        elevationPrecision,
+        altitudePrecision,
         includeExtensions: options.includeExtensions !== false,
       }));
     });
@@ -634,7 +634,7 @@ function formatGpxMetadataNumber(value: number): string {
 
 type GpxTrackPointFormatOptions = {
   coordinatePrecision: number;
-  elevationPrecision: number;
+  altitudePrecision: number;
   includeExtensions: boolean;
 };
 
@@ -672,8 +672,8 @@ function formatGpxTrackPoint(
       `lon="${formatGpxNumber(point.lon, options.coordinatePrecision)}">`,
   ];
 
-  if (isFiniteNumber(point.elevationM)) {
-    lines.push(`        <ele>${formatGpxNumber(point.elevationM, options.elevationPrecision)}</ele>`);
+  if (isFiniteNumber(point.altitudeM)) {
+    lines.push(`        <ele>${formatGpxNumber(point.altitudeM, options.altitudePrecision)}</ele>`);
   }
   if (isFiniteNumber(point.time)) {
     lines.push(`        <time>${formatGpxTime(point.time)}</time>`);

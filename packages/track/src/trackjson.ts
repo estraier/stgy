@@ -15,7 +15,7 @@ export type TrackJsonPrecisionOptions = {
   coordinates?: number;
   times?: number;
   distances?: number;
-  elevations?: number;
+  altitudes?: number;
   heartRates?: number;
   cadences?: number;
   powers?: number;
@@ -28,7 +28,7 @@ const DEFAULT_TRACK_JSON_PRECISION = {
   coordinates: 5,
   times: 0,
   distances: 1,
-  elevations: 1,
+  altitudes: 1,
   heartRates: 1,
   cadences: 1,
   powers: 1,
@@ -286,7 +286,7 @@ function compactTrackJsonCoordinate(
   return coordinate.map((value, index) => {
     return roundNumber(
       value as number,
-      index < 2 ? precision.coordinates : precision.elevations
+      index < 2 ? precision.coordinates : precision.altitudes
     );
   });
 }
@@ -347,8 +347,8 @@ function getCoordinatePropertyPrecision(
     return precision.distances;
   }
 
-  if (name === "elevations") {
-    return precision.elevations;
+  if (name === "altitudes") {
+    return precision.altitudes;
   }
 
   if (name === "heartRates") {
@@ -938,9 +938,9 @@ function resolveTrackJsonPrecision(
       precision.distances,
       DEFAULT_TRACK_JSON_PRECISION.distances
     ),
-    elevations: normalizePrecision(
-      precision.elevations,
-      DEFAULT_TRACK_JSON_PRECISION.elevations
+    altitudes: normalizePrecision(
+      precision.altitudes,
+      DEFAULT_TRACK_JSON_PRECISION.altitudes
     ),
     heartRates: normalizePrecision(
       precision.heartRates,

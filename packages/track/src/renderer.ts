@@ -37,7 +37,7 @@ const TRACK_GRAPH_SMOOTHING_WINDOWS = [
 const TARGET_GRAPH_X_TICKS = 5;
 const TARGET_GRAPH_Y_TICKS = 5;
 const TRACK_GRAPH_SERIES_ORDER = [
-  "elevations",
+  "altitudes",
   "speeds",
   "cadences",
   "heartRates",
@@ -829,6 +829,9 @@ export class StgyTrackRenderer {
   }
 
   private formatHudLabel(name: string): string {
+    if (name === "altitudes") {
+      return "altitude";
+    }
     return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase();
   }
 
@@ -936,13 +939,13 @@ export class StgyTrackRenderer {
       this.appendHudItem(list, "distances", `${(distance / 1000).toFixed(2)} km`);
     }
 
-    const elevation = this.getCoordinatePropertyValue(
+    const altitude = this.getCoordinatePropertyValue(
       coordinateProperties,
-      "elevations",
+      "altitudes",
       index
     );
-    if (typeof elevation === "number" && Number.isFinite(elevation)) {
-      this.appendHudItem(list, "elevations", `${Math.round(elevation)} m`);
+    if (typeof altitude === "number" && Number.isFinite(altitude)) {
+      this.appendHudItem(list, "altitude", `${Math.round(altitude)} m`);
     }
 
     const heartRate = this.getCoordinatePropertyValue(
@@ -1349,7 +1352,7 @@ export class StgyTrackRenderer {
   }
 
   private formatGraphYValue(seriesName: string, value: number): string {
-    if (seriesName === "elevations") {
+    if (seriesName === "altitudes") {
       return `${value.toFixed(1)} m`;
     }
 
@@ -1375,7 +1378,7 @@ export class StgyTrackRenderer {
   private formatGraphYTickLabel(seriesName: string, value: number): string {
     const roundedValue = Math.round(value);
 
-    if (seriesName === "elevations") {
+    if (seriesName === "altitudes") {
       return `${roundedValue} m`;
     }
 
@@ -1400,7 +1403,7 @@ export class StgyTrackRenderer {
 
   private usesZeroGraphYMin(seriesName: string): boolean {
     return (
-      seriesName === "elevations" ||
+      seriesName === "altitudes" ||
       seriesName === "heartRates" ||
       seriesName === "cadences" ||
       seriesName === "powers" ||

@@ -485,7 +485,7 @@ Check:
 coordinates have about 5 decimal places
 times are integers
 distances have 1 decimal place
-elevations have 1 decimal place
+altitudes have 1 decimal place
 heartRates have 1 decimal place at most
 cadences have 1 decimal place at most
 powers have 1 decimal place at most
@@ -579,7 +579,7 @@ The graph redraws with the selected X axis.
 Try:
 
 ```text
-elevations
+altitudes
 heartRates
 cadences
 powers
@@ -624,7 +624,7 @@ Check:
 
 ```text
 Distance ticks show km
-Elevation ticks show m
+Altitude ticks show m
 Heart rate ticks show bpm
 Cadence ticks show rpm
 Power ticks show W
@@ -645,7 +645,7 @@ Ticks and units match the selected axes.
 For these series:
 
 ```text
-elevations
+altitudes
 heartRates
 cadences
 powers
@@ -680,7 +680,7 @@ Check:
 Moving pointer over the route updates the HUD
 Distance appears
 Time appears when available
-Elevation appears when available
+Altitude appears when available
 Heart rate appears when available
 Cadence appears when available
 Power appears when available

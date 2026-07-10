@@ -85,11 +85,11 @@ Coordinates follow GeoJSON order.
 Optional altitude may be present as the third value.
 
 ```text
-[longitude, latitude, elevation]
+[longitude, latitude, altitude]
 ```
 
-However, the preferred representation is to store elevation in
-`coordinateProperties.elevations`.
+However, the preferred representation is to store altitude in
+`coordinateProperties.altitudes`.
 
 Preferred coordinate precision is 5 decimal places.
 
@@ -136,7 +136,7 @@ Each array should have the same length as `geometry.coordinates`.
   "coordinateProperties": {
     "times": [1710000000, 1710000001],
     "distances": [0, 8.3],
-    "elevations": [12.3, 12.5],
+    "altitudes": [12.3, 12.5],
     "heartRates": [120, 121],
     "cadences": [80, 82],
     "powers": [150, 170],
@@ -151,7 +151,7 @@ Standard series:
 | --- | --- | --- |
 | `times` | seconds or milliseconds | Unix timestamp |
 | `distances` | m | Distance from route start |
-| `elevations` | m | Elevation |
+| `altitudes` | m | Altitude |
 | `heartRates` | bpm | Heart rate |
 | `cadences` | rpm | Cadence |
 | `powers` | W | Power |
@@ -164,7 +164,7 @@ Reserved standard names should not be reused for custom metrics.
 ```text
 times
 distances
-elevations
+altitudes
 heartRates
 cadences
 powers
@@ -325,7 +325,7 @@ Default precision:
 | coordinates | 5 decimal places |
 | times | integer |
 | distances | 1 decimal place |
-| elevations | 1 decimal place |
+| altitudes | 1 decimal place |
 | heartRates | 1 decimal place |
 | cadences | 1 decimal place |
 | powers | 1 decimal place |
@@ -395,7 +395,7 @@ For each bucket:
 coordinates   representative middle sample
 times         representative middle sample
 distances     representative middle sample
-elevations    average
+altitudes    average
 heartRates    average
 cadences      average
 powers        average
@@ -441,7 +441,7 @@ These series are not fill-forwarded:
 ```text
 times
 distances
-elevations
+altitudes
 speeds
 custom metrics
 ```
@@ -494,7 +494,7 @@ series already present in the file.
         "coordinateProperties": {
           "times": [1710000000, 1710000030, 1710000060],
           "distances": [0, 120.5, 241.0],
-          "elevations": [12.3, 15.8, 14.2],
+          "altitudes": [12.3, 15.8, 14.2],
           "heartRates": [120, 125, 129],
           "cadences": [80, 82, 79],
           "powers": [150, 180, 160],
@@ -519,7 +519,7 @@ coordinates has at least two points
 coordinateProperties arrays match coordinates length
 speeds are km/h
 distances are meters
-elevations are meters
+altitudes are meters
 times are Unix seconds or milliseconds
 numeric values are compacted
 unsafe metric names are not used

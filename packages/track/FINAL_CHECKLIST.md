@@ -315,7 +315,7 @@ Check:
 ```text
 graph panel appears
 X axis can switch distance / time / sample
-Y series can switch elevations / heartRates / cadences / powers / speeds
+Y series can switch altitudes / heartRates / cadences / powers / speeds
 smoothing changes only the graph
 HUD remains raw
 Y axis starts at 0 for standard series

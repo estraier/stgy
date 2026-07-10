@@ -210,7 +210,7 @@ const makeTrackWithGraph = () => ({
         coordinateProperties: {
           times: [1767222000, 1767222060, 1767222120],
           distances: [0, 210, 545],
-          elevations: [20, 21, 22],
+          altitudes: [20, 21, 22],
           heartRates: [118, 123, 128],
           powers: [130, 145, 160],
         },
@@ -543,7 +543,7 @@ describe("StgyTrackRenderer", () => {
             coordinateProperties: {
               times: [localTime - 60, localTime, localTime + 60],
               distances: [0, 210, 545],
-              elevations: [10, 20, 30],
+              altitudes: [10, 20, 30],
               heartRates: [120, 130, 140],
               cadences: [70, 80, 90],
               powers: [150, 180, 210],
@@ -577,7 +577,7 @@ describe("StgyTrackRenderer", () => {
     expect(overlay?.textContent).toContain("times: 2026/01/02 03:04:05");
     expect(overlay?.textContent).toContain("elapsed: 60s (00:01:00)");
     expect(overlay?.textContent).toContain("distances: 0.21 km");
-    expect(overlay?.textContent).toContain("elevations: 20 m");
+    expect(overlay?.textContent).toContain("altitude: 20 m");
     expect(overlay?.textContent).toContain("heart rates: 130 bpm");
     expect(overlay?.textContent).toContain("cadences: 80 rpm");
     expect(overlay?.textContent).toContain("powers: 180 W");
@@ -833,7 +833,7 @@ describe("StgyTrackRenderer", () => {
             title: "demo-toumi",
             description: "Converted from demo-toumi.fit",
             coordinateProperties: {
-              elevations: [10, 20],
+              altitudes: [10, 20],
             },
           },
         },
@@ -1049,7 +1049,7 @@ describe("StgyTrackRenderer", () => {
     }));
 
     expect(options).toEqual([
-      { value: "elevations", text: "elevations" },
+      { value: "altitudes", text: "altitude" },
       { value: "heartRates", text: "heart rates" },
       { value: "powers", text: "powers" },
     ]);
@@ -1085,7 +1085,7 @@ describe("StgyTrackRenderer", () => {
               powers: [130, 145, 160],
               cadences: [72, 75, 78],
               speeds: [18.5, 19.2, 20.1],
-              elevations: [20, 21, 22],
+              altitudes: [20, 21, 22],
             },
           },
         },
@@ -1102,7 +1102,7 @@ describe("StgyTrackRenderer", () => {
 
     expect(seriesSelect).not.toBeNull();
     expect(Array.from(seriesSelect?.options || []).map((option) => option.value)).toEqual([
-      "elevations",
+      "altitudes",
       "speeds",
       "cadences",
       "heartRates",

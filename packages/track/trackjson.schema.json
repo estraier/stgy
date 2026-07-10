@@ -93,7 +93,7 @@
         },
         {
           "type": "number",
-          "description": "Optional elevation."
+          "description": "Optional altitude."
         }
       ],
       "items": false
@@ -136,7 +136,7 @@
         "distances": {
           "$ref": "#/$defs/numberSeries"
         },
-        "elevations": {
+        "altitudes": {
           "$ref": "#/$defs/numberSeries"
         },
         "heartRates": {

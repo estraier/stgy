@@ -26,7 +26,7 @@ and includes a browser demo that converts FIT files to TrackJSON.
 - Coordinate HUD for route samples
 - Graph panel for route sample data
 - Graph X axis selection: distance / time / sample
-- Graph Y series selection: elevations / heartRates / cadences / powers / speeds
+- Graph Y series selection: altitudes / heartRates / cadences / powers / speeds
 - Graph smoothing with centered moving averages
 - FIT to TrackJSON conversion demo
 - Raw `.trj` and compressed `.trjgz` downloads
@@ -214,7 +214,7 @@ TrackJSON is a GeoJSON `FeatureCollection`.
         "coordinateProperties": {
           "times": [1710000000, 1710000001],
           "distances": [0, 8.3],
-          "elevations": [12.3, 12.5],
+          "altitudes": [12.3, 12.5],
           "heartRates": [120, 121],
           "cadences": [80, 82],
           "powers": [150, 170],
@@ -237,7 +237,7 @@ Standard coordinate properties:
 | --- | --- | --- |
 | `times` | seconds or milliseconds | Unix timestamp |
 | `distances` | m | Distance from start |
-| `elevations` | m | Elevation |
+| `altitudes` | m | Altitude |
 | `heartRates` | bpm | Heart rate |
 | `cadences` | rpm | Cadence |
 | `powers` | W | Power |
@@ -311,7 +311,7 @@ Displayed values:
 ```text
 times
 distances
-elevations
+altitudes
 heartRates
 cadences
 powers
@@ -336,7 +336,7 @@ sample
 Y series choices include:
 
 ```text
-elevations
+altitudes
 heartRates
 cadences
 powers
@@ -387,7 +387,7 @@ Current behavior:
 
 - Tick labels use integer formatting
 - Distance ticks include `km`
-- Elevation ticks include `m`
+- Altitude ticks include `m`
 - Heart rate ticks include `bpm`
 - Cadence ticks include `rpm`
 - Power ticks include `W`
@@ -399,7 +399,7 @@ Current behavior:
 For these standard series, the Y axis minimum is fixed to `0`.
 
 ```text
-elevations
+altitudes
 heartRates
 cadences
 powers
@@ -545,7 +545,7 @@ For each bucket:
 lat/lon      representative middle sample
 time         representative middle sample
 distance     representative middle sample
-elevation    average
+altitude     average
 heart rate   average
 cadence      average
 power        average
@@ -592,7 +592,7 @@ Default precision:
 | coordinates | 5 decimal places |
 | times | integer |
 | distances | 1 decimal place |
-| elevations | 1 decimal place |
+| altitudes | 1 decimal place |
 | heartRates | 1 decimal place |
 | cadences | 1 decimal place |
 | powers | 1 decimal place |
@@ -652,7 +652,7 @@ These series are not fill-forwarded:
 ```text
 times
 distances
-elevations
+altitudes
 speeds
 custom metrics
 ```

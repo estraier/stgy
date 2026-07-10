@@ -331,7 +331,7 @@ describe("scatter analysis", () => {
       heartRateBpm: 100,
       powerW: 120,
       distanceM: 0,
-      elevationM: 0,
+      altitudeM: 0,
     },
     {
       time: 10,
@@ -340,7 +340,7 @@ describe("scatter analysis", () => {
       heartRateBpm: 110,
       powerW: 140,
       distanceM: 100,
-      elevationM: 5,
+      altitudeM: 5,
     },
     {
       time: 20,
@@ -349,7 +349,7 @@ describe("scatter analysis", () => {
       heartRateBpm: 120,
       powerW: 160,
       distanceM: 200,
-      elevationM: 20,
+      altitudeM: 20,
     },
     {
       time: 40,
@@ -358,7 +358,7 @@ describe("scatter analysis", () => {
       heartRateBpm: 130,
       powerW: 180,
       distanceM: 300,
-      elevationM: 30,
+      altitudeM: 30,
     },
   ];
 
@@ -389,7 +389,7 @@ describe("scatter analysis", () => {
       "Efficiency",
       "Torque",
       "Grade",
-      "Elevation",
+      "Altitude",
     ]);
   });
 
@@ -440,6 +440,6 @@ test("exports the scatter metric table", () => {
     "efficiency",
     "estimatedTorqueNm",
     "gradePercent",
-    "elevationM",
+    "altitudeM",
   ]);
 });

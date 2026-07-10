@@ -1422,7 +1422,7 @@ function buildSummaryCards(activity: TrackActivity, trackJsonData: unknown): Sum
     cards.push({ label: "Average speed", value: `${formatNumber(avgSpeed, 1)} km/h`, icon: Gauge });
   }
   if (elevationGainM > 0) {
-    cards.push({ label: "Elevation", value: `${formatNumber(elevationGainM, 0)} m`, icon: Mountain });
+    cards.push({ label: "Elevation gain", value: `${formatNumber(elevationGainM, 0)} m`, icon: Mountain });
   }
   if (avgHeartRate) {
     cards.push({ label: "Mean HR", value: `${formatNumber(avgHeartRate, 1)} bpm`, icon: HeartPulse });
@@ -1589,14 +1589,14 @@ function getElevationGainM(points: TrackPoint[]): number {
   let previous: number | undefined;
 
   points.forEach((point) => {
-    if (!Number.isFinite(point.elevationM)) {
+    if (!Number.isFinite(point.altitudeM)) {
       return;
     }
-    const elevation = point.elevationM || 0;
-    if (previous != null && elevation > previous) {
-      gain += elevation - previous;
+    const altitude = point.altitudeM || 0;
+    if (previous != null && altitude > previous) {
+      gain += altitude - previous;
     }
-    previous = elevation;
+    previous = altitude;
   });
 
   return gain;

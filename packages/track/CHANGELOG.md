@@ -64,7 +64,7 @@ current development state.
 - Fix unsupported downsampling strategy validation so invalid strategies throw
   even when the activity is already below `maxPoints`.
 - Fix `.trj` loading from Python's `http.server`.
-- Fix TrackJSON upload/re-export path so `elevations` and other numeric series
+- Fix TrackJSON upload/re-export path so `altitudes` and other numeric series
   are compacted.
 - Fix tests that compared floating-point coordinates with exact equality.
 

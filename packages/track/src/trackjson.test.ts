@@ -84,7 +84,7 @@ describe("downsampleTrackJsonData", () => {
       [139.00009123, 35.00009123],
     ]);
     expect(feature.properties.coordinateProperties.times).toEqual([1000, 1003, 1006, 1009]);
-    expect(feature.properties.coordinateProperties.elevations).toEqual([
+    expect(feature.properties.coordinateProperties.altitudes).toEqual([
       100.123,
       103.123,
       106.123,
@@ -109,7 +109,7 @@ describe("downsampleTrackJsonData", () => {
     ]);
     expect(feature.properties.coordinateProperties.times).toEqual([1000, 1002, 1006, 1009]);
     expect(feature.properties.coordinateProperties.distances).toEqual([0, 20, 60, 90]);
-    expect(feature.properties.coordinateProperties.elevations).toEqual([
+    expect(feature.properties.coordinateProperties.altitudes).toEqual([
       100.123,
       102.623,
       106.623,
@@ -238,7 +238,7 @@ describe("compactTrackJsonData", () => {
     ]);
     expect(feature.properties.coordinateProperties.times).toEqual([1000, 1001, 1002]);
     expect(feature.properties.coordinateProperties.distances).toEqual([0, 10, 20]);
-    expect(feature.properties.coordinateProperties.elevations).toEqual([
+    expect(feature.properties.coordinateProperties.altitudes).toEqual([
       100.1,
       101.1,
       102.1,
@@ -326,7 +326,7 @@ function makeFeature(pointCount: number): any {
       coordinateProperties: {
         times: Array.from({ length: pointCount }, (_, index) => 1000 + index),
         distances: Array.from({ length: pointCount }, (_, index) => index * 10),
-        elevations: Array.from({ length: pointCount }, (_, index) => 100.123 + index),
+        altitudes: Array.from({ length: pointCount }, (_, index) => 100.123 + index),
         heartRates: Array.from({ length: pointCount }, (_, index) => 120 + index),
         cadences: Array.from({ length: pointCount }, (_, index) => 80 + index),
         powers: Array.from({ length: pointCount }, (_, index) => 150 + index),
