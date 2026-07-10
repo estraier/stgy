@@ -1614,42 +1614,83 @@ function appendPedalingSummaryLines(
   lines: TrackMetadataSummaryLine[],
   pedaling: Record<string, unknown>,
 ) {
-  appendDurationSummaryLine(lines, pedaling, "totalSeconds", "pedaling | time");
-  appendNumberSummaryLine(
-    lines,
+  const firstParts: string[] = [];
+  const secondParts: string[] = [];
+
+  appendDurationSummaryPart(firstParts, pedaling, "totalSeconds", "time");
+  appendNumberSummaryPart(
+    firstParts,
     pedaling,
     "averageSpeedKph",
-    "pedaling | speed",
+    "speed",
     "km/h",
   );
-  appendNumberSummaryLine(
-    lines,
+  appendNumberSummaryPart(
+    firstParts,
     pedaling,
     "averageCadenceRpm",
-    "pedaling | cadence",
+    "cadence",
     "rpm",
   );
-  appendNumberSummaryLine(
-    lines,
+  appendNumberSummaryPart(
+    secondParts,
     pedaling,
     "averageHeartRateBpm",
-    "pedaling | heart rate",
+    "heart rate",
     "bpm",
   );
-  appendNumberSummaryLine(
-    lines,
+  appendNumberSummaryPart(
+    secondParts,
     pedaling,
     "averagePowerW",
-    "pedaling | power",
+    "power",
     "W",
   );
-  appendNumberSummaryLine(
-    lines,
+  appendNumberSummaryPart(
+    secondParts,
     pedaling,
     "normalizedPowerW",
-    "pedaling | NP",
+    "NP",
     "W",
   );
+
+  appendPedalingStatsLine(lines, "pedaling-stats-primary", firstParts);
+  appendPedalingStatsLine(lines, "pedaling-stats-secondary", secondParts);
+}
+
+function appendDurationSummaryPart(
+  parts: string[],
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+) {
+  const value = getNumberProperty(record, key);
+  if (isFiniteNumber(value)) {
+    parts.push(`${label} ${formatDuration(value)}`);
+  }
+}
+
+function appendNumberSummaryPart(
+  parts: string[],
+  record: Record<string, unknown>,
+  key: string,
+  label: string,
+  unit: string,
+) {
+  const value = getNumberProperty(record, key);
+  if (isFiniteNumber(value)) {
+    parts.push(`${label} ${formatNumber(value, 1)} ${unit}`);
+  }
+}
+
+function appendPedalingStatsLine(
+  lines: TrackMetadataSummaryLine[],
+  key: string,
+  parts: string[],
+) {
+  if (parts.length > 0) {
+    lines.push({ key, text: `pedaling stats: ${parts.join(", ")}` });
+  }
 }
 
 function appendPedalingDynamicsSummaryLines(
