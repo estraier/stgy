@@ -1,17 +1,16 @@
 "use client";
 
 import { Config } from "@/config";
-import React, {
-  useRef,
-  useState,
-  useCallback,
-  useMemo,
-  forwardRef,
-  useImperativeHandle,
-} from "react";
+import React, { useRef, useState, useCallback, forwardRef, useImperativeHandle } from "react";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import ImageUploadDialog, { DialogFileItem, UploadResult } from "@/components/ImageUploadDialog";
-import { Upload as UploadIcon } from "lucide-react";
+import TrackUploadDialog, {
+  TrackDialogFileItem,
+  TrackUploadResult,
+} from "@/components/TrackUploadDialog";
+import { classifyEditorUploadFiles, getEditorUploadSelectionError } from "@/utils/uploadFiles";
+import { makeTrackMarkdown } from "@/utils/tracks";
+import { Upload as UploadIcon, X as CloseIcon } from "lucide-react";
 
 export type UploadImageEmbedButtonHandle = {
   openWithFiles: (files: File[]) => void;
@@ -24,47 +23,27 @@ type Props = {
 };
 
 function cryptoRandomId() {
-  if (typeof crypto !== "undefined" && "randomUUID" in crypto) return crypto.randomUUID();
+  if (typeof crypto !== "undefined" && "randomUUID" in crypto) {
+    return crypto.randomUUID();
+  }
   return Math.random().toString(36).slice(2);
 }
 
 const UploadImageEmbedButton = forwardRef<UploadImageEmbedButtonHandle, Props>(
   function UploadImageEmbedButton(
-    { onInsert, className = "", title = "Upload images" }: Props,
+    { onInsert, className = "", title = "Upload images or tracks" }: Props,
     ref,
   ) {
     const status = useRequireLogin();
     const userId = status.state === "authenticated" ? status.session.userId : undefined;
 
     const inputRef = useRef<HTMLInputElement>(null);
-    const [dialogFiles, setDialogFiles] = useState<DialogFileItem[] | null>(null);
-    const [showDialog, setShowDialog] = useState(false);
+    const [imageDialogFiles, setImageDialogFiles] = useState<DialogFileItem[] | null>(null);
+    const [trackDialogFiles, setTrackDialogFiles] = useState<TrackDialogFileItem[] | null>(null);
+    const [selectionError, setSelectionError] = useState<string | null>(null);
 
-    const textExts = useMemo(() => new Set(["txt", "text", "md", "markdown"]), []);
-    const imageExts = useMemo(
-      () =>
-        new Set(["jpg", "jpeg", "png", "webp", "heic", "heif", "tif", "tiff", "gif", "bmp", "svg"]),
-      [],
-    );
-
-    const isTextFile = useCallback(
-      (f: File) => {
-        const ext = f.name.toLowerCase().split(".").pop() || "";
-        return f.type.startsWith("text/") || f.type === "text/markdown" || textExts.has(ext);
-      },
-      [textExts],
-    );
-
-    const isImageFile = useCallback(
-      (f: File) => {
-        const ext = f.name.toLowerCase().split(".").pop() || "";
-        return f.type.startsWith("image/") || imageExts.has(ext);
-      },
-      [imageExts],
-    );
-
-    const normalizeText = useCallback((s: string) => {
-      const noBom = s.replace(/^\uFEFF/, "");
+    const normalizeText = useCallback((value: string) => {
+      const noBom = value.replace(/^\uFEFF/, "");
       const lf = noBom.replace(/\r\n?/g, "\n");
       const nfc = typeof lf.normalize === "function" ? lf.normalize("NFC") : lf;
       return nfc.endsWith("\n") ? nfc : nfc + "\n";
@@ -72,8 +51,15 @@ const UploadImageEmbedButton = forwardRef<UploadImageEmbedButtonHandle, Props>(
 
     const pickFiles = useCallback(() => {
       if (!userId) return;
+      setSelectionError(null);
       inputRef.current?.click();
     }, [userId]);
+
+    const resetNativeInput = useCallback((list: FileList | File[] | null) => {
+      if (inputRef.current && list instanceof FileList) {
+        inputRef.current.value = "";
+      }
+    }, []);
 
     const onFilesChosen = useCallback(
       async (list: FileList | File[] | null) => {
@@ -85,79 +71,95 @@ const UploadImageEmbedButton = forwardRef<UploadImageEmbedButtonHandle, Props>(
           return;
         }
 
+        setSelectionError(null);
         const files = Array.isArray(list) ? list : Array.from(list);
-        const textFiles = files.filter(isTextFile);
-        const imageFiles = files.filter(isImageFile);
+        const classified = classifyEditorUploadFiles(files);
 
-        if (textFiles.length > 0) {
+        const nextSelectionError = getEditorUploadSelectionError(classified);
+        if (nextSelectionError) {
+          setSelectionError(nextSelectionError);
+          resetNativeInput(list);
+          return;
+        }
+
+        if (classified.textFiles.length > 0) {
           const results = await Promise.all(
-            textFiles.map(async (f) => {
+            classified.textFiles.map(async (file) => {
               try {
-                const raw = await f.text();
+                const raw = await file.text();
                 return { ok: true as const, content: normalizeText(raw) };
-              } catch (e) {
-                return { ok: false as const, name: f.name, error: String(e) };
+              } catch (caught: unknown) {
+                return {
+                  ok: false as const,
+                  name: file.name,
+                  error: caught instanceof Error ? caught.message : String(caught),
+                };
               }
             }),
           );
-          const oks = results.filter((r) => r.ok) as { ok: true; content: string }[];
-          const errs = results.filter((r) => !r.ok) as { ok: false; name: string; error: string }[];
-          const parts: string[] = [];
-          if (oks.length > 0) parts.push(...oks.map((r) => r.content));
-          if (errs.length > 0)
-            parts.push(...errs.map((e) => `> Upload error: **${e.name}** — ${e.error}\n`));
+          const parts = results.map((result) =>
+            result.ok ? result.content : `> Upload error: **${result.name}** — ${result.error}\n`,
+          );
           if (parts.length > 0) onInsert(parts.join(""));
         }
 
-        if (imageFiles.length > 0 && userId) {
-          const limited = imageFiles.slice(0, Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE);
-          const mapped: DialogFileItem[] = limited.map((f) => ({
-            id: cryptoRandomId(),
-            file: f,
-            name: f.name,
-            type: f.type,
-            size: f.size,
-          }));
-          setDialogFiles(mapped);
-          setShowDialog(true);
+        if (classified.imageFiles.length > 0 && userId) {
+          const limited = classified.imageFiles.slice(0, Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE);
+          setImageDialogFiles(
+            limited.map((file) => ({
+              id: cryptoRandomId(),
+              file,
+              name: file.name,
+              type: file.type,
+              size: file.size,
+            })),
+          );
         }
 
-        if (inputRef.current && list instanceof FileList) inputRef.current.value = "";
+        if (classified.trackFiles.length > 0 && userId) {
+          const maxCount = Config.MEDIA_TRACK_COUNT_LIMIT_ONCE || 12;
+          const limited = classified.trackFiles.slice(0, maxCount);
+          setTrackDialogFiles(
+            limited.map((file) => ({
+              id: cryptoRandomId(),
+              file,
+              name: file.name,
+              type: file.type,
+              size: file.size,
+            })),
+          );
+        }
+
+        resetNativeInput(list);
       },
-      [onInsert, userId, isTextFile, isImageFile, normalizeText],
+      [normalizeText, onInsert, resetNativeInput, userId],
     );
 
-    const handleComplete = useCallback(
+    const handleImageComplete = useCallback(
       (results: UploadResult[]) => {
-        const oks = results.filter((r): r is Extract<UploadResult, { ok: true }> => r.ok);
-        const errs = results.filter((r): r is Extract<UploadResult, { ok: false }> => !r.ok);
-
-        if (oks.length > 0 || errs.length > 0) {
-          const useGrid = true;
-          const mdParts: string[] = [];
-
-          if (oks.length > 0) {
-            mdParts.push(
-              ...oks.map((r) => `![](/images/${r.objectKey})${useGrid ? "{grid}" : ""}`),
-            );
-          }
-          if (errs.length > 0) {
-            mdParts.push(...errs.map((e) => `> Upload error: **${e.name}** — ${e.error}`));
-          }
-
-          onInsert(mdParts.join("\n") + "\n");
-        }
-
-        setShowDialog(false);
-        setDialogFiles(null);
+        const markdown = results.map((result) =>
+          result.ok
+            ? `![](/images/${result.objectKey}){grid}`
+            : `> Upload error: **${result.name}** — ${result.error}`,
+        );
+        if (markdown.length > 0) onInsert(markdown.join("\n") + "\n");
+        setImageDialogFiles(null);
       },
       [onInsert],
     );
 
-    const handleClose = useCallback(() => {
-      setShowDialog(false);
-      setDialogFiles(null);
-    }, []);
+    const handleTrackComplete = useCallback(
+      (results: TrackUploadResult[]) => {
+        const markdown = results.map((result) =>
+          result.ok
+            ? makeTrackMarkdown({ previewKey: result.previewKey })
+            : `> Upload error: **${result.name}** — ${result.error}`,
+        );
+        if (markdown.length > 0) onInsert(markdown.join("\n\n") + "\n");
+        setTrackDialogFiles(null);
+      },
+      [onInsert],
+    );
 
     useImperativeHandle(
       ref,
@@ -172,19 +174,27 @@ const UploadImageEmbedButton = forwardRef<UploadImageEmbedButtonHandle, Props>(
     const disabled = status.state !== "authenticated";
 
     return (
-      <div className={"relative " + className}>
+      <div className={`relative ${className}`}>
         <input
           ref={inputRef}
           type="file"
-          accept={`${Config.IMAGE_ALLOWED_TYPES},${Config.TEXT_ALLOWED_TYPES}`}
+          accept={[
+            Config.IMAGE_ALLOWED_TYPES,
+            Config.TEXT_ALLOWED_TYPES,
+            Config.TRACK_ALLOWED_TYPES,
+          ].join(",")}
           multiple
           className="hidden"
-          onChange={(e) => onFilesChosen(e.target.files)}
+          onChange={(event) => void onFilesChosen(event.target.files)}
           disabled={disabled}
         />
         <button
           type="button"
-          className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
+          className={
+            "inline-flex h-6 px-2 items-center justify-center rounded border " +
+            "border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 " +
+            "disabled:opacity-50 leading-none"
+          }
           onClick={pickFiles}
           disabled={disabled}
           title={title}
@@ -194,13 +204,44 @@ const UploadImageEmbedButton = forwardRef<UploadImageEmbedButtonHandle, Props>(
           </span>
         </button>
 
-        {showDialog && dialogFiles && userId && (
+        {selectionError && (
+          <div
+            className={
+              "absolute left-0 top-full z-[1200] mt-1 flex w-80 max-w-[80vw] " +
+              "items-start gap-2 rounded border border-red-300 bg-red-50 px-2 py-1.5 " +
+              "text-xs text-red-700 shadow"
+            }
+            role="alert"
+          >
+            <span className="flex-1">{selectionError}</span>
+            <button
+              type="button"
+              className="shrink-0 rounded p-0.5 hover:bg-red-100"
+              onClick={() => setSelectionError(null)}
+              aria-label="Dismiss upload error"
+            >
+              <CloseIcon className="h-3.5 w-3.5" aria-hidden />
+            </button>
+          </div>
+        )}
+
+        {imageDialogFiles && userId && (
           <ImageUploadDialog
             userId={userId}
-            files={dialogFiles}
+            files={imageDialogFiles}
             maxCount={Config.MEDIA_IMAGE_COUNT_LIMIT_ONCE}
-            onClose={handleClose}
-            onComplete={handleComplete}
+            onClose={() => setImageDialogFiles(null)}
+            onComplete={handleImageComplete}
+          />
+        )}
+
+        {trackDialogFiles && userId && (
+          <TrackUploadDialog
+            userId={userId}
+            files={trackDialogFiles}
+            maxCount={Config.MEDIA_TRACK_COUNT_LIMIT_ONCE || 12}
+            onClose={() => setTrackDialogFiles(null)}
+            onComplete={handleTrackComplete}
           />
         )}
       </div>

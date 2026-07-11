@@ -1,16 +1,26 @@
 import type { TrackObject } from "@/api/models";
 
-export type TrackFileKind = "FIT" | "TRJGZ";
+export type StoredTrackFileKind = "FIT" | "TRJGZ";
+export type TrackFileKind = StoredTrackFileKind | "GPX" | "TRJ";
 
 export function getTrackFileKind(filename: string): TrackFileKind | null {
   const lower = filename.trim().toLowerCase();
   if (lower.endsWith(".fit")) return "FIT";
+  if (lower.endsWith(".gpx")) return "GPX";
+  if (lower.endsWith(".trj")) return "TRJ";
   if (lower.endsWith(".trjgz")) return "TRJGZ";
   return null;
 }
 
+export function getTrackUploadFilename(filename: string): string {
+  const kind = getTrackFileKind(filename);
+  if (kind !== "GPX" && kind !== "TRJ") return filename;
+  return filename.replace(/\.(?:gpx|trj)$/i, ".trjgz");
+}
+
 export function getTrackUploadContentType(filename: string): string {
-  return getTrackFileKind(filename) === "TRJGZ" ? "application/gzip" : "application/octet-stream";
+  const kind = getTrackFileKind(filename);
+  return kind === "FIT" ? "application/octet-stream" : "application/gzip";
 }
 
 export function getTrackUploadDialogGridClass(itemCount: number): string {
@@ -24,8 +34,9 @@ export function restPathFromTrackKey(key: string, userId: string): string {
   return key.startsWith(prefix) ? key.slice(prefix.length) : key;
 }
 
-export function getTrackObjectKind(track: Pick<TrackObject, "key">): TrackFileKind | null {
-  return getTrackFileKind(track.key);
+export function getTrackObjectKind(track: Pick<TrackObject, "key">): StoredTrackFileKind | null {
+  const kind = getTrackFileKind(track.key);
+  return kind === "FIT" || kind === "TRJGZ" ? kind : null;
 }
 
 export function makeTrackMarkdown(track: Pick<TrackObject, "previewKey">): string {

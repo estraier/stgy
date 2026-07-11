@@ -1,4 +1,4 @@
-import { gzipSync } from "zlib";
+import { gunzipSync, gzipSync } from "zlib";
 import {
   downsampleTrackActivity,
   obfuscateFitPrivacy,
@@ -21,6 +21,7 @@ import {
   formatTrackPreviewStartTime,
   makeFitPreview,
   makeFitPreviewJson,
+  makeGpxPreview,
   makeTrackJsonPreview,
   makeTrackJsonPreviewJson,
   makeTrackUploadPreview,
@@ -28,6 +29,7 @@ import {
   normalizeTrackObfuscationDistance,
   prepareTrackUploadPayload,
 } from "./trackPreview";
+import { parseGpxText } from "stgy-track/gpx";
 
 jest.mock("stgy-track/fit", () => ({
   downsampleTrackActivity: jest.fn(),
@@ -43,6 +45,10 @@ jest.mock("stgy-track/trackjson", () => ({
   parseTrackJsonData: jest.fn(),
 }));
 
+jest.mock("stgy-track/gpx", () => ({
+  parseGpxText: jest.fn(),
+}));
+
 const obfuscateFitPrivacyMock = jest.mocked(obfuscateFitPrivacy);
 const parseFitBytesMock = jest.mocked(parseFitBytes);
 const downsampleTrackActivityMock = jest.mocked(downsampleTrackActivity);
@@ -51,6 +57,7 @@ const trackJsonDataToTrackActivityMock = jest.mocked(trackJsonDataToTrackActivit
 const parseTrackJsonDataMock = jest.mocked(parseTrackJsonData);
 const downsampleTrackJsonDataMock = jest.mocked(downsampleTrackJsonData);
 const compactTrackJsonDataMock = jest.mocked(compactTrackJsonData);
+const parseGpxTextMock = jest.mocked(parseGpxText);
 
 beforeEach(() => {
   jest.clearAllMocks();
@@ -92,6 +99,33 @@ test("builds a FIT preview with uniform 3000-point downsampling and metadata", a
   });
   expect(trackActivityToTrackJsonMock).toHaveBeenCalledWith(preview, {
     pretty: false,
+  });
+});
+
+test("builds a GPX preview with uniform downsampling", async () => {
+  const activity = {
+    metadata: {
+      startTime: 1_700_000_000,
+      totalDistanceM: 20_000,
+      totalElapsedTime: 3600,
+    },
+    points: new Array(4000),
+  };
+  const preview = { points: new Array(3000) };
+
+  parseGpxTextMock.mockReturnValue(activity as never);
+  downsampleTrackActivityMock.mockReturnValue(preview as never);
+  trackActivityToTrackJsonMock.mockReturnValue('{"type":"FeatureCollection"}');
+
+  await expect(makeGpxPreview("<gpx />")).resolves.toEqual({
+    json: '{"type":"FeatureCollection"}',
+    metadata: activity.metadata,
+  });
+  expect(parseGpxTextMock).toHaveBeenCalledWith("<gpx />");
+  expect(downsampleTrackActivityMock).toHaveBeenCalledWith(activity, {
+    maxPoints: TRACK_UPLOAD_PREVIEW_MAX_POINTS,
+    strategy: "uniform",
+    preserveEndpoints: true,
   });
 });
 
@@ -156,14 +190,41 @@ test("decompresses a TRJGZ file before building its preview", async () => {
   expect(parseTrackJsonDataMock).toHaveBeenCalledWith(text);
 });
 
+test("reads GPX and TRJ files for upload previews", async () => {
+  const activity = { metadata: {}, points: [] };
+  const data = { type: "FeatureCollection", features: [] };
+  const bytes = (value: string) => new TextEncoder().encode(value).buffer;
+
+  parseGpxTextMock.mockReturnValue(activity as never);
+  parseTrackJsonDataMock.mockReturnValue(data);
+  trackJsonDataToTrackActivityMock.mockReturnValue(activity as never);
+  downsampleTrackActivityMock.mockReturnValue(activity as never);
+  downsampleTrackJsonDataMock.mockReturnValue(data);
+  compactTrackJsonDataMock.mockReturnValue(data);
+  trackActivityToTrackJsonMock.mockReturnValue(JSON.stringify(data));
+
+  await expect(
+    makeTrackUploadPreview({
+      name: "ride.gpx",
+      arrayBuffer: jest.fn().mockResolvedValue(bytes("<gpx />")),
+    }),
+  ).resolves.toEqual({ json: JSON.stringify(data), metadata: {} });
+  await expect(
+    makeTrackUploadPreview({
+      name: "ride.trj",
+      arrayBuffer: jest.fn().mockResolvedValue(bytes(JSON.stringify(data))),
+    }),
+  ).resolves.toEqual({ json: JSON.stringify(data), metadata: {} });
+});
+
 test("rejects unsupported upload formats", async () => {
   const file = {
-    name: "ride.gpx",
+    name: "ride.tcx",
     arrayBuffer: jest.fn(),
   };
 
   await expect(makeTrackUploadPreview(file)).rejects.toThrow(
-    "Only FIT and TRJGZ files are supported.",
+    "Only FIT, GPX, TRJ, and TRJGZ files are supported.",
   );
   expect(file.arrayBuffer).not.toHaveBeenCalled();
 });
@@ -229,15 +290,12 @@ test("caps default and edited obfuscation distances at five percent", () => {
   expect(normalizeTrackObfuscationDistance(-10, 20_000)).toBe(0);
 });
 
-test("rewrites only enabled FIT upload payloads", async () => {
+test("prepares original and obfuscated FIT upload payloads", async () => {
   const originalBytes = new Uint8Array([1, 2, 3]);
   const outputBytes = new Uint8Array([4, 5, 6]);
-  const file = {
-    name: "ride.fit",
+  const file = new File([originalBytes], "ride.fit", {
     type: "application/octet-stream",
-    size: originalBytes.byteLength,
-    arrayBuffer: jest.fn().mockResolvedValue(originalBytes.buffer),
-  } as unknown as File;
+  });
   obfuscateFitPrivacyMock.mockReturnValue(outputBytes);
 
   await expect(
@@ -246,31 +304,65 @@ test("rewrites only enabled FIT upload payloads", async () => {
       startDistanceM: 1000,
       endDistanceM: 1000,
     }),
-  ).resolves.toBe(file);
+  ).resolves.toEqual({
+    payload: file,
+    filename: "ride.fit",
+    contentType: "application/octet-stream",
+  });
 
-  const payload = await prepareTrackUploadPayload(file, {
+  const prepared = await prepareTrackUploadPayload(file, {
     enabled: true,
     startDistanceM: 1100,
     endDistanceM: 1200,
   });
 
-  expect(payload).toBeInstanceOf(Blob);
-  expect(payload.size).toBe(outputBytes.byteLength);
-  expect(obfuscateFitPrivacyMock).toHaveBeenCalledWith(originalBytes.buffer, {
+  expect(prepared.filename).toBe("ride.fit");
+  expect(prepared.contentType).toBe("application/octet-stream");
+  expect(prepared.payload).toBeInstanceOf(Blob);
+  expect(prepared.payload.size).toBe(outputBytes.byteLength);
+  expect(obfuscateFitPrivacyMock).toHaveBeenCalledWith(expect.any(ArrayBuffer), {
     startDistanceM: 1100,
     endDistanceM: 1200,
   });
+});
 
+test("keeps TRJGZ uploads unchanged", async () => {
+  const file = new File([new Uint8Array([1, 2, 3])], "ride.trjgz", {
+    type: "application/gzip",
+  });
 
-  const trackJsonFile = {
-    ...file,
-    name: "ride.trjgz",
-  } as File;
-  await expect(
-    prepareTrackUploadPayload(trackJsonFile, {
-      enabled: true,
-      startDistanceM: 1100,
-      endDistanceM: 1200,
-    }),
-  ).resolves.toBe(trackJsonFile);
+  await expect(prepareTrackUploadPayload(file)).resolves.toEqual({
+    payload: file,
+    filename: "ride.trjgz",
+    contentType: "application/gzip",
+  });
+});
+
+test("converts GPX and TRJ uploads to gzipped TrackJSON", async () => {
+  const activity = { metadata: {}, points: [] };
+  const data = { type: "FeatureCollection", features: [] };
+  const compact = { type: "FeatureCollection", features: [], compact: true };
+
+  parseGpxTextMock.mockReturnValue(activity as never);
+  trackActivityToTrackJsonMock.mockReturnValue(JSON.stringify(data));
+  parseTrackJsonDataMock.mockReturnValue(data);
+  compactTrackJsonDataMock.mockReturnValue(compact);
+
+  const gpx = await prepareTrackUploadPayload(
+    new File(["<gpx />"], "ride.gpx", { type: "application/gpx+xml" }),
+  );
+  const trj = await prepareTrackUploadPayload(
+    new File([JSON.stringify(data)], "route.trj", { type: "application/json" }),
+  );
+
+  expect(gpx.filename).toBe("ride.trjgz");
+  expect(gpx.contentType).toBe("application/gzip");
+  expect(gunzipSync(Buffer.from(await gpx.payload.arrayBuffer())).toString()).toBe(
+    JSON.stringify(data),
+  );
+  expect(trj.filename).toBe("route.trjgz");
+  expect(trj.contentType).toBe("application/gzip");
+  expect(gunzipSync(Buffer.from(await trj.payload.arrayBuffer())).toString()).toBe(
+    JSON.stringify(compact),
+  );
 });

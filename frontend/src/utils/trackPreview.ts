@@ -1,5 +1,5 @@
 import type { TrackActivityMetadata } from "stgy-track/activity";
-import { getTrackFileKind } from "./tracks";
+import { getTrackFileKind, getTrackUploadContentType, getTrackUploadFilename } from "./tracks";
 
 export const TRACK_UPLOAD_PREVIEW_MAX_POINTS = 3000;
 export const TRACK_OBFUSCATION_MIN_DISTANCE_M = 1000;
@@ -27,6 +27,12 @@ export type TrackObfuscationDistances = {
   endDistanceM: number;
 };
 
+export type PreparedTrackUpload = {
+  payload: Blob | File;
+  filename: string;
+  contentType: string;
+};
+
 type TrackPreviewFile = Pick<File, "name" | "arrayBuffer">;
 
 export async function makeTrackUploadPreview(
@@ -38,11 +44,17 @@ export async function makeTrackUploadPreview(
   if (kind === "FIT") {
     return makeFitPreview(await file.arrayBuffer(), maxPoints, obfuscation);
   }
+  if (kind === "GPX") {
+    return makeGpxPreview(decodeUtf8(await file.arrayBuffer()), maxPoints);
+  }
+  if (kind === "TRJ") {
+    return makeTrackJsonPreview(decodeUtf8(await file.arrayBuffer()), maxPoints);
+  }
   if (kind === "TRJGZ") {
     const text = await decompressGzipText(await file.arrayBuffer());
     return makeTrackJsonPreview(text, maxPoints);
   }
-  throw new Error("Only FIT and TRJGZ files are supported.");
+  throw new Error("Only FIT, GPX, TRJ, and TRJGZ files are supported.");
 }
 
 export async function makeTrackUploadPreviewJson(
@@ -83,6 +95,25 @@ export async function makeFitPreviewJson(
   maxPoints = TRACK_UPLOAD_PREVIEW_MAX_POINTS,
 ): Promise<string> {
   return (await makeFitPreview(bytes, maxPoints)).json;
+}
+
+export async function makeGpxPreview(
+  text: string,
+  maxPoints = TRACK_UPLOAD_PREVIEW_MAX_POINTS,
+): Promise<TrackUploadPreview> {
+  const [fit, gpx] = await Promise.all([import("stgy-track/fit"), import("stgy-track/gpx")]);
+  const activity = gpx.parseGpxText(text);
+  const preview = fit.downsampleTrackActivity(activity, {
+    maxPoints,
+    strategy: "uniform",
+    preserveEndpoints: true,
+  });
+  return {
+    json: fit.trackActivityToTrackJson(preview, {
+      pretty: false,
+    }),
+    metadata: pickPreviewMetadata(activity.metadata),
+  };
 }
 
 export async function makeTrackJsonPreview(
@@ -142,19 +173,51 @@ export function normalizeTrackObfuscationDistance(
 export async function prepareTrackUploadPayload(
   file: File,
   obfuscation?: TrackUploadObfuscationOptions,
-): Promise<Blob | File> {
-  if (getTrackFileKind(file.name) !== "FIT" || !obfuscation?.enabled) {
-    return file;
+): Promise<PreparedTrackUpload> {
+  const kind = getTrackFileKind(file.name);
+  if (!kind) {
+    throw new Error("Only FIT, GPX, TRJ, and TRJGZ files are supported.");
   }
 
-  const fit = await import("stgy-track/fit");
-  const output = fit.obfuscateFitPrivacy(await file.arrayBuffer(), {
-    startDistanceM: obfuscation.startDistanceM,
-    endDistanceM: obfuscation.endDistanceM,
-  });
-  return new Blob([copyUint8ArrayToArrayBuffer(output)], {
-    type: "application/octet-stream",
-  });
+  const filename = getTrackUploadFilename(file.name);
+  const contentType = getTrackUploadContentType(filename);
+
+  if (kind === "FIT") {
+    if (!obfuscation?.enabled) {
+      return { payload: file, filename, contentType };
+    }
+    const fit = await import("stgy-track/fit");
+    const output = fit.obfuscateFitPrivacy(await file.arrayBuffer(), {
+      startDistanceM: obfuscation.startDistanceM,
+      endDistanceM: obfuscation.endDistanceM,
+    });
+    return {
+      payload: new Blob([copyUint8ArrayToArrayBuffer(output)], { type: contentType }),
+      filename,
+      contentType,
+    };
+  }
+
+  if (kind === "TRJGZ") {
+    return { payload: file, filename, contentType };
+  }
+
+  const sourceText = decodeUtf8(await file.arrayBuffer());
+  let trackJson: string;
+  if (kind === "GPX") {
+    const [fit, gpx] = await Promise.all([import("stgy-track/fit"), import("stgy-track/gpx")]);
+    trackJson = fit.trackActivityToTrackJson(gpx.parseGpxText(sourceText), { pretty: false });
+  } else {
+    const trackjson = await import("stgy-track/trackjson");
+    const parsed = trackjson.parseTrackJsonData(sourceText);
+    trackJson = JSON.stringify(trackjson.compactTrackJsonData(parsed));
+  }
+
+  return {
+    payload: await compressGzipText(trackJson),
+    filename,
+    contentType,
+  };
 }
 
 function createTrackObfuscationDistance(
@@ -265,6 +328,21 @@ function formatNumber(value: number, fractionDigits: number): string {
 
 function isFiniteNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value);
+}
+
+function decodeUtf8(buffer: ArrayBuffer): string {
+  return new TextDecoder("utf-8").decode(buffer);
+}
+
+async function compressGzipText(text: string): Promise<Blob> {
+  if (typeof CompressionStream === "undefined") {
+    throw new Error("This browser does not support TRJGZ compression.");
+  }
+
+  const stream = new Blob([text]).stream().pipeThrough(new CompressionStream("gzip"));
+  return new Blob([await new Response(stream).arrayBuffer()], {
+    type: "application/gzip",
+  });
 }
 
 async function decompressGzipText(buffer: ArrayBuffer): Promise<string> {

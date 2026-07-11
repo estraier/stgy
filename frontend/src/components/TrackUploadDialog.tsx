@@ -20,11 +20,7 @@ import {
   type TrackUploadObfuscationOptions,
   type TrackUploadPreviewMetadata,
 } from "@/utils/trackPreview";
-import {
-  getTrackFileKind,
-  getTrackUploadContentType,
-  getTrackUploadDialogGridClass,
-} from "@/utils/tracks";
+import { getTrackFileKind, getTrackUploadDialogGridClass } from "@/utils/tracks";
 import TrackPreviewMap from "@/components/TrackPreviewMap";
 
 export type TrackDialogFileItem = {
@@ -36,7 +32,7 @@ export type TrackDialogFileItem = {
 };
 
 export type TrackUploadResult =
-  | { ok: true; objectKey: string }
+  | { ok: true; objectKey: string; previewKey: string }
   | { ok: false; error: string; name: string };
 
 type UploadStatus = "pending" | "uploading" | "finalizing" | "done" | "error";
@@ -87,7 +83,7 @@ function createSelectedItem(file: TrackDialogFileItem): SelectedItem {
     ...file,
     status: "pending",
     previewStatus: supported ? "loading" : "error",
-    previewError: supported ? undefined : "Only FIT and TRJGZ files are supported.",
+    previewError: supported ? undefined : "Only FIT, GPX, TRJ, and TRJGZ files are supported.",
     obfuscateCoordinates: false,
     obfuscateStartDistanceM: 1000,
     obfuscateEndDistanceM: 1000,
@@ -243,10 +239,18 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
   );
 
   const selectedBytes = useMemo(() => items.reduce((sum, item) => sum + item.size, 0), [items]);
+  const knownUploadBytes = useMemo(
+    () =>
+      items.reduce((sum, item) => {
+        const kind = getTrackFileKind(item.name);
+        return kind === "FIT" || kind === "TRJGZ" ? sum + item.size : sum;
+      }, 0),
+    [items],
+  );
   const singleLimit = quota ? quota.limitSingleBytes : Config.MEDIA_TRACK_BYTE_LIMIT;
   const monthlyLimit = quota ? quota.limitMonthlyBytes : Config.MEDIA_TRACK_BYTE_LIMIT_PER_MONTH;
   const knownQuotaExceeded = Boolean(
-    monthlyLimit && quota && quota.bytesTotal + selectedBytes > monthlyLimit,
+    monthlyLimit && quota && quota.bytesTotal + knownUploadBytes > monthlyLimit,
   );
   const previewsLoading = items.some((item) => item.previewStatus === "loading");
   const invalidItems = useMemo(
@@ -254,7 +258,11 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
       items.filter(
         (item) =>
           !getTrackFileKind(item.name) ||
-          Boolean(singleLimit && item.size > singleLimit) ||
+          Boolean(
+            singleLimit &&
+              (getTrackFileKind(item.name) === "FIT" || getTrackFileKind(item.name) === "TRJGZ") &&
+              item.size > singleLimit,
+          ) ||
           item.previewStatus === "error",
       ),
     [items, singleLimit],
@@ -271,12 +279,12 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
     for (const item of items) {
       const kind = getTrackFileKind(item.name);
       if (!kind) {
-        const message = "Only FIT and TRJGZ files can be uploaded.";
+        const message = "Only FIT, GPX, TRJ, and TRJGZ files can be uploaded.";
         setItemState(item.id, { status: "error", error: message });
         results.push({ ok: false, error: message, name: item.name });
         continue;
       }
-      if (singleLimit && item.size > singleLimit) {
+      if (singleLimit && (kind === "FIT" || kind === "TRJGZ") && item.size > singleLimit) {
         const message = `File exceeds the single-file limit (${formatBytes(singleLimit)}).`;
         setItemState(item.id, { status: "error", error: message });
         results.push({ ok: false, error: message, name: item.name });
@@ -285,20 +293,32 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
 
       try {
         setItemState(item.id, { status: "uploading", error: undefined });
-        const contentType = getTrackUploadContentType(item.name);
-        const payload = await prepareTrackUploadPayload(item.file, getItemObfuscation(item));
-        const presigned = await presignTrackUpload(userId, item.name, payload.size);
+        const prepared = await prepareTrackUploadPayload(item.file, getItemObfuscation(item));
+        if (singleLimit && prepared.payload.size > singleLimit) {
+          throw new Error(
+            `Converted file exceeds the single-file limit (${formatBytes(singleLimit)}).`,
+          );
+        }
+        const presigned = await presignTrackUpload(
+          userId,
+          prepared.filename,
+          prepared.payload.size,
+        );
         await uploadToPresigned(
           presigned,
-          payload,
-          item.name,
-          presigned.fields["Content-Type"] || contentType,
+          prepared.payload,
+          prepared.filename,
+          presigned.fields["Content-Type"] || prepared.contentType,
         );
 
         setItemState(item.id, { status: "finalizing" });
         const finalized = await finalizeTrack(userId, presigned.objectKey);
         setItemState(item.id, { status: "done" });
-        results.push({ ok: true, objectKey: finalized.master.key });
+        results.push({
+          ok: true,
+          objectKey: finalized.master.key,
+          previewKey: finalized.master.previewKey,
+        });
       } catch (caught: unknown) {
         const message = caught instanceof Error ? caught.message : String(caught);
         setItemState(item.id, { status: "error", error: message });
@@ -364,7 +384,10 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
           <ul className={`grid ${gridClass} gap-3 justify-center`}>
             {items.map((item) => {
               const kind = getTrackFileKind(item.name);
-              const oversized = Boolean(singleLimit && item.size > singleLimit);
+              const sourceSizeIsUploadSize = kind === "FIT" || kind === "TRJGZ";
+              const oversized = Boolean(
+                sourceSizeIsUploadSize && singleLimit && item.size > singleLimit,
+              );
               const maxObfuscationDistanceM = getTrackObfuscationMaxDistance(
                 item.previewMetadata?.totalDistanceM,
               );
@@ -456,8 +479,7 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                             value={item.obfuscateStartDistanceM}
                             disabled={busy || !item.obfuscateCoordinates}
                             className={
-                              "w-[72px] rounded border border-gray-300 " +
-                              "px-1 py-0.5 text-right"
+                              "w-[72px] rounded border border-gray-300 " + "px-1 py-0.5 text-right"
                             }
                             onChange={(event) => {
                               setItemState(item.id, {
@@ -483,8 +505,7 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                             value={item.obfuscateEndDistanceM}
                             disabled={busy || !item.obfuscateCoordinates}
                             className={
-                              "w-[72px] rounded border border-gray-300 " +
-                              "px-1 py-0.5 text-right"
+                              "w-[72px] rounded border border-gray-300 " + "px-1 py-0.5 text-right"
                             }
                             onChange={(event) => {
                               setItemState(item.id, {
@@ -518,7 +539,7 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                     )}
                     {!kind && (
                       <div className="text-[11px] text-red-600">
-                        Only FIT and TRJGZ files are supported.
+                        Only FIT, GPX, TRJ, and TRJGZ files are supported.
                       </div>
                     )}
                     {item.previewStatus === "error" && item.previewError && (
