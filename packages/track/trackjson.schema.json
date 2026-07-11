@@ -201,6 +201,12 @@
         "totalDistanceM": {
           "type": "number"
         },
+        "ascentM": {
+          "type": "number"
+        },
+        "descentM": {
+          "type": "number"
+        },
         "totalTimerTime": {
           "type": "number"
         },

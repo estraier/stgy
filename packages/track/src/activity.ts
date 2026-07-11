@@ -79,6 +79,8 @@ export type TrackActivityMetadata = {
   totalElapsedTime?: number;
   totalTimerTime?: number;
   totalDistanceM?: number;
+  ascentM?: number;
+  descentM?: number;
   analysis?: TrackActivityAnalysisMetadata;
   statistics?: TrackActivityStatistics;
   training?: TrackActivityTraining;
@@ -583,6 +585,8 @@ function getTrimmedElapsedTime(points: TrackPoint[]): number {
 }
 
 function clearComputedMetadata(metadata: TrackActivityMetadata) {
+  delete metadata.ascentM;
+  delete metadata.descentM;
   delete metadata.analysis;
   delete metadata.statistics;
   delete metadata.training;
@@ -850,10 +854,16 @@ function getActivityEndTime(activity: TrackActivity): number | undefined {
   return undefined;
 }
 
+export type ApplyComputedMetadataOptions = {
+  preserveElevation?: boolean;
+};
+
 export function applyComputedMetadata(
   metadata: TrackActivityMetadata,
   points: TrackPoint[],
+  options: ApplyComputedMetadataOptions = {},
 ) {
+  applyElevationMetadata(metadata, points, options.preserveElevation === true);
   metadata.analysis = buildActivityAnalysisMetadata();
 
   const statistics = buildActivityStatistics(points);
@@ -895,6 +905,59 @@ export function applyComputedMetadata(
   } else {
     delete metadata.pedaling;
   }
+}
+
+function applyElevationMetadata(
+  metadata: TrackActivityMetadata,
+  points: TrackPoint[],
+  preserveExisting: boolean,
+) {
+  const elevation = calculateTrackAscentDescent(points);
+  if (!elevation) {
+    if (!preserveExisting) {
+      delete metadata.ascentM;
+      delete metadata.descentM;
+    }
+    return;
+  }
+
+  if (!preserveExisting || !isFiniteNumber(metadata.ascentM)) {
+    metadata.ascentM = elevation.ascentM;
+  }
+  if (!preserveExisting || !isFiniteNumber(metadata.descentM)) {
+    metadata.descentM = elevation.descentM;
+  }
+}
+
+export function calculateTrackAscentDescent(
+  points: TrackPoint[],
+): { ascentM: number; descentM: number } | undefined {
+  let ascentM = 0;
+  let descentM = 0;
+  let previousAltitudeM: number | undefined;
+  let altitudeCount = 0;
+
+  points.forEach((point) => {
+    if (!isFiniteNumber(point.altitudeM)) {
+      if (Object.keys(point).length === 0) {
+        previousAltitudeM = undefined;
+      }
+      return;
+    }
+
+    altitudeCount += 1;
+    if (isFiniteNumber(previousAltitudeM)) {
+      const deltaM = point.altitudeM - previousAltitudeM;
+      if (deltaM > 0) {
+        ascentM += deltaM;
+      } else if (deltaM < 0) {
+        descentM -= deltaM;
+      }
+    }
+    previousAltitudeM = point.altitudeM;
+  });
+
+  return altitudeCount >= 2 ? { ascentM, descentM } : undefined;
 }
 
 function mergeTrainingMetadata(

@@ -152,6 +152,8 @@ describe("trackActivityToGpx", () => {
         totalElapsedTime: 120,
         totalTimerTime: 90,
         totalDistanceM: 1200,
+        ascentM: 45.6,
+        descentM: 32.1,
         training: {
           totalCaloriesCal: 123000,
           source: {
@@ -184,6 +186,8 @@ describe("trackActivityToGpx", () => {
     expect(parsed.metadata.endTime).toBe(1710000120);
     expect(parsed.metadata.totalElapsedTime).toBe(120);
     expect(parsed.metadata.totalTimerTime).toBe(90);
+    expect(parsed.metadata.ascentM).toBe(45.6);
+    expect(parsed.metadata.descentM).toBe(32.1);
     expect(parsed.metadata.training?.totalCaloriesCal).toBe(123000);
   });
 

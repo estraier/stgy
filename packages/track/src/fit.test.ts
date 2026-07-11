@@ -17,6 +17,7 @@ import {
   trackActivityToTrackJson,
 } from "./fit";
 import type { TrackActivity, TrackPoint } from "./fit";
+import { calculateTrackAscentDescent } from "./activity";
 
 jest.mock("@garmin/fitsdk", () => {
   return {
@@ -34,6 +35,24 @@ type MockFitReadResult = {
 
 const decoderMock = Decoder as unknown as jest.Mock;
 const fromArrayBufferMock = Stream.fromArrayBuffer as unknown as jest.Mock;
+
+describe("calculateTrackAscentDescent", () => {
+  test("sums ascent and descent and resets at segment breaks", () => {
+    expect(calculateTrackAscentDescent([
+      { altitudeM: 100 },
+      { altitudeM: 110 },
+      { altitudeM: 105 },
+      {},
+      { altitudeM: 50 },
+      { altitudeM: 60 },
+      { altitudeM: 52 },
+    ])).toEqual({ ascentM: 20, descentM: 13 });
+  });
+
+  test("returns undefined without two altitude samples", () => {
+    expect(calculateTrackAscentDescent([{ altitudeM: 100 }])).toBeUndefined();
+  });
+});
 
 beforeEach(() => {
   decoderMock.mockReset();
@@ -120,6 +139,8 @@ describe("parseFitBytes", () => {
             totalElapsedTime: 3900.4,
             totalTimerTime: 3600.6,
             totalDistance: 12345.67,
+            totalAscent: 345.6,
+            totalDescent: 321.4,
             avgLeftRightBalance: 51.5,
             avgLeftTorqueEffectiveness: 80.1,
             avgRightTorqueEffectiveness: 81.2,
@@ -186,6 +207,8 @@ describe("parseFitBytes", () => {
     expect(activity.metadata.totalElapsedTime).toBeCloseTo(3900.4);
     expect(activity.metadata.totalTimerTime).toBeCloseTo(3600.6);
     expect(activity.metadata.totalDistanceM).toBeCloseTo(12345.67);
+    expect(activity.metadata.ascentM).toBeCloseTo(345.6);
+    expect(activity.metadata.descentM).toBeCloseTo(321.4);
     expect(activity.metadata.pedalingDynamics).toEqual({
       leftRightBalance: { leftPercentage: 51.5, rightPercentage: 48.5 },
       torqueEffectiveness: { leftPercentage: 80.1, rightPercentage: 81.2 },
@@ -213,6 +236,24 @@ describe("parseFitBytes", () => {
         pedalSmoothnessPercentage: 23,
       },
     });
+  });
+
+  test("computes ascent and descent when FIT session totals are absent", () => {
+    mockDecoder(true, {
+      messages: {
+        recordMesgs: [
+          { timestamp: new Date("2024-03-01T01:00:00Z"), altitude: 100 },
+          { timestamp: new Date("2024-03-01T01:00:01Z"), altitude: 110 },
+          { timestamp: new Date("2024-03-01T01:00:02Z"), altitude: 105 },
+          { timestamp: new Date("2024-03-01T01:00:03Z"), altitude: 120 },
+        ],
+      },
+    });
+
+    const activity = parseFitBytes(new Uint8Array([1, 2, 3]));
+
+    expect(activity.metadata.ascentM).toBe(25);
+    expect(activity.metadata.descentM).toBe(5);
   });
 
   test("decodes FIT left/right balance right flag", () => {
@@ -1009,6 +1050,8 @@ describe("trackJsonDataToTrackActivity", () => {
               startTime: 100,
               endTime: 110,
               localTimeOffsetSeconds: 32400,
+              ascentM: 50,
+              descentM: 40,
               analysis: {
                 movingSpeedThresholdKph: 3,
               },
@@ -1045,6 +1088,8 @@ describe("trackJsonDataToTrackActivity", () => {
     expect(activity.metadata.startTime).toBe(100);
     expect(activity.metadata.endTime).toBe(110);
     expect(activity.metadata.localTimeOffsetSeconds).toBe(32400);
+    expect(activity.metadata.ascentM).toBe(50);
+    expect(activity.metadata.descentM).toBe(40);
     expect(activity.metadata.analysis).toEqual({
       movingSpeedThresholdKph: 3,
     });
@@ -1387,6 +1432,8 @@ describe("trackActivityToTrackJson", () => {
       totalElapsedTime: 3901,
       totalTimerTime: 3601,
       totalDistanceM: 12345.7,
+      ascentM: 456.8,
+      descentM: 432.1,
       recordingDevice: {
         manufacturer: "garmin",
         product: "edge",
@@ -1820,6 +1867,8 @@ function makeActivity(pointCount: number): TrackActivity {
       totalElapsedTime: 3900.6,
       totalTimerTime: 3600.6,
       totalDistanceM: 12345.67,
+      ascentM: 456.78,
+      descentM: 432.1,
       recordingDevice: {
         manufacturer: "garmin",
         product: "edge",

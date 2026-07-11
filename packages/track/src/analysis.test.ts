@@ -262,6 +262,8 @@ describe("display analysis helpers", () => {
       metadata: {
         totalElapsedTime: 7815,
         totalDistanceM: 54321,
+        ascentM: 678.4,
+        descentM: 654.2,
         analysis: { movingSpeedThresholdKph: 3 },
         statistics: {
           speedKph: { mean: 18.123, median: 18, max: 30 },
@@ -295,6 +297,7 @@ describe("display analysis helpers", () => {
       ],
     }, { ftpW: 200, lthrBpm: 150 }).map((line) => line.text)).toEqual([
       "gross: elapsed time 2:10:15, distance 54.32 km, average speed 25.0 km/h",
+      "elevation: ascent 678 m, descent 654 m",
       "net: moving time 0:10, distance 0.02 km, average speed 7.2 km/h",
       "moving threshold: >= 3.0 km/h",
       "speed: mean 18.1, median 18.0, max 30.0 km/h",

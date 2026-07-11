@@ -62,7 +62,7 @@ export function parseGpxText(
   assignDistancesAndSpeeds(segments);
 
   const metadata = buildGpxMetadata(root, points);
-  applyComputedMetadata(metadata, points);
+  applyComputedMetadata(metadata, points, { preserveElevation: true });
 
   return {
     schemaVersion: 1,
@@ -257,6 +257,8 @@ function applyGpxActivityExtensionMetadata(
   assignGpxActivityExtensionNumber(metadata, activityElement, "totalElapsedTime");
   assignGpxActivityExtensionNumber(metadata, activityElement, "totalTimerTime");
   assignGpxActivityExtensionNumber(metadata, activityElement, "totalDistanceM");
+  assignGpxActivityExtensionNumber(metadata, activityElement, "ascentM");
+  assignGpxActivityExtensionNumber(metadata, activityElement, "descentM");
   assignGpxActivityExtensionNumber(
     metadata,
     activityElement,
@@ -608,6 +610,8 @@ function formatGpxActivityMetadataExtensions(activity: TrackActivity): string[] 
     ["totalElapsedTime", activity.metadata.totalElapsedTime],
     ["totalTimerTime", activity.metadata.totalTimerTime],
     ["totalDistanceM", activity.metadata.totalDistanceM],
+    ["ascentM", activity.metadata.ascentM],
+    ["descentM", activity.metadata.descentM],
     ["localTimeOffsetSeconds", activity.metadata.localTimeOffsetSeconds],
     ["totalCaloriesCal", activity.metadata.training?.totalCaloriesCal],
   ];

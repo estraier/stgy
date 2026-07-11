@@ -377,6 +377,11 @@ export function getActivityMetadataSummaryLines(
     lines.push({ key: "gross", text: grossLine });
   }
 
+  const elevationLine = getElevationSummaryText(metadata);
+  if (elevationLine) {
+    lines.push({ key: "elevation", text: elevationLine });
+  }
+
   const netLine = getNetSummaryText(input, metadata);
   if (netLine) {
     lines.push({ key: "net", text: netLine });
@@ -1605,6 +1610,23 @@ function getGrossSummaryText(
   }
 
   return parts.length > 0 ? `gross: ${parts.join(", ")}` : undefined;
+}
+
+function getElevationSummaryText(
+  metadata: Record<string, unknown>,
+): string | undefined {
+  const ascentM = getNumberProperty(metadata, "ascentM");
+  const descentM = getNumberProperty(metadata, "descentM");
+  const parts: string[] = [];
+
+  if (isFiniteNumber(ascentM)) {
+    parts.push(`ascent ${formatNumber(ascentM, 0)} m`);
+  }
+  if (isFiniteNumber(descentM)) {
+    parts.push(`descent ${formatNumber(descentM, 0)} m`);
+  }
+
+  return parts.length > 0 ? `elevation: ${parts.join(", ")}` : undefined;
 }
 
 function getNetSummaryText(

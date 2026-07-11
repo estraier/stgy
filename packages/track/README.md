@@ -263,6 +263,8 @@ FIT conversion writes FIT-derived metadata there when `includeMetadata` is not
       "subSport": "road",
       "startTime": 1710000000,
       "totalDistanceM": 12345.7,
+      "ascentM": 456.8,
+      "descentM": 432.1,
       "totalTimerTime": 3600,
       "totalElapsedTime": 3900,
       "device": {

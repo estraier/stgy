@@ -11,6 +11,7 @@ import {
   MapPinned,
   Mountain,
   RotateCcw,
+  Thermometer,
   Timer,
   UploadCloud,
   Zap,
@@ -52,6 +53,11 @@ import {
   trackActivityToGpx,
 } from "stgy-track/gpx";
 import { parseTrackJsonData } from "stgy-track/trackjson";
+import {
+  getTrackElevationSummaryItems,
+  getTrackSandboxMetadataSummaryLines,
+  orderTrackSandboxSummaryCards,
+} from "@/utils/trackSummary";
 
 type SourceType = "fit" | "gpx" | "trackjson" | "trjgz";
 type DownsampleStrategy = "uniform" | "aggregate";
@@ -724,7 +730,9 @@ function RideAnalysis({
   lthrBpm: number;
 }) {
   const metadataSummaryLines = useMemo(() => {
-    return getActivityMetadataSummaryLines(activity, { ftpW });
+    return getTrackSandboxMetadataSummaryLines(
+      getActivityMetadataSummaryLines(activity, { ftpW }),
+    );
   }, [activity, ftpW]);
   const histogramDisplays = useMemo(() => {
     return getActivityHistogramDisplays(activity);
@@ -1393,10 +1401,11 @@ function buildSummaryCards(activity: TrackActivity, trackJsonData: unknown): Sum
   const avgSpeed = getNestedNumber(stats, "speedKph", "mean");
   const avgPower = getNestedNumber(stats, "powerW", "mean");
   const avgHeartRate = getNestedNumber(stats, "heartRateBpm", "mean");
+  const avgTemperature = getNestedNumber(stats, "temperatureC", "mean");
   const normalizedPowerW = getNumberProperty(training, "normalizedPowerW");
   const totalWorkJ = getNumberProperty(training, "totalWorkJ");
   const totalCaloriesCal = getNumberProperty(training, "totalCaloriesCal");
-  const elevationGainM = getElevationGainM(activity.points);
+  const elevationItems = getTrackElevationSummaryItems(metadata);
   const cards: SummaryCard[] = [];
   const context = buildRideContextSummary(activity, trackJsonData);
 
@@ -1409,23 +1418,27 @@ function buildSummaryCards(activity: TrackActivity, trackJsonData: unknown): Sum
     });
   }
 
-  if (distanceM) {
-    cards.push({ label: "Total distance", value: formatDistance(distanceM), icon: Bike });
+  if (elapsedTime) {
+    cards.push({ label: "Elapsed time", value: formatDuration(elapsedTime), icon: CalendarClock });
   }
   if (timerTime) {
     cards.push({ label: "Moving time", value: formatDuration(timerTime), icon: Timer });
   }
-  if (elapsedTime) {
-    cards.push({ label: "Elapsed time", value: formatDuration(elapsedTime), icon: CalendarClock });
+  if (distanceM) {
+    cards.push({ label: "Total distance", value: formatDistance(distanceM), icon: Bike });
   }
   if (avgSpeed) {
     cards.push({ label: "Average speed", value: `${formatNumber(avgSpeed, 1)} km/h`, icon: Gauge });
   }
-  if (elevationGainM > 0) {
-    cards.push({ label: "Elevation gain", value: `${formatNumber(elevationGainM, 0)} m`, icon: Mountain });
-  }
+  elevationItems.forEach((item) => {
+    cards.push({
+      label: item.label,
+      value: `${formatNumber(item.valueM, 0)} m`,
+      icon: Mountain,
+    });
+  });
   if (avgHeartRate) {
-    cards.push({ label: "Mean HR", value: `${formatNumber(avgHeartRate, 1)} bpm`, icon: HeartPulse });
+    cards.push({ label: "Average HR", value: `${formatNumber(avgHeartRate, 1)} bpm`, icon: HeartPulse });
   }
   if (avgPower) {
     cards.push({ label: "Average power", value: `${formatNumber(avgPower, 1)} W`, icon: Zap });
@@ -1443,9 +1456,16 @@ function buildSummaryCards(activity: TrackActivity, trackJsonData: unknown): Sum
       icon: Gauge,
     });
   }
+  if (typeof avgTemperature === "number") {
+    cards.push({
+      label: "Average temperature",
+      value: `${formatNumber(avgTemperature, 1)} °C`,
+      icon: Thermometer,
+    });
+  }
 
   void metadataRecord;
-  return cards;
+  return orderTrackSandboxSummaryCards(cards);
 }
 
 function buildRideContextSummary(
@@ -1583,25 +1603,6 @@ function getPointDistanceM(points: TrackPoint[]): number | undefined {
   }
   return Math.max(...distances) - Math.min(...distances);
 }
-
-function getElevationGainM(points: TrackPoint[]): number {
-  let gain = 0;
-  let previous: number | undefined;
-
-  points.forEach((point) => {
-    if (!Number.isFinite(point.altitudeM)) {
-      return;
-    }
-    const altitude = point.altitudeM || 0;
-    if (previous != null && altitude > previous) {
-      gain += altitude - previous;
-    }
-    previous = altitude;
-  });
-
-  return gain;
-}
-
 
 function haversineDistanceM(
   a: TrackPoint & { lat: number; lon: number },

@@ -6,6 +6,7 @@ import {
   buildActivityHistograms,
   buildActivityPedaling,
   buildActivityStatistics,
+  calculateTrackAscentDescent,
   computeNormalizedPowerW,
   computeTotalWorkJ,
   hasTrainingValues,
@@ -435,7 +436,7 @@ export function trackJsonDataToTrackActivity(
     }
   }
 
-  applyComputedMetadata(metadata, points);
+  applyComputedMetadata(metadata, points, { preserveElevation: true });
 
   return {
     schemaVersion: 1,
@@ -1083,6 +1084,8 @@ function buildTrackJsonActivityMetadata(
     copyOptionalNumber(src, metadata, "totalElapsedTime");
     copyOptionalNumber(src, metadata, "totalTimerTime");
     copyOptionalNumber(src, metadata, "totalDistanceM");
+    copyOptionalNumber(src, metadata, "ascentM");
+    copyOptionalNumber(src, metadata, "descentM");
 
     const recordingDevice = getRecordProperty(src, "recordingDevice");
     if (recordingDevice) {
@@ -1668,6 +1671,8 @@ function buildTrackJsonMetadata(
     metadata.totalDistanceM,
     precision.metadata,
   );
+  assignMetadataNumber(output, "ascentM", metadata.ascentM, precision.metadata);
+  assignMetadataNumber(output, "descentM", metadata.descentM, precision.metadata);
 
   const analysis = buildTrackJsonAnalysis(metadata.analysis);
   if (analysis) {
@@ -2401,6 +2406,26 @@ function fitMessagesToMetadata(
         getFirstValue(session, ["totalDistance", "total_distance"]),
       ),
     );
+    assignNumber(
+      metadata,
+      "ascentM",
+      toFiniteNumber(getFirstValue(session, ["totalAscent", "total_ascent"])),
+    );
+    assignNumber(
+      metadata,
+      "descentM",
+      toFiniteNumber(getFirstValue(session, ["totalDescent", "total_descent"])),
+    );
+  }
+
+  const elevation = calculateTrackAscentDescent(points);
+  if (elevation) {
+    if (!isFiniteNumber(metadata.ascentM)) {
+      metadata.ascentM = elevation.ascentM;
+    }
+    if (!isFiniteNumber(metadata.descentM)) {
+      metadata.descentM = elevation.descentM;
+    }
   }
 
   assignFitEndTime(metadata, session, points);

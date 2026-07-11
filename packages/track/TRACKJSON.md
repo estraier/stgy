@@ -209,6 +209,8 @@ TrackJSON metadata is stored in `Feature.properties.metadata`.
     "subSport": "road",
     "startTime": 1710000000,
     "totalDistanceM": 12345.7,
+    "ascentM": 456.8,
+    "descentM": 432.1,
     "totalTimerTime": 3600,
     "totalElapsedTime": 3900,
     "recordingDevice": {
@@ -287,6 +289,8 @@ Common metadata fields:
 | `createdAt` | number | Unix timestamp |
 | `startTime` | number | Unix timestamp |
 | `totalDistanceM` | number | Total distance in meters |
+| `ascentM` | number | Cumulative ascent in meters |
+| `descentM` | number | Cumulative descent in meters |
 | `totalTimerTime` | number | Moving/timer time in seconds |
 | `totalElapsedTime` | number | Elapsed time in seconds |
 | `recordingDevice.manufacturer` | string | Recording device manufacturer from FIT `file_id` |
