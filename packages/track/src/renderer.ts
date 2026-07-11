@@ -1984,6 +1984,7 @@ export class StgyTrackRenderer {
 
     const showOverlay = figure.dataset.showOverlay !== "false";
     const showGraph = figure.dataset.showGraph !== "false";
+    const hideControls = figure.dataset.hideControls === "true";
     const graphPanel = showGraph ? this.createGraphPanel(figure) : null;
     if (!showGraph) {
       this.removeGraphPanel(figure);
@@ -2075,9 +2076,12 @@ export class StgyTrackRenderer {
       zoom: zoom,
       layers: [defaultLayer],
       scrollWheelZoom: false,
+      zoomControl: !hideControls,
     });
 
-    L.control.layers(baseMaps).addTo(map);
+    if (!hideControls) {
+      L.control.layers(baseMaps).addTo(map);
+    }
 
     const hud = showOverlay ? this.createHud(canvas) : null;
     const markerState: CoordinateMarkerState = { marker: null };

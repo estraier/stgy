@@ -221,6 +221,45 @@ describe("parseMarkdown", () => {
     expect(stripPos(parseMarkdown(mdText))).toStrictEqual(expected);
   });
 
+  it("track map hides controls", () => {
+    const mdText = "@[Ride](/maps/ride.trjgz){hide-controls}";
+    const expected = [
+      {
+        type: "element",
+        tag: "figure",
+        attrs: {
+          class: "stgy-track-map",
+          "data-src": "/maps/ride.trjgz",
+          "data-hide-controls": "true",
+        },
+        children: [
+          {
+            type: "element",
+            tag: "div",
+            attrs: {
+              class: "stgy-track-canvas",
+            },
+            children: [],
+          },
+          {
+            type: "element",
+            tag: "figcaption",
+            attrs: {
+              class: "stgy-track-caption",
+            },
+            children: [
+              {
+                type: "text",
+                text: "Ride",
+              },
+            ],
+          },
+        ],
+      },
+    ];
+    expect(stripPos(parseMarkdown(mdText))).toStrictEqual(expected);
+  });
+
   it("inline track map pins", () => {
     const mdText =
       "@[Akatutumi](map://139.6444794,35.6595519,15|" +
@@ -2286,6 +2325,13 @@ describe("mdRenderHtml basics", () => {
     );
   });
 
+  it("track map hides controls", () => {
+    const mdText = "@[Ride](/maps/ride.trjgz){hide-controls}";
+    expect(makeHtml(mdText)).toBe(
+      '<figure class="stgy-track-map" data-hide-controls="true" data-src="/maps/ride.trjgz"><div class="stgy-track-canvas"></div><figcaption class="stgy-track-caption">Ride</figcaption></figure>',
+    );
+  });
+
   it("inline track map pins", () => {
     const mdText =
       "@[Akatutumi](map://139.6444794,35.6595519,15|" +
@@ -2527,6 +2573,11 @@ describe("mdRenderMarkdown basics", () => {
     expect(makeMarkdown(mdText)).toBe(
       "@[Ride](/maps/ride.trjgz){float=right, size=large}\n",
     );
+  });
+
+  it("track map hides controls", () => {
+    const mdText = "@[Ride](/maps/ride.trjgz){hide-controls}";
+    expect(makeMarkdown(mdText)).toBe(mdText + "\n");
   });
 
   it("inline track map pins", () => {

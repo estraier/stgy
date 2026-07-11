@@ -699,6 +699,8 @@ span[aria-label="Identicon"] > svg {
 /* Track manager previews. */
 .track-manager-map {
   position: relative;
+  z-index: 0;
+  isolation: isolate;
   min-width: 0;
   min-height: 0;
 }
@@ -718,8 +720,4 @@ span[aria-label="Identicon"] > svg {
 
 .track-manager-thumbnail .leaflet-container {
   pointer-events: none;
-}
-
-.track-manager-thumbnail .leaflet-control-container {
-  display: none;
 }

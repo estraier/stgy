@@ -104,6 +104,7 @@ dist/fit-demo.js
 | `data-base-layer` | Initial base layer name or alias |
 | `data-show-overlay` | Set `false` to hide the coordinate HUD |
 | `data-show-graph` | Set `false` to hide the graph panel |
+| `data-hide-controls` | Set `true` to hide zoom and base-layer controls |
 | `data-download-src` | Original/master file download URL |
 | `data-download-label` | Download link label |
 | `data-download-filename` | Download filename |

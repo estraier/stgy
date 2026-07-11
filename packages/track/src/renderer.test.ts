@@ -255,6 +255,27 @@ describe("StgyTrackRenderer", () => {
     expect(baseMaps).toHaveProperty("GSI Pale");
   });
 
+  test("hides zoom and layer controls when data-hide-controls is true", () => {
+    document.body.innerHTML = `
+      <figure
+        class="stgy-track-map"
+        data-lat="35.681"
+        data-lon="139.767"
+        data-hide-controls="true">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    isJapanSpy.mockReturnValue(true);
+
+    renderer.hydrate(document.body);
+
+    expect(L.map).toHaveBeenCalledWith(expect.any(HTMLElement), expect.objectContaining({
+      zoomControl: false,
+    }));
+    expect(L.control.layers).not.toHaveBeenCalled();
+  });
+
   test("uses data-base-layer as the initial base layer", () => {
     document.body.innerHTML = `
       <figure

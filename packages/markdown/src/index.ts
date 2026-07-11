@@ -266,6 +266,12 @@ function applyMdTrackMapOptions(attrs: MdAttrs, macro: MdMacroOptions) {
         attrs["data-show-overlay"] = overlay ? "true" : "false";
       continue;
     }
+    if (key === "hide-controls") {
+      const hideControls = macroBooleanValue(value);
+      if (hideControls !== undefined)
+        attrs["data-hide-controls"] = hideControls ? "true" : "false";
+      continue;
+    }
     attrs[`data-${key}`] = value === true ? "true" : String(value);
   }
 
@@ -3446,6 +3452,9 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     addOpt("base", dataAttr("base-layer"));
     addOpt("graph", dataAttr("show-graph"));
     addOpt("overlay", dataAttr("show-overlay"));
+    const hideControls = dataAttr("hide-controls");
+    if (hideControls === "true") macro.push("hide-controls");
+    else if (hideControls === "false") macro.push("hide-controls=false");
 
     const style = getAttrStr(fig.attrs, "style") || "";
     const height = /(?:^|;)\s*height\s*:\s*([^;]+)/i.exec(style)?.[1]?.trim();
