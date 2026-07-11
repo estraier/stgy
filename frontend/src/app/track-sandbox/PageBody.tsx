@@ -31,6 +31,7 @@ import type { TrackActivity, TrackPoint } from "stgy-track/activity";
 import {
   buildScatterPlotPoints,
   buildSmoothedScatterSamples,
+  calculateScatterCorrelation,
   createRangeTicks,
   getActivityHistogramDisplays,
   getActivityMetadataSummaryLines,
@@ -963,9 +964,17 @@ function ScatterPlot({
     return point.x >= xRange.min && point.x <= xRange.max &&
       point.y >= yRange.min && point.y <= yRange.max;
   });
+  const correlation = calculateScatterCorrelation(visiblePoints);
+  const correlationLabel = correlation.coefficient == null
+    ? "N/A"
+    : correlation.coefficient.toFixed(3);
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full overflow-visible rounded-xl bg-slate-50">
+    <svg viewBox={`0 0 ${width} ${height}`}
+      className="w-full overflow-visible rounded-xl bg-slate-50">
+      <text x={width - right} y="11" textAnchor="end" fontSize="9" fill="#475569">
+        Pearson r: {correlationLabel} (n={correlation.sampleCount})
+      </text>
       <line x1={left} y1={top + plotHeight} x2={width - right} y2={top + plotHeight}
         stroke="#cbd5e1" />
       <line x1={left} y1={top} x2={left} y2={top + plotHeight} stroke="#cbd5e1" />

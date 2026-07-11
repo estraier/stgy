@@ -103,6 +103,11 @@ export type TrackScatterPoint = {
   y: number;
 };
 
+export type TrackScatterCorrelation = {
+  coefficient?: number;
+  sampleCount: number;
+};
+
 export type ScatterAxisRange = {
   min: number;
   max: number;
@@ -694,6 +699,51 @@ export function buildScatterPlotPoints(
     .filter((point): point is TrackScatterPoint => Boolean(point));
 
   return sampleEvenly(filtered, maxPoints);
+}
+
+export function calculateScatterCorrelation(
+  points: TrackScatterPoint[],
+): TrackScatterCorrelation {
+  const finitePoints = points.filter((point) => {
+    return Number.isFinite(point.x) && Number.isFinite(point.y);
+  });
+  const sampleCount = finitePoints.length;
+  if (sampleCount < 2) {
+    return { sampleCount };
+  }
+
+  let xTotal = 0;
+  let yTotal = 0;
+  for (const point of finitePoints) {
+    xTotal += point.x;
+    yTotal += point.y;
+  }
+  const xMean = xTotal / sampleCount;
+  const yMean = yTotal / sampleCount;
+
+  let covariance = 0;
+  let xVariance = 0;
+  let yVariance = 0;
+  for (const point of finitePoints) {
+    const xDifference = point.x - xMean;
+    const yDifference = point.y - yMean;
+    covariance += xDifference * yDifference;
+    xVariance += xDifference * xDifference;
+    yVariance += yDifference * yDifference;
+  }
+
+  if (xVariance <= 0 || yVariance <= 0) {
+    return { sampleCount };
+  }
+  const coefficient = covariance / Math.sqrt(xVariance * yVariance);
+  if (!Number.isFinite(coefficient)) {
+    return { sampleCount };
+  }
+
+  return {
+    coefficient: Math.max(-1, Math.min(1, coefficient)),
+    sampleCount,
+  };
 }
 
 export function getScatterAxisRange(

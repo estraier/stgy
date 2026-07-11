@@ -5,6 +5,7 @@ import {
   buildPowerBracketHistogram,
   buildSpeedBracketHistogram,
   buildScatterPlotPoints,
+  calculateScatterCorrelation,
   buildSmoothedScatterSamples,
   createRangeTicks,
   getActivityHistogramDisplay,
@@ -465,6 +466,39 @@ describe("scatter analysis", () => {
 
   test("samples evenly", () => {
     expect(sampleEvenly([0, 1, 2, 3, 4], 3)).toEqual([0, 2, 4]);
+  });
+
+  test("calculates Pearson correlation for scatter points", () => {
+    expect(calculateScatterCorrelation([
+      { x: 1, y: 2 },
+      { x: 2, y: 4 },
+      { x: 3, y: 6 },
+    ])).toEqual({ coefficient: 1, sampleCount: 3 });
+
+    expect(calculateScatterCorrelation([
+      { x: 1, y: 6 },
+      { x: 2, y: 4 },
+      { x: 3, y: 2 },
+    ])).toEqual({ coefficient: -1, sampleCount: 3 });
+  });
+
+  test("reports unavailable scatter correlation for insufficient or constant data", () => {
+    expect(calculateScatterCorrelation([{ x: 1, y: 2 }])).toEqual({
+      sampleCount: 1,
+    });
+    expect(calculateScatterCorrelation([
+      { x: 1, y: 2 },
+      { x: 1, y: 3 },
+      { x: 1, y: 4 },
+    ])).toEqual({ sampleCount: 3 });
+  });
+
+  test("ignores non-finite scatter points when calculating correlation", () => {
+    expect(calculateScatterCorrelation([
+      { x: 1, y: 2 },
+      { x: Number.NaN, y: 3 },
+      { x: 2, y: 4 },
+    ])).toEqual({ coefficient: 1, sampleCount: 2 });
   });
 
   test("trims scatter axis ranges by 2-98 percentiles", () => {
