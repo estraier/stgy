@@ -221,8 +221,8 @@ describe("parseMarkdown", () => {
     expect(stripPos(parseMarkdown(mdText))).toStrictEqual(expected);
   });
 
-  it("track map hides controls", () => {
-    const mdText = "@[Ride](/maps/ride.trjgz){hide-controls}";
+  it("track map disables controls", () => {
+    const mdText = "@[Ride](/maps/ride.trjgz){controls=false}";
     const expected = [
       {
         type: "element",
@@ -230,7 +230,7 @@ describe("parseMarkdown", () => {
         attrs: {
           class: "stgy-track-map",
           "data-src": "/maps/ride.trjgz",
-          "data-hide-controls": "true",
+          "data-controls": "false",
         },
         children: [
           {
@@ -2325,10 +2325,10 @@ describe("mdRenderHtml basics", () => {
     );
   });
 
-  it("track map hides controls", () => {
-    const mdText = "@[Ride](/maps/ride.trjgz){hide-controls}";
+  it("track map disables controls", () => {
+    const mdText = "@[Ride](/maps/ride.trjgz){controls=false}";
     expect(makeHtml(mdText)).toBe(
-      '<figure class="stgy-track-map" data-hide-controls="true" data-src="/maps/ride.trjgz"><div class="stgy-track-canvas"></div><figcaption class="stgy-track-caption">Ride</figcaption></figure>',
+      '<figure class="stgy-track-map" data-controls="false" data-src="/maps/ride.trjgz"><div class="stgy-track-canvas"></div><figcaption class="stgy-track-caption">Ride</figcaption></figure>',
     );
   });
 
@@ -2575,8 +2575,8 @@ describe("mdRenderMarkdown basics", () => {
     );
   });
 
-  it("track map hides controls", () => {
-    const mdText = "@[Ride](/maps/ride.trjgz){hide-controls}";
+  it("track map disables controls", () => {
+    const mdText = "@[Ride](/maps/ride.trjgz){controls=false}";
     expect(makeMarkdown(mdText)).toBe(mdText + "\n");
   });
 

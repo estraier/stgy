@@ -88,6 +88,7 @@ jest.mock("leaflet", () => {
       setView: jest.fn(),
       fitBounds: jest.fn(),
       invalidateSize: jest.fn(),
+      remove: jest.fn(),
       on: jest.fn().mockReturnThis(),
       getContainer: () => document.createElement("div"),
     };
@@ -255,13 +256,13 @@ describe("StgyTrackRenderer", () => {
     expect(baseMaps).toHaveProperty("GSI Pale");
   });
 
-  test("hides zoom and layer controls when data-hide-controls is true", () => {
+  test("hides zoom and layer controls when data-controls is false", () => {
     document.body.innerHTML = `
       <figure
         class="stgy-track-map"
         data-lat="35.681"
         data-lon="139.767"
-        data-hide-controls="true">
+        data-controls="false">
         <div class="stgy-track-canvas"></div>
       </figure>
     `;
@@ -338,7 +339,10 @@ describe("StgyTrackRenderer", () => {
 
     await flushPromises();
 
-    expect(mockMap.fitBounds).toHaveBeenCalledWith(expect.any(Object), { padding: [50, 50] });
+    expect(mockMap.fitBounds).toHaveBeenCalledWith(expect.any(Object), {
+      padding: [50, 50],
+      animate: false,
+    });
     expect(mockMap.setView).not.toHaveBeenCalled();
   });
 
@@ -356,7 +360,11 @@ describe("StgyTrackRenderer", () => {
 
     await flushPromises();
 
-    expect(mockMap.setView).toHaveBeenCalledWith({ lat: 35, lng: 139 }, 15);
+    expect(mockMap.setView).toHaveBeenCalledWith(
+      { lat: 35, lng: 139 },
+      15,
+      { animate: false },
+    );
     expect(mockMap.fitBounds).not.toHaveBeenCalled();
   });
 
@@ -447,7 +455,11 @@ describe("StgyTrackRenderer", () => {
 
     await flushPromises();
 
-    expect(mockMap.setView).toHaveBeenCalledWith({ lat: 35.681, lng: 139.767 }, 12);
+    expect(mockMap.setView).toHaveBeenCalledWith(
+      { lat: 35.681, lng: 139.767 },
+      12,
+      { animate: false },
+    );
     expect(mockMap.fitBounds).not.toHaveBeenCalled();
   });
 
@@ -1226,6 +1238,69 @@ describe("StgyTrackRenderer", () => {
 
     expect(map.removeLayer).toHaveBeenCalledWith(marker);
     expect(map.hasLayer(marker)).toBe(false);
+  });
+
+  test("hydrates a track-map element passed as the root", () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-lat="35.681" data-lon="139.767">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+    const figure = document.querySelector<HTMLElement>(".stgy-track-map");
+    expect(figure).not.toBeNull();
+
+    renderer.hydrate(figure!);
+
+    expect(L.map).toHaveBeenCalledTimes(1);
+    expect(figure!.dataset.stgyTrackInitialized).toBe("true");
+  });
+
+  test("destroys the Leaflet map for a track-map root", () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-lat="35.681" data-lon="139.767">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+    const figure = document.querySelector<HTMLElement>(".stgy-track-map");
+    expect(figure).not.toBeNull();
+    renderer.hydrate(figure!);
+    const map = (L.map as jest.Mock).mock.results[0].value as { remove: jest.Mock };
+
+    renderer.destroy(figure!);
+
+    expect(map.remove).toHaveBeenCalledTimes(1);
+    expect(figure!.dataset.stgyTrackInitialized).toBeUndefined();
+  });
+
+  test("clears Leaflet removal timers before removing a map", () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-lat="35.681" data-lon="139.767">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+    const figure = document.querySelector<HTMLElement>(".stgy-track-map");
+    expect(figure).not.toBeNull();
+    renderer.hydrate(figure!);
+
+    const map = (L.map as jest.Mock).mock.results[0].value as {
+      remove: jest.Mock;
+      _transitionEndTimer?: ReturnType<typeof setTimeout>;
+      _sizeTimer?: ReturnType<typeof setTimeout>;
+    };
+    const transitionEndTimer = setTimeout(() => undefined, 250);
+    const sizeTimer = setTimeout(() => undefined, 250);
+    map._transitionEndTimer = transitionEndTimer;
+    map._sizeTimer = sizeTimer;
+    const clearTimeoutSpy = jest.spyOn(globalThis, "clearTimeout");
+
+    renderer.destroy(figure!);
+
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(transitionEndTimer);
+    expect(clearTimeoutSpy).toHaveBeenCalledWith(sizeTimer);
+    expect(map._transitionEndTimer).toBeUndefined();
+    expect(map._sizeTimer).toBeUndefined();
+    expect(map.remove).toHaveBeenCalledTimes(1);
+    clearTimeoutSpy.mockRestore();
   });
 
   const setupBaseLayerMap = (baseLayer: string | null, isJapanValue: boolean) => {

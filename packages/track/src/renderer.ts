@@ -161,6 +161,13 @@ type StyleableLayer = L.Layer & {
   bringToFront?: () => unknown;
 };
 
+type LeafletMapWithRemovalTimers = L.Map & {
+  _transitionEndTimer?: ReturnType<typeof setTimeout>;
+  _sizeTimer?: ReturnType<typeof setTimeout>;
+};
+
+const trackMapsByCanvas = new WeakMap<HTMLElement, L.Map>();
+
 const fixLeafletIcons = () => {
   const iconUrl = "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png";
   const iconRetinaUrl = "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png";
@@ -248,8 +255,48 @@ export class StgyTrackRenderer {
   }
 
   public hydrate(rootElement: HTMLElement = document.body) {
-    const figures = rootElement.querySelectorAll<HTMLElement>(".stgy-track-map");
+    const figures = this.getTrackMapFigures(rootElement);
     figures.forEach((figure) => this.initMap(figure));
+  }
+
+  public destroy(rootElement: HTMLElement = document.body) {
+    const figures = this.getTrackMapFigures(rootElement);
+    figures.forEach((figure) => {
+      const canvas = figure.querySelector<HTMLElement>(".stgy-track-canvas");
+      if (canvas) {
+        const map = trackMapsByCanvas.get(canvas);
+        if (map) {
+          this.removeLeafletMap(map);
+          trackMapsByCanvas.delete(canvas);
+        }
+      }
+      this.removeGraphPanel(figure);
+      this.removeDownloadActions(figure);
+      delete figure.dataset.stgyTrackInitialized;
+    });
+  }
+
+  private removeLeafletMap(map: L.Map) {
+    const internalMap = map as LeafletMapWithRemovalTimers;
+    if (internalMap._transitionEndTimer != null) {
+      clearTimeout(internalMap._transitionEndTimer);
+      internalMap._transitionEndTimer = undefined;
+    }
+    if (internalMap._sizeTimer != null) {
+      clearTimeout(internalMap._sizeTimer);
+      internalMap._sizeTimer = undefined;
+    }
+    map.remove();
+  }
+
+  private getTrackMapFigures(rootElement: HTMLElement): HTMLElement[] {
+    const figures = Array.from(
+      rootElement.querySelectorAll<HTMLElement>(".stgy-track-map")
+    );
+    if (rootElement.matches(".stgy-track-map")) {
+      figures.unshift(rootElement);
+    }
+    return figures;
   }
 
   private createBoundsAccumulator(): BoundsAccumulator {
@@ -1984,7 +2031,7 @@ export class StgyTrackRenderer {
 
     const showOverlay = figure.dataset.showOverlay !== "false";
     const showGraph = figure.dataset.showGraph !== "false";
-    const hideControls = figure.dataset.hideControls === "true";
+    const controls = figure.dataset.controls !== "false";
     const graphPanel = showGraph ? this.createGraphPanel(figure) : null;
     if (!showGraph) {
       this.removeGraphPanel(figure);
@@ -2076,10 +2123,12 @@ export class StgyTrackRenderer {
       zoom: zoom,
       layers: [defaultLayer],
       scrollWheelZoom: false,
-      zoomControl: !hideControls,
+      zoomControl: controls,
     });
 
-    if (!hideControls) {
+    trackMapsByCanvas.set(canvas, map);
+
+    if (controls) {
       L.control.layers(baseMaps).addTo(map);
     }
 
@@ -2161,12 +2210,14 @@ export class StgyTrackRenderer {
         const southWest = bounds.getSouthWest();
         const northEast = bounds.getNorthEast();
         if (southWest.lat === northEast.lat && southWest.lng === northEast.lng) {
-          map.setView(bounds.getCenter(), DEFAULT_SINGLE_POINT_ZOOM);
+          map.setView(bounds.getCenter(), DEFAULT_SINGLE_POINT_ZOOM, {
+            animate: false,
+          });
         } else {
-          map.fitBounds(bounds, { padding: [50, 50] });
+          map.fitBounds(bounds, { padding: [50, 50], animate: false });
         }
       } else if (!hasExplicitLat || !hasExplicitLon) {
-        map.setView(bounds.getCenter(), zoom);
+        map.setView(bounds.getCenter(), zoom, { animate: false });
       }
     }
 

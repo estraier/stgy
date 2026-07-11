@@ -6,14 +6,14 @@ type Props = {
   src: string;
   lazy?: boolean;
   interactive?: boolean;
-  hideControls?: boolean;
+  controls?: boolean;
 };
 
 export default function TrackPreviewMap({
   src,
   lazy = false,
   interactive = true,
-  hideControls = false,
+  controls = true,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(!lazy);
@@ -76,7 +76,7 @@ export default function TrackPreviewMap({
         data-src={src}
         data-show-graph="false"
         data-show-overlay="false"
-        data-hide-controls={hideControls ? "true" : undefined}
+        data-controls={controls ? undefined : "false"}
         style={{ height: "100%" }}
       >
         <div className="stgy-track-canvas" />

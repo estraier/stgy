@@ -212,7 +212,7 @@ export default function PageBody() {
                   src={track.previewUrl}
                   lazy
                   interactive={false}
-                  hideControls
+                  controls={false}
                 />
                 <button
                   type="button"

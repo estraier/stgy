@@ -3,11 +3,21 @@
 import { useCallback, useEffect, useRef } from "react";
 import type { SyntheticEvent } from "react";
 
-const ALLOWED_TRACK_IMAGE_PATTERNS: RegExp[] = [
-  /^\/images\//,
-  /^\/data\//,
-  /^\/media\//,
-];
+const ALLOWED_TRACK_IMAGE_PATTERNS: RegExp[] = [/^\/images\//, /^\/data\//, /^\/media\//];
+
+const DEFAULT_INTERSECTION_ROOT_MARGIN = "0px";
+
+type TrackModule = typeof import("stgy-track");
+type TrackRenderer = InstanceType<TrackModule["StgyTrackRenderer"]>;
+
+let trackModulePromise: Promise<TrackModule> | null = null;
+
+function loadTrackModule(): Promise<TrackModule> {
+  if (!trackModulePromise) {
+    trackModulePromise = import("stgy-track");
+  }
+  return trackModulePromise;
+}
 
 export function stopTrackMapEvent(e: SyntheticEvent) {
   const target = e.target;
@@ -16,61 +26,188 @@ export function stopTrackMapEvent(e: SyntheticEvent) {
   }
 }
 
-export function useTrackMapHydrator() {
+export type TrackMapHydratorOptions = {
+  lazy?: boolean;
+  redrawDelayMs?: number;
+  intersectionRootMargin?: string;
+  allowedImagePatterns?: RegExp[] | null;
+};
+
+type PendingRoot = {
+  cancelers: Set<() => void>;
+};
+
+function trackMapFigures(root: HTMLElement): HTMLElement[] {
+  const figures = Array.from(root.querySelectorAll<HTMLElement>(".stgy-track-map"));
+  if (root.matches(".stgy-track-map")) figures.unshift(root);
+  return figures;
+}
+
+function setTrackLoadError(figure: HTMLElement, error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const canvas = figure.querySelector<HTMLElement>(".stgy-track-canvas");
+  if (canvas) {
+    canvas.textContent = `Track renderer could not be loaded: ${message}`;
+  }
+}
+
+export function destroyTrackMaps(root: HTMLElement | null): void {
+  if (!root) return;
+  const figures = trackMapFigures(root);
+  if (figures.length === 0) return;
+  void loadTrackModule()
+    .then(({ StgyTrackRenderer }) => {
+      const renderer = new StgyTrackRenderer();
+      figures.forEach((figure) => renderer.destroy(figure));
+    })
+    .catch(() => {
+      // Destruction is best-effort. Detached DOM will still be collected.
+    });
+}
+
+export function useTrackMapHydrator(options: TrackMapHydratorOptions = {}) {
+  const {
+    lazy = true,
+    redrawDelayMs = 0,
+    intersectionRootMargin = DEFAULT_INTERSECTION_ROOT_MARGIN,
+    allowedImagePatterns = ALLOWED_TRACK_IMAGE_PATTERNS,
+  } = options;
   const mountedRef = useRef(true);
-  const nextSeqRef = useRef(0);
-  const rootSeqRef = useRef(new WeakMap<HTMLElement, number>());
+  const pendingByRootRef = useRef(new WeakMap<HTMLElement, PendingRoot>());
+  const pendingRootsRef = useRef(new Set<PendingRoot>());
+  const rendererRef = useRef<TrackRenderer | null>(null);
 
   useEffect(() => {
     mountedRef.current = true;
+    const pendingRoots = pendingRootsRef.current;
     return () => {
       mountedRef.current = false;
-      rootSeqRef.current = new WeakMap<HTMLElement, number>();
+      pendingRoots.forEach((pending) => {
+        pending.cancelers.forEach((cancel) => cancel());
+        pending.cancelers.clear();
+      });
+      pendingRoots.clear();
+      pendingByRootRef.current = new WeakMap<HTMLElement, PendingRoot>();
     };
   }, []);
 
-  return useCallback((root: HTMLElement | null) => {
-    if (!root) return;
-    const maps = Array.from(root.querySelectorAll<HTMLElement>(".stgy-track-map"));
-    if (maps.length === 0) return;
+  return useCallback(
+    (root: HTMLElement | null) => {
+      if (!root) return;
 
-    const needsHydration = maps.some((figure) => {
-      return !figure.dataset.stgyTrackInitialized;
-    });
-    if (!needsHydration) return;
+      const previousPending = pendingByRootRef.current.get(root);
+      if (previousPending) {
+        previousPending.cancelers.forEach((cancel) => cancel());
+        previousPending.cancelers.clear();
+        pendingRootsRef.current.delete(previousPending);
+      }
 
-    const hydrateSeq = ++nextSeqRef.current;
-    rootSeqRef.current.set(root, hydrateSeq);
-
-    maps.forEach((figure) => {
-      delete figure.dataset.stgyTrackInitialized;
-      const canvas = figure.querySelector<HTMLElement>(".stgy-track-canvas");
-      if (!canvas) return;
-      const nextCanvas = canvas.cloneNode(false) as HTMLElement;
-      canvas.replaceWith(nextCanvas);
-    });
-    root.querySelectorAll(".stgy-track-graph").forEach((node) => node.remove());
-
-    void import("stgy-track")
-      .then(({ StgyTrackRenderer }) => {
-        if (!mountedRef.current) return;
-        if (!root.isConnected) return;
-        if (rootSeqRef.current.get(root) !== hydrateSeq) return;
-
-        const renderer = new StgyTrackRenderer({
-          allowedImagePatterns: ALLOWED_TRACK_IMAGE_PATTERNS,
-        });
-        renderer.hydrate(root);
-      })
-      .catch((e: unknown) => {
-        if (!mountedRef.current) return;
-        if (!root.isConnected) return;
-        if (rootSeqRef.current.get(root) !== hydrateSeq) return;
-
-        const message = e instanceof Error ? e.message : String(e);
-        root.querySelectorAll<HTMLElement>(".stgy-track-canvas").forEach((canvas) => {
-          canvas.textContent = `Track renderer could not be loaded: ${message}`;
-        });
+      const maps = trackMapFigures(root).filter((figure) => {
+        return !figure.dataset.stgyTrackInitialized;
       });
-  }, []);
+      if (maps.length === 0) return;
+
+      const pending: PendingRoot = {
+        cancelers: new Set(),
+      };
+      pendingByRootRef.current.set(root, pending);
+      pendingRootsRef.current.add(pending);
+
+      const isCurrent = (figure: HTMLElement) => {
+        return (
+          mountedRef.current && figure.isConnected && pendingByRootRef.current.get(root) === pending
+        );
+      };
+
+      const getRenderer = async (): Promise<TrackRenderer> => {
+        if (rendererRef.current) return rendererRef.current;
+        const { StgyTrackRenderer } = await loadTrackModule();
+        if (!rendererRef.current) {
+          rendererRef.current = new StgyTrackRenderer({
+            allowedImagePatterns: allowedImagePatterns ?? undefined,
+          });
+        }
+        return rendererRef.current;
+      };
+
+      maps.forEach((figure) => {
+        let observer: IntersectionObserver | null = null;
+        let timer: number | null = null;
+        let finished = false;
+
+        const cleanup = () => {
+          if (finished) return;
+          finished = true;
+          observer?.disconnect();
+          observer = null;
+          if (timer != null) {
+            window.clearTimeout(timer);
+            timer = null;
+          }
+          pending.cancelers.delete(cleanup);
+          if (pending.cancelers.size === 0) {
+            pendingRootsRef.current.delete(pending);
+          }
+        };
+        pending.cancelers.add(cleanup);
+
+        const hydrate = () => {
+          if (!isCurrent(figure)) {
+            cleanup();
+            return;
+          }
+          if (lazy && figure.getClientRects().length === 0) {
+            return;
+          }
+          cleanup();
+          delete figure.dataset.stgyTrackRedraw;
+          void getRenderer()
+            .then((renderer) => {
+              if (!mountedRef.current || !figure.isConnected) return;
+              renderer.hydrate(figure);
+            })
+            .catch((error: unknown) => {
+              if (!mountedRef.current || !figure.isConnected) return;
+              setTrackLoadError(figure, error);
+            });
+        };
+
+        const scheduleHydrate = () => {
+          if (!isCurrent(figure)) {
+            cleanup();
+            return;
+          }
+          const delay = figure.dataset.stgyTrackRedraw === "true" ? redrawDelayMs : 0;
+          if (delay <= 0) {
+            hydrate();
+            return;
+          }
+          timer = window.setTimeout(() => {
+            timer = null;
+            hydrate();
+          }, delay);
+        };
+
+        if (lazy && typeof IntersectionObserver !== "undefined") {
+          observer = new IntersectionObserver(
+            (entries) => {
+              const entry = entries[entries.length - 1];
+              if (!entry) return;
+              if (entry.isIntersecting) {
+                if (timer == null) scheduleHydrate();
+              } else if (timer != null) {
+                window.clearTimeout(timer);
+                timer = null;
+              }
+            },
+            { root: null, rootMargin: intersectionRootMargin, threshold: 0 },
+          );
+          observer.observe(figure);
+        } else {
+          scheduleHydrate();
+        }
+      });
+    },
+    [allowedImagePatterns, intersectionRootMargin, lazy, redrawDelayMs],
+  );
 }

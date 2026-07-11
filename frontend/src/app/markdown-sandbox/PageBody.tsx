@@ -31,6 +31,8 @@ import {
   mdRenderText,
 } from "stgy-markdown";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
+import { destroyTrackMaps, useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
+import { reconcileTrackMapPreviews, TRACK_MAP_REDRAW_DELAY_MS } from "@/utils/liveTrackPreview";
 
 type Mode = "html" | "text";
 
@@ -581,7 +583,6 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
   });
   const renderAbortRef = useRef<AbortController | null>(null);
   const idleHandleRef = useRef<number | null>(null);
-  const trackHydrateSeqRef = useRef(0);
   const requestIdle = useCallback((cb: IdleRequestCallback, timeout = 500): number => {
     const win = window as typeof window & {
       requestIdleCallback?: (callback: IdleRequestCallback, options?: IdleRequestOptions) => number;
@@ -610,35 +611,14 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
   const previewHtmlARef = useRef<HTMLDivElement>(null);
   const previewHtmlBRef = useRef<HTMLDivElement>(null);
   const previewHtmlFrontIsARef = useRef(true);
+  const previewRenderedHtmlRef = useRef(new WeakMap<HTMLElement, string>());
   const gutterRef = useRef<HTMLDivElement | null>(null);
 
-  const hydrateTrackMaps = useCallback((root: HTMLElement | null) => {
-    if (!root) return;
-    const maps = Array.from(root.querySelectorAll<HTMLElement>(".stgy-track-map"));
-    if (maps.length === 0) return;
-
-    const hydrateSeq = ++trackHydrateSeqRef.current;
-    maps.forEach((figure) => {
-      delete figure.dataset.stgyTrackInitialized;
-      const canvas = figure.querySelector<HTMLElement>(".stgy-track-canvas");
-      if (!canvas) return;
-      const nextCanvas = canvas.cloneNode(false) as HTMLElement;
-      canvas.replaceWith(nextCanvas);
-    });
-    root.querySelectorAll(".stgy-track-graph").forEach((node) => node.remove());
-
-    void import("stgy-track").then(({ StgyTrackRenderer }) => {
-      if (hydrateSeq !== trackHydrateSeqRef.current || !root.isConnected) return;
-      const renderer = new StgyTrackRenderer();
-      renderer.hydrate(root);
-    }).catch((e: unknown) => {
-      if (hydrateSeq !== trackHydrateSeqRef.current || !root.isConnected) return;
-      const message = e instanceof Error ? e.message : String(e);
-      root.querySelectorAll<HTMLElement>(".stgy-track-canvas").forEach((canvas) => {
-        canvas.textContent = `Track renderer could not be loaded: ${message}`;
-      });
-    });
-  }, []);
+  const hydrateTrackMaps = useTrackMapHydrator({
+    lazy: true,
+    redrawDelayMs: TRACK_MAP_REDRAW_DELAY_MS,
+    allowedImagePatterns: null,
+  });
 
   const caretMirrorRef = useRef<HTMLDivElement | null>(null);
   const highlightOverlayRef = useRef<HTMLDivElement | null>(null);
@@ -1237,50 +1217,61 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
 
   useLayoutEffect(() => {
     if (mode !== "html") return;
-    const a = previewHtmlARef.current;
-    const b = previewHtmlBRef.current;
-    if (!a || !b) return;
-    const front = previewHtmlFrontIsARef.current ? a : b;
-    const back = previewHtmlFrontIsARef.current ? b : a;
-    front.style.display = "block";
-    back.style.display = "none";
-    front.innerHTML = renderedHtml;
-    previewBodyRef.current = front;
-    requestAnimationFrame(() => hydrateTrackMaps(front));
-    rebuildAnchors();
-    scheduleSync();
-    schedulePreviewHighlight();
-    attachObservers();
-  }, [
-    mode,
-    renderedHtml,
-    hydrateTrackMaps,
-    rebuildAnchors,
-    scheduleSync,
-    schedulePreviewHighlight,
-    attachObservers,
-  ]);
+    return () => {
+      const current = previewBodyRef.current;
+      if (current instanceof HTMLElement) destroyTrackMaps(current);
+    };
+  }, [mode]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
     if (mode !== "html") return;
     const a = previewHtmlARef.current;
     const b = previewHtmlBRef.current;
     if (!a || !b) return;
-    const frontIsA = previewHtmlFrontIsARef.current;
-    const front = frontIsA ? a : b;
-    const back = frontIsA ? b : a;
+
+    const currentBody = previewBodyRef.current;
+    const hasMountedBody = currentBody === a || currentBody === b;
+    if (!hasMountedBody) {
+      const front = previewHtmlFrontIsARef.current ? a : b;
+      const back = previewHtmlFrontIsARef.current ? b : a;
+      front.innerHTML = renderedHtml;
+      front.style.display = "block";
+      back.style.display = "none";
+      previewBodyRef.current = front;
+      previewRenderedHtmlRef.current.set(front, renderedHtml);
+      hydrateTrackMaps(front);
+      rebuildAnchors();
+      scheduleSync();
+      schedulePreviewHighlight();
+      attachObservers();
+      return;
+    }
+
+    const front = currentBody;
+    if (previewRenderedHtmlRef.current.get(front) === renderedHtml) {
+      front.style.display = "block";
+      (front === a ? b : a).style.display = "none";
+      return;
+    }
+
+    const back = front === a ? b : a;
     back.innerHTML = renderedHtml;
-    requestAnimationFrame(() => {
+    const frame = requestAnimationFrame(() => {
+      reconcileTrackMapPreviews(front, back);
       front.style.display = "none";
       back.style.display = "block";
-      previewHtmlFrontIsARef.current = !frontIsA;
+      previewHtmlFrontIsARef.current = back === a;
       previewBodyRef.current = back;
+      previewRenderedHtmlRef.current.set(back, renderedHtml);
+      destroyTrackMaps(front);
       hydrateTrackMaps(back);
       rebuildAnchors();
       scheduleSync();
       schedulePreviewHighlight();
       attachObservers();
     });
+
+    return () => cancelAnimationFrame(frame);
   }, [
     renderedHtml,
     mode,

@@ -10,7 +10,8 @@ import React, {
   useId,
 } from "react";
 import { makeArticleHtmlFromMarkdown } from "@/utils/article";
-import { useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
+import { destroyTrackMaps, useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
+import { reconcileTrackMapPreviews, TRACK_MAP_REDRAW_DELAY_MS } from "@/utils/liveTrackPreview";
 import { parseBodyAndTags } from "@/utils/parse";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import UserMentionButton from "@/components/UserMentionButton";
@@ -530,6 +531,7 @@ export default function PostForm({
   const overlayBodyBRef = useRef<HTMLDivElement>(null);
   const previewFrontIsARef = useRef(true);
   const overlayFrontIsARef = useRef(true);
+  const previewRenderedHtmlRef = useRef(new WeakMap<HTMLElement, string>());
   const uploadBtnRef = useRef<UploadImageEmbedButtonHandle | null>(null);
   const toolbarBtn =
     "h-6 w-7 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none -translate-y-[1px]";
@@ -544,7 +546,10 @@ export default function PostForm({
   const pasteNodesRef = useRef<MdNode[] | null>(null);
   const pasteImageNodesRef = useRef<MdElementNode[] | null>(null);
   const pasteHasBlockRef = useRef<boolean>(false);
-  const hydrateTrackMaps = useTrackMapHydrator();
+  const hydrateTrackMaps = useTrackMapHydrator({
+    lazy: true,
+    redrawDelayMs: TRACK_MAP_REDRAW_DELAY_MS,
+  });
 
   function cryptoRandomId() {
     if (typeof crypto !== "undefined" && typeof (crypto as Crypto).randomUUID === "function") {
@@ -1633,77 +1638,75 @@ export default function PostForm({
     schedulePreviewHighlight();
   }, [scheduleEditorHighlight, schedulePreviewHighlight]);
 
-  const swapInto = useCallback(
-    (
-      a: HTMLDivElement | null,
-      b: HTMLDivElement | null,
-      frontIsARef: React.MutableRefObject<boolean>,
-      bodyRef: React.MutableRefObject<HTMLDivElement | null>,
-    ) => {
-      if (!a || !b || !showPreview) return;
-      const frontIsA = frontIsARef.current;
-      const front = frontIsA ? a : b;
-      const back = frontIsA ? b : a;
-      back.innerHTML = previewHtml;
-      requestAnimationFrame(() => {
-        front.style.display = "none";
-        back.style.display = "block";
-        frontIsARef.current = !frontIsA;
-        bodyRef.current = back;
-        hydrateTrackMaps(back);
-        rebuildAnchors();
-        scheduleSyncRef.current();
-        schedulePreviewHighlightRef.current();
-        if (overlayActive) refreshGutterPins();
-        attachPreviewObservers();
-      });
-    },
-    [
-      previewHtml,
-      hydrateTrackMaps,
-      rebuildAnchors,
-      overlayActive,
-      attachPreviewObservers,
-      refreshGutterPins,
-      showPreview,
-    ],
-  );
+  useLayoutEffect(() => {
+    if (!showPreview) return;
+    const bodyRef = overlayActive ? overlayBodyRef : previewBodyRef;
+    return () => destroyTrackMaps(bodyRef.current);
+  }, [showPreview, overlayActive]);
 
   useLayoutEffect(() => {
     if (!showPreview) return;
-    const initNormal = () => {
-      const a = previewBodyARef.current,
-        b = previewBodyBRef.current;
-      if (!a || !b) return;
-      const front = previewFrontIsARef.current ? a : b;
-      front.innerHTML = previewHtml;
-      front.style.display = "block";
-      (previewFrontIsARef.current ? b : a).style.display = "none";
-      previewBodyRef.current = front;
-      hydrateTrackMaps(front);
-    };
-    const initOverlay = () => {
-      const a = overlayBodyARef.current,
-        b = overlayBodyBRef.current;
-      if (!a || !b) return;
-      const front = overlayFrontIsARef.current ? a : b;
-      front.innerHTML = previewHtml;
-      front.style.display = "block";
-      (overlayFrontIsARef.current ? b : a).style.display = "none";
-      overlayBodyRef.current = front;
-      hydrateTrackMaps(front);
-    };
-    if (overlayActive) initOverlay();
-    else initNormal();
-  }, [showPreview, overlayActive, previewHtml, hydrateTrackMaps]);
 
-  useEffect(() => {
-    if (overlayActive) {
-      swapInto(overlayBodyARef.current, overlayBodyBRef.current, overlayFrontIsARef, overlayBodyRef);
-    } else {
-      swapInto(previewBodyARef.current, previewBodyBRef.current, previewFrontIsARef, previewBodyRef);
+    const a = overlayActive ? overlayBodyARef.current : previewBodyARef.current;
+    const b = overlayActive ? overlayBodyBRef.current : previewBodyBRef.current;
+    const frontIsARef = overlayActive ? overlayFrontIsARef : previewFrontIsARef;
+    const bodyRef = overlayActive ? overlayBodyRef : previewBodyRef;
+    if (!a || !b) return;
+
+    const currentBody = bodyRef.current;
+    const hasMountedBody = currentBody === a || currentBody === b;
+    if (!hasMountedBody) {
+      const front = frontIsARef.current ? a : b;
+      const back = frontIsARef.current ? b : a;
+      front.innerHTML = previewHtml;
+      front.style.display = "block";
+      back.style.display = "none";
+      bodyRef.current = front;
+      previewRenderedHtmlRef.current.set(front, previewHtml);
+      hydrateTrackMaps(front);
+      rebuildAnchors();
+      scheduleSyncRef.current();
+      schedulePreviewHighlightRef.current();
+      if (overlayActive) refreshGutterPins();
+      attachPreviewObservers();
+      return;
     }
-  }, [overlayActive, previewHtml, swapInto]);
+
+    const front = currentBody;
+    if (previewRenderedHtmlRef.current.get(front) === previewHtml) {
+      front.style.display = "block";
+      (front === a ? b : a).style.display = "none";
+      return;
+    }
+
+    const back = front === a ? b : a;
+    back.innerHTML = previewHtml;
+    const frame = requestAnimationFrame(() => {
+      reconcileTrackMapPreviews(front, back);
+      front.style.display = "none";
+      back.style.display = "block";
+      frontIsARef.current = back === a;
+      bodyRef.current = back;
+      previewRenderedHtmlRef.current.set(back, previewHtml);
+      destroyTrackMaps(front);
+      hydrateTrackMaps(back);
+      rebuildAnchors();
+      scheduleSyncRef.current();
+      schedulePreviewHighlightRef.current();
+      if (overlayActive) refreshGutterPins();
+      attachPreviewObservers();
+    });
+
+    return () => cancelAnimationFrame(frame);
+  }, [
+    previewHtml,
+    showPreview,
+    overlayActive,
+    hydrateTrackMaps,
+    rebuildAnchors,
+    attachPreviewObservers,
+    refreshGutterPins,
+  ]);
 
   function handleSubmit(e: React.FormEvent) {
     if (overLimit) {
