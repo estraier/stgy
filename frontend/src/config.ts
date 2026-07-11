@@ -17,6 +17,7 @@ export class Config {
   );
   static readonly MEDIA_BUCKET_IMAGES = Config.STORAGE_S3_BUCKET_PREFIX + "-images";
   static readonly MEDIA_BUCKET_PROFILES = Config.STORAGE_S3_BUCKET_PREFIX + "-profiles";
+  static readonly MEDIA_BUCKET_TRACKS = Config.STORAGE_S3_BUCKET_PREFIX + "-tracks";
   static readonly MEDIA_IMAGE_BYTE_LIMIT = normNum(
     process.env.NEXT_PUBLIC_MEDIA_IMAGE_BYTE_LIMIT,
     10 * 1024 * 1024,
@@ -27,6 +28,18 @@ export class Config {
   );
   static readonly MEDIA_IMAGE_COUNT_LIMIT_ONCE = normNum(
     process.env.NEXT_PUBLIC_MEDIA_IMAGE_COUNT_LIMIT_ONCE,
+    12,
+  );
+  static readonly MEDIA_TRACK_BYTE_LIMIT = normNum(
+    process.env.NEXT_PUBLIC_MEDIA_TRACK_BYTE_LIMIT,
+    20 * 1024 * 1024,
+  );
+  static readonly MEDIA_TRACK_BYTE_LIMIT_PER_MONTH = normNum(
+    process.env.NEXT_PUBLIC_MEDIA_TRACK_BYTE_LIMIT_PER_MONTH,
+    200 * 1024 * 1024,
+  );
+  static readonly MEDIA_TRACK_COUNT_LIMIT_ONCE = normNum(
+    process.env.NEXT_PUBLIC_MEDIA_TRACK_COUNT_LIMIT_ONCE,
     12,
   );
   static readonly MEDIA_AVATAR_BYTE_LIMIT = normNum(
@@ -45,6 +58,7 @@ export class Config {
     100,
   );
   static readonly IMAGES_PAGE_SIZE = normNum(process.env.NEXT_PUBLIC_IMAGES_PAGE_SIZE, 30);
+  static readonly TRACKS_PAGE_SIZE = normNum(process.env.NEXT_PUBLIC_TRACKS_PAGE_SIZE, 30);
   static readonly INTRODUCTION_LENGTH_LIMIT = normNum(
     process.env.NEXT_PUBLIC_INTRODUCTION_LENGTH_LIMIT,
     2500,
@@ -87,6 +101,8 @@ export class Config {
   static readonly TEXT_ALLOWED_TYPES = "text/plain,text/markdown,.txt,.text,.md,.markdown";
   static readonly IMAGE_ALLOWED_TYPES =
     "image/jpeg,image/png,image/webp,image/heic,image/heif,image/tiff,image/gif,image/bmp,image/svg+xml,.jpg,.jpeg,.png,.webp,.heic,.heif,.tif,.tiff,.gif,.bmp,.svg";
+  static readonly TRACK_ALLOWED_TYPES =
+    ".fit,.trjgz,application/vnd.ant.fit,application/octet-stream,application/gzip,application/x-gzip";
   static readonly WELCOME_PAGE_PATH = "/posts/0002000000000001";
   static readonly HELP_PAGE_PATH = "/posts/0002000000000002";
   static readonly PUB_DESIGN_THEMES = [

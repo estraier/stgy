@@ -1695,6 +1695,97 @@ def
       expected,
     );
   });
+
+  it("removes maps", () => {
+    const mdText = `abc
+@[Map](/maps/ride.trjgz)
+def
+![alt](/data/first.jpg)
+`;
+    const expected = [
+      {
+        type: "element",
+        tag: "figure",
+        attrs: {
+          class: "featured-block",
+        },
+        children: [
+          {
+            type: "element",
+            tag: "img",
+            attrs: {
+              src: "/data/first.jpg",
+            },
+            children: [],
+          },
+          {
+            type: "element",
+            tag: "figcaption",
+            children: [
+              {
+                type: "text",
+                text: "alt",
+              },
+            ],
+          },
+        ],
+      },
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "abc",
+          },
+        ],
+      },
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "def",
+          },
+        ],
+      },
+    ];
+    expect(stripPos(mdFilterForFeatured(parseMarkdown(mdText)))).toStrictEqual(
+      expected,
+    );
+  });
+
+  it("removes grouped maps", () => {
+    const mdText = `abc
+@[Map1](/maps/map1.trjgz){grid}
+@[Map2](/maps/map2.trjgz){grid}
+def
+`;
+    const nodes = mdGroupMapGrid(parseMarkdown(mdText));
+    expect(stripPos(mdFilterForFeatured(nodes))).toStrictEqual([
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "abc",
+          },
+        ],
+      },
+      {
+        type: "element",
+        tag: "p",
+        children: [
+          {
+            type: "text",
+            text: "def",
+          },
+        ],
+      },
+    ]);
+  });
 });
 
 describe("mdAnnotateElements", () => {

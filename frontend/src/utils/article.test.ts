@@ -2,6 +2,7 @@ jest.mock("@/config", () => ({
   Config: {
     STORAGE_S3_PUBLIC_URL_PREFIX: "https://cdn.test/{bucket}/",
     MEDIA_BUCKET_IMAGES: "images-bkt",
+    MEDIA_BUCKET_TRACKS: "tracks-bkt",
     MAX_MEDIA_OBJECTS_PER_POST: 100,
     SNIPPET_MAX_LENGTH: 100,
     SNIPPET_MAX_HEIGHT: 60,
@@ -39,6 +40,11 @@ describe("article utils (normal cases)", () => {
     expect(html).toContain('src="https://cdn.test/images-bkt/u1/masters/abc/cat.jpg"');
     expect(html).toContain("data-char-position");
     expect(html).toContain("data-line-position");
+  });
+
+  test("makeArticleHtmlFromMarkdown rewrites managed track previews", () => {
+    const html = makeArticleHtmlFromMarkdown("@[](/tracks/u1/previews/abc/ride.trjgz)");
+    expect(html).toContain('data-src="https://cdn.test/tracks-bkt/u1/previews/abc/ride.trjgz"');
   });
 
   test("makeArticleTextFromMarkdown", () => {

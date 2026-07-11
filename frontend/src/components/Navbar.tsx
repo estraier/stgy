@@ -167,6 +167,13 @@ export default function Navbar() {
               Images
             </Link>
             <Link
+              href="/tracks"
+              className="block w-full px-4 py-2 text-left hover:bg-gray-100"
+              onClick={() => setMenuOpen(false)}
+            >
+              Tracks
+            </Link>
+            <Link
               href="/auth-settings"
               className="block w-full px-4 py-2 text-left hover:bg-gray-100"
               onClick={() => setMenuOpen(false)}

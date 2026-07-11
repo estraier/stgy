@@ -136,6 +136,10 @@ function rewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {
     /\{bucket\}/g,
     Config.MEDIA_BUCKET_IMAGES,
   );
+  const tracksPrefix = Config.STORAGE_S3_PUBLIC_URL_PREFIX.replace(
+    /\{bucket\}/g,
+    Config.MEDIA_BUCKET_TRACKS,
+  );
   const rewriteRules: MdRewriteRule[] = [];
   rewriteRules.push({
     pattern: /^\/data\//,
@@ -157,7 +161,43 @@ function rewriteMediaUrls(nodes: MdNode[], useThumbnail: boolean): MdNode[] {
     rewriteRules,
     maxObjects: Config.MAX_MEDIA_OBJECTS_PER_POST,
   };
-  return mdRewriteMediaUrls(nodes, opts);
+  return rewriteTrackUrls(mdRewriteMediaUrls(nodes, opts), tracksPrefix);
+}
+
+function rewriteTrackUrls(nodes: MdNode[], tracksPrefix: string): MdNode[] {
+  const rewriteUrl = (url: string): string => url.replace(/^\/tracks\//, tracksPrefix);
+  const rewriteOne = (node: MdNode): MdNode => {
+    if (node.type !== "element") return node;
+    const children = (node.children || []).map(rewriteOne);
+    const attrs = node.attrs || {};
+    const className = typeof attrs.class === "string" ? attrs.class : "";
+    const classes = className.split(/\s+/);
+
+    if (node.tag === "figure" && classes.includes("stgy-track-map")) {
+      const dataSrc = typeof attrs["data-src"] === "string" ? attrs["data-src"] : "";
+      if (dataSrc.startsWith("/tracks/")) {
+        return {
+          ...node,
+          attrs: { ...attrs, "data-src": rewriteUrl(dataSrc) },
+          children,
+        };
+      }
+    }
+
+    if (node.tag === "a" && classes.includes("track-source")) {
+      const href = typeof attrs.href === "string" ? attrs.href : "";
+      if (href.startsWith("/tracks/")) {
+        return {
+          ...node,
+          attrs: { ...attrs, href: rewriteUrl(href) },
+          children,
+        };
+      }
+    }
+
+    return { ...node, children };
+  };
+  return nodes.map(rewriteOne);
 }
 
 function rewritePublishedUrls(nodes: MdNode[]): MdNode[] {

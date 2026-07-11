@@ -133,6 +133,27 @@ export type StorageMonthlyQuota = {
   limitMonthlyBytes: number | null;
 };
 
+export type TrackObject = StorageObjectMetadata & {
+  publicUrl: string;
+  previewKey: string;
+  previewUrl: string;
+};
+
+export type FinalizedTrack = {
+  master: TrackObject;
+  preview: TrackObject;
+};
+
+export type TrackStorageMonthlyQuota = {
+  userId: string;
+  yyyymm: string;
+  bytesMasters: number;
+  bytesPreviews: number;
+  bytesTotal: number;
+  limitSingleBytes: number | null;
+  limitMonthlyBytes: number | null;
+};
+
 export type NotificationUserRecord = {
   userId: string;
   userNickname: string;

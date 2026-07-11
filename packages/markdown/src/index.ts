@@ -2271,25 +2271,28 @@ export function mdFindFeatured(nodes: MdNode[]): MdElementNode | null {
 
 export function mdFilterForFeatured(nodes: MdNode[]): MdNode[] {
   const featuredFig = mdFindFeatured(nodes);
-  function removeImageBlocks(arr: MdNode[]): MdNode[] {
+  function removeMediaBlocks(arr: MdNode[]): MdNode[] {
     const out: MdNode[] = [];
     for (const n of arr) {
-      if (
-        n.type === "element" &&
-        n.tag === "figure" &&
-        n.attrs?.class === "image-block"
-      ) {
-        continue;
+      if (n.type === "element") {
+        const className = n.attrs?.class;
+        if (
+          (n.tag === "figure" &&
+            (className === "image-block" || className === "stgy-track-map")) ||
+          (n.tag === "div" && className === "stgy-track-grid")
+        ) {
+          continue;
+        }
       }
       if (n.type === "element" && n.children?.length) {
-        out.push({ ...n, children: removeImageBlocks(n.children) });
+        out.push({ ...n, children: removeMediaBlocks(n.children) });
       } else {
         out.push(n);
       }
     }
     return out;
   }
-  const body = removeImageBlocks(nodes);
+  const body = removeMediaBlocks(nodes);
   if (featuredFig && featuredFig.type === "element") {
     const thumb: MdElementNode = makeElement(
       "figure",
