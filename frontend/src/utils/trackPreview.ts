@@ -2,13 +2,13 @@ import type { TrackActivityMetadata } from "stgy-track/activity";
 import { getTrackFileKind } from "./tracks";
 
 export const TRACK_UPLOAD_PREVIEW_MAX_POINTS = 3000;
+export const TRACK_OBFUSCATION_MIN_DISTANCE_M = 1000;
+export const TRACK_OBFUSCATION_MAX_DISTANCE_M = 1500;
+export const TRACK_OBFUSCATION_MAX_ROUTE_RATIO = 0.05;
 
 export type TrackUploadPreviewMetadata = Pick<
   TrackActivityMetadata,
-  | "startTime"
-  | "localTimeOffsetSeconds"
-  | "totalDistanceM"
-  | "totalElapsedTime"
+  "startTime" | "localTimeOffsetSeconds" | "totalDistanceM" | "totalElapsedTime"
 >;
 
 export type TrackUploadPreview = {
@@ -16,15 +16,27 @@ export type TrackUploadPreview = {
   metadata: TrackUploadPreviewMetadata;
 };
 
+export type TrackUploadObfuscationOptions = {
+  enabled: boolean;
+  startDistanceM: number;
+  endDistanceM: number;
+};
+
+export type TrackObfuscationDistances = {
+  startDistanceM: number;
+  endDistanceM: number;
+};
+
 type TrackPreviewFile = Pick<File, "name" | "arrayBuffer">;
 
 export async function makeTrackUploadPreview(
   file: TrackPreviewFile,
   maxPoints = TRACK_UPLOAD_PREVIEW_MAX_POINTS,
+  obfuscation?: TrackUploadObfuscationOptions,
 ): Promise<TrackUploadPreview> {
   const kind = getTrackFileKind(file.name);
   if (kind === "FIT") {
-    return makeFitPreview(await file.arrayBuffer(), maxPoints);
+    return makeFitPreview(await file.arrayBuffer(), maxPoints, obfuscation);
   }
   if (kind === "TRJGZ") {
     const text = await decompressGzipText(await file.arrayBuffer());
@@ -43,9 +55,16 @@ export async function makeTrackUploadPreviewJson(
 export async function makeFitPreview(
   bytes: ArrayBuffer,
   maxPoints = TRACK_UPLOAD_PREVIEW_MAX_POINTS,
+  obfuscation?: TrackUploadObfuscationOptions,
 ): Promise<TrackUploadPreview> {
   const fit = await import("stgy-track/fit");
-  const activity = fit.parseFitBytes(bytes);
+  const sourceBytes = obfuscation?.enabled
+    ? fit.obfuscateFitPrivacy(bytes, {
+        startDistanceM: obfuscation.startDistanceM,
+        endDistanceM: obfuscation.endDistanceM,
+      })
+    : bytes;
+  const activity = fit.parseFitBytes(sourceBytes);
   const preview = fit.downsampleTrackActivity(activity, {
     maxPoints,
     strategy: "uniform",
@@ -94,6 +113,76 @@ export async function makeTrackJsonPreviewJson(
   return (await makeTrackJsonPreview(text, maxPoints)).json;
 }
 
+export function createTrackObfuscationDistances(
+  totalDistanceM: number | undefined,
+  random: () => number = Math.random,
+): TrackObfuscationDistances {
+  return {
+    startDistanceM: createTrackObfuscationDistance(totalDistanceM, random),
+    endDistanceM: createTrackObfuscationDistance(totalDistanceM, random),
+  };
+}
+
+export function getTrackObfuscationMaxDistance(
+  totalDistanceM: number | undefined,
+): number | undefined {
+  if (!isFiniteNumber(totalDistanceM) || totalDistanceM < 0) return undefined;
+  return Math.max(0, Math.floor(totalDistanceM * TRACK_OBFUSCATION_MAX_ROUTE_RATIO));
+}
+
+export function normalizeTrackObfuscationDistance(
+  value: number,
+  totalDistanceM: number | undefined,
+): number {
+  const normalized = Number.isFinite(value) ? Math.max(0, Math.floor(value)) : 0;
+  const maxDistanceM = getTrackObfuscationMaxDistance(totalDistanceM);
+  return maxDistanceM === undefined ? normalized : Math.min(normalized, maxDistanceM);
+}
+
+export async function prepareTrackUploadPayload(
+  file: File,
+  obfuscation?: TrackUploadObfuscationOptions,
+): Promise<Blob | File> {
+  if (getTrackFileKind(file.name) !== "FIT" || !obfuscation?.enabled) {
+    return file;
+  }
+
+  const fit = await import("stgy-track/fit");
+  const output = fit.obfuscateFitPrivacy(await file.arrayBuffer(), {
+    startDistanceM: obfuscation.startDistanceM,
+    endDistanceM: obfuscation.endDistanceM,
+  });
+  return new Blob([copyUint8ArrayToArrayBuffer(output)], {
+    type: "application/octet-stream",
+  });
+}
+
+function createTrackObfuscationDistance(
+  totalDistanceM: number | undefined,
+  random: () => number,
+): number {
+  const maxDistanceM = getTrackObfuscationMaxDistance(totalDistanceM);
+  if (maxDistanceM !== undefined && maxDistanceM < TRACK_OBFUSCATION_MIN_DISTANCE_M) {
+    return maxDistanceM;
+  }
+
+  const upper = Math.min(
+    TRACK_OBFUSCATION_MAX_DISTANCE_M,
+    maxDistanceM ?? TRACK_OBFUSCATION_MAX_DISTANCE_M,
+  );
+  const fraction = Math.min(Math.max(random(), 0), 0.999999999999);
+  return (
+    TRACK_OBFUSCATION_MIN_DISTANCE_M +
+    Math.floor(fraction * (upper - TRACK_OBFUSCATION_MIN_DISTANCE_M + 1))
+  );
+}
+
+function copyUint8ArrayToArrayBuffer(bytes: Uint8Array): ArrayBuffer {
+  const copy = new Uint8Array(bytes.byteLength);
+  copy.set(bytes);
+  return copy.buffer;
+}
+
 export function formatTrackPreviewStartTime(
   metadata: TrackUploadPreviewMetadata,
 ): string | undefined {
@@ -130,15 +219,14 @@ export function formatTrackPreviewElapsedTime(
   const remainingSeconds = total % 60;
 
   if (hours > 0) {
-    return `${hours}:${String(minutes).padStart(2, "0")}:` +
-      String(remainingSeconds).padStart(2, "0");
+    return (
+      `${hours}:${String(minutes).padStart(2, "0")}:` + String(remainingSeconds).padStart(2, "0")
+    );
   }
   return `${minutes}:${String(remainingSeconds).padStart(2, "0")}`;
 }
 
-function pickPreviewMetadata(
-  metadata: TrackActivityMetadata,
-): TrackUploadPreviewMetadata {
+function pickPreviewMetadata(metadata: TrackActivityMetadata): TrackUploadPreviewMetadata {
   const output: TrackUploadPreviewMetadata = {};
   if (isFiniteNumber(metadata.startTime)) output.startTime = metadata.startTime;
   if (isFiniteNumber(metadata.localTimeOffsetSeconds)) {
@@ -161,9 +249,11 @@ function formatDateTimeParts(date: Date, useUtcFields: boolean): string {
   const minutes = useUtcFields ? date.getUTCMinutes() : date.getMinutes();
   const seconds = useUtcFields ? date.getUTCSeconds() : date.getSeconds();
 
-  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")} ` +
+  return (
+    `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")} ` +
     `${String(hours).padStart(2, "0")}:${String(minutes).padStart(2, "0")}:` +
-    String(seconds).padStart(2, "0");
+    String(seconds).padStart(2, "0")
+  );
 }
 
 function formatNumber(value: number, fractionDigits: number): string {

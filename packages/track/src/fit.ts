@@ -3483,6 +3483,7 @@ const FIT_RECORD_GLOBAL_MESSAGE_NUMBER = 20;
 const RECORD_POSITION_LAT_FIELD = 0;
 const RECORD_POSITION_LONG_FIELD = 1;
 const RECORD_DISTANCE_FIELD = 5;
+const FIT_INVALID_UINT32 = 0xffffffff;
 const EARTH_RADIUS_M = 6371000;
 
 const CRC_TABLE = [
@@ -3708,9 +3709,12 @@ function collectDataMessagePoint(
     ? dataOffset + distanceField.offset
     : undefined;
 
-  const distanceM = distanceOffset === undefined
+  const distanceRaw = distanceOffset === undefined
     ? undefined
-    : readUint32(data, distanceOffset, definition.littleEndian) / 100;
+    : readUint32(data, distanceOffset, definition.littleEndian);
+  const distanceM = distanceRaw === undefined || distanceRaw === FIT_INVALID_UINT32
+    ? undefined
+    : distanceRaw / 100;
 
   points.push({
     latOffset,

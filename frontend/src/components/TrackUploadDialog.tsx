@@ -9,10 +9,15 @@ import { Config } from "@/config";
 import { formatBytes } from "@/utils/format";
 import {
   TRACK_UPLOAD_PREVIEW_MAX_POINTS,
+  createTrackObfuscationDistances,
   formatTrackPreviewDistance,
   formatTrackPreviewElapsedTime,
   formatTrackPreviewStartTime,
+  getTrackObfuscationMaxDistance,
   makeTrackUploadPreview,
+  normalizeTrackObfuscationDistance,
+  prepareTrackUploadPayload,
+  type TrackUploadObfuscationOptions,
   type TrackUploadPreviewMetadata,
 } from "@/utils/trackPreview";
 import {
@@ -44,6 +49,9 @@ type SelectedItem = TrackDialogFileItem & {
   previewUrl?: string;
   previewError?: string;
   previewMetadata?: TrackUploadPreviewMetadata;
+  obfuscateCoordinates: boolean;
+  obfuscateStartDistanceM: number;
+  obfuscateEndDistanceM: number;
 };
 
 type SelectedItemPatch = Partial<
@@ -55,7 +63,14 @@ type SelectedItemPatch = Partial<
     | "previewUrl"
     | "previewError"
     | "previewMetadata"
+    | "obfuscateCoordinates"
+    | "obfuscateStartDistanceM"
+    | "obfuscateEndDistanceM"
   >
+>;
+
+type ObfuscationPatch = Partial<
+  Pick<SelectedItem, "obfuscateCoordinates" | "obfuscateStartDistanceM" | "obfuscateEndDistanceM">
 >;
 
 type Props = {
@@ -73,6 +88,17 @@ function createSelectedItem(file: TrackDialogFileItem): SelectedItem {
     status: "pending",
     previewStatus: supported ? "loading" : "error",
     previewError: supported ? undefined : "Only FIT and TRJGZ files are supported.",
+    obfuscateCoordinates: false,
+    obfuscateStartDistanceM: 1000,
+    obfuscateEndDistanceM: 1000,
+  };
+}
+
+function getItemObfuscation(item: SelectedItem): TrackUploadObfuscationOptions {
+  return {
+    enabled: getTrackFileKind(item.name) === "FIT" && item.obfuscateCoordinates,
+    startDistanceM: item.obfuscateStartDistanceM,
+    endDistanceM: item.obfuscateEndDistanceM,
   };
 }
 
@@ -86,8 +112,16 @@ function TrackPreviewMetadata({ metadata }: { metadata: TrackUploadPreviewMetada
   return (
     <div className="overflow-x-auto whitespace-nowrap text-[15px] leading-5 text-gray-600">
       {startTime && <span>Start: {startTime}</span>}
-      {distance && <span>{startTime ? " " : ""}Distance: {distance}</span>}
-      {elapsedTime && <span>{startTime || distance ? " " : ""}Elapsed: {elapsedTime}</span>}
+      {distance && (
+        <span>
+          {startTime ? " " : ""}Distance: {distance}
+        </span>
+      )}
+      {elapsedTime && (
+        <span>
+          {startTime || distance ? " " : ""}Elapsed: {elapsedTime}
+        </span>
+      )}
     </div>
   );
 }
@@ -98,7 +132,8 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
   const [quota, setQuota] = useState<TrackStorageMonthlyQuota | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const previewUrlsRef = useRef<Set<string>>(new Set());
+  const previewUrlsRef = useRef<Map<string, string>>(new Map());
+  const previewRequestsRef = useRef<Map<string, number>>(new Map());
 
   useEffect(() => setMounted(true), []);
 
@@ -106,48 +141,83 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
     setItems((current) => current.map((item) => (item.id === id ? { ...item, ...patch } : item)));
   }, []);
 
+  const refreshItemPreview = useCallback(
+    async (
+      item: Pick<SelectedItem, "id" | "file" | "name">,
+      obfuscation: TrackUploadObfuscationOptions,
+      initializeDefaults = false,
+    ) => {
+      const requestId = (previewRequestsRef.current.get(item.id) || 0) + 1;
+      previewRequestsRef.current.set(item.id, requestId);
+      setItemState(item.id, {
+        previewStatus: "loading",
+        previewError: undefined,
+      });
+
+      try {
+        const preview = await makeTrackUploadPreview(
+          item.file,
+          TRACK_UPLOAD_PREVIEW_MAX_POINTS,
+          obfuscation,
+        );
+        if (previewRequestsRef.current.get(item.id) !== requestId) return;
+
+        const url = URL.createObjectURL(
+          new Blob([preview.json], {
+            type: "application/json",
+          }),
+        );
+        const oldUrl = previewUrlsRef.current.get(item.id);
+        if (oldUrl) URL.revokeObjectURL(oldUrl);
+        previewUrlsRef.current.set(item.id, url);
+
+        const patch: SelectedItemPatch = {
+          previewStatus: "ready",
+          previewUrl: url,
+          previewError: undefined,
+          previewMetadata: preview.metadata,
+        };
+        if (initializeDefaults && getTrackFileKind(item.name) === "FIT") {
+          const defaults = createTrackObfuscationDistances(preview.metadata.totalDistanceM);
+          patch.obfuscateStartDistanceM = defaults.startDistanceM;
+          patch.obfuscateEndDistanceM = defaults.endDistanceM;
+        }
+        setItemState(item.id, patch);
+      } catch (caught: unknown) {
+        if (previewRequestsRef.current.get(item.id) !== requestId) return;
+        const message = caught instanceof Error ? caught.message : String(caught);
+        setItemState(item.id, {
+          previewStatus: "error",
+          previewError: message,
+        });
+      }
+    },
+    [setItemState],
+  );
+
   useEffect(() => {
-    let cancelled = false;
+    const previewRequests = previewRequestsRef.current;
     const previewUrls = previewUrlsRef.current;
 
     files.forEach((file) => {
       if (!getTrackFileKind(file.name)) return;
-
-      void makeTrackUploadPreview(file.file)
-        .then((preview) => {
-          const url = URL.createObjectURL(
-            new Blob([preview.json], {
-              type: "application/json",
-            }),
-          );
-          if (cancelled) {
-            URL.revokeObjectURL(url);
-            return;
-          }
-          previewUrls.add(url);
-          setItemState(file.id, {
-            previewStatus: "ready",
-            previewUrl: url,
-            previewError: undefined,
-            previewMetadata: preview.metadata,
-          });
-        })
-        .catch((caught: unknown) => {
-          if (cancelled) return;
-          const message = caught instanceof Error ? caught.message : String(caught);
-          setItemState(file.id, {
-            previewStatus: "error",
-            previewError: message,
-          });
-        });
+      void refreshItemPreview(
+        file,
+        {
+          enabled: false,
+          startDistanceM: 0,
+          endDistanceM: 0,
+        },
+        true,
+      );
     });
 
     return () => {
-      cancelled = true;
+      previewRequests.clear();
       previewUrls.forEach((url) => URL.revokeObjectURL(url));
       previewUrls.clear();
     };
-  }, [files, setItemState]);
+  }, [files, refreshItemPreview]);
 
   useEffect(() => {
     let cancelled = false;
@@ -162,6 +232,15 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
       cancelled = true;
     };
   }, [userId]);
+
+  const updateObfuscation = useCallback(
+    (item: SelectedItem, patch: ObfuscationPatch) => {
+      const nextItem = { ...item, ...patch };
+      setItemState(item.id, patch);
+      void refreshItemPreview(nextItem, getItemObfuscation(nextItem));
+    },
+    [refreshItemPreview, setItemState],
+  );
 
   const selectedBytes = useMemo(() => items.reduce((sum, item) => sum + item.size, 0), [items]);
   const singleLimit = quota ? quota.limitSingleBytes : Config.MEDIA_TRACK_BYTE_LIMIT;
@@ -181,10 +260,7 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
     [items, singleLimit],
   );
   const canUpload = !busy && !previewsLoading && invalidItems.length === 0 && !knownQuotaExceeded;
-  const gridClass = useMemo(
-    () => getTrackUploadDialogGridClass(items.length),
-    [items.length],
-  );
+  const gridClass = useMemo(() => getTrackUploadDialogGridClass(items.length), [items.length]);
 
   const onUpload = useCallback(async () => {
     if (!canUpload) return;
@@ -210,10 +286,11 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
       try {
         setItemState(item.id, { status: "uploading", error: undefined });
         const contentType = getTrackUploadContentType(item.name);
-        const presigned = await presignTrackUpload(userId, item.name, item.size);
+        const payload = await prepareTrackUploadPayload(item.file, getItemObfuscation(item));
+        const presigned = await presignTrackUpload(userId, item.name, payload.size);
         await uploadToPresigned(
           presigned,
-          item.file,
+          payload,
           item.name,
           presigned.fields["Content-Type"] || contentType,
         );
@@ -288,6 +365,11 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
             {items.map((item) => {
               const kind = getTrackFileKind(item.name);
               const oversized = Boolean(singleLimit && item.size > singleLimit);
+              const maxObfuscationDistanceM = getTrackObfuscationMaxDistance(
+                item.previewMetadata?.totalDistanceM,
+              );
+              const obfuscationUnavailable =
+                maxObfuscationDistanceM !== undefined && maxObfuscationDistanceM <= 0;
               const statusText =
                 item.status === "uploading"
                   ? "Uploading…"
@@ -304,7 +386,13 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                             : "Ready";
               return (
                 <li key={item.id} className="rounded border bg-white overflow-hidden mx-auto">
-                  <div className="relative w-[70vw] sm:w-[44vw] md:w-[28vw] lg:w-[24vw] xl:w-[22vw] aspect-video bg-gray-50 flex items-center justify-center">
+                  <div
+                    className={
+                      "relative w-[70vw] sm:w-[44vw] md:w-[28vw] " +
+                      "lg:w-[24vw] xl:w-[22vw] aspect-video bg-gray-50 " +
+                      "flex items-center justify-center"
+                    }
+                  >
                     {item.previewUrl ? (
                       <TrackPreviewMap key={item.previewUrl} src={item.previewUrl} />
                     ) : (
@@ -320,7 +408,12 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                       </div>
                     )}
                     {(item.status === "uploading" || item.status === "finalizing") && (
-                      <div className="absolute inset-0 z-[700] bg-white/70 flex items-center justify-center text-xs">
+                      <div
+                        className={
+                          "absolute inset-0 z-[700] bg-white/70 flex " +
+                          "items-center justify-center text-xs"
+                        }
+                      >
                         {statusText}
                       </div>
                     )}
@@ -332,6 +425,82 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                     </div>
                     {item.previewMetadata && (
                       <TrackPreviewMetadata metadata={item.previewMetadata} />
+                    )}
+                    {kind === "FIT" && (
+                      <div
+                        className={
+                          "flex flex-wrap items-center gap-x-1 gap-y-1 " +
+                          "text-[13px] text-gray-700"
+                        }
+                      >
+                        <label className="inline-flex items-center gap-1 whitespace-nowrap">
+                          <input
+                            type="checkbox"
+                            checked={item.obfuscateCoordinates}
+                            disabled={busy || obfuscationUnavailable}
+                            onChange={(event) => {
+                              updateObfuscation(item, {
+                                obfuscateCoordinates: event.target.checked,
+                              });
+                            }}
+                          />
+                          Obfuscate coordinate
+                        </label>
+                        <label className="inline-flex items-center gap-1 whitespace-nowrap">
+                          start:
+                          <input
+                            type="number"
+                            min={0}
+                            max={maxObfuscationDistanceM}
+                            step={1}
+                            value={item.obfuscateStartDistanceM}
+                            disabled={busy || !item.obfuscateCoordinates}
+                            className={
+                              "w-[72px] rounded border border-gray-300 " +
+                              "px-1 py-0.5 text-right"
+                            }
+                            onChange={(event) => {
+                              setItemState(item.id, {
+                                obfuscateStartDistanceM: normalizeTrackObfuscationDistance(
+                                  Number(event.target.value),
+                                  item.previewMetadata?.totalDistanceM,
+                                ),
+                              });
+                            }}
+                            onBlur={() => {
+                              void refreshItemPreview(item, getItemObfuscation(item));
+                            }}
+                          />
+                          m
+                        </label>
+                        <label className="inline-flex items-center gap-1 whitespace-nowrap">
+                          end:
+                          <input
+                            type="number"
+                            min={0}
+                            max={maxObfuscationDistanceM}
+                            step={1}
+                            value={item.obfuscateEndDistanceM}
+                            disabled={busy || !item.obfuscateCoordinates}
+                            className={
+                              "w-[72px] rounded border border-gray-300 " +
+                              "px-1 py-0.5 text-right"
+                            }
+                            onChange={(event) => {
+                              setItemState(item.id, {
+                                obfuscateEndDistanceM: normalizeTrackObfuscationDistance(
+                                  Number(event.target.value),
+                                  item.previewMetadata?.totalDistanceM,
+                                ),
+                              });
+                            }}
+                            onBlur={() => {
+                              void refreshItemPreview(item, getItemObfuscation(item));
+                            }}
+                          />
+                          m
+                        </label>
+                      </div>
                     )}
                     <div className="text-[12px] text-gray-700">
                       <span className="font-mono">{kind || "Unsupported"}</span> •{" "}

@@ -1,6 +1,7 @@
 import { gzipSync } from "zlib";
 import {
   downsampleTrackActivity,
+  obfuscateFitPrivacy,
   parseFitBytes,
   trackActivityToTrackJson,
   trackJsonDataToTrackActivity,
@@ -11,7 +12,10 @@ import {
   parseTrackJsonData,
 } from "stgy-track/trackjson";
 import {
+  TRACK_OBFUSCATION_MAX_DISTANCE_M,
+  TRACK_OBFUSCATION_MIN_DISTANCE_M,
   TRACK_UPLOAD_PREVIEW_MAX_POINTS,
+  createTrackObfuscationDistances,
   formatTrackPreviewDistance,
   formatTrackPreviewElapsedTime,
   formatTrackPreviewStartTime,
@@ -21,10 +25,13 @@ import {
   makeTrackJsonPreviewJson,
   makeTrackUploadPreview,
   makeTrackUploadPreviewJson,
+  normalizeTrackObfuscationDistance,
+  prepareTrackUploadPayload,
 } from "./trackPreview";
 
 jest.mock("stgy-track/fit", () => ({
   downsampleTrackActivity: jest.fn(),
+  obfuscateFitPrivacy: jest.fn(),
   parseFitBytes: jest.fn(),
   trackActivityToTrackJson: jest.fn(),
   trackJsonDataToTrackActivity: jest.fn(),
@@ -36,6 +43,7 @@ jest.mock("stgy-track/trackjson", () => ({
   parseTrackJsonData: jest.fn(),
 }));
 
+const obfuscateFitPrivacyMock = jest.mocked(obfuscateFitPrivacy);
 const parseFitBytesMock = jest.mocked(parseFitBytes);
 const downsampleTrackActivityMock = jest.mocked(downsampleTrackActivity);
 const trackActivityToTrackJsonMock = jest.mocked(trackActivityToTrackJson);
@@ -176,4 +184,93 @@ test("formats preview date, distance, and elapsed time", () => {
 test("formats short distance and duration values", () => {
   expect(formatTrackPreviewDistance({ totalDistanceM: 750 })).toBe("750 m");
   expect(formatTrackPreviewElapsedTime({ totalElapsedTime: 125 })).toBe("2:05");
+});
+
+test("obfuscates FIT bytes before building the preview when enabled", async () => {
+  const bytes = new Uint8Array([1, 2, 3]).buffer;
+  const obfuscated = new Uint8Array([4, 5, 6]);
+  const activity = { metadata: {}, points: [] };
+
+  obfuscateFitPrivacyMock.mockReturnValue(obfuscated);
+  parseFitBytesMock.mockReturnValue(activity as never);
+  downsampleTrackActivityMock.mockReturnValue(activity as never);
+  trackActivityToTrackJsonMock.mockReturnValue('{"type":"FeatureCollection"}');
+
+  await makeFitPreview(bytes, TRACK_UPLOAD_PREVIEW_MAX_POINTS, {
+    enabled: true,
+    startDistanceM: 1100,
+    endDistanceM: 1300,
+  });
+
+  expect(obfuscateFitPrivacyMock).toHaveBeenCalledWith(bytes, {
+    startDistanceM: 1100,
+    endDistanceM: 1300,
+  });
+  expect(parseFitBytesMock).toHaveBeenCalledWith(obfuscated);
+});
+
+test("chooses independent random obfuscation distances within 1000-1500m", () => {
+  const values = [0, 0.999999];
+  const distances = createTrackObfuscationDistances(100_000, () => values.shift() || 0);
+
+  expect(distances).toEqual({
+    startDistanceM: TRACK_OBFUSCATION_MIN_DISTANCE_M,
+    endDistanceM: TRACK_OBFUSCATION_MAX_DISTANCE_M,
+  });
+});
+
+test("caps default and edited obfuscation distances at five percent", () => {
+  const values = [0.25, 0.75];
+  expect(createTrackObfuscationDistances(20_000, () => values.shift() || 0)).toEqual({
+    startDistanceM: 1000,
+    endDistanceM: 1000,
+  });
+  expect(normalizeTrackObfuscationDistance(1400, 20_000)).toBe(1000);
+  expect(normalizeTrackObfuscationDistance(-10, 20_000)).toBe(0);
+});
+
+test("rewrites only enabled FIT upload payloads", async () => {
+  const originalBytes = new Uint8Array([1, 2, 3]);
+  const outputBytes = new Uint8Array([4, 5, 6]);
+  const file = {
+    name: "ride.fit",
+    type: "application/octet-stream",
+    size: originalBytes.byteLength,
+    arrayBuffer: jest.fn().mockResolvedValue(originalBytes.buffer),
+  } as unknown as File;
+  obfuscateFitPrivacyMock.mockReturnValue(outputBytes);
+
+  await expect(
+    prepareTrackUploadPayload(file, {
+      enabled: false,
+      startDistanceM: 1000,
+      endDistanceM: 1000,
+    }),
+  ).resolves.toBe(file);
+
+  const payload = await prepareTrackUploadPayload(file, {
+    enabled: true,
+    startDistanceM: 1100,
+    endDistanceM: 1200,
+  });
+
+  expect(payload).toBeInstanceOf(Blob);
+  expect(payload.size).toBe(outputBytes.byteLength);
+  expect(obfuscateFitPrivacyMock).toHaveBeenCalledWith(originalBytes.buffer, {
+    startDistanceM: 1100,
+    endDistanceM: 1200,
+  });
+
+
+  const trackJsonFile = {
+    ...file,
+    name: "ride.trjgz",
+  } as File;
+  await expect(
+    prepareTrackUploadPayload(trackJsonFile, {
+      enabled: true,
+      startDistanceM: 1100,
+      endDistanceM: 1200,
+    }),
+  ).resolves.toBe(trackJsonFile);
 });

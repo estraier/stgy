@@ -1858,6 +1858,7 @@ type TestPoint = {
   lat: number;
   lon: number;
   distanceM?: number;
+  distanceRaw?: number;
 };
 
 const CRC_TABLE = [
@@ -1867,7 +1868,11 @@ const CRC_TABLE = [
   0x5000, 0x9c01, 0x8801, 0x4400,
 ];
 
-function buildFit(points: TestPoint[], includeDistance = true): Uint8Array {
+function buildFit(
+  points: TestPoint[],
+  includeDistance = true,
+  prefixRecords: number[] = []
+): Uint8Array {
   const fields = includeDistance
     ? [
       [0, 4, 0x85],
@@ -1880,6 +1885,7 @@ function buildFit(points: TestPoint[], includeDistance = true): Uint8Array {
     ];
 
   const records: number[] = [
+    ...prefixRecords,
     0x40,
     0x00,
     0x00,
@@ -1896,7 +1902,10 @@ function buildFit(points: TestPoint[], includeDistance = true): Uint8Array {
     pushInt32(records, degreesToSemicircle(point.lat));
     pushInt32(records, degreesToSemicircle(point.lon));
     if (includeDistance) {
-      pushUint32(records, Math.round((point.distanceM ?? index * 500) * 100));
+      pushUint32(
+        records,
+        point.distanceRaw ?? Math.round((point.distanceM ?? index * 500) * 100)
+      );
     }
   });
 
@@ -2095,6 +2104,60 @@ describe("obfuscateFitPrivacy", () => {
     obfuscateFitPrivacy(fit, { startDistanceM: 1000 });
 
     expect(fit).toEqual(original);
+  });
+
+  test("preserves manufacturer-specific messages byte-for-byte", () => {
+    const manufacturerRecords = [
+      0x41,
+      0x00,
+      0x00,
+      0x00,
+      0xff,
+      0x02,
+      0x00,
+      0x02,
+      0x84,
+      0x01,
+      0x04,
+      0x86,
+      0x01,
+      0x34,
+      0x12,
+      0xde,
+      0xad,
+      0xbe,
+      0xef,
+    ];
+    const fit = buildFit(points, true, manufacturerRecords);
+    const metadataStart = fit[0];
+    const metadataEnd = metadataStart + manufacturerRecords.length;
+    const originalMetadata = fit.slice(metadataStart, metadataEnd);
+
+    const obfuscated = obfuscateFitPrivacy(fit, {
+      startDistanceM: 1000,
+      endDistanceM: 500,
+    });
+
+    expect(obfuscated).toHaveLength(fit.length);
+    expect(obfuscated.slice(metadataStart, metadataEnd)).toEqual(originalMetadata);
+    expectValidFileCrc(obfuscated);
+  });
+
+  test("treats the FIT uint32 invalid distance as unavailable", () => {
+    const fit = buildFit([
+      { lat: 35.0000, lon: 139.0000, distanceRaw: 0xffffffff },
+      { lat: 35.0000, lon: 139.0050, distanceRaw: 0xffffffff },
+      { lat: 35.0000, lon: 139.0100, distanceRaw: 0xffffffff },
+    ]);
+
+    const obfuscated = obfuscateFitPrivacy(fit, { startDistanceM: 100 });
+
+    expect(readRecordCoordinates(obfuscated)).toEqual([
+      [35.0000, 139.0050],
+      [35.0000, 139.0050],
+      [35.0000, 139.0100],
+    ]);
+    expectValidFileCrc(obfuscated);
   });
 
   test("rejects negative privacy distances", () => {
