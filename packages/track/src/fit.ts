@@ -1674,7 +1674,7 @@ function buildTrackJsonMetadata(
     output.analysis = analysis;
   }
 
-  const statistics = buildTrackJsonStatistics(metadata.statistics, precision);
+  const statistics = buildTrackJsonStatistics(metadata.statistics);
   if (statistics) {
     output.statistics = statistics;
   }
@@ -1694,14 +1694,13 @@ function buildTrackJsonMetadata(
     output.histograms = histograms;
   }
 
-  const pedaling = buildTrackJsonPedaling(metadata.pedaling, precision);
+  const pedaling = buildTrackJsonPedaling(metadata.pedaling);
   if (pedaling) {
     output.pedaling = pedaling;
   }
 
   const pedalingDynamics = buildTrackJsonPedalingDynamics(
     metadata.pedalingDynamics,
-    precision,
   );
   if (pedalingDynamics) {
     output.pedalingDynamics = pedalingDynamics;
@@ -1788,37 +1787,24 @@ function readTrackJsonPedalingSidePercentages(
 
 function buildTrackJsonStatistics(
   statistics: TrackActivityStatistics | undefined,
-  precision: Required<TrackJsonPrecisionOptions>,
 ): Record<string, unknown> | undefined {
   if (!statistics) {
     return undefined;
   }
 
   const output: Record<string, unknown> = {};
-  assignTrackJsonNumericStats(
-    output,
-    "speedKph",
-    statistics.speedKph,
-    precision,
-  );
-  assignTrackJsonNumericStats(
-    output,
-    "cadenceRpm",
-    statistics.cadenceRpm,
-    precision,
-  );
+  assignTrackJsonNumericStats(output, "speedKph", statistics.speedKph);
+  assignTrackJsonNumericStats(output, "cadenceRpm", statistics.cadenceRpm);
   assignTrackJsonNumericStats(
     output,
     "heartRateBpm",
     statistics.heartRateBpm,
-    precision,
   );
-  assignTrackJsonNumericStats(output, "powerW", statistics.powerW, precision);
+  assignTrackJsonNumericStats(output, "powerW", statistics.powerW);
   assignTrackJsonNumericStats(
     output,
     "temperatureC",
     statistics.temperatureC,
-    precision,
   );
 
   return Object.keys(output).length > 0 ? output : undefined;
@@ -1828,7 +1814,6 @@ function assignTrackJsonNumericStats(
   output: Record<string, unknown>,
   key: string,
   stats: TrackNumericStats | undefined,
-  precision: Required<TrackJsonPrecisionOptions>,
 ) {
   if (!stats) {
     return;
@@ -1894,7 +1879,6 @@ function buildTrackJsonTraining(
 
 function buildTrackJsonPedaling(
   pedaling: TrackActivityPedaling | undefined,
-  precision: Required<TrackJsonPrecisionOptions>,
 ): Record<string, unknown> | undefined {
   if (!pedaling || pedaling.totalSeconds <= 0) {
     return undefined;
@@ -1938,7 +1922,6 @@ function buildTrackJsonPedaling(
 
 function buildTrackJsonPedalingDynamics(
   dynamics: TrackActivityPedalingDynamics | undefined,
-  precision: Required<TrackJsonPrecisionOptions>,
 ): Record<string, unknown> | undefined {
   if (!dynamics) {
     return undefined;
@@ -1947,7 +1930,6 @@ function buildTrackJsonPedalingDynamics(
   const output: Record<string, unknown> = {};
   const leftRightBalance = buildTrackJsonLeftRightBalance(
     dynamics.leftRightBalance,
-    precision,
   );
   if (leftRightBalance) {
     output.leftRightBalance = leftRightBalance;
@@ -1955,7 +1937,6 @@ function buildTrackJsonPedalingDynamics(
 
   const torqueEffectiveness = buildTrackJsonPedalingSidePercentages(
     dynamics.torqueEffectiveness,
-    precision,
   );
   if (torqueEffectiveness) {
     output.torqueEffectiveness = torqueEffectiveness;
@@ -1963,7 +1944,6 @@ function buildTrackJsonPedalingDynamics(
 
   const pedalSmoothness = buildTrackJsonPedalingSidePercentages(
     dynamics.pedalSmoothness,
-    precision,
   );
   if (pedalSmoothness) {
     output.pedalSmoothness = pedalSmoothness;
@@ -1974,7 +1954,6 @@ function buildTrackJsonPedalingDynamics(
 
 function buildTrackJsonLeftRightBalance(
   balance: TrackActivityLeftRightBalance | undefined,
-  precision: Required<TrackJsonPrecisionOptions>,
 ): Record<string, unknown> | undefined {
   if (!balance) {
     return undefined;
@@ -1998,7 +1977,6 @@ function buildTrackJsonLeftRightBalance(
 
 function buildTrackJsonPedalingSidePercentages(
   percentages: TrackActivityPedalingSidePercentages | undefined,
-  precision: Required<TrackJsonPrecisionOptions>,
 ): Record<string, unknown> | undefined {
   if (!percentages) {
     return undefined;

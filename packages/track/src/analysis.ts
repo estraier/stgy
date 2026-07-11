@@ -1864,37 +1864,6 @@ function appendSidePercentagesSummaryLine(
   }
 }
 
-function appendDurationSummaryLine(
-  lines: TrackMetadataSummaryLine[],
-  object: Record<string, unknown>,
-  key: string,
-  label: string,
-) {
-  const value = getNumberProperty(object, key);
-  if (isFiniteNumber(value)) {
-    lines.push({
-      key: `${label}-${key}`,
-      text: `${label}: ${formatDuration(value)}`,
-    });
-  }
-}
-
-function appendNumberSummaryLine(
-  lines: TrackMetadataSummaryLine[],
-  object: Record<string, unknown>,
-  key: string,
-  label: string,
-  unit: string,
-) {
-  const value = getNumberProperty(object, key);
-  if (isFiniteNumber(value)) {
-    lines.push({
-      key: `${label}-${key}`,
-      text: `${label}: ${formatNumber(value, 1)} ${unit}`,
-    });
-  }
-}
-
 export function getDerivedTrainingMetrics(
   input: TrackActivityMetadataInput,
   ftpW: number | undefined,
@@ -1965,26 +1934,6 @@ function appendDerivedTrainingSummaryLines(
     lines.push({
       key: "training-metrics",
       text: `training metrics: ${parts.join(", ")}`,
-    });
-  }
-}
-
-function appendDerivedHeartRateSummaryLines(
-  lines: TrackMetadataSummaryLine[],
-  metadata: Record<string, unknown>,
-  lthrBpm: number | undefined,
-) {
-  const metrics = getDerivedHeartRateMetrics(metadata, lthrBpm);
-  if (isFiniteNumber(metrics.meanHeartRatePercentageOfLthr)) {
-    lines.push({
-      key: "heart-rate-mean-lthr",
-      text: `mean HR: ${formatNumber(metrics.meanHeartRatePercentageOfLthr, 1)}% LTHR`,
-    });
-  }
-  if (isFiniteNumber(metrics.maxHeartRatePercentageOfLthr)) {
-    lines.push({
-      key: "heart-rate-max-lthr",
-      text: `max HR: ${formatNumber(metrics.maxHeartRatePercentageOfLthr, 1)}% LTHR`,
     });
   }
 }

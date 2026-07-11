@@ -1913,14 +1913,6 @@ function formatTimeOffset(seconds: number): string {
   return prefix;
 }
 
-function getRecordProperty(
-  object: Record<string, unknown>,
-  key: string
-): Record<string, unknown> | undefined {
-  const value = object[key];
-  return isRecord(value) ? value : undefined;
-}
-
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
