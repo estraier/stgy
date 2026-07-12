@@ -1,3 +1,15 @@
+import type {
+  TrackJsonPointOfInterest,
+  TrackJsonPointOfInterestRole,
+  TrackJsonPosition,
+} from "./activity";
+
+export type {
+  TrackJsonPointOfInterest,
+  TrackJsonPointOfInterestRole,
+  TrackJsonPosition,
+} from "./activity";
+
 export type TrackJsonDownsampleStrategy = "uniform" | "aggregate";
 
 export type TrackJsonDownsampleOptions = {
@@ -90,6 +102,7 @@ export function compactTrackJsonData(
     }),
   };
 
+  compactTrackJsonDerivedProperties(output, data, precision);
   if (isRecord(data.metadata)) {
     output.metadata = compactTrackJsonMetadata(data.metadata, precision);
   }
@@ -199,6 +212,23 @@ export function getTrackJsonTitle(data: unknown): string | undefined {
   return typeof title === "string" && title.trim() ? title.trim() : undefined;
 }
 
+export function getTrackJsonPoi(data: unknown): TrackJsonPointOfInterest[] {
+  if (!isRecord(data) || !Array.isArray(data.poi)) {
+    return [];
+  }
+
+  return data.poi
+    .map(readTrackJsonPointOfInterest)
+    .filter((point): point is TrackJsonPointOfInterest => Boolean(point));
+}
+
+export function getTrackJsonPointOfInterest(
+  data: unknown,
+  role: TrackJsonPointOfInterestRole,
+): TrackJsonPointOfInterest | undefined {
+  return getTrackJsonPoi(data).find((point) => point.role === role);
+}
+
 export function getTrackJsonMetadata(
   data: unknown
 ): Record<string, unknown> | undefined {
@@ -231,7 +261,74 @@ function compactTrackJsonFeature(
     output.properties = compactTrackJsonProperties(feature.properties, precision);
   }
 
+  compactTrackJsonDerivedProperties(output, feature, precision);
   return output;
+}
+
+function compactTrackJsonDerivedProperties(
+  output: Record<string, unknown>,
+  source: Record<string, unknown>,
+  precision: Required<TrackJsonPrecisionOptions>,
+) {
+  if (Array.isArray(source.bbox)) {
+    output.bbox = source.bbox.map((value) => {
+      return typeof value === "number" && Number.isFinite(value)
+        ? roundNumber(value, precision.coordinates)
+        : value;
+    });
+  }
+
+  if (Array.isArray(source.poi)) {
+    output.poi = source.poi.map((value) => {
+      if (!isRecord(value) || !Array.isArray(value.coordinates)) {
+        return compactTrackJsonValue(value, undefined, [], precision);
+      }
+
+      return {
+        ...value,
+        coordinates: value.coordinates.map((coordinate) => {
+          return typeof coordinate === "number" && Number.isFinite(coordinate)
+            ? roundNumber(coordinate, precision.coordinates)
+            : coordinate;
+        }),
+      };
+    });
+  }
+}
+
+function readTrackJsonPointOfInterest(
+  value: unknown,
+): TrackJsonPointOfInterest | undefined {
+  if (!isRecord(value) || !isTrackJsonPointOfInterestRole(value.role)) {
+    return undefined;
+  }
+
+  const coordinates = readTrackJsonPosition(value.coordinates);
+  return coordinates ? { role: value.role, coordinates } : undefined;
+}
+
+function readTrackJsonPosition(value: unknown): TrackJsonPosition | undefined {
+  if (
+    !Array.isArray(value) ||
+    value.length < 2 ||
+    typeof value[0] !== "number" ||
+    !Number.isFinite(value[0]) ||
+    typeof value[1] !== "number" ||
+    !Number.isFinite(value[1])
+  ) {
+    return undefined;
+  }
+
+  return [value[0], value[1]];
+}
+
+function isTrackJsonPointOfInterestRole(
+  value: unknown,
+): value is TrackJsonPointOfInterestRole {
+  return value === "start" ||
+    value === "end" ||
+    value === "centroid" ||
+    value === "furthest";
 }
 
 function compactTrackJsonGeometry(

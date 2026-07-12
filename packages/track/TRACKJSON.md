@@ -49,9 +49,39 @@ The preferred root is a GeoJSON `FeatureCollection`.
 ```json
 {
   "type": "FeatureCollection",
+  "bbox": [139.7, 35.6, 140.1, 35.9],
+  "poi": [
+    {
+      "role": "start",
+      "coordinates": [139.7, 35.6]
+    },
+    {
+      "role": "end",
+      "coordinates": [140.1, 35.9]
+    },
+    {
+      "role": "centroid",
+      "coordinates": [139.9, 35.75]
+    },
+    {
+      "role": "furthest",
+      "coordinates": [140.1, 35.9]
+    }
+  ],
   "features": []
 }
 ```
+
+`poi` contains route reference points. Generated TrackJSON writes the entries in
+this order: `start`, `end`, `centroid`, and `furthest`.
+
+- `start` is the first positioned route point.
+- `end` is the last positioned route point.
+- `centroid` is the route-length-weighted spherical centroid.
+- `furthest` is the route point farthest from `start` on the unit sphere.
+
+The roles remain separate even when two or more entries have identical
+coordinates. Point coordinates use GeoJSON order: `[longitude, latitude]`.
 
 A single GeoJSON `Feature` may be accepted by helper functions, but generated
 TrackJSON should use `FeatureCollection`.

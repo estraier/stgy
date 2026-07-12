@@ -3,6 +3,8 @@ import {
   countTrackJsonPositionedPoints,
   downsampleTrackJsonData,
   getTrackJsonMetadata,
+  getTrackJsonPoi,
+  getTrackJsonPointOfInterest,
   getTrackJsonTitle,
   obfuscateTrackJsonPrivacy,
   parseTrackJsonData,
@@ -53,6 +55,28 @@ describe("TrackJSON metadata and summaries", () => {
       sport: "cycling",
       totalDistanceM: 12345.678,
     });
+  });
+
+  test("reads valid point-of-interest entries by role", () => {
+    const data = {
+      ...makeFeatureCollection(3),
+      poi: [
+        { role: "start", coordinates: [139, 35] },
+        { role: "centroid", coordinates: [139.1, 35.1] },
+        { role: "invalid", coordinates: [0, 0] },
+        { role: "end", coordinates: ["bad", 35] },
+      ],
+    };
+
+    expect(getTrackJsonPoi(data)).toEqual([
+      { role: "start", coordinates: [139, 35] },
+      { role: "centroid", coordinates: [139.1, 35.1] },
+    ]);
+    expect(getTrackJsonPointOfInterest(data, "centroid")).toEqual({
+      role: "centroid",
+      coordinates: [139.1, 35.1],
+    });
+    expect(getTrackJsonPointOfInterest(data, "furthest")).toBeUndefined();
   });
 
   test("prefers root metadata when available", () => {
@@ -259,6 +283,24 @@ describe("compactTrackJsonData", () => {
     expect(feature.geometry.coordinates[1]).toEqual([139.000011, 35.000011]);
     expect(feature.properties.coordinateProperties.speeds).toEqual([18, 18.36]);
     expect(feature.properties.metadata.totalDistanceM).toBe(12346);
+  });
+
+  test("rounds top-level bbox and poi coordinates", () => {
+    const compacted = compactTrackJsonData({
+      ...makeFeatureCollection(2),
+      bbox: [139.00000123, 35.00000123, 139.00001123, 35.00001123],
+      poi: [
+        {
+          role: "centroid",
+          coordinates: [139.00000623, 35.00000623],
+        },
+      ],
+    }) as any;
+
+    expect(compacted.bbox).toEqual([139, 35, 139.00001, 35.00001]);
+    expect(compacted.poi).toEqual([
+      { role: "centroid", coordinates: [139.00001, 35.00001] },
+    ]);
   });
 
   test("rounds point coordinates with coordinate precision", () => {

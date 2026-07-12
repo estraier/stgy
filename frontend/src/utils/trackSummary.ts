@@ -1,5 +1,6 @@
 import type { TrackActivityMetadata } from "stgy-track/activity";
 import type { TrackMetadataSummaryLine } from "stgy-track/analysis";
+import { getTrackJsonPoi } from "stgy-track/trackjson";
 
 export type TrackElevationSummaryItem = {
   key: "ascent" | "descent";
@@ -22,22 +23,46 @@ export function getTrackElevationSummaryItems(
   return items;
 }
 
+export function getTrackJsonPropertySummaryLines(
+  data: unknown,
+): TrackMetadataSummaryLine[] {
+  if (!isRecord(data)) {
+    return [];
+  }
+
+  const lines: TrackMetadataSummaryLine[] = [];
+  if (Array.isArray(data.bbox)) {
+    lines.push({ key: "bbox", text: `bbox: ${JSON.stringify(data.bbox)}` });
+  }
+  getTrackJsonPoi(data).forEach((point) => {
+    lines.push({
+      key: `poi-${point.role}`,
+      text:
+        `poi ${point.role}: lon ${formatCoordinate(point.coordinates[0])}, ` +
+        `lat ${formatCoordinate(point.coordinates[1])}`,
+    });
+  });
+  return lines;
+}
+
 export function getTrackSandboxMetadataSummaryLines(
   lines: TrackMetadataSummaryLine[],
 ): TrackMetadataSummaryLine[] {
   const byKey = new Map(lines.map((line) => [line.key, line]));
   const ordered: TrackMetadataSummaryLine[] = [];
 
-  ["gross", "net", "elevation"].forEach((key) => {
+  ["gross", "net", "elevation", "bbox"].forEach((key) => {
     const line = byKey.get(key);
     if (line) {
       ordered.push(line);
     }
   });
 
+  lines.filter(isPoiSummaryLine).forEach((line) => ordered.push(line));
+
   lines.forEach((line) => {
     const isHeader = line.key === "gross" || line.key === "net" ||
-      line.key === "elevation";
+      line.key === "elevation" || line.key === "bbox" || isPoiSummaryLine(line);
     if (line.key !== "analysis" && !isHeader) {
       ordered.push(line);
     }
@@ -71,6 +96,18 @@ export function orderTrackSandboxSummaryCards<T extends { label: string }>(
       return a.index - b.index;
     })
     .map(({ card }) => card);
+}
+
+function isPoiSummaryLine(line: TrackMetadataSummaryLine): boolean {
+  return line.key.startsWith("poi-");
+}
+
+function formatCoordinate(value: number): string {
+  return value.toFixed(5);
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isFiniteNumber(value: unknown): value is number {

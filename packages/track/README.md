@@ -493,6 +493,15 @@ export function getTrackJsonTitle(data: unknown): string | undefined;
 export function getTrackJsonMetadata(
   data: unknown
 ): Record<string, unknown> | undefined;
+
+export function getTrackJsonPoi(
+  data: unknown
+): TrackJsonPointOfInterest[];
+
+export function getTrackJsonPointOfInterest(
+  data: unknown,
+  role: TrackJsonPointOfInterestRole
+): TrackJsonPointOfInterest | undefined;
 ```
 
 These helpers are independent from the demo UI and are tested in

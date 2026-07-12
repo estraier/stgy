@@ -304,7 +304,7 @@ describe("display analysis helpers", () => {
       "speed: mean 18.1, median 18.0, max 30.0 km/h",
       "heart rate: mean 120.0, median 121.0, max 150.0 bpm",
       "power: mean 150.0, median 155.0, max 210.0 W",
-      "pedaling stats: time 1:05, speed 7.5 km/h, cadence 61.4 rpm",
+      "pedaling stats: time 1:05, distance 0.13 km, speed 7.5 km/h, cadence 61.4 rpm",
       "pedaling stats: heart rate 129.1 bpm, power 123.5 W, NP 130.1 W",
       "pedaling dynamics | L/R balance: L 51.2% / R 48.8%",
       "pedaling dynamics | torque effectiveness: L 80.0%, R 81.0%",

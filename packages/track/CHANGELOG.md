@@ -46,6 +46,8 @@ current development state.
 
 ### Changed
 
+- Replace the top-level `rcenter` coordinate with a `poi` array containing
+  `start`, `end`, `centroid`, and `furthest` route points.
 - Prefer `.trj` over `.json` for raw TrackJSON downloads.
 - Keep `.trjgz` for compressed TrackJSON downloads.
 - Apply downsampling to TrackJSON uploads in the FIT demo, not only FIT uploads.

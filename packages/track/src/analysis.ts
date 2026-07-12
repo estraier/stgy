@@ -1786,6 +1786,7 @@ function appendPedalingSummaryLines(
   const secondParts: string[] = [];
 
   appendDurationSummaryPart(firstParts, pedaling, "totalSeconds", "time");
+  appendPedalingDistanceSummaryPart(firstParts, pedaling);
   appendNumberSummaryPart(
     firstParts,
     pedaling,
@@ -1835,6 +1836,18 @@ function appendDurationSummaryPart(
   const value = getNumberProperty(record, key);
   if (isFiniteNumber(value)) {
     parts.push(`${label} ${formatDuration(value)}`);
+  }
+}
+
+function appendPedalingDistanceSummaryPart(
+  parts: string[],
+  pedaling: Record<string, unknown>,
+) {
+  const totalSeconds = getNumberProperty(pedaling, "totalSeconds");
+  const averageSpeedKph = getNumberProperty(pedaling, "averageSpeedKph");
+  if (isFiniteNumber(totalSeconds) && isFiniteNumber(averageSpeedKph)) {
+    const distanceKm = averageSpeedKph * totalSeconds / 3600;
+    parts.push(`distance ${formatNumber(distanceKm, 2)} km`);
   }
 }
 

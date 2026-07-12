@@ -2,7 +2,7 @@ import { Decoder, Stream } from "@garmin/fitsdk";
 import {
   TrackJsonConversionError,
   TrackParseError,
-  addTrackJsonBbox,
+  addTrackJsonDerivedProperties,
   computeHeartRateZoneSummary,
   computePowerZoneSummary,
   downsampleTrackActivity,
@@ -1285,7 +1285,12 @@ describe("trackActivityToTrackJson", () => {
 
     expect(parsed.type).toBe("FeatureCollection");
     expect(parsed.bbox).toEqual([139, 35, 139.00002, 35.00002]);
-    expect(parsed.rcenter).toEqual([139.00001, 35.00001]);
+    expect(parsed.poi).toEqual([
+      { role: "start", coordinates: [139, 35] },
+      { role: "end", coordinates: [139.00002, 35.00002] },
+      { role: "centroid", coordinates: [139.00001, 35.00001] },
+      { role: "furthest", coordinates: [139.00002, 35.00002] },
+    ]);
     expect(feature.type).toBe("Feature");
     expect(feature.geometry.type).toBe("LineString");
     expect(feature.properties.title).toBe("Ride");
@@ -1312,10 +1317,15 @@ describe("trackActivityToTrackJson", () => {
     );
 
     expect(parsed.bbox).toEqual([139.000001, 35.000001, 139.000011, 35.000011]);
-    expect(parsed.rcenter).toEqual([139.000006, 35.000006]);
+    expect(parsed.poi).toEqual([
+      { role: "start", coordinates: [139.000001, 35.000001] },
+      { role: "end", coordinates: [139.000011, 35.000011] },
+      { role: "centroid", coordinates: [139.000006, 35.000006] },
+      { role: "furthest", coordinates: [139.000011, 35.000011] },
+    ]);
   });
 
-  test("can add bbox and rcenter to TrackJSON features including pins", () => {
+  test("can add bbox and poi to TrackJSON features including pins", () => {
     const data = {
       type: "FeatureCollection",
       features: [
@@ -1341,14 +1351,19 @@ describe("trackActivityToTrackJson", () => {
       ],
     };
 
-    expect(addTrackJsonBbox(data)).toEqual({
+    expect(addTrackJsonDerivedProperties(data)).toEqual({
       ...data,
       bbox: [138.12, 36.3, 138.7, 36.8],
-      rcenter: [138.25982, 36.40008],
+      poi: [
+        { role: "start", coordinates: [138.12, 36.3] },
+        { role: "end", coordinates: [138.4, 36.5] },
+        { role: "centroid", coordinates: [138.25982, 36.40008] },
+        { role: "furthest", coordinates: [138.4, 36.5] },
+      ],
     });
   });
 
-  test("computes rcenter across the antimeridian", () => {
+  test("computes poi across the antimeridian", () => {
     const parsed = parseTrackJson(
       trackActivityToTrackJson(
         {
@@ -1364,7 +1379,35 @@ describe("trackActivityToTrackJson", () => {
       ),
     );
 
-    expect(parsed.rcenter).toEqual([180, 1]);
+    expect(parsed.poi).toEqual([
+      { role: "start", coordinates: [179.9, 1] },
+      { role: "end", coordinates: [-179.9, 1] },
+      { role: "centroid", coordinates: [180, 1] },
+      { role: "furthest", coordinates: [-179.9, 1] },
+    ]);
+  });
+
+  test("uses 3D vectors to find the furthest route point", () => {
+    const parsed = parseTrackJson(
+      trackActivityToTrackJson(
+        {
+          schemaVersion: 1,
+          metadata: {},
+          points: [
+            { lat: 0, lon: 179 },
+            { lat: 0, lon: -179 },
+            { lat: 0, lon: 170 },
+          ],
+          warnings: [],
+        },
+        { precision: { coordinates: 4 } },
+      ),
+    );
+
+    expect(parsed.poi.find((point: any) => point.role === "furthest")).toEqual({
+      role: "furthest",
+      coordinates: [170, 0],
+    });
   });
 
   test("does not connect separated point segments", () => {
@@ -1397,6 +1440,14 @@ describe("trackActivityToTrackJson", () => {
     ]);
     expect(parsed.features[0].properties.coordinateProperties.times).toEqual([1, 2]);
     expect(parsed.features[1].properties.coordinateProperties.times).toEqual([3, 4]);
+    expect(parsed.poi.find((point: any) => point.role === "start")).toEqual({
+      role: "start",
+      coordinates: [139, 35],
+    });
+    expect(parsed.poi.find((point: any) => point.role === "end")).toEqual({
+      role: "end",
+      coordinates: [140.1, 36.1],
+    });
   });
 
   test("writes standard coordinateProperties arrays", () => {

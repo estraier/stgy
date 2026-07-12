@@ -53,9 +53,13 @@ import {
   parseGpxText,
   trackActivityToGpx,
 } from "stgy-track/gpx";
-import { parseTrackJsonData } from "stgy-track/trackjson";
+import {
+  getTrackJsonPointOfInterest,
+  parseTrackJsonData,
+} from "stgy-track/trackjson";
 import {
   getTrackElevationSummaryItems,
+  getTrackJsonPropertySummaryLines,
   getTrackSandboxMetadataSummaryLines,
   orderTrackSandboxSummaryCards,
 } from "@/utils/trackSummary";
@@ -567,7 +571,12 @@ export default function TrackSandbox() {
 
             {showAnalysis && (
               <div className="mt-4">
-                <RideAnalysis activity={result.activity} ftpW={ftpW} lthrBpm={lthrBpm} />
+                <RideAnalysis
+                  activity={result.activity}
+                  trackJsonData={result.trackJsonData}
+                  ftpW={ftpW}
+                  lthrBpm={lthrBpm}
+                />
               </div>
             )}
           </>
@@ -723,18 +732,21 @@ function RideSummary({
 
 function RideAnalysis({
   activity,
+  trackJsonData,
   ftpW,
   lthrBpm,
 }: {
   activity: TrackActivity;
+  trackJsonData: unknown;
   ftpW: number;
   lthrBpm: number;
 }) {
   const metadataSummaryLines = useMemo(() => {
-    return getTrackSandboxMetadataSummaryLines(
-      getActivityMetadataSummaryLines(activity, { ftpW }),
-    );
-  }, [activity, ftpW]);
+    return getTrackSandboxMetadataSummaryLines([
+      ...getActivityMetadataSummaryLines(activity, { ftpW }),
+      ...getTrackJsonPropertySummaryLines(trackJsonData),
+    ]);
+  }, [activity, trackJsonData, ftpW]);
   const histogramDisplays = useMemo(() => {
     return getActivityHistogramDisplays(activity);
   }, [activity]);
@@ -806,7 +818,7 @@ function MetadataSummary({ lines }: { lines: Array<{ key: string; text: string }
       <div className="mb-2 text-xs font-semibold text-slate-600">Metadata</div>
       <ul className="space-y-1 rounded-xl bg-slate-50 p-4 text-base leading-7 text-slate-700">
         {lines.map((line) => (
-          <li key={line.key}>{line.text}</li>
+          <li key={line.key} className="break-words">{line.text}</li>
         ))}
       </ul>
     </div>
@@ -1481,9 +1493,10 @@ function buildRideContextSummary(
   activity: TrackActivity,
   trackJsonData: unknown,
 ): { items: SummaryCardItem[] } | undefined {
-  const center = getTrackJsonRcenter(trackJsonData) ??
-    getActivityRouteCenter(activity.points) ??
-    getTrackJsonBboxCenter(trackJsonData);
+  const centroid = getTrackJsonPointOfInterest(trackJsonData, "centroid");
+  const center = centroid
+    ? { lon: centroid.coordinates[0], lat: centroid.coordinates[1] }
+    : getActivityRouteCenter(activity.points) ?? getTrackJsonBboxCenter(trackJsonData);
   const metadata = activity.metadata as Record<string, unknown>;
   const startTime = numberValue(metadata.startTime);
   const endTime = numberValue(metadata.endTime) ?? getActivityEndTime(activity);
@@ -1501,21 +1514,6 @@ function buildRideContextSummary(
   }
 
   return items.length > 0 ? { items } : undefined;
-}
-
-function getTrackJsonRcenter(data: unknown): { lon: number; lat: number } | undefined {
-  const record = asRecord(data);
-  const rcenter = record?.rcenter;
-  if (!Array.isArray(rcenter) || rcenter.length < 2) {
-    return undefined;
-  }
-
-  const lon = numberValue(rcenter[0]);
-  const lat = numberValue(rcenter[1]);
-  if (typeof lon !== "number" || typeof lat !== "number") {
-    return undefined;
-  }
-  return { lon, lat };
 }
 
 function getTrackJsonBboxCenter(data: unknown): { lon: number; lat: number } | undefined {

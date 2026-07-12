@@ -252,7 +252,18 @@ export type TrackPoint = {
 };
 
 export type TrackJsonBbox = [number, number, number, number];
-export type TrackJsonRcenter = [number, number];
+export type TrackJsonPosition = [number, number];
+
+export type TrackJsonPointOfInterestRole =
+  | "start"
+  | "end"
+  | "centroid"
+  | "furthest";
+
+export type TrackJsonPointOfInterest = {
+  role: TrackJsonPointOfInterestRole;
+  coordinates: TrackJsonPosition;
+};
 
 export type TrackWarning = {
   code: string;

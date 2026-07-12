@@ -36,7 +36,8 @@ import type {
   TrackDeviceInfo,
   TrackDurationBestEfforts,
   TrackJsonBbox,
-  TrackJsonRcenter,
+  TrackJsonPointOfInterest,
+  TrackJsonPosition,
   TrackNumericStats,
   TrackPoint,
   TrackWarning,
@@ -75,7 +76,9 @@ export type {
   TrackDurationBestEfforts,
   TrackHeartRateZoneKey,
   TrackJsonBbox,
-  TrackJsonRcenter,
+  TrackJsonPointOfInterest,
+  TrackJsonPointOfInterestRole,
+  TrackJsonPosition,
   TrackHeartRateZoneSummary,
   TrackHeartRateHistogram,
   TrackHeartRateHistogramBucket,
@@ -190,7 +193,7 @@ export type TrackJsonOptions = {
   precision?: TrackJsonPrecisionOptions;
 };
 
-export type AddTrackJsonBboxOptions = {
+export type AddTrackJsonDerivedPropertiesOptions = {
   precision?: TrackJsonPrecisionOptions;
 };
 
@@ -262,35 +265,34 @@ export function computeTrackJsonBbox(data: unknown): TrackJsonBbox | undefined {
   return trackJsonBoundsToBbox(bounds);
 }
 
-export function computeTrackJsonRcenter(data: unknown): TrackJsonRcenter | undefined {
-  const center = createTrackJsonRouteCenter();
-  addTrackJsonObjectToRouteCenter(center, data);
-  return trackJsonRouteCenterToRcenter(center);
+export function computeTrackJsonPoi(data: unknown): TrackJsonPointOfInterest[] {
+  const route = createTrackJsonRouteAnalysis();
+  addTrackJsonObjectToRouteAnalysis(route, data);
+  return trackJsonRouteAnalysisToPoi(route);
 }
 
-export function addTrackJsonBbox(
+export function addTrackJsonDerivedProperties(
   data: unknown,
-  options: AddTrackJsonBboxOptions = {},
+  options: AddTrackJsonDerivedPropertiesOptions = {},
 ): unknown {
   if (!isObjectRecord(data)) {
     return data;
   }
 
-  const bbox = computeTrackJsonBbox(data);
-  const rcenter = computeTrackJsonRcenter(data);
-  if (!bbox && !rcenter) {
-    return data;
-  }
-
   const precision = resolveTrackJsonPrecision(options.precision);
+  const bbox = computeTrackJsonBbox(data);
+  const poi = computeTrackJsonPoi(data);
   const nextData: Record<string, unknown> = { ...data };
+
+  delete nextData.rcenter;
+  delete nextData.poi;
 
   if (bbox) {
     nextData.bbox = roundTrackJsonBbox(bbox, precision.coordinates);
   }
 
-  if (rcenter) {
-    nextData.rcenter = roundTrackJsonRcenter(rcenter, precision.coordinates);
+  if (poi.length > 0) {
+    nextData.poi = roundTrackJsonPoi(poi, precision.coordinates);
   }
 
   return nextData;
@@ -484,7 +486,7 @@ export function trackActivityToTrackJson(
   const trackJson = {
     type: "FeatureCollection",
     bbox: buildTrackJsonBboxFromPoints(bboxPoints, precision.coordinates),
-    rcenter: buildTrackJsonRcenterFromPointSegments(
+    poi: buildTrackJsonPoiFromPointSegments(
       routeSegments,
       precision.coordinates,
     ),
@@ -618,24 +620,30 @@ type TrackJsonVector = {
   z: number;
 };
 
-type TrackJsonRouteCenter = {
-  sumX: number;
-  sumY: number;
-  sumZ: number;
-  totalLengthM: number;
-  fallback?: TrackJsonRcenter;
+type TrackJsonRouteAnalysis = {
+  centerSumX: number;
+  centerSumY: number;
+  centerSumZ: number;
+  centerTotalLengthM: number;
+  centerFallback?: TrackJsonPosition;
+  start?: TrackJsonPosition;
+  end?: TrackJsonPosition;
+  furthest?: TrackJsonPosition;
+  startVector?: TrackJsonVector;
+  furthestChordSquared: number;
 };
 
 function createTrackJsonBounds(): TrackJsonBounds {
   return {};
 }
 
-function createTrackJsonRouteCenter(): TrackJsonRouteCenter {
+function createTrackJsonRouteAnalysis(): TrackJsonRouteAnalysis {
   return {
-    sumX: 0,
-    sumY: 0,
-    sumZ: 0,
-    totalLengthM: 0,
+    centerSumX: 0,
+    centerSumY: 0,
+    centerSumZ: 0,
+    centerTotalLengthM: 0,
+    furthestChordSquared: -1,
   };
 }
 
@@ -660,29 +668,28 @@ function buildTrackJsonBboxFromPoints(
   return roundTrackJsonBbox(bbox, precision);
 }
 
-function buildTrackJsonRcenterFromPointSegments(
+function buildTrackJsonPoiFromPointSegments(
   segments: (TrackPoint & { lat: number; lon: number })[][],
   precision: number,
-): TrackJsonRcenter | undefined {
-  const center = createTrackJsonRouteCenter();
+): TrackJsonPointOfInterest[] {
+  const route = createTrackJsonRouteAnalysis();
 
   segments.forEach((segment) => {
-    let previous: TrackJsonRcenter | undefined;
+    let previous: TrackJsonPosition | undefined;
 
     segment.forEach((point) => {
-      const position: TrackJsonRcenter = [point.lon, point.lat];
-      setTrackJsonRouteCenterFallback(center, position);
+      const position: TrackJsonPosition = [point.lon, point.lat];
+      addTrackJsonPositionToRouteAnalysis(route, position);
 
       if (previous) {
-        addTrackJsonRouteSegmentToCenter(center, previous, position);
+        addTrackJsonRouteSegmentToAnalysis(route, previous, position);
       }
 
       previous = position;
     });
   });
 
-  const rcenter = trackJsonRouteCenterToRcenter(center);
-  return rcenter ? roundTrackJsonRcenter(rcenter, precision) : undefined;
+  return roundTrackJsonPoi(trackJsonRouteAnalysisToPoi(route), precision);
 }
 
 function roundTrackJsonBbox(bbox: TrackJsonBbox, precision: number): TrackJsonBbox {
@@ -694,13 +701,23 @@ function roundTrackJsonBbox(bbox: TrackJsonBbox, precision: number): TrackJsonBb
   ];
 }
 
-function roundTrackJsonRcenter(
-  rcenter: TrackJsonRcenter,
+function roundTrackJsonPoi(
+  poi: TrackJsonPointOfInterest[],
   precision: number,
-): TrackJsonRcenter {
+): TrackJsonPointOfInterest[] {
+  return poi.map((point) => ({
+    role: point.role,
+    coordinates: roundTrackJsonPosition(point.coordinates, precision),
+  }));
+}
+
+function roundTrackJsonPosition(
+  position: TrackJsonPosition,
+  precision: number,
+): TrackJsonPosition {
   return [
-    roundNumber(rcenter[0], precision),
-    roundNumber(rcenter[1], precision),
+    roundNumber(position[0], precision),
+    roundNumber(position[1], precision),
   ];
 }
 
@@ -758,8 +775,8 @@ function isTrackJsonPosition(value: unknown[]): value is [number, number, ...unk
   return value.length >= 2 && isFiniteNumber(value[0]) && isFiniteNumber(value[1]);
 }
 
-function addTrackJsonObjectToRouteCenter(
-  center: TrackJsonRouteCenter,
+function addTrackJsonObjectToRouteAnalysis(
+  route: TrackJsonRouteAnalysis,
   value: unknown,
 ) {
   if (!isObjectRecord(value)) {
@@ -768,21 +785,21 @@ function addTrackJsonObjectToRouteCenter(
 
   if (value.type === "FeatureCollection" && Array.isArray(value.features)) {
     value.features.forEach((feature) => {
-      addTrackJsonObjectToRouteCenter(center, feature);
+      addTrackJsonObjectToRouteAnalysis(route, feature);
     });
     return;
   }
 
   if (value.type === "Feature") {
-    addTrackJsonGeometryToRouteCenter(center, value.geometry);
+    addTrackJsonGeometryToRouteAnalysis(route, value.geometry);
     return;
   }
 
-  addTrackJsonGeometryToRouteCenter(center, value);
+  addTrackJsonGeometryToRouteAnalysis(route, value);
 }
 
-function addTrackJsonGeometryToRouteCenter(
-  center: TrackJsonRouteCenter,
+function addTrackJsonGeometryToRouteAnalysis(
+  route: TrackJsonRouteAnalysis,
   geometry: unknown,
 ) {
   if (!isObjectRecord(geometry)) {
@@ -791,32 +808,32 @@ function addTrackJsonGeometryToRouteCenter(
 
   if (geometry.type === "GeometryCollection" && Array.isArray(geometry.geometries)) {
     geometry.geometries.forEach((child) => {
-      addTrackJsonGeometryToRouteCenter(center, child);
+      addTrackJsonGeometryToRouteAnalysis(route, child);
     });
     return;
   }
 
   if (geometry.type === "LineString") {
-    addTrackJsonLineStringToRouteCenter(center, geometry.coordinates);
+    addTrackJsonLineStringToRouteAnalysis(route, geometry.coordinates);
     return;
   }
 
   if (geometry.type === "MultiLineString" && Array.isArray(geometry.coordinates)) {
     geometry.coordinates.forEach((lineString) => {
-      addTrackJsonLineStringToRouteCenter(center, lineString);
+      addTrackJsonLineStringToRouteAnalysis(route, lineString);
     });
   }
 }
 
-function addTrackJsonLineStringToRouteCenter(
-  center: TrackJsonRouteCenter,
+function addTrackJsonLineStringToRouteAnalysis(
+  route: TrackJsonRouteAnalysis,
   coordinates: unknown,
 ) {
   if (!Array.isArray(coordinates)) {
     return;
   }
 
-  let previous: TrackJsonRcenter | undefined;
+  let previous: TrackJsonPosition | undefined;
 
   coordinates.forEach((coordinate) => {
     if (!Array.isArray(coordinate) || !isTrackJsonPosition(coordinate)) {
@@ -824,30 +841,46 @@ function addTrackJsonLineStringToRouteCenter(
       return;
     }
 
-    const position: TrackJsonRcenter = [coordinate[0], coordinate[1]];
-    setTrackJsonRouteCenterFallback(center, position);
+    const position: TrackJsonPosition = [coordinate[0], coordinate[1]];
+    addTrackJsonPositionToRouteAnalysis(route, position);
 
     if (previous) {
-      addTrackJsonRouteSegmentToCenter(center, previous, position);
+      addTrackJsonRouteSegmentToAnalysis(route, previous, position);
     }
 
     previous = position;
   });
 }
 
-function setTrackJsonRouteCenterFallback(
-  center: TrackJsonRouteCenter,
-  position: TrackJsonRcenter,
+function addTrackJsonPositionToRouteAnalysis(
+  route: TrackJsonRouteAnalysis,
+  position: TrackJsonPosition,
 ) {
-  if (!center.fallback) {
-    center.fallback = position;
+  const vector = trackJsonPositionToVector(position);
+
+  if (!route.start) {
+    route.start = position;
+    route.startVector = vector;
+    route.furthest = position;
+    route.furthestChordSquared = 0;
+  } else if (route.startVector) {
+    const chordSquared = calculateSquaredVectorDistance(route.startVector, vector);
+    if (chordSquared > route.furthestChordSquared) {
+      route.furthest = position;
+      route.furthestChordSquared = chordSquared;
+    }
+  }
+
+  route.end = position;
+  if (!route.centerFallback) {
+    route.centerFallback = position;
   }
 }
 
-function addTrackJsonRouteSegmentToCenter(
-  center: TrackJsonRouteCenter,
-  start: TrackJsonRcenter,
-  end: TrackJsonRcenter,
+function addTrackJsonRouteSegmentToAnalysis(
+  route: TrackJsonRouteAnalysis,
+  start: TrackJsonPosition,
+  end: TrackJsonPosition,
 ) {
   const lengthM = calculateCoordinateDistanceM(start, end);
   if (lengthM <= 0) {
@@ -855,15 +888,15 @@ function addTrackJsonRouteSegmentToCenter(
   }
 
   const midpoint = calculateSphericalMidpointVector(start, end);
-  center.sumX += midpoint.x * lengthM;
-  center.sumY += midpoint.y * lengthM;
-  center.sumZ += midpoint.z * lengthM;
-  center.totalLengthM += lengthM;
+  route.centerSumX += midpoint.x * lengthM;
+  route.centerSumY += midpoint.y * lengthM;
+  route.centerSumZ += midpoint.z * lengthM;
+  route.centerTotalLengthM += lengthM;
 }
 
 function calculateCoordinateDistanceM(
-  start: TrackJsonRcenter,
-  end: TrackJsonRcenter,
+  start: TrackJsonPosition,
+  end: TrackJsonPosition,
 ): number {
   return calculateDistanceM(
     { lon: start[0], lat: start[1] },
@@ -871,26 +904,46 @@ function calculateCoordinateDistanceM(
   );
 }
 
-function trackJsonRouteCenterToRcenter(
-  center: TrackJsonRouteCenter,
-): TrackJsonRcenter | undefined {
-  if (center.totalLengthM > 0) {
-    return vectorToTrackJsonRcenter({
-      x: center.sumX / center.totalLengthM,
-      y: center.sumY / center.totalLengthM,
-      z: center.sumZ / center.totalLengthM,
-    }) ?? center.fallback;
+function trackJsonRouteAnalysisToPoi(
+  route: TrackJsonRouteAnalysis,
+): TrackJsonPointOfInterest[] {
+  if (!route.start || !route.end || !route.furthest) {
+    return [];
   }
 
-  return center.fallback;
+  const centroid = trackJsonRouteAnalysisToCentroid(route);
+  if (!centroid) {
+    return [];
+  }
+
+  return [
+    { role: "start", coordinates: route.start },
+    { role: "end", coordinates: route.end },
+    { role: "centroid", coordinates: centroid },
+    { role: "furthest", coordinates: route.furthest },
+  ];
+}
+
+function trackJsonRouteAnalysisToCentroid(
+  route: TrackJsonRouteAnalysis,
+): TrackJsonPosition | undefined {
+  if (route.centerTotalLengthM > 0) {
+    return vectorToTrackJsonPosition({
+      x: route.centerSumX / route.centerTotalLengthM,
+      y: route.centerSumY / route.centerTotalLengthM,
+      z: route.centerSumZ / route.centerTotalLengthM,
+    }) ?? route.centerFallback;
+  }
+
+  return route.centerFallback;
 }
 
 function calculateSphericalMidpointVector(
-  start: TrackJsonRcenter,
-  end: TrackJsonRcenter,
+  start: TrackJsonPosition,
+  end: TrackJsonPosition,
 ): TrackJsonVector {
-  const startVector = trackJsonRcenterToVector(start);
-  const endVector = trackJsonRcenterToVector(end);
+  const startVector = trackJsonPositionToVector(start);
+  const endVector = trackJsonPositionToVector(end);
   return normalizeTrackJsonVector({
     x: startVector.x + endVector.x,
     y: startVector.y + endVector.y,
@@ -898,7 +951,7 @@ function calculateSphericalMidpointVector(
   }) ?? startVector;
 }
 
-function trackJsonRcenterToVector(position: TrackJsonRcenter): TrackJsonVector {
+function trackJsonPositionToVector(position: TrackJsonPosition): TrackJsonVector {
   const lonRad = degreesToRadians(position[0]);
   const latRad = degreesToRadians(position[1]);
   const cosLat = Math.cos(latRad);
@@ -910,9 +963,9 @@ function trackJsonRcenterToVector(position: TrackJsonRcenter): TrackJsonVector {
   };
 }
 
-function vectorToTrackJsonRcenter(
+function vectorToTrackJsonPosition(
   vector: TrackJsonVector,
-): TrackJsonRcenter | undefined {
+): TrackJsonPosition | undefined {
   const normalized = normalizeTrackJsonVector(vector);
   if (!normalized) {
     return undefined;
@@ -923,6 +976,16 @@ function vectorToTrackJsonRcenter(
     Math.atan2(normalized.z, Math.hypot(normalized.x, normalized.y)),
   );
   return [lon, lat];
+}
+
+function calculateSquaredVectorDistance(
+  left: TrackJsonVector,
+  right: TrackJsonVector,
+): number {
+  const x = left.x - right.x;
+  const y = left.y - right.y;
+  const z = left.z - right.z;
+  return x * x + y * y + z * z;
 }
 
 function normalizeTrackJsonVector(

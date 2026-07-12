@@ -27,6 +27,7 @@ import {
 import { parseGpxText, trackActivityToGpx } from "./gpx";
 import {
   getTrackJsonMetadata,
+  getTrackJsonPoi,
   parseTrackJsonData,
 } from "./trackjson";
 import type { TrackActivity, TrackPoint } from "./activity";
@@ -697,7 +698,7 @@ function showSummary(
   }
 
   appendBboxSummaryLine(lines, result.trackJsonData);
-  appendRcenterSummaryLine(lines, result.trackJsonData);
+  appendPoiSummaryLines(lines, result.trackJsonData);
 
   if (result.obfuscatedPrivacyApplied) {
     lines.push(
@@ -791,16 +792,13 @@ function appendBboxSummaryLine(lines: string[], data: unknown) {
   );
 }
 
-function appendRcenterSummaryLine(lines: string[], data: unknown) {
-  const rcenter = getTrackJsonRcenter(data);
-  if (!rcenter) {
-    return;
-  }
-
-  lines.push(
-    `rcenter: lon ${formatNumber(rcenter[0], 5)}, ` +
-    `lat ${formatNumber(rcenter[1], 5)}`
-  );
+function appendPoiSummaryLines(lines: string[], data: unknown) {
+  getTrackJsonPoi(data).forEach((point) => {
+    lines.push(
+      `poi ${point.role}: lon ${formatNumber(point.coordinates[0], 5)}, ` +
+      `lat ${formatNumber(point.coordinates[1], 5)}`,
+    );
+  });
 }
 
 function getTrackJsonBbox(data: unknown): [number, number, number, number] | undefined {
@@ -814,19 +812,6 @@ function getTrackJsonBbox(data: unknown): [number, number, number, number] | und
   }
 
   return bbox as [number, number, number, number];
-}
-
-function getTrackJsonRcenter(data: unknown): [number, number] | undefined {
-  if (!isRecord(data) || !Array.isArray(data.rcenter) || data.rcenter.length < 2) {
-    return undefined;
-  }
-
-  const rcenter = data.rcenter.slice(0, 2);
-  if (!rcenter.every((value) => typeof value === "number" && Number.isFinite(value))) {
-    return undefined;
-  }
-
-  return rcenter as [number, number];
 }
 
 function getResultMetadata(result: ConversionResult): Record<string, unknown> | undefined {
