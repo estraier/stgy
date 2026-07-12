@@ -20,6 +20,8 @@ import {
   LayoutList,
   AlignStartVertical,
   Sparkle,
+  Layers as LayersIcon,
+  ChartLine as GraphIcon,
 } from "lucide-react";
 import {
   parseMarkdown,
@@ -33,6 +35,19 @@ import {
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
 import { destroyTrackMaps, useTrackMapHydrator } from "@/hooks/useTrackMapHydrator";
 import { reconcileTrackMapPreviews, TRACK_MAP_REDRAW_DELAY_MS } from "@/utils/liveTrackPreview";
+import {
+  cycleTrackBaseOptions,
+  getNextTrackBaseValue,
+  getTrackBaseValue,
+  isTrackGraphDisabled,
+  parseMarkdownOptions,
+  parseTrackMarkdownLine,
+  toggleTrackGraphOptions,
+  updateTrackLayoutOptions,
+  updateTrackMarkdownLine,
+  updateTrackSizeOptions,
+  type MarkdownOptionToken,
+} from "@/utils/markdownTrackOptions";
 
 type Mode = "html" | "text";
 
@@ -174,6 +189,29 @@ function applyImageOptionFromTextarea(
   const before = text.slice(0, start);
   const after = text.slice(end);
   const nextText = before + newLine + after;
+  const delta = newLine.length - (end - start);
+  const newCaret = caret + delta;
+  setBody(nextText);
+  requestAnimationFrame(() => {
+    const pos = clamp(newCaret, start, start + newLine.length);
+    ta.setSelectionRange(pos, pos);
+  });
+}
+
+function applyTrackOptionFromTextarea(
+  ta: HTMLTextAreaElement,
+  setBody: (next: string) => void,
+  updater: (tokens: MarkdownOptionToken[]) => MarkdownOptionToken[],
+) {
+  const text = ta.value;
+  const selStart = ta.selectionStart ?? 0;
+  const selEnd = ta.selectionEnd ?? selStart;
+  const caret = Math.max(selStart, selEnd);
+  const { start, end } = getCurrentLineRange(text, caret);
+  const line = text.slice(start, end);
+  const newLine = updateTrackMarkdownLine(line, updater);
+  if (newLine == null) return;
+  const nextText = text.slice(0, start) + newLine + text.slice(end);
   const delta = newLine.length - (end - start);
   const newCaret = caret + delta;
   setBody(nextText);
@@ -557,6 +595,9 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
   const [maxHeight, setMaxHeight] = useState<number | undefined>(undefined);
   const [useFeatured, setUseFeatured] = useState<boolean>(false);
   const [isImageLine, setIsImageLine] = useState<boolean>(false);
+  const [isTrackLine, setIsTrackLine] = useState<boolean>(false);
+  const [trackBaseValue, setTrackBaseValue] = useState<string | null>(null);
+  const [trackGraphDisabled, setTrackGraphDisabled] = useState(false);
 
   const [previewSrc, setPreviewSrc] = useState<string>(initialBody);
   const bodyRef = useRef(body);
@@ -652,14 +693,25 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
     [],
   );
 
-  const updateIsImageLine = useCallback(() => {
+  const updateMediaLineState = useCallback(() => {
     const ta = textareaRef.current;
     if (!ta) return;
     const text = ta.value;
     const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
     const { start, end } = getCurrentLineRange(text, pos);
     const line = text.slice(start, end);
-    setIsImageLine(!!parseImageMarkdownLine(line));
+    const imageLine = parseImageMarkdownLine(line);
+    const trackLine = imageLine ? null : parseTrackMarkdownLine(line);
+    setIsImageLine(imageLine != null);
+    setIsTrackLine(trackLine != null);
+    if (trackLine) {
+      const tokens = parseMarkdownOptions(trackLine.options);
+      setTrackBaseValue(getTrackBaseValue(tokens));
+      setTrackGraphDisabled(isTrackGraphDisabled(tokens));
+    } else {
+      setTrackBaseValue(null);
+      setTrackGraphDisabled(false);
+    }
   }, []);
 
   const rebuildAnchors = useCallback(() => {
@@ -893,7 +945,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
         syncToCaret();
         scheduleHighlight();
         schedulePreviewHighlight();
-        updateIsImageLine();
+        updateMediaLineState();
       });
       gutter.appendChild(btn);
       return btn;
@@ -904,7 +956,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       syncToCaret,
       scheduleHighlight,
       schedulePreviewHighlight,
-      updateIsImageLine,
+      updateMediaLineState,
     ],
   );
 
@@ -1152,10 +1204,10 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
         didAutoFocusRef.current = true;
         scheduleHighlight();
         schedulePreviewHighlight();
-        updateIsImageLine();
+        updateMediaLineState();
       }
     }
-  }, [autoFocus, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine]);
+  }, [autoFocus, scheduleHighlight, schedulePreviewHighlight, updateMediaLineState]);
 
   useEffect(() => {
     const cleanup = attachObservers();
@@ -1291,13 +1343,19 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
-        updateIsImageLine();
+        updateMediaLineState();
         scheduleSync();
         scheduleHighlight();
         schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateMediaLineState,
+    ],
   );
 
   const onToolbarFence = useCallback(
@@ -1309,13 +1367,19 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
-        updateIsImageLine();
+        updateMediaLineState();
         scheduleSync();
         scheduleHighlight();
         schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateMediaLineState,
+    ],
   );
 
   const onToolbarInline = useCallback(
@@ -1327,13 +1391,19 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
-        updateIsImageLine();
+        updateMediaLineState();
         scheduleSync();
         scheduleHighlight();
         schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateMediaLineState,
+    ],
   );
 
   const onToolbarRuby = useCallback(
@@ -1345,13 +1415,19 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
-        updateIsImageLine();
+        updateMediaLineState();
         scheduleSync();
         scheduleHighlight();
         schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateMediaLineState,
+    ],
   );
 
   const onToolbarLink = useCallback(
@@ -1363,13 +1439,19 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
-        updateIsImageLine();
+        updateMediaLineState();
         scheduleSync();
         scheduleHighlight();
         schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateMediaLineState,
+    ],
   );
 
   const onToolbarImageLayout = useCallback(
@@ -1399,13 +1481,19 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
-        updateIsImageLine();
+        updateMediaLineState();
         scheduleSync();
         scheduleHighlight();
         schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateMediaLineState,
+    ],
   );
 
   const onToolbarImageSize = useCallback(
@@ -1446,13 +1534,19 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
-        updateIsImageLine();
+        updateMediaLineState();
         scheduleSync();
         scheduleHighlight();
         schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateMediaLineState,
+    ],
   );
 
   const onToolbarImageFeatured = useCallback(
@@ -1470,13 +1564,194 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
       requestAnimationFrame(() => {
         const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
         caretRef.current = pos;
-        updateIsImageLine();
+        updateMediaLineState();
         scheduleSync();
         scheduleHighlight();
         schedulePreviewHighlight();
       });
     },
-    [activeTextarea, scheduleSync, scheduleHighlight, schedulePreviewHighlight, updateIsImageLine],
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateMediaLineState,
+    ],
+  );
+
+  const onToolbarTrackLayout = useCallback(
+    (layout: ImageLayout) => (e: React.MouseEvent) => {
+      e.preventDefault();
+      const ta = activeTextarea();
+      if (!ta) return;
+      applyTrackOptionFromTextarea(ta, setBody, (tokens) => {
+        return updateTrackLayoutOptions(tokens, layout);
+      });
+      requestAnimationFrame(() => {
+        const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+        caretRef.current = pos;
+        updateMediaLineState();
+        scheduleSync();
+        scheduleHighlight();
+        schedulePreviewHighlight();
+      });
+    },
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateMediaLineState,
+    ],
+  );
+
+  const onToolbarTrackSize = useCallback(
+    (size: ImageSize) => (e: React.MouseEvent) => {
+      e.preventDefault();
+      const ta = activeTextarea();
+      if (!ta) return;
+      applyTrackOptionFromTextarea(ta, setBody, (tokens) => {
+        return updateTrackSizeOptions(tokens, size);
+      });
+      requestAnimationFrame(() => {
+        const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+        caretRef.current = pos;
+        updateMediaLineState();
+        scheduleSync();
+        scheduleHighlight();
+        schedulePreviewHighlight();
+      });
+    },
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateMediaLineState,
+    ],
+  );
+
+  const onToolbarTrackBase = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const ta = activeTextarea();
+      if (!ta) return;
+      applyTrackOptionFromTextarea(ta, setBody, cycleTrackBaseOptions);
+      requestAnimationFrame(() => {
+        const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+        caretRef.current = pos;
+        updateMediaLineState();
+        scheduleSync();
+        scheduleHighlight();
+        schedulePreviewHighlight();
+      });
+    },
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateMediaLineState,
+    ],
+  );
+
+  const onToolbarTrackGraph = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      const ta = activeTextarea();
+      if (!ta) return;
+      applyTrackOptionFromTextarea(ta, setBody, toggleTrackGraphOptions);
+      requestAnimationFrame(() => {
+        const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
+        caretRef.current = pos;
+        updateMediaLineState();
+        scheduleSync();
+        scheduleHighlight();
+        schedulePreviewHighlight();
+      });
+    },
+    [
+      activeTextarea,
+      scheduleSync,
+      scheduleHighlight,
+      schedulePreviewHighlight,
+      updateMediaLineState,
+    ],
+  );
+
+  const nextTrackBaseValue = getNextTrackBaseValue(trackBaseValue);
+  const trackBaseTitle = `Base layer: ${trackBaseValue ?? "default"} → ${nextTrackBaseValue ?? "default"}`;
+  const trackGraphTitle = trackGraphDisabled
+    ? "Graph: hidden → default"
+    : "Graph: default → hidden";
+  const trackToolbarButton =
+    "inline-flex h-7 w-8 items-center justify-center rounded border border-gray-300 " +
+    "bg-gray-50 text-gray-700 hover:bg-gray-100";
+  const trackToolbar = (
+    <>
+      <button
+        type="button"
+        onMouseDown={onToolbarTrackLayout("default")}
+        className={trackToolbarButton}
+        title="Default layout"
+      >
+        <AlignStartVertical className="w-4 h-4" />
+      </button>
+      <button
+        type="button"
+        onMouseDown={onToolbarTrackLayout("grid")}
+        className={trackToolbarButton}
+        title="Grid layout"
+      >
+        <LayoutGrid className="w-4 h-4" />
+      </button>
+      <button
+        type="button"
+        onMouseDown={onToolbarTrackLayout("float-left")}
+        className={trackToolbarButton}
+        title="Float left"
+      >
+        <LayoutList className="w-4 h-4" />
+      </button>
+      <button
+        type="button"
+        onMouseDown={onToolbarTrackLayout("float-right")}
+        className={trackToolbarButton}
+        title="Float right"
+      >
+        <LayoutList className="w-4 h-4" style={{ transform: "scaleX(-1)" }} />
+      </button>
+      <div className="w-4" />
+      {(["xs", "s", "m", "l", "xl"] as const).map((size) => (
+        <button
+          key={size}
+          type="button"
+          onMouseDown={onToolbarTrackSize(size)}
+          className={`${trackToolbarButton} px-2 text-xs`}
+          title={`Size ${size.toUpperCase()}${size === "m" ? " (default)" : ""}`}
+        >
+          {size.toUpperCase()}
+        </button>
+      ))}
+      <button
+        type="button"
+        onMouseDown={onToolbarTrackBase}
+        className={trackToolbarButton}
+        title={trackBaseTitle}
+      >
+        <LayersIcon className="w-4 h-4" />
+        <span className="sr-only">Cycle base map</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={onToolbarTrackGraph}
+        className={`${trackToolbarButton} ${trackGraphDisabled ? "bg-gray-300" : ""}`}
+        title={trackGraphTitle}
+        aria-pressed={trackGraphDisabled}
+      >
+        <GraphIcon className="w-4 h-4" />
+      </button>
+    </>
   );
 
   return (
@@ -1627,6 +1902,8 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
                       <Sparkle className="w-4 h-4 scale-90" />
                     </button>
                   </>
+                ) : isTrackLine ? (
+                  trackToolbar
                 ) : (
                   <>
                     <button
@@ -1762,7 +2039,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
                       scheduleSync();
                       scheduleHighlight();
                       schedulePreviewHighlight();
-                      updateIsImageLine();
+                      updateMediaLineState();
                     }}
                     onKeyUp={() => {
                       const ta = textareaRef.current;
@@ -1773,7 +2050,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
                       scheduleSync();
                       scheduleHighlight();
                       schedulePreviewHighlight();
-                      updateIsImageLine();
+                      updateMediaLineState();
                     }}
                     onClick={() => {
                       const ta = textareaRef.current;
@@ -1784,7 +2061,7 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
                       scheduleSync();
                       scheduleHighlight();
                       schedulePreviewHighlight();
-                      updateIsImageLine();
+                      updateMediaLineState();
                     }}
                     onSelect={() => {
                       const ta = textareaRef.current;
@@ -1795,12 +2072,12 @@ We work in **Tokyo**.  We eat in __Osaka__.  We live in ~~Saitama~~.
                       scheduleSync();
                       scheduleHighlight();
                       schedulePreviewHighlight();
-                      updateIsImageLine();
+                      updateMediaLineState();
                     }}
                     onFocus={() => {
                       scheduleHighlight();
                       schedulePreviewHighlight();
-                      updateIsImageLine();
+                      updateMediaLineState();
                     }}
                     maxLength={65535}
                     rows={1}

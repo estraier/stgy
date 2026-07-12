@@ -40,11 +40,26 @@ import {
   LayoutList,
   AlignStartVertical,
   Sparkle as SparkleIcon,
+  Layers as LayersIcon,
+  ChartLine as GraphIcon,
 } from "lucide-react";
 import { structurizeHtml, parseHtml, mdRenderMarkdown, countHtmlElements } from "stgy-markdown";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import ImageUploadDialog, { DialogFileItem, UploadResult } from "@/components/ImageUploadDialog";
 import { Config } from "@/config";
+import {
+  cycleTrackBaseOptions,
+  getNextTrackBaseValue,
+  getTrackBaseValue,
+  isTrackGraphDisabled,
+  parseMarkdownOptions,
+  parseTrackMarkdownLine,
+  toggleTrackGraphOptions,
+  updateTrackLayoutOptions,
+  updateTrackMarkdownLine,
+  updateTrackSizeOptions,
+  type MarkdownOptionToken,
+} from "@/utils/markdownTrackOptions";
 
 type MdAttrs = Record<string, string | number | boolean>;
 type MdTextNode = { type: "text"; text: string };
@@ -138,6 +153,29 @@ function applyImageOptionFromTextarea(
   const before = text.slice(0, start);
   const after = text.slice(end);
   const nextText = before + newLine + after;
+  const delta = newLine.length - (end - start);
+  const newCaret = caret + delta;
+  setBody(nextText);
+  requestAnimationFrame(() => {
+    const pos = clamp(newCaret, start, start + newLine.length);
+    ta.setSelectionRange(pos, pos);
+  });
+}
+
+function applyTrackOptionFromTextarea(
+  ta: HTMLTextAreaElement,
+  setBody: (next: string) => void,
+  updater: (tokens: MarkdownOptionToken[]) => MarkdownOptionToken[],
+) {
+  const text = ta.value;
+  const selStart = ta.selectionStart ?? 0;
+  const selEnd = ta.selectionEnd ?? selStart;
+  const caret = Math.max(selStart, selEnd);
+  const { start, end } = getCurrentLineRange(text, caret);
+  const line = text.slice(start, end);
+  const newLine = updateTrackMarkdownLine(line, updater);
+  if (newLine == null) return;
+  const nextText = text.slice(0, start) + newLine + text.slice(end);
   const delta = newLine.length - (end - start);
   const newCaret = caret + delta;
   setBody(nextText);
@@ -515,6 +553,9 @@ export default function PostForm({
   const [hasFocusedOnce, setHasFocusedOnce] = useState(false);
   const [isXl, setIsXl] = useState(false);
   const [isImageLine, setIsImageLine] = useState(false);
+  const [isTrackLine, setIsTrackLine] = useState(false);
+  const [trackBaseValue, setTrackBaseValue] = useState<string | null>(null);
+  const [trackGraphDisabled, setTrackGraphDisabled] = useState(false);
   const overlayActive = showPreview && isXl;
   const bodyLiveRef = useRef(body);
   useEffect(() => {
@@ -682,14 +723,25 @@ export default function PostForm({
     return overlayActive ? overlayBodyRef.current : previewBodyRef.current;
   }, [overlayActive]);
 
-  const updateIsImageLine = useCallback(() => {
+  const updateMediaLineState = useCallback(() => {
     const ta = activeTextarea();
     if (!ta) return;
     const text = ta.value;
     const pos = ta.selectionEnd ?? ta.selectionStart ?? caretRef.current;
     const { start, end } = getCurrentLineRange(text, pos);
     const line = text.slice(start, end);
-    setIsImageLine(!!parseImageMarkdownLine(line));
+    const imageLine = parseImageMarkdownLine(line);
+    const trackLine = imageLine ? null : parseTrackMarkdownLine(line);
+    setIsImageLine(imageLine != null);
+    setIsTrackLine(trackLine != null);
+    if (trackLine) {
+      const tokens = parseMarkdownOptions(trackLine.options);
+      setTrackBaseValue(getTrackBaseValue(tokens));
+      setTrackGraphDisabled(isTrackGraphDisabled(tokens));
+    } else {
+      setTrackBaseValue(null);
+      setTrackGraphDisabled(false);
+    }
   }, [activeTextarea]);
 
   const handleFocus = useCallback(() => {
@@ -713,8 +765,8 @@ export default function PostForm({
       schedulePreviewHighlightRef.current();
     }
     if (overlayActive) resizeOverlayTextareaRef.current();
-    updateIsImageLine();
-  }, [activeTextarea, hasFocusedOnce, onErrorClear, overlayActive, updateIsImageLine]);
+    updateMediaLineState();
+  }, [activeTextarea, hasFocusedOnce, onErrorClear, overlayActive, updateMediaLineState]);
 
   const actPrefix = (prefix: string) => (e: React.MouseEvent) => {
     e.preventDefault();
@@ -733,7 +785,7 @@ export default function PostForm({
         schedulePreviewHighlightRef.current();
       }
       if (overlayActive) resizeOverlayTextareaRef.current();
-      updateIsImageLine();
+      updateMediaLineState();
     });
   };
   const actFence = (e: React.MouseEvent) => {
@@ -753,7 +805,7 @@ export default function PostForm({
         schedulePreviewHighlightRef.current();
       }
       if (overlayActive) resizeOverlayTextareaRef.current();
-      updateIsImageLine();
+      updateMediaLineState();
     });
   };
   const actInline = (open: string, close?: string) => (e: React.MouseEvent) => {
@@ -773,7 +825,7 @@ export default function PostForm({
         schedulePreviewHighlightRef.current();
       }
       if (overlayActive) resizeOverlayTextareaRef.current();
-      updateIsImageLine();
+      updateMediaLineState();
     });
   };
   const actRuby = (e: React.MouseEvent) => {
@@ -793,7 +845,7 @@ export default function PostForm({
         schedulePreviewHighlightRef.current();
       }
       if (overlayActive) resizeOverlayTextareaRef.current();
-      updateIsImageLine();
+      updateMediaLineState();
     });
   };
   const actLink = (e: React.MouseEvent) => {
@@ -813,7 +865,7 @@ export default function PostForm({
         schedulePreviewHighlightRef.current();
       }
       if (overlayActive) resizeOverlayTextareaRef.current();
-      updateIsImageLine();
+      updateMediaLineState();
     });
   };
 
@@ -855,7 +907,7 @@ export default function PostForm({
         schedulePreviewHighlightRef.current();
       }
       if (overlayActive) resizeOverlayTextareaRef.current();
-      updateIsImageLine();
+      updateMediaLineState();
     });
   };
 
@@ -898,7 +950,7 @@ export default function PostForm({
         schedulePreviewHighlightRef.current();
       }
       if (overlayActive) resizeOverlayTextareaRef.current();
-      updateIsImageLine();
+      updateMediaLineState();
     });
   };
 
@@ -926,7 +978,95 @@ export default function PostForm({
         schedulePreviewHighlightRef.current();
       }
       if (overlayActive) resizeOverlayTextareaRef.current();
-      updateIsImageLine();
+      updateMediaLineState();
+    });
+  };
+
+  const actTrackLayout = (layout: ImageLayout) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    const ta = activeTextarea();
+    if (!ta) return;
+    applyTrackOptionFromTextarea(ta, setBody, (tokens) => {
+      return updateTrackLayoutOptions(tokens, layout);
+    });
+    afterNextPaint(() => {
+      const s = ta.selectionStart ?? caretRef.current;
+      const ed = ta.selectionEnd ?? s;
+      selStartRef.current = s;
+      selEndRef.current = ed;
+      caretRef.current = ed;
+      scheduleSyncRef.current();
+      if (overlayActive) {
+        scheduleEditorHighlightRef.current();
+        schedulePreviewHighlightRef.current();
+      }
+      if (overlayActive) resizeOverlayTextareaRef.current();
+      updateMediaLineState();
+    });
+  };
+
+  const actTrackSize = (size: ImageSize) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    const ta = activeTextarea();
+    if (!ta) return;
+    applyTrackOptionFromTextarea(ta, setBody, (tokens) => {
+      return updateTrackSizeOptions(tokens, size);
+    });
+    afterNextPaint(() => {
+      const s = ta.selectionStart ?? caretRef.current;
+      const ed = ta.selectionEnd ?? s;
+      selStartRef.current = s;
+      selEndRef.current = ed;
+      caretRef.current = ed;
+      scheduleSyncRef.current();
+      if (overlayActive) {
+        scheduleEditorHighlightRef.current();
+        schedulePreviewHighlightRef.current();
+      }
+      if (overlayActive) resizeOverlayTextareaRef.current();
+      updateMediaLineState();
+    });
+  };
+
+  const actTrackBase = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const ta = activeTextarea();
+    if (!ta) return;
+    applyTrackOptionFromTextarea(ta, setBody, cycleTrackBaseOptions);
+    afterNextPaint(() => {
+      const s = ta.selectionStart ?? caretRef.current;
+      const ed = ta.selectionEnd ?? s;
+      selStartRef.current = s;
+      selEndRef.current = ed;
+      caretRef.current = ed;
+      scheduleSyncRef.current();
+      if (overlayActive) {
+        scheduleEditorHighlightRef.current();
+        schedulePreviewHighlightRef.current();
+      }
+      if (overlayActive) resizeOverlayTextareaRef.current();
+      updateMediaLineState();
+    });
+  };
+
+  const actTrackGraph = (e: React.MouseEvent) => {
+    e.preventDefault();
+    const ta = activeTextarea();
+    if (!ta) return;
+    applyTrackOptionFromTextarea(ta, setBody, toggleTrackGraphOptions);
+    afterNextPaint(() => {
+      const s = ta.selectionStart ?? caretRef.current;
+      const ed = ta.selectionEnd ?? s;
+      selStartRef.current = s;
+      selEndRef.current = ed;
+      caretRef.current = ed;
+      scheduleSyncRef.current();
+      if (overlayActive) {
+        scheduleEditorHighlightRef.current();
+        schedulePreviewHighlightRef.current();
+      }
+      if (overlayActive) resizeOverlayTextareaRef.current();
+      updateMediaLineState();
     });
   };
 
@@ -1214,7 +1354,7 @@ export default function PostForm({
         if (did) requestAnimationFrame(() => schedulePreviewHighlight());
         else schedulePreviewHighlight();
         scheduleEditorHighlight();
-        updateIsImageLine();
+        updateMediaLineState();
       });
       gutter.appendChild(btn);
       return btn;
@@ -1225,7 +1365,7 @@ export default function PostForm({
       syncToCaret,
       scheduleEditorHighlight,
       schedulePreviewHighlight,
-      updateIsImageLine,
+      updateMediaLineState,
     ],
   );
 
@@ -1459,14 +1599,14 @@ export default function PostForm({
       scheduleSync();
       scheduleEditorHighlight();
       schedulePreviewHighlight();
-      updateIsImageLine();
+      updateMediaLineState();
     },
     [
       activeTextarea,
       scheduleSync,
       scheduleEditorHighlight,
       schedulePreviewHighlight,
-      updateIsImageLine,
+      updateMediaLineState,
     ],
   );
 
@@ -1739,7 +1879,7 @@ export default function PostForm({
           scheduleEditorHighlightRef.current();
           schedulePreviewHighlightRef.current();
         }
-        updateIsImageLine();
+        updateMediaLineState();
         return;
       }
       const text = ta.value;
@@ -1764,10 +1904,10 @@ export default function PostForm({
           schedulePreviewHighlightRef.current();
         }
         if (overlayActiveLiveRef.current) resizeOverlayTextareaRef.current();
-        updateIsImageLine();
+        updateMediaLineState();
       });
     },
-    [setBody, updateIsImageLine],
+    [setBody, updateMediaLineState],
   );
 
   const insertInlineAtCursor = useCallback(
@@ -1785,7 +1925,7 @@ export default function PostForm({
           scheduleEditorHighlightRef.current();
           schedulePreviewHighlightRef.current();
         }
-        updateIsImageLine();
+        updateMediaLineState();
         return;
       }
       const text = ta.value;
@@ -1808,10 +1948,10 @@ export default function PostForm({
           schedulePreviewHighlightRef.current();
         }
         if (overlayActiveLiveRef.current) resizeOverlayTextareaRef.current();
-        updateIsImageLine();
+        updateMediaLineState();
       });
     },
-    [setBody, updateIsImageLine],
+    [setBody, updateMediaLineState],
   );
 
   const handlePasteUploadComplete = useCallback(
@@ -1978,6 +2118,119 @@ export default function PostForm({
     [dataUrlToFile, insertAtCursor, insertInlineAtCursor, userId],
   );
 
+  const nextTrackBaseValue = getNextTrackBaseValue(trackBaseValue);
+  const trackBaseTitle = `Base layer: ${trackBaseValue ?? "default"} → ${nextTrackBaseValue ?? "default"}`;
+  const trackGraphTitle = trackGraphDisabled
+    ? "Graph: hidden → default"
+    : "Graph: default → hidden";
+  const trackToolbar = (
+    <>
+      <button
+        type="button"
+        onMouseDown={actTrackLayout("default")}
+        title="Default layout"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <AlignStartVertical className="w-4 h-4 opacity-80" aria-hidden />
+        <span className="sr-only">Default layout</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={actTrackLayout("grid")}
+        title="Grid layout"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <LayoutGrid className="w-4 h-4 opacity-80" aria-hidden />
+        <span className="sr-only">Grid layout</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={actTrackLayout("float-left")}
+        title="Float left"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <LayoutList className="w-4 h-4 opacity-80" aria-hidden />
+        <span className="sr-only">Float left</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={actTrackLayout("float-right")}
+        title="Float right"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <LayoutList
+          className="w-4 h-4 opacity-80"
+          aria-hidden
+          style={{ transform: "scaleX(-1)" }}
+        />
+        <span className="sr-only">Float right</span>
+      </button>
+      <div className="w-4" />
+      <button
+        type="button"
+        onMouseDown={actTrackSize("xs")}
+        title="Size XS"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <span className="text-[10px] leading-none">XS</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={actTrackSize("s")}
+        title="Size S"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <span className="text-[10px] leading-none">S</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={actTrackSize("m")}
+        title="Size M (default)"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <span className="text-[10px] leading-none">M</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={actTrackSize("l")}
+        title="Size L"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <span className="text-[10px] leading-none">L</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={actTrackSize("xl")}
+        title="Size XL"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <span className="text-[10px] leading-none">XL</span>
+      </button>
+      <div className="w-2" />
+      <button
+        type="button"
+        onMouseDown={actTrackBase}
+        title={trackBaseTitle}
+        aria-label={trackBaseTitle}
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <LayersIcon className="w-4 h-4 opacity-80" aria-hidden />
+        <span className="sr-only">Cycle base map</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={actTrackGraph}
+        title={trackGraphTitle}
+        aria-label={trackGraphTitle}
+        aria-pressed={trackGraphDisabled}
+        className={`inline-flex ${toolbarBtn} ${trackGraphDisabled ? "bg-gray-300" : ""}`}
+      >
+        <GraphIcon className="w-4 h-4 opacity-80" aria-hidden />
+        <span className="sr-only">Toggle graph</span>
+      </button>
+    </>
+  );
+
   return (
     <div className="relative group">
       <form
@@ -2084,6 +2337,8 @@ export default function PostForm({
                     <span className="sr-only">Featured</span>
                   </button>
                 </>
+              ) : isTrackLine ? (
+                trackToolbar
               ) : (
                 <>
                   <button
@@ -2252,7 +2507,7 @@ export default function PostForm({
                   scheduleEditorHighlightRef.current();
                   schedulePreviewHighlightRef.current();
                 }
-                updateIsImageLine();
+                updateMediaLineState();
               }}
               onKeyUp={() => {
                 const ta = textareaRef.current;
@@ -2268,7 +2523,7 @@ export default function PostForm({
                   scheduleEditorHighlightRef.current();
                   schedulePreviewHighlightRef.current();
                 }
-                updateIsImageLine();
+                updateMediaLineState();
               }}
               onClick={() => {
                 const ta = textareaRef.current;
@@ -2284,7 +2539,7 @@ export default function PostForm({
                   scheduleEditorHighlightRef.current();
                   schedulePreviewHighlightRef.current();
                 }
-                updateIsImageLine();
+                updateMediaLineState();
               }}
               onSelect={() => {
                 const ta = textareaRef.current;
@@ -2300,7 +2555,7 @@ export default function PostForm({
                   scheduleEditorHighlightRef.current();
                   schedulePreviewHighlightRef.current();
                 }
-                updateIsImageLine();
+                updateMediaLineState();
               }}
               onScroll={() => {
                 if (overlayActive) {
@@ -2375,7 +2630,7 @@ export default function PostForm({
                     ensurePreviewReadyAndSync(160);
                     scheduleEditorHighlightRef.current();
                     schedulePreviewHighlightRef.current();
-                    updateIsImageLine();
+                    updateMediaLineState();
                   });
                 }
               }}
@@ -2545,6 +2800,8 @@ export default function PostForm({
                             <span className="sr-only">Featured</span>
                           </button>
                         </>
+                      ) : isTrackLine ? (
+                        trackToolbar
                       ) : (
                         <>
                           <button
@@ -2715,7 +2972,7 @@ export default function PostForm({
                           scheduleSyncRef.current();
                           scheduleEditorHighlightRef.current();
                           schedulePreviewHighlightRef.current();
-                          updateIsImageLine();
+                          updateMediaLineState();
                         }}
                         onKeyUp={() => {
                           const ta = overlayTextareaRef.current;
@@ -2729,7 +2986,7 @@ export default function PostForm({
                           scheduleSyncRef.current();
                           scheduleEditorHighlightRef.current();
                           schedulePreviewHighlightRef.current();
-                          updateIsImageLine();
+                          updateMediaLineState();
                         }}
                         onClick={() => {
                           const ta = overlayTextareaRef.current;
@@ -2743,7 +3000,7 @@ export default function PostForm({
                           scheduleSyncRef.current();
                           scheduleEditorHighlightRef.current();
                           schedulePreviewHighlightRef.current();
-                          updateIsImageLine();
+                          updateMediaLineState();
                         }}
                         onSelect={() => {
                           const ta = overlayTextareaRef.current;
@@ -2757,7 +3014,7 @@ export default function PostForm({
                           scheduleSyncRef.current();
                           scheduleEditorHighlightRef.current();
                           schedulePreviewHighlightRef.current();
-                          updateIsImageLine();
+                          updateMediaLineState();
                         }}
                         onScroll={() => {
                           scheduleEditorHighlightRef.current();
@@ -2828,7 +3085,7 @@ export default function PostForm({
                           ensurePreviewReadyAndSync(160);
                           scheduleEditorHighlightRef.current();
                           schedulePreviewHighlightRef.current();
-                          updateIsImageLine();
+                          updateMediaLineState();
                         });
                       }}
                     >
@@ -2883,7 +3140,7 @@ export default function PostForm({
                       ensurePreviewReadyAndSync(160);
                       scheduleEditorHighlightRef.current();
                       schedulePreviewHighlightRef.current();
-                      updateIsImageLine();
+                      updateMediaLineState();
                     });
                   }}
                 >

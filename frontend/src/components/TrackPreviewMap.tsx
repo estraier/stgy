@@ -48,11 +48,16 @@ export default function TrackPreviewMap({
     if (!root) return;
 
     let cancelled = false;
+    let renderer: {
+      hydrate: (element: HTMLElement) => void;
+      destroy: (element: HTMLElement) => void;
+    } | null = null;
     setLoadError(null);
     void import("stgy-track")
       .then(({ StgyTrackRenderer }) => {
         if (cancelled || !root.isConnected) return;
-        new StgyTrackRenderer().hydrate(root);
+        renderer = new StgyTrackRenderer();
+        renderer.hydrate(root);
       })
       .catch((error: unknown) => {
         if (cancelled) return;
@@ -61,6 +66,7 @@ export default function TrackPreviewMap({
 
     return () => {
       cancelled = true;
+      renderer?.destroy(root);
     };
   }, [src, visible]);
 

@@ -714,6 +714,11 @@ span[aria-label="Identicon"] > svg {
   min-height: 0;
 }
 
+.track-manager-map .stgy-track-map {
+  display: block;
+  margin: 0;
+}
+
 .track-manager-map .stgy-track-canvas {
   border: 0;
 }

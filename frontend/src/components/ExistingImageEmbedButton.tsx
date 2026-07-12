@@ -4,6 +4,8 @@ import React, { useCallback, useState } from "react";
 import { useRequireLogin } from "@/hooks/useRequireLogin";
 import ExistingImageEmbedDialog from "@/components/ExistingImageEmbedDialog";
 import { Images as ImagesIcon } from "lucide-react";
+import { makeExistingMediaMarkdown } from "@/utils/mediaEmbed";
+import type { ExistingMediaSelection } from "@/utils/mediaEmbed";
 
 type Props = {
   onInsert: (markdown: string) => void;
@@ -14,7 +16,7 @@ type Props = {
 export default function ExistingImageEmbedButton({
   onInsert,
   className = "",
-  title = "Insert from library",
+  title = "Insert existing media",
 }: Props) {
   const status = useRequireLogin();
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
@@ -29,14 +31,9 @@ export default function ExistingImageEmbedButton({
   const handleClose = useCallback(() => setOpen(false), []);
 
   const handleEmbed = useCallback(
-    (keys: string[]) => {
-      if (keys.length === 0) {
-        setOpen(false);
-        return;
-      }
-      const useGrid = true;
-      const md = keys.map((k) => `![](/images/${k})${useGrid ? "{grid}" : ""}`).join("\n") + "\n";
-      onInsert(md);
+    (selection: ExistingMediaSelection) => {
+      const markdown = makeExistingMediaMarkdown(selection);
+      if (markdown) onInsert(markdown);
       setOpen(false);
     },
     [onInsert],
