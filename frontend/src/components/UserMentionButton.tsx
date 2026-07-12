@@ -6,6 +6,7 @@ import { listFriendsByNicknamePrefix } from "@/api/users";
 import AvatarImg from "@/components/AvatarImg";
 import { makeTextFromJsonSnippet } from "@/utils/article";
 import { AtSign } from "lucide-react";
+import { calculatePopoverPosition } from "@/utils/popover";
 
 type UserMentionButtonProps = {
   onInsert: (markdown: string) => void;
@@ -19,6 +20,7 @@ export default function UserMentionButton({
   title = "Mention user",
 }: UserMentionButtonProps) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const dialogRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const [open, setOpen] = useState(false);
@@ -26,6 +28,7 @@ export default function UserMentionButton({
   const [loading, setLoading] = useState(false);
   const [items, setItems] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [position, setPosition] = useState({ top: 0, left: 0, width: 320 });
 
   const doFetch = useCallback(async (q: string) => {
     setLoading(true);
@@ -52,24 +55,60 @@ export default function UserMentionButton({
     return () => window.clearTimeout(timer);
   }, [open, query, doFetch]);
 
+  const updatePosition = useCallback(() => {
+    const anchor = containerRef.current?.getBoundingClientRect();
+    if (!anchor) return;
+    const dialogHeight = dialogRef.current?.getBoundingClientRect().height || 336;
+    setPosition(
+      calculatePopoverPosition(anchor, {
+        viewportWidth: window.innerWidth,
+        viewportHeight: window.innerHeight,
+        popoverHeight: dialogHeight,
+      }),
+    );
+  }, []);
+
   useEffect(() => {
     if (!open) return;
+    const dialog = dialogRef.current;
+    updatePosition();
+    if (dialog && typeof dialog.showPopover === "function") {
+      dialog.showPopover();
+    }
+    const raf = window.requestAnimationFrame(updatePosition);
+    const observer = dialog && typeof ResizeObserver !== "undefined"
+      ? new ResizeObserver(updatePosition)
+      : null;
+    if (dialog) observer?.observe(dialog);
+
     function onDocMouseDown(ev: MouseEvent) {
-      if (!containerRef.current) return;
-      if (!containerRef.current.contains(ev.target as Node)) {
-        setOpen(false);
-      }
+      const target = ev.target as Node;
+      if (containerRef.current?.contains(target) || dialogRef.current?.contains(target)) return;
+      setOpen(false);
     }
     function onKey(ev: KeyboardEvent) {
       if (ev.key === "Escape") setOpen(false);
     }
+    window.addEventListener("resize", updatePosition);
+    window.addEventListener("scroll", updatePosition, true);
     document.addEventListener("mousedown", onDocMouseDown);
     document.addEventListener("keydown", onKey);
     return () => {
+      window.cancelAnimationFrame(raf);
+      observer?.disconnect();
+      window.removeEventListener("resize", updatePosition);
+      window.removeEventListener("scroll", updatePosition, true);
       document.removeEventListener("mousedown", onDocMouseDown);
       document.removeEventListener("keydown", onKey);
+      if (dialog && typeof dialog.hidePopover === "function") {
+        try {
+          dialog.hidePopover();
+        } catch {
+          // The browser may already have removed the element from the top layer.
+        }
+      }
     };
-  }, [open]);
+  }, [open, updatePosition]);
 
   useEffect(() => {
     if (open) {
@@ -149,9 +188,22 @@ export default function UserMentionButton({
 
       {open && (
         <div
+          ref={dialogRef}
+          popover="manual"
           role="dialog"
           aria-label="Mention user"
-          className="absolute right-0 mt-1 w-80 max-w-[90vw] z-50 rounded border border-gray-200 bg-white shadow-lg"
+          className={
+            "fixed z-[2000] overflow-hidden rounded border border-gray-200 " +
+            "bg-white p-0 shadow-lg"
+          }
+          style={{
+            top: position.top,
+            left: position.left,
+            right: "auto",
+            bottom: "auto",
+            width: position.width,
+            margin: 0,
+          }}
         >
           <div className="p-2 border-b bg-gray-50">
             <input
