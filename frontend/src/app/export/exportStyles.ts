@@ -619,4 +619,17 @@ body.stgy-export .markdown-body code[class*="language-"],
 body.stgy-export .markdown-body pre[class*="language-"] {
   text-shadow: none !important;
 }
+
+body.stgy-export .stgy-track-export-error {
+  display: flex;
+  min-height: 12rem;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  border: 1px solid #fca5a5;
+  border-radius: 0.35em;
+  background: #fef2f2;
+  color: #b91c1c;
+  text-align: center;
+}
 `;

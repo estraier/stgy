@@ -5,7 +5,16 @@ import { getSessionInfo } from "@/api/auth";
 import { getPubConfig, getUser, listBlockees, listFollowees } from "@/api/users";
 import { getPost, listPosts, listPostsLikedByUser } from "@/api/posts";
 import { listImages } from "@/api/media";
-import type { MediaObject, Post, PostDetail, PubConfig, User, UserDetail } from "@/api/models";
+import { listTracks } from "@/api/tracks";
+import type {
+  MediaObject,
+  Post,
+  PostDetail,
+  PubConfig,
+  TrackObject,
+  User,
+  UserDetail,
+} from "@/api/models";
 import { makeArticleHtmlFromMarkdown, makePubAttributesFromJsonSnippet } from "@/utils/article";
 import { sliceByPseudoTokens } from "stgy-markdown";
 import { convertHtmlMathInline } from "@/utils/mathjax-inline";
@@ -16,6 +25,11 @@ import {
   type WritableFileStreamMinimal,
 } from "@/utils/zip";
 import { Config } from "@/config";
+import {
+  makeTrackArchiveEntries,
+  rewriteTrackObjectUrlsToRelative,
+  type TrackArchiveEntry,
+} from "@/utils/exportTracks";
 import { HTML_STYLES_CSS } from "./exportStyles";
 
 interface SaveFilePickerOptions {
@@ -34,6 +48,65 @@ declare global {
 }
 
 const IMAGES_PAGE_SIZE = Config.IMAGES_PAGE_SIZE || 30;
+const TRACKS_PAGE_SIZE = Config.TRACKS_PAGE_SIZE || 30;
+
+const TRACK_VIEWER_JS_URL = "/export-assets/track-viewer.js";
+const TRACK_VIEWER_CSS_URL = "/export-assets/track-viewer.css";
+
+const TRACK_EXPORT_BOOTSTRAP_JS = `(() => {
+  const message =
+    "Track maps require an HTTP server. Open this archive through a local web server.";
+
+  function showError(text) {
+    document.querySelectorAll(".stgy-track-map").forEach((figure) => {
+      const canvas = figure.querySelector(".stgy-track-canvas");
+      if (!canvas) return;
+      canvas.classList.add("stgy-track-export-error");
+      canvas.textContent = text;
+    });
+  }
+
+  function initialize() {
+    if (!document.querySelector(".stgy-track-map")) return;
+    if (window.location.protocol === "file:") {
+      showError(message);
+      return;
+    }
+
+    const Viewer = window.StgyTrackViewer;
+    if (!Viewer || typeof Viewer.StgyTrackRenderer !== "function") {
+      showError("Track renderer could not be loaded.");
+      return;
+    }
+
+    try {
+      new Viewer.StgyTrackRenderer().hydrate(document.body);
+    } catch (error) {
+      showError(error instanceof Error ? error.message : String(error));
+    }
+  }
+
+  if (document.readyState === "loading") {
+    document.addEventListener("DOMContentLoaded", initialize, { once: true });
+  } else {
+    initialize();
+  }
+})();
+`;
+
+const EXPORT_README_TEXT = `STGY export archive
+
+The original track files are stored in tracks/masters.
+The TrackJSON previews used by the exported HTML are stored in tracks/previews.
+
+Track maps cannot be loaded directly through file:// because browsers block JavaScript from
+fetching local files. Start an HTTP server in this directory, for example:
+
+  python3 -m http.server 8000
+
+Then open http://localhost:8000/index.html in a browser. Background map tiles are downloaded
+from their original providers, so an Internet connection is still required.
+`;
 
 const POST_BASE_SLEEP_MS = 200;
 const IMAGE_BASE_SLEEP_MS = 500;
@@ -130,18 +203,42 @@ function rewriteImageObjectUrlsToRelative(text: string, userId: string, baseDir:
   });
 }
 
-function rewriteProfileIntroductionAndSnippet(profile: UserDetail, userId: string): UserDetail {
-  const rewrittenIntro = rewriteImageObjectUrlsToRelative(profile.introduction, userId, "./images");
-  const rewrittenSnippet = rewriteImageObjectUrlsToRelative(profile.snippet, userId, "./images");
+function rewriteProfileIntroductionAndSnippet(
+  profile: UserDetail,
+  userId: string,
+  trackEntries: TrackArchiveEntry[],
+): UserDetail {
+  const rewrittenIntro = rewriteTrackObjectUrlsToRelative(
+    rewriteImageObjectUrlsToRelative(profile.introduction, userId, "./images"),
+    trackEntries,
+    "./tracks",
+  );
+  const rewrittenSnippet = rewriteTrackObjectUrlsToRelative(
+    rewriteImageObjectUrlsToRelative(profile.snippet, userId, "./images"),
+    trackEntries,
+    "./tracks",
+  );
   return { ...profile, introduction: rewrittenIntro, snippet: rewrittenSnippet };
 }
 
-function rewritePostContentAndSnippet<T extends Post | PostDetail>(post: T, userId: string): T {
+function rewritePostContentAndSnippet<T extends Post | PostDetail>(
+  post: T,
+  userId: string,
+  trackEntries: TrackArchiveEntry[],
+): T {
   const next = { ...post };
   if ("content" in next && typeof next.content === "string") {
-    next.content = rewriteImageObjectUrlsToRelative(next.content, userId, "../images");
+    next.content = rewriteTrackObjectUrlsToRelative(
+      rewriteImageObjectUrlsToRelative(next.content, userId, "../images"),
+      trackEntries,
+      "../tracks",
+    );
   }
-  next.snippet = rewriteImageObjectUrlsToRelative(next.snippet, userId, "../images");
+  next.snippet = rewriteTrackObjectUrlsToRelative(
+    rewriteImageObjectUrlsToRelative(next.snippet, userId, "../images"),
+    trackEntries,
+    "../tracks",
+  );
   return next;
 }
 
@@ -164,6 +261,12 @@ async function fetchBytes(url: string, label: string): Promise<Uint8Array> {
   const bytes = new Uint8Array(await resp.arrayBuffer());
   await sleepForTransferBytes(bytes.length, IMAGE_BASE_SLEEP_MS);
   return bytes;
+}
+
+function renderTrackAssetTags(baseDir: string): string {
+  return `<link rel="stylesheet" href="${baseDir}/track-viewer.css" />
+  <script defer src="${baseDir}/track-viewer.js"></script>
+  <script defer src="${baseDir}/track-export.js"></script>`;
 }
 
 function renderProfileHtml(profile: UserDetail): string {
@@ -201,6 +304,7 @@ function renderProfileHtml(profile: UserDetail): string {
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>${escapeHtml(nickname)} - STGY Profile</title>
   <link rel="stylesheet" href="./style.css" />
+  ${renderTrackAssetTags("./assets")}
 </head>
 <body class="stgy-export stgy-export-profile">
   <main>
@@ -249,6 +353,7 @@ function renderPostHtml(post: Post | PostDetail): string {
   <meta name="viewport" content="width=device-width,initial-scale=1" />
   <title>Post ${escapeHtml(postId)} - STGY</title>
   <link rel="stylesheet" href="../style.css" />
+  ${renderTrackAssetTags("../assets")}
 </head>
 <body class="stgy-export stgy-export-post">
   <main>
@@ -368,6 +473,26 @@ async function fetchAllMyImages(userId: string): Promise<MediaObject[]> {
   return out.filter((it) => {
     if (seen.has(it.key)) return false;
     seen.add(it.key);
+    return true;
+  });
+}
+
+async function fetchAllMyTracks(userId: string): Promise<TrackObject[]> {
+  const out: TrackObject[] = [];
+  for (let page = 1; page < 100000; page++) {
+    const data = await withTooOftenRetry(() =>
+      listTracks(userId, {
+        offset: (page - 1) * TRACKS_PAGE_SIZE,
+        limit: TRACKS_PAGE_SIZE + 1,
+      }),
+    );
+    out.push(...data.slice(0, TRACKS_PAGE_SIZE));
+    if (data.length <= TRACKS_PAGE_SIZE) break;
+  }
+  const seen = new Set<string>();
+  return out.filter((track) => {
+    if (seen.has(track.key)) return false;
+    seen.add(track.key);
     return true;
   });
 }
@@ -500,10 +625,31 @@ export default function PageBody() {
       const enc = new TextEncoder();
       const now = new Date();
       const base = `${exportRootDir}/`;
-
-      const exportProfile = rewriteProfileIntroductionAndSnippet(profile, userId);
+      const tracks = await fetchAllMyTracks(userId);
+      const trackEntries = makeTrackArchiveEntries(tracks, userId);
+      const exportProfile = rewriteProfileIntroductionAndSnippet(
+        profile,
+        userId,
+        trackEntries,
+      );
 
       await zipWriter.addFile(`${base}style.css`, enc.encode(HTML_STYLES_CSS), now);
+      await zipWriter.addFile(
+        `${base}assets/track-viewer.css`,
+        await fetchBytes(TRACK_VIEWER_CSS_URL, "track viewer stylesheet"),
+        now,
+      );
+      await zipWriter.addFile(
+        `${base}assets/track-viewer.js`,
+        await fetchBytes(TRACK_VIEWER_JS_URL, "track viewer script"),
+        now,
+      );
+      await zipWriter.addFile(
+        `${base}assets/track-export.js`,
+        enc.encode(TRACK_EXPORT_BOOTSTRAP_JS),
+        now,
+      );
+      await zipWriter.addFile(`${base}README.txt`, enc.encode(EXPORT_README_TEXT), now);
       await zipWriter.addFile(
         `${base}profile.json`,
         enc.encode(JSON.stringify(exportProfile, null, 2)),
@@ -551,7 +697,7 @@ export default function PageBody() {
 
       for (const p of posts) {
         const detail = await withTooOftenRetry(() => getPost(p.id, userId));
-        const rewritten = rewritePostContentAndSnippet(detail ?? p, userId);
+        const rewritten = rewritePostContentAndSnippet(detail ?? p, userId, trackEntries);
 
         const jsonBytes = enc.encode(JSON.stringify(rewritten, null, 2));
         await zipWriter.addFile(`${base}posts/${p.id}.json`, jsonBytes, now);
@@ -582,6 +728,19 @@ export default function PageBody() {
         await zipWriter.addFile(
           `${base}images/${filename}`,
           await fetchBytes(it.publicUrl, filename),
+          now,
+        );
+      }
+
+      for (const entry of trackEntries) {
+        await zipWriter.addFile(
+          `${base}tracks/masters/${entry.masterFilename}`,
+          await fetchBytes(entry.track.publicUrl, entry.masterFilename),
+          now,
+        );
+        await zipWriter.addFile(
+          `${base}tracks/previews/${entry.previewFilename}`,
+          await fetchBytes(entry.track.previewUrl, entry.previewFilename),
           now,
         );
       }
@@ -639,6 +798,21 @@ export default function PageBody() {
               : Posted image binaries
             </li>
             <li>
+              <code className="font-bold">
+                ./tracks/masters/<var>&#123;objectId&#125;</var>.<var>&#123;fit|trjgz&#125;</var>
+              </code>{" "}
+              : Original track binaries
+            </li>
+            <li>
+              <code className="font-bold">
+                ./tracks/previews/<var>&#123;objectId&#125;</var>.trjgz
+              </code>{" "}
+              : TrackJSON previews used by exported HTML
+            </li>
+            <li>
+              <code className="font-bold">./assets/track-viewer.*</code> : Map renderer assets
+            </li>
+            <li>
               <code className="font-bold">./relations.json</code> : Follow/block/like relations in
               JSON
             </li>
@@ -648,11 +822,19 @@ export default function PageBody() {
             <li>
               <code className="font-bold">./style.css</code> : Stylesheet for exported HTML
             </li>
+            <li>
+              <code className="font-bold">./README.txt</code> : Instructions for viewing maps
+            </li>
           </ul>
           <p className="mt-3">
             The JSON and HTML versions of the profile/posts contain the same information. JSON is
             useful for migrating your data to other services, while HTML is convenient for using the
             exported data as a website or CMS content.
+          </p>
+          <p className="mt-3">
+            Exported maps load their data from the archive. To view them, extract the ZIP and open
+            it through a local HTTP server rather than directly through <code>file://</code>.
+            Background map tiles still require an Internet connection.
           </p>
           <p className="mt-3">
             Creating and downloading the archive may take a while. After you click the button, keep

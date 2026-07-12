@@ -11,7 +11,10 @@
     "test": "jest",
     "fmt": "prettier --write .",
     "lint": "eslint src --ext .js,.jsx,.ts,.tsx",
-    "clean": "rm -rf node_modules dist out .next .turbo"
+    "clean": "rm -rf node_modules dist out .next .turbo public/export-assets",
+    "build:export-track-assets": "node scripts/build-export-track-assets.mjs",
+    "prebuild": "npm run build:export-track-assets",
+    "predev": "npm run build:export-track-assets"
   },
   "dependencies": {
     "@vvo/tzdb": "^6.187.0",
@@ -42,6 +45,7 @@
     "eslint": "^9",
     "eslint-config-next": "15.4.1",
     "tailwindcss": "^4",
-    "typescript": "^5"
+    "typescript": "^5",
+    "esbuild": "^0.20.0"
   }
 }
