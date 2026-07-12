@@ -1055,7 +1055,19 @@ describe("StgyTrackRenderer", () => {
       "time",
       "sample",
     ]);
+    expect(Array.from(axisSelect?.options || []).map((option) => option.textContent)).toEqual([
+      "Distance",
+      "Time",
+      "Sample",
+    ]);
     expect(axisSelect?.className).toBe("stgy-track-graph-select");
+
+    const smoothingSelect = document.querySelector<HTMLSelectElement>(
+      '.stgy-track-graph select[aria-label="Graph smoothing"]',
+    );
+    expect(Array.from(smoothingSelect?.options || []).slice(0, 3).map(
+      (option) => option.textContent,
+    )).toEqual(["Smoothing: none", "Smoothing: 3", "Smoothing: 5"]);
   });
 
   test("excludes distances and times from graph series selector", async () => {
@@ -1082,9 +1094,9 @@ describe("StgyTrackRenderer", () => {
     }));
 
     expect(options).toEqual([
-      { value: "altitudes", text: "altitude" },
-      { value: "heartRates", text: "heart rates" },
-      { value: "powers", text: "powers" },
+      { value: "altitudes", text: "Altitude" },
+      { value: "heartRates", text: "Heart rate" },
+      { value: "powers", text: "Power" },
     ]);
     expect(options.map((option) => option.value)).not.toContain("distances");
     expect(options.map((option) => option.value)).not.toContain("times");
@@ -1119,6 +1131,8 @@ describe("StgyTrackRenderer", () => {
               cadences: [72, 75, 78],
               speeds: [18.5, 19.2, 20.1],
               altitudes: [20, 21, 22],
+              torqueEffectivenessPercentage: [80, 82, 84],
+              pedalSmoothnessPercentage: [20, 22, 24],
             },
           },
         },
@@ -1140,7 +1154,89 @@ describe("StgyTrackRenderer", () => {
       "cadences",
       "heartRates",
       "powers",
+      "torqueEffectivenessPercentage",
+      "pedalSmoothnessPercentage",
     ]);
+    expect(Array.from(seriesSelect?.options || []).map((option) => option.textContent)).toEqual([
+      "Altitude",
+      "Speed",
+      "Cadence",
+      "Heart rate",
+      "Power",
+      "Torque efficiency",
+      "Pedal smoothness",
+    ]);
+  });
+
+  test("formats pedaling dynamics graph series as percentages", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139.7528, 35.6852],
+              [139.7550, 35.6848],
+              [139.7585, 35.6840],
+            ],
+          },
+          properties: {
+            coordinateProperties: {
+              distances: [0, 210, 545],
+              torqueEffectivenessPercentage: [80, 82, 84],
+              pedalSmoothnessPercentage: [20, 22, 24],
+            },
+          },
+        },
+      ],
+    });
+
+    renderer.hydrate(document.body);
+    await flushPromises();
+
+    const seriesSelect = document.querySelector<HTMLSelectElement>(
+      '.stgy-track-graph select[aria-label="Graph series"]',
+    );
+    expect(seriesSelect).not.toBeNull();
+    if (!seriesSelect) return;
+
+    seriesSelect.value = "torqueEffectivenessPercentage";
+    seriesSelect.dispatchEvent(new Event("change", { bubbles: true }));
+
+    const svg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
+    const readout = document.querySelector<HTMLElement>(
+      ".stgy-track-graph-readout",
+    );
+    expect(svg?.getAttribute("aria-label")).toBe("Torque efficiency graph");
+    expect(readout).not.toBeNull();
+    if (!svg || !readout) return;
+
+    svg.getBoundingClientRect = jest.fn().mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 800,
+      height: 180,
+      right: 800,
+      bottom: 180,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+    svg.dispatchEvent(new MouseEvent("mousemove", {
+      bubbles: true,
+      clientX: 333,
+      clientY: 90,
+    }));
+
+    expect(readout.textContent).toMatch(/ \/ [0-9.]+ %$/);
   });
 
   test("updates graph readout on hover", async () => {

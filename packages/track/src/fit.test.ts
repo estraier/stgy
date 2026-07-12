@@ -1661,6 +1661,38 @@ describe("trackActivityToTrackJson", () => {
     expect(coordinateProperties.heartRates).toEqual([0, 0, 122]);
   });
 
+  test("fill-forwards pedaling dynamics metric series", () => {
+    const activity = makeActivity(4);
+    activity.points[0].metrics = {
+      torqueEffectivenessPercentage: 80,
+      pedalSmoothnessPercentage: 20,
+    };
+    activity.points[1].metrics = {};
+    activity.points[2].metrics = {
+      torqueEffectivenessPercentage: 84,
+    };
+    activity.points[3].metrics = {
+      pedalSmoothnessPercentage: 24,
+    };
+
+    const parsed = parseTrackJson(trackActivityToTrackJson(activity));
+    const coordinateProperties =
+      parsed.features[0].properties.coordinateProperties;
+
+    expect(coordinateProperties.torqueEffectivenessPercentage).toEqual([
+      80,
+      80,
+      84,
+      84,
+    ]);
+    expect(coordinateProperties.pedalSmoothnessPercentage).toEqual([
+      20,
+      20,
+      20,
+      24,
+    ]);
+  });
+
   test("omits a fill-forward series when it has no valid values", () => {
     const activity = makeActivity(3);
     activity.points.forEach((point) => {

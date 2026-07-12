@@ -42,8 +42,24 @@ const TRACK_GRAPH_SERIES_ORDER = [
   "cadences",
   "heartRates",
   "powers",
+  "torqueEffectivenessPercentage",
+  "pedalSmoothnessPercentage",
 ] as const;
 const TRACK_GRAPH_SERIES_ORDER_SET = new Set<string>(TRACK_GRAPH_SERIES_ORDER);
+const TRACK_GRAPH_SERIES_LABELS: Record<string, string> = {
+  altitudes: "Altitude",
+  speeds: "Speed",
+  cadences: "Cadence",
+  heartRates: "Heart rate",
+  powers: "Power",
+  torqueEffectivenessPercentage: "Torque efficiency",
+  pedalSmoothnessPercentage: "Pedal smoothness",
+};
+const TRACK_GRAPH_X_AXIS_LABELS: Record<TrackGraphXAxisKind, string> = {
+  distance: "Distance",
+  time: "Time",
+  sample: "Sample",
+};
 
 type BaseLayerKey =
   | "gsi-pale"
@@ -879,7 +895,17 @@ export class StgyTrackRenderer {
     if (name === "altitudes") {
       return "altitude";
     }
+    if (name === "torqueEffectivenessPercentage") {
+      return "Torque efficiency";
+    }
+    if (name === "pedalSmoothnessPercentage") {
+      return "Pedal smoothness";
+    }
     return name.replace(/([a-z0-9])([A-Z])/g, "$1 $2").toLowerCase();
+  }
+
+  private formatGraphSeriesLabel(name: string): string {
+    return TRACK_GRAPH_SERIES_LABELS[name] || this.formatHudLabel(name);
   }
 
   private findNearestCoordinateIndex(coordinates: unknown, latlng: L.LatLng): number | null {
@@ -1419,6 +1445,13 @@ export class StgyTrackRenderer {
       return `${value.toFixed(1)} km/h`;
     }
 
+    if (
+      seriesName === "torqueEffectivenessPercentage" ||
+      seriesName === "pedalSmoothnessPercentage"
+    ) {
+      return `${value.toFixed(1)} %`;
+    }
+
     return `${value.toFixed(1)}`;
   }
 
@@ -1445,6 +1478,13 @@ export class StgyTrackRenderer {
       return `${roundedValue} km/h`;
     }
 
+    if (
+      seriesName === "torqueEffectivenessPercentage" ||
+      seriesName === "pedalSmoothnessPercentage"
+    ) {
+      return `${roundedValue} %`;
+    }
+
     return `${roundedValue}`;
   }
 
@@ -1454,7 +1494,9 @@ export class StgyTrackRenderer {
       seriesName === "heartRates" ||
       seriesName === "cadences" ||
       seriesName === "powers" ||
-      seriesName === "speeds"
+      seriesName === "speeds" ||
+      seriesName === "torqueEffectivenessPercentage" ||
+      seriesName === "pedalSmoothnessPercentage"
     );
   }
 
@@ -1650,7 +1692,7 @@ export class StgyTrackRenderer {
       dataset.series.forEach((item) => {
         const option = document.createElement("option");
         option.value = item.name;
-        option.textContent = this.formatHudLabel(item.name);
+        option.textContent = this.formatGraphSeriesLabel(item.name);
         option.selected = item.name === series.name;
         seriesSelect.appendChild(option);
       });
@@ -1686,7 +1728,7 @@ export class StgyTrackRenderer {
       availableXAxisKinds.forEach((kind) => {
         const option = document.createElement("option");
         option.value = kind;
-        option.textContent = kind;
+        option.textContent = TRACK_GRAPH_X_AXIS_LABELS[kind];
         option.selected = kind === selectedXAxis;
         axisSelect.appendChild(option);
       });
@@ -1713,8 +1755,8 @@ export class StgyTrackRenderer {
       const option = document.createElement("option");
       option.value = `${windowSize}`;
       option.textContent = windowSize === 1
-        ? "smoothing: none"
-        : `smoothing: ${windowSize}`;
+        ? "Smoothing: none"
+        : `Smoothing: ${windowSize}`;
       option.selected = windowSize === smoothingWindow;
       smoothingSelect.appendChild(option);
     });
@@ -1743,7 +1785,7 @@ export class StgyTrackRenderer {
     const svg = document.createElementNS(svgNs, "svg");
     svg.setAttribute("viewBox", "0 0 800 180");
     svg.setAttribute("role", "img");
-    svg.setAttribute("aria-label", `${this.formatHudLabel(series.name)} graph`);
+    svg.setAttribute("aria-label", `${this.formatGraphSeriesLabel(series.name)} graph`);
 
     const plotLeft = 52;
     const plotRight = 780;

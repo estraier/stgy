@@ -106,6 +106,10 @@ const DEFAULT_TRACK_JSON_PRECISION = {
   metadata: 1,
 };
 const TRACK_JSON_METRIC_METADATA_PRECISION = 3;
+const FILL_FORWARD_METRIC_NAMES = new Set([
+  "torqueEffectivenessPercentage",
+  "pedalSmoothnessPercentage",
+]);
 const FIT_EPOCH_UNIX_SECONDS = 631065600;
 const LOCAL_TIME_OFFSET_LIMIT_SECONDS = 24 * 3600;
 
@@ -3273,6 +3277,17 @@ function addMetricSeries(
   Array.from(metricNames)
     .sort()
     .forEach((name) => {
+      if (FILL_FORWARD_METRIC_NAMES.has(name)) {
+        addFillForwardSeries(
+          output,
+          name,
+          points,
+          (point) => point.metrics?.[name],
+          (value) => roundNumber(value, precision.metrics),
+        );
+        return;
+      }
+
       const values = points.map((point) => point.metrics?.[name]);
       if (values.every(isFiniteNumber)) {
         output[name] = (values as number[]).map((value) => {
