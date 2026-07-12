@@ -5,6 +5,7 @@ import {
   getTrackUploadContentType,
   getTrackUploadFilename,
   makeTrackMarkdown,
+  makeTrackOriginalViewerUrl,
   restPathFromTrackKey,
 } from "./tracks";
 
@@ -45,6 +46,12 @@ describe("track helpers", () => {
   test("detects the stored master format", () => {
     expect(getTrackObjectKind({ key: "u1/masters/a.fit" })).toBe("FIT");
     expect(getTrackObjectKind({ key: "u1/masters/a.trjgz" })).toBe("TRJGZ");
+  });
+
+  test("creates the original track viewer URL", () => {
+    expect(makeTrackOriginalViewerUrl("u1/masters/a b.fit")).toBe(
+      "/tracks/original?key=u1%2Fmasters%2Fa+b.fit",
+    );
   });
 
   test("creates a map macro for the preview TrackJSON", () => {

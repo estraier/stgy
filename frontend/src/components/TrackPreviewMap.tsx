@@ -7,6 +7,8 @@ type Props = {
   lazy?: boolean;
   interactive?: boolean;
   controls?: boolean;
+  graph?: boolean;
+  overlay?: boolean;
 };
 
 export default function TrackPreviewMap({
@@ -14,6 +16,8 @@ export default function TrackPreviewMap({
   lazy = false,
   interactive = true,
   controls = true,
+  graph = false,
+  overlay = false,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
   const [visible, setVisible] = useState(!lazy);
@@ -68,7 +72,7 @@ export default function TrackPreviewMap({
       cancelled = true;
       renderer?.destroy(root);
     };
-  }, [src, visible]);
+  }, [controls, graph, overlay, src, visible]);
 
   return (
     <div
@@ -80,8 +84,8 @@ export default function TrackPreviewMap({
       <figure
         className="stgy-track-map"
         data-src={src}
-        data-show-graph="false"
-        data-show-overlay="false"
+        data-show-graph={graph ? undefined : "false"}
+        data-show-overlay={overlay ? undefined : "false"}
         data-controls={controls ? undefined : "false"}
         style={{ height: "100%" }}
       >

@@ -6,7 +6,13 @@ import type { TrackObject, TrackStorageMonthlyQuota } from "@/api/models";
 import { deleteTrack, getTracksMonthlyQuota, listTracks } from "@/api/tracks";
 import { Config } from "@/config";
 import { formatBytes, formatDateTime } from "@/utils/format";
-import { getTrackObjectKind, makeTrackMarkdown, restPathFromTrackKey } from "@/utils/tracks";
+import { downloadUrlAsFile, filenameFromStorageKey } from "@/utils/download";
+import {
+  getTrackObjectKind,
+  makeTrackMarkdown,
+  makeTrackOriginalViewerUrl,
+  restPathFromTrackKey,
+} from "@/utils/tracks";
 import TrackPreviewMap from "@/components/TrackPreviewMap";
 import TrackUploadDialog, {
   TrackDialogFileItem,
@@ -34,6 +40,7 @@ export default function PageBody() {
   const [copiedKey, setCopiedKey] = useState<string | null>(null);
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [showUpload, setShowUpload] = useState(false);
   const [dialogFiles, setDialogFiles] = useState<TrackDialogFileItem[] | null>(null);
 
@@ -110,6 +117,20 @@ export default function PageBody() {
     setDialogFiles(mapped);
     setShowUpload(true);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function downloadOriginal(track: TrackObject) {
+    setDownloadingKey(track.key);
+    try {
+      await downloadUrlAsFile(
+        track.publicUrl,
+        filenameFromStorageKey(track.key, "original-track"),
+      );
+    } catch (caught: unknown) {
+      alert(caught instanceof Error ? caught.message : "Failed to download original track.");
+    } finally {
+      setDownloadingKey((key) => (key === track.key ? null : key));
+    }
   }
 
   async function actuallyDelete(track: TrackObject) {
@@ -310,43 +331,62 @@ export default function PageBody() {
               </div>
             </div>
 
-            <div className="mt-3 flex flex-wrap gap-2 justify-end items-center">
-              {!confirmingDelete ? (
-                <>
-                  <button
-                    className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
-                    onClick={() => copyMarkdownFor(previewObj)}
-                    title="Copy Markdown"
-                  >
-                    {copiedKey === previewObj.key ? "Copied!" : "Copy Markdown"}
-                  </button>
-                  <button
-                    className="px-3 py-1 rounded border border-red-300 text-red-700 bg-white hover:bg-red-50"
-                    onClick={() => setConfirmingDelete(true)}
-                    title="Delete"
-                  >
-                    Delete
-                  </button>
-                </>
-              ) : (
-                <>
-                  <span className="text-sm text-red-700 mr-1">Really delete this track?</span>
-                  <button
-                    className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
-                    onClick={() => setConfirmingDelete(false)}
-                    disabled={deleting}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="px-3 py-1 rounded border border-red-400 text-white bg-red-500 hover:bg-red-600 disabled:opacity-60"
-                    onClick={() => actuallyDelete(previewObj)}
-                    disabled={deleting}
-                  >
-                    {deleting ? "Deleting…" : "Delete permanently"}
-                  </button>
-                </>
-              )}
+            <div className="mt-3 flex flex-wrap gap-2 justify-between items-center">
+              <div className="flex flex-wrap gap-2 items-center">
+                <button
+                  className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-60"
+                  onClick={() => downloadOriginal(previewObj)}
+                  disabled={downloadingKey === previewObj.key}
+                >
+                  {downloadingKey === previewObj.key ? "Downloading…" : "Download original"}
+                </button>
+                <a
+                  className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
+                  href={makeTrackOriginalViewerUrl(previewObj.key)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open original
+                </a>
+              </div>
+              <div className="ml-auto flex flex-wrap gap-2 justify-end items-center">
+                {!confirmingDelete ? (
+                  <>
+                    <button
+                      className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
+                      onClick={() => copyMarkdownFor(previewObj)}
+                      title="Copy Markdown"
+                    >
+                      {copiedKey === previewObj.key ? "Copied!" : "Copy Markdown"}
+                    </button>
+                    <button
+                      className="px-3 py-1 rounded border border-red-300 text-red-700 bg-white hover:bg-red-50"
+                      onClick={() => setConfirmingDelete(true)}
+                      title="Delete"
+                    >
+                      Delete
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-sm text-red-700 mr-1">Really delete this track?</span>
+                    <button
+                      className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
+                      onClick={() => setConfirmingDelete(false)}
+                      disabled={deleting}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="px-3 py-1 rounded border border-red-400 text-white bg-red-500 hover:bg-red-600 disabled:opacity-60"
+                      onClick={() => actuallyDelete(previewObj)}
+                      disabled={deleting}
+                    >
+                      {deleting ? "Deleting…" : "Delete permanently"}
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>

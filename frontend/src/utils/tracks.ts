@@ -42,3 +42,8 @@ export function getTrackObjectKind(track: Pick<TrackObject, "key">): StoredTrack
 export function makeTrackMarkdown(track: Pick<TrackObject, "previewKey">): string {
   return `@[](/tracks/${track.previewKey})`;
 }
+
+export function makeTrackOriginalViewerUrl(trackKey: string): string {
+  const params = new URLSearchParams({ key: trackKey });
+  return `/tracks/original?${params.toString()}`;
+}

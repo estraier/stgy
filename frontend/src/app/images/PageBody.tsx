@@ -6,6 +6,7 @@ import { useRequireLogin } from "@/hooks/useRequireLogin";
 import type { MediaObject, StorageMonthlyQuota } from "@/api/models";
 import { listImages, deleteImage, getImagesMonthlyQuota } from "@/api/media";
 import { formatDateTime, formatBytes } from "@/utils/format";
+import { downloadUrlAsFile, filenameFromStorageKey } from "@/utils/download";
 import { Config } from "@/config";
 import ImageUploadDialog, { DialogFileItem, UploadResult } from "@/components/ImageUploadDialog";
 
@@ -36,6 +37,7 @@ export default function PageBody() {
 
   const [confirmingDelete, setConfirmingDelete] = useState(false);
   const [deleting, setDeleting] = useState(false);
+  const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
@@ -152,6 +154,20 @@ export default function PageBody() {
     setDialogFiles(mapped);
     setShowUpload(true);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function downloadOriginal(obj: MediaObject) {
+    setDownloadingKey(obj.key);
+    try {
+      await downloadUrlAsFile(
+        obj.publicUrl,
+        filenameFromStorageKey(obj.key, "original-image"),
+      );
+    } catch (e: unknown) {
+      alert(e instanceof Error ? e.message : "Failed to download original image.");
+    } finally {
+      setDownloadingKey((key) => (key === obj.key ? null : key));
+    }
   }
 
   async function actuallyDelete(obj: MediaObject) {
@@ -368,43 +384,62 @@ export default function PageBody() {
               </div>
             </div>
 
-            <div className="mt-3 flex flex-wrap gap-2 justify-end items-center">
-              {!confirmingDelete ? (
-                <>
-                  <button
-                    className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
-                    onClick={() => copyMarkdownFor(previewObj.key)}
-                    title="Copy Markdown (![](key))"
-                  >
-                    {copiedKey === previewObj.key ? "Copied!" : "Copy Markdown"}
-                  </button>
-                  <button
-                    className="px-3 py-1 rounded border border-red-300 text-red-700 bg-white hover:bg-red-50"
-                    onClick={() => setConfirmingDelete(true)}
-                    title="Delete"
-                  >
-                    Delete
-                  </button>
-                </>
-              ) : (
-                <>
-                  <span className="text-sm text-red-700 mr-1">Really delete this image?</span>
-                  <button
-                    className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
-                    onClick={() => setConfirmingDelete(false)}
-                    disabled={deleting}
-                  >
-                    Cancel
-                  </button>
-                  <button
-                    className="px-3 py-1 rounded border border-red-400 text-white bg-red-500 hover:bg-red-600 disabled:opacity-60"
-                    onClick={() => actuallyDelete(previewObj)}
-                    disabled={deleting}
-                  >
-                    {deleting ? "Deleting…" : "Delete permanently"}
-                  </button>
-                </>
-              )}
+            <div className="mt-3 flex flex-wrap gap-2 justify-between items-center">
+              <div className="flex flex-wrap gap-2 items-center">
+                <button
+                  className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100 disabled:opacity-60"
+                  onClick={() => downloadOriginal(previewObj)}
+                  disabled={downloadingKey === previewObj.key}
+                >
+                  {downloadingKey === previewObj.key ? "Downloading…" : "Download original"}
+                </button>
+                <a
+                  className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
+                  href={previewObj.publicUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  Open original
+                </a>
+              </div>
+              <div className="ml-auto flex flex-wrap gap-2 justify-end items-center">
+                {!confirmingDelete ? (
+                  <>
+                    <button
+                      className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
+                      onClick={() => copyMarkdownFor(previewObj.key)}
+                      title="Copy Markdown (![](key))"
+                    >
+                      {copiedKey === previewObj.key ? "Copied!" : "Copy Markdown"}
+                    </button>
+                    <button
+                      className="px-3 py-1 rounded border border-red-300 text-red-700 bg-white hover:bg-red-50"
+                      onClick={() => setConfirmingDelete(true)}
+                      title="Delete"
+                    >
+                      Delete
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <span className="text-sm text-red-700 mr-1">Really delete this image?</span>
+                    <button
+                      className="px-3 py-1 rounded border border-gray-300 bg-white hover:bg-gray-100"
+                      onClick={() => setConfirmingDelete(false)}
+                      disabled={deleting}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      className="px-3 py-1 rounded border border-red-400 text-white bg-red-500 hover:bg-red-600 disabled:opacity-60"
+                      onClick={() => actuallyDelete(previewObj)}
+                      disabled={deleting}
+                    >
+                      {deleting ? "Deleting…" : "Delete permanently"}
+                    </button>
+                  </>
+                )}
+              </div>
             </div>
           </div>
         </div>

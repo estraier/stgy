@@ -726,3 +726,46 @@ span[aria-label="Identicon"] > svg {
 .track-manager-thumbnail .leaflet-container {
   pointer-events: none;
 }
+
+/* Full-screen original track viewer. */
+.track-original-viewer > .track-manager-map {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  overflow: hidden;
+}
+
+.track-original-viewer > .track-manager-map > .stgy-track-map {
+  display: flex;
+  flex: 1 1 0;
+  height: auto !important;
+  min-height: 240px;
+}
+
+.track-original-viewer > .track-manager-map > .stgy-track-map > .stgy-track-canvas {
+  flex: 1 1 auto;
+  height: auto;
+}
+
+.track-original-viewer > .track-manager-map > .stgy-track-graph {
+  display: flex;
+  flex: 0 0 clamp(220px, 36vh, 400px);
+  flex-direction: column;
+  min-height: 220px;
+  max-height: 400px;
+  margin: 8px 0 0;
+}
+
+.track-original-viewer > .track-manager-map > .stgy-track-graph > svg {
+  flex: 1 1 0;
+  width: 100%;
+  height: auto;
+  min-height: 140px;
+  max-height: none;
+}
+
+@media (max-height: 600px) {
+  .track-original-viewer > .track-manager-map > .stgy-track-map {
+    min-height: 180px;
+  }
+}
