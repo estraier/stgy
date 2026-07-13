@@ -96,16 +96,48 @@ const TRACK_EXPORT_BOOTSTRAP_JS = `(() => {
 
 const EXPORT_README_TEXT = `STGY export archive
 
-The original track files are stored in tracks/masters.
-The TrackJSON previews used by the exported HTML are stored in tracks/previews.
+This archive contains a copy of your exported STGY data and browser-readable HTML pages.
+Start with index.html to browse the profile and posts included in the archive.
 
-Track maps cannot be loaded directly through file:// because browsers block JavaScript from
-fetching local files. Start an HTTP server in this directory, for example:
+The main contents are:
+
+  profile.json and profile.html
+    Your profile in machine-readable JSON and browser-readable HTML.
+
+  posts/
+    Each post in JSON and HTML formats.
+
+  images/
+    The original image data stored by STGY. Exported HTML refers to these local files.
+
+  tracks/masters/
+    The original FIT or TRJGZ track data stored by STGY.
+
+  tracks/previews/
+    TrackJSON preview data used to draw maps and graphs in the exported HTML.
+
+  assets/ and style.css
+    JavaScript and stylesheets used by the exported HTML.
+
+  pub-config.json, relations.json, and avatar.webp
+    Publication settings, social relations, and the avatar image.
+
+The JSON files are suitable for processing or migration. The HTML files provide a convenient
+way to read the exported contents as a static website. Keep the directory structure intact so
+that images, tracks, scripts, and stylesheets continue to resolve correctly.
+
+Map viewing
+-----------
+
+Pages without maps can usually be opened directly. Track maps cannot be loaded through file://
+because browsers block JavaScript from fetching local files. To view maps, start an HTTP server
+in this directory, for example:
 
   python3 -m http.server 8000
 
-Then open http://localhost:8000/index.html in a browser. Background map tiles are downloaded
-from their original providers, so an Internet connection is still required.
+Then open http://localhost:8000/index.html in a browser. Track data is read from this archive,
+but background map tiles are downloaded from their original providers, so an Internet connection
+is still required.
 `;
 
 const POST_BASE_SLEEP_MS = 200;
@@ -823,7 +855,8 @@ export default function PageBody() {
               <code className="font-bold">./style.css</code> : Stylesheet for exported HTML
             </li>
             <li>
-              <code className="font-bold">./README.txt</code> : Instructions for viewing maps
+              <code className="font-bold">./README.txt</code> : Archive overview and viewing
+              instructions
             </li>
           </ul>
           <p className="mt-3">
