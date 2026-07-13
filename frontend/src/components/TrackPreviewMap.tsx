@@ -2,6 +2,13 @@
 
 import { useEffect, useRef, useState } from "react";
 
+const TRACK_DATA_LOADED_EVENT = "stgy-track-data-loaded";
+
+type TrackDataLoadedEventDetail = {
+  source?: unknown;
+  data?: unknown;
+};
+
 type Props = {
   src: string;
   lazy?: boolean;
@@ -9,6 +16,7 @@ type Props = {
   controls?: boolean;
   graph?: boolean;
   overlay?: boolean;
+  onTrackData?: (data: unknown) => void;
 };
 
 export default function TrackPreviewMap({
@@ -18,10 +26,31 @@ export default function TrackPreviewMap({
   controls = true,
   graph = false,
   overlay = false,
+  onTrackData,
 }: Props) {
   const rootRef = useRef<HTMLDivElement>(null);
+  const onTrackDataRef = useRef(onTrackData);
   const [visible, setVisible] = useState(!lazy);
   const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onTrackDataRef.current = onTrackData;
+  }, [onTrackData]);
+
+  useEffect(() => {
+    const root = rootRef.current;
+    if (!root) return;
+
+    const handleTrackDataLoaded = (event: Event) => {
+      const detail = (event as CustomEvent<TrackDataLoadedEventDetail>).detail;
+      if (detail?.source === src) {
+        onTrackDataRef.current?.(detail.data);
+      }
+    };
+
+    root.addEventListener(TRACK_DATA_LOADED_EVENT, handleTrackDataLoaded);
+    return () => root.removeEventListener(TRACK_DATA_LOADED_EVENT, handleTrackDataLoaded);
+  }, [src]);
 
   useEffect(() => {
     if (!lazy || visible) return;

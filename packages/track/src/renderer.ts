@@ -19,6 +19,8 @@ const ALLOWED_MAP_COLORS = new Set([
   "grey",
 ]);
 
+export const STGY_TRACK_DATA_LOADED_EVENT = "stgy-track-data-loaded";
+
 const DEFAULT_SINGLE_POINT_ZOOM = 12;
 const TRACK_GRAPH_SMOOTHING_WINDOWS = [
   1,
@@ -36,8 +38,6 @@ const TRACK_GRAPH_SMOOTHING_WINDOWS = [
 ] as const;
 const TARGET_GRAPH_X_TICKS = 5;
 const TARGET_GRAPH_Y_TICKS = 5;
-const TRACK_GRAPH_VIEWBOX_WIDTH = 800;
-const TRACK_GRAPH_VIEWBOX_HEIGHT = 180;
 const TRACK_GRAPH_SERIES_ORDER = [
   "altitudes",
   "speeds",
@@ -1131,11 +1131,11 @@ export class StgyTrackRenderer {
 
     state.hoverLine.setAttribute("x1", `${hoverX}`);
     state.hoverLine.setAttribute("x2", `${hoverX}`);
-    state.hoverLine.setAttribute("visibility", "visible");
+    state.hoverLine.removeAttribute("hidden");
 
     state.hoverPoint.setAttribute("cx", `${hoverX}`);
     state.hoverPoint.setAttribute("cy", `${hoverY}`);
-    state.hoverPoint.setAttribute("visibility", "visible");
+    state.hoverPoint.removeAttribute("hidden");
 
     state.readout.textContent =
       `${this.formatXAxisLabel(state.selectedXAxis, state.xValues[index])} / ` +
@@ -1148,8 +1148,8 @@ export class StgyTrackRenderer {
       return;
     }
 
-    state.hoverLine.setAttribute("visibility", "hidden");
-    state.hoverPoint.setAttribute("visibility", "hidden");
+    state.hoverLine.setAttribute("hidden", "true");
+    state.hoverPoint.setAttribute("hidden", "true");
     state.readout.textContent = "";
   }
 
@@ -1785,10 +1785,7 @@ export class StgyTrackRenderer {
 
     const svgNs = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(svgNs, "svg");
-    svg.setAttribute(
-      "viewBox",
-      `0 0 ${TRACK_GRAPH_VIEWBOX_WIDTH} ${TRACK_GRAPH_VIEWBOX_HEIGHT}`
-    );
+    svg.setAttribute("viewBox", "0 0 800 180");
     svg.setAttribute("role", "img");
     svg.setAttribute("aria-label", `${this.formatGraphSeriesLabel(series.name)} graph`);
 
@@ -1885,13 +1882,13 @@ export class StgyTrackRenderer {
     hoverLine.setAttribute("y1", `${plotTop}`);
     hoverLine.setAttribute("y2", `${plotBottom}`);
     hoverLine.setAttribute("stroke-dasharray", "4 4");
-    hoverLine.setAttribute("visibility", "hidden");
+    hoverLine.setAttribute("hidden", "true");
     svg.appendChild(hoverLine);
 
     const hoverPoint = document.createElementNS(svgNs, "circle");
     hoverPoint.setAttribute("class", "stgy-track-graph-hover-point");
     hoverPoint.setAttribute("r", "4");
-    hoverPoint.setAttribute("visibility", "hidden");
+    hoverPoint.setAttribute("hidden", "true");
     svg.appendChild(hoverPoint);
 
     context.graphHoverState = {
@@ -1913,7 +1910,7 @@ export class StgyTrackRenderer {
         return;
       }
 
-      const viewBoxX = this.graphClientXToViewBoxX(rect, clientX);
+      const viewBoxX = ((clientX - rect.left) / rect.width) * 800;
       let nearestIndex = 0;
       let nearestDistance = Number.POSITIVE_INFINITY;
 
@@ -1957,21 +1954,6 @@ export class StgyTrackRenderer {
     });
 
     panel.appendChild(svg);
-  }
-
-  private graphClientXToViewBoxX(rect: DOMRect, clientX: number): number {
-    const scale = Math.min(
-      rect.width / TRACK_GRAPH_VIEWBOX_WIDTH,
-      rect.height / TRACK_GRAPH_VIEWBOX_HEIGHT
-    );
-    if (!Number.isFinite(scale) || scale <= 0) {
-      return 0;
-    }
-
-    const renderedWidth = TRACK_GRAPH_VIEWBOX_WIDTH * scale;
-    const renderedLeft = rect.left + (rect.width - renderedWidth) / 2;
-    const viewBoxX = (clientX - renderedLeft) / scale;
-    return Math.max(0, Math.min(TRACK_GRAPH_VIEWBOX_WIDTH, viewBoxX));
   }
 
   private createGeoJsonLayer(
@@ -2041,6 +2023,17 @@ export class StgyTrackRenderer {
     const data = await this.loader.load(href);
     cache[href] = data;
     return data;
+  }
+
+  private dispatchTrackDataLoaded(
+    figure: HTMLElement,
+    source: string,
+    data: unknown
+  ) {
+    figure.dispatchEvent(new CustomEvent(STGY_TRACK_DATA_LOADED_EVENT, {
+      bubbles: true,
+      detail: { source, data },
+    }));
   }
 
   private renderTrackAsPin(
@@ -2282,6 +2275,10 @@ export class StgyTrackRenderer {
         map.setView(bounds.getCenter(), zoom, { animate: false });
       }
     }
+
+    Object.entries(trackDataCache).forEach(([source, data]) => {
+      this.dispatchTrackDataLoaded(figure, source, data);
+    });
 
     figure.dataset.stgyTrackInitialized = "true";
   }

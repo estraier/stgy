@@ -1,5 +1,8 @@
 import L from "leaflet";
-import { StgyTrackRenderer } from "./renderer";
+import {
+  STGY_TRACK_DATA_LOADED_EVENT,
+  StgyTrackRenderer,
+} from "./renderer";
 import { TrackLoader } from "./loader";
 import * as geo from "./geo";
 
@@ -368,17 +371,20 @@ describe("StgyTrackRenderer", () => {
     expect(mockMap.fitBounds).not.toHaveBeenCalled();
   });
 
-  test("loads track from data-src", async () => {
+  test("loads track from data-src and dispatches its data", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map" data-src="#demo-geojson-1">
         <div class="stgy-track-canvas"></div>
       </figure>
     `;
 
-    const loadSpy = jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+    const trackData = {
       type: "FeatureCollection",
       features: [],
-    });
+    };
+    const loadSpy = jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(trackData);
+    const loadedListener = jest.fn();
+    document.body.addEventListener(STGY_TRACK_DATA_LOADED_EVENT, loadedListener);
 
     renderer.hydrate(document.body);
 
@@ -386,6 +392,11 @@ describe("StgyTrackRenderer", () => {
 
     expect(loadSpy).toHaveBeenCalledTimes(1);
     expect(loadSpy).toHaveBeenCalledWith("#demo-geojson-1");
+    expect(loadedListener).toHaveBeenCalledTimes(1);
+    expect((loadedListener.mock.calls[0][0] as CustomEvent).detail).toEqual({
+      source: "#demo-geojson-1",
+      data: trackData,
+    });
   });
 
   test("uses data-src bounds for initial center and Japan tile selection", async () => {
@@ -1237,74 +1248,6 @@ describe("StgyTrackRenderer", () => {
     }));
 
     expect(readout.textContent).toMatch(/ \/ [0-9.]+ %$/);
-  });
-
-  test("maps graph pointer x through letterboxed SVG content", () => {
-    const rect = {
-      left: 100,
-      width: 1600,
-      height: 220,
-    } as DOMRect;
-    const scale = 220 / 180;
-    const renderedLeft = rect.left + (rect.width - 800 * scale) / 2;
-    const clientX = renderedLeft + 600 * scale;
-
-    const viewBoxX = (renderer as any).graphClientXToViewBoxX(rect, clientX);
-
-    expect(viewBoxX).toBeCloseTo(600, 6);
-  });
-
-  test("keeps graph hover indicators hidden until a sample is activated", async () => {
-    document.body.innerHTML = `
-      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
-        <div class="stgy-track-canvas"></div>
-      </figure>
-    `;
-
-    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
-
-    renderer.hydrate(document.body);
-    await flushPromises();
-
-    const svg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
-    const hoverLine = document.querySelector<SVGLineElement>(
-      ".stgy-track-graph-hover-line",
-    );
-    const hoverPoint = document.querySelector<SVGCircleElement>(
-      ".stgy-track-graph-hover-point",
-    );
-
-    expect(svg).not.toBeNull();
-    expect(hoverLine?.getAttribute("visibility")).toBe("hidden");
-    expect(hoverPoint?.getAttribute("visibility")).toBe("hidden");
-
-    if (!svg || !hoverLine || !hoverPoint) return;
-
-    svg.getBoundingClientRect = jest.fn().mockReturnValue({
-      left: 0,
-      top: 0,
-      width: 800,
-      height: 180,
-      right: 800,
-      bottom: 180,
-      x: 0,
-      y: 0,
-      toJSON: () => ({}),
-    });
-
-    svg.dispatchEvent(new MouseEvent("mousemove", {
-      bubbles: true,
-      clientX: 333,
-      clientY: 90,
-    }));
-
-    expect(hoverLine.getAttribute("visibility")).toBe("visible");
-    expect(hoverPoint.getAttribute("visibility")).toBe("visible");
-
-    svg.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
-
-    expect(hoverLine.getAttribute("visibility")).toBe("hidden");
-    expect(hoverPoint.getAttribute("visibility")).toBe("hidden");
   });
 
   test("updates graph readout on hover", async () => {

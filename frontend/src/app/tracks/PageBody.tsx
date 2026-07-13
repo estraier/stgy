@@ -5,7 +5,14 @@ import { useRequireLogin } from "@/hooks/useRequireLogin";
 import type { TrackObject, TrackStorageMonthlyQuota } from "@/api/models";
 import { deleteTrack, getTracksMonthlyQuota, listTracks } from "@/api/tracks";
 import { Config } from "@/config";
-import { formatBytes, formatDateTime } from "@/utils/format";
+import { formatBytes } from "@/utils/format";
+import {
+  formatTrackListDateTime,
+  formatTrackListDistance,
+  formatTrackListElapsedTime,
+  getTrackListSummary,
+  type TrackListSummary,
+} from "@/utils/trackListSummary";
 import { downloadUrlAsFile, filenameFromStorageKey } from "@/utils/download";
 import {
   getTrackObjectKind,
@@ -43,10 +50,21 @@ export default function PageBody() {
   const [downloadingKey, setDownloadingKey] = useState<string | null>(null);
   const [showUpload, setShowUpload] = useState(false);
   const [dialogFiles, setDialogFiles] = useState<TrackDialogFileItem[] | null>(null);
+  const [trackSummaries, setTrackSummaries] = useState<Record<string, TrackListSummary>>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
   const offset = useMemo(() => (page - 1) * PAGE_SIZE, [page]);
+
+  const registerTrackSummary = useCallback((key: string, data: unknown) => {
+    const summary = getTrackListSummary(data);
+    if (!summary) return;
+
+    setTrackSummaries((current) => ({
+      ...current,
+      [key]: summary,
+    }));
+  }, []);
 
   const copyMarkdownFor = useCallback(async (track: TrackObject) => {
     try {
@@ -69,9 +87,11 @@ export default function PageBody() {
       });
       setHasNext(data.length > PAGE_SIZE);
       setItems(data.slice(0, PAGE_SIZE));
+      setTrackSummaries({});
     } catch (caught: unknown) {
       setItems([]);
       setHasNext(false);
+      setTrackSummaries({});
       setError(caught instanceof Error ? caught.message : "Failed to load tracks.");
     } finally {
       setLoading(false);
@@ -142,6 +162,11 @@ export default function PageBody() {
       setItems((current) =>
         current.filter((item) => !(item.bucket === track.bucket && item.key === track.key)),
       );
+      setTrackSummaries((current) => {
+        const next = { ...current };
+        delete next[track.key];
+        return next;
+      });
       setPreviewObj(null);
       setConfirmingDelete(false);
       await loadQuota();
@@ -159,6 +184,7 @@ export default function PageBody() {
     monthlyLimit && monthlyLimit > 0
       ? Math.min(100, Math.round(((quota?.bytesTotal ?? 0) / monthlyLimit) * 100))
       : null;
+  const previewSummary = previewObj ? trackSummaries[previewObj.key] : undefined;
 
   return (
     <main className="max-w-5xl mx-auto mt-8 p-2 sm:p-4">
@@ -225,6 +251,10 @@ export default function PageBody() {
       <ul className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
         {items.map((track) => {
           const lastModified = parseIsoToDate(track.lastModified);
+          const summary = trackSummaries[track.key];
+          const dateTime = formatTrackListDateTime(summary, lastModified);
+          const elapsedTime = formatTrackListElapsedTime(summary?.totalElapsedTime);
+          const distance = formatTrackListDistance(summary?.totalDistanceM);
           return (
             <li key={`${track.bucket}/${track.key}`} className="group relative">
               <div className="relative block w-full aspect-square overflow-hidden rounded border border-gray-300 bg-gray-50">
@@ -234,6 +264,7 @@ export default function PageBody() {
                   lazy
                   interactive={false}
                   controls={false}
+                  onTrackData={(data) => registerTrackSummary(track.key, data)}
                 />
                 <button
                   type="button"
@@ -246,17 +277,21 @@ export default function PageBody() {
                   title="Open"
                 />
               </div>
-              <div className="mt-1 flex items-center justify-between gap-2">
-                <time className="text-[11px] text-gray-500">
-                  {lastModified ? formatDateTime(lastModified) : "—"}
-                </time>
-                <button
-                  className="text-[11px] px-1 py-0.5 rounded border border-gray-300 bg-white hover:bg-gray-100"
-                  onClick={() => copyMarkdownFor(track)}
-                  title="Copy Markdown"
-                >
-                  {copiedKey === track.key ? "OK" : "MD"}
-                </button>
+              <div className="mt-1 font-mono text-[11px] leading-4 text-gray-500">
+                <div className="flex items-center justify-between gap-1">
+                  <time className="whitespace-nowrap">{dateTime}</time>
+                  <button
+                    className="shrink-0 px-1 py-0.5 rounded border border-gray-300 bg-white hover:bg-gray-100"
+                    onClick={() => copyMarkdownFor(track)}
+                    title="Copy Markdown"
+                  >
+                    {copiedKey === track.key ? "OK" : "MD"}
+                  </button>
+                </div>
+                <div className="flex justify-between whitespace-nowrap">
+                  <span>{elapsedTime}</span>
+                  <span>{distance}</span>
+                </div>
               </div>
             </li>
           );
@@ -311,6 +346,7 @@ export default function PageBody() {
                 <TrackPreviewMap
                   key={`modal-${previewObj.previewUrl}`}
                   src={previewObj.previewUrl}
+                  onTrackData={(data) => registerTrackSummary(previewObj.key, data)}
                 />
               </div>
               <div className="text-sm text-gray-700 space-y-1">
@@ -323,10 +359,14 @@ export default function PageBody() {
                   <span className="ml-3 text-gray-500">Type:</span>{" "}
                   {getTrackObjectKind(previewObj) || previewObj.contentType || "unknown"}
                   <span className="ml-3 text-gray-500">Timestamp:</span>{" "}
-                  {(() => {
-                    const date = parseIsoToDate(previewObj.lastModified);
-                    return date ? formatDateTime(date) : "—";
-                  })()}
+                  {formatTrackListDateTime(
+                    previewSummary,
+                    parseIsoToDate(previewObj.lastModified),
+                  )}
+                  <span className="ml-3 text-gray-500">Elapsed time:</span>{" "}
+                  {formatTrackListElapsedTime(previewSummary?.totalElapsedTime)}
+                  <span className="ml-3 text-gray-500">Distance:</span>{" "}
+                  {formatTrackListDistance(previewSummary?.totalDistanceM)}
                 </div>
               </div>
             </div>
