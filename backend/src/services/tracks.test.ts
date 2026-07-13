@@ -7,8 +7,8 @@ import type { StorageService } from "./storage";
 jest.mock("../config", () => ({
   Config: {
     MEDIA_BUCKET_TRACKS: "test-bucket-tracks",
-    MEDIA_TRACK_BYTE_LIMIT: 20 * 1024 * 1024,
-    MEDIA_TRACK_BYTE_LIMIT_PER_MONTH: 200 * 1024 * 1024,
+    MEDIA_TRACK_BYTE_LIMIT: 10 * 1024 * 1024,
+    MEDIA_TRACK_BYTE_LIMIT_PER_MONTH: 100 * 1024 * 1024,
     MEDIA_TRACK_PREVIEW_MAX_POINTS: 3000,
     MEDIA_TRACK_JSON_BYTE_LIMIT: 1024,
     MEDIA_TRACK_JSON_FEATURE_LIMIT: 100,
@@ -114,7 +114,7 @@ describe("TracksService", () => {
         "Content-Type": "application/octet-stream",
       },
       objectKey: "tracks-staging/u1/uuid.fit",
-      maxBytes: 20 * 1024 * 1024,
+      maxBytes: 10 * 1024 * 1024,
       expiresInSec: 300,
     };
     storage.createPresignedPost.mockResolvedValueOnce(presigned);
@@ -146,7 +146,7 @@ describe("TracksService", () => {
         "Content-Type": "application/gzip",
       },
       objectKey: "tracks-staging/u1/uuid.trjgz",
-      maxBytes: 20 * 1024 * 1024,
+      maxBytes: 10 * 1024 * 1024,
       expiresInSec: 300,
     });
 
@@ -165,14 +165,14 @@ describe("TracksService", () => {
   });
 
   test("presignTrackUpload: rejects single-file over limit", async () => {
-    await expect(service.presignTrackUpload(userId, "big.fit", 30 * 1024 * 1024)).rejects.toThrow(
+    await expect(service.presignTrackUpload(userId, "big.fit", 11 * 1024 * 1024)).rejects.toThrow(
       /file too large/i,
     );
   });
 
   test("presignTrackUpload: rejects monthly quota exceeded", async () => {
     storage.listObjects
-      .mockResolvedValueOnce([makeMeta("u1/masters/797491/a.fit", 199 * 1024 * 1024)])
+      .mockResolvedValueOnce([makeMeta("u1/masters/797491/a.fit", 99 * 1024 * 1024)])
       .mockResolvedValueOnce([makeMeta("u1/previews/797491/a.trjgz", 2 * 1024 * 1024)]);
 
     await expect(service.presignTrackUpload(userId, "next.fit", 1 * 1024 * 1024)).rejects.toThrow(
@@ -290,7 +290,7 @@ describe("TracksService", () => {
     );
     storage.loadObject.mockResolvedValueOnce(makeFitBytes()).mockResolvedValueOnce(makeFitBytes());
     storage.listObjects
-      .mockResolvedValueOnce([makeMeta("u1/masters/797491/a.fit", 199 * 1024 * 1024)])
+      .mockResolvedValueOnce([makeMeta("u1/masters/797491/a.fit", 99 * 1024 * 1024)])
       .mockResolvedValueOnce([makeMeta("u1/previews/797491/a.trjgz", 2 * 1024 * 1024)]);
 
     await expect(service.finalizeTrack(userId, stagingKey)).rejects.toThrow(
@@ -403,8 +403,8 @@ describe("TracksService", () => {
       bytesMasters: 30,
       bytesPreviews: 3,
       bytesTotal: 33,
-      limitSingleBytes: 20 * 1024 * 1024,
-      limitMonthlyBytes: 200 * 1024 * 1024,
+      limitSingleBytes: 10 * 1024 * 1024,
+      limitMonthlyBytes: 100 * 1024 * 1024,
     });
   });
 

@@ -106,17 +106,17 @@ function TrackPreviewMetadata({ metadata }: { metadata: TrackUploadPreviewMetada
   if (!startTime && !distance && !elapsedTime) return null;
 
   return (
-    <div className="overflow-x-auto whitespace-nowrap text-[15px] leading-5 text-gray-600">
-      {startTime && <span>Start: {startTime}</span>}
-      {distance && (
-        <span>
-          {startTime ? " " : ""}Distance: {distance}
-        </span>
-      )}
-      {elapsedTime && (
-        <span>
-          {startTime || distance ? " " : ""}Elapsed: {elapsedTime}
-        </span>
+    <div className="overflow-x-auto whitespace-nowrap text-[13px] leading-5 text-gray-600">
+      {startTime && <div>Start time: {startTime}</div>}
+      {(distance || elapsedTime) && (
+        <div>
+          {distance && <>Distance: {distance}</>}
+          {elapsedTime && (
+            <>
+              {distance ? " " : ""}Elapsed: {elapsedTime}
+            </>
+          )}
+        </div>
       )}
     </div>
   );
@@ -408,11 +408,16 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                             ? "Preview error"
                             : "Ready";
               return (
-                <li key={item.id} className="rounded border bg-white overflow-hidden mx-auto">
+                <li
+                  key={item.id}
+                  className={
+                    "w-[70vw] sm:w-[44vw] md:w-[28vw] lg:w-[24vw] xl:w-[22vw] " +
+                    "rounded border bg-white overflow-hidden mx-auto"
+                  }
+                >
                   <div
                     className={
-                      "relative w-[70vw] sm:w-[44vw] md:w-[28vw] " +
-                      "lg:w-[24vw] xl:w-[22vw] aspect-video bg-gray-50 " +
+                      "relative w-full aspect-[4/3] bg-gray-50 " +
                       "flex items-center justify-center"
                     }
                   >
@@ -442,20 +447,15 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                     )}
                   </div>
 
-                  <div className="p-3 text-sm text-gray-800 space-y-2 min-w-[260px]">
-                    <div className="font-medium truncate max-w-60" title={item.name}>
+                  <div className="w-full min-w-0 p-3 text-sm text-gray-800 space-y-2">
+                    <div className="font-medium truncate max-w-full" title={item.name}>
                       {item.name}
                     </div>
                     {item.previewMetadata && (
                       <TrackPreviewMetadata metadata={item.previewMetadata} />
                     )}
                     {kind === "FIT" && (
-                      <div
-                        className={
-                          "flex flex-wrap items-center gap-x-1 gap-y-1 " +
-                          "text-[13px] text-gray-700"
-                        }
-                      >
+                      <div className="text-[13px] text-gray-700">
                         <label className="inline-flex items-center gap-1 whitespace-nowrap">
                           <input
                             type="checkbox"
@@ -467,60 +467,69 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                               });
                             }}
                           />
-                          Obfuscate coordinate
+                          Obfuscate coordinates
                         </label>
-                        <label className="inline-flex items-center gap-1 whitespace-nowrap">
-                          start:
-                          <input
-                            type="number"
-                            min={0}
-                            max={maxObfuscationDistanceM}
-                            step={1}
-                            value={item.obfuscateStartDistanceM}
-                            disabled={busy || !item.obfuscateCoordinates}
-                            className={
-                              "w-[72px] rounded border border-gray-300 " + "px-1 py-0.5 text-right"
-                            }
-                            onChange={(event) => {
-                              setItemState(item.id, {
-                                obfuscateStartDistanceM: normalizeTrackObfuscationDistance(
-                                  Number(event.target.value),
-                                  item.previewMetadata?.totalDistanceM,
-                                ),
-                              });
-                            }}
-                            onBlur={() => {
-                              void refreshItemPreview(item, getItemObfuscation(item));
-                            }}
-                          />
-                          m
-                        </label>
-                        <label className="inline-flex items-center gap-1 whitespace-nowrap">
-                          end:
-                          <input
-                            type="number"
-                            min={0}
-                            max={maxObfuscationDistanceM}
-                            step={1}
-                            value={item.obfuscateEndDistanceM}
-                            disabled={busy || !item.obfuscateCoordinates}
-                            className={
-                              "w-[72px] rounded border border-gray-300 " + "px-1 py-0.5 text-right"
-                            }
-                            onChange={(event) => {
-                              setItemState(item.id, {
-                                obfuscateEndDistanceM: normalizeTrackObfuscationDistance(
-                                  Number(event.target.value),
-                                  item.previewMetadata?.totalDistanceM,
-                                ),
-                              });
-                            }}
-                            onBlur={() => {
-                              void refreshItemPreview(item, getItemObfuscation(item));
-                            }}
-                          />
-                          m
-                        </label>
+                        <div
+                          className={
+                            "mt-1 flex flex-wrap items-center gap-x-1 gap-y-1 " +
+                            (item.obfuscateCoordinates ? "text-gray-700" : "text-gray-300")
+                          }
+                        >
+                          <label className="inline-flex items-center gap-1 whitespace-nowrap">
+                            start:
+                            <input
+                              type="number"
+                              min={0}
+                              max={maxObfuscationDistanceM}
+                              step={1}
+                              value={item.obfuscateStartDistanceM}
+                              disabled={busy || !item.obfuscateCoordinates}
+                              className={
+                                "w-[72px] rounded border border-gray-300 px-1 py-0.5 text-right " +
+                                "disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-300"
+                              }
+                              onChange={(event) => {
+                                setItemState(item.id, {
+                                  obfuscateStartDistanceM: normalizeTrackObfuscationDistance(
+                                    Number(event.target.value),
+                                    item.previewMetadata?.totalDistanceM,
+                                  ),
+                                });
+                              }}
+                              onBlur={() => {
+                                void refreshItemPreview(item, getItemObfuscation(item));
+                              }}
+                            />
+                            m
+                          </label>
+                          <label className="inline-flex items-center gap-1 whitespace-nowrap">
+                            end:
+                            <input
+                              type="number"
+                              min={0}
+                              max={maxObfuscationDistanceM}
+                              step={1}
+                              value={item.obfuscateEndDistanceM}
+                              disabled={busy || !item.obfuscateCoordinates}
+                              className={
+                                "w-[72px] rounded border border-gray-300 px-1 py-0.5 text-right " +
+                                "disabled:border-gray-200 disabled:bg-gray-50 disabled:text-gray-300"
+                              }
+                              onChange={(event) => {
+                                setItemState(item.id, {
+                                  obfuscateEndDistanceM: normalizeTrackObfuscationDistance(
+                                    Number(event.target.value),
+                                    item.previewMetadata?.totalDistanceM,
+                                  ),
+                                });
+                              }}
+                              onBlur={() => {
+                                void refreshItemPreview(item, getItemObfuscation(item));
+                              }}
+                            />
+                            m
+                          </label>
+                        </div>
                       </div>
                     )}
                     <div className="text-[12px] text-gray-700">

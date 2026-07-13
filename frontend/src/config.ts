@@ -32,11 +32,11 @@ export class Config {
   );
   static readonly MEDIA_TRACK_BYTE_LIMIT = normNum(
     process.env.NEXT_PUBLIC_MEDIA_TRACK_BYTE_LIMIT,
-    20 * 1024 * 1024,
+    10 * 1024 * 1024,
   );
   static readonly MEDIA_TRACK_BYTE_LIMIT_PER_MONTH = normNum(
     process.env.NEXT_PUBLIC_MEDIA_TRACK_BYTE_LIMIT_PER_MONTH,
-    200 * 1024 * 1024,
+    100 * 1024 * 1024,
   );
   static readonly MEDIA_TRACK_COUNT_LIMIT_ONCE = normNum(
     process.env.NEXT_PUBLIC_MEDIA_TRACK_COUNT_LIMIT_ONCE,

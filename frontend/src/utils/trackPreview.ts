@@ -2,8 +2,7 @@ import type { TrackActivityMetadata } from "stgy-track/activity";
 import { getTrackFileKind, getTrackUploadContentType, getTrackUploadFilename } from "./tracks";
 
 export const TRACK_UPLOAD_PREVIEW_MAX_POINTS = 3000;
-export const TRACK_OBFUSCATION_MIN_DISTANCE_M = 1000;
-export const TRACK_OBFUSCATION_MAX_DISTANCE_M = 1500;
+export const TRACK_OBFUSCATION_DEFAULT_DISTANCE_M = 1000;
 export const TRACK_OBFUSCATION_MAX_ROUTE_RATIO = 0.05;
 
 export type TrackUploadPreviewMetadata = Pick<
@@ -146,11 +145,14 @@ export async function makeTrackJsonPreviewJson(
 
 export function createTrackObfuscationDistances(
   totalDistanceM: number | undefined,
-  random: () => number = Math.random,
 ): TrackObfuscationDistances {
+  const defaultDistanceM = normalizeTrackObfuscationDistance(
+    TRACK_OBFUSCATION_DEFAULT_DISTANCE_M,
+    totalDistanceM,
+  );
   return {
-    startDistanceM: createTrackObfuscationDistance(totalDistanceM, random),
-    endDistanceM: createTrackObfuscationDistance(totalDistanceM, random),
+    startDistanceM: defaultDistanceM,
+    endDistanceM: defaultDistanceM,
   };
 }
 
@@ -218,26 +220,6 @@ export async function prepareTrackUploadPayload(
     filename,
     contentType,
   };
-}
-
-function createTrackObfuscationDistance(
-  totalDistanceM: number | undefined,
-  random: () => number,
-): number {
-  const maxDistanceM = getTrackObfuscationMaxDistance(totalDistanceM);
-  if (maxDistanceM !== undefined && maxDistanceM < TRACK_OBFUSCATION_MIN_DISTANCE_M) {
-    return maxDistanceM;
-  }
-
-  const upper = Math.min(
-    TRACK_OBFUSCATION_MAX_DISTANCE_M,
-    maxDistanceM ?? TRACK_OBFUSCATION_MAX_DISTANCE_M,
-  );
-  const fraction = Math.min(Math.max(random(), 0), 0.999999999999);
-  return (
-    TRACK_OBFUSCATION_MIN_DISTANCE_M +
-    Math.floor(fraction * (upper - TRACK_OBFUSCATION_MIN_DISTANCE_M + 1))
-  );
 }
 
 function copyUint8ArrayToArrayBuffer(bytes: Uint8Array): ArrayBuffer {

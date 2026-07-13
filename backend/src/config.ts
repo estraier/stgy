@@ -49,10 +49,10 @@ export class Config {
     100 * 1024 * 1024,
   );
   static readonly MEDIA_BUCKET_TRACKS = Config.STORAGE_S3_BUCKET_PREFIX + "-tracks";
-  static readonly MEDIA_TRACK_BYTE_LIMIT = envNum("STGY_MEDIA_TRACK_BYTE_LIMIT", 20 * 1024 * 1024);
+  static readonly MEDIA_TRACK_BYTE_LIMIT = envNum("STGY_MEDIA_TRACK_BYTE_LIMIT", 10 * 1024 * 1024);
   static readonly MEDIA_TRACK_BYTE_LIMIT_PER_MONTH = envNum(
     "STGY_MEDIA_TRACK_BYTE_LIMIT_PER_MONTH",
-    200 * 1024 * 1024,
+    100 * 1024 * 1024,
   );
   static readonly MEDIA_TRACK_PREVIEW_MAX_POINTS = envNum(
     "STGY_MEDIA_TRACK_PREVIEW_MAX_POINTS",

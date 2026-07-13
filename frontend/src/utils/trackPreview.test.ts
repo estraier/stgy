@@ -12,8 +12,7 @@ import {
   parseTrackJsonData,
 } from "stgy-track/trackjson";
 import {
-  TRACK_OBFUSCATION_MAX_DISTANCE_M,
-  TRACK_OBFUSCATION_MIN_DISTANCE_M,
+  TRACK_OBFUSCATION_DEFAULT_DISTANCE_M,
   TRACK_UPLOAD_PREVIEW_MAX_POINTS,
   createTrackObfuscationDistances,
   formatTrackPreviewDistance,
@@ -270,19 +269,15 @@ test("obfuscates FIT bytes before building the preview when enabled", async () =
   expect(parseFitBytesMock).toHaveBeenCalledWith(obfuscated);
 });
 
-test("chooses independent random obfuscation distances within 1000-1500m", () => {
-  const values = [0, 0.999999];
-  const distances = createTrackObfuscationDistances(100_000, () => values.shift() || 0);
-
-  expect(distances).toEqual({
-    startDistanceM: TRACK_OBFUSCATION_MIN_DISTANCE_M,
-    endDistanceM: TRACK_OBFUSCATION_MAX_DISTANCE_M,
+test("uses a fixed 1000m default obfuscation distance", () => {
+  expect(createTrackObfuscationDistances(100_000)).toEqual({
+    startDistanceM: TRACK_OBFUSCATION_DEFAULT_DISTANCE_M,
+    endDistanceM: TRACK_OBFUSCATION_DEFAULT_DISTANCE_M,
   });
 });
 
 test("caps default and edited obfuscation distances at five percent", () => {
-  const values = [0.25, 0.75];
-  expect(createTrackObfuscationDistances(20_000, () => values.shift() || 0)).toEqual({
+  expect(createTrackObfuscationDistances(20_000)).toEqual({
     startDistanceM: 1000,
     endDistanceM: 1000,
   });
