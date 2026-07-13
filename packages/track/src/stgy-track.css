@@ -176,7 +176,15 @@
 }
 
 .stgy-track-graph-collapse {
+  width: 21px;
+  height: 21px;
   margin-left: auto;
+  border-radius: 3px;
+}
+
+.stgy-track-graph-collapse .stgy-track-graph-toggle-icon {
+  width: 13px;
+  height: 13px;
 }
 
 .stgy-track-graph-restore {
