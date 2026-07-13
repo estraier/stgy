@@ -726,6 +726,65 @@ describe("StgyTrackRenderer", () => {
     ).toBe(false);
   });
 
+  test("collapses and restores the graph while resizing the map", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#track-a">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
+
+    const originalRequestAnimationFrame = window.requestAnimationFrame;
+    window.requestAnimationFrame = (callback: FrameRequestCallback) => {
+      callback(0);
+      return 1;
+    };
+
+    try {
+      renderer.hydrate(document.body);
+      await flushPromises();
+
+      const graph = document.querySelector<HTMLElement>(".stgy-track-graph");
+      const collapseButton = document.querySelector<HTMLButtonElement>(
+        '.stgy-track-graph-collapse[aria-label="Collapse graph"]',
+      );
+      const restoreButton = document.querySelector<HTMLButtonElement>(
+        '.stgy-track-graph-restore[aria-label="Show graph"]',
+      );
+      const map = (L.map as jest.Mock).mock.results[0].value;
+      map.invalidateSize.mockClear();
+
+      expect(graph).not.toBeNull();
+      expect(collapseButton).not.toBeNull();
+      expect(restoreButton).not.toBeNull();
+      expect(
+        collapseButton?.querySelector(".stgy-track-graph-toggle-icon-close")
+      ).not.toBeNull();
+      expect(
+        restoreButton?.querySelector(".stgy-track-graph-toggle-icon-graph")
+      ).not.toBeNull();
+      expect(graph?.hidden).toBe(false);
+      expect(restoreButton?.hidden).toBe(true);
+      expect(restoreButton?.hasAttribute("hidden")).toBe(true);
+
+      collapseButton?.click();
+
+      expect(graph?.hidden).toBe(true);
+      expect(restoreButton?.hidden).toBe(false);
+      expect(map.invalidateSize).toHaveBeenCalledWith({ animate: false });
+
+      map.invalidateSize.mockClear();
+      restoreButton?.click();
+
+      expect(graph?.hidden).toBe(false);
+      expect(restoreButton?.hidden).toBe(true);
+      expect(map.invalidateSize).toHaveBeenCalledWith({ animate: false });
+    } finally {
+      window.requestAnimationFrame = originalRequestAnimationFrame;
+    }
+  });
+
   test("renders graph inside map figure when the map is in a grid", async () => {
     document.body.innerHTML = `
       <div class="stgy-track-grid" data-cols="2">
@@ -1222,7 +1281,7 @@ describe("StgyTrackRenderer", () => {
     seriesSelect.value = "torqueEffectivenessPercentage";
     seriesSelect.dispatchEvent(new Event("change", { bubbles: true }));
 
-    const svg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
+    const svg = document.querySelector<SVGSVGElement>('.stgy-track-graph svg[role="img"]');
     const readout = document.querySelector<HTMLElement>(
       ".stgy-track-graph-readout",
     );
@@ -1250,6 +1309,74 @@ describe("StgyTrackRenderer", () => {
     expect(readout.textContent).toMatch(/ \/ [0-9.]+ %$/);
   });
 
+  test("maps graph pointer x through letterboxed SVG content", () => {
+    const rect = {
+      left: 100,
+      width: 1600,
+      height: 220,
+    } as DOMRect;
+    const scale = 220 / 180;
+    const renderedLeft = rect.left + (rect.width - 800 * scale) / 2;
+    const clientX = renderedLeft + 600 * scale;
+
+    const viewBoxX = (renderer as any).graphClientXToViewBoxX(rect, clientX);
+
+    expect(viewBoxX).toBeCloseTo(600, 6);
+  });
+
+  test("keeps graph hover indicators hidden until a sample is activated", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-hud">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue(makeTrackWithGraph());
+
+    renderer.hydrate(document.body);
+    await flushPromises();
+
+    const svg = document.querySelector<SVGSVGElement>('.stgy-track-graph svg[role="img"]');
+    const hoverLine = document.querySelector<SVGLineElement>(
+      ".stgy-track-graph-hover-line",
+    );
+    const hoverPoint = document.querySelector<SVGCircleElement>(
+      ".stgy-track-graph-hover-point",
+    );
+
+    expect(svg).not.toBeNull();
+    expect(hoverLine?.getAttribute("visibility")).toBe("hidden");
+    expect(hoverPoint?.getAttribute("visibility")).toBe("hidden");
+
+    if (!svg || !hoverLine || !hoverPoint) return;
+
+    svg.getBoundingClientRect = jest.fn().mockReturnValue({
+      left: 0,
+      top: 0,
+      width: 800,
+      height: 180,
+      right: 800,
+      bottom: 180,
+      x: 0,
+      y: 0,
+      toJSON: () => ({}),
+    });
+
+    svg.dispatchEvent(new MouseEvent("mousemove", {
+      bubbles: true,
+      clientX: 333,
+      clientY: 90,
+    }));
+
+    expect(hoverLine.getAttribute("visibility")).toBe("visible");
+    expect(hoverPoint.getAttribute("visibility")).toBe("visible");
+
+    svg.dispatchEvent(new MouseEvent("mouseleave", { bubbles: true }));
+
+    expect(hoverLine.getAttribute("visibility")).toBe("hidden");
+    expect(hoverPoint.getAttribute("visibility")).toBe("hidden");
+  });
+
   test("updates graph readout on hover", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map" data-src="#demo-geojson-hud">
@@ -1263,7 +1390,7 @@ describe("StgyTrackRenderer", () => {
 
     await flushPromises();
 
-    const svg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
+    const svg = document.querySelector<SVGSVGElement>('.stgy-track-graph svg[role="img"]');
     const readout = document.querySelector<HTMLElement>(".stgy-track-graph-readout");
 
     expect(svg).not.toBeNull();
@@ -1305,7 +1432,7 @@ describe("StgyTrackRenderer", () => {
 
     await flushPromises();
 
-    const svg = document.querySelector<SVGSVGElement>(".stgy-track-graph svg");
+    const svg = document.querySelector<SVGSVGElement>('.stgy-track-graph svg[role="img"]');
     expect(svg).not.toBeNull();
 
     if (!svg) return;

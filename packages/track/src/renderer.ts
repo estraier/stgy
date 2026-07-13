@@ -38,6 +38,8 @@ const TRACK_GRAPH_SMOOTHING_WINDOWS = [
 ] as const;
 const TARGET_GRAPH_X_TICKS = 5;
 const TARGET_GRAPH_Y_TICKS = 5;
+const TRACK_GRAPH_VIEWBOX_WIDTH = 800;
+const TRACK_GRAPH_VIEWBOX_HEIGHT = 180;
 const TRACK_GRAPH_SERIES_ORDER = [
   "altitudes",
   "speeds",
@@ -165,6 +167,8 @@ type CoordinateInteractionContext = {
   hud: HTMLElement | null;
   markerState: CoordinateMarkerState;
   graphPanel: HTMLElement | null;
+  graphRestoreButton: HTMLButtonElement | null;
+  graphCollapsed: boolean;
   graphHoverState: GraphHoverState | null;
   routeDatasetByLayer: WeakMap<L.Layer, TrackGraphDataset>;
   routeStyleByLayer: WeakMap<L.Layer, L.PathOptions>;
@@ -289,6 +293,7 @@ export class StgyTrackRenderer {
         }
       }
       this.removeGraphPanel(figure);
+      this.removeGraphRestoreButton(figure);
       this.removeDownloadActions(figure);
       delete figure.dataset.stgyTrackInitialized;
     });
@@ -507,6 +512,75 @@ export class StgyTrackRenderer {
     }
 
     return panel;
+  }
+
+  private removeGraphRestoreButton(figure: HTMLElement) {
+    figure
+      .querySelectorAll(".stgy-track-graph-restore")
+      .forEach((node) => node.remove());
+  }
+
+  private createGraphToggleButton(
+    iconType: "close" | "graph",
+    label: string
+  ): HTMLButtonElement {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "stgy-track-graph-toggle";
+    button.setAttribute("aria-label", label);
+    button.title = label;
+
+    const svgNs = "http://www.w3.org/2000/svg";
+    const icon = document.createElementNS(svgNs, "svg");
+    icon.classList.add(
+      "stgy-track-graph-toggle-icon",
+      `stgy-track-graph-toggle-icon-${iconType}`
+    );
+    icon.setAttribute("viewBox", "0 0 20 20");
+    icon.setAttribute("aria-hidden", "true");
+
+    const path = document.createElementNS(svgNs, "path");
+    if (iconType === "close") {
+      path.setAttribute("d", "M5 5l10 10M15 5L5 15");
+    } else {
+      path.setAttribute("d", "M3 3v14h14M5 14l3-4 3 2 5-7");
+    }
+    icon.appendChild(path);
+    button.appendChild(icon);
+
+    return button;
+  }
+
+  private invalidateMapAfterLayout(map: L.Map) {
+    const invalidate = () => map.invalidateSize({ animate: false });
+    if (
+      typeof window !== "undefined" &&
+      typeof window.requestAnimationFrame === "function"
+    ) {
+      window.requestAnimationFrame(invalidate);
+    } else {
+      invalidate();
+    }
+  }
+
+  private setGraphCollapsed(
+    context: CoordinateInteractionContext,
+    collapsed: boolean
+  ) {
+    const panel = context.graphPanel;
+    if (!panel || !context.activeGraphDataset) {
+      return;
+    }
+
+    context.graphCollapsed = collapsed;
+    panel.hidden = collapsed;
+    if (context.graphRestoreButton) {
+      context.graphRestoreButton.hidden = !collapsed;
+    }
+    if (collapsed) {
+      this.clearGraphHover(context);
+    }
+    this.invalidateMapAfterLayout(context.map);
   }
 
   private normalizeAllowedImagePatterns(patterns?: RegExp[]): RegExp[] | undefined {
@@ -1131,11 +1205,11 @@ export class StgyTrackRenderer {
 
     state.hoverLine.setAttribute("x1", `${hoverX}`);
     state.hoverLine.setAttribute("x2", `${hoverX}`);
-    state.hoverLine.removeAttribute("hidden");
+    state.hoverLine.setAttribute("visibility", "visible");
 
     state.hoverPoint.setAttribute("cx", `${hoverX}`);
     state.hoverPoint.setAttribute("cy", `${hoverY}`);
-    state.hoverPoint.removeAttribute("hidden");
+    state.hoverPoint.setAttribute("visibility", "visible");
 
     state.readout.textContent =
       `${this.formatXAxisLabel(state.selectedXAxis, state.xValues[index])} / ` +
@@ -1148,8 +1222,8 @@ export class StgyTrackRenderer {
       return;
     }
 
-    state.hoverLine.setAttribute("hidden", "true");
-    state.hoverPoint.setAttribute("hidden", "true");
+    state.hoverLine.setAttribute("visibility", "hidden");
+    state.hoverPoint.setAttribute("visibility", "hidden");
     state.readout.textContent = "";
   }
 
@@ -1675,12 +1749,18 @@ export class StgyTrackRenderer {
 
     if (!xValues || !series || xValues.length !== series.values.length || xValues.length === 0) {
       panel.hidden = true;
+      if (context.graphRestoreButton) {
+        context.graphRestoreButton.hidden = true;
+      }
       return;
     }
 
     const displayValues = this.smoothCenteredMovingAverage(series.values, smoothingWindow);
 
-    panel.hidden = false;
+    panel.hidden = context.graphCollapsed;
+    if (context.graphRestoreButton) {
+      context.graphRestoreButton.hidden = !context.graphCollapsed;
+    }
     panel.replaceChildren();
 
     const controls = document.createElement("div");
@@ -1781,11 +1861,21 @@ export class StgyTrackRenderer {
     readout.textContent = "";
     controls.appendChild(readout);
 
+    const collapseButton = this.createGraphToggleButton("close", "Collapse graph");
+    collapseButton.classList.add("stgy-track-graph-collapse");
+    collapseButton.addEventListener("click", () => {
+      this.setGraphCollapsed(context, true);
+    });
+    controls.appendChild(collapseButton);
+
     panel.appendChild(controls);
 
     const svgNs = "http://www.w3.org/2000/svg";
     const svg = document.createElementNS(svgNs, "svg");
-    svg.setAttribute("viewBox", "0 0 800 180");
+    svg.setAttribute(
+      "viewBox",
+      `0 0 ${TRACK_GRAPH_VIEWBOX_WIDTH} ${TRACK_GRAPH_VIEWBOX_HEIGHT}`
+    );
     svg.setAttribute("role", "img");
     svg.setAttribute("aria-label", `${this.formatGraphSeriesLabel(series.name)} graph`);
 
@@ -1882,13 +1972,13 @@ export class StgyTrackRenderer {
     hoverLine.setAttribute("y1", `${plotTop}`);
     hoverLine.setAttribute("y2", `${plotBottom}`);
     hoverLine.setAttribute("stroke-dasharray", "4 4");
-    hoverLine.setAttribute("hidden", "true");
+    hoverLine.setAttribute("visibility", "hidden");
     svg.appendChild(hoverLine);
 
     const hoverPoint = document.createElementNS(svgNs, "circle");
     hoverPoint.setAttribute("class", "stgy-track-graph-hover-point");
     hoverPoint.setAttribute("r", "4");
-    hoverPoint.setAttribute("hidden", "true");
+    hoverPoint.setAttribute("visibility", "hidden");
     svg.appendChild(hoverPoint);
 
     context.graphHoverState = {
@@ -1910,7 +2000,7 @@ export class StgyTrackRenderer {
         return;
       }
 
-      const viewBoxX = ((clientX - rect.left) / rect.width) * 800;
+      const viewBoxX = this.graphClientXToViewBoxX(rect, clientX);
       let nearestIndex = 0;
       let nearestDistance = Number.POSITIVE_INFINITY;
 
@@ -1954,6 +2044,21 @@ export class StgyTrackRenderer {
     });
 
     panel.appendChild(svg);
+  }
+
+  private graphClientXToViewBoxX(rect: DOMRect, clientX: number): number {
+    const scale = Math.min(
+      rect.width / TRACK_GRAPH_VIEWBOX_WIDTH,
+      rect.height / TRACK_GRAPH_VIEWBOX_HEIGHT
+    );
+    if (!Number.isFinite(scale) || scale <= 0) {
+      return 0;
+    }
+
+    const renderedWidth = TRACK_GRAPH_VIEWBOX_WIDTH * scale;
+    const renderedLeft = rect.left + (rect.width - renderedWidth) / 2;
+    const viewBoxX = (clientX - renderedLeft) / scale;
+    return Math.max(0, Math.min(TRACK_GRAPH_VIEWBOX_WIDTH, viewBoxX));
   }
 
   private createGeoJsonLayer(
@@ -2183,6 +2288,16 @@ export class StgyTrackRenderer {
 
     trackMapsByCanvas.set(canvas, map);
 
+    this.removeGraphRestoreButton(figure);
+    const graphRestoreButton = showGraph
+      ? this.createGraphToggleButton("graph", "Show graph")
+      : null;
+    if (graphRestoreButton) {
+      graphRestoreButton.classList.add("stgy-track-graph-restore");
+      graphRestoreButton.hidden = true;
+      canvas.appendChild(graphRestoreButton);
+    }
+
     if (controls) {
       L.control.layers(baseMaps).addTo(map);
     }
@@ -2194,6 +2309,8 @@ export class StgyTrackRenderer {
       hud,
       markerState,
       graphPanel,
+      graphRestoreButton,
+      graphCollapsed: false,
       graphHoverState: null,
       routeDatasetByLayer: new WeakMap<L.Layer, TrackGraphDataset>(),
       routeStyleByLayer: new WeakMap<L.Layer, L.PathOptions>(),
@@ -2202,6 +2319,14 @@ export class StgyTrackRenderer {
       pinnedSample: null,
       ignoreNextMapClick: false,
     };
+
+    if (graphRestoreButton) {
+      L.DomEvent.disableClickPropagation(graphRestoreButton);
+      graphRestoreButton.addEventListener("click", (event) => {
+        event.stopPropagation();
+        this.setGraphCollapsed(interactionContext, false);
+      });
+    }
 
     map.on("click", () => {
       if (interactionContext.ignoreNextMapClick) {

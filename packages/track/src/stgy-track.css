@@ -140,6 +140,54 @@
   font-size: 0.9em;
 }
 
+.stgy-track-graph-toggle {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 30px;
+  height: 30px;
+  padding: 0;
+  border: 1px solid #cbd5e1;
+  border-radius: 4px;
+  background: #f8fafc;
+  color: #1f2937;
+  cursor: pointer;
+}
+
+.stgy-track-graph-toggle[hidden] {
+  display: none;
+}
+
+.stgy-track-graph-toggle:hover,
+.stgy-track-graph-toggle:focus-visible {
+  background: #e2e8f0;
+}
+
+.stgy-track-graph-toggle-icon {
+  display: block;
+  width: 18px;
+  height: 18px;
+  fill: none;
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 1.8;
+}
+
+.stgy-track-graph-collapse {
+  margin-left: auto;
+}
+
+.stgy-track-graph-restore {
+  position: absolute;
+  left: 50%;
+  bottom: 8px;
+  z-index: 700;
+  transform: translateX(-50%);
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+}
+
 .stgy-track-graph svg {
   display: block;
   width: 100%;
@@ -232,6 +280,10 @@
 
   .stgy-track-graph-readout {
     font-size: 0.85em;
+  }
+
+  .stgy-track-graph-collapse {
+    display: none;
   }
 
   .stgy-track-hud {
