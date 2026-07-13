@@ -1,3 +1,4 @@
-export { StgyTrackRenderer, STGY_TRACK_DATA_LOADED_EVENT } from "./renderer";
+export { StgyTrackRenderer } from "./renderer";
 export { isJapan, JAPAN_AREAS } from "./geo";
 export * from "./analysis";
+export * from "./metadata";

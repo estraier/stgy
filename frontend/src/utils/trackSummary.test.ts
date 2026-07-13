@@ -27,14 +27,27 @@ describe("getTrackElevationSummaryItems", () => {
 });
 
 describe("getTrackJsonPropertySummaryLines", () => {
-  test("formats top-level bbox and poi properties", () => {
+  test("formats overview, bbox, and poi properties", () => {
     expect(getTrackJsonPropertySummaryLines({
       bbox: [138.1, 35.2, 139.3, 36.4],
       poi: [
         { role: "start", coordinates: [138.1, 35.2] },
-        { role: "centroid", coordinates: [138.7, 35.8] },
+        { role: "centroid", coordinates: [138.4003, 36.4059] },
       ],
+      metadata: {
+        startTime: 1780643064,
+        totalElapsedTime: 4788,
+        localTimeOffsetSeconds: 32400,
+      },
     })).toEqual([
+      {
+        key: "local-time-offset",
+        text: "local time offset: UTC+09:00",
+      },
+      {
+        key: "time",
+        text: "time range: start 2026-06-05 16:04:24, end 2026-06-05 17:24:12",
+      },
       { key: "bbox", text: "bbox: [138.1,35.2,139.3,36.4]" },
       {
         key: "poi-start",
@@ -42,7 +55,7 @@ describe("getTrackJsonPropertySummaryLines", () => {
       },
       {
         key: "poi-centroid",
-        text: "poi centroid: lon 138.70000, lat 35.80000",
+        text: "poi centroid: lon 138.40030, lat 36.40590",
       },
     ]);
   });
@@ -55,6 +68,8 @@ describe("getTrackJsonPropertySummaryLines", () => {
 describe("getTrackSandboxMetadataSummaryLines", () => {
   test("orders gross, net, and elevation and omits moving threshold", () => {
     const lines: TrackMetadataSummaryLine[] = [
+      { key: "time", text: "time range" },
+      { key: "local-time-offset", text: "local time" },
       { key: "gross", text: "gross" },
       { key: "elevation", text: "elevation" },
       { key: "net", text: "net" },
@@ -66,6 +81,8 @@ describe("getTrackSandboxMetadataSummaryLines", () => {
     ];
 
     expect(getTrackSandboxMetadataSummaryLines(lines)).toEqual([
+      { key: "local-time-offset", text: "local time" },
+      { key: "time", text: "time range" },
       { key: "gross", text: "gross" },
       { key: "net", text: "net" },
       { key: "elevation", text: "elevation" },

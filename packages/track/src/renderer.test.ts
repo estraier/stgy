@@ -152,6 +152,7 @@ jest.mock("leaflet", () => {
       setLatLng: jest.fn().mockReturnThis(),
     })),
     featureGroup: jest.fn().mockImplementation(createFeatureGroup),
+    layerGroup: jest.fn().mockImplementation(() => ({})),
     geoJSON: jest.fn().mockImplementation((data, options) => {
       const featureLayers: ReturnType<typeof createFeatureLayer>[] = [];
 
@@ -397,6 +398,83 @@ describe("StgyTrackRenderer", () => {
       source: "#demo-geojson-1",
       data: trackData,
     });
+  });
+
+  test("shows TrackJSON metadata from the layer control", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#metadata-track">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    const mockMap = L.map(document.createElement("div"));
+    (L.map as jest.Mock).mockReturnValue(mockMap);
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      poi: [
+        { role: "centroid", coordinates: [138.4003, 36.4059] },
+      ],
+      metadata: {
+        startTime: 1780643064,
+        totalElapsedTime: 4788,
+        localTimeOffsetSeconds: 32400,
+        totalDistanceM: 123450,
+      },
+      features: [],
+    });
+
+    renderer.hydrate(document.body);
+    await flushPromises();
+
+    const overlays = (L.control.layers as jest.Mock).mock.calls[0][1] as
+      Record<string, L.Layer>;
+    expect(overlays).toHaveProperty("Metadata");
+
+    const overlay = document.querySelector<HTMLElement>(
+      ".stgy-track-metadata-overlay",
+    );
+    expect(overlay?.hidden).toBe(true);
+
+    const onMock = mockMap.on as unknown as jest.Mock;
+    const overlayAdd = onMock.mock.calls.find((call: unknown[]) => {
+      return call[0] === "overlayadd";
+    })?.[1] as ((event: { layer: L.Layer }) => void) | undefined;
+    overlayAdd?.({ layer: overlays.Metadata });
+
+    expect(overlay?.hidden).toBe(false);
+    expect(overlay?.textContent).not.toContain("Coordinates:");
+    expect(overlay?.textContent).toContain(
+      "time range: start 2026-06-05 16:04:24, end 2026-06-05 17:24:12",
+    );
+    expect(mockMap.removeLayer).toHaveBeenCalledWith(overlays.Metadata);
+
+    overlay
+      ?.querySelector<HTMLButtonElement>(".stgy-track-metadata-close")
+      ?.click();
+    expect(overlay?.hidden).toBe(true);
+
+    overlayAdd?.({ layer: overlays.Metadata });
+    overlay?.click();
+    expect(overlay?.hidden).toBe(true);
+  });
+
+  test("does not add Metadata for TrackJSON without metadata", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#plain-track">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [],
+    });
+
+    renderer.hydrate(document.body);
+    await flushPromises();
+
+    expect((L.control.layers as jest.Mock).mock.calls[0][1]).toBeUndefined();
+    expect(document.querySelector(".stgy-track-metadata-overlay")).toBeNull();
   });
 
   test("uses data-src bounds for initial center and Japan tile selection", async () => {

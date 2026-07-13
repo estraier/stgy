@@ -1,6 +1,8 @@
 import L from "leaflet";
 import { isJapan } from "./geo";
 import { TrackLoader } from "./loader";
+import { getTrackJsonDisplayMetadataLines } from "./metadata";
+import { getTrackJsonTitle } from "./trackjson";
 
 const DEFAULT_PIN_COLOR = "#3388ff";
 const DEFAULT_ROUTE_COLOR = "#0078A8";
@@ -109,6 +111,11 @@ type BoundsAccumulator = {
   minLng: number;
   maxLat: number;
   maxLng: number;
+};
+
+type PreloadedTrackData = {
+  source: string;
+  data: unknown;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -294,6 +301,7 @@ export class StgyTrackRenderer {
       }
       this.removeGraphPanel(figure);
       this.removeGraphRestoreButton(figure);
+      this.removeMetadataOverlay(figure);
       this.removeDownloadActions(figure);
       delete figure.dataset.stgyTrackInitialized;
     });
@@ -471,6 +479,93 @@ export class StgyTrackRenderer {
     hud.hidden = true;
     canvas.appendChild(hud);
     return hud;
+  }
+
+  private removeMetadataOverlay(figure: HTMLElement) {
+    figure
+      .querySelectorAll(".stgy-track-metadata-overlay")
+      .forEach((node) => node.remove());
+  }
+
+  private createMetadataOverlay(
+    canvas: HTMLElement,
+    text: string,
+  ): HTMLElement {
+    canvas
+      .querySelectorAll(".stgy-track-metadata-overlay")
+      .forEach((node) => node.remove());
+
+    const overlay = document.createElement("div");
+    overlay.className = "stgy-track-metadata-overlay";
+    overlay.hidden = true;
+    overlay.setAttribute("aria-hidden", "true");
+
+    const dialog = document.createElement("div");
+    dialog.className = "stgy-track-metadata-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-label", "Track metadata");
+
+    const closeButton = this.createGraphToggleButton(
+      "close",
+      "Close metadata",
+    );
+    closeButton.classList.add("stgy-track-metadata-close");
+
+    const content = document.createElement("div");
+    content.className = "stgy-track-metadata-content";
+    content.textContent = text;
+
+    dialog.append(closeButton, content);
+    overlay.appendChild(dialog);
+    canvas.appendChild(overlay);
+
+    const close = () => this.setMetadataOverlayOpen(overlay, false);
+    closeButton.addEventListener("click", close);
+    overlay.addEventListener("click", (event) => {
+      if (event.target === overlay) {
+        close();
+      }
+    });
+    overlay.addEventListener("keydown", (event) => {
+      if (event.key === "Escape") {
+        close();
+      }
+    });
+
+    L.DomEvent.disableClickPropagation(dialog);
+    L.DomEvent.disableScrollPropagation(dialog);
+    return overlay;
+  }
+
+  private setMetadataOverlayOpen(overlay: HTMLElement, open: boolean) {
+    overlay.hidden = !open;
+    overlay.setAttribute("aria-hidden", open ? "false" : "true");
+    if (open) {
+      overlay
+        .querySelector<HTMLButtonElement>(".stgy-track-metadata-close")
+        ?.focus();
+    }
+  }
+
+  private buildMetadataOverlayText(
+    loadedTracks: PreloadedTrackData[],
+  ): string | undefined {
+    const sections = loadedTracks.flatMap((loadedTrack, index) => {
+      const lines = getTrackJsonDisplayMetadataLines(loadedTrack.data);
+      if (lines.length === 0) {
+        return [];
+      }
+
+      if (loadedTracks.length === 1) {
+        return [lines.map((line) => line.text).join("\n")];
+      }
+
+      const title = getTrackJsonTitle(loadedTrack.data) || `Track ${index + 1}`;
+      return [`${title}\n${lines.map((line) => line.text).join("\n")}`];
+    });
+
+    return sections.length > 0 ? sections.join("\n\n") : undefined;
   }
 
   private removeGraphPanel(figure: HTMLElement) {
@@ -2210,6 +2305,7 @@ export class StgyTrackRenderer {
       ? []
       : Array.from(figure.querySelectorAll<HTMLAnchorElement>(".stgy-track-sources a.track-source"));
     const trackDataCache: Record<string, unknown> = {};
+    const preloadedTracks: PreloadedTrackData[] = [];
     const viewBounds = this.createBoundsAccumulator();
 
     const inlinePins = figure.querySelectorAll<HTMLElement>(".stgy-track-pins li");
@@ -2224,6 +2320,7 @@ export class StgyTrackRenderer {
     if (dataSrc) {
       try {
         const preloadedTrackData = await this.loadTrackData(dataSrc, trackDataCache);
+        preloadedTracks.push({ source: dataSrc, data: preloadedTrackData });
         this.extendBoundsWithGeoJson(viewBounds, preloadedTrackData);
       } catch (e) {
         this.showError(figure, this.toUserErrorMessage(e));
@@ -2238,6 +2335,7 @@ export class StgyTrackRenderer {
 
         try {
           const preloadedTrackData = await this.loadTrackData(href, trackDataCache);
+          preloadedTracks.push({ source: href, data: preloadedTrackData });
           this.extendBoundsWithGeoJson(viewBounds, preloadedTrackData);
         } catch (e) {
           this.showError(figure, this.toUserErrorMessage(e));
@@ -2288,6 +2386,13 @@ export class StgyTrackRenderer {
 
     trackMapsByCanvas.set(canvas, map);
 
+    this.removeMetadataOverlay(figure);
+    const metadataText = this.buildMetadataOverlayText(preloadedTracks);
+    const metadataOverlay = metadataText
+      ? this.createMetadataOverlay(canvas, metadataText)
+      : null;
+    const metadataLayer = metadataOverlay ? L.layerGroup() : null;
+
     this.removeGraphRestoreButton(figure);
     const graphRestoreButton = showGraph
       ? this.createGraphToggleButton("graph", "Show graph")
@@ -2299,7 +2404,18 @@ export class StgyTrackRenderer {
     }
 
     if (controls) {
-      L.control.layers(baseMaps).addTo(map);
+      const overlays = metadataLayer ? { Metadata: metadataLayer } : undefined;
+      L.control.layers(baseMaps, overlays).addTo(map);
+    }
+
+    if (metadataLayer && metadataOverlay) {
+      map.on("overlayadd", (event: L.LayersControlEvent) => {
+        if (event.layer !== metadataLayer) {
+          return;
+        }
+        this.setMetadataOverlayOpen(metadataOverlay, true);
+        map.removeLayer(metadataLayer);
+      });
     }
 
     const hud = showOverlay ? this.createHud(canvas) : null;

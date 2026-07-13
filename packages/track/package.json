@@ -24,6 +24,11 @@
       "require": "./dist/analysis.js",
       "default": "./dist/analysis.js"
     },
+    "./metadata": {
+      "types": "./dist/metadata.d.ts",
+      "require": "./dist/metadata.js",
+      "default": "./dist/metadata.js"
+    },
     "./fit": {
       "types": "./dist/fit.d.ts",
       "require": "./dist/fit.js",

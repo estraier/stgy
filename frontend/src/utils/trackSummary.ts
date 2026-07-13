@@ -1,6 +1,7 @@
 import type { TrackActivityMetadata } from "stgy-track/activity";
 import type { TrackMetadataSummaryLine } from "stgy-track/analysis";
 import { getTrackJsonPoi } from "stgy-track/trackjson";
+import { getTrackJsonTimingMetadataLines } from "stgy-track/metadata";
 
 export type TrackElevationSummaryItem = {
   key: "ascent" | "descent";
@@ -30,7 +31,9 @@ export function getTrackJsonPropertySummaryLines(
     return [];
   }
 
-  const lines: TrackMetadataSummaryLine[] = [];
+  const lines: TrackMetadataSummaryLine[] = [
+    ...getTrackJsonTimingMetadataLines(data),
+  ];
   if (Array.isArray(data.bbox)) {
     lines.push({ key: "bbox", text: `bbox: ${JSON.stringify(data.bbox)}` });
   }
@@ -51,7 +54,15 @@ export function getTrackSandboxMetadataSummaryLines(
   const byKey = new Map(lines.map((line) => [line.key, line]));
   const ordered: TrackMetadataSummaryLine[] = [];
 
-  ["gross", "net", "elevation", "bbox"].forEach((key) => {
+  const headerKeys = [
+    "local-time-offset",
+    "time",
+    "gross",
+    "net",
+    "elevation",
+    "bbox",
+  ];
+  headerKeys.forEach((key) => {
     const line = byKey.get(key);
     if (line) {
       ordered.push(line);
@@ -62,7 +73,9 @@ export function getTrackSandboxMetadataSummaryLines(
 
   lines.forEach((line) => {
     const isHeader = line.key === "gross" || line.key === "net" ||
-      line.key === "elevation" || line.key === "bbox" || isPoiSummaryLine(line);
+      line.key === "elevation" || line.key === "bbox" ||
+      line.key === "local-time-offset" || line.key === "time" ||
+      isPoiSummaryLine(line);
     if (line.key !== "analysis" && !isHeader) {
       ordered.push(line);
     }

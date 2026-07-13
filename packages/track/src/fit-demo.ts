@@ -38,6 +38,7 @@ import type {
   TrackScatterPoint,
 } from "./analysis";
 import type { TrackJsonDownsampleStrategy } from "./trackjson";
+import { getTrackJsonOverviewMetadataLines } from "./metadata";
 
 const SCATTER_AXIS_TICK_TARGET = 8;
 
@@ -672,12 +673,16 @@ function showSummary(
   files: File[],
   result: ConversionResult
 ) {
-  const lines: string[] = [
+  const timeRangeLines = getTrackJsonOverviewMetadataLines(
+    result.trackJsonData,
+  ).map((line) => line.text);
+  const lines: string[] = [];
+  lines.push(
     files.length === 1
       ? `file: ${files[0].name}`
       : `files: ${files.length} (${files.map((file) => file.name).join(", ")})`,
     `source: ${formatSourceType(result.sourceType)}`,
-  ];
+  );
 
   if (typeof result.originalPointCount === "number") {
     lines.push(`original points: ${result.originalPointCount}`);
@@ -715,7 +720,6 @@ function showSummary(
     const sport = getStringProperty(metadata, "sport");
     const subSport = getStringProperty(metadata, "subSport");
     const createdAt = getNumberProperty(metadata, "createdAt");
-    const startTime = getNumberProperty(metadata, "startTime");
     const totalDistanceM = getNumberProperty(metadata, "totalDistanceM");
     const totalTimerTime = getNumberProperty(metadata, "totalTimerTime");
     const totalElapsedTime = getNumberProperty(metadata, "totalElapsedTime");
@@ -736,15 +740,6 @@ function showSummary(
       lines.push(`created at: ${formatUtcDateTime(createdAt)}`);
     }
 
-    if (typeof startTime === "number") {
-      lines.push(`start time: ${formatUtcDateTime(startTime)}`);
-    }
-
-    const endTime = getActivityEndTime(metadata);
-    if (typeof endTime === "number") {
-      lines.push(`end time: ${formatUtcDateTime(endTime)}`);
-    }
-
     if (typeof totalDistanceM === "number") {
       lines.push(`total distance: ${formatDistance(totalDistanceM)}`);
     }
@@ -759,6 +754,7 @@ function showSummary(
       lines.push(`local time offset: ${formatTimeOffset(localTimeOffsetSeconds)}`);
     }
 
+    lines.push(...timeRangeLines);
     appendMetadataSummaryLines(lines, result, metadata);
   }
 
@@ -1860,21 +1856,6 @@ function formatDuration(seconds: number): string {
   }
 
   return `${minutes}:${restSeconds.toString().padStart(2, "0")}`;
-}
-
-function getActivityEndTime(metadata: Record<string, unknown>): number | undefined {
-  const endTime = getNumberProperty(metadata, "endTime");
-  if (typeof endTime === "number") {
-    return endTime;
-  }
-
-  const startTime = getNumberProperty(metadata, "startTime");
-  const totalElapsedTime = getNumberProperty(metadata, "totalElapsedTime");
-  if (typeof startTime === "number" && typeof totalElapsedTime === "number") {
-    return startTime + totalElapsedTime;
-  }
-
-  return undefined;
 }
 
 function formatUtcDateTime(unixSeconds: number): string {
