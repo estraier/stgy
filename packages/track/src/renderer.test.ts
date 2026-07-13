@@ -140,6 +140,18 @@ jest.mock("leaflet", () => {
     on: jest.fn().mockReturnThis(),
   });
 
+  const createLayersControl = () => {
+    const container = document.createElement("div");
+    const list = document.createElement("section");
+    list.className = "leaflet-control-layers-list";
+    container.appendChild(list);
+
+    return {
+      addTo: jest.fn().mockReturnThis(),
+      getContainer: jest.fn().mockReturnValue(container),
+    };
+  };
+
   return {
     ...originalL,
     map: jest.fn().mockImplementation(createMap),
@@ -186,7 +198,7 @@ jest.mock("leaflet", () => {
     }),
     tileLayer: jest.fn().mockImplementation((url) => ({ __url: url })),
     control: {
-      layers: jest.fn().mockReturnValue({ addTo: jest.fn() }),
+      layers: jest.fn().mockImplementation(createLayersControl),
     },
   };
 });
@@ -400,7 +412,7 @@ describe("StgyTrackRenderer", () => {
     });
   });
 
-  test("shows TrackJSON metadata from the layer control", async () => {
+  test("shows TrackJSON metadata from a layer-control action", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map" data-src="#metadata-track">
         <div class="stgy-track-canvas"></div>
@@ -409,6 +421,16 @@ describe("StgyTrackRenderer", () => {
 
     const mockMap = L.map(document.createElement("div"));
     (L.map as jest.Mock).mockReturnValue(mockMap);
+
+    const controlContainer = document.createElement("div");
+    const controlList = document.createElement("section");
+    controlList.className = "leaflet-control-layers-list";
+    controlContainer.appendChild(controlList);
+    jest.spyOn(L.control, "layers").mockReturnValue({
+      addTo: jest.fn().mockReturnThis(),
+      getContainer: jest.fn().mockReturnValue(controlContainer),
+    } as unknown as L.Control.Layers);
+
     jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
       type: "FeatureCollection",
       poi: [
@@ -426,34 +448,38 @@ describe("StgyTrackRenderer", () => {
     renderer.hydrate(document.body);
     await flushPromises();
 
-    const overlays = (L.control.layers as jest.Mock).mock.calls[0][1] as
-      Record<string, L.Layer>;
-    expect(overlays).toHaveProperty("Metadata");
+    expect((L.control.layers as jest.Mock).mock.calls[0][1]).toBeUndefined();
+
+    const metadataButton = controlContainer.querySelector<HTMLButtonElement>(
+      ".stgy-track-metadata-control",
+    );
+    expect(metadataButton?.textContent).toBe("Metadata");
+    expect(metadataButton?.querySelector("input")).toBeNull();
 
     const overlay = document.querySelector<HTMLElement>(
       ".stgy-track-metadata-overlay",
     );
     expect(overlay?.hidden).toBe(true);
 
-    const onMock = mockMap.on as unknown as jest.Mock;
-    const overlayAdd = onMock.mock.calls.find((call: unknown[]) => {
-      return call[0] === "overlayadd";
-    })?.[1] as ((event: { layer: L.Layer }) => void) | undefined;
-    overlayAdd?.({ layer: overlays.Metadata });
+    metadataButton?.click();
 
     expect(overlay?.hidden).toBe(false);
     expect(overlay?.textContent).not.toContain("Coordinates:");
     expect(overlay?.textContent).toContain(
       "time range: start 2026-06-05 16:04:24, end 2026-06-05 17:24:12",
     );
-    expect(mockMap.removeLayer).toHaveBeenCalledWith(overlays.Metadata);
+    expect(
+      (mockMap.on as unknown as jest.Mock).mock.calls.some(
+        (call: unknown[]) => call[0] === "overlayadd",
+      ),
+    ).toBe(false);
 
     overlay
       ?.querySelector<HTMLButtonElement>(".stgy-track-metadata-close")
       ?.click();
     expect(overlay?.hidden).toBe(true);
 
-    overlayAdd?.({ layer: overlays.Metadata });
+    metadataButton?.click();
     overlay?.click();
     expect(overlay?.hidden).toBe(true);
   });

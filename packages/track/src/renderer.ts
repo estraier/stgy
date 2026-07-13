@@ -548,6 +548,38 @@ export class StgyTrackRenderer {
     }
   }
 
+  private addMetadataControlAction(
+    layerControl: L.Control.Layers,
+    metadataOverlay: HTMLElement,
+  ) {
+    const container = (layerControl as L.Control.Layers & {
+      getContainer?: () => HTMLElement | undefined;
+    }).getContainer?.();
+    const list = container?.querySelector<HTMLElement>(
+      ".leaflet-control-layers-list",
+    );
+    if (!list) {
+      return;
+    }
+
+    list
+      .querySelectorAll(".stgy-track-metadata-control")
+      .forEach((node) => node.remove());
+
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "stgy-track-metadata-control";
+    button.textContent = "Metadata";
+    button.setAttribute("aria-haspopup", "dialog");
+    button.addEventListener("click", (event) => {
+      event.preventDefault();
+      event.stopPropagation();
+      this.setMetadataOverlayOpen(metadataOverlay, true);
+    });
+
+    list.appendChild(button);
+  }
+
   private buildMetadataOverlayText(
     loadedTracks: PreloadedTrackData[],
   ): string | undefined {
@@ -2391,7 +2423,6 @@ export class StgyTrackRenderer {
     const metadataOverlay = metadataText
       ? this.createMetadataOverlay(canvas, metadataText)
       : null;
-    const metadataLayer = metadataOverlay ? L.layerGroup() : null;
 
     this.removeGraphRestoreButton(figure);
     const graphRestoreButton = showGraph
@@ -2404,18 +2435,11 @@ export class StgyTrackRenderer {
     }
 
     if (controls) {
-      const overlays = metadataLayer ? { Metadata: metadataLayer } : undefined;
-      L.control.layers(baseMaps, overlays).addTo(map);
-    }
-
-    if (metadataLayer && metadataOverlay) {
-      map.on("overlayadd", (event: L.LayersControlEvent) => {
-        if (event.layer !== metadataLayer) {
-          return;
-        }
-        this.setMetadataOverlayOpen(metadataOverlay, true);
-        map.removeLayer(metadataLayer);
-      });
+      const layerControl = L.control.layers(baseMaps);
+      layerControl.addTo(map);
+      if (metadataOverlay) {
+        this.addMetadataControlAction(layerControl, metadataOverlay);
+      }
     }
 
     const hud = showOverlay ? this.createHud(canvas) : null;
