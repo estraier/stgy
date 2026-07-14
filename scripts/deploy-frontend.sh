@@ -13,7 +13,7 @@ CFG_NEXT_PUBLIC_STORAGE_S3_BUCKET_PREFIX=stgy
 CFG_NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX=https://s3.stgy.jp/{bucket}/
 # ========================================================================
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OWNER="${DEPLOY_OWNER:-$(id -un)}"
 GROUP="${DEPLOY_GROUP:-$(id -gn)}"
 TARGET="${DEPLOY_TARGET:-$HOME/stgy-frontend}"

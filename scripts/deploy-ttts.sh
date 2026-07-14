@@ -9,7 +9,7 @@ CFG_SEARCH_INDEX_DIR_NAME=data
 CFG_ENABLE_KUROMOJI=true
 # =======================================================================
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OWNER="${DEPLOY_OWNER:-$(id -un)}"
 GROUP="${DEPLOY_GROUP:-$(id -gn)}"
 TARGET="${DEPLOY_TARGET:-$HOME/stgy-ttts}"

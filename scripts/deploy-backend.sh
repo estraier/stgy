@@ -45,7 +45,7 @@ CFG_OPENAI_API_KEY="${STGY_OPENAI_API_KEY:-}"
 CFG_TEST_SIGNUP_CODE=
 # =======================================================================
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OWNER="${DEPLOY_OWNER:-$(id -un)}"
 GROUP="${DEPLOY_GROUP:-$(id -gn)}"
 TARGET="${DEPLOY_TARGET:-$HOME/stgy-backend}"
