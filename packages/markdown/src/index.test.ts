@@ -181,6 +181,66 @@ describe("parseMarkdown", () => {
     ];
     expect(stripPos(parseMarkdown(mdText))).toStrictEqual(expected);
   });
+  it("YouTube embed", () => {
+    const mdText =
+      "@[Video](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1m30s)";
+    expect(stripPos(parseMarkdown(mdText))).toStrictEqual([
+      {
+        type: "element",
+        tag: "figure",
+        attrs: {
+          class: "stgy-embed stgy-youtube-embed",
+          "data-provider": "youtube",
+          "data-src": "https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=1m30s",
+        },
+        children: [
+          {
+            type: "element",
+            tag: "iframe",
+            attrs: {
+              class: "stgy-embed-frame",
+              src: "https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90",
+              title: "Video",
+              loading: "lazy",
+              referrerpolicy: "strict-origin-when-cross-origin",
+              allow:
+                "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share",
+              allowfullscreen: true,
+            },
+            children: [],
+          },
+          {
+            type: "element",
+            tag: "figcaption",
+            attrs: { class: "stgy-embed-caption" },
+            children: [{ type: "text", text: "Video" }],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it.each([
+    "https://youtu.be/dQw4w9WgXcQ",
+    "https://www.youtube.com/shorts/dQw4w9WgXcQ",
+    "https://www.youtube.com/embed/dQw4w9WgXcQ",
+    "https://www.youtube.com/live/dQw4w9WgXcQ",
+  ])("recognizes YouTube URL %s", (url) => {
+    const nodes = parseMarkdown(`@[](${url})`);
+    expect((nodes[0] as { attrs?: Record<string, unknown> }).attrs?.class).toBe(
+      "stgy-embed stgy-youtube-embed",
+    );
+  });
+
+  it("does not mistake a lookalike host for YouTube", () => {
+    const nodes = parseMarkdown(
+      "@[](https://www.youtube.com.example.org/watch?v=dQw4w9WgXcQ)",
+    );
+    expect((nodes[0] as { attrs?: Record<string, unknown> }).attrs?.class).toBe(
+      "stgy-track-map",
+    );
+  });
+
   it("track map source", () => {
     const mdText = "@[Ride](/maps/ride.trjgz){float=right,size=large}";
     const expected = [
@@ -1795,6 +1855,25 @@ def
     );
   });
 
+  it("removes YouTube embeds", () => {
+    const mdText = `abc
+@[Video](https://youtu.be/dQw4w9WgXcQ)
+def
+`;
+    expect(stripPos(mdFilterForFeatured(parseMarkdown(mdText)))).toStrictEqual([
+      {
+        type: "element",
+        tag: "p",
+        children: [{ type: "text", text: "abc" }],
+      },
+      {
+        type: "element",
+        tag: "p",
+        children: [{ type: "text", text: "def" }],
+      },
+    ]);
+  });
+
   it("removes grouped maps", () => {
     const mdText = `abc
 @[Map1](/maps/map1.trjgz){grid}
@@ -2318,6 +2397,13 @@ describe("mdRenderHtml basics", () => {
     );
   });
 
+  it("YouTube embed", () => {
+    const mdText = "@[Video](https://youtu.be/dQw4w9WgXcQ?t=90){ignored=true}";
+    expect(makeHtml(mdText)).toBe(
+      '<figure class="stgy-embed stgy-youtube-embed" data-provider="youtube" data-src="https://youtu.be/dQw4w9WgXcQ?t=90"><iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen class="stgy-embed-frame" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" title="Video"></iframe><figcaption class="stgy-embed-caption">Video</figcaption></figure>',
+    );
+  });
+
   it("track map source", () => {
     const mdText = "@[Ride](/maps/ride.trjgz){float=right,size=large}";
     expect(makeHtml(mdText)).toBe(
@@ -2510,6 +2596,11 @@ ika</pre><h2 id="h-1-1">H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul>
 });
 
 describe("mdRenderMarkdown basics", () => {
+  it("YouTube embed", () => {
+    const mdText = "@[Video](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90)";
+    expect(makeMarkdown(mdText)).toBe(mdText + "\n");
+  });
+
   it("empty body", () => {
     const mdText = "";
     expect(makeMarkdown(mdText)).toBe("");
@@ -2765,6 +2856,14 @@ describe("mdRenderMarkdown from HTML", () => {
 `);
   });
 
+  it("YouTube embed", () => {
+    const html =
+      '<figure class="stgy-embed stgy-youtube-embed" data-provider="youtube" data-src="https://youtu.be/dQw4w9WgXcQ?t=90"><iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90"></iframe><figcaption>Video</figcaption></figure>';
+    expect(makeMarkdownFromHtml(html)).toBe(
+      "@[Video](https://youtu.be/dQw4w9WgXcQ?t=90)\n",
+    );
+  });
+
   it("image variations", () => {
     const html = `<img src="/foo1.png" alt="alt1">
 <div>abc<img src="/foo2.png" alt="alt2">def</div>
@@ -2899,6 +2998,14 @@ describe("serialization", () => {
 
   it("track map", () => {
     const mdText = "@[Ride](/maps/ride.trjgz){float=right,size=large}";
+    const nodes = parseMarkdown(mdText);
+    const serialized = serializeMdNodes(nodes);
+    const deserialized = deserializeMdNodes(serialized);
+    expect(stripPos(deserialized)).toStrictEqual(stripPos(nodes));
+  });
+
+  it("YouTube embed", () => {
+    const mdText = "@[Video](https://youtu.be/dQw4w9WgXcQ)";
     const nodes = parseMarkdown(mdText);
     const serialized = serializeMdNodes(nodes);
     const deserialized = deserializeMdNodes(serialized);

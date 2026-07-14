@@ -531,6 +531,27 @@ body.stgy-export .markdown-body .featured-block figcaption {
   display: none;
 }
 
+body.stgy-export .markdown-body figure.stgy-embed {
+  box-sizing: border-box;
+  clear: both;
+  width: min(100%, 48rem);
+  margin: 0.75em auto;
+}
+body.stgy-export .markdown-body figure.stgy-embed .stgy-embed-frame {
+  display: block;
+  width: 100%;
+  aspect-ratio: 16 / 9;
+  border: 0;
+  border-radius: 0.35em;
+  background: #000;
+}
+body.stgy-export .markdown-body figure.stgy-embed .stgy-embed-caption {
+  margin-top: 0.3em;
+  text-align: center;
+  font-size: 80%;
+  opacity: 0.75;
+}
+
 body.stgy-export .markdown-body a {
   color: #03c;
   text-decoration: none;

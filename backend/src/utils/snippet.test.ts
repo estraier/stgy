@@ -12,6 +12,12 @@ describe("makeSnippetJsonFromMarkdown", () => {
     expect(makeSnippetJsonFromMarkdown(mdText)).toStrictEqual(expected);
   });
 
+  it("removes YouTube embeds", () => {
+    const mdText = "before\n\n@[Video](https://youtu.be/dQw4w9WgXcQ)\n\nafter";
+    const expected = '[{"T":"p","X":"before"},{"T":"p","X":"after"}]';
+    expect(makeSnippetJsonFromMarkdown(mdText)).toStrictEqual(expected);
+  });
+
   it("complex", () => {
     const mdText = `# H
 P

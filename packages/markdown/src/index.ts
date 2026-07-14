@@ -79,6 +79,7 @@ const INLINE_TAGS = new Set<string>([
   "br",
   "img",
   "video",
+  "iframe",
   "ruby",
   "rb",
   "rt",
@@ -245,6 +246,132 @@ function parseMdMapUri(url: string): MdMapSpec | null {
   }
 
   return { lon, lat, zoom, pins };
+}
+
+type MdEmbedSpec = {
+  provider: "youtube";
+  sourceUrl: string;
+  embedUrl: string;
+  videoId: string;
+};
+
+const YOUTUBE_VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
+const YOUTUBE_HOSTS = new Set([
+  "youtube.com",
+  "www.youtube.com",
+  "m.youtube.com",
+  "music.youtube.com",
+  "youtube-nocookie.com",
+  "www.youtube-nocookie.com",
+]);
+
+function parseYouTubeStartSeconds(raw: string | null): number | undefined {
+  if (!raw) return undefined;
+  const value = raw.trim().toLowerCase();
+  if (/^\d+$/.test(value)) {
+    const seconds = Number(value);
+    return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : undefined;
+  }
+  const match = value.match(/^(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?$/);
+  if (!match || !match[0]) return undefined;
+  const seconds =
+    Number(match[1] || 0) * 3600 +
+    Number(match[2] || 0) * 60 +
+    Number(match[3] || 0);
+  return Number.isSafeInteger(seconds) && seconds > 0 ? seconds : undefined;
+}
+
+function parseMdYouTubeUrl(rawUrl: string): MdEmbedSpec | null {
+  const sourceUrl = rawUrl.trim();
+  let url: URL;
+  try {
+    url = new URL(sourceUrl);
+  } catch {
+    return null;
+  }
+  if (url.protocol !== "https:" && url.protocol !== "http:") return null;
+
+  const host = url.hostname.toLowerCase().replace(/\.$/, "");
+  let videoId = "";
+  const pathParts = url.pathname.split("/").filter(Boolean);
+
+  if (host === "youtu.be") {
+    videoId = pathParts[0] || "";
+  } else if (YOUTUBE_HOSTS.has(host)) {
+    if (url.pathname === "/watch") {
+      videoId = url.searchParams.get("v") || "";
+    } else if (
+      pathParts.length >= 2 &&
+      ["embed", "shorts", "live", "v"].includes(pathParts[0] || "")
+    ) {
+      videoId = pathParts[1] || "";
+    }
+  } else {
+    return null;
+  }
+
+  if (!YOUTUBE_VIDEO_ID_RE.test(videoId)) return null;
+
+  const embed = new URL(`https://www.youtube-nocookie.com/embed/${videoId}`);
+  const start = parseYouTubeStartSeconds(
+    url.searchParams.get("start") || url.searchParams.get("t"),
+  );
+  if (start !== undefined) embed.searchParams.set("start", String(start));
+
+  return {
+    provider: "youtube",
+    sourceUrl,
+    embedUrl: embed.toString(),
+    videoId,
+  };
+}
+
+function makeMdEmbedElement(
+  desc: string,
+  spec: MdEmbedSpec,
+  line?: number,
+  char?: number,
+): MdElementNode {
+  const children: MdNode[] = [
+    makeElement(
+      "iframe",
+      [],
+      {
+        class: "stgy-embed-frame",
+        src: spec.embedUrl,
+        title: desc || "YouTube video",
+        loading: "lazy",
+        referrerpolicy: "strict-origin-when-cross-origin",
+        allow:
+          "accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share",
+        allowfullscreen: true,
+      },
+      line,
+      char,
+    ),
+  ];
+  if (desc) {
+    children.push(
+      makeElement(
+        "figcaption",
+        [{ type: "text", text: desc }],
+        { class: "stgy-embed-caption" },
+        line,
+        char,
+      ),
+    );
+  }
+  return makeElement(
+    "figure",
+    children,
+    {
+      class: "stgy-embed stgy-youtube-embed",
+      "data-provider": spec.provider,
+      "data-src": spec.sourceUrl,
+    },
+    line,
+    char,
+  );
 }
 
 function applyMdTrackMapOptions(attrs: MdAttrs, macro: MdMacroOptions) {
@@ -668,8 +795,13 @@ export function parseMarkdown(mdText: string): MdNode[] {
       flushQuote();
       const desc = map[1] || "";
       const url = map[2] || "";
-      const macro = parseMdMacroOptions(map[3]);
-      nodes.push(makeMdTrackMapElement(desc, url, macro, i, lineCharStart));
+      const embedSpec = parseMdYouTubeUrl(url);
+      if (embedSpec) {
+        nodes.push(makeMdEmbedElement(desc, embedSpec, i, lineCharStart));
+      } else {
+        const macro = parseMdMacroOptions(map[3]);
+        nodes.push(makeMdTrackMapElement(desc, url, macro, i, lineCharStart));
+      }
       continue;
     }
     const img = line.match(imageMacroRe);
@@ -1175,6 +1307,24 @@ export function parseHtml(
     if (tag === "br") return [e("br", [])];
     return parseInline(el);
   };
+  const parseEmbedFigure = (el: Element): MdElementNode | null => {
+    if (el.tagName.toLowerCase() !== "figure") return null;
+    const classes = (el.getAttribute("class") || "").split(/\s+/);
+    if (!classes.includes("stgy-embed")) return null;
+
+    const iframe = el.querySelector("iframe");
+    const sourceUrl =
+      el.getAttribute("data-src") || iframe?.getAttribute("src") || "";
+    const spec = parseMdYouTubeUrl(sourceUrl);
+    if (!spec) return null;
+
+    const captionEl = Array.from(el.children).find(
+      (child) => child.tagName.toLowerCase() === "figcaption",
+    ) as Element | undefined;
+    const caption = captionEl ? (captionEl.textContent || "").trim() : "";
+    return makeMdEmbedElement(caption, spec);
+  };
+
   const listAttrsFor = (listEl: Element): MdAttrs | undefined => {
     const tag = listEl.tagName.toLowerCase();
     const { bulletNone } = marksFromStyle(listEl.getAttribute("style"));
@@ -1319,6 +1469,14 @@ export function parseHtml(
         }
         sink.push(e("table", tableChildren));
         continue;
+      }
+      if (tag === "figure") {
+        const embed = parseEmbedFigure(el);
+        if (embed) {
+          flushInline();
+          sink.push(embed);
+          continue;
+        }
       }
       if (tag === "img") {
         flushInline();
@@ -1493,6 +1651,14 @@ export function parseHtml(
           sink.push(e("table", tableChildren));
           continue;
         }
+        if (tag === "figure") {
+          const embed = parseEmbedFigure(el);
+          if (embed) {
+            flushInlineBufTo(sink, inlineBuf);
+            sink.push(embed);
+            continue;
+          }
+        }
         if (tag === "img") {
           flushInlineBufTo(sink, inlineBuf);
           const src = el.getAttribute("src") || "";
@@ -1663,6 +1829,7 @@ export function parseHtml(
     "track",
     "wbr",
     "video",
+    "iframe",
   ]);
   const EXEMPT_EMPTY = new Set<string>(["tr", "td", "th"]);
   const isDroppableWhenEmpty = (tag: string) =>
@@ -2282,10 +2449,14 @@ export function mdFilterForFeatured(nodes: MdNode[]): MdNode[] {
     for (const n of arr) {
       if (n.type === "element") {
         const className = n.attrs?.class;
+        const classes =
+          typeof className === "string" ? className.split(/\s+/) : [];
         if (
           (n.tag === "figure" &&
-            (className === "image-block" || className === "stgy-track-map")) ||
-          (n.tag === "div" && className === "stgy-track-grid")
+            (classes.includes("image-block") ||
+              classes.includes("stgy-track-map") ||
+              classes.includes("stgy-embed"))) ||
+          (n.tag === "div" && classes.includes("stgy-track-grid"))
         ) {
           continue;
         }
@@ -3439,6 +3610,11 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     const attrsStr = macro.length ? `{${macro.join(", ")}}` : "";
     return `![${desc}](${src})${attrsStr}`;
   };
+  const renderEmbedFigureMacro = (fig: MdElementNode): string => {
+    const caption = extractAltFromFigureOrImg(fig);
+    const sourceUrl = sanitizeUrl(getAttrStr(fig.attrs, "data-src") || "");
+    return `@[${caption}](${sourceUrl})`;
+  };
   const renderTrackFigureMacro = (fig: MdElementNode): string => {
     const caption = extractAltFromFigureOrImg(fig);
     const macro: string[] = [];
@@ -3642,6 +3818,7 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
       case "toc":
         return "<!TOC!>";
       case "figure":
+        if (hasClass(el, "stgy-embed")) return renderEmbedFigureMacro(el);
         if (hasClass(el, "stgy-track-map")) return renderTrackFigureMacro(el);
         return renderFigureMacro(el);
       case "table": {

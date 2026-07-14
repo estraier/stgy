@@ -24,13 +24,21 @@ const TRACK_BASE_LAYERS: readonly TrackBaseLayer[] = [
   "topo",
 ];
 
+export function isTrackMapUrl(url: string): boolean {
+  const value = url.trim();
+  if (value.startsWith("map://")) return true;
+  return /\.(?:fit|trjgz)(?:[?#].*)?$/iu.test(value);
+}
+
 export function parseTrackMarkdownLine(line: string): TrackMarkdownLineMatch | null {
   const match = line.match(/^(\s*)@\[([^\]]*)\]\s*\(([^)]+)\)(?:\s*\{([^}]*)\})?(\s*)$/u);
   if (!match) return null;
+  const url = match[3] ?? "";
+  if (!isTrackMapUrl(url)) return null;
   return {
     leading: match[1] ?? "",
     caption: match[2] ?? "",
-    url: match[3] ?? "",
+    url,
     options: match[4] ?? null,
     trailing: match[5] ?? "",
   };

@@ -3,6 +3,7 @@ import {
   cycleTrackBaseOptions,
   getNextTrackBaseValue,
   isTrackGraphDisabled,
+  isTrackMapUrl,
   parseMarkdownOptions,
   parseTrackMarkdownLine,
   toggleTrackGraphOptions,
@@ -24,9 +25,23 @@ describe("markdown track options", () => {
     });
   });
 
-  test("rejects non-track markdown lines", () => {
+  test("recognizes only map and supported track URLs", () => {
+    expect(isTrackMapUrl("map://135.123,35.123")).toBe(true);
+    expect(isTrackMapUrl("/tracks/a.fit")).toBe(true);
+    expect(isTrackMapUrl("/tracks/a.TRJGZ?download=1#preview")).toBe(true);
+
+    expect(isTrackMapUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toBe(false);
+    expect(isTrackMapUrl("/tracks/a.gpx")).toBe(false);
+    expect(isTrackMapUrl("/tracks/a.trj")).toBe(false);
+    expect(isTrackMapUrl("/tracks/a.fit.txt")).toBe(false);
+  });
+
+  test("rejects non-track markdown lines and non-map embeds", () => {
     expect(parseTrackMarkdownLine("![Ride](/images/a.jpg)")).toBeNull();
     expect(parseTrackMarkdownLine("[Ride](/tracks/a.trjgz)")).toBeNull();
+    expect(
+      parseTrackMarkdownLine("@[Video](https://www.youtube.com/watch?v=dQw4w9WgXcQ)"),
+    ).toBeNull();
   });
 
   test("rebuilds a line while preserving surrounding whitespace", () => {

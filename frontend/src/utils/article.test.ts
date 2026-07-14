@@ -42,6 +42,24 @@ describe("article utils (normal cases)", () => {
     expect(html).toContain("data-line-position");
   });
 
+  test("makeArticleHtmlFromMarkdown renders YouTube embeds", () => {
+    const html = makeArticleHtmlFromMarkdown("@[Video](https://youtu.be/dQw4w9WgXcQ?t=90)");
+    expect(html).toContain('class="stgy-embed stgy-youtube-embed"');
+    expect(html).toContain('src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90"');
+    expect(html).toContain("<figcaption");
+    expect(html).toContain("Video</figcaption>");
+  });
+
+  test("makeSnippetHtmlFromMarkdown removes YouTube embeds", () => {
+    const html = makeSnippetHtmlFromMarkdown(
+      "before\n\n@[Video](https://youtu.be/dQw4w9WgXcQ)\n\nafter",
+    );
+    expect(html).toContain("before");
+    expect(html).toContain("after");
+    expect(html).not.toContain("youtube");
+    expect(html).not.toContain("iframe");
+  });
+
   test("makeArticleHtmlFromMarkdown rewrites managed track previews", () => {
     const html = makeArticleHtmlFromMarkdown("@[](/tracks/u1/previews/abc/ride.trjgz)");
     expect(html).toContain('data-src="https://cdn.test/tracks-bkt/u1/previews/abc/ride.trjgz"');

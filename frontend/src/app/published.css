@@ -2924,6 +2924,23 @@ html:has(.site-container) {
   direction: inherit;
 }
 
+/* YouTube players always use a horizontal 16:9 viewport, including vertical themes. */
+.pub-theme-dir-vert .markdown-body figure.stgy-embed {
+  writing-mode: horizontal-tb !important;
+  text-orientation: mixed !important;
+  box-sizing: border-box;
+  width: min(40em, calc(100svw - 2rem)) !important;
+  max-width: calc(100svw - 2rem) !important;
+  height: auto !important;
+}
+
+@media (max-width: 480px) {
+  .pub-theme-dir-vert .markdown-body figure.stgy-embed {
+    width: calc(100svw - 1rem) !important;
+    max-width: calc(100svw - 1rem) !important;
+  }
+}
+
 /* Vertical public themes: cap images by physical viewport width without forcing them wider.
    Do not set width or inline-size here; natural image size and existing data-size rules
    must keep working. */
