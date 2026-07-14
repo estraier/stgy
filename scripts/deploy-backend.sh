@@ -35,8 +35,6 @@ CFG_SEARCH_API_BASE_URL=http://127.0.0.1:3200
 # SMTP (Postfix on the same host; auth not required for localhost)
 CFG_SMTP_HOST=127.0.0.1
 CFG_SMTP_PORT=25
-CFG_SMTP_USER=
-CFG_SMTP_PASS=
 
 # Misc
 CFG_MAIL_FROM=noreply@stgy.jp
@@ -119,8 +117,6 @@ export STGY_SEARCH_API_BASE_URL='__CFG_SEARCH_API_BASE_URL__'
 
 export STGY_SMTP_HOST='__CFG_SMTP_HOST__'
 export STGY_SMTP_PORT='__CFG_SMTP_PORT__'
-export STGY_SMTP_USERNAME='__CFG_SMTP_USER__'
-export STGY_SMTP_PASSWORD='__CFG_SMTP_PASS__'
 
 export STGY_MAIL_SENDER_ADDRESS='__CFG_MAIL_FROM__'
 export STGY_ID_ISSUE_WORKER_ID='__CFG_ID_WORKER__'
@@ -271,8 +267,6 @@ sed -i \
   -e "s#__CFG_SEARCH_API_BASE_URL__#${CFG_SEARCH_API_BASE_URL}#g" \
   -e "s#__CFG_SMTP_HOST__#${CFG_SMTP_HOST}#g" \
   -e "s#__CFG_SMTP_PORT__#${CFG_SMTP_PORT}#g" \
-  -e "s#__CFG_SMTP_USER__#${CFG_SMTP_USER}#g" \
-  -e "s#__CFG_SMTP_PASS__#${CFG_SMTP_PASS}#g" \
   -e "s#__CFG_MAIL_FROM__#${CFG_MAIL_FROM}#g" \
   -e "s#__CFG_ID_WORKER__#${CFG_ID_WORKER}#g" \
   -e "s#__CFG_OPENAI_API_KEY__#${CFG_OPENAI_API_KEY}#g" \
