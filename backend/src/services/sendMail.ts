@@ -15,9 +15,6 @@ export class SendMailService {
         host: Config.SMTP_HOST,
         port: Config.SMTP_PORT,
         secure: false,
-        tls: {
-          rejectUnauthorized: false,
-        },
       },
     );
   }
