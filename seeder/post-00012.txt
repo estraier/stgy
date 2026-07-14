@@ -1068,6 +1068,10 @@ mc mb stgylocal/stgy-images
 mc anonymous set download stgylocal/stgy-images
 mc mb stgylocal/stgy-profiles
 mc anonymous set download stgylocal/stgy-profiles
+mc mb stgylocal/stgy-tracks
+mc anonymous set download stgylocal/stgy-tracks
+mc mb stgylocal/stgy-test
+mc anonymous set download stgylocal/stgy-test
 ```
 
 ## Redis
