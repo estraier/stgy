@@ -1285,6 +1285,9 @@ DROP SCHEMA public CASCADE; CREATE SCHEMA public;
 __EOF__
 mc alias set stgylocal http://127.0.0.1:9000 admin stgystgy
 mc rb --force stgylocal/stgy-images
+mc rb --force stgylocal/stgy-profiles
+mc rb --force stgylocal/stgy-tracks
+mc rb --force stgylocal/stgy-test
 redis-cli -a stgystgy FLUSHALL
 ```
 
