@@ -502,6 +502,29 @@ map://経度,緯度,ズーム
 
 ``map://`` 記法は、人間が短い地図メモを手で書くための簡易記法です。複雑な経路情報を埋め込む用途には向いていません。サイクリングや登山などの経路を表示したい場合には、TrackJSONファイルをアップロードして、それを参照してください。``map://`` 記法の中では、カンマと縦棒は区切り文字として扱われます。そのため、タイトルや説明文の中にこれらの文字を含めることはできません。URLにこれらの文字が必要な場合には、URLエンコードされた形にしてください。形式が正しくない ``map://`` のURLは、安全のため外部データとして読み込まれません。その場合、地図は正しく表示されません。
 
+## YouTube動画埋め込み
+
+地図の埋め込みと同様に、@[キャプション]\(URL) 記法を使うと、Youtubeの動画を記事内に埋め込むことができます。キャプションは省略できます。オプションには対応していません。
+
+```
+@[サイクリング記録](https://www.youtube.com/watch?v=BOF5PQ9Osc4)
+```
+
+@[サイクリング記録](https://www.youtube.com/watch?v=BOF5PQ9Osc4)
+
+YouTubeのURLとしては、以下のパターンのいずれを使っても構いません。www.youtube.comの代わりに、youtube.comやwww.youtube-nocookie.comなどの公式の別ドメインを使っても構いません。
+
+```
+https://www.youtube.com/watch?v=VIDEO_ID
+https://www.youtube.com/shorts/VIDEO_ID
+https://www.youtube.com/live/VIDEO_ID
+https://www.youtube.com/embed/VIDEO_ID
+https://www.youtube.com/v/VIDEO_ID
+https://youtu.be/VIDEO_ID
+```
+
+なお、動画データのSTGYへのアップロードには現在は対応していません。
+
 ## コメント
 
 「``<[``」と「``]>``」で挟んだ部分はコメントになります。ここで言うコメントとは、Markdown内には記述があるのに、読者向けには表示されない文字列のことです。コメントは文字が書ける任意の場所に置くことができます。コメントだけの行は、行ごと無視されるので、リストやテーブルの途中にコメント行を挟むこともできます。
