@@ -35,7 +35,7 @@ Environment (DB):
 Environment (S3/MinIO):
   STGY_STORAGE_S3_ENDPOINT              (default: http://minio:9000 ; fallback host->127.0.0.1 if not resolvable)
   STGY_STORAGE_S3_REGION                (optional: used when creating buckets on restore)
-  STGY_STORAGE_S3_ACCESS_KEY            (fallback: STGY_MINIO_ROOT_USER, then "admin")
+  STGY_STORAGE_S3_ACCESS_KEY_ID         (fallback: STGY_MINIO_ROOT_USER, then "admin")
   STGY_STORAGE_S3_SECRET_ACCESS_KEY     (fallback: STGY_MINIO_ROOT_PASSWORD, then "stgystgy")
   STGY_STORAGE_S3_BUCKETS               (optional: comma-separated explicit bucket names)
   STGY_STORAGE_S3_ANON_DOWNLOAD_BUCKETS (optional: comma-separated bucket names to set 'download' policy)
@@ -275,7 +275,7 @@ DB_NAME="${STGY_DATABASE_NAME:-stgy}"
 S3_ENDPOINT_RAW="${STGY_STORAGE_S3_ENDPOINT:-http://minio:9000}"
 S3_ENDPOINT="$(fix_endpoint_if_unresolvable "$S3_ENDPOINT_RAW")"
 S3_REGION="${STGY_STORAGE_S3_REGION:-}"
-S3_ACCESS_KEY="${STGY_STORAGE_S3_ACCESS_KEY:-${STGY_MINIO_ROOT_USER:-admin}}"
+S3_ACCESS_KEY="${STGY_STORAGE_S3_ACCESS_KEY_ID:-${STGY_MINIO_ROOT_USER:-admin}}"
 S3_SECRET_KEY="${STGY_STORAGE_S3_SECRET_ACCESS_KEY:-${STGY_MINIO_ROOT_PASSWORD:-stgystgy}}"
 
 if [ -z "$BACKUP_NAME" ] && [ "$COMMAND" = "backup" ]; then
