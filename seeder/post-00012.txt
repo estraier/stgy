@@ -1291,6 +1291,7 @@ redis-cli -a stgystgy FLUSHALL
 ```:small
 sudo systemctl disable --now stgy-frontend
 sudo systemctl disable --now stgy-backend
+sudo systemctl disable --now stgy-ttts
 sudo systemctl disable --now postfix
 sudo systemctl disable --now redis-server
 sudo systemctl disable --now minio
@@ -1306,6 +1307,7 @@ sudo systemctl enable --now postgresql
 sudo systemctl enable --now minio
 sudo systemctl enable --now redis-server
 sudo systemctl enable --now postfix
+sudo systemctl enable --now stgy-ttts
 sudo systemctl enable --now stgy-backend
 sudo systemctl enable --now stgy-frontend
 ```
