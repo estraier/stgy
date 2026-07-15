@@ -880,7 +880,7 @@ alias_maps = hash:/etc/aliases
 alias_database = hash:/etc/aliases
 ```
 
-/etc/postfix/master.cfを編集する。既存の行を全てコメントアウトした上で以下を加える。すなわち、smtpの行のchrootをnに変え、submissionの行でローカルホストのクライアントとSASL認証を経たクライアントを許可する。
+/etc/postfix/master.cfを編集する。既存のサービス定義はそのまま残し、smtpの既存行を以下の内容に置き換える。また、コメントアウトされているsubmissionの行を以下の内容で有効化する。すなわち、smtpの行のchrootをnに変え、submissionではローカルホストのクライアントとSASL認証を経たクライアントを許可する。
 
 ```:small
 smtp       inet  n       -       n       -       -       smtpd
