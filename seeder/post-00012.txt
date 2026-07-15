@@ -347,7 +347,7 @@ docker compose version
 docker run --rm hello-world
 ```
 
-Node.jsとnpmとjqをインストールする。Ubuntuのデフォルト設定で入るNode.jsは古いので、Node 22系に手動更新する。
+Node.jsとnpmとjqをインストールする。NodeSource版のnodejsパッケージにはnpmも含まれるため、npmを別途インストールする必要はない。Ubuntuのデフォルト設定で入るNode.jsは古いので、Node 22系に手動更新する。
 
 ```:small
 curl -fsSL https://deb.nodesource.com/setup_22.x | sudo -E bash -
@@ -1270,9 +1270,10 @@ systemctl status stgy-frontend
 curl -i http://localhost:3000/health
 ```
 
-以下のコマンドで初期データの投入を行う。
+以下のコマンドで初期データの投入を行う。この補助スクリプトを使う場合はPython Requestsが必要なので、未導入ならここでインストールする。
 
 ```:small
+sudo apt install python3-requests
 ./scripts/edit-users.py seeder/user-0*.txt
 ./scripts/edit-posts.py seeder/post-0*.txt
 ./scripts/user-actions.py seeder/action-*.txt
