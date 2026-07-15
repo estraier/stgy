@@ -720,6 +720,12 @@ https://s3-console.stgy.jp {
   reverse_proxy http://127.0.0.1:9001
 }
 
+# Postfixで使うmail.stgy.jpの個別TLS証明書を、CaddyのAutomatic HTTPSで取得・更新する。
+# mail.stgy.jpではWebコンテンツを提供しないため、通常のHTTPSアクセスには404を返す。
+https://mail.stgy.jp {
+  respond 404
+}
+
 https://www.stgy.jp {
   encode zstd gzip
   root * /home/prod/www
@@ -902,7 +908,7 @@ sudo systemctl restart postfix
 Macでswaksコマンドを使うと、疎通が確認できる。パスワードは先ほど決めたものを指定すること。
 
 ```:small
-swaks --to hirarin@gmail.com --server stgy.jp:587 --from noreply@stgy.jp --auth-user postfix@stgy.jp --auth-password SASLPASSWORD --auth PLAIN --header "Subject: test" --body "test1" --tls
+swaks --to hirarin@gmail.com --server mail.stgy.jp:587 --from noreply@stgy.jp --auth-user postfix@stgy.jp --auth-password SASLPASSWORD --auth PLAIN --header "Subject: test" --body "test1" --tls
 ```
 
 SMTPサーバが配信先のSMTPサーバに信用されるためには、自身が名乗るホスト名（設定ファイル内のmyhostnameの値）とIPアドレスの逆引きの値が同じである必要がある。また、DNSのSPF設定で、自身のIPアドレスが登録されている必要がある。SASL認証はメールのリレーに必須の設定ではないが、インターネット越しで認証して安全にメールを受信するには、SSLとSASL認証の組み合わせを使うのが望ましい。
