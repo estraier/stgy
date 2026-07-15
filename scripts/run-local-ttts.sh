@@ -11,7 +11,7 @@ set -a
 set +a
 
 CMD="dev"
-PORT="${SEARCH_SERVER_PORT:-3200}"
+PORT="${STGY_SEARCH_PORT:-3200}"
 
 declare -a PASS_ARGS=()
 

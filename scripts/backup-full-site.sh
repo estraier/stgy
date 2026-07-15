@@ -428,7 +428,7 @@ do_restore_objects() {
         mc anonymous set download "stgys3/${bucket}" >/dev/null 2>&1 || true
       fi
     else
-      if [ "$bucket" = "stgy-images" ] || [ "$bucket" = "stgy-profiles" ] || [ "$bucket" = "stgy-tracks" ]; then
+      if [ "$bucket" = "stgy-images" ] || [ "$bucket" = "stgy-profiles" ] || [ "$bucket" = "stgy-tracks" ] || [ "$bucket" = "stgy-test" ]; then
         mc anonymous set download "stgys3/${bucket}" >/dev/null 2>&1 || true
       fi
     fi

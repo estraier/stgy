@@ -34,7 +34,7 @@ CFG_SEARCH_API_BASE_URL=http://127.0.0.1:3200
 
 # SMTP (Postfix on the same host; auth not required for localhost)
 CFG_SMTP_HOST=127.0.0.1
-CFG_SMTP_PORT=25
+CFG_SMTP_PORT=587
 
 # Misc
 CFG_MAIL_FROM=noreply@stgy.jp

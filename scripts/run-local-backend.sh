@@ -95,7 +95,7 @@ case "${WORKER}" in
     (sleep 3 ; npm run backend:ai-user-worker) &
     ;;
   one)
-    echo "[run-local-backend] running one workers"
+    echo "[run-local-backend] running one worker"
     (sleep 3 ; npm run backend:one-worker) &
     ;;
   *)
