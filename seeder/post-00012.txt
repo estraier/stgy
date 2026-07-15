@@ -803,7 +803,7 @@ Caddyfileを書き換えたならCaddyを再起動する。
 sudo systemctl restart caddy
 ```
 
-HTTPSで使うサーバ証明書はLet's Encryptから自動取得され、/var/caddy/certificates配下に保存される。更新も勝手にやってくれて、その際のACME認証も自身のWebサーバの機能で通せるので、certbotを運用するより楽だ。後述のSendmailの設定でもCaddyが取得した証明書を流用できる。
+HTTPSで使うサーバ証明書はLet's Encryptから自動取得され、/var/caddy/certificates配下に保存される。更新も勝手にやってくれて、その際のACME認証も自身のWebサーバの機能で通せるので、certbotを運用するより楽だ。後述のPostfixの設定でもCaddyが取得した証明書を流用できる。
 
 ```:small
 $ cd /var/caddy/certificates/acme-v02.api.letsencrypt.org-directory
