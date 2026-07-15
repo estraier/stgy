@@ -926,7 +926,7 @@ systemctl status postgresql
 以下の手順はPostgreSQLのメジャーバージョンが16であることを前提とする。もし違うバージョンであれば16を読み替えること。まずは、/etc/postgresql/16/main/conf.d/90-stgy.confファイルを新規作成する。内容は以下のようにする。メモリ使用量はメモリ4GBのシステムに最適化してある。
 
 ```:small
-listen_addresses = '127.0.0.1'
+listen_addresses = '*'
 port = 5432
 
 password_encryption = scram-sha-256
