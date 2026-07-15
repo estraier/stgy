@@ -244,11 +244,11 @@ Docker関係のコマンドを利用目的別に整理する。
 
 全てのサービスを立ち上げたら、ブラウザで以下のURLを開くと、STGYのサービスが使い始められる。
 
-- https://localhost:8080/ : ユーザが使うサイト
+- http://localhost:8080/ : ユーザが使うサイト
   - デフォルトでは、「admin」ユーザのパスワードが「stgystgy」になっている。
-- https://s3-console.stgy.jp/ : MinIOのコンソール
+- http://s3-console.localhost:8080/ : MinIOのコンソール
   - アップロードされた画像データはここで確認できる。
-- https://mail.localhost:8080/ : 確認メールの保存先
+- http://mail.localhost:8080/ : 確認メールの保存先
   - サインアップやメアド変更の際の確認メールはここに送られる。
 
 ## Linux上での開発環境の構築
