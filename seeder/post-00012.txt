@@ -1090,10 +1090,10 @@ sudo systemctl enable --now redis-server
 systemctl status redis-server
 ```
 
-/etc/redis/redis.confを編集する。内容は以下のようにする。ループバックアドレスのみにバインドし、パスワード認証を要求する。メモリ使用量は512MBに制限する。元の内容は全て消してよい。
+/etc/redis/redis.confを編集する。内容は以下のようにする。全てのアドレスにバインドするが、パスワード認証を要求する。メモリ使用量は512MBに制限する。元の内容は全て消してよい。
 
 ```:small
-bind 127.0.0.1
+bind 0.0.0.0
 port 6379
 protected-mode yes
 
