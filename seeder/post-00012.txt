@@ -1151,7 +1151,6 @@ WorkingDirectory=/home/prod/stgy-ttts
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/prod/stgy-ttts/start.sh start
 ExecStop=/home/prod/stgy-ttts/start.sh stop
-ExecReload=/home/prod/stgy-ttts/start.sh restart
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=30s
@@ -1201,7 +1200,6 @@ WorkingDirectory=/home/prod/stgy-backend
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/prod/stgy-backend/start.sh start
 ExecStop=/home/prod/stgy-backend/start.sh stop
-ExecReload=/home/prod/stgy-backend/start.sh restart
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=30s
@@ -1231,7 +1229,7 @@ curl -i http://localhost:3100/health
 ./scripts/deploy-frontend.sh
 ```
 
-デプロイ用スクリプトを実行すると、/home/prod/stgy-frontend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればバックエンドサービスが起動する。それを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-frontend.serviceとして書く。
+デプロイ用スクリプトを実行すると、/home/prod/stgy-frontend配下にJavaScriptがデプロイされる。その中にstart.shというスクリプトがあり、それを実行すればフロントエンドサービスが起動する。それを自動起動するsystemdスクリプトを/etc/systemd/system/stgy-frontend.serviceとして書く。
 
 ```:small
 [Unit]
@@ -1247,7 +1245,6 @@ WorkingDirectory=/home/prod/stgy-frontend
 Environment=PATH=/usr/local/bin:/usr/bin:/bin
 ExecStart=/home/prod/stgy-frontend/start.sh start
 ExecStop=/home/prod/stgy-frontend/start.sh stop
-ExecReload=/home/prod/stgy-frontend/start.sh restart
 Restart=on-failure
 RestartSec=2s
 TimeoutStopSec=30s
