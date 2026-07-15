@@ -1268,9 +1268,9 @@ curl -i http://localhost:3000/health
 以下のコマンドで初期データの投入を行う。
 
 ```:small
-./scripts/edit_users.py seeder/user-0*.txt
-./scripts/edit_posts.py seeder/post-0*.txt
-./scripts/user_actions.py seeder/action-*.txt
+./scripts/edit-users.py seeder/user-0*.txt
+./scripts/edit-posts.py seeder/post-0*.txt
+./scripts/user-actions.py seeder/action-*.txt
 ```
 
 deploy-backend.shとdeploy-frontend.shが環境設定を内包するself-containedな実装になっているのは重要である。デプロイした時の環境設定で常にサービスが安定稼働するべきだからだ。デプロイ後に外部から環境変数を変化させて挙動を変えてはならない。二つのスクリプトはCI/CDへの布石である。STGYはOSS製品として頒布するので特定のデプロイ方式を前提としないが、少なくともGitHub Actionsでデプロイしやすいようには設計している。実際、GitHub Actionsのワークフローでリポジトリ内のスクリプトを実行するだけで、CDは達成できる。パスワード等はリポジトリのシークレットからパラメータ注入する。CIに関しては、単にテスト環境でnpm testを呼ぶワークフローを仕掛ければ良い。そこで呼ばれるテストが統合テストと呼ぶに足るものであるかどうかが品質を左右することになる。
