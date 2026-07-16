@@ -160,7 +160,7 @@ case "${1:-start}" in
     ;;
   restart)
     stop_all
-    start_all
+    exec "$0" start
     ;;
   status)
     status_all
