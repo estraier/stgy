@@ -81,14 +81,19 @@ find_entry () {
   if [[ -z "$ENTRY" ]]; then
     ENTRY="$(find "$APP_DIR" -maxdepth 3 -type f \( -name 'server.js' -o -name 'server.cjs' -o -name 'server.mjs' -o -name 'index.js' \) | head -n1 || true)"
   fi
-  [[ -z "$ENTRY" ]] && { echo "[error] Next.js server entry not found under: $APP_DIR"; exit 1; }
+  [[ -z "$ENTRY" ]] && { echo "[error] Next.js server entry not found under: $APP_DIR" >&2; return 1; }
   printf "%s" "$ENTRY"
 }
 
 is_running () {
   [[ -f "$PID_FILE" ]] || return 1
   local pid; pid="$(cat "$PID_FILE" 2>/dev/null || true)"
-  [[ -n "${pid:-}" ]] && kill -0 "$pid" 2>/dev/null
+  [[ -n "${pid:-}" && -d "/proc/$pid" ]] || return 1
+
+  # A stale PID file may point to an unrelated process after PID reuse.
+  # Verify that the process command line contains this deployment's entrypoint.
+  local entry; entry="$(find_entry 2>/dev/null)" || return 1
+  grep -Fzxq -- "$entry" "/proc/$pid/cmdline" 2>/dev/null
 }
 
 start_fg () {
