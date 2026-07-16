@@ -649,7 +649,7 @@ Caddyの自動起動スクリプトの本体は/usr/lib/systemd/system/caddy.ser
 sudo systemctl edit caddy
 ```
 
-エディタが開いたら、以下を記述して保存する。UMaskの行は追加の設定であり、同一グループのプロセスが証明書などのデータを読めるようにする。
+エディタが開いたら、以下を記述して保存する。UMask=0027は、Caddyが明示的により厳しい権限を指定しないファイルやディレクトリについて、その他のユーザへのアクセス権を付けないための設定である。Caddyの証明書ストレージは、これとは別に秘密鍵などを所有者だけが読める権限で作成する。
 
 ```:small
 [Service]
@@ -836,10 +836,9 @@ systemctl status postfix
 sudo apt install libsasl2-modules sasl2-bin
 ```
 
-postfixというユーザが自動的に作られるので、それがcaddyの証明書を読めるようにprodグループに追加する。また、SASL認証のデータベースにアクセスできるように、saslグループにも追加する。
+postfixというユーザが自動的に作られる。SASL認証のデータベースにアクセスできるように、saslグループへ追加する。
 
 ```:small
-sudo usermod -aG prod postfix
 sudo usermod -aG sasl postfix
 ```
 
