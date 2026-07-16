@@ -255,36 +255,85 @@ case "${1:-start}" in
 esac
 EOS
 
-# Inject baked config values safely
-sed -i \
-  -e "s#__CFG_NODE_ENV__#${CFG_NODE_ENV}#g" \
-  -e "s#__CFG_FRONTEND_ORIGIN__#${CFG_FRONTEND_ORIGIN}#g" \
-  -e "s#__CFG_BACKEND_PORT__#${CFG_BACKEND_PORT}#g" \
-  -e "s#__CFG_BACKEND_API_BASE_URL__#${CFG_BACKEND_API_BASE_URL}#g" \
-  -e "s#__CFG_BACKEND_API_PRIVATE_URL_LIST__#${CFG_BACKEND_API_PRIVATE_URL_LIST}#g" \
-  -e "s#__CFG_DB_HOST__#${CFG_DB_HOST}#g" \
-  -e "s#__CFG_DB_PORT__#${CFG_DB_PORT}#g" \
-  -e "s#__CFG_DB_USER__#${CFG_DB_USER}#g" \
-  -e "s#__CFG_DB_PASS__#${CFG_DB_PASS}#g" \
-  -e "s#__CFG_DB_NAME__#${CFG_DB_NAME}#g" \
-  -e "s#__CFG_S3_ENDPOINT__#${CFG_S3_ENDPOINT}#g" \
-  -e "s#__CFG_S3_REGION__#${CFG_S3_REGION}#g" \
-  -e "s#__CFG_S3_KEY__#${CFG_S3_KEY}#g" \
-  -e "s#__CFG_S3_SECRET__#${CFG_S3_SECRET}#g" \
-  -e "s#__CFG_S3_FORCE_PATH_STYLE__#${CFG_S3_FORCE_PATH_STYLE}#g" \
-  -e "s#__CFG_S3_BUCKET_PREFIX__#${CFG_S3_BUCKET_PREFIX}#g" \
-  -e "s#__CFG_S3_PUBLIC_URL_PREFIX__#${CFG_S3_PUBLIC_URL_PREFIX}#g" \
-  -e "s#__CFG_REDIS_HOST__#${CFG_REDIS_HOST}#g" \
-  -e "s#__CFG_REDIS_PORT__#${CFG_REDIS_PORT}#g" \
-  -e "s#__CFG_REDIS_PASS__#${CFG_REDIS_PASS}#g" \
-  -e "s#__CFG_SEARCH_API_BASE_URL__#${CFG_SEARCH_API_BASE_URL}#g" \
-  -e "s#__CFG_SMTP_HOST__#${CFG_SMTP_HOST}#g" \
-  -e "s#__CFG_SMTP_PORT__#${CFG_SMTP_PORT}#g" \
-  -e "s#__CFG_MAIL_FROM__#${CFG_MAIL_FROM}#g" \
-  -e "s#__CFG_ID_WORKER__#${CFG_ID_WORKER}#g" \
-  -e "s#__CFG_OPENAI_API_KEY__#${CFG_OPENAI_API_KEY}#g" \
-  -e "s#__CFG_TEST_SIGNUP_CODE__#${CFG_TEST_SIGNUP_CODE}#g" \
-  "$TARGET/start.sh"
+# Inject baked config values without interpreting sed replacement characters.
+# The template places every placeholder inside a single-quoted shell string, so
+# only embedded single quotes need shell escaping.
+TARGET_START_SH="$TARGET/start.sh" \
+INJECT_CFG_NODE_ENV="$CFG_NODE_ENV" \
+INJECT_CFG_FRONTEND_ORIGIN="$CFG_FRONTEND_ORIGIN" \
+INJECT_CFG_BACKEND_PORT="$CFG_BACKEND_PORT" \
+INJECT_CFG_BACKEND_API_BASE_URL="$CFG_BACKEND_API_BASE_URL" \
+INJECT_CFG_BACKEND_API_PRIVATE_URL_LIST="$CFG_BACKEND_API_PRIVATE_URL_LIST" \
+INJECT_CFG_DB_HOST="$CFG_DB_HOST" \
+INJECT_CFG_DB_PORT="$CFG_DB_PORT" \
+INJECT_CFG_DB_USER="$CFG_DB_USER" \
+INJECT_CFG_DB_PASS="$CFG_DB_PASS" \
+INJECT_CFG_DB_NAME="$CFG_DB_NAME" \
+INJECT_CFG_S3_ENDPOINT="$CFG_S3_ENDPOINT" \
+INJECT_CFG_S3_REGION="$CFG_S3_REGION" \
+INJECT_CFG_S3_KEY="$CFG_S3_KEY" \
+INJECT_CFG_S3_SECRET="$CFG_S3_SECRET" \
+INJECT_CFG_S3_FORCE_PATH_STYLE="$CFG_S3_FORCE_PATH_STYLE" \
+INJECT_CFG_S3_BUCKET_PREFIX="$CFG_S3_BUCKET_PREFIX" \
+INJECT_CFG_S3_PUBLIC_URL_PREFIX="$CFG_S3_PUBLIC_URL_PREFIX" \
+INJECT_CFG_REDIS_HOST="$CFG_REDIS_HOST" \
+INJECT_CFG_REDIS_PORT="$CFG_REDIS_PORT" \
+INJECT_CFG_REDIS_PASS="$CFG_REDIS_PASS" \
+INJECT_CFG_SEARCH_API_BASE_URL="$CFG_SEARCH_API_BASE_URL" \
+INJECT_CFG_SMTP_HOST="$CFG_SMTP_HOST" \
+INJECT_CFG_SMTP_PORT="$CFG_SMTP_PORT" \
+INJECT_CFG_MAIL_FROM="$CFG_MAIL_FROM" \
+INJECT_CFG_ID_WORKER="$CFG_ID_WORKER" \
+INJECT_CFG_OPENAI_API_KEY="$CFG_OPENAI_API_KEY" \
+INJECT_CFG_TEST_SIGNUP_CODE="$CFG_TEST_SIGNUP_CODE" \
+node <<'NODE'
+const fs = require('fs');
+
+const path = process.env.TARGET_START_SH;
+let text = fs.readFileSync(path, 'utf8');
+
+const replacements = {
+  __CFG_NODE_ENV__: process.env.INJECT_CFG_NODE_ENV,
+  __CFG_FRONTEND_ORIGIN__: process.env.INJECT_CFG_FRONTEND_ORIGIN,
+  __CFG_BACKEND_PORT__: process.env.INJECT_CFG_BACKEND_PORT,
+  __CFG_BACKEND_API_BASE_URL__: process.env.INJECT_CFG_BACKEND_API_BASE_URL,
+  __CFG_BACKEND_API_PRIVATE_URL_LIST__: process.env.INJECT_CFG_BACKEND_API_PRIVATE_URL_LIST,
+  __CFG_DB_HOST__: process.env.INJECT_CFG_DB_HOST,
+  __CFG_DB_PORT__: process.env.INJECT_CFG_DB_PORT,
+  __CFG_DB_USER__: process.env.INJECT_CFG_DB_USER,
+  __CFG_DB_PASS__: process.env.INJECT_CFG_DB_PASS,
+  __CFG_DB_NAME__: process.env.INJECT_CFG_DB_NAME,
+  __CFG_S3_ENDPOINT__: process.env.INJECT_CFG_S3_ENDPOINT,
+  __CFG_S3_REGION__: process.env.INJECT_CFG_S3_REGION,
+  __CFG_S3_KEY__: process.env.INJECT_CFG_S3_KEY,
+  __CFG_S3_SECRET__: process.env.INJECT_CFG_S3_SECRET,
+  __CFG_S3_FORCE_PATH_STYLE__: process.env.INJECT_CFG_S3_FORCE_PATH_STYLE,
+  __CFG_S3_BUCKET_PREFIX__: process.env.INJECT_CFG_S3_BUCKET_PREFIX,
+  __CFG_S3_PUBLIC_URL_PREFIX__: process.env.INJECT_CFG_S3_PUBLIC_URL_PREFIX,
+  __CFG_REDIS_HOST__: process.env.INJECT_CFG_REDIS_HOST,
+  __CFG_REDIS_PORT__: process.env.INJECT_CFG_REDIS_PORT,
+  __CFG_REDIS_PASS__: process.env.INJECT_CFG_REDIS_PASS,
+  __CFG_SEARCH_API_BASE_URL__: process.env.INJECT_CFG_SEARCH_API_BASE_URL,
+  __CFG_SMTP_HOST__: process.env.INJECT_CFG_SMTP_HOST,
+  __CFG_SMTP_PORT__: process.env.INJECT_CFG_SMTP_PORT,
+  __CFG_MAIL_FROM__: process.env.INJECT_CFG_MAIL_FROM,
+  __CFG_ID_WORKER__: process.env.INJECT_CFG_ID_WORKER,
+  __CFG_OPENAI_API_KEY__: process.env.INJECT_CFG_OPENAI_API_KEY,
+  __CFG_TEST_SIGNUP_CODE__: process.env.INJECT_CFG_TEST_SIGNUP_CODE,
+};
+
+const escapeSingleQuotedShellContent = (value) =>
+  String(value ?? '').replace(/'/g, "'\"'\"'");
+
+for (const [placeholder, value] of Object.entries(replacements)) {
+  if (!text.includes(placeholder)) {
+    throw new Error(`placeholder not found: ${placeholder}`);
+  }
+  text = text.split(placeholder).join(escapeSingleQuotedShellContent(value));
+}
+
+fs.writeFileSync(path, text);
+NODE
 
 chmod +x "$TARGET/start.sh"
 
