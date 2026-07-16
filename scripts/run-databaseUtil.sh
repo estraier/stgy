@@ -13,6 +13,4 @@ set +a
 export STGY_DATABASE_HOST=localhost
 export STGY_REDIS_HOST=localhost
 
-cd backend
-
-ts-node src/databaseUtil.ts "$@"
+npm run --silent backend:database-util -- "$@"
