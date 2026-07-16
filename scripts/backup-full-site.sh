@@ -436,15 +436,15 @@ do_restore_objects() {
       mc mb "stgys3/${bucket}" >/dev/null
     fi
 
-    mc mirror --overwrite --remove "$(join_path "$indir" "$bucket")" "stgys3/${bucket}"
+    mc mirror --overwrite --remove --preserve "$(join_path "$indir" "$bucket")" "stgys3/${bucket}"
 
     if [ -n "${STGY_STORAGE_S3_ANON_DOWNLOAD_BUCKETS:-}" ]; then
       if split_csv "${STGY_STORAGE_S3_ANON_DOWNLOAD_BUCKETS}" | grep -Fxq "$bucket"; then
-        mc anonymous set download "stgys3/${bucket}" >/dev/null 2>&1 || true
+        mc anonymous set download "stgys3/${bucket}" >/dev/null
       fi
     else
       if [ "$bucket" = "stgy-images" ] || [ "$bucket" = "stgy-profiles" ] || [ "$bucket" = "stgy-tracks" ] || [ "$bucket" = "stgy-test" ]; then
-        mc anonymous set download "stgys3/${bucket}" >/dev/null 2>&1 || true
+        mc anonymous set download "stgys3/${bucket}" >/dev/null
       fi
     fi
   done < <(ls -1 "$indir" 2>/dev/null || true)

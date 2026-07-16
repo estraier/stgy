@@ -195,7 +195,10 @@ status_one() {
 
 start_all() {
   start_one "backend" "dist/index.js"
-  start_one "oneworker" "dist/oneWorker.js"
+  if ! start_one "oneworker" "dist/oneWorker.js"; then
+    stop_one "backend"
+    return 1
+  fi
 }
 
 stop_all() {
