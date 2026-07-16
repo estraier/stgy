@@ -62,6 +62,7 @@ mkdir -p "$TARGET"
 
 # Install runtime assets
 rsync -a --delete backend/dist/           "$TARGET/dist/"
+rsync -a --delete backend/src/prompts/     "$TARGET/dist/prompts/"
 rsync -a            backend/package.json  "$TARGET/backend.package.json"
 rsync -a --delete node_modules/           "$TARGET/node_modules/"
 rsync -a --delete packages/               "$TARGET/packages/"
