@@ -360,7 +360,7 @@ detect_buckets() {
     return 0
   fi
 
-  mc ls "stgys3" 2>/dev/null | awk '{print $NF}' | sed 's:/*$::' | sed '/^$/d' || true
+  mc ls "stgys3" | awk '{print $NF}' | sed 's:/*$::' | sed '/^$/d'
 }
 
 do_backup_objects() {
@@ -382,6 +382,9 @@ do_backup_objects() {
       base_objects_dir=""
     fi
   fi
+
+  local buckets
+  buckets="$(detect_buckets)"
 
   local bucket
   while read -r bucket; do
@@ -405,7 +408,7 @@ do_backup_objects() {
     fi
 
     mc mirror --overwrite --remove --preserve "stgys3/${bucket}" "$dest_bucket"
-  done < <(detect_buckets)
+  done <<<"$buckets"
 }
 
 do_restore_objects() {
