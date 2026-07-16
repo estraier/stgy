@@ -64,8 +64,8 @@ fi
 export STGY_FRONTEND_HOST=localhost
 export STGY_FRONTEND_CANONICAL_URL=http://localhost:8080
 export STGY_FRONTEND_ORIGIN=http://localhost:3000,http://localhost:8080
-export STGY_BACKEND_API_BASE_URL=http://localhost:3100
-export STGY_BACKEND_API_PRIVATE_URL_LIST=http://localhost:3100
+export STGY_BACKEND_API_BASE_URL="http://localhost:${PORT}"
+export STGY_BACKEND_API_PRIVATE_URL_LIST="http://localhost:${PORT}"
 export STGY_SEARCH_API_BASE_URL=http://localhost:3200
 export STGY_DATABASE_HOST=localhost
 export STGY_STORAGE_S3_ENDPOINT=http://localhost:9000
@@ -78,25 +78,42 @@ if [ "${OVERRIDING_OPENAI_API_KEY}" != "-" ]; then
   export STGY_OPENAI_API_KEY="${OVERRIDING_OPENAI_API_KEY}"
 fi
 
+declare -a WORKER_PIDS=()
+
+start_worker() {
+  local npm_script="$1"
+  (
+    sleep 3
+    exec npm run "$npm_script"
+  ) &
+  WORKER_PIDS+=("$!")
+}
+
 cleanup() {
+  local pid
   trap - INT TERM EXIT
-  kill 0 >/dev/null 2>&1 || true
+  for pid in "${WORKER_PIDS[@]}"; do
+    kill -TERM "$pid" >/dev/null 2>&1 || true
+  done
+  for pid in "${WORKER_PIDS[@]}"; do
+    wait "$pid" >/dev/null 2>&1 || true
+  done
 }
 trap cleanup INT TERM EXIT
 
 case "${WORKER}" in
   multi)
     echo "[run-local-backend] running multiple workers"
-    (sleep 3 ; npm run backend:mail-worker) &
-    (sleep 3 ; npm run backend:media-worker) &
-    (sleep 3 ; npm run backend:notification-worker) &
-    (sleep 3 ; npm run backend:search-index-worker) &
-    (sleep 3 ; npm run backend:ai-summary-worker) &
-    (sleep 3 ; npm run backend:ai-user-worker) &
+    start_worker backend:mail-worker
+    start_worker backend:media-worker
+    start_worker backend:notification-worker
+    start_worker backend:search-index-worker
+    start_worker backend:ai-summary-worker
+    start_worker backend:ai-user-worker
     ;;
   one)
     echo "[run-local-backend] running one worker"
-    (sleep 3 ; npm run backend:one-worker) &
+    start_worker backend:one-worker
     ;;
   *)
     echo "[run-local-backend] running no workers"

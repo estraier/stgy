@@ -72,104 +72,115 @@ def delete_post(admin_cookies, post_id):
 
 def parse_line(line):
   s = line.strip()
-  if not s or ":" not in s:
+  if not s:
     return None, None
+  if ":" not in s:
+    raise ValueError("action line must contain ':'")
   k, v = s.split(":", 1)
-  return k.strip(), v.strip()
+  key = k.strip()
+  value = v.strip()
+  if not key:
+    raise ValueError("action name is empty")
+  return key, value
 
 def parse_csv_ids(v):
   parts = [p.strip() for p in v.split(",")]
-  if len(parts) < 2:
-    raise ValueError("need two comma-separated ids")
+  if len(parts) != 2 or not all(parts):
+    raise ValueError("need exactly two non-empty comma-separated ids")
   return parts[0], parts[1]
 
-def main():
-  if len(sys.argv) < 2:
+def main(argv=None):
+  if argv is None:
+    argv = sys.argv
+  if len(argv) < 2:
     print("usage: user-actions.py <files...>")
-    sys.exit(1)
+    return 2
 
-  files = sorted(sys.argv[1:])
+  files = sorted(argv[1:])
   admin_cookies = admin_login()
   switched_cache = {}
+  ok_count = 0
+  err_count = 0
 
   for path in files:
     with open(path, "r", encoding="utf-8") as f:
-      for raw in f:
-        k, v = parse_line(raw)
+      for line_number, raw in enumerate(f, 1):
+        try:
+          k, v = parse_line(raw)
+        except ValueError as e:
+          print(f"[ERR] {path}:{line_number}: {e}: {raw.strip()!r}")
+          err_count += 1
+          continue
         if not k:
           continue
-        if k == "like":
-          try:
-            actor_id, post_id = parse_csv_ids(v)
-          except Exception as e:
-            print(f"[like] skip malformed '{raw.strip()}': {e}")
-            continue
-          if actor_id not in switched_cache:
-            try:
-              switched_cache[actor_id] = switch_user(admin_cookies, actor_id)
-            except Exception as e:
-              print(f"[switch-user] {actor_id}: {e}")
-              continue
-          ok, msg = do_like(switched_cache[actor_id], post_id)
-          if ok:
-            print(f"[like] {actor_id} -> post {post_id}: ok")
-          else:
-            print(f"[like] {actor_id} -> post {post_id}: {msg}")
 
-        elif k == "follow":
+        if k in ("like", "follow", "block"):
           try:
             actor_id, target_id = parse_csv_ids(v)
-          except Exception as e:
-            print(f"[follow] skip malformed '{raw.strip()}': {e}")
+          except ValueError as e:
+            print(f"[{k}] {path}:{line_number}: malformed action: {e}")
+            err_count += 1
             continue
-          if actor_id not in switched_cache:
-            try:
-              switched_cache[actor_id] = switch_user(admin_cookies, actor_id)
-            except Exception as e:
-              print(f"[switch-user] {actor_id}: {e}")
-              continue
-          ok, msg = do_follow(switched_cache[actor_id], target_id)
-          if ok:
-            print(f"[follow] {actor_id} -> user {target_id}: ok")
-          else:
-            print(f"[follow] {actor_id} -> user {target_id}: {msg}")
 
-        elif k == "block":
-          try:
-            actor_id, target_id = parse_csv_ids(v)
-          except Exception as e:
-            print(f"[follow] skip malformed '{raw.strip()}': {e}")
-            continue
           if actor_id not in switched_cache:
             try:
               switched_cache[actor_id] = switch_user(admin_cookies, actor_id)
             except Exception as e:
               print(f"[switch-user] {actor_id}: {e}")
+              err_count += 1
               continue
-          ok, msg = do_block(switched_cache[actor_id], target_id)
-          if ok:
-            print(f"[block] {actor_id} -> user {target_id}: ok")
+
+          if k == "like":
+            ok, msg = do_like(switched_cache[actor_id], target_id)
+            target_label = f"post {target_id}"
+          elif k == "follow":
+            ok, msg = do_follow(switched_cache[actor_id], target_id)
+            target_label = f"user {target_id}"
           else:
-            print(f"[block] {actor_id} -> user {target_id}: {msg}")
+            ok, msg = do_block(switched_cache[actor_id], target_id)
+            target_label = f"user {target_id}"
+
+          if ok:
+            print(f"[{k}] {actor_id} -> {target_label}: ok")
+            ok_count += 1
+          else:
+            print(f"[{k}] {actor_id} -> {target_label}: {msg}")
+            err_count += 1
 
         elif k == "delete-user":
           user_id = v
+          if not user_id:
+            print(f"[delete-user] {path}:{line_number}: user id is empty")
+            err_count += 1
+            continue
           ok, msg = delete_user(admin_cookies, user_id)
           if ok:
             print(f"[delete-user] {user_id}: ok")
+            ok_count += 1
           else:
             print(f"[delete-user] {user_id}: {msg}")
+            err_count += 1
 
         elif k == "delete-post":
           post_id = v
+          if not post_id:
+            print(f"[delete-post] {path}:{line_number}: post id is empty")
+            err_count += 1
+            continue
           ok, msg = delete_post(admin_cookies, post_id)
           if ok:
             print(f"[delete-post] {post_id}: ok")
+            ok_count += 1
           else:
             print(f"[delete-post] {post_id}: {msg}")
+            err_count += 1
 
         else:
-          print(f"[skip] unknown action: {k}")
+          print(f"[ERR] {path}:{line_number}: unknown action: {k}")
+          err_count += 1
+
+  print(f"[SUMMARY] ok={ok_count} err={err_count}")
+  return 0 if err_count == 0 else 1
 
 if __name__ == "__main__":
-  main()
+  sys.exit(main())
