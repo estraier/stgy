@@ -5,7 +5,6 @@ set -eu
 MARKER="/data/.inited"
 MC_DIR="/data/bin"
 MC="$MC_DIR/mc"
-MC_URL="https://dl.min.io/client/mc/release/linux-amd64/mc"
 
 if [ -f "$MARKER" ]; then
   echo "==> already initialized (skip)"
@@ -14,11 +13,25 @@ fi
 
 echo "==> ensure mc client"
 if ! [ -x "$MC" ]; then
+  case "$(uname -m)" in
+    x86_64|amd64)
+      mc_platform="linux-amd64"
+      ;;
+    aarch64|arm64)
+      mc_platform="linux-arm64"
+      ;;
+    *)
+      echo "Unsupported architecture for MinIO Client: $(uname -m)" >&2
+      exit 1
+      ;;
+  esac
+  mc_url="https://dl.min.io/client/mc/release/${mc_platform}/mc"
+
   mkdir -p "$MC_DIR"
   if command -v wget >/dev/null 2>&1; then
-    wget -qO "$MC" "$MC_URL"
+    wget -qO "$MC" "$mc_url"
   else
-    curl -fsSL "$MC_URL" -o "$MC"
+    curl -fsSL "$mc_url" -o "$MC"
   fi
   chmod +x "$MC"
 fi
