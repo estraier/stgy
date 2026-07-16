@@ -131,12 +131,23 @@ if [[ -z "$NODE_BIN" ]]; then
 fi
 
 pidfile() { echo "$RUN_DIR/$1.pid"; }
+expected_entry() {
+  case "$1" in
+    backend) echo "dist/index.js" ;;
+    oneworker) echo "dist/oneWorker.js" ;;
+    *) return 1 ;;
+  esac
+}
 is_running() {
   local name="$1" pidfile_path; pidfile_path="$(pidfile "$name")"
   [[ -f "$pidfile_path" ]] || return 1
   local pid; pid="$(cat "$pidfile_path" 2>/dev/null || true)"
   [[ -n "$pid" && -d "/proc/$pid" ]] || return 1
-  return 0
+
+  # A stale PID file may point to an unrelated process after PID reuse.
+  # Verify that the process command line contains the expected Node.js entrypoint.
+  local entry; entry="$(expected_entry "$name")" || return 1
+  grep -Fzxq -- "$entry" "/proc/$pid/cmdline" 2>/dev/null
 }
 
 start_one() {
