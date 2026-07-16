@@ -7,6 +7,7 @@ source .env
 set +a
 
 docker compose exec -T postgres psql \
+  -v ON_ERROR_STOP=1 \
   -U "$STGY_DATABASE_USER" \
   "$STGY_DATABASE_NAME" \
   -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
@@ -22,6 +23,7 @@ fi
 
 for file in "${sql_files[@]}"; do
   docker compose exec -T postgres psql \
+    -v ON_ERROR_STOP=1 \
     -U "$STGY_DATABASE_USER" \
     "$STGY_DATABASE_NAME" < "$file"
 done
