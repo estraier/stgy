@@ -103,6 +103,7 @@ services:
       - "127.0.0.1:${STGY_MAILPIT_CONSOLE_PORT:-8025}:${STGY_MAILPIT_CONSOLE_PORT:-8025}"
 
   caddy:
+    <<: *host_gw
     image: caddy:2
     networks: [stgy_net]
     ports:
