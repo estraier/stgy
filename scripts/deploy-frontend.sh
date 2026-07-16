@@ -38,7 +38,11 @@ mkdir -p "$TARGET"
 mkdir -p "$TARGET/frontend/.next/static" "$TARGET/frontend/public"
 
 # Copy Next.js standalone runtime + assets
-rsync -a --delete frontend/.next/standalone/         "$TARGET/"
+rsync -a --delete \
+  --exclude=/run/ \
+  --exclude=/logs/ \
+  --exclude=/start.sh \
+  frontend/.next/standalone/ "$TARGET/"
 rsync -a --delete frontend/.next/static/             "$TARGET/frontend/.next/static/"
 rsync -a --delete frontend/public/                   "$TARGET/frontend/public/"
 
