@@ -95,7 +95,7 @@ fix_endpoint_if_unresolvable() {
 }
 
 today_yyyy_mm_dd() {
-  date -u +"%Y-%m-%d"
+  date +"%Y-%m-%d"
 }
 
 split_csv() {
