@@ -897,7 +897,7 @@ submission inet  n       -       n       -       -       smtpd
 SASL認証のためのアカウントを作る必要がある。ここでは postfix@stgy.jp というアカウントを作る。パスワードを聞かれるので、予め決めておいた文字列を入力する。その後の確認コマンドで「postfix@stgy.jp: userPassword」と表示されれば成功。
 
 ```:small
-sudo saslpasswd2 postfix -u stgy.jp
+sudo saslpasswd2 -c postfix -u stgy.jp
 sudo chgrp sasl /etc/sasldb2
 sudo sasldblistusers2
 ```
