@@ -1,20 +1,21 @@
 #!/bin/bash
 
-set -eu
+set -euo pipefail
 
-docker compose exec -T minio sh -lc "
-  mc alias set local 'http://localhost:9000' \"\$MINIO_ROOT_USER\" \"\$MINIO_ROOT_PASSWORD\" >/dev/null
-"
+docker compose exec -T minio sh -eu -c '
+  mc alias set local "http://localhost:9000" "$MINIO_ROOT_USER" "$MINIO_ROOT_PASSWORD" >/dev/null
+'
 
-BUCKETS="stgy-test stgy-images stgy-profiles stgy-tracks"
+readonly BUCKETS=(stgy-test stgy-images stgy-profiles stgy-tracks)
 
-for b in $BUCKETS; do
-  docker compose exec -T minio sh -lc "
-    mc rb --force local/$b >/dev/null 2>&1 || true
-    mc mb local/$b >/dev/null 2>&1 || true
-    mc anonymous set download local/$b >/dev/null 2>&1 || true
-  "
-  echo "reset bucket: $b"
+for bucket in "${BUCKETS[@]}"; do
+  docker compose exec -T minio sh -eu -c '
+    bucket="$1"
+    mc rb --force "local/$bucket" >/dev/null 2>&1 || true
+    mc mb "local/$bucket" >/dev/null
+    mc anonymous set download "local/$bucket" >/dev/null
+  ' sh "$bucket"
+  echo "reset bucket: $bucket"
 done
 
 echo "==> MinIO reset done."
