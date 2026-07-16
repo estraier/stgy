@@ -12,6 +12,7 @@ set +a
 
 CMD="dev"
 PORT="${STGY_FRONTEND_PORT:-3000}"
+CADDY_PORT="${STGY_CADDY_PORT:-8080}"
 
 declare -a PASS_ARGS=()
 
@@ -41,15 +42,24 @@ if ! [[ "$PORT" =~ ^[0-9]+$ ]] || (( PORT < 1 || PORT > 65535 )); then
   echo "Invalid port: $PORT" >&2
   exit 1
 fi
+if ! [[ "$CADDY_PORT" =~ ^[0-9]+$ ]] || (( CADDY_PORT < 1 || CADDY_PORT > 65535 )); then
+  echo "Invalid Caddy port: $CADDY_PORT" >&2
+  exit 1
+fi
 
 export PORT
-export NEXT_PUBLIC_FRONTEND_CANONICAL_URL=http://localhost:8080
-export NEXT_PUBLIC_BACKEND_API_BASE_URL=http://localhost:8080/backend
-export NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX=http://s3.localhost:8080/{bucket}/
+export NEXT_PUBLIC_FRONTEND_CANONICAL_URL="http://localhost:${CADDY_PORT}"
+export NEXT_PUBLIC_BACKEND_API_BASE_URL="http://localhost:${CADDY_PORT}/backend"
+export NEXT_PUBLIC_STORAGE_S3_PUBLIC_URL_PREFIX="http://s3.localhost:${CADDY_PORT}/{bucket}/"
 
-echo "[run-local-frontend] port=${PORT} cmd=${CMD}"
-echo "[run-local-frontend] npm run ${CMD} -- ${PASS_ARGS[*]-}"
+echo "[run-local-frontend] port=${PORT} caddy_port=${CADDY_PORT} cmd=${CMD}"
 
+if [[ "$CMD" == "start" ]]; then
+  echo "[run-local-frontend] npm run frontend:build"
+  npm run frontend:build
+fi
+
+echo "[run-local-frontend] npm run frontend:${CMD} -- ${PASS_ARGS[*]-}"
 if ((${#PASS_ARGS[@]})); then
   npm run "frontend:${CMD}" -- "${PASS_ARGS[@]}"
 else

@@ -46,8 +46,13 @@ export STGY_SEARCH_PORT="$PORT"
 export STGY_SEARCH_LOG_FORMAT="simple"
 
 echo "[run-local-ttts] port=${STGY_SEARCH_PORT} cmd=${CMD}"
-echo "[run-local-ttts] npm run ${CMD} -- ${PASS_ARGS[*]-}"
 
+if [[ "$CMD" == "start" ]]; then
+  echo "[run-local-ttts] npm run ttts:build"
+  npm run ttts:build
+fi
+
+echo "[run-local-ttts] npm run ttts:${CMD} -- ${PASS_ARGS[*]-}"
 if ((${#PASS_ARGS[@]})); then
   npm run "ttts:${CMD}" -- "${PASS_ARGS[@]}"
 else
