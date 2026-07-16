@@ -21,19 +21,20 @@ usage() {
   cat >&2 <<__EOF__
 Usage:
   $SCRIPT_NAME backup  [--root DIR] [--name NAME] [--db|--no-db] [--objects|--no-objects]
+                       [--stop-command COMMAND --start-command COMMAND]
   $SCRIPT_NAME restore [--root DIR] [--db|--no-db] [--objects|--no-objects] NAME
   $SCRIPT_NAME prune   [--root DIR] [--retain-generations N]
   $SCRIPT_NAME list    [--root DIR]
 
 Environment (DB):
-  STGY_DATABASE_HOST        (default: postgres; fallback: 127.0.0.1 if not resolvable)
+  STGY_DATABASE_HOST        (default: postgres; only the default name falls back to 127.0.0.1)
   STGY_DATABASE_PORT        (default: 5432)
   STGY_DATABASE_USER        (default: admin)
   STGY_DATABASE_PASSWORD    (default: stgystgy)
   STGY_DATABASE_NAME        (default: stgy)
 
 Environment (S3/MinIO):
-  STGY_STORAGE_S3_ENDPOINT              (default: http://minio:9000 ; fallback host->127.0.0.1 if not resolvable)
+  STGY_STORAGE_S3_ENDPOINT              (default: http://minio:9000; only the default host falls back to 127.0.0.1)
   STGY_STORAGE_S3_REGION                (optional: used when creating buckets on restore)
   STGY_STORAGE_S3_ACCESS_KEY_ID         (fallback: STGY_MINIO_ROOT_USER, then "admin")
   STGY_STORAGE_S3_SECRET_ACCESS_KEY     (fallback: STGY_MINIO_ROOT_PASSWORD, then "stgystgy")
@@ -46,6 +47,8 @@ Backup layout:
 
 Examples:
   $SCRIPT_NAME backup
+  $SCRIPT_NAME backup --stop-command 'docker compose stop backend worker' \
+    --start-command 'docker compose start backend worker'
   $SCRIPT_NAME restore full-site-2026-01-12
   $SCRIPT_NAME prune --retain-generations 7
 __EOF__
@@ -64,16 +67,22 @@ is_resolvable_host() {
 resolve_host_or_localhost() {
   local host="$1"
   local fallback="${2:-127.0.0.1}"
+  local fallback_name="${3:-}"
   if is_resolvable_host "$host"; then
     echo "$host"
     return 0
   fi
-  log "warning: host '$host' is not resolvable; falling back to $fallback"
-  echo "$fallback"
+  if [ -n "$fallback_name" ] && [ "$host" = "$fallback_name" ]; then
+    log "warning: default host '$host' is not resolvable; falling back to $fallback"
+    echo "$fallback"
+    return 0
+  fi
+  die "host is not resolvable: $host"
 }
 
 fix_endpoint_if_unresolvable() {
   local url="$1"
+  local fallback_name="${2:-minio}"
 
   if [[ "$url" =~ ^([a-zA-Z][a-zA-Z0-9+.-]*)://([^/:]+)(:([0-9]+))?(/.*)?$ ]]; then
     local scheme="${BASH_REMATCH[1]}"
@@ -85,13 +94,15 @@ fix_endpoint_if_unresolvable() {
       echo "$url"
       return 0
     fi
-
-    log "warning: endpoint host '$host' is not resolvable; falling back to 127.0.0.1"
-    echo "${scheme}://127.0.0.1${port_part}${rest}"
-    return 0
+    if [ "$host" = "$fallback_name" ]; then
+      log "warning: default endpoint host '$host' is not resolvable; falling back to 127.0.0.1"
+      echo "${scheme}://127.0.0.1${port_part}${rest}"
+      return 0
+    fi
+    die "endpoint host is not resolvable: $host"
   fi
 
-  echo "$url"
+  die "invalid S3 endpoint URL: $url"
 }
 
 today_yyyy_mm_dd() {
@@ -128,20 +139,40 @@ OBJECTS_ENABLED="1"
 
 BACKUP_ROOT="$BACKUP_ROOT_DEFAULT"
 BACKUP_NAME=""
+BACKUP_STOP_COMMAND=""
+BACKUP_START_COMMAND=""
+WRITERS_STOPPED="0"
 
 RETAIN_GENERATIONS="$RETAIN_DEFAULT"
 
 HARDLINK_BASE=""
 BACKUP_WORK_DEST=""
 
-cleanup_incomplete_backup() {
+cleanup_backup() {
   local status=$?
   trap - EXIT
+
   if [ -n "$BACKUP_WORK_DEST" ] && [ -e "$BACKUP_WORK_DEST" ]; then
     log "removing incomplete backup: $BACKUP_WORK_DEST"
     rm -rf -- "$BACKUP_WORK_DEST"
   fi
+
+  if [ "$WRITERS_STOPPED" = "1" ]; then
+    log "starting writers..."
+    if ! /bin/bash -c "$BACKUP_START_COMMAND"; then
+      log "ERROR: failed to restart writers"
+      [ "$status" -ne 0 ] || status=1
+    fi
+    WRITERS_STOPPED="0"
+  fi
+
   exit "$status"
+}
+
+validate_generation_name() {
+  local name="$1"
+  [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
+    die "invalid backup generation name: $name"
 }
 
 if [ $# -lt 1 ]; then
@@ -178,6 +209,24 @@ case "$COMMAND" in
         --no-db) DB_ENABLED="0"; shift ;;
         --objects) OBJECTS_ENABLED="1"; shift ;;
         --no-objects) OBJECTS_ENABLED="0"; shift ;;
+        --stop-command)
+          [[ $# -ge 2 ]] || die "--stop-command requires a value"
+          BACKUP_STOP_COMMAND="$2"
+          shift 2
+          ;;
+        --stop-command=*)
+          BACKUP_STOP_COMMAND="${1#*=}"
+          shift
+          ;;
+        --start-command)
+          [[ $# -ge 2 ]] || die "--start-command requires a value"
+          BACKUP_START_COMMAND="$2"
+          shift 2
+          ;;
+        --start-command=*)
+          BACKUP_START_COMMAND="${1#*=}"
+          shift
+          ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown option: $1" ;;
       esac
@@ -269,7 +318,6 @@ need_cmd sort
 need_cmd tail
 need_cmd sed
 need_cmd tr
-need_cmd getent
 need_cmd wc
 need_cmd head
 need_cmd awk
@@ -278,14 +326,14 @@ need_cmd cp
 need_cmd mv
 
 DB_HOST_RAW="${STGY_DATABASE_HOST:-postgres}"
-DB_HOST="$(resolve_host_or_localhost "$DB_HOST_RAW" "127.0.0.1")"
+DB_HOST=""
 DB_PORT="${STGY_DATABASE_PORT:-5432}"
 DB_USER="${STGY_DATABASE_USER:-admin}"
 DB_PASSWORD="${STGY_DATABASE_PASSWORD:-stgystgy}"
 DB_NAME="${STGY_DATABASE_NAME:-stgy}"
 
 S3_ENDPOINT_RAW="${STGY_STORAGE_S3_ENDPOINT:-http://minio:9000}"
-S3_ENDPOINT="$(fix_endpoint_if_unresolvable "$S3_ENDPOINT_RAW")"
+S3_ENDPOINT=""
 S3_REGION="${STGY_STORAGE_S3_REGION:-}"
 S3_ACCESS_KEY="${STGY_STORAGE_S3_ACCESS_KEY_ID:-${STGY_MINIO_ROOT_USER:-admin}}"
 S3_SECRET_KEY="${STGY_STORAGE_S3_SECRET_ACCESS_KEY:-${STGY_MINIO_ROOT_PASSWORD:-stgystgy}}"
@@ -293,6 +341,30 @@ S3_SECRET_KEY="${STGY_STORAGE_S3_SECRET_ACCESS_KEY:-${STGY_MINIO_ROOT_PASSWORD:-
 if [ -z "$BACKUP_NAME" ] && [ "$COMMAND" = "backup" ]; then
   BACKUP_NAME="full-site-$(today_yyyy_mm_dd)"
 fi
+
+if [ "$COMMAND" = "backup" ] || [ "$COMMAND" = "restore" ]; then
+  validate_generation_name "$BACKUP_NAME"
+  if [ "$DB_ENABLED" = "0" ] && [ "$OBJECTS_ENABLED" = "0" ]; then
+    die "neither database nor objects were selected"
+  fi
+fi
+
+if [ -n "$BACKUP_STOP_COMMAND" ] || [ -n "$BACKUP_START_COMMAND" ]; then
+  [ -n "$BACKUP_STOP_COMMAND" ] && [ -n "$BACKUP_START_COMMAND" ] ||
+    die "--stop-command and --start-command must be specified together"
+fi
+
+prepare_db_connection() {
+  [ -z "$DB_HOST" ] || return 0
+  need_cmd getent
+  DB_HOST="$(resolve_host_or_localhost "$DB_HOST_RAW" "127.0.0.1" "postgres")"
+}
+
+prepare_s3_connection() {
+  [ -z "$S3_ENDPOINT" ] || return 0
+  need_cmd getent
+  S3_ENDPOINT="$(fix_endpoint_if_unresolvable "$S3_ENDPOINT_RAW" "minio")"
+}
 
 compute_hardlink_base() {
   local root="$1"
@@ -305,6 +377,7 @@ compute_hardlink_base() {
 }
 
 do_backup_db() {
+  prepare_db_connection
   need_cmd pg_dump
 
   local outdir="$1"
@@ -324,6 +397,7 @@ do_backup_db() {
 }
 
 do_restore_db() {
+  prepare_db_connection
   need_cmd psql
   need_cmd pg_restore
 
@@ -349,6 +423,7 @@ do_restore_db() {
     -d "$DB_NAME" \
     --no-owner \
     --no-privileges \
+    --exit-on-error \
     "$dumpfile"
 }
 
@@ -364,6 +439,7 @@ detect_buckets() {
 }
 
 do_backup_objects() {
+  prepare_s3_connection
   need_cmd mc
 
   local outdir="$1"
@@ -385,6 +461,7 @@ do_backup_objects() {
 
   local buckets
   buckets="$(detect_buckets)"
+  [ -n "$buckets" ] || die "no S3 buckets found"
 
   local bucket
   while read -r bucket; do
@@ -412,6 +489,7 @@ do_backup_objects() {
 }
 
 do_restore_objects() {
+  prepare_s3_connection
   need_cmd mc
 
   local indir="$1"
@@ -421,10 +499,11 @@ do_restore_objects() {
 
   mc alias set stgys3 "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null
 
-  local bucket
-  while read -r bucket; do
-    [ -n "$bucket" ] || continue
-    [ -d "$(join_path "$indir" "$bucket")" ] || continue
+  local bucket_dir bucket found="0"
+  for bucket_dir in "$indir"/*; do
+    [ -d "$bucket_dir" ] || continue
+    found="1"
+    bucket="${bucket_dir##*/}"
 
     log "  bucket=$bucket"
 
@@ -436,7 +515,7 @@ do_restore_objects() {
       mc mb "stgys3/${bucket}" >/dev/null
     fi
 
-    mc mirror --overwrite --remove --preserve "$(join_path "$indir" "$bucket")" "stgys3/${bucket}"
+    mc mirror --overwrite --remove --preserve "$bucket_dir" "stgys3/${bucket}"
 
     if [ -n "${STGY_STORAGE_S3_ANON_DOWNLOAD_BUCKETS:-}" ]; then
       if split_csv "${STGY_STORAGE_S3_ANON_DOWNLOAD_BUCKETS}" | grep -Fxq "$bucket"; then
@@ -447,7 +526,48 @@ do_restore_objects() {
         mc anonymous set download "stgys3/${bucket}" >/dev/null
       fi
     fi
-  done < <(ls -1 "$indir" 2>/dev/null || true)
+  done
+  [ "$found" = "1" ] || die "no bucket directories found: $indir"
+}
+
+preflight_restore_db() {
+  prepare_db_connection
+  need_cmd psql
+  need_cmd pg_restore
+
+  local indir="$1"
+  local dumpfile
+  dumpfile="$(join_path "$indir" "stgy.dump")"
+  [ -f "$dumpfile" ] || die "db dump not found: $dumpfile"
+
+  pg_restore --list "$dumpfile" >/dev/null
+  PGPASSWORD="$DB_PASSWORD" psql \
+    -h "$DB_HOST" \
+    -p "$DB_PORT" \
+    -U "$DB_USER" \
+    -d "$DB_NAME" \
+    -v ON_ERROR_STOP=1 \
+    -c "SELECT 1;" >/dev/null
+}
+
+preflight_restore_objects() {
+  prepare_s3_connection
+  need_cmd mc
+
+  local indir="$1"
+  [ -d "$indir" ] || die "objects dir not found: $indir"
+
+  local bucket_dir found="0"
+  for bucket_dir in "$indir"/*; do
+    if [ -d "$bucket_dir" ]; then
+      found="1"
+      break
+    fi
+  done
+  [ "$found" = "1" ] || die "no bucket directories found: $indir"
+
+  mc alias set stgys3 "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null
+  mc ls stgys3 >/dev/null
 }
 
 do_backup() {
@@ -468,7 +588,13 @@ do_backup() {
   fi
 
   BACKUP_WORK_DEST="$work"
-  trap cleanup_incomplete_backup EXIT
+  trap cleanup_backup EXIT
+
+  if [ -n "$BACKUP_STOP_COMMAND" ]; then
+    log "stopping writers..."
+    WRITERS_STOPPED="1"
+    /bin/bash -c "$BACKUP_STOP_COMMAND"
+  fi
 
   mkdir -p "$work"
 
@@ -485,8 +611,14 @@ do_backup() {
 
   mv "$work" "$dest"
   BACKUP_WORK_DEST=""
-  trap - EXIT
   log "backup done: $dest"
+
+  if [ "$WRITERS_STOPPED" = "1" ]; then
+    log "starting writers..."
+    WRITERS_STOPPED="0"
+    /bin/bash -c "$BACKUP_START_COMMAND"
+  fi
+  trap - EXIT
 }
 
 do_restore() {
@@ -497,6 +629,13 @@ do_restore() {
   log "restore-root=$BACKUP_ROOT"
   log "name=$BACKUP_NAME"
   log "db=$DB_ENABLED objects=$OBJECTS_ENABLED"
+
+  if [ "$DB_ENABLED" = "1" ]; then
+    preflight_restore_db "$(join_path "$src" "db")"
+  fi
+  if [ "$OBJECTS_ENABLED" = "1" ]; then
+    preflight_restore_objects "$(join_path "$src" "objects")"
+  fi
 
   if [ "$DB_ENABLED" = "1" ]; then
     do_restore_db "$(join_path "$src" "db")"

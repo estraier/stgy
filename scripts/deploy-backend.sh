@@ -336,7 +336,7 @@ for (const [placeholder, value] of Object.entries(replacements)) {
 fs.writeFileSync(path, text);
 NODE
 
-chmod +x "$TARGET/start.sh"
+chmod 700 "$TARGET/start.sh"
 
 # Ownership (best-effort if changing user/group)
 if [[ "$(id -un)" != "$OWNER" ]] || [[ "$(id -gn)" != "$GROUP" ]]; then

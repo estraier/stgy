@@ -4,7 +4,7 @@ set -euo pipefail
 # ====== Embedded "production" config (baked into build and start.sh) ======
 CFG_NODE_ENV=production
 CFG_FRONTEND_PORT=3000           # Next.js listen port
-CFG_HOSTNAME=127.0.0.1           # Bind to localhost (Caddy will reverse-proxy)
+CFG_HOSTNAME=0.0.0.0           # Reachable from native Caddy and Docker bridge
 
 # Values used at build-time for client bundle (also baked into start.sh)
 CFG_NEXT_PUBLIC_FRONTEND_CANONICAL_URL=https://stgy.jp
