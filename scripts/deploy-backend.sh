@@ -229,11 +229,10 @@ case "${1:-start}" in
     start_all
     # Wait until any child exits; then stop the rest and propagate failure.
     while true; do
-      if ! pgrep -F "$(pidfile backend)" >/dev/null 2>&1 || \
-         ! pgrep -F "$(pidfile oneworker)" >/dev/null 2>&1; then
+      if ! is_running "backend" || ! is_running "oneworker"; then
         echo "[supervisor] a child process exited; stopping the others..."
         stop_all
-        # non-zero exit if backend died
+        # non-zero exit if either child died
         exit 1
       fi
       sleep 1
