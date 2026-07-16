@@ -132,6 +132,17 @@ BACKUP_NAME=""
 RETAIN_GENERATIONS="$RETAIN_DEFAULT"
 
 HARDLINK_BASE=""
+BACKUP_WORK_DEST=""
+
+cleanup_incomplete_backup() {
+  local status=$?
+  trap - EXIT
+  if [ -n "$BACKUP_WORK_DEST" ] && [ -e "$BACKUP_WORK_DEST" ]; then
+    log "removing incomplete backup: $BACKUP_WORK_DEST"
+    rm -rf -- "$BACKUP_WORK_DEST"
+  fi
+  exit "$status"
+}
 
 if [ $# -lt 1 ]; then
   usage
@@ -264,6 +275,7 @@ need_cmd head
 need_cmd awk
 need_cmd grep
 need_cmd cp
+need_cmd mv
 
 DB_HOST_RAW="${STGY_DATABASE_HOST:-postgres}"
 DB_HOST="$(resolve_host_or_localhost "$DB_HOST_RAW" "127.0.0.1")"
@@ -437,8 +449,9 @@ do_restore_objects() {
 
 do_backup() {
   mkdir -p "$BACKUP_ROOT"
-  local dest
+  local dest work
   dest="$(join_path "$BACKUP_ROOT" "$BACKUP_NAME")"
+  work="$(join_path "$BACKUP_ROOT" ".${BACKUP_NAME}.partial.$$")"
 
   log "backup-root=$BACKUP_ROOT"
   log "name=$BACKUP_NAME"
@@ -447,20 +460,29 @@ do_backup() {
   if [ -e "$dest" ]; then
     die "backup destination already exists: $dest"
   fi
+  if [ -e "$work" ]; then
+    die "backup work destination already exists: $work"
+  fi
 
-  mkdir -p "$dest"
+  BACKUP_WORK_DEST="$work"
+  trap cleanup_incomplete_backup EXIT
+
+  mkdir -p "$work"
 
   if [ "$DB_ENABLED" = "1" ]; then
-    mkdir -p "$(join_path "$dest" "db")"
-    do_backup_db "$(join_path "$dest" "db")"
+    mkdir -p "$(join_path "$work" "db")"
+    do_backup_db "$(join_path "$work" "db")"
   fi
 
   if [ "$OBJECTS_ENABLED" = "1" ]; then
     HARDLINK_BASE="$(compute_hardlink_base "$BACKUP_ROOT" "$BACKUP_NAME" || true)"
-    mkdir -p "$(join_path "$dest" "objects")"
-    do_backup_objects "$(join_path "$dest" "objects")"
+    mkdir -p "$(join_path "$work" "objects")"
+    do_backup_objects "$(join_path "$work" "objects")"
   fi
 
+  mv "$work" "$dest"
+  BACKUP_WORK_DEST=""
+  trap - EXIT
   log "backup done: $dest"
 }
 
