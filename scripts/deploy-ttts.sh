@@ -68,7 +68,10 @@ is_running() {
   [[ -f "$pidfile_path" ]] || return 1
   local pid; pid="$(cat "$pidfile_path" 2>/dev/null || true)"
   [[ -n "$pid" && -d "/proc/$pid" ]] || return 1
-  return 0
+
+  # A stale PID file may point to an unrelated process after PID reuse.
+  # Verify that the process command line contains the expected Node.js entrypoint.
+  grep -Fzxq -- "dist/index.js" "/proc/$pid/cmdline" 2>/dev/null
 }
 
 start_one() {
@@ -144,7 +147,7 @@ case "${1:-start}" in
     start_all
     # Wait until child exits
     while true; do
-      if ! pgrep -F "$(pidfile ttts)" >/dev/null 2>&1; then
+      if ! is_running "ttts"; then
         echo "[supervisor] ttts process exited; stopping..."
         stop_all
         exit 1
