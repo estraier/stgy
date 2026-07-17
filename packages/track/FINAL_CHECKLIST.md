@@ -17,18 +17,30 @@ Expected changed or added files are in these groups.
 ### Source files
 
 ```text
-src/index.ts
-src/loader.ts
-src/loader.test.ts
-src/renderer.ts
+src/activity.ts
+src/analysis.ts
+src/analysis.test.ts
+src/browser.ts
+src/css.d.ts
 src/fit.ts
 src/fit.test.ts
 src/fit-demo.ts
-src/fit-demo.html
+src/geo.ts
+src/geo.test.ts
+src/gpx.ts
+src/gpx.test.ts
+src/index.ts
+src/loader.ts
+src/loader.test.ts
+src/metadata.ts
+src/metadata.test.ts
+src/renderer.ts
+src/renderer.test.ts
+src/stgy-track.css
 src/trackjson.ts
 src/trackjson.test.ts
-src/css.d.ts
-src/stgy-track.css
+fit-demo.html
+index.html
 ```
 
 Notes:
@@ -97,6 +109,7 @@ trackjson.schema.json
 ```text
 examples/README.md
 examples/index.html
+examples/base-layer.html
 examples/simple-track.html
 examples/compressed-track.html
 examples/multi-track.html
@@ -279,7 +292,6 @@ Use the actual path in the project.
 Examples:
 
 ```text
-http://localhost:8000/src/fit-demo.html
 http://localhost:8000/fit-demo.html
 ```
 
@@ -315,7 +327,7 @@ Check:
 ```text
 graph panel appears
 X axis can switch distance / time / sample
-Y series can switch altitudes / heartRates / cadences / powers / speeds
+Y series can switch altitudes / heartRates / cadences / powers / speeds / torqueEffectivenessPercentage / pedalSmoothnessPercentage
 smoothing changes only the graph
 HUD remains raw
 Y axis starts at 0 for standard series

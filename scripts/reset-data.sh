@@ -12,11 +12,11 @@ docker compose exec -T postgres psql \
   "$STGY_DATABASE_NAME" \
   -c "DROP SCHEMA public CASCADE; CREATE SCHEMA public;"
 
-mapfile -t sql_files < <(
-  find postgres/init -maxdepth 1 -type f -name '*.sql' -print | LC_ALL=C sort
-)
+shopt -s nullglob
+sql_files=(postgres/init/*.sql)
+shopt -u nullglob
 
-if (( ${#sql_files[@]} == 0 )); then
+if [ "${#sql_files[@]}" -eq 0 ]; then
   echo "No PostgreSQL initialization files found in postgres/init." >&2
   exit 1
 fi

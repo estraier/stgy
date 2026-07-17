@@ -170,7 +170,9 @@ Each array should have the same length as `geometry.coordinates`.
     "heartRates": [120, 121],
     "cadences": [80, 82],
     "powers": [150, 170],
-    "speeds": [25.1, 26.4]
+    "speeds": [25.1, 26.4],
+    "torqueEffectivenessPercentage": [80.1, 81.2],
+    "pedalSmoothnessPercentage": [22.3, 23.4]
   }
 }
 ```
@@ -186,6 +188,8 @@ Standard series:
 | `cadences` | rpm | Cadence |
 | `powers` | W | Power |
 | `speeds` | km/h | Speed |
+| `torqueEffectivenessPercentage` | % | Torque efficiency |
+| `pedalSmoothnessPercentage` | % | Pedal smoothness |
 
 Custom numeric series are allowed.
 
@@ -199,6 +203,8 @@ heartRates
 cadences
 powers
 speeds
+torqueEffectivenessPercentage
+pedalSmoothnessPercentage
 ```
 
 Unsafe property names should not be used.

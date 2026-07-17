@@ -122,10 +122,22 @@ join_path() {
   fi
 }
 
+BACKUP_MARKER_FILE=".stgy-full-site-backup"
+
 list_generations() {
   local root="$1"
   [ -d "$root" ] || return 0
-  (cd "$root" && ls -1d full-site-* 2>/dev/null || true) | sort
+  local path name
+  for path in "$root"/*; do
+    [ -d "$path" ] || continue
+    name="${path##*/}"
+    if [[ "$name" == full-site-* ]] ||
+       [ -f "$path/$BACKUP_MARKER_FILE" ] ||
+       [ -f "$path/db/stgy.dump" ] ||
+       [ -d "$path/objects" ]; then
+      printf '%s\n' "$name"
+    fi
+  done | sort
 }
 
 BACKUP_ROOT_DEFAULT="/var/backups/stgy"
@@ -535,6 +547,7 @@ do_backup() {
   trap cleanup_incomplete_backup EXIT
 
   mkdir -p "$work"
+  : >"$(join_path "$work" "$BACKUP_MARKER_FILE")"
 
   if [ "$DB_ENABLED" = "1" ]; then
     mkdir -p "$(join_path "$work" "db")"

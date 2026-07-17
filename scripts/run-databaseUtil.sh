@@ -13,4 +13,4 @@ set +a
 export STGY_DATABASE_HOST=localhost
 export STGY_REDIS_HOST=localhost
 
-npm run --silent backend:database-util -- "$@"
+npm run --silent database-util --workspace backend -- "$@"

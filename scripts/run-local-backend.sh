@@ -82,18 +82,34 @@ declare -a WORKER_PIDS=()
 
 start_worker() {
   local npm_script="$1"
+  local built_entry="$2"
   (
     sleep 3
-    exec npm run "$npm_script"
+    if [[ "$CMD" == "start" ]]; then
+      exec node "$built_entry"
+    else
+      exec npm run "$npm_script"
+    fi
   ) &
   WORKER_PIDS+=("$!")
 }
 
+terminate_process_tree() {
+  local pid="$1" child
+  while IFS= read -r child; do
+    [ -n "$child" ] && terminate_process_tree "$child"
+  done < <(pgrep -P "$pid" 2>/dev/null || true)
+  kill -TERM "$pid" >/dev/null 2>&1 || true
+}
+
 cleanup() {
-  local pid
+  local pid active_jobs
   trap - INT TERM EXIT
+  active_jobs="$(jobs -pr)"
   for pid in "${WORKER_PIDS[@]}"; do
-    kill -TERM "$pid" >/dev/null 2>&1 || true
+    if grep -Fxq "$pid" <<<"$active_jobs"; then
+      terminate_process_tree "$pid"
+    fi
   done
   for pid in "${WORKER_PIDS[@]}"; do
     wait "$pid" >/dev/null 2>&1 || true
@@ -104,16 +120,16 @@ trap cleanup INT TERM EXIT
 case "${WORKER}" in
   multi)
     echo "[run-local-backend] running multiple workers"
-    start_worker backend:mail-worker
-    start_worker backend:media-worker
-    start_worker backend:notification-worker
-    start_worker backend:search-index-worker
-    start_worker backend:ai-summary-worker
-    start_worker backend:ai-user-worker
+    start_worker backend:mail-worker backend/dist/mailWorker.js
+    start_worker backend:media-worker backend/dist/mediaWorker.js
+    start_worker backend:notification-worker backend/dist/notificationWorker.js
+    start_worker backend:search-index-worker backend/dist/searchIndexWorker.js
+    start_worker backend:ai-summary-worker backend/dist/aiSummaryWorker.js
+    start_worker backend:ai-user-worker backend/dist/aiUserWorker.js
     ;;
   one)
     echo "[run-local-backend] running one worker"
-    start_worker backend:one-worker
+    start_worker backend:one-worker backend/dist/oneWorker.js
     ;;
   *)
     echo "[run-local-backend] running no workers"

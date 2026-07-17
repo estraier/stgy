@@ -18,7 +18,7 @@ fi
 export STGY_STORAGE_S3_ENDPOINT="http://localhost:${MINIO_PORT}"
 
 run_storage_util() {
-    npm run backend:storage-util -- "$@"
+    npm run storage-util --workspace backend -- "$@"
 }
 
 if [ $# -eq 1 ] && [ $1 = "volume" ]

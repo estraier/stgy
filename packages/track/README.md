@@ -243,6 +243,8 @@ Standard coordinate properties:
 | `cadences` | rpm | Cadence |
 | `powers` | W | Power |
 | `speeds` | km/h | Speed |
+| `torqueEffectivenessPercentage` | % | Torque efficiency |
+| `pedalSmoothnessPercentage` | % | Pedal smoothness |
 
 ## TrackJSON metadata
 
@@ -344,6 +346,8 @@ heartRates
 cadences
 powers
 speeds
+torqueEffectivenessPercentage
+pedalSmoothnessPercentage
 custom numeric series
 ```
 
@@ -395,6 +399,8 @@ Current behavior:
 - Cadence ticks include `rpm`
 - Power ticks include `W`
 - Speed ticks include `km/h`
+- Torque efficiency ticks include `%`
+- Pedal smoothness ticks include `%`
 - Y ticks have horizontal grid lines
 - X ticks do not have vertical grid lines
 - Tick labels are intentionally small
@@ -407,6 +413,8 @@ heartRates
 cadences
 powers
 speeds
+torqueEffectivenessPercentage
+pedalSmoothnessPercentage
 ```
 
 For other custom numeric series, the Y axis range is based on the sample range.

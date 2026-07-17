@@ -12,7 +12,7 @@ for RESOURCE in "${RESOURCES[@]}"; do
   echo "Target Resource: $RESOURCE"
   echo "  -> Fetching shard list ..."
 
-  SHARDS_JSON=$(curl --fail-with-body --silent --show-error \
+  SHARDS_JSON=$(curl --fail --silent --show-error \
     "${SEARCH_HOST}/${RESOURCE}/shards")
 
   if ! jq -e 'type == "array" and all(.[]; (.startTimestamp | type) == "number")' \
@@ -21,15 +21,14 @@ for RESOURCE in "${RESOURCES[@]}"; do
     exit 1
   fi
 
-  mapfile -t TIMESTAMPS < <(jq -r '.[].startTimestamp' <<<"$SHARDS_JSON")
-  if [ "${#TIMESTAMPS[@]}" -eq 0 ]; then
+  if [ "$(jq 'length' <<<"$SHARDS_JSON")" -eq 0 ]; then
     echo "     No shards found."
     continue
   fi
 
-  for TS in "${TIMESTAMPS[@]}"; do
+  while IFS= read -r TS; do
     echo "  -> Deleting shard: $TS ..."
-    DELETE_RES=$(curl --fail-with-body --silent --show-error -X DELETE \
+    DELETE_RES=$(curl --fail --silent --show-error -X DELETE \
       "${SEARCH_HOST}/${RESOURCE}/shards/${TS}?wait=60")
     if ! jq -e '.result == "enqueued" and (.taskId | type) == "string"' \
       >/dev/null <<<"$DELETE_RES"; then
@@ -37,7 +36,7 @@ for RESOURCE in "${RESOURCES[@]}"; do
       exit 1
     fi
     echo "     $DELETE_RES"
-  done
+  done < <(jq -r '.[].startTimestamp' <<<"$SHARDS_JSON")
 done
 
 echo "--------------------------------------------------"

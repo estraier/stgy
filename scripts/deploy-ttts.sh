@@ -20,7 +20,6 @@ cd "$REPO_ROOT"
 # Monorepo build (target ttts workspace)
 npm ci --workspaces --include-workspace-root
 npm run build --workspace ttts
-npm prune --omit=dev --workspaces --include-workspace-root
 
 # Prepare target directory
 mkdir -p "$TARGET"
@@ -46,6 +45,8 @@ cd "$APP_DIR"
 RUN_DIR="$APP_DIR/run"
 LOG_DIR="$APP_DIR/logs"
 DATA_DIR="$APP_DIR/__CFG_SEARCH_INDEX_DIR_NAME__"
+STOP_REQUEST_FILE="$RUN_DIR/stop-requested"
+SUPERVISOR_PID_FILE="$RUN_DIR/supervisor.pid"
 
 mkdir -p "$RUN_DIR" "$LOG_DIR" "$DATA_DIR"
 
@@ -63,30 +64,54 @@ if [[ -z "$NODE_BIN" ]]; then
 fi
 
 pidfile() { echo "$RUN_DIR/$1.pid"; }
+expected_entry() { echo "$APP_DIR/dist/index.js"; }
+process_start_time() {
+  local pid="$1" stat
+  stat="$(cat "/proc/$pid/stat" 2>/dev/null)" || return 1
+  local -a fields
+  read -r -a fields <<<"${stat##*) }"
+  [[ ${#fields[@]} -ge 20 ]] || return 1
+  printf '%s\n' "${fields[19]}"
+}
 is_running() {
   local name="$1" pidfile_path; pidfile_path="$(pidfile "$name")"
   [[ -f "$pidfile_path" ]] || return 1
-  local pid; pid="$(cat "$pidfile_path" 2>/dev/null || true)"
-  [[ -n "$pid" && -d "/proc/$pid" ]] || return 1
 
-  # A stale PID file may point to an unrelated process after PID reuse.
-  # Verify that the process command line contains the expected Node.js entrypoint.
-  grep -Fzxq -- "dist/index.js" "/proc/$pid/cmdline" 2>/dev/null
+  local pid recorded_start extra
+  read -r pid recorded_start extra <"$pidfile_path" || return 1
+  [[ "$pid" =~ ^[0-9]+$ && "$recorded_start" =~ ^[0-9]+$ && -z "${extra:-}" ]] || return 1
+  [[ -d "/proc/$pid" ]] || return 1
+
+  local current_start
+  current_start="$(process_start_time "$pid")" || return 1
+  [[ "$current_start" == "$recorded_start" ]] || return 1
+
+  local entry
+  entry="$(expected_entry)"
+  grep -Fzxq -- "$NODE_BIN" "/proc/$pid/cmdline" 2>/dev/null &&
+    grep -Fzxq -- "$entry" "/proc/$pid/cmdline" 2>/dev/null
 }
 
 start_one() {
   local name="$1" entry="$2"
   local log="$LOG_DIR/$name.log" pf; pf="$(pidfile "$name")"
   if is_running "$name"; then
-    echo "[$name] already running (pid $(cat "$pf"))"
+    local pid; read -r pid _ <"$pf"
+    echo "[$name] already running (pid $pid)"
     return 0
   fi
   echo "[$name] starting..."
   nohup "$NODE_BIN" "$entry" >>"$log" 2>&1 &
-  echo $! >"$pf"
+  local pid=$! start_time
+  start_time="$(process_start_time "$pid" 2>/dev/null || true)"
+  if [[ ! "$start_time" =~ ^[0-9]+$ ]]; then
+    echo "[$name] failed to record process identity; see $log"
+    return 1
+  fi
+  printf '%s %s\n' "$pid" "$start_time" >"$pf"
   sleep 0.2
   if is_running "$name"; then
-    echo "[$name] started (pid $(cat "$pf"))"
+    echo "[$name] started (pid $pid)"
   else
     echo "[$name] failed to start; see $log"
     return 1
@@ -100,7 +125,7 @@ stop_one() {
     echo "[$name] not running"
     return 0
   fi
-  local pid; pid="$(cat "$pf")"
+  local pid; read -r pid _ <"$pf"
   echo "[$name] stopping (pid $pid)..."
   kill -TERM "$pid" 2>/dev/null || true
 
@@ -122,14 +147,16 @@ stop_one() {
 status_one() {
   local name="$1" pf; pf="$(pidfile "$name")"
   if is_running "$name"; then
-    echo "[$name] RUNNING (pid $(cat "$pf"))"
+    local pid; read -r pid _ <"$pf"
+    echo "[$name] RUNNING (pid $pid)"
   else
     echo "[$name] STOPPED"
+    return 3
   fi
 }
 
 start_all() {
-  start_one "ttts" "dist/index.js"
+  start_one "ttts" "$(expected_entry)"
 }
 
 stop_all() {
@@ -140,26 +167,87 @@ status_all() {
   status_one "ttts"
 }
 
+end_supervision() {
+  rm -f "$SUPERVISOR_PID_FILE" "$STOP_REQUEST_FILE"
+}
+
+wait_for_supervisor() {
+  [[ -f "$SUPERVISOR_PID_FILE" ]] || return 0
+  local pid recorded_start extra current_start
+  read -r pid recorded_start extra <"$SUPERVISOR_PID_FILE" || true
+  if [[ ! "$pid" =~ ^[0-9]+$ ]] ||
+     [[ ! "$recorded_start" =~ ^[0-9]+$ ]] ||
+     [[ -n "${extra:-}" ]] ||
+     [[ "$pid" == "$$" ]]; then
+    rm -f "$SUPERVISOR_PID_FILE"
+    return 0
+  fi
+  current_start="$(process_start_time "$pid" 2>/dev/null || true)"
+  if [[ "$current_start" != "$recorded_start" ]]; then
+    rm -f "$SUPERVISOR_PID_FILE"
+    return 0
+  fi
+  for _ in {1..30}; do
+    if ! kill -0 "$pid" 2>/dev/null; then
+      rm -f "$SUPERVISOR_PID_FILE"
+      return 0
+    fi
+    sleep 0.1
+  done
+  echo "[supervisor] did not exit after stop request" >&2
+  return 1
+}
+
+request_stop() {
+  : >"$STOP_REQUEST_FILE"
+  stop_all
+  wait_for_supervisor
+  if [[ ! -f "$SUPERVISOR_PID_FILE" ]]; then
+    rm -f "$STOP_REQUEST_FILE"
+  fi
+}
+
+supervisor_shutdown() {
+  echo "[supervisor] SIGTERM received"
+  : >"$STOP_REQUEST_FILE"
+  stop_all
+  end_supervision
+  exit 0
+}
+
 # If launched without args: run in foreground & supervise children.
 case "${1:-start}" in
   start)
-    trap 'echo "[supervisor] SIGTERM received"; stop_all; exit 0' TERM INT
-    start_all
+    rm -f "$STOP_REQUEST_FILE"
+    supervisor_start_time="$(process_start_time "$$")"
+    printf '%s %s\n' "$$" "$supervisor_start_time" >"$SUPERVISOR_PID_FILE"
+    trap supervisor_shutdown TERM INT
+    if ! start_all; then
+      end_supervision
+      exit 1
+    fi
     # Wait until child exits
     while true; do
       if ! is_running "ttts"; then
+        if [[ -f "$STOP_REQUEST_FILE" ]]; then
+          echo "[supervisor] stop requested; stopping..."
+          stop_all
+          end_supervision
+          exit 0
+        fi
         echo "[supervisor] ttts process exited; stopping..."
         stop_all
+        end_supervision
         exit 1
       fi
       sleep 1
     done
     ;;
   stop)
-    stop_all
+    request_stop
     ;;
   restart)
-    stop_all
+    request_stop
     exec "$0" start
     ;;
   status)

@@ -23,7 +23,7 @@ examples/
 src/fit.ts
 src/fit.test.ts
 src/fit-demo.ts
-src/fit-demo.html
+fit-demo.html
 src/loader.ts
 src/loader.test.ts
 src/trackjson.ts
@@ -106,7 +106,7 @@ HUD works
 Open:
 
 ```text
-http://localhost:8000/src/fit-demo.html
+http://localhost:8000/fit-demo.html
 ```
 
 or the actual demo path used by the project.

@@ -629,6 +629,8 @@ Heart rate ticks show bpm
 Cadence ticks show rpm
 Power ticks show W
 Speed ticks show km/h
+Torque efficiency ticks show %
+Pedal smoothness ticks show %
 Y grid lines are horizontal only
 X grid lines are not shown
 Tick labels are small
@@ -650,6 +652,8 @@ heartRates
 cadences
 powers
 speeds
+torqueEffectivenessPercentage
+pedalSmoothnessPercentage
 ```
 
 Check:
@@ -685,6 +689,8 @@ Heart rate appears when available
 Cadence appears when available
 Power appears when available
 Speed appears when available
+Torque efficiency appears when available
+Pedal smoothness appears when available
 ```
 
 Expected:
