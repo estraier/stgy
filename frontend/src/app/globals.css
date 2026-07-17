@@ -682,7 +682,7 @@ span[aria-label="Identicon"] > svg {
 .markdown-body:not(.excerpt):not(.pub-theme-dir-vert .markdown-body)
   figure.stgy-track-map:not([data-float]):not(.stgy-track-grid > figure.stgy-track-map)
   + .stgy-track-graph {
-  width: 85%;
+  width: 80%;
   margin-left: auto;
   margin-right: auto;
 }
@@ -696,7 +696,7 @@ span[aria-label="Identicon"] > svg {
     .stgy-track-grid > figure.stgy-track-map
   )
   + .stgy-track-graph {
-  width: 70%;
+  width: 64%;
 }
 
 .markdown-body:not(.excerpt):not(.pub-theme-dir-vert .markdown-body)
@@ -705,6 +705,18 @@ span[aria-label="Identicon"] > svg {
   ),
 .markdown-body:not(.excerpt):not(.pub-theme-dir-vert .markdown-body)
   figure.stgy-track-map[data-size="small"]:not([data-float]):not(
+    .stgy-track-grid > figure.stgy-track-map
+  )
+  + .stgy-track-graph {
+  width: 71%;
+}
+
+.markdown-body:not(.excerpt):not(.pub-theme-dir-vert .markdown-body)
+  figure.stgy-track-map[data-size="medium"]:not([data-float]):not(
+    .stgy-track-grid > figure.stgy-track-map
+  ),
+.markdown-body:not(.excerpt):not(.pub-theme-dir-vert .markdown-body)
+  figure.stgy-track-map[data-size="medium"]:not([data-float]):not(
     .stgy-track-grid > figure.stgy-track-map
   )
   + .stgy-track-graph {
@@ -712,18 +724,6 @@ span[aria-label="Identicon"] > svg {
 }
 
 .markdown-body:not(.excerpt):not(.pub-theme-dir-vert .markdown-body)
-  figure.stgy-track-map[data-size="medium"]:not([data-float]):not(
-    .stgy-track-grid > figure.stgy-track-map
-  ),
-.markdown-body:not(.excerpt):not(.pub-theme-dir-vert .markdown-body)
-  figure.stgy-track-map[data-size="medium"]:not([data-float]):not(
-    .stgy-track-grid > figure.stgy-track-map
-  )
-  + .stgy-track-graph {
-  width: 85%;
-}
-
-.markdown-body:not(.excerpt):not(.pub-theme-dir-vert .markdown-body)
   figure.stgy-track-map[data-size="large"]:not([data-float]):not(
     .stgy-track-grid > figure.stgy-track-map
   ),
@@ -732,7 +732,7 @@ span[aria-label="Identicon"] > svg {
     .stgy-track-grid > figure.stgy-track-map
   )
   + .stgy-track-graph {
-  width: 90%;
+  width: 89%;
 }
 
 .markdown-body:not(.excerpt):not(.pub-theme-dir-vert .markdown-body)
