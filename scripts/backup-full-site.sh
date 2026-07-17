@@ -21,7 +21,6 @@ usage() {
   cat >&2 <<__EOF__
 Usage:
   $SCRIPT_NAME backup  [--root DIR] [--name NAME] [--db|--no-db] [--objects|--no-objects]
-                       [--stop-command COMMAND --start-command COMMAND]
   $SCRIPT_NAME restore [--root DIR] [--db|--no-db] [--objects|--no-objects] NAME
   $SCRIPT_NAME prune   [--root DIR] [--retain-generations N]
   $SCRIPT_NAME list    [--root DIR]
@@ -47,8 +46,6 @@ Backup layout:
 
 Examples:
   $SCRIPT_NAME backup
-  $SCRIPT_NAME backup --stop-command 'docker compose stop backend worker' \
-    --start-command 'docker compose start backend worker'
   $SCRIPT_NAME restore full-site-2026-01-12
   $SCRIPT_NAME prune --retain-generations 7
 __EOF__
@@ -139,40 +136,20 @@ OBJECTS_ENABLED="1"
 
 BACKUP_ROOT="$BACKUP_ROOT_DEFAULT"
 BACKUP_NAME=""
-BACKUP_STOP_COMMAND=""
-BACKUP_START_COMMAND=""
-WRITERS_STOPPED="0"
 
 RETAIN_GENERATIONS="$RETAIN_DEFAULT"
 
 HARDLINK_BASE=""
 BACKUP_WORK_DEST=""
 
-cleanup_backup() {
+cleanup_incomplete_backup() {
   local status=$?
   trap - EXIT
-
   if [ -n "$BACKUP_WORK_DEST" ] && [ -e "$BACKUP_WORK_DEST" ]; then
     log "removing incomplete backup: $BACKUP_WORK_DEST"
     rm -rf -- "$BACKUP_WORK_DEST"
   fi
-
-  if [ "$WRITERS_STOPPED" = "1" ]; then
-    log "starting writers..."
-    if ! /bin/bash -c "$BACKUP_START_COMMAND"; then
-      log "ERROR: failed to restart writers"
-      [ "$status" -ne 0 ] || status=1
-    fi
-    WRITERS_STOPPED="0"
-  fi
-
   exit "$status"
-}
-
-validate_generation_name() {
-  local name="$1"
-  [[ "$name" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] ||
-    die "invalid backup generation name: $name"
 }
 
 if [ $# -lt 1 ]; then
@@ -209,24 +186,6 @@ case "$COMMAND" in
         --no-db) DB_ENABLED="0"; shift ;;
         --objects) OBJECTS_ENABLED="1"; shift ;;
         --no-objects) OBJECTS_ENABLED="0"; shift ;;
-        --stop-command)
-          [[ $# -ge 2 ]] || die "--stop-command requires a value"
-          BACKUP_STOP_COMMAND="$2"
-          shift 2
-          ;;
-        --stop-command=*)
-          BACKUP_STOP_COMMAND="${1#*=}"
-          shift
-          ;;
-        --start-command)
-          [[ $# -ge 2 ]] || die "--start-command requires a value"
-          BACKUP_START_COMMAND="$2"
-          shift 2
-          ;;
-        --start-command=*)
-          BACKUP_START_COMMAND="${1#*=}"
-          shift
-          ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown option: $1" ;;
       esac
@@ -342,18 +301,6 @@ if [ -z "$BACKUP_NAME" ] && [ "$COMMAND" = "backup" ]; then
   BACKUP_NAME="full-site-$(today_yyyy_mm_dd)"
 fi
 
-if [ "$COMMAND" = "backup" ] || [ "$COMMAND" = "restore" ]; then
-  validate_generation_name "$BACKUP_NAME"
-  if [ "$DB_ENABLED" = "0" ] && [ "$OBJECTS_ENABLED" = "0" ]; then
-    die "neither database nor objects were selected"
-  fi
-fi
-
-if [ -n "$BACKUP_STOP_COMMAND" ] || [ -n "$BACKUP_START_COMMAND" ]; then
-  [ -n "$BACKUP_STOP_COMMAND" ] && [ -n "$BACKUP_START_COMMAND" ] ||
-    die "--stop-command and --start-command must be specified together"
-fi
-
 prepare_db_connection() {
   [ -z "$DB_HOST" ] || return 0
   need_cmd getent
@@ -461,7 +408,6 @@ do_backup_objects() {
 
   local buckets
   buckets="$(detect_buckets)"
-  [ -n "$buckets" ] || die "no S3 buckets found"
 
   local bucket
   while read -r bucket; do
@@ -499,11 +445,10 @@ do_restore_objects() {
 
   mc alias set stgys3 "$S3_ENDPOINT" "$S3_ACCESS_KEY" "$S3_SECRET_KEY" >/dev/null
 
-  local bucket_dir bucket found="0"
-  for bucket_dir in "$indir"/*; do
-    [ -d "$bucket_dir" ] || continue
-    found="1"
-    bucket="${bucket_dir##*/}"
+  local bucket
+  while read -r bucket; do
+    [ -n "$bucket" ] || continue
+    [ -d "$(join_path "$indir" "$bucket")" ] || continue
 
     log "  bucket=$bucket"
 
@@ -515,7 +460,7 @@ do_restore_objects() {
       mc mb "stgys3/${bucket}" >/dev/null
     fi
 
-    mc mirror --overwrite --remove --preserve "$bucket_dir" "stgys3/${bucket}"
+    mc mirror --overwrite --remove --preserve "$(join_path "$indir" "$bucket")" "stgys3/${bucket}"
 
     if [ -n "${STGY_STORAGE_S3_ANON_DOWNLOAD_BUCKETS:-}" ]; then
       if split_csv "${STGY_STORAGE_S3_ANON_DOWNLOAD_BUCKETS}" | grep -Fxq "$bucket"; then
@@ -526,8 +471,7 @@ do_restore_objects() {
         mc anonymous set download "stgys3/${bucket}" >/dev/null
       fi
     fi
-  done
-  [ "$found" = "1" ] || die "no bucket directories found: $indir"
+  done < <(ls -1 "$indir" 2>/dev/null || true)
 }
 
 preflight_restore_db() {
@@ -588,13 +532,7 @@ do_backup() {
   fi
 
   BACKUP_WORK_DEST="$work"
-  trap cleanup_backup EXIT
-
-  if [ -n "$BACKUP_STOP_COMMAND" ]; then
-    log "stopping writers..."
-    WRITERS_STOPPED="1"
-    /bin/bash -c "$BACKUP_STOP_COMMAND"
-  fi
+  trap cleanup_incomplete_backup EXIT
 
   mkdir -p "$work"
 
@@ -611,14 +549,8 @@ do_backup() {
 
   mv "$work" "$dest"
   BACKUP_WORK_DEST=""
-  log "backup done: $dest"
-
-  if [ "$WRITERS_STOPPED" = "1" ]; then
-    log "starting writers..."
-    WRITERS_STOPPED="0"
-    /bin/bash -c "$BACKUP_START_COMMAND"
-  fi
   trap - EXIT
+  log "backup done: $dest"
 }
 
 do_restore() {

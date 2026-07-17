@@ -8,7 +8,7 @@ https://stgy.jp {
 
   redir /backend /backend/
   handle_path /backend/* {
-    reverse_proxy http://backend:3100 http://host.docker.internal:3100 {
+    reverse_proxy http://backend:3100 {
       lb_policy first
       health_uri /health
       header_up Host {http.request.host}
@@ -18,7 +18,7 @@ https://stgy.jp {
   }
 
   handle {
-    reverse_proxy http://frontend:3000 http://host.docker.internal:3000 {
+    reverse_proxy http://frontend:3000 {
       lb_policy first
       health_uri /
       header_up Host {http.request.host}
@@ -34,18 +34,12 @@ https://s3.stgy.jp {
   @okref header_regexp Referer ^https?://([^.]+\.)?stgy\.jp(/|$)
   @noref not header Referer *
   handle @okref {
-    reverse_proxy http://minio:9000 http://host.docker.internal:9000 {
-      lb_policy first
-      lb_try_duration 5s
-      lb_try_interval 250ms
+    reverse_proxy http://minio:9000 {
       flush_interval -1
     }
   }
   handle @noref {
-    reverse_proxy http://minio:9000 http://host.docker.internal:9000 {
-      lb_policy first
-      lb_try_duration 5s
-      lb_try_interval 250ms
+    reverse_proxy http://minio:9000 {
       flush_interval -1
     }
   }
@@ -55,11 +49,7 @@ https://s3.stgy.jp {
 https://s3-console.stgy.jp {
   encode zstd gzip
 
-  reverse_proxy http://minio:9001 http://host.docker.internal:9001 {
-    lb_policy first
-    lb_try_duration 5s
-    lb_try_interval 250ms
-  }
+  reverse_proxy http://minio:9001
 }
 
 https://mail.stgy.jp {

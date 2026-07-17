@@ -26,10 +26,7 @@ http://:8080 {
 http://s3.localhost:8080 {
   encode zstd gzip
 
-  reverse_proxy http://minio:9000 http://host.docker.internal:9000 {
-    lb_policy first
-    lb_try_duration 5s
-    lb_try_interval 250ms
+  reverse_proxy http://minio:9000 {
     flush_interval -1
   }
 }
@@ -37,11 +34,7 @@ http://s3.localhost:8080 {
 http://s3-console.localhost:8080 {
   encode zstd gzip
 
-  reverse_proxy http://minio:9001 http://host.docker.internal:9001 {
-    lb_policy first
-    lb_try_duration 5s
-    lb_try_interval 250ms
-  }
+  reverse_proxy http://minio:9001
 }
 
 http://mail.localhost:8080 {
