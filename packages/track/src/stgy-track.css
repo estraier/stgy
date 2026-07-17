@@ -130,14 +130,16 @@
 }
 
 .stgy-track-graph-controls select {
-  max-width: 100%;
+  max-width: 16ex;
   font: inherit;
+  font-size: 0.9em;
 }
 
 .stgy-track-graph-readout {
   min-height: 1.4em;
   color: #444;
-  font-size: 0.9em;
+  font-size: 0.81em;
+  white-space: nowrap;
 }
 
 .stgy-track-graph-toggle {
