@@ -9,6 +9,9 @@ import { DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
 import { int8ToBase64, base64ToInt8 } from "../utils/format";
 import type { ChatRequest } from "../models/aiUser";
+import { createLogger } from "../utils/logger";
+
+const logger = createLogger({ file: "aiUsers" });
 
 function isRecord(x: unknown): x is Record<string, unknown> {
   return typeof x === "object" && x !== null;
@@ -126,7 +129,10 @@ export default function createAiUsersRouter(pgPool: Pool, redis: Redis) {
       const messages = messagesRaw as ChatRequest["messages"];
       const resp = await aiUsersService.chat({ model: modelToUse, messages, responseFormat });
       res.json(resp);
-    } catch {
+    } catch (e) {
+      const error = e instanceof Error ? `${e.name}: ${e.message}` : String(e);
+      const errorMessage = error.replaceAll(/\s+/g, " ").trim().slice(0, 100);
+      logger.error(`chat failed model=${modelToUse}: ${errorMessage}`);
       res.status(500).json({ error: "internal_error" });
     }
   });
