@@ -7,8 +7,36 @@ services:
       MINIO_SERVER_URL: https://s3.stgy.jp
 
   mailpit:
-    expose:
-      - "8025"
+    profiles: [development]
+
+  postfix:
+    networks: [stgy_net]
+    build:
+      context: .
+      dockerfile: postfix/Dockerfile
+    hostname: mail.stgy.jp
+    restart: always
+    volumes:
+      - postfix_queue:/var/spool/postfix
+    healthcheck:
+      test: ["CMD-SHELL", "postfix status >/dev/null 2>&1"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 5s
+
+  worker:
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      minio:
+        condition: service_started
+      postfix:
+        condition: service_healthy
+      ttts:
+        condition: service_started
 
   caddy:
     ports: !override
@@ -16,3 +44,6 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile.vps:/etc/caddy/Caddyfile:ro
+
+volumes:
+  postfix_queue:
