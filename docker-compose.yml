@@ -90,13 +90,13 @@ services:
     environment:
       MP_SMTP_BIND_ADDR: 0.0.0.0:${STGY_SMTP_PORT:-5587}
       MP_UI_BIND_ADDR: 0.0.0.0:${STGY_MAILPIT_CONSOLE_PORT:-8025}
-      # MP_SMTP_RELAY_HOST: mail.stgy.jp
+      # MP_SMTP_RELAY_HOST: dbmx.net
       # MP_SMTP_RELAY_PORT: 587
       # MP_SMTP_RELAY_STARTTLS: true
       # MP_SMTP_RELAY_AUTH: plain
-      # MP_SMTP_RELAY_USERNAME: postfix@stgy.jp
+      # MP_SMTP_RELAY_USERNAME: postfix@dbmx.net
       # MP_SMTP_RELAY_PASSWORD: ********
-      # MP_SMTP_RELAY_OVERRIDE_FROM: noreply@stgy.jp
+      # MP_SMTP_RELAY_OVERRIDE_FROM: noreply@dbmx.net
       # MP_SMTP_RELAY_ALL: true
     ports:
       - "127.0.0.1:${STGY_SMTP_PORT:-5587}:${STGY_SMTP_PORT:-5587}"
