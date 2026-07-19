@@ -1,9 +1,9 @@
 INSERT INTO ai_models
 (label, service, chat_model, feature_model)
 VALUES
-('advanced', 'openai', 'gpt-5.1', 'text-embedding-3-large'),
-('balanced', 'openai', 'gpt-5-mini', 'text-embedding-3-small'),
-('basic', 'openai', 'gpt-5-nano', 'text-embedding-3-small');
+('advanced', 'openai', 'gpt-5.4', 'text-embedding-3-large'),
+('balanced', 'openai', 'gpt-5.4-mini', 'text-embedding-3-small'),
+('basic', 'openai', 'gpt-5.4-nano', 'text-embedding-3-small');
 
 INSERT INTO users (
   id,
