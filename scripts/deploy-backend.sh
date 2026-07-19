@@ -2,45 +2,46 @@
 set -euo pipefail
 
 # ====== Embedded "production" config (baked into start.sh) ======
-CFG_NODE_ENV=production
-CFG_FRONTEND_ORIGIN=https://stgy.jp
-CFG_BACKEND_PORT=3100
-CFG_BACKEND_API_BASE_URL=https://stgy.jp/backend
-CFG_BACKEND_API_PRIVATE_URL_LIST=http://127.0.0.1:3100
+# Values supplied in the deployment environment override the defaults below.
+CFG_NODE_ENV="${NODE_ENV:-production}"
+CFG_FRONTEND_ORIGIN="${STGY_FRONTEND_ORIGIN:-https://stgy.jp}"
+CFG_BACKEND_PORT="${STGY_BACKEND_PORT:-3100}"
+CFG_BACKEND_API_BASE_URL="${STGY_BACKEND_API_BASE_URL:-https://stgy.jp/backend}"
+CFG_BACKEND_API_PRIVATE_URL_LIST="${STGY_BACKEND_API_PRIVATE_URL_LIST:-http://127.0.0.1:3100}"
 
 # PostgreSQL (native service on the host)
-CFG_DB_HOST=127.0.0.1
-CFG_DB_PORT=5432
-CFG_DB_USER=admin
-CFG_DB_PASS=stgystgy
-CFG_DB_NAME=stgy
+CFG_DB_HOST="${STGY_DATABASE_HOST:-127.0.0.1}"
+CFG_DB_PORT="${STGY_DATABASE_PORT:-5432}"
+CFG_DB_USER="${STGY_DATABASE_USER:-admin}"
+CFG_DB_PASS="${STGY_DATABASE_PASSWORD:-stgystgy}"
+CFG_DB_NAME="${STGY_DATABASE_NAME:-stgy}"
 
 # MinIO (host:9000 directly; public delivery via Caddy)
-CFG_S3_ENDPOINT=http://127.0.0.1:9000
-CFG_S3_REGION=us-east-1
-CFG_S3_KEY=admin
-CFG_S3_SECRET=stgystgy
-CFG_S3_FORCE_PATH_STYLE=true
-CFG_S3_BUCKET_PREFIX=stgy
-CFG_S3_PUBLIC_URL_PREFIX=https://s3.stgy.jp/{bucket}/
+CFG_S3_ENDPOINT="${STGY_STORAGE_S3_ENDPOINT:-http://127.0.0.1:9000}"
+CFG_S3_REGION="${STGY_STORAGE_S3_REGION:-us-east-1}"
+CFG_S3_KEY="${STGY_STORAGE_S3_ACCESS_KEY_ID:-admin}"
+CFG_S3_SECRET="${STGY_STORAGE_S3_SECRET_ACCESS_KEY:-stgystgy}"
+CFG_S3_FORCE_PATH_STYLE="${STGY_STORAGE_S3_FORCE_PATH_STYLE:-true}"
+CFG_S3_BUCKET_PREFIX="${STGY_STORAGE_S3_BUCKET_PREFIX:-stgy}"
+CFG_S3_PUBLIC_URL_PREFIX="${STGY_STORAGE_S3_PUBLIC_URL_PREFIX:-https://s3.stgy.jp/{bucket}/}"
 
 # Redis (native service on the host)
-CFG_REDIS_HOST=127.0.0.1
-CFG_REDIS_PORT=6379
-CFG_REDIS_PASS=stgystgy
+CFG_REDIS_HOST="${STGY_REDIS_HOST:-127.0.0.1}"
+CFG_REDIS_PORT="${STGY_REDIS_PORT:-6379}"
+CFG_REDIS_PASS="${STGY_REDIS_PASSWORD:-stgystgy}"
 
 # Search (TTTS native service on the host)
-CFG_SEARCH_API_BASE_URL=http://127.0.0.1:3200
+CFG_SEARCH_API_BASE_URL="${STGY_SEARCH_API_BASE_URL:-http://127.0.0.1:3200}"
 
 # SMTP (Postfix on the same host; auth not required for localhost)
-CFG_SMTP_HOST=127.0.0.1
-CFG_SMTP_PORT=587
+CFG_SMTP_HOST="${STGY_SMTP_HOST:-127.0.0.1}"
+CFG_SMTP_PORT="${STGY_SMTP_PORT:-587}"
 
 # Misc
-CFG_MAIL_FROM=noreply@stgy.jp
-CFG_ID_WORKER=0
+CFG_MAIL_FROM="${STGY_MAIL_SENDER_ADDRESS:-noreply@stgy.jp}"
+CFG_ID_WORKER="${STGY_ID_ISSUE_WORKER_ID:-0}"
 CFG_OPENAI_API_KEY="${STGY_OPENAI_API_KEY:-}"
-CFG_TEST_SIGNUP_CODE=
+CFG_TEST_SIGNUP_CODE="${STGY_TEST_SIGNUP_CODE:-}"
 # =======================================================================
 
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"

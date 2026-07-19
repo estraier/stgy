@@ -43,13 +43,14 @@ source .env
 set +a
 
 if [ "$MODE" = docker ]; then
-  docker compose exec -T redis redis-cli -a "$STGY_REDIS_PASSWORD" FLUSHALL
+  exec docker compose exec postgres psql \
+    -U "$STGY_DATABASE_USER" \
+    "$STGY_DATABASE_NAME"
 else
-  redis-cli \
+  export PGPASSWORD="$STGY_DATABASE_PASSWORD"
+  exec psql \
     -h 127.0.0.1 \
-    -p "${STGY_REDIS_PORT:-6379}" \
-    -a "$STGY_REDIS_PASSWORD" \
-    FLUSHALL
+    -p "${STGY_DATABASE_PORT:-5432}" \
+    -U "$STGY_DATABASE_USER" \
+    "$STGY_DATABASE_NAME"
 fi
-
-echo "==> Redis reset done ($MODE mode)."
