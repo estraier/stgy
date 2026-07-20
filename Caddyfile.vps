@@ -1,5 +1,9 @@
+import extra-sites/*.caddy
+
 https://stgy.jp {
   encode zstd gzip
+
+  import site_test
 
   @deny_backend_metrics path /backend/metrics /backend/metrics/
   handle @deny_backend_metrics {

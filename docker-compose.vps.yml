@@ -44,6 +44,7 @@ services:
       - "443:443"
     volumes:
       - ./Caddyfile.vps:/etc/caddy/Caddyfile:ro
+      - /home/prod/extra-sites:/home/prod/extra-sites:ro
 
 volumes:
   postfix_queue:

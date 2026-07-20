@@ -1,0 +1,5 @@
+(site_test) {
+  handle /site-test {
+    respond "test.caddy is OK" 200
+  }
+}

@@ -1,5 +1,9 @@
+import extra-sites/test.caddy
+
 http://:8080 {
   encode zstd gzip
+
+  import site_test
 
   redir /backend /backend/
   handle_path /backend/* {
