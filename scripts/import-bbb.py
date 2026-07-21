@@ -1,8 +1,14 @@
 #!/usr/bin/env python3
 
 import argparse
+import json
 import re
+import ssl
+import subprocess
 import sys
+import urllib.error
+import urllib.parse
+import urllib.request
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -12,9 +18,163 @@ DEFAULT_OWNER = "0001000000000001"
 JST = timezone(timedelta(hours=9))
 IMAGE_URL_PREFIX = "https://dbmx.net/hourou/data/"
 HEREDOC_BASE = "____EOF____"
+YAHOO_GEOCODER_URL = "https://map.yahooapis.jp/geocode/V1/geoCoder"
+YAHOO_REFERER = "https://stgy.jp"
+MAP_ZOOM = 8
 OWNER_RE = re.compile(r"^[0-9A-Fa-f]{16}$")
 HEADING_RE = re.compile(r"^(\*+)\s+(.+)$")
 HYPHENS_RE = re.compile(r"^(\s*)(-{2,})(\s*)$")
+MAP_ATTR_RE = re.compile(r"\[([A-Za-z][-_A-Za-z0-9]*)=(.*?)\]")
+
+
+class YahooGeocoder:
+  def __init__(self, appid: str):
+    self.appid = appid
+    self.cache: dict[str, tuple[float, float]] = {}
+
+  def geocode(self, query: str) -> tuple[float, float]:
+    cached = self.cache.get(query)
+    if cached is not None:
+      return cached
+
+    params = urllib.parse.urlencode({
+      "appid": self.appid,
+      "query": query,
+      "output": "json",
+      "results": "1",
+    })
+    request = urllib.request.Request(
+      f"{YAHOO_GEOCODER_URL}?{params}",
+      headers={
+        "Accept": "application/json",
+        "Referer": YAHOO_REFERER,
+      },
+    )
+    try:
+      with urllib.request.urlopen(request, timeout=30) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+    except urllib.error.HTTPError as exc:
+      raise ValueError(
+        f"Yahoo geocoding failed for {query!r}: HTTP {exc.code}"
+      ) from exc
+    except urllib.error.URLError as exc:
+      reason = exc.reason
+      if (
+        isinstance(reason, ssl.SSLCertVerificationError)
+        or "CERTIFICATE_VERIFY_FAILED" in str(reason)
+      ):
+        payload = self._geocode_with_curl(query)
+      else:
+        raise ValueError(
+          f"Yahoo geocoding failed for {query!r}: {reason}"
+        ) from exc
+    except (UnicodeError, json.JSONDecodeError) as exc:
+      raise ValueError(
+        f"Yahoo geocoding returned invalid JSON for {query!r}"
+      ) from exc
+
+    result_info = payload.get("ResultInfo")
+    if not isinstance(result_info, dict):
+      raise ValueError(f"Yahoo geocoding returned no ResultInfo for {query!r}")
+    status = result_info.get("Status")
+    if status != 200:
+      description = result_info.get("Description")
+      detail = f": {description}" if description else ""
+      raise ValueError(
+        f"Yahoo geocoding failed for {query!r}: status {status}{detail}"
+      )
+
+    features = payload.get("Feature")
+    if isinstance(features, dict):
+      features = [features]
+    if not isinstance(features, list) or not features:
+      raise ValueError(f"Yahoo geocoding found no result for {query!r}")
+    feature = features[0]
+    if not isinstance(feature, dict):
+      raise ValueError(f"Yahoo geocoding returned an invalid result for {query!r}")
+    geometry = feature.get("Geometry")
+    if not isinstance(geometry, dict):
+      raise ValueError(f"Yahoo geocoding returned no geometry for {query!r}")
+    coordinates = geometry.get("Coordinates")
+    if not isinstance(coordinates, str):
+      raise ValueError(f"Yahoo geocoding returned no coordinates for {query!r}")
+
+    parts = [part.strip() for part in coordinates.split(",")]
+    if len(parts) != 2:
+      raise ValueError(f"Yahoo geocoding returned invalid coordinates for {query!r}")
+    try:
+      lon = float(parts[0])
+      lat = float(parts[1])
+    except ValueError as exc:
+      raise ValueError(
+        f"Yahoo geocoding returned invalid coordinates for {query!r}"
+      ) from exc
+    if not (-180 <= lon <= 180 and -90 <= lat <= 90):
+      raise ValueError(f"Yahoo geocoding returned invalid coordinates for {query!r}")
+
+    result = (lon, lat)
+    self.cache[query] = result
+    return result
+
+  def _geocode_with_curl(self, query: str) -> dict:
+    command = [
+      "curl",
+      "--fail",
+      "--silent",
+      "--show-error",
+      "--get",
+      "--max-time",
+      "30",
+      YAHOO_GEOCODER_URL,
+      "--data-urlencode",
+      f"appid={self.appid}",
+      "--data-urlencode",
+      f"query={query}",
+      "--data-urlencode",
+      "output=json",
+      "--data-urlencode",
+      "results=1",
+      "--header",
+      "Accept: application/json",
+      "--header",
+      f"Referer: {YAHOO_REFERER}",
+    ]
+    try:
+      completed = subprocess.run(
+        command,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        timeout=35,
+      )
+    except FileNotFoundError as exc:
+      raise ValueError(
+        f"Yahoo geocoding failed for {query!r}: "
+        "Python could not verify the TLS certificate and curl is not installed"
+      ) from exc
+    except subprocess.TimeoutExpired as exc:
+      raise ValueError(
+        f"Yahoo geocoding failed for {query!r}: curl timed out"
+      ) from exc
+    except subprocess.CalledProcessError as exc:
+      detail = (exc.stderr or "").strip()
+      suffix = f": {detail}" if detail else ""
+      raise ValueError(
+        f"Yahoo geocoding failed for {query!r}: curl failed{suffix}"
+      ) from exc
+
+    try:
+      payload = json.loads(completed.stdout)
+    except json.JSONDecodeError as exc:
+      raise ValueError(
+        f"Yahoo geocoding returned invalid JSON for {query!r}"
+      ) from exc
+    if not isinstance(payload, dict):
+      raise ValueError(
+        f"Yahoo geocoding returned invalid JSON for {query!r}"
+      )
+    return payload
 
 
 @dataclass(frozen=True)
@@ -35,6 +195,10 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     "--owner",
     default=DEFAULT_OWNER,
     help=f"ownedBy value (default: {DEFAULT_OWNER})",
+  )
+  parser.add_argument(
+    "--yahoo-appid",
+    help="Yahoo geocoder Client ID used to convert @map/@maps directives",
   )
   parser.add_argument(
     "--output-dir",
@@ -91,7 +255,57 @@ def normalize_image_url(url: str) -> str:
   return url
 
 
-def transform_body(lines: list[str]) -> str:
+def format_coordinate(value: float) -> str:
+  return f"{value:.8f}".rstrip("0").rstrip(".")
+
+
+def parse_map_directive(line: str) -> tuple[str, list[str], str | None]:
+  match = re.fullmatch(r"\s*@maps?\s+(.+?)\s*", line)
+  if not match:
+    raise ValueError(f"invalid @map directive: {line!r}")
+  params = match.group(1)
+  attrs: dict[str, str] = {}
+  for attr_match in MAP_ATTR_RE.finditer(params):
+    name = attr_match.group(1).lower()
+    if name in attrs:
+      raise ValueError(f"duplicate [{name}=...] in @map directive: {line!r}")
+    attrs[name] = attr_match.group(2).strip()
+  center = MAP_ATTR_RE.sub("", params).strip()
+  if not center or "[" in center or "]" in center:
+    raise ValueError(f"invalid center address in @map directive: {line!r}")
+
+  via = [value.strip() for value in attrs.get("via", "").split(",") if value.strip()]
+  float_dir = attrs.get("float")
+  if float_dir is not None and float_dir not in {"left", "right"}:
+    raise ValueError(f"invalid [float=...] in @map directive: {line!r}")
+  return center, via, float_dir
+
+
+def transform_map_directive(line: str, geocoder: YahooGeocoder | None) -> str:
+  if geocoder is None:
+    return f"```text\n{line.strip()}\n```"
+  center, via, float_dir = parse_map_directive(line)
+  addresses = [center, *via]
+  coordinates = [geocoder.geocode(address) for address in addresses]
+  center_lon, center_lat = coordinates[0]
+  blocks = [
+    f"{format_coordinate(center_lon)},{format_coordinate(center_lat)},{MAP_ZOOM}"
+  ]
+  for address, (lon, lat) in zip(addresses, coordinates):
+    if ";" in address or "|" in address:
+      raise ValueError(f"unsupported character in @map address: {address!r}")
+    blocks.append(
+      f"{format_coordinate(lon)},{format_coordinate(lat)};{address}"
+    )
+  options = f"{{float={float_dir}}}" if float_dir else ""
+  return f"@[{center}](map://{'|'.join(blocks)}){options}"
+
+
+def transform_body(
+  lines: list[str],
+  geocoder: YahooGeocoder | None,
+  source_path: Path,
+) -> str:
   output: list[str] = []
 
   for line in lines:
@@ -119,7 +333,10 @@ def transform_body(lines: list[str]) -> str:
       continue
 
     if re.match(r"^\s*@maps?\s+", line):
-      output.extend(["```text", stripped, "```"])
+      try:
+        output.append(transform_map_directive(line, geocoder))
+      except ValueError as exc:
+        raise ValueError(f"{source_path}: {exc}") from exc
       continue
 
     heading_match = HEADING_RE.fullmatch(line)
@@ -147,7 +364,11 @@ def transform_body(lines: list[str]) -> str:
   return "\n".join(output)
 
 
-def parse_article(path: Path, output_dir: Path) -> Article:
+def parse_article(
+  path: Path,
+  output_dir: Path,
+  geocoder: YahooGeocoder | None,
+) -> Article:
   try:
     text = path.read_text(encoding="utf-8-sig")
   except OSError as exc:
@@ -191,7 +412,7 @@ def parse_article(path: Path, output_dir: Path) -> Article:
   if date_value is None:
     raise ValueError(f"{path}: @date is required")
 
-  body = transform_body(body_lines)
+  body = transform_body(body_lines, geocoder, path)
   content = f"# {title}"
   if body:
     content += "\n\n" + body
@@ -263,7 +484,9 @@ def main(argv: list[str]) -> int:
   try:
     owner = normalize_owner(args.owner)
     output_dir = args.output_dir.resolve()
-    articles = [parse_article(path, output_dir) for path in args.files]
+    yahoo_appid = (args.yahoo_appid or "").strip()
+    geocoder = YahooGeocoder(yahoo_appid) if yahoo_appid else None
+    articles = [parse_article(path, output_dir, geocoder) for path in args.files]
 
     output_paths = [article.output_path for article in articles]
     if len(output_paths) != len(set(output_paths)):
