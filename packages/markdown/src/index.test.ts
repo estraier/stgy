@@ -220,6 +220,27 @@ describe("parseMarkdown", () => {
     ]);
   });
 
+  it.each(["xsmall", "small", "medium", "large", "xlarge"])(
+    "supports YouTube embed size %s",
+    (size) => {
+      const nodes = parseMarkdown(
+        `@[](https://youtu.be/dQw4w9WgXcQ){size=${size}}`,
+      );
+      expect(
+        (nodes[0] as { attrs?: Record<string, unknown> }).attrs?.["data-size"],
+      ).toBe(size);
+    },
+  );
+
+  it("ignores unsupported YouTube embed options", () => {
+    const nodes = parseMarkdown(
+      "@[](https://youtu.be/dQw4w9WgXcQ){size=huge,float=right}",
+    );
+    const attrs = (nodes[0] as { attrs?: Record<string, unknown> }).attrs;
+    expect(attrs?.["data-size"]).toBeUndefined();
+    expect(attrs?.["data-float"]).toBeUndefined();
+  });
+
   it.each([
     "https://youtu.be/dQw4w9WgXcQ",
     "https://www.youtube.com/shorts/dQw4w9WgXcQ",
@@ -2398,9 +2419,10 @@ describe("mdRenderHtml basics", () => {
   });
 
   it("YouTube embed", () => {
-    const mdText = "@[Video](https://youtu.be/dQw4w9WgXcQ?t=90){ignored=true}";
+    const mdText =
+      "@[Video](https://youtu.be/dQw4w9WgXcQ?t=90){size=large,ignored=true}";
     expect(makeHtml(mdText)).toBe(
-      '<figure class="stgy-embed stgy-youtube-embed" data-provider="youtube" data-src="https://youtu.be/dQw4w9WgXcQ?t=90"><iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen class="stgy-embed-frame" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" title="Video"></iframe><figcaption class="stgy-embed-caption">Video</figcaption></figure>',
+      '<figure class="stgy-embed stgy-youtube-embed" data-provider="youtube" data-size="large" data-src="https://youtu.be/dQw4w9WgXcQ?t=90"><iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" allowfullscreen class="stgy-embed-frame" loading="lazy" referrerpolicy="strict-origin-when-cross-origin" title="Video"></iframe><figcaption class="stgy-embed-caption">Video</figcaption></figure>',
     );
   });
 
@@ -2597,7 +2619,8 @@ ika</pre><h2 id="h-1-1">H2</h2><ul><li>a</li></ul><p>b</p><ul><li>c<ul><li>d<ul>
 
 describe("mdRenderMarkdown basics", () => {
   it("YouTube embed", () => {
-    const mdText = "@[Video](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90)";
+    const mdText =
+      "@[Video](https://www.youtube.com/watch?v=dQw4w9WgXcQ&t=90){size=small}";
     expect(makeMarkdown(mdText)).toBe(mdText + "\n");
   });
 
@@ -2858,9 +2881,9 @@ describe("mdRenderMarkdown from HTML", () => {
 
   it("YouTube embed", () => {
     const html =
-      '<figure class="stgy-embed stgy-youtube-embed" data-provider="youtube" data-src="https://youtu.be/dQw4w9WgXcQ?t=90"><iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90"></iframe><figcaption>Video</figcaption></figure>';
+      '<figure class="stgy-embed stgy-youtube-embed" data-provider="youtube" data-size="xlarge" data-src="https://youtu.be/dQw4w9WgXcQ?t=90"><iframe src="https://www.youtube-nocookie.com/embed/dQw4w9WgXcQ?start=90"></iframe><figcaption>Video</figcaption></figure>';
     expect(makeMarkdownFromHtml(html)).toBe(
-      "@[Video](https://youtu.be/dQw4w9WgXcQ?t=90)\n",
+      "@[Video](https://youtu.be/dQw4w9WgXcQ?t=90){size=xlarge}\n",
     );
   });
 

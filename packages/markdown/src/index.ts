@@ -255,6 +255,25 @@ type MdEmbedSpec = {
   videoId: string;
 };
 
+type MdEmbedSize = "xsmall" | "small" | "medium" | "large" | "xlarge";
+
+const MD_EMBED_SIZES = new Set<MdEmbedSize>([
+  "xsmall",
+  "small",
+  "medium",
+  "large",
+  "xlarge",
+]);
+
+function normalizeMdEmbedSize(
+  value: string | boolean | undefined,
+): MdEmbedSize | undefined {
+  const size = macroStringValue(value)?.toLowerCase() as
+    | MdEmbedSize
+    | undefined;
+  return size && MD_EMBED_SIZES.has(size) ? size : undefined;
+}
+
 const YOUTUBE_VIDEO_ID_RE = /^[A-Za-z0-9_-]{11}$/;
 const YOUTUBE_HOSTS = new Set([
   "youtube.com",
@@ -329,6 +348,7 @@ function parseMdYouTubeUrl(rawUrl: string): MdEmbedSpec | null {
 function makeMdEmbedElement(
   desc: string,
   spec: MdEmbedSpec,
+  size?: MdEmbedSize,
   line?: number,
   char?: number,
 ): MdElementNode {
@@ -361,17 +381,14 @@ function makeMdEmbedElement(
       ),
     );
   }
-  return makeElement(
-    "figure",
-    children,
-    {
-      class: "stgy-embed stgy-youtube-embed",
-      "data-provider": spec.provider,
-      "data-src": spec.sourceUrl,
-    },
-    line,
-    char,
-  );
+  const attrs: MdAttrs = {
+    class: "stgy-embed stgy-youtube-embed",
+    "data-provider": spec.provider,
+    "data-src": spec.sourceUrl,
+  };
+  if (size) attrs["data-size"] = size;
+
+  return makeElement("figure", children, attrs, line, char);
 }
 
 function applyMdTrackMapOptions(attrs: MdAttrs, macro: MdMacroOptions) {
@@ -795,11 +812,19 @@ export function parseMarkdown(mdText: string): MdNode[] {
       flushQuote();
       const desc = map[1] || "";
       const url = map[2] || "";
+      const macro = parseMdMacroOptions(map[3]);
       const embedSpec = parseMdYouTubeUrl(url);
       if (embedSpec) {
-        nodes.push(makeMdEmbedElement(desc, embedSpec, i, lineCharStart));
+        nodes.push(
+          makeMdEmbedElement(
+            desc,
+            embedSpec,
+            normalizeMdEmbedSize(macro.size),
+            i,
+            lineCharStart,
+          ),
+        );
       } else {
-        const macro = parseMdMacroOptions(map[3]);
         nodes.push(makeMdTrackMapElement(desc, url, macro, i, lineCharStart));
       }
       continue;
@@ -1322,7 +1347,10 @@ export function parseHtml(
       (child) => child.tagName.toLowerCase() === "figcaption",
     ) as Element | undefined;
     const caption = captionEl ? (captionEl.textContent || "").trim() : "";
-    return makeMdEmbedElement(caption, spec);
+    const size = normalizeMdEmbedSize(
+      el.getAttribute("data-size") || undefined,
+    );
+    return makeMdEmbedElement(caption, spec, size);
   };
 
   const listAttrsFor = (listEl: Element): MdAttrs | undefined => {
@@ -3613,7 +3641,9 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
   const renderEmbedFigureMacro = (fig: MdElementNode): string => {
     const caption = extractAltFromFigureOrImg(fig);
     const sourceUrl = sanitizeUrl(getAttrStr(fig.attrs, "data-src") || "");
-    return `@[${caption}](${sourceUrl})`;
+    const size = normalizeMdEmbedSize(getAttrStr(fig.attrs, "data-size"));
+    const attrs = size ? `{size=${size}}` : "";
+    return `@[${caption}](${sourceUrl})${attrs}`;
   };
   const renderTrackFigureMacro = (fig: MdElementNode): string => {
     const caption = extractAltFromFigureOrImg(fig);

@@ -2924,19 +2924,20 @@ html:has(.site-container) {
   direction: inherit;
 }
 
-/* YouTube players always use a horizontal 16:9 viewport, including vertical themes. */
+/* YouTube players always use a horizontal 16:9 viewport, including vertical themes.
+   Keep the requested percentage width while capping the physical viewport width. */
 .pub-theme-dir-vert .markdown-body figure.stgy-embed {
   writing-mode: horizontal-tb !important;
   text-orientation: mixed !important;
   box-sizing: border-box;
-  width: min(40em, calc(100svw - 2rem)) !important;
+  width: min(var(--stgy-embed-width), calc(100svw - 2rem)) !important;
   max-width: calc(100svw - 2rem) !important;
   height: auto !important;
 }
 
 @media (max-width: 480px) {
   .pub-theme-dir-vert .markdown-body figure.stgy-embed {
-    width: calc(100svw - 1rem) !important;
+    width: min(var(--stgy-embed-width), calc(100svw - 1rem)) !important;
     max-width: calc(100svw - 1rem) !important;
   }
 }
