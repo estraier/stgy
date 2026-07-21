@@ -1,16 +1,19 @@
 #!/usr/bin/env python3
 
 import argparse
+import http.cookiejar
 import json
 import re
 import ssl
 import subprocess
 import sys
+import tempfile
 import urllib.error
 import urllib.parse
 import urllib.request
+import uuid
 from collections import defaultdict
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -25,6 +28,469 @@ OWNER_RE = re.compile(r"^[0-9A-Fa-f]{16}$")
 HEADING_RE = re.compile(r"^(\*+)\s+(.+)$")
 HYPHENS_RE = re.compile(r"^(\s*)(-{2,})(\s*)$")
 MAP_ATTR_RE = re.compile(r"\[([A-Za-z][-_A-Za-z0-9]*)=(.*?)\]")
+GENERATED_IMAGE_RE = re.compile(r"!\[\]\((.*)\)\{grid\}")
+IMAGE_MIME_TYPES = {
+  ".jpg": "image/jpeg",
+  ".jpeg": "image/jpeg",
+  ".png": "image/png",
+  ".webp": "image/webp",
+}
+
+
+class StgyClient:
+  def __init__(self, site_base: str, email: str, password: str):
+    self.api_base = normalize_stgy_api_base(site_base)
+    self.email = email
+    self.password = password
+    self.cookie_jar = http.cookiejar.CookieJar()
+    self.opener = urllib.request.build_opener(
+      urllib.request.HTTPCookieProcessor(self.cookie_jar)
+    )
+    self.curl_temp_dir = tempfile.TemporaryDirectory(prefix="stgy-import-bbb-")
+    self.curl_cookie_path = Path(self.curl_temp_dir.name) / "cookies.txt"
+    self.use_curl = False
+    self.logged_in = False
+
+  def login(self) -> dict:
+    self._request_json(
+      "POST",
+      "/auth",
+      {"email": self.email, "password": self.password},
+      {200},
+    )
+    self.logged_in = True
+    session = self._request_json("GET", "/auth", None, {200})
+    if not isinstance(session, dict):
+      raise ValueError("STGY login returned invalid session information")
+    return session
+
+  def logout(self) -> None:
+    try:
+      if self.logged_in:
+        try:
+          self._request_json("DELETE", "/auth", None, {200})
+        except ValueError:
+          pass
+        self.logged_in = False
+    finally:
+      self.curl_temp_dir.cleanup()
+
+  def upload_image(self, owner: str, path: Path) -> str:
+    try:
+      data = path.read_bytes()
+    except OSError as exc:
+      raise ValueError(f"cannot read image file {path}: {exc}") from exc
+    if not data:
+      raise ValueError(f"image file is empty: {path}")
+
+    content_type = IMAGE_MIME_TYPES.get(path.suffix.lower())
+    if content_type is None:
+      raise ValueError(
+        f"unsupported image type for STGY upload: {path} "
+        "(supported: JPEG, PNG, WebP)"
+      )
+
+    owner_path = urllib.parse.quote(owner, safe="")
+    presigned = self._request_json(
+      "POST",
+      f"/media/{owner_path}/images/presigned",
+      {"filename": path.name, "sizeBytes": len(data)},
+      {200},
+    )
+    if not isinstance(presigned, dict):
+      raise ValueError(f"STGY returned invalid presigned upload data for {path}")
+    upload_url = presigned.get("url")
+    fields = presigned.get("fields")
+    object_key = presigned.get("objectKey")
+    if (
+      not isinstance(upload_url, str)
+      or not upload_url
+      or not isinstance(fields, dict)
+      or not isinstance(object_key, str)
+      or not object_key
+    ):
+      raise ValueError(f"STGY returned invalid presigned upload data for {path}")
+    if not all(isinstance(key, str) and isinstance(value, str) for key, value in fields.items()):
+      raise ValueError(f"STGY returned invalid presigned upload fields for {path}")
+
+    self._upload_multipart(
+      upload_url,
+      fields,
+      path.name,
+      data,
+      content_type,
+    )
+    finalized = self._request_json(
+      "POST",
+      f"/media/{owner_path}/images/finalize",
+      {"key": object_key},
+      {200},
+    )
+    if not isinstance(finalized, dict):
+      raise ValueError(f"STGY returned invalid finalize data for {path}")
+    final_key = finalized.get("key")
+    if not isinstance(final_key, str) or not final_key:
+      raise ValueError(f"STGY returned no final image key for {path}")
+    return f"/images/{final_key}"
+
+  def create_post(self, payload: dict) -> dict:
+    result = self._request_json("POST", "/posts", payload, {201})
+    if not isinstance(result, dict):
+      raise ValueError("STGY returned invalid post data")
+    return result
+
+  def _request_json(
+    self,
+    method: str,
+    path: str,
+    payload: dict | None,
+    expected_statuses: set[int],
+  ) -> object:
+    if self.use_curl:
+      return self._request_json_with_curl(method, path, payload, expected_statuses)
+
+    url = self.api_base + path
+    data = None
+    headers = {"Accept": "application/json"}
+    if payload is not None:
+      data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+      headers["Content-Type"] = "application/json"
+    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+    try:
+      with self.opener.open(request, timeout=60) as response:
+        status = response.status
+        body = response.read()
+    except urllib.error.HTTPError as exc:
+      body = exc.read()
+      detail = decode_http_error_body(body)
+      suffix = f": {detail}" if detail else ""
+      raise ValueError(f"STGY API {method} {path} failed: HTTP {exc.code}{suffix}") from exc
+    except urllib.error.URLError as exc:
+      if is_ssl_certificate_error(exc.reason):
+        self.use_curl = True
+        return self._request_json_with_curl(method, path, payload, expected_statuses)
+      raise ValueError(f"STGY API {method} {path} failed: {exc.reason}") from exc
+
+    if status not in expected_statuses:
+      detail = decode_http_error_body(body)
+      suffix = f": {detail}" if detail else ""
+      raise ValueError(f"STGY API {method} {path} failed: HTTP {status}{suffix}")
+    if not body:
+      return {}
+    try:
+      return json.loads(body.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+      raise ValueError(f"STGY API {method} {path} returned invalid JSON") from exc
+
+  def _request_json_with_curl(
+    self,
+    method: str,
+    path: str,
+    payload: dict | None,
+    expected_statuses: set[int],
+  ) -> object:
+    url = self.api_base + path
+    body_path = Path(self.curl_temp_dir.name) / ("response-" + uuid.uuid4().hex)
+    self._seed_curl_cookie_file()
+    command = [
+      "curl",
+      "--silent",
+      "--show-error",
+      "--max-time",
+      "60",
+      "--request",
+      method,
+      "--header",
+      "Accept: application/json",
+      "--output",
+      str(body_path),
+      "--write-out",
+      "%{http_code}",
+      "--cookie-jar",
+      str(self.curl_cookie_path),
+    ]
+    if self.curl_cookie_path.exists():
+      command.extend(["--cookie", str(self.curl_cookie_path)])
+    input_text = None
+    if payload is not None:
+      command.extend([
+        "--header",
+        "Content-Type: application/json",
+        "--data-binary",
+        "@-",
+      ])
+      input_text = json.dumps(payload, ensure_ascii=False)
+    command.append(url)
+
+    try:
+      completed = subprocess.run(
+        command,
+        check=True,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        input=input_text,
+        timeout=65,
+      )
+      body = body_path.read_bytes() if body_path.exists() else b""
+    except FileNotFoundError as exc:
+      raise ValueError(
+        f"STGY API {method} {path} failed: "
+        "Python could not verify the TLS certificate and curl is not installed"
+      ) from exc
+    except subprocess.TimeoutExpired as exc:
+      raise ValueError(f"STGY API {method} {path} failed: curl timed out") from exc
+    except subprocess.CalledProcessError as exc:
+      detail = (exc.stderr or "").strip()
+      suffix = f": {detail}" if detail else ""
+      raise ValueError(
+        f"STGY API {method} {path} failed: curl failed{suffix}"
+      ) from exc
+    except OSError as exc:
+      raise ValueError(f"STGY API {method} {path} failed: {exc}") from exc
+    finally:
+      try:
+        body_path.unlink()
+      except FileNotFoundError:
+        pass
+
+    try:
+      status = int(completed.stdout.strip())
+    except ValueError as exc:
+      raise ValueError(
+        f"STGY API {method} {path} failed: curl returned an invalid status"
+      ) from exc
+    if status not in expected_statuses:
+      detail = decode_http_error_body(body)
+      suffix = f": {detail}" if detail else ""
+      raise ValueError(f"STGY API {method} {path} failed: HTTP {status}{suffix}")
+    if not body:
+      return {}
+    try:
+      return json.loads(body.decode("utf-8"))
+    except (UnicodeError, json.JSONDecodeError) as exc:
+      raise ValueError(f"STGY API {method} {path} returned invalid JSON") from exc
+
+  def _seed_curl_cookie_file(self) -> None:
+    if self.curl_cookie_path.exists():
+      return
+    cookies = list(self.cookie_jar)
+    if not cookies:
+      return
+    lines = ["# Netscape HTTP Cookie File"]
+    for cookie in cookies:
+      include_subdomains = "TRUE" if cookie.domain_initial_dot else "FALSE"
+      secure = "TRUE" if cookie.secure else "FALSE"
+      expires = str(cookie.expires or 0)
+      lines.append(
+        "\t".join([
+          cookie.domain,
+          include_subdomains,
+          cookie.path,
+          secure,
+          expires,
+          cookie.name,
+          cookie.value,
+        ])
+      )
+    self.curl_cookie_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+  @staticmethod
+  def _upload_multipart(
+    url: str,
+    fields: dict[str, str],
+    filename: str,
+    data: bytes,
+    content_type: str,
+  ) -> None:
+    boundary = "----stgy-import-bbb-" + uuid.uuid4().hex
+    body = bytearray()
+
+    def append_line(value: str) -> None:
+      body.extend(value.encode("utf-8"))
+      body.extend(b"\r\n")
+
+    for name, value in fields.items():
+      append_line(f"--{boundary}")
+      append_line(
+        'Content-Disposition: form-data; name="{}"'.format(
+          name.replace('"', "")
+        )
+      )
+      append_line("")
+      append_line(value)
+
+    append_line(f"--{boundary}")
+    append_line(
+      'Content-Disposition: form-data; name="file"; filename="{}"'.format(
+        filename.replace('"', "")
+      )
+    )
+    append_line(f"Content-Type: {content_type}")
+    append_line("")
+    body.extend(data)
+    body.extend(b"\r\n")
+    append_line(f"--{boundary}--")
+
+    request = urllib.request.Request(
+      url,
+      data=bytes(body),
+      headers={
+        "Content-Type": f"multipart/form-data; boundary={boundary}",
+        "Content-Length": str(len(body)),
+      },
+      method="POST",
+    )
+    try:
+      with urllib.request.urlopen(request, timeout=120) as response:
+        status = response.status
+        response_body = response.read()
+    except urllib.error.HTTPError as exc:
+      detail = decode_http_error_body(exc.read())
+      suffix = f": {detail}" if detail else ""
+      raise ValueError(f"STGY storage upload failed: HTTP {exc.code}{suffix}") from exc
+    except urllib.error.URLError as exc:
+      if is_ssl_certificate_error(exc.reason):
+        StgyClient._upload_multipart_with_curl(url, bytes(body), boundary)
+        return
+      raise ValueError(f"STGY storage upload failed: {exc.reason}") from exc
+
+    if status not in {200, 201, 204}:
+      detail = decode_http_error_body(response_body)
+      suffix = f": {detail}" if detail else ""
+      raise ValueError(f"STGY storage upload failed: HTTP {status}{suffix}")
+
+  @staticmethod
+  def _upload_multipart_with_curl(url: str, body: bytes, boundary: str) -> None:
+    with tempfile.TemporaryDirectory(prefix="stgy-import-bbb-upload-") as temp_dir:
+      body_path = Path(temp_dir) / "request.bin"
+      response_path = Path(temp_dir) / "response.bin"
+      body_path.write_bytes(body)
+      command = [
+        "curl",
+        "--silent",
+        "--show-error",
+        "--max-time",
+        "120",
+        "--request",
+        "POST",
+        "--header",
+        f"Content-Type: multipart/form-data; boundary={boundary}",
+        "--data-binary",
+        f"@{body_path}",
+        "--output",
+        str(response_path),
+        "--write-out",
+        "%{http_code}",
+        url,
+      ]
+      try:
+        completed = subprocess.run(
+          command,
+          check=True,
+          capture_output=True,
+          text=True,
+          encoding="utf-8",
+          timeout=125,
+        )
+      except FileNotFoundError as exc:
+        raise ValueError(
+          "STGY storage upload failed: Python could not verify the TLS certificate "
+          "and curl is not installed"
+        ) from exc
+      except subprocess.TimeoutExpired as exc:
+        raise ValueError("STGY storage upload failed: curl timed out") from exc
+      except subprocess.CalledProcessError as exc:
+        detail = (exc.stderr or "").strip()
+        suffix = f": {detail}" if detail else ""
+        raise ValueError(f"STGY storage upload failed: curl failed{suffix}") from exc
+
+      try:
+        status = int(completed.stdout.strip())
+      except ValueError as exc:
+        raise ValueError(
+          "STGY storage upload failed: curl returned an invalid status"
+        ) from exc
+      response_body = response_path.read_bytes() if response_path.exists() else b""
+      if status not in {200, 201, 204}:
+        detail = decode_http_error_body(response_body)
+        suffix = f": {detail}" if detail else ""
+        raise ValueError(f"STGY storage upload failed: HTTP {status}{suffix}")
+
+
+class ImageUploader:
+  def __init__(self, image_dir: Path, client: StgyClient, owner: str):
+    try:
+      self.image_dir = image_dir.expanduser().resolve(strict=True)
+    except OSError as exc:
+      raise ValueError(f"--image-dir is not accessible: {image_dir}: {exc}") from exc
+    if not self.image_dir.is_dir():
+      raise ValueError(f"--image-dir is not a directory: {image_dir}")
+    self.client = client
+    self.owner = owner
+    self.cache: dict[Path, str] = {}
+
+  def rewrite(self, url: str) -> str:
+    parsed = urllib.parse.urlsplit(url)
+    if parsed.scheme or parsed.netloc or url.startswith("/"):
+      return url
+    if parsed.query or parsed.fragment:
+      raise ValueError(f"local image URL cannot contain query or fragment: {url!r}")
+
+    relative_text = urllib.parse.unquote(parsed.path)
+    if not relative_text:
+      raise ValueError("local image path is empty")
+    candidate = (self.image_dir / relative_text).resolve()
+    try:
+      candidate.relative_to(self.image_dir)
+    except ValueError as exc:
+      raise ValueError(f"local image path is outside --image-dir: {url!r}") from exc
+    if not candidate.is_file():
+      raise ValueError(f"local image file not found: {candidate}")
+
+    uploaded = self.cache.get(candidate)
+    if uploaded is None:
+      uploaded = self.client.upload_image(self.owner, candidate)
+      self.cache[candidate] = uploaded
+      print(f"[UPLOADED] {candidate} -> {uploaded}")
+    return uploaded
+
+
+def normalize_stgy_api_base(value: str) -> str:
+  raw = value.strip().rstrip("/")
+  if not raw:
+    raise ValueError("--stgy-base is empty")
+  parsed = urllib.parse.urlsplit(raw)
+  if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    raise ValueError("--stgy-base must be an absolute http or https URL")
+  if parsed.query or parsed.fragment:
+    raise ValueError("--stgy-base must not contain a query or fragment")
+  return raw if parsed.path.rstrip("/").endswith("/backend") else raw + "/backend"
+
+
+def decode_http_error_body(body: bytes) -> str:
+  if not body:
+    return ""
+  try:
+    text = body.decode("utf-8", errors="replace").strip()
+  except Exception:
+    return ""
+  if not text:
+    return ""
+  try:
+    payload = json.loads(text)
+  except json.JSONDecodeError:
+    return text[:500]
+  if isinstance(payload, dict) and isinstance(payload.get("error"), str):
+    return payload["error"][:500]
+  return text[:500]
+
+
+def is_ssl_certificate_error(reason: object) -> bool:
+  return (
+    isinstance(reason, ssl.SSLCertVerificationError)
+    or "CERTIFICATE_VERIFY_FAILED" in str(reason)
+  )
 
 
 class YahooGeocoder:
@@ -189,7 +655,7 @@ class Article:
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
   parser = argparse.ArgumentParser(
-    description="Convert BBB .art files to STGY seeder/post-*.txt files.",
+    description="Convert BBB .art files to STGY post files or post them through the API.",
   )
   parser.add_argument(
     "--owner",
@@ -205,6 +671,22 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     type=Path,
     default=Path.cwd(),
     help="output directory (default: current directory)",
+  )
+  parser.add_argument(
+    "--image-dir",
+    type=Path,
+    help="root directory used to resolve and upload relative image paths",
+  )
+  parser.add_argument(
+    "--stgy-base",
+    help="STGY site base URL, for example http://localhost:8080",
+  )
+  parser.add_argument("--login-email", help="STGY login email")
+  parser.add_argument("--login-password", help="STGY login password")
+  parser.add_argument(
+    "--post",
+    action="store_true",
+    help="post converted articles to STGY instead of writing post-*.txt files",
   )
   parser.add_argument("files", nargs="+", type=Path, help="input .art files")
   return parser.parse_args(argv)
@@ -461,11 +943,40 @@ def choose_heredoc(content: str) -> str:
   return delimiter
 
 
+def format_published_at(value: datetime) -> str:
+  timespec = "milliseconds" if value.microsecond else "seconds"
+  return value.isoformat(sep=" ", timespec=timespec)
+
+
+def rewrite_article_images(article: Article, uploader: ImageUploader) -> Article:
+  output: list[str] = []
+  for line in article.content.splitlines():
+    match = GENERATED_IMAGE_RE.fullmatch(line)
+    if match:
+      output.append(f"![]({uploader.rewrite(match.group(1))}){{grid}}")
+    else:
+      output.append(line)
+  return replace(article, content="\n".join(output))
+
+
+def make_post_payload(article: Article, owner: str, post_id: str) -> dict:
+  return {
+    "id": post_id,
+    "content": article.content,
+    "ownedBy": owner,
+    "replyTo": None,
+    "locale": None,
+    "publishedAt": format_published_at(article.published_at),
+    "allowLikes": True,
+    "allowReplies": True,
+    "tags": article.tags,
+  }
+
+
 def render_post(article: Article, owner: str, post_id: str) -> str:
   delimiter = choose_heredoc(article.content)
   tags = ", ".join(article.tags)
-  timespec = "milliseconds" if article.published_at.microsecond else "seconds"
-  published_at = article.published_at.isoformat(sep=" ", timespec=timespec)
+  published_at = format_published_at(article.published_at)
   return (
     f"id: {post_id}\n"
     f"ownedBy: {owner}\n"
@@ -479,25 +990,94 @@ def render_post(article: Article, owner: str, post_id: str) -> str:
   )
 
 
+def validate_stgy_args(args: argparse.Namespace) -> None:
+  needs_stgy = args.post or args.image_dir is not None
+  supplied = {
+    "--stgy-base": args.stgy_base,
+    "--login-email": args.login_email,
+    "--login-password": args.login_password,
+  }
+  if needs_stgy:
+    missing = [name for name, value in supplied.items() if not value]
+    if missing:
+      raise ValueError(
+        f"{', '.join(missing)} required with "
+        + ("--post or --image-dir" if len(missing) > 1 else "--post/--image-dir")
+      )
+  elif any(value for value in supplied.values()):
+    raise ValueError(
+      "--stgy-base, --login-email and --login-password are used only with "
+      "--post or --image-dir"
+    )
+
+
 def main(argv: list[str]) -> int:
   args = parse_args(argv)
+  client: StgyClient | None = None
   try:
     owner = normalize_owner(args.owner)
-    output_dir = args.output_dir.resolve()
+    validate_stgy_args(args)
+    output_dir = args.output_dir.expanduser().resolve()
     yahoo_appid = (args.yahoo_appid or "").strip()
     geocoder = YahooGeocoder(yahoo_appid) if yahoo_appid else None
-    articles = [parse_article(path, output_dir, geocoder) for path in args.files]
+    articles = [
+      parse_article(path.expanduser(), output_dir, geocoder)
+      for path in args.files
+    ]
 
-    output_paths = [article.output_path for article in articles]
-    if len(output_paths) != len(set(output_paths)):
-      raise ValueError("multiple input files would produce the same output file name")
+    if not args.post:
+      output_paths = [article.output_path for article in articles]
+      if len(output_paths) != len(set(output_paths)):
+        raise ValueError("multiple input files would produce the same output file name")
 
     counters: dict[int, int] = defaultdict(int)
-    rendered: list[tuple[Article, str]] = []
+    identified: list[tuple[Article, str]] = []
     for article in articles:
-      post_id = issue_id(article.published_at, counters)
-      rendered.append((article, render_post(article, owner, post_id)))
+      identified.append((article, issue_id(article.published_at, counters)))
 
+    if args.post or args.image_dir is not None:
+      client = StgyClient(
+        args.stgy_base,
+        args.login_email,
+        args.login_password,
+      )
+      session = client.login()
+      login_user_id = session.get("userId")
+      is_admin = session.get("userIsAdmin") is True
+      if args.post and not is_admin:
+        raise ValueError("--post requires an STGY administrator login to set article IDs")
+      if args.image_dir is not None and not is_admin and login_user_id != owner:
+        raise ValueError(
+          "the STGY login user must be an administrator or match --owner "
+          "when --image-dir is used"
+        )
+
+    if args.image_dir is not None:
+      if client is None:
+        raise ValueError("STGY client is not initialized")
+      uploader = ImageUploader(args.image_dir, client, owner)
+      identified = [
+        (rewrite_article_images(article, uploader), post_id)
+        for article, post_id in identified
+      ]
+
+    if args.post:
+      if client is None:
+        raise ValueError("STGY client is not initialized")
+      for article, post_id in identified:
+        created = client.create_post(make_post_payload(article, owner, post_id))
+        created_id = created.get("id")
+        if created_id != post_id:
+          raise ValueError(
+            f"STGY returned an unexpected article ID: expected {post_id}, got {created_id!r}"
+          )
+        print(f"[POSTED] {article.source_path} -> id={post_id}")
+      return 0
+
+    rendered = [
+      (article, render_post(article, owner, post_id))
+      for article, post_id in identified
+    ]
     output_dir.mkdir(parents=True, exist_ok=True)
     for article, content in rendered:
       article.output_path.write_text(content, encoding="utf-8")
@@ -506,6 +1086,9 @@ def main(argv: list[str]) -> int:
   except (OSError, ValueError) as exc:
     print(f"[ERR] {exc}", file=sys.stderr)
     return 1
+  finally:
+    if client is not None:
+      client.logout()
 
 
 if __name__ == "__main__":
