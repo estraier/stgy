@@ -76,7 +76,7 @@ export class Config {
   static readonly SNIPPET_MAX_HEIGHT = normNum(process.env.NEXT_PUBLIC_SNIPPET_MAX_HEIGHT, 10);
   static readonly MAX_MEDIA_OBJECTS_PER_POST = normNum(
     process.env.NEXT_PUBLIC_MAX_MEDIA_OBJECTS_PER_POST,
-    50,
+    100,
   );
   static readonly IMAGE_OPTIMIZE_TRIGGER_BYTES = normNum(
     process.env.NEXT_PUBLIC_IMAGE_OPTIMIZE_TRIGGER_BYTES,
