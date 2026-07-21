@@ -2925,20 +2925,43 @@ html:has(.site-container) {
 }
 
 /* YouTube players always use a horizontal 16:9 viewport, including vertical themes.
-   Keep the requested percentage width while capping the physical viewport width. */
+   As with vertical track maps, cap the physical width independently of the vertical
+   article flow. 40em is the xlarge reference width; the other sizes retain their
+   requested percentage of that width. */
 .pub-theme-dir-vert .markdown-body figure.stgy-embed {
+  --stgy-embed-vertical-width: 32em;
   writing-mode: horizontal-tb !important;
   text-orientation: mixed !important;
   box-sizing: border-box;
-  width: min(var(--stgy-embed-width), calc(100svw - 2rem)) !important;
-  max-width: calc(100svw - 2rem) !important;
+  width: min(var(--stgy-embed-vertical-width), calc(100svw - 2rem)) !important;
+  max-width: min(var(--stgy-embed-vertical-width), calc(100svw - 2rem)) !important;
   height: auto !important;
+}
+
+.pub-theme-dir-vert .markdown-body figure.stgy-embed[data-size="xsmall"] {
+  --stgy-embed-vertical-width: 25.6em;
+}
+
+.pub-theme-dir-vert .markdown-body figure.stgy-embed[data-size="small"] {
+  --stgy-embed-vertical-width: 28.4em;
+}
+
+.pub-theme-dir-vert .markdown-body figure.stgy-embed[data-size="medium"] {
+  --stgy-embed-vertical-width: 32em;
+}
+
+.pub-theme-dir-vert .markdown-body figure.stgy-embed[data-size="large"] {
+  --stgy-embed-vertical-width: 35.6em;
+}
+
+.pub-theme-dir-vert .markdown-body figure.stgy-embed[data-size="xlarge"] {
+  --stgy-embed-vertical-width: 40em;
 }
 
 @media (max-width: 480px) {
   .pub-theme-dir-vert .markdown-body figure.stgy-embed {
-    width: min(var(--stgy-embed-width), calc(100svw - 1rem)) !important;
-    max-width: calc(100svw - 1rem) !important;
+    width: min(var(--stgy-embed-vertical-width), calc(100svw - 1rem)) !important;
+    max-width: min(var(--stgy-embed-vertical-width), calc(100svw - 1rem)) !important;
   }
 }
 
