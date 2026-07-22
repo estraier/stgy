@@ -77,6 +77,11 @@ export default function createTracksRouter(
     Config.HOURLY_IMAGE_POSTS_COUNT_LIMIT,
   );
 
+  async function skipsMonthlyQuota(loginUser: LoginUser, pathUserId: string): Promise<boolean> {
+    if (loginUser.id === pathUserId) return loginUser.isAdmin;
+    return (await usersService.getUserLite(pathUserId))?.isAdmin === true;
+  }
+
   async function requireAuthorized(
     req: Request,
     res: Response,
@@ -114,6 +119,7 @@ export default function createTracksRouter(
         auth.pathUserId,
         typeof req.body.filename === "string" ? req.body.filename : "",
         Number(req.body.sizeBytes ?? 0),
+        await skipsMonthlyQuota(auth.loginUser, auth.pathUserId),
       );
       watch.done();
       res.json(presigned);
@@ -140,6 +146,7 @@ export default function createTracksRouter(
       const finalized = await tracksService.finalizeTrack(
         auth.pathUserId,
         getRequestKey(req),
+        await skipsMonthlyQuota(auth.loginUser, auth.pathUserId),
       );
       watch.done();
       if (!auth.loginUser.isAdmin) {
@@ -178,7 +185,11 @@ export default function createTracksRouter(
     try {
       const yyyymm = typeof req.query.yyyymm === "string" ? req.query.yyyymm : undefined;
       const watch = timerThrottleService.startWatch(auth.loginUser);
-      const quota = await tracksService.calculateMonthlyQuota(auth.pathUserId, yyyymm);
+      const quota = await tracksService.calculateMonthlyQuota(
+        auth.pathUserId,
+        yyyymm,
+        await skipsMonthlyQuota(auth.loginUser, auth.pathUserId),
+      );
       watch.done();
       res.json(quota);
     } catch (e) {

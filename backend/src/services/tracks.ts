@@ -179,6 +179,7 @@ export class TracksService {
     pathUserId: string,
     filename: string,
     sizeBytes: number,
+    skipMonthlyQuota = false,
   ): Promise<PresignedPostResult> {
     if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) {
       throw new Error("invalid sizeBytes");
@@ -195,7 +196,7 @@ export class TracksService {
       throw new Error("unsupported track file");
     }
 
-    if (limitMonthly) {
+    if (limitMonthly && !skipMonthlyQuota) {
       const quota = await this.calculateMonthlyQuota(pathUserId, getYyyyMm(new Date()));
       if (quota.bytesTotal + sizeBytes > limitMonthly) {
         throw new Error("monthly quota exceeded");
@@ -214,7 +215,11 @@ export class TracksService {
     });
   }
 
-  async finalizeTrack(pathUserId: string, stagingKey: string): Promise<FinalizedTrack> {
+  async finalizeTrack(
+    pathUserId: string,
+    stagingKey: string,
+    skipMonthlyQuota = false,
+  ): Promise<FinalizedTrack> {
     if (!isKeyUnder(`tracks-staging/${pathUserId}`, stagingKey)) {
       throw new Error("invalid key");
     }
@@ -271,7 +276,7 @@ export class TracksService {
 
     const now = new Date();
     const limitMonthly = Number(Config.MEDIA_TRACK_BYTE_LIMIT_PER_MONTH ?? 0) || null;
-    if (limitMonthly) {
+    if (limitMonthly && !skipMonthlyQuota) {
       const quota = await this.calculateMonthlyQuota(pathUserId, getYyyyMm(now));
       if (quota.bytesTotal + head.size + previewBytes.length > limitMonthly) {
         await this.deleteStaging(stagingKey);
@@ -383,6 +388,7 @@ export class TracksService {
   async calculateMonthlyQuota(
     pathUserId: string,
     yyyymm?: string,
+    skipMonthlyQuota = false,
   ): Promise<TrackStorageMonthlyQuota> {
     let targetStr: string;
     if (!yyyymm) {
@@ -411,7 +417,9 @@ export class TracksService {
     const bytesPreviews = previews.reduce((a, b) => a + (b.size || 0), 0);
     const bytesTotal = bytesMasters + bytesPreviews;
     const limitSingleBytes = Number(Config.MEDIA_TRACK_BYTE_LIMIT ?? 0) || null;
-    const limitMonthlyBytes = Number(Config.MEDIA_TRACK_BYTE_LIMIT_PER_MONTH ?? 0) || null;
+    const limitMonthlyBytes = skipMonthlyQuota
+      ? null
+      : Number(Config.MEDIA_TRACK_BYTE_LIMIT_PER_MONTH ?? 0) || null;
 
     return {
       userId: pathUserId,

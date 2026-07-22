@@ -27,6 +27,14 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
     Config.HOURLY_IMAGE_POSTS_COUNT_LIMIT,
   );
 
+  async function skipsMonthlyQuota(
+    loginUser: NonNullable<Awaited<ReturnType<AuthHelpers["requireLogin"]>>>,
+    pathUserId: string,
+  ): Promise<boolean> {
+    if (loginUser.id === pathUserId) return loginUser.isAdmin;
+    return (await usersService.getUserLite(pathUserId))?.isAdmin === true;
+  }
+
   router.post("/:userId/images/presigned", async (req: Request, res: Response) => {
     const loginUser = await authHelpers.requireLogin(req, res);
     if (!loginUser) return;
@@ -42,6 +50,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
         pathUserId,
         typeof req.body.filename === "string" ? req.body.filename : "",
         Number(req.body.sizeBytes ?? 0),
+        await skipsMonthlyQuota(loginUser, pathUserId),
       );
       watch.done();
       res.json(presigned);
@@ -64,6 +73,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
       const meta = await mediaService.finalizeImage(
         pathUserId,
         typeof req.body.key === "string" ? req.body.key : "",
+        await skipsMonthlyQuota(loginUser, pathUserId),
       );
       watch.done();
       if (!loginUser.isAdmin) {
@@ -114,7 +124,11 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
           : undefined;
       if (yyyymm && !/^\d{6}$/.test(yyyymm)) throw new Error("invalid yyyymm");
       const watch = timerThrottleService.startWatch(loginUser);
-      const quota = await mediaService.calculateMonthlyQuota(pathUserId, yyyymm);
+      const quota = await mediaService.calculateMonthlyQuota(
+        pathUserId,
+        yyyymm,
+        await skipsMonthlyQuota(loginUser, pathUserId),
+      );
       watch.done();
       res.json(quota);
     } catch (e) {

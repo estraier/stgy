@@ -180,6 +180,25 @@ describe("TracksService", () => {
     );
   });
 
+  test("presignTrackUpload: skips monthly quota when requested", async () => {
+    const presigned: PresignedPostResult = {
+      url: "http://minio:9000/test-bucket-tracks",
+      fields: {
+        key: "tracks-staging/u1/uuid.fit",
+        "Content-Type": "application/octet-stream",
+      },
+      objectKey: "tracks-staging/u1/uuid.fit",
+      maxBytes: 10 * 1024 * 1024,
+      expiresInSec: 300,
+    };
+    storage.createPresignedPost.mockResolvedValueOnce(presigned);
+
+    await expect(
+      service.presignTrackUpload(userId, "next.fit", 1 * 1024 * 1024, true),
+    ).resolves.toEqual(presigned);
+    expect(storage.listObjects).not.toHaveBeenCalled();
+  });
+
   test("finalizeTrack: success for FIT, move master and synchronously save preview", async () => {
     const stagingKey = "tracks-staging/u1/tmp.fit";
     storage.headObject.mockResolvedValueOnce(
@@ -299,6 +318,24 @@ describe("TracksService", () => {
     expect(storage.deleteObject).toHaveBeenCalledWith({ bucket, key: stagingKey });
   });
 
+  test("finalizeTrack: skips monthly quota when requested", async () => {
+    const stagingKey = "tracks-staging/u1/tmp.fit";
+    storage.headObject.mockResolvedValueOnce(
+      makeMeta(stagingKey, 2 * 1024 * 1024, "application/octet-stream"),
+    );
+    storage.loadObject.mockResolvedValueOnce(makeFitBytes()).mockResolvedValueOnce(makeFitBytes());
+    storage.headObject
+      .mockResolvedValueOnce(
+        makeMeta("u1/masters/797491/master.fit", 2 * 1024 * 1024, "application/octet-stream"),
+      )
+      .mockResolvedValueOnce(
+        makeMeta("u1/previews/797491/master.trjgz", 5120, "application/gzip"),
+      );
+
+    await expect(service.finalizeTrack(userId, stagingKey, true)).resolves.toBeDefined();
+    expect(storage.listObjects).not.toHaveBeenCalled();
+  });
+
   test("finalizeTrack: deletes and rejects oversized TRJGZ JSON", async () => {
     const stagingKey = "tracks-staging/u1/tmp.trjgz";
     const body = JSON.stringify({
@@ -406,6 +443,14 @@ describe("TracksService", () => {
       limitSingleBytes: 10 * 1024 * 1024,
       limitMonthlyBytes: 100 * 1024 * 1024,
     });
+  });
+
+  test("calculateMonthlyQuota: reports no monthly limit when quota is skipped", async () => {
+    storage.listObjects.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    const quota = await service.calculateMonthlyQuota(userId, undefined, true);
+
+    expect(quota.limitMonthlyBytes).toBeNull();
   });
 
   test("deleteAllTracks: deletes masters, previews, and staging", async () => {

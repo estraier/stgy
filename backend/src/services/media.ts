@@ -54,6 +54,7 @@ export class MediaService {
     pathUserId: string,
     filename: string,
     sizeBytes: number,
+    skipMonthlyQuota = false,
   ): Promise<PresignedPostResult> {
     if (!Number.isFinite(sizeBytes) || sizeBytes <= 0) throw new Error("invalid sizeBytes");
     const limitSingle = Number(Config.MEDIA_IMAGE_BYTE_LIMIT ?? 0) || null;
@@ -63,7 +64,7 @@ export class MediaService {
     if (!ct0) throw new Error("unsupported content type");
     const now = new Date();
     const yyyymmStr = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
-    if (limitMonthly) {
+    if (limitMonthly && !skipMonthlyQuota) {
       const quota = await this.calculateMonthlyQuota(pathUserId, yyyymmStr);
       if (quota.bytesTotal + sizeBytes > limitMonthly) {
         throw new Error("monthly quota exceeded");
@@ -80,7 +81,11 @@ export class MediaService {
     });
   }
 
-  async finalizeImage(pathUserId: string, stagingKey: string): Promise<StorageObjectMetadata> {
+  async finalizeImage(
+    pathUserId: string,
+    stagingKey: string,
+    skipMonthlyQuota = false,
+  ): Promise<StorageObjectMetadata> {
     if (!isKeyUnder(`staging/${pathUserId}`, stagingKey)) throw new Error("invalid key");
     const head = await this.storage.headObject({
       bucket: Config.MEDIA_BUCKET_IMAGES,
@@ -151,7 +156,7 @@ export class MediaService {
     const now = new Date();
     const yyyymmStr = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
     const limitMonthly = Number(Config.MEDIA_IMAGE_BYTE_LIMIT_PER_MONTH ?? 0) || null;
-    if (limitMonthly) {
+    if (limitMonthly && !skipMonthlyQuota) {
       const quota = await this.calculateMonthlyQuota(pathUserId, yyyymmStr);
       if (quota.bytesTotal + head.size > limitMonthly) {
         await this.storage.deleteObject({ bucket: Config.MEDIA_BUCKET_IMAGES, key: stagingKey });
@@ -431,7 +436,11 @@ export class MediaService {
     }
   }
 
-  async calculateMonthlyQuota(pathUserId: string, yyyymm?: string): Promise<StorageMonthlyQuota> {
+  async calculateMonthlyQuota(
+    pathUserId: string,
+    yyyymm?: string,
+    skipMonthlyQuota = false,
+  ): Promise<StorageMonthlyQuota> {
     let targetStr: string;
     if (!yyyymm) {
       const now = new Date();
@@ -457,7 +466,9 @@ export class MediaService {
     const bytesThumbs = thumbs.reduce((a, b) => a + (b.size || 0), 0);
     const bytesTotal = bytesMasters + bytesThumbs;
     const limitSingleBytes = Number(Config.MEDIA_IMAGE_BYTE_LIMIT ?? 0) || null;
-    const limitMonthlyBytes = Number(Config.MEDIA_IMAGE_BYTE_LIMIT_PER_MONTH ?? 0) || null;
+    const limitMonthlyBytes = skipMonthlyQuota
+      ? null
+      : Number(Config.MEDIA_IMAGE_BYTE_LIMIT_PER_MONTH ?? 0) || null;
     return {
       userId: pathUserId,
       yyyymm: targetStr,

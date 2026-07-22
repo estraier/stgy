@@ -119,6 +119,22 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
     );
   });
 
+  test("presignImageUpload: skips monthly quota when requested", async () => {
+    const presigned: PresignedPostResult = {
+      url: "http://minio:9000/test-bucket-images",
+      fields: { key: "staging/u1/uuid.png", "Content-Type": "image/png" },
+      objectKey: "staging/u1/uuid.png",
+      maxBytes: 10 * 1024 * 1024,
+      expiresInSec: 300,
+    };
+    storage.createPresignedPost.mockResolvedValueOnce(presigned);
+
+    await expect(
+      service.presignImageUpload(userId, "next.png", 5 * 1024 * 1024, true),
+    ).resolves.toEqual(presigned);
+    expect(storage.listObjects).not.toHaveBeenCalled();
+  });
+
   test("finalizeImage: success (png), move to masters/, enqueue, monthly check passes", async () => {
     const stagingKey = "staging/u1/tmp_abc.png";
     storage.headObject.mockResolvedValueOnce(
@@ -197,6 +213,29 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
       /monthly quota exceeded/i,
     );
     expect(storage.deleteObject).toHaveBeenCalledWith({ bucket: imageBucket, key: stagingKey });
+  });
+
+  test("finalizeImage: skips monthly quota when requested", async () => {
+    const stagingKey = "staging/u1/tmp.png";
+    storage.headObject.mockResolvedValueOnce(
+      makeMeta(stagingKey, 2 * 1024 * 1024, "image/png", imageBucket),
+    );
+    storage.loadObject.mockResolvedValueOnce(
+      new Uint8Array([
+        0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44,
+        0x52, 0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01, 0x08, 0x02, 0x00, 0x00, 0x00,
+      ]),
+    );
+    const dstMeta = makeMeta(
+      "u1/masters/797491/8244988800000deadbeef.png",
+      2 * 1024 * 1024,
+      "image/png",
+      imageBucket,
+    );
+    storage.headObject.mockResolvedValueOnce(dstMeta);
+
+    await expect(service.finalizeImage(userId, stagingKey, true)).resolves.toEqual(dstMeta);
+    expect(storage.listObjects).not.toHaveBeenCalled();
   });
 
   test("listImages: returns only masters/ with pagination", async () => {
@@ -434,6 +473,14 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
     expect(q.bytesTotal).toBe(33);
     expect(q.limitSingleBytes).toBe(10 * 1024 * 1024);
     expect(q.limitMonthlyBytes).toBe(100 * 1024 * 1024);
+  });
+
+  test("calculateMonthlyQuota: reports no monthly limit when quota is skipped", async () => {
+    storage.listObjects.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
+
+    const q = await service.calculateMonthlyQuota(userId, undefined, true);
+
+    expect(q.limitMonthlyBytes).toBeNull();
   });
 
   test("deleteAllImagesAndProfiles: deletes all under images/profiles (masters/thumbs/staging)", async () => {
