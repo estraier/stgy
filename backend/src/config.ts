@@ -183,7 +183,7 @@ export class Config {
   static readonly AI_USER_BATCH_SIZE = envNum("STGY_AI_USER_BATCH_SIZE", 1);
   static readonly AI_USER_CONCURRENCY = envNum("STGY_AI_USER_CONCURRENCY", 1);
   static readonly AI_USER_IDLE_SLEEP_MS = envNum("STGY_AI_USER_IDLE_SLEEP_MS", 10 * 1000);
-  static readonly AI_USER_LOOP_SLEEP_MS = envNum("STGY_AI_USER_LOOP_SLEEP_MS", 12 * 3600 * 1000);
+  static readonly AI_USER_LOOP_SLEEP_MS = envNum("STGY_AI_USER_LOOP_SLEEP_MS", 25 * 3600 * 1000);
   static readonly AI_USER_FETCH_POST_LIMIT = envNum("STGY_AI_USER_FETCH_POST_LIMIT", 30);
   static readonly AI_USER_COMPARE_POST_LIMIT = envNum("STGY_AI_USER_COMPARE_POST_LIMIT", 100);
   static readonly AI_USER_READ_POST_LIMIT = envNum("STGY_AI_USER_READ_POST_LIMIT", 10);
@@ -226,7 +226,7 @@ export class Config {
     "STGY_AI_USER_SKIP_INTEREST_UPDATE_DAYS",
     0,
   );
-  static readonly AI_USER_SKIP_NEW_POST_DAYS = envNum("STGY_AI_USER_SKIP_NEW_POST_DAYS", 0);
+  static readonly AI_USER_SKIP_NEW_POST_DAYS = envNum("STGY_AI_USER_SKIP_NEW_POST_DAYS", 3);
   static readonly AI_USER_FOLLOWEE_ACTIVE_DAYS = envNum("STGY_AI_USER_FOLLOWEE_ACTIVE_DAYS", 30);
 }
 
