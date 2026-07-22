@@ -28,6 +28,8 @@ OWNER_RE = re.compile(r"^[0-9A-Fa-f]{16}$")
 HEADING_RE = re.compile(r"^(\*+)\s+(.+)$")
 HYPHENS_RE = re.compile(r"^(\s*)(-{2,})(\s*)$")
 MAP_ATTR_RE = re.compile(r"\[([A-Za-z][-_A-Za-z0-9]*)=(.*?)\]")
+BBB_LINK_RE = re.compile(r"\[\[([^\[\]|]+)\|([^\[\]]+)\]\]")
+FILENAME_LINK_RE = re.compile(r"^filename:(\d{8})$")
 GENERATED_IMAGE_RE = re.compile(r"!\[\]\((.*)\)\{grid\}")
 IMAGE_MIME_TYPES = {
   ".jpg": "image/jpeg",
@@ -737,6 +739,35 @@ def normalize_image_url(url: str) -> str:
   return url
 
 
+def filename_link_post_id(target: str, source_path: Path) -> str:
+  match = FILENAME_LINK_RE.fullmatch(target)
+  if not match:
+    raise ValueError(
+      f"{source_path}: invalid filename link target: {target!r}"
+    )
+  try:
+    published_at = datetime.strptime(match.group(1), "%Y%m%d").replace(
+      hour=12,
+      tzinfo=JST,
+    )
+  except ValueError as exc:
+    raise ValueError(
+      f"{source_path}: invalid filename link date: {target!r}"
+    ) from exc
+  return issue_id(published_at, defaultdict(int))
+
+
+def transform_bbb_links(line: str, source_path: Path) -> str:
+  def replace_link(match: re.Match[str]) -> str:
+    label = match.group(1).strip()
+    target = match.group(2).strip()
+    if target.startswith("filename:"):
+      target = f"/posts/{filename_link_post_id(target, source_path)}"
+    return f"[{label}]({target})"
+
+  return BBB_LINK_RE.sub(replace_link, line)
+
+
 def format_coordinate(value: float) -> str:
   return f"{value:.8f}".rstrip("0").rstrip(".")
 
@@ -824,7 +855,10 @@ def transform_body(
     heading_match = HEADING_RE.fullmatch(line)
     if heading_match:
       level = len(heading_match.group(1)) + 1
-      output.append(f"{'#' * level} {heading_match.group(2)}")
+      output.append(
+        f"{'#' * level} "
+        f"{transform_bbb_links(heading_match.group(2), source_path)}"
+      )
       continue
 
     hyphens_match = HYPHENS_RE.fullmatch(line)
@@ -837,7 +871,7 @@ def transform_body(
       )
       continue
 
-    output.append(line)
+    output.append(transform_bbb_links(line, source_path))
 
   while output and not output[0].strip():
     output.pop(0)

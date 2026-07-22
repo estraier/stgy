@@ -1,0 +1,11 @@
+id: 0001000000000006
+email: stgy03@stgy.jp
+nickname: STGY TEST 03
+password: *
+isAdmin: false
+blockStrangers: true
+locale: en-US
+timezone: America/New_York
+introduction:<<____EOF____
+Test account number 3.
+____EOF____
