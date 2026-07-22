@@ -596,6 +596,12 @@ export default function PageBody() {
   const [profile, setProfile] = useState<UserDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [exporting, setExporting] = useState(false);
+  const [exportPhase, setExportPhase] = useState<
+    "preparing" | "exporting" | "finalizing" | null
+  >(null);
+  const [exportProgress, setExportProgress] = useState<{ completed: number; total: number } | null>(
+    null,
+  );
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState(false);
 
@@ -653,6 +659,8 @@ export default function PageBody() {
       }
 
       setExporting(true);
+      setExportPhase("preparing");
+      setExportProgress(null);
 
       const enc = new TextEncoder();
       const now = new Date();
@@ -665,49 +673,14 @@ export default function PageBody() {
         trackEntries,
       );
 
-      await zipWriter.addFile(`${base}style.css`, enc.encode(HTML_STYLES_CSS), now);
-      await zipWriter.addFile(
-        `${base}assets/track-viewer.css`,
-        await fetchBytes(TRACK_VIEWER_CSS_URL, "track viewer stylesheet"),
-        now,
-      );
-      await zipWriter.addFile(
-        `${base}assets/track-viewer.js`,
-        await fetchBytes(TRACK_VIEWER_JS_URL, "track viewer script"),
-        now,
-      );
-      await zipWriter.addFile(
-        `${base}assets/track-export.js`,
-        enc.encode(TRACK_EXPORT_BOOTSTRAP_JS),
-        now,
-      );
-      await zipWriter.addFile(`${base}README.txt`, enc.encode(EXPORT_README_TEXT), now);
-      await zipWriter.addFile(
-        `${base}profile.json`,
-        enc.encode(JSON.stringify(exportProfile, null, 2)),
-        now,
-      );
-      await zipWriter.addFile(
-        `${base}profile.html`,
-        enc.encode(renderProfileHtml(exportProfile)),
-        now,
-      );
-
+      let pubCfg: PubConfig | null = null;
       try {
-        const pubCfg: PubConfig = await withTooOftenRetry(() => getPubConfig(userId));
-        await zipWriter.addFile(
-          `${base}pub-config.json`,
-          enc.encode(JSON.stringify(pubCfg, null, 2)),
-          now,
-        );
+        pubCfg = await withTooOftenRetry(() => getPubConfig(userId));
       } catch {}
 
-      if (profile.avatar) {
-        const url = getPublicUrlFromStoragePath(profile.avatar, profile.updatedAt);
-        if (url) {
-          await zipWriter.addFile(`${base}avatar.webp`, await fetchBytes(url, "avatar"), now);
-        }
-      }
+      const avatarUrl = profile.avatar
+        ? getPublicUrlFromStoragePath(profile.avatar, profile.updatedAt)
+        : null;
 
       const [followees, blockees, likes] = await Promise.all([
         fetchAllUsersByPager((o, l) =>
@@ -719,33 +692,7 @@ export default function PageBody() {
         fetchAllLikedPosts(userId),
       ]);
 
-      await zipWriter.addFile(
-        `${base}relations.json`,
-        enc.encode(JSON.stringify({ followees, blockees, likes }, null, 2)),
-        now,
-      );
-
       const posts = await fetchAllMyPosts(userId);
-
-      for (const p of posts) {
-        const detail = await withTooOftenRetry(() => getPost(p.id, userId));
-        const rewritten = rewritePostContentAndSnippet(detail ?? p, userId, trackEntries);
-
-        const jsonBytes = enc.encode(JSON.stringify(rewritten, null, 2));
-        await zipWriter.addFile(`${base}posts/${p.id}.json`, jsonBytes, now);
-
-        const htmlBytes = enc.encode(renderPostHtml(rewritten));
-        await zipWriter.addFile(`${base}posts/${p.id}.html`, htmlBytes, now);
-
-        await sleepForTransferBytes(jsonBytes.length + htmlBytes.length, POST_BASE_SLEEP_MS);
-      }
-
-      await zipWriter.addFile(
-        `${base}index.html`,
-        enc.encode(renderIndexHtml(posts, profile)),
-        now,
-      );
-
       const images = await fetchAllMyImages(userId);
       const masterByFilename = new Map<string, MediaObject>();
 
@@ -756,27 +703,95 @@ export default function PageBody() {
           if (!masterByFilename.has(fname)) masterByFilename.set(fname, it);
         });
 
+      const totalFiles =
+        9 +
+        (pubCfg ? 1 : 0) +
+        (avatarUrl ? 1 : 0) +
+        posts.length * 2 +
+        masterByFilename.size +
+        trackEntries.length * 2;
+      let completedFiles = 0;
+
+      const addExportFile = async (name: string, data: Uint8Array) => {
+        await zipWriter.addFile(name, data, now);
+        completedFiles += 1;
+        setExportProgress({ completed: completedFiles, total: totalFiles });
+      };
+
+      setExportProgress({ completed: 0, total: totalFiles });
+      setExportPhase("exporting");
+
+      await addExportFile(`${base}style.css`, enc.encode(HTML_STYLES_CSS));
+      await addExportFile(
+        `${base}assets/track-viewer.css`,
+        await fetchBytes(TRACK_VIEWER_CSS_URL, "track viewer stylesheet"),
+      );
+      await addExportFile(
+        `${base}assets/track-viewer.js`,
+        await fetchBytes(TRACK_VIEWER_JS_URL, "track viewer script"),
+      );
+      await addExportFile(
+        `${base}assets/track-export.js`,
+        enc.encode(TRACK_EXPORT_BOOTSTRAP_JS),
+      );
+      await addExportFile(`${base}README.txt`, enc.encode(EXPORT_README_TEXT));
+      await addExportFile(
+        `${base}profile.json`,
+        enc.encode(JSON.stringify(exportProfile, null, 2)),
+      );
+      await addExportFile(`${base}profile.html`, enc.encode(renderProfileHtml(exportProfile)));
+
+      if (pubCfg) {
+        await addExportFile(
+          `${base}pub-config.json`,
+          enc.encode(JSON.stringify(pubCfg, null, 2)),
+        );
+      }
+
+      if (avatarUrl) {
+        await addExportFile(`${base}avatar.webp`, await fetchBytes(avatarUrl, "avatar"));
+      }
+
+      await addExportFile(
+        `${base}relations.json`,
+        enc.encode(JSON.stringify({ followees, blockees, likes }, null, 2)),
+      );
+
+      for (const p of posts) {
+        const detail = await withTooOftenRetry(() => getPost(p.id, userId));
+        const rewritten = rewritePostContentAndSnippet(detail ?? p, userId, trackEntries);
+
+        const jsonBytes = enc.encode(JSON.stringify(rewritten, null, 2));
+        await addExportFile(`${base}posts/${p.id}.json`, jsonBytes);
+
+        const htmlBytes = enc.encode(renderPostHtml(rewritten));
+        await addExportFile(`${base}posts/${p.id}.html`, htmlBytes);
+
+        await sleepForTransferBytes(jsonBytes.length + htmlBytes.length, POST_BASE_SLEEP_MS);
+      }
+
+      await addExportFile(`${base}index.html`, enc.encode(renderIndexHtml(posts, profile)));
+
       for (const [filename, it] of masterByFilename.entries()) {
-        await zipWriter.addFile(
+        await addExportFile(
           `${base}images/${filename}`,
           await fetchBytes(it.publicUrl, filename),
-          now,
         );
       }
 
       for (const entry of trackEntries) {
-        await zipWriter.addFile(
+        await addExportFile(
           `${base}tracks/masters/${entry.masterFilename}`,
           await fetchBytes(entry.track.publicUrl, entry.masterFilename),
-          now,
         );
-        await zipWriter.addFile(
+        await addExportFile(
           `${base}tracks/previews/${entry.previewFilename}`,
           await fetchBytes(entry.track.previewUrl, entry.previewFilename),
-          now,
         );
       }
 
+      setExportPhase("finalizing");
+      await sleep(0);
       await zipWriter.finalize();
 
       setDone(true);
@@ -785,8 +800,18 @@ export default function PageBody() {
       if ((err as Error).name !== "AbortError") setError((err as Error).message || String(err));
     } finally {
       setExporting(false);
+      setExportPhase(null);
+      setExportProgress(null);
     }
   }
+
+  const exportButtonLabel = !exporting
+    ? "Export all data"
+    : exportPhase === "preparing"
+      ? "Preparing…"
+      : exportProgress
+        ? `${exportPhase === "finalizing" ? "Finalizing" : "Exporting"}… ${exportProgress.completed} / ${exportProgress.total}`
+        : "Exporting…";
 
   return (
     <main className="max-w-2xl mx-auto mt-12 p-4 bg-white shadow border rounded">
@@ -890,7 +915,7 @@ export default function PageBody() {
             className="bg-blue-600 text-white px-8 py-2 rounded disabled:opacity-60"
             disabled={loading || exporting}
           >
-            {exporting ? "Exporting…" : "Export all data"}
+            {exportButtonLabel}
           </button>
         </div>
       </form>
