@@ -3,20 +3,27 @@
 import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { updateUserPassword, deleteUser, startUpdateEmail, verifyUpdateEmail } from "@/api/users";
-import { logout, getSessionInfo } from "@/api/auth";
+import { logout, getSessionInfo, switchLoginAccount } from "@/api/auth";
 
 export default function PageBody() {
   const router = useRouter();
 
   const [userId, setUserId] = useState<string | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => {
     let canceled = false;
     getSessionInfo()
       .then((session) => {
-        if (!canceled) setUserId(session.userId);
+        if (!canceled) {
+          setUserId(session.userId);
+          setIsAdmin(session.userIsAdmin);
+        }
       })
       .catch(() => {
-        if (!canceled) setUserId(null);
+        if (!canceled) {
+          setUserId(null);
+          setIsAdmin(false);
+        }
       });
     return () => {
       canceled = true;
@@ -144,6 +151,29 @@ export default function PageBody() {
     }
   }
 
+  const [switchUserId, setSwitchUserId] = useState("");
+  const [switchError, setSwitchError] = useState<string | null>(null);
+  const [switchSubmitting, setSwitchSubmitting] = useState(false);
+
+  async function handleSwitchLoginAccount(e: React.FormEvent) {
+    e.preventDefault();
+    setSwitchError(null);
+    const targetUserId = switchUserId.trim();
+    if (!targetUserId) {
+      setSwitchError("Please enter a user ID.");
+      return;
+    }
+    setSwitchSubmitting(true);
+    try {
+      await switchLoginAccount(targetUserId);
+      router.replace("/posts");
+      router.refresh();
+    } catch (e) {
+      setSwitchError(e ? String(e) : "Failed to switch login account.");
+      setSwitchSubmitting(false);
+    }
+  }
+
   return (
     <main className="max-w-2xl mx-auto mt-12 p-4 bg-white shadow border rounded">
       <h1 className="text-2xl font-bold mb-6">Authentication Settings</h1>
@@ -225,7 +255,7 @@ export default function PageBody() {
         </form>
       </section>
 
-      <section>
+      <section className="mb-10">
         <h2 className="text-lg font-semibold mb-2">Withdrawal account</h2>
         {!withdrawalMode ? (
           <div>
@@ -276,6 +306,32 @@ export default function PageBody() {
           </form>
         )}
       </section>
+
+      {isAdmin && (
+        <section>
+          <h2 className="text-lg font-semibold mb-2">Switch login account</h2>
+          <form onSubmit={handleSwitchLoginAccount} className="flex flex-col gap-3">
+            <input
+              id="switch-login-user-id"
+              type="text"
+              placeholder="User ID"
+              value={switchUserId}
+              onChange={(e) => setSwitchUserId(e.target.value)}
+              className="border px-2 py-1 rounded"
+              autoComplete="off"
+              disabled={switchSubmitting}
+            />
+            {switchError && <div className="text-red-600">{switchError}</div>}
+            <button
+              type="submit"
+              className="bg-blue-600 text-white px-4 py-1 rounded"
+              disabled={switchSubmitting}
+            >
+              {switchSubmitting ? "Switching…" : "Switch and re-login"}
+            </button>
+          </form>
+        </section>
+      )}
     </main>
   );
 }

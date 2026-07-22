@@ -16,6 +16,15 @@ export async function login(email: string, password: string): Promise<{ sessionI
   return res.json();
 }
 
+export async function switchLoginAccount(userId: string): Promise<{ sessionId: string }> {
+  const res = await apiFetch("/auth/switch-user", {
+    method: "POST",
+    body: JSON.stringify({ id: userId }),
+  });
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}
+
 export async function logout(): Promise<{ result: string }> {
   const res = await apiFetch("/auth", { method: "DELETE" });
   if (!res.ok) throw new Error(await extractError(res));
