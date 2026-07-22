@@ -14,6 +14,7 @@ type MailTask =
   | { type: "reset-password"; email: string; mailCode: string; resetPasswordId: string };
 
 const MAIL_QUEUE = "mail-queue";
+const MAIL_PROCESSING_QUEUE = "mail-queue:processing";
 
 async function handleMailTask(
   msg: MailTask,
@@ -53,49 +54,99 @@ async function sendMailWithRecord(
   subject: string,
   body: string,
 ) {
-  try {
-    const canSend = await sendMailService.canSendMail(address);
-    if (!canSend.ok) {
-      logger.warn(`throttle: cannot send to ${address}: ${canSend.reason}`);
-      return;
-    }
-    await sendMailService.send(mailTransporter, address, subject, body);
-    await sendMailService.recordSend(address);
-    logger.info(`sent mail to ${address} [${subject}]`);
-  } catch (e) {
-    logger.warn(`failed to send mail to ${address}: ${e}`);
+  const canSend = await sendMailService.canSendMail(address);
+  if (!canSend.ok) {
+    throw new Error(`throttle: cannot send to ${address}: ${canSend.reason}`);
   }
+
+  await sendMailService.send(mailTransporter, address, subject, body);
+
+  try {
+    await sendMailService.recordSend(address);
+  } catch (e) {
+    logger.warn(`sent mail to ${address}, but failed to record send history: ${e}`);
+  }
+  logger.info(`sent mail to ${address} [${subject}]`);
+}
+
+async function requeueMailTask(
+  queue: string,
+  processingQueue: string,
+  redis: Redis,
+  payload: string,
+): Promise<void> {
+  await redis.multi().lrem(processingQueue, 1, payload).lpush(queue, payload).exec();
+}
+
+export async function processNextMailTask(
+  queue: string,
+  processingQueue: string,
+  redis: Redis,
+  sendMailService: SendMailService,
+  mailTransporter: Transporter,
+): Promise<boolean> {
+  const payload = await redis.brpoplpush(queue, processingQueue, 5);
+  if (!payload) return false;
+
+  try {
+    let msg: unknown;
+    try {
+      msg = JSON.parse(payload);
+    } catch {
+      logger.error(`invalid payload in ${queue}: ${payload}`);
+      await redis.lrem(processingQueue, 1, payload);
+      return true;
+    }
+
+    if (typeof msg === "object" && msg !== null && "type" in msg) {
+      await handleMailTask(msg as MailTask, sendMailService, mailTransporter);
+    } else {
+      logger.error(`invalid task object in ${queue}: ${payload}`);
+    }
+
+    await redis.lrem(processingQueue, 1, payload);
+    return true;
+  } catch (e) {
+    try {
+      await requeueMailTask(queue, processingQueue, redis, payload);
+    } catch (requeueError) {
+      logger.error(`failed to return mail task to ${queue}: ${requeueError}`);
+    }
+    throw e;
+  }
+}
+
+export async function recoverProcessingQueue(
+  queue: string,
+  processingQueue: string,
+  redis: Redis,
+): Promise<number> {
+  let recovered = 0;
+  while (await redis.rpoplpush(processingQueue, queue)) {
+    recovered += 1;
+  }
+  return recovered;
 }
 
 async function processQueue(
   queue: string,
+  processingQueue: string,
   redis: Redis,
   sendMailService: SendMailService,
   mailTransporter: Transporter,
 ) {
   while (lifecycle.isActive) {
     try {
-      const res = await redis.brpop(queue, 5);
-
-      if (!lifecycle.isActive) break;
-
-      if (!res) continue;
-      const payload = res[1];
-      let msg: unknown;
-      try {
-        msg = JSON.parse(payload);
-      } catch {
-        logger.error(`invalid payload in ${queue}: ${payload}`);
-        continue;
-      }
-      if (typeof msg === "object" && msg !== null && "type" in msg) {
-        await handleMailTask(msg as MailTask, sendMailService, mailTransporter);
-      } else {
-        logger.error(`invalid task object in ${queue}: ${payload}`);
-      }
+      await processNextMailTask(
+        queue,
+        processingQueue,
+        redis,
+        sendMailService,
+        mailTransporter,
+      );
     } catch (e) {
       if (!lifecycle.isActive) break;
-      logger.error(`error processing ${queue}: ${e}`);
+      logger.error(`error processing ${queue}; task returned to queue: ${e}`);
       await new Promise((resolve) => setTimeout(resolve, 3000));
     }
   }
@@ -108,7 +159,17 @@ export async function startMailWorker() {
   const mailTransporter: Transporter = SendMailService.createTransport();
 
   try {
-    await processQueue(MAIL_QUEUE, redis, sendMailService, mailTransporter);
+    const recovered = await recoverProcessingQueue(MAIL_QUEUE, MAIL_PROCESSING_QUEUE, redis);
+    if (recovered > 0) {
+      logger.warn(`returned ${recovered} unfinished mail task(s) to ${MAIL_QUEUE}`);
+    }
+    await processQueue(
+      MAIL_QUEUE,
+      MAIL_PROCESSING_QUEUE,
+      redis,
+      sendMailService,
+      mailTransporter,
+    );
   } finally {
     logger.info("Stopping mail worker, disconnecting redis...");
     try {

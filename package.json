@@ -91,6 +91,7 @@
     "endpoint-test": "./tests/ttts_endpoint_test.py && ./tests/backend_endpoint_test.py",
     "psql": "./scripts/psql.sh",
     "vps:docker:up": "docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d --build --remove-orphans",
+    "vps:docker:mail:diagnose": "./scripts/diagnose-vps-docker-mail.sh",
     "vps:hybrid:up": "docker compose -f docker-compose.yml -f docker-compose.vps.yml stop postgres minio redis ttts mailpit caddy || true ; docker compose -f docker-compose.yml -f docker-compose.vps.yml rm -f postgres minio redis ttts mailpit caddy ; docker compose -f docker-compose.yml -f docker-compose.vps.yml up -d --build --no-deps worker backend frontend",
     "vps:hybrid:down": "docker compose -f docker-compose.yml -f docker-compose.vps.yml stop worker backend frontend ; docker compose -f docker-compose.yml -f docker-compose.vps.yml rm -f worker backend frontend",
     "vps:docker:down": "docker compose -f docker-compose.yml -f docker-compose.vps.yml down",
