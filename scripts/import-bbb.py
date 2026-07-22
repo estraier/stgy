@@ -871,6 +871,9 @@ def transform_body(
       )
       continue
 
+    if line.startswith("|") and "|" in line[1:] and not line.endswith("|"):
+      line += "|"
+
     output.append(transform_bbb_links(line, source_path))
 
   while output and not output[0].strip():

@@ -1666,6 +1666,8 @@ npm run reset-search-restore
 ./scripts/import-archive.py --data-dir stgy-export-0001000000000021-20260722140653 --admin-email admin@stgy.jp --admin-password stgystgy --owner 0001000000001234
 ```
 
+返信の記事は除外したい場合、--no-replyオプションをつける。インポートした記事を公開したい場合、--publishオプションをつける。
+
 ## まとめ
 
 STGYは、リバースプロクシにCaddy、データベースにPostgreSQL、オブジェクトストレージにMinIO、キャッシュにRedisを用い、Node.jsのバックエンドとフロントエンドがそれらを操るアーキテクチャである。メール送信には、開発環境ではMailpit、VPSではPostfixを用いる。開発時にはMac上でDockerを用いて依存サービスを稼働させた上で、バックエンドとフロントエンドをローカルホストで動かす。

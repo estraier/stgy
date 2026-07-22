@@ -63,6 +63,7 @@ class ImportPlan:
   data_dir: Path
   profile: dict[str, Any]
   posts: tuple[ArchivePost, ...]
+  skipped_reply_count: int
   image_paths: tuple[Path, ...]
   track_master_paths: tuple[Path, ...]
   track_preview_to_master: dict[Path, Path]
@@ -405,7 +406,7 @@ def collect_media_references(
   )
 
 
-def load_import_plan(data_dir: Path) -> ImportPlan:
+def load_import_plan(data_dir: Path, no_reply: bool = False, publish: bool = False) -> ImportPlan:
   root = data_dir.expanduser().resolve()
   if not root.is_dir():
     raise ValueError(f"data directory not found: {root}")
@@ -417,13 +418,20 @@ def load_import_plan(data_dir: Path) -> ImportPlan:
   posts_dir = root / "posts"
   if not posts_dir.is_dir():
     raise ValueError(f"posts directory not found: {posts_dir}")
-  posts = tuple(
+  all_posts = tuple(
     validate_post(load_json_object(path), path)
     for path in sorted(posts_dir.glob("*.json"), key=lambda p: p.name)
   )
-  ids = [post.id for post in posts]
+  ids = [post.id for post in all_posts]
   if len(ids) != len(set(ids)):
     raise ValueError("duplicate post IDs in archive")
+  posts = tuple(post for post in all_posts if not (no_reply and post.reply_to is not None))
+  skipped_reply_count = len(all_posts) - len(posts)
+  if publish:
+    for post in posts:
+      created_at = post.data.get("createdAt")
+      if not isinstance(created_at, str) or not created_at:
+        raise ValueError(f"{post.path}: createdAt must be a non-empty string with --publish")
 
   image_paths, track_master_paths, preview_to_master = collect_media_references(root, posts)
 
@@ -440,6 +448,7 @@ def load_import_plan(data_dir: Path) -> ImportPlan:
     data_dir=root,
     profile=profile,
     posts=posts,
+    skipped_reply_count=skipped_reply_count,
     image_paths=image_paths,
     track_master_paths=track_master_paths,
     track_preview_to_master=preview_to_master,
@@ -515,13 +524,24 @@ def build_user_body(profile: dict[str, Any], introduction: str, password: str | 
   return body
 
 
-def build_post_body(post: ArchivePost, owner_id: str, content: str, include_id: bool) -> dict[str, Any]:
+def build_post_body(
+  post: ArchivePost,
+  owner_id: str,
+  content: str,
+  include_id: bool,
+  publish: bool,
+) -> dict[str, Any]:
+  published_at = post.data.get("publishedAt")
+  if publish:
+    published_at = post.data.get("createdAt")
+    if not isinstance(published_at, str) or not published_at:
+      raise ValueError(f"{post.path}: createdAt must be a non-empty string with --publish")
   body: dict[str, Any] = {
     "content": content,
     "ownedBy": owner_id,
     "replyTo": post.data.get("replyTo"),
     "locale": post.data.get("locale"),
-    "publishedAt": post.data.get("publishedAt"),
+    "publishedAt": published_at,
     "allowLikes": post.data["allowLikes"],
     "allowReplies": post.data["allowReplies"],
     "tags": post.data["tags"],
@@ -547,7 +567,12 @@ def validate_pub_config(data: dict[str, Any]) -> dict[str, Any]:
   return {key: value for key, value in data.items() if key in allowed}
 
 
-def import_archive(plan: ImportPlan, client: StgyClient, owner_override: str | None) -> None:
+def import_archive(
+  plan: ImportPlan,
+  client: StgyClient,
+  owner_override: str | None,
+  publish: bool = False,
+) -> None:
   profile_id = normalize_id(plan.profile["id"], "profile ID")
   owner_id = normalize_id(owner_override, "--owner") if owner_override else profile_id
   client.login()
@@ -634,19 +659,26 @@ def import_archive(plan: ImportPlan, client: StgyClient, owner_override: str | N
       track_urls_by_preview,
     )
     existing_post = client.get_post(post.id)
+    post_body = build_post_body(
+      post,
+      owner_id,
+      rewritten_content,
+      existing_post is None,
+      publish,
+    )
     if existing_post is None:
-      client.create_post(build_post_body(post, owner_id, rewritten_content, True))
+      client.create_post(post_body)
       created += 1
       print(f"[POST CREATED] {post.id}")
     else:
-      client.update_post(post.id, build_post_body(post, owner_id, rewritten_content, False))
+      client.update_post(post.id, post_body)
       updated += 1
       print(f"[POST UPDATED] {post.id}")
 
   print(
     "[SUMMARY] "
     f"owner={owner_id} user={'created' if created_user else ('skipped' if owner_override else 'updated')} "
-    f"postsCreated={created} postsUpdated={updated} "
+    f"postsCreated={created} postsUpdated={updated} repliesSkipped={plan.skipped_reply_count} "
     f"images={len(image_urls)} tracks={len(track_url_by_master)}"
   )
 
@@ -659,6 +691,12 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
   parser.add_argument("--admin-email", default=DEFAULT_ADMIN_EMAIL)
   parser.add_argument("--admin-password", default=DEFAULT_ADMIN_PASSWORD)
   parser.add_argument("--owner", help="restore posts and referenced media under an existing user ID")
+  parser.add_argument("--no-reply", action="store_true", help="do not import posts that are replies")
+  parser.add_argument(
+    "--publish",
+    action="store_true",
+    help="publish imported posts externally using each archived post's creation time",
+  )
   return parser.parse_args(argv)
 
 
@@ -666,9 +704,9 @@ def main(argv: list[str]) -> int:
   args = parse_args(argv)
   client: StgyClient | None = None
   try:
-    plan = load_import_plan(args.data_dir)
+    plan = load_import_plan(args.data_dir, args.no_reply, args.publish)
     client = StgyClient(DEFAULT_API_BASE, args.admin_email, args.admin_password)
-    import_archive(plan, client, args.owner)
+    import_archive(plan, client, args.owner, args.publish)
     return 0
   except (OSError, ValueError, RuntimeError, requests.RequestException) as exc:
     print(f"[ERROR] {exc}", file=sys.stderr)
