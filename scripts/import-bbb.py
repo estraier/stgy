@@ -799,10 +799,10 @@ def transform_body(
 
     image_match = re.fullmatch(r"\s*@image\s+(.+?)\s*", line)
     if image_match:
-      raw_urls = image_match.group(1).split("|")
-      urls = [part.strip() for part in raw_urls]
-      if any(not url for url in urls):
+      raw_urls = [part.strip() for part in image_match.group(1).split("|")]
+      if any(not raw_url for raw_url in raw_urls):
         raise ValueError(f"invalid @image directive: {line!r}")
+      urls = [raw_url.split(maxsplit=1)[0] for raw_url in raw_urls]
       if output and output[-1].startswith("![]("):
         output.append("")
       for url in urls:

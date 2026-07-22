@@ -3,6 +3,7 @@
 set -euo pipefail
 
 MODE=docker
+CORE_ONLY=false
 INSECURE_PASSWORD=false
 while [ "$#" -gt 0 ]; do
   case "$1" in
@@ -13,6 +14,10 @@ while [ "$#" -gt 0 ]; do
       ;;
     --mode=*)
       MODE="${1#*=}"
+      shift
+      ;;
+    --core-only)
+      CORE_ONLY=true
       shift
       ;;
     --insecure-password)
@@ -47,11 +52,18 @@ cd "$PROJECT_ROOT"
 ./scripts/reset-minio-data.sh --mode "$MODE"
 ./scripts/reset-ttts-data.sh --mode "$MODE"
 
+INSECURE_OPTTONS=""
 if [ "$INSECURE_PASSWORD" = true ]; then
-  ./scripts/edit-users.py --insecure-password seeder/user-0*.txt
-else
+  INSECURE_OPTTONS="--insecure-password"
   ./scripts/edit-users.py seeder/user-0*.txt
 fi
-./scripts/edit-posts.py seeder/post-0*.txt
-./scripts/user-actions.py seeder/action-*.txt
-./scripts/edit-posts.py seeder/post-x0*.txt
+if [ "$CORE_ONLY" = true ]; then
+  ./scripts/edit-users.py $INSECURE_OPTTONS seeder/user-000[0-2]*.txt
+  ./scripts/edit-posts.py seeder/post-000[0-2]*.txt
+  ./scripts/user-actions.py seeder/action-00001.txt
+else
+  ./scripts/edit-users.py $INSECURE_OPTTONS seeder/user-0*.txt
+  ./scripts/edit-posts.py seeder/post-0*.txt
+  ./scripts/user-actions.py seeder/action-*.txt
+  ./scripts/edit-posts.py seeder/post-x0*.txt
+fi

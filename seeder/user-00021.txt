@@ -1,15 +1,15 @@
 id: 0001000000000021
-email: mikio@stgy.jp
+email: hirarin@gmail.com
 nickname: mikio
 password: *
-isAdmin: false
+isAdmin: true
 blockStrangers: false
 locale: ja-JP
 timezone: Asia/Tokyo
 introduction:<<____EOF____
-STGYの開発者です。
+STGYの開発者です。趣味でソフトウェア開発をやっていて、データベースや言語処理や画像処理の技術に興味があります。最近はAI関連の技術も学んでいて、その一環でこのSNSを開発しています。
 
-趣味でソフトウェア開発をやっていて、データベースや言語処理や画像処理の技術に興味があります。最近はAI関連の技術も学んでいて、その一環でこのSNSを開発しています。
+ソフトウェア開発の話の他には、自転車や写真や旅の話題を主に書きます。自転車で日本全国を放浪しながら、プログラムを書いたり写真を撮ったり読書をしたりして生活しています。
 
 STGYについて質問や要望があれば、[こちらの質問・要望ページ](/posts/0002000000000021)に返信投稿をしてください。
 ____EOF____
