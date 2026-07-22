@@ -60,6 +60,11 @@ import {
   updateTrackSizeOptions,
   type MarkdownOptionToken,
 } from "@/utils/markdownTrackOptions";
+import {
+  parseYouTubeMarkdownLine,
+  updateYouTubeMarkdownLine,
+  updateYouTubeSizeOptions,
+} from "@/utils/markdownYouTubeOptions";
 
 type MdAttrs = Record<string, string | number | boolean>;
 type MdTextNode = { type: "text"; text: string };
@@ -153,6 +158,29 @@ function applyImageOptionFromTextarea(
   const before = text.slice(0, start);
   const after = text.slice(end);
   const nextText = before + newLine + after;
+  const delta = newLine.length - (end - start);
+  const newCaret = caret + delta;
+  setBody(nextText);
+  requestAnimationFrame(() => {
+    const pos = clamp(newCaret, start, start + newLine.length);
+    ta.setSelectionRange(pos, pos);
+  });
+}
+
+function applyYouTubeOptionFromTextarea(
+  ta: HTMLTextAreaElement,
+  setBody: (next: string) => void,
+  updater: Parameters<typeof updateYouTubeMarkdownLine>[1],
+) {
+  const text = ta.value;
+  const selStart = ta.selectionStart ?? 0;
+  const selEnd = ta.selectionEnd ?? selStart;
+  const caret = Math.max(selStart, selEnd);
+  const { start, end } = getCurrentLineRange(text, caret);
+  const line = text.slice(start, end);
+  const newLine = updateYouTubeMarkdownLine(line, updater);
+  if (newLine == null) return;
+  const nextText = text.slice(0, start) + newLine + text.slice(end);
   const delta = newLine.length - (end - start);
   const newCaret = caret + delta;
   setBody(nextText);
@@ -553,6 +581,7 @@ export default function PostForm({
   const [hasFocusedOnce, setHasFocusedOnce] = useState(false);
   const [isXl, setIsXl] = useState(false);
   const [isImageLine, setIsImageLine] = useState(false);
+  const [isYouTubeLine, setIsYouTubeLine] = useState(false);
   const [isTrackLine, setIsTrackLine] = useState(false);
   const [trackBaseValue, setTrackBaseValue] = useState<string | null>(null);
   const [trackGraphDisabled, setTrackGraphDisabled] = useState(false);
@@ -731,8 +760,10 @@ export default function PostForm({
     const { start, end } = getCurrentLineRange(text, pos);
     const line = text.slice(start, end);
     const imageLine = parseImageMarkdownLine(line);
-    const trackLine = imageLine ? null : parseTrackMarkdownLine(line);
+    const youtubeLine = imageLine ? null : parseYouTubeMarkdownLine(line);
+    const trackLine = imageLine || youtubeLine ? null : parseTrackMarkdownLine(line);
     setIsImageLine(imageLine != null);
+    setIsYouTubeLine(youtubeLine != null);
     setIsTrackLine(trackLine != null);
     if (trackLine) {
       const tokens = parseMarkdownOptions(trackLine.options);
@@ -965,6 +996,29 @@ export default function PostForm({
         next = [...next, { key: "featured", value: null }];
       }
       return next;
+    });
+    afterNextPaint(() => {
+      const s = ta.selectionStart ?? caretRef.current;
+      const ed = ta.selectionEnd ?? s;
+      selStartRef.current = s;
+      selEndRef.current = ed;
+      caretRef.current = ed;
+      scheduleSyncRef.current();
+      if (overlayActive) {
+        scheduleEditorHighlightRef.current();
+        schedulePreviewHighlightRef.current();
+      }
+      if (overlayActive) resizeOverlayTextareaRef.current();
+      updateMediaLineState();
+    });
+  };
+
+  const actYouTubeSize = (size: ImageSize) => (e: React.MouseEvent) => {
+    e.preventDefault();
+    const ta = activeTextarea();
+    if (!ta) return;
+    applyYouTubeOptionFromTextarea(ta, setBody, (tokens) => {
+      return updateYouTubeSizeOptions(tokens, size);
     });
     afterNextPaint(() => {
       const s = ta.selectionStart ?? caretRef.current;
@@ -2123,6 +2177,51 @@ export default function PostForm({
   const trackGraphTitle = trackGraphDisabled
     ? "Graph: hidden → default"
     : "Graph: default → hidden";
+  const youtubeToolbar = (
+    <>
+      <button
+        type="button"
+        onMouseDown={actYouTubeSize("xs")}
+        title="Size XS"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <span className="text-[10px] leading-none">XS</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={actYouTubeSize("s")}
+        title="Size S"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <span className="text-[10px] leading-none">S</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={actYouTubeSize("m")}
+        title="Size M (default)"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <span className="text-[10px] leading-none">M</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={actYouTubeSize("l")}
+        title="Size L"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <span className="text-[10px] leading-none">L</span>
+      </button>
+      <button
+        type="button"
+        onMouseDown={actYouTubeSize("xl")}
+        title="Size XL"
+        className={`inline-flex ${toolbarBtn}`}
+      >
+        <span className="text-[10px] leading-none">XL</span>
+      </button>
+    </>
+  );
+
   const trackToolbar = (
     <>
       <button
@@ -2337,6 +2436,8 @@ export default function PostForm({
                     <span className="sr-only">Featured</span>
                   </button>
                 </>
+              ) : isYouTubeLine ? (
+                youtubeToolbar
               ) : isTrackLine ? (
                 trackToolbar
               ) : (
@@ -2800,6 +2901,8 @@ export default function PostForm({
                             <span className="sr-only">Featured</span>
                           </button>
                         </>
+                      ) : isYouTubeLine ? (
+                        youtubeToolbar
                       ) : isTrackLine ? (
                         trackToolbar
                       ) : (
