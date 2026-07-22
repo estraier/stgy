@@ -97,8 +97,8 @@
     "vps:docker:reset": "docker compose -f docker-compose.yml -f docker-compose.vps.yml down --rmi all --remove-orphans && DOCKER_BUILDKIT=1 COMPOSE_DOCKER_CLI_BUILD=1 docker compose -f docker-compose.yml -f docker-compose.vps.yml build --no-cache && docker compose -f docker-compose.yml -f docker-compose.vps.yml create",
     "vps:docker:start": "docker compose -f docker-compose.yml -f docker-compose.vps.yml start",
     "vps:docker:stop": "docker compose -f docker-compose.yml -f docker-compose.vps.yml stop",
-    "vps:reset-data": "./scripts/reset-service-data.sh",
-    "vps:native:reset-data": "./scripts/reset-service-data.sh --mode native",
-    "vps:hybrid:reset-data": "./scripts/reset-service-data.sh --mode native"
+    "vps:reset-data": "./scripts/reset-service-data.sh --core-only",
+    "vps:native:reset-data": "./scripts/reset-service-data.sh --mode native --core-only",
+    "vps:hybrid:reset-data": "./scripts/reset-service-data.sh --mode native --core-only"
   }
 }
