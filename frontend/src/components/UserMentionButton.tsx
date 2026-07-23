@@ -156,7 +156,7 @@ export default function UserMentionButton({
   const onPickPlace = useCallback(
     (place: GeoPlace, address: GeoAddress) => {
       const label = escapeLabelForMarkdown(address.label);
-      onInsert(`@[${label}](map://${place.longitude},${place.latitude},8)`);
+      onInsert(`@[${label}](map://${place.longitude},${place.latitude},11)`);
       setOpen(false);
     },
     [onInsert],
