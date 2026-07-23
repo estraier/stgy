@@ -1,0 +1,4 @@
+dist
+.cache
+source-data/**/*.zip
+data/*.ndjson

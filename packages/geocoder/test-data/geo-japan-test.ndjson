@@ -1,0 +1,8 @@
+{"id":11,"level":1,"country":"JP","longitude":139.425001,"latitude":35.915351,"addresses":[{"locale":"ja","label":"埼玉県","elements":["埼玉県"]}]}
+{"id":13,"level":1,"country":"JP","longitude":139.74,"latitude":35.665007,"addresses":[{"locale":"ja","label":"東京都","elements":["東京都"]}]}
+{"id":11201,"level":2,"country":"JP","longitude":139.425001,"latitude":35.915027,"addresses":[{"locale":"ja","label":"埼玉県川越市","elements":["埼玉県","川越市"]}]}
+{"id":11208,"level":2,"country":"JP","longitude":139.475001,"latitude":35.800026,"addresses":[{"locale":"ja","label":"埼玉県所沢市","elements":["埼玉県","所沢市"]}]}
+{"id":13101,"level":2,"country":"JP","longitude":139.75,"latitude":35.685004,"addresses":[{"locale":"ja","label":"東京都千代田区","elements":["東京都","千代田区"]}]}
+{"longitude":139.396113,"latitude":35.857704,"belongTo":11201}
+{"longitude":139.451087,"latitude":35.812362,"belongTo":11208}
+{"longitude":139.727007,"latitude":35.67458,"belongTo":13101}
