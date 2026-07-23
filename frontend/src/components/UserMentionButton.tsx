@@ -1,6 +1,7 @@
 "use client";
 
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import type { User } from "@/api/models";
 import { listFriendsByNicknamePrefix } from "@/api/users";
 import AvatarImg from "@/components/AvatarImg";
@@ -29,6 +30,7 @@ export default function UserMentionButton({
   const [items, setItems] = useState<User[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [position, setPosition] = useState({ top: 0, left: 0, width: 320 });
+  const anchorRectRef = useRef<DOMRect | null>(null);
 
   const doFetch = useCallback(async (q: string) => {
     setLoading(true);
@@ -56,7 +58,11 @@ export default function UserMentionButton({
   }, [open, query, doFetch]);
 
   const updatePosition = useCallback(() => {
-    const anchor = containerRef.current?.getBoundingClientRect();
+    const currentAnchor = containerRef.current?.getBoundingClientRect();
+    if (currentAnchor && (currentAnchor.width > 0 || currentAnchor.height > 0)) {
+      anchorRectRef.current = currentAnchor;
+    }
+    const anchor = anchorRectRef.current;
     if (!anchor) return;
     const dialogHeight = dialogRef.current?.getBoundingClientRect().height || 336;
     setPosition(
@@ -72,9 +78,6 @@ export default function UserMentionButton({
     if (!open) return;
     const dialog = dialogRef.current;
     updatePosition();
-    if (dialog && typeof dialog.showPopover === "function") {
-      dialog.showPopover();
-    }
     const raf = window.requestAnimationFrame(updatePosition);
     const observer = dialog && typeof ResizeObserver !== "undefined"
       ? new ResizeObserver(updatePosition)
@@ -100,13 +103,6 @@ export default function UserMentionButton({
       window.removeEventListener("scroll", updatePosition, true);
       document.removeEventListener("mousedown", onDocMouseDown);
       document.removeEventListener("keydown", onKey);
-      if (dialog && typeof dialog.hidePopover === "function") {
-        try {
-          dialog.hidePopover();
-        } catch {
-          // The browser may already have removed the element from the top layer.
-        }
-      }
     };
   }, [open, updatePosition]);
 
@@ -178,7 +174,11 @@ export default function UserMentionButton({
       <button
         type="button"
         className="inline-flex h-6 px-2 items-center justify-center rounded border border-gray-300 bg-gray-50 hover:bg-gray-100 text-gray-700 disabled:opacity-50 leading-none"
-        onClick={() => setOpen((v) => !v)}
+        onMouseDown={(event) => {
+          event.preventDefault();
+          anchorRectRef.current = containerRef.current?.getBoundingClientRect() ?? null;
+          setOpen((value) => !value);
+        }}
         title={title}
         aria-haspopup="dialog"
         aria-expanded={open}
@@ -186,38 +186,39 @@ export default function UserMentionButton({
         <AtSign size={16} aria-hidden className="opacity-80" />
       </button>
 
-      {open && (
-        <div
-          ref={dialogRef}
-          popover="manual"
-          role="dialog"
-          aria-label="Mention user"
-          className={
-            "fixed z-[2000] overflow-hidden rounded border border-gray-200 " +
-            "bg-white p-0 shadow-lg"
-          }
-          style={{
-            top: position.top,
-            left: position.left,
-            right: "auto",
-            bottom: "auto",
-            width: position.width,
-            margin: 0,
-          }}
-        >
-          <div className="p-2 border-b bg-gray-50">
-            <input
-              ref={inputRef}
-              type="text"
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search users…"
-              className="w-full px-2 py-1 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-300"
-            />
-          </div>
-          {content}
-        </div>
-      )}
+      {open && typeof document !== "undefined" &&
+        createPortal(
+          <div
+            ref={dialogRef}
+            role="dialog"
+            aria-label="Mention user"
+            className={
+              "fixed z-[2000] overflow-hidden rounded border border-gray-200 " +
+              "bg-white p-0 shadow-lg"
+            }
+            style={{
+              top: position.top,
+              left: position.left,
+              right: "auto",
+              bottom: "auto",
+              width: position.width,
+              margin: 0,
+            }}
+          >
+            <div className="p-2 border-b bg-gray-50">
+              <input
+                ref={inputRef}
+                type="text"
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+                placeholder="Search users…"
+                className="w-full px-2 py-1 text-sm border rounded focus:outline-none focus:ring-2 focus:ring-blue-300"
+              />
+            </div>
+            {content}
+          </div>,
+          document.body,
+        )}
     </div>
   );
 }
