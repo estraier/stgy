@@ -14,6 +14,21 @@ const loginUser = {
   isAdmin: false,
 } as UserLite;
 
+const dummyUser: UserLite = {
+  id: "0000000000000000",
+  nickname: "dummy-user",
+  aiModel: null,
+  isAdmin: false,
+  blockStrangers: false,
+  createdAt: "",
+  updatedAt: null,
+  countFollowers: 0,
+  countFollowees: 0,
+  countPosts: 0,
+  isBlockedByFocusUser: false,
+  isBlockingFocusUser: false,
+};
+
 const place: GeoPlace = {
   level: 2,
   country: "JP",
@@ -33,8 +48,10 @@ describe("geo routes", () => {
   let baseUrl: string;
   let encode: jest.Mock;
   let decode: jest.Mock;
+  let getSessionId: jest.SpyInstance;
   let getCurrentUser: jest.SpyInstance;
   let canDo: jest.SpyInstance;
+  let startWatch: jest.SpyInstance;
   let done: jest.Mock;
 
   beforeEach(async () => {
@@ -42,11 +59,14 @@ describe("geo routes", () => {
     decode = jest.fn();
     done = jest.fn();
 
+    getSessionId = jest
+      .spyOn(AuthHelpers.prototype, "getSessionId")
+      .mockReturnValue("session-1");
     getCurrentUser = jest
       .spyOn(AuthHelpers.prototype, "getCurrentUser")
       .mockResolvedValue(loginUser);
     canDo = jest.spyOn(DailyTimerThrottleService.prototype, "canDo").mockResolvedValue(true);
-    jest
+    startWatch = jest
       .spyOn(DailyTimerThrottleService.prototype, "startWatch")
       .mockReturnValue({ done });
 
@@ -66,7 +86,21 @@ describe("geo routes", () => {
     });
   });
 
-  test("requires login", async () => {
+  test("uses a throttled dummy user without a session", async () => {
+    getSessionId.mockReturnValue(null);
+    encode.mockReturnValue([place]);
+
+    const response = await fetch(`${baseUrl}/geo/encode?query=x`);
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([place]);
+    expect(getCurrentUser).not.toHaveBeenCalled();
+    expect(canDo).toHaveBeenCalledWith("0000000000000000");
+    expect(startWatch).toHaveBeenCalledWith(dummyUser);
+  });
+
+  test("rejects an invalid session", async () => {
+    getSessionId.mockReturnValue("invalid-session");
     getCurrentUser.mockResolvedValue(null);
 
     const response = await fetch(`${baseUrl}/geo/encode?query=x`);

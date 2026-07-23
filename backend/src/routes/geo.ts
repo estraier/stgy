@@ -7,6 +7,7 @@ import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
 import { DailyTimerThrottleService } from "../services/throttle";
 import { AuthHelpers } from "./authHelpers";
+import type { UserLite } from "../models/user";
 
 export default function createGeoRouter(pgPool: Pool, redis: Redis, geoCoder: GeoCoder) {
   const router = Router();
@@ -20,7 +21,7 @@ export default function createGeoRouter(pgPool: Pool, redis: Redis, geoCoder: Ge
   );
 
   router.get("/encode", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await getGeoUser(req, res, authHelpers);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
@@ -44,7 +45,7 @@ export default function createGeoRouter(pgPool: Pool, redis: Redis, geoCoder: Ge
   });
 
   router.get("/decode", async (req: Request, res: Response) => {
-    const loginUser = await authHelpers.requireLogin(req, res);
+    const loginUser = await getGeoUser(req, res, authHelpers);
     if (!loginUser) return;
     if (!loginUser.isAdmin && !(await timerThrottleService.canDo(loginUser.id))) {
       return res.status(403).json({ error: "too often operations" });
@@ -68,6 +69,17 @@ export default function createGeoRouter(pgPool: Pool, redis: Redis, geoCoder: Ge
   });
 
   return router;
+}
+
+async function getGeoUser(
+  req: Request,
+  res: Response,
+  authHelpers: AuthHelpers,
+): Promise<UserLite | null> {
+  if (!authHelpers.getSessionId(req)) {
+    return authHelpers.makeDummyUser();
+  }
+  return await authHelpers.requireLogin(req, res);
 }
 
 function parseCoordinate(

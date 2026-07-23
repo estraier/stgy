@@ -826,8 +826,6 @@ paths:
   /geo/encode:
     get:
       summary: Encode a place name
-      security:
-        - sessionCookie: []
       parameters:
         - in: query
           name: query
@@ -856,8 +854,6 @@ paths:
   /geo/decode:
     get:
       summary: Decode coordinates to a place
-      security:
-        - sessionCookie: []
       parameters:
         - in: query
           name: longitude

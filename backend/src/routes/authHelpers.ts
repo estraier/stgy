@@ -38,6 +38,23 @@ export class AuthHelpers {
     return loginUser as UserLite;
   }
 
+  makeDummyUser(): UserLite {
+    return {
+      id: "0000000000000000",
+      nickname: "dummy-user",
+      aiModel: null,
+      isAdmin: false,
+      blockStrangers: false,
+      createdAt: "",
+      updatedAt: null,
+      countFollowers: 0,
+      countFollowees: 0,
+      countPosts: 0,
+      isBlockedByFocusUser: false,
+      isBlockingFocusUser: false,
+    };
+  }
+
   async checkBlock(blockerId: string, blockeeId: string): Promise<boolean> {
     if (blockerId === blockeeId) {
       return false;
