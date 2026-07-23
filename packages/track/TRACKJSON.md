@@ -53,7 +53,8 @@ The preferred root is a GeoJSON `FeatureCollection`.
   "poi": [
     {
       "role": "start",
-      "coordinates": [139.7, 35.6]
+      "coordinates": [139.7, 35.6],
+      "label": "東京都千代田区"
     },
     {
       "role": "end",
@@ -82,6 +83,11 @@ this order: `start`, `end`, `centroid`, and `furthest`.
 
 The roles remain separate even when two or more entries have identical
 coordinates. Point coordinates use GeoJSON order: `[longitude, latitude]`.
+
+`label` is optional. TrackJSON generation does not require reverse geocoding and
+normally emits POI entries without `label`. Environments that can reverse
+geocode may add labels later by exact coordinate match. Unlabeled POI entries
+remain fully valid and usable.
 
 A single GeoJSON `Feature` may be accepted by helper functions, but generated
 TrackJSON should use `FeatureCollection`.

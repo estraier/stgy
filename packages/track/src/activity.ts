@@ -263,6 +263,7 @@ export type TrackJsonPointOfInterestRole =
 export type TrackJsonPointOfInterest = {
   role: TrackJsonPointOfInterestRole;
   coordinates: TrackJsonPosition;
+  label?: string;
 };
 
 export type TrackWarning = {

@@ -23,6 +23,12 @@ export type TrackJsonPrivacyObfuscationOptions = {
   endDistanceM?: number;
 };
 
+export type TrackJsonPoiLabelAssignment = {
+  longitude: number;
+  latitude: number;
+  label: string;
+};
+
 export type TrackJsonPrecisionOptions = {
   coordinates?: number;
   times?: number;
@@ -212,6 +218,68 @@ export function getTrackJsonTitle(data: unknown): string | undefined {
   return typeof title === "string" && title.trim() ? title.trim() : undefined;
 }
 
+export function applyTrackJsonPoiLabels<T>(
+  data: T,
+  assignments: readonly TrackJsonPoiLabelAssignment[],
+): T {
+  if (!isRecord(data) || !Array.isArray(data.poi) || assignments.length === 0) {
+    return data;
+  }
+
+  const labelsByCoordinates = new Map<string, string>();
+  assignments.forEach((assignment) => {
+    if (
+      Number.isFinite(assignment.longitude) &&
+      Number.isFinite(assignment.latitude) &&
+      typeof assignment.label === "string"
+    ) {
+      labelsByCoordinates.set(
+        makeTrackJsonCoordinateKey(
+          assignment.longitude,
+          assignment.latitude,
+        ),
+        assignment.label,
+      );
+    }
+  });
+
+  if (labelsByCoordinates.size === 0) {
+    return data;
+  }
+
+  let changed = false;
+  const poi = data.poi.map((value) => {
+    if (!isRecord(value) || !isTrackJsonPointOfInterestRole(value.role)) {
+      return value;
+    }
+
+    const coordinates = readTrackJsonPosition(value.coordinates);
+    if (!coordinates) {
+      return value;
+    }
+
+    const label = labelsByCoordinates.get(
+      makeTrackJsonCoordinateKey(coordinates[0], coordinates[1]),
+    );
+    if (label === undefined || value.label === label) {
+      return value;
+    }
+
+    changed = true;
+    return {
+      ...value,
+      label,
+    };
+  });
+
+  return changed
+    ? ({
+        ...data,
+        poi,
+      } as T)
+    : data;
+}
+
 export function getTrackJsonPoi(data: unknown): TrackJsonPointOfInterest[] {
   if (!isRecord(data) || !Array.isArray(data.poi)) {
     return [];
@@ -304,7 +372,20 @@ function readTrackJsonPointOfInterest(
   }
 
   const coordinates = readTrackJsonPosition(value.coordinates);
-  return coordinates ? { role: value.role, coordinates } : undefined;
+  if (!coordinates) {
+    return undefined;
+  }
+
+  return typeof value.label === "string"
+    ? { role: value.role, coordinates, label: value.label }
+    : { role: value.role, coordinates };
+}
+
+function makeTrackJsonCoordinateKey(
+  longitude: number,
+  latitude: number,
+): string {
+  return `${longitude},${latitude}`;
 }
 
 function readTrackJsonPosition(value: unknown): TrackJsonPosition | undefined {

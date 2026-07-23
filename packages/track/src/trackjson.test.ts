@@ -1,4 +1,5 @@
 import {
+  applyTrackJsonPoiLabels,
   compactTrackJsonData,
   countTrackJsonPositionedPoints,
   downsampleTrackJsonData,
@@ -61,7 +62,7 @@ describe("TrackJSON metadata and summaries", () => {
     const data = {
       ...makeFeatureCollection(3),
       poi: [
-        { role: "start", coordinates: [139, 35] },
+        { role: "start", coordinates: [139, 35], label: "Tokyo" },
         { role: "centroid", coordinates: [139.1, 35.1] },
         { role: "invalid", coordinates: [0, 0] },
         { role: "end", coordinates: ["bad", 35] },
@@ -69,7 +70,7 @@ describe("TrackJSON metadata and summaries", () => {
     };
 
     expect(getTrackJsonPoi(data)).toEqual([
-      { role: "start", coordinates: [139, 35] },
+      { role: "start", coordinates: [139, 35], label: "Tokyo" },
       { role: "centroid", coordinates: [139.1, 35.1] },
     ]);
     expect(getTrackJsonPointOfInterest(data, "centroid")).toEqual({
@@ -88,6 +89,82 @@ describe("TrackJSON metadata and summaries", () => {
     };
 
     expect(getTrackJsonMetadata(data)).toEqual({ source: "root" });
+  });
+});
+
+describe("applyTrackJsonPoiLabels", () => {
+  test("adds labels to every exact coordinate match without mutating the input", () => {
+    const data = {
+      ...makeFeatureCollection(3),
+      poi: [
+        { role: "start", coordinates: [138.2933, 36.37194] },
+        { role: "end", coordinates: [138.33058, 36.35977] },
+        { role: "centroid", coordinates: [138.2933, 36.37194] },
+        {
+          role: "furthest",
+          coordinates: [138.33407, 36.35316],
+          label: "Existing label",
+        },
+      ],
+    };
+
+    const result = applyTrackJsonPoiLabels(data, [
+      {
+        longitude: 138.2933,
+        latitude: 36.37194,
+        label: "Nagano Prefecture Ueda City",
+      },
+      {
+        longitude: 138.33058,
+        latitude: 36.35977,
+        label: "Nagano Prefecture Ueda City",
+      },
+    ]);
+
+    expect(result).not.toBe(data);
+    expect(result.poi).toEqual([
+      {
+        role: "start",
+        coordinates: [138.2933, 36.37194],
+        label: "Nagano Prefecture Ueda City",
+      },
+      {
+        role: "end",
+        coordinates: [138.33058, 36.35977],
+        label: "Nagano Prefecture Ueda City",
+      },
+      {
+        role: "centroid",
+        coordinates: [138.2933, 36.37194],
+        label: "Nagano Prefecture Ueda City",
+      },
+      {
+        role: "furthest",
+        coordinates: [138.33407, 36.35316],
+        label: "Existing label",
+      },
+    ]);
+    expect(data.poi[0]).toEqual({
+      role: "start",
+      coordinates: [138.2933, 36.37194],
+    });
+  });
+
+  test("requires an exact coordinate match", () => {
+    const data = {
+      ...makeFeatureCollection(3),
+      poi: [
+        { role: "start", coordinates: [138.2933, 36.37194] },
+      ],
+    };
+
+    expect(applyTrackJsonPoiLabels(data, [
+      {
+        longitude: 138.29331,
+        latitude: 36.37194,
+        label: "Nearby label",
+      },
+    ])).toBe(data);
   });
 });
 

@@ -502,6 +502,17 @@ export function getTrackJsonMetadata(
   data: unknown
 ): Record<string, unknown> | undefined;
 
+export type TrackJsonPoiLabelAssignment = {
+  longitude: number;
+  latitude: number;
+  label: string;
+};
+
+export function applyTrackJsonPoiLabels<T>(
+  data: T,
+  assignments: readonly TrackJsonPoiLabelAssignment[]
+): T;
+
 export function getTrackJsonPoi(
   data: unknown
 ): TrackJsonPointOfInterest[];
@@ -511,6 +522,11 @@ export function getTrackJsonPointOfInterest(
   role: TrackJsonPointOfInterestRole
 ): TrackJsonPointOfInterest | undefined;
 ```
+
+`TrackJsonPointOfInterest.coordinates` is required and `label` is optional.
+Generated TrackJSON is usable without labels. `applyTrackJsonPoiLabels()` adds
+labels later to POI entries whose longitude and latitude exactly match an
+assignment, without requiring `packages/track` to perform reverse geocoding.
 
 These helpers are independent from the demo UI and are tested in
 `src/trackjson.test.ts`.
