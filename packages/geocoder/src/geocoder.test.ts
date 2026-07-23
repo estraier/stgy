@@ -1,4 +1,4 @@
-import { mkdtempSync, rmSync, writeFileSync } from "fs";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
 import { tmpdir } from "os";
 import { join } from "path";
 
@@ -20,17 +20,23 @@ describe("GeoCoder", () => {
   test("decodes from representative and alias points", () => {
     const geoCoder = new GeoCoder([TEST_DATA]);
 
-    expect(geoCoder.decode(139.4511, 35.8124, "ja")[0]).toEqual(
-      expect.objectContaining({
-        level: 2,
-        addresses: [expect.objectContaining({ label: "埼玉県所沢市" })],
-      }),
-    );
+    for (const coordinates of [
+      [139.475001, 35.800026],
+      [139.4511, 35.8124],
+    ]) {
+      expect(geoCoder.decode(coordinates[0], coordinates[1], "ja")[0]).toEqual(
+        expect.objectContaining({
+          level: 2,
+          addresses: [expect.objectContaining({ label: "埼玉県所沢市" })],
+        }),
+      );
+    }
     expect(geoCoder.decode(0, 0, "ja")).toEqual([]);
   });
 
-  test("stores aliases in typed arrays", () => {
+  test("sorts representative and alias points by latitude after loading", () => {
     const geoCoder = new GeoCoder([TEST_DATA]) as unknown as {
+      highestLevelPlaces: readonly { latitude: number }[];
       aliasLongitudes: Float32Array;
       aliasLatitudes: Float32Array;
       aliasBelongTo: Uint16Array | Uint32Array;
@@ -39,6 +45,35 @@ describe("GeoCoder", () => {
     expect(geoCoder.aliasLongitudes).toBeInstanceOf(Float32Array);
     expect(geoCoder.aliasLatitudes).toBeInstanceOf(Float32Array);
     expect(geoCoder.aliasBelongTo).toBeInstanceOf(Uint16Array);
+    expect(geoCoder.highestLevelPlaces.map((place) => place.latitude)).toEqual(
+      geoCoder.highestLevelPlaces
+        .map((place) => place.latitude)
+        .sort((left, right) => left - right),
+    );
+    expect(Array.from(geoCoder.aliasLatitudes)).toEqual(
+      Array.from(geoCoder.aliasLatitudes).sort((left, right) => left - right),
+    );
+  });
+
+  test("accepts place and alias records in any order", () => {
+    const directory = mkdtempSync(join(tmpdir(), "stgy-geocoder-"));
+    const file = join(directory, "unordered.ndjson");
+    const lines = readFileSync(TEST_DATA, "utf8").trim().split("\n");
+    writeFileSync(file, lines.reverse().join("\n"));
+
+    try {
+      const geoCoder = new GeoCoder([file]);
+      expect(geoCoder.encode("埼玉県所沢市", "ja")[0]).toEqual(
+        expect.objectContaining({ level: 2 }),
+      );
+      expect(geoCoder.decode(139.4511, 35.8124, "ja")[0]).toEqual(
+        expect.objectContaining({
+          addresses: [expect.objectContaining({ label: "埼玉県所沢市" })],
+        }),
+      );
+    } finally {
+      rmSync(directory, { recursive: true, force: true });
+    }
   });
 
   test("rejects an alias whose place does not exist", () => {

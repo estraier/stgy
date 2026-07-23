@@ -6,6 +6,8 @@ import type { GeoAddress, GeoAliasRecord, GeoPlace, GeoPlaceRecord } from "./typ
 const JAPANESE_LOCALE = "ja";
 const MAX_DECODE_DISTANCE_KM = 10;
 const EARTH_RADIUS_KM = 6371.0088;
+const MAX_DECODE_LATITUDE_DELTA_DEGREES =
+  (MAX_DECODE_DISTANCE_KM / EARTH_RADIUS_KM) * (180 / Math.PI);
 
 type AliasIds = Uint16Array | Uint32Array;
 
@@ -81,11 +83,14 @@ export class GeoCoder {
 
     this.highestLevel = highestLevel;
     this.highestLevelPlaces = Object.freeze(
-      Array.from(this.placesById.values()).filter((place) => place.level === highestLevel),
+      Array.from(this.placesById.values())
+        .filter((place) => place.level === highestLevel)
+        .sort(comparePlacesByLatitude),
     );
-    this.aliasLongitudes = new Float32Array(aliasCount);
-    this.aliasLatitudes = new Float32Array(aliasCount);
-    this.aliasBelongTo = maximumId <= 0xffff ? new Uint16Array(aliasCount) : new Uint32Array(aliasCount);
+    const aliasLongitudes = new Float32Array(aliasCount);
+    const aliasLatitudes = new Float32Array(aliasCount);
+    const aliasBelongTo: AliasIds =
+      maximumId <= 0xffff ? new Uint16Array(aliasCount) : new Uint32Array(aliasCount);
 
     let aliasIndex = 0;
     for (const filePath of files) {
@@ -109,12 +114,21 @@ export class GeoCoder {
             `alias must refer to level ${this.highestLevel}, got level ${place.level}`,
           );
         }
-        this.aliasLongitudes[aliasIndex] = record.value.longitude;
-        this.aliasLatitudes[aliasIndex] = record.value.latitude;
-        this.aliasBelongTo[aliasIndex] = record.value.belongTo;
+        aliasLongitudes[aliasIndex] = record.value.longitude;
+        aliasLatitudes[aliasIndex] = record.value.latitude;
+        aliasBelongTo[aliasIndex] = record.value.belongTo;
         aliasIndex += 1;
       });
     }
+
+    const sortedAliases = sortAliasesByLatitude(
+      aliasLongitudes,
+      aliasLatitudes,
+      aliasBelongTo,
+    );
+    this.aliasLongitudes = sortedAliases.longitudes;
+    this.aliasLatitudes = sortedAliases.latitudes;
+    this.aliasBelongTo = sortedAliases.belongTo;
   }
 
   encode(query: string, _locale: string): GeoPlace[] {
@@ -156,8 +170,19 @@ export class GeoCoder {
 
     let bestPlaceId: number | undefined;
     let bestDistanceKm = Number.POSITIVE_INFINITY;
+    const minimumLatitude = latitude - MAX_DECODE_LATITUDE_DELTA_DEGREES;
+    const maximumLatitude = latitude + MAX_DECODE_LATITUDE_DELTA_DEGREES;
 
-    for (const place of this.highestLevelPlaces) {
+    const placeStartIndex = lowerBoundPlacesByLatitude(
+      this.highestLevelPlaces,
+      minimumLatitude,
+    );
+    const placeEndIndex = upperBoundPlacesByLatitude(
+      this.highestLevelPlaces,
+      maximumLatitude,
+    );
+    for (let index = placeStartIndex; index < placeEndIndex; index += 1) {
+      const place = this.highestLevelPlaces[index];
       const distanceKm = distanceKmBetween(
         longitude,
         latitude,
@@ -170,7 +195,9 @@ export class GeoCoder {
       }
     }
 
-    for (let index = 0; index < this.aliasBelongTo.length; index += 1) {
+    const aliasStartIndex = lowerBoundLatitudes(this.aliasLatitudes, minimumLatitude);
+    const aliasEndIndex = upperBoundLatitudes(this.aliasLatitudes, maximumLatitude);
+    for (let index = aliasStartIndex; index < aliasEndIndex; index += 1) {
       const distanceKm = distanceKmBetween(
         longitude,
         latitude,
@@ -193,6 +220,117 @@ export class GeoCoder {
     }
     return this.encode(address.label, locale);
   }
+}
+
+interface SortedAliases {
+  readonly longitudes: Float32Array;
+  readonly latitudes: Float32Array;
+  readonly belongTo: AliasIds;
+}
+
+function comparePlacesByLatitude(left: GeoPlaceRecord, right: GeoPlaceRecord): number {
+  return (
+    left.latitude - right.latitude ||
+    left.longitude - right.longitude ||
+    left.id - right.id
+  );
+}
+
+function sortAliasesByLatitude(
+  longitudes: Float32Array,
+  latitudes: Float32Array,
+  belongTo: AliasIds,
+): SortedAliases {
+  const indexes = Array.from({ length: latitudes.length }, (_, index) => index);
+  indexes.sort((left, right) => {
+    return (
+      latitudes[left] - latitudes[right] ||
+      longitudes[left] - longitudes[right] ||
+      belongTo[left] - belongTo[right]
+    );
+  });
+
+  const sortedLongitudes = new Float32Array(longitudes.length);
+  const sortedLatitudes = new Float32Array(latitudes.length);
+  const sortedBelongTo: AliasIds =
+    belongTo instanceof Uint16Array
+      ? new Uint16Array(belongTo.length)
+      : new Uint32Array(belongTo.length);
+
+  for (let sortedIndex = 0; sortedIndex < indexes.length; sortedIndex += 1) {
+    const sourceIndex = indexes[sortedIndex];
+    sortedLongitudes[sortedIndex] = longitudes[sourceIndex];
+    sortedLatitudes[sortedIndex] = latitudes[sourceIndex];
+    sortedBelongTo[sortedIndex] = belongTo[sourceIndex];
+  }
+
+  return {
+    longitudes: sortedLongitudes,
+    latitudes: sortedLatitudes,
+    belongTo: sortedBelongTo,
+  };
+}
+
+function lowerBoundPlacesByLatitude(
+  places: readonly GeoPlaceRecord[],
+  target: number,
+): number {
+  let lower = 0;
+  let upper = places.length;
+  while (lower < upper) {
+    const middle = lower + Math.floor((upper - lower) / 2);
+    if (places[middle].latitude < target) {
+      lower = middle + 1;
+    } else {
+      upper = middle;
+    }
+  }
+  return lower;
+}
+
+function upperBoundPlacesByLatitude(
+  places: readonly GeoPlaceRecord[],
+  target: number,
+): number {
+  let lower = 0;
+  let upper = places.length;
+  while (lower < upper) {
+    const middle = lower + Math.floor((upper - lower) / 2);
+    if (places[middle].latitude <= target) {
+      lower = middle + 1;
+    } else {
+      upper = middle;
+    }
+  }
+  return lower;
+}
+
+function lowerBoundLatitudes(values: Float32Array, target: number): number {
+  let lower = 0;
+  let upper = values.length;
+  while (lower < upper) {
+    const middle = lower + Math.floor((upper - lower) / 2);
+    if (values[middle] < target) {
+      lower = middle + 1;
+    } else {
+      upper = middle;
+    }
+  }
+  return lower;
+}
+
+function upperBoundLatitudes(values: Float32Array, target: number): number {
+  let lower = 0;
+  let upper = values.length;
+  while (lower < upper) {
+    const middle = lower + Math.floor((upper - lower) / 2);
+    if (values[middle] <= target) {
+      lower = middle + 1;
+    } else {
+      upper = middle;
+    }
+  }
+  return lower;
 }
 
 function parseLine(filePath: string, line: string, lineNumber: number): ParsedRecord | undefined {
