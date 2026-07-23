@@ -7,3 +7,4 @@ export * from "./signup";
 export * from "./users";
 export * from "./posts";
 export * from "./tracks";
+export * from "./geo";
