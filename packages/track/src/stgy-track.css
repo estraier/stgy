@@ -129,9 +129,9 @@
 }
 
 .stgy-track-graph-controls select {
-  max-width: 16ex;
+  max-width: 13.6ex;
   font: inherit;
-  font-size: 0.9em;
+  font-size: 0.765em;
 }
 
 .stgy-track-graph-readout {
