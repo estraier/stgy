@@ -105,6 +105,91 @@ def test_auth():
   logout(session_id)
   print("[test_auth] OK")
 
+def test_geo():
+  print("[geo] login requirement")
+  res = requests.get(
+    f"{BASE_URL}/geo/encode",
+    params={"query": "埼玉県所沢市", "locale": "ja"},
+  )
+  assert res.status_code == 401, res.text
+  assert res.json() == {"error": "login required"}
+  res = requests.get(
+    f"{BASE_URL}/geo/decode",
+    params={"longitude": 139.461129, "latitude": 35.803146, "locale": "ja"},
+  )
+  assert res.status_code == 401, res.text
+  assert res.json() == {"error": "login required"}
+  print("[geo] no login -> 401 OK")
+
+  session_id = login()
+  cookies = {"session_id": session_id}
+
+  res = requests.get(
+    f"{BASE_URL}/geo/encode",
+    params={"query": "埼玉県所沢市", "locale": "ja"},
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  encoded = res.json()
+  assert isinstance(encoded, list), f"invalid response: {encoded}"
+  assert len(encoded) == 2, f"unexpected hierarchy: {encoded}"
+  assert [place["level"] for place in encoded] == [2, 1]
+  assert [place["country"] for place in encoded] == ["JP", "JP"]
+  assert [place["addresses"][0]["label"] for place in encoded] == [
+    "埼玉県所沢市",
+    "埼玉県",
+  ]
+  assert encoded[0]["addresses"][0]["elements"] == ["埼玉県", "所沢市"]
+  assert encoded[1]["addresses"][0]["elements"] == ["埼玉県"]
+  print("[geo] encode OK")
+
+  municipality = encoded[0]
+  res = requests.get(
+    f"{BASE_URL}/geo/decode",
+    params={
+      "longitude": municipality["longitude"],
+      "latitude": municipality["latitude"],
+      "locale": "ja",
+    },
+    cookies=cookies,
+  )
+  assert res.status_code == 200, res.text
+  decoded = res.json()
+  assert decoded == encoded, f"unexpected decode result: {decoded}"
+  print("[geo] decode representative point OK")
+
+  res = requests.get(f"{BASE_URL}/geo/encode", cookies=cookies)
+  assert res.status_code == 400, res.text
+  assert res.json() == {"error": "query is required"}
+
+  res = requests.get(
+    f"{BASE_URL}/geo/encode",
+    params={"query": "埼玉県所沢市並木", "locale": "ja"},
+    cookies=cookies,
+  )
+  assert res.status_code == 404, res.text
+  assert res.json() == {"error": "not found"}
+
+  res = requests.get(
+    f"{BASE_URL}/geo/decode",
+    params={"longitude": "x", "latitude": 35.803146},
+    cookies=cookies,
+  )
+  assert res.status_code == 400, res.text
+  assert res.json() == {"error": "longitude must be a number"}
+
+  res = requests.get(
+    f"{BASE_URL}/geo/decode",
+    params={"longitude": 0, "latitude": 0, "locale": "ja"},
+    cookies=cookies,
+  )
+  assert res.status_code == 404, res.text
+  assert res.json() == {"error": "not found"}
+  print("[geo] validation and not-found responses OK")
+
+  logout(session_id)
+  print("[test_geo] OK")
+
 def test_signup():
   print("[signup] start")
   admin_session_id = login()

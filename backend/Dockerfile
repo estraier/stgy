@@ -4,11 +4,13 @@ COPY package.json package-lock.json .npmrc ./
 COPY backend/package.json backend/package.json
 COPY packages/markdown/package.json packages/markdown/package.json
 COPY packages/track/package.json packages/track/package.json
+COPY packages/geocoder/package.json packages/geocoder/package.json
 RUN npm config set registry https://registry.npmjs.org/
 RUN npm ci --workspaces --include-workspace-root
 COPY backend ./backend
 COPY packages/markdown ./packages/markdown
 COPY packages/track ./packages/track
+COPY packages/geocoder ./packages/geocoder
 RUN npm run packages:build && npm run backend:build
 RUN npm prune --omit=dev --workspaces --include-workspace-root
 

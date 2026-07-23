@@ -1,4 +1,5 @@
 import { Config } from "./config";
+import { GeoCoder } from "stgy-geocoder";
 import { createLogger } from "./utils/logger";
 import express, { ErrorRequestHandler } from "express";
 import type { Request } from "express";
@@ -19,6 +20,7 @@ import createSignupRouter from "./routes/signup";
 import createMediaRouter from "./routes/media";
 import createTracksRouter from "./routes/tracks";
 import createNotificationsRouter from "./routes/notifications";
+import createGeoRouter from "./routes/geo";
 import { getSampleAddr, connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 
 const logger = createLogger({ file: "index" });
@@ -49,6 +51,8 @@ async function main() {
     }
     logger.info(`[config] ${key}: ${JSON.stringify(value)}`);
   });
+
+  const geoCoder = new GeoCoder([Config.GEO_STATIC_JSON_FILE]);
 
   const pgPool = await connectPgWithRetry();
   const redis = await connectRedisWithRetry();
@@ -97,6 +101,7 @@ async function main() {
   app.use("/media", createMediaRouter(pgPool, redis, storageService));
   app.use("/media", createTracksRouter(pgPool, redis, storageService));
   app.use("/notifications", createNotificationsRouter(pgPool, redis));
+  app.use("/geo", createGeoRouter(pgPool, redis, geoCoder));
 
   const errorHandler: ErrorRequestHandler = (err, req, res, _next) => {
     logger.error(`[error] ${req.method} ${req.path}: ${err}`);

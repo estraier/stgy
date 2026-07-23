@@ -30,6 +30,6 @@ npm run generate:japan --workspace packages/geocoder
 1. Python仮想環境を`packages/geocoder/.cache/`へ作成する。
 2. 必要なPythonパッケージを導入する。
 3. N03 2026年版の原本を`source-data/N03-2026/`へ取得する。
-4. 5 km間隔の補助点と、0.25 km²以上の未収録構成面の補完点を生成する。
+4. 2 km間隔の補助点と、0.25 km²以上の未収録構成面の補完点を生成する。
 5. `data/geo-japan.ndjson`を書き出す。
 6. 1 km検証グリッドで最近傍判定を検証する。

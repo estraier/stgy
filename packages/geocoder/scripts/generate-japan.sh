@@ -34,7 +34,7 @@ fi
 exec "$VENV/bin/python" "$PACKAGE_ROOT/scripts/generate-japan.py" \
   --input "$SOURCE" \
   --output "$OUTPUT" \
-  --grid-km 5 \
+  --grid-km 2 \
   --component-area-km2 0.25 \
   --validation-grid-km 1 \
   "$@"

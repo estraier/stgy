@@ -1,3 +1,5 @@
+import { dirname, join } from "path";
+
 export class Config {
   static readonly FRONTEND_ORIGIN = envStrCsv("STGY_FRONTEND_ORIGIN", ["http://localhost:3000"]);
   static readonly BACKEND_API_BASE_URL = envStr(
@@ -8,6 +10,10 @@ export class Config {
     "http://localhost:3100",
   ]);
   static readonly BACKEND_PORT = envNum("STGY_BACKEND_PORT", 3100);
+  static readonly GEO_STATIC_JSON_FILE = envStr(
+    "STGY_GEO_STATIC_JSON_FILE",
+    join(dirname(require.resolve("stgy-geocoder/package.json")), "data/geo-japan.ndjson"),
+  );
   static readonly SEARCH_API_BASE_URL = envStr("STGY_SEARCH_API_BASE_URL", "http://localhost:3200");
   static readonly DATABASE_HOST = envStr("STGY_DATABASE_HOST", "localhost");
   static readonly DATABASE_PORT = envNum("STGY_DATABASE_PORT", 5432);
@@ -86,6 +92,7 @@ export class Config {
   static readonly SNIPPET_MAX_LENGTH = envNum("STGY_SNIPPET_MAX_LENGTH", 300);
   static readonly SNIPPET_MAX_HEIGHT = envNum("STGY_SNIPPET_MAX_HEIGHT", 10);
   static readonly DAILY_DB_TIMER_LIMIT_MS = envNum("STGY_DAILY_DB_TIMER_LIMIT_MS", 120 * 1000);
+  static readonly DAILY_GEO_TIMER_LIMIT_MS = envNum("STGY_DAILY_GEO_TIMER_LIMIT_MS", 120 * 1000);
   static readonly DAILY_MEDIA_TIMER_LIMIT_MS = envNum(
     "STGY_DAILY_MEDIA_TIMER_LIMIT_MS",
     180 * 1000,

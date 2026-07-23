@@ -75,7 +75,7 @@ def parse_args() -> argparse.Namespace:
         help="N03 ZIP, GeoJSON, GML or Shapefile path/URL; repeat for multiple files",
     )
     parser.add_argument("--output", required=True, help="output NDJSON path")
-    parser.add_argument("--grid-km", type=float, default=5.0)
+    parser.add_argument("--grid-km", type=float, default=2.0)
     parser.add_argument("--component-area-km2", type=float, default=0.25)
     parser.add_argument("--validation-grid-km", type=float, default=1.0)
     parser.add_argument("--skip-validation", action="store_true")
