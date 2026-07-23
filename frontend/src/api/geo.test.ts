@@ -1,5 +1,5 @@
 import { apiFetch, extractError } from "./client";
-import { encodeGeo } from "./geo";
+import { decodeGeo, encodeGeo } from "./geo";
 
 jest.mock("./client", () => ({
   apiFetch: jest.fn(),
@@ -51,6 +51,39 @@ describe("geo API", () => {
     mockApiFetch.mockResolvedValue(jsonResponse({ error: "not found" }, false, 404));
 
     await expect(encodeGeo("存在しない地名")).resolves.toEqual([]);
+    expect(mockExtractError).not.toHaveBeenCalled();
+  });
+
+
+  test("decodes coordinates", async () => {
+    const payload = [
+      {
+        level: 2,
+        country: "JP",
+        longitude: 138.31795,
+        latitude: 36.3603,
+        addresses: [
+          {
+            locale: "ja",
+            label: "長野県上田市",
+            elements: ["長野県", "上田市"],
+          },
+        ],
+      },
+    ];
+    mockApiFetch.mockResolvedValue(jsonResponse(payload));
+
+    await expect(decodeGeo(138.31795, 36.3603, "ja")).resolves.toEqual(payload);
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/geo/decode?longitude=138.31795&latitude=36.3603&locale=ja",
+      { method: "GET" },
+    );
+  });
+
+  test("returns an empty array when coordinates are not found", async () => {
+    mockApiFetch.mockResolvedValue(jsonResponse({ error: "not found" }, false, 404));
+
+    await expect(decodeGeo(0, 0)).resolves.toEqual([]);
     expect(mockExtractError).not.toHaveBeenCalled();
   });
 

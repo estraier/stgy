@@ -868,6 +868,7 @@ function getActivityEndTime(activity: TrackActivity): number | undefined {
 
 export type ApplyComputedMetadataOptions = {
   preserveElevation?: boolean;
+  preserveExisting?: boolean;
 };
 
 export function applyComputedMetadata(
@@ -875,10 +876,22 @@ export function applyComputedMetadata(
   points: TrackPoint[],
   options: ApplyComputedMetadataOptions = {},
 ) {
-  applyElevationMetadata(metadata, points, options.preserveElevation === true);
-  metadata.analysis = buildActivityAnalysisMetadata();
+  const preserveExisting = options.preserveExisting === true;
+  applyElevationMetadata(
+    metadata,
+    points,
+    options.preserveElevation === true || preserveExisting,
+  );
 
-  const statistics = buildActivityStatistics(points);
+  if (!preserveExisting || !metadata.analysis) {
+    metadata.analysis = buildActivityAnalysisMetadata();
+  }
+
+  const statistics = mergeComputedMetadata(
+    metadata.statistics,
+    buildActivityStatistics(points),
+    preserveExisting,
+  );
   if (statistics) {
     metadata.statistics = statistics;
   } else {
@@ -888,6 +901,7 @@ export function applyComputedMetadata(
   const training = mergeTrainingMetadata(
     metadata.training,
     buildMergedTraining(points),
+    preserveExisting,
   );
   if (training) {
     metadata.training = training;
@@ -895,28 +909,58 @@ export function applyComputedMetadata(
     delete metadata.training;
   }
 
-  const bestEfforts = buildActivityBestEfforts(points);
+  const bestEfforts = mergeComputedMetadata(
+    metadata.bestEfforts,
+    buildActivityBestEfforts(points),
+    preserveExisting,
+  );
   if (bestEfforts) {
     metadata.bestEfforts = bestEfforts;
   } else {
     delete metadata.bestEfforts;
   }
 
-  const histograms = buildActivityHistograms(points);
+  const histograms = mergeComputedMetadata(
+    metadata.histograms,
+    buildActivityHistograms(points),
+    preserveExisting,
+  );
   if (histograms) {
     metadata.histograms = histograms;
   } else {
     delete metadata.histograms;
   }
 
-  const pedaling = buildActivityPedaling(points);
+  const computedPedaling = buildActivityPedaling(points);
+  const pedaling =
+    preserveExisting && metadata.pedaling
+      ? { ...metadata.pedaling }
+      : computedPedaling;
   if (pedaling) {
     metadata.pedaling = pedaling;
-  } else if (metadata.pedaling && metadata.pedaling.totalSeconds > 0) {
-    metadata.pedaling = { ...metadata.pedaling };
   } else {
     delete metadata.pedaling;
   }
+}
+
+function mergeComputedMetadata<T extends object>(
+  existing: T | undefined,
+  computed: T | undefined,
+  preserveExisting: boolean,
+): T | undefined {
+  if (!preserveExisting) {
+    return computed;
+  }
+  if (!existing) {
+    return computed;
+  }
+  if (!computed) {
+    return { ...existing };
+  }
+  return {
+    ...computed,
+    ...existing,
+  };
 }
 
 function applyElevationMetadata(
@@ -975,22 +1019,73 @@ export function calculateTrackAscentDescent(
 function mergeTrainingMetadata(
   existing: TrackActivityTraining | undefined,
   computed: TrackActivityTraining | undefined,
+  preserveExisting = false,
 ): TrackActivityTraining | undefined {
+  if (!preserveExisting) {
+    if (!existing) {
+      return computed;
+    }
+    if (!computed) {
+      return hasTrainingValues(existing) ? { ...existing } : undefined;
+    }
+
+    const training: TrackActivityTraining = {
+      ...existing,
+      ...computed,
+    };
+    const source = {
+      ...(existing.source || {}),
+      ...(computed.source || {}),
+    };
+
+    if (Object.keys(source).length > 0) {
+      training.source = source;
+    } else {
+      delete training.source;
+    }
+
+    return hasTrainingValues(training) ? training : undefined;
+  }
+
   if (!existing) {
     return computed;
   }
   if (!computed) {
-    return hasTrainingValues(existing) ? { ...existing } : undefined;
+    return hasTrainingValues(existing)
+      ? {
+          ...existing,
+          source: existing.source ? { ...existing.source } : undefined,
+        }
+      : undefined;
   }
 
   const training: TrackActivityTraining = {
-    ...existing,
     ...computed,
+    ...existing,
   };
   const source = {
-    ...(existing.source || {}),
     ...(computed.source || {}),
+    ...(existing.source || {}),
   };
+
+  if (
+    isFiniteNumber(existing.normalizedPowerW) &&
+    existing.source?.normalizedPower === undefined
+  ) {
+    delete source.normalizedPower;
+  }
+  if (
+    isFiniteNumber(existing.totalWorkJ) &&
+    existing.source?.totalWork === undefined
+  ) {
+    delete source.totalWork;
+  }
+  if (
+    isFiniteNumber(existing.totalCaloriesCal) &&
+    existing.source?.totalCalories === undefined
+  ) {
+    delete source.totalCalories;
+  }
 
   if (Object.keys(source).length > 0) {
     training.source = source;

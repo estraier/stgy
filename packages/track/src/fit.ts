@@ -397,7 +397,6 @@ export function trackJsonDataToTrackActivity(
     firstFeature,
     options,
   );
-
   features.forEach((feature, featureIndex) => {
     const geometry = getRecordProperty(feature, "geometry");
     const coordinates = Array.isArray(geometry?.coordinates)
@@ -442,7 +441,10 @@ export function trackJsonDataToTrackActivity(
     }
   }
 
-  applyComputedMetadata(metadata, points, { preserveElevation: true });
+  applyComputedMetadata(metadata, points, {
+    preserveElevation: true,
+    preserveExisting: true,
+  });
 
   return {
     schemaVersion: 1,

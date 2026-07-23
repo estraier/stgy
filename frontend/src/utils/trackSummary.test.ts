@@ -31,7 +31,7 @@ describe("getTrackJsonPropertySummaryLines", () => {
     expect(getTrackJsonPropertySummaryLines({
       bbox: [138.1, 35.2, 139.3, 36.4],
       poi: [
-        { role: "start", coordinates: [138.1, 35.2] },
+        { role: "start", coordinates: [138.1, 35.2], label: "埼玉県所沢市" },
         { role: "centroid", coordinates: [138.4003, 36.4059] },
       ],
       metadata: {
@@ -51,7 +51,7 @@ describe("getTrackJsonPropertySummaryLines", () => {
       { key: "bbox", text: "bbox: [138.1,35.2,139.3,36.4]" },
       {
         key: "poi-start",
-        text: "poi start: lon 138.10000, lat 35.20000",
+        text: "poi start: lon 138.10000, lat 35.20000, label 埼玉県所沢市",
       },
       {
         key: "poi-centroid",

@@ -24,3 +24,19 @@ export async function encodeGeo(query: string, locale = "ja"): Promise<GeoPlace[
   if (!res.ok) throw new Error(await extractError(res));
   return res.json();
 }
+
+export async function decodeGeo(
+  longitude: number,
+  latitude: number,
+  locale = "ja",
+): Promise<GeoPlace[]> {
+  const search = new URLSearchParams();
+  search.append("longitude", String(longitude));
+  search.append("latitude", String(latitude));
+  search.append("locale", locale);
+
+  const res = await apiFetch(`/geo/decode?${search.toString()}`, { method: "GET" });
+  if (res.status === 404) return [];
+  if (!res.ok) throw new Error(await extractError(res));
+  return res.json();
+}

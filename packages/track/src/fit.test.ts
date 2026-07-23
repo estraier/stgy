@@ -1122,6 +1122,108 @@ describe("trackJsonDataToTrackActivity", () => {
     });
   });
 
+  test("preserves existing TrackJSON metadata and computes only missing entries", () => {
+    const activity = trackJsonDataToTrackActivity({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139.0, 35.0, 10],
+              [139.1, 35.1, 20],
+            ],
+          },
+          properties: {
+            metadata: {
+              ascentM: 123,
+              descentM: 456,
+              analysis: {
+                movingSpeedThresholdKph: 7,
+              },
+              statistics: {
+                speedKph: {
+                  mean: 99,
+                  median: 98,
+                  max: 100,
+                },
+                temperatureC: {
+                  mean: 27.419,
+                  median: 27,
+                  max: 29,
+                },
+              },
+              training: {
+                normalizedPowerW: 999,
+                totalWorkJ: 888,
+                source: {
+                  normalizedPower: "fit",
+                  totalWork: "fit",
+                },
+              },
+              bestEfforts: {
+                powerW: {
+                  "1": 777,
+                },
+              },
+              pedaling: {
+                totalSeconds: 9,
+                averagePowerW: 555,
+              },
+            },
+            coordinateProperties: {
+              times: [0, 1],
+              distances: [0, 10],
+              speeds: [18, 21.6],
+              heartRates: [120, 130],
+              cadences: [80, 90],
+              powers: [100, 200],
+            },
+          },
+        },
+      ],
+    });
+
+    expect(activity.metadata.ascentM).toBe(123);
+    expect(activity.metadata.descentM).toBe(456);
+    expect(activity.metadata.analysis).toEqual({
+      movingSpeedThresholdKph: 7,
+    });
+    expect(activity.metadata.statistics?.speedKph).toEqual({
+      mean: 99,
+      median: 98,
+      max: 100,
+    });
+    expect(activity.metadata.statistics?.temperatureC).toEqual({
+      mean: 27.419,
+      median: 27,
+      max: 29,
+    });
+    expect(activity.metadata.statistics?.heartRateBpm).toEqual({
+      mean: 120,
+      median: 120,
+      max: 120,
+    });
+    expect(activity.metadata.training).toEqual({
+      normalizedPowerW: 999,
+      totalWorkJ: 888,
+      source: {
+        normalizedPower: "fit",
+        totalWork: "fit",
+      },
+    });
+    expect(activity.metadata.bestEfforts).toEqual({
+      powerW: {
+        "1": 777,
+      },
+    });
+    expect(activity.metadata.pedaling).toEqual({
+      totalSeconds: 9,
+      averagePowerW: 555,
+    });
+  });
+
   test("preserves TrackJSON LineString feature breaks", () => {
     const activity = trackJsonDataToTrackActivity({
       type: "FeatureCollection",

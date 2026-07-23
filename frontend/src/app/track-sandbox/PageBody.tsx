@@ -63,6 +63,7 @@ import {
   getTrackSandboxMetadataSummaryLines,
   orderTrackSandboxSummaryCards,
 } from "@/utils/trackSummary";
+import { addTrackJsonPoiLabels } from "@/utils/trackPoiLabels";
 
 type SourceType = "fit" | "gpx" | "trackjson" | "trjgz";
 type DownsampleStrategy = "uniform" | "aggregate";
@@ -1181,13 +1182,17 @@ async function convertFiles(files: File[], options: ConvertOptions): Promise<Tra
   const description = files.length === 1
     ? `Converted from ${firstFile.name}`
     : `Merged from ${files.map((file) => file.name).join(", ")}`;
-  const trackJson = trackActivityToTrackJson(renderedActivity, {
+  const unlabeledTrackJson = trackActivityToTrackJson(renderedActivity, {
     title,
     description,
     includeMetadata: true,
     pretty: false,
   });
-  const trackJsonData = JSON.parse(trackJson);
+  const unlabeledTrackJsonData = JSON.parse(unlabeledTrackJson);
+  const trackJsonData = await addTrackJsonPoiLabels(unlabeledTrackJsonData);
+  const trackJson = trackJsonData === unlabeledTrackJsonData
+    ? unlabeledTrackJson
+    : JSON.stringify(trackJsonData);
   const gpx = trackActivityToGpx(renderedActivity, {
     name: title,
     description,

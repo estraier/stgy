@@ -68,11 +68,13 @@ export function getTrackJsonPropertyMetadataLines(
   }
 
   getTrackJsonPoi(data).forEach((point) => {
+    const label = point.label?.trim();
     lines.push({
       key: `poi-${point.role}`,
       text:
         `poi ${point.role}: lon ${formatNumber(point.coordinates[0], 5)}, ` +
-        `lat ${formatNumber(point.coordinates[1], 5)}`,
+        `lat ${formatNumber(point.coordinates[1], 5)}` +
+        (label ? `, label ${label}` : ""),
     });
   });
 

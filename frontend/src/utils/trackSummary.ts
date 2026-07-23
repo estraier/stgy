@@ -38,11 +38,13 @@ export function getTrackJsonPropertySummaryLines(
     lines.push({ key: "bbox", text: `bbox: ${JSON.stringify(data.bbox)}` });
   }
   getTrackJsonPoi(data).forEach((point) => {
+    const label = point.label?.trim();
     lines.push({
       key: `poi-${point.role}`,
       text:
         `poi ${point.role}: lon ${formatCoordinate(point.coordinates[0])}, ` +
-        `lat ${formatCoordinate(point.coordinates[1])}`,
+        `lat ${formatCoordinate(point.coordinates[1])}` +
+        (label ? `, label ${label}` : ""),
     });
   });
   return lines;

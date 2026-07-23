@@ -9,7 +9,7 @@ const makeTrackJson = () => ({
   type: "FeatureCollection",
   bbox: [138.3, 36.3, 138.5, 36.5],
   poi: [
-    { role: "start", coordinates: [138.3, 36.3] },
+    { role: "start", coordinates: [138.3, 36.3], label: "長野県東御市" },
     { role: "centroid", coordinates: [138.4003, 36.4059] },
   ],
   metadata: {
@@ -58,6 +58,12 @@ describe("TrackJSON metadata formatting", () => {
       "poi-start",
       "poi-centroid",
     ]);
+    expect(lines.find((line) => line.key === "poi-start")?.text).toBe(
+      "poi start: lon 138.30000, lat 36.30000, label 長野県東御市",
+    );
+    expect(lines.find((line) => line.key === "poi-centroid")?.text).toBe(
+      "poi centroid: lon 138.40030, lat 36.40590",
+    );
   });
 
   test("returns no renderer metadata for TrackJSON without metadata", () => {
