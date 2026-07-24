@@ -27,6 +27,10 @@ import {
 import { Config } from "@/config";
 import { formatBytes } from "@/utils/format";
 import {
+  restoreImageFilename,
+  rewriteOwnedImageObjectUrlsToRelative,
+} from "@/utils/exportImages";
+import {
   makeTrackArchiveEntries,
   rewriteTrackObjectUrlsToRelative,
   type TrackArchiveEntry,
@@ -215,39 +219,18 @@ function escapeHtml(s: string): string {
     .replace(/'/g, "&#39;");
 }
 
-function escapeRegExp(s: string): string {
-  return String(s).replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function restoreFilename(rev6: string, time8: string, hash8: string, ext: string): string {
-  const r1 = 999999 - parseInt(rev6, 10);
-  const r2 = 0xffffffff - parseInt(time8, 16);
-  return `${String(r1).padStart(6, "0")}${r2.toString(16).padStart(8, "0")}${hash8}.${ext}`;
-}
-
-function rewriteImageObjectUrlsToRelative(text: string, userId: string, baseDir: string): string {
-  const uid = escapeRegExp(userId);
-  const re = new RegExp(
-    String.raw`\/images\/${uid}\/(?:masters|thumbs|master|thumb)\/(\d{6})\/([0-9a-f]{8})([0-9a-f]{8})\.([A-Za-z0-9]{1,5})(?:[?#][^)\s"'<>]*)?`,
-    "g",
-  );
-  return String(text || "").replace(re, (_m, rev6: string, t8: string, h8: string, ext: string) => {
-    return `${baseDir}/${restoreFilename(rev6, t8, h8, ext)}`;
-  });
-}
-
 function rewriteProfileIntroductionAndSnippet(
   profile: UserDetail,
   userId: string,
   trackEntries: TrackArchiveEntry[],
 ): UserDetail {
   const rewrittenIntro = rewriteTrackObjectUrlsToRelative(
-    rewriteImageObjectUrlsToRelative(profile.introduction, userId, "./images"),
+    rewriteOwnedImageObjectUrlsToRelative(profile.introduction, userId, "./images"),
     trackEntries,
     "./tracks",
   );
   const rewrittenSnippet = rewriteTrackObjectUrlsToRelative(
-    rewriteImageObjectUrlsToRelative(profile.snippet, userId, "./images"),
+    rewriteOwnedImageObjectUrlsToRelative(profile.snippet, userId, "./images"),
     trackEntries,
     "./tracks",
   );
@@ -262,13 +245,13 @@ function rewritePostContentAndSnippet<T extends Post | PostDetail>(
   const next = { ...post };
   if ("content" in next && typeof next.content === "string") {
     next.content = rewriteTrackObjectUrlsToRelative(
-      rewriteImageObjectUrlsToRelative(next.content, userId, "../images"),
+      rewriteOwnedImageObjectUrlsToRelative(next.content, userId, "../images"),
       trackEntries,
       "../tracks",
     );
   }
   next.snippet = rewriteTrackObjectUrlsToRelative(
-    rewriteImageObjectUrlsToRelative(next.snippet, userId, "../images"),
+    rewriteOwnedImageObjectUrlsToRelative(next.snippet, userId, "../images"),
     trackEntries,
     "../tracks",
   );
@@ -541,7 +524,7 @@ function imageFilenameFromKey(key: string, userId: string): string {
   const name = parts[3];
   const m = /^([0-9a-f]{8})([0-9a-f]{8})\.([A-Za-z0-9]{1,5})$/i.exec(name);
   if (!m) throw new Error("Invalid image format");
-  return restoreFilename(rev6, m[1], m[2], m[3]);
+  return restoreImageFilename(rev6, m[1], m[2], m[3]);
 }
 
 async function fetchAllUsersByPager(
