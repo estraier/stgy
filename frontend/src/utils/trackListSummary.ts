@@ -1,3 +1,4 @@
+import { getTrackJsonPointOfInterest } from "stgy-track/trackjson";
 import { formatDateTime } from "./format";
 
 export type TrackListSummary = {
@@ -5,9 +6,15 @@ export type TrackListSummary = {
   localTimeOffsetSeconds?: number;
   totalElapsedTime?: number;
   totalDistanceM?: number;
+  location?: string;
 };
 
 type JsonRecord = Record<string, unknown>;
+type NumericTrackListSummaryKey =
+  | "startTime"
+  | "localTimeOffsetSeconds"
+  | "totalElapsedTime"
+  | "totalDistanceM";
 
 export function getTrackListSummary(data: unknown): TrackListSummary | undefined {
   const metadata = getTrackMetadata(data);
@@ -18,6 +25,11 @@ export function getTrackListSummary(data: unknown): TrackListSummary | undefined
   copyFiniteNumber(metadata, summary, "localTimeOffsetSeconds");
   copyFiniteNumber(metadata, summary, "totalElapsedTime");
   copyFiniteNumber(metadata, summary, "totalDistanceM");
+
+  const location = getCentroidLabel(data);
+  if (location) {
+    summary.location = location;
+  }
 
   return Object.keys(summary).length > 0 ? summary : undefined;
 }
@@ -76,10 +88,15 @@ function getFirstFeature(data: JsonRecord): JsonRecord | undefined {
   return data.features.find(isRecord);
 }
 
+function getCentroidLabel(data: unknown): string | undefined {
+  const label = getTrackJsonPointOfInterest(data, "centroid")?.label?.trim();
+  return label || undefined;
+}
+
 function copyFiniteNumber(
   source: JsonRecord,
   target: TrackListSummary,
-  key: keyof TrackListSummary,
+  key: NumericTrackListSummaryKey,
 ) {
   const value = source[key];
   if (isFiniteNumber(value)) {

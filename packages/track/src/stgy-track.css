@@ -53,6 +53,13 @@
   text-decoration: underline;
 }
 
+.stgy-track-coordinate-popup {
+  display: block;
+  white-space: nowrap;
+  cursor: text;
+  user-select: text;
+}
+
 .stgy-track-popup .annot-title {
   margin-bottom: 0.4em;
   font-weight: 700;

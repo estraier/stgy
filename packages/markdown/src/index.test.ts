@@ -462,6 +462,63 @@ describe("parseMarkdown", () => {
     expect(stripPos(parseMarkdown(mdText))).toStrictEqual(expected);
   });
 
+  it("inline track map accepts cardinal directions for center and pins", () => {
+    const mdText =
+      "@[Places](map://73.9857W,40.7484N,12|" +
+      "151.2093e,33.8688s;Sydney)";
+    const result = stripPos(parseMarkdown(mdText));
+    expect(result).toStrictEqual([
+      {
+        type: "element",
+        tag: "figure",
+        attrs: {
+          class: "stgy-track-map",
+          "data-lon": -73.9857,
+          "data-lat": 40.7484,
+          "data-zoom": 12,
+          "data-center-address": "Places",
+        },
+        children: [
+          {
+            type: "element",
+            tag: "div",
+            attrs: { class: "stgy-track-canvas" },
+            children: [],
+          },
+          {
+            type: "element",
+            tag: "ul",
+            attrs: { class: "stgy-track-pins" },
+            children: [
+              {
+                type: "element",
+                tag: "li",
+                attrs: {
+                  "data-lon": 151.2093,
+                  "data-lat": -33.8688,
+                },
+                children: [
+                  {
+                    type: "element",
+                    tag: "div",
+                    attrs: { class: "annot-title" },
+                    children: [{ type: "text", text: "Sydney" }],
+                  },
+                ],
+              },
+            ],
+          },
+          {
+            type: "element",
+            tag: "figcaption",
+            attrs: { class: "stgy-track-caption" },
+            children: [{ type: "text", text: "Places" }],
+          },
+        ],
+      },
+    ]);
+  });
+
   it("inline track map uses default zoom when zoom is omitted", () => {
     const mdText = "@[](map://139.6444794,35.6595519){height=240}";
     const expected = [
@@ -2447,6 +2504,15 @@ describe("mdRenderHtml basics", () => {
       "http://example.com/;/media/1234/bread.jpg)";
     expect(makeHtml(mdText)).toBe(
       '<figure class="stgy-track-map" data-center-address="Akatutumi" data-lat="35.6595519" data-lon="139.6444794" data-zoom="15"><div class="stgy-track-canvas"></div><ul class="stgy-track-pins"><li data-lat="35.6595498" data-lon="139.6444772"><div class="annot-title">Bakery</div><div class="annot-desc">Good</div><div class="annot-link"><a href="http://example.com/">http://example.com/</a></div><div class="annot-image" data-alt="Bakery" data-src="/media/1234/bread.jpg"></div></li></ul><figcaption class="stgy-track-caption">Akatutumi</figcaption></figure>',
+    );
+  });
+
+  it("inline track map renders cardinal directions for center and pins", () => {
+    const mdText =
+      "@[Places](map://73.9857W,40.7484N,12|" +
+      "151.2093e,33.8688s;Sydney)";
+    expect(makeHtml(mdText)).toBe(
+      '<figure class="stgy-track-map" data-center-address="Places" data-lat="40.7484" data-lon="-73.9857" data-zoom="12"><div class="stgy-track-canvas"></div><ul class="stgy-track-pins"><li data-lat="-33.8688" data-lon="151.2093"><div class="annot-title">Sydney</div></li></ul><figcaption class="stgy-track-caption">Places</figcaption></figure>',
     );
   });
 

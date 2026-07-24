@@ -53,6 +53,7 @@ export default function PageBody() {
   const [trackSummaries, setTrackSummaries] = useState<Record<string, TrackListSummary>>({});
 
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const listRequestIdRef = useRef(0);
   const userId = status.state === "authenticated" ? status.session.userId : undefined;
   const offset = useMemo(() => (page - 1) * PAGE_SIZE, [page]);
 
@@ -78,6 +79,7 @@ export default function PageBody() {
 
   const loadList = useCallback(async () => {
     if (status.state !== "authenticated" || !userId) return;
+    const requestId = ++listRequestIdRef.current;
     setLoading(true);
     setError(null);
     try {
@@ -85,16 +87,32 @@ export default function PageBody() {
         offset,
         limit: PAGE_SIZE + 1,
       });
+      if (requestId !== listRequestIdRef.current) return;
+
+      const nextItems = data.slice(0, PAGE_SIZE);
+      const nextKeys = new Set(nextItems.map((item) => item.key));
       setHasNext(data.length > PAGE_SIZE);
-      setItems(data.slice(0, PAGE_SIZE));
-      setTrackSummaries({});
+      setItems(nextItems);
+      // Preserve summaries for unchanged previews because React keeps those maps mounted.
+      setTrackSummaries((current) => {
+        const next: Record<string, TrackListSummary> = {};
+        for (const [key, summary] of Object.entries(current)) {
+          if (nextKeys.has(key)) {
+            next[key] = summary;
+          }
+        }
+        return next;
+      });
     } catch (caught: unknown) {
+      if (requestId !== listRequestIdRef.current) return;
       setItems([]);
       setHasNext(false);
       setTrackSummaries({});
       setError(caught instanceof Error ? caught.message : "Failed to load tracks.");
     } finally {
-      setLoading(false);
+      if (requestId === listRequestIdRef.current) {
+        setLoading(false);
+      }
     }
   }, [offset, status.state, userId]);
 
@@ -292,6 +310,14 @@ export default function PageBody() {
                   <span>{elapsedTime}</span>
                   <span>{distance}</span>
                 </div>
+                {summary?.location && (
+                  <div
+                    className="overflow-hidden whitespace-nowrap text-ellipsis text-[9px] leading-3 text-gray-400"
+                    title={summary.location}
+                  >
+                    {summary.location}
+                  </div>
+                )}
               </div>
             </li>
           );
@@ -367,6 +393,12 @@ export default function PageBody() {
                   {formatTrackListElapsedTime(previewSummary?.totalElapsedTime)}
                   <span className="ml-3 text-gray-500">Distance:</span>{" "}
                   {formatTrackListDistance(previewSummary?.totalDistanceM)}
+                  {previewSummary?.location && (
+                    <>
+                      <span className="ml-3 text-gray-500">Location:</span>{" "}
+                      {previewSummary.location}
+                    </>
+                  )}
                 </div>
               </div>
             </div>

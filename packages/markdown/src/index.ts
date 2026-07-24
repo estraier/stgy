@@ -197,12 +197,33 @@ function isFiniteMdMapCoordinate(
   );
 }
 
+function parseMdMapCoordinate(
+  raw: string,
+  axis: "lon" | "lat",
+): number | null {
+  const value = raw.trim();
+  const direction = value.match(/([NSEW])$/i)?.[1]?.toUpperCase();
+  if (!direction) {
+    const coordinate = Number(value);
+    return Number.isFinite(coordinate) ? coordinate : null;
+  }
+
+  const allowedDirections = axis === "lon" ? ["E", "W"] : ["N", "S"];
+  if (!allowedDirections.includes(direction)) return null;
+
+  const magnitude = Number(value.slice(0, -1).trim());
+  if (!Number.isFinite(magnitude) || magnitude < 0) return null;
+  return direction === "W" || direction === "S" ? -magnitude : magnitude;
+}
+
 function parseMdMapLonLat(raw: string): { lon: number; lat: number } | null {
   const parts = raw.split(",").map((part) => part.trim());
   if (parts.length < 2) return null;
-  const lon = Number(parts[0]);
-  const lat = Number(parts[1]);
-  if (!isFiniteMdMapCoordinate(lon, lat)) return null;
+  const lon = parseMdMapCoordinate(parts[0]!, "lon");
+  const lat = parseMdMapCoordinate(parts[1]!, "lat");
+  if (lon === null || lat === null || !isFiniteMdMapCoordinate(lon, lat)) {
+    return null;
+  }
   return { lon, lat };
 }
 
@@ -219,11 +240,11 @@ function parseMdMapUri(url: string): MdMapSpec | null {
   const centerParts = blocks[0]!.split(",").map((part) => part.trim());
   if (centerParts.length !== 2 && centerParts.length !== 3) return null;
 
-  const lon = Number(centerParts[0]);
-  const lat = Number(centerParts[1]);
+  const center = parseMdMapLonLat(centerParts.slice(0, 2).join(","));
+  if (!center) return null;
+  const { lon, lat } = center;
   const zoom =
     centerParts.length === 3 ? Number(centerParts[2]) : DEFAULT_MD_MAP_ZOOM;
-  if (!isFiniteMdMapCoordinate(lon, lat)) return null;
   if (!Number.isFinite(zoom) || zoom < 0 || zoom > 22) return null;
 
   const pins: MdMapPin[] = [];

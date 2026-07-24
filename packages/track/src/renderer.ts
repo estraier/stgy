@@ -23,6 +23,15 @@ const ALLOWED_MAP_COLORS = new Set([
 
 export const STGY_TRACK_DATA_LOADED_EVENT = "stgy-track-data-loaded";
 
+const formatHemisphereCoordinate = (
+  value: number,
+  positiveHemisphere: "E" | "N",
+  negativeHemisphere: "W" | "S",
+) => `${Math.abs(value).toFixed(5)}${value < 0 ? negativeHemisphere : positiveHemisphere}`;
+
+const formatCoordinatePopupText = (latitude: number, longitude: number) =>
+  `${formatHemisphereCoordinate(longitude, "E", "W")}, ${formatHemisphereCoordinate(latitude, "N", "S")}`;
+
 const DEFAULT_SINGLE_POINT_ZOOM = 12;
 const TRACK_GRAPH_SMOOTHING_WINDOWS = [
   1,
@@ -2467,6 +2476,24 @@ export class StgyTrackRenderer {
         this.setGraphCollapsed(interactionContext, false);
       });
     }
+
+    map.on("contextmenu", (event: L.LeafletMouseEvent) => {
+      const popupContent = document.createElement("span");
+      popupContent.className = "stgy-track-coordinate-popup";
+      popupContent.textContent = formatCoordinatePopupText(
+        event.latlng.lat,
+        event.latlng.lng,
+      );
+      L.DomEvent.disableClickPropagation(popupContent);
+
+      L.popup({
+        closeButton: false,
+        closeOnClick: true,
+      })
+        .setLatLng(event.latlng)
+        .setContent(popupContent)
+        .openOn(map);
+    });
 
     map.on("click", () => {
       if (interactionContext.ignoreNextMapClick) {
