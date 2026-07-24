@@ -389,6 +389,17 @@ export function downsampleTrackActivity(
     return cloneTrackActivity(activity);
   }
 
+  const positionSegments = splitPositionSegmentsForDownsampling(activity.points);
+  if (positionSegments.segments.length > 1) {
+    return downsampleTrackActivitySegments(
+      activity,
+      positionSegments,
+      maxPoints,
+      strategy,
+      preserveEndpoints,
+    );
+  }
+
   if (strategy === "uniform") {
     return downsampleTrackActivityUniform(
       activity,
@@ -1890,18 +1901,193 @@ function normalizeMaxPoints(value: number): number {
   return Math.floor(value);
 }
 
+type DownsamplePositionSegments = {
+  segments: TrackPoint[][];
+  separators: TrackPoint[];
+};
+
+function splitPositionSegmentsForDownsampling(
+  points: TrackPoint[],
+): DownsamplePositionSegments {
+  const segments: TrackPoint[][] = [];
+  const separators: TrackPoint[] = [];
+  let current: TrackPoint[] = [];
+  let pendingSeparator: TrackPoint | undefined;
+
+  points.forEach((point) => {
+    if (hasPosition(point)) {
+      if (current.length === 0 && segments.length > 0 && pendingSeparator) {
+        separators.push(pendingSeparator);
+        pendingSeparator = undefined;
+      }
+      current.push(point);
+      return;
+    }
+
+    if (current.length > 0) {
+      segments.push(current);
+      current = [];
+      pendingSeparator = point;
+      return;
+    }
+
+    if (segments.length > 0 && !pendingSeparator) {
+      pendingSeparator = point;
+    }
+  });
+
+  if (current.length > 0) {
+    segments.push(current);
+  }
+
+  return { segments, separators };
+}
+
+function downsampleTrackActivitySegments(
+  activity: TrackActivity,
+  positionSegments: DownsamplePositionSegments,
+  maxPoints: number,
+  strategy: "uniform" | "aggregate",
+  preserveEndpoints: boolean,
+): TrackActivity {
+  const separatorCount = positionSegments.segments.length - 1;
+  const availableSegmentPoints = maxPoints - separatorCount;
+  const segmentPointCounts = allocateSegmentPointCounts(
+    positionSegments.segments.map((segment) => segment.length),
+    availableSegmentPoints,
+  );
+  const points: TrackPoint[] = [];
+
+  positionSegments.segments.forEach((segment, index) => {
+    if (index > 0) {
+      points.push(cloneTrackPoint(positionSegments.separators[index - 1] || {}));
+    }
+
+    downsampleTrackPoints(
+      segment,
+      segmentPointCounts[index],
+      strategy,
+      preserveEndpoints,
+    ).forEach((point) => points.push(point));
+  });
+
+  return {
+    ...cloneTrackActivity(activity),
+    points,
+  };
+}
+
+function allocateSegmentPointCounts(
+  segmentLengths: number[],
+  availablePoints: number,
+): number[] {
+  const minimums = segmentLengths.map((length) => Math.min(2, length));
+  const minimumTotal = minimums.reduce((sum, value) => sum + value, 0);
+  if (availablePoints < minimumTotal) {
+    const separatorCount = Math.max(0, segmentLengths.length - 1);
+    throw new RangeError(
+      `maxPoints must be at least ${minimumTotal + separatorCount} ` +
+        `to preserve ${segmentLengths.length} track segments.`,
+    );
+  }
+
+  const allocations = [...minimums];
+  let remaining = availablePoints - minimumTotal;
+  let active = segmentLengths
+    .map((length, index) => ({ index, length }))
+    .filter(({ index, length }) => allocations[index] < length);
+
+  while (remaining > 0 && active.length > 0) {
+    const roundRemaining = remaining;
+    const totalWeight = active.reduce((sum, item) => sum + item.length, 0);
+    const shares = active.map((item) => {
+      return {
+        ...item,
+        share: (roundRemaining * item.length) / totalWeight,
+      };
+    });
+    let distributed = 0;
+
+    shares.forEach(({ index, length, share }) => {
+      const capacity = length - allocations[index];
+      const count = Math.min(capacity, Math.floor(share));
+      if (count > 0) {
+        allocations[index] += count;
+        distributed += count;
+      }
+    });
+
+    remaining -= distributed;
+    active = active.filter(({ index, length }) => allocations[index] < length);
+    if (remaining === 0 || active.length === 0) {
+      break;
+    }
+
+    if (distributed === 0) {
+      shares
+        .filter(({ index, length }) => allocations[index] < length)
+        .sort((a, b) => {
+          const fractionDifference =
+            b.share - Math.floor(b.share) -
+            (a.share - Math.floor(a.share));
+          return fractionDifference || b.length - a.length || a.index - b.index;
+        })
+        .slice(0, remaining)
+        .forEach(({ index }) => {
+          allocations[index] += 1;
+          remaining -= 1;
+        });
+
+      active = active.filter(({ index, length }) => allocations[index] < length);
+    }
+  }
+
+  return allocations;
+}
+
+function downsampleTrackPoints(
+  points: TrackPoint[],
+  maxPoints: number,
+  strategy: "uniform" | "aggregate",
+  preserveEndpoints: boolean,
+): TrackPoint[] {
+  if (points.length <= maxPoints) {
+    return points.map(cloneTrackPoint);
+  }
+
+  if (strategy === "uniform") {
+    return downsampleTrackPointsUniform(points, maxPoints, preserveEndpoints);
+  }
+
+  return preserveEndpoints
+    ? aggregatePointsWithEndpoints(points, maxPoints)
+    : aggregatePoints(points, maxPoints);
+}
+
+function downsampleTrackPointsUniform(
+  points: TrackPoint[],
+  maxPoints: number,
+  preserveEndpoints: boolean,
+): TrackPoint[] {
+  const indices = preserveEndpoints
+    ? selectUniformIndicesWithEndpoints(points.length, maxPoints)
+    : selectUniformIndices(points.length, maxPoints);
+
+  return indices.map((index) => cloneTrackPoint(points[index]));
+}
+
 function downsampleTrackActivityUniform(
   activity: TrackActivity,
   maxPoints: number,
   preserveEndpoints: boolean,
 ): TrackActivity {
-  const indices = preserveEndpoints
-    ? selectUniformIndicesWithEndpoints(activity.points.length, maxPoints)
-    : selectUniformIndices(activity.points.length, maxPoints);
-
   return {
     ...cloneTrackActivity(activity),
-    points: indices.map((index) => cloneTrackPoint(activity.points[index])),
+    points: downsampleTrackPointsUniform(
+      activity.points,
+      maxPoints,
+      preserveEndpoints,
+    ),
   };
 }
 
@@ -1910,13 +2096,11 @@ function downsampleTrackActivityAggregate(
   maxPoints: number,
   preserveEndpoints: boolean,
 ): TrackActivity {
-  const points = preserveEndpoints
-    ? aggregatePointsWithEndpoints(activity.points, maxPoints)
-    : aggregatePoints(activity.points, maxPoints);
-
   return {
     ...cloneTrackActivity(activity),
-    points,
+    points: preserveEndpoints
+      ? aggregatePointsWithEndpoints(activity.points, maxPoints)
+      : aggregatePoints(activity.points, maxPoints),
   };
 }
 

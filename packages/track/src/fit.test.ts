@@ -944,6 +944,82 @@ describe("downsampleTrackActivity", () => {
     expect(downsampled.metadata.pedaling).not.toBe(activity.metadata.pedaling);
   });
 
+  test("uniform downsampling preserves GPX-style segment boundaries", () => {
+    const activity = makeActivity(12);
+    activity.points = [
+      ...Array.from({ length: 6 }, (_, index) => makePoint(index)),
+      {},
+      ...Array.from({ length: 6 }, (_, index) => makePoint(100 + index)),
+    ];
+
+    const downsampled = downsampleTrackActivity(activity, {
+      maxPoints: 7,
+      strategy: "uniform",
+    });
+
+    expect(downsampled.points.map((point) => point.time)).toEqual([
+      1710000000,
+      1710000003,
+      1710000005,
+      undefined,
+      1710000100,
+      1710000103,
+      1710000105,
+    ]);
+
+    const trackJson = parseTrackJson(trackActivityToTrackJson(downsampled));
+    expect(trackJson.features).toHaveLength(2);
+    expect(trackJson.features.map((feature: any) => {
+      return feature.geometry.coordinates.length;
+    })).toEqual([3, 3]);
+  });
+
+  test("aggregate downsampling allocates points proportionally without crossing segments", () => {
+    const activity = makeActivity(12);
+    const firstSegment = Array.from({ length: 8 }, (_, index) => ({
+      ...makePoint(index),
+      powerW: index,
+    }));
+    const secondSegment = Array.from({ length: 4 }, (_, index) => ({
+      ...makePoint(100 + index),
+      powerW: 100 + index,
+    }));
+    activity.points = [...firstSegment, {}, ...secondSegment];
+
+    const downsampled = downsampleTrackActivity(activity, {
+      maxPoints: 7,
+      strategy: "aggregate",
+      preserveEndpoints: false,
+    });
+
+    expect(downsampled.points).toHaveLength(7);
+    expect(downsampled.points[4]).toEqual({});
+    expect(downsampled.points.map((point) => point.powerW)).toEqual([
+      0.5,
+      2.5,
+      4.5,
+      6.5,
+      undefined,
+      100.5,
+      102.5,
+    ]);
+  });
+
+  test("rejects a point limit too small to preserve every segment", () => {
+    const activity = makeActivity(6);
+    activity.points = [
+      ...Array.from({ length: 3 }, (_, index) => makePoint(index)),
+      {},
+      ...Array.from({ length: 3 }, (_, index) => makePoint(100 + index)),
+    ];
+
+    expect(() =>
+      downsampleTrackActivity(activity, {
+        maxPoints: 4,
+      }),
+    ).toThrow("maxPoints must be at least 5 to preserve 2 track segments");
+  });
+
   test("rejects unsupported downsampling strategy", () => {
     const activity = makeActivity(3);
 
