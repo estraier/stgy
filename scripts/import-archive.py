@@ -329,6 +329,18 @@ def iter_embed_urls(text: str) -> Iterable[tuple[str, str]]:
     yield match.group("prefix")[0], match.group("url").strip()
 
 
+def iter_map_pin_image_urls(url: str) -> Iterable[str]:
+  if not url.startswith("map://"):
+    return
+  for block in url[len("map://"):].split("|")[1:]:
+    fields = block.split(";")
+    if len(fields) < 5:
+      continue
+    image_url = fields[4].strip()
+    if image_url:
+      yield image_url
+
+
 def resolve_archive_url(data_dir: Path, source_file: Path, url: str) -> Path | None:
   parts = urlsplit(url)
   if parts.scheme or parts.netloc or url.startswith("//"):
@@ -373,31 +385,44 @@ def collect_media_references(
   track_masters: set[Path] = set()
   preview_to_master: dict[Path, Path] = {}
 
+  def add_image_reference(source_file: Path, url: str) -> None:
+    candidate = resolve_archive_url(data_dir, source_file, url)
+    if candidate is None:
+      return
+    try:
+      candidate.relative_to(images_dir)
+    except ValueError:
+      return
+    if not candidate.is_file():
+      raise ValueError(f"referenced image not found: {source_file}: {url}")
+    if candidate.suffix.lower() not in IMAGE_CONTENT_TYPES:
+      raise ValueError(f"referenced image type is unsupported: {candidate}")
+    image_paths.add(candidate)
+
   for post in posts:
     for kind, url in iter_embed_urls(post.content):
+      if kind == "!":
+        add_image_reference(post.path, url)
+        continue
+      if kind != "@":
+        continue
+      if url.startswith("map://"):
+        for image_url in iter_map_pin_image_urls(url):
+          add_image_reference(post.path, image_url)
+        continue
+
       candidate = resolve_archive_url(data_dir, post.path, url)
       if candidate is None:
         continue
-      if kind == "!":
-        try:
-          candidate.relative_to(images_dir)
-        except ValueError:
-          continue
-        if not candidate.is_file():
-          raise ValueError(f"referenced image not found: {post.path}: {url}")
-        if candidate.suffix.lower() not in IMAGE_CONTENT_TYPES:
-          raise ValueError(f"referenced image type is unsupported: {candidate}")
-        image_paths.add(candidate)
-      elif kind == "@":
-        try:
-          candidate.relative_to(previews_dir)
-        except ValueError:
-          continue
-        if not candidate.is_file():
-          raise ValueError(f"referenced track preview not found: {post.path}: {url}")
-        master = find_track_master(data_dir, candidate)
-        preview_to_master[candidate] = master
-        track_masters.add(master)
+      try:
+        candidate.relative_to(previews_dir)
+      except ValueError:
+        continue
+      if not candidate.is_file():
+        raise ValueError(f"referenced track preview not found: {post.path}: {url}")
+      master = find_track_master(data_dir, candidate)
+      preview_to_master[candidate] = master
+      track_masters.add(master)
 
   return (
     tuple(sorted(image_paths, key=str)),
@@ -457,6 +482,36 @@ def load_import_plan(data_dir: Path, no_reply: bool = False, publish: bool = Fal
   )
 
 
+def rewrite_map_pin_image_urls(
+  url: str,
+  source_file: Path,
+  data_dir: Path,
+  image_urls: dict[Path, str],
+) -> str:
+  if not url.startswith("map://"):
+    return url
+  blocks = url.split("|")
+  changed = False
+  for index in range(1, len(blocks)):
+    fields = blocks[index].split(";")
+    if len(fields) < 5:
+      continue
+    raw_image_url = fields[4]
+    stripped_image_url = raw_image_url.strip()
+    if not stripped_image_url:
+      continue
+    candidate = resolve_archive_url(data_dir, source_file, stripped_image_url)
+    replacement = image_urls.get(candidate) if candidate is not None else None
+    if replacement is None:
+      continue
+    leading = raw_image_url[:len(raw_image_url) - len(raw_image_url.lstrip())]
+    trailing = raw_image_url[len(raw_image_url.rstrip()):]
+    fields[4] = f"{leading}{replacement}{trailing}"
+    blocks[index] = ";".join(fields)
+    changed = True
+  return "|".join(blocks) if changed else url
+
+
 def rewrite_embeds(
   text: str,
   source_file: Path,
@@ -468,6 +523,23 @@ def rewrite_embeds(
     kind = match.group("prefix")[0]
     raw_url = match.group("url")
     stripped_url = raw_url.strip()
+    if kind == "@" and stripped_url.startswith("map://"):
+      rewritten_url = rewrite_map_pin_image_urls(
+        stripped_url,
+        source_file,
+        data_dir,
+        image_urls,
+      )
+      if rewritten_url == stripped_url:
+        return match.group(0)
+      leading = raw_url[:len(raw_url) - len(raw_url.lstrip())]
+      trailing = raw_url[len(raw_url.rstrip()):]
+      return (
+        f"{match.group('prefix')}"
+        f"{leading}{rewritten_url}{trailing}"
+        f"{match.group('suffix')}"
+      )
+
     candidate = resolve_archive_url(data_dir, source_file, stripped_url)
     replacement: str | None = None
     if candidate is not None:

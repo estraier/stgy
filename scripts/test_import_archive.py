@@ -1,0 +1,91 @@
+#!/usr/bin/env python3
+
+import importlib.util
+import tempfile
+import unittest
+from pathlib import Path
+
+
+MODULE_PATH = Path(__file__).with_name("import-archive.py")
+SPEC = importlib.util.spec_from_file_location("stgy_import_archive", MODULE_PATH)
+if SPEC is None or SPEC.loader is None:
+  raise RuntimeError(f"cannot load {MODULE_PATH}")
+MODULE = importlib.util.module_from_spec(SPEC)
+SPEC.loader.exec_module(MODULE)
+
+
+class ImportArchiveMapPinImageTest(unittest.TestCase):
+  def test_collects_and_rewrites_local_map_pin_images(self) -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+      data_dir = Path(temporary_directory).resolve()
+      posts_dir = data_dir / "posts"
+      images_dir = data_dir / "images"
+      posts_dir.mkdir()
+      images_dir.mkdir()
+      post_path = posts_dir / "0001.json"
+      post_path.write_text("{}", encoding="utf-8")
+      first_image = images_dir / "first.jpg"
+      second_image = images_dir / "second.png"
+      first_image.write_bytes(b"first")
+      second_image.write_bytes(b"second")
+
+      content = (
+        "![same](../images/first.jpg)\n"
+        "@[Map](map://139.0,35.0,13|"
+        "139.1,35.1;First;;;../images/first.jpg|"
+        "139.2,35.2;Second;;; ../images/second.png |"
+        "139.3,35.3;External;;;https://example.com/external.jpg)"
+      )
+      post = MODULE.ArchivePost(
+        path=post_path,
+        data={"id": "0000000000000001", "content": content},
+      )
+
+      image_paths, track_paths, preview_to_master = MODULE.collect_media_references(
+        data_dir,
+        [post],
+      )
+
+      self.assertEqual(image_paths, (first_image, second_image))
+      self.assertEqual(track_paths, ())
+      self.assertEqual(preview_to_master, {})
+
+      rewritten = MODULE.rewrite_embeds(
+        content,
+        post_path,
+        data_dir,
+        {
+          first_image: "/images/OWNER/masters/first.jpg",
+          second_image: "/images/OWNER/masters/second.png",
+        },
+        {},
+      )
+
+      self.assertIn("![same](/images/OWNER/masters/first.jpg)", rewritten)
+      self.assertIn("139.1,35.1;First;;;/images/OWNER/masters/first.jpg", rewritten)
+      self.assertIn("139.2,35.2;Second;;; /images/OWNER/masters/second.png ", rewritten)
+      self.assertIn("https://example.com/external.jpg", rewritten)
+
+  def test_rejects_missing_local_map_pin_image(self) -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+      data_dir = Path(temporary_directory).resolve()
+      posts_dir = data_dir / "posts"
+      images_dir = data_dir / "images"
+      posts_dir.mkdir()
+      images_dir.mkdir()
+      post_path = posts_dir / "0001.json"
+      post_path.write_text("{}", encoding="utf-8")
+      post = MODULE.ArchivePost(
+        path=post_path,
+        data={
+          "id": "0000000000000001",
+          "content": "@[Map](map://139,35,13|139,35;Missing;;;../images/missing.jpg)",
+        },
+      )
+
+      with self.assertRaisesRegex(ValueError, "referenced image not found"):
+        MODULE.collect_media_references(data_dir, [post])
+
+
+if __name__ == "__main__":
+  unittest.main()
