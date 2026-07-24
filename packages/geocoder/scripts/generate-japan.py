@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate STGY level-1/level-2 static geocoding NDJSON from N03 boundaries."""
+"""Generate STGY prefecture, municipality and designated-city-ward geocoding data."""
 
 from __future__ import annotations
 
@@ -39,8 +39,10 @@ GEOGRAPHIC_CRS = CRS.from_epsg(4326)
 class Place:
     id: int
     level: int
+    kind: str
     prefecture: str
     municipality: str | None
+    ward: str | None
     longitude: float
     latitude: float
     geometry: Polygon | MultiPolygon
@@ -49,11 +51,49 @@ class Place:
 
     @property
     def elements(self) -> list[str]:
-        return [self.prefecture] if self.municipality is None else [self.prefecture, self.municipality]
+        elements = [self.prefecture]
+        if self.municipality is not None:
+            elements.append(self.municipality)
+        if self.ward is not None:
+            elements.append(self.ward)
+        return elements
 
     @property
     def label(self) -> str:
         return "".join(self.elements)
+
+    @property
+    def aliases(self) -> list[str]:
+        if self.kind == "prefecture":
+            if self.prefecture == "北海道":
+                return []
+            if self.prefecture.endswith(("都", "府", "県")):
+                return [self.prefecture[:-1]]
+            return []
+
+        if self.kind == "designated-city-ward":
+            assert self.municipality is not None
+            assert self.ward is not None
+            aliases: list[str] = []
+            if self.ward.endswith("区") and len(self.ward) > 1:
+                aliases.append(self.ward[:-1])
+            aliases.append(self.ward)
+            aliases.append(f"{self.municipality}{self.ward}")
+            return list(dict.fromkeys(aliases))
+
+        assert self.municipality is not None
+        municipality = self.municipality
+        local_name = municipality
+        if "郡" in local_name:
+            local_name = local_name.rsplit("郡", 1)[1]
+
+        aliases: list[str] = []
+        if local_name.endswith(("市", "区", "町", "村")) and len(local_name) > 1:
+            aliases.append(local_name[:-1])
+        aliases.append(local_name)
+        if municipality != local_name:
+            aliases.append(municipality)
+        return list(dict.fromkeys(aliases))
 
 
 @dataclass(frozen=True)
@@ -201,8 +241,10 @@ def resolve_municipality_code(codes: Iterable[int], has_wards: bool) -> int:
     return unique_codes[0]
 
 
-def make_places(frame: gpd.GeoDataFrame) -> tuple[list[Place], list[Place]]:
-    records: list[tuple[str, str, str, int, bool, object]] = []
+def make_places(
+    frame: gpd.GeoDataFrame,
+) -> tuple[list[Place], list[Place], list[Place], list[Place]]:
+    records: list[tuple[str, str, str, str, int, object]] = []
     for row in frame.itertuples(index=False):
         prefecture = clean_text(getattr(row, "N03_001", ""))
         district = clean_text(getattr(row, "N03_003", ""))
@@ -212,89 +254,144 @@ def make_places(frame: gpd.GeoDataFrame) -> tuple[list[Place], list[Place]]:
         geometry = getattr(row, "geometry")
         if not prefecture or not municipality or code is None or geometry is None or geometry.is_empty:
             continue
-        records.append((prefecture, district, municipality, code, bool(ward), geometry))
+        records.append((prefecture, district, municipality, ward, code, geometry))
 
-    grouped: dict[tuple[str, str, str], list[tuple[int, bool, object]]] = defaultdict(list)
-    for prefecture, district, municipality, code, has_ward, geometry in records:
-        grouped[(prefecture, district, municipality)].append((code, has_ward, geometry))
+    municipality_groups: dict[
+        tuple[str, str, str], list[tuple[int, bool, object]]
+    ] = defaultdict(list)
+    ward_groups: dict[
+        tuple[str, str, str, str, int], list[object]
+    ] = defaultdict(list)
+    for prefecture, district, municipality, ward, code, geometry in records:
+        municipality_groups[(prefecture, district, municipality)].append(
+            (code, bool(ward), geometry)
+        )
+        if ward:
+            ward_groups[(prefecture, district, municipality, ward, code)].append(geometry)
 
     to_projected = Transformer.from_crs(GEOGRAPHIC_CRS, PROJECTED_CRS, always_xy=True)
     to_geographic = Transformer.from_crs(PROJECTED_CRS, GEOGRAPHIC_CRS, always_xy=True)
 
-    level2: list[Place] = []
-    prepared_groups: list[tuple[int, str, str, list[object]]] = []
-    for (prefecture, district, municipality), entries in grouped.items():
-        code = resolve_municipality_code(
-            (entry[0] for entry in entries), any(entry[1] for entry in entries)
-        )
-        municipality_element = f"{district}{municipality}"
-        prepared_groups.append(
-            (code, prefecture, municipality_element, [entry[2] for entry in entries])
-        )
-
-    for code, prefecture, municipality, geometries in sorted(prepared_groups):
+    def make_place(
+        place_id: int,
+        level: int,
+        kind: str,
+        prefecture: str,
+        municipality: str | None,
+        ward: str | None,
+        geometries: list[object],
+    ) -> Place | None:
         geometry = shapely.make_valid(shapely.union_all(geometries))
         geometry = polygonal_only(geometry)
         if geometry is None or geometry.is_empty:
-            continue
+            return None
         projected = shapely.transform(geometry, to_projected.transform, interleaved=False)
         point = largest_component(projected).representative_point()
         longitude, latitude = to_geographic.transform(point.x, point.y)
-        level2.append(
-            Place(
-                id=code,
-                level=2,
-                prefecture=prefecture,
-                municipality=municipality,
-                longitude=longitude,
-                latitude=latitude,
-                geometry=geometry,
-                projected_geometry=projected,
-                projected_point=point,
-            )
+        return Place(
+            id=place_id,
+            level=level,
+            kind=kind,
+            prefecture=prefecture,
+            municipality=municipality,
+            ward=ward,
+            longitude=longitude,
+            latitude=latitude,
+            geometry=geometry,
+            projected_geometry=projected,
+            projected_point=point,
         )
+
+    level2: list[Place] = []
+    designated_city_parent_ids: set[int] = set()
+    prepared_municipalities: list[tuple[int, str, str, list[object]]] = []
+    for (prefecture, district, municipality), entries in municipality_groups.items():
+        has_wards = any(entry[1] for entry in entries)
+        code = resolve_municipality_code((entry[0] for entry in entries), has_wards)
+        municipality_element = f"{district}{municipality}"
+        prepared_municipalities.append(
+            (code, prefecture, municipality_element, [entry[2] for entry in entries])
+        )
+        if has_wards:
+            designated_city_parent_ids.add(code)
+
+    for code, prefecture, municipality, geometries in sorted(prepared_municipalities):
+        kind = (
+            "special-ward"
+            if prefecture == "東京都" and 13101 <= code <= 13123 and municipality.endswith("区")
+            else "municipality"
+        )
+        place = make_place(
+            code,
+            2,
+            kind,
+            prefecture,
+            municipality,
+            None,
+            geometries,
+        )
+        if place is not None:
+            level2.append(place)
+
+    level3: list[Place] = []
+    for (prefecture, district, municipality, ward, code), geometries in sorted(
+        ward_groups.items(), key=lambda item: item[0][4]
+    ):
+        place = make_place(
+            code,
+            3,
+            "designated-city-ward",
+            prefecture,
+            f"{district}{municipality}",
+            ward,
+            geometries,
+        )
+        if place is not None:
+            level3.append(place)
 
     if not level2:
         raise ValueError("no level-2 records generated")
     labels_by_id: dict[int, str] = {}
-    for place in level2:
+    for place in [*level2, *level3]:
         previous = labels_by_id.get(place.id)
         if previous is not None and previous != place.label:
             raise ValueError(
-                f"municipality id collision: {place.id:05d}: {previous} / {place.label}"
+                f"place id collision: {place.id:05d}: {previous} / {place.label}"
             )
         labels_by_id[place.id] = place.label
+
+    parents_by_label = {place.label: place for place in level2}
+    for ward in level3:
+        parent_label = f"{ward.prefecture}{ward.municipality}"
+        parent = parents_by_label.get(parent_label)
+        if parent is None or parent.id not in designated_city_parent_ids:
+            raise ValueError(f"ward has no designated-city parent: {ward.label}")
 
     by_prefecture: dict[str, list[Place]] = defaultdict(list)
     for place in level2:
         by_prefecture[place.prefecture].append(place)
 
     level1: list[Place] = []
-    for prefecture, municipalities in sorted(by_prefecture.items(), key=lambda item: min(p.id for p in item[1])):
+    for prefecture, municipalities in sorted(
+        by_prefecture.items(), key=lambda item: min(p.id for p in item[1])
+    ):
         prefecture_code = min(place.id for place in municipalities) // 1000
-        geometry = polygonal_only(shapely.make_valid(shapely.union_all([p.geometry for p in municipalities])))
-        projected = polygonal_only(
-            shapely.make_valid(shapely.union_all([p.projected_geometry for p in municipalities]))
+        place = make_place(
+            prefecture_code,
+            1,
+            "prefecture",
+            prefecture,
+            None,
+            None,
+            [place.geometry for place in municipalities],
         )
-        if geometry is None or projected is None:
-            continue
-        point = largest_component(projected).representative_point()
-        longitude, latitude = to_geographic.transform(point.x, point.y)
-        level1.append(
-            Place(
-                id=prefecture_code,
-                level=1,
-                prefecture=prefecture,
-                municipality=None,
-                longitude=longitude,
-                latitude=latitude,
-                geometry=geometry,
-                projected_geometry=projected,
-                projected_point=point,
-            )
-        )
+        if place is not None:
+            level1.append(place)
 
-    return level1, level2
+    decode_places = [
+        place for place in level2 if place.id not in designated_city_parent_ids
+    ] + level3
+    return level1, level2, level3, decode_places
 
 
 def polygonal_only(geometry: object) -> Polygon | MultiPolygon | None:
@@ -326,20 +423,20 @@ def aligned_values(minimum: float, maximum: float, spacing: float, origin: float
     return np.arange(start, maximum + spacing * 0.25, spacing, dtype=np.float64)
 
 
-def make_aliases(level2: list[Place], grid_km: float, component_area_km2: float) -> list[Alias]:
+def make_aliases(places: list[Place], grid_km: float, component_area_km2: float) -> list[Alias]:
     spacing = grid_km * 1000.0
     area_limit = component_area_km2 * 1_000_000.0
     if spacing <= 0 or area_limit < 0:
         raise ValueError("invalid grid parameters")
 
-    min_x = min(place.projected_geometry.bounds[0] for place in level2)
-    min_y = min(place.projected_geometry.bounds[1] for place in level2)
+    min_x = min(place.projected_geometry.bounds[0] for place in places)
+    min_y = min(place.projected_geometry.bounds[1] for place in places)
     origin_x = math.floor(min_x / spacing) * spacing
     origin_y = math.floor(min_y / spacing) * spacing
     to_geographic = Transformer.from_crs(PROJECTED_CRS, GEOGRAPHIC_CRS, always_xy=True)
 
     aliases: list[Alias] = []
-    for place in level2:
+    for place in places:
         minx, miny, maxx, maxy = place.projected_geometry.bounds
         xs = aligned_values(minx, maxx, spacing, origin_x)
         ys = aligned_values(miny, maxy, spacing, origin_y)
@@ -375,6 +472,7 @@ def place_record(place: Place) -> dict[str, object]:
     return {
         "id": place.id,
         "level": place.level,
+        "kind": place.kind,
         "country": "JP",
         "longitude": round(place.longitude, 6),
         "latitude": round(place.latitude, 6),
@@ -383,6 +481,7 @@ def place_record(place: Place) -> dict[str, object]:
                 "locale": "ja",
                 "label": place.label,
                 "elements": place.elements,
+                "aliases": place.aliases,
             }
         ],
     }
@@ -396,7 +495,13 @@ def alias_record(alias: Alias) -> dict[str, object]:
     }
 
 
-def write_ndjson(output: Path, level1: list[Place], level2: list[Place], aliases: list[Alias]) -> None:
+def write_ndjson(
+    output: Path,
+    level1: list[Place],
+    level2: list[Place],
+    level3: list[Place],
+    aliases: list[Alias],
+) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     temp = output.with_suffix(output.suffix + ".tmp")
     with temp.open("w", encoding="utf-8", newline="\n") as stream:
@@ -404,16 +509,18 @@ def write_ndjson(output: Path, level1: list[Place], level2: list[Place], aliases
             stream.write(json.dumps(place_record(place), ensure_ascii=False, separators=(",", ":")) + "\n")
         for place in sorted(level2, key=lambda item: item.id):
             stream.write(json.dumps(place_record(place), ensure_ascii=False, separators=(",", ":")) + "\n")
+        for place in sorted(level3, key=lambda item: item.id):
+            stream.write(json.dumps(place_record(place), ensure_ascii=False, separators=(",", ":")) + "\n")
         for alias in aliases:
             stream.write(json.dumps(alias_record(alias), ensure_ascii=False, separators=(",", ":")) + "\n")
     temp.replace(output)
 
 
-def validate(level2: list[Place], aliases: list[Alias], grid_km: float) -> dict[str, object]:
+def validate(places: list[Place], aliases: list[Alias], grid_km: float) -> dict[str, object]:
     spacing = grid_km * 1000.0
-    candidate_x = [place.projected_point.x for place in level2] + [alias.x for alias in aliases]
-    candidate_y = [place.projected_point.y for place in level2] + [alias.y for alias in aliases]
-    candidate_ids = np.array([place.id for place in level2] + [alias.belong_to for alias in aliases])
+    candidate_x = [place.projected_point.x for place in places] + [alias.x for alias in aliases]
+    candidate_y = [place.projected_point.y for place in places] + [alias.y for alias in aliases]
+    candidate_ids = np.array([place.id for place in places] + [alias.belong_to for alias in aliases])
     tree = cKDTree(np.column_stack((candidate_x, candidate_y)))
 
     totals: dict[int, int] = defaultdict(int)
@@ -422,12 +529,12 @@ def validate(level2: list[Place], aliases: list[Alias], grid_km: float) -> dict[
     total = 0
     total_correct = 0
 
-    min_x = min(place.projected_geometry.bounds[0] for place in level2)
-    min_y = min(place.projected_geometry.bounds[1] for place in level2)
+    min_x = min(place.projected_geometry.bounds[0] for place in places)
+    min_y = min(place.projected_geometry.bounds[1] for place in places)
     origin_x = math.floor(min_x / spacing) * spacing
     origin_y = math.floor(min_y / spacing) * spacing
 
-    for place in level2:
+    for place in places:
         minx, miny, maxx, maxy = place.projected_geometry.bounds
         xs = aligned_values(minx, maxx, spacing, origin_x)
         ys = aligned_values(miny, maxy, spacing, origin_y)
@@ -451,7 +558,7 @@ def validate(level2: list[Place], aliases: list[Alias], grid_km: float) -> dict[
         max_distance = max(max_distance, float(np.max(distances)))
 
     worst = []
-    labels = {place.id: place.label for place in level2}
+    labels = {place.id: place.label for place in places}
     for place_id, count in totals.items():
         accuracy = correct[place_id] / count if count else 1.0
         worst.append((accuracy, labels[place_id], count))
@@ -461,7 +568,7 @@ def validate(level2: list[Place], aliases: list[Alias], grid_km: float) -> dict[
         "validationPoints": total,
         "accuracy": total_correct / total if total else None,
         "maxNearestDistanceKm": max_distance / 1000.0,
-        "worstMunicipalities": [
+        "worstPlaces": [
             {"label": label, "accuracy": accuracy, "points": count}
             for accuracy, label, count in worst[:10]
         ],
@@ -473,15 +580,27 @@ def main() -> int:
     output = Path(args.output).expanduser().resolve()
 
     frame = load_sources(args.input)
-    level1, level2 = make_places(frame)
-    aliases = make_aliases(level2, args.grid_km, args.component_area_km2)
-    write_ndjson(output, level1, level2, aliases)
+    level1, level2, level3, decode_places = make_places(frame)
+    aliases = make_aliases(decode_places, args.grid_km, args.component_area_km2)
+    write_ndjson(output, level1, level2, level3, aliases)
 
+    all_places = [*level1, *level2, *level3]
     stats: dict[str, object] = {
         "output": str(output),
         "bytes": output.stat().st_size,
         "level1": len(level1),
         "level2": len(level2),
+        "level3": len(level3),
+        "kinds": {
+            kind: sum(place.kind == kind for place in all_places)
+            for kind in (
+                "prefecture",
+                "municipality",
+                "special-ward",
+                "designated-city-ward",
+            )
+        },
+        "decodePlaces": len(decode_places),
         "aliases": len(aliases),
         "gridAliases": sum(alias.source == "grid" for alias in aliases),
         "componentAliases": sum(alias.source == "component" for alias in aliases),
@@ -490,7 +609,7 @@ def main() -> int:
         "componentAreaKm2": args.component_area_km2,
     }
     if not args.skip_validation:
-        stats["validation"] = validate(level2, aliases, args.validation_grid_km)
+        stats["validation"] = validate(decode_places, aliases, args.validation_grid_km)
     print(json.dumps(stats, ensure_ascii=False, indent=2))
     return 0
 

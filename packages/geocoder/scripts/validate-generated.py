@@ -9,6 +9,13 @@ import sys
 from collections import Counter
 from pathlib import Path
 
+PLACE_KIND_LEVELS = {
+    "prefecture": 1,
+    "municipality": 2,
+    "special-ward": 2,
+    "designated-city-ward": 3,
+}
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -23,8 +30,9 @@ def valid_coordinate(value: object, minimum: float, maximum: float) -> bool:
 def main() -> int:
     path = Path(parse_args().file).expanduser().resolve()
     place_ids: set[int] = set()
-    place_levels: dict[int, int] = {}
-    labels: set[tuple[str, str]] = set()
+    place_kinds: dict[int, str] = {}
+    japanese_labels: dict[tuple[str, str], int] = {}
+    japanese_elements: dict[int, list[str]] = {}
     alias_targets: Counter[int] = Counter()
     counts: Counter[str] = Counter()
 
@@ -60,22 +68,30 @@ def main() -> int:
 
             place_id = record.get("id")
             level = record.get("level")
+            kind = record.get("kind")
             country = record.get("country")
             addresses = record.get("addresses")
             if not isinstance(place_id, int) or place_id <= 0 or place_id in place_ids:
                 raise ValueError(f"{path}:{line_number}: invalid or duplicate place id")
-            if not isinstance(level, int) or level <= 0:
-                raise ValueError(f"{path}:{line_number}: invalid level")
+            if not isinstance(kind, str) or kind not in PLACE_KIND_LEVELS:
+                raise ValueError(f"{path}:{line_number}: invalid kind")
+            if level != PLACE_KIND_LEVELS[kind]:
+                raise ValueError(
+                    f"{path}:{line_number}: kind {kind} requires level {PLACE_KIND_LEVELS[kind]}"
+                )
             if not isinstance(country, str) or not country:
                 raise ValueError(f"{path}:{line_number}: invalid country")
             if not isinstance(addresses, list) or not addresses:
                 raise ValueError(f"{path}:{line_number}: invalid addresses")
+
+            japanese_address_found = False
             for address in addresses:
                 if not isinstance(address, dict):
                     raise ValueError(f"{path}:{line_number}: invalid address")
                 locale = address.get("locale")
                 label = address.get("label")
                 elements = address.get("elements")
+                aliases = address.get("aliases")
                 if not isinstance(locale, str) or not locale:
                     raise ValueError(f"{path}:{line_number}: invalid locale")
                 if not isinstance(label, str) or not label:
@@ -87,31 +103,67 @@ def main() -> int:
                     or "".join(elements) != label
                 ):
                     raise ValueError(f"{path}:{line_number}: invalid elements")
-                key = (country, label)
-                if locale == "ja" and key in labels:
-                    raise ValueError(f"{path}:{line_number}: duplicate Japanese label")
+                if (
+                    not isinstance(aliases, list)
+                    or not all(isinstance(alias, str) and alias for alias in aliases)
+                    or len(set(aliases)) != len(aliases)
+                ):
+                    raise ValueError(f"{path}:{line_number}: invalid aliases")
+                counts["addressAliases"] += len(aliases)
                 if locale == "ja":
-                    labels.add(key)
+                    key = (country, label)
+                    if key in japanese_labels:
+                        raise ValueError(f"{path}:{line_number}: duplicate Japanese label")
+                    japanese_labels[key] = place_id
+                    japanese_elements[place_id] = elements
+                    japanese_address_found = True
+            if not japanese_address_found:
+                raise ValueError(f"{path}:{line_number}: place has no Japanese address")
+
             place_ids.add(place_id)
-            place_levels[place_id] = level
+            place_kinds[place_id] = kind
             counts[f"level{level}"] += 1
+            counts[kind] += 1
 
     if not place_ids:
         raise ValueError(f"{path}: no place records")
-    highest_level = max(place_levels.values())
+
+    designated_city_parent_ids: set[int] = set()
+    for place_id, kind in place_kinds.items():
+        if kind != "designated-city-ward":
+            continue
+        elements = japanese_elements[place_id]
+        parent_label = elements[0] + elements[1]
+        parent_id = japanese_labels.get(("JP", parent_label))
+        if parent_id is None or place_kinds.get(parent_id) != "municipality":
+            raise ValueError(
+                f"{path}: designated-city ward {place_id} has no municipality parent {parent_label}"
+            )
+        designated_city_parent_ids.add(parent_id)
+
+    decode_place_ids = {
+        place_id
+        for place_id, kind in place_kinds.items()
+        if kind in {"special-ward", "designated-city-ward"}
+        or (kind == "municipality" and place_id not in designated_city_parent_ids)
+    }
+    if not decode_place_ids:
+        raise ValueError(f"{path}: no reverse-geocoding places")
+
     for target in alias_targets:
         if target not in place_ids:
             raise ValueError(f"{path}: alias refers to unknown place id {target}")
-        if place_levels[target] != highest_level:
+        if target not in decode_place_ids:
             raise ValueError(
-                f"{path}: alias {target} refers to level {place_levels[target]}, expected {highest_level}"
+                f"{path}: alias {target} does not refer to a reverse-geocoding place"
             )
 
     result = {
         "file": str(path),
         "bytes": path.stat().st_size,
-        "highestLevel": highest_level,
         **dict(sorted(counts.items())),
+        "decodePlaces": len(decode_place_ids),
+        "designatedCityParents": len(designated_city_parent_ids),
         "aliasTargets": len(alias_targets),
     }
     print(json.dumps(result, ensure_ascii=False, indent=2))

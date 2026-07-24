@@ -1,7 +1,13 @@
 import { resolve } from "path";
 
 import { forEachLineSync } from "./lineReader";
-import type { GeoAddress, GeoAliasRecord, GeoPlace, GeoPlaceRecord } from "./types";
+import type {
+  GeoAddressRecord,
+  GeoAliasRecord,
+  GeoPlace,
+  GeoPlaceKind,
+  GeoPlaceRecord,
+} from "./types";
 
 const JAPANESE_LOCALE = "ja";
 const MAX_DECODE_DISTANCE_KM = 10;
@@ -21,16 +27,22 @@ interface ParsedAlias {
   readonly value: GeoAliasRecord;
 }
 
+interface LoadedAlias {
+  readonly filePath: string;
+  readonly lineNumber: number;
+  readonly value: GeoAliasRecord;
+}
+
 type ParsedRecord = ParsedPlace | ParsedAlias;
 
 export class GeoCoder {
   private readonly placesById = new Map<number, GeoPlaceRecord>();
   private readonly placesByCountryAndJapaneseLabel = new Map<string, GeoPlaceRecord>();
-  private readonly highestLevelPlaces: readonly GeoPlaceRecord[];
+  private readonly placesByJapaneseAlias = new Map<string, GeoPlaceRecord[]>();
+  private readonly decodePlaces: readonly GeoPlaceRecord[];
   private readonly aliasLongitudes: Float32Array;
   private readonly aliasLatitudes: Float32Array;
   private readonly aliasBelongTo: AliasIds;
-  private readonly highestLevel: number;
 
   constructor(initFiles: readonly string[]) {
     if (initFiles.length === 0) {
@@ -38,9 +50,8 @@ export class GeoCoder {
     }
 
     const files = initFiles.map((filePath) => resolve(filePath));
-    let aliasCount = 0;
+    const aliases: LoadedAlias[] = [];
     let maximumId = 0;
-    let highestLevel = 0;
 
     for (const filePath of files) {
       forEachLineSync(filePath, (line, lineNumber) => {
@@ -49,7 +60,7 @@ export class GeoCoder {
           return;
         }
         if (record.kind === "alias") {
-          aliasCount += 1;
+          aliases.push({ filePath, lineNumber, value: record.value });
           return;
         }
 
@@ -72,8 +83,15 @@ export class GeoCoder {
 
         this.placesById.set(place.id, place);
         this.placesByCountryAndJapaneseLabel.set(labelKey, place);
+        for (const alias of japaneseAddress.aliases) {
+          const places = this.placesByJapaneseAlias.get(alias);
+          if (places === undefined) {
+            this.placesByJapaneseAlias.set(alias, [place]);
+          } else {
+            places.push(place);
+          }
+        }
         maximumId = Math.max(maximumId, place.id);
-        highestLevel = Math.max(highestLevel, place.level);
       });
     }
 
@@ -81,44 +99,44 @@ export class GeoCoder {
       throw new Error("GeoCoder NDJSON files contain no place records");
     }
 
-    this.highestLevel = highestLevel;
-    this.highestLevelPlaces = Object.freeze(
-      Array.from(this.placesById.values())
-        .filter((place) => place.level === highestLevel)
+    for (const alias of aliases) {
+      if (!this.placesById.has(alias.value.belongTo)) {
+        throw dataError(
+          alias.filePath,
+          alias.lineNumber,
+          `alias refers to unknown place id: ${alias.value.belongTo}`,
+        );
+      }
+    }
+
+    const decodePlaceIds = collectDecodePlaceIds(
+      this.placesById,
+      this.placesByCountryAndJapaneseLabel,
+    );
+    this.decodePlaces = Object.freeze(
+      Array.from(decodePlaceIds, (placeId) => this.placesById.get(placeId))
+        .filter((place): place is GeoPlaceRecord => place !== undefined)
         .sort(comparePlacesByLatitude),
     );
-    const aliasLongitudes = new Float32Array(aliasCount);
-    const aliasLatitudes = new Float32Array(aliasCount);
+    const aliasLongitudes = new Float32Array(aliases.length);
+    const aliasLatitudes = new Float32Array(aliases.length);
     const aliasBelongTo: AliasIds =
-      maximumId <= 0xffff ? new Uint16Array(aliasCount) : new Uint32Array(aliasCount);
+      maximumId <= 0xffff
+        ? new Uint16Array(aliases.length)
+        : new Uint32Array(aliases.length);
 
-    let aliasIndex = 0;
-    for (const filePath of files) {
-      forEachLineSync(filePath, (line, lineNumber) => {
-        const record = parseLine(filePath, line, lineNumber);
-        if (record === undefined || record.kind === "place") {
-          return;
-        }
-        const place = this.placesById.get(record.value.belongTo);
-        if (place === undefined) {
-          throw dataError(
-            filePath,
-            lineNumber,
-            `alias refers to unknown place id: ${record.value.belongTo}`,
-          );
-        }
-        if (place.level !== this.highestLevel) {
-          throw dataError(
-            filePath,
-            lineNumber,
-            `alias must refer to level ${this.highestLevel}, got level ${place.level}`,
-          );
-        }
-        aliasLongitudes[aliasIndex] = record.value.longitude;
-        aliasLatitudes[aliasIndex] = record.value.latitude;
-        aliasBelongTo[aliasIndex] = record.value.belongTo;
-        aliasIndex += 1;
-      });
+    for (let aliasIndex = 0; aliasIndex < aliases.length; aliasIndex += 1) {
+      const alias = aliases[aliasIndex];
+      if (!decodePlaceIds.has(alias.value.belongTo)) {
+        throw dataError(
+          alias.filePath,
+          alias.lineNumber,
+          `alias must refer to a reverse-geocoding place: ${alias.value.belongTo}`,
+        );
+      }
+      aliasLongitudes[aliasIndex] = alias.value.longitude;
+      aliasLatitudes[aliasIndex] = alias.value.latitude;
+      aliasBelongTo[aliasIndex] = alias.value.belongTo;
     }
 
     const sortedAliases = sortAliasesByLatitude(
@@ -137,30 +155,40 @@ export class GeoCoder {
       return [];
     }
 
-    const matched = findPlaceByJapaneseLabel(
+    const exactMatch = findPlaceByJapaneseLabel(
       this.placesByCountryAndJapaneseLabel,
       normalizedQuery,
     );
-    if (matched === undefined) {
+    const matchedPlaces =
+      exactMatch === undefined
+        ? this.placesByJapaneseAlias.get(normalizedQuery) ?? []
+        : [exactMatch];
+    if (matchedPlaces.length === 0) {
       return [];
     }
 
-    const address = getJapaneseAddress(matched);
-    if (address === undefined) {
-      return [];
-    }
+    const resultById = new Map<number, GeoPlaceRecord>();
+    for (const matchedPlace of matchedPlaces) {
+      const address = getJapaneseAddress(matchedPlace);
+      if (address === undefined) {
+        continue;
+      }
 
-    const result: GeoPlace[] = [];
-    let label = "";
-    for (const element of address.elements) {
-      label += element;
-      const place = this.placesByCountryAndJapaneseLabel.get(makeLabelKey(matched.country, label));
-      if (place !== undefined) {
-        result.push(toPublicPlace(place));
+      let label = "";
+      for (const element of address.elements) {
+        label += element;
+        const place = this.placesByCountryAndJapaneseLabel.get(
+          makeLabelKey(matchedPlace.country, label),
+        );
+        if (place !== undefined) {
+          resultById.set(place.id, place);
+        }
       }
     }
-    result.sort((left, right) => right.level - left.level);
-    return result;
+
+    return Array.from(resultById.values())
+      .sort(comparePlacesForEncode)
+      .map(toPublicPlace);
   }
 
   decode(longitude: number, latitude: number, locale: string): GeoPlace[] {
@@ -174,15 +202,15 @@ export class GeoCoder {
     const maximumLatitude = latitude + MAX_DECODE_LATITUDE_DELTA_DEGREES;
 
     const placeStartIndex = lowerBoundPlacesByLatitude(
-      this.highestLevelPlaces,
+      this.decodePlaces,
       minimumLatitude,
     );
     const placeEndIndex = upperBoundPlacesByLatitude(
-      this.highestLevelPlaces,
+      this.decodePlaces,
       maximumLatitude,
     );
     for (let index = placeStartIndex; index < placeEndIndex; index += 1) {
-      const place = this.highestLevelPlaces[index];
+      const place = this.decodePlaces[index];
       const distanceKm = distanceKmBetween(
         longitude,
         latitude,
@@ -226,6 +254,15 @@ interface SortedAliases {
   readonly longitudes: Float32Array;
   readonly latitudes: Float32Array;
   readonly belongTo: AliasIds;
+}
+
+
+function comparePlacesForEncode(left: GeoPlaceRecord, right: GeoPlaceRecord): number {
+  return (
+    right.level - left.level ||
+    left.country.localeCompare(right.country) ||
+    left.id - right.id
+  );
 }
 
 function comparePlacesByLatitude(left: GeoPlaceRecord, right: GeoPlaceRecord): number {
@@ -367,6 +404,8 @@ function parsePlace(
 ): GeoPlaceRecord {
   const id = requirePositiveInteger(value.id, filePath, lineNumber, "id");
   const level = requirePositiveInteger(value.level, filePath, lineNumber, "level");
+  const kind = requirePlaceKind(value.kind, filePath, lineNumber);
+  validatePlaceKindLevel(kind, level, filePath, lineNumber);
   const country = requireNonEmptyString(value.country, filePath, lineNumber, "country");
   const longitude = requireLongitude(value.longitude, filePath, lineNumber);
   const latitude = requireLatitude(value.latitude, filePath, lineNumber);
@@ -417,17 +456,136 @@ function parsePlace(
         `addresses[${index}].label must equal concatenated elements`,
       );
     }
-    return Object.freeze({ locale, label, elements: Object.freeze(elements) });
+    const aliases = parseAddressAliases(
+      rawAddress.aliases,
+      filePath,
+      lineNumber,
+      `addresses[${index}].aliases`,
+    );
+    return Object.freeze({
+      locale,
+      label,
+      elements: Object.freeze(elements),
+      aliases: Object.freeze(aliases),
+    });
   });
 
   return Object.freeze({
     id,
     level,
+    kind,
     country,
     longitude,
     latitude,
     addresses: Object.freeze(addresses),
   });
+}
+
+function requirePlaceKind(
+  value: unknown,
+  filePath: string,
+  lineNumber: number,
+): GeoPlaceKind {
+  if (
+    value !== "prefecture" &&
+    value !== "municipality" &&
+    value !== "special-ward" &&
+    value !== "designated-city-ward"
+  ) {
+    throw dataError(filePath, lineNumber, "invalid place kind");
+  }
+  return value;
+}
+
+function validatePlaceKindLevel(
+  kind: GeoPlaceKind,
+  level: number,
+  filePath: string,
+  lineNumber: number,
+): void {
+  const expectedLevel =
+    kind === "prefecture" ? 1 : kind === "designated-city-ward" ? 3 : 2;
+  if (level !== expectedLevel) {
+    throw dataError(
+      filePath,
+      lineNumber,
+      `place kind ${kind} must have level ${expectedLevel}, got ${level}`,
+    );
+  }
+}
+
+function collectDecodePlaceIds(
+  placesById: ReadonlyMap<number, GeoPlaceRecord>,
+  placesByLabel: ReadonlyMap<string, GeoPlaceRecord>,
+): ReadonlySet<number> {
+  const designatedCityParentIds = new Set<number>();
+
+  for (const place of placesById.values()) {
+    if (place.kind !== "designated-city-ward") {
+      continue;
+    }
+    const address = getJapaneseAddress(place);
+    if (address === undefined || address.elements.length !== 3) {
+      throw new Error(`designated-city-ward ${place.id} has no three-element Japanese address`);
+    }
+    const parentLabel = address.elements[0] + address.elements[1];
+    const parent = placesByLabel.get(makeLabelKey(place.country, parentLabel));
+    if (parent === undefined) {
+      throw new Error(`designated-city-ward ${place.id} has no parent municipality: ${parentLabel}`);
+    }
+    if (parent.kind !== "municipality" || parent.level !== 2) {
+      throw new Error(
+        `designated-city-ward ${place.id} has invalid parent municipality: ${parentLabel}`,
+      );
+    }
+    designatedCityParentIds.add(parent.id);
+  }
+
+  const result = new Set<number>();
+  for (const place of placesById.values()) {
+    if (
+      place.kind === "designated-city-ward" ||
+      place.kind === "special-ward" ||
+      (place.kind === "municipality" && !designatedCityParentIds.has(place.id))
+    ) {
+      result.add(place.id);
+    }
+  }
+  if (result.size === 0) {
+    throw new Error("GeoCoder NDJSON files contain no reverse-geocoding places");
+  }
+  return result;
+}
+
+function parseAddressAliases(
+  value: unknown,
+  filePath: string,
+  lineNumber: number,
+  fieldName: string,
+): string[] {
+  if (value === undefined) {
+    return [];
+  }
+  if (!Array.isArray(value)) {
+    throw dataError(filePath, lineNumber, `${fieldName} must be an array`);
+  }
+
+  const aliases: string[] = [];
+  const seen = new Set<string>();
+  for (let index = 0; index < value.length; index += 1) {
+    const alias = requireNonEmptyString(
+      value[index],
+      filePath,
+      lineNumber,
+      `${fieldName}[${index}]`,
+    );
+    if (seen.has(alias)) {
+      throw dataError(filePath, lineNumber, `duplicate address alias: ${alias}`);
+    }
+    seen.add(alias);
+    aliases.push(alias);
+  }
+  return aliases;
 }
 
 function parseAlias(
@@ -460,7 +618,7 @@ function findPlaceByJapaneseLabel(
   return matched;
 }
 
-function getJapaneseAddress(place: GeoPlaceRecord): GeoAddress | undefined {
+function getJapaneseAddress(place: GeoPlaceRecord): GeoAddressRecord | undefined {
   return place.addresses.find((address) => address.locale === JAPANESE_LOCALE);
 }
 
@@ -471,10 +629,19 @@ function makeLabelKey(country: string, label: string): string {
 function toPublicPlace(place: GeoPlaceRecord): GeoPlace {
   return Object.freeze({
     level: place.level,
+    kind: place.kind,
     country: place.country,
     longitude: place.longitude,
     latitude: place.latitude,
-    addresses: place.addresses,
+    addresses: Object.freeze(
+      place.addresses.map((address) =>
+        Object.freeze({
+          locale: address.locale,
+          label: address.label,
+          elements: address.elements,
+        }),
+      ),
+    ),
   });
 }
 

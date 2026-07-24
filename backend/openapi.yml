@@ -37,6 +37,9 @@ components:
       type: object
       properties:
         level: { type: integer, minimum: 1 }
+        kind:
+          type: string
+          enum: [prefecture, municipality, special-ward, designated-city-ward]
         country: { type: string }
         longitude: { type: number, format: double }
         latitude: { type: number, format: double }
@@ -44,7 +47,7 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/GeoAddress"
-      required: [level, country, longitude, latitude, addresses]
+      required: [level, kind, country, longitude, latitude, addresses]
 
     GeoPlaces:
       type: array

@@ -6,4 +6,4 @@
 npm run generate:japan --workspace packages/geocoder
 ```
 
-The generated file is intentionally not included in this source patch. The source archive is about 766 MB and is downloaded into `source-data/N03-2026/` by the generation script.
+The generator downloads the N03 2026 source archive into `source-data/N03-2026/` and writes prefectures, municipalities, Tokyo special wards, designated-city wards, and reverse-geocoding sample points to this directory.

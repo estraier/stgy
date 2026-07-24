@@ -6,8 +6,15 @@ export type GeoAddress = {
   elements: string[];
 };
 
+export type GeoPlaceKind =
+  | "prefecture"
+  | "municipality"
+  | "special-ward"
+  | "designated-city-ward";
+
 export type GeoPlace = {
   level: number;
+  kind: GeoPlaceKind;
   country: string;
   longitude: number;
   latitude: number;

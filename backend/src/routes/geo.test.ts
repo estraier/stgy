@@ -31,6 +31,7 @@ const dummyUser: UserLite = {
 
 const place: GeoPlace = {
   level: 2,
+  kind: "municipality",
   country: "JP",
   longitude: 139.461129,
   latitude: 35.803146,
