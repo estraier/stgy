@@ -3,6 +3,7 @@ import { gzipSync } from "zlib";
 import { TracksService } from "./tracks";
 import type { StorageObjectMetadata, PresignedPostResult } from "../models/storage";
 import type { StorageService } from "./storage";
+import type { GeoCoder } from "stgy-geocoder";
 
 jest.mock("../config", () => ({
   Config: {
@@ -49,6 +50,7 @@ jest.mock("./trackPreview", () => ({
 describe("TracksService", () => {
   let storage: jest.Mocked<StorageService>;
   let service: TracksService;
+  let geoCoder: GeoCoder;
 
   const bucket = "test-bucket-tracks";
   const userId = "u1";
@@ -69,7 +71,8 @@ describe("TracksService", () => {
       moveObject: jest.fn(),
       deleteObject: jest.fn(),
     } as unknown as jest.Mocked<StorageService>;
-    service = new TracksService(storage);
+    geoCoder = { decode: jest.fn(() => []) } as unknown as GeoCoder;
+    service = new TracksService(storage, geoCoder);
   });
 
   afterAll(() => {
@@ -238,6 +241,14 @@ describe("TracksService", () => {
     expect(previewId.key).toMatch(/^u1\/previews\/797491\/[0-9a-f]{16}\.trjgz$/);
     expect(previewBytes.length).toBeGreaterThan(0);
     expect(previewContentType).toBe("application/gzip");
+    const preview = jest.requireMock("./trackPreview") as {
+      makeFitTrackPreview: jest.Mock;
+    };
+    expect(preview.makeFitTrackPreview).toHaveBeenCalledWith(
+      expect.any(Uint8Array),
+      3000,
+      geoCoder,
+    );
 
     expect(result.master.publicUrl).toContain(masterMeta.key);
     expect(result.master.previewKey).toBe(previewMeta.key);
@@ -268,6 +279,10 @@ describe("TracksService", () => {
     expect(storage.saveObject.mock.calls[0][0].key).toMatch(
       /^u1\/previews\/797491\/[0-9a-f]{16}\.trjgz$/,
     );
+    const preview = jest.requireMock("./trackPreview") as {
+      makeTrackJsonTrackPreview: jest.Mock;
+    };
+    expect(preview.makeTrackJsonTrackPreview).toHaveBeenCalledWith(trackJson, 3000, geoCoder);
   });
 
   test("finalizeTrack: deletes and rejects invalid FIT header", async () => {

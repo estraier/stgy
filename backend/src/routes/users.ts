@@ -3,6 +3,7 @@ import { Router, Request, Response } from "express";
 import { Pool } from "pg";
 import Redis from "ioredis";
 import crypto from "crypto";
+import type { GeoCoder } from "stgy-geocoder";
 import type { StorageService } from "../services/storage";
 import { UsersService } from "../services/users";
 import { MediaService } from "../services/media";
@@ -31,11 +32,12 @@ export default function createUsersRouter(
   redis: Redis,
   storageService: StorageService,
   eventLogService: EventLogService,
+  geoCoder: GeoCoder,
 ) {
   const router = Router();
   const usersService = new UsersService(pgPool, redis, eventLogService);
   const mediaService = new MediaService(storageService, redis);
-  const tracksService = new TracksService(storageService);
+  const tracksService = new TracksService(storageService, geoCoder);
   const authService = new AuthService(pgPool, redis);
   const searchService = new SearchService(pgPool, "users");
   const timerThrottleService = new DailyTimerThrottleService(

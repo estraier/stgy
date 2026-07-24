@@ -2,6 +2,7 @@ import { Config } from "../config";
 import { Router, Request, Response } from "express";
 import { Pool } from "pg";
 import Redis from "ioredis";
+import type { GeoCoder } from "stgy-geocoder";
 import type { StorageService } from "../services/storage";
 import { AuthService } from "../services/auth";
 import { UsersService } from "../services/users";
@@ -59,9 +60,10 @@ export default function createTracksRouter(
   pgPool: Pool,
   redis: Redis,
   storage: StorageService,
+  geoCoder: GeoCoder,
 ) {
   const router = Router();
-  const tracksService = new TracksService(storage);
+  const tracksService = new TracksService(storage, geoCoder);
   const usersService = new UsersService(pgPool, redis);
   const authService = new AuthService(pgPool, redis);
   const authHelpers = new AuthHelpers(authService, usersService);

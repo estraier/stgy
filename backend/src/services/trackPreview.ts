@@ -1,4 +1,5 @@
 import { gzipSync } from "zlib";
+import type { GeoCoder, GeoPlace } from "stgy-geocoder";
 
 type TrackActivity = {
   schemaVersion: number;
@@ -25,10 +26,25 @@ type FitModule = {
   ) => string;
 };
 
+type TrackJsonPoi = {
+  coordinates: [number, number];
+};
+
+type TrackJsonPoiLabelAssignment = {
+  longitude: number;
+  latitude: number;
+  label: string;
+};
+
 type TrackJsonModule = {
   parseTrackJsonData: (text: string) => unknown;
   downsampleTrackJsonData: (data: unknown, options: DownsampleOptions) => unknown;
   compactTrackJsonData: (data: unknown) => unknown;
+  getTrackJsonPoi: (data: unknown) => TrackJsonPoi[];
+  applyTrackJsonPoiLabels: <T>(
+    data: T,
+    assignments: readonly TrackJsonPoiLabelAssignment[],
+  ) => T;
 };
 
 async function loadModule<T>(candidates: string[]): Promise<T> {
@@ -63,11 +79,43 @@ function gzipUtf8(text: string): Uint8Array {
   return new Uint8Array(gzipSync(Buffer.from(text, "utf8")));
 }
 
+function getGeoPlaceLabel(place: GeoPlace | undefined, locale: string): string | undefined {
+  const address = place?.addresses.find((item) => item.locale === locale) ?? place?.addresses[0];
+  const label = address?.label.trim();
+  return label || undefined;
+}
+
+function addTrackJsonPoiLabels(
+  data: unknown,
+  trackjson: TrackJsonModule,
+  geoCoder: GeoCoder,
+): unknown {
+  const coordinatesByKey = new Map<string, { longitude: number; latitude: number }>();
+
+  trackjson.getTrackJsonPoi(data).forEach((point) => {
+    const longitude = point.coordinates[0];
+    const latitude = point.coordinates[1];
+    coordinatesByKey.set(`${longitude},${latitude}`, { longitude, latitude });
+  });
+
+  const assignments = Array.from(coordinatesByKey.values())
+    .map(({ longitude, latitude }) => {
+      const label = getGeoPlaceLabel(geoCoder.decode(longitude, latitude, "ja")[0], "ja");
+      return label ? { longitude, latitude, label } : undefined;
+    })
+    .filter((assignment): assignment is TrackJsonPoiLabelAssignment => {
+      return assignment !== undefined;
+    });
+
+  return trackjson.applyTrackJsonPoiLabels(data, assignments);
+}
+
 export async function makeFitTrackPreview(
   bytes: Uint8Array,
   maxPoints: number,
+  geoCoder: GeoCoder,
 ): Promise<Uint8Array> {
-  const fit = await loadFitModule();
+  const [fit, trackjson] = await Promise.all([loadFitModule(), loadTrackJsonModule()]);
   const activity = fit.parseFitBytes(bytes);
   const preview = fit.downsampleTrackActivity(activity, {
     maxPoints,
@@ -77,12 +125,15 @@ export async function makeFitTrackPreview(
   const text = fit.trackActivityToTrackJson(preview, {
     pretty: false,
   });
-  return gzipUtf8(text);
+  const data = trackjson.parseTrackJsonData(text);
+  const labeled = addTrackJsonPoiLabels(data, trackjson, geoCoder);
+  return gzipUtf8(labeled === data ? text : JSON.stringify(labeled));
 }
 
 export async function makeTrackJsonTrackPreview(
   text: string,
   maxPoints: number,
+  geoCoder: GeoCoder,
 ): Promise<Uint8Array> {
   const trackjson = await loadTrackJsonModule();
   const data = trackjson.parseTrackJsonData(text);
@@ -92,5 +143,6 @@ export async function makeTrackJsonTrackPreview(
     preserveEndpoints: true,
   });
   const compact = trackjson.compactTrackJsonData(downsampled);
-  return gzipUtf8(JSON.stringify(compact));
+  const labeled = addTrackJsonPoiLabels(compact, trackjson, geoCoder);
+  return gzipUtf8(JSON.stringify(labeled));
 }

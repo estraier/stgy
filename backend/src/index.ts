@@ -96,10 +96,10 @@ async function main() {
   app.use("/ai-models", createAIModelsRouter(pgPool, redis));
   app.use("/ai-users", createAIUsersRouter(pgPool, redis));
   app.use("/ai-posts", createAIPostsRouter(pgPool, redis, eventLogService));
-  app.use("/users", createUsersRouter(pgPool, redis, storageService, eventLogService));
+  app.use("/users", createUsersRouter(pgPool, redis, storageService, eventLogService, geoCoder));
   app.use("/posts", createPostsRouter(pgPool, redis, storageService, eventLogService));
   app.use("/media", createMediaRouter(pgPool, redis, storageService));
-  app.use("/media", createTracksRouter(pgPool, redis, storageService));
+  app.use("/media", createTracksRouter(pgPool, redis, storageService, geoCoder));
   app.use("/notifications", createNotificationsRouter(pgPool, redis));
   app.use("/geo", createGeoRouter(pgPool, redis, geoCoder));
 

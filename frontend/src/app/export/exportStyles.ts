@@ -552,6 +552,138 @@ body.stgy-export .markdown-body figure.stgy-embed .stgy-embed-caption {
   opacity: 0.75;
 }
 
+/* Track maps base layout. Keep this aligned with globals.css. */
+body.stgy-export .markdown-body figure.stgy-track-map {
+  position: relative;
+  display: flow-root;
+  clear: both;
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  height: 26em;
+  margin: 0.55em 0.25em;
+  overflow: clip;
+  contain: layout paint;
+}
+@supports not (overflow: clip) {
+  body.stgy-export .markdown-body figure.stgy-track-map {
+    overflow: hidden;
+  }
+}
+body.stgy-export .markdown-body figure.stgy-track-map .stgy-track-canvas,
+body.stgy-export .markdown-body figure.stgy-track-map .leaflet-container {
+  overflow: hidden;
+}
+body.stgy-export .markdown-body figure.stgy-track-map .leaflet-control-container {
+  max-width: 100%;
+}
+body.stgy-export .markdown-body figure.stgy-track-map .leaflet-popup-content-wrapper,
+body.stgy-export .markdown-body figure.stgy-track-map .leaflet-popup-tip {
+  max-width: 100%;
+}
+body.stgy-export .markdown-body figure.stgy-track-map + .stgy-track-graph {
+  display: flow-root;
+  overflow: clip;
+}
+@supports not (overflow: clip) {
+  body.stgy-export .markdown-body figure.stgy-track-map + .stgy-track-graph {
+    overflow: hidden;
+  }
+}
+body.stgy-export .markdown-body figure.stgy-track-map + .stgy-track-graph svg {
+  display: block;
+}
+body.stgy-export .markdown-body figure.stgy-track-map .stgy-track-canvas {
+  box-sizing: border-box;
+  width: 100%;
+  max-width: 100%;
+  height: 100%;
+  min-width: 0;
+}
+body.stgy-export .markdown-body figure.stgy-track-map .leaflet-container {
+  width: 100%;
+  height: 100%;
+}
+body.stgy-export .markdown-body figure.stgy-track-map .stgy-track-graph,
+body.stgy-export .markdown-body figure.stgy-track-map + .stgy-track-graph {
+  box-sizing: border-box;
+  clear: both;
+  width: 100%;
+  max-width: 100%;
+  min-width: 0;
+  overflow-x: auto;
+}
+body.stgy-export .markdown-body figure.stgy-track-map .stgy-track-graph svg,
+body.stgy-export .markdown-body figure.stgy-track-map .stgy-track-graph canvas,
+body.stgy-export .markdown-body figure.stgy-track-map + .stgy-track-graph svg,
+body.stgy-export .markdown-body figure.stgy-track-map + .stgy-track-graph canvas {
+  max-width: 100%;
+}
+body.stgy-export .markdown-body .stgy-track-caption {
+  display: block;
+  margin-top: 0.25em;
+  line-height: 1.3;
+  font-size: 80%;
+  text-align: center;
+  opacity: 0.85;
+}
+body.stgy-export .markdown-body:not(.excerpt) figure.stgy-track-map[data-float="left"] {
+  float: left;
+  clear: none;
+  width: min(24em, 50%);
+  margin: 0.15em 0.6em 0.15em 0;
+}
+body.stgy-export .markdown-body:not(.excerpt) figure.stgy-track-map[data-float="right"] {
+  float: right;
+  clear: none;
+  width: min(24em, 50%);
+  margin: 0.15em 0 0.15em 0.6em;
+}
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map[data-float="left"]
+  + .stgy-track-graph {
+  float: left;
+  clear: left;
+  width: min(24em, 50%);
+  margin: 0 0.6em 0.15em 0;
+}
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map[data-float="right"]
+  + .stgy-track-graph {
+  float: right;
+  clear: right;
+  width: min(24em, 50%);
+  margin: 0 0 0.15em 0.6em;
+}
+body.stgy-export .markdown-body:not(.excerpt) .stgy-track-grid {
+  display: grid;
+  gap: 0.5em;
+  margin: 0.5em 0 1em;
+  clear: both;
+}
+body.stgy-export .markdown-body:not(.excerpt) .stgy-track-grid figure.stgy-track-map {
+  float: none;
+  clear: none;
+  width: 100%;
+  max-width: 100%;
+  margin: 0;
+}
+body.stgy-export .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="1"] {
+  grid-template-columns: minmax(0, 1fr);
+}
+body.stgy-export .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="2"] {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+body.stgy-export .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="3"] {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+body.stgy-export .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="4"] {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+body.stgy-export .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="5"] {
+  grid-template-columns: repeat(5, minmax(0, 1fr));
+}
+
 body.stgy-export .markdown-body a {
   color: #03c;
   text-decoration: none;
@@ -639,6 +771,139 @@ body.stgy-export .markdown-body pre[class*="language-"] * {
 body.stgy-export .markdown-body code[class*="language-"],
 body.stgy-export .markdown-body pre[class*="language-"] {
   text-shadow: none !important;
+}
+
+/* Track maps final overrides. Keep this late block aligned with globals.css. */
+body.stgy-export .markdown-body figure.stgy-track-map {
+  height: auto;
+  overflow: visible;
+  contain: layout;
+}
+body.stgy-export .markdown-body figure.stgy-track-map[data-size="xsmall"],
+body.stgy-export .markdown-body figure.stgy-track-map[data-size="small"],
+body.stgy-export .markdown-body figure.stgy-track-map[data-size="medium"],
+body.stgy-export .markdown-body figure.stgy-track-map[data-size="large"],
+body.stgy-export .markdown-body figure.stgy-track-map[data-size="xlarge"] {
+  height: auto;
+}
+body.stgy-export .markdown-body figure.stgy-track-map {
+  width: 100%;
+  max-width: 100%;
+  height: auto;
+  overflow: visible;
+}
+body.stgy-export .markdown-body figure.stgy-track-map .stgy-track-canvas {
+  width: 100%;
+  max-width: 100%;
+  height: 520px;
+  overflow: hidden;
+  contain: layout paint;
+}
+
+/* Medium is the default when data-size is absent. */
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map:not([data-float]):not(.stgy-track-grid > figure.stgy-track-map),
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map:not([data-float]):not(.stgy-track-grid > figure.stgy-track-map)
+  + .stgy-track-graph {
+  width: 80%;
+  margin-left: auto;
+  margin-right: auto;
+}
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map[data-size="xsmall"]:not([data-float]):not(
+    .stgy-track-grid > figure.stgy-track-map
+  ),
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map[data-size="xsmall"]:not([data-float]):not(
+    .stgy-track-grid > figure.stgy-track-map
+  )
+  + .stgy-track-graph {
+  width: 64%;
+}
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map[data-size="small"]:not([data-float]):not(
+    .stgy-track-grid > figure.stgy-track-map
+  ),
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map[data-size="small"]:not([data-float]):not(
+    .stgy-track-grid > figure.stgy-track-map
+  )
+  + .stgy-track-graph {
+  width: 71%;
+}
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map[data-size="medium"]:not([data-float]):not(
+    .stgy-track-grid > figure.stgy-track-map
+  ),
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map[data-size="medium"]:not([data-float]):not(
+    .stgy-track-grid > figure.stgy-track-map
+  )
+  + .stgy-track-graph {
+  width: 80%;
+}
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map[data-size="large"]:not([data-float]):not(
+    .stgy-track-grid > figure.stgy-track-map
+  ),
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map[data-size="large"]:not([data-float]):not(
+    .stgy-track-grid > figure.stgy-track-map
+  )
+  + .stgy-track-graph {
+  width: 89%;
+}
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map[data-size="xlarge"]:not([data-float]):not(
+    .stgy-track-grid > figure.stgy-track-map
+  ),
+body.stgy-export .markdown-body:not(.excerpt)
+  figure.stgy-track-map[data-size="xlarge"]:not([data-float]):not(
+    .stgy-track-grid > figure.stgy-track-map
+  )
+  + .stgy-track-graph {
+  width: 100%;
+}
+body.stgy-export .markdown-body figure.stgy-track-map[data-size="xsmall"] .stgy-track-canvas {
+  height: 260px;
+}
+body.stgy-export .markdown-body figure.stgy-track-map[data-size="small"] .stgy-track-canvas {
+  height: 360px;
+}
+body.stgy-export .markdown-body figure.stgy-track-map[data-size="medium"] .stgy-track-canvas {
+  height: 520px;
+}
+body.stgy-export .markdown-body figure.stgy-track-map[data-size="large"] .stgy-track-canvas {
+  height: 640px;
+}
+body.stgy-export .markdown-body figure.stgy-track-map[data-size="xlarge"] .stgy-track-canvas {
+  height: 760px;
+}
+body.stgy-export .markdown-body:not(.excerpt) .stgy-track-grid,
+body.stgy-export .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="1"],
+body.stgy-export .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="2"],
+body.stgy-export .markdown-body:not(.excerpt) .stgy-track-grid[data-cols="3"] {
+  width: 100%;
+  max-width: 100%;
+}
+body.stgy-export .markdown-body:not(.excerpt) .stgy-track-grid figure.stgy-track-map {
+  width: 100%;
+  max-width: 100%;
+}
+body.stgy-export .markdown-body:not(.excerpt) figure.stgy-track-map[data-float="left"],
+body.stgy-export .markdown-body:not(.excerpt) figure.stgy-track-map[data-float="right"] {
+  width: min(24rem, 50%);
+  max-width: 100%;
+}
+body.stgy-export .markdown-body:not(.excerpt)
+    figure.stgy-track-map[data-float="left"]
+    + .stgy-track-graph,
+body.stgy-export .markdown-body:not(.excerpt)
+    figure.stgy-track-map[data-float="right"]
+    + .stgy-track-graph {
+  width: min(24rem, 50%);
+  max-width: 100%;
 }
 
 body.stgy-export .stgy-track-export-error {

@@ -1,4 +1,5 @@
 import crypto from "crypto";
+import type { GeoCoder } from "stgy-geocoder";
 import {
   PresignedPostResult,
   StorageObjectMetadata,
@@ -150,10 +151,14 @@ function bytesToUtf8(bytes: Uint8Array): string {
   return Buffer.from(bytes).toString("utf8");
 }
 
-async function makePreviewBytes(kind: TrackMasterKind, bytes: Uint8Array): Promise<Uint8Array> {
+async function makePreviewBytes(
+  kind: TrackMasterKind,
+  bytes: Uint8Array,
+  geoCoder: GeoCoder,
+): Promise<Uint8Array> {
   const maxPoints = getPreviewMaxPoints();
   if (kind === "fit") {
-    return makeFitTrackPreview(bytes, maxPoints);
+    return makeFitTrackPreview(bytes, maxPoints, geoCoder);
   }
 
   const jsonBytes = await gunzipWithLimit(bytes, getTrackJsonByteLimit());
@@ -165,7 +170,7 @@ async function makePreviewBytes(kind: TrackMasterKind, bytes: Uint8Array): Promi
     throw new Error("invalid track json");
   }
   validateTrackJsonOperationalLimits(data, getTrackJsonLimits());
-  return makeTrackJsonTrackPreview(jsonText, maxPoints);
+  return makeTrackJsonTrackPreview(jsonText, maxPoints, geoCoder);
 }
 
 function getYyyyMm(d: Date): string {
@@ -173,7 +178,10 @@ function getYyyyMm(d: Date): string {
 }
 
 export class TracksService {
-  constructor(private storage: StorageService) {}
+  constructor(
+    private storage: StorageService,
+    private geoCoder: GeoCoder,
+  ) {}
 
   async presignTrackUpload(
     pathUserId: string,
@@ -268,7 +276,7 @@ export class TracksService {
 
     let previewBytes: Uint8Array;
     try {
-      previewBytes = await makePreviewBytes(kind, bytes);
+      previewBytes = await makePreviewBytes(kind, bytes, this.geoCoder);
     } catch {
       await this.deleteStaging(stagingKey);
       throw new Error("invalid track data");
