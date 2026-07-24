@@ -5,7 +5,7 @@ export type ZipInputFile = {
 
 export interface IZipWriter {
   addFile(name: string, data: Uint8Array, now: Date): Promise<void>;
-  finalize(): Promise<void>;
+  finalize(): Promise<number>;
 }
 
 export interface WritableFileStreamMinimal {
@@ -157,6 +157,7 @@ export class ZipStreamWriter implements IZipWriter {
     );
 
     await this.writer.close();
+    return this.currentOffset;
   }
 }
 
@@ -260,5 +261,6 @@ export class InMemoryZipWriter implements IZipWriter {
     a.click();
     a.remove();
     setTimeout(() => URL.revokeObjectURL(url), 1000);
+    return zipBytes.length;
   }
 }

@@ -25,6 +25,7 @@ import {
   type WritableFileStreamMinimal,
 } from "@/utils/zip";
 import { Config } from "@/config";
+import { formatBytes } from "@/utils/format";
 import {
   makeTrackArchiveEntries,
   rewriteTrackObjectUrlsToRelative,
@@ -603,7 +604,10 @@ export default function PageBody() {
     null,
   );
   const [error, setError] = useState<string | null>(null);
-  const [done, setDone] = useState(false);
+  const [done, setDone] = useState<{
+    beforeBytes: number;
+    afterBytes: number;
+  } | null>(null);
 
   useEffect(() => {
     let canceled = false;
@@ -643,7 +647,7 @@ export default function PageBody() {
     if (loading || exporting || !userId || !profile) return;
 
     setError(null);
-    setDone(false);
+    setDone(null);
 
     try {
       let zipWriter: IZipWriter;
@@ -711,9 +715,11 @@ export default function PageBody() {
         masterByFilename.size +
         trackEntries.length * 2;
       let completedFiles = 0;
+      let beforeBytes = 0;
 
       const addExportFile = async (name: string, data: Uint8Array) => {
         await zipWriter.addFile(name, data, now);
+        beforeBytes += data.byteLength;
         completedFiles += 1;
         setExportProgress({ completed: completedFiles, total: totalFiles });
       };
@@ -792,10 +798,9 @@ export default function PageBody() {
 
       setExportPhase("finalizing");
       await sleep(0);
-      await zipWriter.finalize();
+      const afterBytes = await zipWriter.finalize();
 
-      setDone(true);
-      setTimeout(() => setDone(false), 2000);
+      setDone({ beforeBytes, afterBytes });
     } catch (err: unknown) {
       if ((err as Error).name !== "AbortError") setError((err as Error).message || String(err));
     } finally {
@@ -905,19 +910,28 @@ export default function PageBody() {
           </div>
         )}
         {done && (
-          <div className="bg-green-100 border border-green-400 text-green-700 px-4 py-2 rounded -mt-2">
-            Download finished
+          <div
+            className="bg-green-100 border border-green-400 text-green-700 px-4 py-2 rounded -mt-2"
+            role="status"
+          >
+            <div className="font-bold">Download finished</div>
+            <div className="mt-1 text-sm">
+              Source data size (before ZIP): {formatBytes(done.beforeBytes)}
+            </div>
+            <div className="text-sm">ZIP archive size (after ZIP): {formatBytes(done.afterBytes)}</div>
           </div>
         )}
-        <div className="flex items-center gap-3">
-          <button
-            type="submit"
-            className="bg-blue-600 text-white px-8 py-2 rounded disabled:opacity-60"
-            disabled={loading || exporting}
-          >
-            {exportButtonLabel}
-          </button>
-        </div>
+        {!done && (
+          <div className="flex items-center gap-3">
+            <button
+              type="submit"
+              className="bg-blue-600 text-white px-8 py-2 rounded disabled:opacity-60"
+              disabled={loading || exporting}
+            >
+              {exportButtonLabel}
+            </button>
+          </div>
+        )}
       </form>
     </main>
   );
