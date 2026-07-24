@@ -93,6 +93,17 @@ jest.mock("leaflet", () => {
       invalidateSize: jest.fn(),
       remove: jest.fn(),
       on: jest.fn().mockReturnThis(),
+      getSize: jest.fn().mockReturnValue(originalL.point(800, 600)),
+      getMinZoom: jest.fn().mockReturnValue(0),
+      getMaxZoom: jest.fn().mockReturnValue(20),
+      project: jest.fn().mockImplementation((latLng, zoom) => {
+        const scale = 2 ** zoom;
+        return originalL.point(latLng.lng * scale, -latLng.lat * scale);
+      }),
+      unproject: jest.fn().mockImplementation((point, zoom) => {
+        const scale = 2 ** zoom;
+        return { lat: -point.y / scale, lng: point.x / scale };
+      }),
       getContainer: () => document.createElement("div"),
     };
 
@@ -423,7 +434,7 @@ describe("StgyTrackRenderer", () => {
     expect(mapOptions.layers[0].__url).toContain("seamlessphoto");
   });
 
-  test("calls fitBounds when data-zoom is not provided and bounds are not a single point", async () => {
+  test("uses relative route padding when data-zoom is not provided", async () => {
     document.body.innerHTML = `
       <figure class="stgy-track-map">
         <div class="stgy-track-canvas"></div>
@@ -437,11 +448,156 @@ describe("StgyTrackRenderer", () => {
 
     await flushPromises();
 
-    expect(mockMap.fitBounds).toHaveBeenCalledWith(expect.any(Object), {
-      padding: [50, 50],
-      animate: false,
+    expect(mockMap.setView).toHaveBeenCalledWith(
+      { lat: 35, lng: 139 },
+      8,
+      { animate: false },
+    );
+    expect(mockMap.fitBounds).not.toHaveBeenCalled();
+  });
+
+  test("uses larger relative padding for pins than for route nodes", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map">
+        <div class="stgy-track-canvas"></div>
+        <ul class="stgy-track-pins">
+          <li data-lat="34" data-lon="138"></li>
+          <li data-lat="36" data-lon="140"></li>
+        </ul>
+      </figure>
+    `;
+
+    const mockMap = L.map(document.createElement("div"));
+    (L.map as jest.Mock).mockReturnValue(mockMap);
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    expect(mockMap.setView).toHaveBeenCalledWith(
+      { lat: 35, lng: 139 },
+      7,
+      { animate: false },
+    );
+    expect(mockMap.fitBounds).not.toHaveBeenCalled();
+  });
+
+  test("treats GeoJSON Point features as pins for automatic padding", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-points">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    const mockMap = L.map(document.createElement("div"));
+    (L.map as jest.Mock).mockReturnValue(mockMap);
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [138, 34] },
+          properties: {},
+        },
+        {
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [140, 36] },
+          properties: {},
+        },
+      ],
     });
-    expect(mockMap.setView).not.toHaveBeenCalled();
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    expect(mockMap.setView).toHaveBeenCalledWith(
+      { lat: 35, lng: 139 },
+      7,
+      { animate: false },
+    );
+  });
+
+  test("calculates horizontal and vertical padding from the map dimensions separately", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-padding">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    const mockMap = L.map(document.createElement("div"));
+    (mockMap.getSize as jest.Mock).mockReturnValue(L.point(1000, 400));
+    (L.map as jest.Mock).mockReturnValue(mockMap);
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [[139, 35], [140, 36]],
+          },
+          properties: {},
+        },
+      ],
+    });
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    expect(mockMap.setView).toHaveBeenCalledWith(
+      { lat: 35.5, lng: 139.5 },
+      8,
+      { animate: false },
+    );
+  });
+
+  test("fits a Soya-to-Sata route one zoom level closer with five-percent padding", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-japan-long-route">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    const mockMap = L.map(document.createElement("div"));
+    (mockMap.getSize as jest.Mock).mockReturnValue(L.point(800, 520));
+    (mockMap.project as jest.Mock).mockImplementation((latLng, zoom) => {
+      return L.CRS.EPSG3857.latLngToPoint(L.latLng(latLng), zoom);
+    });
+    (mockMap.unproject as jest.Mock).mockImplementation((point, zoom) => {
+      return L.CRS.EPSG3857.pointToLatLng(point, zoom);
+    });
+    (L.map as jest.Mock).mockReturnValue(mockMap);
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [141.936, 45.523],
+              [130.66, 31.0],
+            ],
+          },
+          properties: {},
+        },
+      ],
+    });
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    expect(mockMap.setView).toHaveBeenCalledWith(
+      expect.any(Object),
+      5,
+      { animate: false },
+    );
   });
 
   test("calls setView when only data-zoom is provided", async () => {

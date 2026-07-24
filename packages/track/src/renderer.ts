@@ -34,6 +34,9 @@ const formatCoordinatePopupText = (latitude: number, longitude: number) =>
   `${formatHemisphereCoordinate(longitude, "E", "W")}, ${formatHemisphereCoordinate(latitude, "N", "S")}`;
 
 const DEFAULT_SINGLE_POINT_ZOOM = 12;
+const ROUTE_VIEW_PADDING_RATIO = 0.05;
+const PIN_VIEW_PADDING_RATIO = 0.15;
+const FALLBACK_MAX_AUTO_ZOOM = 20;
 const TRACK_GRAPH_SMOOTHING_WINDOWS = [
   1,
   3,
@@ -121,6 +124,16 @@ type BoundsAccumulator = {
   minLng: number;
   maxLat: number;
   maxLng: number;
+};
+
+type AutoViewBounds = {
+  bounds: L.LatLngBounds;
+  paddingRatio: number;
+};
+
+type AutoMapView = {
+  center: L.LatLng;
+  zoom: number;
 };
 
 type PreloadedTrackData = {
@@ -392,6 +405,69 @@ export class StgyTrackRenderer {
     this.extendBoundsWithLeafletBounds(bounds, layer.getBounds());
   }
 
+  private extendBoundsWithCoordinates(bounds: BoundsAccumulator, coordinates: unknown) {
+    if (!Array.isArray(coordinates)) {
+      return;
+    }
+
+    if (
+      coordinates.length >= 2 &&
+      typeof coordinates[0] === "number" &&
+      typeof coordinates[1] === "number"
+    ) {
+      this.extendBoundsWithLatLng(bounds, coordinates[1], coordinates[0]);
+      return;
+    }
+
+    coordinates.forEach((child) => {
+      this.extendBoundsWithCoordinates(bounds, child);
+    });
+  }
+
+  private extendTypedBoundsWithGeoJson(
+    routeBounds: BoundsAccumulator,
+    pinBounds: BoundsAccumulator,
+    geoJsonData: unknown,
+  ) {
+    if (!isRecord(geoJsonData)) {
+      return;
+    }
+
+    const type = geoJsonData.type;
+
+    if (type === "FeatureCollection") {
+      const features = geoJsonData.features;
+      if (Array.isArray(features)) {
+        features.forEach((feature) => {
+          this.extendTypedBoundsWithGeoJson(routeBounds, pinBounds, feature);
+        });
+      }
+      return;
+    }
+
+    if (type === "Feature") {
+      this.extendTypedBoundsWithGeoJson(routeBounds, pinBounds, geoJsonData.geometry);
+      return;
+    }
+
+    if (type === "GeometryCollection") {
+      const geometries = geoJsonData.geometries;
+      if (Array.isArray(geometries)) {
+        geometries.forEach((geometry) => {
+          this.extendTypedBoundsWithGeoJson(routeBounds, pinBounds, geometry);
+        });
+      }
+      return;
+    }
+
+    if (type === "Point" || type === "MultiPoint") {
+      this.extendBoundsWithCoordinates(pinBounds, geoJsonData.coordinates);
+      return;
+    }
+
+    this.extendBoundsWithCoordinates(routeBounds, geoJsonData.coordinates);
+  }
+
   private toLeafletBounds(bounds: BoundsAccumulator): L.LatLngBounds | null {
     if (!bounds.hasValue) {
       return null;
@@ -401,6 +477,79 @@ export class StgyTrackRenderer {
       [bounds.minLat, bounds.minLng],
       [bounds.maxLat, bounds.maxLng]
     );
+  }
+
+  private getAutoMapView(
+    map: L.Map,
+    autoViewBounds: AutoViewBounds[],
+  ): AutoMapView | null {
+    if (autoViewBounds.length === 0) {
+      return null;
+    }
+
+    const mapSize = map.getSize();
+    if (mapSize.x <= 0 || mapSize.y <= 0) {
+      return null;
+    }
+
+    const reportedMaxZoom = map.getMaxZoom();
+    const reportedMinZoom = map.getMinZoom();
+    const maxZoom = Number.isFinite(reportedMaxZoom)
+      ? Math.floor(reportedMaxZoom)
+      : FALLBACK_MAX_AUTO_ZOOM;
+    const minZoom = Number.isFinite(reportedMinZoom)
+      ? Math.ceil(reportedMinZoom)
+      : 0;
+
+    for (let zoom = maxZoom; zoom >= minZoom; zoom -= 1) {
+      let minCenterX = Number.NEGATIVE_INFINITY;
+      let maxCenterX = Number.POSITIVE_INFINITY;
+      let minCenterY = Number.NEGATIVE_INFINITY;
+      let maxCenterY = Number.POSITIVE_INFINITY;
+
+      for (const { bounds, paddingRatio } of autoViewBounds) {
+        const southWest = map.project(bounds.getSouthWest(), zoom);
+        const northEast = map.project(bounds.getNorthEast(), zoom);
+        const minX = Math.min(southWest.x, northEast.x);
+        const maxX = Math.max(southWest.x, northEast.x);
+        const minY = Math.min(southWest.y, northEast.y);
+        const maxY = Math.max(southWest.y, northEast.y);
+        const usableHalfWidth = mapSize.x * (0.5 - paddingRatio);
+        const usableHalfHeight = mapSize.y * (0.5 - paddingRatio);
+
+        minCenterX = Math.max(minCenterX, maxX - usableHalfWidth);
+        maxCenterX = Math.min(maxCenterX, minX + usableHalfWidth);
+        minCenterY = Math.max(minCenterY, maxY - usableHalfHeight);
+        maxCenterY = Math.min(maxCenterY, minY + usableHalfHeight);
+      }
+
+      if (minCenterX <= maxCenterX && minCenterY <= maxCenterY) {
+        return {
+          center: map.unproject(
+            L.point(
+              (minCenterX + maxCenterX) / 2,
+              (minCenterY + maxCenterY) / 2,
+            ),
+            zoom,
+          ),
+          zoom,
+        };
+      }
+    }
+
+    const combinedBounds = this.createBoundsAccumulator();
+    autoViewBounds.forEach(({ bounds }) => {
+      this.extendBoundsWithLeafletBounds(combinedBounds, bounds);
+    });
+    const combinedLeafletBounds = this.toLeafletBounds(combinedBounds);
+    if (!combinedLeafletBounds?.isValid()) {
+      return null;
+    }
+
+    return {
+      center: combinedLeafletBounds.getCenter(),
+      zoom: minZoom,
+    };
   }
 
 
@@ -2376,6 +2525,8 @@ export class StgyTrackRenderer {
     const trackDataCache: Record<string, unknown> = {};
     const preloadedTracks: PreloadedTrackData[] = [];
     const viewBounds = this.createBoundsAccumulator();
+    const routeViewBounds = this.createBoundsAccumulator();
+    const pinViewBounds = this.createBoundsAccumulator();
 
     const inlinePins = figure.querySelectorAll<HTMLElement>(".stgy-track-pins li");
     inlinePins.forEach((pin) => {
@@ -2383,6 +2534,7 @@ export class StgyTrackRenderer {
       const pinLon = parseFloat(pin.dataset.lon || "0");
       if (pinLat !== 0 || pinLon !== 0) {
         this.extendBoundsWithLatLng(viewBounds, pinLat, pinLon);
+        this.extendBoundsWithLatLng(pinViewBounds, pinLat, pinLon);
       }
     });
 
@@ -2391,6 +2543,11 @@ export class StgyTrackRenderer {
         const preloadedTrackData = await this.loadTrackData(dataSrc, trackDataCache);
         preloadedTracks.push({ source: dataSrc, data: preloadedTrackData });
         this.extendBoundsWithGeoJson(viewBounds, preloadedTrackData);
+        this.extendTypedBoundsWithGeoJson(
+          routeViewBounds,
+          pinViewBounds,
+          preloadedTrackData,
+        );
       } catch (e) {
         this.showError(figure, this.toUserErrorMessage(e));
         return;
@@ -2405,7 +2562,20 @@ export class StgyTrackRenderer {
         try {
           const preloadedTrackData = await this.loadTrackData(href, trackDataCache);
           preloadedTracks.push({ source: href, data: preloadedTrackData });
-          this.extendBoundsWithGeoJson(viewBounds, preloadedTrackData);
+          if (link.dataset.render === "pin") {
+            const center = this.getGeoJsonCenter(preloadedTrackData);
+            if (center) {
+              this.extendBoundsWithLatLng(viewBounds, center.lat, center.lng);
+              this.extendBoundsWithLatLng(pinViewBounds, center.lat, center.lng);
+            }
+          } else {
+            this.extendBoundsWithGeoJson(viewBounds, preloadedTrackData);
+            this.extendTypedBoundsWithGeoJson(
+              routeViewBounds,
+              pinViewBounds,
+              preloadedTrackData,
+            );
+          }
         } catch (e) {
           this.showError(figure, this.toUserErrorMessage(e));
           return;
@@ -2589,7 +2759,33 @@ export class StgyTrackRenderer {
             animate: false,
           });
         } else {
-          map.fitBounds(bounds, { padding: [50, 50], animate: false });
+          const autoViewBounds: AutoViewBounds[] = [];
+          const routeBounds = this.toLeafletBounds(routeViewBounds);
+          const pinBounds = this.toLeafletBounds(pinViewBounds);
+
+          if (routeBounds?.isValid()) {
+            autoViewBounds.push({
+              bounds: routeBounds,
+              paddingRatio: ROUTE_VIEW_PADDING_RATIO,
+            });
+          }
+          if (pinBounds?.isValid()) {
+            autoViewBounds.push({
+              bounds: pinBounds,
+              paddingRatio: PIN_VIEW_PADDING_RATIO,
+            });
+          }
+          if (autoViewBounds.length === 0) {
+            autoViewBounds.push({
+              bounds,
+              paddingRatio: ROUTE_VIEW_PADDING_RATIO,
+            });
+          }
+
+          const autoView = this.getAutoMapView(map, autoViewBounds);
+          if (autoView) {
+            map.setView(autoView.center, autoView.zoom, { animate: false });
+          }
         }
       } else if (!hasExplicitLat || !hasExplicitLon) {
         map.setView(bounds.getCenter(), zoom, { animate: false });
