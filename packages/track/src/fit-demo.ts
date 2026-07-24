@@ -39,6 +39,7 @@ import type {
 } from "./analysis";
 import type { TrackJsonDownsampleStrategy } from "./trackjson";
 import { getTrackJsonOverviewMetadataLines } from "./metadata";
+import { getFiniteNumberRange } from "./numeric";
 
 const SCATTER_AXIS_TICK_TARGET = 8;
 
@@ -1033,7 +1034,8 @@ function buildPowerCurveSvg(points: PowerCurvePoint[]): SVGSVGElement {
   const plotHeight = height - marginTop - marginBottom;
   const minDuration = points[0].durationSeconds;
   const maxDuration = points[points.length - 1].durationSeconds;
-  const maxPower = Math.max(...points.map((point) => point.watts));
+  const maxPower =
+    getFiniteNumberRange(points.map((point) => point.watts))?.max ?? 0;
   const yMax = getNiceCeiling(maxPower);
   const svgNs = "http://www.w3.org/2000/svg";
   const svg = document.createElementNS(svgNs, "svg");

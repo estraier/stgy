@@ -2,6 +2,7 @@ import L from "leaflet";
 import { isJapan } from "./geo";
 import { TrackLoader } from "./loader";
 import { getTrackJsonDisplayMetadataLines } from "./metadata";
+import { getFiniteNumberRange } from "./numeric";
 import { getTrackJsonTitle } from "./trackjson";
 
 const DEFAULT_PIN_COLOR = "#3388ff";
@@ -2044,10 +2045,15 @@ export class StgyTrackRenderer {
     const plotWidth = plotRight - plotLeft;
     const plotHeight = plotBottom - plotTop;
 
-    const xMin = Math.min(...xValues);
-    const xMax = Math.max(...xValues);
-    const rawYMin = Math.min(...displayValues);
-    const rawYMax = Math.max(...displayValues);
+    const xRange = getFiniteNumberRange(xValues);
+    const yRange = getFiniteNumberRange(displayValues);
+    if (!xRange || !yRange) {
+      return panel;
+    }
+    const xMin = xRange.min;
+    const xMax = xRange.max;
+    const rawYMin = yRange.min;
+    const rawYMax = yRange.max;
     const useZeroYMin = this.usesZeroGraphYMin(series.name);
     const baseYMin = useZeroYMin ? 0 : rawYMin;
     const yPadding = !useZeroYMin && baseYMin === rawYMax

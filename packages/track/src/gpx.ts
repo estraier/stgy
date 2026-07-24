@@ -5,6 +5,7 @@ import type {
   TrackPoint,
   TrackWarning,
 } from "./activity";
+import { getFiniteNumberRange } from "./numeric";
 
 export type ParseGpxOptions = {
   minPositionPoints?: number;
@@ -187,8 +188,9 @@ function buildGpxMetadata(root: Element, points: TrackPoint[]): TrackActivityMet
   const firstRoute = getDirectChild(root, "rte");
   const metadataTime = parseGpxTime(getDirectChildText(metadataElement, "time"));
   const pointTimes = points.map((point) => point.time).filter(isFiniteNumber);
-  const timeRange = pointTimes.length > 0
-    ? { startTime: Math.min(...pointTimes), endTime: Math.max(...pointTimes) }
+  const pointTimeRange = getFiniteNumberRange(pointTimes);
+  const timeRange = pointTimeRange
+    ? { startTime: pointTimeRange.min, endTime: pointTimeRange.max }
     : undefined;
   const metadata: TrackActivityMetadata = {
     source: {
@@ -346,7 +348,8 @@ function getTotalDistanceM(points: TrackPoint[]): number | undefined {
     return undefined;
   }
 
-  return Math.max(...distances) - Math.min(...distances);
+  const range = getFiniteNumberRange(distances);
+  return range ? range.max - range.min : undefined;
 }
 
 function buildGpxWarnings(segments: TrackPoint[][]): TrackWarning[] {

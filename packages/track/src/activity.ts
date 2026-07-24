@@ -9,6 +9,7 @@ import {
   hasTimedAnalysisPointPairs,
 } from "./analysis";
 import type { TrackMovingAnalysisInterval } from "./analysis";
+import { getFiniteNumberRange } from "./numeric";
 
 const DEFAULT_MAX_POINTS = 3000;
 const PEDALING_MIN_SPEED_KPH = 3;
@@ -562,12 +563,15 @@ function getTrackActivityPointTimeRange(
     return undefined;
   }
 
-  const startTime = Math.min(...times);
-  const endTime = Math.max(...times);
+  const range = getFiniteNumberRange(times);
+  if (!range) {
+    return undefined;
+  }
+
   return {
-    startTime,
-    endTime,
-    durationSeconds: Math.max(0, endTime - startTime),
+    startTime: range.min,
+    endTime: range.max,
+    durationSeconds: Math.max(0, range.max - range.min),
   };
 }
 
@@ -646,8 +650,9 @@ function getActivitySortTime(activity: TrackActivity): number | undefined {
     .map((point) => point.time)
     .filter(isFiniteNumber);
 
-  if (pointTimes.length > 0) {
-    return Math.min(...pointTimes);
+  const pointTimeRange = getFiniteNumberRange(pointTimes);
+  if (pointTimeRange) {
+    return pointTimeRange.min;
   }
 
   return activity.metadata.startTime;
@@ -792,8 +797,9 @@ function assignMergedCreatedAt(
     .map((activity) => activity.metadata.createdAt)
     .filter(isFiniteNumber);
 
-  if (createdAtValues.length > 0) {
-    metadata.createdAt = Math.min(...createdAtValues);
+  const createdAtRange = getFiniteNumberRange(createdAtValues);
+  if (createdAtRange) {
+    metadata.createdAt = createdAtRange.min;
   } else {
     delete metadata.createdAt;
   }
@@ -829,10 +835,11 @@ function getMergedTimeRange(
   points: TrackPoint[],
 ): TrackActivityTimeRange | undefined {
   const pointTimes = points.map((point) => point.time).filter(isFiniteNumber);
-  if (pointTimes.length > 0) {
+  const pointTimeRange = getFiniteNumberRange(pointTimes);
+  if (pointTimeRange) {
     return {
-      startTime: Math.min(...pointTimes),
-      endTime: Math.max(...pointTimes),
+      startTime: pointTimeRange.min,
+      endTime: pointTimeRange.max,
     };
   }
 
@@ -841,13 +848,15 @@ function getMergedTimeRange(
     .filter(isFiniteNumber);
   const endTimes = activities.map(getActivityEndTime).filter(isFiniteNumber);
 
-  if (startTimes.length === 0 || endTimes.length === 0) {
+  const startTimeRange = getFiniteNumberRange(startTimes);
+  const endTimeRange = getFiniteNumberRange(endTimes);
+  if (!startTimeRange || !endTimeRange) {
     return undefined;
   }
 
   return {
-    startTime: Math.min(...startTimes),
-    endTime: Math.max(...endTimes),
+    startTime: startTimeRange.min,
+    endTime: endTimeRange.max,
   };
 }
 
@@ -1192,8 +1201,9 @@ function getMergedTotalDistance(points: TrackPoint[]): number | undefined {
     .map((point) => point.distanceM)
     .filter(isFiniteNumber);
 
-  if (distances.length >= 2) {
-    return Math.max(0, Math.max(...distances) - Math.min(...distances));
+  const distanceRange = getFiniteNumberRange(distances);
+  if (distances.length >= 2 && distanceRange) {
+    return Math.max(0, distanceRange.max - distanceRange.min);
   }
 
   return undefined;

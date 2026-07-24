@@ -42,6 +42,7 @@ import type {
   TrackPoint,
   TrackWarning,
 } from "./activity";
+import { getFiniteNumberRange } from "./numeric";
 
 export {
   STRAVA_POWER_CURVE_DURATIONS_SECONDS,
@@ -2548,15 +2549,16 @@ function assignFitTimeFallbacks(
   points: TrackPoint[],
 ) {
   const times = points.map((point) => point.time).filter(isFiniteNumber);
-  if (times.length === 0) {
+  const timeRange = getFiniteNumberRange(times);
+  if (!timeRange) {
     return;
   }
 
   if (!isFiniteNumber(metadata.startTime)) {
-    metadata.startTime = Math.min(...times);
+    metadata.startTime = timeRange.min;
   }
   if (!isFiniteNumber(metadata.endTime)) {
-    metadata.endTime = Math.max(...times);
+    metadata.endTime = timeRange.max;
   }
   if (
     !isFiniteNumber(metadata.totalElapsedTime) &&
@@ -2593,8 +2595,9 @@ function assignFitEndTime(
   }
 
   const times = points.map((point) => point.time).filter(isFiniteNumber);
-  if (times.length > 0) {
-    metadata.endTime = Math.max(...times);
+  const timeRange = getFiniteNumberRange(times);
+  if (timeRange) {
+    metadata.endTime = timeRange.max;
   }
 }
 
@@ -4467,7 +4470,7 @@ function getFitExportActivityStartTime(
   }
 
   const times = points.map((point) => point.time).filter(isFiniteNumber);
-  return times.length > 0 ? Math.min(...times) : Math.floor(Date.now() / 1000);
+  return getFiniteNumberRange(times)?.min ?? Math.floor(Date.now() / 1000);
 }
 
 function getFitExportActivityEndTime(
@@ -4481,7 +4484,10 @@ function getFitExportActivityEndTime(
   }
 
   const times = points.map((point) => point.time).filter(isFiniteNumber);
-  return times.length > 0 ? Math.max(...times) : startTime + Math.max(0, points.length - 1);
+  return (
+    getFiniteNumberRange(times)?.max ??
+    startTime + Math.max(0, points.length - 1)
+  );
 }
 
 function getFitExportDistance(points: TrackPoint[]): number | undefined {
@@ -4490,7 +4496,8 @@ function getFitExportDistance(points: TrackPoint[]): number | undefined {
     return undefined;
   }
 
-  return Math.max(...distances) - Math.min(...distances);
+  const range = getFiniteNumberRange(distances);
+  return range ? range.max - range.min : undefined;
 }
 
 function getFitExportKilocalories(totalCaloriesCal: number | undefined): number | undefined {
@@ -4524,7 +4531,7 @@ function averageFiniteNumbers(values: number[]): number | undefined {
 }
 
 function maxFiniteNumbers(values: number[]): number | undefined {
-  return values.length > 0 ? Math.max(...values) : undefined;
+  return getFiniteNumberRange(values)?.max;
 }
 
 function getPointFitTimestamp(
