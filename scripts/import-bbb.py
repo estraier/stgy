@@ -30,7 +30,9 @@ HYPHENS_RE = re.compile(r"^(\s*)(-{2,})(\s*)$")
 MAP_ATTR_RE = re.compile(r"\[([A-Za-z][-_A-Za-z0-9]*)=(.*?)\]")
 BBB_LINK_RE = re.compile(r"\[\[([^\[\]|]+)\|([^\[\]]+)\]\]")
 FILENAME_LINK_RE = re.compile(r"^filename:(\d{8})$")
-GENERATED_IMAGE_RE = re.compile(r"!\[\]\((.*)\)\{grid\}")
+GENERATED_IMAGE_RE = re.compile(
+  r"!\[\]\((?P<url>.*)\)\{(?P<options>grid(?:,featured)?)\}"
+)
 IMAGE_MIME_TYPES = {
   ".jpg": "image/jpeg",
   ".jpeg": "image/jpeg",
@@ -833,11 +835,17 @@ def transform_body(
       raw_urls = [part.strip() for part in image_match.group(1).split("|")]
       if any(not raw_url for raw_url in raw_urls):
         raise ValueError(f"invalid @image directive: {line!r}")
-      urls = [raw_url.split(maxsplit=1)[0] for raw_url in raw_urls]
+      images: list[tuple[str, bool]] = []
+      for raw_url in raw_urls:
+        parts = raw_url.split()
+        url = parts[0]
+        featured = any(part.lower() == "[top]" for part in parts[1:])
+        images.append((url, featured))
       if output and output[-1].startswith("![]("):
         output.append("")
-      for url in urls:
-        output.append(f"![]({normalize_image_url(url)}){{grid}}")
+      for url, featured in images:
+        options = "grid,featured" if featured else "grid"
+        output.append(f"![]({normalize_image_url(url)}){{{options}}}")
       continue
 
     youtube_match = re.fullmatch(r"\s*@youtube\s+(.+?)\s*", line)
@@ -990,7 +998,10 @@ def rewrite_article_images(article: Article, uploader: ImageUploader) -> Article
   for line in article.content.splitlines():
     match = GENERATED_IMAGE_RE.fullmatch(line)
     if match:
-      output.append(f"![]({uploader.rewrite(match.group(1))}){{grid}}")
+      output.append(
+        f"![]({uploader.rewrite(match.group('url'))})"
+        f"{{{match.group('options')}}}"
+      )
     else:
       output.append(line)
   return replace(article, content="\n".join(output))

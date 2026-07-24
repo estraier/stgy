@@ -119,20 +119,23 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
     );
   });
 
-  test("presignImageUpload: skips monthly quota when requested", async () => {
+  test("presignImageUpload: skips single-file and monthly byte limits when requested", async () => {
     const presigned: PresignedPostResult = {
       url: "http://minio:9000/test-bucket-images",
       fields: { key: "staging/u1/uuid.png", "Content-Type": "image/png" },
       objectKey: "staging/u1/uuid.png",
-      maxBytes: 10 * 1024 * 1024,
+      maxBytes: 0,
       expiresInSec: 300,
     };
     storage.createPresignedPost.mockResolvedValueOnce(presigned);
 
     await expect(
-      service.presignImageUpload(userId, "next.png", 5 * 1024 * 1024, true),
+      service.presignImageUpload(userId, "next.png", 20 * 1024 * 1024, true),
     ).resolves.toEqual(presigned);
     expect(storage.listObjects).not.toHaveBeenCalled();
+    expect(storage.createPresignedPost).toHaveBeenCalledWith(
+      expect.objectContaining({ maxBytes: undefined }),
+    );
   });
 
   test("finalizeImage: success (png), move to masters/, enqueue, monthly check passes", async () => {
@@ -180,6 +183,17 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
     expect(meta).toEqual(dstMeta);
   });
 
+  test("finalizeImage: deletes and rejects single-file over limit", async () => {
+    const stagingKey = "staging/u1/tmp.png";
+    storage.headObject.mockResolvedValueOnce(
+      makeMeta(stagingKey, 20 * 1024 * 1024, "image/png", imageBucket),
+    );
+
+    await expect(service.finalizeImage(userId, stagingKey)).rejects.toThrow(/file too large/i);
+    expect(storage.deleteObject).toHaveBeenCalledWith({ bucket: imageBucket, key: stagingKey });
+    expect(storage.loadObject).not.toHaveBeenCalled();
+  });
+
   test("finalizeImage: rejects invalid key path", async () => {
     await expect(service.finalizeImage(userId, "staging/u2/tmp.png")).rejects.toThrow(
       /invalid key/i,
@@ -215,10 +229,10 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
     expect(storage.deleteObject).toHaveBeenCalledWith({ bucket: imageBucket, key: stagingKey });
   });
 
-  test("finalizeImage: skips monthly quota when requested", async () => {
+  test("finalizeImage: skips single-file and monthly byte limits when requested", async () => {
     const stagingKey = "staging/u1/tmp.png";
     storage.headObject.mockResolvedValueOnce(
-      makeMeta(stagingKey, 2 * 1024 * 1024, "image/png", imageBucket),
+      makeMeta(stagingKey, 20 * 1024 * 1024, "image/png", imageBucket),
     );
     storage.loadObject.mockResolvedValueOnce(
       new Uint8Array([
@@ -228,7 +242,7 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
     );
     const dstMeta = makeMeta(
       "u1/masters/797491/8244988800000deadbeef.png",
-      2 * 1024 * 1024,
+      20 * 1024 * 1024,
       "image/png",
       imageBucket,
     );
@@ -475,11 +489,12 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
     expect(q.limitMonthlyBytes).toBe(100 * 1024 * 1024);
   });
 
-  test("calculateMonthlyQuota: reports no monthly limit when quota is skipped", async () => {
+  test("calculateMonthlyQuota: reports no byte limits when limits are skipped", async () => {
     storage.listObjects.mockResolvedValueOnce([]).mockResolvedValueOnce([]);
 
     const q = await service.calculateMonthlyQuota(userId, undefined, true);
 
+    expect(q.limitSingleBytes).toBeNull();
     expect(q.limitMonthlyBytes).toBeNull();
   });
 
