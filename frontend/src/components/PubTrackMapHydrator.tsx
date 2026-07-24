@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect } from "react";
+import { STGY_TRACK_RENDERER_IMAGE_OPTIONS } from "@/utils/trackImageUrl";
 
 type Props = {
   htmlKey: string;
@@ -28,7 +29,7 @@ export default function PubTrackMapHydrator({
         void import("stgy-track")
           .then(({ StgyTrackRenderer }) => {
             if (cancelled) return;
-            new StgyTrackRenderer().hydrate(root);
+            new StgyTrackRenderer(STGY_TRACK_RENDERER_IMAGE_OPTIONS).hydrate(root);
           })
           .catch(() => {});
       });

@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { STGY_TRACK_RENDERER_IMAGE_OPTIONS } from "@/utils/trackImageUrl";
 
 const TRACK_DATA_LOADED_EVENT = "stgy-track-data-loaded";
 
@@ -89,7 +90,7 @@ export default function TrackPreviewMap({
     void import("stgy-track")
       .then(({ StgyTrackRenderer }) => {
         if (cancelled || !root.isConnected) return;
-        renderer = new StgyTrackRenderer();
+        renderer = new StgyTrackRenderer(STGY_TRACK_RENDERER_IMAGE_OPTIONS);
         renderer.hydrate(root);
       })
       .catch((error: unknown) => {

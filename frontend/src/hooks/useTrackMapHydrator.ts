@@ -2,8 +2,11 @@
 
 import { useCallback, useEffect, useRef } from "react";
 import type { SyntheticEvent } from "react";
-
-const ALLOWED_TRACK_IMAGE_PATTERNS: RegExp[] = [/^\/images\//, /^\/data\//, /^\/media\//];
+import {
+  ALLOWED_TRACK_IMAGE_PATTERNS,
+  rewriteTrackImageUrl as defaultRewriteTrackImageUrl,
+  type TrackImageUrlRewriter,
+} from "@/utils/trackImageUrl";
 
 const DEFAULT_INTERSECTION_ROOT_MARGIN = "0px";
 
@@ -31,6 +34,7 @@ export type TrackMapHydratorOptions = {
   redrawDelayMs?: number;
   intersectionRootMargin?: string;
   allowedImagePatterns?: RegExp[] | null;
+  rewriteImageUrl?: TrackImageUrlRewriter | null;
 };
 
 type PendingRoot = {
@@ -71,6 +75,7 @@ export function useTrackMapHydrator(options: TrackMapHydratorOptions = {}) {
     redrawDelayMs = 0,
     intersectionRootMargin = DEFAULT_INTERSECTION_ROOT_MARGIN,
     allowedImagePatterns = ALLOWED_TRACK_IMAGE_PATTERNS,
+    rewriteImageUrl = defaultRewriteTrackImageUrl,
   } = options;
   const mountedRef = useRef(true);
   const pendingByRootRef = useRef(new WeakMap<HTMLElement, PendingRoot>());
@@ -125,6 +130,7 @@ export function useTrackMapHydrator(options: TrackMapHydratorOptions = {}) {
         if (!rendererRef.current) {
           rendererRef.current = new StgyTrackRenderer({
             allowedImagePatterns: allowedImagePatterns ?? undefined,
+            rewriteImageUrl: rewriteImageUrl ?? undefined,
           });
         }
         return rendererRef.current;
@@ -208,6 +214,12 @@ export function useTrackMapHydrator(options: TrackMapHydratorOptions = {}) {
         }
       });
     },
-    [allowedImagePatterns, intersectionRootMargin, lazy, redrawDelayMs],
+    [
+      allowedImagePatterns,
+      intersectionRootMargin,
+      lazy,
+      redrawDelayMs,
+      rewriteImageUrl,
+    ],
   );
 }

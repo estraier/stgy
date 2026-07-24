@@ -1203,6 +1203,103 @@ describe("StgyTrackRenderer", () => {
     expect(popupHtml).not.toContain("https://example.com/ng.jpg");
   });
 
+  test("rewrites allowed popup image URLs before rendering", async () => {
+    const rewriteImageUrl = jest.fn((src: string) => {
+      return src.replace(/^\/images\//, "https://cdn.example.test/images/");
+    });
+    renderer = new StgyTrackRenderer({
+      allowedImagePatterns: [/^\/images\//],
+      rewriteImageUrl,
+    });
+
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-popup-media-rewrite">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [139.767, 35.681],
+          },
+          properties: {
+            title: "東京駅",
+            images: ["/images/user/masters/photo.jpg"],
+          },
+        },
+      ],
+    });
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const renderedGeoJsonResult = (L.geoJSON as jest.Mock).mock.results.find((result) => {
+      return result.value.__featureLayers?.length > 0;
+    });
+    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
+    const popupContent = featureLayer.bindPopup.mock.calls[0][0] as string | HTMLElement;
+    const popupHtml = typeof popupContent === "string"
+      ? popupContent
+      : popupContent.outerHTML;
+
+    expect(rewriteImageUrl).toHaveBeenCalledWith("/images/user/masters/photo.jpg");
+    expect(popupHtml).toContain(
+      'src="https://cdn.example.test/images/user/masters/photo.jpg"',
+    );
+  });
+
+  test("does not render an image when rewriteImageUrl returns an unsafe URL", async () => {
+    renderer = new StgyTrackRenderer({
+      allowedImagePatterns: [/^\/images\//],
+      rewriteImageUrl: () => "javascript:alert(1)",
+    });
+
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#demo-geojson-popup-media-unsafe-rewrite">
+        <div class="stgy-track-canvas"></div>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [139.767, 35.681],
+          },
+          properties: {
+            title: "東京駅",
+            images: ["/images/user/masters/photo.jpg"],
+          },
+        },
+      ],
+    });
+
+    renderer.hydrate(document.body);
+
+    await flushPromises();
+
+    const renderedGeoJsonResult = (L.geoJSON as jest.Mock).mock.results.find((result) => {
+      return result.value.__featureLayers?.length > 0;
+    });
+    const featureLayer = renderedGeoJsonResult?.value.__featureLayers[0];
+    const popupContent = featureLayer.bindPopup.mock.calls[0][0] as string | HTMLElement;
+    const popupHtml = typeof popupContent === "string"
+      ? popupContent
+      : popupContent.outerHTML;
+
+    expect(popupHtml).not.toContain("<img");
+    expect(popupHtml).not.toContain("javascript:");
+  });
+
   test("builds inline pin popup images from data-src and filters them", async () => {
     renderer = new StgyTrackRenderer({
       allowedImagePatterns: [/^\/media\//],

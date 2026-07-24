@@ -129,8 +129,11 @@ type PreloadedTrackData = {
 
 type JsonRecord = Record<string, unknown>;
 
+export type TrackImageUrlRewriter = (src: string) => string | null;
+
 export type StgyTrackRendererOptions = {
   allowedImagePatterns?: RegExp[];
+  rewriteImageUrl?: TrackImageUrlRewriter;
 };
 type CoordinateProperties = JsonRecord;
 type GeoJsonInput = Parameters<typeof L.geoJSON>[0];
@@ -283,6 +286,7 @@ const createCustomPinIcon = (color: string) => {
 export class StgyTrackRenderer {
   private loader: TrackLoader;
   private allowedImagePatterns?: RegExp[];
+  private rewriteImageUrl?: TrackImageUrlRewriter;
 
   constructor(options: StgyTrackRendererOptions = {}) {
     fixLeafletIcons();
@@ -290,6 +294,7 @@ export class StgyTrackRenderer {
     this.allowedImagePatterns = this.normalizeAllowedImagePatterns(
       options.allowedImagePatterns,
     );
+    this.rewriteImageUrl = options.rewriteImageUrl;
   }
 
   public hydrate(rootElement: HTMLElement = document.body) {
@@ -803,9 +808,26 @@ export class StgyTrackRenderer {
     root.appendChild(div);
   }
 
+  private resolveImageUrl(srcValue: unknown): string | null {
+    const source = this.normalizeSafeUrl(srcValue);
+    if (!source || !this.isAllowedImageUrl(source)) {
+      return null;
+    }
+
+    if (!this.rewriteImageUrl) {
+      return source;
+    }
+
+    try {
+      return this.normalizeSafeUrl(this.rewriteImageUrl(source));
+    } catch {
+      return null;
+    }
+  }
+
   private appendSafeImage(root: HTMLElement, srcValue: unknown, altValue?: unknown) {
-    const src = this.normalizeSafeUrl(srcValue);
-    if (!src || !this.isAllowedImageUrl(src)) {
+    const src = this.resolveImageUrl(srcValue);
+    if (!src) {
       return;
     }
 

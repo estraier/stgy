@@ -64,6 +64,7 @@ import {
   orderTrackSandboxSummaryCards,
 } from "@/utils/trackSummary";
 import { addTrackJsonPoiLabels } from "@/utils/trackPoiLabels";
+import { STGY_TRACK_RENDERER_IMAGE_OPTIONS } from "@/utils/trackImageUrl";
 
 type SourceType = "fit" | "gpx" | "trackjson" | "trjgz";
 type DownsampleStrategy = "uniform" | "aggregate";
@@ -622,7 +623,7 @@ function TrackMap({ trackJson }: { trackJson: string }) {
         return;
       }
 
-      const renderer = new StgyTrackRenderer();
+      const renderer = new StgyTrackRenderer(STGY_TRACK_RENDERER_IMAGE_OPTIONS);
       renderer.hydrate(rootRef.current);
     })().catch((e: unknown) => {
       if (disposed) {
