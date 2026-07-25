@@ -121,8 +121,8 @@ type MdMapPin = {
   lat: number;
   title?: string;
   description?: string;
-  url?: string;
-  image?: string;
+  urls?: string[];
+  images?: string[];
 };
 
 type MdMapSpec = {
@@ -183,6 +183,11 @@ function isSafeMdMapUrl(value: string | undefined): value is string {
   return /^(https?:\/\/|\/(?!\/)|\.\/|\.\.\/)/i.test(s);
 }
 
+function parseMdMapUrls(value: string | undefined): string[] {
+  if (!value) return [];
+  return value.split(/\s+/).filter(isSafeMdMapUrl);
+}
+
 function isFiniteMdMapCoordinate(
   lon: number,
   lat: number,
@@ -239,11 +244,13 @@ function parseMdMapPins(blocks: readonly string[]): MdMapPin[] {
     const description = fields[2] || undefined;
     const urlField = fields[3] || undefined;
     const imageField = fields[4] || undefined;
+    const urls = parseMdMapUrls(urlField);
+    const images = parseMdMapUrls(imageField);
     const pin: MdMapPin = { lon: point.lon, lat: point.lat };
     if (title) pin.title = title;
     if (description) pin.description = description;
-    if (isSafeMdMapUrl(urlField)) pin.url = urlField;
-    if (isSafeMdMapUrl(imageField)) pin.image = imageField;
+    if (urls.length > 0) pin.urls = urls;
+    if (images.length > 0) pin.images = images;
     pins.push(pin);
   }
   return pins;
@@ -493,15 +500,15 @@ function makeMdMapPinElement(
   if (pin.title) children.push(makeMdTextBlock("annot-title", pin.title, line, char));
   if (pin.description)
     children.push(makeMdTextBlock("annot-desc", pin.description, line, char));
-  if (pin.url) {
+  for (const url of pin.urls || []) {
     children.push(
       makeElement(
         "div",
         [
           makeElement(
             "a",
-            [{ type: "text", text: pin.url }],
-            { href: pin.url },
+            [{ type: "text", text: url }],
+            { href: url },
             line,
             char,
           ),
@@ -512,14 +519,14 @@ function makeMdMapPinElement(
       ),
     );
   }
-  if (pin.image) {
+  for (const image of pin.images || []) {
     children.push(
       makeElement(
         "div",
         [],
         {
           class: "annot-image",
-          "data-src": pin.image,
+          "data-src": image,
           "data-alt": pin.title || "",
         },
         line,
@@ -3858,29 +3865,35 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
         };
         const title = findChildText("annot-title");
         const description = findChildText("annot-desc");
-        let href = "";
-        let image = "";
+        const hrefs: string[] = [];
+        const images: string[] = [];
         for (const n of pin.children || []) {
           if (isElement(n) && hasClass(n, "annot-link")) {
-            const a = (n.children || []).find((c) => isElement(c, "a")) as
-              | MdElementNode
-              | undefined;
-            href = getAttrStr(a?.attrs, "href") || "";
+            for (const child of n.children || []) {
+              if (!isElement(child, "a")) continue;
+              const href = getAttrStr(child.attrs, "href") || "";
+              if (href) hrefs.push(href);
+            }
           }
           if (isElement(n) && hasClass(n, "annot-image")) {
-            image = getAttrStr(n.attrs, "data-src") || "";
-            if (!image) {
-              const img = (n.children || []).find((c) => isElement(c, "img")) as
-                | MdElementNode
-                | undefined;
-              image = getAttrStr(img?.attrs, "src") || "";
+            const dataSrc = getAttrStr(n.attrs, "data-src") || "";
+            if (dataSrc) {
+              images.push(dataSrc);
+              continue;
+            }
+            for (const child of n.children || []) {
+              if (!isElement(child, "img")) continue;
+              const src = getAttrStr(child.attrs, "src") || "";
+              if (src) images.push(src);
             }
           }
         }
-        if (title || description || href || image) fields.push(title);
-        if (description || href || image) fields.push(description);
-        if (href || image) fields.push(href);
-        if (image) fields.push(image);
+        const hrefField = hrefs.join(" ");
+        const imageField = images.join(" ");
+        if (title || description || hrefField || imageField) fields.push(title);
+        if (description || hrefField || imageField) fields.push(description);
+        if (hrefField || imageField) fields.push(hrefField);
+        if (imageField) fields.push(imageField);
         pinBlocks.push(fields.join(";"));
       }
     }

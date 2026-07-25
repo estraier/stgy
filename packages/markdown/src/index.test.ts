@@ -2517,6 +2517,17 @@ describe("mdRenderHtml basics", () => {
     );
   });
 
+  it("inline track map pins with multiple links and images", () => {
+    const mdText =
+      "@[Places](map://139.7,35.6,15|" +
+      "139.71,35.61;Stop;Rest;" +
+      "https://example.com/one /docs/two;" +
+      "/media/one.jpg https://example.com/two.jpg)";
+    expect(makeHtml(mdText)).toBe(
+      '<figure class="stgy-track-map" data-center-address="Places" data-lat="35.6" data-lon="139.7" data-zoom="15"><div class="stgy-track-canvas"></div><ul class="stgy-track-pins"><li data-lat="35.61" data-lon="139.71"><div class="annot-title">Stop</div><div class="annot-desc">Rest</div><div class="annot-link"><a href="https://example.com/one">https://example.com/one</a></div><div class="annot-link"><a href="/docs/two">/docs/two</a></div><div class="annot-image" data-alt="Stop" data-src="/media/one.jpg"></div><div class="annot-image" data-alt="Stop" data-src="https://example.com/two.jpg"></div></li></ul><figcaption class="stgy-track-caption">Places</figcaption></figure>',
+    );
+  });
+
   it("inline track map renders cardinal directions for center and pins", () => {
     const mdText =
       "@[Places](map://73.9857W,40.7484N,12|" +
@@ -2786,6 +2797,15 @@ describe("mdRenderMarkdown basics", () => {
     expect(makeMarkdown(mdText)).toBe(mdText + "\n");
   });
 
+  it("inline track map pins with multiple links and images", () => {
+    const mdText =
+      "@[Places](map://139.7,35.6,15|" +
+      "139.71,35.61;Stop;Rest;" +
+      "https://example.com/one /docs/two;" +
+      "/media/one.jpg https://example.com/two.jpg)";
+    expect(makeMarkdown(mdText)).toBe(mdText + "\n");
+  });
+
   it("quote", () => {
     const mdText = "> hello world";
     expect(makeMarkdown(mdText)).toBe("> hello world\n");
@@ -2846,6 +2866,28 @@ describe("mdRenderMarkdown from HTML", () => {
       '</figure>';
     expect(makeMarkdownFromHtml(html)).toBe(
       "@[Ride](/maps/ride.trjgz|139.1,35.1;Stop;Rest;;/media/stop.jpg)\n",
+    );
+  });
+
+  it("track map pin with multiple links and images", () => {
+    const html =
+      '<figure class="stgy-track-map" data-lon="139.7" data-lat="35.6" data-zoom="15">' +
+      '<div class="stgy-track-canvas"></div>' +
+      '<ul class="stgy-track-pins">' +
+      '<li data-lon="139.71" data-lat="35.61">' +
+      '<div class="annot-title">Stop</div>' +
+      '<div class="annot-desc">Rest</div>' +
+      '<div class="annot-link"><a href="https://example.com/one">One</a></div>' +
+      '<div class="annot-link"><a href="/docs/two">Two</a></div>' +
+      '<div class="annot-image" data-src="/media/one.jpg"></div>' +
+      '<div class="annot-image"><img src="https://example.com/two.jpg"></div>' +
+      '</li></ul>' +
+      '<figcaption class="stgy-track-caption">Places</figcaption>' +
+      '</figure>';
+    expect(makeMarkdownFromHtml(html)).toBe(
+      "@[Places](map://139.7,35.6,15|139.71,35.61;Stop;Rest;" +
+        "https://example.com/one /docs/two;" +
+        "/media/one.jpg https://example.com/two.jpg)\n",
     );
   });
 
