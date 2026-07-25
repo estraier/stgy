@@ -60,6 +60,29 @@ export function makeTrackArchiveEntries(
   return entries;
 }
 
+function managedTrackPaths(entry: TrackArchiveEntry): string[] {
+  return [
+    entry.track.publicUrl,
+    entry.track.previewUrl,
+    `/tracks/${entry.track.key}`,
+    `/tracks/${entry.track.previewKey}`,
+  ];
+}
+
+export function filterReferencedTrackArchiveEntries(
+  texts: Iterable<string>,
+  entries: TrackArchiveEntry[],
+): TrackArchiveEntry[] {
+  const contents = Array.from(texts, (text) => String(text || ""));
+
+  return entries.filter((entry) =>
+    managedTrackPaths(entry).some((source) => {
+      const sourceWithoutQuery = String(source || "").replace(/[?#].*$/, "");
+      return sourceWithoutQuery !== "" && contents.some((text) => text.includes(sourceWithoutQuery));
+    }),
+  );
+}
+
 function replaceTrackUrl(text: string, source: string, replacement: string): string {
   if (!source) return text;
   const sourceWithoutQuery = source.replace(/[?#].*$/, "");
@@ -79,14 +102,7 @@ export function rewriteTrackObjectUrlsToRelative(
 
   for (const entry of entries) {
     const replacement = `${baseDir}/previews/${entry.previewFilename}`;
-    const managedPaths = [
-      entry.track.publicUrl,
-      entry.track.previewUrl,
-      `/tracks/${entry.track.key}`,
-      `/tracks/${entry.track.previewKey}`,
-    ];
-
-    for (const source of managedPaths) {
+    for (const source of managedTrackPaths(entry)) {
       rewritten = replaceTrackUrl(rewritten, source, replacement);
     }
   }

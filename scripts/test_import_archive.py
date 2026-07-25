@@ -15,6 +15,28 @@ SPEC.loader.exec_module(MODULE)
 
 
 class ImportArchiveMapPinImageTest(unittest.TestCase):
+  def test_stgy_base_defaults_and_normalizes_to_backend_api(self) -> None:
+    args = MODULE.parse_args(["--data-dir", "."])
+    self.assertEqual(args.stgy_base, "http://localhost:8080/")
+    self.assertEqual(
+      MODULE.normalize_stgy_api_base("http://localhost:8080/"),
+      "http://localhost:8080/backend",
+    )
+    self.assertEqual(
+      MODULE.normalize_stgy_api_base("https://stgy.jp"),
+      "https://stgy.jp/backend",
+    )
+    self.assertEqual(
+      MODULE.normalize_stgy_api_base("https://stgy.jp/backend/"),
+      "https://stgy.jp/backend",
+    )
+
+  def test_rejects_invalid_stgy_base(self) -> None:
+    for value in ["", "localhost:8080", "ftp://localhost/", "http://localhost/#fragment"]:
+      with self.subTest(value=value):
+        with self.assertRaisesRegex(ValueError, "--stgy-base"):
+          MODULE.normalize_stgy_api_base(value)
+
   def test_collects_and_rewrites_local_map_pin_images(self) -> None:
     with tempfile.TemporaryDirectory() as temporary_directory:
       data_dir = Path(temporary_directory).resolve()

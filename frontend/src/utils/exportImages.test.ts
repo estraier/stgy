@@ -1,4 +1,7 @@
-import { rewriteOwnedImageObjectUrlsToRelative } from "./exportImages";
+import {
+  collectOwnedImageFilenames,
+  rewriteOwnedImageObjectUrlsToRelative,
+} from "./exportImages";
 
 describe("rewriteOwnedImageObjectUrlsToRelative", () => {
   const ownImage = "/images/u1/masters/797392/01234567deadbeef.jpg";
@@ -41,5 +44,26 @@ describe("rewriteOwnedImageObjectUrlsToRelative", () => {
     expect(
       rewriteOwnedImageObjectUrlsToRelative(`${ownImage}?v=1#preview`, "u1", "./images"),
     ).toBe(`./images/${restoredFilename}`);
+  });
+});
+
+
+describe("collectOwnedImageFilenames", () => {
+  test("collects unique owned images from articles and map pins", () => {
+    const first = "/images/u1/masters/797392/01234567deadbeef.jpg";
+    const second = "/images/u1/thumbs/797391/11234567cafebabe.webp?v=2";
+
+    expect(
+      Array.from(
+        collectOwnedImageFilenames(
+          [
+            `![photo](${first})`,
+            `@[map](map://138.4,36.4,13|138.4,36.4;Point;;;${first} ${second})`,
+            first.replace("/u1/", "/u2/"),
+          ],
+          "u1",
+        ),
+      ),
+    ).toEqual(["202607fedcba98deadbeef.jpg", "202608eedcba98cafebabe.webp"]);
   });
 });

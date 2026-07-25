@@ -15,6 +15,24 @@ function isOwnedBy(rawOwnerId: string, userId: string): boolean {
   }
 }
 
+export function collectOwnedImageFilenames(
+  texts: Iterable<string>,
+  userId: string,
+): Set<string> {
+  const filenames = new Set<string>();
+
+  for (const text of texts) {
+    const pattern = new RegExp(STGY_MASTER_IMAGE_URL_RE.source, STGY_MASTER_IMAGE_URL_RE.flags);
+    for (const match of String(text || "").matchAll(pattern)) {
+      const [, rawOwnerId, rev6, time8, hash8, ext] = match;
+      if (!isOwnedBy(rawOwnerId, userId)) continue;
+      filenames.add(restoreImageFilename(rev6, time8, hash8, ext));
+    }
+  }
+
+  return filenames;
+}
+
 export function rewriteOwnedImageObjectUrlsToRelative(
   text: string,
   userId: string,

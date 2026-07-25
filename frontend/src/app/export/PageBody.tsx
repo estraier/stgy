@@ -27,10 +27,12 @@ import {
 import { Config } from "@/config";
 import { formatBytes } from "@/utils/format";
 import {
+  collectOwnedImageFilenames,
   restoreImageFilename,
   rewriteOwnedImageObjectUrlsToRelative,
 } from "@/utils/exportImages";
 import {
+  filterReferencedTrackArchiveEntries,
   makeTrackArchiveEntries,
   rewriteTrackObjectUrlsToRelative,
   type TrackArchiveEntry,
@@ -113,13 +115,13 @@ The main contents are:
     Each post in JSON and HTML formats.
 
   images/
-    The original image data stored by STGY. Exported HTML refers to these local files.
+    The original image data included in this export. Exported HTML refers to these local files.
 
   tracks/masters/
-    The original FIT or TRJGZ track data stored by STGY.
+    The original FIT or TRJGZ track data included in this export.
 
   tracks/previews/
-    TrackJSON preview data used to draw maps and graphs in the exported HTML.
+    Included TrackJSON preview data used to draw maps and graphs in the exported HTML.
 
   assets/ and style.css
     JavaScript and stylesheets used by the exported HTML.
@@ -603,6 +605,7 @@ export default function PageBody() {
     beforeBytes: number;
     afterBytes: number;
   } | null>(null);
+  const [includeUnreferencedResources, setIncludeUnreferencedResources] = useState(false);
 
   useEffect(() => {
     let canceled = false;
@@ -669,14 +672,6 @@ export default function PageBody() {
         ? IMAGE_BASE_SLEEP_MS_ADMIN
         : IMAGE_BASE_SLEEP_MS;
       const perMbSleepMs = profile.isAdmin ? PER_MB_SLEEP_MS_ADMIN : PER_MB_SLEEP_MS;
-      const tracks = await fetchAllMyTracks(userId);
-      const trackEntries = makeTrackArchiveEntries(tracks, userId);
-      const exportProfile = rewriteProfileIntroductionAndSnippet(
-        profile,
-        userId,
-        trackEntries,
-      );
-
       let pubCfg: PubConfig | null = null;
       try {
         pubCfg = await withTooOftenRetry(() => getPubConfig(userId));
@@ -697,13 +692,36 @@ export default function PageBody() {
       ]);
 
       const posts = await fetchAllMyPosts(userId);
+      const postDetails: PostDetail[] = [];
+      for (const post of posts) {
+        postDetails.push(await withTooOftenRetry(() => getPost(post.id, userId)));
+        await sleep(postBaseSleepMs);
+      }
+
+      const referenceTexts = [
+        profile.introduction,
+        profile.snippet,
+        ...postDetails.flatMap((post) => [post.content, post.snippet]),
+      ];
+
+      const tracks = await fetchAllMyTracks(userId);
+      const allTrackEntries = makeTrackArchiveEntries(tracks, userId);
+      const trackEntries = includeUnreferencedResources
+        ? allTrackEntries
+        : filterReferencedTrackArchiveEntries(referenceTexts, allTrackEntries);
+      const exportProfile = rewriteProfileIntroductionAndSnippet(profile, userId, trackEntries);
+
       const images = await fetchAllMyImages(userId);
+      const referencedImageFilenames = includeUnreferencedResources
+        ? null
+        : collectOwnedImageFilenames(referenceTexts, userId);
       const masterByFilename = new Map<string, MediaObject>();
 
       images
         .filter((it) => isMasterKey(it.key, userId))
         .forEach((it) => {
           const fname = imageFilenameFromKey(it.key, userId);
+          if (referencedImageFilenames && !referencedImageFilenames.has(fname)) return;
           if (!masterByFilename.has(fname)) masterByFilename.set(fname, it);
         });
 
@@ -776,21 +794,16 @@ export default function PageBody() {
         enc.encode(JSON.stringify({ followees, blockees, likes }, null, 2)),
       );
 
-      for (const p of posts) {
-        const detail = await withTooOftenRetry(() => getPost(p.id, userId));
-        const rewritten = rewritePostContentAndSnippet(detail ?? p, userId, trackEntries);
+      for (const detail of postDetails) {
+        const rewritten = rewritePostContentAndSnippet(detail, userId, trackEntries);
 
         const jsonBytes = enc.encode(JSON.stringify(rewritten, null, 2));
-        await addExportFile(`${base}posts/${p.id}.json`, jsonBytes);
+        await addExportFile(`${base}posts/${detail.id}.json`, jsonBytes);
 
         const htmlBytes = enc.encode(renderPostHtml(rewritten));
-        await addExportFile(`${base}posts/${p.id}.html`, htmlBytes);
+        await addExportFile(`${base}posts/${detail.id}.html`, htmlBytes);
 
-        await sleepForTransferBytes(
-          jsonBytes.length + htmlBytes.length,
-          postBaseSleepMs,
-          perMbSleepMs,
-        );
+        await sleepForTransferBytes(jsonBytes.length + htmlBytes.length, 0, perMbSleepMs);
       }
 
       await addExportFile(`${base}index.html`, enc.encode(renderIndexHtml(posts, profile)));
@@ -851,8 +864,10 @@ export default function PageBody() {
       <form onSubmit={handleExport} className="flex flex-col gap-6">
         <section className="text-sm text-gray-700 leading-relaxed">
           <p>
-            You can download all of your STGY data in one ZIP archive here. Click the button at the
-            bottom of this page to start downloading. The archive includes the following files:
+            You can download your STGY data in one ZIP archive here. By default, images and tracks
+            are included only when referenced by the exported profile or posts. Select the option
+            beside the button to include resources that are not referenced. The archive includes the
+            following files:
           </p>
           <ul className="list-disc pl-6 mt-3 space-y-1 text-sm text-gray-700">
             <li>
@@ -949,7 +964,7 @@ export default function PageBody() {
           </div>
         )}
         {!done && (
-          <div className="flex items-center gap-3">
+          <div className="flex items-center gap-3 flex-wrap">
             <button
               type="submit"
               className="bg-blue-600 text-white px-8 py-2 rounded disabled:opacity-60"
@@ -957,6 +972,15 @@ export default function PageBody() {
             >
               {exportButtonLabel}
             </button>
+            <label className="flex items-center gap-2 text-sm text-gray-700">
+              <input
+                type="checkbox"
+                checked={includeUnreferencedResources}
+                onChange={(event) => setIncludeUnreferencedResources(event.target.checked)}
+                disabled={loading || exporting}
+              />
+              <span>include unreferenced resources</span>
+            </label>
           </div>
         )}
       </form>

@@ -14,7 +14,7 @@ from urllib.parse import unquote, urlsplit
 import requests
 
 
-DEFAULT_API_BASE = os.environ.get("STGY_BACKEND_API_BASE_URL", "http://localhost:3100")
+DEFAULT_STGY_BASE = "http://localhost:8080/"
 DEFAULT_ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
 DEFAULT_ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "stgystgy")
 ID_RE = re.compile(r"^[0-9A-F]{16}$")
@@ -72,8 +72,8 @@ class ImportPlan:
 
 
 class StgyClient:
-  def __init__(self, api_base: str, admin_email: str, admin_password: str):
-    self.api_base = api_base.rstrip("/")
+  def __init__(self, stgy_base: str, admin_email: str, admin_password: str):
+    self.api_base = normalize_stgy_api_base(stgy_base)
     self.admin_email = admin_email
     self.admin_password = admin_password
     self.session = requests.Session()
@@ -254,6 +254,18 @@ class StgyClient:
       return response.json()
     except ValueError as exc:
       raise RuntimeError(f"STGY API {method} {path} returned invalid JSON") from exc
+
+
+def normalize_stgy_api_base(value: str) -> str:
+  raw = value.strip().rstrip("/")
+  if not raw:
+    raise ValueError("--stgy-base is empty")
+  parsed = urlsplit(raw)
+  if parsed.scheme not in {"http", "https"} or not parsed.netloc:
+    raise ValueError("--stgy-base must be an absolute http or https URL")
+  if parsed.query or parsed.fragment:
+    raise ValueError("--stgy-base must not contain a query or fragment")
+  return raw if parsed.path.rstrip("/").endswith("/backend") else raw + "/backend"
 
 
 def require_dict(value: Any, label: str) -> dict[str, Any]:
@@ -793,6 +805,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     description="Restore a STGY /export archive through the administrator API."
   )
   parser.add_argument("--data-dir", required=True, type=Path)
+  parser.add_argument(
+    "--stgy-base",
+    default=DEFAULT_STGY_BASE,
+    help=f"STGY site base URL (default: {DEFAULT_STGY_BASE})",
+  )
   parser.add_argument("--admin-email", default=DEFAULT_ADMIN_EMAIL)
   parser.add_argument("--admin-password", default=DEFAULT_ADMIN_PASSWORD)
   parser.add_argument("--owner", help="restore posts and referenced media under an existing user ID")
@@ -810,7 +827,7 @@ def main(argv: list[str]) -> int:
   client: StgyClient | None = None
   try:
     plan = load_import_plan(args.data_dir, args.no_reply, args.publish)
-    client = StgyClient(DEFAULT_API_BASE, args.admin_email, args.admin_password)
+    client = StgyClient(args.stgy_base, args.admin_email, args.admin_password)
     import_archive(plan, client, args.owner, args.publish)
     return 0
   except (OSError, ValueError, RuntimeError, requests.RequestException) as exc:

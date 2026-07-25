@@ -146,6 +146,7 @@ scriptsの下には、システムの管理に必要なスクリプトが入っ�
 - deploy-backend.sh : デモ環境にてバックエンドをデプロイする
 - deploy-frontend.sh : デモ環境にてフロントエンドをデプロイする
 - import-archive.py : エクスポートしたユーザデータをインポートする。
+- upload-embedded-images.py : ローカルの画像を一括アップロードして記事を書く。
 
 postgresの下にはデータベースのスキーマ定義を行うSQLファイルが置いてある。minioの下にはオブジェクトストレージのバケットの初期設定を行うスクリプトが置いてある。
 
@@ -1660,16 +1661,38 @@ npm run reset-search-restore
 フロントエンドのエクスポート機能を使うと、個々のユーザの単位でデータをダウンロードできる。それをインポートすると、該当のユーザが作られ、プロファイルとアバター画像と記事と画像と経路が全てアップロードされる。ユーザIDや投稿IDも保たれる。画像や経路は、記事から参照されているもののみを再アップロードして、オブジェクトIDを振り直す。エクスポートしたzipファイルを展開しておいたなら、以下ようなコマンドでインポートできる。
 
 ```:small
-./scripts/import-archive.py --data-dir stgy-export-0001000000000021-20260722140653 --admin-email admin@stgy.jp --admin-password stgystgy
+./scripts/import-archive.py --stgy-base https://stgy.jp/ --data-dir stgy-export-0001000000000021-20260722140653 --admin-email admin@stgy.jp --admin-password stgystgy
 ```
 
 既存のユーザの所有リソースとして記事データとそれに付随する画像と経路をインポートしたい場合、--ownerオプションを使う。
 
 ```:small
-./scripts/import-archive.py --data-dir stgy-export-0001000000000021-20260722140653 --admin-email admin@stgy.jp --admin-password stgystgy --owner 0001000000001234
+./scripts/import-archive.py --stgy-base https://stgy.jp/ --data-dir stgy-export-0001000000000021-20260722140653 --admin-email admin@stgy.jp --admin-password stgystgy --owner 0001000000001234
 ```
 
-返信の記事は除外したい場合、--no-replyオプションをつける。インポートした記事を公開したい場合、--publishオプションをつける。
+返信の記事を除外したい場合、--no-replyオプションをつける。インポートした記事を全て公開したい場合、--publishオプションをつける。
+
+ローカルにある多数の画像を埋め込んだ記事を書きたい場合、ローカルの画像ファイルのパスを埋め込んだ任意のテキストを用意して、アップロードと同時にアップロード後のURLに置換する処理をするスクリプトが便利だ。まず、以下のようなファイルを用意する。
+
+```:small
+ネズミ：{{image:mouse.jpg}}
+ウシ：{{image:cow.jpg}}
+トラ：{{image:tiger.jpg}}
+```
+
+以下のようなコマンドを実行する。入力と出力のテキストファイル名と、パスの起点となるディレクトリと、出力ファイルを指定する。
+
+```:small
+./scripts/upload-embedded-images.py --stgy-base http://localhost:8080/ --data-dir ~/images --input ~/zodiac-raw.txt --output ~/zodiac-resolved.txt --user-email admin@stgy.jp --user-password stgystgy
+```
+
+出力には以下のように書かれる。これを適当に編集して記事として投稿すればよい。
+
+```:small
+ネズミ：/images/0001000000000001/masters/797392/20cdf97adef7e7dd.webp
+ウシ：/images/0001000000000001/masters/797392/20cdf97adef7e7dd.webp
+トラ：/images/0001000000000001/masters/797392/20cd706c651d3975.webp
+```
 
 ## まとめ
 

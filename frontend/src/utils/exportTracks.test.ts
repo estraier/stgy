@@ -1,5 +1,6 @@
 import type { TrackObject } from "@/api/models";
 import {
+  filterReferencedTrackArchiveEntries,
   makeTrackArchiveEntries,
   rewriteTrackObjectUrlsToRelative,
 } from "./exportTracks";
@@ -81,5 +82,33 @@ describe("rewriteTrackObjectUrlsToRelative", () => {
   test("leaves external track URLs unchanged", () => {
     const source = "@[](https://example.com/ride.trjgz)";
     expect(rewriteTrackObjectUrlsToRelative(source, entries, "../tracks")).toBe(source);
+  });
+});
+
+
+describe("filterReferencedTrackArchiveEntries", () => {
+  const first = makeTrack();
+  const second = makeTrack({
+    key: "u1/masters/797391/11234567cafebabe.trjgz",
+    publicUrl: "https://cdn.test/tracks/u1/masters/797391/11234567cafebabe.trjgz",
+    previewKey: "u1/previews/797391/11234567cafebabe.trjgz",
+    previewUrl: "https://cdn.test/tracks/u1/previews/797391/11234567cafebabe.trjgz",
+  });
+  const entries = makeTrackArchiveEntries([first, second], "u1");
+
+  test("keeps only tracks referenced by managed master or preview URLs", () => {
+    const referenced = filterReferencedTrackArchiveEntries(
+      [
+        "@[](/tracks/u1/previews/797392/01234567deadbeef.trjgz)",
+        "https://cdn.test/tracks/u1/masters/797391/11234567cafebabe.trjgz?v=1",
+      ],
+      entries,
+    );
+
+    expect(referenced.map((entry) => entry.track.key)).toEqual([first.key, second.key]);
+  });
+
+  test("omits unreferenced tracks", () => {
+    expect(filterReferencedTrackArchiveEntries(["No maps here"], entries)).toEqual([]);
   });
 });
