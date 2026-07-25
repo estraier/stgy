@@ -146,8 +146,11 @@ is still required.
 `;
 
 const POST_BASE_SLEEP_MS = 200;
+const POST_BASE_SLEEP_MS_ADMIN = 40;
 const IMAGE_BASE_SLEEP_MS = 500;
+const IMAGE_BASE_SLEEP_MS_ADMIN = 100;
 const PER_MB_SLEEP_MS = 100;
+const PER_MB_SLEEP_MS_ADMIN = 20;
 const ONE_MB = 1024 * 1024;
 
 const TOO_OFTEN_WAIT_MS = 600_000;
@@ -158,10 +161,14 @@ function sleep(ms: number): Promise<void> {
   return new Promise((r) => setTimeout(r, n));
 }
 
-function sleepForTransferBytes(bytes: number, baseMs: number): Promise<void> {
+function sleepForTransferBytes(
+  bytes: number,
+  baseMs: number,
+  perMbMs: number = PER_MB_SLEEP_MS,
+): Promise<void> {
   const b = Math.max(0, bytes | 0);
   const mb = Math.ceil(b / ONE_MB);
-  const ms = Math.max(0, baseMs | 0) + mb * PER_MB_SLEEP_MS;
+  const ms = Math.max(0, baseMs | 0) + mb * Math.max(0, perMbMs | 0);
   return sleep(ms);
 }
 
@@ -271,11 +278,16 @@ function getPublicUrlFromStoragePath(storagePath: string, version?: string | nul
   return `${prefix}/${key}${suffix}`;
 }
 
-async function fetchBytes(url: string, label: string): Promise<Uint8Array> {
+async function fetchBytes(
+  url: string,
+  label: string,
+  baseSleepMs: number = IMAGE_BASE_SLEEP_MS,
+  perMbSleepMs: number = PER_MB_SLEEP_MS,
+): Promise<Uint8Array> {
   const resp = await fetch(url, { method: "GET", credentials: "include" });
   if (!resp.ok) throw new Error(`Failed to download ${label}: ${resp.status}`);
   const bytes = new Uint8Array(await resp.arrayBuffer());
-  await sleepForTransferBytes(bytes.length, IMAGE_BASE_SLEEP_MS);
+  await sleepForTransferBytes(bytes.length, baseSleepMs, perMbSleepMs);
   return bytes;
 }
 
@@ -652,6 +664,11 @@ export default function PageBody() {
       const enc = new TextEncoder();
       const now = new Date();
       const base = `${exportRootDir}/`;
+      const postBaseSleepMs = profile.isAdmin ? POST_BASE_SLEEP_MS_ADMIN : POST_BASE_SLEEP_MS;
+      const imageBaseSleepMs = profile.isAdmin
+        ? IMAGE_BASE_SLEEP_MS_ADMIN
+        : IMAGE_BASE_SLEEP_MS;
+      const perMbSleepMs = profile.isAdmin ? PER_MB_SLEEP_MS_ADMIN : PER_MB_SLEEP_MS;
       const tracks = await fetchAllMyTracks(userId);
       const trackEntries = makeTrackArchiveEntries(tracks, userId);
       const exportProfile = rewriteProfileIntroductionAndSnippet(
@@ -713,11 +730,21 @@ export default function PageBody() {
       await addExportFile(`${base}style.css`, enc.encode(HTML_STYLES_CSS));
       await addExportFile(
         `${base}assets/track-viewer.css`,
-        await fetchBytes(TRACK_VIEWER_CSS_URL, "track viewer stylesheet"),
+        await fetchBytes(
+          TRACK_VIEWER_CSS_URL,
+          "track viewer stylesheet",
+          imageBaseSleepMs,
+          perMbSleepMs,
+        ),
       );
       await addExportFile(
         `${base}assets/track-viewer.js`,
-        await fetchBytes(TRACK_VIEWER_JS_URL, "track viewer script"),
+        await fetchBytes(
+          TRACK_VIEWER_JS_URL,
+          "track viewer script",
+          imageBaseSleepMs,
+          perMbSleepMs,
+        ),
       );
       await addExportFile(
         `${base}assets/track-export.js`,
@@ -738,7 +765,10 @@ export default function PageBody() {
       }
 
       if (avatarUrl) {
-        await addExportFile(`${base}avatar.webp`, await fetchBytes(avatarUrl, "avatar"));
+        await addExportFile(
+          `${base}avatar.webp`,
+          await fetchBytes(avatarUrl, "avatar", imageBaseSleepMs, perMbSleepMs),
+        );
       }
 
       await addExportFile(
@@ -756,7 +786,11 @@ export default function PageBody() {
         const htmlBytes = enc.encode(renderPostHtml(rewritten));
         await addExportFile(`${base}posts/${p.id}.html`, htmlBytes);
 
-        await sleepForTransferBytes(jsonBytes.length + htmlBytes.length, POST_BASE_SLEEP_MS);
+        await sleepForTransferBytes(
+          jsonBytes.length + htmlBytes.length,
+          postBaseSleepMs,
+          perMbSleepMs,
+        );
       }
 
       await addExportFile(`${base}index.html`, enc.encode(renderIndexHtml(posts, profile)));
@@ -764,18 +798,28 @@ export default function PageBody() {
       for (const [filename, it] of masterByFilename.entries()) {
         await addExportFile(
           `${base}images/${filename}`,
-          await fetchBytes(it.publicUrl, filename),
+          await fetchBytes(it.publicUrl, filename, imageBaseSleepMs, perMbSleepMs),
         );
       }
 
       for (const entry of trackEntries) {
         await addExportFile(
           `${base}tracks/masters/${entry.masterFilename}`,
-          await fetchBytes(entry.track.publicUrl, entry.masterFilename),
+          await fetchBytes(
+            entry.track.publicUrl,
+            entry.masterFilename,
+            imageBaseSleepMs,
+            perMbSleepMs,
+          ),
         );
         await addExportFile(
           `${base}tracks/previews/${entry.previewFilename}`,
-          await fetchBytes(entry.track.previewUrl, entry.previewFilename),
+          await fetchBytes(
+            entry.track.previewUrl,
+            entry.previewFilename,
+            imageBaseSleepMs,
+            perMbSleepMs,
+          ),
         );
       }
 
