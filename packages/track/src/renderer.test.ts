@@ -326,9 +326,9 @@ describe("StgyTrackRenderer", () => {
   });
 
   test.each([
-    [1, 0.9],
-    [10, 0.8],
-    [30, 0.7],
+    [1, 0.85],
+    [10, 0.75],
+    [30, 0.65],
   ])("scales %i inline pins to %p of the original size", (pinCount, scale) => {
     document.body.innerHTML = `
       <figure class="stgy-track-map" data-lat="35" data-lon="139">
@@ -355,8 +355,8 @@ describe("StgyTrackRenderer", () => {
     renderer.hydrate(document.body);
 
     const [width, height] = getMarkerIconSize();
-    expect(width).toBeCloseTo(25 * 0.8);
-    expect(height).toBeCloseTo(41 * 0.8);
+    expect(width).toBeCloseTo(25 * 0.75);
+    expect(height).toBeCloseTo(41 * 0.75);
   });
 
   test("counts GeoJSON Point and MultiPoint pins together with inline pins", async () => {
@@ -390,8 +390,8 @@ describe("StgyTrackRenderer", () => {
     await flushPromises();
 
     const [width, height] = getMarkerIconSize();
-    expect(width).toBeCloseTo(25 * 0.8);
-    expect(height).toBeCloseTo(41 * 0.8);
+    expect(width).toBeCloseTo(25 * 0.75);
+    expect(height).toBeCloseTo(41 * 0.75);
   });
 
   test("shows copyable coordinates on a map context click", () => {

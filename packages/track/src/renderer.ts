@@ -7,9 +7,9 @@ import { getTrackJsonTitle } from "./trackjson";
 
 const DEFAULT_PIN_COLOR = "#3388ff";
 const DEFAULT_ROUTE_COLOR = "#0078A8";
-const DEFAULT_PIN_SCALE = 0.9;
-const TEN_PIN_SCALE = 0.8;
-const THIRTY_PIN_SCALE = 0.7;
+const DEFAULT_PIN_SCALE = 0.85;
+const TEN_PIN_SCALE = 0.75;
+const THIRTY_PIN_SCALE = 0.65;
 const PIN_ICON_WIDTH = 25;
 const PIN_ICON_HEIGHT = 41;
 const PIN_ICON_ANCHOR_X = 12;
