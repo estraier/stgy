@@ -8,11 +8,13 @@ import type { TrackStorageMonthlyQuota } from "@/api/models";
 import { Config } from "@/config";
 import { formatBytes } from "@/utils/format";
 import {
+  TRACK_UPLOAD_POINT_LIMIT,
   TRACK_UPLOAD_PREVIEW_MAX_POINTS,
   createTrackObfuscationDistances,
   formatTrackPreviewDistance,
   formatTrackPreviewElapsedTime,
   formatTrackPreviewStartTime,
+  getTrackUploadDownsamplePointCount,
   getTrackObfuscationMaxDistance,
   makeTrackUploadPreview,
   normalizeTrackObfuscationDistance,
@@ -45,6 +47,7 @@ type SelectedItem = TrackDialogFileItem & {
   previewUrl?: string;
   previewError?: string;
   previewMetadata?: TrackUploadPreviewMetadata;
+  pointCount?: number;
   obfuscateCoordinates: boolean;
   obfuscateStartDistanceM: number;
   obfuscateEndDistanceM: number;
@@ -59,6 +62,7 @@ type SelectedItemPatch = Partial<
     | "previewUrl"
     | "previewError"
     | "previewMetadata"
+    | "pointCount"
     | "obfuscateCoordinates"
     | "obfuscateStartDistanceM"
     | "obfuscateEndDistanceM"
@@ -92,10 +96,24 @@ function createSelectedItem(file: TrackDialogFileItem): SelectedItem {
 
 function getItemObfuscation(item: SelectedItem): TrackUploadObfuscationOptions {
   return {
-    enabled: getTrackFileKind(item.name) === "FIT" && item.obfuscateCoordinates,
+    enabled: Boolean(getTrackFileKind(item.name)) && item.obfuscateCoordinates,
     startDistanceM: item.obfuscateStartDistanceM,
     endDistanceM: item.obfuscateEndDistanceM,
   };
+}
+
+function getItemDownsamplePointCount(item: SelectedItem): number | undefined {
+  if (item.pointCount === undefined || item.pointCount <= TRACK_UPLOAD_POINT_LIMIT) {
+    return undefined;
+  }
+  return getTrackUploadDownsamplePointCount(item.pointCount);
+}
+
+function sourceFileSizeIsUploadSize(item: SelectedItem): boolean {
+  const kind = getTrackFileKind(item.name);
+  if (getItemDownsamplePointCount(item) !== undefined) return false;
+  if (kind === "FIT") return true;
+  return kind === "TRJGZ" && !item.obfuscateCoordinates;
 }
 
 function TrackPreviewMetadata({ metadata }: { metadata: TrackUploadPreviewMetadata }) {
@@ -172,8 +190,9 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
           previewUrl: url,
           previewError: undefined,
           previewMetadata: preview.metadata,
+          pointCount: preview.pointCount,
         };
-        if (initializeDefaults && getTrackFileKind(item.name) === "FIT") {
+        if (initializeDefaults) {
           const defaults = createTrackObfuscationDistances(preview.metadata.totalDistanceM);
           patch.obfuscateStartDistanceM = defaults.startDistanceM;
           patch.obfuscateEndDistanceM = defaults.endDistanceM;
@@ -242,8 +261,7 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
   const knownUploadBytes = useMemo(
     () =>
       items.reduce((sum, item) => {
-        const kind = getTrackFileKind(item.name);
-        return kind === "FIT" || kind === "TRJGZ" ? sum + item.size : sum;
+        return sourceFileSizeIsUploadSize(item) ? sum + item.size : sum;
       }, 0),
     [items],
   );
@@ -260,7 +278,7 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
           !getTrackFileKind(item.name) ||
           Boolean(
             singleLimit &&
-              (getTrackFileKind(item.name) === "FIT" || getTrackFileKind(item.name) === "TRJGZ") &&
+              sourceFileSizeIsUploadSize(item) &&
               item.size > singleLimit,
           ) ||
           item.previewStatus === "error",
@@ -284,7 +302,7 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
         results.push({ ok: false, error: message, name: item.name });
         continue;
       }
-      if (singleLimit && (kind === "FIT" || kind === "TRJGZ") && item.size > singleLimit) {
+      if (singleLimit && sourceFileSizeIsUploadSize(item) && item.size > singleLimit) {
         const message = `File exceeds the single-file limit (${formatBytes(singleLimit)}).`;
         setItemState(item.id, { status: "error", error: message });
         results.push({ ok: false, error: message, name: item.name });
@@ -384,10 +402,11 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
           <ul className={`grid ${gridClass} gap-3 justify-center`}>
             {items.map((item) => {
               const kind = getTrackFileKind(item.name);
-              const sourceSizeIsUploadSize = kind === "FIT" || kind === "TRJGZ";
+              const sourceSizeIsUploadSize = sourceFileSizeIsUploadSize(item);
               const oversized = Boolean(
                 sourceSizeIsUploadSize && singleLimit && item.size > singleLimit,
               );
+              const downsamplePointCount = getItemDownsamplePointCount(item);
               const maxObfuscationDistanceM = getTrackObfuscationMaxDistance(
                 item.previewMetadata?.totalDistanceM,
               );
@@ -454,7 +473,7 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                     {item.previewMetadata && (
                       <TrackPreviewMetadata metadata={item.previewMetadata} />
                     )}
-                    {kind === "FIT" && (
+                    {kind && (
                       <div className="text-[13px] text-gray-700">
                         <label className="inline-flex items-center gap-1 whitespace-nowrap">
                           <input
@@ -530,6 +549,14 @@ export default function TrackUploadDialog({ userId, files, maxCount, onClose, on
                             m
                           </label>
                         </div>
+                      </div>
+                    )}
+                    {downsamplePointCount !== undefined && item.pointCount !== undefined && (
+                      <div className="text-[11px] leading-4 text-amber-700">
+                        {item.pointCount.toLocaleString()} points exceeds the{" "}
+                        {TRACK_UPLOAD_POINT_LIMIT.toLocaleString()}-point limit. A downsampled{" "}
+                        {downsamplePointCount.toLocaleString()}-point{" "}
+                        {kind === "FIT" ? "FIT" : "TRJGZ"} will be uploaded.
                       </div>
                     )}
                     <div className="text-[12px] text-gray-700">

@@ -1,7 +1,9 @@
-import type { TrackActivityMetadata } from "stgy-track/activity";
+import type { TrackActivity, TrackActivityMetadata } from "stgy-track/activity";
 import { getTrackFileKind, getTrackUploadContentType, getTrackUploadFilename } from "./tracks";
 
 export const TRACK_UPLOAD_PREVIEW_MAX_POINTS = 3000;
+export const TRACK_UPLOAD_POINT_LIMIT = 100000;
+export const TRACK_UPLOAD_DOWNSAMPLE_REDUCTION_POINTS = 50000;
 export const TRACK_OBFUSCATION_DEFAULT_DISTANCE_M = 1000;
 export const TRACK_OBFUSCATION_MAX_ROUTE_RATIO = 0.05;
 
@@ -13,6 +15,7 @@ export type TrackUploadPreviewMetadata = Pick<
 export type TrackUploadPreview = {
   json: string;
   metadata: TrackUploadPreviewMetadata;
+  pointCount: number;
 };
 
 export type TrackUploadObfuscationOptions = {
@@ -44,14 +47,14 @@ export async function makeTrackUploadPreview(
     return makeFitPreview(await file.arrayBuffer(), maxPoints, obfuscation);
   }
   if (kind === "GPX") {
-    return makeGpxPreview(decodeUtf8(await file.arrayBuffer()), maxPoints);
+    return makeGpxPreview(decodeUtf8(await file.arrayBuffer()), maxPoints, obfuscation);
   }
   if (kind === "TRJ") {
-    return makeTrackJsonPreview(decodeUtf8(await file.arrayBuffer()), maxPoints);
+    return makeTrackJsonPreview(decodeUtf8(await file.arrayBuffer()), maxPoints, obfuscation);
   }
   if (kind === "TRJGZ") {
     const text = await decompressGzipText(await file.arrayBuffer());
-    return makeTrackJsonPreview(text, maxPoints);
+    return makeTrackJsonPreview(text, maxPoints, obfuscation);
   }
   throw new Error("Only FIT, GPX, TRJ, and TRJGZ files are supported.");
 }
@@ -76,6 +79,7 @@ export async function makeFitPreview(
       })
     : bytes;
   const activity = fit.parseFitBytes(sourceBytes);
+  const pointCount = fit.countFitRecordMessages(sourceBytes);
   const preview = fit.downsampleTrackActivity(activity, {
     maxPoints,
     strategy: "uniform",
@@ -86,6 +90,7 @@ export async function makeFitPreview(
       pretty: false,
     }),
     metadata: pickPreviewMetadata(activity.metadata),
+    pointCount,
   };
 }
 
@@ -99,10 +104,26 @@ export async function makeFitPreviewJson(
 export async function makeGpxPreview(
   text: string,
   maxPoints = TRACK_UPLOAD_PREVIEW_MAX_POINTS,
+  obfuscation?: TrackUploadObfuscationOptions,
 ): Promise<TrackUploadPreview> {
   const [fit, gpx] = await Promise.all([import("stgy-track/fit"), import("stgy-track/gpx")]);
   const activity = gpx.parseGpxText(text);
-  const preview = fit.downsampleTrackActivity(activity, {
+  const pointCount = countTrackActivityPositionedPoints(activity);
+  let previewActivity = activity;
+  if (obfuscation?.enabled) {
+    const trackjson = await import("stgy-track/trackjson");
+    const data = trackjson.parseTrackJsonData(
+      fit.trackActivityToTrackJson(activity, { pretty: false }),
+    );
+    const obfuscated = fit.addTrackJsonDerivedProperties(
+      trackjson.obfuscateTrackJsonPrivacy(data, {
+        startDistanceM: obfuscation.startDistanceM,
+        endDistanceM: obfuscation.endDistanceM,
+      }),
+    );
+    previewActivity = fit.trackJsonDataToTrackActivity(obfuscated);
+  }
+  const preview = fit.downsampleTrackActivity(previewActivity, {
     maxPoints,
     strategy: "uniform",
     preserveEndpoints: true,
@@ -112,27 +133,42 @@ export async function makeGpxPreview(
       pretty: false,
     }),
     metadata: pickPreviewMetadata(activity.metadata),
+    pointCount,
   };
 }
 
 export async function makeTrackJsonPreview(
   text: string,
   maxPoints = TRACK_UPLOAD_PREVIEW_MAX_POINTS,
+  obfuscation?: TrackUploadObfuscationOptions,
 ): Promise<TrackUploadPreview> {
   const [fit, trackjson] = await Promise.all([
     import("stgy-track/fit"),
     import("stgy-track/trackjson"),
   ]);
   const data = trackjson.parseTrackJsonData(text);
-  const activity = fit.trackJsonDataToTrackActivity(data);
-  const preview = trackjson.downsampleTrackJsonData(data, {
+  const pointCount = trackjson.countTrackJsonPositionedPoints(data);
+  const source = obfuscation?.enabled
+    ? fit.addTrackJsonDerivedProperties(
+        trackjson.obfuscateTrackJsonPrivacy(data, {
+          startDistanceM: obfuscation.startDistanceM,
+          endDistanceM: obfuscation.endDistanceM,
+        }),
+      )
+    : data;
+  const activity = fit.trackJsonDataToTrackActivity(source);
+  const preview = trackjson.downsampleTrackJsonData(source, {
     maxPoints,
     strategy: "uniform",
     preserveEndpoints: true,
   });
+  const output = obfuscation?.enabled
+    ? fit.addTrackJsonDerivedProperties(preview)
+    : preview;
   return {
-    json: JSON.stringify(trackjson.compactTrackJsonData(preview)),
+    json: JSON.stringify(trackjson.compactTrackJsonData(output)),
     metadata: pickPreviewMetadata(activity.metadata),
+    pointCount,
   };
 }
 
@@ -172,6 +208,17 @@ export function normalizeTrackObfuscationDistance(
   return maxDistanceM === undefined ? normalized : Math.min(normalized, maxDistanceM);
 }
 
+export function getTrackUploadDownsamplePointCount(pointCount: number): number {
+  const normalized = Number.isFinite(pointCount) ? Math.max(0, Math.floor(pointCount)) : 0;
+  if (normalized <= TRACK_UPLOAD_POINT_LIMIT) {
+    return normalized;
+  }
+  return Math.min(
+    normalized - TRACK_UPLOAD_DOWNSAMPLE_REDUCTION_POINTS,
+    TRACK_UPLOAD_POINT_LIMIT,
+  );
+}
+
 export async function prepareTrackUploadPayload(
   file: File,
   obfuscation?: TrackUploadObfuscationOptions,
@@ -185,14 +232,24 @@ export async function prepareTrackUploadPayload(
   const contentType = getTrackUploadContentType(filename);
 
   if (kind === "FIT") {
-    if (!obfuscation?.enabled) {
+    const fit = await import("stgy-track/fit");
+    const input = await file.arrayBuffer();
+    const sourcePointCount = fit.countFitRecordMessages(input);
+    const uploadPointCount = getTrackUploadDownsamplePointCount(sourcePointCount);
+    if (!obfuscation?.enabled && uploadPointCount === sourcePointCount) {
       return { payload: file, filename, contentType };
     }
-    const fit = await import("stgy-track/fit");
-    const output = fit.obfuscateFitPrivacy(await file.arrayBuffer(), {
-      startDistanceM: obfuscation.startDistanceM,
-      endDistanceM: obfuscation.endDistanceM,
-    });
+
+    let output: Uint8Array = new Uint8Array(input);
+    if (obfuscation?.enabled) {
+      output = fit.obfuscateFitPrivacy(output, {
+        startDistanceM: obfuscation.startDistanceM,
+        endDistanceM: obfuscation.endDistanceM,
+      });
+    }
+    if (uploadPointCount < sourcePointCount) {
+      output = fit.downsampleFitRecordMessages(output, uploadPointCount);
+    }
     return {
       payload: new Blob([copyUint8ArrayToArrayBuffer(output)], { type: contentType }),
       filename,
@@ -201,18 +258,82 @@ export async function prepareTrackUploadPayload(
   }
 
   if (kind === "TRJGZ") {
-    return { payload: file, filename, contentType };
+    const sourceText = await decompressGzipText(await file.arrayBuffer());
+    const [fit, trackjson] = await Promise.all([
+      import("stgy-track/fit"),
+      import("stgy-track/trackjson"),
+    ]);
+    const parsed = trackjson.parseTrackJsonData(sourceText);
+    const sourcePointCount = trackjson.countTrackJsonPositionedPoints(parsed);
+    const uploadPointCount = getTrackUploadDownsamplePointCount(sourcePointCount);
+    if (!obfuscation?.enabled && uploadPointCount === sourcePointCount) {
+      return { payload: file, filename, contentType };
+    }
+    const output = prepareTrackJsonUploadData(
+      fit,
+      trackjson,
+      parsed,
+      sourcePointCount,
+      uploadPointCount,
+      obfuscation,
+    );
+    return {
+      payload: await compressGzipText(
+        JSON.stringify(trackjson.compactTrackJsonData(output)),
+      ),
+      filename,
+      contentType,
+    };
   }
 
   const sourceText = decodeUtf8(await file.arrayBuffer());
   let trackJson: string;
   if (kind === "GPX") {
-    const [fit, gpx] = await Promise.all([import("stgy-track/fit"), import("stgy-track/gpx")]);
-    trackJson = fit.trackActivityToTrackJson(gpx.parseGpxText(sourceText), { pretty: false });
+    const [fit, gpx] = await Promise.all([
+      import("stgy-track/fit"),
+      import("stgy-track/gpx"),
+    ]);
+    const activity = gpx.parseGpxText(sourceText);
+    const sourcePointCount = countTrackActivityPositionedPoints(activity);
+    const uploadPointCount = getTrackUploadDownsamplePointCount(sourcePointCount);
+    if (!obfuscation?.enabled) {
+      const uploadActivity =
+        uploadPointCount < sourcePointCount
+          ? downsampleTrackActivityToPositionedPoints(fit, activity, uploadPointCount)
+          : activity;
+      trackJson = fit.trackActivityToTrackJson(uploadActivity, { pretty: false });
+    } else {
+      const trackjson = await import("stgy-track/trackjson");
+      const parsed = trackjson.parseTrackJsonData(
+        fit.trackActivityToTrackJson(activity, { pretty: false }),
+      );
+      const output = prepareTrackJsonUploadData(
+        fit,
+        trackjson,
+        parsed,
+        sourcePointCount,
+        uploadPointCount,
+        obfuscation,
+      );
+      trackJson = JSON.stringify(trackjson.compactTrackJsonData(output));
+    }
   } else {
-    const trackjson = await import("stgy-track/trackjson");
+    const [fit, trackjson] = await Promise.all([
+      import("stgy-track/fit"),
+      import("stgy-track/trackjson"),
+    ]);
     const parsed = trackjson.parseTrackJsonData(sourceText);
-    trackJson = JSON.stringify(trackjson.compactTrackJsonData(parsed));
+    const sourcePointCount = trackjson.countTrackJsonPositionedPoints(parsed);
+    const uploadPointCount = getTrackUploadDownsamplePointCount(sourcePointCount);
+    const output = prepareTrackJsonUploadData(
+      fit,
+      trackjson,
+      parsed,
+      sourcePointCount,
+      uploadPointCount,
+      obfuscation,
+    );
+    trackJson = JSON.stringify(trackjson.compactTrackJsonData(output));
   }
 
   return {
@@ -220,6 +341,92 @@ export async function prepareTrackUploadPayload(
     filename,
     contentType,
   };
+}
+
+type TrackFitModule = typeof import("stgy-track/fit");
+type TrackJsonModule = typeof import("stgy-track/trackjson");
+
+function prepareTrackJsonUploadData(
+  fit: TrackFitModule,
+  trackjson: TrackJsonModule,
+  data: unknown,
+  sourcePointCount: number,
+  uploadPointCount: number,
+  obfuscation?: TrackUploadObfuscationOptions,
+): unknown {
+  let output = data;
+
+  if (obfuscation?.enabled) {
+    output = trackjson.obfuscateTrackJsonPrivacy(output, {
+      startDistanceM: obfuscation.startDistanceM,
+      endDistanceM: obfuscation.endDistanceM,
+    });
+  }
+
+  if (uploadPointCount < sourcePointCount) {
+    output = downsampleTrackJsonToPositionedPoints(
+      fit,
+      trackjson,
+      output,
+      uploadPointCount,
+    );
+  }
+
+  return obfuscation?.enabled ? fit.addTrackJsonDerivedProperties(output) : output;
+}
+
+function downsampleTrackJsonToPositionedPoints(
+  fit: TrackFitModule,
+  trackjson: TrackJsonModule,
+  data: unknown,
+  maxPoints: number,
+): unknown {
+  const directlyDownsampled = trackjson.downsampleTrackJsonData(data, {
+    maxPoints,
+    strategy: "uniform",
+    preserveEndpoints: true,
+  });
+  if (trackjson.countTrackJsonPositionedPoints(directlyDownsampled) <= maxPoints) {
+    return directlyDownsampled;
+  }
+
+  const activity = fit.trackJsonDataToTrackActivity(data);
+  const downsampled = downsampleTrackActivityToPositionedPoints(fit, activity, maxPoints);
+  return trackjson.parseTrackJsonData(
+    fit.trackActivityToTrackJson(downsampled, { pretty: false }),
+  );
+}
+
+function downsampleTrackActivityToPositionedPoints(
+  fit: TrackFitModule,
+  activity: TrackActivity,
+  maxPoints: number,
+): TrackActivity {
+  const segmentCount = countTrackActivityPositionSegments(activity);
+  return fit.downsampleTrackActivity(activity, {
+    maxPoints: maxPoints + Math.max(0, segmentCount - 1),
+    strategy: "uniform",
+    preserveEndpoints: true,
+  });
+}
+
+function countTrackActivityPositionedPoints(activity: TrackActivity): number {
+  return activity.points.reduce((count, point) => {
+    return isFiniteNumber(point.lat) && isFiniteNumber(point.lon) ? count + 1 : count;
+  }, 0);
+}
+
+function countTrackActivityPositionSegments(activity: TrackActivity): number {
+  let count = 0;
+  let inSegment = false;
+  activity.points.forEach((point) => {
+    const positioned = isFiniteNumber(point.lat) && isFiniteNumber(point.lon);
+    if (positioned && !inSegment) {
+      count += 1;
+    }
+    inSegment = positioned;
+  });
+  return count;
 }
 
 function copyUint8ArrayToArrayBuffer(bytes: Uint8Array): ArrayBuffer {

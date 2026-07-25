@@ -3564,11 +3564,22 @@ type FitRecordPoint = {
   effectiveDistanceM: number;
 };
 
+type FitRawMessage = {
+  startOffset: number;
+  endOffset: number;
+  globalMessageNumber?: number;
+  compressedTimestamp: boolean;
+  localMessageType?: number;
+  definition?: FitDefinition;
+  timestamp?: number;
+};
+
 const FIT_SIGNATURE = ".FIT";
 const FIT_RECORD_GLOBAL_MESSAGE_NUMBER = 20;
 const RECORD_POSITION_LAT_FIELD = 0;
 const RECORD_POSITION_LONG_FIELD = 1;
 const RECORD_DISTANCE_FIELD = 5;
+const RECORD_TIMESTAMP_FIELD = 253;
 const FIT_INVALID_UINT32 = 0xffffffff;
 const EARTH_RADIUS_M = 6371000;
 
@@ -3605,6 +3616,313 @@ export function obfuscateFitPrivacy(
   updateFileCrc(output, fileInfo.dataEndOffset);
 
   return output;
+}
+
+export function countFitRecordMessages(
+  bytes: ArrayBuffer | Uint8Array
+): number {
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const fileInfo = readFitFileInfo(data);
+  return collectFitRawMessages(data, fileInfo.headerSize, fileInfo.dataSize)
+    .filter((message) => message.globalMessageNumber === FIT_RECORD_GLOBAL_MESSAGE_NUMBER)
+    .length;
+}
+
+export function hasFitCompressedTimestampMessages(
+  bytes: ArrayBuffer | Uint8Array
+): boolean {
+  const data = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const fileInfo = readFitFileInfo(data);
+  return collectFitRawMessages(data, fileInfo.headerSize, fileInfo.dataSize)
+    .some((message) => message.compressedTimestamp);
+}
+
+export function downsampleFitRecordMessages(
+  bytes: ArrayBuffer | Uint8Array,
+  maxPoints: number
+): Uint8Array {
+  const normalizedMaxPoints = normalizeFitDownsampleMaxPoints(maxPoints);
+  const input = bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes);
+  const fileInfo = readFitFileInfo(input);
+  const messages = collectFitRawMessages(input, fileInfo.headerSize, fileInfo.dataSize);
+  const recordCount = messages.filter(
+    (message) => message.globalMessageNumber === FIT_RECORD_GLOBAL_MESSAGE_NUMBER
+  ).length;
+
+  if (recordCount <= normalizedMaxPoints) {
+    return new Uint8Array(input);
+  }
+
+  const selectedRecordIndices = new Set(
+    selectUniformFitRecordIndices(recordCount, normalizedMaxPoints)
+  );
+  const retainedMessages: FitRawMessage[] = [];
+  let recordIndex = 0;
+
+  messages.forEach((message) => {
+    if (message.globalMessageNumber !== FIT_RECORD_GLOBAL_MESSAGE_NUMBER) {
+      retainedMessages.push(message);
+      return;
+    }
+
+    if (selectedRecordIndices.has(recordIndex)) {
+      retainedMessages.push(message);
+    }
+    recordIndex += 1;
+  });
+
+  const dataSize = retainedMessages.reduce(
+    (sum, message) => sum + getRetainedFitMessageSize(message),
+    0
+  );
+  const trailingOffset = fileInfo.dataEndOffset + 2;
+  const trailingSize = Math.max(0, input.byteLength - trailingOffset);
+  const dataEndOffset = fileInfo.headerSize + dataSize;
+  const output = new Uint8Array(dataEndOffset + 2 + trailingSize);
+
+  output.set(input.subarray(0, fileInfo.headerSize), 0);
+  writeUint32(output, 4, dataSize, true);
+  updateFitHeaderCrc(output, fileInfo.headerSize);
+
+  let outputOffset = fileInfo.headerSize;
+  retainedMessages.forEach((message) => {
+    outputOffset = writeRetainedFitMessage(output, outputOffset, input, message);
+  });
+
+  updateFileCrc(output, dataEndOffset);
+  if (trailingSize > 0) {
+    output.set(input.subarray(trailingOffset), dataEndOffset + 2);
+  }
+
+  return output;
+}
+
+function getRetainedFitMessageSize(message: FitRawMessage): number {
+  if (!message.compressedTimestamp) {
+    return message.endOffset - message.startOffset;
+  }
+
+  const definition = message.definition;
+  if (!definition) {
+    throw new Error("FIT compressed timestamp message has no definition");
+  }
+  return 1 + definition.dataSize;
+}
+
+function writeRetainedFitMessage(
+  output: Uint8Array,
+  outputOffset: number,
+  input: Uint8Array,
+  message: FitRawMessage
+): number {
+  if (!message.compressedTimestamp) {
+    const source = input.subarray(message.startOffset, message.endOffset);
+    output.set(source, outputOffset);
+    return outputOffset + source.byteLength;
+  }
+
+  const definition = message.definition;
+  const localMessageType = message.localMessageType;
+  const timestamp = message.timestamp;
+  if (!definition || localMessageType === undefined || timestamp === undefined) {
+    throw new Error("FIT compressed timestamp message is incomplete");
+  }
+
+  const timestampField = getFitTimestampField(definition);
+  const inputDataOffset = message.startOffset + 1;
+  const outputDataOffset = outputOffset + 1;
+  const compressedDataSize = definition.dataSize - timestampField.size;
+
+  output[outputOffset] = localMessageType & 0x0f;
+  output.set(
+    input.subarray(inputDataOffset, inputDataOffset + timestampField.offset),
+    outputDataOffset
+  );
+  writeUint32(
+    output,
+    outputDataOffset + timestampField.offset,
+    timestamp,
+    definition.littleEndian
+  );
+  output.set(
+    input.subarray(
+      inputDataOffset + timestampField.offset,
+      inputDataOffset + compressedDataSize
+    ),
+    outputDataOffset + timestampField.offset + timestampField.size
+  );
+
+  return outputOffset + 1 + definition.dataSize;
+}
+
+function normalizeFitDownsampleMaxPoints(value: number): number {
+  if (!Number.isFinite(value) || value < 2) {
+    throw new RangeError(
+      "maxPoints must be a finite number greater than or equal to 2."
+    );
+  }
+  return Math.floor(value);
+}
+
+function selectUniformFitRecordIndices(length: number, count: number): number[] {
+  const last = length - 1;
+  const selected = new Set<number>();
+
+  for (let index = 0; index < count; index += 1) {
+    selected.add(Math.round((index * last) / (count - 1)));
+  }
+
+  for (let index = 0; selected.size < count && index < length; index += 1) {
+    selected.add(index);
+  }
+
+  return Array.from(selected).sort((a, b) => a - b);
+}
+
+function collectFitRawMessages(
+  data: Uint8Array,
+  headerSize: number,
+  dataSize: number
+): FitRawMessage[] {
+  const definitions = new Map<number, FitDefinition>();
+  const messages: FitRawMessage[] = [];
+  let offset = headerSize;
+  let lastTimestamp: number | undefined;
+  const dataEndOffset = headerSize + dataSize;
+
+  while (offset < dataEndOffset) {
+    const startOffset = offset;
+    const recordHeader = data[offset];
+    offset += 1;
+
+    if ((recordHeader & 0x80) !== 0) {
+      const localMessageType = (recordHeader >> 5) & 0x03;
+      const definition = getDefinition(definitions, localMessageType);
+      const timestamp = expandFitCompressedTimestamp(
+        lastTimestamp,
+        recordHeader & 0x1f
+      );
+      lastTimestamp = timestamp;
+      offset += getFitCompressedTimestampDataSize(definition);
+      assertFitMessageEnd(offset, dataEndOffset);
+      messages.push({
+        startOffset,
+        endOffset: offset,
+        globalMessageNumber: definition.globalMessageNumber,
+        compressedTimestamp: true,
+        localMessageType,
+        definition,
+        timestamp,
+      });
+      continue;
+    }
+
+    if ((recordHeader & 0x40) !== 0) {
+      const localMessageType = recordHeader & 0x0f;
+      const hasDeveloperFields = (recordHeader & 0x20) !== 0;
+      offset = readDefinitionMessage(
+        data,
+        offset,
+        localMessageType,
+        hasDeveloperFields,
+        definitions
+      );
+      assertFitMessageEnd(offset, dataEndOffset);
+      messages.push({
+        startOffset,
+        endOffset: offset,
+        compressedTimestamp: false,
+      });
+      continue;
+    }
+
+    const localMessageType = recordHeader & 0x0f;
+    const definition = getDefinition(definitions, localMessageType);
+    const timestamp = readFitMessageTimestamp(data, offset, definition);
+    if (timestamp !== undefined) {
+      lastTimestamp = timestamp;
+    }
+    offset += definition.dataSize;
+    assertFitMessageEnd(offset, dataEndOffset);
+    messages.push({
+      startOffset,
+      endOffset: offset,
+      globalMessageNumber: definition.globalMessageNumber,
+      compressedTimestamp: false,
+      localMessageType,
+      definition,
+      timestamp,
+    });
+  }
+
+  if (offset !== dataEndOffset) {
+    throw new Error("FIT data records are not aligned with the data size");
+  }
+
+  return messages;
+}
+
+function expandFitCompressedTimestamp(
+  lastTimestamp: number | undefined,
+  timeOffset: number
+): number {
+  if (lastTimestamp === undefined) {
+    throw new Error("FIT compressed timestamp message has no preceding timestamp");
+  }
+
+  let timestamp = (lastTimestamp & 0xffffffe0) + timeOffset;
+  if (timeOffset < (lastTimestamp & 0x1f)) {
+    timestamp += 0x20;
+  }
+  return timestamp >>> 0;
+}
+
+function readFitMessageTimestamp(
+  data: Uint8Array,
+  dataOffset: number,
+  definition: FitDefinition
+): number | undefined {
+  const timestampField = findField(definition, RECORD_TIMESTAMP_FIELD);
+  if (!timestampField || timestampField.size < 4) {
+    return undefined;
+  }
+
+  const timestamp = readUint32(
+    data,
+    dataOffset + timestampField.offset,
+    definition.littleEndian
+  );
+  return timestamp === FIT_INVALID_UINT32 ? undefined : timestamp;
+}
+
+
+function getFitTimestampField(definition: FitDefinition): FitDefinitionField {
+  const timestampField = findField(definition, RECORD_TIMESTAMP_FIELD);
+  if (!timestampField || timestampField.size !== 4) {
+    throw new Error(
+      "FIT compressed timestamp message has no 4-byte timestamp field in its definition"
+    );
+  }
+  return timestampField;
+}
+
+function getFitCompressedTimestampDataSize(definition: FitDefinition): number {
+  return definition.dataSize - getFitTimestampField(definition).size;
+}
+
+function assertFitMessageEnd(offset: number, dataEndOffset: number): void {
+  if (offset > dataEndOffset) {
+    throw new Error("FIT data message exceeds the declared data size");
+  }
+}
+
+function updateFitHeaderCrc(data: Uint8Array, headerSize: number): void {
+  if (headerSize < 14) {
+    return;
+  }
+  const crcOffset = headerSize - 2;
+  const crc = calculateFitCrc(data, 0, crcOffset);
+  writeUint16(data, crcOffset, crc, true);
 }
 
 function normalizeDistanceOption(value: number | undefined): number {
@@ -3678,8 +3996,8 @@ function collectRecordPoints(
     if ((recordHeader & 0x80) !== 0) {
       const localMessageType = (recordHeader >> 5) & 0x03;
       const definition = getDefinition(definitions, localMessageType);
-      collectDataMessagePoint(data, offset, definition, points);
-      offset += definition.dataSize;
+      collectDataMessagePoint(data, offset, definition, points, true);
+      offset += getFitCompressedTimestampDataSize(definition);
       continue;
     }
 
@@ -3775,7 +4093,8 @@ function collectDataMessagePoint(
   data: Uint8Array,
   dataOffset: number,
   definition: FitDefinition,
-  points: FitRecordPoint[]
+  points: FitRecordPoint[],
+  compressedTimestamp = false
 ): void {
   if (definition.globalMessageNumber !== FIT_RECORD_GLOBAL_MESSAGE_NUMBER) {
     return;
@@ -3788,11 +4107,23 @@ function collectDataMessagePoint(
     return;
   }
 
-  const latOffset = dataOffset + latField.offset;
-  const lonOffset = dataOffset + lonField.offset;
+  const latOffset = dataOffset + getFitDataFieldOffset(
+    definition,
+    latField,
+    compressedTimestamp
+  );
+  const lonOffset = dataOffset + getFitDataFieldOffset(
+    definition,
+    lonField,
+    compressedTimestamp
+  );
   const distanceField = findField(definition, RECORD_DISTANCE_FIELD);
   const distanceOffset = distanceField && distanceField.size >= 4
-    ? dataOffset + distanceField.offset
+    ? dataOffset + getFitDataFieldOffset(
+        definition,
+        distanceField,
+        compressedTimestamp
+      )
     : undefined;
 
   const distanceRaw = distanceOffset === undefined
@@ -3811,6 +4142,25 @@ function collectDataMessagePoint(
     distanceM,
     effectiveDistanceM: 0,
   });
+}
+
+function getFitDataFieldOffset(
+  definition: FitDefinition,
+  field: FitDefinitionField,
+  compressedTimestamp: boolean
+): number {
+  if (!compressedTimestamp) {
+    return field.offset;
+  }
+  const timestampField = findField(definition, RECORD_TIMESTAMP_FIELD);
+  if (!timestampField) {
+    throw new Error(
+      "FIT compressed timestamp message has no timestamp field in its definition"
+    );
+  }
+  return field.offset > timestampField.offset
+    ? field.offset - timestampField.size
+    : field.offset;
 }
 
 function findField(
@@ -3993,6 +4343,26 @@ function readUint32(data: Uint8Array, offset: number, littleEndian: boolean): nu
     (data[offset + 2] << 8) |
     data[offset + 3]
   ) >>> 0;
+}
+
+function writeUint32(
+  data: Uint8Array,
+  offset: number,
+  value: number,
+  littleEndian: boolean
+): void {
+  const unsignedValue = value >>> 0;
+  if (littleEndian) {
+    data[offset] = unsignedValue & 0xff;
+    data[offset + 1] = (unsignedValue >> 8) & 0xff;
+    data[offset + 2] = (unsignedValue >> 16) & 0xff;
+    data[offset + 3] = (unsignedValue >> 24) & 0xff;
+    return;
+  }
+  data[offset] = (unsignedValue >> 24) & 0xff;
+  data[offset + 1] = (unsignedValue >> 16) & 0xff;
+  data[offset + 2] = (unsignedValue >> 8) & 0xff;
+  data[offset + 3] = unsignedValue & 0xff;
 }
 
 function readInt32(data: Uint8Array, offset: number, littleEndian: boolean): number {

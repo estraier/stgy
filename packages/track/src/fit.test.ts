@@ -3,14 +3,17 @@ import {
   TrackJsonConversionError,
   TrackParseError,
   addTrackJsonDerivedProperties,
+  countFitRecordMessages,
   computeHeartRateZoneSummary,
   computePowerZoneSummary,
+  downsampleFitRecordMessages,
   downsampleTrackActivity,
   mergeTrackActivities,
   trimTrackActivity,
   trackJsonDataToTrackActivity,
   getHeartRateZone,
   getPowerZone,
+  hasFitCompressedTimestampMessages,
   parseFitBytes,
   obfuscateFitPrivacy,
   trackActivityToFit,
@@ -2240,6 +2243,61 @@ function buildFit(
   return data;
 }
 
+function buildCompressedTimestampFit(points: TestPoint[]): Uint8Array {
+  if (points.length < 2) {
+    throw new Error("compressed timestamp fixture requires at least two points");
+  }
+
+  const records: number[] = [
+    0x40,
+    0x00,
+    0x00,
+    0x14,
+    0x00,
+    0x03,
+    0xfd,
+    0x04,
+    0x86,
+    0x00,
+    0x04,
+    0x85,
+    0x01,
+    0x04,
+    0x85,
+  ];
+
+  records.push(0x00);
+  pushUint32(records, 1_000);
+  pushInt32(records, degreesToSemicircle(points[0].lat));
+  pushInt32(records, degreesToSemicircle(points[0].lon));
+
+  points.slice(1).forEach((point, index) => {
+    records.push(0x80 | ((1_001 + index) & 0x1f));
+    pushInt32(records, degreesToSemicircle(point.lat));
+    pushInt32(records, degreesToSemicircle(point.lon));
+  });
+
+  const headerSize = 14;
+  const data = new Uint8Array(headerSize + records.length + 2);
+  data[0] = headerSize;
+  data[1] = 16;
+  writeUint16(data, 2, 0);
+  writeUint32(data, 4, records.length);
+  data[8] = ".".charCodeAt(0);
+  data[9] = "F".charCodeAt(0);
+  data[10] = "I".charCodeAt(0);
+  data[11] = "T".charCodeAt(0);
+  records.forEach((value, index) => {
+    data[headerSize + index] = value;
+  });
+  writeUint16(
+    data,
+    headerSize + records.length,
+    calculateFitCrc(data, 0, headerSize + records.length)
+  );
+  return data;
+}
+
 function readRecordCoordinates(fit: Uint8Array, includeDistance = true): Array<[number, number]> {
   const headerSize = fit[0];
   const definitionSize = includeDistance ? 15 : 12;
@@ -2259,9 +2317,41 @@ function readRecordCoordinates(fit: Uint8Array, includeDistance = true): Array<[
   return coordinates;
 }
 
+function readTimestampedRecordValues(
+  fit: Uint8Array
+): Array<{ timestamp: number; lat: number; lon: number }> {
+  const headerSize = fit[0];
+  const definitionSize = 15;
+  const recordSize = 13;
+  const values: Array<{ timestamp: number; lat: number; lon: number }> = [];
+  let offset = headerSize + definitionSize;
+  const dataEndOffset = headerSize + readUint32(fit, 4);
+
+  while (offset < dataEndOffset) {
+    expect(fit[offset] & 0x80).toBe(0);
+    offset += 1;
+    values.push({
+      timestamp: readUint32(fit, offset),
+      lat: round6(semicircleToDegrees(readInt32(fit, offset + 4))),
+      lon: round6(semicircleToDegrees(readInt32(fit, offset + 8))),
+    });
+    offset += recordSize - 1;
+  }
+
+  return values;
+}
+
 function expectValidFileCrc(fit: Uint8Array): void {
   const dataEndOffset = fit[0] + readUint32(fit, 4);
   expect(readUint16(fit, dataEndOffset)).toBe(calculateFitCrc(fit, 0, dataEndOffset));
+}
+
+function expectValidHeaderCrc(fit: Uint8Array): void {
+  const headerSize = fit[0];
+  expect(headerSize).toBeGreaterThanOrEqual(14);
+  expect(readUint16(fit, headerSize - 2)).toBe(
+    calculateFitCrc(fit, 0, headerSize - 2)
+  );
 }
 
 function pushInt32(values: number[], value: number): void {
@@ -2475,6 +2565,99 @@ describe("obfuscateFitPrivacy", () => {
 
     expect(() => obfuscateFitPrivacy(fit, { startDistanceM: -1 })).toThrow(
       "FIT privacy obfuscation distance must be a non-negative finite number"
+    );
+  });
+});
+
+describe("downsampleFitRecordMessages", () => {
+  const points: TestPoint[] = Array.from({ length: 6 }, (_, index) => ({
+    lat: 35 + index * 0.001,
+    lon: 139 + index * 0.001,
+    distanceM: index * 1000,
+  }));
+
+  test("counts and uniformly downsamples record messages while preserving endpoints", () => {
+    const fit = buildFit(points);
+
+    expect(countFitRecordMessages(fit)).toBe(6);
+
+    const downsampled = downsampleFitRecordMessages(fit, 4);
+
+    expect(countFitRecordMessages(downsampled)).toBe(4);
+    expect(readRecordCoordinates(downsampled)).toEqual([
+      [35.0000, 139.0000],
+      [35.0020, 139.0020],
+      [35.0030, 139.0030],
+      [35.0050, 139.0050],
+    ]);
+    expectValidHeaderCrc(downsampled);
+    expectValidFileCrc(downsampled);
+  });
+
+  test("returns a byte-for-byte copy when the record count is within the limit", () => {
+    const fit = buildFit(points);
+    const output = downsampleFitRecordMessages(fit, points.length);
+
+    expect(output).not.toBe(fit);
+    expect(Array.from(output)).toEqual(Array.from(fit));
+  });
+
+  test("preserves non-record messages byte-for-byte", () => {
+    const manufacturerRecords = [
+      0x41,
+      0x00,
+      0x00,
+      0x00,
+      0xff,
+      0x02,
+      0x00,
+      0x02,
+      0x84,
+      0x01,
+      0x04,
+      0x86,
+      0x01,
+      0x34,
+      0x12,
+      0xde,
+      0xad,
+      0xbe,
+      0xef,
+    ];
+    const fit = buildFit(points, true, manufacturerRecords);
+    const output = downsampleFitRecordMessages(fit, 4);
+    const headerSize = fit[0];
+
+    expect(output.slice(headerSize, headerSize + manufacturerRecords.length)).toEqual(
+      fit.slice(headerSize, headerSize + manufacturerRecords.length)
+    );
+    expectValidFileCrc(output);
+  });
+
+  test("downsamples compressed timestamp records without re-encoding the FIT file", () => {
+    const fit = buildCompressedTimestampFit(points);
+
+    expect(countFitRecordMessages(fit)).toBe(6);
+    expect(hasFitCompressedTimestampMessages(fit)).toBe(true);
+
+    const downsampled = downsampleFitRecordMessages(fit, 4);
+
+    expect(countFitRecordMessages(downsampled)).toBe(4);
+    expect(hasFitCompressedTimestampMessages(downsampled)).toBe(false);
+    expect(readTimestampedRecordValues(downsampled)).toEqual([
+      { timestamp: 1_000, lat: 35.0000, lon: 139.0000 },
+      { timestamp: 1_002, lat: 35.0020, lon: 139.0020 },
+      { timestamp: 1_003, lat: 35.0030, lon: 139.0030 },
+      { timestamp: 1_005, lat: 35.0050, lon: 139.0050 },
+    ]);
+    expectValidHeaderCrc(downsampled);
+    expectValidFileCrc(downsampled);
+  });
+
+  test("rejects an invalid point limit", () => {
+    const fit = buildFit(points);
+    expect(() => downsampleFitRecordMessages(fit, 1)).toThrow(
+      "maxPoints must be a finite number greater than or equal to 2."
     );
   });
 });

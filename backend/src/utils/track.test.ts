@@ -83,6 +83,48 @@ describe("track utility validation", () => {
     ).not.toThrow();
   });
 
+  test("validateTrackJsonOperationalLimits counts route samples but not POI metadata", () => {
+    const data = {
+      type: "FeatureCollection",
+      poi: [
+        { role: "centroid", coordinates: [139.05, 35.05] },
+        { role: "start", coordinates: [139.0, 35.0] },
+        { role: "end", coordinates: [139.1, 35.1] },
+        { role: "furthest", coordinates: [139.1, 35.1] },
+      ],
+      features: [
+        {
+          type: "Feature",
+          geometry: {
+            type: "LineString",
+            coordinates: [
+              [139.0, 35.0],
+              [139.1, 35.1],
+            ],
+          },
+          properties: {},
+        },
+        {
+          type: "Feature",
+          geometry: {
+            type: "Point",
+            coordinates: [139.05, 35.05],
+          },
+          properties: {},
+        },
+      ],
+    };
+
+    expect(() =>
+      validateTrackJsonOperationalLimits(data, {
+        maxFeatures: 10,
+        maxPoints: 2,
+        maxPropertyValues: 20,
+        maxDepth: 20,
+      }),
+    ).not.toThrow();
+  });
+
   test("validateTrackJsonOperationalLimits rejects too many features", () => {
     const data = {
       type: "FeatureCollection",
@@ -104,6 +146,7 @@ describe("track utility validation", () => {
       features: [
         {
           geometry: {
+            type: "LineString",
             coordinates: [
               [139.0, 35.0],
               [139.1, 35.1],

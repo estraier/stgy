@@ -114,6 +114,29 @@ function countCoordinatePositions(value: unknown, maxPoints: number): number {
   return count;
 }
 
+function countTrackGeometryPositions(value: unknown, maxPoints: number): number {
+  if (!isPlainObject(value)) {
+    return 0;
+  }
+
+  if (value.type === "LineString" || value.type === "MultiLineString") {
+    return countCoordinatePositions(value.coordinates, maxPoints);
+  }
+
+  if (value.type !== "GeometryCollection" || !Array.isArray(value.geometries)) {
+    return 0;
+  }
+
+  let count = 0;
+  for (const geometry of value.geometries) {
+    count += countTrackGeometryPositions(geometry, maxPoints - count);
+    if (count > maxPoints) {
+      throw new Error("too many track points");
+    }
+  }
+  return count;
+}
+
 function countArrayLeafValues(value: unknown, maxValues: number): number {
   const stack: unknown[] = [value];
   let count = 0;
@@ -167,12 +190,14 @@ export function validateTrackJsonOperationalLimits(
       throw new Error("track json too deep");
     }
 
-    if (key === "coordinates") {
-      totalPoints += countCoordinatePositions(value, limits.maxPoints - totalPoints);
+    if (key === "geometry") {
+      totalPoints += countTrackGeometryPositions(
+        value,
+        limits.maxPoints - totalPoints,
+      );
       if (totalPoints > limits.maxPoints) {
         throw new Error("too many track points");
       }
-      continue;
     }
 
     if (key === "coordinateProperties" && isPlainObject(value)) {
