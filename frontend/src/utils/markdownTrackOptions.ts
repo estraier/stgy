@@ -27,7 +27,8 @@ const TRACK_BASE_LAYERS: readonly TrackBaseLayer[] = [
 export function isTrackMapUrl(url: string): boolean {
   const value = url.trim();
   if (value.startsWith("map://")) return true;
-  return /\.(?:fit|trjgz)(?:[?#].*)?$/iu.test(value);
+  const sourceUrl = value.split("|", 1)[0]?.trim() || "";
+  return /\.(?:fit|trjgz)(?:[?#].*)?$/iu.test(sourceUrl);
 }
 
 export function parseTrackMarkdownLine(line: string): TrackMarkdownLineMatch | null {

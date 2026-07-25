@@ -5,7 +5,7 @@ export function restoreImageFilename(rev6: string, time8: string, hash8: string,
 }
 
 const STGY_MASTER_IMAGE_URL_RE =
-  /\/images\/([^/?#]+)\/(?:masters|thumbs|master|thumb)\/(\d{6})\/([0-9a-f]{8})([0-9a-f]{8})\.([A-Za-z0-9]{1,5})(?:[?#][^)\s"'<>]*)?/gi;
+  /\/images\/([^/?#]+)\/(?:masters|thumbs|master|thumb)\/(\d{6})\/([0-9a-f]{8})([0-9a-f]{8})\.([A-Za-z0-9]{1,5})(?:[?#][^)|\s"'<>]*)?/gi;
 
 function isOwnedBy(rawOwnerId: string, userId: string): boolean {
   try {

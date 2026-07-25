@@ -17,6 +17,16 @@ describe("rewriteOwnedImageObjectUrlsToRelative", () => {
     );
   });
 
+  test("preserves following pins after a rewritten image URL", () => {
+    const source =
+      `@[map](map://138.4,36.4,13|138.4,36.4;First;;;${ownImage}?v=1|` +
+      "138.5,36.5;Second)";
+    expect(rewriteOwnedImageObjectUrlsToRelative(source, "u1", "../images")).toBe(
+      `@[map](map://138.4,36.4,13|138.4,36.4;First;;;../images/${restoredFilename}|` +
+        "138.5,36.5;Second)",
+    );
+  });
+
   test("does not rewrite an image owned by another user", () => {
     const source = ownImage.replace("/u1/", "/u2/");
     expect(rewriteOwnedImageObjectUrlsToRelative(source, "u1", "../images")).toBe(source);

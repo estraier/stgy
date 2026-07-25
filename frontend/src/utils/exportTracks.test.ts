@@ -69,6 +69,15 @@ describe("rewriteTrackObjectUrlsToRelative", () => {
     );
   });
 
+  test("preserves pins after a rewritten track URL", () => {
+    const source =
+      "@[Ride](https://cdn.test/tracks/u1/masters/797392/01234567deadbeef.fit?v=1|" +
+      "139.1,35.1;Stop)";
+    expect(rewriteTrackObjectUrlsToRelative(source, entries, "../tracks")).toBe(
+      "@[Ride](../tracks/previews/797392-01234567deadbeef.trjgz|139.1,35.1;Stop)",
+    );
+  });
+
   test("leaves external track URLs unchanged", () => {
     const source = "@[](https://example.com/ride.trjgz)";
     expect(rewriteTrackObjectUrlsToRelative(source, entries, "../tracks")).toBe(source);

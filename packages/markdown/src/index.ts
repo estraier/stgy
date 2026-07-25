@@ -227,6 +227,28 @@ function parseMdMapLonLat(raw: string): { lon: number; lat: number } | null {
   return { lon, lat };
 }
 
+function parseMdMapPins(blocks: readonly string[]): MdMapPin[] {
+  const pins: MdMapPin[] = [];
+  for (const block of blocks) {
+    if (!block) continue;
+    const fields = block.split(";").map((field) => field.trim());
+    const point = parseMdMapLonLat(fields[0] || "");
+    if (!point) continue;
+
+    const title = fields[1] || undefined;
+    const description = fields[2] || undefined;
+    const urlField = fields[3] || undefined;
+    const imageField = fields[4] || undefined;
+    const pin: MdMapPin = { lon: point.lon, lat: point.lat };
+    if (title) pin.title = title;
+    if (description) pin.description = description;
+    if (isSafeMdMapUrl(urlField)) pin.url = urlField;
+    if (isSafeMdMapUrl(imageField)) pin.image = imageField;
+    pins.push(pin);
+  }
+  return pins;
+}
+
 function parseMdMapUri(url: string): MdMapSpec | null {
   const prefix = "map://";
   if (!url.startsWith(prefix)) return null;
@@ -247,26 +269,19 @@ function parseMdMapUri(url: string): MdMapSpec | null {
     centerParts.length === 3 ? Number(centerParts[2]) : DEFAULT_MD_MAP_ZOOM;
   if (!Number.isFinite(zoom) || zoom < 0 || zoom > 22) return null;
 
-  const pins: MdMapPin[] = [];
-  for (const block of blocks.slice(1)) {
-    if (!block) continue;
-    const fields = block.split(";").map((field) => field.trim());
-    const point = parseMdMapLonLat(fields[0] || "");
-    if (!point) continue;
+  return { lon, lat, zoom, pins: parseMdMapPins(blocks.slice(1)) };
+}
 
-    const title = fields[1] || undefined;
-    const description = fields[2] || undefined;
-    const urlField = fields[3] || undefined;
-    const imageField = fields[4] || undefined;
-    const pin: MdMapPin = { lon: point.lon, lat: point.lat };
-    if (title) pin.title = title;
-    if (description) pin.description = description;
-    if (isSafeMdMapUrl(urlField)) pin.url = urlField;
-    if (isSafeMdMapUrl(imageField)) pin.image = imageField;
-    pins.push(pin);
-  }
-
-  return { lon, lat, zoom, pins };
+function parseMdTrackSourceWithPins(
+  url: string,
+): { sourceUrl: string; pins: MdMapPin[] } | null {
+  if (url.trim().toLowerCase().startsWith("map://")) return null;
+  const blocks = url.split("|").map((block) => block.trim());
+  if (blocks.length < 2 || !blocks[0]) return null;
+  return {
+    sourceUrl: blocks[0]!,
+    pins: parseMdMapPins(blocks.slice(1)),
+  };
 }
 
 type MdEmbedSpec = {
@@ -532,25 +547,32 @@ function makeMdTrackMapElement(
   const attrs: MdAttrs = { class: "stgy-track-map" };
   const children: MdNode[] = [makeMdTrackCanvas(line, char)];
   const mapSpec = parseMdMapUri(url);
+  const trackSpec = mapSpec ? null : parseMdTrackSourceWithPins(url);
+  let pins: MdMapPin[] = [];
 
   if (mapSpec) {
     attrs["data-lon"] = mapSpec.lon;
     attrs["data-lat"] = mapSpec.lat;
     attrs["data-zoom"] = mapSpec.zoom;
     if (desc) attrs["data-center-address"] = desc;
-    if (mapSpec.pins.length > 0) {
-      children.push(
-        makeElement(
-          "ul",
-          mapSpec.pins.map((pin) => makeMdMapPinElement(pin, line, char)),
-          { class: "stgy-track-pins" },
-          line,
-          char,
-        ),
-      );
-    }
+    pins = mapSpec.pins;
+  } else if (trackSpec) {
+    attrs["data-src"] = trackSpec.sourceUrl;
+    pins = trackSpec.pins;
   } else if (!url.trim().toLowerCase().startsWith("map://")) {
     attrs["data-src"] = url;
+  }
+
+  if (pins.length > 0) {
+    children.push(
+      makeElement(
+        "ul",
+        pins.map((pin) => makeMdMapPinElement(pin, line, char)),
+        { class: "stgy-track-pins" },
+        line,
+        char,
+      ),
+    );
   }
 
   applyMdTrackMapOptions(attrs, macro);
@@ -1374,6 +1396,127 @@ export function parseHtml(
     return makeMdEmbedElement(caption, spec, size);
   };
 
+  const parseTrackFigure = (el: Element): MdElementNode | null => {
+    if (el.tagName.toLowerCase() !== "figure") return null;
+    const classes = (el.getAttribute("class") || "").split(/\s+/);
+    if (!classes.includes("stgy-track-map")) return null;
+
+    const attrs: MdAttrs = { class: "stgy-track-map" };
+    for (const name of [
+      "data-src",
+      "data-lon",
+      "data-lat",
+      "data-zoom",
+      "data-center-address",
+      "data-float",
+      "data-size",
+      "data-base-layer",
+      "data-show-graph",
+      "data-show-overlay",
+      "data-controls",
+      "style",
+    ]) {
+      const value = el.getAttribute(name);
+      if (value !== null && value !== "") attrs[name] = value;
+    }
+
+    const children: MdNode[] = [
+      e("div", [], { class: "stgy-track-canvas" }),
+    ];
+    const pinsEl = Array.from(el.children).find((child) => {
+      if (child.tagName.toLowerCase() !== "ul") return false;
+      return (child.getAttribute("class") || "")
+        .split(/\s+/)
+        .includes("stgy-track-pins");
+    }) as Element | undefined;
+
+    if (pinsEl) {
+      const pins: MdNode[] = [];
+      for (const pinEl of Array.from(pinsEl.children)) {
+        if (pinEl.tagName.toLowerCase() !== "li") continue;
+        const pinAttrs: MdAttrs = {};
+        for (const name of ["data-lon", "data-lat"]) {
+          const value = pinEl.getAttribute(name);
+          if (value !== null && value !== "") pinAttrs[name] = value;
+        }
+
+        const pinChildren: MdNode[] = [];
+        for (const child of Array.from(pinEl.children)) {
+          const childClasses = (child.getAttribute("class") || "").split(/\s+/);
+          if (childClasses.includes("annot-title")) {
+            pinChildren.push(
+              e("div", parseInline(child), { class: "annot-title" }),
+            );
+            continue;
+          }
+          if (childClasses.includes("annot-desc")) {
+            pinChildren.push(
+              e("div", parseInline(child), { class: "annot-desc" }),
+            );
+            continue;
+          }
+          if (childClasses.includes("annot-link")) {
+            const anchorEl = child.querySelector("a");
+            const href = anchorEl?.getAttribute("href") || "";
+            pinChildren.push(
+              e(
+                "div",
+                anchorEl
+                  ? [
+                      e(
+                        "a",
+                        parseInline(anchorEl),
+                        href ? { href } : undefined,
+                      ),
+                    ]
+                  : [],
+                { class: "annot-link" },
+              ),
+            );
+            continue;
+          }
+          if (childClasses.includes("annot-image")) {
+            const imageAttrs: MdAttrs = { class: "annot-image" };
+            const imageEl = child.querySelector("img");
+            const source =
+              child.getAttribute("data-src") || imageEl?.getAttribute("src") || "";
+            const alt =
+              child.getAttribute("data-alt") || imageEl?.getAttribute("alt") || "";
+            if (source) imageAttrs["data-src"] = source;
+            if (alt) imageAttrs["data-alt"] = alt;
+            const imageChildren: MdNode[] = source
+              ? [e("img", [], alt ? { src: source, alt } : { src: source })]
+              : [];
+            pinChildren.push(e("div", imageChildren, imageAttrs));
+          }
+        }
+        pins.push(
+          e(
+            "li",
+            pinChildren,
+            Object.keys(pinAttrs).length ? pinAttrs : undefined,
+          ),
+        );
+      }
+      if (pins.length > 0) {
+        children.push(e("ul", pins, { class: "stgy-track-pins" }));
+      }
+    }
+
+    const captionEl = Array.from(el.children).find(
+      (child) => child.tagName.toLowerCase() === "figcaption",
+    ) as Element | undefined;
+    if (captionEl) {
+      children.push(
+        e("figcaption", parseInline(captionEl), {
+          class: "stgy-track-caption",
+        }),
+      );
+    }
+
+    return e("figure", children, attrs);
+  };
+
   const listAttrsFor = (listEl: Element): MdAttrs | undefined => {
     const tag = listEl.tagName.toLowerCase();
     const { bulletNone } = marksFromStyle(listEl.getAttribute("style"));
@@ -1520,6 +1663,12 @@ export function parseHtml(
         continue;
       }
       if (tag === "figure") {
+        const track = parseTrackFigure(el);
+        if (track) {
+          flushInline();
+          sink.push(track);
+          continue;
+        }
         const embed = parseEmbedFigure(el);
         if (embed) {
           flushInline();
@@ -1701,6 +1850,12 @@ export function parseHtml(
           continue;
         }
         if (tag === "figure") {
+          const track = parseTrackFigure(el);
+          if (track) {
+            flushInlineBufTo(sink, inlineBuf);
+            sink.push(track);
+            continue;
+          }
           const embed = parseEmbedFigure(el);
           if (embed) {
             flushInlineBufTo(sink, inlineBuf);
@@ -3685,57 +3840,60 @@ export function mdRenderMarkdown(nodes: MdNode[]): string {
     const height = /(?:^|;)\s*height\s*:\s*([^;]+)/i.exec(style)?.[1]?.trim();
     addOpt("height", height);
 
+    const pinBlocks: string[] = [];
+    for (const child of fig.children || []) {
+      if (!isElement(child, "ul") || !hasClass(child, "stgy-track-pins")) {
+        continue;
+      }
+      for (const pin of child.children || []) {
+        if (!isElement(pin, "li")) continue;
+        const pinLon = getAttrStr(pin.attrs, "data-lon") || "";
+        const pinLat = getAttrStr(pin.attrs, "data-lat") || "";
+        const fields = [`${pinLon},${pinLat}`];
+        const findChildText = (cls: string): string => {
+          const found = (pin.children || []).find(
+            (n) => isElement(n) && hasClass(n, cls),
+          ) as MdElementNode | undefined;
+          return collectPlainText(found?.children || []).trim();
+        };
+        const title = findChildText("annot-title");
+        const description = findChildText("annot-desc");
+        let href = "";
+        let image = "";
+        for (const n of pin.children || []) {
+          if (isElement(n) && hasClass(n, "annot-link")) {
+            const a = (n.children || []).find((c) => isElement(c, "a")) as
+              | MdElementNode
+              | undefined;
+            href = getAttrStr(a?.attrs, "href") || "";
+          }
+          if (isElement(n) && hasClass(n, "annot-image")) {
+            image = getAttrStr(n.attrs, "data-src") || "";
+            if (!image) {
+              const img = (n.children || []).find((c) => isElement(c, "img")) as
+                | MdElementNode
+                | undefined;
+              image = getAttrStr(img?.attrs, "src") || "";
+            }
+          }
+        }
+        if (title || description || href || image) fields.push(title);
+        if (description || href || image) fields.push(description);
+        if (href || image) fields.push(href);
+        if (image) fields.push(image);
+        pinBlocks.push(fields.join(";"));
+      }
+    }
+
     const dataSrc = getAttrStr(fig.attrs, "data-src");
     let url = dataSrc ? sanitizeUrl(dataSrc) : "";
-    if (!url) {
+    if (url) {
+      if (pinBlocks.length > 0) url = [url, ...pinBlocks].join("|");
+    } else {
       const lon = getAttrStr(fig.attrs, "data-lon") || "";
       const lat = getAttrStr(fig.attrs, "data-lat") || "";
       const zoom = getAttrStr(fig.attrs, "data-zoom") || "";
-      const blocks: string[] = [`${lon},${lat},${zoom}`];
-      for (const child of fig.children || []) {
-        if (!isElement(child, "ul") || !hasClass(child, "stgy-track-pins")) {
-          continue;
-        }
-        for (const pin of child.children || []) {
-          if (!isElement(pin, "li")) continue;
-          const pinLon = getAttrStr(pin.attrs, "data-lon") || "";
-          const pinLat = getAttrStr(pin.attrs, "data-lat") || "";
-          const fields = [`${pinLon},${pinLat}`];
-          const findChildText = (cls: string): string => {
-            const found = (pin.children || []).find(
-              (n) => isElement(n) && hasClass(n, cls),
-            ) as MdElementNode | undefined;
-            return collectPlainText(found?.children || []).trim();
-          };
-          const title = findChildText("annot-title");
-          const description = findChildText("annot-desc");
-          let href = "";
-          let image = "";
-          for (const n of pin.children || []) {
-            if (isElement(n) && hasClass(n, "annot-link")) {
-              const a = (n.children || []).find((c) => isElement(c, "a")) as
-                | MdElementNode
-                | undefined;
-              href = getAttrStr(a?.attrs, "href") || "";
-            }
-            if (isElement(n) && hasClass(n, "annot-image")) {
-              image = getAttrStr(n.attrs, "data-src") || "";
-              if (!image) {
-                const img = (n.children || []).find((c) => isElement(c, "img")) as
-                  | MdElementNode
-                  | undefined;
-                image = getAttrStr(img?.attrs, "src") || "";
-              }
-            }
-          }
-          if (title || description || href || image) fields.push(title);
-          if (description || href || image) fields.push(description);
-          if (href || image) fields.push(href);
-          if (image) fields.push(image);
-          blocks.push(fields.join(";"));
-        }
-      }
-      url = `map://${blocks.join("|")}`;
+      url = `map://${[`${lon},${lat},${zoom}`, ...pinBlocks].join("|")}`;
     }
 
     const attrsStr = macro.length ? `{${macro.join(", ")}}` : "";

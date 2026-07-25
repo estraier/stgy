@@ -29,11 +29,28 @@ describe("markdown track options", () => {
     expect(isTrackMapUrl("map://135.123,35.123")).toBe(true);
     expect(isTrackMapUrl("/tracks/a.fit")).toBe(true);
     expect(isTrackMapUrl("/tracks/a.TRJGZ?download=1#preview")).toBe(true);
+    expect(
+      isTrackMapUrl("/tracks/a.trjgz|139.1,35.1;Stop;;;/images/stop.jpg"),
+    ).toBe(true);
 
     expect(isTrackMapUrl("https://www.youtube.com/watch?v=dQw4w9WgXcQ")).toBe(false);
     expect(isTrackMapUrl("/tracks/a.gpx")).toBe(false);
     expect(isTrackMapUrl("/tracks/a.trj")).toBe(false);
     expect(isTrackMapUrl("/tracks/a.fit.txt")).toBe(false);
+  });
+
+  test("parses a track embedding line with pins", () => {
+    expect(
+      parseTrackMarkdownLine(
+        "@[Ride](/tracks/u/previews/a.trjgz|139.1,35.1;Stop){base=photo}",
+      ),
+    ).toEqual({
+      leading: "",
+      caption: "Ride",
+      url: "/tracks/u/previews/a.trjgz|139.1,35.1;Stop",
+      options: "base=photo",
+      trailing: "",
+    });
   });
 
   test("rejects non-track markdown lines and non-map embeds", () => {

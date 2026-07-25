@@ -329,10 +329,25 @@ def iter_embed_urls(text: str) -> Iterable[tuple[str, str]]:
     yield match.group("prefix")[0], match.group("url").strip()
 
 
+def split_track_embed_with_pins(url: str) -> tuple[list[str], int] | None:
+  blocks = url.split("|")
+  if url.startswith("map://"):
+    return blocks, 1
+  if len(blocks) < 2:
+    return None
+  source_url = blocks[0].strip()
+  source_path = urlsplit(source_url).path.lower()
+  if not source_path.endswith((".fit", ".trjgz")):
+    return None
+  return blocks, 1
+
+
 def iter_map_pin_image_urls(url: str) -> Iterable[str]:
-  if not url.startswith("map://"):
+  split = split_track_embed_with_pins(url)
+  if split is None:
     return
-  for block in url[len("map://"):].split("|")[1:]:
+  blocks, first_pin_index = split
+  for block in blocks[first_pin_index:]:
     fields = block.split(";")
     if len(fields) < 5:
       continue
@@ -406,10 +421,13 @@ def collect_media_references(
         continue
       if kind != "@":
         continue
-      if url.startswith("map://"):
+      split = split_track_embed_with_pins(url)
+      if split is not None:
         for image_url in iter_map_pin_image_urls(url):
           add_image_reference(post.path, image_url)
-        continue
+        if url.startswith("map://"):
+          continue
+        url = split[0][0].strip()
 
       candidate = resolve_archive_url(data_dir, post.path, url)
       if candidate is None:
@@ -487,12 +505,26 @@ def rewrite_map_pin_image_urls(
   source_file: Path,
   data_dir: Path,
   image_urls: dict[Path, str],
+  track_urls_by_preview: dict[Path, str] | None = None,
 ) -> str:
-  if not url.startswith("map://"):
+  split = split_track_embed_with_pins(url)
+  if split is None:
     return url
-  blocks = url.split("|")
+  blocks, first_pin_index = split
   changed = False
-  for index in range(1, len(blocks)):
+
+  if not url.startswith("map://") and track_urls_by_preview is not None:
+    raw_source_url = blocks[0]
+    stripped_source_url = raw_source_url.strip()
+    candidate = resolve_archive_url(data_dir, source_file, stripped_source_url)
+    replacement = track_urls_by_preview.get(candidate) if candidate is not None else None
+    if replacement is not None:
+      leading = raw_source_url[:len(raw_source_url) - len(raw_source_url.lstrip())]
+      trailing = raw_source_url[len(raw_source_url.rstrip()):]
+      blocks[0] = f"{leading}{replacement}{trailing}"
+      changed = True
+
+  for index in range(first_pin_index, len(blocks)):
     fields = blocks[index].split(";")
     if len(fields) < 5:
       continue
@@ -523,12 +555,13 @@ def rewrite_embeds(
     kind = match.group("prefix")[0]
     raw_url = match.group("url")
     stripped_url = raw_url.strip()
-    if kind == "@" and stripped_url.startswith("map://"):
+    if kind == "@" and split_track_embed_with_pins(stripped_url) is not None:
       rewritten_url = rewrite_map_pin_image_urls(
         stripped_url,
         source_file,
         data_dir,
         image_urls,
+        track_urls_by_preview,
       )
       if rewritten_url == stripped_url:
         return match.group(0)

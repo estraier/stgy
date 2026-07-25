@@ -2497,6 +2497,16 @@ describe("mdRenderHtml basics", () => {
     );
   });
 
+  it("track map source with pins", () => {
+    const mdText =
+      "@[Ride](/maps/ride.trjgz|" +
+      "139.1,35.1;Stop;Rest;;/media/stop.jpg|" +
+      "139.2,35.2;Goal)";
+    expect(makeHtml(mdText)).toBe(
+      '<figure class="stgy-track-map" data-src="/maps/ride.trjgz"><div class="stgy-track-canvas"></div><ul class="stgy-track-pins"><li data-lat="35.1" data-lon="139.1"><div class="annot-title">Stop</div><div class="annot-desc">Rest</div><div class="annot-image" data-alt="Stop" data-src="/media/stop.jpg"></div></li><li data-lat="35.2" data-lon="139.2"><div class="annot-title">Goal</div></li></ul><figcaption class="stgy-track-caption">Ride</figcaption></figure>',
+    );
+  });
+
   it("inline track map pins", () => {
     const mdText =
       "@[Akatutumi](map://139.6444794,35.6595519,15|" +
@@ -2760,6 +2770,14 @@ describe("mdRenderMarkdown basics", () => {
     expect(makeMarkdown(mdText)).toBe(mdText + "\n");
   });
 
+  it("track map source with pins", () => {
+    const mdText =
+      "@[Ride](/maps/ride.trjgz|" +
+      "139.1,35.1;Stop;Rest;;/media/stop.jpg|" +
+      "139.2,35.2;Goal){base=photo}";
+    expect(makeMarkdown(mdText)).toBe(mdText + "\n");
+  });
+
   it("inline track map pins", () => {
     const mdText =
       "@[Akatutumi](map://139.6444794,35.6595519,15|" +
@@ -2814,6 +2832,23 @@ describe("mdRenderMarkdown basics", () => {
 });
 
 describe("mdRenderMarkdown from HTML", () => {
+  it("track map source with pins", () => {
+    const html =
+      '<figure class="stgy-track-map" data-src="/maps/ride.trjgz">' +
+      '<div class="stgy-track-canvas"></div>' +
+      '<ul class="stgy-track-pins">' +
+      '<li data-lon="139.1" data-lat="35.1">' +
+      '<div class="annot-title">Stop</div>' +
+      '<div class="annot-desc">Rest</div>' +
+      '<div class="annot-image" data-src="/media/stop.jpg"></div>' +
+      '</li></ul>' +
+      '<figcaption class="stgy-track-caption">Ride</figcaption>' +
+      '</figure>';
+    expect(makeMarkdownFromHtml(html)).toBe(
+      "@[Ride](/maps/ride.trjgz|139.1,35.1;Stop;Rest;;/media/stop.jpg)\n",
+    );
+  });
+
   it("inline variations", () => {
     const html = `<span>normal</span>
 <strong>bold1</strong>

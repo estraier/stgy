@@ -64,7 +64,7 @@ function replaceTrackUrl(text: string, source: string, replacement: string): str
   if (!source) return text;
   const sourceWithoutQuery = source.replace(/[?#].*$/, "");
   const pattern = new RegExp(
-    `${escapeRegExp(sourceWithoutQuery)}(?:[?#][^)\\s\"'<>]*)?`,
+    `${escapeRegExp(sourceWithoutQuery)}(?:[?#][^)|\\s\"'<>]*)?`,
     "g",
   );
   return text.replace(pattern, replacement);

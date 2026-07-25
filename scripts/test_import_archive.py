@@ -66,6 +66,58 @@ class ImportArchiveMapPinImageTest(unittest.TestCase):
       self.assertIn("139.2,35.2;Second;;; /images/OWNER/masters/second.png ", rewritten)
       self.assertIn("https://example.com/external.jpg", rewritten)
 
+  def test_collects_and_rewrites_track_source_with_pin_images(self) -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+      data_dir = Path(temporary_directory).resolve()
+      posts_dir = data_dir / "posts"
+      images_dir = data_dir / "images"
+      previews_dir = data_dir / "tracks" / "previews"
+      masters_dir = data_dir / "tracks" / "masters"
+      posts_dir.mkdir()
+      images_dir.mkdir()
+      previews_dir.mkdir(parents=True)
+      masters_dir.mkdir(parents=True)
+      post_path = posts_dir / "0001.json"
+      post_path.write_text("{}", encoding="utf-8")
+      image_path = images_dir / "stop.jpg"
+      preview_path = previews_dir / "ride.trjgz"
+      master_path = masters_dir / "ride.fit"
+      image_path.write_bytes(b"image")
+      preview_path.write_bytes(b"preview")
+      master_path.write_bytes(b"master")
+
+      content = (
+        "@[Ride](../tracks/previews/ride.trjgz|"
+        "139.1,35.1;Stop;Rest;;../images/stop.jpg)"
+      )
+      post = MODULE.ArchivePost(
+        path=post_path,
+        data={"id": "0000000000000001", "content": content},
+      )
+
+      image_paths, track_paths, preview_to_master = MODULE.collect_media_references(
+        data_dir,
+        [post],
+      )
+
+      self.assertEqual(image_paths, (image_path,))
+      self.assertEqual(track_paths, (master_path,))
+      self.assertEqual(preview_to_master, {preview_path: master_path})
+
+      rewritten = MODULE.rewrite_embeds(
+        content,
+        post_path,
+        data_dir,
+        {image_path: "/images/OWNER/masters/stop.jpg"},
+        {preview_path: "/tracks/OWNER/masters/ride.fit"},
+      )
+
+      self.assertEqual(
+        rewritten,
+        "@[Ride](/tracks/OWNER/masters/ride.fit|"
+        "139.1,35.1;Stop;Rest;;/images/OWNER/masters/stop.jpg)",
+      )
+
   def test_rejects_missing_local_map_pin_image(self) -> None:
     with tempfile.TemporaryDirectory() as temporary_directory:
       data_dir = Path(temporary_directory).resolve()
