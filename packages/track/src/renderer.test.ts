@@ -225,6 +225,20 @@ const flushPromises = async () => {
   await new Promise(process.nextTick);
 };
 
+const makeInlinePins = (count: number, color?: string) => {
+  return Array.from({ length: count }, (_, index) => {
+    const colorAttribute = color ? ` data-color="${color}"` : "";
+    return `<li data-lat="${35 + index * 0.001}" data-lon="${139 + index * 0.001}"${colorAttribute}></li>`;
+  }).join("");
+};
+
+const getMarkerIconSize = (markerCallIndex = 0): [number, number] => {
+  const options = (L.marker as jest.Mock).mock.calls[markerCallIndex][1] as
+    L.MarkerOptions;
+  const icon = options.icon as L.Icon;
+  return icon.options.iconSize as [number, number];
+};
+
 const makeTrackWithGraph = () => ({
   type: "FeatureCollection",
   features: [
@@ -309,6 +323,75 @@ describe("StgyTrackRenderer", () => {
       zoomControl: false,
     }));
     expect(L.control.layers).not.toHaveBeenCalled();
+  });
+
+  test.each([
+    [1, 0.9],
+    [10, 0.8],
+    [30, 0.7],
+  ])("scales %i inline pins to %p of the original size", (pinCount, scale) => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-lat="35" data-lon="139">
+        <div class="stgy-track-canvas"></div>
+        <ul class="stgy-track-pins">${makeInlinePins(pinCount)}</ul>
+      </figure>
+    `;
+
+    renderer.hydrate(document.body);
+
+    const [width, height] = getMarkerIconSize();
+    expect(width).toBeCloseTo(25 * scale);
+    expect(height).toBeCloseTo(41 * scale);
+  });
+
+  test("uses the same count-dependent size for colored pins", () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-lat="35" data-lon="139">
+        <div class="stgy-track-canvas"></div>
+        <ul class="stgy-track-pins">${makeInlinePins(10, "red")}</ul>
+      </figure>
+    `;
+
+    renderer.hydrate(document.body);
+
+    const [width, height] = getMarkerIconSize();
+    expect(width).toBeCloseTo(25 * 0.8);
+    expect(height).toBeCloseTo(41 * 0.8);
+  });
+
+  test("counts GeoJSON Point and MultiPoint pins together with inline pins", async () => {
+    document.body.innerHTML = `
+      <figure class="stgy-track-map" data-src="#pins" data-lat="35" data-lon="139">
+        <div class="stgy-track-canvas"></div>
+        <ul class="stgy-track-pins">${makeInlinePins(7)}</ul>
+      </figure>
+    `;
+
+    jest.spyOn(TrackLoader.prototype, "load").mockResolvedValue({
+      type: "FeatureCollection",
+      features: [
+        {
+          type: "Feature",
+          geometry: { type: "Point", coordinates: [139, 35] },
+          properties: {},
+        },
+        {
+          type: "Feature",
+          geometry: {
+            type: "MultiPoint",
+            coordinates: [[139.1, 35.1], [139.2, 35.2]],
+          },
+          properties: {},
+        },
+      ],
+    });
+
+    renderer.hydrate(document.body);
+    await flushPromises();
+
+    const [width, height] = getMarkerIconSize();
+    expect(width).toBeCloseTo(25 * 0.8);
+    expect(height).toBeCloseTo(41 * 0.8);
   });
 
   test("shows copyable coordinates on a map context click", () => {
@@ -855,6 +938,7 @@ describe("StgyTrackRenderer", () => {
         lat: (35.681 + 35.69) / 2,
         lng: (139.767 + 139.78) / 2,
       }),
+      expect.objectContaining({ icon: expect.anything() }),
     );
   });
 

@@ -54,9 +54,9 @@ class ImportArchiveMapPinImageTest(unittest.TestCase):
       content = (
         "![same](../images/first.jpg)\n"
         "@[Map](map://139.0,35.0,13|"
-        "139.1,35.1;First;;;../images/first.jpg|"
+        "139.1,35.1;First;;;../images/first.jpg ../images/second.png|"
         "139.2,35.2;Second;;; ../images/second.png |"
-        "139.3,35.3;External;;;https://example.com/external.jpg)"
+        "139.3,35.3;External;;;https://example.com/one.jpg https://example.com/two.jpg)"
       )
       post = MODULE.ArchivePost(
         path=post_path,
@@ -84,9 +84,16 @@ class ImportArchiveMapPinImageTest(unittest.TestCase):
       )
 
       self.assertIn("![same](/images/OWNER/masters/first.jpg)", rewritten)
-      self.assertIn("139.1,35.1;First;;;/images/OWNER/masters/first.jpg", rewritten)
+      self.assertIn(
+        "139.1,35.1;First;;;/images/OWNER/masters/first.jpg "
+        "/images/OWNER/masters/second.png",
+        rewritten,
+      )
       self.assertIn("139.2,35.2;Second;;; /images/OWNER/masters/second.png ", rewritten)
-      self.assertIn("https://example.com/external.jpg", rewritten)
+      self.assertIn(
+        "https://example.com/one.jpg https://example.com/two.jpg",
+        rewritten,
+      )
 
   def test_collects_and_rewrites_track_source_with_pin_images(self) -> None:
     with tempfile.TemporaryDirectory() as temporary_directory:
@@ -139,6 +146,34 @@ class ImportArchiveMapPinImageTest(unittest.TestCase):
         "@[Ride](/tracks/OWNER/masters/ride.fit|"
         "139.1,35.1;Stop;Rest;;/images/OWNER/masters/stop.jpg)",
       )
+
+  def test_reports_each_space_separated_map_pin_image_separately(self) -> None:
+    with tempfile.TemporaryDirectory() as temporary_directory:
+      data_dir = Path(temporary_directory).resolve()
+      posts_dir = data_dir / "posts"
+      images_dir = data_dir / "images"
+      posts_dir.mkdir()
+      images_dir.mkdir()
+      post_path = posts_dir / "0001.json"
+      post_path.write_text("{}", encoding="utf-8")
+      existing = images_dir / "existing.jpg"
+      existing.write_bytes(b"existing")
+      post = MODULE.ArchivePost(
+        path=post_path,
+        data={
+          "id": "0000000000000001",
+          "content": (
+            "@[Map](map://139,35,13|139,35;Two images;;;"
+            "../images/existing.jpg ../images/missing.jpg)"
+          ),
+        },
+      )
+
+      with self.assertRaisesRegex(
+        ValueError,
+        r"referenced image not found: .*\.\./images/missing\.jpg$",
+      ):
+        MODULE.collect_media_references(data_dir, [post])
 
   def test_rejects_missing_local_map_pin_image(self) -> None:
     with tempfile.TemporaryDirectory() as temporary_directory:

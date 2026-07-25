@@ -7,6 +7,17 @@ import { getTrackJsonTitle } from "./trackjson";
 
 const DEFAULT_PIN_COLOR = "#3388ff";
 const DEFAULT_ROUTE_COLOR = "#0078A8";
+const DEFAULT_PIN_SCALE = 0.9;
+const TEN_PIN_SCALE = 0.8;
+const THIRTY_PIN_SCALE = 0.7;
+const PIN_ICON_WIDTH = 25;
+const PIN_ICON_HEIGHT = 41;
+const PIN_ICON_ANCHOR_X = 12;
+const PIN_POPUP_ANCHOR_X = 1;
+const PIN_POPUP_ANCHOR_Y = -34;
+const PIN_TOOLTIP_ANCHOR_X = 16;
+const PIN_TOOLTIP_ANCHOR_Y = -28;
+const PIN_SHADOW_SIZE = 41;
 const DEFAULT_DOWNLOAD_LABEL = "Download original data";
 const ALLOWED_URL_PROTOCOLS = new Set(["http:", "https:"]);
 const ALLOWED_MAP_COLORS = new Set([
@@ -223,23 +234,36 @@ type LeafletMapWithRemovalTimers = L.Map & {
 
 const trackMapsByCanvas = new WeakMap<HTMLElement, L.Map>();
 
-const fixLeafletIcons = () => {
+const getPinScale = (pinCount: number): number => {
+  if (pinCount >= 30) {
+    return THIRTY_PIN_SCALE;
+  }
+  if (pinCount >= 10) {
+    return TEN_PIN_SCALE;
+  }
+  return DEFAULT_PIN_SCALE;
+};
+
+const createDefaultPinIcon = (scale: number) => {
   const iconUrl = "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png";
   const iconRetinaUrl = "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png";
   const shadowUrl = "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png";
 
-  delete (L.Marker.prototype as unknown as Record<string, unknown>)._getIconUrl;
-
-  L.Marker.prototype.options.icon = L.icon({
+  return L.icon({
     iconUrl,
     iconRetinaUrl,
     shadowUrl,
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [1, -34],
-    tooltipAnchor: [16, -28],
-    shadowSize: [41, 41],
+    iconSize: [PIN_ICON_WIDTH * scale, PIN_ICON_HEIGHT * scale],
+    iconAnchor: [PIN_ICON_ANCHOR_X * scale, PIN_ICON_HEIGHT * scale],
+    popupAnchor: [PIN_POPUP_ANCHOR_X * scale, PIN_POPUP_ANCHOR_Y * scale],
+    tooltipAnchor: [PIN_TOOLTIP_ANCHOR_X * scale, PIN_TOOLTIP_ANCHOR_Y * scale],
+    shadowSize: [PIN_SHADOW_SIZE * scale, PIN_SHADOW_SIZE * scale],
   });
+};
+
+const fixLeafletIcons = () => {
+  delete (L.Marker.prototype as unknown as Record<string, unknown>)._getIconUrl;
+  L.Marker.prototype.options.icon = createDefaultPinIcon(DEFAULT_PIN_SCALE);
 };
 
 const isRecord = (value: unknown): value is JsonRecord => {
@@ -281,20 +305,81 @@ const normalizeMapColor = (value: unknown): string | null => {
   return null;
 };
 
-const createCustomPinIcon = (color: string) => {
+const createCustomPinIcon = (color: string, scale: number) => {
   const safeColor = normalizeMapColor(color) || DEFAULT_PIN_COLOR;
+  const width = PIN_ICON_WIDTH * scale;
+  const height = PIN_ICON_HEIGHT * scale;
   const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="25px" height="41px" style="filter: drop-shadow(2px 4px 2px rgba(0,0,0,0.3));">
+    <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 36" width="${width}px" height="${height}px" style="filter: drop-shadow(2px 4px 2px rgba(0,0,0,0.3));">
       <path fill="${safeColor}" stroke="#ffffff" stroke-width="1.5" d="M12 0C5.373 0 0 5.373 0 12c0 8.442 11.373 23.36 11.706 23.784.144.184.364.288.594.288.23 0 .45-.104.594-.288C13.227 35.36 24 20.442 24 12 24 5.373 18.627 0 12 0zm0 18c-3.314 0-6-2.686-6-6s2.686-6 6-6 6 2.686 6 6-2.686 6-6 6z"/>
     </svg>`;
 
   return L.divIcon({
     className: "stgy-custom-pin",
     html: svg,
-    iconSize: [25, 41],
-    iconAnchor: [12, 41],
-    popupAnchor: [0, -34],
+    iconSize: [width, height],
+    iconAnchor: [PIN_ICON_ANCHOR_X * scale, height],
+    popupAnchor: [0, PIN_POPUP_ANCHOR_Y * scale],
   });
+};
+
+const isGeoJsonPosition = (value: unknown): boolean => {
+  return (
+    Array.isArray(value) &&
+    value.length >= 2 &&
+    typeof value[0] === "number" &&
+    Number.isFinite(value[0]) &&
+    typeof value[1] === "number" &&
+    Number.isFinite(value[1])
+  );
+};
+
+const countGeoJsonGeometryPins = (geometry: unknown): number => {
+  if (!isRecord(geometry)) {
+    return 0;
+  }
+
+  if (geometry.type === "Point") {
+    return isGeoJsonPosition(geometry.coordinates) ? 1 : 0;
+  }
+
+  if (geometry.type === "MultiPoint") {
+    return Array.isArray(geometry.coordinates)
+      ? geometry.coordinates.filter(isGeoJsonPosition).length
+      : 0;
+  }
+
+  if (geometry.type === "GeometryCollection") {
+    return Array.isArray(geometry.geometries)
+      ? geometry.geometries.reduce(
+          (total, child) => total + countGeoJsonGeometryPins(child),
+          0,
+        )
+      : 0;
+  }
+
+  return 0;
+};
+
+const countGeoJsonPins = (value: unknown): number => {
+  if (!isRecord(value)) {
+    return 0;
+  }
+
+  if (value.type === "FeatureCollection") {
+    return Array.isArray(value.features)
+      ? value.features.reduce(
+          (total, feature) => total + countGeoJsonPins(feature),
+          0,
+        )
+      : 0;
+  }
+
+  if (value.type === "Feature") {
+    return countGeoJsonGeometryPins(value.geometry);
+  }
+
+  return countGeoJsonGeometryPins(value);
 };
 
 export class StgyTrackRenderer {
@@ -2377,16 +2462,19 @@ export class StgyTrackRenderer {
   private createGeoJsonLayer(
     map: L.Map,
     geoJsonData: unknown,
-    context: CoordinateInteractionContext
+    context: CoordinateInteractionContext,
+    pinScale: number,
   ): L.GeoJSON {
     return L.geoJSON(asGeoJsonInput(geoJsonData), {
       style: (feature) => this.getFeaturePathStyle(feature),
       pointToLayer: (feature, latlng) => {
         const props = getFeatureProperties(feature);
-        const markerOptions: L.MarkerOptions = {};
+        const markerOptions: L.MarkerOptions = {
+          icon: createDefaultPinIcon(pinScale),
+        };
         const pinColor = normalizeMapColor(props.color);
         if (pinColor) {
-          markerOptions.icon = createCustomPinIcon(pinColor);
+          markerOptions.icon = createCustomPinIcon(pinColor, pinScale);
         }
         return L.marker(latlng, markerOptions);
       },
@@ -2459,14 +2547,17 @@ export class StgyTrackRenderer {
     layerGroup: L.FeatureGroup,
     geoJsonData: unknown,
     label: string,
-    context: CoordinateInteractionContext
+    context: CoordinateInteractionContext,
+    pinScale: number,
   ) {
     const center = this.getGeoJsonCenter(geoJsonData);
     if (!center) {
       return;
     }
 
-    const marker = L.marker(center);
+    const marker = L.marker(center, {
+      icon: createDefaultPinIcon(pinScale),
+    });
     if (label) {
       const popupElement = document.createElement("div");
       const title = document.createElement("div");
@@ -2479,7 +2570,7 @@ export class StgyTrackRenderer {
     let routeLayer: L.GeoJSON | null = null;
     marker.on("click", () => {
       if (!routeLayer) {
-        routeLayer = this.createGeoJsonLayer(map, geoJsonData, context);
+        routeLayer = this.createGeoJsonLayer(map, geoJsonData, context, pinScale);
       }
       if (layerGroup.hasLayer(routeLayer)) {
         layerGroup.removeLayer(routeLayer);
@@ -2529,10 +2620,12 @@ export class StgyTrackRenderer {
     const pinViewBounds = this.createBoundsAccumulator();
 
     const inlinePins = figure.querySelectorAll<HTMLElement>(".stgy-track-pins li");
+    let pinCount = 0;
     inlinePins.forEach((pin) => {
       const pinLat = parseFloat(pin.dataset.lat || "0");
       const pinLon = parseFloat(pin.dataset.lon || "0");
       if (pinLat !== 0 || pinLon !== 0) {
+        pinCount += 1;
         this.extendBoundsWithLatLng(viewBounds, pinLat, pinLon);
         this.extendBoundsWithLatLng(pinViewBounds, pinLat, pinLon);
       }
@@ -2542,6 +2635,7 @@ export class StgyTrackRenderer {
       try {
         const preloadedTrackData = await this.loadTrackData(dataSrc, trackDataCache);
         preloadedTracks.push({ source: dataSrc, data: preloadedTrackData });
+        pinCount += countGeoJsonPins(preloadedTrackData);
         this.extendBoundsWithGeoJson(viewBounds, preloadedTrackData);
         this.extendTypedBoundsWithGeoJson(
           routeViewBounds,
@@ -2565,10 +2659,12 @@ export class StgyTrackRenderer {
           if (link.dataset.render === "pin") {
             const center = this.getGeoJsonCenter(preloadedTrackData);
             if (center) {
+              pinCount += 1;
               this.extendBoundsWithLatLng(viewBounds, center.lat, center.lng);
               this.extendBoundsWithLatLng(pinViewBounds, center.lat, center.lng);
             }
           } else {
+            pinCount += countGeoJsonPins(preloadedTrackData);
             this.extendBoundsWithGeoJson(viewBounds, preloadedTrackData);
             this.extendTypedBoundsWithGeoJson(
               routeViewBounds,
@@ -2582,6 +2678,8 @@ export class StgyTrackRenderer {
         }
       }
     }
+
+    const pinScale = getPinScale(pinCount);
 
     if (!hasExplicitLat || !hasExplicitLon) {
       const center = this.getBoundsCenter(viewBounds);
@@ -2705,13 +2803,18 @@ export class StgyTrackRenderer {
     const masterGroup = L.featureGroup().addTo(map);
 
     if (inlinePins.length > 0) {
-      this.renderInlinePins(map, masterGroup, inlinePins);
+      this.renderInlinePins(map, masterGroup, inlinePins, pinScale);
     }
 
     if (dataSrc) {
       try {
         const geoJsonData = await this.loadTrackData(dataSrc, trackDataCache);
-        const geoJsonLayer = this.createGeoJsonLayer(map, geoJsonData, interactionContext);
+        const geoJsonLayer = this.createGeoJsonLayer(
+          map,
+          geoJsonData,
+          interactionContext,
+          pinScale,
+        );
         masterGroup.addLayer(geoJsonLayer);
       } catch (e) {
         this.showError(figure, this.toUserErrorMessage(e));
@@ -2727,9 +2830,21 @@ export class StgyTrackRenderer {
         try {
           const geoJsonData = await this.loadTrackData(href, trackDataCache);
           if (link.dataset.render === "pin") {
-            this.renderTrackAsPin(map, masterGroup, geoJsonData, link.textContent?.trim() || "", interactionContext);
+            this.renderTrackAsPin(
+              map,
+              masterGroup,
+              geoJsonData,
+              link.textContent?.trim() || "",
+              interactionContext,
+              pinScale,
+            );
           } else {
-            const geoJsonLayer = this.createGeoJsonLayer(map, geoJsonData, interactionContext);
+            const geoJsonLayer = this.createGeoJsonLayer(
+              map,
+              geoJsonData,
+              interactionContext,
+              pinScale,
+            );
             masterGroup.addLayer(geoJsonLayer);
           }
         } catch (e) {
@@ -2799,7 +2914,12 @@ export class StgyTrackRenderer {
     figure.dataset.stgyTrackInitialized = "true";
   }
 
-  private renderInlinePins(map: L.Map, layerGroup: L.FeatureGroup, pins: NodeListOf<HTMLElement>) {
+  private renderInlinePins(
+    map: L.Map,
+    layerGroup: L.FeatureGroup,
+    pins: NodeListOf<HTMLElement>,
+    pinScale: number,
+  ) {
     const mapContainer = map.getContainer();
     const mapWidth = mapContainer.clientWidth;
     const mapHeight = mapContainer.clientHeight;
@@ -2818,10 +2938,12 @@ export class StgyTrackRenderer {
       const popupMaxHeight = mapHeight * (heightPct / 100);
       const minWidth = Math.min(150, maxWidth * 0.5);
 
-      const markerOptions: L.MarkerOptions = {};
+      const markerOptions: L.MarkerOptions = {
+        icon: createDefaultPinIcon(pinScale),
+      };
       const pinColor = normalizeMapColor(li.dataset.color);
       if (pinColor) {
-        markerOptions.icon = createCustomPinIcon(pinColor);
+        markerOptions.icon = createCustomPinIcon(pinColor, pinScale);
       }
 
       const marker = L.marker([lat, lon], markerOptions);

@@ -363,9 +363,8 @@ def iter_map_pin_image_urls(url: str) -> Iterable[str]:
     fields = block.split(";")
     if len(fields) < 5:
       continue
-    image_url = fields[4].strip()
-    if image_url:
-      yield image_url
+    for match in re.finditer(r"\S+", fields[4]):
+      yield match.group(0)
 
 
 def resolve_archive_url(data_dir: Path, source_file: Path, url: str) -> Path | None:
@@ -540,17 +539,26 @@ def rewrite_map_pin_image_urls(
     fields = blocks[index].split(";")
     if len(fields) < 5:
       continue
-    raw_image_url = fields[4]
-    stripped_image_url = raw_image_url.strip()
-    if not stripped_image_url:
+    raw_image_urls = fields[4]
+    if not raw_image_urls.strip():
       continue
-    candidate = resolve_archive_url(data_dir, source_file, stripped_image_url)
-    replacement = image_urls.get(candidate) if candidate is not None else None
-    if replacement is None:
+
+    field_changed = False
+
+    def replace_image_url(match: re.Match[str]) -> str:
+      nonlocal field_changed
+      image_url = match.group(0)
+      candidate = resolve_archive_url(data_dir, source_file, image_url)
+      replacement = image_urls.get(candidate) if candidate is not None else None
+      if replacement is None:
+        return image_url
+      field_changed = True
+      return replacement
+
+    rewritten_image_urls = re.sub(r"\S+", replace_image_url, raw_image_urls)
+    if not field_changed:
       continue
-    leading = raw_image_url[:len(raw_image_url) - len(raw_image_url.lstrip())]
-    trailing = raw_image_url[len(raw_image_url.rstrip()):]
-    fields[4] = f"{leading}{replacement}{trailing}"
+    fields[4] = rewritten_image_urls
     blocks[index] = ";".join(fields)
     changed = True
   return "|".join(blocks) if changed else url
