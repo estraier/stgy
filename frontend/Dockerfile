@@ -4,11 +4,13 @@ COPY package.json package-lock.json .npmrc ./
 COPY frontend/package.json frontend/package.json
 COPY packages/markdown/package.json packages/markdown/package.json
 COPY packages/track/package.json packages/track/package.json
+COPY packages/geocoder/package.json packages/geocoder/package.json
 RUN npm config set registry https://registry.npmjs.org/
 RUN npm ci --workspaces --include-workspace-root
 COPY frontend ./frontend
 COPY packages/markdown ./packages/markdown
 COPY packages/track ./packages/track
+COPY packages/geocoder ./packages/geocoder
 ARG NEXT_PUBLIC_FRONTEND_CANONICAL_URL
 ARG NEXT_PUBLIC_BACKEND_API_BASE_URL
 ARG NEXT_PUBLIC_STORAGE_S3_BUCKET_PREFIX
