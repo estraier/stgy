@@ -94,23 +94,59 @@ start_worker() {
   WORKER_PIDS+=("$!")
 }
 
-terminate_process_tree() {
+declare -a PROCESS_TREE_PIDS=()
+
+process_is_running() {
+  local pid="$1" state
+  kill -0 "$pid" >/dev/null 2>&1 || return 1
+  state="$(ps -o stat= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
+  [[ "$state" != Z* ]]
+}
+
+collect_process_tree() {
   local pid="$1" child
   while IFS= read -r child; do
-    [ -n "$child" ] && terminate_process_tree "$child"
+    [ -n "$child" ] && collect_process_tree "$child"
   done < <(pgrep -P "$pid" 2>/dev/null || true)
-  kill -TERM "$pid" >/dev/null 2>&1 || true
+  PROCESS_TREE_PIDS+=("$pid")
 }
 
 cleanup() {
-  local pid active_jobs
+  local pid attempt alive
   trap - INT TERM EXIT
-  active_jobs="$(jobs -pr)"
+
+  PROCESS_TREE_PIDS=()
   for pid in "${WORKER_PIDS[@]}"; do
-    if grep -Fxq "$pid" <<<"$active_jobs"; then
-      terminate_process_tree "$pid"
+    if process_is_running "$pid"; then
+      collect_process_tree "$pid"
     fi
   done
+
+  for pid in "${PROCESS_TREE_PIDS[@]}"; do
+    kill -TERM "$pid" >/dev/null 2>&1 || true
+  done
+
+  # A worker can be waiting in a database/Redis retry promise and keep its
+  # signal handler alive. Give it a brief chance to stop cleanly, then ensure
+  # no descendant remains after this launcher exits.
+  for attempt in {1..20}; do
+    alive=0
+    for pid in "${PROCESS_TREE_PIDS[@]}"; do
+      if process_is_running "$pid"; then
+        alive=1
+        break
+      fi
+    done
+    (( alive == 0 )) && break
+    sleep 0.1
+  done
+
+  for pid in "${PROCESS_TREE_PIDS[@]}"; do
+    if process_is_running "$pid"; then
+      kill -KILL "$pid" >/dev/null 2>&1 || true
+    fi
+  done
+
   for pid in "${WORKER_PIDS[@]}"; do
     wait "$pid" >/dev/null 2>&1 || true
   done

@@ -5,8 +5,9 @@ allowLikes: false
 allowReplies: false
 tags: stgy-help
 content:<<____EOF____
-# STGYのその他の機能
+# STGYの全文検索機能
 
 今後書きます。
 
+Next: [STGYのその他の機能](/posts/0002000000000016)
 ____EOF____
