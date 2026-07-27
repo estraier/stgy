@@ -199,6 +199,24 @@ function parseJsonArray<T = unknown>(raw: string | null): T[] | null {
   }
 }
 
+export function parseCachedSeedPool(raw: string | null): SearchSeed[] | null {
+  const packets = parseJsonArray<SearchSeedPacket>(raw);
+  if (!packets) return null;
+  const parsed: SearchSeed[] = [];
+  for (const packet of packets) {
+    const seed = fromSeedPacket(packet);
+    if (seed) parsed.push(seed);
+  }
+  return packets.length === 0 || parsed.length > 0 ? parsed : null;
+}
+
+export function parseCachedRecommendationIds(raw: string | null): string[] | null {
+  const values = parseJsonArray<unknown>(raw);
+  if (!values) return null;
+  const ids = values.filter((value): value is string => typeof value === "string");
+  return values.length === 0 || ids.length > 0 ? ids : null;
+}
+
 export default function createAiPostsRouter(
   pgPool: Pool,
   redis: Redis,
@@ -575,17 +593,7 @@ export default function createAiPostsRouter(
     const recKey = `recommend-user-posts:${targetUserId}`;
     try {
       const watch = timerThrottleService.startWatch(loginUser);
-      let seedPool: SearchSeed[] | null = null;
-      const cachedSeedsRaw = await redis.get(seedKey);
-      const cachedSeedPackets = parseJsonArray<SearchSeedPacket>(cachedSeedsRaw);
-      if (cachedSeedPackets && cachedSeedPackets.length > 0) {
-        const parsed: SearchSeed[] = [];
-        for (const p of cachedSeedPackets) {
-          const s = fromSeedPacket(p);
-          if (s) parsed.push(s);
-        }
-        if (parsed.length > 0) seedPool = parsed;
-      }
+      let seedPool = parseCachedSeedPool(await redis.get(seedKey));
       if (!seedPool) {
         const rawSeeds = await aiPostsService.BuildSearchSeedForUser(
           targetUserId,
@@ -599,13 +607,7 @@ export default function createAiPostsRouter(
         );
         seedPool = rawSeeds;
       }
-      let ids: string[] | null = null;
-      const cachedIdsRaw = await redis.get(recKey);
-      const cachedIds = parseJsonArray<unknown>(cachedIdsRaw);
-      if (cachedIds && cachedIds.length > 0) {
-        const onlyStrings = cachedIds.filter((x): x is string => typeof x === "string");
-        if (onlyStrings.length > 0) ids = onlyStrings;
-      }
+      let ids = parseCachedRecommendationIds(await redis.get(recKey));
       if (!ids) {
         const seeds = selectSeedsByWeight(seedPool);
         if (seeds.length === 0) {
@@ -692,13 +694,7 @@ export default function createAiPostsRouter(
     const recKey = `recommend-post-posts:${loginUser.id}:${targetPostId}`;
     try {
       const watch = timerThrottleService.startWatch(loginUser);
-      let ids: string[] | null = null;
-      const cachedIdsRaw = await redis.get(recKey);
-      const cachedIds = parseJsonArray<unknown>(cachedIdsRaw);
-      if (cachedIds && cachedIds.length > 0) {
-        const onlyStrings = cachedIds.filter((x): x is string => typeof x === "string");
-        if (onlyStrings.length > 0) ids = onlyStrings;
-      }
+      let ids = parseCachedRecommendationIds(await redis.get(recKey));
       if (!ids) {
         const summary = await aiPostsService.getAiPostSummary(targetPostId);
         if (!summary) {

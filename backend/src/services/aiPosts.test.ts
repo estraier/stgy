@@ -1023,7 +1023,8 @@ describe("AiPostsService RecommendPosts", () => {
     expect(result).toEqual([]);
   });
 
-  test("does not include posts missing ai_post_summaries features/row", async () => {
+  test("keeps posts with null features but excludes posts without an AI summary row", async () => {
+    mkSummary(dec(129), null);
     const input: RecommendPostsInput = {
       tags: [seed("tech"), seed("eco"), seed("game")],
       keywordHashes: [],
@@ -1032,8 +1033,42 @@ describe("AiPostsService RecommendPosts", () => {
     };
     const result = await service.RecommendPosts(input);
     const set = new Set(result);
-    expect(set.has(hex(129))).toBe(false);
+    expect(set.has(hex(129))).toBe(true);
     expect(set.has(hex(128))).toBe(false);
+  });
+
+  test("keeps the coarse rank among null-feature posts during vector reranking", async () => {
+    pgClient.postTags.push(
+      { postId: dec(128), name: "tech" },
+      { postId: dec(128), name: "eco" },
+      { postId: dec(128), name: "game" },
+    );
+    pgClient.tags.push(
+      { postId: dec(128), name: "tech" },
+      { postId: dec(128), name: "eco" },
+      { postId: dec(128), name: "game" },
+    );
+    mkSummary(dec(128), null);
+    mkSummary(dec(129), null);
+
+    const baseInput: RecommendPostsInput = {
+      tags: [seed("tech"), seed("eco"), seed("game")],
+      keywordHashes: [],
+      limit: 200,
+      order: "desc",
+    };
+    const coarseResult = await service.RecommendPosts(baseInput);
+    expect(coarseResult.indexOf(hex(128))).toBeLessThan(coarseResult.indexOf(hex(129)));
+
+    const rerankedResult = await service.RecommendPosts({
+      ...baseInput,
+      features: new Int8Array([10, 0, 0]),
+    });
+    const rank128 = rerankedResult.indexOf(hex(128));
+    const rank129 = rerankedResult.indexOf(hex(129));
+    expect(rank128).toBeGreaterThanOrEqual(0);
+    expect(rank129).toBeGreaterThanOrEqual(0);
+    expect(rank128).toBeLessThan(rank129);
   });
 
   test("includes seedPostIds into universe when provided (features not null)", async () => {

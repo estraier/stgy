@@ -979,10 +979,12 @@ export class AiPostsService {
       postId: bigint;
       vec: number[] | null;
       baseScore: number;
+      coarseRank: number;
       socialRank: number;
       dedupedRank?: number;
     }[] = [];
-    for (const c of universe) {
+    for (let coarseRank = 0; coarseRank < universe.length; coarseRank++) {
+      const c = universe[coarseRank];
       let vec: number[] | null = null;
       if (needVecDecode && c.features) {
         try {
@@ -999,13 +1001,17 @@ export class AiPostsService {
           baseScore = sigmoidalContrast((simRaw + 1) / 2, 5, 0.75);
         }
       }
-      candidates.push({ postId: c.postId, vec, baseScore, socialRank: 0 });
+      candidates.push({ postId: c.postId, vec, baseScore, coarseRank, socialRank: 0 });
     }
-    candidates.sort((a, b) =>
-      a.baseScore !== b.baseScore
-        ? b.baseScore - a.baseScore
-        : compareBigIntDesc(a.postId, b.postId),
-    );
+    const compareByBaseScore = (
+      a: (typeof candidates)[number],
+      b: (typeof candidates)[number],
+    ): number => {
+      if (a.baseScore !== b.baseScore) return b.baseScore - a.baseScore;
+      if (a.baseScore === Number.NEGATIVE_INFINITY) return a.coarseRank - b.coarseRank;
+      return compareBigIntDesc(a.postId, b.postId);
+    };
+    candidates.sort(compareByBaseScore);
     if (needOwnerDecay) {
       const decay = ownerDecay as number;
       const ownersById = new Map<string, string>();
@@ -1043,11 +1049,7 @@ export class AiPostsService {
         }
         seenByOwner.set(owner, seen + 1);
       }
-      candidates.sort((a, b) =>
-        a.baseScore !== b.baseScore
-          ? b.baseScore - a.baseScore
-          : compareBigIntDesc(a.postId, b.postId),
-      );
+      candidates.sort(compareByBaseScore);
     }
     const likesById = new Map<string, number>();
     if (promotionByLikesAlpha > 0) {
