@@ -59,7 +59,7 @@ if [ "$INSECURE_PASSWORD" = true ]; then
 fi
 if [ "$CORE_ONLY" = true ]; then
   ./scripts/edit-users.py $INSECURE_OPTTONS seeder/user-000[0-2]*.txt
-  ./scripts/edit-posts.py seeder/post-000[0-2]*.txt
+  ./scripts/edit-posts.py seeder/post-000[0-4]*.txt
   ./scripts/user-actions.py seeder/action-00001.txt
 else
   ./scripts/edit-users.py $INSECURE_OPTTONS seeder/user-0*.txt
