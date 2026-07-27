@@ -5,7 +5,7 @@ allowLikes: false
 allowReplies: false
 tags: stgy-help
 content:<<____EOF____
-# STGYのその他の機能
+# STGYの推薦機能
 
 今後書きます。
 
