@@ -13,6 +13,7 @@ import {
 } from "./taskQueue";
 import { IndexFileManager, IndexFileInfo } from "./indexFileManager";
 import { makeFtsQuery } from "../utils/query";
+import { TaskWaitTimeoutError } from "../utils/taskWait";
 
 const DB_PAGE_SIZE_BYTES = 8192;
 const FTS_BLOCK_SIZE_BYTES = 8000;
@@ -235,7 +236,7 @@ export class SearchService {
       if (this.isClosing) throw new Error("Service closed");
       if (!(await queue.isPending(id))) return;
       const elapsed = Date.now() - start;
-      if (elapsed >= effectiveTimeout) throw new Error(`Timeout waiting for task ${id}`);
+      if (elapsed >= effectiveTimeout) throw new TaskWaitTimeoutError(id, effectiveTimeout);
       await this.sleep(Math.min(currentDelay, effectiveTimeout - elapsed));
       if (currentDelay < maxDelay) currentDelay = Math.min(currentDelay + 50, maxDelay);
     }

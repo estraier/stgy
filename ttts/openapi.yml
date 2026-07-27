@@ -108,11 +108,23 @@ paths:
                   description: Wait time in seconds
       responses:
         "200":
-          description: Flush task enqueued
+          description: Flush completed within the requested wait period
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskResponse"
+        "202":
+          description: Flush task accepted without waiting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "408":
+          description: Wait period expired; the flush task continues in the background
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskTimeoutResponse"
 
   /{resource}/optimize:
     parameters:
@@ -138,11 +150,23 @@ paths:
                   type: number
       responses:
         "200":
-          description: Optimization task enqueued
+          description: Optimization completed within the requested wait period
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskResponse"
+        "202":
+          description: Optimization task accepted without waiting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "408":
+          description: Wait period expired; the optimization task continues in the background
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskTimeoutResponse"
 
   /{resource}/reconstruct:
     parameters:
@@ -171,11 +195,23 @@ paths:
                   type: number
       responses:
         "200":
-          description: Reconstruction task enqueued
+          description: Reconstruction completed within the requested wait period
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskResponse"
+        "202":
+          description: Reconstruction task accepted without waiting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "408":
+          description: Wait period expired; the reconstruction task continues in the background
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskTimeoutResponse"
 
   /{resource}/reserve:
     parameters:
@@ -210,12 +246,34 @@ paths:
                   type: number
       responses:
         "200":
-          description: Reservation task enqueued
+          description: Reservation completed within the requested wait period
           content:
             application/json:
               schema:
                 allOf:
                   - $ref: "#/components/schemas/TaskResponse"
+                  - type: object
+                    properties:
+                      count:
+                        type: number
+        "202":
+          description: Reservation task accepted without waiting
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/TaskResponse"
+                  - type: object
+                    properties:
+                      count:
+                        type: number
+        "408":
+          description: Wait period expired; the reservation task continues in the background
+          content:
+            application/json:
+              schema:
+                allOf:
+                  - $ref: "#/components/schemas/TaskTimeoutResponse"
                   - type: object
                     properties:
                       count:
@@ -259,11 +317,23 @@ paths:
         - $ref: "#/components/parameters/WaitQuery"
       responses:
         "200":
-          description: Drop task enqueued
+          description: Drop completed within the requested wait period
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskResponse"
+        "202":
+          description: Drop task accepted without waiting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "408":
+          description: Wait period expired; the drop task continues in the background
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskTimeoutResponse"
 
   /{resource}/tokenize:
     parameters:
@@ -321,8 +391,9 @@ paths:
             default: 0
         - name: timeout
           in: query
+          description: Search time limit in seconds; fractional values are accepted
           schema:
-            type: integer
+            type: number
             default: 1
       responses:
         "200":
@@ -363,8 +434,9 @@ paths:
             default: 0
         - name: timeout
           in: query
+          description: Search time limit in seconds; fractional values are accepted
           schema:
-            type: integer
+            type: number
             default: 1
         - name: omitBodyText
           in: query
@@ -442,12 +514,24 @@ paths:
                 wait:
                   type: number
       responses:
-        "202":
-          description: Task accepted
+        "200":
+          description: Task completed within the requested wait period
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskResponse"
+        "202":
+          description: Task accepted without waiting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "408":
+          description: Wait period expired; the task continues in the background
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskTimeoutResponse"
 
     delete:
       summary: Remove a document
@@ -468,12 +552,24 @@ paths:
                 wait:
                   type: number
       responses:
-        "202":
-          description: Task accepted
+        "200":
+          description: Task completed within the requested wait period
           content:
             application/json:
               schema:
                 $ref: "#/components/schemas/TaskResponse"
+        "202":
+          description: Task accepted without waiting
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskResponse"
+        "408":
+          description: Wait period expired; the task continues in the background
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TaskTimeoutResponse"
 
 components:
   parameters:
@@ -487,7 +583,7 @@ components:
     WaitQuery:
       name: wait
       in: query
-      description: Wait for task completion (seconds)
+      description: Wait for task completion in seconds; fractional values are accepted
       schema:
         type: number
 
@@ -503,9 +599,21 @@ components:
       properties:
         result:
           type: string
-          example: enqueued
+          example: completed
         taskId:
           type: string
+
+    TaskTimeoutResponse:
+      allOf:
+        - $ref: "#/components/schemas/TaskResponse"
+        - type: object
+          properties:
+            result:
+              type: string
+              example: timeout
+            message:
+              type: string
+              example: The task is still being processed
 
     Document:
       type: object

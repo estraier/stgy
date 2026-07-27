@@ -1,6 +1,7 @@
 import { Router, Request, Response } from "express";
 import { SearchService } from "../services/search";
 import { Tokenizer } from "../utils/tokenizer";
+import { parsePositiveSecondsOrDefault, waitForTaskOutcome } from "../utils/taskWait";
 
 type ResourceInstance = {
   searchService: SearchService;
@@ -11,12 +12,25 @@ export default function createResourceRouter(instance: ResourceInstance) {
   const { searchService } = instance;
   const logger = searchService.getLogger();
 
-  const handleWait = async (req: Request, taskId: string) => {
-    const v = req.query.wait || (req.body && req.body.wait);
-    const waitSec = typeof v === "string" ? parseFloat(v) : typeof v === "number" ? v : null;
-    if (waitSec !== null && waitSec > 0) {
-      await searchService.waitTask(taskId, waitSec * 1000);
-    }
+  const respondToTask = async (
+    req: Request,
+    res: Response,
+    taskId: string,
+    pendingResult: string,
+    extra: Record<string, unknown> = {},
+  ) => {
+    const waitValue = req.query.wait ?? (req.body && req.body.wait);
+    const outcome = await waitForTaskOutcome(
+      taskId,
+      waitValue,
+      searchService.waitTask.bind(searchService),
+    );
+    const result = outcome.status === 202 ? pendingResult : outcome.result;
+    const body =
+      outcome.status === 408
+        ? { result, taskId, message: outcome.message, ...extra }
+        : { result, taskId, ...extra };
+    res.status(outcome.status).json(body);
   };
 
   router.get("/maintenance", async (_req: Request, res: Response) => {
@@ -70,8 +84,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
         type: "RECONSTRUCT",
         payload: { targetTimestamp: timestamp, newInitialId, useExternalId: !!useExternalId },
       });
-      await handleWait(req, taskId);
-      res.json({ result: "enqueued", taskId });
+      await respondToTask(req, res, taskId, "enqueued");
     } catch (e) {
       logger.error(e);
       res.status(500).json({ error: String(e) });
@@ -96,8 +109,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
         type: "RESERVE",
         payload: { documents },
       });
-      await handleWait(req, taskId);
-      res.json({ result: "enqueued", taskId, count: documents.length });
+      await respondToTask(req, res, taskId, "enqueued", { count: documents.length });
     } catch (e) {
       logger.error(e);
       res.status(500).json({ error: String(e) });
@@ -123,8 +135,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
         type: "DROP_SHARD",
         payload: { targetTimestamp: timestamp },
       });
-      await handleWait(req, taskId);
-      res.json({ result: "enqueued", taskId });
+      await respondToTask(req, res, taskId, "enqueued");
     } catch (e) {
       logger.error(e);
       res.status(500).json({ error: String(e) });
@@ -134,8 +145,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
   router.post("/flush", async (req: Request, res: Response) => {
     try {
       const taskId = await searchService.enqueueTask({ type: "SYNC", payload: {} });
-      await handleWait(req, taskId);
-      res.json({ result: "flushed", taskId });
+      await respondToTask(req, res, taskId, "flushed");
     } catch (e) {
       logger.error(e);
       res.status(500).json({ error: String(e) });
@@ -151,8 +161,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
         type: "OPTIMIZE",
         payload: { targetTimestamp: timestamp },
       });
-      await handleWait(req, taskId);
-      res.json({ result: "enqueued", taskId });
+      await respondToTask(req, res, taskId, "enqueued");
     } catch (e) {
       logger.error(e);
       res.status(500).json({ error: String(e) });
@@ -181,7 +190,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const locale = (req.query.locale as string) || "en";
       const limit = parseInt(req.query.limit as string, 10) || 100;
       const offset = parseInt(req.query.offset as string, 10) || 0;
-      const timeout = parseInt(req.query.timeout as string, 10) || 1;
+      const timeout = parsePositiveSecondsOrDefault(req.query.timeout, 1);
       const results = await searchService.search(query, locale, limit, offset, timeout);
       res.json(results);
     } catch (e) {
@@ -197,7 +206,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
       const locale = (req.query.locale as string) || "en";
       const limit = parseInt(req.query.limit as string, 10) || 100;
       const offset = parseInt(req.query.offset as string, 10) || 0;
-      const timeout = parseInt(req.query.timeout as string, 10) || 1;
+      const timeout = parsePositiveSecondsOrDefault(req.query.timeout, 1);
       const omitBodyText = req.query.omitBodyText === "true";
       const omitAttrs = req.query.omitAttrs === "true";
       const ids = await searchService.search(query, locale, limit, offset, timeout);
@@ -236,8 +245,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
         type: "ADD",
         payload: { docId, timestamp, bodyText: text, locale: locale || "en", attrs: attrs || null },
       });
-      await handleWait(req, taskId);
-      res.status(202).json({ result: "accepted", taskId });
+      await respondToTask(req, res, taskId, "accepted");
     } catch (e) {
       logger.error(e);
       res.status(500).json({ error: String(e) });
@@ -254,8 +262,7 @@ export default function createResourceRouter(instance: ResourceInstance) {
         type: "REMOVE",
         payload: { docId, timestamp },
       });
-      await handleWait(req, taskId);
-      res.status(202).json({ result: "accepted", taskId });
+      await respondToTask(req, res, taskId, "accepted");
     } catch (e) {
       logger.error(e);
       res.status(500).json({ error: String(e) });
