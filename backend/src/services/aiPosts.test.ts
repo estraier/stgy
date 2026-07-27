@@ -1023,6 +1023,80 @@ describe("AiPostsService RecommendPosts", () => {
     expect(result).toEqual([]);
   });
 
+  test("uses extraTags only to fill a primary candidate pool below the vector limit", async () => {
+    const localPg = new MockPgClient();
+    const localService = new AiPostsService(localPg as unknown as Pool);
+    const owner = dec(900);
+    const addCandidate = (id: number, tag: string) => {
+      localPg.posts.push({
+        postId: dec(id),
+        replyTo: null,
+        userId: owner,
+        publishedAt: "2025-01-01T00:00:00Z",
+      });
+      localPg.postTags.push({ postId: dec(id), name: tag });
+      localPg.summaries.push({
+        postId: dec(id),
+        summary: "s",
+        hashes: null,
+        features: Buffer.from(new Int8Array([1, 0, 0])),
+        updatedAt: "2025-01-01T00:00:00Z",
+      });
+    };
+
+    for (let id = 1000; id < 1099; id++) addCandidate(id, "primary");
+    addCandidate(2000, "extra");
+    addCandidate(2001, "extra");
+
+    const result = await localService.RecommendPosts({
+      tags: [seed("primary")],
+      extraTags: [seed("extra", 0.5)],
+      keywordHashes: [],
+      limit: 200,
+      order: "desc",
+    });
+
+    expect(result).toHaveLength(100);
+    expect(result).toContain(hex(2001));
+    expect(result).not.toContain(hex(2000));
+  });
+
+  test("does not add extraTags when primary candidates already reach the vector limit", async () => {
+    const localPg = new MockPgClient();
+    const localService = new AiPostsService(localPg as unknown as Pool);
+    const owner = dec(900);
+    const addCandidate = (id: number, tag: string) => {
+      localPg.posts.push({
+        postId: dec(id),
+        replyTo: null,
+        userId: owner,
+        publishedAt: "2025-01-01T00:00:00Z",
+      });
+      localPg.postTags.push({ postId: dec(id), name: tag });
+      localPg.summaries.push({
+        postId: dec(id),
+        summary: "s",
+        hashes: null,
+        features: Buffer.from(new Int8Array([1, 0, 0])),
+        updatedAt: "2025-01-01T00:00:00Z",
+      });
+    };
+
+    for (let id = 1000; id < 1100; id++) addCandidate(id, "primary");
+    addCandidate(2001, "extra");
+
+    const result = await localService.RecommendPosts({
+      tags: [seed("primary")],
+      extraTags: [seed("extra", 0.5)],
+      keywordHashes: [],
+      limit: 200,
+      order: "desc",
+    });
+
+    expect(result).toHaveLength(100);
+    expect(result).not.toContain(hex(2001));
+  });
+
   test("keeps posts with null features but excludes posts without an AI summary row", async () => {
     mkSummary(dec(129), null);
     const input: RecommendPostsInput = {

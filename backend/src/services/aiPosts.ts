@@ -724,6 +724,10 @@ export class AiPostsService {
     const paramTagCounts = this.buildParamTagCounts(input.tags);
     const queryTags = Array.from(paramTagCounts.keys());
     if (queryTags.length === 0) return [];
+    const extraParamTagCounts = this.buildParamTagCounts(
+      Array.isArray(input.extraTags) ? input.extraTags : [],
+    );
+    for (const tag of paramTagCounts.keys()) extraParamTagCounts.delete(tag);
     const paramKeywordCounts = buildParamKeywordHashCounts(input.keywordHashes);
     const seedPostIdsHex = Array.isArray(input.seedPostIds)
       ? input.seedPostIds.filter(isNonEmptyString).map((s) => s.trim())
@@ -747,48 +751,79 @@ export class AiPostsService {
       );
       followeeIds = new Set(fr.rows.map((r) => r.followee_id));
     }
-    const res = await pgQuery<RecommendDbRowLocal>(
-      this.pgPool,
-      `
-        WITH query_tags(tag) AS (
-          SELECT unnest($1::text[])
-        ),
-        raw AS (
-          SELECT qt.tag, x.post_id, x.src
-          FROM query_tags qt
-          JOIN LATERAL (
-            (SELECT post_id, 'post'::text AS src
-             FROM post_tags
-             WHERE name = qt.tag
-             ORDER BY post_id DESC
-             LIMIT $2)
-            UNION ALL
-            (SELECT post_id, 'ai'::text AS src
-             FROM ai_post_tags
-             WHERE name = qt.tag
-             ORDER BY post_id DESC
-             LIMIT $2)
-          ) x ON true
-        ),
-        agg AS (
-          SELECT tag, post_id, COUNT(DISTINCT src)::int AS table_count
-          FROM raw
-          GROUP BY tag, post_id
-        )
-        SELECT a.post_id, a.tag, a.table_count, (p.reply_to IS NULL) AS is_root, p.owned_by AS user_id
-        FROM agg a
-        JOIN posts p ON p.id = a.post_id
-      `,
-      [queryTags, Config.AI_POST_RECOMMEND_TAG_CANDIDATES],
-    );
-    let records: RecommendRecordLocal[] = res.rows.map((r) => ({
-      postId: BigInt(r.post_id),
-      tag: r.tag,
-      tableCount: r.table_count,
-      isRoot: r.is_root,
-      userId: r.user_id,
-    }));
-    if (selfUserIdDec) records = records.filter((r) => r.userId !== selfUserIdDec);
+    const fetchTagRecords = async (tags: string[]): Promise<RecommendRecordLocal[]> => {
+      if (tags.length === 0) return [];
+      const res = await pgQuery<RecommendDbRowLocal>(
+        this.pgPool,
+        `
+          WITH query_tags(tag) AS (
+            SELECT unnest($1::text[])
+          ),
+          raw AS (
+            SELECT qt.tag, x.post_id, x.src
+            FROM query_tags qt
+            JOIN LATERAL (
+              (SELECT post_id, 'post'::text AS src
+               FROM post_tags
+               WHERE name = qt.tag
+               ORDER BY post_id DESC
+               LIMIT $2)
+              UNION ALL
+              (SELECT post_id, 'ai'::text AS src
+               FROM ai_post_tags
+               WHERE name = qt.tag
+               ORDER BY post_id DESC
+               LIMIT $2)
+            ) x ON true
+          ),
+          agg AS (
+            SELECT tag, post_id, COUNT(DISTINCT src)::int AS table_count
+            FROM raw
+            GROUP BY tag, post_id
+          )
+          SELECT a.post_id, a.tag, a.table_count, (p.reply_to IS NULL) AS is_root,
+                 p.owned_by AS user_id
+          FROM agg a
+          JOIN posts p ON p.id = a.post_id
+        `,
+        [tags, Config.AI_POST_RECOMMEND_TAG_CANDIDATES],
+      );
+      const out = res.rows.map((r) => ({
+        postId: BigInt(r.post_id),
+        tag: r.tag,
+        tableCount: r.table_count,
+        isRoot: r.is_root,
+        userId: r.user_id,
+      }));
+      return selfUserIdDec ? out.filter((r) => r.userId !== selfUserIdDec) : out;
+    };
+
+    let records = await fetchTagRecords(queryTags);
+    const primaryPostIds = new Set(records.map((r) => r.postId.toString()));
+    // extraTags are a coverage fallback. They add new candidates only when the primary pool is small.
+    if (
+      primaryPostIds.size < Config.AI_POST_RECOMMEND_VEC_CANDIDATES &&
+      extraParamTagCounts.size > 0
+    ) {
+      const extraRecords = await fetchTagRecords(Array.from(extraParamTagCounts.keys()));
+      extraRecords.sort(
+        (a, b) => compareBigIntDesc(a.postId, b.postId) || a.tag.localeCompare(b.tag),
+      );
+      const selectedExtraPostIds = new Set<string>();
+      const needed = Config.AI_POST_RECOMMEND_VEC_CANDIDATES - primaryPostIds.size;
+      for (const r of extraRecords) {
+        const postId = r.postId.toString();
+        if (primaryPostIds.has(postId) || selectedExtraPostIds.has(postId)) continue;
+        selectedExtraPostIds.add(postId);
+        if (selectedExtraPostIds.size >= needed) break;
+      }
+      if (selectedExtraPostIds.size > 0) {
+        records = records.concat(
+          extraRecords.filter((r) => selectedExtraPostIds.has(r.postId.toString())),
+        );
+        for (const [tag, count] of extraParamTagCounts) paramTagCounts.set(tag, count);
+      }
+    }
     if (records.length === 0) return [];
     const tagTableCountsByPostId = new Map<bigint, Map<string, number>>();
     const metaByPostId = new Map<bigint, { isRoot: boolean; userId: string }>();

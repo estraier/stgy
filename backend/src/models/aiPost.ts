@@ -75,6 +75,7 @@ export type SearchSeedPacket = {
 
 export type RecommendPostsInput = {
   tags: SearchSeedTag[];
+  extraTags?: SearchSeedTag[];
   keywordHashes: SearchSeedKeywordHash[];
   features?: Int8Array;
   seedPostIds?: string[];

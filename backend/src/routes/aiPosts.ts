@@ -621,6 +621,7 @@ export default function createAiPostsRouter(
             const w = maxWeight > 0 ? seed.weight / maxWeight : 1;
             const outIds = await aiPostsService.RecommendPosts({
               tags: seed.tags,
+              extraTags: seed.extraTags,
               keywordHashes: seed.keywordHashes ?? [],
               features: seed.features,
               seedPostIds: seed.postIds,

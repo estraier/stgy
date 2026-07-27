@@ -531,31 +531,66 @@ components:
       properties:
         tags:
           type: array
-          description: Tag filters with weights.
+          minItems: 1
+          description: Primary tag filters with positive weights.
           items:
             $ref: "#/components/schemas/SearchSeedTag"
+        keywordHashes:
+          type: array
+          nullable: true
+          default: []
+          description: |
+            Optional keyword hashes with weights. Each item may be an unsigned 32-bit hash,
+            which has an implicit weight of 1, or a hash/count object. Duplicate hashes are merged.
+          items:
+            oneOf:
+              - type: integer
+                minimum: 0
+                maximum: 4294967295
+              - $ref: "#/components/schemas/SearchSeedKeywordHash"
         seedPostIds:
           type: array
           items: { type: string }
-          description: Optional seed post ids (hex). When provided, backend may include these posts in vector candidates.
+          description: Optional seed post ids (hex). They may be included in vector candidates and promoted by promotionForSeedPosts.
         selfUserId:
           type: string
+          description: Optional user id (hex). Posts owned by this user are excluded, and followee relationships are used in coarse scoring.
         features:
           type: string
           format: byte
           nullable: true
           description: Base64-encoded Int8Array features vector used for similarity-based re-ranking.
-        rerankByLikesAlpha:
+        ownerDecay:
           type: number
-          format: float
-        dedupWeight:
+          format: double
+          description: Optional repeated-owner decay factor. The service clamps it to the range 0 through 1; omitted means no owner decay.
+        promotionByLikesAlpha:
           type: number
-          format: float
+          format: double
+          default: 0
+          description: Positive value enabling rank promotion by like count; zero or a negative value disables it.
+        promotionForSeedPosts:
+          type: number
+          format: double
+          default: 0
+          description: Positive maximum rank promotion for seedPostIds; zero or a negative value disables it.
+        demotionForReplies:
+          type: number
+          format: double
+          default: 0
+          description: Positive rank demotion applied to reply posts; zero or a negative value disables it.
+        demotionForDuplication:
+          type: number
+          format: double
+          default: 0
+          description: Positive maximum rank demotion for content duplication; zero or a negative value disables it.
         offset:
           type: integer
+          minimum: 0
           default: 0
         limit:
           type: integer
+          minimum: 0
           default: 100
         order:
           type: string

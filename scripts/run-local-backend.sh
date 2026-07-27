@@ -83,6 +83,12 @@ declare -a WORKER_PIDS=()
 start_worker() {
   local npm_script="$1"
   local built_entry="$2"
+
+  # Put each background worker in its own process group.  If Ctrl-C makes an
+  # intermediate npm process exit before cleanup runs, its Node descendant
+  # remains addressable through this process-group ID instead of becoming an
+  # untraceable orphan.
+  set -m
   (
     sleep 3
     if [[ "$CMD" == "start" ]]; then
@@ -92,47 +98,38 @@ start_worker() {
     fi
   ) &
   WORKER_PIDS+=("$!")
+  set +m
 }
 
-declare -a PROCESS_TREE_PIDS=()
-
-process_is_running() {
-  local pid="$1" state
-  kill -0 "$pid" >/dev/null 2>&1 || return 1
-  state="$(ps -o stat= -p "$pid" 2>/dev/null | tr -d '[:space:]')"
-  [[ "$state" != Z* ]]
+process_group_is_running() {
+  local pgid="$1"
+  ps -axo pgid=,stat= 2>/dev/null | awk -v pgid="$pgid" '
+    $1 == pgid && $2 !~ /^Z/ { found = 1 }
+    END { exit found ? 0 : 1 }
+  '
 }
 
-collect_process_tree() {
-  local pid="$1" child
-  while IFS= read -r child; do
-    [ -n "$child" ] && collect_process_tree "$child"
-  done < <(pgrep -P "$pid" 2>/dev/null || true)
-  PROCESS_TREE_PIDS+=("$pid")
+signal_process_group() {
+  local signal="$1"
+  local pgid="$2"
+  kill -"$signal" -- "-$pgid" >/dev/null 2>&1 || true
 }
 
 cleanup() {
   local pid attempt alive
   trap - INT TERM EXIT
 
-  PROCESS_TREE_PIDS=()
   for pid in "${WORKER_PIDS[@]}"; do
-    if process_is_running "$pid"; then
-      collect_process_tree "$pid"
-    fi
-  done
-
-  for pid in "${PROCESS_TREE_PIDS[@]}"; do
-    kill -TERM "$pid" >/dev/null 2>&1 || true
+    signal_process_group TERM "$pid"
   done
 
   # A worker can be waiting in a database/Redis retry promise and keep its
-  # signal handler alive. Give it a brief chance to stop cleanly, then ensure
-  # no descendant remains after this launcher exits.
+  # signal handler alive. Give the whole group a brief chance to stop cleanly,
+  # then ensure no descendant remains after this launcher exits.
   for attempt in {1..20}; do
     alive=0
-    for pid in "${PROCESS_TREE_PIDS[@]}"; do
-      if process_is_running "$pid"; then
+    for pid in "${WORKER_PIDS[@]}"; do
+      if process_group_is_running "$pid"; then
         alive=1
         break
       fi
@@ -141,9 +138,9 @@ cleanup() {
     sleep 0.1
   done
 
-  for pid in "${PROCESS_TREE_PIDS[@]}"; do
-    if process_is_running "$pid"; then
-      kill -KILL "$pid" >/dev/null 2>&1 || true
+  for pid in "${WORKER_PIDS[@]}"; do
+    if process_group_is_running "$pid"; then
+      signal_process_group KILL "$pid"
     fi
   done
 
