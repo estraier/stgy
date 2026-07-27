@@ -89,6 +89,8 @@ type ShardConnection = {
   pendingTxCount: number;
   lastTxStartTime: number;
   isCommitting: boolean;
+  pendingBatchTaskIds: string[];
+  committedBatchTaskIds: string[];
   recordPositions: boolean;
   recordContents: boolean;
 };
@@ -152,8 +154,6 @@ export class SearchService {
             await this.processDataTask(task);
           } catch (e) {
             this.logger.error({ err: e, taskId: task.id }, "Recovery task failed");
-          } finally {
-            await this.docQueue.removeFromBatch(task.id);
           }
         }
         await this.synchronizeAllShards();
@@ -372,7 +372,6 @@ export class SearchService {
               this.logger.error({ err: e, taskId: docTask.id }, "Worker doc task failed");
             } finally {
               release();
-              await this.docQueue.removeFromBatch(docTask.id);
             }
             taskProcessed = true;
           }
@@ -428,6 +427,13 @@ export class SearchService {
       );
     } else if (task.type === "REMOVE") {
       await this.removeDocument(task.payload.docId, task.payload.timestamp);
+    }
+
+    const shard = await this.getShard(
+      this.fileManager.getBucketTimestamp(task.payload.timestamp),
+    );
+    if (!shard.pendingBatchTaskIds.includes(task.id)) {
+      shard.pendingBatchTaskIds.push(task.id);
     }
   }
 
@@ -520,11 +526,7 @@ export class SearchService {
     }
     for (const [bucketTs, ids] of batches) {
       const shard = await this.getShard(bucketTs);
-      if (shard.pendingTxCount > 0) {
-        await shard.writer.exec("COMMIT");
-        shard.pendingTxCount = 0;
-        shard.lastTxStartTime = 0;
-      }
+      await this.commitShard(shard);
       await shard.writer.exec("BEGIN");
       const minRow = await shard.writer.get<{ min_id: number | null }>(
         "SELECT MIN(internal_id) as min_id FROM id_tuples",
@@ -541,27 +543,41 @@ export class SearchService {
     }
   }
 
+  private async removeCommittedBatchTasks(shard: ShardConnection) {
+    while (shard.committedBatchTaskIds.length > 0) {
+      const taskId = shard.committedBatchTaskIds[0];
+      await this.docQueue.removeFromBatch(taskId);
+      shard.committedBatchTaskIds.shift();
+    }
+  }
+
+  private async commitShard(shard: ShardConnection) {
+    if (shard.isCommitting) return;
+    shard.isCommitting = true;
+    try {
+      if (shard.pendingTxCount > 0) {
+        // Keep batch_tasks durable until the corresponding index transaction commits.
+        await shard.writer.exec("COMMIT");
+        shard.pendingTxCount = 0;
+        shard.lastTxStartTime = 0;
+        shard.committedBatchTaskIds.push(...shard.pendingBatchTaskIds);
+        shard.pendingBatchTaskIds.length = 0;
+      }
+      await this.removeCommittedBatchTasks(shard);
+    } finally {
+      shard.isCommitting = false;
+    }
+  }
+
   protected async synchronizeAllShards() {
     for (const shard of this.shards.values()) {
-      if (shard.pendingTxCount > 0 && !shard.isCommitting) {
-        shard.isCommitting = true;
-        try {
-          await shard.writer.exec("COMMIT");
-          shard.pendingTxCount = 0;
-          shard.lastTxStartTime = 0;
-        } finally {
-          shard.isCommitting = false;
-        }
-      }
+      await this.commitShard(shard);
     }
   }
 
   protected async optimizeShard(timestamp: number) {
     const shard = await this.getShard(this.fileManager.getBucketTimestamp(timestamp));
-    if (shard.pendingTxCount > 0) {
-      await shard.writer.exec("COMMIT");
-      shard.pendingTxCount = 0;
-    }
+    await this.commitShard(shard);
     await shard.writer.exec("INSERT INTO docs(docs) VALUES('optimize'); VACUUM;");
   }
 
@@ -583,7 +599,7 @@ export class SearchService {
   ) {
     const bucketTs = this.fileManager.getBucketTimestamp(timestamp);
     const shard = await this.getShard(bucketTs);
-    if (shard.pendingTxCount > 0) await shard.writer.exec("COMMIT");
+    await this.commitShard(shard);
     const oldPath = this.fileManager.getFilePath(bucketTs),
       tempPath = `${oldPath}.rebuild`;
     try {
@@ -630,10 +646,10 @@ export class SearchService {
         shard.pendingTxCount >= this.config.autoCommitUpdateCount ||
         elapsed >= this.config.autoCommitDurationSeconds * 1000
       ) {
-        await shard.writer.exec("COMMIT");
-        shard.pendingTxCount = 0;
-        shard.lastTxStartTime = 0;
+        await this.commitShard(shard);
       }
+    } else if (shard.committedBatchTaskIds.length > 0) {
+      await this.removeCommittedBatchTasks(shard);
     }
   }
 
@@ -684,6 +700,8 @@ export class SearchService {
         pendingTxCount: 0,
         lastTxStartTime: 0,
         isCommitting: false,
+        pendingBatchTaskIds: [],
+        committedBatchTaskIds: [],
         recordPositions: rp,
         recordContents: rc,
       };
@@ -792,7 +810,7 @@ export class SearchService {
         [rp ? 1 : 0, rc ? 1 : 0],
       );
       await db.exec(
-        `CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(tokens, tokenize = "unicode61", detail = '${rp ? "full" : "none"}', ${rc ? "" : "content='',"});`,
+        `CREATE VIRTUAL TABLE IF NOT EXISTS docs USING fts5(tokens, tokenize = "unicode61 categories 'L* N* Co M* P* S*' remove_diacritics 0", detail = '${rp ? "full" : "none"}', ${rc ? "" : "content='',"});`,
       );
       await db.exec(`INSERT INTO docs(docs, rank) VALUES('pgsz', ${FTS_BLOCK_SIZE_BYTES});`);
       await db.exec("COMMIT");

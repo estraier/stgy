@@ -14,6 +14,20 @@ const mockLogger = {
 
 const TEST_DIR = "./test_data_search_service_actor";
 
+class TestSearchService extends SearchService {
+  async getPendingBatchTaskIds(): Promise<string[]> {
+    return (await this.docQueue.getPendingBatchTasks()).map((task) => task.id);
+  }
+}
+
+async function waitUntil(predicate: () => Promise<boolean>, timeoutMs = 2000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!(await predicate())) {
+    if (Date.now() >= deadline) throw new Error("Timed out waiting for condition");
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+}
+
 const CONFIG: SearchConfig = {
   baseDir: TEST_DIR,
   namePrefix: "test_search",
@@ -35,7 +49,7 @@ const CONFIG: SearchConfig = {
 };
 
 describe("SearchService (Actor Model)", () => {
-  let service: SearchService;
+  let service: TestSearchService;
 
   beforeAll(async () => {
     await fs.mkdir(TEST_DIR, { recursive: true });
@@ -50,7 +64,7 @@ describe("SearchService (Actor Model)", () => {
     const files = await fs.readdir(TEST_DIR).catch(() => []);
     for (const f of files) await fs.unlink(path.join(TEST_DIR, f)).catch(() => {});
 
-    service = new SearchService(CONFIG, mockLogger);
+    service = new TestSearchService(CONFIG, mockLogger);
     await service.open();
   });
 
@@ -90,21 +104,63 @@ describe("SearchService (Actor Model)", () => {
       true,
     );
 
-    await runTask(
-      {
-        type: "ADD",
-        payload: { docId: "auto_1", timestamp: 1000, bodyText: "automatic commit", locale: "en" },
-      },
-      false,
-    );
+    const taskId = await service.enqueueTask({
+      type: "ADD",
+      payload: { docId: "auto_1", timestamp: 1000, bodyText: "automatic commit", locale: "en" },
+    });
+
+    await waitUntil(async () => (await service.getPendingBatchTaskIds()).includes(taskId));
 
     const immediateRes = await service.search("automatic");
     expect(immediateRes).not.toContain("auto_1");
 
-    await new Promise((r) => setTimeout(r, 800));
+    await service.waitTask(taskId);
 
     const lateRes = await service.search("automatic");
     expect(lateRes).toContain("auto_1");
+  });
+
+  test("Batch task remains pending until its index transaction is committed", async () => {
+    await service.close();
+    service = new TestSearchService(
+      {
+        ...CONFIG,
+        autoCommitDurationSeconds: 60,
+        commitCheckIntervalSeconds: 600,
+      },
+      mockLogger,
+    );
+    await service.open();
+
+    const taskId = await service.enqueueTask({
+      type: "ADD",
+      payload: { docId: "batch_1", timestamp: 1000, bodyText: "batch commit", locale: "en" },
+    });
+
+    await waitUntil(async () => (await service.getPendingBatchTaskIds()).includes(taskId));
+    expect(await service.getPendingBatchTaskIds()).toContain(taskId);
+
+    const syncId = await service.enqueueTask({ type: "SYNC", payload: {} });
+    await service.waitTask(syncId);
+    await service.waitTask(taskId);
+
+    expect(await service.getPendingBatchTaskIds()).not.toContain(taskId);
+    expect(await service.search("batch")).toContain("batch_1");
+  });
+
+  test("Search preserves programming-language symbols", async () => {
+    await runTask({
+      type: "ADD",
+      payload: {
+        docId: "cpp_doc",
+        timestamp: 1000,
+        bodyText: "私はC++言語が好きです",
+        locale: "ja",
+      },
+    });
+
+    expect(await service.search("C++", "ja")).toContain("cpp_doc");
+    expect(await service.search("C", "ja")).not.toContain("cpp_doc");
   });
 
   test("Update: Overwrite existing document", async () => {
@@ -263,7 +319,7 @@ describe("SearchService (Actor Model)", () => {
 
     await service.close();
 
-    service = new SearchService(CONFIG, mockLogger);
+    service = new TestSearchService(CONFIG, mockLogger);
     await service.open();
 
     expect(await service.search("survive")).toContain("doc_persist");

@@ -627,12 +627,19 @@ export class PostsService {
       ]);
       const currentRes = await pgQuery(
         this.pgPool,
-        `SELECT p.locale, pd.content FROM posts p JOIN post_details pd ON p.id = pd.post_id WHERE p.id = $1`,
+        `SELECT p.locale, u.locale AS owner_locale, pd.content
+           FROM posts p
+           JOIN users u ON u.id = p.owned_by
+           JOIN post_details pd ON p.id = pd.post_id
+          WHERE p.id = $1`,
         [hexToDec(input.id)],
       );
       if (currentRes.rows.length > 0) {
         const targetContent = input.content ?? currentRes.rows[0].content;
-        const targetLocale = input.locale ?? currentRes.rows[0].locale;
+        const targetLocale =
+          currentRes.rows[0].locale ??
+          currentRes.rows[0].owner_locale ??
+          Config.DEFAULT_LOCALE;
         const timestamp = Math.floor(
           IdIssueService.bigIntToDate(BigInt(hexToDec(input.id))).getTime() / 1000,
         );

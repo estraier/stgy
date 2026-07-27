@@ -62,6 +62,11 @@ describe("Tokenizer", () => {
         const tokens = tokenizer.tokenize(text, "ja");
         expect(tokens).toEqual(["1", "グラム", "の", "ヴァイオリン", "abc"]);
       });
+
+      test("preserves C++ as one token next to Japanese text", () => {
+        const tokens = tokenizer.tokenize("私はC++言語が好きです", "ja");
+        expect(tokens).toEqual(["私", "は", "c++", "言語", "が", "好き", "です"]);
+      });
     });
 
     describe("Chinese (zh)", () => {
@@ -93,6 +98,11 @@ describe("Tokenizer", () => {
         const text = "crème brûlée";
         const tokens = tokenizer.tokenize(text, "en");
         expect(tokens).toEqual(["creme", "brulee"]);
+      });
+
+      test("preserves common programming-language terms", () => {
+        const tokens = tokenizer.tokenize("C++ C# .NET node.js", "en");
+        expect(tokens).toEqual(["c++", "c#", ".net", "node.js"]);
       });
     });
 

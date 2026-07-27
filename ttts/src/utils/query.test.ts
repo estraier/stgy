@@ -32,7 +32,13 @@ describe("makeFtsQuery", () => {
 
   test("normalizes symbols and letters", async () => {
     const result = await makeFtsQuery("a* AND (b% OR C's)", "en", 10, false);
-    expect(result.ftsQuery).toBe("a AND and AND b AND or AND c's");
+    expect(result.ftsQuery).toBe("a AND and AND b AND or AND \"c's\"");
+    expect(result.filteringPhrases).toEqual([]);
+  });
+
+  test("quotes technical terms that contain FTS5 syntax characters", async () => {
+    const result = await makeFtsQuery("C++", "ja", 10, false);
+    expect(result.ftsQuery).toBe('"c++"');
     expect(result.filteringPhrases).toEqual([]);
   });
 

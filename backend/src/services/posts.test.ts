@@ -16,10 +16,13 @@ jest.mock("../utils/servers", () => {
   return { pgQuery };
 });
 
+const mockEnqueueAddDocument = jest.fn().mockResolvedValue(undefined);
+const mockEnqueueRemoveDocument = jest.fn().mockResolvedValue(undefined);
+
 jest.mock("./search", () => ({
   SearchService: jest.fn().mockImplementation(() => ({
-    enqueueAddDocument: jest.fn().mockResolvedValue(undefined),
-    enqueueRemoveDocument: jest.fn().mockResolvedValue(undefined),
+    enqueueAddDocument: mockEnqueueAddDocument,
+    enqueueRemoveDocument: mockEnqueueRemoveDocument,
   })),
 }));
 
@@ -87,10 +90,18 @@ class MockPgClientMain {
       return { rows: user ? [{ locale: user.locale }] : [] };
     }
 
-    if (sql.includes("SELECT p.locale, pd.content FROM posts p JOIN post_details pd")) {
+    if (
+      sql.includes("SELECT p.locale, u.locale AS owner_locale, pd.content") &&
+      sql.includes("JOIN users u ON u.id = p.owned_by")
+    ) {
       const id = params![0];
       const post = this.data.find((p) => p.id === id);
-      return { rows: post ? [{ locale: post.locale, content: post.content }] : [] };
+      const owner = post ? this.users.find((u) => u.id === post.ownedBy) : undefined;
+      return {
+        rows: post
+          ? [{ locale: post.locale, owner_locale: owner?.locale ?? null, content: post.content }]
+          : [],
+      };
     }
 
     if (sql.startsWith("SELECT allow_likes FROM posts WHERE id = $1")) {
@@ -735,6 +746,8 @@ describe("posts service", () => {
   let user1Hex: string, user2Hex: string, user3Hex: string;
 
   beforeEach(() => {
+    mockEnqueueAddDocument.mockClear();
+    mockEnqueueRemoveDocument.mockClear();
     pgClient = new MockPgClientMain();
     redis = new MockRedis();
     postsService = new PostsService(pgClient as any, redis as any);
@@ -931,6 +944,50 @@ describe("posts service", () => {
     const post = await postsService.updatePost(input);
     expect(post).not.toBeNull();
     expect(post!.locale).toBeNull();
+  });
+
+  test("updatePost: null post locale uses the current owner's locale for indexing", async () => {
+    const storedPost = pgClient.data.find((p) => p.id === toDecStr(postSample.id));
+    expect(storedPost).toBeDefined();
+    storedPost!.locale = null;
+
+    await postsService.updatePost({ id: postSample.id, content: "updated content" });
+
+    expect(mockEnqueueAddDocument).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueAddDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: postSample.id,
+        locale: "ja-JP",
+      }),
+    );
+  });
+
+  test("updatePost: explicit post locale still takes precedence for indexing", async () => {
+    await postsService.updatePost({ id: postSample.id, locale: "fr-FR" });
+
+    expect(mockEnqueueAddDocument).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueAddDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: postSample.id,
+        locale: "fr-FR",
+      }),
+    );
+  });
+
+  test("updatePost: changing owner uses the new owner's locale for indexing", async () => {
+    const storedPost = pgClient.data.find((p) => p.id === toDecStr(postSample.id));
+    expect(storedPost).toBeDefined();
+    storedPost!.locale = null;
+
+    await postsService.updatePost({ id: postSample.id, ownedBy: user2Hex });
+
+    expect(mockEnqueueAddDocument).toHaveBeenCalledTimes(1);
+    expect(mockEnqueueAddDocument).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: postSample.id,
+        locale: "en-US",
+      }),
+    );
   });
 
   test("updatePost: not found", async () => {

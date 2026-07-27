@@ -2,6 +2,7 @@ import { Config } from "./config";
 import { makeTextFromMarkdown } from "./utils/snippet";
 import { decToHex } from "./utils/format";
 import type { Pool } from "pg";
+import { resolvePostIndexLocale } from "./utils/searchLocale";
 
 const rawArgs = process.argv.slice(2);
 const printLogs = rawArgs.includes("--print-logs");
@@ -103,6 +104,7 @@ interface UserRow {
 interface PostRow {
   id: string;
   locale: string | null;
+  owner_locale: string | null;
   content: string | null;
 }
 
@@ -261,8 +263,9 @@ async function runAddPosts(pgPool: Pool, startIdDec: string, endIdDec: string) {
 
   while (true) {
     const sql = `
-      SELECT p.id, p.locale, pd.content
+      SELECT p.id, p.locale, u.locale AS owner_locale, pd.content
       FROM posts p
+      LEFT JOIN users u ON u.id = p.owned_by
       LEFT JOIN post_details pd ON p.id = pd.post_id
       WHERE p.id <= $1 AND p.id > $2
       ORDER BY p.id DESC
@@ -282,7 +285,11 @@ async function runAddPosts(pgPool: Pool, startIdDec: string, endIdDec: string) {
 
         if (!bodyText || bodyText.trim().length === 0) return;
 
-        const locale = row.locale || Config.DEFAULT_LOCALE || "en";
+        const locale = resolvePostIndexLocale(
+          row.locale,
+          row.owner_locale,
+          Config.DEFAULT_LOCALE,
+        );
 
         await fetchJson("posts", "PUT", `/${hexId}`, {
           text: bodyText,

@@ -1,5 +1,13 @@
 import { Tokenizer } from "./tokenizer";
 
+function quoteFtsText(text: string): string {
+  return `"${text.replace(/"/g, '""')}"`;
+}
+
+function formatFtsToken(token: string): string {
+  return /^[\p{L}\p{N}_]+$/u.test(token) ? token : quoteFtsText(token);
+}
+
 export async function makeFtsQuery(
   query: string,
   locale: string,
@@ -29,9 +37,9 @@ export async function makeFtsQuery(
 
       if (tokens.length > 0) {
         if (supportPhrase) {
-          parts.push(`"${tokens.join(" ")}"`);
+          parts.push(quoteFtsText(tokens.join(" ")));
         } else {
-          parts.push(tokens.join(" AND "));
+          parts.push(tokens.map(formatFtsToken).join(" AND "));
           if (tokens.length > 1) {
             filteringPhrases.push(tokens.join(" "));
           }
@@ -48,7 +56,11 @@ export async function makeFtsQuery(
       totalTokens += tokens.length;
 
       if (tokens.length > 0) {
-        parts.push(tokens.join(supportPhrase ? " " : " AND "));
+        parts.push(
+          supportPhrase
+            ? tokens.map(formatFtsToken).join(" ")
+            : tokens.map(formatFtsToken).join(" AND "),
+        );
       }
     }
   }

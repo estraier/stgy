@@ -2,6 +2,9 @@ import kuromoji from "kuromoji";
 import path from "path";
 import { Config } from "../config";
 
+const TECHNICAL_TERM_REGEX =
+  /(?:\.[a-z0-9]+|[a-z0-9]+(?:\+\+|#)(?:[a-z0-9]+)?|[a-z0-9]+(?:[._][a-z0-9]+)+)/g;
+
 export class Tokenizer {
   private static instancePromise: Promise<Tokenizer> | null = null;
   private kTokenizer: kuromoji.Tokenizer<kuromoji.IpadicFeatures> | null = null;
@@ -51,6 +54,40 @@ export class Tokenizer {
       .trim();
   }
 
+  private cleanToken(token: string): string {
+    return token
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .normalize("NFC");
+  }
+
+  private tokenizePlain(text: string, locale: string): string[] {
+    if (!text.trim()) return [];
+
+    let rawTokens: string[];
+    if (locale.startsWith("ja") && this.kTokenizer) {
+      rawTokens = this.kTokenizer.tokenize(text).map((t) => t.surface_form);
+    } else {
+      let segmenter = this.segmenterCache.get(locale);
+      if (!segmenter) {
+        segmenter = new Intl.Segmenter(locale, { granularity: "word" });
+        this.segmenterCache.set(locale, segmenter);
+      }
+      rawTokens = Array.from(segmenter.segment(text))
+        .filter((s) => s.isWordLike)
+        .map((s) => s.segment);
+    }
+
+    const symbolOnlyRegex = /^[\p{P}\p{S}]+$/u;
+    const tokens: string[] = [];
+    for (const token of rawTokens) {
+      const cleanToken = this.cleanToken(token);
+      if (!cleanToken || symbolOnlyRegex.test(cleanToken)) continue;
+      tokens.push(cleanToken);
+    }
+    return tokens;
+  }
+
   public guessLocale(text: string, preferableLocale: string = "en"): string {
     const normalized = this.normalize(text);
     if (!normalized) return preferableLocale;
@@ -81,41 +118,16 @@ export class Tokenizer {
     const normalized = this.normalize(text);
     if (!normalized) return [];
 
-    let rawTokens: string[] = [];
-
-    if (locale.startsWith("ja") && this.kTokenizer) {
-      const results = this.kTokenizer.tokenize(normalized);
-      rawTokens = results.map((t) => t.surface_form);
-    } else {
-      let segmenter = this.segmenterCache.get(locale);
-      if (!segmenter) {
-        segmenter = new Intl.Segmenter(locale, { granularity: "word" });
-        this.segmenterCache.set(locale, segmenter);
-      }
-
-      const segments = segmenter.segment(normalized);
-      rawTokens = Array.from(segments)
-        .filter((s) => s.isWordLike)
-        .map((s) => s.segment);
-    }
-
     const tokens: string[] = [];
-    const symbolOnlyRegex = /^[\p{P}\p{S}]+$/u;
-
-    for (const token of rawTokens) {
-      const cleanToken = token
-        .normalize("NFD")
-        .replace(/[\u0300-\u036f]/g, "")
-        .normalize("NFC");
-
-      if (!cleanToken) continue;
-
-      if (symbolOnlyRegex.test(cleanToken)) {
-        continue;
-      }
-      tokens.push(cleanToken);
+    let offset = 0;
+    for (const match of normalized.matchAll(TECHNICAL_TERM_REGEX)) {
+      const index = match.index ?? 0;
+      tokens.push(...this.tokenizePlain(normalized.slice(offset, index), locale));
+      const technicalTerm = this.cleanToken(match[0]);
+      if (technicalTerm) tokens.push(technicalTerm);
+      offset = index + match[0].length;
     }
-
+    tokens.push(...this.tokenizePlain(normalized.slice(offset), locale));
     return tokens;
   }
 }
