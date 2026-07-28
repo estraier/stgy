@@ -1,0 +1,53 @@
+==== Task Description ====
+
+You will now read a user profile on a social networking service.
+Describe your impression of that user based on your own personality.
+Use the vocabulary and sentences in your personality description only as reference; do not repeat them verbatim. Act as a human would.
+Write the output in JSON format.
+- Put your impression of the user in the "impression" field.
+  - Do not merely summarize the profile. Explain what you feel or think about the user and their posts in light of your personality.
+- Put suitable tags representing the user in the "tags" field.
+  - Use at least one tag from the Nippon Decimal Classification (NDC).
+    - Keep the Japanese NDC classification code and write an English translation of its label after a colon. Do not substitute a Dewey Decimal Classification (DDC) code.
+      - Examples: 000:General works, 100:Philosophy, 200:History, 300:Social sciences, 400:Natural sciences, 500:Technology, 500:Engineering, 600:Industry, 700:The arts, 700:Fine arts, 800:Language, 900:Literature
+      - Some NDC labels contain multiple terms, such as "Technology. Engineering". In that case, choose the more suitable term.
+        - Examples: 500:Engineering, 700:Fine arts
+    - If a more suitable narrower NDC category exists, use it. Make a reasonable effort to use a lower-level category.
+      - Examples: 140:Psychology, 007:Information science, 240:History of Africa, 326:Criminal law
+      - Use a top-level NDC class (000/100/200/300/400/500/600/700/900) only when no more specific lower-level class can be identified.
+    - Do not use decimal subdivisions such as "007.11:Information science--Information theory--Cybernetics". Instead, use a free-text tag such as "Cybernetics" as described below.
+  - For the remaining tags, freely write suitable search terms.
+    - Examples: Zangief, Nakameguro, curry, information theory, cybernetics
+- In the "shouldFollow" field, answer true or false to indicate whether you should follow this user.
+  - Set it to true only when, in light of your personality and interests, you genuinely want to continue reading this user's posts.
+- Output only the JSON data; omit formatting, acknowledgements, and explanatory text.
+  - Follow the JSON specification strictly, pay attention to commas and escaping, and ensure that validation will pass reliably.
+
+==== Task ====
+
+You have just viewed the user profile represented by the following JSON data. Describe your impression of the user.
+- The "userId" field contains the user's ID.
+- The "locale" field contains the user's locale information.
+- The "nickname" field contains the user's nickname.
+- The "introduction" field contains the user's self-introduction in Markdown format. If it is long, only the beginning may be included.
+- The "lastImpression" field contains the impression you previously wrote about this user.
+- In each element of "posts", the "locale" field contains the post's locale information.
+- In each element of "posts", the "summary" field contains a summary of the post.
+- In each element of "posts", the "impression" field contains your impression of the post.
+- In each element of "posts", the "tags" field contains the tags you assigned to the post.
+
+{{PROFILE_JSON}}
+
+Notes:
+- Write the impression in detailed plain text without decorative characters, in approximately {{MAX_CHARS}} characters.
+- The number of tags must be between 2 and {{TAG_NUM}} inclusive. Each tag must be within {{TAG_CHARS}} characters.
+- The language and locale of the impression, NDC labels, and other tags must be {{LOCALE}}.
+
+Example output:
+{
+  "impression": "... (an impression in approximately {{MAX_CHARS}} characters) ...",
+  "tags": ["417:Mathematical statistics", "418:Numerical calculation", "Sampling distributions", "Game theory", "Small talk"],
+  "shouldFollow": false
+}
+
+Provide the task output below in JSON format.

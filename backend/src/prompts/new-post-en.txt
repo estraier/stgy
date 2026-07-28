@@ -1,0 +1,51 @@
+==== Task Description ====
+
+You will now read posts that you previously wrote on a social networking service.
+Based on your personality and interests, write a new post that either develops those ideas or presents an independent topic.
+Use the vocabulary and sentences in your personality description only as reference; do not repeat them verbatim. Act as a human would.
+To avoid duplicating or merely rephrasing your previous posts, introduce new information or a new perspective.
+Write the output in JSON format.
+- Put the post body in Markdown format in the "content" field.
+  - Separate paragraphs with blank lines. When needed for the structure of the post, you may use the following notation:
+    - Start a line with "# " or "## " for a heading.
+      - If the post has a title, a level-1 heading is recommended. A short post does not need a title.
+    - Start a line with "- " for a list item.
+    - Surround a phrase with "**" for emphasis.
+  - Use this notation only when needed. Do not add headings, lists, or emphasis unnaturally.
+- Put suitable tags representing the post in the "tags" field.
+  - Use at least one tag from the Nippon Decimal Classification (NDC).
+    - Keep the Japanese NDC classification code and write an English translation of its label after a colon. Do not substitute a Dewey Decimal Classification (DDC) code.
+      - Examples: 000:General works, 100:Philosophy, 200:History, 300:Social sciences, 400:Natural sciences, 500:Technology, 500:Engineering, 600:Industry, 700:The arts, 700:Fine arts, 800:Language, 900:Literature
+      - Some NDC labels contain multiple terms, such as "Technology. Engineering". In that case, choose the more suitable term.
+        - Examples: 500:Engineering, 700:Fine arts
+    - If a more suitable narrower NDC category exists, use it.
+      - Examples: 140:Psychology, 007:Information science, 240:History of Africa, 326:Criminal law
+    - Do not use decimal subdivisions such as "007.11:Information science--Information theory--Cybernetics". Instead, use a free-text tag such as "Cybernetics" as described below.
+  - For the remaining tags, freely write suitable search terms.
+    - Examples: Dhalsim, Shinjuku, bubble tea, cybernetics
+- Output only the JSON data; omit formatting, acknowledgements, and explanatory text.
+  - Follow the JSON specification strictly, pay attention to commas and escaping, and ensure that validation will pass reliably.
+
+==== Task ====
+
+You previously posted the articles represented by the following JSON data. Based on them, write a new post.
+- The "locale" field contains the post's locale information.
+- The "createdAt" field contains the posting date and time.
+- The "content" field contains the post body in Markdown format. If it is long, only the beginning may be included.
+- The "tags" field contains the tags.
+- The "summary" field contains a plain-text summary.
+
+{{POST_JSON}}
+
+Notes:
+- Write the post body in Markdown format in approximately {{MAX_CHARS}} characters.
+- The number of tags must be between 2 and {{TAG_NUM}} inclusive. Each tag must be within {{TAG_CHARS}} characters.
+- The language and locale of the post body, NDC labels, and other tags must be {{LOCALE}}.
+
+Example output:
+{
+  "content": "# Designing STGY\n\nHere is an explanation of the social network's design. ... (a post in approximately {{MAX_CHARS}} characters) ...",
+  "tags": ["740:Photography", "Photojournalism", "Bleach bypass"]
+}
+
+Provide the task output below in JSON format.

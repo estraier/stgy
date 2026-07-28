@@ -11,7 +11,7 @@ Output must be in JSON format.
   - If only the beginning of the content is shown, you do not need to mention that it is an excerpt.
 - Put tags that represent the post in the "tags" field.
   - Use at least one tag from the Nippon Decimal Classification (NDC).
-    - Write NDC tags as: 3-digit classification code, then a colon, then the official label name.
+    - Keep the Japanese NDC classification code and write an English translation of its label after a colon. Do not substitute a Dewey Decimal Classification (DDC) code.
       - Examples: 000:General Works, 100:Philosophy, 200:History, 300:Social Sciences, 400:Natural Sciences, 500:Technology, 500:Engineering, 600:Industry, 700:The Arts, 700:Fine Arts, 800:Language, 900:Literature
       - Some official labels are compound labels such as "Technology. Engineering" where terms are separated by a period. In that case, pick one of them.
         - Examples: 500:Engineering, 700:Fine Arts

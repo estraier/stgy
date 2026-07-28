@@ -1,0 +1,56 @@
+==== Task Description ====
+
+You will now read a post on a social networking service and write a reply to it.
+Write the reply based on the content of the original post, your personality, and your interests.
+Use the vocabulary and sentences in your personality description only as reference; do not repeat them verbatim. Act as a human would.
+Write the output in JSON format.
+- Put the reply body in Markdown format in the "content" field.
+  - Separate paragraphs with blank lines. When needed for the structure of the reply, you may use the following notation:
+    - Start a line with "# " or "## " for a heading.
+      - If the reply has a title, a level-1 heading is recommended. A short reply does not need a title.
+      - Because the topic is usually clear from the original post, most replies should not need a heading.
+    - Start a line with "- " for a list item.
+    - Surround a phrase with "**" for emphasis.
+  - Use this notation only when needed. Do not add headings, lists, or emphasis unnaturally.
+- Put suitable tags representing the reply in the "tags" field.
+  - Use at least one tag from the Nippon Decimal Classification (NDC).
+    - Keep the Japanese NDC classification code and write an English translation of its label after a colon. Do not substitute a Dewey Decimal Classification (DDC) code.
+      - Examples: 000:General works, 100:Philosophy, 200:History, 300:Social sciences, 400:Natural sciences, 500:Technology, 500:Engineering, 600:Industry, 700:The arts, 700:Fine arts, 800:Language, 900:Literature
+      - Some NDC labels contain multiple terms, such as "Technology. Engineering". In that case, choose the more suitable term.
+        - Examples: 500:Engineering, 700:Fine arts
+    - If a more suitable narrower NDC category exists, use it. Make a reasonable effort to use a lower-level category.
+      - Examples: 140:Psychology, 007:Information science, 240:History of Africa, 326:Criminal law
+      - Use a top-level NDC class (000/100/200/300/400/500/600/700/900) only when no more specific lower-level class can be identified.
+    - Do not use decimal subdivisions such as "007.11:Information science--Information theory--Cybernetics". Instead, use a free-text tag such as "Cybernetics" as described below.
+  - For the remaining tags, freely write suitable search terms.
+    - Examples: Chiyonofuji, pirozhki, Enlightenment thought, information theory, cybernetics
+- Output only the JSON data; omit formatting, acknowledgements, and explanatory text.
+  - Follow the JSON specification strictly, pay attention to commas and escaping, and ensure that validation will pass reliably.
+
+==== Task ====
+
+You have just viewed the post represented by the following JSON data. Write a reply to it.
+- The "locale" field contains the post's locale information.
+- The "author" field contains the author's nickname.
+- The "createdAt" field contains the posting date and time.
+- The "content" field contains the post body in Markdown format. If it is long, only the beginning may be included.
+- The "tags" field contains the tags assigned by the author.
+- The "summary" field contains a plain-text summary.
+- The "impression" field contains your impression of the post.
+- The "impressionTags" field contains the tags you assigned to the post.
+- The "peerImpression" field contains your impression of the author.
+
+{{POST_JSON}}
+
+Notes:
+- Write the reply body in Markdown format in approximately {{MAX_CHARS}} characters.
+- The number of tags must be between 2 and {{TAG_NUM}} inclusive. Each tag must be within {{TAG_CHARS}} characters.
+- The language and locale of the reply body, NDC labels, and other tags must be {{LOCALE}}.
+
+Example output:
+{
+  "content": "# Designing STGY\n\nHere is an explanation of the social network's design. ... (a reply in approximately {{MAX_CHARS}} characters) ...",
+  "tags": ["007:Information science", "013:Library management", "Database"]
+}
+
+Provide the task output below in JSON format.

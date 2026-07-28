@@ -5,6 +5,7 @@ import { AuthService } from "./services/auth";
 import { connectPgWithRetry, connectRedisWithRetry } from "./utils/servers";
 import {
   decodeFeatures,
+  encodeFeatures,
   cosineSimilarity,
   normalizeL2,
   addVectors,
@@ -301,6 +302,27 @@ async function generateFeatures(
     throw new Error(`features api returned empty features: ${truncateForLog(res.body, 50)}`);
   }
   return features;
+}
+
+function applyInterestHysteresis(
+  features: string,
+  previousFeatures: Int8Array | null,
+): string {
+  const current = normalizeL2(decodeFeatures(base64ToInt8(features)));
+  const previous = previousFeatures
+    ? normalizeL2(decodeFeatures(previousFeatures))
+    : new Array<number>(current.length).fill(0);
+  if (current.length !== previous.length) {
+    throw new Error(
+      `interest feature dimensions mismatch: current=${current.length} previous=${previous.length}`,
+    );
+  }
+  const coefficient = Config.AI_USER_INTEREST_HYSTERESIS_COEFFICIENT;
+  const blended = new Array<number>(current.length);
+  for (let i = 0; i < current.length; i++) {
+    blended[i] = current[i] + coefficient * previous[i];
+  }
+  return Buffer.from(encodeFeatures(normalizeL2(blended))).toString("base64");
 }
 
 function buildProfileExcerpt(
@@ -1718,10 +1740,14 @@ async function createInterest(
   lines.push("");
   lines.push(introSnippet);
   const featuresInput = lines.join("\n");
-  const feat = await generateFeatures(adminSessionCookie, {
+  const generatedFeatures = await generateFeatures(adminSessionCookie, {
     model: Config.AI_SUMMARY_MODEL,
     input: featuresInput,
   });
+  const features = applyInterestHysteresis(
+    generatedFeatures,
+    interest?.features ?? null,
+  );
   const saveRes = await apiRequest(
     adminSessionCookie,
     `/ai-users/${encodeURIComponent(profile.id)}/interests`,
@@ -1730,7 +1756,7 @@ async function createInterest(
       body: {
         interest: newInterest,
         tags: newTags,
-        features: feat,
+        features,
       },
     },
   );
@@ -2110,8 +2136,8 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
       const post = item.post;
       if (post.ownedBy === user.id) continue;
       const decision = decisionByPostId.get(post.id);
-      const shouldLike = decision ? decision.shouldLike : true;
-      const shouldReply = decision ? decision.shouldReply : true;
+      const shouldLike = decision ? decision.shouldLike : false;
+      const shouldReply = decision ? decision.shouldReply : false;
       if (
         shouldLike &&
         i < Config.AI_USER_LIKE_LIMIT &&
