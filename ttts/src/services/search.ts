@@ -582,15 +582,14 @@ export class SearchService {
     await shard.writer.exec("INSERT INTO docs(docs) VALUES('optimize'); VACUUM;");
   }
 
-  protected async removeIndexFile(timestamp: number) {
-    const bucketTs = this.fileManager.getBucketTimestamp(timestamp);
-    const shard = this.shards.get(bucketTs);
+  protected async removeIndexFile(bucketTimestamp: number) {
+    const shard = this.shards.get(bucketTimestamp);
     if (shard) {
       await shard.writer.close();
       for (const r of shard.readers) await r.db.close();
-      this.shards.delete(bucketTs);
+      this.shards.delete(bucketTimestamp);
     }
-    await this.fileManager.removeIndexFile(bucketTs);
+    await this.fileManager.removeIndexFile(bucketTimestamp);
   }
 
   protected async reconstructIndexFile(

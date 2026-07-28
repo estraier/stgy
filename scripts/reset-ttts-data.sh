@@ -80,12 +80,37 @@ for RESOURCE in "${RESOURCES[@]}"; do
     echo "  -> Deleting shard: $TS ..."
     DELETE_RES=$(curl --fail --silent --show-error -X DELETE \
       "${SEARCH_HOST}/${RESOURCE}/shards/${TS}?wait=60")
-    if ! jq -e '.result == "enqueued" and (.taskId | type) == "string"' \
+    if ! jq -e \
+      '(.result == "completed" or .result == "enqueued") and (.taskId | type) == "string"' \
       >/dev/null <<<"$DELETE_RES"; then
       echo "     Invalid delete response: $DELETE_RES" >&2
       exit 1
     fi
     echo "     $DELETE_RES"
+
+    if [ "$(jq -r '.result' <<<"$DELETE_RES")" = "enqueued" ]; then
+      DEADLINE=$(( $(date +%s) + 60 ))
+      while true; do
+        SHARDS_AFTER_DELETE=$(curl --fail --silent --show-error \
+          "${SEARCH_HOST}/${RESOURCE}/shards")
+        if ! jq -e 'type == "array" and all(.[]; (.startTimestamp | type) == "number")' \
+          >/dev/null <<<"$SHARDS_AFTER_DELETE"; then
+          echo "     Invalid shard-list response while waiting: $SHARDS_AFTER_DELETE" >&2
+          exit 1
+        fi
+        if ! jq -e --argjson timestamp "$TS" \
+          'any(.[]; .startTimestamp == $timestamp)' \
+          >/dev/null <<<"$SHARDS_AFTER_DELETE"; then
+          echo "     Deletion completed."
+          break
+        fi
+        if (( $(date +%s) >= DEADLINE )); then
+          echo "     Timed out waiting for shard deletion: $TS" >&2
+          exit 1
+        fi
+        sleep 0.2
+      done
+    fi
   done < <(jq -r '.[].startTimestamp' <<<"$SHARDS_JSON")
 done
 

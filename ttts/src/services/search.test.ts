@@ -3,6 +3,7 @@ import path from "path";
 import { SearchService, SearchConfig } from "./search";
 import { Logger } from "pino";
 import { SearchTask } from "./taskQueue";
+import { Database } from "../utils/database";
 
 const mockLogger = {
   info: jest.fn(),
@@ -17,6 +18,10 @@ const TEST_DIR = "./test_data_search_service_actor";
 class TestSearchService extends SearchService {
   async getPendingBatchTaskIds(): Promise<string[]> {
     return (await this.docQueue.getPendingBatchTasks()).map((task) => task.id);
+  }
+
+  getIndexFilePath(bucketTimestamp: number): string {
+    return this.fileManager.getFilePath(bucketTimestamp);
   }
 }
 
@@ -273,6 +278,28 @@ describe("SearchService (Actor Model)", () => {
 
     expect((await service.listIndexFiles()).length).toBe(0);
     expect(await service.search("drop")).toEqual([]);
+  });
+
+  test("Management: DROP_SHARD uses the listed shard timestamp without rebucketing", async () => {
+    const oldBucketTimestamp = 150;
+    const db = await Database.open(service.getIndexFilePath(oldBucketTimestamp));
+    await db.close();
+
+    expect((await service.listIndexFiles()).map((file) => file.startTimestamp)).toContain(
+      oldBucketTimestamp,
+    );
+
+    await runTask(
+      {
+        type: "DROP_SHARD",
+        payload: { targetTimestamp: oldBucketTimestamp },
+      },
+      false,
+    );
+
+    expect((await service.listIndexFiles()).map((file) => file.startTimestamp)).not.toContain(
+      oldBucketTimestamp,
+    );
   });
 
   test("Management: RESERVE", async () => {
