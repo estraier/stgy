@@ -72,7 +72,7 @@ export class Config {
     10000,
   );
   static readonly TAGS_NUMBER_LIMIT = normNum(process.env.NEXT_PUBLIC_TAGS_NUMBER_LIMIT, 5);
-  static readonly SNIPPET_MAX_LENGTH = normNum(process.env.NEXT_PUBLIC_SNIPPET_MAX_LENGTH, 200);
+  static readonly SNIPPET_MAX_LENGTH = normNum(process.env.NEXT_PUBLIC_SNIPPET_MAX_LENGTH, 300);
   static readonly SNIPPET_MAX_HEIGHT = normNum(process.env.NEXT_PUBLIC_SNIPPET_MAX_HEIGHT, 10);
   static readonly MAX_MEDIA_OBJECTS_PER_POST = normNum(
     process.env.NEXT_PUBLIC_MAX_MEDIA_OBJECTS_PER_POST,
@@ -134,7 +134,7 @@ export class Config {
   );
   static readonly AI_SUMMARY_POST_SKIP_LATEST_MS = normNum(
     process.env.NEXT_PUBLIC_AI_SUMMARY_POST_SKIP_LATEST_MS,
-    600 * 1000,
+    300 * 1000,
   );
 }
 

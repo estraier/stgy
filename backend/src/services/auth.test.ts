@@ -1,5 +1,6 @@
 import { AuthService } from "./auth";
 import { decToHex, hexToDec } from "../utils/format";
+import { Config } from "../config";
 
 jest.mock("../utils/servers", () => ({
   pgQuery: jest.fn(async (pool: any, text: string, params?: any[]) => pool.query(text, params)),
@@ -66,7 +67,12 @@ describe("AuthService class", () => {
     });
     const result = await authService.login("test@example.com", "password");
     expect(result.userId).toBe(userIdHex);
-    expect(redis.set).toHaveBeenCalled();
+    expect(redis.set).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.any(String),
+      "EX",
+      Config.SESSION_TTL,
+    );
     const sessionId = result.sessionId;
     const session = JSON.parse(redis.store[`session:${sessionId}`]);
     expect(session.userId).toBe(userIdHex);
@@ -130,6 +136,26 @@ describe("AuthService class", () => {
   test("loginAsAdmin: admin not found", async () => {
     (pgClient.query as jest.Mock).mockResolvedValueOnce({ rows: [], rowCount: 0 });
     await expect(authService.loginAsAdmin()).rejects.toThrow("admin not found");
+  });
+
+  test("loginAsAdmin: first user is not admin", async () => {
+    (pgClient.query as jest.Mock).mockResolvedValueOnce({
+      rows: [
+        {
+          id: "1",
+          email: "user@example.com",
+          nickname: "user",
+          is_admin: false,
+          created_at: "2025-07-01T02:03:04Z",
+          updated_at: null,
+          locale: "ja-JP",
+          timezone: "Asia/Tokyo",
+        },
+      ],
+      rowCount: 1,
+    });
+    await expect(authService.loginAsAdmin()).rejects.toThrow("first user is not admin");
+    expect(redis.set).not.toHaveBeenCalled();
   });
 
   test("switchUser: success", async () => {

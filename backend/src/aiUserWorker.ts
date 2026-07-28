@@ -819,7 +819,7 @@ async function fetchOwnRecentPosts(
   const parsed = JSON.parse(res.body) as unknown;
   if (!Array.isArray(parsed)) return [];
   const list = parsed as Post[];
-  const ids = list.map((p) => p.id).slice(0, Config.AI_USER_READ_POST_LIMIT);
+  const ids = list.map((p) => p.id).slice(0, limit);
   const result: PostDetail[] = [];
   for (const id of ids) {
     try {
@@ -1375,8 +1375,8 @@ async function createPostImpression(
   }
   const impression = truncateText(impressionRaw.trim(), Config.AI_USER_OUTPUT_TEXT_LIMIT);
   const tags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
-  const shouldLike = parsed["shouldLike"] ? true : false;
-  const shouldReply = parsed["shouldReply"] ? true : false;
+  const shouldLike = parsed["shouldLike"] === true;
+  const shouldReply = parsed["shouldReply"] === true;
   const payload = JSON.stringify({ impression, tags, shouldLike, shouldReply });
   await apiRequest(
     userSessionCookie,
@@ -1547,7 +1547,7 @@ async function createPeerImpression(
   }
   const impression = truncateText(impressionRaw.trim(), Config.AI_USER_OUTPUT_TEXT_LIMIT);
   const tags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
-  const shouldFollow = parsed["shouldFollow"] ? true : false;
+  const shouldFollow = parsed["shouldFollow"] === true;
   const payload = JSON.stringify({ impression, tags, shouldFollow });
   await apiRequest(
     userSessionCookie,
@@ -1820,6 +1820,7 @@ async function createNewPost(
   const postJson = JSON.stringify(postExcerpt, null, 2).replaceAll(/{{[A-Z_]+}}/g, "");
   let maxChars = Config.AI_USER_NEW_POST_LENGTH;
   let tagChars = Config.AI_TAG_MAX_LENGTH;
+  const tagNum = Math.min(Config.AI_USER_NEW_POST_TAGS, Config.AI_TAG_MAX_COUNT);
   if (
     locale === "ja" ||
     locale.startsWith("ja-") ||
@@ -1844,7 +1845,7 @@ async function createNewPost(
     .replaceAll("{{POST_JSON}}", postJson)
     .replaceAll("{{MAX_CHARS}}", String(maxChars))
     .replaceAll("{{TAG_CHARS}}", String(tagChars))
-    .replaceAll("{{TAG_NUM}}", String(Config.AI_USER_NEW_POST_TAGS))
+    .replaceAll("{{TAG_NUM}}", String(tagNum))
     .replaceAll("{{LOCALE}}", localeText);
 
   const chatReq: ChatRequest = {
@@ -1873,7 +1874,7 @@ async function createNewPost(
     );
   }
   const content = truncateText(contentRaw, Config.AI_USER_OUTPUT_TEXT_LIMIT);
-  const tags = parseTagsField(parsed["tags"], Config.AI_TAG_MAX_COUNT);
+  const tags = parseTagsField(parsed["tags"], tagNum);
   const saveRes = await apiRequest(userSessionCookie, "/posts", {
     method: "POST",
     body: { content, tags },
@@ -2138,9 +2139,10 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
       const decision = decisionByPostId.get(post.id);
       const shouldLike = decision ? decision.shouldLike : false;
       const shouldReply = decision ? decision.shouldReply : false;
+      const interestRank = i + 1;
       if (
         shouldLike &&
-        i < Config.AI_USER_LIKE_LIMIT &&
+        interestRank <= Config.AI_USER_LIKE_MAX_INTEREST_RANK &&
         item.similarity >= Config.AI_USER_LIKE_MIN_SIMILARITY
       ) {
         try {
@@ -2152,7 +2154,7 @@ async function processUser(adminSessionCookie: string, user: AiUser): Promise<vo
       }
       if (
         shouldReply &&
-        i < Config.AI_USER_REPLY_LIMIT &&
+        interestRank <= Config.AI_USER_REPLY_MAX_INTEREST_RANK &&
         item.similarity >= Config.AI_USER_REPLY_MIN_SIMILARITY
       ) {
         try {

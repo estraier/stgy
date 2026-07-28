@@ -173,8 +173,7 @@ export class Config {
   );
   static readonly AI_SUMMARY_POST_SKIP_LATEST_MS = envNum(
     "STGY_AI_SUMMARY_POST_SKIP_LATEST_MS",
-    //600 * 1000,
-    60 * 1000,
+    300 * 1000,
   );
   static readonly AI_SUMMARY_BATCH_SIZE = envNum("STGY_AI_SUMMARY_BATCH_SIZE", 1000);
   static readonly AI_SUMMARY_CONCURRENCY = envNum("STGY_AI_SUMMARY_CONCURRENCY", 1);
@@ -196,9 +195,15 @@ export class Config {
   static readonly AI_USER_READ_POST_LIMIT = envNum("STGY_AI_USER_READ_POST_LIMIT", 10);
   static readonly AI_USER_READ_PEER_POST_LIMIT = envNum("STGY_AI_USER_READ_PEER_POST_LIMIT", 10);
   static readonly AI_USER_READ_OWN_POST_LIMIT = envNum("STGY_AI_USER_READ_OWN_POST_LIMIT", 10);
-  static readonly AI_USER_LIKE_LIMIT = envNum("STGY_AI_USER_LIKE_LIMIT", 2);
+  static readonly AI_USER_LIKE_MAX_INTEREST_RANK = envNum(
+    "STGY_AI_USER_LIKE_MAX_INTEREST_RANK",
+    2,
+  );
   static readonly AI_USER_LIKE_MIN_SIMILARITY = envNum("STGY_AI_USER_LIKE_MIN_SIMILARITY", 0.5);
-  static readonly AI_USER_REPLY_LIMIT = envNum("STGY_AI_USER_REPLY_LIMIT", 2);
+  static readonly AI_USER_REPLY_MAX_INTEREST_RANK = envNum(
+    "STGY_AI_USER_REPLY_MAX_INTEREST_RANK",
+    2,
+  );
   static readonly AI_USER_REPLY_MIN_SIMILARITY = envNum("STGY_AI_USER_REPLY_MIN_SIMILARITY", 0.6);
   static readonly AI_USER_POST_TEXT_LIMIT = envNum("STGY_AI_USER_POST_TEXT_LIMIT", 10000);
   static readonly AI_USER_INTRO_TEXT_LIMIT = envNum("STGY_AI_USER_INTRO_TEXT_LIMIT", 10000);

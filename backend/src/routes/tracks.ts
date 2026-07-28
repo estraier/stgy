@@ -70,7 +70,7 @@ export default function createTracksRouter(
   const timerThrottleService = new DailyTimerThrottleService(
     redis,
     "media",
-    Config.DAILY_DB_TIMER_LIMIT_MS,
+    Config.DAILY_MEDIA_TIMER_LIMIT_MS,
   );
   const updatesThrottleService = new ThrottleService(
     redis,

@@ -4,10 +4,9 @@ import crypto from "crypto";
 import type { SessionInfo } from "../models/session";
 import { hexToDec, decToHex, checkPasswordHash } from "../utils/format";
 import { pgQuery } from "../utils/servers";
+import { Config } from "../config";
 
 export type LoginResult = { sessionId: string; userId: string };
-
-const SESSION_TTL = 60 * 60 * 24 * 2;
 
 type LoginRow = {
   id: string;
@@ -98,7 +97,12 @@ export class AuthService {
       userTimezone,
       loggedInAt: new Date().toISOString(),
     };
-    await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", SESSION_TTL);
+    await this.redis.set(
+      `session:${sessionId}`,
+      JSON.stringify(sessionInfo),
+      "EX",
+      Config.SESSION_TTL,
+    );
     return { sessionId, userId };
   }
 
@@ -133,6 +137,7 @@ export class AuthService {
       locale: userLocale,
       timezone: userTimezone,
     } = result.rows[0];
+    if (!userIsAdmin) throw new Error("first user is not admin");
     const sessionId = crypto.randomBytes(32).toString("hex");
     const sessionInfo: SessionInfo = {
       userId: decToHex(id),
@@ -145,7 +150,12 @@ export class AuthService {
       userTimezone,
       loggedInAt: new Date().toISOString(),
     };
-    await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", SESSION_TTL);
+    await this.redis.set(
+      `session:${sessionId}`,
+      JSON.stringify(sessionInfo),
+      "EX",
+      Config.SESSION_TTL,
+    );
     return { sessionId, userId: sessionInfo.userId };
   }
 
@@ -191,13 +201,22 @@ export class AuthService {
       userTimezone,
       loggedInAt: new Date().toISOString(),
     };
-    await this.redis.set(`session:${sessionId}`, JSON.stringify(sessionInfo), "EX", SESSION_TTL);
+    await this.redis.set(
+      `session:${sessionId}`,
+      JSON.stringify(sessionInfo),
+      "EX",
+      Config.SESSION_TTL,
+    );
     return { sessionId, userId: sessionInfo.userId };
   }
 
   async getSessionInfo(sessionId: string): Promise<SessionInfo | null> {
     if (!sessionId) return null;
-    const value = await this.redis.getex(`session:${sessionId}`, "EX", SESSION_TTL);
+    const value = await this.redis.getex(
+      `session:${sessionId}`,
+      "EX",
+      Config.SESSION_TTL,
+    );
     if (!value) return null;
     try {
       return JSON.parse(value) as SessionInfo;
@@ -248,7 +267,12 @@ export class AuthService {
       userTimezone,
       loggedInAt: current.loggedInAt,
     };
-    await this.redis.set(`session:${sessionId}`, JSON.stringify(next), "EX", SESSION_TTL);
+    await this.redis.set(
+      `session:${sessionId}`,
+      JSON.stringify(next),
+      "EX",
+      Config.SESSION_TTL,
+    );
     return next;
   }
 

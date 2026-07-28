@@ -18,7 +18,7 @@ export default function createMediaRouter(pgPool: Pool, redis: Redis, storage: S
   const timerThrottleService = new DailyTimerThrottleService(
     redis,
     "media",
-    Config.DAILY_DB_TIMER_LIMIT_MS,
+    Config.DAILY_MEDIA_TIMER_LIMIT_MS,
   );
   const updatesThrottleService = new ThrottleService(
     redis,
