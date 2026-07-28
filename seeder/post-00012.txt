@@ -98,7 +98,7 @@ STGYの関連パッケージは全て単一のリポジトリに収められて�
 - packages/ : 独自の依存パッケージ群のディレクトリ
   - markdown/ : Markdownの解釈やHTMLへの変換
   - track/ : 経路データの解釈やTrackJSONへの変換とそのレンダリング
-  - geo/ : ジオコーディングのデータ生成と検索
+  - geocoder/ : ジオコーディングのデータ生成と検索
 - ttts/ : 全文検索サービスのソースコードや設定ファイル一式のディレクトリ
 - backend/ : バックエンドサービスのソースコードや設定ファイル一式のディレクトリ
 - frontend/ : フロントエンドサービスのソースコードや設定ファイル一式のディレクトリ
@@ -109,11 +109,11 @@ STGYの関連パッケージは全て単一のリポジトリに収められて�
 - postfix/ : Dockerで動かすPostfixの設定一式のディレクトリ
 - seeder/ : 初期登録データ一式のディレクトリ
 
-パッケージ管理はNPMで行っており、その設定はpackage.jsonに書いてある。Dockerの管理はそこにあるスクリプトコマンドを叩いて行う。ワークスペース構成を取っていて、packages/*とbackendとfrontendの下にあるpackage.jsonはその管理下にある。それぞれのサブパッケージには、以下の共通したファイルやディレクトリが格納されている。
+パッケージ管理はNPMで行っており、その設定はpackage.jsonに書いてある。Dockerの管理はそこにあるスクリプトコマンドを叩いて行う。ワークスペース構成を取っていて、packages/*とtttsとbackendとfrontendの下にあるpackage.jsonはその管理下にある。それぞれのサブパッケージには、以下の共通したファイルやディレクトリが格納されている。
 
 - package.json : NPMでパッケージ管理をするための設定ファイル
 - tsconfig.json : TypeScriptのビルド設定ファイル
-- tsconfig.lint.json : eslintが使うビルド設定ファイル
+- tsconfig.eslint.json : eslintが使うビルド設定ファイル
 - eslint.config.mjs : eslintによるコード解析の設定ファイル
 - jest.config.js : jestによるユニットテストの設定ファイル
 - src/ : ソースコード一式
@@ -447,7 +447,7 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
   - 全文検索サーバをhttp://ttts:3200として認識し、Dockerサブネットで通信。
     - STGY_SEARCH_API_BASE_URL=http://ttts:3200
 
-- メールワーカ（Node.jsのCLI。実運用では統合ワーカのスレッド）
+- メールワーカ（Node.jsのCLI。実運用では統合ワーカ内で起動）
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
@@ -455,14 +455,14 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_SMTP_HOST=postfix
     - STGY_SMTP_PORT=25
 
-- メディアワーカ（Node.jsのCLI。実運用では統合ワーカのスレッド）
+- メディアワーカ（Node.jsのCLI。実運用では統合ワーカ内で起動）
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
   - S3サーバのエンドポイントをhttp://minio:9000として認識し、Dockerサブネットで通信。
     - STGY_STORAGE_S3_ENDPOINT=http://minio:9000
 
-- 通知ワーカ（Node.jsのCLI。実運用では統合ワーカのスレッド）
+- 通知ワーカ（Node.jsのCLI。実運用では統合ワーカ内で起動）
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
     - STGY_REDIS_HOST=redis
     - STGY_REDIS_PORT=6379
@@ -470,14 +470,14 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_DATABASE_HOST=postgres
     - STGY_DATABASE_PORT=5432
 
-- 検索インデックスワーカ（Node.jsのCLI。実運用では統合ワーカのスレッド）
+- 検索インデックスワーカ（Node.jsのCLI。実運用では統合ワーカ内で起動）
   - DBサーバをpostgres:5432として認識し、Dockerサブネットで通信。
     - STGY_DATABASE_HOST=postgres
     - STGY_DATABASE_PORT=5432
   - 全文検索サーバをhttp://ttts:3200として認識し、Dockerサブネットで通信。
     - STGY_SEARCH_API_BASE_URL=http://ttts:3200
 
-- AI要約ワーカ（Node.jsのCLI。実運用では統合ワーカのスレッド）
+- AI要約ワーカ（Node.jsのCLI。実運用では統合ワーカ内で起動）
   - バックエンドをhttps://stgy.jp/backendとして認識し、公開サブネットで通信。
     - STGY_BACKEND_API_BASE_URL=https://stgy.jp/backend
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
@@ -487,7 +487,7 @@ Docker完結の前提で、アーキテクチャと設定を整理してみる�
     - STGY_DATABASE_HOST=postgres
     - STGY_DATABASE_PORT=5432
 
-- AIユーザワーカ（Node.jsのCLI。実運用では統合ワーカのスレッド）
+- AIユーザワーカ（Node.jsのCLI。実運用では統合ワーカ内で起動）
   - バックエンドをhttps://stgy.jp/backendとして認識し、公開サブネットで通信。
     - STGY_BACKEND_API_BASE_URL=https://stgy.jp/backend
   - キャッシュサーバをredis:6379として認識し、Dockerサブネットで通信。
