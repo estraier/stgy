@@ -7,6 +7,9 @@ VENV=${STGY_GEOCODER_GENERATOR_VENV:-"$PACKAGE_ROOT/.cache/generator-venv"}
 SOURCE=${STGY_GEOCODER_SOURCE_FILE:-"$PACKAGE_ROOT/source-data/N03-2026/N03-20260101_GML.zip"}
 SOURCE_URL=${STGY_GEOCODER_SOURCE_URL:-"https://nlftp.mlit.go.jp/ksj/gml/data/N03/N03-2026/N03-20260101_GML.zip"}
 OUTPUT=${STGY_GEOCODER_OUTPUT_FILE:-"$PACKAGE_ROOT/data/geo-japan.ndjson"}
+ENGLISH_SOURCE=${STGY_GEOCODER_ENGLISH_SOURCE_FILE:-"$PACKAGE_ROOT/source-data/address-base-registry/mt_city_all-en.json"}
+ABR_CATALOG_URL=${STGY_GEOCODER_ABR_CATALOG_URL:-"https://dataset.address-br.digital.go.jp/api/feed/dcat-us/1.1.json"}
+ABR_CITY_URL=${STGY_GEOCODER_ABR_CITY_URL:-}
 
 if [ ! -x "$VENV/bin/python" ]; then
   "$PYTHON" -m venv "$VENV"
@@ -31,10 +34,36 @@ if [ ! -f "$SOURCE" ]; then
     --output "$SOURCE"
 fi
 
-exec "$VENV/bin/python" "$PACKAGE_ROOT/scripts/generate-japan.py" \
-  --input "$SOURCE" \
-  --output "$OUTPUT" \
-  --grid-km 2 \
-  --component-area-km2 0.25 \
-  --validation-grid-km 1 \
-  "$@"
+if [ ! -f "$ENGLISH_SOURCE" ]; then
+  if [ -n "$ABR_CITY_URL" ]; then
+    if ! "$VENV/bin/python" "$PACKAGE_ROOT/scripts/download-japan-english-addresses.py" \
+      --catalog-url "$ABR_CATALOG_URL" \
+      --dataset-url "$ABR_CITY_URL" \
+      --output "$ENGLISH_SOURCE"; then
+      echo "warning: failed to download ABR municipality names; generating Japanese addresses only" >&2
+    fi
+  elif ! "$VENV/bin/python" "$PACKAGE_ROOT/scripts/download-japan-english-addresses.py" \
+    --catalog-url "$ABR_CATALOG_URL" \
+    --output "$ENGLISH_SOURCE"; then
+    echo "warning: failed to download ABR municipality names; generating Japanese addresses only" >&2
+  fi
+fi
+
+if [ -f "$ENGLISH_SOURCE" ]; then
+  exec "$VENV/bin/python" "$PACKAGE_ROOT/scripts/generate-japan.py" \
+    --input "$SOURCE" \
+    --english-addresses "$ENGLISH_SOURCE" \
+    --output "$OUTPUT" \
+    --grid-km 2 \
+    --component-area-km2 0.25 \
+    --validation-grid-km 1 \
+    "$@"
+else
+  exec "$VENV/bin/python" "$PACKAGE_ROOT/scripts/generate-japan.py" \
+    --input "$SOURCE" \
+    --output "$OUTPUT" \
+    --grid-km 2 \
+    --component-area-km2 0.25 \
+    --validation-grid-km 1 \
+    "$@"
+fi

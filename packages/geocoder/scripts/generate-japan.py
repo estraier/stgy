@@ -34,6 +34,22 @@ PROJECTED_CRS = CRS.from_proj4(
 )
 GEOGRAPHIC_CRS = CRS.from_epsg(4326)
 
+ENGLISH_NAME_SUFFIXES = (
+    (" Prefecture", "prefecture"),
+    (" Metropolis", "metropolis"),
+    (" Village", "village"),
+    ("-machi", "town"),
+    ("-mura", "village"),
+    (" City", "city"),
+    (" Ward", "ward"),
+    (" Town", "town"),
+    ("-shi", "city"),
+    ("-cho", "town"),
+    ("-son", "village"),
+    ("-gun", "county"),
+    ("-ku", "ward"),
+)
+
 
 @dataclass(frozen=True)
 class Place:
@@ -106,6 +122,133 @@ class Alias:
     source: str
 
 
+@dataclass(frozen=True)
+class EnglishName:
+    code: int
+    prefecture_japanese: str
+    prefecture_english: str
+    county_japanese: str
+    county_english: str
+    municipality_japanese: str
+    municipality_english: str
+    ward_japanese: str
+    ward_english: str
+
+    @property
+    def japanese(self) -> str:
+        return f"{self.county_japanese}{self.municipality_japanese}{self.ward_japanese}"
+
+
+class EnglishAddressIndex:
+    def __init__(self, records: Iterable[EnglishName]):
+        self.by_code: dict[int, EnglishName] = {}
+        self.by_prefecture_and_japanese: dict[tuple[int, str], list[EnglishName]] = (
+            defaultdict(list)
+        )
+        self.prefecture_names: dict[str, str] = {}
+        for record in records:
+            if record.code in self.by_code:
+                raise ValueError(f"duplicate English address code: {record.code:05d}")
+            self.by_code[record.code] = record
+            self.by_prefecture_and_japanese[(record.code // 1000, record.japanese)].append(
+                record
+            )
+            previous = self.prefecture_names.get(record.prefecture_japanese)
+            if previous is not None and previous != record.prefecture_english:
+                raise ValueError(
+                    f"conflicting English prefecture name: {record.prefecture_japanese}"
+                )
+            self.prefecture_names[record.prefecture_japanese] = record.prefecture_english
+
+    def prefecture_name(self, japanese: str) -> str | None:
+        return self.prefecture_names.get(japanese)
+
+    def find(self, place: Place) -> EnglishName | None:
+        japanese_candidates = japanese_name_candidates(place)
+        by_code = self.by_code.get(place.id)
+        if by_code is not None and by_code.japanese in japanese_candidates:
+            return by_code
+
+        matched: dict[int, EnglishName] = {}
+        prefecture_code = place.id // 1000
+        for japanese in japanese_candidates:
+            for record in self.by_prefecture_and_japanese.get(
+                (prefecture_code, japanese), []
+            ):
+                matched[record.code] = record
+        if len(matched) == 1:
+            return next(iter(matched.values()))
+        return None
+
+
+class EnglishAddressBuilder:
+    def __init__(self, index: EnglishAddressIndex | None):
+        self.index = index
+        self.generated = 0
+        self.missing = 0
+
+    def build(self, place: Place) -> dict[str, object] | None:
+        if self.index is None:
+            self.missing += 1
+            return None
+
+        prefecture = self.index.prefecture_name(place.prefecture)
+        if prefecture is None:
+            return self.warn(place, f"no matching English prefecture name")
+
+        if place.kind == "prefecture":
+            self.generated += 1
+            return {
+                "locale": "en",
+                "label": prefecture,
+                "elements": [prefecture],
+                "aliases": [f"{prefecture} prefecture"],
+            }
+
+        local_record = self.index.find(place)
+        if local_record is None:
+            return self.warn(place, "no matching English municipality name")
+
+        city, city_suffix = split_english_name(local_record.municipality_english)
+        if not city:
+            return self.warn(place, "invalid English municipality name")
+
+        if place.kind == "designated-city-ward":
+            ward, ward_suffix = split_english_name(local_record.ward_english)
+            if not ward:
+                return self.warn(place, "invalid English designated-city ward name")
+            elements = [prefecture, city, ward]
+            aliases = unique_strings(
+                [
+                    ward,
+                    f"{ward} {ward_suffix or 'ward'}",
+                    f"{city} {ward}",
+                    f"{city} {ward} {ward_suffix or 'ward'}",
+                ]
+            )
+        else:
+            elements = [prefecture, city]
+            aliases = unique_strings(
+                [city, f"{city} {city_suffix or infer_suffix(place)}"]
+            )
+
+        self.generated += 1
+        return {
+            "locale": "en",
+            "label": ", ".join(reversed(elements)),
+            "elements": elements,
+            "aliases": aliases,
+        }
+
+    def warn(self, place: Place, reason: str) -> None:
+        self.missing += 1
+        print(
+            f"warning: no English address for {place.id:05d} {place.label}: {reason}",
+            file=sys.stderr,
+        )
+        return None
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
@@ -115,11 +258,73 @@ def parse_args() -> argparse.Namespace:
         help="N03 ZIP, GeoJSON, GML or Shapefile path/URL; repeat for multiple files",
     )
     parser.add_argument("--output", required=True, help="output NDJSON path")
+    parser.add_argument(
+        "--english-addresses",
+        help="normalized JSON generated from the Digital Agency ABR municipality master",
+    )
     parser.add_argument("--grid-km", type=float, default=2.0)
     parser.add_argument("--component-area-km2", type=float, default=0.25)
     parser.add_argument("--validation-grid-km", type=float, default=1.0)
     parser.add_argument("--skip-validation", action="store_true")
     return parser.parse_args()
+
+
+def load_english_addresses(path_value: str | None) -> EnglishAddressIndex | None:
+    if path_value is None:
+        return None
+    path = Path(path_value).expanduser().resolve()
+    document = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(document, dict) or not isinstance(document.get("records"), list):
+        raise ValueError(f"invalid English address source: {path}")
+    records: list[EnglishName] = []
+    fields = (
+        "prefectureJa",
+        "prefectureEn",
+        "countyJa",
+        "countyEn",
+        "municipalityJa",
+        "municipalityEn",
+        "wardJa",
+        "wardEn",
+    )
+    for index, value in enumerate(document["records"]):
+        if not isinstance(value, dict):
+            raise ValueError(f"invalid English address record {index}: {path}")
+        code = value.get("code")
+        if not isinstance(code, str) or not code.isdigit() or len(code) != 5:
+            raise ValueError(f"invalid English address code at record {index}: {path}")
+        values: dict[str, str] = {}
+        for field in fields:
+            item = value.get(field)
+            if not isinstance(item, str):
+                raise ValueError(
+                    f"invalid {field} at English address record {index}: {path}"
+                )
+            values[field] = item.strip()
+        if not all(
+            values[field]
+            for field in (
+                "prefectureJa",
+                "prefectureEn",
+                "municipalityJa",
+                "municipalityEn",
+            )
+        ):
+            raise ValueError(f"incomplete English address record {index}: {path}")
+        records.append(
+            EnglishName(
+                int(code),
+                values["prefectureJa"],
+                values["prefectureEn"],
+                values["countyJa"],
+                values["countyEn"],
+                values["municipalityJa"],
+                values["municipalityEn"],
+                values["wardJa"],
+                values["wardEn"],
+            )
+        )
+    return EnglishAddressIndex(records)
 
 
 def load_sources(sources: list[str]) -> gpd.GeoDataFrame:
@@ -208,6 +413,54 @@ def clean_text(value: object) -> str:
     if value is None or pd.isna(value):
         return ""
     return str(value).strip()
+
+
+def strip_district(japanese: str) -> str:
+    if "郡" in japanese:
+        return japanese.rsplit("郡", 1)[1]
+    return japanese
+
+
+def japanese_name_candidates(place: Place) -> set[str]:
+    if place.kind == "prefecture":
+        return {place.prefecture}
+    if place.kind == "designated-city-ward":
+        assert place.municipality is not None
+        assert place.ward is not None
+        municipality = strip_district(place.municipality)
+        return {
+            place.ward,
+            f"{place.municipality}{place.ward}",
+            f"{municipality}{place.ward}",
+        }
+    assert place.municipality is not None
+    return {place.municipality, strip_district(place.municipality)}
+
+
+def split_english_name(value: str) -> tuple[str, str | None]:
+    normalized = " ".join(value.split())
+    for suffix, kind in ENGLISH_NAME_SUFFIXES:
+        if normalized.lower().endswith(suffix.lower()):
+            return normalized[: -len(suffix)].strip(), kind
+    return normalized, None
+
+
+
+def infer_suffix(place: Place) -> str:
+    japanese = place.ward if place.ward is not None else place.municipality or ""
+    if japanese.endswith("市"):
+        return "city"
+    if japanese.endswith("区"):
+        return "ward"
+    if japanese.endswith("町"):
+        return "town"
+    if japanese.endswith("村"):
+        return "village"
+    return place.kind
+
+
+def unique_strings(values: Iterable[str]) -> list[str]:
+    return list(dict.fromkeys(value for value in values if value))
 
 
 def parse_municipality_code(code_value: object) -> int | None:
@@ -468,7 +721,21 @@ def make_aliases(places: list[Place], grid_km: float, component_area_km2: float)
     return aliases
 
 
-def place_record(place: Place) -> dict[str, object]:
+def place_record(
+    place: Place,
+    english_addresses: EnglishAddressBuilder,
+) -> dict[str, object]:
+    addresses: list[dict[str, object]] = [
+        {
+            "locale": "ja",
+            "label": place.label,
+            "elements": place.elements,
+            "aliases": place.aliases,
+        }
+    ]
+    english_address = english_addresses.build(place)
+    if english_address is not None:
+        addresses.append(english_address)
     return {
         "id": place.id,
         "level": place.level,
@@ -476,14 +743,7 @@ def place_record(place: Place) -> dict[str, object]:
         "country": "JP",
         "longitude": round(place.longitude, 6),
         "latitude": round(place.latitude, 6),
-        "addresses": [
-            {
-                "locale": "ja",
-                "label": place.label,
-                "elements": place.elements,
-                "aliases": place.aliases,
-            }
-        ],
+        "addresses": addresses,
     }
 
 
@@ -501,16 +761,17 @@ def write_ndjson(
     level2: list[Place],
     level3: list[Place],
     aliases: list[Alias],
+    english_addresses: EnglishAddressBuilder,
 ) -> None:
     output.parent.mkdir(parents=True, exist_ok=True)
     temp = output.with_suffix(output.suffix + ".tmp")
     with temp.open("w", encoding="utf-8", newline="\n") as stream:
         for place in sorted(level1, key=lambda item: item.id):
-            stream.write(json.dumps(place_record(place), ensure_ascii=False, separators=(",", ":")) + "\n")
+            stream.write(json.dumps(place_record(place, english_addresses), ensure_ascii=False, separators=(",", ":")) + "\n")
         for place in sorted(level2, key=lambda item: item.id):
-            stream.write(json.dumps(place_record(place), ensure_ascii=False, separators=(",", ":")) + "\n")
+            stream.write(json.dumps(place_record(place, english_addresses), ensure_ascii=False, separators=(",", ":")) + "\n")
         for place in sorted(level3, key=lambda item: item.id):
-            stream.write(json.dumps(place_record(place), ensure_ascii=False, separators=(",", ":")) + "\n")
+            stream.write(json.dumps(place_record(place, english_addresses), ensure_ascii=False, separators=(",", ":")) + "\n")
         for alias in aliases:
             stream.write(json.dumps(alias_record(alias), ensure_ascii=False, separators=(",", ":")) + "\n")
     temp.replace(output)
@@ -582,9 +843,16 @@ def main() -> int:
     frame = load_sources(args.input)
     level1, level2, level3, decode_places = make_places(frame)
     aliases = make_aliases(decode_places, args.grid_km, args.component_area_km2)
-    write_ndjson(output, level1, level2, level3, aliases)
-
     all_places = [*level1, *level2, *level3]
+    english_index = load_english_addresses(args.english_addresses)
+    if english_index is None:
+        print(
+            "warning: English address source is unavailable; English addresses will be omitted",
+            file=sys.stderr,
+        )
+    english_addresses = EnglishAddressBuilder(english_index)
+    write_ndjson(output, level1, level2, level3, aliases, english_addresses)
+
     stats: dict[str, object] = {
         "output": str(output),
         "bytes": output.stat().st_size,
@@ -607,6 +875,8 @@ def main() -> int:
         "typedArrayBytes": len(aliases) * 10,
         "gridKm": args.grid_km,
         "componentAreaKm2": args.component_area_km2,
+        "englishAddresses": english_addresses.generated,
+        "missingEnglishAddresses": english_addresses.missing,
     }
     if not args.skip_validation:
         stats["validation"] = validate(decode_places, aliases, args.validation_grid_km)

@@ -255,9 +255,15 @@ components:
         - type: object
           properties:
             content: { type: string }
+          required: [content]
+
+    PubPostDetail:
+      allOf:
+        - $ref: "#/components/schemas/PostDetail"
+        - type: object
+          properties:
             olderPostId: { type: string, nullable: true }
             newerPostId: { type: string, nullable: true }
-          required: [content, olderPostId, newerPostId]
 
     PostLite:
       type: object
@@ -866,7 +872,8 @@ paths:
         - in: query
           name: locale
           required: false
-          schema: { type: string, default: ja }
+          description: Locale preference; exact locale, then base language, then the configured default are tried.
+          schema: { type: string, default: en }
       responses:
         "200":
           description: Matching place and its parent hierarchy, ordered by descending level
@@ -898,7 +905,8 @@ paths:
         - in: query
           name: locale
           required: false
-          schema: { type: string, default: ja }
+          description: Locale preference; exact locale, then base language, then the configured default are tried.
+          schema: { type: string, default: en }
       responses:
         "200":
           description: Nearest highest-level place and its parent hierarchy, ordered by descending level
@@ -3707,7 +3715,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PostDetail"
+                $ref: "#/components/schemas/PubPostDetail"
         "400":
           $ref: "#/components/responses/Error400"
         "404":
@@ -3738,7 +3746,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/Post"
+                  $ref: "#/components/schemas/PubPostDetail"
         "400":
           $ref: "#/components/responses/Error400"
 

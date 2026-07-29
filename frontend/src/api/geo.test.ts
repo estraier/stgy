@@ -51,6 +51,10 @@ describe("geo API", () => {
     mockApiFetch.mockResolvedValue(jsonResponse({ error: "not found" }, false, 404));
 
     await expect(encodeGeo("存在しない地名")).resolves.toEqual([]);
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/geo/encode?query=%E5%AD%98%E5%9C%A8%E3%81%97%E3%81%AA%E3%81%84%E5%9C%B0%E5%90%8D",
+      { method: "GET" },
+    );
     expect(mockExtractError).not.toHaveBeenCalled();
   });
 
@@ -84,6 +88,10 @@ describe("geo API", () => {
     mockApiFetch.mockResolvedValue(jsonResponse({ error: "not found" }, false, 404));
 
     await expect(decodeGeo(0, 0)).resolves.toEqual([]);
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/geo/decode?longitude=0&latitude=0",
+      { method: "GET" },
+    );
     expect(mockExtractError).not.toHaveBeenCalled();
   });
 

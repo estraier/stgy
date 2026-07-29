@@ -30,7 +30,7 @@ function parseCoordinate(value: string | undefined, name: string): number {
 function parseDecodeArguments(args: readonly string[]): {
   readonly longitude: number;
   readonly latitude: number;
-  readonly locale: string;
+  readonly locale?: string;
 } {
   const coordinateText = args[1];
   if (coordinateText === undefined) {
@@ -45,20 +45,20 @@ function parseDecodeArguments(args: readonly string[]): {
       return {
         longitude,
         latitude: parseCoordinate(latitudeText, "latitude"),
-        locale: args[2] ?? "ja",
+        locale: args[2],
       };
     }
     return {
       longitude,
       latitude: parseCoordinate(args[2], "latitude"),
-      locale: args[3] ?? "ja",
+      locale: args[3],
     };
   }
 
   return {
     longitude: parseCoordinate(coordinateText, "longitude"),
     latitude: parseCoordinate(args[2], "latitude"),
-    locale: args[3] ?? "ja",
+    locale: args[3],
   };
 }
 
@@ -74,7 +74,7 @@ function main(argv: readonly string[]): void {
     if (query === undefined) {
       throw new Error(usage(command));
     }
-    const locale = argv[2] ?? "ja";
+    const locale = argv[2];
     console.log(JSON.stringify(geoCoder.encode(query, locale), null, 2));
     return;
   }

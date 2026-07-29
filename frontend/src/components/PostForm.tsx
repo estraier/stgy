@@ -611,6 +611,8 @@ export default function PostForm({
     typeof (status.session as unknown as { userId?: unknown }).userId === "string"
       ? ((status.session as unknown as { userId?: unknown }).userId as string)
       : undefined;
+  const userLocale =
+    status.state === "authenticated" ? status.session.userLocale : undefined;
   const [pasteDialogFiles, setPasteDialogFiles] = useState<DialogFileItem[] | null>(null);
   const [showPasteDialog, setShowPasteDialog] = useState(false);
   const pasteNodesRef = useRef<MdNode[] | null>(null);
@@ -2582,7 +2584,10 @@ export default function PostForm({
             </div>
 
             <div className="flex items-center gap-1">
-              <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)} />
+              <UserMentionButton
+                locale={userLocale}
+                onInsert={(md) => insertInlineAtCursor(md)}
+              />
               <ExistingImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
               <UploadImageEmbedButton ref={uploadBtnRef} onInsert={(md) => insertAtCursor(md)} />
             </div>
@@ -3047,7 +3052,10 @@ export default function PostForm({
                     </div>
 
                     <div className="flex items-center gap-1 -mb-0.5">
-                      <UserMentionButton onInsert={(md) => insertInlineAtCursor(md)} />
+                      <UserMentionButton
+                locale={userLocale}
+                onInsert={(md) => insertInlineAtCursor(md)}
+              />
                       <ExistingImageEmbedButton onInsert={(md) => insertAtCursor(md)} />
                       <UploadImageEmbedButton
                         ref={uploadBtnRef}

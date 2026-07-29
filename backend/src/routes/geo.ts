@@ -32,7 +32,7 @@ export default function createGeoRouter(pgPool: Pool, redis: Redis, geoCoder: Ge
       return res.status(400).json({ error: "query is required" });
     }
     const locale =
-      typeof req.query.locale === "string" && req.query.locale ? req.query.locale : "ja";
+      typeof req.query.locale === "string" && req.query.locale ? req.query.locale : undefined;
 
     const watch = timerThrottleService.startWatch(loginUser);
     const places = geoCoder.encode(query, locale);
@@ -56,7 +56,7 @@ export default function createGeoRouter(pgPool: Pool, redis: Redis, geoCoder: Ge
     const latitude = parseCoordinate(req.query.latitude, "latitude", -90, 90, res);
     if (latitude === undefined) return;
     const locale =
-      typeof req.query.locale === "string" && req.query.locale ? req.query.locale : "ja";
+      typeof req.query.locale === "string" && req.query.locale ? req.query.locale : undefined;
 
     const watch = timerThrottleService.startWatch(loginUser);
     const places = geoCoder.decode(longitude, latitude, locale);

@@ -36,7 +36,7 @@ describe("addTrackJsonPoiLabels", () => {
       ],
     };
 
-    await expect(addTrackJsonPoiLabels(source)).resolves.toEqual({
+    await expect(addTrackJsonPoiLabels(source, "ja-JP")).resolves.toEqual({
       poi: [
         {
           role: "start",
@@ -51,7 +51,7 @@ describe("addTrackJsonPoiLabels", () => {
       ],
     });
     expect(mockDecodeGeo).toHaveBeenCalledTimes(1);
-    expect(mockDecodeGeo).toHaveBeenCalledWith(138.2933, 36.37194, "ja");
+    expect(mockDecodeGeo).toHaveBeenCalledWith(138.2933, 36.37194, "ja-JP");
   });
 
   test("keeps a POI unlabeled when reverse geocoding has no result", async () => {
@@ -87,14 +87,21 @@ describe("addTrackJsonPoiLabels", () => {
       },
     ]);
 
-    await expect(addTrackJsonPoiLabels({
-      poi: [{ role: "start", coordinates: [138.2933, 36.37194] }],
-    })).resolves.toEqual({
-      poi: [{
-        role: "start",
-        coordinates: [138.2933, 36.37194],
-        label: "長野県上田市",
-      }],
+    await expect(
+      addTrackJsonPoiLabels(
+        {
+          poi: [{ role: "start", coordinates: [138.2933, 36.37194] }],
+        },
+        "ja-JP",
+      ),
+    ).resolves.toEqual({
+      poi: [
+        {
+          role: "start",
+          coordinates: [138.2933, 36.37194],
+          label: "長野県上田市",
+        },
+      ],
     });
   });
 });

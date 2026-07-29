@@ -121,7 +121,7 @@ describe("geo routes", () => {
     expect(encode).not.toHaveBeenCalled();
   });
 
-  test("encodes a place and defaults locale to ja", async () => {
+  test("encodes a place and leaves the default locale to GeoCoder", async () => {
     encode.mockReturnValue([place]);
 
     const response = await fetch(
@@ -130,7 +130,7 @@ describe("geo routes", () => {
 
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual([place]);
-    expect(encode).toHaveBeenCalledWith("埼玉県所沢市", "ja");
+    expect(encode).toHaveBeenCalledWith("埼玉県所沢市", undefined);
     expect(done).toHaveBeenCalledTimes(1);
   });
 
@@ -162,6 +162,19 @@ describe("geo routes", () => {
     expect(response.status).toBe(200);
     expect(await response.json()).toEqual([place]);
     expect(decode).toHaveBeenCalledWith(139.46, 35.8, "ja");
+    expect(done).toHaveBeenCalledTimes(1);
+  });
+
+  test("leaves the default decode locale to GeoCoder", async () => {
+    decode.mockReturnValue([place]);
+
+    const response = await fetch(
+      `${baseUrl}/geo/decode?longitude=139.46&latitude=35.80`,
+    );
+
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual([place]);
+    expect(decode).toHaveBeenCalledWith(139.46, 35.8, undefined);
     expect(done).toHaveBeenCalledTimes(1);
   });
 

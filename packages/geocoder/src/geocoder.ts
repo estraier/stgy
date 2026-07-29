@@ -1,5 +1,6 @@
 import { resolve } from "path";
 
+import { Config } from "./config";
 import { forEachLineSync } from "./lineReader";
 import type {
   GeoAddressRecord,
@@ -35,10 +36,17 @@ interface LoadedAlias {
 
 type ParsedRecord = ParsedPlace | ParsedAlias;
 
+interface LocaleSearchSpace {
+  readonly labels: Map<string, GeoPlaceRecord[]>;
+  readonly aliases: Map<string, GeoPlaceRecord[]>;
+}
+
 export class GeoCoder {
   private readonly placesById = new Map<number, GeoPlaceRecord>();
   private readonly placesByCountryAndJapaneseLabel = new Map<string, GeoPlaceRecord>();
-  private readonly placesByJapaneseAlias = new Map<string, GeoPlaceRecord[]>();
+  private readonly searchSpacesByLocale = new Map<string, LocaleSearchSpace>();
+  private readonly supportedLocales = new Set<string>();
+  private readonly defaultLocale: string;
   private readonly decodePlaces: readonly GeoPlaceRecord[];
   private readonly aliasLongitudes: Float32Array;
   private readonly aliasLatitudes: Float32Array;
@@ -83,12 +91,15 @@ export class GeoCoder {
 
         this.placesById.set(place.id, place);
         this.placesByCountryAndJapaneseLabel.set(labelKey, place);
-        for (const alias of japaneseAddress.aliases) {
-          const places = this.placesByJapaneseAlias.get(alias);
-          if (places === undefined) {
-            this.placesByJapaneseAlias.set(alias, [place]);
-          } else {
-            places.push(place);
+        for (const address of place.addresses) {
+          this.supportedLocales.add(address.locale);
+          const searchSpace = getOrCreateSearchSpace(
+            this.searchSpacesByLocale,
+            address.locale,
+          );
+          addPlaceToSearchIndex(searchSpace.labels, address.label, place);
+          for (const alias of address.aliases) {
+            addPlaceToSearchIndex(searchSpace.aliases, alias, place);
           }
         }
         maximumId = Math.max(maximumId, place.id);
@@ -98,6 +109,11 @@ export class GeoCoder {
     if (this.placesById.size === 0) {
       throw new Error("GeoCoder NDJSON files contain no place records");
     }
+
+    this.defaultLocale =
+      resolveSupportedLocale(this.supportedLocales, Config.DEFAULT_LOCALE) ??
+      normalizeLocale(Config.DEFAULT_LOCALE) ??
+      Config.DEFAULT_LOCALE;
 
     for (const alias of aliases) {
       if (!this.placesById.has(alias.value.belongTo)) {
@@ -149,49 +165,41 @@ export class GeoCoder {
     this.aliasBelongTo = sortedAliases.belongTo;
   }
 
-  encode(query: string, _locale: string): GeoPlace[] {
+  encode(query: string, locale?: string): GeoPlace[] {
     const normalizedQuery = query.trim();
     if (normalizedQuery.length === 0) {
       return [];
     }
 
-    const exactMatch = findPlaceByJapaneseLabel(
-      this.placesByCountryAndJapaneseLabel,
-      normalizedQuery,
-    );
-    const matchedPlaces =
-      exactMatch === undefined
-        ? this.placesByJapaneseAlias.get(normalizedQuery) ?? []
-        : [exactMatch];
-    if (matchedPlaces.length === 0) {
+    const resolvedLocale = this.resolveLocale(locale);
+    const matchedById = new Map<number, GeoPlaceRecord>();
+    for (const searchLocale of getSearchLocales(resolvedLocale, this.defaultLocale)) {
+      const searchSpace = this.searchSpacesByLocale.get(searchLocale);
+      if (searchSpace === undefined) {
+        continue;
+      }
+      const exactMatches = searchSpace.labels.get(normalizedQuery) ?? [];
+      const matches =
+        exactMatches.length > 0
+          ? exactMatches
+          : searchSpace.aliases.get(normalizedQuery) ?? [];
+      for (const place of matches) {
+        matchedById.set(place.id, place);
+      }
+    }
+    if (matchedById.size === 0) {
       return [];
     }
 
-    const resultById = new Map<number, GeoPlaceRecord>();
-    for (const matchedPlace of matchedPlaces) {
-      const address = getJapaneseAddress(matchedPlace);
-      if (address === undefined) {
-        continue;
-      }
-
-      let label = "";
-      for (const element of address.elements) {
-        label += element;
-        const place = this.placesByCountryAndJapaneseLabel.get(
-          makeLabelKey(matchedPlace.country, label),
-        );
-        if (place !== undefined) {
-          resultById.set(place.id, place);
-        }
-      }
-    }
-
-    return Array.from(resultById.values())
+    return collectPlaceHierarchy(
+      matchedById.values(),
+      this.placesByCountryAndJapaneseLabel,
+    )
       .sort(comparePlacesForEncode)
-      .map(toPublicPlace);
+      .map((place) => toPublicPlace(place, resolvedLocale, this.defaultLocale));
   }
 
-  decode(longitude: number, latitude: number, locale: string): GeoPlace[] {
+  decode(longitude: number, latitude: number, locale?: string): GeoPlace[] {
     if (!isLongitude(longitude) || !isLatitude(latitude)) {
       return [];
     }
@@ -242,11 +250,24 @@ export class GeoCoder {
       return [];
     }
     const place = this.placesById.get(bestPlaceId);
-    const address = place === undefined ? undefined : getJapaneseAddress(place);
-    if (address === undefined) {
+    if (place === undefined) {
       return [];
     }
-    return this.encode(address.label, locale);
+    const resolvedLocale = this.resolveLocale(locale);
+    return collectPlaceHierarchy(
+      [place],
+      this.placesByCountryAndJapaneseLabel,
+    )
+      .sort(comparePlacesForEncode)
+      .map((hierarchyPlace) =>
+        toPublicPlace(hierarchyPlace, resolvedLocale, this.defaultLocale),
+      );
+  }
+
+  private resolveLocale(locale?: string): string {
+    return (
+      resolveSupportedLocale(this.supportedLocales, locale) ?? this.defaultLocale
+    );
   }
 }
 
@@ -256,6 +277,99 @@ interface SortedAliases {
   readonly belongTo: AliasIds;
 }
 
+function getOrCreateSearchSpace(
+  searchSpaces: Map<string, LocaleSearchSpace>,
+  locale: string,
+): LocaleSearchSpace {
+  const existing = searchSpaces.get(locale);
+  if (existing !== undefined) {
+    return existing;
+  }
+  const created: LocaleSearchSpace = { labels: new Map(), aliases: new Map() };
+  searchSpaces.set(locale, created);
+  return created;
+}
+
+function addPlaceToSearchIndex(
+  index: Map<string, GeoPlaceRecord[]>,
+  key: string,
+  place: GeoPlaceRecord,
+): void {
+  const places = index.get(key);
+  if (places === undefined) {
+    index.set(key, [place]);
+    return;
+  }
+  places.push(place);
+}
+
+function getSearchLocales(locale: string, defaultLocale: string): readonly string[] {
+  return locale === defaultLocale ? [defaultLocale] : [locale, defaultLocale];
+}
+
+function resolveSupportedLocale(
+  supportedLocales: ReadonlySet<string>,
+  locale?: string,
+): string | undefined {
+  for (const candidate of getLocaleCandidates(locale)) {
+    if (supportedLocales.has(candidate)) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function getLocaleCandidates(locale?: string): readonly string[] {
+  const normalizedLocale = normalizeLocale(locale);
+  if (normalizedLocale === undefined) {
+    return [];
+  }
+  const language = normalizedLocale.split("-")[0];
+  return language === normalizedLocale
+    ? [normalizedLocale]
+    : [normalizedLocale, language];
+}
+
+function normalizeLocale(locale?: string): string | undefined {
+  const normalizedSeparators = locale
+    ?.trim()
+    .replace(/_/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-|-$/g, "");
+  if (!normalizedSeparators) {
+    return undefined;
+  }
+  try {
+    return Intl.getCanonicalLocales(normalizedSeparators)[0];
+  } catch {
+    return undefined;
+  }
+}
+
+function collectPlaceHierarchy(
+  matchedPlaces: Iterable<GeoPlaceRecord>,
+  placesByCountryAndJapaneseLabel: ReadonlyMap<string, GeoPlaceRecord>,
+): GeoPlaceRecord[] {
+  const resultById = new Map<number, GeoPlaceRecord>();
+  for (const matchedPlace of matchedPlaces) {
+    const address = getJapaneseAddress(matchedPlace);
+    if (address === undefined) {
+      continue;
+    }
+
+    let label = "";
+    for (const element of address.elements) {
+      label += element;
+      const place = placesByCountryAndJapaneseLabel.get(
+        makeLabelKey(matchedPlace.country, label),
+      );
+      if (place !== undefined) {
+        resultById.set(place.id, place);
+      }
+    }
+  }
+  return Array.from(resultById.values());
+}
 
 function comparePlacesForEncode(left: GeoPlaceRecord, right: GeoPlaceRecord): number {
   return (
@@ -418,12 +532,20 @@ function parsePlace(
     if (!isObject(rawAddress)) {
       throw dataError(filePath, lineNumber, `addresses[${index}] must be an object`);
     }
-    const locale = requireNonEmptyString(
+    const rawLocale = requireNonEmptyString(
       rawAddress.locale,
       filePath,
       lineNumber,
       `addresses[${index}].locale`,
     );
+    const locale = normalizeLocale(rawLocale);
+    if (locale === undefined) {
+      throw dataError(
+        filePath,
+        lineNumber,
+        `addresses[${index}].locale is invalid: ${rawLocale}`,
+      );
+    }
     if (locales.has(locale)) {
       throw dataError(filePath, lineNumber, `duplicate address locale: ${locale}`);
     }
@@ -449,11 +571,11 @@ function parsePlace(
         `addresses[${index}].elements[${elementIndex}]`,
       ),
     );
-    if (elements.join("") !== label) {
+    if (!addressLabelMatchesElements(locale, label, elements)) {
       throw dataError(
         filePath,
         lineNumber,
-        `addresses[${index}].label must equal concatenated elements`,
+        `addresses[${index}].label does not match elements for locale ${locale}`,
       );
     }
     const aliases = parseAddressAliases(
@@ -479,6 +601,21 @@ function parsePlace(
     latitude,
     addresses: Object.freeze(addresses),
   });
+}
+
+function addressLabelMatchesElements(
+  locale: string,
+  label: string,
+  elements: readonly string[],
+): boolean {
+  const language = locale.split("-")[0];
+  if (language === "ja") {
+    return elements.join("") === label;
+  }
+  if (language === "en") {
+    return [...elements].reverse().join(", ") === label;
+  }
+  return true;
 }
 
 function requirePlaceKind(
@@ -600,48 +737,46 @@ function parseAlias(
   };
 }
 
-function findPlaceByJapaneseLabel(
-  places: ReadonlyMap<string, GeoPlaceRecord>,
-  label: string,
-): GeoPlaceRecord | undefined {
-  let matched: GeoPlaceRecord | undefined;
-  for (const place of places.values()) {
-    const address = getJapaneseAddress(place);
-    if (address?.label !== label) {
-      continue;
-    }
-    if (matched !== undefined) {
-      return undefined;
-    }
-    matched = place;
-  }
-  return matched;
-}
-
 function getJapaneseAddress(place: GeoPlaceRecord): GeoAddressRecord | undefined {
-  return place.addresses.find((address) => address.locale === JAPANESE_LOCALE);
+  return (
+    place.addresses.find((address) => address.locale === JAPANESE_LOCALE) ??
+    place.addresses.find(
+      (address) => address.locale.split("-")[0] === JAPANESE_LOCALE,
+    )
+  );
 }
 
 function makeLabelKey(country: string, label: string): string {
   return `${country}\u0000${label}`;
 }
 
-function toPublicPlace(place: GeoPlaceRecord): GeoPlace {
+function toPublicPlace(
+  place: GeoPlaceRecord,
+  locale: string,
+  defaultLocale: string,
+): GeoPlace {
+  const addressLocales =
+    locale === defaultLocale ? [defaultLocale] : [defaultLocale, locale];
+  const addresses = addressLocales
+    .map((addressLocale) =>
+      place.addresses.find((address) => address.locale === addressLocale),
+    )
+    .filter((address): address is GeoAddressRecord => address !== undefined)
+    .map((address) =>
+      Object.freeze({
+        locale: address.locale,
+        label: address.label,
+        elements: address.elements,
+      }),
+    );
+
   return Object.freeze({
     level: place.level,
     kind: place.kind,
     country: place.country,
     longitude: place.longitude,
     latitude: place.latitude,
-    addresses: Object.freeze(
-      place.addresses.map((address) =>
-        Object.freeze({
-          locale: address.locale,
-          label: address.label,
-          elements: address.elements,
-        }),
-      ),
-    ),
+    addresses: Object.freeze(addresses),
   });
 }
 

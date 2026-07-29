@@ -7,3 +7,5 @@ npm run generate:japan --workspace packages/geocoder
 ```
 
 The generator downloads the N03 2026 source archive into `source-data/N03-2026/` and writes prefectures, municipalities, Tokyo special wards, designated-city wards, and reverse-geocoding sample points to this directory.
+
+The generator also downloads the nationwide municipality master from the Digital Agency Address Base Registry public catalog. No API key or authentication is required. English addresses are added only when the Japanese prefecture, county, municipality, and designated-city ward names can be matched. Unmatched records remain Japanese-only and are reported as warnings during generation.

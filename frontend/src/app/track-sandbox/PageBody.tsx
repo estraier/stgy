@@ -63,6 +63,7 @@ import {
   getTrackSandboxMetadataSummaryLines,
   orderTrackSandboxSummaryCards,
 } from "@/utils/trackSummary";
+import { getBrowserLocale } from "@/utils/locale";
 import { addTrackJsonPoiLabels } from "@/utils/trackPoiLabels";
 import { STGY_TRACK_RENDERER_IMAGE_OPTIONS } from "@/utils/trackImageUrl";
 
@@ -203,7 +204,7 @@ export default function TrackSandbox() {
     setStatus(files.length > 1 ? "Converting and merging tracks…" : "Converting track…");
 
     try {
-      const nextResult = await convertFiles(files, options);
+      const nextResult = await convertFiles(files, options, getBrowserLocale());
       const rawUrl = URL.createObjectURL(new Blob([nextResult.trackJson], {
         type: "application/json",
       }));
@@ -1145,7 +1146,11 @@ function formatZoneBarLabel(label: string): string {
   return match ? `${match[1]}: ${match[2]}` : label;
 }
 
-async function convertFiles(files: File[], options: ConvertOptions): Promise<TrackResult> {
+async function convertFiles(
+  files: File[],
+  options: ConvertOptions,
+  locale?: string,
+): Promise<TrackResult> {
   const firstFile = files[0];
   if (!firstFile) {
     throw new Error("No track file was selected.");
@@ -1190,7 +1195,7 @@ async function convertFiles(files: File[], options: ConvertOptions): Promise<Tra
     pretty: false,
   });
   const unlabeledTrackJsonData = JSON.parse(unlabeledTrackJson);
-  const trackJsonData = await addTrackJsonPoiLabels(unlabeledTrackJsonData);
+  const trackJsonData = await addTrackJsonPoiLabels(unlabeledTrackJsonData, locale);
   const trackJson = trackJsonData === unlabeledTrackJsonData
     ? unlabeledTrackJson
     : JSON.stringify(trackJsonData);

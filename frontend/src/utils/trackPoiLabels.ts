@@ -1,12 +1,16 @@
 import { decodeGeo } from "@/api/geo";
-import type { GeoPlace } from "@/api/geo";
+import type { GeoAddress, GeoPlace } from "@/api/geo";
+import { getLocaleCandidates, normalizeLocale } from "@/utils/locale";
 import {
   applyTrackJsonPoiLabels,
   getTrackJsonPoi,
 } from "stgy-track/trackjson";
 import type { TrackJsonPoiLabelAssignment } from "stgy-track/trackjson";
 
-export async function addTrackJsonPoiLabels(data: unknown): Promise<unknown> {
+export async function addTrackJsonPoiLabels(
+  data: unknown,
+  locale?: string,
+): Promise<unknown> {
   const coordinatesByKey = new Map<string, { longitude: number; latitude: number }>();
 
   getTrackJsonPoi(data).forEach((point) => {
@@ -17,8 +21,8 @@ export async function addTrackJsonPoiLabels(data: unknown): Promise<unknown> {
 
   const assignments = (await Promise.all(
     Array.from(coordinatesByKey.values()).map(async ({ longitude, latitude }) => {
-      const places = await decodeGeo(longitude, latitude, "ja");
-      const label = getGeoPlaceLabel(places[0], "ja");
+      const places = await decodeGeo(longitude, latitude, locale);
+      const label = getGeoPlaceLabel(places[0], locale);
       return label ? { longitude, latitude, label } : undefined;
     }),
   )).filter((assignment): assignment is TrackJsonPoiLabelAssignment => {
@@ -30,10 +34,18 @@ export async function addTrackJsonPoiLabels(data: unknown): Promise<unknown> {
 
 function getGeoPlaceLabel(
   place: GeoPlace | undefined,
-  locale: string,
+  locale?: string,
 ): string | undefined {
-  const address = place?.addresses.find((item) => item.locale === locale) ??
-    place?.addresses[0];
+  let address: GeoAddress | undefined;
+  for (const candidate of getLocaleCandidates(locale)) {
+    address = place?.addresses.find(
+      (item) => normalizeLocale(item.locale) === candidate,
+    );
+    if (address !== undefined) {
+      break;
+    }
+  }
+  address ??= place?.addresses[place.addresses.length - 1];
   const label = address?.label.trim();
   return label || undefined;
 }

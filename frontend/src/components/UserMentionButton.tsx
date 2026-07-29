@@ -9,16 +9,19 @@ import { listFriendsByNicknamePrefix } from "@/api/users";
 import AvatarImg from "@/components/AvatarImg";
 import { makeTextFromJsonSnippet } from "@/utils/article";
 import { AtSign } from "lucide-react";
+import { getLocaleCandidates, normalizeLocale } from "@/utils/locale";
 import { calculatePopoverPosition } from "@/utils/popover";
 
 type UserMentionButtonProps = {
   onInsert: (markdown: string) => void;
+  locale?: string;
   className?: string;
   title?: string;
 };
 
 export default function UserMentionButton({
   onInsert,
+  locale,
   className = "",
   title = "Mention user",
 }: UserMentionButtonProps) {
@@ -50,7 +53,7 @@ export default function UserMentionButton({
           }
           return;
         }
-        const res = await encodeGeo(placeQuery, "ja");
+        const res = await encodeGeo(placeQuery, locale);
         if (requestId === requestIdRef.current) {
           setUsers([]);
           setPlaces(res);
@@ -77,7 +80,7 @@ export default function UserMentionButton({
         setLoading(false);
       }
     }
-  }, []);
+  }, [locale]);
 
   useEffect(() => {
     requestIdRef.current += 1;
@@ -176,7 +179,7 @@ export default function UserMentionButton({
       return (
         <ul className="max-h-64 overflow-auto divide-y">
           {places.map((place, index) => {
-            const address = getPreferredAddress(place, "ja");
+            const address = getPreferredAddress(place, locale);
             if (!address) return null;
             return (
               <li key={`${place.country}:${place.level}:${address.label}:${index}`}>
@@ -235,7 +238,7 @@ export default function UserMentionButton({
         })}
       </ul>
     );
-  }, [error, geoMode, loading, onPickPlace, onPickUser, places, query, users]);
+  }, [error, geoMode, loading, locale, onPickPlace, onPickUser, places, query, users]);
 
   return (
     <div ref={containerRef} className={"relative inline-block " + className}>
@@ -292,8 +295,16 @@ export default function UserMentionButton({
   );
 }
 
-function getPreferredAddress(place: GeoPlace, locale: string): GeoAddress | undefined {
-  return place.addresses.find((address) => address.locale === locale) ?? place.addresses[0];
+function getPreferredAddress(place: GeoPlace, locale?: string): GeoAddress | undefined {
+  for (const candidate of getLocaleCandidates(locale)) {
+    const address = place.addresses.find(
+      (item) => normalizeLocale(item.locale) === candidate,
+    );
+    if (address !== undefined) {
+      return address;
+    }
+  }
+  return place.addresses[place.addresses.length - 1];
 }
 
 function escapeLabelForMarkdown(label: string): string {

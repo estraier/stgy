@@ -21,10 +21,10 @@ export type GeoPlace = {
   addresses: GeoAddress[];
 };
 
-export async function encodeGeo(query: string, locale = "ja"): Promise<GeoPlace[]> {
+export async function encodeGeo(query: string, locale?: string): Promise<GeoPlace[]> {
   const search = new URLSearchParams();
   search.append("query", query);
-  search.append("locale", locale);
+  if (locale) search.append("locale", locale);
 
   const res = await apiFetch(`/geo/encode?${search.toString()}`, { method: "GET" });
   if (res.status === 404) return [];
@@ -35,12 +35,12 @@ export async function encodeGeo(query: string, locale = "ja"): Promise<GeoPlace[
 export async function decodeGeo(
   longitude: number,
   latitude: number,
-  locale = "ja",
+  locale?: string,
 ): Promise<GeoPlace[]> {
   const search = new URLSearchParams();
   search.append("longitude", String(longitude));
   search.append("latitude", String(latitude));
-  search.append("locale", locale);
+  if (locale) search.append("locale", locale);
 
   const res = await apiFetch(`/geo/decode?${search.toString()}`, { method: "GET" });
   if (res.status === 404) return [];
