@@ -30,7 +30,7 @@ const dummyUser: UserLite = {
 };
 
 const place: GeoPlace = {
-  level: 2,
+  level: 3,
   kind: "municipality",
   country: "JP",
   longitude: 139.461129,
@@ -38,8 +38,8 @@ const place: GeoPlace = {
   addresses: [
     {
       locale: "ja",
-      label: "埼玉県所沢市",
-      elements: ["埼玉県", "所沢市"],
+      label: "日本埼玉県所沢市",
+      elements: ["日本", "埼玉県", "所沢市"],
     },
   ],
 };

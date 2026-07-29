@@ -106,24 +106,68 @@ def test_auth():
   print("[test_auth] OK")
 
 def test_geo():
-  print("[geo] anonymous encode")
+  def address_by_locale(place, locale):
+    for address in place["addresses"]:
+      if address["locale"] == locale:
+        return address
+    return None
+
+  print("[geo] anonymous encode with regional Japanese locale")
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params={"query": "埼玉県所沢市", "locale": "ja"},
+    params={"query": "埼玉県所沢市", "locale": "ja-JP"},
   )
   assert res.status_code == 200, res.text
   encoded = res.json()
   assert isinstance(encoded, list), f"invalid response: {encoded}"
-  assert len(encoded) == 2, f"unexpected hierarchy: {encoded}"
-  assert [place["level"] for place in encoded] == [2, 1]
-  assert [place["country"] for place in encoded] == ["JP", "JP"]
-  assert [place["addresses"][0]["label"] for place in encoded] == [
-    "埼玉県所沢市",
-    "埼玉県",
+  assert len(encoded) == 3, f"unexpected hierarchy: {encoded}"
+  assert [place["level"] for place in encoded] == [3, 2, 1]
+  assert [place["kind"] for place in encoded] == [
+    "municipality",
+    "prefecture",
+    "country",
   ]
-  assert encoded[0]["addresses"][0]["elements"] == ["埼玉県", "所沢市"]
-  assert encoded[1]["addresses"][0]["elements"] == ["埼玉県"]
-  print("[geo] anonymous encode OK")
+  assert [place["country"] for place in encoded] == ["JP", "JP", "JP"]
+  assert [address_by_locale(place, "ja")["label"] for place in encoded] == [
+    "日本埼玉県所沢市",
+    "日本埼玉県",
+    "日本",
+  ]
+  assert [address_by_locale(place, "en")["label"] for place in encoded] == [
+    "Tokorozawa, Saitama, Japan",
+    "Saitama, Japan",
+    "Japan",
+  ]
+  assert [
+    [address["locale"] for address in place["addresses"]]
+    for place in encoded
+  ] == [["en", "ja"], ["en", "ja"], ["en", "ja"]]
+  assert address_by_locale(encoded[0], "ja")["elements"] == ["日本", "埼玉県", "所沢市"]
+  assert address_by_locale(encoded[0], "en")["elements"] == ["Japan", "Saitama", "Tokorozawa"]
+  assert address_by_locale(encoded[1], "ja")["elements"] == ["日本", "埼玉県"]
+  assert address_by_locale(encoded[1], "en")["elements"] == ["Japan", "Saitama"]
+  assert address_by_locale(encoded[2], "ja")["elements"] == ["日本"]
+  assert address_by_locale(encoded[2], "en")["elements"] == ["Japan"]
+  print("[geo] anonymous encode with regional Japanese locale OK")
+
+  print("[geo] anonymous encode with default English locale")
+  res = requests.get(
+    f"{BASE_URL}/geo/encode",
+    params={"query": "tOkOrOzAwA, sAiTaMa"},
+  )
+  assert res.status_code == 200, res.text
+  encoded_en = res.json()
+  assert [place["level"] for place in encoded_en] == [3, 2, 1]
+  assert [place["addresses"][0]["label"] for place in encoded_en] == [
+    "Tokorozawa, Saitama, Japan",
+    "Saitama, Japan",
+    "Japan",
+  ]
+  assert all(
+    [address["locale"] for address in place["addresses"]] == ["en"]
+    for place in encoded_en
+  )
+  print("[geo] anonymous encode with default English locale OK")
 
   municipality = encoded[0]
   res = requests.get(
@@ -131,7 +175,7 @@ def test_geo():
     params={
       "longitude": municipality["longitude"],
       "latitude": municipality["latitude"],
-      "locale": "ja",
+      "locale": "ja-JP",
     },
   )
   assert res.status_code == 200, res.text
@@ -141,7 +185,7 @@ def test_geo():
 
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params={"query": "埼玉県所沢市", "locale": "ja"},
+    params={"query": "埼玉県所沢市", "locale": "ja-JP"},
     cookies={"session_id": "invalid-session"},
   )
   assert res.status_code == 401, res.text
@@ -154,7 +198,7 @@ def test_geo():
 
   res = requests.get(
     f"{BASE_URL}/geo/encode",
-    params={"query": "埼玉県所沢市並木", "locale": "ja"},
+    params={"query": "埼玉県所沢市並木", "locale": "ja-JP"},
   )
   assert res.status_code == 404, res.text
   assert res.json() == {"error": "not found"}
@@ -168,7 +212,7 @@ def test_geo():
 
   res = requests.get(
     f"{BASE_URL}/geo/decode",
-    params={"longitude": 0, "latitude": 0, "locale": "ja"},
+    params={"longitude": 0, "latitude": 0, "locale": "ja-JP"},
   )
   assert res.status_code == 404, res.text
   assert res.json() == {"error": "not found"}

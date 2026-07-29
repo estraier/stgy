@@ -39,7 +39,7 @@ components:
         level: { type: integer, minimum: 1 }
         kind:
           type: string
-          enum: [prefecture, municipality, special-ward, designated-city-ward]
+          enum: [country, prefecture, municipality, special-ward, designated-city-ward]
         country: { type: string }
         longitude: { type: number, format: double }
         latitude: { type: number, format: double }

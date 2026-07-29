@@ -60,8 +60,16 @@ describe("trackPreview", () => {
             longitude,
             latitude,
             addresses: [
-              { locale: "en", label: "Tokorozawa, Saitama", elements: [] },
-              { locale: "ja", label: "埼玉県所沢市", elements: [] },
+              {
+                locale: "en",
+                label: "Tokorozawa, Saitama, Japan",
+                elements: ["Japan", "Saitama", "Tokorozawa"],
+              },
+              {
+                locale: "ja",
+                label: "日本埼玉県所沢市",
+                elements: ["日本", "埼玉県", "所沢市"],
+              },
             ],
           },
         ];
@@ -86,8 +94,8 @@ describe("trackPreview", () => {
     expect(decode).toHaveBeenCalledWith(139.46, 35.8, "ja");
     expect(decode).toHaveBeenCalledWith(139.5, 35.9, "ja");
     expect(output.poi).toEqual([
-      { role: "start", coordinates: [139.46, 35.8], label: "埼玉県所沢市" },
-      { role: "centroid", coordinates: [139.46, 35.8], label: "埼玉県所沢市" },
+      { role: "start", coordinates: [139.46, 35.8], label: "日本埼玉県所沢市" },
+      { role: "centroid", coordinates: [139.46, 35.8], label: "日本埼玉県所沢市" },
       { role: "end", coordinates: [139.5, 35.9] },
     ]);
   });

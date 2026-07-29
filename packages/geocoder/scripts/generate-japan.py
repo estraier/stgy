@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Generate STGY prefecture, municipality and designated-city-ward geocoding data."""
+"""Generate STGY country, prefecture, municipality and ward geocoding data."""
 
 from __future__ import annotations
 
@@ -34,6 +34,13 @@ PROJECTED_CRS = CRS.from_proj4(
 )
 GEOGRAPHIC_CRS = CRS.from_epsg(4326)
 
+JAPAN_COUNTRY_ID = 392
+JAPAN_COUNTRY_CODE = "JP"
+JAPAN_COUNTRY_NAME_JA = "日本"
+JAPAN_COUNTRY_NAME_EN = "Japan"
+JAPAN_LONGITUDE_ORIGIN = 139.7413574722222
+JAPAN_LATITUDE_ORIGIN = 35.65809922222222
+
 ENGLISH_NAME_SUFFIXES = (
     (" Prefecture", "prefecture"),
     (" Metropolis", "metropolis"),
@@ -49,6 +56,29 @@ ENGLISH_NAME_SUFFIXES = (
     ("-gun", "county"),
     ("-ku", "ward"),
 )
+
+
+def make_address_search_labels(elements: list[str], locale: str) -> set[str]:
+    language = locale.split("-", 1)[0].lower()
+    labels: set[str] = set()
+    for start in range(len(elements)):
+        suffix = elements[start:]
+        label = (
+            "".join(suffix)
+            if language == "ja"
+            else ", ".join(reversed(suffix))
+        )
+        labels.add(label.casefold())
+    return labels
+
+
+def exclude_search_labels(
+    aliases: Iterable[str], elements: list[str], locale: str
+) -> list[str]:
+    search_labels = make_address_search_labels(elements, locale)
+    return unique_strings(
+        alias for alias in aliases if alias.casefold() not in search_labels
+    )
 
 
 @dataclass(frozen=True)
@@ -67,7 +97,9 @@ class Place:
 
     @property
     def elements(self) -> list[str]:
-        elements = [self.prefecture]
+        if self.kind == "country":
+            return [JAPAN_COUNTRY_NAME_JA]
+        elements = [JAPAN_COUNTRY_NAME_JA, self.prefecture]
         if self.municipality is not None:
             elements.append(self.municipality)
         if self.ward is not None:
@@ -80,6 +112,8 @@ class Place:
 
     @property
     def aliases(self) -> list[str]:
+        if self.kind == "country":
+            return []
         if self.kind == "prefecture":
             if self.prefecture == "北海道":
                 return []
@@ -88,14 +122,11 @@ class Place:
             return []
 
         if self.kind == "designated-city-ward":
-            assert self.municipality is not None
             assert self.ward is not None
             aliases: list[str] = []
             if self.ward.endswith("区") and len(self.ward) > 1:
                 aliases.append(self.ward[:-1])
-            aliases.append(self.ward)
-            aliases.append(f"{self.municipality}{self.ward}")
-            return list(dict.fromkeys(aliases))
+            return exclude_search_labels(aliases, self.elements, "ja")
 
         assert self.municipality is not None
         municipality = self.municipality
@@ -109,7 +140,7 @@ class Place:
         aliases.append(local_name)
         if municipality != local_name:
             aliases.append(municipality)
-        return list(dict.fromkeys(aliases))
+        return exclude_search_labels(aliases, self.elements, "ja")
 
 
 @dataclass(frozen=True)
@@ -188,6 +219,15 @@ class EnglishAddressBuilder:
         self.missing = 0
 
     def build(self, place: Place) -> dict[str, object] | None:
+        if place.kind == "country":
+            self.generated += 1
+            return {
+                "locale": "en",
+                "label": JAPAN_COUNTRY_NAME_EN,
+                "elements": [JAPAN_COUNTRY_NAME_EN],
+                "aliases": [],
+            }
+
         if self.index is None:
             self.missing += 1
             return None
@@ -197,11 +237,12 @@ class EnglishAddressBuilder:
             return self.warn(place, f"no matching English prefecture name")
 
         if place.kind == "prefecture":
+            elements = [JAPAN_COUNTRY_NAME_EN, prefecture]
             self.generated += 1
             return {
                 "locale": "en",
-                "label": prefecture,
-                "elements": [prefecture],
+                "label": ", ".join(reversed(elements)),
+                "elements": elements,
                 "aliases": [f"{prefecture} prefecture"],
             }
 
@@ -217,19 +258,23 @@ class EnglishAddressBuilder:
             ward, ward_suffix = split_english_name(local_record.ward_english)
             if not ward:
                 return self.warn(place, "invalid English designated-city ward name")
-            elements = [prefecture, city, ward]
-            aliases = unique_strings(
+            elements = [JAPAN_COUNTRY_NAME_EN, prefecture, city, ward]
+            aliases = exclude_search_labels(
                 [
                     ward,
                     f"{ward} {ward_suffix or 'ward'}",
                     f"{city} {ward}",
                     f"{city} {ward} {ward_suffix or 'ward'}",
-                ]
+                ],
+                elements,
+                "en",
             )
         else:
-            elements = [prefecture, city]
-            aliases = unique_strings(
-                [city, f"{city} {city_suffix or infer_suffix(place)}"]
+            elements = [JAPAN_COUNTRY_NAME_EN, prefecture, city]
+            aliases = exclude_search_labels(
+                [city, f"{city} {city_suffix or infer_suffix(place)}"],
+                elements,
+                "en",
             )
 
         self.generated += 1
@@ -496,7 +541,7 @@ def resolve_municipality_code(codes: Iterable[int], has_wards: bool) -> int:
 
 def make_places(
     frame: gpd.GeoDataFrame,
-) -> tuple[list[Place], list[Place], list[Place], list[Place]]:
+) -> tuple[list[Place], list[Place], list[Place], list[Place], list[Place]]:
     records: list[tuple[str, str, str, str, int, object]] = []
     for row in frame.itertuples(index=False):
         prefecture = clean_text(getattr(row, "N03_001", ""))
@@ -533,14 +578,20 @@ def make_places(
         municipality: str | None,
         ward: str | None,
         geometries: list[object],
+        fixed_coordinates: tuple[float, float] | None = None,
     ) -> Place | None:
         geometry = shapely.make_valid(shapely.union_all(geometries))
         geometry = polygonal_only(geometry)
         if geometry is None or geometry.is_empty:
             return None
         projected = shapely.transform(geometry, to_projected.transform, interleaved=False)
-        point = largest_component(projected).representative_point()
-        longitude, latitude = to_geographic.transform(point.x, point.y)
+        if fixed_coordinates is None:
+            point = largest_component(projected).representative_point()
+            longitude, latitude = to_geographic.transform(point.x, point.y)
+        else:
+            longitude, latitude = fixed_coordinates
+            x, y = to_projected.transform(longitude, latitude)
+            point = Point(x, y)
         return Place(
             id=place_id,
             level=level,
@@ -555,7 +606,7 @@ def make_places(
             projected_point=point,
         )
 
-    level2: list[Place] = []
+    level3: list[Place] = []
     designated_city_parent_ids: set[int] = set()
     prepared_municipalities: list[tuple[int, str, str, list[object]]] = []
     for (prefecture, district, municipality), entries in municipality_groups.items():
@@ -576,7 +627,7 @@ def make_places(
         )
         place = make_place(
             code,
-            2,
+            3,
             kind,
             prefecture,
             municipality,
@@ -584,15 +635,15 @@ def make_places(
             geometries,
         )
         if place is not None:
-            level2.append(place)
+            level3.append(place)
 
-    level3: list[Place] = []
+    level4: list[Place] = []
     for (prefecture, district, municipality, ward, code), geometries in sorted(
         ward_groups.items(), key=lambda item: item[0][4]
     ):
         place = make_place(
             code,
-            3,
+            4,
             "designated-city-ward",
             prefecture,
             f"{district}{municipality}",
@@ -600,12 +651,12 @@ def make_places(
             geometries,
         )
         if place is not None:
-            level3.append(place)
+            level4.append(place)
 
-    if not level2:
-        raise ValueError("no level-2 records generated")
+    if not level3:
+        raise ValueError("no level-3 records generated")
     labels_by_id: dict[int, str] = {}
-    for place in [*level2, *level3]:
+    for place in [*level3, *level4]:
         previous = labels_by_id.get(place.id)
         if previous is not None and previous != place.label:
             raise ValueError(
@@ -613,25 +664,25 @@ def make_places(
             )
         labels_by_id[place.id] = place.label
 
-    parents_by_label = {place.label: place for place in level2}
-    for ward in level3:
-        parent_label = f"{ward.prefecture}{ward.municipality}"
+    parents_by_label = {place.label: place for place in level3}
+    for ward in level4:
+        parent_label = f"{JAPAN_COUNTRY_NAME_JA}{ward.prefecture}{ward.municipality}"
         parent = parents_by_label.get(parent_label)
         if parent is None or parent.id not in designated_city_parent_ids:
             raise ValueError(f"ward has no designated-city parent: {ward.label}")
 
     by_prefecture: dict[str, list[Place]] = defaultdict(list)
-    for place in level2:
+    for place in level3:
         by_prefecture[place.prefecture].append(place)
 
-    level1: list[Place] = []
+    level2: list[Place] = []
     for prefecture, municipalities in sorted(
         by_prefecture.items(), key=lambda item: min(p.id for p in item[1])
     ):
         prefecture_code = min(place.id for place in municipalities) // 1000
         place = make_place(
             prefecture_code,
-            1,
+            2,
             "prefecture",
             prefecture,
             None,
@@ -639,13 +690,30 @@ def make_places(
             [place.geometry for place in municipalities],
         )
         if place is not None:
-            level1.append(place)
+            level2.append(place)
+
+    if JAPAN_COUNTRY_ID in labels_by_id or any(
+        place.id == JAPAN_COUNTRY_ID for place in level2
+    ):
+        raise ValueError(f"country id collision: {JAPAN_COUNTRY_ID}")
+    country = make_place(
+        JAPAN_COUNTRY_ID,
+        1,
+        "country",
+        JAPAN_COUNTRY_NAME_JA,
+        None,
+        None,
+        [place.geometry for place in level2],
+        (JAPAN_LONGITUDE_ORIGIN, JAPAN_LATITUDE_ORIGIN),
+    )
+    if country is None:
+        raise ValueError("failed to generate Japan country record")
+    level1 = [country]
 
     decode_places = [
-        place for place in level2 if place.id not in designated_city_parent_ids
-    ] + level3
-    return level1, level2, level3, decode_places
-
+        place for place in level3 if place.id not in designated_city_parent_ids
+    ] + level4
+    return level1, level2, level3, level4, decode_places
 
 def polygonal_only(geometry: object) -> Polygon | MultiPolygon | None:
     if isinstance(geometry, Polygon):
@@ -740,9 +808,13 @@ def place_record(
         "id": place.id,
         "level": place.level,
         "kind": place.kind,
-        "country": "JP",
-        "longitude": round(place.longitude, 6),
-        "latitude": round(place.latitude, 6),
+        "country": JAPAN_COUNTRY_CODE,
+        "longitude": (
+            place.longitude if place.kind == "country" else round(place.longitude, 6)
+        ),
+        "latitude": (
+            place.latitude if place.kind == "country" else round(place.latitude, 6)
+        ),
         "addresses": addresses,
     }
 
@@ -760,6 +832,7 @@ def write_ndjson(
     level1: list[Place],
     level2: list[Place],
     level3: list[Place],
+    level4: list[Place],
     aliases: list[Alias],
     english_addresses: EnglishAddressBuilder,
 ) -> None:
@@ -771,6 +844,8 @@ def write_ndjson(
         for place in sorted(level2, key=lambda item: item.id):
             stream.write(json.dumps(place_record(place, english_addresses), ensure_ascii=False, separators=(",", ":")) + "\n")
         for place in sorted(level3, key=lambda item: item.id):
+            stream.write(json.dumps(place_record(place, english_addresses), ensure_ascii=False, separators=(",", ":")) + "\n")
+        for place in sorted(level4, key=lambda item: item.id):
             stream.write(json.dumps(place_record(place, english_addresses), ensure_ascii=False, separators=(",", ":")) + "\n")
         for alias in aliases:
             stream.write(json.dumps(alias_record(alias), ensure_ascii=False, separators=(",", ":")) + "\n")
@@ -841,17 +916,17 @@ def main() -> int:
     output = Path(args.output).expanduser().resolve()
 
     frame = load_sources(args.input)
-    level1, level2, level3, decode_places = make_places(frame)
+    level1, level2, level3, level4, decode_places = make_places(frame)
     aliases = make_aliases(decode_places, args.grid_km, args.component_area_km2)
-    all_places = [*level1, *level2, *level3]
+    all_places = [*level1, *level2, *level3, *level4]
     english_index = load_english_addresses(args.english_addresses)
     if english_index is None:
         print(
-            "warning: English address source is unavailable; English addresses will be omitted",
+            "warning: English address source is unavailable; non-country English addresses will be omitted",
             file=sys.stderr,
         )
     english_addresses = EnglishAddressBuilder(english_index)
-    write_ndjson(output, level1, level2, level3, aliases, english_addresses)
+    write_ndjson(output, level1, level2, level3, level4, aliases, english_addresses)
 
     stats: dict[str, object] = {
         "output": str(output),
@@ -859,9 +934,11 @@ def main() -> int:
         "level1": len(level1),
         "level2": len(level2),
         "level3": len(level3),
+        "level4": len(level4),
         "kinds": {
             kind: sum(place.kind == kind for place in all_places)
             for kind in (
+                "country",
                 "prefecture",
                 "municipality",
                 "special-ward",

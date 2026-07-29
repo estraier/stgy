@@ -7,6 +7,7 @@ export type GeoAddress = {
 };
 
 export type GeoPlaceKind =
+  | "country"
   | "prefecture"
   | "municipality"
   | "special-ward"

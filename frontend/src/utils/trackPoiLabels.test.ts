@@ -15,15 +15,15 @@ describe("addTrackJsonPoiLabels", () => {
   test("adds reverse-geocoded labels and deduplicates identical coordinates", async () => {
     mockDecodeGeo.mockResolvedValue([
       {
-        level: 2,
+        level: 3,
         country: "JP",
         longitude: 138.2933,
         latitude: 36.37194,
         addresses: [
           {
             locale: "ja",
-            label: "長野県上田市",
-            elements: ["長野県", "上田市"],
+            label: "日本長野県上田市",
+            elements: ["日本", "長野県", "上田市"],
           },
         ],
       },
@@ -41,12 +41,12 @@ describe("addTrackJsonPoiLabels", () => {
         {
           role: "start",
           coordinates: [138.2933, 36.37194],
-          label: "長野県上田市",
+          label: "日本長野県上田市",
         },
         {
           role: "centroid",
           coordinates: [138.2933, 36.37194],
-          label: "長野県上田市",
+          label: "日本長野県上田市",
         },
       ],
     });
@@ -68,20 +68,20 @@ describe("addTrackJsonPoiLabels", () => {
   test("uses the requested locale address when available", async () => {
     mockDecodeGeo.mockResolvedValue([
       {
-        level: 2,
+        level: 3,
         country: "JP",
         longitude: 138.2933,
         latitude: 36.37194,
         addresses: [
           {
             locale: "en",
-            label: "Ueda, Nagano",
-            elements: ["Nagano", "Ueda"],
+            label: "Ueda, Nagano, Japan",
+            elements: ["Japan", "Nagano", "Ueda"],
           },
           {
             locale: "ja",
-            label: "長野県上田市",
-            elements: ["長野県", "上田市"],
+            label: "日本長野県上田市",
+            elements: ["日本", "長野県", "上田市"],
           },
         ],
       },
@@ -99,7 +99,7 @@ describe("addTrackJsonPoiLabels", () => {
         {
           role: "start",
           coordinates: [138.2933, 36.37194],
-          label: "長野県上田市",
+          label: "日本長野県上田市",
         },
       ],
     });

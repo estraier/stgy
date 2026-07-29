@@ -6,6 +6,10 @@
 npm run generate:japan --workspace packages/geocoder
 ```
 
-The generator downloads the N03 2026 source archive into `source-data/N03-2026/` and writes prefectures, municipalities, Tokyo special wards, designated-city wards, and reverse-geocoding sample points to this directory.
+The generator downloads the N03 2026 source archive into `source-data/N03-2026/` and writes a Japan country record, prefectures, municipalities, Tokyo special wards, designated-city wards, and reverse-geocoding sample points to this directory.
 
 The generator also downloads the nationwide municipality master from the Digital Agency Address Base Registry public catalog. No API key or authentication is required. English addresses are added only when the Japanese prefecture, county, municipality, and designated-city ward names can be matched. Unmatched records remain Japanese-only and are reported as warnings during generation.
+
+The Japan country record uses ISO numeric ID `392` and the official Japanese longitude and latitude origin in Azabudai, Minato, Tokyo as its representative point. Administrative levels below it are prefecture level 2, municipality/special-ward level 3, and designated-city-ward level 4.
+
+Every address stores the complete hierarchy from country to place in `elements`. For example, Tokorozawa uses `["Japan", "Saitama", "Tokorozawa"]` in English and `["日本", "埼玉県", "所沢市"]` in Japanese. The runtime also indexes labels made by dropping leading hierarchy elements, so the same record can be encoded from either `Tokorozawa, Saitama, Japan` or `Tokorozawa, Saitama`, and from either `日本埼玉県所沢市` or `埼玉県所沢市`.

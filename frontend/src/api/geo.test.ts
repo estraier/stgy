@@ -25,15 +25,15 @@ describe("geo API", () => {
   test("encodes a place name", async () => {
     const payload = [
       {
-        level: 2,
+        level: 3,
         country: "JP",
         longitude: 139.461129,
         latitude: 35.803146,
         addresses: [
           {
             locale: "ja",
-            label: "埼玉県所沢市",
-            elements: ["埼玉県", "所沢市"],
+            label: "日本埼玉県所沢市",
+            elements: ["日本", "埼玉県", "所沢市"],
           },
         ],
       },
@@ -62,15 +62,15 @@ describe("geo API", () => {
   test("decodes coordinates", async () => {
     const payload = [
       {
-        level: 2,
+        level: 3,
         country: "JP",
         longitude: 138.31795,
         latitude: 36.3603,
         addresses: [
           {
             locale: "ja",
-            label: "長野県上田市",
-            elements: ["長野県", "上田市"],
+            label: "日本長野県上田市",
+            elements: ["日本", "長野県", "上田市"],
           },
         ],
       },

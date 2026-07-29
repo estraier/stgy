@@ -43,6 +43,7 @@ interface LocaleSearchSpace {
 
 export class GeoCoder {
   private readonly placesById = new Map<number, GeoPlaceRecord>();
+  private readonly countriesByCode = new Map<string, GeoPlaceRecord>();
   private readonly placesByCountryAndJapaneseLabel = new Map<string, GeoPlaceRecord>();
   private readonly searchSpacesByLocale = new Map<string, LocaleSearchSpace>();
   private readonly supportedLocales = new Set<string>();
@@ -89,6 +90,18 @@ export class GeoCoder {
           );
         }
 
+        if (place.kind === "country") {
+          const existingCountry = this.countriesByCode.get(place.country);
+          if (existingCountry !== undefined) {
+            throw dataError(
+              filePath,
+              lineNumber,
+              `duplicate country record: ${place.country}`,
+            );
+          }
+          this.countriesByCode.set(place.country, place);
+        }
+
         this.placesById.set(place.id, place);
         this.placesByCountryAndJapaneseLabel.set(labelKey, place);
         for (const address of place.addresses) {
@@ -97,7 +110,9 @@ export class GeoCoder {
             this.searchSpacesByLocale,
             address.locale,
           );
-          addPlaceToSearchIndex(searchSpace.labels, address.label, place);
+          for (const searchLabel of makeAddressSearchLabels(address)) {
+            addPlaceToSearchIndex(searchSpace.labels, searchLabel, place);
+          }
           for (const alias of address.aliases) {
             addPlaceToSearchIndex(searchSpace.aliases, alias, place);
           }
@@ -108,6 +123,11 @@ export class GeoCoder {
 
     if (this.placesById.size === 0) {
       throw new Error("GeoCoder NDJSON files contain no place records");
+    }
+    for (const place of this.placesById.values()) {
+      if (place.kind !== "country" && !this.countriesByCode.has(place.country)) {
+        throw new Error(`place ${place.id} has no country record: ${place.country}`);
+      }
     }
 
     this.defaultLocale =
@@ -166,7 +186,7 @@ export class GeoCoder {
   }
 
   encode(query: string, locale?: string): GeoPlace[] {
-    const normalizedQuery = query.trim();
+    const normalizedQuery = normalizeSearchKey(query);
     if (normalizedQuery.length === 0) {
       return [];
     }
@@ -193,6 +213,7 @@ export class GeoCoder {
 
     return collectPlaceHierarchy(
       matchedById.values(),
+      this.countriesByCode,
       this.placesByCountryAndJapaneseLabel,
     )
       .sort(comparePlacesForEncode)
@@ -256,6 +277,7 @@ export class GeoCoder {
     const resolvedLocale = this.resolveLocale(locale);
     return collectPlaceHierarchy(
       [place],
+      this.countriesByCode,
       this.placesByCountryAndJapaneseLabel,
     )
       .sort(comparePlacesForEncode)
@@ -295,12 +317,35 @@ function addPlaceToSearchIndex(
   key: string,
   place: GeoPlaceRecord,
 ): void {
-  const places = index.get(key);
+  const normalizedKey = normalizeSearchKey(key);
+  const places = index.get(normalizedKey);
   if (places === undefined) {
-    index.set(key, [place]);
+    index.set(normalizedKey, [place]);
     return;
   }
   places.push(place);
+}
+
+function normalizeSearchKey(value: string): string {
+  return value.trim().toLowerCase();
+}
+
+function makeAddressSearchLabels(address: GeoAddressRecord): readonly string[] {
+  const language = address.locale.split("-")[0];
+  const labels = new Set<string>([address.label]);
+  if (language !== "ja" && language !== "en") {
+    return Array.from(labels);
+  }
+
+  for (let start = 1; start < address.elements.length; start += 1) {
+    const elements = address.elements.slice(start);
+    labels.add(
+      language === "ja"
+        ? elements.join("")
+        : [...elements].reverse().join(", "),
+    );
+  }
+  return Array.from(labels);
 }
 
 function getSearchLocales(locale: string, defaultLocale: string): readonly string[] {
@@ -348,10 +393,16 @@ function normalizeLocale(locale?: string): string | undefined {
 
 function collectPlaceHierarchy(
   matchedPlaces: Iterable<GeoPlaceRecord>,
+  countriesByCode: ReadonlyMap<string, GeoPlaceRecord>,
   placesByCountryAndJapaneseLabel: ReadonlyMap<string, GeoPlaceRecord>,
 ): GeoPlaceRecord[] {
   const resultById = new Map<number, GeoPlaceRecord>();
   for (const matchedPlace of matchedPlaces) {
+    const country = countriesByCode.get(matchedPlace.country);
+    if (country !== undefined) {
+      resultById.set(country.id, country);
+    }
+
     const address = getJapaneseAddress(matchedPlace);
     if (address === undefined) {
       continue;
@@ -556,11 +607,15 @@ function parsePlace(
       lineNumber,
       `addresses[${index}].label`,
     );
-    if (!Array.isArray(rawAddress.elements) || rawAddress.elements.length !== level) {
+    const expectedElementCount = level;
+    if (
+      !Array.isArray(rawAddress.elements) ||
+      rawAddress.elements.length !== expectedElementCount
+    ) {
       throw dataError(
         filePath,
         lineNumber,
-        `addresses[${index}].elements length must equal level ${level}`,
+        `addresses[${index}].elements length must be ${expectedElementCount} for ${kind}`,
       );
     }
     const elements = rawAddress.elements.map((element, elementIndex) =>
@@ -624,6 +679,7 @@ function requirePlaceKind(
   lineNumber: number,
 ): GeoPlaceKind {
   if (
+    value !== "country" &&
     value !== "prefecture" &&
     value !== "municipality" &&
     value !== "special-ward" &&
@@ -641,7 +697,13 @@ function validatePlaceKindLevel(
   lineNumber: number,
 ): void {
   const expectedLevel =
-    kind === "prefecture" ? 1 : kind === "designated-city-ward" ? 3 : 2;
+    kind === "country"
+      ? 1
+      : kind === "prefecture"
+        ? 2
+        : kind === "designated-city-ward"
+          ? 4
+          : 3;
   if (level !== expectedLevel) {
     throw dataError(
       filePath,
@@ -662,15 +724,15 @@ function collectDecodePlaceIds(
       continue;
     }
     const address = getJapaneseAddress(place);
-    if (address === undefined || address.elements.length !== 3) {
-      throw new Error(`designated-city-ward ${place.id} has no three-element Japanese address`);
+    if (address === undefined || address.elements.length !== 4) {
+      throw new Error(`designated-city-ward ${place.id} has no four-element Japanese address`);
     }
-    const parentLabel = address.elements[0] + address.elements[1];
+    const parentLabel = address.elements.slice(0, -1).join("");
     const parent = placesByLabel.get(makeLabelKey(place.country, parentLabel));
     if (parent === undefined) {
       throw new Error(`designated-city-ward ${place.id} has no parent municipality: ${parentLabel}`);
     }
-    if (parent.kind !== "municipality" || parent.level !== 2) {
+    if (parent.kind !== "municipality" || parent.level !== 3) {
       throw new Error(
         `designated-city-ward ${place.id} has invalid parent municipality: ${parentLabel}`,
       );
