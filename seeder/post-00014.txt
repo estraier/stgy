@@ -27,7 +27,7 @@ ORDER BY p.id DESC OFFSET 0 LIMIT 20;
 
 postsテーブルには、reply_toがNULLのレコードだけを対象としたIDの部分インデックスが設けられているため、そのインデックスを引くだけで処理が完了する。全ての投稿数をPと置くと、探索開始位置を求める計算量はO(log(P))で、そこから20件を読む部分は定数時間で済む。これは、Pが莫大になっても処理量が全件数に比例しないことを意味している。
 
-現行のスキーマとデータで実行計画を確認するには、以下を実行する。実行時間や行数はデータ件数、統計情報、キャッシュ状態によって変わるので、ここでは古い結果を転載しない。
+現行のスキーマとデータで実行計画を確認するには、以下を実行する。実行時間や行数はデータ件数、統計情報、キャッシュ状態によって変わるが、以下は検証用データベースで得た結果である。
 
 ```sql:small
 EXPLAIN (ANALYZE, BUFFERS)
@@ -698,7 +698,7 @@ WHERE nickname LIKE 'user00%';
 
 ``LOWER(nickname)``版はidx_users_nickname_idを使い、24バッファ、1.090msで完了した。式を一致させない版はusers全体をSequential Scanし、29014件を条件不一致として捨て、512バッファ、10.976msを要した。式インデックスは、検索条件側の式まで一致させて初めて意図どおりに使える。
 ## listFriendsByNicknamePrefix
-上述のlistUsersメソッドは、social順の外部仕様を満たすためには率直な実装だが、検索文字列が短い場合には候補が増える。そこで、仕様を単純化したlistFriendsByNicknamePrefixという専用メソッドを設けた。ユーザリストはIDの昇順か降順で返すという原則を崩して、自分、フォロイー、その他の分類順で、各分類の中ではニックネームの辞書順にするという特殊仕様だ。
+上述のlistUsersメソッドは、social順の外部仕様を満たすためには率直な実装だが、検索文字列が短い場合には候補が増える。そこで、仕様を単純化したlistFriendsByNicknamePrefixという専用メソッドを設けた。ユーザリストはIDの昇順か降順で返すという原則を崩して、自分、フォロイー、その他の分類順で、各分類の中では``LOWER(nickname)``の``text_pattern_ops``順にするという特殊仕様だ。
 
 ページングに必要な候補数を``k = offset + limit``とする。selfを最大1件、followeesを最大k件取得してpreferredを作り、足りない件数だけをothersから補う。具体的なクエリは以下のものだ。ここではoffsetが0、limitが20なのでkは20である。
 
@@ -1139,12 +1139,12 @@ ORDER BY c.relname;
 
 ```sql:small
 SELECT id, nickname, snippet
-FROM users WHERE id > 281474976710658
+FROM users WHERE id > 0x0001000000000002
 ORDER BY id LIMIT 10;
 
 WITH cand_ids AS (
   SELECT id FROM users
-  WHERE id > 281474976710658
+  WHERE id > 0x0001000000000002
   ORDER BY id LIMIT 10
 )
 SELECT u.id, u.nickname, u.snippet
@@ -1152,6 +1152,8 @@ FROM users AS u
 JOIN cand_ids AS c ON u.id = c.id
 ORDER BY c.id;
 ```
+
+ここで使った``0x0001000000000002``は、10進数では281474976710658に相当する。``0x``接頭辞による16進整数リテラルはPostgreSQL 16以降で利用できる。PostgreSQL 15以前で同じクエリを実行する場合は、10進数の281474976710658と書けばよい。
 
 なお、PostgreSQLでは、TOAST（The Oversized-Attribute Storage Technique）という機構があり、大きい可変長データを暗黙的に圧縮したり別領域へ移動したりする。SELECT対象に含めない外部TOAST値まで毎回読み出されるわけではない。しかし、主テーブルにはTOASTポインタやインライン部分が残り、短い本文は行内に格納され得る。行が太いほど1ページに入るレコード数が減るため、一覧で常用するpostsやusersを小さく保つという目的では、本文を別テーブルへ分ける効果がある。参照頻度の異なるデータを明示的に分けることで、意図せず本文を取得するクエリも避けやすい。
 
