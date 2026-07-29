@@ -28,9 +28,6 @@ export type PostLite = Omit<
 
 export type PostDetail = Post & {
   content: string;
-};
-
-export type PubPostDetail = PostDetail & {
   olderPostId: string | null;
   newerPostId: string | null;
 };

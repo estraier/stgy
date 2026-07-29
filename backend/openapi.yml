@@ -255,15 +255,9 @@ components:
         - type: object
           properties:
             content: { type: string }
-          required: [content]
-
-    PubPostDetail:
-      allOf:
-        - $ref: "#/components/schemas/PostDetail"
-        - type: object
-          properties:
             olderPostId: { type: string, nullable: true }
             newerPostId: { type: string, nullable: true }
+          required: [content, olderPostId, newerPostId]
 
     PostLite:
       type: object
@@ -3713,7 +3707,7 @@ paths:
           content:
             application/json:
               schema:
-                $ref: "#/components/schemas/PubPostDetail"
+                $ref: "#/components/schemas/PostDetail"
         "400":
           $ref: "#/components/responses/Error400"
         "404":
@@ -3744,7 +3738,7 @@ paths:
               schema:
                 type: array
                 items:
-                  $ref: "#/components/schemas/PubPostDetail"
+                  $ref: "#/components/schemas/Post"
         "400":
           $ref: "#/components/responses/Error400"
 

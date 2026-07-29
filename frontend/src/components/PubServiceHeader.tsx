@@ -2,7 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
-import type { SessionInfo, PubPostDetail } from "@/api/models";
+import type { PostDetail, SessionInfo } from "@/api/models";
 import { getSessionInfo } from "@/api/auth";
 import { Heart, MessageCircle } from "lucide-react";
 
@@ -10,7 +10,7 @@ type Props = {
   showServiceHeader: boolean;
   redirectTo?: string;
   viewAsHref?: string;
-  post?: PubPostDetail;
+  post?: PostDetail;
 };
 
 function isAllowedPath(p: string): boolean {

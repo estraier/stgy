@@ -489,6 +489,12 @@ export default function PageBody() {
 
   const topTriangleOpacityClass = bottomInView ? "opacity-10" : "opacity-50 hover:opacity-100";
   const bottomTriangleOpacityClass = topInView ? "opacity-10" : "opacity-50 hover:opacity-100";
+  const previousPostOpacityClass = post.olderPostId
+    ? "opacity-50 hover:opacity-100 cursor-pointer"
+    : "opacity-10 cursor-default";
+  const nextPostOpacityClass = post.newerPostId
+    ? "opacity-50 hover:opacity-100 cursor-pointer"
+    : "opacity-10 cursor-default";
 
   function handleReplyPageChange(nextPage: number) {
     const sp = new URLSearchParams(searchParams);
@@ -517,14 +523,43 @@ export default function PageBody() {
       <div className="relative">
         <button
           type="button"
+          disabled={!post.olderPostId}
+          className={
+            "absolute -top-8 left-0 px-3 py-1 rounded-full border border-gray-300 bg-white text-xs shadow-sm hover:bg-gray-50 whitespace-nowrap " +
+            previousPostOpacityClass
+          }
+          onClick={() => {
+            if (post.olderPostId) router.push(`/posts/${post.olderPostId}`);
+          }}
+          aria-label="Previous post"
+        >
+          ◁
+        </button>
+        <button
+          type="button"
           ref={topTriangleRef}
           className={
             "absolute -top-8 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full border border-gray-300 bg-white text-xs shadow-sm cursor-pointer hover:bg-gray-50 " +
             topTriangleOpacityClass
           }
           onClick={() => scrollToTriangle(bottomTriangleRef.current)}
+          aria-label="Scroll to bottom"
         >
           ▽
+        </button>
+        <button
+          type="button"
+          disabled={!post.newerPostId}
+          className={
+            "absolute -top-8 right-0 px-3 py-1 rounded-full border border-gray-300 bg-white text-xs shadow-sm hover:bg-gray-50 whitespace-nowrap " +
+            nextPostOpacityClass
+          }
+          onClick={() => {
+            if (post.newerPostId) router.push(`/posts/${post.newerPostId}`);
+          }}
+          aria-label="Next post"
+        >
+          ▷
         </button>
         <PostCard
           post={post}
@@ -541,14 +576,43 @@ export default function PageBody() {
         />
         <button
           type="button"
+          disabled={!post.olderPostId}
+          className={
+            "absolute -bottom-8 left-0 px-3 py-1 rounded-full border border-gray-300 bg-white text-xs shadow-sm hover:bg-gray-50 whitespace-nowrap " +
+            previousPostOpacityClass
+          }
+          onClick={() => {
+            if (post.olderPostId) router.push(`/posts/${post.olderPostId}`);
+          }}
+          aria-label="Previous post"
+        >
+          ◁
+        </button>
+        <button
+          type="button"
           ref={bottomTriangleRef}
           className={
             "absolute -bottom-8 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full border border-gray-300 bg-white text-xs shadow-sm cursor-pointer hover:bg-gray-50 " +
             bottomTriangleOpacityClass
           }
           onClick={() => scrollToTriangle(topTriangleRef.current)}
+          aria-label="Scroll to top"
         >
           △
+        </button>
+        <button
+          type="button"
+          disabled={!post.newerPostId}
+          className={
+            "absolute -bottom-8 right-0 px-3 py-1 rounded-full border border-gray-300 bg-white text-xs shadow-sm hover:bg-gray-50 whitespace-nowrap " +
+            nextPostOpacityClass
+          }
+          onClick={() => {
+            if (post.newerPostId) router.push(`/posts/${post.newerPostId}`);
+          }}
+          aria-label="Next post"
+        >
+          ▷
         </button>
       </div>
 

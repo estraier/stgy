@@ -318,20 +318,26 @@ class MockPgClientMain {
 
       const olderPool = sameOwnerPub.filter(
         (p) =>
-          p.publishedAt! < cur.publishedAt! || (p.publishedAt === cur.publishedAt && p.id < cur.id),
+          p.publishedAt! < cur.publishedAt! ||
+          (p.publishedAt === cur.publishedAt && BigInt(p.id) < BigInt(cur.id)),
       );
       olderPool.sort((a, b) =>
         a.publishedAt === b.publishedAt
-          ? b.id.localeCompare(a.id)
+          ? BigInt(a.id) < BigInt(b.id)
+            ? 1
+            : -1
           : b.publishedAt!.localeCompare(a.publishedAt!),
       );
       const newerPool = sameOwnerPub.filter(
         (p) =>
-          p.publishedAt! > cur.publishedAt! || (p.publishedAt === cur.publishedAt && p.id > cur.id),
+          p.publishedAt! > cur.publishedAt! ||
+          (p.publishedAt === cur.publishedAt && BigInt(p.id) > BigInt(cur.id)),
       );
       newerPool.sort((a, b) =>
         a.publishedAt === b.publishedAt
-          ? a.id.localeCompare(b.id)
+          ? BigInt(a.id) < BigInt(b.id)
+            ? -1
+            : 1
           : a.publishedAt!.localeCompare(b.publishedAt!),
       );
 
@@ -537,6 +543,13 @@ class MockPgClientMain {
       const reply_to_owner_id = replyToPost ? replyToPost.ownedBy : null;
 
       const owner = this.users.find((u) => u.id === post.ownedBy);
+      const sameOwner = this.data.filter((p) => p.ownedBy === post.ownedBy);
+      const older = sameOwner
+        .filter((p) => BigInt(p.id) < BigInt(post.id))
+        .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? 1 : -1))[0];
+      const newer = sameOwner
+        .filter((p) => BigInt(p.id) > BigInt(post.id))
+        .sort((a, b) => (BigInt(a.id) < BigInt(b.id) ? -1 : 1))[0];
 
       const row: any = {
         id: post.id,
@@ -560,6 +573,8 @@ class MockPgClientMain {
           .map((t) => t.name)
           .sort(),
         content: post.content,
+        older_post_id: older?.id ?? null,
+        newer_post_id: newer?.id ?? null,
       };
       if (includeBlocking && focusUserId)
         row.is_blocking_focus_user = this.computeIsBlocking(post.ownedBy, focusUserId);
@@ -908,6 +923,40 @@ describe("posts service", () => {
     expect(post!.content).toBe(postSample.content);
     expect(post!.ownerLocale).toBe("ja-JP");
     expect(post!.replyToOwnerId).toBeNull();
+    expect(post!.olderPostId).toBeNull();
+    expect(post!.newerPostId).toBeNull();
+  });
+
+  test("getPost returns adjacent posts by id regardless of publication status", async () => {
+    const olderId = "0000000000001000";
+    const currentId = "0000000000002000";
+    const newerId = "0000000000003000";
+    const ownerId = toDecStr(user2Hex);
+    const base = {
+      ownedBy: ownerId,
+      replyTo: null,
+      allowLikes: true,
+      allowReplies: true,
+      createdAt: "2024-01-01T00:00:00Z",
+      updatedAt: null,
+      content: "",
+      locale: "en-US",
+    };
+    pgClient.data.push(
+      { ...base, id: toDecStr(olderId), publishedAt: null },
+      { ...base, id: toDecStr(currentId), publishedAt: "2024-01-02T00:00:00Z" },
+      { ...base, id: toDecStr(newerId), publishedAt: null },
+      {
+        ...base,
+        id: toDecStr("0000000000002500"),
+        ownedBy: toDecStr(user3Hex),
+        publishedAt: null,
+      },
+    );
+
+    const post = await postsService.getPost(currentId);
+    expect(post?.olderPostId).toBe(olderId);
+    expect(post?.newerPostId).toBe(newerId);
   });
 
   test("getPost: not found", async () => {
@@ -1676,6 +1725,68 @@ describe("public posts (getPubPost / listPubPostsByUser)", () => {
     expect(hitGt!.publishedAt).toBe("2024-01-10T00:00:00Z");
     expect(hitGt!.ownerLocale).toBe("ja-JP");
     expect(hitGt!.replyToOwnerId).toBeNull();
+  });
+
+  test("getPubPost returns adjacent published posts only", async () => {
+    const olderId = "0000000000001100";
+    const currentId = "0000000000002200";
+    const newerId = "0000000000003300";
+    const unpublishedId = "0000000000004400";
+    const futureId = "0000000000005500";
+    const base = {
+      ownedBy: toDecStr(alice),
+      replyTo: null,
+      allowLikes: true,
+      allowReplies: true,
+      createdAt: "2024-01-01T00:00:00Z",
+      updatedAt: null,
+      content: "",
+      locale: "ja-JP",
+    };
+    pgClient.data.push(
+      { ...base, id: toDecStr(olderId), publishedAt: "2024-01-01T00:00:00Z" },
+      { ...base, id: toDecStr(currentId), publishedAt: "2024-01-03T00:00:00Z" },
+      { ...base, id: toDecStr(newerId), publishedAt: "2024-01-05T00:00:00Z" },
+      { ...base, id: toDecStr(unpublishedId), publishedAt: null },
+      { ...base, id: toDecStr(futureId), publishedAt: "2024-01-07T00:00:00Z" },
+      {
+        ...base,
+        id: toDecStr("0000000000006600"),
+        ownedBy: toDecStr(bob),
+        publishedAt: "2024-01-04T00:00:00Z",
+      },
+    );
+
+    const post = await postsService.getPubPost(currentId, "2024-01-06T00:00:00Z");
+    expect(post?.olderPostId).toBe(olderId);
+    expect(post?.newerPostId).toBe(newerId);
+  });
+
+  test("getPubPost breaks equal publication times by id", async () => {
+    const olderId = "0000000000001100";
+    const currentId = "0000000000002200";
+    const newerId = "0000000000003300";
+    const publishedAt = "2024-01-03T00:00:00Z";
+    const base = {
+      ownedBy: toDecStr(alice),
+      replyTo: null,
+      allowLikes: true,
+      allowReplies: true,
+      createdAt: "2024-01-01T00:00:00Z",
+      publishedAt,
+      updatedAt: null,
+      content: "",
+      locale: "ja-JP",
+    };
+    pgClient.data.push(
+      { ...base, id: toDecStr(newerId) },
+      { ...base, id: toDecStr(olderId) },
+      { ...base, id: toDecStr(currentId) },
+    );
+
+    const post = await postsService.getPubPost(currentId, publishedAt);
+    expect(post?.olderPostId).toBe(olderId);
+    expect(post?.newerPostId).toBe(newerId);
   });
 
   test("listPubPostsByUser includes equality (<=) and honors order asc", async () => {

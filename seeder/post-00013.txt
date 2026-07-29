@@ -178,12 +178,12 @@ CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
 CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
 CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
-CREATE INDEX idx_posts_public_owned_by_published_at ON posts (owned_by, published_at) WHERE published_at IS NOT NULL;
+CREATE INDEX idx_posts_public_owned_by_published_at ON posts (owned_by, published_at, id) WHERE published_at IS NOT NULL;
 ```
 
 プライマリキーであるidはSnowflake IDだ。usersと同様にリストを返す全てのクエリは ``ORDER BY id`` をすることになり、その順序が時系列になるのは便利だ。
 
-owned_byは、その投稿を書いたユーザのIDだ。ユーザ毎の投稿の一覧を出すクエリのために、当然それにインデックスを貼る必要がある。その際にもID順でデータを返すので、owned_byとidの複合インデックスにすべきだ。
+owned_byは、その投稿を書いたユーザのIDだ。ユーザ毎の投稿の一覧を出すクエリのために、当然それにインデックスを貼る必要がある。その際にもID順でデータを返すので、owned_byとidの複合インデックスにすべきだ。外部公開記事はpublished_atとidの組で順序を決める。同じユーザの前後の公開記事をインデックスから直接取得できるように、published_atがNULLでない行にはowned_by、published_at、idの複合インデックスを作る。
 
 reply_toは返信先の投稿IDだ。返信ではない投稿はreply_toにNULLを持つ。外部キー制約をつけていないのは、返信先の投稿が消される可能性があるからだ。ON DELETE SET NULLをつければ返信先が消された時にNULLにすることもできるが、返信先が消えたら返信じゃなくなるという扱いはおかしいので、そのまま値を残すことにしている。外部キー制約がないとアプリ側で整合性を保証する必要があるが、それはトランザクション内でちゃんと検査する。なお、投稿毎の返信の一覧を出すクエリのために、reply_toにIDとの複合インデックスを貼る必要がある。また、ログイン後のUIのデフォルト状態では、返信ではない投稿の一覧を出したい。そのクエリを効率化するため、NULL値に限定した、IDとの複合インデックスを作っている。
 
