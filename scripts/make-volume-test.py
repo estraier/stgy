@@ -1,292 +1,538 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 
+import argparse
 import os
+from pathlib import Path
+import subprocess
 import sys
-import time
-import requests
-
-APP_HOST = os.environ.get("STGY_APP_HOST", "localhost")
-APP_PORT = int(os.environ.get("STGY_APP_PORT", 3100))
-ADMIN_EMAIL = os.environ.get("STGY_ADMIN_EMAIL", "admin@stgy.jp")
-ADMIN_PASSWORD = os.environ.get("STGY_ADMIN_PASSWORD", "stgystgy")
-BASE_URL = f"http://{APP_HOST}:{APP_PORT}"
+import textwrap
 
 NUM_DUMMY_USERS = 30000
 
-TARO_ID = "0001000000100000"
-TARO_POST1_ID = "0002000000100001"
-TARO_POST2_ID = "0002000000100002"
+ADMIN_USER_ID = 281474976710657  # 0001000000000001
+BENCHMARK_USER_ID = 1853070350746583040  # 19B76DAA800F0000
+BENCHMARK_POST1_ID = 1855878856704991232  # 19C167FCC00F2000
+BENCHMARK_POST2_ID = 1855878856706039808  # 19C167FCC01F2000
 
-USERS_ID_START_HEX = "0001000000200001"
-REPLY_ID_START_HEX = "0002000000300001"
+DUMMY_USER_BASE_MS = 1767312000000  # 2026-01-02 00:00:00+00
+DUMMY_USER_WORKER_ID = 241
+DUMMY_POST_BASE_MS = 1769990400000  # 2026-02-02 00:00:00+00
+DUMMY_POST_WORKER_ID = 243
 
-def login_admin() -> tuple[requests.Session, str]:
-  s = requests.Session()
-  r = s.post(f"{BASE_URL}/auth", json={"email": ADMIN_EMAIL, "password": ADMIN_PASSWORD})
-  if r.status_code != 200:
-    raise RuntimeError(f"[admin login] failed: {r.status_code} {r.text}")
-  sid = r.cookies.get("session_id")
-  if not sid:
-    raise RuntimeError("[admin login] no session_id")
-  s.cookies.clear()
-  s.cookies.set("session_id", sid)
-  return s, sid
+EVENT_LOG_PARTITIONS = 256
+EVENT_PARTITION_ID = BENCHMARK_USER_ID % EVENT_LOG_PARTITIONS
+EVENT_BASE_MS = 1782864000000  # 2026-07-01 00:00:00+00
+EVENT_WORKER_ID = 244
+EVENT_COUNT = 1000
+EVENT_AFTER_ORDINAL = 400
+EVENT_AFTER_ID = 1869468402083381248  # event number 400
+NOTIFICATION_NEWER_THAN = "2026-07-01 00:30:30+00"
+NICKNAME_PREFIX = "user00"
 
-def switch_user(admin_session_id: str, user_id: str) -> requests.Session:
-  tx = requests.Session()
-  tx.cookies.set("session_id", admin_session_id)
-  r = tx.post(f"{BASE_URL}/auth/switch-user", json={"id": user_id})
-  if r.status_code != 200:
-    raise RuntimeError(f"[switch-user] {user_id} failed: {r.status_code} {r.text}")
-  user_sid = r.cookies.get("session_id")
-  if not user_sid:
-    try:
-      user_sid = r.json().get("sessionId")
-    except Exception:
-      user_sid = None
-  if not user_sid:
-    raise RuntimeError(f"[switch-user] session_id not returned for user {user_id}")
-  s = requests.Session()
-  s.cookies.set("session_id", user_sid)
-  return s
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
-def ensure_user(
-  admin: requests.Session,
-  *,
-  user_id: str,
-  email: str,
-  nickname: str,
-  password: str,
-  is_admin: bool,
-  block_strangers: bool,
-  locale: str,
-  timezone: str,
-  introduction: str,
-  ai_model: str | None = None,
-  ai_personality: str | None = None,
-  avatar: str | None = None,
-) -> dict:
-  g = admin.get(f"{BASE_URL}/users/{user_id}")
-  if g.status_code == 200:
-    body = {
-      "email": email,
-      "nickname": nickname,
-      "isAdmin": is_admin,
-      "blockStrangers": block_strangers,
-      "locale": locale,
-      "timezone": timezone,
-      "introduction": introduction,
-      "avatar": avatar,
-      "aiModel": ai_model,
-      "aiPersonality": ai_personality,
-    }
-    r = admin.put(f"{BASE_URL}/users/{user_id}", json=body)
-    if r.status_code != 200:
-      raise RuntimeError(f"[users.update] {user_id} failed: {r.status_code} {r.text}")
-    return r.json()
-  body = {
-    "id": user_id,
-    "email": email,
-    "nickname": nickname,
-    "password": password,
-    "isAdmin": is_admin,
-    "blockStrangers": block_strangers,
-    "locale": locale,
-    "timezone": timezone,
-    "introduction": introduction,
-    "avatar": avatar,
-    "aiModel": ai_model,
-    "aiPersonality": ai_personality,
-  }
-  r = admin.post(f"{BASE_URL}/users", json=body)
-  if r.status_code != 201:
-    raise RuntimeError(f"[users.create] {user_id} failed: {r.status_code} {r.text}")
-  return r.json()
 
-def create_post_as_admin(
-  admin: requests.Session,
-  *,
-  post_id: str | None,
-  owned_by: str,
-  content: str,
-  reply_to: str | None,
-  published_at: str | None,
-  tags: list[str] | None = None,
-  allow_likes: bool = True,
-  allow_replies: bool = True,
-) -> dict:
-  body = {
-    "content": content,
-    "ownedBy": owned_by,
-    "replyTo": reply_to,
-    "publishedAt": published_at,
-    "allowLikes": allow_likes,
-    "allowReplies": allow_replies,
-    "tags": tags or [],
-  }
-  if post_id:
-    body["id"] = post_id
-  r = admin.post(f"{BASE_URL}/posts", json=body)
-  if r.status_code != 201:
-    raise RuntimeError(f"[posts.create] id={post_id} ownedBy={owned_by} failed: {r.status_code} {r.text}")
-  return r.json()
+def parse_args(argv: list[str]) -> argparse.Namespace:
+  parser = argparse.ArgumentParser(
+    description="Populate the STGY database with deterministic volume-test data and run ANALYZE.",
+  )
+  parser.add_argument(
+    "--mode",
+    choices=("docker", "native"),
+    default="docker",
+    help="PostgreSQL execution mode (default: docker)",
+  )
+  return parser.parse_args(argv)
 
-def like_post(session: requests.Session, post_id: str) -> None:
-  r = session.post(f"{BASE_URL}/posts/{post_id}/like")
-  if r.status_code == 200:
-    return
-  if r.status_code in (400, 403, 404):
-    print(f"[like] skip {post_id}: {r.status_code} {r.text}")
-    return
-  raise RuntimeError(f"[like] {post_id} failed: {r.status_code} {r.text}")
 
-def follow_user(session: requests.Session, target_user_id: str) -> None:
-  r = session.post(f"{BASE_URL}/users/{target_user_id}/follow")
-  if r.status_code == 200:
-    return
-  if r.status_code in (400, 403):
-    print(f"[follow] skip -> {target_user_id}: {r.status_code} {r.text}")
-    return
-  raise RuntimeError(f"[follow] -> {target_user_id} failed: {r.status_code} {r.text}")
+def snowflake_id(timestamp_ms: int, worker_id: int, sequence: int = 0) -> int:
+  return (timestamp_ms << 20) | (worker_id << 12) | sequence
 
-def list_replies_to(session: requests.Session, post_id: str) -> list[dict]:
-  r = session.get(f"{BASE_URL}/posts", params={"replyTo": post_id, "limit": 2000})
-  if r.status_code != 200:
-    raise RuntimeError(f"[list replies] replyTo={post_id} failed: {r.status_code} {r.text}")
-  return r.json()
 
-def hex_inc(base_hex: str, delta: int) -> str:
-  v = int(base_hex, 16) + delta
-  s = f"{v:0{len(base_hex)}X}"
-  return s
+def build_sql() -> str:
+  first_dummy_user_id = snowflake_id(DUMMY_USER_BASE_MS, DUMMY_USER_WORKER_ID)
+  last_dummy_user_id = snowflake_id(
+    DUMMY_USER_BASE_MS + NUM_DUMMY_USERS - 1,
+    DUMMY_USER_WORKER_ID,
+  )
+  first_event_id = snowflake_id(EVENT_BASE_MS, EVENT_WORKER_ID)
+  last_event_id = snowflake_id(EVENT_BASE_MS + EVENT_COUNT - 1, EVENT_WORKER_ID)
 
-def make_user_name(i: int) -> str:
-  return f"user{i:05d}"
+  if EVENT_AFTER_ID != snowflake_id(
+    EVENT_BASE_MS + EVENT_AFTER_ORDINAL - 1,
+    EVENT_WORKER_ID,
+  ):
+    raise RuntimeError("EVENT_AFTER_ID does not match the configured event series")
+
+  return textwrap.dedent(
+    f"""
+    \\set ON_ERROR_STOP on
+    \\timing on
+
+    BEGIN;
+    SET LOCAL statement_timeout = 0;
+
+    DO $$
+    BEGIN
+      IF NOT EXISTS (
+        SELECT 1 FROM user_secrets WHERE user_id = {ADMIN_USER_ID}
+      ) THEN
+        RAISE EXCEPTION 'admin user secret is required before running make-volume-test.py';
+      END IF;
+    END
+    $$;
+
+    ALTER TABLE user_follows DISABLE TRIGGER trg_user_follows_counts_ins;
+    ALTER TABLE user_follows DISABLE TRIGGER trg_user_follows_counts_del;
+    ALTER TABLE posts DISABLE TRIGGER trg_user_post_counts_ins;
+    ALTER TABLE posts DISABLE TRIGGER trg_user_post_counts_del;
+    ALTER TABLE posts DISABLE TRIGGER trg_post_reply_counts_ins;
+    ALTER TABLE posts DISABLE TRIGGER trg_post_reply_counts_del;
+    ALTER TABLE post_likes DISABLE TRIGGER trg_post_like_counts_ins;
+    ALTER TABLE post_likes DISABLE TRIGGER trg_post_like_counts_del;
+
+    DELETE FROM event_logs
+    WHERE partition_id = {EVENT_PARTITION_ID}
+      AND event_id BETWEEN {first_event_id} AND {last_event_id};
+    DELETE FROM event_log_cursors
+    WHERE consumer = 'notification'
+      AND partition_id = {EVENT_PARTITION_ID};
+    DELETE FROM users
+    WHERE id = {BENCHMARK_USER_ID}
+       OR id BETWEEN {first_dummy_user_id} AND {last_dummy_user_id};
+
+    CREATE TEMP TABLE volume_users (
+      ordinal INT PRIMARY KEY,
+      id BIGINT NOT NULL UNIQUE,
+      nickname VARCHAR(50) NOT NULL,
+      locale VARCHAR(50) NOT NULL,
+      timezone VARCHAR(50) NOT NULL
+    ) ON COMMIT DROP;
+
+    INSERT INTO volume_users (ordinal, id, nickname, locale, timezone)
+    SELECT
+      i,
+      ((({DUMMY_USER_BASE_MS} + i - 1)::bigint << 20)
+        | ({DUMMY_USER_WORKER_ID}::bigint << 12)),
+      'user' || lpad(i::text, 5, '0'),
+      CASE WHEN i % 5 = 0 THEN 'ja-JP' ELSE 'en-US' END,
+      CASE WHEN i % 5 = 0 THEN 'Asia/Tokyo' ELSE 'America/New_York' END
+    FROM generate_series(1, {NUM_DUMMY_USERS}) AS g(i);
+
+    INSERT INTO users (
+      id, updated_at, snippet, nickname, avatar, locale, timezone,
+      ai_model, is_admin, block_strangers
+    ) VALUES (
+      {BENCHMARK_USER_ID},
+      TIMESTAMPTZ '2026-01-01 00:00:00+00',
+      '[{{"T":"p","X":"Volume-test benchmark user."}}]',
+      'user00000',
+      NULL,
+      'en-US',
+      'Asia/Tokyo',
+      NULL,
+      FALSE,
+      FALSE
+    );
+
+    INSERT INTO users (
+      id, updated_at, snippet, nickname, avatar, locale, timezone,
+      ai_model, is_admin, block_strangers
+    )
+    SELECT
+      vu.id,
+      TIMESTAMPTZ '2026-01-02 00:00:00+00'
+        + (vu.ordinal - 1) * INTERVAL '1 millisecond',
+      '[{{"T":"p","X":"Volume-test user ' || vu.nickname || '."}}]',
+      vu.nickname,
+      NULL,
+      vu.locale,
+      vu.timezone,
+      NULL,
+      FALSE,
+      vu.ordinal % 3 = 0
+    FROM volume_users vu;
+
+    INSERT INTO user_secrets (user_id, email, password)
+    SELECT
+      {BENCHMARK_USER_ID},
+      'volume-benchmark@stgy.invalid',
+      us.password
+    FROM user_secrets us
+    WHERE us.user_id = {ADMIN_USER_ID};
+
+    INSERT INTO user_secrets (user_id, email, password)
+    SELECT
+      vu.id,
+      vu.nickname || '@volume.stgy.invalid',
+      us.password
+    FROM volume_users vu
+    CROSS JOIN LATERAL (
+      SELECT password FROM user_secrets WHERE user_id = {ADMIN_USER_ID}
+    ) us;
+
+    INSERT INTO user_details (user_id, introduction, ai_personality)
+    VALUES (
+      {BENCHMARK_USER_ID},
+      'Benchmark user for STGY database volume tests.',
+      NULL
+    );
+
+    INSERT INTO user_details (user_id, introduction, ai_personality)
+    SELECT
+      vu.id,
+      'Volume-test profile for ' || vu.nickname || '.',
+      NULL
+    FROM volume_users vu;
+
+    INSERT INTO user_follows (follower_id, followee_id, created_at)
+    SELECT
+      {BENCHMARK_USER_ID},
+      vu.id,
+      TIMESTAMPTZ '2026-03-01 00:00:00+00'
+        + (vu.ordinal - 1) * INTERVAL '1 millisecond'
+    FROM volume_users vu
+    UNION ALL
+    SELECT
+      vu.id,
+      {BENCHMARK_USER_ID},
+      TIMESTAMPTZ '2026-03-02 00:00:00+00'
+        + (vu.ordinal - 1) * INTERVAL '1 millisecond'
+    FROM volume_users vu;
+
+    INSERT INTO posts (
+      id, owned_by, reply_to, published_at, updated_at, snippet, locale,
+      allow_likes, allow_replies
+    ) VALUES
+    (
+      {BENCHMARK_POST1_ID},
+      {BENCHMARK_USER_ID},
+      NULL,
+      TIMESTAMPTZ '2026-02-01 00:00:00+00',
+      TIMESTAMPTZ '2026-02-01 00:00:00+00',
+      '[{{"T":"p","X":"Benchmark root post one."}}]',
+      'en-US',
+      TRUE,
+      TRUE
+    ),
+    (
+      {BENCHMARK_POST2_ID},
+      {BENCHMARK_USER_ID},
+      NULL,
+      TIMESTAMPTZ '2026-02-01 00:00:00.001+00',
+      TIMESTAMPTZ '2026-02-01 00:00:00.001+00',
+      '[{{"T":"p","X":"Benchmark root post two."}}]',
+      'en-US',
+      TRUE,
+      TRUE
+    );
+
+    INSERT INTO post_details (post_id, content) VALUES
+      ({BENCHMARK_POST1_ID}, 'Benchmark root post one.'),
+      ({BENCHMARK_POST2_ID}, 'Benchmark root post two.');
+
+    INSERT INTO post_tags (post_id, name, is_root) VALUES
+      ({BENCHMARK_POST1_ID}, 'bulk', TRUE),
+      ({BENCHMARK_POST1_ID}, 'benchmark', TRUE),
+      ({BENCHMARK_POST2_ID}, 'bulk', TRUE),
+      ({BENCHMARK_POST2_ID}, 'benchmark', TRUE);
+
+    CREATE TEMP TABLE volume_posts (
+      ordinal BIGINT PRIMARY KEY,
+      owner_ordinal INT NOT NULL,
+      post_number INT NOT NULL,
+      id BIGINT NOT NULL UNIQUE,
+      owned_by BIGINT NOT NULL,
+      reply_to BIGINT,
+      published_at TIMESTAMPTZ NOT NULL,
+      content TEXT NOT NULL,
+      snippet TEXT NOT NULL,
+      locale VARCHAR(50)
+    ) ON COMMIT DROP;
+
+    INSERT INTO volume_posts (
+      ordinal, owner_ordinal, post_number, id, owned_by, reply_to,
+      published_at, content, snippet, locale
+    )
+    SELECT
+      ((vu.ordinal - 1)::bigint * 3 + p.post_number),
+      vu.ordinal,
+      p.post_number,
+      ((({DUMMY_POST_BASE_MS}
+          + (vu.ordinal - 1)::bigint * 3
+          + p.post_number - 1) << 20)
+        | ({DUMMY_POST_WORKER_ID}::bigint << 12)),
+      vu.id,
+      CASE
+        WHEN p.post_number = 2 AND vu.ordinal % 2 = 0
+          THEN {BENCHMARK_POST2_ID}
+        ELSE NULL
+      END,
+      TIMESTAMPTZ '2026-02-02 00:00:00+00'
+        + (((vu.ordinal - 1)::bigint * 3 + p.post_number - 1)
+          * INTERVAL '1 millisecond'),
+      CASE
+        WHEN p.post_number = 2 AND vu.ordinal % 2 = 0
+          THEN 'Reply by ' || vu.nickname || '.'
+        ELSE 'Post ' || p.post_number || ' by ' || vu.nickname || '.'
+      END,
+      CASE
+        WHEN p.post_number = 2 AND vu.ordinal % 2 = 0
+          THEN '[{{"T":"p","X":"Reply by ' || vu.nickname || '."}}]'
+        ELSE '[{{"T":"p","X":"Post ' || p.post_number
+          || ' by ' || vu.nickname || '."}}]'
+      END,
+      CASE WHEN vu.ordinal % 4 = 0 THEN NULL ELSE vu.locale END
+    FROM volume_users vu
+    CROSS JOIN LATERAL generate_series(1, 1 + (vu.ordinal % 3)) AS p(post_number);
+
+    INSERT INTO posts (
+      id, owned_by, reply_to, published_at, updated_at, snippet, locale,
+      allow_likes, allow_replies
+    )
+    SELECT
+      vp.id,
+      vp.owned_by,
+      vp.reply_to,
+      vp.published_at,
+      vp.published_at,
+      vp.snippet,
+      vp.locale,
+      TRUE,
+      TRUE
+    FROM volume_posts vp;
+
+    INSERT INTO post_details (post_id, content)
+    SELECT id, content FROM volume_posts;
+
+    INSERT INTO post_tags (post_id, name, is_root)
+    SELECT id, 'bulk', reply_to IS NULL FROM volume_posts
+    UNION ALL
+    SELECT
+      id,
+      'tagA' || lpad((owner_ordinal / 10)::text, 5, '0'),
+      reply_to IS NULL
+    FROM volume_posts
+    UNION ALL
+    SELECT
+      id,
+      'tagB' || lpad((owner_ordinal % 10)::text, 5, '0'),
+      reply_to IS NULL
+    FROM volume_posts;
+
+    INSERT INTO post_likes (post_id, liked_by, created_at)
+    SELECT
+      {BENCHMARK_POST1_ID},
+      vu.id,
+      TIMESTAMPTZ '2026-04-01 00:00:00+00'
+        + (vu.ordinal - 1) * INTERVAL '1 millisecond'
+    FROM volume_users vu;
+
+    INSERT INTO post_likes (post_id, liked_by, created_at)
+    SELECT
+      latest.id,
+      {BENCHMARK_USER_ID},
+      TIMESTAMPTZ '2026-04-02 00:00:00+00'
+        + (latest.owner_ordinal - 1) * INTERVAL '1 millisecond'
+    FROM (
+      SELECT DISTINCT ON (owned_by)
+        owned_by, owner_ordinal, id
+      FROM volume_posts
+      ORDER BY owned_by, id DESC
+    ) latest;
+
+    TRUNCATE user_counts;
+    WITH
+    follower_counts AS (
+      SELECT followee_id AS user_id, count(*)::int AS follower_count
+      FROM user_follows
+      GROUP BY followee_id
+    ),
+    followee_counts AS (
+      SELECT follower_id AS user_id, count(*)::int AS followee_count
+      FROM user_follows
+      GROUP BY follower_id
+    ),
+    post_owner_counts AS (
+      SELECT owned_by AS user_id, count(*)::int AS post_count
+      FROM posts
+      GROUP BY owned_by
+    )
+    INSERT INTO user_counts (
+      user_id, follower_count, followee_count, post_count
+    )
+    SELECT
+      u.id,
+      COALESCE(fc.follower_count, 0),
+      COALESCE(fec.followee_count, 0),
+      COALESCE(pc.post_count, 0)
+    FROM users u
+    LEFT JOIN follower_counts fc ON fc.user_id = u.id
+    LEFT JOIN followee_counts fec ON fec.user_id = u.id
+    LEFT JOIN post_owner_counts pc ON pc.user_id = u.id
+    WHERE fc.user_id IS NOT NULL
+       OR fec.user_id IS NOT NULL
+       OR pc.user_id IS NOT NULL;
+
+    TRUNCATE post_counts;
+    WITH
+    like_counts AS (
+      SELECT post_id, count(*)::int AS like_count
+      FROM post_likes
+      GROUP BY post_id
+    ),
+    reply_counts AS (
+      SELECT reply_to AS post_id, count(*)::int AS reply_count
+      FROM posts
+      WHERE reply_to IS NOT NULL
+      GROUP BY reply_to
+    )
+    INSERT INTO post_counts (post_id, like_count, reply_count)
+    SELECT
+      p.id,
+      COALESCE(lc.like_count, 0),
+      COALESCE(rc.reply_count, 0)
+    FROM posts p
+    LEFT JOIN like_counts lc ON lc.post_id = p.id
+    LEFT JOIN reply_counts rc ON rc.post_id = p.id
+    WHERE lc.post_id IS NOT NULL OR rc.post_id IS NOT NULL;
+
+    ALTER TABLE user_follows ENABLE TRIGGER trg_user_follows_counts_ins;
+    ALTER TABLE user_follows ENABLE TRIGGER trg_user_follows_counts_del;
+    ALTER TABLE posts ENABLE TRIGGER trg_user_post_counts_ins;
+    ALTER TABLE posts ENABLE TRIGGER trg_user_post_counts_del;
+    ALTER TABLE posts ENABLE TRIGGER trg_post_reply_counts_ins;
+    ALTER TABLE posts ENABLE TRIGGER trg_post_reply_counts_del;
+    ALTER TABLE post_likes ENABLE TRIGGER trg_post_like_counts_ins;
+    ALTER TABLE post_likes ENABLE TRIGGER trg_post_like_counts_del;
+
+    INSERT INTO notifications (
+      user_id, slot, term, is_read, payload, updated_at, created_at
+    )
+    SELECT
+      {BENCHMARK_USER_ID},
+      CASE WHEN n <= 60 THEN 'volume-unread' ELSE 'volume-read' END,
+      lpad(n::text, 4, '0'),
+      n > 60,
+      json_build_object(
+        'countUsers', 1,
+        'records', json_build_array(
+          json_build_object(
+            'userId', upper(lpad(to_hex(vu.id), 16, '0')),
+            'userNickname', vu.nickname,
+            'ts', extract(epoch FROM (
+              TIMESTAMPTZ '2026-07-01 00:00:00+00'
+              + (n - 1) * INTERVAL '1 minute'
+            ))::bigint
+          )
+        )
+      )::text,
+      TIMESTAMPTZ '2026-07-01 00:00:00+00'
+        + (n - 1) * INTERVAL '1 minute',
+      TIMESTAMPTZ '2026-07-01 00:00:00+00'
+        + (n - 1) * INTERVAL '1 minute'
+    FROM generate_series(1, 120) AS g(n)
+    JOIN volume_users vu ON vu.ordinal = ((n - 1) % {NUM_DUMMY_USERS}) + 1;
+
+    INSERT INTO event_logs (partition_id, event_id, payload)
+    SELECT
+      {EVENT_PARTITION_ID},
+      ((({EVENT_BASE_MS} + n - 1)::bigint << 20)
+        | ({EVENT_WORKER_ID}::bigint << 12)),
+      json_build_object(
+        'type', 'follow',
+        'followerId', upper(lpad(to_hex(vu.id), 16, '0')),
+        'followeeId', upper(lpad(to_hex({BENCHMARK_USER_ID}::bigint), 16, '0'))
+      )::text
+    FROM generate_series(1, {EVENT_COUNT}) AS g(n)
+    JOIN volume_users vu ON vu.ordinal = ((n - 1) % {NUM_DUMMY_USERS}) + 1;
+
+    INSERT INTO event_log_cursors (
+      consumer, partition_id, last_event_id, updated_at
+    ) VALUES (
+      'notification',
+      {EVENT_PARTITION_ID},
+      {last_event_id},
+      now()
+    )
+    ON CONFLICT (consumer, partition_id)
+    DO UPDATE SET
+      last_event_id = EXCLUDED.last_event_id,
+      updated_at = EXCLUDED.updated_at;
+
+    COMMIT;
+
+    ANALYZE;
+
+    SELECT 'benchmark_user_id' AS name, '{BENCHMARK_USER_ID}' AS value
+    UNION ALL SELECT 'benchmark_user_hex', upper(lpad(to_hex({BENCHMARK_USER_ID}::bigint), 16, '0'))
+    UNION ALL SELECT 'nickname_prefix', '{NICKNAME_PREFIX}%'
+    UNION ALL SELECT 'event_partition_id', '{EVENT_PARTITION_ID}'
+    UNION ALL SELECT 'event_after_id', '{EVENT_AFTER_ID}'
+    UNION ALL SELECT 'notification_newer_than', '{NOTIFICATION_NEWER_THAN}';
+
+    SELECT 'users' AS name, count(*)::bigint AS records FROM users
+    UNION ALL SELECT 'posts', count(*) FROM posts
+    UNION ALL SELECT 'user_follows', count(*) FROM user_follows
+    UNION ALL SELECT 'post_likes', count(*) FROM post_likes
+    UNION ALL SELECT 'post_tags', count(*) FROM post_tags
+    UNION ALL SELECT 'event_logs_partition_{EVENT_PARTITION_ID}', count(*) FROM event_logs WHERE partition_id = {EVENT_PARTITION_ID}
+    UNION ALL SELECT 'benchmark_notifications', count(*) FROM notifications WHERE user_id = {BENCHMARK_USER_ID}
+    ORDER BY name;
+    """
+  ).lstrip()
+
+
+def run_psql(sql: str, mode: str) -> None:
+  shell = r"""
+set -euo pipefail
+set -a
+source .env
+set +a
+
+if [ "$STGY_VOLUME_TEST_MODE" = docker ]; then
+  docker compose exec -T postgres psql \
+    -v ON_ERROR_STOP=1 \
+    -U "$STGY_DATABASE_USER" \
+    "$STGY_DATABASE_NAME"
+else
+  PGPASSWORD="$STGY_DATABASE_PASSWORD" psql \
+    -h 127.0.0.1 \
+    -p "${STGY_DATABASE_PORT:-5432}" \
+    -v ON_ERROR_STOP=1 \
+    -U "$STGY_DATABASE_USER" \
+    "$STGY_DATABASE_NAME"
+fi
+"""
+  env = os.environ.copy()
+  env["STGY_VOLUME_TEST_MODE"] = mode
+  subprocess.run(
+    ["bash", "-lc", shell],
+    cwd=PROJECT_ROOT,
+    env=env,
+    input=sql,
+    text=True,
+    check=True,
+  )
+
 
 def main(argv: list[str]) -> int:
-  admin, admin_sid = login_admin()
-  print("[login] admin OK")
+  args = parse_args(argv)
+  sql = build_sql()
 
-  print("[user] ensure taro")
-  taro = ensure_user(
-    admin,
-    user_id=TARO_ID,
-    email="taro@stgy.jp",
-    nickname="taro",
-    password="taro-taro",
-    is_admin=True,
-    block_strangers=False,
-    locale="en",
-    timezone="Asia/Tokyo",
-    introduction="I'm taro.",
-    ai_model=None,
-    ai_personality=None,
-  )
-  print(f"[user] taro: {taro['id']}")
-
-  print("[post] taro post #1 (with ID)")
-  p1 = create_post_as_admin(
-    admin,
-    post_id=TARO_POST1_ID,
-    owned_by=TARO_ID,
-    content="Hello, world",
-    reply_to=None,
-    published_at="1978-02-11 18:30:00+09",
-    tags=["bulk"],
-  )
-  print(f"[post] created: {p1['id']}")
-
-  print("[post] taro post #2 (with ID)")
-  p2 = create_post_as_admin(
-    admin,
-    post_id=TARO_POST2_ID,
-    owned_by=TARO_ID,
-    content="We will rock you.",
-    reply_to=None,
-    published_at="1978-02-12 15:11:13+09",
-    tags=["bulk"],
-  )
-  print(f"[post] created: {p2['id']}")
-
-  print(f"[users] creating {NUM_DUMMY_USERS} users and 1 normal post each")
-  users = []
-  for i in range(1, NUM_DUMMY_USERS + 1):
-    name = make_user_name(i)
-    uid = hex_inc(USERS_ID_START_HEX, i - 1)
-    u = ensure_user(
-      admin,
-      user_id=uid,
-      email=f"{name}@stgy.jp",
-      nickname=name,
-      password=f"{name}-pw",
-      is_admin=i % 10 == 0,
-      block_strangers=i % 3 == 0,
-      locale="en",
-      timezone="Asia/Tokyo",
-      introduction=f"I'm {name}.",
-      ai_model=None,
-      ai_personality=None,
-    )
-    users.append(u)
-    create_post_as_admin(
-      admin,
-      post_id=None,
-      owned_by=uid,
-      content=f"Post by {name}.",
-      reply_to=None,
-      published_at="2000-10-15 02:40:15+09",
-      tags=["bulk", f"tagA{int(i/10):05d}", f"tagB{int(i%10):05d}"],
-    )
-    if i % 10 == 0:
-      print(f"  - created up to {name}")
-
-  print("[replies] creating replies to taro's 2nd post (with IDs)")
-  replies = []
-  for i, u in enumerate(users, start=1):
-    reply_id = hex_inc(REPLY_ID_START_HEX, i - 1)
-    name = u["nickname"]
-    pr = create_post_as_admin(
-      admin,
-      post_id=reply_id,
-      owned_by=u["id"],
-      content=f"Reply to taro by {name}.",
-      reply_to=TARO_POST2_ID,
-      published_at="2001-07-07 07:07:07+09",
-      tags=["bulk"],
-    )
-    replies.append(pr)
-    if i % 10 == 0:
-      print(f"  - replies created up to {name}")
-  print(f"[replies] total: {len(replies)}")
-
-  print("[follow] start: taro -> users")
-  taro_sess = switch_user(admin_sid, TARO_ID)
-  for u in users:
-    follow_user(taro_sess, u["id"])
-  print("[follow] done: taro -> users")
-
-  print("[follow] start: users -> taro")
-  for u in users:
-    s = switch_user(admin_sid, u["id"])
-    follow_user(s, TARO_ID)
-  print("[follow] done: users -> taro")
-
-  print("[like] start: users -> taro first post")
-  for u in users:
-    s = switch_user(admin_sid, u["id"])
-    like_post(s, TARO_POST1_ID)
-  print("[like] done: users -> taro first post")
-
-  print("[like] start: taro -> replies to his posts")
-  for pid in (p1["id"], p2["id"]):
-    items = list_replies_to(taro_sess, pid)
-    for it in items:
-      like_post(taro_sess, it["id"])
-  print("[like] done: taro -> replies to his posts")
-
-  print("[SUMMARY] OK")
+  print(f"[volume-test] mode={args.mode}")
+  print(f"[volume-test] dummy users={NUM_DUMMY_USERS}")
+  print(f"[volume-test] benchmark user={BENCHMARK_USER_ID}")
+  print("[volume-test] loading deterministic rows and running ANALYZE")
+  run_psql(sql, args.mode)
+  print("[volume-test] done")
   return 0
 
+
 if __name__ == "__main__":
-  sys.exit(main(sys.argv))
+  try:
+    sys.exit(main(sys.argv[1:]))
+  except subprocess.CalledProcessError as exc:
+    print(f"[volume-test] psql failed with exit code {exc.returncode}", file=sys.stderr)
+    sys.exit(exc.returncode or 1)

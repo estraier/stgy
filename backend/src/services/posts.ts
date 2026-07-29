@@ -739,14 +739,19 @@ export class PostsService {
     const sql = `
       WITH all_followers AS (
         SELECT followee_id FROM user_follows WHERE follower_id = $1
-        ${includeSelf ? "UNION SELECT $1" : ""}
+        ${includeSelf ? "UNION ALL SELECT $1" : ""}
       ),
       active_followers AS (
-        SELECT DISTINCT ON (p2.owned_by) p2.owned_by, p2.id AS last_id
-        FROM posts p2
-        WHERE p2.owned_by IN (SELECT followee_id FROM all_followers)
-          ${repliesFilter}
-        ORDER BY p2.owned_by, p2.id ${orderDir}
+        SELECT af.followee_id AS owned_by, latest_post.id AS last_id
+        FROM all_followers af
+        JOIN LATERAL (
+          SELECT p2.id
+          FROM posts p2
+          WHERE p2.owned_by = af.followee_id
+            ${repliesFilter}
+          ORDER BY p2.id ${orderDir}
+          LIMIT 1
+        ) AS latest_post ON TRUE
       ),
       top_followees AS (
         SELECT owned_by FROM active_followers ORDER BY last_id ${orderDir} LIMIT $2

@@ -55,6 +55,7 @@ class MockPgClientMain {
   blocks: { blockerId: string; blockeeId: string }[] = [];
   userBlockStrangers: Record<string, boolean> = {};
   txCount = 0;
+  lastSql = "";
 
   private countRepliesFor(postId: string) {
     return this.data.filter((r) => r.replyTo === postId).length;
@@ -81,6 +82,7 @@ class MockPgClientMain {
 
   async query(sql: string, params?: any[]) {
     sql = normalizeSql(sql);
+    this.lastSql = sql;
 
     if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
 
@@ -385,7 +387,7 @@ class MockPgClientMain {
       let followeeIds = this.follows
         .filter((f) => f.followerId === userId)
         .map((f) => f.followeeId);
-      if (sql.includes("UNION SELECT $1")) followeeIds.push(userId);
+      if (/UNION(?: ALL)? SELECT \$1/.test(sql)) followeeIds.push(userId);
       followeeIds = Array.from(new Set(followeeIds));
 
       const onlyRoots = /\breply_to\s+IS\s+NULL/i.test(sql);
@@ -1200,6 +1202,24 @@ describe("listPostsByFollowees", () => {
     expect(result.some((p) => p.ownedBy === alice)).toBe(true);
     expect(result.some((p) => p.ownedBy === bob)).toBe(true);
     expect(result.some((p) => p.ownedBy === carol)).toBe(false);
+  });
+
+  test("selects each active followee through a limited lateral index lookup", async () => {
+    const input: ListPostsByFolloweesInput = {
+      userId: alice,
+      includeSelf: true,
+      offset: 0,
+      limit: 10,
+      order: "desc",
+    };
+
+    await postsService.listPostsByFollowees(input);
+
+    expect(pgClient.lastSql).toContain("UNION ALL SELECT $1");
+    expect(pgClient.lastSql).toContain(
+      "FROM all_followers af JOIN LATERAL ( SELECT p2.id FROM posts p2 WHERE p2.owned_by = af.followee_id ORDER BY p2.id DESC LIMIT 1 ) AS latest_post ON TRUE",
+    );
+    expect(pgClient.lastSql).not.toContain("SELECT DISTINCT ON");
   });
 
   test("listPostsByFollowees: isBlockingFocusUser computed", async () => {
