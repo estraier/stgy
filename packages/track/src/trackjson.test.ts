@@ -63,6 +63,7 @@ describe("TrackJSON metadata and summaries", () => {
       ...makeFeatureCollection(3),
       poi: [
         { role: "start", coordinates: [139, 35], label: "Tokyo" },
+        { role: "midway", coordinates: [139.05, 35.05] },
         { role: "centroid", coordinates: [139.1, 35.1] },
         { role: "invalid", coordinates: [0, 0] },
         { role: "end", coordinates: ["bad", 35] },
@@ -71,8 +72,13 @@ describe("TrackJSON metadata and summaries", () => {
 
     expect(getTrackJsonPoi(data)).toEqual([
       { role: "start", coordinates: [139, 35], label: "Tokyo" },
+      { role: "midway", coordinates: [139.05, 35.05] },
       { role: "centroid", coordinates: [139.1, 35.1] },
     ]);
+    expect(getTrackJsonPointOfInterest(data, "midway")).toEqual({
+      role: "midway",
+      coordinates: [139.05, 35.05],
+    });
     expect(getTrackJsonPointOfInterest(data, "centroid")).toEqual({
       role: "centroid",
       coordinates: [139.1, 35.1],

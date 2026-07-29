@@ -258,6 +258,7 @@ export type TrackJsonPosition = [number, number];
 export type TrackJsonPointOfInterestRole =
   | "start"
   | "end"
+  | "midway"
   | "centroid"
   | "furthest";
 

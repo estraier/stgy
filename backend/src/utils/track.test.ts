@@ -90,6 +90,7 @@ describe("track utility validation", () => {
         { role: "centroid", coordinates: [139.05, 35.05] },
         { role: "start", coordinates: [139.0, 35.0] },
         { role: "end", coordinates: [139.1, 35.1] },
+        { role: "midway", coordinates: [139.05, 35.05] },
         { role: "furthest", coordinates: [139.1, 35.1] },
       ],
       features: [

@@ -1481,6 +1481,22 @@ describe("trackActivityToTrackJson", () => {
     expect(feature.properties.opacity).toBe(0.8);
   });
 
+  test("writes midway only when there are more than three positioned samples", () => {
+    const threeSamples = parseTrackJson(
+      trackActivityToTrackJson(makeActivity(3)),
+    );
+    const fourSamples = parseTrackJson(
+      trackActivityToTrackJson(makeActivity(4)),
+    );
+
+    expect(threeSamples.poi.find((point: any) => point.role === "midway"))
+      .toBeUndefined();
+    expect(fourSamples.poi.find((point: any) => point.role === "midway")).toEqual({
+      role: "midway",
+      coordinates: [139.00002, 35.00002],
+    });
+  });
+
   test("rounds coordinates to the default output precision", () => {
     const parsed = parseTrackJson(trackActivityToTrackJson(makeActivity(2)));
 
@@ -1628,6 +1644,10 @@ describe("trackActivityToTrackJson", () => {
     expect(parsed.poi.find((point: any) => point.role === "end")).toEqual({
       role: "end",
       coordinates: [140.1, 36.1],
+    });
+    expect(parsed.poi.find((point: any) => point.role === "midway")).toEqual({
+      role: "midway",
+      coordinates: [140, 36],
     });
   });
 

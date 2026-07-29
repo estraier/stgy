@@ -267,7 +267,9 @@ export function computeTrackJsonBbox(data: unknown): TrackJsonBbox | undefined {
 }
 
 export function computeTrackJsonPoi(data: unknown): TrackJsonPointOfInterest[] {
-  const route = createTrackJsonRouteAnalysis();
+  const route = createTrackJsonRouteAnalysis(
+    getTrackJsonMidwaySampleIndex(countTrackJsonRoutePositions(data)),
+  );
   addTrackJsonObjectToRouteAnalysis(route, data);
   return trackJsonRouteAnalysisToPoi(route);
 }
@@ -631,6 +633,9 @@ type TrackJsonRouteAnalysis = {
   centerFallback?: TrackJsonPosition;
   start?: TrackJsonPosition;
   end?: TrackJsonPosition;
+  midway?: TrackJsonPosition;
+  midwaySampleIndex?: number;
+  sampleIndex: number;
   furthest?: TrackJsonPosition;
   startVector?: TrackJsonVector;
   furthestChordSquared: number;
@@ -640,12 +645,16 @@ function createTrackJsonBounds(): TrackJsonBounds {
   return {};
 }
 
-function createTrackJsonRouteAnalysis(): TrackJsonRouteAnalysis {
+function createTrackJsonRouteAnalysis(
+  midwaySampleIndex?: number,
+): TrackJsonRouteAnalysis {
   return {
     centerSumX: 0,
     centerSumY: 0,
     centerSumZ: 0,
     centerTotalLengthM: 0,
+    midwaySampleIndex,
+    sampleIndex: 0,
     furthestChordSquared: -1,
   };
 }
@@ -675,7 +684,10 @@ function buildTrackJsonPoiFromPointSegments(
   segments: (TrackPoint & { lat: number; lon: number })[][],
   precision: number,
 ): TrackJsonPointOfInterest[] {
-  const route = createTrackJsonRouteAnalysis();
+  const sampleCount = segments.reduce((sum, segment) => sum + segment.length, 0);
+  const route = createTrackJsonRouteAnalysis(
+    getTrackJsonMidwaySampleIndex(sampleCount),
+  );
 
   segments.forEach((segment) => {
     let previous: TrackJsonPosition | undefined;
@@ -801,6 +813,70 @@ function addTrackJsonObjectToRouteAnalysis(
   addTrackJsonGeometryToRouteAnalysis(route, value);
 }
 
+function countTrackJsonRoutePositions(value: unknown): number {
+  if (!isObjectRecord(value)) {
+    return 0;
+  }
+
+  if (value.type === "FeatureCollection" && Array.isArray(value.features)) {
+    return value.features.reduce((sum, feature) => {
+      return sum + countTrackJsonRoutePositions(feature);
+    }, 0);
+  }
+
+  if (value.type === "Feature") {
+    return countTrackJsonGeometryPositions(value.geometry);
+  }
+
+  return countTrackJsonGeometryPositions(value);
+}
+
+function countTrackJsonGeometryPositions(geometry: unknown): number {
+  if (!isObjectRecord(geometry)) {
+    return 0;
+  }
+
+  if (
+    geometry.type === "GeometryCollection" &&
+    Array.isArray(geometry.geometries)
+  ) {
+    return geometry.geometries.reduce((sum, child) => {
+      return sum + countTrackJsonGeometryPositions(child);
+    }, 0);
+  }
+
+  if (geometry.type === "LineString") {
+    return countTrackJsonLineStringPositions(geometry.coordinates);
+  }
+
+  if (
+    geometry.type === "MultiLineString" &&
+    Array.isArray(geometry.coordinates)
+  ) {
+    return geometry.coordinates.reduce((sum, lineString) => {
+      return sum + countTrackJsonLineStringPositions(lineString);
+    }, 0);
+  }
+
+  return 0;
+}
+
+function countTrackJsonLineStringPositions(coordinates: unknown): number {
+  if (!Array.isArray(coordinates)) {
+    return 0;
+  }
+
+  return coordinates.reduce((count, coordinate) => {
+    const isPosition = Array.isArray(coordinate) &&
+      isTrackJsonPosition(coordinate);
+    return count + (isPosition ? 1 : 0);
+  }, 0);
+}
+
+function getTrackJsonMidwaySampleIndex(sampleCount: number): number | undefined {
+  return sampleCount > 3 ? Math.floor(sampleCount / 2) : undefined;
+}
+
 function addTrackJsonGeometryToRouteAnalysis(
   route: TrackJsonRouteAnalysis,
   geometry: unknown,
@@ -859,6 +935,11 @@ function addTrackJsonPositionToRouteAnalysis(
   route: TrackJsonRouteAnalysis,
   position: TrackJsonPosition,
 ) {
+  if (route.sampleIndex === route.midwaySampleIndex) {
+    route.midway = position;
+  }
+  route.sampleIndex += 1;
+
   const vector = trackJsonPositionToVector(position);
 
   if (!route.start) {
@@ -922,6 +1003,9 @@ function trackJsonRouteAnalysisToPoi(
   return [
     { role: "start", coordinates: route.start },
     { role: "end", coordinates: route.end },
+    ...(route.midway
+      ? [{ role: "midway" as const, coordinates: route.midway }]
+      : []),
     { role: "centroid", coordinates: centroid },
     { role: "furthest", coordinates: route.furthest },
   ];

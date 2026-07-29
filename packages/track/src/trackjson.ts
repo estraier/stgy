@@ -408,6 +408,7 @@ function isTrackJsonPointOfInterestRole(
 ): value is TrackJsonPointOfInterestRole {
   return value === "start" ||
     value === "end" ||
+    value === "midway" ||
     value === "centroid" ||
     value === "furthest";
 }

@@ -42,12 +42,13 @@ current development state.
 - Add `src/trackjson.test.ts`.
 - Add examples for raw TrackJSON, compressed TrackJSON, multiple tracks, inline
   pins, and graph/HUD behavior.
+- Add the `midway` POI for routes with more than three positioned samples.
 - Add `README.md`, `TESTING.md`, and `TRACKJSON.md` documentation.
 
 ### Changed
 
 - Replace the top-level `rcenter` coordinate with a `poi` array containing
-  `start`, `end`, `centroid`, and `furthest` route points.
+  `start`, `end`, `midway`, `centroid`, and `furthest` route points.
 - Prefer `.trj` over `.json` for raw TrackJSON downloads.
 - Keep `.trjgz` for compressed TrackJSON downloads.
 - Apply downsampling to TrackJSON uploads in the FIT demo, not only FIT uploads.

@@ -61,6 +61,10 @@ The preferred root is a GeoJSON `FeatureCollection`.
       "coordinates": [140.1, 35.9]
     },
     {
+      "role": "midway",
+      "coordinates": [139.85, 35.72]
+    },
+    {
       "role": "centroid",
       "coordinates": [139.9, 35.75]
     },
@@ -74,10 +78,12 @@ The preferred root is a GeoJSON `FeatureCollection`.
 ```
 
 `poi` contains route reference points. Generated TrackJSON writes the entries in
-this order: `start`, `end`, `centroid`, and `furthest`.
+this order: `start`, `end`, `midway`, `centroid`, and `furthest`.
 
 - `start` is the first positioned route point.
 - `end` is the last positioned route point.
+- `midway` is the positioned sample at index `floor(sampleCount / 2)` in route
+  order. It is omitted when the route has three or fewer positioned samples.
 - `centroid` is the route-length-weighted spherical centroid.
 - `furthest` is the route point farthest from `start` on the unit sphere.
 
