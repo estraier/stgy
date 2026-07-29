@@ -1233,7 +1233,7 @@ export class UsersService {
     const omitOthers = !!input.omitOthers;
 
     const ctes: string[] = [];
-    const unions: string[] = [];
+    const preferredUnions: string[] = [];
 
     if (!omitSelf) {
       ctes.push(`
@@ -1244,50 +1244,67 @@ export class UsersService {
             AND lower(u.nickname) LIKE $1
         )
       `);
-      unions.push(`SELECT * FROM self`);
+      preferredUnions.push(`SELECT * FROM self`);
     }
 
     ctes.push(`
       followees AS (
         SELECT 1 AS prio, u.id, lower(u.nickname) AS nkey
-        FROM user_follows f
-        JOIN users u ON u.id = f.followee_id
-        WHERE f.follower_id = $2
+        FROM users u
+        WHERE u.id <> $2
           AND lower(u.nickname) LIKE $1
-        ORDER BY lower(u.nickname), u.id
+          AND EXISTS (
+            SELECT 1
+            FROM user_follows f
+            WHERE f.follower_id = $2
+              AND f.followee_id = u.id
+          )
+        ORDER BY lower(u.nickname) USING ~<~, u.id
         LIMIT $5
       )
     `);
-    unions.push(`SELECT * FROM followees`);
+    preferredUnions.push(`SELECT * FROM followees`);
 
+    ctes.push(`
+      preferred AS MATERIALIZED (
+        ${preferredUnions.join("\nUNION ALL\n")}
+      )
+    `);
+
+    const candidateUnions = [`SELECT * FROM preferred`];
     if (!omitOthers) {
       ctes.push(`
         others AS (
           SELECT 3 AS prio, u.id, lower(u.nickname) AS nkey
           FROM users u
-          WHERE lower(u.nickname) LIKE $1
-          ORDER BY lower(u.nickname), u.id
-          LIMIT $5
+          WHERE u.id <> $2
+            AND lower(u.nickname) LIKE $1
+            AND NOT EXISTS (
+              SELECT 1
+              FROM user_follows f
+              WHERE f.follower_id = $2
+                AND f.followee_id = u.id
+            )
+          ORDER BY lower(u.nickname) USING ~<~, u.id
+          LIMIT (
+            SELECT GREATEST(0, $5 - COUNT(*))
+            FROM preferred
+          )
         )
       `);
-      unions.push(`SELECT * FROM others`);
+      candidateUnions.push(`SELECT * FROM others`);
     }
 
     const sql = `
       WITH
       ${ctes.join(",\n")},
       candidates AS (
-        ${unions.join("\nUNION ALL\n")}
-      ),
-      dedup AS (
-        SELECT DISTINCT ON (id) id, prio, nkey
-        FROM candidates
-        ORDER BY id, prio
+        ${candidateUnions.join("\nUNION ALL\n")}
       ),
       page AS (
         SELECT id, prio, nkey
-        FROM dedup
-        ORDER BY prio, nkey, id
+        FROM candidates
+        ORDER BY prio, nkey USING ~<~, id
         OFFSET $3
         LIMIT $4
       )
@@ -1307,7 +1324,7 @@ export class UsersService {
       FROM page p
       JOIN users u ON u.id = p.id
       LEFT JOIN user_counts uc ON uc.user_id = u.id
-      ORDER BY p.prio, p.nkey, u.id
+      ORDER BY p.prio, p.nkey USING ~<~, u.id
     `.trim();
 
     const params = [likePattern, hexToDec(focusUserId), offset, limit, k];

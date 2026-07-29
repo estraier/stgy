@@ -93,6 +93,7 @@ const SQL_LIST_BLOCKEES_ASC =
   "SELECT u.id, u.updated_at, u.snippet, u.nickname, u.avatar, u.ai_model, u.is_admin, u.block_strangers, id_to_timestamp(u.id) AS created_at, COALESCE(uc.follower_count, 0) AS count_followers, COALESCE(uc.followee_count, 0) AS count_followees, COALESCE(uc.post_count, 0) AS count_posts FROM user_blocks b JOIN users u ON b.blockee_id = u.id LEFT JOIN user_counts uc ON uc.user_id = u.id WHERE b.blocker_id = $1 ORDER BY b.created_at ASC, b.blockee_id ASC OFFSET $2 LIMIT $3";
 
 class MockPgClient {
+  lastSql = "";
   users: MockUser[];
   details: Record<string, DetailRow>;
   follows: { followerId: string; followeeId: string }[];
@@ -229,6 +230,7 @@ class MockPgClient {
 
   async query(sql: string, params: any[] = []) {
     const n = normalizeSql(sql);
+    this.lastSql = n;
 
     if (n === "BEGIN" || n === "COMMIT" || n === "ROLLBACK") return { rows: [] };
 
@@ -898,10 +900,12 @@ class MockPgClient {
     }
 
     if (
-      n.startsWith("WITH self AS (") &&
+      n.startsWith("WITH ") &&
+      n.includes("followees AS (") &&
+      n.includes("preferred AS MATERIALIZED (") &&
       n.includes("candidates AS (") &&
       n.includes("JOIN users u ON u.id = p.id") &&
-      n.includes("ORDER BY p.prio, p.nkey, u.id")
+      n.includes("ORDER BY p.prio, p.nkey USING ~<~, u.id")
     ) {
       const likePattern: string = params[0];
       const focusUserIdHex: string = decToHex(params[1]);
@@ -912,17 +916,21 @@ class MockPgClient {
       const match = (u: MockUser) => u.nickname.toLowerCase().startsWith(prefix);
       const hasSelf = n.includes("self AS (");
       const hasOthers = n.includes("others AS (");
-      const candidates: Array<{ prio: number; id: string; nkey: string }> = [];
+      const preferred: Array<{ prio: number; id: string; nkey: string }> = [];
+
       if (hasSelf) {
         const selfUser = this.users.find((u) => u.id === focusUserIdHex && match(u));
         if (selfUser)
-          candidates.push({ prio: 0, id: selfUser.id, nkey: selfUser.nickname.toLowerCase() });
+          preferred.push({ prio: 0, id: selfUser.id, nkey: selfUser.nickname.toLowerCase() });
       }
-      const followeeIds = this.follows
-        .filter((f) => f.followerId === focusUserIdHex)
-        .map((f) => f.followeeId);
+
+      const followeeIds = new Set(
+        this.follows
+          .filter((f) => f.followerId === focusUserIdHex)
+          .map((f) => f.followeeId),
+      );
       const followees = this.users
-        .filter((u) => followeeIds.includes(u.id) && match(u))
+        .filter((u) => u.id !== focusUserIdHex && followeeIds.has(u.id) && match(u))
         .sort(
           (a, b) =>
             a.nickname.toLowerCase().localeCompare(b.nickname.toLowerCase()) ||
@@ -930,31 +938,36 @@ class MockPgClient {
         )
         .slice(0, k);
       for (const u of followees)
-        candidates.push({ prio: 1, id: u.id, nkey: u.nickname.toLowerCase() });
+        preferred.push({ prio: 1, id: u.id, nkey: u.nickname.toLowerCase() });
+
+      const candidates = [...preferred];
       if (hasOthers) {
+        const remaining = Math.max(0, k - preferred.length);
         const others = this.users
-          .filter((u) => match(u))
+          .filter(
+            (u) =>
+              u.id !== focusUserIdHex &&
+              !followeeIds.has(u.id) &&
+              match(u),
+          )
           .sort(
             (a, b) =>
               a.nickname.toLowerCase().localeCompare(b.nickname.toLowerCase()) ||
               (BigInt("0x" + a.id) > BigInt("0x" + b.id) ? 1 : -1),
           )
-          .slice(0, k);
+          .slice(0, remaining);
         for (const u of others)
           candidates.push({ prio: 3, id: u.id, nkey: u.nickname.toLowerCase() });
       }
-      const bestById = new Map<string, { prio: number; id: string; nkey: string }>();
-      for (const c of candidates) {
-        const prev = bestById.get(c.id);
-        if (!prev || c.prio < prev.prio) bestById.set(c.id, c);
-      }
-      const deduped = Array.from(bestById.values()).sort(
-        (a, b) =>
-          a.prio - b.prio ||
-          a.nkey.localeCompare(b.nkey) ||
-          (BigInt("0x" + a.id) > BigInt("0x" + b.id) ? 1 : -1),
-      );
-      const page = deduped.slice(offset, offset + limit);
+
+      const page = candidates
+        .sort(
+          (a, b) =>
+            a.prio - b.prio ||
+            a.nkey.localeCompare(b.nkey) ||
+            (BigInt("0x" + a.id) > BigInt("0x" + b.id) ? 1 : -1),
+        )
+        .slice(offset, offset + limit);
       const rows = page
         .map((p) => this.users.find((u) => u.id === p.id))
         .filter((u): u is MockUser => !!u)
@@ -1282,6 +1295,58 @@ describe("UsersService", () => {
     });
     expect(res.length).toBe(1);
     expect(res[0].id).toBe(BOB);
+    expect(pg.lastSql).toContain("preferred AS MATERIALIZED");
+    expect(pg.lastSql).toContain("ORDER BY lower(u.nickname) USING ~<~, u.id");
+    expect(pg.lastSql).toContain("NOT EXISTS");
+    expect(pg.lastSql).not.toContain("DISTINCT ON");
+  });
+
+  test("listFriendsByNicknamePrefix preserves priority, paging, and omission flags", async () => {
+    const daveId = "00000000000000D0";
+    pg.users.push({
+      id: daveId,
+      nickname: "Dave",
+      isAdmin: false,
+      blockStrangers: false,
+      snippet: "introD",
+      avatar: null,
+      aiModel: "gpt-4.1",
+      createdAt: "2020-01-04T00:00:00Z",
+      updatedAt: null,
+      countFollowers: 0,
+      countFollowees: 0,
+      countPosts: 0,
+    });
+
+    const secondPage = await service.listFriendsByNicknamePrefix({
+      focusUserId: ALICE,
+      nicknamePrefix: "",
+      offset: 2,
+      limit: 2,
+      omitSelf: false,
+      omitOthers: false,
+    });
+    expect(secondPage.map((u) => u.id)).toEqual([CAROL, daveId]);
+
+    const withoutSelf = await service.listFriendsByNicknamePrefix({
+      focusUserId: ALICE,
+      nicknamePrefix: "",
+      offset: 0,
+      limit: 3,
+      omitSelf: true,
+      omitOthers: false,
+    });
+    expect(withoutSelf.map((u) => u.id)).toEqual([BOB, CAROL, daveId]);
+
+    const withoutOthers = await service.listFriendsByNicknamePrefix({
+      focusUserId: ALICE,
+      nicknamePrefix: "",
+      offset: 2,
+      limit: 2,
+      omitSelf: false,
+      omitOthers: true,
+    });
+    expect(withoutOthers.map((u) => u.id)).toEqual([CAROL]);
   });
 
   test("addBlock/removeBlock and block flags in getUser/listUsers", async () => {
