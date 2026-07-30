@@ -172,16 +172,17 @@ CREATE TABLE posts (
 );
 CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
 CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
+CREATE INDEX idx_posts_reply_to_owned_by ON posts(reply_to, owned_by);
 CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
-CREATE INDEX idx_posts_public_owned_by_published_at ON posts (owned_by, published_at) WHERE published_at IS NOT NULL;
+CREATE INDEX idx_posts_public_owned_by_published_at ON posts (owned_by, published_at, id) WHERE published_at IS NOT NULL;
 ```
 
 プライマリキーであるidはSnowflake IDだ。usersと同様にリストを返す全てのクエリは ``ORDER BY id`` をすることになり、その順序が時系列になるのは便利だ。
 
 owned_byは、その投稿を書いたユーザのIDだ。ユーザ毎の投稿の一覧を出すクエリのために、当然それにインデックスを貼る必要がある。その際にもID順でデータを返すので、owned_byとidの複合インデックスにすべきだ。
 
-reply_toは返信先の投稿IDだ。返信ではない投稿はreply_toにNULLを持つ。外部キー制約をつけていないのは、返信先の投稿が消される可能性があるからだ。ON DELETE SET NULLをつければ返信先が消された時にNULLにすることもできるが、返信先が消えたら返信じゃなくなるという扱いはおかしいので、そのまま値を残すことにしている。投稿の登録時と更新時にはアプリ側で返信先の存在と返信可否を検査し、DB側でも遅延可能な制約トリガposts_reply_to_existsによって、指定時点で返信先が存在することを保証する。返信先が後から削除された場合にはreply_toの値を残す。なお、投稿毎の返信の一覧を出すクエリのために、reply_toにIDとの複合インデックスを貼る必要がある。また、ログイン後のUIのデフォルト状態では、返信ではない投稿の一覧を出したい。そのクエリを効率化するため、NULL値に限定した、IDとの複合インデックスを作っている。
+reply_toは返信先の投稿IDだ。返信ではない投稿はreply_toにNULLを持つ。外部キー制約をつけていないのは、返信先の投稿が消される可能性があるからだ。ON DELETE SET NULLをつければ返信先が消された時にNULLにすることもできるが、返信先が消えたら返信じゃなくなるという扱いはおかしいので、そのまま値を残すことにしている。投稿の登録時と更新時にはアプリ側で返信先の存在と返信可否を検査し、DB側でも遅延可能な制約トリガposts_reply_to_existsによって、指定時点で返信先が存在することを保証する。返信先が後から削除された場合にはreply_toの値を残す。なお、投稿毎の返信の一覧を出すクエリのために、reply_toにIDとの複合インデックスを貼る必要がある。投稿一覧では、表示対象の投稿にログイン中のユーザが返信済みかをまとめて判定する。その処理はreply_toとowned_byを同時に指定するため、その組み合わせにも複合インデックスを設ける。また、ログイン後のUIのデフォルト状態では、返信ではない投稿の一覧を出したい。そのクエリを効率化するため、NULL値に限定した、IDとの複合インデックスを作っている。
 
 allow_likesとallow_repliesは、それぞれイイネと返信を受け付けるか否かを示している。ヘルプ記事などは多くのユーザに見られるだろうが、そこにイイネや返信をつけるスパム行為が予期されるため、任意のページのイイネや返信をブロックする機能は必須だ。
 

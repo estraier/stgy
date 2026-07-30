@@ -9,6 +9,11 @@ import sys
 import textwrap
 
 NUM_DUMMY_USERS = 30000
+NUM_VOLUME_POSTS = 60000
+NUM_ROOT_VOLUME_POSTS = 45000
+NUM_REPLY_VOLUME_POSTS = 15000
+NOTIFICATION_COUNT = 30000
+NOTIFICATION_UNREAD_COUNT = NOTIFICATION_COUNT // 2
 
 ADMIN_USER_ID = 281474976710657  # 0001000000000001
 BENCHMARK_USER_ID = 1853070350746583040  # 19B76DAA800F0000
@@ -19,6 +24,9 @@ DUMMY_USER_BASE_MS = 1767312000000  # 2026-01-02 00:00:00+00
 DUMMY_USER_WORKER_ID = 241
 DUMMY_POST_BASE_MS = 1769990400000  # 2026-02-02 00:00:00+00
 DUMMY_POST_WORKER_ID = 243
+DENSE_POST_BASE_MS = 1768435200000  # 2026-01-15 00:00:00+00
+DENSE_ROOT_POST_WORKER_ID = 245
+DENSE_REPLY_POST_WORKER_ID = 246
 
 EVENT_LOG_PARTITIONS = 256
 EVENT_PARTITION_ID = BENCHMARK_USER_ID % EVENT_LOG_PARTITIONS
@@ -27,7 +35,7 @@ EVENT_WORKER_ID = 244
 EVENT_COUNT = 1000
 EVENT_AFTER_ORDINAL = 400
 EVENT_AFTER_ID = 1869468402083381248  # event number 400
-NOTIFICATION_NEWER_THAN = "2026-07-01 00:30:30+00"
+NOTIFICATION_NEWER_THAN = "2026-07-01 03:00:00+00"
 NICKNAME_PREFIX = "user00"
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -58,6 +66,44 @@ def build_sql() -> str:
   )
   first_event_id = snowflake_id(EVENT_BASE_MS, EVENT_WORKER_ID)
   last_event_id = snowflake_id(EVENT_BASE_MS + EVENT_COUNT - 1, EVENT_WORKER_ID)
+  first_dense_owner_id = first_dummy_user_id
+  dense_reply_owner_id = snowflake_id(
+    DUMMY_USER_BASE_MS + 1,
+    DUMMY_USER_WORKER_ID,
+  )
+
+  # Keep the original 1-to-3-post shape for user00001, user00002, and
+  # the latest 20 users so the existing list-query fixtures remain stable.
+  # Concentrate the remaining roots and replies into user00001 and user00002
+  # to make both sides of (reply_to, owned_by) independently high-cardinality.
+  preserved_multi_post_ordinals = {1, 2}
+  preserved_multi_post_ordinals.update(
+    range(NUM_DUMMY_USERS - 19, NUM_DUMMY_USERS + 1)
+  )
+  preserved_root_extras = 0
+  preserved_reply_extras = 0
+  for ordinal in preserved_multi_post_ordinals:
+    for post_number in range(2, 2 + (ordinal % 3)):
+      if post_number == 2 and ordinal % 2 == 0:
+        preserved_reply_extras += 1
+      else:
+        preserved_root_extras += 1
+
+  dense_root_posts = (
+    NUM_ROOT_VOLUME_POSTS - NUM_DUMMY_USERS - preserved_root_extras
+  )
+  dense_reply_posts = NUM_REPLY_VOLUME_POSTS - preserved_reply_extras
+  generated_volume_posts = (
+    NUM_DUMMY_USERS
+    + preserved_root_extras
+    + preserved_reply_extras
+    + dense_root_posts
+    + dense_reply_posts
+  )
+  if generated_volume_posts != NUM_VOLUME_POSTS:
+    raise RuntimeError("volume post distribution does not match NUM_VOLUME_POSTS")
+  if dense_root_posts <= 0 or dense_reply_posts <= 0:
+    raise RuntimeError("dense volume post groups must be positive")
 
   if EVENT_AFTER_ID != snowflake_id(
     EVENT_BASE_MS + EVENT_AFTER_ORDINAL - 1,
@@ -285,7 +331,50 @@ def build_sql() -> str:
       END,
       CASE WHEN vu.ordinal % 4 = 0 THEN NULL ELSE vu.locale END
     FROM volume_users vu
-    CROSS JOIN LATERAL generate_series(1, 1 + (vu.ordinal % 3)) AS p(post_number);
+    CROSS JOIN LATERAL generate_series(
+      1,
+      CASE
+        WHEN vu.ordinal <= 2 OR vu.ordinal > {NUM_DUMMY_USERS - 20}
+          THEN 1 + (vu.ordinal % 3)
+        ELSE 1
+      END
+    ) AS p(post_number)
+
+    UNION ALL
+
+    SELECT
+      1000000::bigint + g.i,
+      1,
+      100000 + g.i,
+      ((({DENSE_POST_BASE_MS} + g.i - 1)::bigint << 20)
+        | ({DENSE_ROOT_POST_WORKER_ID}::bigint << 12)),
+      {first_dense_owner_id},
+      NULL,
+      TIMESTAMPTZ '2026-01-15 00:00:00+00'
+        + (g.i - 1) * INTERVAL '1 millisecond',
+      'Dense root post ' || g.i || ' by user00001.',
+      '[{{"T":"p","X":"Dense root post ' || g.i
+        || ' by user00001."}}]',
+      'en-US'
+    FROM generate_series(1, {dense_root_posts}) AS g(i)
+
+    UNION ALL
+
+    SELECT
+      2000000::bigint + g.i,
+      2,
+      200000 + g.i,
+      ((({DENSE_POST_BASE_MS} + g.i - 1)::bigint << 20)
+        | ({DENSE_REPLY_POST_WORKER_ID}::bigint << 12)),
+      {dense_reply_owner_id},
+      {BENCHMARK_POST1_ID},
+      TIMESTAMPTZ '2026-01-15 00:00:00+00'
+        + (g.i - 1) * INTERVAL '1 millisecond',
+      'Dense reply ' || g.i || ' by user00002.',
+      '[{{"T":"p","X":"Dense reply ' || g.i
+        || ' by user00002."}}]',
+      'en-US'
+    FROM generate_series(1, {dense_reply_posts}) AS g(i);
 
     INSERT INTO posts (
       id, owned_by, reply_to, published_at, updated_at, snippet, locale,
@@ -412,9 +501,13 @@ def build_sql() -> str:
     )
     SELECT
       {BENCHMARK_USER_ID},
-      CASE WHEN n <= 60 THEN 'volume-unread' ELSE 'volume-read' END,
-      lpad(n::text, 4, '0'),
-      n > 60,
+      CASE
+        WHEN n <= {NOTIFICATION_UNREAD_COUNT}
+          THEN 'volume-unread'
+        ELSE 'volume-read'
+      END,
+      lpad(n::text, 8, '0'),
+      n > {NOTIFICATION_UNREAD_COUNT},
       json_build_object(
         'countUsers', 1,
         'records', json_build_array(
@@ -423,16 +516,16 @@ def build_sql() -> str:
             'userNickname', vu.nickname,
             'ts', extract(epoch FROM (
               TIMESTAMPTZ '2026-07-01 00:00:00+00'
-              + (n - 1) * INTERVAL '1 minute'
+              + (n - 1) * INTERVAL '1 second'
             ))::bigint
           )
         )
       )::text,
       TIMESTAMPTZ '2026-07-01 00:00:00+00'
-        + (n - 1) * INTERVAL '1 minute',
+        + (n - 1) * INTERVAL '1 second',
       TIMESTAMPTZ '2026-07-01 00:00:00+00'
-        + (n - 1) * INTERVAL '1 minute'
-    FROM generate_series(1, 120) AS g(n)
+        + (n - 1) * INTERVAL '1 second'
+    FROM generate_series(1, {NOTIFICATION_COUNT}) AS g(n)
     JOIN volume_users vu ON vu.ordinal = ((n - 1) % {NUM_DUMMY_USERS}) + 1;
 
     INSERT INTO event_logs (partition_id, event_id, payload)
@@ -468,6 +561,9 @@ def build_sql() -> str:
     SELECT 'benchmark_user_id' AS name, '{BENCHMARK_USER_ID}' AS value
     UNION ALL SELECT 'benchmark_user_hex', upper(lpad(to_hex({BENCHMARK_USER_ID}::bigint), 16, '0'))
     UNION ALL SELECT 'nickname_prefix', '{NICKNAME_PREFIX}%'
+    UNION ALL SELECT 'reply_state_focus_user_id', '{first_dense_owner_id}'
+    UNION ALL SELECT 'reply_state_other_user_id', '{dense_reply_owner_id}'
+    UNION ALL SELECT 'reply_state_target_post_id', '{BENCHMARK_POST1_ID}'
     UNION ALL SELECT 'event_partition_id', '{EVENT_PARTITION_ID}'
     UNION ALL SELECT 'event_after_id', '{EVENT_AFTER_ID}'
     UNION ALL SELECT 'notification_newer_than', '{NOTIFICATION_NEWER_THAN}';
@@ -479,6 +575,8 @@ def build_sql() -> str:
     UNION ALL SELECT 'post_tags', count(*) FROM post_tags
     UNION ALL SELECT 'event_logs_partition_{EVENT_PARTITION_ID}', count(*) FROM event_logs WHERE partition_id = {EVENT_PARTITION_ID}
     UNION ALL SELECT 'benchmark_notifications', count(*) FROM notifications WHERE user_id = {BENCHMARK_USER_ID}
+    UNION ALL SELECT 'reply_state_focus_posts', count(*) FROM posts WHERE owned_by = {first_dense_owner_id}
+    UNION ALL SELECT 'reply_state_target_replies', count(*) FROM posts WHERE reply_to = {BENCHMARK_POST1_ID}
     ORDER BY name;
     """
   ).lstrip()
@@ -523,6 +621,8 @@ def main(argv: list[str]) -> int:
 
   print(f"[volume-test] mode={args.mode}")
   print(f"[volume-test] dummy users={NUM_DUMMY_USERS}")
+  print(f"[volume-test] volume posts={NUM_VOLUME_POSTS}")
+  print(f"[volume-test] notifications={NOTIFICATION_COUNT}")
   print(f"[volume-test] benchmark user={BENCHMARK_USER_ID}")
   print("[volume-test] loading deterministic rows and running ANALYZE")
   run_psql(sql, args.mode)

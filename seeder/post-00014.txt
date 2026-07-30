@@ -9,7 +9,7 @@ content:<<____EOF____
 
 本記事では、STGYの運用上でデータベースに発行されるクエリについて分析する。SQLの具体例を示し、その計算量を解析し、実際の実行計画を見て確認する。
 
-以下の実行計画は、``npm run reset-data-volume-test``で作成した検証用データベースを対象にする。make-volume-test.pyは、既存の初期データに加えて、測定用ユーザ1人、ダミーユーザ30000人、投稿60002件、フォロー60000件、イイネ60000件、イベントログ1000件、通知120件を、再現可能なIDと時刻で一括投入する。この時点でpostsの総件数は60017件である。最後にPostgreSQLの``ANALYZE``を実行するので、本記事のSQLはその直後にそのまま実行できる。測定用ユーザのIDは1853070350746583040で、ニックネームはuser00000である。短時間のOLTPクエリにJITコンパイル時間が混入する可能性がある測定では、セッションで``SET jit = off``を指定する。
+以下の実行計画は、``npm run reset-data-volume-test``で作成した検証用データベースを対象にする。make-volume-test.pyは、既存の初期データに加えて、測定用ユーザ1人、ダミーユーザ30000人、投稿60002件、フォロー60000件、イイネ60000件、イベントログ1000件、通知30000件を、再現可能なIDと時刻で一括投入する。この時点でpostsの総件数は60017件である。全ダミーユーザに最低1投稿を持たせたまま、user00001には約15000件の投稿を集中させ、user00002から1番目のベンチマーク投稿への返信も約15000件作る。これにより、フォロイー全員の最新投稿を調べる経路と、reply_toとowned_byの複合条件を調べる経路を同じデータベースで検証できる。通知は測定用ユーザについて未読15000件、既読15000件を作る。最後にPostgreSQLの``ANALYZE``を実行するので、本記事のSQLはその直後にそのまま実行できる。測定用ユーザのIDは1853070350746583040で、ニックネームはuser00000である。短時間のOLTPクエリにJITコンパイル時間が混入する可能性がある測定では、セッションで``SET jit = off``を指定する。
 
 <!TOC!>
 
@@ -170,6 +170,119 @@ ORDER BY p.id DESC OFFSET 0 LIMIT 20;
  Planning Time: 4.993 ms
  Execution Time: 3.777 ms
 ```
+
+focusUserIdが指定された場合に、一覧取得後に実行するイイネ済み判定と返信済み判定の2クエリについても個別に実行計画を確認しておく。サービス層では、一覧で返す最大20件の投稿IDを配列として渡す。以下では、検証用データの既知の投稿IDを具体値として使う。
+
+まず、イイネ済み判定は以下のクエリである。検証用データでは、user00001が1番目のベンチマーク投稿をイイネしている。
+
+```sql:small
+SELECT post_id
+FROM post_likes
+WHERE post_id = ANY(
+  ARRAY[
+    1855878856704991232,
+    1855878856706039808
+  ]::bigint[]
+)
+  AND liked_by = 1853160947712987136;
+```
+
+post_likesの主キーはpost_idとliked_byの複合キーであり、クエリの2条件と一致する。配列中の投稿IDは最大20件という定数なので、それぞれについて複合主キーを引ければ、投稿数やイイネ総数に比例せずに判定できる。現行の実行計画を確認するには、以下を実行する。
+
+```sql:small
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT post_id
+FROM post_likes
+WHERE post_id = ANY(
+  ARRAY[
+    1855878856704991232,
+    1855878856706039808
+  ]::bigint[]
+)
+  AND liked_by = 1853160947712987136;
+```
+
+```:small
+ Index Only Scan using post_likes_pkey on post_likes  (cost=0.29..8.61 rows=1 width=8) (actual time=0.134..0.150 rows=1 loops=1)
+   Index Cond: ((post_id = ANY ('{1855878856704991232,1855878856706039808}'::bigint[])) AND (liked_by = '1853160947712987136'::bigint))
+   Heap Fetches: 0
+   Buffers: shared hit=8
+ Planning:
+   Buffers: shared hit=10
+ Planning Time: 0.345 ms
+ Execution Time: 0.176 ms
+```
+
+2条件がともにIndex Condへ入り、ヒープを読まずに1件を取得している。
+
+返信済み判定は以下のクエリである。検証用データでは、user00001が約15000件の投稿を所有する一方で、user00002が1番目のベンチマーク投稿へ約15000件返信する。以下の条件に一致する投稿は0件だが、reply_toだけ、またはowned_byだけで候補を得ると、どちらから始めても約15000件を調べることになる。
+
+```sql:small
+SELECT reply_to
+FROM posts
+WHERE reply_to = ANY(
+  ARRAY[
+    1855878856704991232,
+    1855878856706039808
+  ]::bigint[]
+)
+  AND owned_by = 1853160947712987136;
+```
+
+この処理のために、postsにはreply_toとowned_byの複合インデックスを設ける。
+
+```sql:small
+CREATE INDEX idx_posts_reply_to_owned_by
+ON posts(reply_to, owned_by);
+```
+
+現行スキーマで実行計画を確認するには、以下を実行する。
+
+```sql:small
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT reply_to
+FROM posts
+WHERE reply_to = ANY(
+  ARRAY[
+    1855878856704991232,
+    1855878856706039808
+  ]::bigint[]
+)
+  AND owned_by = 1853160947712987136;
+```
+
+```:small
+★ここに結果を記載★
+```
+
+reply_toとowned_byの両方がidx_posts_reply_to_owned_byのIndex Condに入ることを確認する。これにより、対象ユーザの全投稿、または対象投稿についた全返信を片側の条件だけで列挙してからFilterで捨てる処理を避けられる。
+
+複合インデックスがない場合との差を同じ検証データで確認するには、以下を実行する。DROP INDEXはトランザクション内で行い、最後にROLLBACKするので、検証後にはインデックスが復元される。
+
+```sql:small
+BEGIN;
+
+DROP INDEX idx_posts_reply_to_owned_by;
+
+EXPLAIN (ANALYZE, BUFFERS)
+SELECT reply_to
+FROM posts
+WHERE reply_to = ANY(
+  ARRAY[
+    1855878856704991232,
+    1855878856706039808
+  ]::bigint[]
+)
+  AND owned_by = 1853160947712987136;
+
+ROLLBACK;
+```
+
+```:small
+★ここに結果を記載★
+```
+
+インデックスを外した計画では、idx_posts_owned_by_idまたはidx_posts_reply_to_idの片方から多数の候補を取得し、もう一方の条件をFilterで判定する可能性がある。実行時間だけでなく、Index CondとFilterのどちらに各条件が入り、何行をFilterで除外したかを見る必要がある。
 
 ## listPostsByFollowees
 STGYのSNSとしての典型的なビューは、「自分がフォローしているユーザの投稿の一覧」を見ることである。これがログイン直後のデフォルトのビューでもある。このクエリが効率的に処理できるかどうかがSNSの性能を決めると言って良い。
@@ -698,9 +811,10 @@ WHERE nickname LIKE 'user00%';
 
 ``LOWER(nickname)``版はidx_users_nickname_idを使い、24バッファ、1.090msで完了した。式を一致させない版はusers全体をSequential Scanし、29014件を条件不一致として捨て、512バッファ、10.976msを要した。式インデックスは、検索条件側の式まで一致させて初めて意図どおりに使える。
 ## listFriendsByNicknamePrefix
-上述のlistUsersメソッドは、social順の外部仕様を満たすためには率直な実装だが、検索文字列が短い場合には候補が増える。そこで、仕様を単純化したlistFriendsByNicknamePrefixという専用メソッドを設けた。ユーザリストはIDの昇順か降順で返すという原則を崩して、自分、フォロイー、その他の分類順で、各分類の中では``LOWER(nickname)``の``text_pattern_ops``順にするという特殊仕様だ。
 
-ページングに必要な候補数を``k = offset + limit``とする。selfを最大1件、followeesを最大k件取得してpreferredを作り、足りない件数だけをothersから補う。具体的なクエリは以下のものだ。ここではoffsetが0、limitが20なのでkは20である。
+ユーザ名の入力補完では、自分、フォロー中のユーザ、その他のユーザの順に候補を返す。バックエンドのusersService.listFriendsByNicknamePrefixメソッドは、ページングに必要な件数をK=offset+limitとして、自分とフォロイーをpreferredへ集め、不足分だけをothersから補う。
+
+フォロイーについては、ニックネームに一致する全ユーザからフォロー関係を確認するのではなく、user_followsからフォロイーを列挙し、各followee_idについてusersの主キーを引く。具体例は以下のクエリである。
 
 ```sql:small
 WITH
@@ -711,17 +825,18 @@ self AS (
     AND lower(u.nickname) LIKE 'user00%'
 ),
 followees AS (
-  SELECT 1 AS prio, u.id, lower(u.nickname) AS nkey
-  FROM users u
-  WHERE u.id <> 1853070350746583040
-    AND lower(u.nickname) LIKE 'user00%'
-    AND EXISTS (
-      SELECT 1
-      FROM user_follows f
-      WHERE f.follower_id = 1853070350746583040
-        AND f.followee_id = u.id
-    )
-  ORDER BY lower(u.nickname) USING ~<~, u.id
+  SELECT 1 AS prio, fu.id, fu.nkey
+  FROM user_follows f
+  JOIN LATERAL (
+    SELECT u.id, lower(u.nickname) AS nkey
+    FROM users u
+    WHERE u.id = f.followee_id
+      AND u.id <> 1853070350746583040
+      AND lower(u.nickname) LIKE 'user00%'
+    LIMIT 1
+  ) AS fu ON TRUE
+  WHERE f.follower_id = 1853070350746583040
+  ORDER BY fu.nkey USING ~<~, fu.id
   LIMIT 20
 ),
 preferred AS MATERIALIZED (
@@ -771,17 +886,13 @@ LEFT JOIN user_counts uc ON uc.user_id = u.id
 ORDER BY p.prio, p.nkey USING ~<~, u.id;
 ```
 
-``idx_users_nickname_id``は``LOWER(nickname) text_pattern_ops, id``の複合インデックスである。``ORDER BY lower(nickname) USING ~<~, u.id``と書くことで、その演算子クラスの順序を使ってインデックスを先頭から走査できる。通常の``ORDER BY lower(nickname), u.id``では、前方一致の絞り込みにインデックスを使えても、候補全件を取得してから別途ソートする計画になる場合がある。
+自分の取得はusersの主キーでO(log(U))である。フォロイー数をFとすると、user_followsからF件を列挙し、その各々についてusersの主キーを引くので、followeesの支配項はO(F･log(U))である。ニックネーム前方一致の判定は主キーで取得した各フォロイー行に対して行う。Fに比例する処理は残るが、ニックネームに一致する全ユーザ数からフォロイーを探す方向にはしない。
 
-self、followees、othersは互いに排他的である。othersではselfとフォロイーを最初から除外するため、後段でDISTINCT ONによる重複排除をする必要がない。preferredをMATERIALIZEDにするのは、その件数を数えてothersのLIMITを決める処理と、最終候補として読み出す処理で同じ結果を共有するためである。selfまたはothersを省略するオプションが指定された場合は、対応するCTEを生成しない。
+preferredだけでK件に達しなかった場合に限り、othersを実行する。idx_users_nickname_idは``LOWER(nickname) text_pattern_ops, id``の複合インデックスである。``ORDER BY lower(nickname) USING ~<~, u.id``と書くことで、そのインデックス順に候補を読み、必要件数が揃った時点で停止できる。候補が自分またはフォロイーなら除外するため、実際に確認する候補数は検索語の選択度とフォロー関係の分布にも依存する。
 
-計算量は検索語の選択度とフォロー関係の分布に依存する。前方一致するユーザをニックネーム索引順にC件調べてk人のフォロイーを見つける場合、各候補について``user_follows``の複合主キーで所属確認を行うので、概ねO(C･log(F))になる。最良の場合はCがk程度で早期終了し、最悪の場合は前方一致する全候補を調べる。othersも不足件数だけを取得して停止する。したがって、短い検索語で一致候補が多く、フォロイーが疎な場合には処理量が増えるが、候補全件を常にソートする必要はない。
-
-現行のクエリを確認するには、以下を実行する。
+フォロイー30000人のuser00000で実行計画を確認するには、上記のクエリへEXPLAINをつける。
 
 ```sql:small
-SET jit = off;
-
 EXPLAIN (ANALYZE, BUFFERS)
 WITH
 self AS (
@@ -791,17 +902,18 @@ self AS (
     AND lower(u.nickname) LIKE 'user00%'
 ),
 followees AS (
-  SELECT 1 AS prio, u.id, lower(u.nickname) AS nkey
-  FROM users u
-  WHERE u.id <> 1853070350746583040
-    AND lower(u.nickname) LIKE 'user00%'
-    AND EXISTS (
-      SELECT 1
-      FROM user_follows f
-      WHERE f.follower_id = 1853070350746583040
-        AND f.followee_id = u.id
-    )
-  ORDER BY lower(u.nickname) USING ~<~, u.id
+  SELECT 1 AS prio, fu.id, fu.nkey
+  FROM user_follows f
+  JOIN LATERAL (
+    SELECT u.id, lower(u.nickname) AS nkey
+    FROM users u
+    WHERE u.id = f.followee_id
+      AND u.id <> 1853070350746583040
+      AND lower(u.nickname) LIKE 'user00%'
+    LIMIT 1
+  ) AS fu ON TRUE
+  WHERE f.follower_id = 1853070350746583040
+  ORDER BY fu.nkey USING ~<~, fu.id
   LIMIT 20
 ),
 preferred AS MATERIALIZED (
@@ -852,67 +964,19 @@ ORDER BY p.prio, p.nkey USING ~<~, u.id;
 ```
 
 ```:small
- Nested Loop Left Join  (cost=357.14..526.93 rows=20 width=353) (actual time=0.298..0.403 rows=20 loops=1)
-   Buffers: shared hit=167
-   CTE preferred
-     ->  Append  (cost=0.29..68.50 rows=21 width=44) (actual time=0.017..0.138 rows=21 loops=1)
-           Buffers: shared hit=47
-           ->  Index Scan using users_pkey on users u_2  (cost=0.29..8.31 rows=1 width=44) (actual time=0.016..0.017 rows=1 loops=1)
-                 Index Cond: (id = '1853070350746583040'::bigint)
-                 Filter: (lower((nickname)::text) ~~ 'user00%'::text)
-                 Buffers: shared hit=3
-           ->  Limit  (cost=0.58..60.09 rows=20 width=44) (actual time=0.062..0.117 rows=20 loops=1)
-                 Buffers: shared hit=44
-                 ->  Nested Loop  (cost=0.58..2696.33 rows=906 width=44) (actual time=0.061..0.114 rows=20 loops=1)
-                       Buffers: shared hit=44
-                       ->  Index Scan using idx_users_nickname_id on users u_3  (cost=0.29..1952.82 rows=909 width=17) (actual time=0.026..0.040 rows=20 loops=1)
-                             Index Cond: ((lower((nickname)::text) ~>=~ 'user00'::text) AND (lower((nickname)::text) ~<~ 'user01'::text))
-                             Filter: ((id <> '1853070350746583040'::bigint) AND (lower((nickname)::text) ~~ 'user00%'::text))
-                             Rows Removed by Filter: 1
-                             Buffers: shared hit=3
-                       ->  Index Only Scan using user_follows_pkey on user_follows f_1  (cost=0.29..1.34 rows=2 width=8) (actual time=0.003..0.003 rows=1 loops=20)
-                             Index Cond: ((follower_id = '1853070350746583040'::bigint) AND (followee_id = u_3.id))
-                             Heap Fetches: 0
-                             Buffers: shared hit=41
-   ->  Nested Loop  (cost=288.35..446.41 rows=20 width=333) (actual time=0.212..0.251 rows=20 loops=1)
-         Buffers: shared hit=107
-         ->  Limit  (cost=288.06..288.11 rows=20 width=44) (actual time=0.203..0.209 rows=20 loops=1)
-               Buffers: shared hit=47
-               ->  Sort  (cost=288.06..288.19 rows=51 width=44) (actual time=0.202..0.205 rows=20 loops=1)
-                     Sort Key: preferred.prio, preferred.nkey USING ~<~, preferred.id
-                     Sort Method: quicksort  Memory: 26kB
-                     Buffers: shared hit=47
-                     ->  Append  (cost=0.00..286.71 rows=51 width=44) (actual time=0.022..0.189 rows=21 loops=1)
-                           Buffers: shared hit=47
-                           ->  CTE Scan on preferred  (cost=0.00..0.42 rows=21 width=44) (actual time=0.021..0.150 rows=21 loops=1)
-                                 Buffers: shared hit=47
-                           ->  Subquery Scan on others  (cost=1.06..286.03 rows=30 width=44) (actual time=0.034..0.035 rows=0 loops=1)
-                                 ->  Limit  (cost=1.06..285.73 rows=30 width=44) (actual time=0.034..0.035 rows=0 loops=1)
-                                       InitPlan 2 (returns $2)
-                                         ->  Aggregate  (cost=0.47..0.49 rows=1 width=8) (actual time=0.032..0.032 rows=1 loops=1)
-                                               ->  CTE Scan on preferred preferred_1  (cost=0.00..0.42 rows=21 width=0) (actual time=0.000..0.024 rows=21 loops=1)
-                                       ->  Nested Loop Anti Join  (cost=0.58..2894.68 rows=305 width=44) (never executed)
-                                             ->  Index Scan using idx_users_nickname_id on users u_1  (cost=0.29..1952.82 rows=909 width=17) (never executed)
-                                                   Index Cond: ((lower((nickname)::text) ~>=~ 'user00'::text) AND (lower((nickname)::text) ~<~ 'user01'::text))
-                                                   Filter: ((id <> '1853070350746583040'::bigint) AND (lower((nickname)::text) ~~ 'user00%'::text))
-                                             ->  Index Only Scan using user_follows_pkey on user_follows f  (cost=0.29..1.34 rows=2 width=8) (never executed)
-                                                   Index Cond: ((follower_id = '1853070350746583040'::bigint) AND (followee_id = u_1.id))
-                                                   Heap Fetches: 0
-         ->  Index Scan using users_pkey on users u  (cost=0.29..7.90 rows=1 width=297) (actual time=0.001..0.001 rows=1 loops=20)
-               Index Cond: (id = preferred.id)
-               Buffers: shared hit=60
-   ->  Index Scan using user_counts_pkey on user_counts uc  (cost=0.29..0.35 rows=1 width=20) (actual time=0.001..0.001 rows=1 loops=20)
-         Index Cond: (user_id = u.id)
-         Buffers: shared hit=60
- Planning:
-   Buffers: shared hit=39
- Planning Time: 1.343 ms
- Execution Time: 0.518 ms
+★ここに結果を記載★
 ```
 
-このデータでは測定用ユーザが30000人をフォローしているが、ニックネーム索引の先頭21件を調べるだけでselfと20人のフォロイーが揃った。followeesの索引走査は20件で停止し、othersの必要件数は0になったため、その内側はnever executedである。最終的にusersとuser_countsを参照したのも20件だけで、実行時間は0.518msだった。
+このケースでは、user_followsから30000人を列挙し、users_pkeyを30000回引くこと、preferredが20件を超えるためothersが実行されないことを確認する。
 
-フォロイーが少ない別の条件でも確認したところ、othersはニックネーム索引を21件読み、20件を取得した時点で停止し、実行時間は0.732msだった。どちらの条件でも、前方一致した1000件をBitmap Heap Scanで取得してソートする旧計画は発生していない。
+フォロイーが1人のuser00001では、上記の全ての1853070350746583040を1853160947712987136へ置き換えて実行する。この場合はselfが1件、followeesが1件、othersが18件となる。
+
+```:small
+★ここに結果を記載★
+```
+
+このケースでは、followeesがuser_follows_pkeyから1件を取得してusers_pkeyを1回引くこと、othersがidx_users_nickname_idを順序付きで走査し、約20件を確認した時点で18件を返すことを確認する。ニックネームに一致する約1000人をBitmap Heap Scanで全件取得してソートする計画になっていないことが重要である。
+
 ## fetchBatch
 通知を作成するワーカーがイベントログを読み出す際には、以下のようなクエリが実行される。
 
@@ -978,7 +1042,7 @@ LIMIT 50;
 
 user_id、is_read、updated_atの複合インデックスを設けているので、そのインデックスを使って各リストの先頭から定数件を取得できる。未読リストと既読リストはアプリケーション側でupdated_atの降順にマージする。マージ後に再度50件へ切り詰めないので、現在のデフォルト設定では最大100件が返り得る。
 
-現行の未読クエリを確認するには、以下を実行する。既読側はis_readをTRUEへ変えて同様に確認できる。
+検証用データでは、測定用ユーザについて未読15000件、既読15000件を作る。小さいパーティションをSequential Scanする方が安いという計画ではなく、複合インデックスが選ばれるだけの件数を用意している。現行の未読クエリを確認するには、以下を実行する。既読側はis_readをTRUEへ変えて同様に確認できる。
 
 ```sql:small
 EXPLAIN (ANALYZE, BUFFERS)
@@ -991,23 +1055,10 @@ LIMIT 50;
 ```
 
 ```:small
- Limit  (cost=7.57..7.70 rows=50 width=67) (actual time=0.126..0.133 rows=50 loops=1)
-   Buffers: shared hit=7
-   ->  Sort  (cost=7.57..7.72 rows=60 width=67) (actual time=0.124..0.127 rows=50 loops=1)
-         Sort Key: notifications.updated_at DESC
-         Sort Method: quicksort  Memory: 40kB
-         Buffers: shared hit=7
-         ->  Seq Scan on notifications_p7 notifications  (cost=0.00..5.80 rows=60 width=67) (actual time=0.025..0.085 rows=60 loops=1)
-               Filter: ((NOT is_read) AND (user_id = '1853070350746583040'::bigint))
-               Rows Removed by Filter: 60
-               Buffers: shared hit=4
- Planning:
-   Buffers: shared hit=166
- Planning Time: 0.571 ms
- Execution Time: 0.148 ms
+★ここに結果を記載★
 ```
 
-この実行計画では複合インデックスではなく、対象パーティション120件のSequential Scanと60件のソートが選ばれた。小さい表では、インデックスを辿ってヒープを読むより、数ページを順番に読む方が安いためである。実際に4バッファ、0.148msで完了しており、このSequential Scanはインデックスが効いていない不具合ではない。通知が増えてコスト関係が変われば、PostgreSQLは同じSQLに対してインデックスを選択できる。
+idx_notifications_user_read_tsのIndex Condにuser_idとis_readが入り、updated_atの逆順に50件を取得して別途Sortを行わないことを確認する。
 
 新着通知を調べる際に、毎回同じデータを返すのは無駄だ。よって、クライアントが最後に取得した通知の最新のupdated_atをnewerThanとして渡すAPIになっていて、それより新しい未読レコードがなければサービス層はnullを返し、HTTPルートは304を返す。
 
@@ -1016,7 +1067,7 @@ SELECT 1
 FROM notifications
 WHERE user_id = 1853070350746583040
   AND is_read = FALSE
-  AND updated_at > '2026-07-01 00:30:30+00'
+  AND updated_at > '2026-07-01 03:00:00+00'
 LIMIT 1;
 ```
 
@@ -1028,32 +1079,23 @@ SELECT 1
 FROM notifications
 WHERE user_id = 1853070350746583040
   AND is_read = FALSE
-  AND updated_at > '2026-07-01 00:30:30+00'
+  AND updated_at > '2026-07-01 03:00:00+00'
 LIMIT 1;
 ```
 
 ```:small
- Limit  (cost=0.00..0.13 rows=1 width=4) (actual time=0.022..0.023 rows=1 loops=1)
-   Buffers: shared hit=1
-   ->  Seq Scan on notifications_p7 notifications  (cost=0.00..5.80 rows=44 width=4) (actual time=0.020..0.020 rows=1 loops=1)
-         Filter: ((NOT is_read) AND (updated_at > '2026-07-01 00:30:30+00'::timestamp with time zone) AND (user_id = '1853070350746583040'::bigint))
-         Rows Removed by Filter: 31
-         Buffers: shared hit=1
- Planning:
-   Buffers: shared hit=5
- Planning Time: 0.362 ms
- Execution Time: 0.053 ms
+★ここに結果を記載★
 ```
 
-この存在確認でもSequential Scanが選ばれたが、1ページを読み、条件に合う1件を見つけた時点で停止して0.053msで完了している。現在のデータ量では合理的な計画であり、インデックスを強制する必要はない。
+3条件がidx_notifications_user_read_tsのIndex Condに入り、最初の1件で停止することを確認する。
 
 ## 総評
 
 ここまで見てきたように、通常の一覧表示で記事IDやユーザIDの候補を取得する処理では、できる限りインデックスを使って返却対象を先に絞るように、スキーマとクエリを設計している。各々のインデックスがメモリ上にキャッシュされる範囲では、高速なランダムアクセスが期待できる。ただし、本文に対する``ILIKE '%...%'``、短いニックネーム前方一致のsocial順ソート、フォロイー全員を調べる処理など、ヒット件数やフォロイー数に比例する経路も残っている。公開の全文検索では外部検索サービスを使って、その負荷をPostgreSQLから分離している。
 
-全体の最新投稿を一覧で使うlistPostsは、通常のIDやタグなどの条件ではインデックスから定数件を取得できる。自分がフォローしているユーザの最新投稿を一覧で使うlistPostsByFolloweesの支配項はO(F･log(P))で、イイネした投稿の一覧で使うlistPostsLikedByUserもliked_byとcreated_atのインデックスから定数件を取得できる。listFriendsByNicknamePrefixは、ニックネーム索引を順序付きで走査し、ページングに必要な件数が揃った時点で停止する。そこで調べる候補数をCとすると、フォロー関係の確認を含めて概ねO(C･log(F))であり、Cは検索語の選択度とフォロー関係の分布に依存する。ただし、ILIKEによる本文検索や、候補数が多いsocial順のlistUsersは、全体件数に対して同じ保証を持たない。
+全体の最新投稿を一覧で使うlistPostsは、通常のIDやタグなどの条件ではインデックスから定数件を取得できる。focusUserIdのイイネ済み判定はpost_likesの複合主キーを使い、返信済み判定はpostsのreply_toとowned_byの複合インデックスを使う。自分がフォローしているユーザの最新投稿を一覧で使うlistPostsByFolloweesの支配項はO(F･log(P))で、イイネした投稿の一覧で使うlistPostsLikedByUserもliked_byとcreated_atのインデックスから定数件を取得できる。listFriendsByNicknamePrefixのfollowees枝はフォロイーF人を列挙して各ユーザを主キーで調べるため、支配項はO(F･log(U))である。preferredで不足する場合のothers枝は、ニックネーム索引を順序付きで走査し、ページングに必要な件数が揃った時点で停止する。ただし、ILIKEによる本文検索や、候補数が多いsocial順のlistUsersは、全体件数に対して同じ保証を持たない。
 
-listPostsByFolloweesはフォロイー数Fに比例して索引を引く。現行実装ではフォロイー数を200人などに制限する上限は設けていない。listFriendsByNicknamePrefixは早期終了できるが、短い検索語に多数が一致し、その中のフォロイーが疎な場合には、多数の候補を確認する可能性がある。利用規模が大きくなってこれらが問題になった場合には、上限、対象フォロイーの事前選択、結果のキャッシュなどを検討する必要がある。
+listPostsByFolloweesとlistFriendsByNicknamePrefixのfollowees枝は、いずれもフォロイー数Fに比例して索引を引く。現行実装ではフォロイー数を200人などに制限する上限は設けていない。listFriendsByNicknamePrefixのothers枝は早期終了できるが、短い検索語に多数が一致し、その中の自分やフォロイーが多い場合には、必要件数より多くの候補を確認する可能性がある。利用規模が大きくなってこれらが問題になった場合には、上限、対象フォロイーの事前選択、結果のキャッシュなどを検討する必要がある。
 
 UXの要求仕様でフォロイー数の制限ができない場合、毎回のクエリでフォローしている全員を対象にするのではなく、「重要フォロイー」のサブセットやアクティブユーザの集合を定期的に計算してキャッシュする方法が現実的である。ただし、キャッシュがなくても正しい結果を返せるDBクエリを基礎として持つべきである。
 
@@ -1087,7 +1129,7 @@ WHERE n.nspname NOT IN ('pg_catalog', 'information_schema')
 ORDER BY pages_8k DESC;
 ```
 
-投稿関係の6インデックスだけを取り出すには、以下を実行する。
+投稿関係の7インデックスだけを取り出すには、以下を実行する。
 
 ```sql:small
 SELECT
@@ -1102,6 +1144,7 @@ WHERE n.nspname = 'public'
     'posts_pkey',
     'idx_posts_owned_by_id',
     'idx_posts_reply_to_id',
+    'idx_posts_reply_to_owned_by',
     'idx_posts_root_id',
     'idx_posts_root_owned_by_id',
     'idx_posts_public_owned_by_published_at'
@@ -1110,21 +1153,14 @@ ORDER BY c.relname;
 ```
 
 ```:small
-                  name                  |  size   | pages_8k
-----------------------------------------+---------+----------
- idx_posts_owned_by_id                  | 1900544 |      232
- idx_posts_public_owned_by_published_at | 2433024 |      297
- idx_posts_reply_to_id                  | 2154496 |      263
- idx_posts_root_id                      | 1138688 |      139
- idx_posts_root_owned_by_id             | 1597440 |      195
- posts_pkey                             | 1359872 |      166
+★ここに結果を記載★
 ```
 
-6インデックスの合計は10584064バイトである。検証DBの投稿総数60017件で割ると、現在のデータ分布では投稿1件あたり約176.35バイトのインデックス容量になる。
+7インデックスの合計をSバイトとすると、検証DBの投稿総数60017件に対する投稿1件あたりのインデックス容量は``S / 60017``で求められる。上の結果を更新した時点で、この値も実測値から計算し直す。
 
-仮に実メモリ16GiB、shared_buffers 4GiBとし、その半分をインデックス、その80%を投稿関係のインデックスへ使えると仮定すると、投稿インデックスへ使える容量は約1.6GiBである。現在の実測比率をそのまま線形に延ばすと、``1.6GiB / 176.35B``で約974万投稿分になる。
+仮に実メモリ16GiB、shared_buffers 4GiBとし、その半分をインデックス、その80%を投稿関係のインデックスへ使えると仮定すると、投稿インデックスへ使える容量は約1.6GiBである。1投稿あたりの実測容量をBバイトとすれば、単純な容量上の目安は``1.6GiB / B``で求められる。
 
-これは限界値ではなく、フェルミ推定級の目安に過ぎない。6インデックスは同じ行集合を対象にしておらず、データ分布、B木ページの充填率、更新と削除による膨張、VACUUMの状態によって投稿あたりの容量は変わる。実際のアクセスは新しい投稿に偏るため、全インデックスがキャッシュに入らなくても頻繁に使うページは残りやすい。OSのページキャッシュもある。一方で、listPostsByFolloweesのように多数のユーザについて索引をランダム参照するクエリは、作業集合が広がるほど物理I/Oの影響を受けやすい。
+これは限界値ではなく、フェルミ推定級の目安に過ぎない。7インデックスは同じ行集合を対象にしておらず、データ分布、B木ページの充填率、更新と削除による膨張、VACUUMの状態によって投稿あたりの容量は変わる。実際のアクセスは新しい投稿に偏るため、全インデックスがキャッシュに入らなくても頻繁に使うページは残りやすい。OSのページキャッシュもある。一方で、listPostsByFolloweesのように多数のユーザについて索引をランダム参照するクエリは、作業集合が広がるほど物理I/Oの影響を受けやすい。
 
 主テーブルのデータにも別のキャッシュ境界がある。postsとusersに本文を入れず、一覧に必要なスニペットと属性だけを置くのは、主テーブルの行とページを小さく保つためである。返却対象のIDを先に定数件へ絞り、その後にだけ主テーブルを参照する設計は、計算量だけでなくキャッシュ効率の点でも重要である。大規模なSequential Scanが頻発すると、他のホットページをキャッシュから追い出す可能性もある。
 

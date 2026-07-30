@@ -136,7 +136,7 @@ scriptsの下には、システムの管理に必要なスクリプトが入っ�
 - edit-users.py : ユーザを作成または更新する
 - edit-posts.py : 投稿を作成または更新する
 - user-actions.py : 個々のユーザでログインしてイイネやフォローやブロックを行う
-- make-volume-test.py : 検証用に大量のユーザと投稿を作成する
+- make-volume-test.py : 検証用に大量のユーザ、投稿、フォロー、イイネ、通知を作成する。特定ユーザの大量投稿と特定投稿への大量返信も作り、複合インデックスを実行計画で確認できるようにする
 - run-local-ttts.sh : 全文検索サービスをローカルホスト上で起動する
 - run-local-backend.sh : バックエンドサービスをローカルホスト上で起動する
 - run-local-frontend.sh : フロントエンドサービスをローカルホスト上で起動する
@@ -236,7 +236,7 @@ Docker関係のコマンドを利用目的別に整理する。
 - npm run reset-data-test
   - DBとオブジェクトストレージを初期化して、機能テスト用のデータを投入する。
 - npm run reset-data-volume-test
-  - DBとオブジェクトストレージを初期化して、性能テスト用の大量のデータを投入する。
+  - DBとオブジェクトストレージを初期化して、性能テスト用の大量のデータを投入し、PostgreSQLのANALYZEを実行する。
 - npm run reset-cache
   - Redisのキャッシュを初期化する。
 - npm run reset-search

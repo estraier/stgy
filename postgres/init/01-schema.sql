@@ -87,6 +87,7 @@ CREATE TABLE posts (
 );
 CREATE INDEX idx_posts_owned_by_id ON posts(owned_by, id);
 CREATE INDEX idx_posts_reply_to_id ON posts(reply_to, id);
+CREATE INDEX idx_posts_reply_to_owned_by ON posts(reply_to, owned_by);
 CREATE INDEX idx_posts_root_id ON posts (id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_root_owned_by_id ON posts (owned_by, id) WHERE reply_to IS NULL;
 CREATE INDEX idx_posts_public_owned_by_published_at ON posts (owned_by, published_at, id) WHERE published_at IS NOT NULL;
