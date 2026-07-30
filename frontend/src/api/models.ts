@@ -84,7 +84,7 @@ export type PostDetail = Post & {
 
 export type AiPostSummary = {
   postId: string;
-  updatedAt: string;
+  sourceUpdatedAt: string;
   summary: string | null;
   features: Int8Array | null;
   tags: string[];
@@ -92,7 +92,7 @@ export type AiPostSummary = {
 
 export type AiPostSummaryPacket = {
   postId: string;
-  updatedAt: string;
+  sourceUpdatedAt: string;
   summary: string | null;
   features: string | null;
   tags: string[];

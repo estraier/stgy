@@ -112,6 +112,7 @@ $$
 
 INSERT INTO ai_post_summaries (
   post_id,
+  source_updated_at,
   summary,
   hashes,
   features
@@ -119,12 +120,14 @@ INSERT INTO ai_post_summaries (
 VALUES
 (
   0x2000000000001,
+  id_to_timestamp(0x2000000000001),
   NULL,
   NULL,
   NULL
 ),
 (
   0x2000000000002,
+  id_to_timestamp(0x2000000000002),
   NULL,
   NULL,
   NULL

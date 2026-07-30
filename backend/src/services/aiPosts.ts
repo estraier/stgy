@@ -29,7 +29,7 @@ import type {
 
 type AiPostSummaryDbRow = {
   post_id: string;
-  updated_at: string;
+  source_updated_at: string;
   summary: string | null;
   features: Buffer | null;
   tags: string[];
@@ -63,7 +63,7 @@ export class AiPostsService {
   private mapSummaryRow(row: AiPostSummaryDbRow): AiPostSummary {
     return {
       postId: decToHex(row.post_id),
-      updatedAt: row.updated_at,
+      sourceUpdatedAt: row.source_updated_at,
       summary: row.summary,
       features: row.features ? bufferToInt8Array(row.features) : null,
       tags: Array.isArray(row.tags) ? row.tags : [],
@@ -102,7 +102,7 @@ export class AiPostsService {
       `
       SELECT
         aps.post_id,
-        aps.updated_at,
+        aps.source_updated_at,
         aps.summary,
         aps.features,
         ARRAY(
@@ -131,14 +131,14 @@ export class AiPostsService {
     let idx = 1;
     if (options?.nullOnly) where.push("aps.summary IS NULL");
     if (isNonEmptyString(options?.newerThan)) {
-      where.push(`aps.updated_at > $${idx++}`);
+      where.push(`aps.source_updated_at > $${idx++}`);
       params.push(options!.newerThan);
     }
     const whereSql = where.length > 0 ? `WHERE ${where.join(" AND ")}` : "";
     const sql = `
       SELECT
         aps.post_id,
-        aps.updated_at,
+        aps.source_updated_at,
         aps.summary,
         aps.features,
         ARRAY(
@@ -179,9 +179,12 @@ export class AiPostsService {
           : input.keywords!.length === 0
             ? null
             : Buffer.from(serializeHashStringList(input.keywords!));
-        const cols: string[] = ["post_id"];
-        const vals: string[] = ["$1"];
-        const updates: string[] = ["updated_at = now()"];
+        const cols: string[] = ["post_id", "source_updated_at"];
+        const vals: string[] = [
+          "$1",
+          "(SELECT COALESCE(p.updated_at, id_to_timestamp(p.id)) FROM posts p WHERE p.id = $1)",
+        ];
+        const updates: string[] = [];
         const params: unknown[] = [postIdDec];
         let p = 2;
         if (summaryProvided) {
@@ -205,8 +208,6 @@ export class AiPostsService {
           updates.push("features = EXCLUDED.features");
           p++;
         }
-        cols.push("updated_at");
-        vals.push("now()");
         await pgQuery(
           client,
           `

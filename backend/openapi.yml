@@ -451,7 +451,10 @@ components:
       type: object
       properties:
         postId: { type: string }
-        updatedAt: { type: string, format: date-time }
+        sourceUpdatedAt:
+          type: string
+          format: date-time
+          description: Time when the source post was created or last edited; AI summary generation does not change it.
         summary: { type: string, nullable: true }
         features:
           type: string
@@ -464,7 +467,7 @@ components:
         keywordHashes:
           type: array
           items: { type: number }
-      required: [postId, updatedAt, summary, features, tags, keywordHashes]
+      required: [postId, sourceUpdatedAt, summary, features, tags, keywordHashes]
 
     UpdateAiPostSummaryRequest:
       type: object
@@ -2873,7 +2876,7 @@ paths:
         - name: newerThan
           in: query
           schema: { type: string }
-          description: ISO8601 date-time string; lists items newer than this.
+          description: ISO8601 date-time string; lists items whose source post was created or edited after this.
       responses:
         "200":
           description: AI post summaries

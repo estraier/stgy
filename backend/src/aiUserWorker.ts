@@ -646,20 +646,20 @@ async function fetchPostSummary(sessionCookie: string, postId: string): Promise<
   const res = await httpRequest(path, { method: "GET", headers: { Cookie: sessionCookie } });
   if (res.statusCode === 401) throw new UnauthorizedError(`401 from ${path}`);
   if (res.statusCode === 404)
-    return { postId, updatedAt: "", summary: null, features: null, tags: [], keywordHashes: [] };
+    return { postId, sourceUpdatedAt: "", summary: null, features: null, tags: [], keywordHashes: [] };
   if (res.statusCode < 200 || res.statusCode >= 300) {
     logger.error(
       `failed to fetch post summary postId=${postId}: ${res.statusCode} ${truncateForLog(res.body, 50)}`,
     );
-    return { postId, updatedAt: "", summary: null, features: null, tags: [], keywordHashes: [] };
+    return { postId, sourceUpdatedAt: "", summary: null, features: null, tags: [], keywordHashes: [] };
   }
   try {
     const parsed = JSON.parse(res.body) as unknown;
     if (!isRecord(parsed))
-      return { postId, updatedAt: "", summary: null, features: null, tags: [], keywordHashes: [] };
+      return { postId, sourceUpdatedAt: "", summary: null, features: null, tags: [], keywordHashes: [] };
     const pkt = parsed as AiPostSummaryPacket;
     const pid = typeof pkt.postId === "string" && pkt.postId.trim() !== "" ? pkt.postId : postId;
-    const updatedAt = typeof pkt.updatedAt === "string" ? pkt.updatedAt : "";
+    const sourceUpdatedAt = typeof pkt.sourceUpdatedAt === "string" ? pkt.sourceUpdatedAt : "";
     const summary = typeof pkt.summary === "string" || pkt.summary === null ? pkt.summary : null;
     let features: Int8Array | null = null;
     if (typeof pkt.features === "string" && pkt.features.trim() !== "") {
@@ -676,10 +676,10 @@ async function fetchPostSummary(sessionCookie: string, postId: string): Promise<
     const keywordHashes = Array.isArray(pkt.keywordHashes)
       ? pkt.keywordHashes.filter((t): t is number => typeof t === "number")
       : [];
-    return { postId: pid, updatedAt, summary, features, tags, keywordHashes };
+    return { postId: pid, sourceUpdatedAt, summary, features, tags, keywordHashes };
   } catch (e) {
     logger.error(`failed to parse post summary postId=${postId}: ${e}`);
-    return { postId, updatedAt: "", summary: null, features: null, tags: [], keywordHashes: [] };
+    return { postId, sourceUpdatedAt: "", summary: null, features: null, tags: [], keywordHashes: [] };
   }
 }
 

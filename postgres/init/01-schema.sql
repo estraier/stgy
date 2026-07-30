@@ -135,7 +135,7 @@ CREATE INDEX idx_post_likes_liked_by_created_at ON post_likes(liked_by, created_
 
 CREATE TABLE ai_post_summaries (
   post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_updated_at TIMESTAMPTZ NOT NULL,
   summary VARCHAR(65535),
   hashes BYTEA,
   features BYTEA

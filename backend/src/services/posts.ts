@@ -477,7 +477,8 @@ export class PostsService {
       );
       await pgQuery(
         client,
-        `INSERT INTO ai_post_summaries (post_id, summary) VALUES ($1, NULL)`,
+        `INSERT INTO ai_post_summaries (post_id, source_updated_at, summary)
+         VALUES ($1, id_to_timestamp($1), NULL)`,
         [hexToDec(id)],
       );
       if (input.tags && input.tags.length > 0) {
@@ -659,7 +660,9 @@ export class PostsService {
       }
       await pgQuery(
         client,
-        `UPDATE ai_post_summaries SET summary = NULL WHERE post_id = $1 AND summary IS NOT NULL`,
+        `UPDATE ai_post_summaries
+         SET source_updated_at = now(), summary = NULL
+         WHERE post_id = $1`,
         [hexToDec(input.id)],
       );
       await pgQuery(client, `DELETE FROM ai_post_tags WHERE post_id = $1`, [

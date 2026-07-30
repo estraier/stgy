@@ -98,10 +98,10 @@ async function fetchPendingSummaries(sessionCookie: string): Promise<AiPostSumma
   const out: AiPostSummaryPacket[] = [];
   for (const item of parsed) {
     if (!isRecord(item)) continue;
-    const updatedAtRaw = item["updatedAt"];
-    if (typeof updatedAtRaw === "string") {
-      const updatedAtMs = Date.parse(updatedAtRaw);
-      if (Number.isFinite(updatedAtMs) && updatedAtMs > cutoff) continue;
+    const sourceUpdatedAtRaw = item["sourceUpdatedAt"];
+    if (typeof sourceUpdatedAtRaw === "string") {
+      const sourceUpdatedAtMs = Date.parse(sourceUpdatedAtRaw);
+      if (Number.isFinite(sourceUpdatedAtMs) && sourceUpdatedAtMs > cutoff) continue;
     }
     out.push(item as AiPostSummaryPacket);
   }

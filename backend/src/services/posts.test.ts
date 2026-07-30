@@ -56,6 +56,7 @@ class MockPgClientMain {
   userBlockStrangers: Record<string, boolean> = {};
   txCount = 0;
   lastSql = "";
+  queries: string[] = [];
 
   private countRepliesFor(postId: string) {
     return this.data.filter((r) => r.replyTo === postId).length;
@@ -87,6 +88,7 @@ class MockPgClientMain {
   async query(sql: string, params?: any[]) {
     sql = normalizeSql(sql);
     this.lastSql = sql;
+    this.queries.push(sql);
 
     if (sql === "BEGIN" || sql === "COMMIT" || sql === "ROLLBACK") return { rows: [] };
 
@@ -991,6 +993,13 @@ describe("posts service", () => {
       true,
     );
     expect(created.content).toBe("new post content");
+    expect(
+      pgClient.queries.some((sql) =>
+        sql.includes(
+          "INSERT INTO ai_post_summaries (post_id, source_updated_at, summary) VALUES ($1, id_to_timestamp($1), NULL)",
+        ),
+      ),
+    ).toBe(true);
   });
 
   test("getPost", async () => {
@@ -1054,6 +1063,13 @@ describe("posts service", () => {
     expect(post!.replyToOwnerId).toBe(user1Hex);
     expect(
       pgClient.tags.some((t) => t.postId === toDecStr(postSample.id) && t.name === "foo"),
+    ).toBe(true);
+    expect(
+      pgClient.queries.some((sql) =>
+        sql.includes(
+          "UPDATE ai_post_summaries SET source_updated_at = now(), summary = NULL WHERE post_id = $1",
+        ),
+      ),
     ).toBe(true);
   });
 

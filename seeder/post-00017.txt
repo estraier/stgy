@@ -72,7 +72,7 @@ PostgreSQLから表示用の投稿データを取得
 ```sql:small
 CREATE TABLE ai_post_summaries (
   post_id BIGINT PRIMARY KEY REFERENCES posts(id) ON DELETE CASCADE,
-  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  source_updated_at TIMESTAMPTZ NOT NULL,
   summary VARCHAR(65535),
   hashes BYTEA,
   features BYTEA
@@ -92,9 +92,9 @@ CREATE INDEX idx_ai_post_tags_name_post_id
   ON ai_post_tags(name, post_id);
 ```
 
-``summary`` は投稿の要約、``hashes`` はキーワードの32ビットハッシュ列、``features`` は量子化された特徴ベクトルである。投稿者が指定したタグは従来どおり ``post_tags`` にあり、AIタグとは分けて保持する。推薦時には両方を使う。
+``source_updated_at`` は要約元の投稿が作成または更新された時刻であり、AIによる要約生成では変更しない。``summary`` は投稿の要約、``hashes`` はキーワードの32ビットハッシュ列、``features`` は量子化された特徴ベクトルである。投稿者が指定したタグは従来どおり ``post_tags`` にあり、AIタグとは分けて保持する。推薦時には両方を使う。
 
-投稿を更新した場合には、summaryをnullへ戻し、既存のAIタグを削除する。要約ワーカーが後で投稿を再処理する。投稿更新のHTTPリクエストの中で生成AIを呼ばないため、AIサービスの応答時間や一時的な障害が投稿更新そのものを止めない。
+投稿を更新した場合には、``source_updated_at`` を更新し、summaryをnullへ戻し、既存のAIタグを削除する。要約ワーカーが後で投稿を再処理する。投稿更新のHTTPリクエストの中で生成AIを呼ばないため、AIサービスの応答時間や一時的な障害が投稿更新そのものを止めない。
 
 ## AI要約ワーカー
 

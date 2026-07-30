@@ -36,7 +36,7 @@ function base64ToInt8(b64: string): Int8Array {
 function toAiPostSummary(pkt: AiPostSummaryPacket): AiPostSummary {
   return {
     postId: pkt.postId,
-    updatedAt: pkt.updatedAt,
+    sourceUpdatedAt: pkt.sourceUpdatedAt,
     summary: pkt.summary,
     features: pkt.features ? base64ToInt8(pkt.features) : null,
     tags: pkt.tags,

@@ -28,7 +28,7 @@ const NUM_RELATED_POSTS = 5;
 function toPacket(s: AiPostSummary): AiPostSummaryPacket {
   return {
     postId: s.postId,
-    updatedAt: s.updatedAt,
+    sourceUpdatedAt: s.sourceUpdatedAt,
     summary: s.summary,
     features: s.features ? int8ToBase64(s.features) : null,
     tags: s.tags ?? [],
