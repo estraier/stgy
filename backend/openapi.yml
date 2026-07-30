@@ -1710,6 +1710,10 @@ paths:
         - name: order
           in: query
           schema: { type: string, enum: [asc, desc], default: desc }
+        - name: after
+          in: query
+          description: Exclusive followee ID cursor; requires offset=0
+          schema: { type: string }
         - name: focusUserId
           in: query
           schema: { type: string }
@@ -1722,6 +1726,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/Error400"
         "401":
           $ref: "#/components/responses/Error401"
         "403":
@@ -1836,6 +1842,10 @@ paths:
         - name: order
           in: query
           schema: { type: string, enum: [asc, desc], default: desc }
+        - name: after
+          in: query
+          description: Exclusive blockee ID cursor; requires offset=0
+          schema: { type: string }
         - name: focusUserId
           in: query
           schema: { type: string }
@@ -1848,6 +1858,8 @@ paths:
                 type: array
                 items:
                   $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/Error400"
         "401":
           $ref: "#/components/responses/Error401"
         "403":
@@ -2122,6 +2134,10 @@ paths:
         - name: order
           in: query
           schema: { type: string, enum: [asc, desc], default: desc }
+        - name: after
+          in: query
+          description: Exclusive liked post ID cursor; requires offset=0
+          schema: { type: string }
         - name: includeReplies
           in: query
           schema: { type: boolean, default: true }
@@ -3201,6 +3217,10 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+        - name: after
+          in: query
+          description: Exclusive object-key cursor; requires offset=0
+          schema: { type: string }
       responses:
         "200":
           description: List of media objects
@@ -3405,6 +3425,10 @@ paths:
         - name: limit
           in: query
           schema: { type: integer, default: 100 }
+        - name: after
+          in: query
+          description: Exclusive object-key cursor; requires offset=0
+          schema: { type: string }
       responses:
         "200":
           description: List of track master objects with preview URLs

@@ -29,8 +29,9 @@ export type StorageObjectMetadata = StorageObjectId & {
 };
 
 export type StorageObjectListRange = {
-  offset: number;
+  offset?: number;
   limit: number;
+  after?: string;
 };
 
 export type StorageObjectDataRange = {

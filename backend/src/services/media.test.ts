@@ -268,6 +268,21 @@ describe("MediaService (masters/thumbs layout, yyyymm as string)", () => {
     expect(res).toEqual(objs);
   });
 
+  test("listImages: passes a validated cursor to storage", async () => {
+    const after = "u1/masters/797491/a.png";
+    storage.listObjects.mockResolvedValueOnce([]);
+
+    await service.listImages(userId, 0, 100, after);
+
+    expect(storage.listObjects).toHaveBeenCalledWith(
+      { bucket: imageBucket, key: "u1/masters/" },
+      { offset: 0, limit: 100, after },
+    );
+    await expect(service.listImages(userId, 0, 100, "other/masters/a.png")).rejects.toThrow(
+      "invalid after",
+    );
+  });
+
   test("getImageBytes: success for masters/", async () => {
     const keyWithout = "masters/797491/foo.webp";
     const fullKey = `${userId}/${keyWithout}`;

@@ -63,6 +63,16 @@ describe("track API", () => {
     });
   });
 
+  test("lists tracks after an object key cursor", async () => {
+    mockApiFetch.mockResolvedValue(jsonResponse([]));
+
+    await listTracks("u1", { after: "u1/masters/797491/a.fit", limit: 31 });
+    expect(mockApiFetch).toHaveBeenCalledWith(
+      "/media/u1/tracks?limit=31&after=u1%2Fmasters%2F797491%2Fa.fit",
+      { method: "GET" },
+    );
+  });
+
   test("gets quota for a selected month", async () => {
     mockApiFetch.mockResolvedValue(jsonResponse({ yyyymm: "202607" }));
 

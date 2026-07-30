@@ -441,11 +441,12 @@ export class PostsService {
     }
     const snippet = makeSnippetJsonFromMarkdown(input.content);
     const mentions = this.eventLogService != null ? getMentionsFromMarkdown(input.content) : [];
-    await pgQuery(this.pgPool, "BEGIN");
+    const client = await this.pgPool.connect();
     try {
+      await pgQuery(client, "BEGIN");
       if (input.replyTo != null) {
         const chk = await pgQuery<{ allow_replies: boolean }>(
-          this.pgPool,
+          client,
           `SELECT allow_replies FROM posts WHERE id = $1`,
           [hexToDec(input.replyTo)],
         );
@@ -454,7 +455,7 @@ export class PostsService {
           throw new Error("replies are not allowed for the target post");
       }
       await pgQuery(
-        this.pgPool,
+        client,
         `INSERT INTO posts (id, owned_by, reply_to, published_at, updated_at, snippet, locale, allow_likes, allow_replies)
          VALUES ($1, $2, $3, $4, NULL, $5, $6, $7, $8)`,
         [
@@ -469,20 +470,20 @@ export class PostsService {
         ],
       );
       await pgQuery(
-        this.pgPool,
+        client,
         `INSERT INTO post_details (post_id, content) VALUES ($1, $2)
          ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
         [hexToDec(id), input.content],
       );
       await pgQuery(
-        this.pgPool,
+        client,
         `INSERT INTO ai_post_summaries (post_id, summary) VALUES ($1, NULL)`,
         [hexToDec(id)],
       );
       if (input.tags && input.tags.length > 0) {
         const isRoot = input.replyTo == null;
         await pgQuery(
-          this.pgPool,
+          client,
           `
           INSERT INTO post_tags (post_id, name, is_root)
           SELECT $1, t, $2
@@ -491,7 +492,7 @@ export class PostsService {
           [hexToDec(id), isRoot, input.tags],
         );
       }
-      const userRes = await pgQuery(this.pgPool, `SELECT locale FROM users WHERE id = $1`, [
+      const userRes = await pgQuery(client, `SELECT locale FROM users WHERE id = $1`, [
         hexToDec(input.ownedBy),
       ]);
       const searchLocale = input.locale ?? userRes.rows[0]?.locale ?? Config.DEFAULT_LOCALE;
@@ -499,65 +500,73 @@ export class PostsService {
       const timestamp = Math.floor(
         IdIssueService.bigIntToDate(BigInt(hexToDec(id))).getTime() / 1000,
       );
-      await this.searchService.enqueueAddDocument({
-        id,
-        bodyText,
-        locale: searchLocale,
-        timestamp,
-      });
-      await pgQuery(this.pgPool, "COMMIT");
-      if (this.eventLogService) {
-        if (input.replyTo) {
-          try {
-            this.eventLogService.recordReply({
-              userId: input.ownedBy,
-              postId: id,
-              replyToPostId: input.replyTo,
-            });
-          } catch {}
-        }
-        if (mentions.length > 0) {
-          try {
-            const uniqueSorted = Array.from(new Set(mentions)).sort().slice(0, 10);
-            if (uniqueSorted.length > 0) {
-              const ownerIdDec = hexToDec(input.ownedBy);
-              const mentionedDecIds = uniqueSorted.map((m) => hexToDec(m));
-              const followRes = await pgQuery<{ follower_id: string | number | bigint }>(
-                this.pgPool,
-                `SELECT follower_id
-                   FROM user_follows
-                  WHERE follower_id = ANY($1) AND followee_id = $2`,
-                [mentionedDecIds, ownerIdDec],
-              );
-              const allowedFollowerIds = new Set(followRes.rows.map((r) => String(r.follower_id)));
-              for (const mentionedUserId of uniqueSorted) {
-                const decId = hexToDec(mentionedUserId);
-                if (!allowedFollowerIds.has(String(decId))) continue;
-                this.eventLogService.recordMention({
-                  userId: input.ownedBy,
-                  postId: id,
-                  mentionedUserId,
-                });
-              }
-            }
-          } catch {}
-        }
-      }
+      await this.searchService.enqueueAddDocument(
+        {
+          id,
+          bodyText,
+          locale: searchLocale,
+          timestamp,
+        },
+        client,
+      );
+      await pgQuery(client, "COMMIT");
     } catch (e) {
-      await pgQuery(this.pgPool, "ROLLBACK");
+      await pgQuery(client, "ROLLBACK");
       throw e;
+    } finally {
+      client.release();
     }
+
+    if (this.eventLogService) {
+      if (input.replyTo) {
+        try {
+          this.eventLogService.recordReply({
+            userId: input.ownedBy,
+            postId: id,
+            replyToPostId: input.replyTo,
+          });
+        } catch {}
+      }
+      if (mentions.length > 0) {
+        try {
+          const uniqueSorted = Array.from(new Set(mentions)).sort().slice(0, 10);
+          if (uniqueSorted.length > 0) {
+            const ownerIdDec = hexToDec(input.ownedBy);
+            const mentionedDecIds = uniqueSorted.map((m) => hexToDec(m));
+            const followRes = await pgQuery<{ follower_id: string | number | bigint }>(
+              this.pgPool,
+              `SELECT follower_id
+                 FROM user_follows
+                WHERE follower_id = ANY($1) AND followee_id = $2`,
+              [mentionedDecIds, ownerIdDec],
+            );
+            const allowedFollowerIds = new Set(followRes.rows.map((r) => String(r.follower_id)));
+            for (const mentionedUserId of uniqueSorted) {
+              const decId = hexToDec(mentionedUserId);
+              if (!allowedFollowerIds.has(String(decId))) continue;
+              this.eventLogService.recordMention({
+                userId: input.ownedBy,
+                postId: id,
+                mentionedUserId,
+              });
+            }
+          }
+        } catch {}
+      }
+    }
+
     const created = await this.getPost(id);
     if (!created) throw new Error("created post not found");
     return created;
   }
 
   async updatePost(input: UpdatePostInput): Promise<PostDetail | null> {
-    await pgQuery(this.pgPool, "BEGIN");
+    const client = await this.pgPool.connect();
     try {
+      await pgQuery(client, "BEGIN");
       if (input.replyTo != null && input.replyTo !== undefined) {
         const chk = await pgQuery<{ allow_replies: boolean }>(
-          this.pgPool,
+          client,
           `SELECT allow_replies FROM posts WHERE id = $1`,
           [hexToDec(input.replyTo)],
         );
@@ -589,7 +598,7 @@ export class PostsService {
         columns.push(`snippet = $${idx++}`);
         values.push(snippet);
         await pgQuery(
-          this.pgPool,
+          client,
           `INSERT INTO post_details (post_id, content) VALUES ($1, $2)
            ON CONFLICT (post_id) DO UPDATE SET content = EXCLUDED.content`,
           [hexToDec(input.id), input.content],
@@ -614,31 +623,31 @@ export class PostsService {
       values.push(hexToDec(input.id));
       if (columns.length > 0) {
         const sql = `UPDATE posts SET ${columns.join(", ")} WHERE id = $${idx} RETURNING id`;
-        const res = await pgQuery(this.pgPool, sql, values);
+        const res = await pgQuery(client, sql, values);
         if (res.rows.length === 0) {
-          await pgQuery(this.pgPool, "ROLLBACK");
+          await pgQuery(client, "ROLLBACK");
           return null;
         }
       }
       if (input.replyTo !== undefined && input.tags === undefined) {
         const isRoot = input.replyTo == null;
         await pgQuery(
-          this.pgPool,
+          client,
           `UPDATE post_tags SET is_root = $2 WHERE post_id = $1 AND is_root IS DISTINCT FROM $2`,
           [hexToDec(input.id), isRoot],
         );
       }
       if (input.tags !== undefined) {
-        await pgQuery(this.pgPool, `DELETE FROM post_tags WHERE post_id = $1`, [
+        await pgQuery(client, `DELETE FROM post_tags WHERE post_id = $1`, [
           hexToDec(input.id),
         ]);
         if (input.tags.length > 0) {
-          const r = await pgQuery(this.pgPool, `SELECT reply_to FROM posts WHERE id = $1`, [
+          const r = await pgQuery(client, `SELECT reply_to FROM posts WHERE id = $1`, [
             hexToDec(input.id),
           ]);
           const isRoot = r.rows[0].reply_to == null;
           await pgQuery(
-            this.pgPool,
+            client,
             `
             INSERT INTO post_tags (post_id, name, is_root)
             SELECT $1, t, $2
@@ -649,15 +658,15 @@ export class PostsService {
         }
       }
       await pgQuery(
-        this.pgPool,
+        client,
         `UPDATE ai_post_summaries SET summary = NULL WHERE post_id = $1 AND summary IS NOT NULL`,
         [hexToDec(input.id)],
       );
-      await pgQuery(this.pgPool, `DELETE FROM ai_post_tags WHERE post_id = $1`, [
+      await pgQuery(client, `DELETE FROM ai_post_tags WHERE post_id = $1`, [
         hexToDec(input.id),
       ]);
       const currentRes = await pgQuery(
-        this.pgPool,
+        client,
         `SELECT p.locale, u.locale AS owner_locale, pd.content
            FROM posts p
            JOIN users u ON u.id = p.owned_by
@@ -674,33 +683,41 @@ export class PostsService {
         const timestamp = Math.floor(
           IdIssueService.bigIntToDate(BigInt(hexToDec(input.id))).getTime() / 1000,
         );
-        await this.searchService.enqueueAddDocument({
-          id: input.id,
-          bodyText: makeTextFromMarkdown(targetContent),
-          locale: targetLocale,
-          timestamp,
-        });
+        await this.searchService.enqueueAddDocument(
+          {
+            id: input.id,
+            bodyText: makeTextFromMarkdown(targetContent),
+            locale: targetLocale,
+            timestamp,
+          },
+          client,
+        );
       }
-      await pgQuery(this.pgPool, "COMMIT");
+      await pgQuery(client, "COMMIT");
       return this.getPost(input.id);
     } catch (e) {
-      await pgQuery(this.pgPool, "ROLLBACK");
+      await pgQuery(client, "ROLLBACK");
       throw e;
+    } finally {
+      client.release();
     }
   }
 
   async deletePost(id: string): Promise<void> {
     const decId = hexToDec(id);
     const timestamp = Math.floor(IdIssueService.bigIntToDate(BigInt(decId)).getTime() / 1000);
-    await pgQuery(this.pgPool, "BEGIN");
+    const client = await this.pgPool.connect();
     try {
-      const res = await pgQuery(this.pgPool, `DELETE FROM posts WHERE id = $1`, [decId]);
+      await pgQuery(client, "BEGIN");
+      const res = await pgQuery(client, `DELETE FROM posts WHERE id = $1`, [decId]);
       if ((res.rowCount ?? 0) === 0) throw new Error("Post not found");
-      await this.searchService.enqueueRemoveDocument(id, timestamp);
-      await pgQuery(this.pgPool, "COMMIT");
+      await this.searchService.enqueueRemoveDocument(id, timestamp, client);
+      await pgQuery(client, "COMMIT");
     } catch (e) {
-      await pgQuery(this.pgPool, "ROLLBACK");
+      await pgQuery(client, "ROLLBACK");
       throw e;
+    } finally {
+      client.release();
     }
   }
 
@@ -868,6 +885,9 @@ export class PostsService {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+    const after = input.after ? hexToDec(input.after) : null;
+    if (after !== null && offset !== 0) throw new Error("after requires offset=0");
+    const comparison = order === "ASC" ? ">" : "<";
     const includeReplies = input.includeReplies !== false;
     let sql = `
       SELECT
@@ -914,8 +934,24 @@ export class PostsService {
       WHERE pl.liked_by = $1
     `;
     if (!includeReplies) sql += ` AND p.reply_to IS NULL`;
-    sql += ` ORDER BY pl.created_at ${order} OFFSET $${paramIdx++} LIMIT $${paramIdx++}`;
-    params.push(offset, limit);
+    if (after !== null) {
+      sql += `
+        AND (pl.created_at, pl.post_id) ${comparison} (
+          SELECT pl2.created_at, pl2.post_id
+          FROM post_likes pl2
+          WHERE pl2.liked_by = $1 AND pl2.post_id = $${paramIdx}
+        )
+      `;
+      params.push(after);
+      paramIdx++;
+    }
+    sql += ` ORDER BY pl.created_at ${order}, pl.post_id ${order}`;
+    if (after === null) {
+      sql += ` OFFSET $${paramIdx++}`;
+      params.push(offset);
+    }
+    sql += ` LIMIT $${paramIdx++}`;
+    params.push(limit);
     const res = await pgQuery(this.pgPool, sql, params);
     const rows = res.rows.map((r) => {
       r.id = decToHex(r.id);

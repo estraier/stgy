@@ -113,11 +113,18 @@ export class StorageS3Service implements StorageService {
   ): Promise<StorageObjectMetadata[]> {
     const all: StorageObjectMetadata[] = [];
     let continuationToken: string | undefined = undefined;
+    const offset = Math.max(0, range?.offset ?? 0);
+    const limit = Math.max(0, range?.limit ?? Number.POSITIVE_INFINITY);
+    const after = range?.after?.trim() || undefined;
+    if (after && offset !== 0) throw new Error("after requires offset=0");
     const need = range
-      ? Math.max(0, range.offset || 0) + Math.max(0, range.limit || 0)
+      ? after
+        ? limit
+        : offset + limit
       : Number.POSITIVE_INFINITY;
     do {
       const remaining = isFinite(need) ? Math.max(0, need - all.length) : 1000;
+      if (remaining === 0) break;
       const maxKeys = Math.min(1000, Math.max(1, remaining));
       const res: ListObjectsV2CommandOutput = await this.s3.send(
         new ListObjectsV2Command({
@@ -125,6 +132,7 @@ export class StorageS3Service implements StorageService {
           Prefix: objId.key,
           MaxKeys: maxKeys,
           ContinuationToken: continuationToken,
+          StartAfter: continuationToken ? undefined : after,
         }),
       );
       const page =
@@ -141,9 +149,9 @@ export class StorageS3Service implements StorageService {
       continuationToken = res.IsTruncated ? res.NextContinuationToken : undefined;
     } while (continuationToken);
     if (!range) return all;
-    const start = Math.min(Math.max(0, range.offset), all.length);
-    const end = Math.min(start + Math.max(0, range.limit), all.length);
-    return all.slice(start, end);
+    const start = after ? 0 : Math.min(offset, all.length);
+    const finish = Math.min(start + limit, all.length);
+    return all.slice(start, finish);
   }
 
   async loadObject(objId: StorageObjectId, range?: StorageObjectDataRange): Promise<Uint8Array> {

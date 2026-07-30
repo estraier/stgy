@@ -122,6 +122,16 @@ describe("SearchService", () => {
 
       expect(params[3]).toBeNull();
     });
+
+    it("uses the supplied transaction client for queue insertion", async () => {
+      const client = { query: jest.fn() } as any;
+      await service.enqueueAddDocument(
+        { id: "d1", timestamp: 100, bodyText: "text", locale: "en" },
+        client,
+      );
+
+      expect((pgQuery as jest.Mock).mock.calls[0][0]).toBe(client);
+    });
   });
 
   describe("Worker: fetchTasks / deleteTasks", () => {

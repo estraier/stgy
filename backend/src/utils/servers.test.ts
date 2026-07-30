@@ -164,6 +164,23 @@ describe("servers utils (Pool/pgQuery, Redis)", () => {
     expect(res.rows[0].a).toBe(2);
   });
 
+  test("pgQuery retries a pool by default", async () => {
+    const query = jest
+      .fn()
+      .mockRejectedValueOnce(new Error("q1"))
+      .mockResolvedValueOnce({ rows: [{ a: 2 }], rowCount: 1 });
+    const pool: any = { query, connect: jest.fn() };
+
+    const { pgQuery } = await import("./servers");
+    const resultPromise = pgQuery<{ a: number }>(pool, "SELECT 2");
+    await flush();
+    jest.advanceTimersByTime(200);
+    const result = await resultPromise;
+
+    expect(query).toHaveBeenCalledTimes(2);
+    expect(result.rows[0].a).toBe(2);
+  });
+
   test("pgQuery: times out after attempts", async () => {
     const alwaysFail = jest.fn().mockRejectedValue(new Error("fail"));
     const poolInst: any = { query: alwaysFail };
@@ -176,6 +193,17 @@ describe("servers utils (Pool/pgQuery, Redis)", () => {
     jest.advanceTimersByTime(400);
     await expect(p).rejects.toThrow(/fail/);
     expect(alwaysFail).toHaveBeenCalledTimes(2);
+  });
+
+  test("pgQuery does not retry a transaction client by default", async () => {
+    const query = jest.fn().mockRejectedValue(new Error("transaction failed"));
+    const client: any = { query, connect: jest.fn(), release: jest.fn() };
+
+    const { pgQuery } = await import("./servers");
+    await expect(pgQuery(client, "UPDATE x SET y = 1")).rejects.toThrow(
+      "transaction failed",
+    );
+    expect(query).toHaveBeenCalledTimes(1);
   });
 
   test("connectRedisWithRetry: success when already ready", async () => {

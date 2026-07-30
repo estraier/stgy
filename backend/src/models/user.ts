@@ -85,6 +85,7 @@ export type UpdatePasswordInput = {
 
 export type ListFolloweesInput = {
   followerId: string;
+  after?: string;
 } & UserPagination;
 
 export type ListFollowersInput = {
@@ -98,6 +99,7 @@ export type FollowUserPair = {
 
 export type ListBlockeesInput = {
   blockerId: string;
+  after?: string;
 } & UserPagination;
 
 export type BlockUserPair = {

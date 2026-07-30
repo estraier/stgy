@@ -149,20 +149,23 @@ export class NotificationsService {
   }
 
   async purgeOldRecords(): Promise<number> {
-    await pgQuery(this.pg, "BEGIN");
+    const client = await this.pg.connect();
     try {
-      await pgQuery(this.pg, "SET LOCAL statement_timeout = 10000");
+      await pgQuery(client, "BEGIN");
+      await pgQuery(client, "SET LOCAL statement_timeout = 10000");
       const res = await pgQuery(
-        this.pg,
+        client,
         `DELETE FROM notifications
          WHERE created_at < (now() - make_interval(days => $1))`,
         [Config.NOTIFICATION_RETENTION_DAYS],
       );
-      await pgQuery(this.pg, "COMMIT");
+      await pgQuery(client, "COMMIT");
       return res.rowCount ?? 0;
     } catch (e) {
-      await pgQuery(this.pg, "ROLLBACK");
+      await pgQuery(client, "ROLLBACK");
       throw e;
+    } finally {
+      client.release();
     }
   }
 }

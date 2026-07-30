@@ -33,11 +33,12 @@ export async function finalizeImage(userId: string, objectKey: string): Promise<
 
 export async function listImages(
   userId: string,
-  opts: { offset?: number; limit?: number } = {},
+  opts: { offset?: number; limit?: number; after?: string } = {},
 ): Promise<MediaObject[]> {
   const sp = new URLSearchParams();
   if (opts.offset !== undefined) sp.set("offset", String(opts.offset));
   if (opts.limit !== undefined) sp.set("limit", String(opts.limit));
+  if (opts.after) sp.set("after", opts.after);
   const q = sp.toString();
   const res = await apiFetch(`/media/${encodeURIComponent(userId)}/images${q ? `?${q}` : ""}`, {
     method: "GET",

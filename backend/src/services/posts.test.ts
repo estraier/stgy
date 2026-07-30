@@ -80,6 +80,10 @@ class MockPgClientMain {
     return authorBlocks || (blockStrangers && !authorFollowsFocus);
   }
 
+  async connect() {
+    return { query: this.query.bind(this), release: jest.fn() };
+  }
+
   async query(sql: string, params?: any[]) {
     sql = normalizeSql(sql);
     this.lastSql = sql;
@@ -1080,6 +1084,7 @@ describe("posts service", () => {
         id: postSample.id,
         locale: "ja-JP",
       }),
+      expect.anything(),
     );
   });
 
@@ -1092,6 +1097,7 @@ describe("posts service", () => {
         id: postSample.id,
         locale: "fr-FR",
       }),
+      expect.anything(),
     );
   });
 
@@ -1108,6 +1114,7 @@ describe("posts service", () => {
         id: postSample.id,
         locale: "en-US",
       }),
+      expect.anything(),
     );
   });
 
@@ -1379,6 +1386,34 @@ describe("listPostsLikedByUser", () => {
     const input: ListPostsLikedByUserInput = { userId: alice, offset: 0, limit: 10, order: "desc" };
     const result = await postsService.listPostsLikedByUser(input, alice);
     expect(result.find((p) => p.id === post1.id)?.isBlockingFocusUser).toBe(true);
+  });
+
+  test("listPostsLikedByUser supports a created-at cursor while preserving offset paging", async () => {
+    const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [] }));
+    const cursorService = new PostsService({ query } as any, redis as any);
+
+    await cursorService.listPostsLikedByUser({
+      userId: alice,
+      after: post1.id,
+      order: "desc",
+      limit: 25,
+    });
+
+    const sql = normalizeSql(query.mock.calls[0][0] as string);
+    expect(sql).toContain(
+      "AND (pl.created_at, pl.post_id) < ( SELECT pl2.created_at, pl2.post_id",
+    );
+    expect(sql).toContain("ORDER BY pl.created_at DESC, pl.post_id DESC LIMIT $3");
+    expect(sql).not.toContain("OFFSET");
+    expect(query.mock.calls[0][1]).toEqual([toDecStr(alice), toDecStr(post1.id), 25]);
+
+    await expect(
+      cursorService.listPostsLikedByUser({
+        userId: alice,
+        after: post1.id,
+        offset: 1,
+      }),
+    ).rejects.toThrow("after requires offset=0");
   });
 });
 

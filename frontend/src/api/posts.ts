@@ -153,6 +153,7 @@ export async function listPostsLikedByUser(params: {
   offset?: number;
   limit?: number;
   order?: "asc" | "desc";
+  after?: string;
   includeReplies?: boolean;
   focusUserId?: string;
 }): Promise<Post[]> {
@@ -161,6 +162,7 @@ export async function listPostsLikedByUser(params: {
   if (params.offset !== undefined) search.append("offset", String(params.offset));
   if (params.limit !== undefined) search.append("limit", String(params.limit));
   if (params.order) search.append("order", params.order);
+  if (params.after) search.append("after", params.after);
   if (params.includeReplies !== undefined)
     search.append("includeReplies", String(params.includeReplies));
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);

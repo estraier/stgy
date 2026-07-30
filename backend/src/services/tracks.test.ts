@@ -387,6 +387,21 @@ describe("TracksService", () => {
     );
   });
 
+  test("listTracks: passes a validated cursor to storage", async () => {
+    const after = "u1/masters/797491/a.fit";
+    storage.listObjects.mockResolvedValueOnce([]);
+
+    await service.listTracks(userId, 0, 100, after);
+
+    expect(storage.listObjects).toHaveBeenCalledWith(
+      { bucket, key: "u1/masters/" },
+      { offset: 0, limit: 100, after },
+    );
+    await expect(service.listTracks(userId, 0, 100, "other/masters/a.fit")).rejects.toThrow(
+      "invalid after",
+    );
+  });
+
   test("getTrackBytes: success for masters and previews", async () => {
     storage.headObject.mockResolvedValueOnce(makeMeta("u1/masters/797491/a.fit", 123));
     storage.loadObject.mockResolvedValueOnce(new Uint8Array([1, 2, 3]));

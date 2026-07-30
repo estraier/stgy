@@ -196,11 +196,14 @@ export class MediaService {
     pathUserId: string,
     offset: number,
     limit: number,
+    after?: string,
   ): Promise<StorageObjectMetadata[]> {
     const prefix = `${pathUserId}/masters/`;
+    if (after && !after.startsWith(prefix)) throw new Error("invalid after");
+    const range = after ? { offset, limit, after } : { offset, limit };
     return await this.storage.listObjects(
       { bucket: Config.MEDIA_BUCKET_IMAGES, key: prefix },
-      { offset, limit },
+      range,
     );
   }
 

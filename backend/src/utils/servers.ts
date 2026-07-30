@@ -1,4 +1,4 @@
-import { Pool, QueryResult, QueryResultRow } from "pg";
+import { Pool, type PoolClient, type QueryResult, type QueryResultRow } from "pg";
 import os from "os";
 import Redis from "ioredis";
 import { Config } from "../config";
@@ -59,18 +59,20 @@ export async function connectPgWithRetry(timeout = 60): Promise<Pool> {
 }
 
 export async function pgQuery<T extends QueryResultRow = QueryResultRow>(
-  pool: Pool,
+  pool: Pool | PoolClient,
   text: string,
   params: ReadonlyArray<unknown> = [],
-  attempts = 3,
+  attempts?: number,
 ): Promise<QueryResult<T>> {
+  const isTransactionClient = "release" in pool && typeof pool.release === "function";
+  const maxAttempts = attempts ?? (isTransactionClient ? 1 : 3);
   let lastErr: unknown;
-  for (let i = 1; i <= attempts; i++) {
+  for (let i = 1; i <= maxAttempts; i++) {
     try {
       return await pool.query<T>(text, params as unknown[]);
     } catch (e) {
       lastErr = e;
-      if (i === attempts) break;
+      if (i === maxAttempts) break;
       await sleep(200 * i);
     }
   }

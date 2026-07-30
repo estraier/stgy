@@ -90,6 +90,10 @@ class MockPgClient {
   follows: MockFollowRow[] = [];
   likes: MockPostLikeRow[] = [];
 
+  async connect() {
+    return { query: this.query.bind(this), release: jest.fn() };
+  }
+
   async query(sql: string, params?: unknown[]) {
     sql = normalizeSql(sql);
 

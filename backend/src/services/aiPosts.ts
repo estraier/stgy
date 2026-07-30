@@ -161,8 +161,9 @@ export class AiPostsService {
 
   async updateAiPost(input: UpdateAiPostSummaryInput): Promise<AiPostSummary | null> {
     const postIdDec = hexToDec(input.postId);
-    await pgQuery(this.pgPool, "BEGIN");
+    const client = await this.pgPool.connect();
     try {
+      await pgQuery(client, "BEGIN");
       const summaryProvided = input.summary !== undefined;
       const featuresProvided = input.features !== undefined;
       const keywordsProvided = input.keywords !== undefined;
@@ -207,7 +208,7 @@ export class AiPostsService {
         cols.push("updated_at");
         vals.push("now()");
         await pgQuery(
-          this.pgPool,
+          client,
           `
           INSERT INTO ai_post_summaries (${cols.join(", ")})
           VALUES (${vals.join(", ")})
@@ -218,10 +219,10 @@ export class AiPostsService {
         );
       }
       if (input.tags !== undefined) {
-        await pgQuery(this.pgPool, `DELETE FROM ai_post_tags WHERE post_id = $1`, [postIdDec]);
+        await pgQuery(client, `DELETE FROM ai_post_tags WHERE post_id = $1`, [postIdDec]);
         if (input.tags.length > 0) {
           await pgQuery(
-            this.pgPool,
+            client,
             `
             INSERT INTO ai_post_tags (post_id, name)
             SELECT $1, t
@@ -231,10 +232,12 @@ export class AiPostsService {
           );
         }
       }
-      await pgQuery(this.pgPool, "COMMIT");
+      await pgQuery(client, "COMMIT");
     } catch (e) {
-      await pgQuery(this.pgPool, "ROLLBACK");
+      await pgQuery(client, "ROLLBACK");
       throw e;
+    } finally {
+      client.release();
     }
     return this.getAiPostSummary(input.postId);
   }

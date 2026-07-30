@@ -1,4 +1,4 @@
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import { Config } from "../config";
 import { Document, SearchInput } from "../models/search";
 import { IdIssueService } from "./idIssue";
@@ -82,7 +82,7 @@ export class SearchService {
     return ids;
   }
 
-  async enqueueAddDocument(doc: Document): Promise<void> {
+  async enqueueAddDocument(doc: Document, client?: PoolClient): Promise<void> {
     const taskId = await this.idIssueService.issueBigint();
     const sql = `
       INSERT INTO search_indexing_tasks
@@ -90,10 +90,14 @@ export class SearchService {
       VALUES ($1, $2, $3, $4, $5, $6)
     `;
     const params = [taskId, this.resourceName, doc.id, doc.bodyText, doc.locale, doc.timestamp];
-    await pgQuery(this.pgPool, sql, params);
+    await pgQuery(client ?? this.pgPool, sql, params);
   }
 
-  async enqueueRemoveDocument(id: string, timestamp: number): Promise<void> {
+  async enqueueRemoveDocument(
+    id: string,
+    timestamp: number,
+    client?: PoolClient,
+  ): Promise<void> {
     const taskId = await this.idIssueService.issueBigint();
     const sql = `
       INSERT INTO search_indexing_tasks
@@ -101,7 +105,7 @@ export class SearchService {
       VALUES ($1, $2, $3, $4, $5, $6)
     `;
     const params = [taskId, this.resourceName, id, null, null, timestamp];
-    await pgQuery(this.pgPool, sql, params);
+    await pgQuery(client ?? this.pgPool, sql, params);
   }
 
   async fetchTasks(limit: number): Promise<SearchIndexTask[]> {

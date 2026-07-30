@@ -410,10 +410,11 @@ export class UsersService {
     const passwordHash = await generatePasswordHash(input.password);
     const snippet = makeSnippetJsonFromMarkdown(input.introduction ?? "").slice(0, 4096);
 
-    await pgQuery(this.pgPool, "BEGIN");
+    const client = await this.pgPool.connect();
     try {
+      await pgQuery(client, "BEGIN");
       await pgQuery(
-        this.pgPool,
+        client,
         `
           INSERT INTO users (
             id,
@@ -443,7 +444,7 @@ export class UsersService {
       );
 
       await pgQuery(
-        this.pgPool,
+        client,
         `
           INSERT INTO user_secrets (user_id, email, password)
           VALUES ($1, $2, $3)
@@ -452,7 +453,7 @@ export class UsersService {
       );
 
       await pgQuery(
-        this.pgPool,
+        client,
         `
           INSERT INTO user_details (user_id, introduction, ai_personality)
           VALUES ($1, $2, $3)
@@ -464,7 +465,7 @@ export class UsersService {
       );
 
       const res = await pgQuery(
-        this.pgPool,
+        client,
         `
           SELECT
             u.id,
@@ -490,21 +491,26 @@ export class UsersService {
       const timestamp = Math.floor(
         IdIssueService.bigIntToDate(BigInt(hexToDec(id))).getTime() / 1000,
       );
-      await this.searchService.enqueueAddDocument({
-        id,
-        bodyText,
-        locale: input.locale,
-        timestamp,
-      });
+      await this.searchService.enqueueAddDocument(
+        {
+          id,
+          bodyText,
+          locale: input.locale,
+          timestamp,
+        },
+        client,
+      );
 
-      await pgQuery(this.pgPool, "COMMIT");
+      await pgQuery(client, "COMMIT");
 
       const row = res.rows[0] as Record<string, unknown>;
       row.id = decToHex(row.id as string);
       return snakeToCamel<User>(row);
     } catch (e) {
-      await pgQuery(this.pgPool, "ROLLBACK");
+      await pgQuery(client, "ROLLBACK");
       throw e;
+    } finally {
+      client.release();
     }
   }
 
@@ -550,13 +556,14 @@ export class UsersService {
       userVals.push(input.blockStrangers);
     }
 
-    await pgQuery(this.pgPool, "BEGIN");
+    const client = await this.pgPool.connect();
     try {
+      await pgQuery(client, "BEGIN");
       if (input.email !== undefined) {
         if (!input.email || input.email.trim() === "") throw new Error("email is required");
         if (!validateEmail(input.email)) throw new Error("given email is invalid");
         await pgQuery(
-          this.pgPool,
+          client,
           `
           UPDATE user_secrets
           SET email = $1
@@ -568,7 +575,7 @@ export class UsersService {
 
       if (input.introduction !== undefined || input.aiPersonality !== undefined) {
         await pgQuery(
-          this.pgPool,
+          client,
           `
             UPDATE user_details
             SET introduction  = COALESCE($2, introduction),
@@ -588,11 +595,11 @@ export class UsersService {
         SET ${userCols.join(", ")}
         WHERE id = $${uidx}
       `.trim();
-        await pgQuery(this.pgPool, sql, userVals);
+        await pgQuery(client, sql, userVals);
       }
 
       const res = await pgQuery(
-        this.pgPool,
+        client,
         `
         SELECT
           u.id,
@@ -615,7 +622,7 @@ export class UsersService {
       );
 
       if (!res.rows[0]) {
-        await pgQuery(this.pgPool, "ROLLBACK");
+        await pgQuery(client, "ROLLBACK");
         return null;
       }
 
@@ -634,7 +641,7 @@ export class UsersService {
           targetLocale === undefined
         ) {
           const currentRes = await pgQuery(
-            this.pgPool,
+            client,
             `
               SELECT u.nickname, u.locale, d.introduction
               FROM users u
@@ -657,22 +664,27 @@ export class UsersService {
           IdIssueService.bigIntToDate(BigInt(hexToDec(input.id))).getTime() / 1000,
         );
 
-        await this.searchService.enqueueAddDocument({
-          id: input.id,
-          bodyText,
-          locale: targetLocale ?? Config.DEFAULT_LOCALE,
-          timestamp,
-        });
+        await this.searchService.enqueueAddDocument(
+          {
+            id: input.id,
+            bodyText,
+            locale: targetLocale ?? Config.DEFAULT_LOCALE,
+            timestamp,
+          },
+          client,
+        );
       }
 
-      await pgQuery(this.pgPool, "COMMIT");
+      await pgQuery(client, "COMMIT");
 
       const row = res.rows[0] as Record<string, unknown>;
       row.id = decToHex(row.id as string);
       return snakeToCamel<User>(row);
     } catch (e) {
-      await pgQuery(this.pgPool, "ROLLBACK");
+      await pgQuery(client, "ROLLBACK");
       throw e;
+    } finally {
+      client.release();
     }
   }
 
@@ -828,10 +840,11 @@ export class UsersService {
   }
 
   async deleteUser(id: string): Promise<void> {
-    await pgQuery(this.pgPool, "BEGIN");
+    const client = await this.pgPool.connect();
     try {
+      await pgQuery(client, "BEGIN");
       const res = await pgQuery(
-        this.pgPool,
+        client,
         `
           DELETE FROM users
           WHERE id = $1
@@ -843,12 +856,14 @@ export class UsersService {
       const timestamp = Math.floor(
         IdIssueService.bigIntToDate(BigInt(hexToDec(id))).getTime() / 1000,
       );
-      await this.searchService.enqueueRemoveDocument(id, timestamp);
+      await this.searchService.enqueueRemoveDocument(id, timestamp, client);
 
-      await pgQuery(this.pgPool, "COMMIT");
+      await pgQuery(client, "COMMIT");
     } catch (e) {
-      await pgQuery(this.pgPool, "ROLLBACK");
+      await pgQuery(client, "ROLLBACK");
       throw e;
+    } finally {
+      client.release();
     }
   }
 
@@ -856,6 +871,27 @@ export class UsersService {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+    const after = input.after ? hexToDec(input.after) : null;
+    if (after !== null && offset !== 0) throw new Error("after requires offset=0");
+    const comparison = order === "ASC" ? ">" : "<";
+    const params: unknown[] = [hexToDec(input.followerId)];
+    let cursorSql = "";
+    if (after !== null) {
+      params.push(after);
+      cursorSql = `
+        AND (f.created_at, f.followee_id) ${comparison} (
+          SELECT f2.created_at, f2.followee_id
+          FROM user_follows f2
+          WHERE f2.follower_id = $1 AND f2.followee_id = $2
+        )
+      `;
+    }
+    const pageSql =
+      after === null
+        ? `OFFSET $${params.length + 1} LIMIT $${params.length + 2}`
+        : `LIMIT $${params.length + 1}`;
+    if (after === null) params.push(offset);
+    params.push(limit);
 
     const sql = `
       SELECT
@@ -875,11 +911,12 @@ export class UsersService {
       JOIN users u ON f.followee_id = u.id
       LEFT JOIN user_counts uc ON uc.user_id = u.id
       WHERE f.follower_id = $1
+      ${cursorSql}
       ORDER BY f.created_at ${order}, f.followee_id ${order}
-      OFFSET $2 LIMIT $3
+      ${pageSql}
     `.trim();
 
-    const res = await pgQuery(this.pgPool, sql, [hexToDec(input.followerId), offset, limit]);
+    const res = await pgQuery(this.pgPool, sql, params);
     const users = res.rows.map((row: Record<string, unknown>) => {
       row.id = decToHex(row.id as string);
       return snakeToCamel<User>(row);
@@ -1104,6 +1141,27 @@ export class UsersService {
     const offset = input.offset ?? 0;
     const limit = input.limit ?? 100;
     const order = (input.order ?? "desc").toLowerCase() === "asc" ? "ASC" : "DESC";
+    const after = input.after ? hexToDec(input.after) : null;
+    if (after !== null && offset !== 0) throw new Error("after requires offset=0");
+    const comparison = order === "ASC" ? ">" : "<";
+    const params: unknown[] = [hexToDec(input.blockerId)];
+    let cursorSql = "";
+    if (after !== null) {
+      params.push(after);
+      cursorSql = `
+        AND (b.created_at, b.blockee_id) ${comparison} (
+          SELECT b2.created_at, b2.blockee_id
+          FROM user_blocks b2
+          WHERE b2.blocker_id = $1 AND b2.blockee_id = $2
+        )
+      `;
+    }
+    const pageSql =
+      after === null
+        ? `OFFSET $${params.length + 1} LIMIT $${params.length + 2}`
+        : `LIMIT $${params.length + 1}`;
+    if (after === null) params.push(offset);
+    params.push(limit);
 
     const sql = `
       SELECT
@@ -1123,11 +1181,12 @@ export class UsersService {
       JOIN users u ON b.blockee_id = u.id
       LEFT JOIN user_counts uc ON uc.user_id = u.id
       WHERE b.blocker_id = $1
+      ${cursorSql}
       ORDER BY b.created_at ${order}, b.blockee_id ${order}
-      OFFSET $2 LIMIT $3
+      ${pageSql}
     `.trim();
 
-    const res = await pgQuery(this.pgPool, sql, [hexToDec(input.blockerId), offset, limit]);
+    const res = await pgQuery(this.pgPool, sql, params);
     const users = res.rows.map((row: Record<string, unknown>) => {
       row.id = decToHex(row.id as string);
       return snakeToCamel<User>(row);

@@ -169,8 +169,13 @@ export default function createTracksRouter(
     try {
       const offset = parseInt((req.query.offset as string) ?? "0", 10);
       const limit = parseInt((req.query.limit as string) ?? "100", 10);
+      const after =
+        typeof req.query.after === "string" && req.query.after.trim() !== ""
+          ? req.query.after.trim()
+          : undefined;
+      if (after && offset !== 0) throw new Error("after requires offset=0");
       const watch = timerThrottleService.startWatch(auth.loginUser);
-      const list = await tracksService.listTracks(auth.pathUserId, offset, limit);
+      const list = await tracksService.listTracks(auth.pathUserId, offset, limit, after);
       watch.done();
       res.json(list);
     } catch (e) {

@@ -56,6 +56,7 @@ declare global {
 
 const IMAGES_PAGE_SIZE = Config.IMAGES_PAGE_SIZE || 30;
 const TRACKS_PAGE_SIZE = Config.TRACKS_PAGE_SIZE || 30;
+const EXPORT_API_PAGE_SIZE = 100;
 
 const TRACK_VIEWER_JS_URL = "/export-assets/track-viewer.js";
 const TRACK_VIEWER_CSS_URL = "/export-assets/track-viewer.css";
@@ -470,7 +471,7 @@ async function fetchAllMyPosts(userId: string): Promise<Post[]> {
     const res = await withTooOftenRetry(() =>
       listPosts({
         after,
-        limit: 200,
+        limit: EXPORT_API_PAGE_SIZE,
         order: "desc",
         ownedBy: userId,
         focusUserId: userId,
@@ -478,7 +479,6 @@ async function fetchAllMyPosts(userId: string): Promise<Post[]> {
     );
     if (res.length === 0) break;
     out.push(...res.filter((p) => p.ownedBy === userId));
-    if (res.length < 200) break;
     after = res[res.length - 1].id;
   }
   const seen = new Set<string>();
@@ -491,15 +491,17 @@ async function fetchAllMyPosts(userId: string): Promise<Post[]> {
 
 async function fetchAllMyImages(userId: string): Promise<MediaObject[]> {
   const out: MediaObject[] = [];
-  for (let page = 1; page < 100000; page++) {
+  let after: string | undefined;
+  for (;;) {
     const data = await withTooOftenRetry(() =>
       listImages(userId, {
-        offset: (page - 1) * IMAGES_PAGE_SIZE,
-        limit: IMAGES_PAGE_SIZE + 1,
+        after,
+        limit: IMAGES_PAGE_SIZE,
       }),
     );
-    out.push(...data.slice(0, IMAGES_PAGE_SIZE));
-    if (data.length <= IMAGES_PAGE_SIZE) break;
+    if (data.length === 0) break;
+    out.push(...data);
+    after = data[data.length - 1].key;
   }
   const seen = new Set<string>();
   return out.filter((it) => {
@@ -511,15 +513,17 @@ async function fetchAllMyImages(userId: string): Promise<MediaObject[]> {
 
 async function fetchAllMyTracks(userId: string): Promise<TrackObject[]> {
   const out: TrackObject[] = [];
-  for (let page = 1; page < 100000; page++) {
+  let after: string | undefined;
+  for (;;) {
     const data = await withTooOftenRetry(() =>
       listTracks(userId, {
-        offset: (page - 1) * TRACKS_PAGE_SIZE,
-        limit: TRACKS_PAGE_SIZE + 1,
+        after,
+        limit: TRACKS_PAGE_SIZE,
       }),
     );
-    out.push(...data.slice(0, TRACKS_PAGE_SIZE));
-    if (data.length <= TRACKS_PAGE_SIZE) break;
+    if (data.length === 0) break;
+    out.push(...data);
+    after = data[data.length - 1].key;
   }
   const seen = new Set<string>();
   return out.filter((track) => {
@@ -544,15 +548,15 @@ function imageFilenameFromKey(key: string, userId: string): string {
 }
 
 async function fetchAllUsersByPager(
-  fetchPage: (o: number, l: number) => Promise<User[]>,
+  fetchPage: (after: string | undefined, limit: number) => Promise<User[]>,
 ): Promise<Array<{ id: string; nickname: string }>> {
   const out: Array<{ id: string; nickname: string }> = [];
-  for (let offset = 0; offset < 200_000; offset += 200) {
-    const res = await withTooOftenRetry(() => fetchPage(offset, 201));
-    res
-      .slice(0, 200)
-      .forEach((u) => u.id && u.nickname && out.push({ id: u.id, nickname: u.nickname }));
-    if (res.length <= 200) break;
+  let after: string | undefined;
+  for (;;) {
+    const res = await withTooOftenRetry(() => fetchPage(after, EXPORT_API_PAGE_SIZE));
+    if (res.length === 0) break;
+    res.forEach((u) => u.id && u.nickname && out.push({ id: u.id, nickname: u.nickname }));
+    after = res[res.length - 1].id;
   }
   const seen = new Set<string>();
   return out.filter((u) => {
@@ -566,22 +570,24 @@ async function fetchAllLikedPosts(
   userId: string,
 ): Promise<Array<{ id: string; ownedBy: string; ownerNickname: string }>> {
   const out: Array<{ id: string; ownedBy: string; ownerNickname: string }> = [];
-  for (let offset = 0; offset < 200_000; offset += 200) {
+  let after: string | undefined;
+  for (;;) {
     const data = await withTooOftenRetry(() =>
       listPostsLikedByUser({
         userId,
-        offset,
-        limit: 201,
+        after,
+        limit: EXPORT_API_PAGE_SIZE,
         order: "desc",
         focusUserId: userId,
         includeReplies: true,
       }),
     );
-    data.slice(0, 200).forEach((p) => {
+    if (data.length === 0) break;
+    data.forEach((p) => {
       if (p.id && p.ownedBy && p.ownerNickname)
         out.push({ id: p.id, ownedBy: p.ownedBy, ownerNickname: p.ownerNickname });
     });
-    if (data.length <= 200) break;
+    after = data[data.length - 1].id;
   }
   const seen = new Set<string>();
   return out.filter((it) => {
@@ -684,11 +690,11 @@ export default function PageBody() {
         : null;
 
       const [followees, blockees, likes] = await Promise.all([
-        fetchAllUsersByPager((o, l) =>
-          withTooOftenRetry(() => listFollowees(userId, { offset: o, limit: l, order: "asc" })),
+        fetchAllUsersByPager((after, limit) =>
+          withTooOftenRetry(() => listFollowees(userId, { after, limit, order: "asc" })),
         ),
-        fetchAllUsersByPager((o, l) =>
-          withTooOftenRetry(() => listBlockees(userId, { offset: o, limit: l, order: "asc" })),
+        fetchAllUsersByPager((after, limit) =>
+          withTooOftenRetry(() => listBlockees(userId, { after, limit, order: "asc" })),
         ),
         fetchAllLikedPosts(userId),
       ]);

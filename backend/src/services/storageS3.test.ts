@@ -191,6 +191,42 @@ describe("StorageS3Service", () => {
     expect(secondInput.ContinuationToken).toBe("token-1");
   });
 
+  test("listObjects starts after the cursor key without replaying the prefix", async () => {
+    const svc = new StorageS3Service();
+    const send = getMockS3Send();
+    send.mockResolvedValueOnce({
+      Contents: [
+        { Key: "prefix/k2", Size: 2, ETag: "e2" },
+        { Key: "prefix/k3", Size: 3, ETag: "e3" },
+      ],
+      IsTruncated: false,
+    } as any);
+
+    const out = await svc.listObjects(
+      { bucket: "b", key: "prefix/" },
+      { after: "prefix/k1", limit: 2 },
+    );
+
+    expect(out.map((o) => o.key)).toEqual(["prefix/k2", "prefix/k3"]);
+    expect(send).toHaveBeenCalledTimes(1);
+    const input = (send.mock.calls[0][0] as any).input;
+    expect(input.Prefix).toBe("prefix/");
+    expect(input.StartAfter).toBe("prefix/k1");
+    expect(input.ContinuationToken).toBeUndefined();
+    expect(input.MaxKeys).toBe(2);
+  });
+
+  test("listObjects rejects combining after with a nonzero offset", async () => {
+    const svc = new StorageS3Service();
+    await expect(
+      svc.listObjects(
+        { bucket: "b", key: "prefix/" },
+        { after: "prefix/k1", offset: 1, limit: 2 },
+      ),
+    ).rejects.toThrow("after requires offset=0");
+    expect(getMockS3Send()).not.toHaveBeenCalled();
+  });
+
   test("loadObject returns Uint8Array", async () => {
     const svc = new StorageS3Service();
     const send = getMockS3Send();

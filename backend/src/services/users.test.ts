@@ -228,6 +228,10 @@ class MockPgClient {
     return base;
   }
 
+  async connect() {
+    return { query: this.query.bind(this), release: jest.fn() };
+  }
+
   async query(sql: string, params: any[] = []) {
     const n = normalizeSql(sql);
     this.lastSql = n;
@@ -1288,6 +1292,30 @@ describe("UsersService", () => {
     expect(res.every((u) => typeof u.countPosts === "number")).toBe(true);
   });
 
+  test("listFollowees supports a created-at cursor while preserving offset paging", async () => {
+    const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [] }));
+    const cursorService = new UsersService({ query } as any, redis as any);
+
+    await cursorService.listFollowees({
+      followerId: ALICE,
+      after: BOB,
+      order: "asc",
+      limit: 25,
+    });
+
+    const sql = normalizeSql(query.mock.calls[0][0] as string);
+    expect(sql).toContain(
+      "AND (f.created_at, f.followee_id) > ( SELECT f2.created_at, f2.followee_id",
+    );
+    expect(sql).toContain("ORDER BY f.created_at ASC, f.followee_id ASC LIMIT $3");
+    expect(sql).not.toContain("OFFSET");
+    expect(query.mock.calls[0][1]).toEqual([hexToDec(ALICE), hexToDec(BOB), 25]);
+
+    await expect(
+      cursorService.listFollowees({ followerId: ALICE, after: BOB, offset: 1 }),
+    ).rejects.toThrow("after requires offset=0");
+  });
+
   test("listFollowers (with focusUserId)", async () => {
     const res = await service.listFollowers({ followeeId: ALICE }, BOB);
     expect(res.length).toBe(2);
@@ -1321,6 +1349,30 @@ describe("UsersService", () => {
     expect(carol.isFollowedByFocusUser).toBe(false);
     expect(carol.isFollowingFocusUser).toBe(false);
     expect((carol as any).email).toBeUndefined();
+  });
+
+  test("listBlockees supports a created-at cursor while preserving offset paging", async () => {
+    const query = jest.fn(async (_sql: string, _params?: unknown[]) => ({ rows: [] }));
+    const cursorService = new UsersService({ query } as any, redis as any);
+
+    await cursorService.listBlockees({
+      blockerId: BOB,
+      after: CAROL,
+      order: "desc",
+      limit: 25,
+    });
+
+    const sql = normalizeSql(query.mock.calls[0][0] as string);
+    expect(sql).toContain(
+      "AND (b.created_at, b.blockee_id) < ( SELECT b2.created_at, b2.blockee_id",
+    );
+    expect(sql).toContain("ORDER BY b.created_at DESC, b.blockee_id DESC LIMIT $3");
+    expect(sql).not.toContain("OFFSET");
+    expect(query.mock.calls[0][1]).toEqual([hexToDec(BOB), hexToDec(CAROL), 25]);
+
+    await expect(
+      cursorService.listBlockees({ blockerId: BOB, after: CAROL, offset: 1 }),
+    ).rejects.toThrow("after requires offset=0");
   });
 
   test("addFollow/removeFollow", async () => {

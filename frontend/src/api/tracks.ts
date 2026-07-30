@@ -37,7 +37,7 @@ export async function finalizeTrack(userId: string, objectKey: string): Promise<
 
 export async function listTracks(
   userId: string,
-  options: { offset?: number; limit?: number } = {},
+  options: { offset?: number; limit?: number; after?: string } = {},
 ): Promise<TrackObject[]> {
   const params = new URLSearchParams();
   if (options.offset !== undefined) {
@@ -45,6 +45,9 @@ export async function listTracks(
   }
   if (options.limit !== undefined) {
     params.set("limit", String(options.limit));
+  }
+  if (options.after) {
+    params.set("after", options.after);
   }
   const query = params.toString();
   const res = await apiFetch(

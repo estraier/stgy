@@ -211,6 +211,7 @@ export async function listFollowees(
     offset?: number;
     limit?: number;
     order?: "asc" | "desc";
+    after?: string;
     focusUserId?: string;
   } = {},
 ): Promise<User[]> {
@@ -218,6 +219,7 @@ export async function listFollowees(
   if (params.offset !== undefined) search.append("offset", String(params.offset));
   if (params.limit !== undefined) search.append("limit", String(params.limit));
   if (params.order) search.append("order", params.order);
+  if (params.after) search.append("after", params.after);
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);
   const q = search.toString();
   const res = await apiFetch(`/users/${id}/followees${q ? `?${q}` : ""}`, { method: "GET" });
@@ -263,6 +265,7 @@ export async function listBlockees(
     offset?: number;
     limit?: number;
     order?: "asc" | "desc";
+    after?: string;
     focusUserId?: string;
   } = {},
 ): Promise<User[]> {
@@ -270,6 +273,7 @@ export async function listBlockees(
   if (params.offset !== undefined) search.append("offset", String(params.offset));
   if (params.limit !== undefined) search.append("limit", String(params.limit));
   if (params.order) search.append("order", params.order);
+  if (params.after) search.append("after", params.after);
   if (params.focusUserId) search.append("focusUserId", params.focusUserId);
   const q = search.toString();
   const res = await apiFetch(`/users/${id}/blockees${q ? `?${q}` : ""}`, { method: "GET" });

@@ -347,11 +347,14 @@ export class TracksService {
     pathUserId: string,
     offset: number,
     limit: number,
+    after?: string,
   ): Promise<TrackObjectMetadata[]> {
     const prefix = `${pathUserId}/masters/`;
+    if (after && !after.startsWith(prefix)) throw new Error("invalid after");
+    const range = after ? { offset, limit, after } : { offset, limit };
     const objects = await this.storage.listObjects(
       { bucket: Config.MEDIA_BUCKET_TRACKS, key: prefix },
-      { offset, limit },
+      range,
     );
     return objects.map((object) => attachTrackUrls(this.storage, object));
   }
